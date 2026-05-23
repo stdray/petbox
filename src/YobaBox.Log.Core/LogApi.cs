@@ -6,6 +6,9 @@ using LinqToDB.Data;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Configuration;
+using YobaBox.Core.Data;
+using YobaBox.Core.Models;
 using YobaBox.Log.Core.Data;
 using YobaBox.Log.Core.Ingestion;
 using YobaBox.Log.Core.Query;
@@ -16,9 +19,14 @@ public static class LogApi
 {
 	public static void MapLogEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapPost("/ingest/clef", IngestClefAsync).RequireAuthorization();
-		app.MapGet("/api/logs/query", QueryLogsAsync).RequireAuthorization();
-		app.MapGet("/api/logs/services", GetServicesAsync).RequireAuthorization();
+		app.MapPost("/ingest/clef", IngestClefAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/query", QueryLogsAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/services", GetServicesAsync).RequireAuthorization("ApiKey");
+	}
+
+	public static void MapSeqSelfLogEndpoint(this IEndpointRouteBuilder app)
+	{
+		app.MapPost("/api/events/raw", SeqIngestAsync).AllowAnonymous();
 	}
 
 	static async Task<IResult> IngestClefAsync(
@@ -145,5 +153,43 @@ public static class LogApi
 			.ToListAsync(ct);
 
 		return Results.Json(services);
+	}
+
+	static async Task<IResult> SeqIngestAsync(
+		HttpContext ctx,
+		YobaBoxDb yobaBoxDb,
+		LogDb logDb,
+		CleFParser parser,
+		IConfiguration config,
+		CancellationToken ct)
+	{
+		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
+		if (string.IsNullOrWhiteSpace(apiKey))
+			return Results.Unauthorized();
+
+		var key = await yobaBoxDb.ApiKeys
+			.FirstOrDefaultAsync((ApiKey k) => k.Key == apiKey, CancellationToken.None);
+		if (key is null)
+			return Results.Unauthorized();
+
+		var serviceKey = config["Seq:SelfLog:ServiceKey"] ?? "yobabox-web";
+
+		var results = await parser.ParseAsync(ctx.Request.Body, ct)
+			.ToListAsync(ct);
+
+		var candidates = results
+			.Where(r => r.IsSuccess)
+			.Select(r => r.Event!)
+			.Select(c => c with { ServiceKey = serviceKey })
+			.ToList();
+
+		var records = candidates
+			.Select(c => LogEntryRecord.FromCandidate(c, LogEntryRecord.ComputeTemplateHash(c.MessageTemplate)))
+			.ToList();
+
+		if (records.Count > 0)
+			await logDb.LogEntries.BulkCopyAsync(records, ct);
+
+		return Results.Ok();
 	}
 }

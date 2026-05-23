@@ -13,6 +13,8 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	HttpClient _client = null!;
 
 	const string ApiKey = "yb_key_system_internal";
+	const string TestPassword = "test123";
+	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
 	public LogPipelineTests()
 	{
@@ -26,6 +28,9 @@ public sealed class LogPipelineTests : IAsyncLifetime
 					{
 						["ConnectionStrings:YobaBox"] = "Data Source=:memory:;Cache=Shared",
 						["Features:Logging"] = "true",
+						["Seq:SelfLog:Enabled"] = "true",
+						["Admin:Username"] = "admin",
+						["Admin:PasswordHash"] = TestPasswordHash,
 					});
 				});
 			});
@@ -44,6 +49,46 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();
+	}
+
+	async Task<HttpResponseMessage> GetPageAsync(string url)
+	{
+		var resp = await _client.GetAsync(url);
+		if (resp.StatusCode == HttpStatusCode.Found)
+		{
+			// Get anti-forgery token from login page
+			var loginPage = await _client.GetAsync("/Login");
+			var loginHtml = await loginPage.Content.ReadAsStringAsync();
+			var tokenStart = loginHtml.IndexOf("__RequestVerificationToken");
+			var valueStart = loginHtml.IndexOf("value=\"", tokenStart) + 7;
+			var valueEnd = loginHtml.IndexOf('"', valueStart);
+			var token = loginHtml[valueStart..valueEnd];
+
+			var cookies = loginPage.Headers.GetValues("Set-Cookie").ToList();
+
+			var loginReq = new HttpRequestMessage(HttpMethod.Post, "/Login?returnUrl=" + Uri.EscapeDataString(url));
+			loginReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+			{
+				["username"] = "admin",
+				["password"] = TestPassword,
+				["returnUrl"] = url,
+				["__RequestVerificationToken"] = token,
+			});
+			foreach (var c in cookies)
+				loginReq.Headers.Add("Cookie", c.Split(';')[0]);
+
+			var loginResp = await _client.SendAsync(loginReq);
+			loginResp.StatusCode.Should().Be(HttpStatusCode.Redirect);
+
+			var authCookie = loginResp.Headers.GetValues("Set-Cookie").FirstOrDefault();
+			if (authCookie is not null)
+			{
+				var req = new HttpRequestMessage(HttpMethod.Get, url);
+				req.Headers.Add("Cookie", authCookie.Split(';')[0]);
+				return await _client.SendAsync(req);
+			}
+		}
+		return resp;
 	}
 
 	static HttpRequestMessage LogRequest(string path, HttpMethod? method = null)
@@ -275,7 +320,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task LogPage_RendersHtml()
 	{
-		var resp = await _client.GetAsync("/logs");
+		var resp = await GetPageAsync("/logs");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("Logs");
@@ -288,9 +333,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		await PostClefAsync("svc-j",
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Error","@m":"{{UniqueMsg("j1")}}"}""");
 
-		var req = new HttpRequestMessage(HttpMethod.Get, "/logs?kql=events+|+take+10");
-		req.Headers.Add("HX-Request", "true");
-		using var resp = await _client.SendAsync(req);
+		using var resp = await GetPageAsync("/logs?kql=events+|+take+10");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"events-row\"");
@@ -299,9 +342,83 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task LogPage_WithShapeChangingKql_RendersColumns()
 	{
-		var resp = await _client.GetAsync("/logs?kql=events+|+count");
+		var resp = await GetPageAsync("/logs?kql=events+|+count");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("Count");
+	}
+
+	[Fact]
+	public async Task SeqIngest_ValidKey_ReturnsOk()
+	{
+		var msg = UniqueMsg("seq1");
+		var req = new HttpRequestMessage(HttpMethod.Post, "/api/events/raw");
+		req.Headers.Add("X-Seq-ApiKey", ApiKey);
+		req.Content = new StringContent(
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}""" + "\n",
+			Encoding.UTF8, "text/plain");
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+	}
+
+	[Fact]
+	public async Task SeqIngest_BadKey_Returns401()
+	{
+		var req = new HttpRequestMessage(HttpMethod.Post, "/api/events/raw");
+		req.Headers.Add("X-Seq-ApiKey", "bad_key");
+		req.Content = new StringContent(
+			"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"test"}""" + "\n",
+			Encoding.UTF8, "text/plain");
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+	}
+
+	[Fact]
+	public async Task SeqIngest_NoKey_Returns401()
+	{
+		var req = new HttpRequestMessage(HttpMethod.Post, "/api/events/raw");
+		req.Content = new StringContent(
+			"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"test"}""" + "\n",
+			Encoding.UTF8, "text/plain");
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+	}
+
+	[Fact]
+	public async Task SeqIngest_EndToEnd_AppearsInKql()
+	{
+		var msg = UniqueMsg("seq-e2e");
+
+		var req = new HttpRequestMessage(HttpMethod.Post, "/api/events/raw");
+		req.Headers.Add("X-Seq-ApiKey", ApiKey);
+		req.Content = new StringContent(
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Error","@m":"{{msg}}"}""" + "\n",
+			Encoding.UTF8, "text/plain");
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		var doc = await QueryAsync($"events | where Message == \"{msg}\" | take 1");
+		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
+		var evt = doc.RootElement.GetProperty("events")[0];
+		evt.GetProperty("level").GetString().Should().Be("Error");
+		evt.GetProperty("serviceKey").GetString().Should().Be("yobabox-web");
+	}
+
+	[Fact]
+	public async Task Query_WhereServiceKey_Equality()
+	{
+		var svcA = $"svc-wsk-{Guid.NewGuid():N}"[..12];
+		var svcB = $"svc-wsk-{Guid.NewGuid():N}"[..12];
+		var msgA = UniqueMsg("ska");
+		var msgB = UniqueMsg("skb");
+
+		await PostClefAsync(svcA,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msgA}}"}""");
+		await PostClefAsync(svcB,
+			$$"""{"@t":"2024-01-01T00:00:01Z","@l":"Info","@m":"{{msgB}}"}""");
+
+		var doc = await QueryAsync($"events | where ServiceKey == \"{svcA}\" | take 10");
+		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
+		doc.RootElement.GetProperty("events")[0].GetProperty("message").GetString().Should().Contain(msgA);
 	}
 }

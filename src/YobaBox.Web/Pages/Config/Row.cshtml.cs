@@ -1,8 +1,10 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using YobaBox.Core.Data;
 
 namespace YobaBox.Web.Pages.Config;
 
+[Authorize]
 public sealed class RowModel : PageModel
 {
 	readonly YobaBoxDb _db;

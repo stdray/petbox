@@ -9,7 +9,7 @@ public static class AuthApi
 {
 	public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapGet("/api/auth/validate", Validate).RequireAuthorization();
+		app.MapGet("/api/auth/validate", Validate).RequireAuthorization("ApiKey");
 	}
 
 	static IResult Validate(HttpContext context)

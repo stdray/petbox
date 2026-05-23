@@ -1,9 +1,11 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using YobaBox.Core.Data;
 
 namespace YobaBox.Web.Pages.Config;
 
+[Authorize]
 public sealed class IndexModel : PageModel
 {
 	readonly YobaBoxDb _db;

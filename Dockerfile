@@ -9,11 +9,15 @@ ENV PATH="/root/.bun/bin:$PATH"
 WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props Directory.Build.targets ./
 COPY src/YobaBox.Core/YobaBox.Core.csproj ./src/YobaBox.Core/
+COPY src/YobaBox.Config/YobaBox.Config.csproj ./src/YobaBox.Config/
+COPY src/YobaBox.Log.Core/YobaBox.Log.Core.csproj ./src/YobaBox.Log.Core/
 COPY src/YobaBox.Web/YobaBox.Web.csproj ./src/YobaBox.Web/
-COPY src/YobaBox.Web/package.json ./src/YobaBox.Web/
+COPY src/YobaBox.Web/package.json src/YobaBox.Web/bun.lock ./src/YobaBox.Web/
 RUN dotnet restore src/YobaBox.Web/YobaBox.Web.csproj -r linux-x64
 
 COPY src/YobaBox.Core/ ./src/YobaBox.Core/
+COPY src/YobaBox.Config/ ./src/YobaBox.Config/
+COPY src/YobaBox.Log.Core/ ./src/YobaBox.Log.Core/
 COPY src/YobaBox.Web/ ./src/YobaBox.Web/
 RUN dotnet publish src/YobaBox.Web/YobaBox.Web.csproj \
 	-c Release \

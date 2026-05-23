@@ -2,6 +2,7 @@ using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using YobaBox.Core.Auth;
 using YobaBox.Core.Data;
 using YobaBox.Core.Models;
 
@@ -11,11 +12,9 @@ public static class ConfigApi
 {
 	public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
 	{
-		var group = app.MapGroup("/api/config");
-
-		group.MapGet("", Resolve);
-		group.MapPost("", Create);
-		group.MapDelete("", Delete);
+		app.MapGet("/api/config", Resolve).RequireAuthorization("ConfigRead");
+		app.MapPost("/api/config", Create).RequireAuthorization("ConfigWrite");
+		app.MapDelete("/api/config", Delete).RequireAuthorization("ConfigWrite");
 	}
 
 	static IResult Resolve(HttpContext context, YobaBoxDb db, string path, string tags)

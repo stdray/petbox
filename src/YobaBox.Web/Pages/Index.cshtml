@@ -1,5 +1,17 @@
 @page
+@model YobaBox.Web.Pages.IndexModel
 @{
-	Layout = null;
-	Response.Redirect("/dashboard");
+	ViewData["Title"] = "YobaBox";
 }
+
+<div class="max-w-2xl mx-auto mt-8" data-testid="index-home">
+	<h1 class="text-2xl font-bold" data-testid="index-title">YobaBox</h1>
+	<p class="mt-2 text-base opacity-70">
+		Monolith platform: config engine, log storage with KQL, data gateway, dashboard.
+	</p>
+	<div class="mt-6 flex flex-wrap gap-2">
+		<a asp-page="/Logs/Index" class="btn btn-sm" data-testid="home-logs">Logs</a>
+		<a asp-page="/Config/Index" class="btn btn-sm" data-testid="home-config">Config</a>
+		<a asp-page="/Admin/Projects" class="btn btn-sm" data-testid="home-projects">Projects</a>
+	</div>
+</div>

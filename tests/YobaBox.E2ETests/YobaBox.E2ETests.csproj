@@ -11,6 +11,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="coverlet.collector" />
 		<PackageReference Include="Microsoft.NET.Test.Sdk" />
 		<PackageReference Include="Microsoft.Playwright" />
@@ -24,6 +28,9 @@
 		<Using Include="Xunit.Abstractions" />
 		<Using Include="AwesomeAssertions" />
 		<Using Include="YobaBox.Core" />
+		<Using Include="YobaBox.Core.Auth" />
+		<Using Include="YobaBox.E2ETests.Infrastructure" />
+		<Using Include="YobaBox.E2ETests.Pages" />
 		<Using Include="Microsoft.Playwright" />
 		<Using Include="Microsoft.Playwright.Assertions" Static="true" />
 	</ItemGroup>

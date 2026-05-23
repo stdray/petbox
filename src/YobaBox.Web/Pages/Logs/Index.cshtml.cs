@@ -1,4 +1,5 @@
 using Kusto.Language;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using YobaBox.Log.Core.Data;
@@ -6,6 +7,7 @@ using YobaBox.Log.Core.Query;
 
 namespace YobaBox.Web.Pages.Logs;
 
+[Authorize]
 public sealed class IndexModel : PageModel
 {
 	readonly LogDb _logDb;

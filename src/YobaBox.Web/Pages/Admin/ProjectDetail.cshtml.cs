@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using YobaBox.Core.Data;
@@ -5,6 +6,7 @@ using YobaBox.Core.Models;
 
 namespace YobaBox.Web.Pages.Admin;
 
+[Authorize]
 public sealed class ProjectDetailModel : PageModel
 {
 	readonly YobaBoxDb _db;
