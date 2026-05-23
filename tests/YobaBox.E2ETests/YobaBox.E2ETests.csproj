@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+		<IsTestProject>true</IsTestProject>
+		<NoWarn>$(NoWarn);CA1001;CA1707;CA1711</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<AssemblyMetadata Include="YobaBoxWebProjectDir" Value="$(MSBuildThisFileDirectory)..\..\src\YobaBox.Web" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="coverlet.collector" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="Microsoft.Playwright" />
+		<PackageReference Include="xunit" />
+		<PackageReference Include="xunit.runner.visualstudio" />
+		<PackageReference Include="AwesomeAssertions" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="Xunit" />
+		<Using Include="Xunit.Abstractions" />
+		<Using Include="AwesomeAssertions" />
+		<Using Include="YobaBox.Core" />
+		<Using Include="Microsoft.Playwright" />
+		<Using Include="Microsoft.Playwright.Assertions" Static="true" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\YobaBox.Core\YobaBox.Core.csproj" />
+		<ProjectReference Include="..\..\src\YobaBox.Web\YobaBox.Web.csproj" />
+	</ItemGroup>
+
+</Project>
