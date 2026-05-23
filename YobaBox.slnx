@@ -1,0 +1,14 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/YobaBox.Core/YobaBox.Core.csproj" />
+    <Project Path="src/YobaBox.Web/YobaBox.Web.csproj" />
+    <Project Path="src/YobaBox.Config/YobaBox.Config.csproj" />
+    <Project Path="src/YobaBox.Log.Core/YobaBox.Log.Core.csproj" />
+    <Project Path="src/YobaBox.Data/YobaBox.Data.csproj" />
+    <Project Path="src/YobaBox.Dashboard/YobaBox.Dashboard.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/YobaBox.Tests/YobaBox.Tests.csproj" />
+    <Project Path="tests/YobaBox.E2ETests/YobaBox.E2ETests.csproj" />
+  </Folder>
+</Solution>
