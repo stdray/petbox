@@ -1,0 +1,111 @@
+@page "/admin/projects/{key}"
+@model YobaBox.Web.Pages.Admin.ProjectDetailModel
+@{
+	ViewData["Title"] = $"Project: {Model.Project?.Name ?? Model.Key}";
+}
+
+@if (Model.Project is null)
+{
+	<div class="alert alert-error" data-testid="project-detail-error">Project not found.</div>
+	return;
+}
+
+<div class="flex items-center gap-3 mb-4">
+	<a asp-page="/Admin/Projects" class="btn btn-sm btn-ghost">&larr; Projects</a>
+	<h1 class="text-xl font-semibold" data-testid="project-detail-title">@Model.Project.Name</h1>
+	<span class="text-sm opacity-60 font-mono">@Model.Project.Key</span>
+</div>
+
+<div class="flex items-center gap-3 mb-4">
+	<h2 class="text-lg font-semibold">Services</h2>
+	<button class="btn btn-sm btn-primary ml-auto"
+		hx-get="/admin/projects/@Model.Key/services/create"
+		hx-target="#service-form"
+		data-testid="project-service-new">
+		+ New Service
+	</button>
+</div>
+
+<div id="service-form"></div>
+
+<div class="overflow-x-auto">
+	<table class="table table-sm" data-testid="project-services-table">
+		<thead>
+			<tr>
+				<th>Key</th>
+				<th>Kind</th>
+				<th>URL</th>
+				<th>Health</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			@foreach (var s in Model.Services)
+			{
+				<tr>
+					<td class="font-mono text-sm">@s.Key</td>
+					<td>@s.Kind</td>
+					<td class="text-sm max-w-xs truncate">@s.Url</td>
+					<td><span class="badge badge-sm">@s.Health</span></td>
+					<td>
+						<button class="btn btn-xs btn-ghost text-error"
+							hx-delete="/admin/projects/@Model.Key/services/delete?serviceKey=@s.Key"
+							hx-target="closest tr"
+							hx-swap="outerHTML"
+							hx-confirm="Delete service @s.Key?"
+							data-testid="project-service-delete">
+							Delete
+						</button>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+</div>
+
+<div class="divider"></div>
+
+<div class="flex items-center gap-3 mb-4">
+	<h2 class="text-lg font-semibold">API Keys</h2>
+	<button class="btn btn-sm btn-primary ml-auto"
+		hx-get="/admin/projects/@Model.Key/keys/create"
+		hx-target="#key-form"
+		data-testid="project-key-new">
+		+ New Key
+	</button>
+</div>
+
+<div id="key-form"></div>
+
+<div class="overflow-x-auto">
+	<table class="table table-sm" data-testid="project-keys-table">
+		<thead>
+			<tr>
+				<th>Key (prefix)</th>
+				<th>Scopes</th>
+				<th>Created</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			@foreach (var k in Model.Keys)
+			{
+				<tr>
+					<td class="font-mono text-sm">@(k.Key.Length > 12 ? k.Key[..12] + "..." : k.Key)</td>
+					<td class="text-sm">@k.Scopes</td>
+					<td class="text-xs opacity-70">@k.CreatedAt.ToString("yyyy-MM-dd")</td>
+					<td>
+						<button class="btn btn-xs btn-ghost text-error"
+							hx-delete="/admin/projects/@Model.Key/keys/revoke?keyValue=@k.Key"
+							hx-target="closest tr"
+							hx-swap="outerHTML"
+							hx-confirm="Revoke key @(k.Key[..Math.Min(12, k.Key.Length)])...?"
+							data-testid="project-key-revoke">
+							Revoke
+						</button>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+</div>

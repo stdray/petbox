@@ -1,0 +1,53 @@
+@page "/admin/projects"
+@model YobaBox.Web.Pages.Admin.ProjectsModel
+@{
+	ViewData["Title"] = "Projects";
+}
+
+<div class="flex items-center gap-3 mb-4">
+	<h1 class="text-xl font-semibold" data-testid="admin-projects-title">Projects</h1>
+	<button class="btn btn-sm btn-primary ml-auto"
+		hx-get="/admin/projects/create"
+		hx-target="#project-form"
+		data-testid="admin-project-new">
+		+ New Project
+	</button>
+</div>
+
+<div id="project-form"></div>
+
+<div class="overflow-x-auto">
+	<table class="table table-sm" data-testid="admin-projects-table">
+		<thead>
+			<tr>
+				<th>Key</th>
+				<th>Name</th>
+				<th>Description</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			@foreach (var p in Model.Projects)
+			{
+				<tr>
+					<td class="font-mono text-sm">@p.Key</td>
+					<td><a asp-page="/Admin/ProjectDetail" asp-route-key="@p.Key" data-testid="admin-project-link">@p.Name</a></td>
+					<td class="text-sm opacity-70">@p.Description</td>
+					<td>
+						@if (p.Key != "$system")
+						{
+							<button class="btn btn-xs btn-ghost text-error"
+								hx-delete="/admin/projects/delete?key=@p.Key"
+								hx-target="closest tr"
+								hx-swap="outerHTML"
+								hx-confirm="Delete project @p.Key?"
+								data-testid="admin-project-delete">
+								Delete
+							</button>
+						}
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+</div>

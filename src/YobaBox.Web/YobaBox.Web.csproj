@@ -24,4 +24,9 @@
 		<Exec Command="bun run build" WorkingDirectory="$(MSBuildProjectDirectory)" />
 	</Target>
 
+	<ItemGroup>
+		<Using Include="LinqToDB" />
+		<Using Include="LinqToDB.Async" />
+	</ItemGroup>
+
 </Project>
