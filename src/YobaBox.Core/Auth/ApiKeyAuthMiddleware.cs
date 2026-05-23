@@ -32,6 +32,26 @@ public sealed class ApiKeyAuthMiddleware
 
 		context.Items["ProjectKey"] = key.ProjectKey;
 		context.Items["Scopes"] = key.Scopes;
+
+		if (context.Request.Path.StartsWithSegments("/api/config"))
+		{
+			var requiredScope = context.Request.Method == "GET" ? "config:read" : "config:write";
+			if (!HasScope(key.Scopes, requiredScope))
+			{
+				context.Response.StatusCode = 403;
+				return;
+			}
+		}
+
 		await _next(context);
+	}
+
+	static bool HasScope(string scopes, string required)
+	{
+		if (string.IsNullOrWhiteSpace(scopes))
+			return false;
+		return scopes
+			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+			.Any(s => string.Equals(s, required, StringComparison.OrdinalIgnoreCase));
 	}
 }
