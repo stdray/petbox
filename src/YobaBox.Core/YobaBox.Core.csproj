@@ -2,6 +2,8 @@
 
 	<PropertyGroup>
 		<IsPackable>false</IsPackable>
+		<!-- FluentMigrator convention uses underscores in migration class names (M001_Initial). -->
+		<NoWarn>$(NoWarn);CA1707</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>
