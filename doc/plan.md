@@ -176,3 +176,22 @@ Goal: KQL ingestion + query working, Log UI, self-logging `$system`, Remote Auth
 - [ ] Log UI: table renders, filters work, row expand
 - [ ] Self-logging: error in ConfigModule → `$system/yobabox-config`
 - [ ] Remote auth: validates against main, caches, 401 on invalid
+
+---
+
+## Phase 3: Test parity with yobaconf + yobalog
+
+Goal: after all feature phases are complete, copy ALL remaining tests from yobaconf and yobalog.
+
+- [ ] Copy all `yobaconf/tests/` tests → `tests/YobaBox.Tests/` (adapt namespaces: `YobaConf` → `YobaBox`)
+- [ ] Copy all `yobalog/tests/` tests → `tests/YobaBox.Tests/` (adapt namespaces: `YobaLog` → `YobaBox`, `WorkspaceId` → `ServiceKey`/project model)
+- [ ] Copy all `yobalog/tests/YobaLog.E2ETests/` → `tests/YobaBox.E2ETests/` (adapt page objects, routes)
+- [ ] Verify all copied tests pass or are explicitly skipped with reason
+
+## Porting rules
+
+При переносе кода из yobaconf / yobalog:
+1. **Атомарные вещи копируются файлами как есть**, затем правятся неймспейсы и точечные несовместимости на месте.
+2. **Не переписывать с нуля** то, что можно скопировать.
+3. После копирования запустить `dotnet build` и `dotnet test` — фиксить только реальные ошибки, не предугадывать.
+4. Тесты копируются вместе с кодом, а не отдельной фазой.
