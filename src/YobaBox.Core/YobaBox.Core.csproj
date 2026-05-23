@@ -3,7 +3,7 @@
 	<PropertyGroup>
 		<IsPackable>false</IsPackable>
 		<!-- FluentMigrator convention uses underscores in migration class names (M001_Initial). -->
-		<NoWarn>$(NoWarn);CA1707</NoWarn>
+		<NoWarn>$(NoWarn);CA1707;NU1510</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -13,6 +13,7 @@
 	<ItemGroup>
 		<PackageReference Include="linq2db" />
 		<PackageReference Include="Microsoft.Data.Sqlite" />
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" />
 		<PackageReference Include="FluentMigrator" />
 		<PackageReference Include="FluentMigrator.Runner.SQLite" />
 		<PackageReference Include="Microsoft.Extensions.Options" />
