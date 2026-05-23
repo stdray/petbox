@@ -1,0 +1,24 @@
+{
+	"name": "yobabox-web",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"scripts": {
+		"dev": "concurrently -n ts,css -c blue,magenta \"bun run dev:ts\" \"bun run dev:css\"",
+		"dev:ts": "bun build ./ts/site.ts --outdir=./wwwroot/js --watch",
+		"dev:css": "tailwindcss -i ./ts/app.css -o ./wwwroot/css/app.css --watch",
+		"build": "bun run typecheck && bun run build:ts && bun run build:css",
+		"build:ts": "bun build ./ts/site.ts --outdir=./wwwroot/js --minify",
+		"build:css": "tailwindcss -i ./ts/app.css -o ./wwwroot/css/app.css --minify",
+		"typecheck": "tsc --noEmit",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "1.9.4",
+		"concurrently": "^9.2.1",
+		"daisyui": "^4.12",
+		"tailwindcss": "3.4.17",
+		"typescript": "5.7.3"
+	}
+}

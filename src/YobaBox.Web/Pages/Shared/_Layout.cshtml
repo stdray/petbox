@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" class="h-full">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>@ViewData["Title"] - YobaBox</title>
+	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
+	<script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+	<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+	<script type="module" src="~/js/site.js" asp-append-version="true"></script>
+</head>
+<body class="min-h-full">
+	<div class="drawer lg:drawer-open">
+		<input id="sidebar-toggle" type="checkbox" class="drawer-toggle" />
+		<div class="drawer-content flex flex-col">
+			<header class="navbar bg-base-200 border-b border-base-300 lg:hidden">
+				<label for="sidebar-toggle" class="btn btn-ghost drawer-button" data-testid="nav-toggle">
+					<svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+						<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+					</svg>
+				</label>
+				<a class="text-lg font-semibold" href="/" data-testid="nav-home">YobaBox</a>
+			</header>
+			<main class="flex-1 p-4 lg:p-6">
+				@RenderBody()
+			</main>
+			<footer class="p-4 text-center text-xs opacity-60" data-testid="footer-version">
+				v@(Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev")
+				· @(Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local")
+			</footer>
+		</div>
+		<div class="drawer-side">
+			<label for="sidebar-toggle" aria-label="close sidebar" class="drawer-overlay"></label>
+			<aside class="bg-base-200 w-64 min-h-full border-r border-base-300">
+				<div class="p-4">
+					<a class="text-xl font-semibold hidden lg:block" href="/" data-testid="nav-home">YobaBox</a>
+				</div>
+				<ul class="menu w-full p-2 gap-1" data-testid="nav-sidebar">
+					<li><a href="/dashboard" data-testid="nav-dashboard">
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" />
+						</svg>
+						Dashboard
+					</a></li>
+					<li><a href="/logs" data-testid="nav-logs">
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16" />
+						</svg>
+						Logs
+					</a></li>
+					<li><a href="/config" data-testid="nav-config">
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+						</svg>
+						Config
+					</a></li>
+					<li><a href="/admin" data-testid="nav-admin">
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+						</svg>
+						Admin
+					</a></li>
+				</ul>
+			</aside>
+		</div>
+	</div>
+	@await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

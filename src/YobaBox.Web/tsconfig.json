@@ -1,0 +1,42 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"lib": ["ES2022", "DOM"],
+
+		"strict": true,
+		"noImplicitAny": true,
+		"strictNullChecks": true,
+		"strictFunctionTypes": true,
+		"strictBindCallApply": true,
+		"strictPropertyInitialization": true,
+		"noImplicitThis": true,
+		"useUnknownInCatchVariables": true,
+		"alwaysStrict": true,
+
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noPropertyAccessFromIndexSignature": true,
+
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"allowSyntheticDefaultImports": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true,
+
+		"declaration": true,
+		"declarationMap": true,
+		"sourceMap": true,
+		"outDir": "dist",
+		"rootDir": "ts"
+	},
+	"include": ["ts/**/*.ts"],
+	"exclude": ["node_modules", "dist"]
+}
