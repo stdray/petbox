@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Pre-commit hook — format verify, build, test.
+# Activate: git config core.hooksPath .githooks
+# Bypass:  git commit --no-verify
+
+set -e
+
+echo "==> dotnet format --verify-no-changes"
+dotnet format YobaBox.slnx --verify-no-changes --no-restore 2>&1
+
+echo "==> dotnet build"
+dotnet build YobaBox.slnx --no-restore 2>&1
+
+echo "==> dotnet test"
+dotnet test YobaBox.slnx --no-build 2>&1
