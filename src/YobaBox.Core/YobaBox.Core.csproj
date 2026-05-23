@@ -5,7 +5,8 @@
 	</PropertyGroup>
 
 	<ItemGroup>
-		<PackageReference Include="linq2db.SQLite.MS" />
+		<PackageReference Include="linq2db" />
+		<PackageReference Include="Microsoft.Data.Sqlite" />
 		<PackageReference Include="FluentMigrator" />
 		<PackageReference Include="FluentMigrator.Runner.SQLite" />
 		<PackageReference Include="Microsoft.Extensions.Options" />
