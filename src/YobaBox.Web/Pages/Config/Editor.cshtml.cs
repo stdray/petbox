@@ -48,13 +48,9 @@ public sealed class EditorModel : PageModel
 
 		if (bindingId is > 0)
 		{
-			await _db.ConfigBindings
-				.Where(b => b.Id == bindingId.Value)
-				.Set(b => b.Path, Path)
-				.Set(b => b.Value, Value)
-				.Set(b => b.Tags, Tags)
-				.Set(b => b.UpdatedAt, DateTime.UtcNow)
-				.UpdateAsync();
+			var binding = _db.ConfigBindings.First(b => b.Id == bindingId.Value);
+			var updated = binding with { Path = Path, Value = Value, Tags = Tags, UpdatedAt = DateTime.UtcNow };
+			await _db.UpdateAsync(updated);
 		}
 		else
 		{
