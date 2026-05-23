@@ -7,6 +7,10 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<PackageReference Include="linq2db" />
 		<PackageReference Include="Microsoft.Data.Sqlite" />
 		<PackageReference Include="FluentMigrator" />
@@ -14,6 +18,10 @@
 		<PackageReference Include="Microsoft.Extensions.Options" />
 		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="LinqToDB.Async" />
 	</ItemGroup>
 
 </Project>
