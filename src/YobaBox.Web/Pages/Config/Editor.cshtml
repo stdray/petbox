@@ -1,0 +1,36 @@
+@page "/config/edit"
+@model YobaBox.Web.Pages.Config.EditorModel
+@{
+	Layout = null;
+}
+
+<tr>
+	<td class="font-mono text-sm">@Model.Binding.Path</td>
+	<td>
+		<input type="text" name="Value" value="@Model.Binding.Value"
+			class="input input-bordered input-sm w-full font-mono"
+			data-testid="config-edit-value" />
+	</td>
+	<td>
+		<input type="text" name="Tags" value="@Model.Binding.Tags"
+			class="input input-bordered input-sm w-full"
+			data-testid="config-edit-tags" />
+	</td>
+	<td class="flex gap-1">
+		<button class="btn btn-xs btn-primary"
+			hx-post="/config/save?id=@Model.Binding.Id"
+			hx-include="closest tr"
+			hx-target="closest tr"
+			hx-swap="outerHTML"
+			data-testid="config-save-btn">
+			Save
+		</button>
+		<button class="btn btn-xs btn-ghost"
+			hx-get="/config/row?id=@Model.Binding.Id"
+			hx-target="closest tr"
+			hx-swap="outerHTML"
+			data-testid="config-cancel-btn">
+			Cancel
+		</button>
+	</td>
+</tr>

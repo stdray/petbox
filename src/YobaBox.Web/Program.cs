@@ -1,6 +1,8 @@
+using YobaBox.Config;
 using YobaBox.Core.Auth;
 using YobaBox.Core.Data;
 using YobaBox.Core.Features;
+using YobaBox.Web;
 
 if (args.Length >= 2 && args[0] == "--hash-password")
 {
@@ -19,11 +21,10 @@ builder.Services.AddScoped(_ => new YobaBoxDb(YobaBoxDb.CreateOptions(connection
 builder.Services.AddSingleton<FeatureFlags>();
 builder.Services.AddRazorPages();
 
-builder
-	.AddConfigModule()
-	.AddLogModule()
-	.AddDataModule()
-	.AddDashboardModule();
+if (new FeatureFlags(builder.Configuration).IsEnabled("Config"))
+{
+	// Phase 1: ConfigApi registered
+}
 
 var app = builder.Build();
 
@@ -51,11 +52,10 @@ app.MapMethods("/version", ["GET", "HEAD"], () => Results.Ok(new
 app.MapAuthEndpoints();
 app.MapRazorPages();
 
-app
-	.UseConfigModule()
-	.UseLogModule()
-	.UseDataModule()
-	.UseDashboardModule();
+if (new FeatureFlags(app.Configuration).IsEnabled("Config"))
+{
+	app.MapConfigEndpoints();
+}
 
 app.Run();
 

@@ -6,6 +6,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\YobaBox.Core\YobaBox.Core.csproj" />
+		<ProjectReference Include="..\YobaBox.Config\YobaBox.Config.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

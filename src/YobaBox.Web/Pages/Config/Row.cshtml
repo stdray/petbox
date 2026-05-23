@@ -1,0 +1,20 @@
+@page "/config/row"
+@model YobaBox.Web.Pages.Config.RowModel
+@{
+	Layout = null;
+}
+
+<tr>
+	<td class="font-mono text-sm">@Model.Binding.Path</td>
+	<td class="font-mono text-sm max-w-xs truncate">@Model.Binding.Value</td>
+	<td class="text-xs opacity-70">@Model.Binding.Tags</td>
+	<td>
+		<button class="btn btn-xs btn-ghost"
+			hx-get="/config/edit?id=@Model.Binding.Id"
+			hx-target="closest tr"
+			hx-swap="outerHTML"
+			data-testid="config-edit-btn">
+			Edit
+		</button>
+	</td>
+</tr>

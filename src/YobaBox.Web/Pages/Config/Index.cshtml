@@ -1,0 +1,41 @@
+@page "/config"
+@model YobaBox.Web.Pages.Config.IndexModel
+@{
+	ViewData["Title"] = "Config";
+}
+
+<div class="flex items-center gap-3 mb-4">
+	<h1 class="text-xl font-semibold" data-testid="config-title">Config Bindings</h1>
+</div>
+
+<div class="overflow-x-auto">
+	<table class="table table-sm" data-testid="config-table">
+		<thead>
+			<tr>
+				<th>Path</th>
+				<th>Value</th>
+				<th>Tags</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			@foreach (var b in Model.Bindings)
+			{
+				<tr>
+					<td class="font-mono text-sm">@b.Path</td>
+					<td class="font-mono text-sm max-w-xs truncate">@b.Value</td>
+					<td class="text-xs opacity-70">@b.Tags</td>
+					<td>
+						<button class="btn btn-xs btn-ghost"
+							hx-get="/config/edit?id=@b.Id"
+							hx-target="closest tr"
+							hx-swap="outerHTML"
+							data-testid="config-edit-btn">
+							Edit
+						</button>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+</div>
