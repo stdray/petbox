@@ -1,0 +1,86 @@
+# .NET
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+[Dd]ebug/
+[Rr]elease/
+*.user
+*.suo
+*.userprefs
+*.pidb
+*.svclog
+*.log
+.vs/
+.vscode/
+*.rsuser
+*.sln.docstates
+*.pdb
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# Test results
+[Tt]est[Rr]esult*/
+coverage/
+*.coverage
+*.coveragexml
+TestResults/
+
+# BenchmarkDotNet artifacts
+BenchmarkDotNet.Artifacts/
+
+# Cake
+tools/
+.cake/
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+!packages/build/
+.nuget/
+
+# Frontend
+node_modules/
+dist/
+.cache/
+
+# Frontend build outputs (bun + tailwind)
+**/wwwroot/js/admin.js
+**/wwwroot/js/admin.js.map
+**/wwwroot/css/app.css
+**/wwwroot/css/app.css.map
+
+# Bun
+bun.lockb.backup
+
+# User secrets
+secrets.json
+appsettings.*.json
+!appsettings.json
+!appsettings.Development.json
+
+# SQLite runtime
+*.db
+*.db-log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Rider / IDEA
+.idea/
+*.iml
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Claude Code (personal)
+.claude/settings.local.json
+
+# Playwright MCP artifacts
+.playwright-mcp/
+tmp/

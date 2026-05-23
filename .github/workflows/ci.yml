@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['deploy']
+  pull_request:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ci-${{ github.ref_name }}-${{ github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Ensure build script is executable
+        run: chmod +x ./build.sh
+
+      - name: Cake CI target (format + test)
+        run: ./build.sh --target=CI
+
+  publish:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    outputs:
+      dockerTag: ${{ steps.publish.outputs.dockerTag }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cake DockerPush (build + smoke + push)
+        id: publish
+        run: |
+          set -euo pipefail
+          chmod +x ./build.sh
+          TAG_FILE="$RUNNER_TEMP/docker-tag.txt"
+          ./build.sh --target=DockerPush \
+            --dockerPush=true \
+            --ghcrRepository=${{ github.repository }} \
+            --dockerTagOutput="$TAG_FILE" \
+            --dockerCacheFrom=type=gha \
+            --dockerCacheTo=type=gha,mode=max
+          echo "dockerTag=$(cat "$TAG_FILE")" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    if: github.event_name == 'push' && github.ref == 'refs/tags/deploy'
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USERNAME }}
+          password: ${{ secrets.DEPLOY_PASSWORD }}
+          script: |
+            set -euo pipefail
+            IMAGE="ghcr.io/${{ github.repository }}:${{ needs.publish.outputs.dockerTag }}"
+            CONTAINER_NAME="yobabox"
+            docker pull "$IMAGE"
+            docker stop "$CONTAINER_NAME" || true
+            docker rm "$CONTAINER_NAME" || true
+            docker run -d \
+              --name "$CONTAINER_NAME" \
+              --restart unless-stopped \
+              -e Admin__Username="$ADMIN_USER" \
+              "$IMAGE"
+            docker system prune -a -f

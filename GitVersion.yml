@@ -1,0 +1,26 @@
+mode: ContinuousDelivery
+next-version: 0.1.0
+tag-prefix: '[vV]?'
+
+branches:
+  main:
+    regex: '^master$|^main$'
+    increment: Patch
+    label: 'ci'
+    is-main-branch: true
+
+  feature:
+    regex: '^features?[/-](?<BranchName>.+)'
+    increment: Inherit
+    label: '{BranchName}'
+
+  release:
+    regex: '^releases?[/-](?<BranchName>.+)'
+    increment: Minor
+    label: rc
+    is-release-branch: true
+
+  hotfix:
+    regex: '^hotfix(es)?[/-](?<BranchName>.+)'
+    increment: Patch
+    label: hotfix
