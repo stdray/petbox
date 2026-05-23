@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authentication;
 using YobaBox.Config;
 using YobaBox.Core.Auth;
 using YobaBox.Core.Data;
@@ -24,6 +25,10 @@ builder.Services.AddScoped(_ => new YobaBoxDb(YobaBoxDb.CreateOptions(connection
 builder.Services.AddScoped(_ => new LogDb(LogDb.CreateOptions(connectionString)));
 builder.Services.AddSingleton<CleFParser>();
 builder.Services.AddSingleton<FeatureFlags>();
+builder.Services.AddAuthentication(ApiKeyAuthenticationHandler.SchemeName)
+	.AddScheme<AuthenticationSchemeOptions, ApiKeyAuthenticationHandler>(
+		ApiKeyAuthenticationHandler.SchemeName, null);
+builder.Services.AddAuthorization();
 builder.Services.AddRazorPages();
 
 if (new FeatureFlags(builder.Configuration).IsEnabled("Config"))
@@ -43,6 +48,8 @@ if (!app.Environment.IsDevelopment())
 
 app.UseStaticFiles();
 app.UseRouting();
+app.UseAuthentication();
+app.UseAuthorization();
 
 app.MapMethods("/health", ["GET", "HEAD"], () => Results.Ok(new { status = "healthy" }))
 	.AllowAnonymous();

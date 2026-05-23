@@ -7,7 +7,7 @@ function formatLocalTime(iso: string): string {
 }
 
 function renderLocalTimes(root: ParentNode): void {
-	for (const el of root.querySelectorAll<HTMLElement>("time[datetime]")) {
+	for (const el of Array.from(root.querySelectorAll<HTMLElement>("time[datetime]"))) {
 		const iso = el.getAttribute("datetime");
 		if (iso) el.textContent = formatLocalTime(iso);
 	}
@@ -42,9 +42,9 @@ document.addEventListener("click", (event) => {
 	event.stopPropagation();
 	event.preventDefault();
 
-	const field = btn.dataset.filterField ?? "";
-	const op = btn.dataset.filterOp ?? "eq";
-	const value = btn.dataset.filterValue ?? "";
+	const field = btn.dataset["filterField"] ?? "";
+	const op = btn.dataset["filterOp"] ?? "eq";
+	const value = btn.dataset["filterValue"] ?? "";
 	if (!field || !value) return;
 
 	const sym = op === "eq" ? "==" : op === "ne" ? "!=" : "==";

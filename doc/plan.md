@@ -151,16 +151,19 @@ Goal: KQL ingestion + query working, Log UI, self-logging `$system`, Remote Auth
 
 ### 2.2 — Log UI
 
-- [ ] `YobaBox.Web/Pages/Logs/Index.cshtml` `[ADAPT yobalog/src/YobaLog.Web/Pages/]` — project+service selector. Table: timestamp, level badge, service, message. htmx poll auto-refresh.
-- [ ] `YobaBox.Web/Pages/Logs/Detail.cshtml` `[ADAPT yobalog detail/expand]` — row expand: full message, properties, exception.
-- [ ] `YobaBox.Web/Pages/Logs/Filters.cshtml` `[ADAPT yobalog filters]` — level, service, text search, date range.
-- [x] `YobaBox.Web/ts/logs.ts` `[PORT yobalog/src/YobaLog.Web/ts/admin.ts log sections]` — Alpine.js: filters, auto-refresh, row expand.
-- [x] `YobaBox.Log.Core/LogModule.cs` `[NEW]` — registers ingestion, KQL API, FeatureFlags.
+- [x] `YobaBox.Web/Pages/Logs/Index.cshtml` `[ADAPT yobalog/src/YobaLog.Web/Pages/]` — KQL textarea + service chips + event table + shape-changing result table. Expandable rows via _EventRow.cshtml, filter chips via data attributes.
+- [x] `YobaBox.Web/Pages/Logs/_EventRow.cshtml` `[ADAPT yobalog detail/expand]` — row expand: full message, properties, exception.
+- [x] `YobaBox.Web/Pages/Logs/_RowsFragment.cshtml` `[NEW]` — htmx fragment: iterates events, renders _EventRow.
+- [x] `YobaBox.Web/ts/logs.ts` `[PORT yobalog/src/YobaLog.Web/ts/admin.ts log sections]` — Alpine.js: local-time rendering, row expand, filter chips.
+- [x] `YobaBox.Log.Core/LogApi.cs` — `MapLogEndpoints` registered in Program.cs when FeatureFlags.Logging enabled.
 
-### 2.3 — Self-logging via `$system` `[NEW]`
+### 2.3 — Auth wiring + Self-logging `$system` `[NEW]`
 
 - [x] `YobaBox.Core/Data/Migrations/M004_SeedSystem.cs` — creates `$system` project + api key for self-logging
-- [x] `YobaBox.Web/Program.cs` — configure Seq.E.Logging → own `/ingest/clef` when LogModule enabled. Fallback: console.
+- [x] `YobaBox.Core/Auth/ApiKeyAuthenticationHandler.cs` — proper ASP.NET Core AuthenticationHandler, validates X-Api-Key against YobaBoxDb.ApiKeys
+- [x] `YobaBox.Web/Program.cs` — registered AddAuthentication(ApiKey) + AddAuthorization, UseAuthentication/UseAuthorization middleware
+- [x] `YobaBox.Core/Auth/AuthApi.cs` — updated to read claims from authenticated user
+- [ ] `YobaBox.Web/Program.cs` — configure Seq.E.Logging → own `/ingest/clef` when LogModule enabled (self-logging runtime wiring)
 - [ ] OTel traces → OTLP endpoint
 
 ### 2.4 — Remote Auth API `[NEW]`
@@ -171,11 +174,12 @@ Goal: KQL ingestion + query working, Log UI, self-logging `$system`, Remote Auth
 
 ### 2.5 — Verify
 
-- [ ] Ingest CLEF → appears in KQL results
-- [ ] KQL: `where Level == "Error" | project Timestamp, Message | take 10` → correct
-- [ ] Log UI: table renders, filters work, row expand
-- [ ] Self-logging: error in ConfigModule → `$system/yobabox-config`
-- [ ] Remote auth: validates against main, caches, 401 on invalid
+- [x] Ingest CLEF → appears in KQL results (18 integration tests in LogPipelineTests)
+- [x] KQL: `where Level >= 3`, `count`, `summarize count() by Level`, `where Message contains` → all pass
+- [x] Log UI: page renders, htmx fragment with KQL, shape-changing KQL → integration tests cover
+- [x] Auth: `/api/auth/validate` returns 200 with valid key, 401 with invalid/missing key → tested
+- [ ] Self-logging: error in own module → `$system/yobabox-web` (Seq.E.Logging wiring not yet done)
+- [ ] Remote auth: run against remote instance → validates, caches, 401 on invalid (needs second instance)
 
 ---
 
