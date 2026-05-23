@@ -206,3 +206,132 @@ Goal: after all feature phases are complete, copy ALL remaining tests from yobac
 2. **Не переписывать с нуля** то, что можно скопировать.
 3. После копирования запустить `dotnet build` и `dotnet test` — фиксить только реальные ошибки, не предугадывать.
 4. Тесты копируются вместе с кодом, а не отдельной фазой.
+
+---
+
+## Phase 4: Dashboard + /admin route fix [NEW]
+
+Goal: fix 404 on /admin, create dashboard page.
+
+### 4.1 — Fix /admin route
+
+- [x] `YobaBox.Web/Pages/Admin/Index.cshtml` — redirect to `/admin/projects`
+- [ ] `YobaBox.Web/Pages/Admin/Index.cshtml.cs` — `[Authorize]` page model
+
+### 4.2 — Dashboard page
+
+- [ ] `YobaBox.Web/Pages/Dashboard/Index.cshtml` — project cards with service list. Initially: `$system` project with services (yobabox-web, etc.). Project name, service key, kind, health status, version.
+- [ ] `YobaBox.Web/Pages/Dashboard/Index.cshtml.cs` — `[Authorize]`, queries Projects + Services from YobaBoxDb
+- [ ] `YobaBox.Web/Pages/Index.cshtml` — redirect to `/dashboard` instead of hub stub
+- [ ] `YobaBox.Web/Pages/Shared/_Layout.cshtml` — fix Dashboard nav link (`/dashboard`)
+
+---
+
+## Phase 5: Port full logs page from yobalog [NEW]
+
+Goal: copy ALL logs UI from yobalog Workspace.cshtml + admin.ts, adapt to yobabox entity model (project/service instead of workspace).
+
+Source: `D:\my\prj\yobalog\src\YobaLog.Web\`
+
+### 5.1 — Event row details + filter chips
+
+- [ ] `EventRowViewModel.cs` `[PORT yobalog]` — IsLive, RenderedMessage (template substitution), LevelBadge, KqlString/KqlDatetime helpers, ToJson(), PropertyForDisplay
+- [ ] `EqNeChipsModel.cs` `[PORT yobalog]` — `record (string Field, string KqlLiteral)`
+- [ ] `Pages/Logs/_EventRow.cshtml` `[ADAPT yobalog/Shared/_EventRow.cshtml]` — full expandable row: Time/Level/Message/Trace columns, hover chips (✓/✗ for Timestamp, Level, TraceId), message template rendering (`<mark class="msg-sub">`), JSON copy button, exception display, details row with all fields
+- [ ] `Pages/Shared/_EqNeChips.cshtml` `[PORT yobalog]` — filter chip partial: ✓ (eq) and ✗ (ne) chips with data-filter-field/op/value attrs
+
+### 5.2 — KQL autocomplete
+
+- [ ] `Pages/Shared/_KqlCompletions.cshtml` `[PORT yobalog]` — htmx fragment: suggestion list with display text + kind, grid layout, data-before/data-after for insertion
+- [ ] Wire `/api/kql/completions` endpoint in LogApi (KqlCompletionService already ported)
+- [ ] `Logs/Index.cshtml` — add htmx attributes to KQL textarea: `hx-get="/api/kql/completions"`, `hx-trigger="keyup changed delay:250ms"`, `hx-target="#kql-completions"`
+
+### 5.3 — Live tail (SSE)
+
+- [ ] `Logs/Index.cshtml` — live tail toggle checkbox, liveTail hidden form field
+- [ ] `ts/logs.ts` — SSE reconnect logic, live-tail banner staging (accumulate events when scrolled away, click-to-flush), `event-live-flash` animation class
+- [ ] `LogApi.cs` — SSE endpoint for live tail (or defer if SSE infrastructure too complex)
+- [ ] `ts/app.css` — `.event-live` animation keyframe, `.msg-sub` style
+
+### 5.4 — TypeScript: admin.ts [PORT yobalog]
+
+- [ ] `ts/logs.ts` `[ADAPT yobalog/ts/admin.ts]` — sections to port:
+  - Local-time rendering (`.local-time` → `YYYY-MM-DD HH:mm:ss.SSS` in local TZ)
+  - Button press flash animation (`.btn-flash`)
+  - Hotkey toast system (bottom-right notifications)
+  - Global `/` focus shortcut → `#kql-textarea`
+  - KQL completion (click insert, keyboard navigation, dot re-trigger)
+  - Hover filter chips (✓/✗ → inject `where field ==/!= value`)
+  - Pin search panel (sticky on scroll, localStorage)
+  - Copy-to-clipboard (`data-copy` attribute)
+  - Expandable event row (click to toggle `.event-details`)
+  - Live-tail banner staging + flush
+
+### 5.5 — Cursor-based infinite scroll
+
+- [ ] `Pages/Logs/_RowsFragment.cshtml` `[ADAPT yobalog/Shared/_RowsFragment.cshtml]` — htmx `intersect once` trigger, sentinel row with loading spinner
+- [ ] `Pages/Logs/Index.cshtml.cs` — add cursor property, encode/decode cursor in OnGetAsync, pass NextCursor to fragment view
+
+### 5.6 — Admin layout + nav
+
+- [ ] `Pages/Shared/_Layout.cshtml` — update sidebar nav to match logs dashboard structure, add user/sign-out section
+- [ ] Add profile/sign-out link in top nav
+
+---
+
+## Phase 6: Port full bindings page from yobaconf [NEW]
+
+Goal: copy ALL config/bindings UI from yobaconf Bindings pages, adapt to yobabox ConfigBinding model.
+
+Source: `D:\my\prj\yobaconf\src\YobaConf.Web\Pages\Bindings\`
+
+### 6.1 — Bindings list page
+
+- [ ] `Pages/Config/Index.cshtml` `[ADAPT yobaconf/Bindings/Index.cshtml]` — full rewrite:
+  - Filter form: key path text input (glob `*` support), tag key facet dropdowns (populated from all bindings)
+  - Table: TagSet badges, Key path, Value (masked), Updated timestamp, Edit/Delete actions
+  - Delete via POST form with confirmation dialog, preserves filter state
+  - "New binding" link → `/Config/Editor`
+  - All `data-testid` attributes
+- [ ] `Pages/Config/Index.cshtml.cs` `[ADAPT yobaconf/Bindings/Index.cshtml.cs]` — OnGet with tag facet filtering + key query, OnPostDelete, OnPostReveal (AJAX secret reveal)
+
+### 6.2 — Create/edit binding page
+
+- [ ] `Pages/Config/Editor.cshtml` `[ADAPT yobaconf/Bindings/Edit.cshtml]` — full rewrite:
+  - Tags textarea (`key=value` per line)
+  - Key path input
+  - Kind radio (Plain/Secret)
+  - Value textarea with JSON validation hint
+  - Error/conflict/unknown-tag warnings
+  - Save/Cancel buttons
+- [ ] `Pages/Config/Editor.cshtml.cs` `[ADAPT yobaconf/Bindings/Edit.cshtml.cs]` — OnGet, OnPost: tag parsing, key path validation, conflict detection
+
+### 6.3 — TypeScript for bindings
+
+- [ ] `ts/config.ts` `[ADAPT yobaconf/ts/bindings-reveal.ts]` — secret reveal via AJAX POST, show for 10s then re-mask, antiforgery token handling
+- [ ] `ts/config.ts` `[ADAPT yobaconf/ts/copy-token.ts]` — clipboard copy utility (`data-copy` attribute)
+- [ ] `ts/admin.ts` → `ts/site.ts` — entry point importing config + logs modules
+
+### 6.4 — Row partial (in-tree editor)
+
+- [ ] `Pages/Config/Row.cshtml` `[ADAPT yobaconf]` — single binding row fragment for htmx inline editing
+
+---
+
+## Phase 7: Remaining UI + polish [NEW]
+
+### 7.1 — Layout fixes
+
+- [ ] `Pages/Shared/_Layout.cshtml` — sidebar links: Dashboard, Logs, Config, Admin → all working
+- [ ] Footer: version + shortSha from env vars
+
+### 7.2 — Auth polish
+
+- [ ] Show logged-in user in nav (from cookie claim)
+- [ ] Sign-out button in nav
+
+### 7.3 — E2E test expansion
+
+- [ ] `tests/YobaBox.E2ETests/DashboardTests.cs` — dashboard renders `$system` project + services
+- [ ] `tests/YobaBox.E2ETests/LogsPageTests.cs` — KQL input, autocomplete, event rows, filter chips
+- [ ] `tests/YobaBox.E2ETests/ConfigPageTests.cs` — binding list, create/edit, secret reveal
