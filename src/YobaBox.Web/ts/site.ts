@@ -1,6 +1,8 @@
 import "htmx.org";
 import Alpine from "alpinejs";
 
+import "./logs";
+
 Alpine.start();
 
 document.addEventListener("alpine:init", () => {

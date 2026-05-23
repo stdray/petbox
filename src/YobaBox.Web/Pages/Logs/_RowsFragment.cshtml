@@ -1,0 +1,6 @@
+@using YobaBox.Web.Pages.Logs
+@model YobaBox.Web.Pages.Logs.IndexModel
+@foreach (var e in Model.Events)
+{
+	<partial name="_EventRow" model="e" />
+}

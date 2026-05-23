@@ -8,7 +8,7 @@ using ParamExpr = System.Linq.Expressions.ParameterExpression;
 
 namespace YobaBox.Log.Core.Query;
 
-static class KqlTransformer
+public static class KqlTransformer
 {
 	public const string EventsTable = "events";
 

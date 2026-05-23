@@ -1,0 +1,102 @@
+@page "/logs"
+@model YobaBox.Web.Pages.Logs.IndexModel
+@{
+	ViewData["Title"] = "Logs";
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold">Logs</h1>
+</div>
+
+@if (Model.KqlError is not null)
+{
+	<div class="alert alert-error mb-4">
+		<pre class="whitespace-pre-wrap text-xs">@Model.KqlError</pre>
+	</div>
+}
+
+@if (Model.SchemaMissing)
+{
+	<div class="alert">No log entries yet. Ingest some events first.</div>
+}
+else if (!Model.IsShapeChanged)
+{
+	<form method="get" class="mb-4 bg-base-200 border border-base-300 rounded-box p-4 flex flex-col gap-3">
+		<div>
+			<textarea name="kql" rows="4"
+				data-testid="kql-input"
+				placeholder="events | where Level >= 3 | take 100"
+				class="textarea textarea-sm textarea-bordered w-full font-mono text-xs">@Model.UserKql</textarea>
+		</div>
+		<p class="text-xs opacity-60 -mt-2">Use KQL: <code>events | where Level &gt;= 3 | where Message contains 'error' | take 50</code></p>
+		<div class="flex gap-2 flex-wrap items-center">
+			<button type="submit" data-testid="kql-apply" class="btn btn-sm btn-primary">Apply</button>
+			<a asp-page="/Logs/Index" class="btn btn-sm btn-ghost">Reset</a>
+			@if (Model.Services.Count > 0)
+			{
+				<span class="text-xs opacity-60 ml-auto">Services:</span>
+				@foreach (var svc in Model.Services.Take(8))
+				{
+					<a asp-page="/Logs/Index" asp-route-kql="@($"events | where ServiceKey == '{svc}' | take 100")"
+						class="badge badge-sm badge-ghost font-mono">@svc</a>
+				}
+			}
+		</div>
+	</form>
+
+	@if (Model.Events.Count == 0)
+	{
+		<div data-testid="events-empty" class="alert">No events match the query.</div>
+	}
+	else
+	{
+		<div class="overflow-x-auto rounded-box border border-base-300 bg-base-200">
+			<table class="table table-sm">
+				<thead>
+					<tr>
+						<th class="w-44">Time</th>
+						<th class="w-24">Level</th>
+						<th class="w-32">Service</th>
+						<th>Message</th>
+					</tr>
+				</thead>
+				<tbody id="events-body" data-testid="events-body">
+					<partial name="_RowsFragment" model="Model" />
+				</tbody>
+			</table>
+		</div>
+	}
+}
+else
+{
+	@if (Model.KqlRows.Count == 0)
+	{
+		<div class="alert">Query returned no rows.</div>
+	}
+	else
+	{
+		<div class="overflow-x-auto rounded-box border border-base-300 bg-base-200">
+			<table class="table table-sm">
+				<thead>
+					<tr>
+						@foreach (var col in Model.KqlResult!.Columns)
+						{
+							<th class="font-mono text-xs">@col.Name</th>
+						}
+					</tr>
+				</thead>
+				<tbody>
+					@foreach (var row in Model.KqlRows)
+					{
+						<tr class="align-top">
+							@foreach (var cell in row)
+							{
+								<td class="font-mono text-xs">@(cell?.ToString() ?? "")</td>
+							}
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+}

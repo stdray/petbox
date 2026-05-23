@@ -154,20 +154,20 @@ Goal: KQL ingestion + query working, Log UI, self-logging `$system`, Remote Auth
 - [ ] `YobaBox.Web/Pages/Logs/Index.cshtml` `[ADAPT yobalog/src/YobaLog.Web/Pages/]` — project+service selector. Table: timestamp, level badge, service, message. htmx poll auto-refresh.
 - [ ] `YobaBox.Web/Pages/Logs/Detail.cshtml` `[ADAPT yobalog detail/expand]` — row expand: full message, properties, exception.
 - [ ] `YobaBox.Web/Pages/Logs/Filters.cshtml` `[ADAPT yobalog filters]` — level, service, text search, date range.
-- [ ] `YobaBox.Web/ts/logs.ts` `[PORT yobalog/src/YobaLog.Web/ts/admin.ts log sections]` — Alpine.js: filters, auto-refresh, row expand.
-- [ ] `YobaBox.Log.Core/LogModule.cs` `[NEW]` — registers ingestion, KQL API, FeatureFlags.
+- [x] `YobaBox.Web/ts/logs.ts` `[PORT yobalog/src/YobaLog.Web/ts/admin.ts log sections]` — Alpine.js: filters, auto-refresh, row expand.
+- [x] `YobaBox.Log.Core/LogModule.cs` `[NEW]` — registers ingestion, KQL API, FeatureFlags.
 
 ### 2.3 — Self-logging via `$system` `[NEW]`
 
-- [ ] `YobaBox.Core/Data/Migrations/M002_SeedSystem.cs` — creates `$system` project + services: yobabox-web, yobabox-config, yobabox-log, yobabox-dashboard
-- [ ] `YobaBox.Web/Program.cs` — configure Seq.E.Logging → own `/ingest/clef` when LogModule enabled. Fallback: console.
+- [x] `YobaBox.Core/Data/Migrations/M004_SeedSystem.cs` — creates `$system` project + api key for self-logging
+- [x] `YobaBox.Web/Program.cs` — configure Seq.E.Logging → own `/ingest/clef` when LogModule enabled. Fallback: console.
 - [ ] OTel traces → OTLP endpoint
 
 ### 2.4 — Remote Auth API `[NEW]`
 
-- [ ] `YobaBox.Core/Auth/RemoteAuthHandler.cs` — validates via HTTP to `RemoteUrl/api/auth/validate`. Caches.
-- [ ] `YobaBox.Core/Auth/AuthConfiguration.cs` — binds `Auth` config section
-- [ ] Log-only instance config sample
+- [x] `YobaBox.Core/Auth/RemoteAuthHandler.cs` — validates via HTTP to `RemoteUrl/api/auth/validate`. Caches.
+- [x] `YobaBox.Core/Auth/AuthConfiguration.cs` — binds `Auth` config section
+- [x] Log-only instance config sample
 
 ### 2.5 — Verify
 

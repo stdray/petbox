@@ -1,0 +1,40 @@
+@using YobaBox.Web.Pages.Logs
+@model LogEntryViewModel
+@{
+	var levelInt = Model.Level.ToString(System.Globalization.CultureInfo.InvariantCulture);
+}
+<tr class="align-top hover cursor-pointer" data-testid="events-row" data-event-id="@Model.Id">
+	<td class="font-mono text-xs opacity-70 whitespace-nowrap">
+		<time datetime="@Model.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")">@Model.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff")</time>
+	</td>
+	<td>
+		<span class="badge badge-sm @LogEntryViewModel.LevelBadge(Model.Level)">@Model.LevelName</span>
+	</td>
+	<td class="font-mono text-xs opacity-70">@Model.ServiceKey</td>
+	<td class="break-words">
+		<span data-testid="event-message">@Model.Message</span>
+		@if (!string.IsNullOrEmpty(Model.Exception))
+		{
+			<pre class="mt-1 text-xs text-error whitespace-pre-wrap">@Model.Exception</pre>
+		}
+	</td>
+</tr>
+<tr class="event-details hidden bg-base-300/50">
+	<td colspan="4" class="text-xs">
+		<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-mono">
+			<dt class="opacity-60">Id</dt>
+			<dd>@Model.Id</dd>
+			<dt class="opacity-60">Timestamp</dt>
+			<dd>@Model.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff")</dd>
+			<dt class="opacity-60">Level</dt>
+			<dd>@Model.LevelName (@Model.Level)</dd>
+			<dt class="opacity-60">Service</dt>
+			<dd>@Model.ServiceKey</dd>
+			@if (!string.IsNullOrEmpty(Model.MessageTemplate) && Model.MessageTemplate != Model.Message)
+			{
+				<dt class="opacity-60">Template</dt>
+				<dd class="break-all">@Model.MessageTemplate</dd>
+			}
+		</dl>
+	</td>
+</tr>
