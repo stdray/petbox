@@ -1,7 +1,11 @@
+using LinqToDB.Mapping;
+
 namespace YobaBox.Core.Models;
 
+[Table("Services")]
 public sealed record Service
 {
+	[PrimaryKey]
 	public string Key { get; init; } = string.Empty;
 	public string ProjectKey { get; init; } = string.Empty;
 	public ServiceKind Kind { get; init; }
