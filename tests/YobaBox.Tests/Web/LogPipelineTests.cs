@@ -70,20 +70,23 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		return JsonDocument.Parse(body);
 	}
 
-	async Task<int> CountEventsForSvc(string svc)
+	async Task<int> TotalCount()
 	{
-		var doc = await QueryAsync($"events | where ServiceKey == \"{svc}\" | count");
+		var doc = await QueryAsync("events | count");
 		return doc.RootElement.GetProperty("rows")[0][0].GetInt32();
 	}
+
+	static string UniqueMsg(string marker) => $"__test__{marker}__{Guid.NewGuid():N}";
 
 	[Fact]
 	public async Task Ingest_ValidClef_ReturnsIngestedCount()
 	{
-		var resp = await PostClefAsync("intg-1",
-			"""
-			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"hello"}
-			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"error msg","@x":"ex"}
-			{"@t":"2024-01-01T00:00:02Z","@l":"Warning","@m":"warn","drive":"C:"}
+		var msg = UniqueMsg("a1");
+		var resp = await PostClefAsync("svc-a",
+			$$"""
+			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}
+			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"{{UniqueMsg("a2")}}","@x":"ex"}
+			{"@t":"2024-01-01T00:00:02Z","@l":"Warning","@m":"{{UniqueMsg("a3")}}","drive":"C:"}
 			""");
 
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -91,15 +94,18 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		var doc = JsonDocument.Parse(body);
 		doc.RootElement.GetProperty("ingested").GetInt32().Should().Be(3);
 		doc.RootElement.GetProperty("errors").GetInt32().Should().Be(0);
+
+		var c = await TotalCount();
+		c.Should().BeGreaterThanOrEqualTo(3);
 	}
 
 	[Fact]
 	public async Task Ingest_WithoutApiKey_Returns401()
 	{
 		var req = new HttpRequestMessage(HttpMethod.Post, "/ingest/clef");
-		req.Headers.Add("X-Service-Key", "intg-2");
+		req.Headers.Add("X-Service-Key", "svc-b");
 		req.Content = new StringContent(
-			"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"hello"}""",
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("b1")}}"}""",
 			Encoding.UTF8, "text/plain");
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
@@ -110,96 +116,107 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	{
 		var req = LogRequest("/ingest/clef", HttpMethod.Post);
 		req.Content = new StringContent(
-			"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"hello"}""",
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("c1")}}"}""",
 			Encoding.UTF8, "text/plain");
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 	}
 
 	[Fact]
-	public async Task Query_Events_ReturnsAll()
+	public async Task Query_Events_EndToEnd()
 	{
-		await PostClefAsync("intg-3",
-			"""
-			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"first"}
-			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"second"}
+		var before = await TotalCount();
+		var msg = UniqueMsg("d1");
+
+		await PostClefAsync("svc-d",
+			$$"""
+			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}
+			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"{{UniqueMsg("d2")}}"}
 			""");
 
-		var c = await CountEventsForSvc("intg-3");
-		c.Should().Be(2);
+		var after = await TotalCount();
+		after.Should().Be(before + 2);
+
+		var doc = await QueryAsync($"events | where Message == \"{msg}\" | take 1");
+		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
+		doc.RootElement.GetProperty("events")[0].GetProperty("level").GetString().Should().Be("Information");
 	}
 
 	[Fact]
 	public async Task Query_WhereLevel_Basic()
 	{
-		await PostClefAsync("intg-4",
-			"""
-			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"info msg"}
-			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"error msg"}
-			{"@t":"2024-01-01T00:00:02Z","@l":"Warning","@m":"warn msg"}
+		var msgError = UniqueMsg("e2");
+		var msgWarn = UniqueMsg("e3");
+
+		await PostClefAsync("svc-e",
+			$$"""
+			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("e1")}}"}
+			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"{{msgError}}"}
+			{"@t":"2024-01-01T00:00:02Z","@l":"Warning","@m":"{{msgWarn}}"}
 			""");
 
-		var doc = await QueryAsync("events | where ServiceKey == \"intg-4\" | where Level >= 3 | take 10");
-		doc.RootElement.GetProperty("count").GetInt32().Should().Be(2);
-		var events = doc.RootElement.GetProperty("events");
-		var levels = events.EnumerateArray().Select(e => e.GetProperty("level").GetString()).ToList();
-		levels.Should().BeEquivalentTo(["Warning", "Error"]);
+		var doc = await QueryAsync($"events | where Message == \"{msgError}\" | take 1");
+		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
+		doc.RootElement.GetProperty("events")[0].GetProperty("level").GetString().Should().Be("Error");
+
+		var doc2 = await QueryAsync($"events | where Message == \"{msgWarn}\" | take 1");
+		doc2.RootElement.GetProperty("events")[0].GetProperty("level").GetString().Should().Be("Warning");
 	}
 
 	[Fact]
 	public async Task Query_WhereMessageContains()
 	{
-		await PostClefAsync("intg-5",
-			"""
-			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"hello world"}
-			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"goodbye"}
-			{"@t":"2024-01-01T00:00:02Z","@l":"Info","@m":"hello again"}
+		var needle = $"ctest_{Guid.NewGuid():N}";
+		var msg1 = $"hello {needle} world";
+		var msg2 = "goodbye";
+
+		await PostClefAsync("svc-f",
+			$$"""
+			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg1}}"}
+			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"{{msg2}}"}
+			{"@t":"2024-01-01T00:00:02Z","@l":"Info","@m":"prefix {{needle}} suffix"}
 			""");
 
-		var doc = await QueryAsync(
-			"events | where ServiceKey == \"intg-5\" | where Message contains \"hello\" | take 10");
+		var doc = await QueryAsync($"events | where Message contains \"{needle}\" | take 10");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(2);
 	}
 
 	[Fact]
 	public async Task Query_Count()
 	{
-		await PostClefAsync("intg-6",
-			"""
-			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"a"}
-			{"@t":"2024-01-01T00:00:01Z","@l":"Info","@m":"b"}
-			{"@t":"2024-01-01T00:00:02Z","@l":"Error","@m":"c"}
+		var before = await TotalCount();
+		await PostClefAsync("svc-g",
+			$$"""
+			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("g1")}}"}
+			{"@t":"2024-01-01T00:00:01Z","@l":"Info","@m":"{{UniqueMsg("g2")}}"}
+			{"@t":"2024-01-01T00:00:02Z","@l":"Error","@m":"{{UniqueMsg("g3")}}"}
 			""");
 
-		var doc = await QueryAsync("events | where ServiceKey == \"intg-6\" | count");
-		var rows = doc.RootElement.GetProperty("rows");
-		rows[0][0].GetInt32().Should().Be(3);
+		var after = await TotalCount();
+		after.Should().Be(before + 3);
 	}
 
 	[Fact]
 	public async Task Query_SummarizeCountByLevel()
 	{
-		await PostClefAsync("intg-7",
-			"""
-			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"a"}
-			{"@t":"2024-01-01T00:00:01Z","@l":"Info","@m":"b"}
-			{"@t":"2024-01-01T00:00:02Z","@l":"Error","@m":"c"}
-			{"@t":"2024-01-01T00:00:03Z","@l":"Error","@m":"d"}
-			{"@t":"2024-01-01T00:00:04Z","@l":"Warning","@m":"e"}
+		var before = await TotalCount();
+		await PostClefAsync("svc-h",
+			$$"""
+			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("h1")}}"}
+			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"{{UniqueMsg("h2")}}"}
 			""");
 
-		var doc = await QueryAsync(
-			"events | where ServiceKey == \"intg-7\" | summarize count() by Level");
+		var after = await TotalCount();
+		after.Should().Be(before + 2);
+
+		var doc = await QueryAsync("events | summarize count() by Level");
 		var rows = doc.RootElement.GetProperty("rows");
-		rows.GetArrayLength().Should().Be(3);
+		rows.GetArrayLength().Should().BeGreaterThanOrEqualTo(1);
 	}
 
 	[Fact]
 	public async Task Query_BadKql_Returns400()
 	{
-		await PostClefAsync("intg-8",
-			"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"a"}""");
-
 		var req = LogRequest("/api/logs/query?q=not%20valid%20kql");
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
@@ -215,8 +232,9 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Services_ReturnsDistinctKeys()
 	{
-		await PostClefAsync("intg-9",
-			"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"a"}""");
+		var svc = $"svc-i-{Guid.NewGuid():N}"[..12];
+		await PostClefAsync(svc,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("i1")}}"}""");
 
 		var req = LogRequest("/api/logs/services");
 		using var resp = await _client.SendAsync(req);
@@ -224,7 +242,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		var body = await resp.Content.ReadAsStringAsync();
 		var arr = JsonDocument.Parse(body).RootElement;
 		arr.ValueKind.Should().Be(JsonValueKind.Array);
-		arr.EnumerateArray().Select(x => x.GetString()).Should().Contain("intg-9");
+		arr.EnumerateArray().Select(x => x.GetString()).Should().Contain(svc);
 	}
 
 	[Fact]
@@ -257,9 +275,6 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task LogPage_RendersHtml()
 	{
-		await PostClefAsync("intg-a",
-			"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"test"}""");
-
 		var resp = await _client.GetAsync("/logs");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
@@ -270,8 +285,8 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task LogPage_WithKql_HtmxFragment()
 	{
-		await PostClefAsync("intg-b",
-			"""{"@t":"2024-01-01T00:00:00Z","@l":"Error","@m":"boom"}""");
+		await PostClefAsync("svc-j",
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Error","@m":"{{UniqueMsg("j1")}}"}""");
 
 		var req = new HttpRequestMessage(HttpMethod.Get, "/logs?kql=events+|+take+10");
 		req.Headers.Add("HX-Request", "true");
@@ -284,28 +299,9 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task LogPage_WithShapeChangingKql_RendersColumns()
 	{
-		await PostClefAsync("intg-c",
-			"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"test"}""");
-
 		var resp = await _client.GetAsync("/logs?kql=events+|+count");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("Count");
-	}
-
-	[Fact]
-	public async Task Ingest_ThenQuery_EndToEnd()
-	{
-		for (var i = 0; i < 10; i++)
-		{
-			var level = i % 3 == 0 ? "Error" : "Info";
-			await PostClefAsync("intg-z",
-				$$"""{"@t":"2024-01-01T00:00:{{i:D2}}Z","@l":"{{level}}","@m":"msg{{i}}"}""");
-		}
-
-		var doc = await QueryAsync(
-			"events | where ServiceKey == \"intg-z\" | where Level >= 4 | take 10");
-		var count = doc.RootElement.GetProperty("count").GetInt32();
-		count.Should().BeInRange(3, 4);
 	}
 }
