@@ -16,6 +16,7 @@ public sealed class YobaBoxDb : DataConnection
 	public ITable<Project> Projects => this.GetTable<Project>();
 	public ITable<Service> Services => this.GetTable<Service>();
 	public ITable<ApiKey> ApiKeys => this.GetTable<ApiKey>();
+	public ITable<ConfigBinding> ConfigBindings => this.GetTable<ConfigBinding>();
 
 	public static DataOptions<YobaBoxDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString));
@@ -49,6 +50,15 @@ public sealed class YobaBoxDb : DataConnection
 			.Property(a => a.ProjectKey).HasLength(100).IsNullable(false)
 			.Property(a => a.Scopes).HasDataType(DataType.Text).IsNullable(false)
 			.Property(a => a.CreatedAt).IsNullable(false);
+
+		builder.Entity<ConfigBinding>()
+			.HasTableName("ConfigBindings")
+			.HasIdentity(c => c.Id)
+			.Property(c => c.Path).HasLength(500).IsNullable(false)
+			.Property(c => c.Value).HasDataType(DataType.Text).IsNullable(false)
+			.Property(c => c.Tags).HasLength(1000).IsNullable(false)
+			.Property(c => c.CreatedAt).IsNullable(false)
+			.Property(c => c.UpdatedAt).IsNullable(false);
 
 		builder.Build();
 	}
