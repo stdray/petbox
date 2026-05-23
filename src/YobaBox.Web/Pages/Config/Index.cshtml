@@ -6,13 +6,9 @@
 
 <div class="flex items-center gap-3 mb-4">
 	<h1 class="text-xl font-semibold" data-testid="config-title">Bindings (@Model.Rows.Count)</h1>
-	<button class="btn btn-sm btn-primary ml-auto"
-		hx-get="/config/edit"
-		hx-target="#config-new-row"
-		hx-swap="outerHTML"
-		data-testid="config-new">
+	<a asp-page="/Config/Editor" class="btn btn-sm btn-primary ml-auto" data-testid="config-new">
 		+ New binding
-	</button>
+	</a>
 </div>
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
@@ -69,7 +65,6 @@
 			</tr>
 		</thead>
 		<tbody>
-			<tr id="config-new-row"></tr>
 			@foreach (var b in Model.Rows)
 			{
 				<partial name="_Row" model="b" />

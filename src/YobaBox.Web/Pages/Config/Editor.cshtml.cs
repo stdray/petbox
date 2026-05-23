@@ -19,12 +19,12 @@ public sealed class EditorModel : PageModel
 	public string Tags { get; private set; } = string.Empty;
 	public bool IsNew { get; private set; }
 
-	public void OnGet(long? id)
+	public void OnGet(long? bindingId)
 	{
-		Id = id;
-		if (id is { } bindingId)
+		Id = bindingId;
+		if (bindingId is { } bid)
 		{
-			var binding = _db.ConfigBindings.First(b => b.Id == bindingId);
+			var binding = _db.ConfigBindings.First(b => b.Id == bid);
 			Path = binding.Path;
 			Value = binding.Value;
 			Tags = binding.Tags;
@@ -36,33 +36,38 @@ public sealed class EditorModel : PageModel
 		}
 	}
 
-	public async Task<IActionResult> OnPostSaveAsync(long? id, string Path, string Value, string Tags)
+	public async Task<IActionResult> OnPostSaveAsync(long? bindingId, string Path, string Value, string Tags)
 	{
 		if (string.IsNullOrWhiteSpace(Path))
-			return BadRequest("Path is required.");
-
-		if (id is > 0)
 		{
-			var binding = _db.ConfigBindings.First(b => b.Id == id.Value);
-			var updated = binding with { Path = Path, Value = Value, Tags = Tags, UpdatedAt = DateTime.UtcNow };
-			await _db.UpdateAsync(updated);
+			ModelState.AddModelError("Path", "Path is required.");
+			Id = bindingId;
+			IsNew = bindingId is null or <= 0;
+			return Page();
+		}
 
-			var saved = _db.ConfigBindings.First(b => b.Id == id.Value);
-			return Partial("_Row", saved);
+		if (bindingId is > 0)
+		{
+			await _db.ConfigBindings
+				.Where(b => b.Id == bindingId.Value)
+				.Set(b => b.Path, Path)
+				.Set(b => b.Value, Value)
+				.Set(b => b.Tags, Tags)
+				.Set(b => b.UpdatedAt, DateTime.UtcNow)
+				.UpdateAsync();
 		}
 		else
 		{
-			var created = new Core.Models.ConfigBinding
+			await _db.InsertWithIdentityAsync(new Core.Models.ConfigBinding
 			{
 				Path = Path,
 				Value = Value,
 				Tags = Tags,
 				CreatedAt = DateTime.UtcNow,
 				UpdatedAt = DateTime.UtcNow,
-			};
-			await _db.InsertWithIdentityAsync(created);
-
-			return Partial("_Row", created);
+			});
 		}
+
+		return RedirectToPage("/Config/Index");
 	}
 }

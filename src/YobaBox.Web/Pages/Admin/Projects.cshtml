@@ -6,15 +6,13 @@
 
 <div class="flex items-center gap-3 mb-4">
 	<h1 class="text-xl font-semibold" data-testid="admin-projects-title">Projects</h1>
-	<button class="btn btn-sm btn-primary ml-auto"
-		hx-get="/admin/projects?handler=Create"
-		hx-target="#project-form"
-		data-testid="admin-project-new">
-		+ New Project
-	</button>
+	<span class="text-sm opacity-60">@Model.Projects.Count total</span>
 </div>
 
-<div id="project-form"></div>
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3">@Model.ErrorMessage</div>
+}
 
 <div class="overflow-x-auto">
 	<table class="table table-sm" data-testid="admin-projects-table">
@@ -36,14 +34,11 @@
 					<td>
 						@if (p.Key != "$system")
 						{
-							<button class="btn btn-xs btn-ghost text-error"
-								hx-delete="/admin/projects?handler=Delete&key=@p.Key"
-								hx-target="closest tr"
-								hx-swap="outerHTML"
-								hx-confirm="Delete project @p.Key?"
-								data-testid="admin-project-delete">
-								Delete
-							</button>
+							<form method="post" asp-page-handler="Delete" asp-route-key="@p.Key"
+								onsubmit="return confirm('Delete project @p.Key?')" style="display:inline">
+								@Html.AntiForgeryToken()
+								<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="admin-project-delete">Delete</button>
+							</form>
 						}
 					</td>
 				</tr>
@@ -51,3 +46,37 @@
 		</tbody>
 	</table>
 </div>
+
+<div class="divider"></div>
+
+<form method="post" asp-page-handler="Create" class="card bg-base-200 mb-4" data-testid="admin-project-create-form">
+	@Html.AntiForgeryToken()
+	<div class="card-body p-4">
+		<h3 class="card-title text-sm">New Project</h3>
+		<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+			<label class="form-control">
+				<span class="label-text">Key</span>
+				<input type="text" name="Key" required
+					class="input input-bordered input-sm font-mono"
+					placeholder="my-project"
+					data-testid="admin-project-create-key" />
+			</label>
+			<label class="form-control">
+				<span class="label-text">Name</span>
+				<input type="text" name="Name" required
+					class="input input-bordered input-sm"
+					placeholder="My Project"
+					data-testid="admin-project-create-name" />
+			</label>
+			<label class="form-control">
+				<span class="label-text">Description</span>
+				<input type="text" name="Description"
+					class="input input-bordered input-sm"
+					data-testid="admin-project-create-desc" />
+			</label>
+		</div>
+		<div class="card-actions mt-3">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="admin-project-create-submit">Create</button>
+		</div>
+	</div>
+</form>

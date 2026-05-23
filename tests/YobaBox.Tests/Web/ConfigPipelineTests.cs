@@ -309,8 +309,8 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 		loginResp.StatusCode.Should().Be(HttpStatusCode.Redirect);
 		var authCookie = string.Join("; ", loginResp.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0]));
 
-		// GET create form
-		var formReq = new HttpRequestMessage(HttpMethod.Get, "/admin/projects?handler=Create");
+		// GET create form (now embedded in the main projects page)
+		var formReq = new HttpRequestMessage(HttpMethod.Get, "/admin/projects");
 		formReq.Headers.Add("Cookie", authCookie);
 		var formResp = await _client.SendAsync(formReq);
 		formResp.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -332,8 +332,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 		createReq.Headers.Add("Cookie", authCookie);
 
 		var createResp = await _client.SendAsync(createReq);
-		createResp.StatusCode.Should().Be(HttpStatusCode.OK);
-		createResp.Headers.Should().Contain(h => h.Key == "HX-Redirect");
+		createResp.StatusCode.Should().Be(HttpStatusCode.Redirect);
 
 		// Verify project detail page renders
 		var detailReq = new HttpRequestMessage(HttpMethod.Get, "/admin/projects/" + projectKey);

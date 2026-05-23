@@ -18,15 +18,19 @@
 
 <div class="flex items-center gap-3 mb-4">
 	<h2 class="text-lg font-semibold">Services</h2>
-	<button class="btn btn-sm btn-primary ml-auto"
-		hx-get="/admin/projects/@Model.Key?handler=CreateService"
-		hx-target="#service-form"
-		data-testid="project-service-new">
-		+ New Service
-	</button>
+	<span class="text-sm opacity-60">@Model.Services.Count</span>
 </div>
 
-<div id="service-form"></div>
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3">@Model.ErrorMessage</div>
+}
+@if (Model.NewKey is not null)
+{
+	<div class="alert alert-success mb-3" data-testid="project-key-created">
+		New key: <code class="font-mono text-sm">@Model.NewKey</code>
+	</div>
+}
 
 <div class="overflow-x-auto">
 	<table class="table table-sm" data-testid="project-services-table">
@@ -48,14 +52,11 @@
 					<td class="text-sm max-w-xs truncate">@s.Url</td>
 					<td><span class="badge badge-sm">@s.Health</span></td>
 					<td>
-						<button class="btn btn-xs btn-ghost text-error"
-							hx-delete="/admin/projects/@Model.Key?handler=Service&serviceKey=@s.Key"
-							hx-target="closest tr"
-							hx-swap="outerHTML"
-							hx-confirm="Delete service @s.Key?"
-							data-testid="project-service-delete">
-							Delete
-						</button>
+						<form method="post" asp-page-handler="DeleteService" asp-route-serviceKey="@s.Key"
+							onsubmit="return confirm('Delete service @s.Key?')" style="display:inline">
+							@Html.AntiForgeryToken()
+							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="project-service-delete">Delete</button>
+						</form>
 					</td>
 				</tr>
 			}
@@ -63,19 +64,47 @@
 	</table>
 </div>
 
+<form method="post" asp-page-handler="CreateService" class="card bg-base-200 mb-4 mt-4" data-testid="project-service-create-form">
+	@Html.AntiForgeryToken()
+	<div class="card-body p-4">
+		<h3 class="card-title text-sm">New Service</h3>
+		<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+			<label class="form-control">
+				<span class="label-text">Key</span>
+				<input type="text" name="serviceKey" required
+					class="input input-bordered input-sm font-mono"
+					placeholder="my-service"
+					data-testid="project-service-create-key" />
+			</label>
+			<label class="form-control">
+				<span class="label-text">Kind</span>
+				<select name="Kind" class="select select-bordered select-sm" data-testid="project-service-create-kind">
+					<option value="Web">Web</option>
+					<option value="Bot">Bot</option>
+					<option value="Cron">Cron</option>
+					<option value="PoC">PoC</option>
+				</select>
+			</label>
+			<label class="form-control">
+				<span class="label-text">URL</span>
+				<input type="text" name="Url"
+					class="input input-bordered input-sm font-mono"
+					placeholder="https://..."
+					data-testid="project-service-create-url" />
+			</label>
+		</div>
+		<div class="card-actions mt-3">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="project-service-create-submit">Create</button>
+		</div>
+	</div>
+</form>
+
 <div class="divider"></div>
 
 <div class="flex items-center gap-3 mb-4">
 	<h2 class="text-lg font-semibold">API Keys</h2>
-	<button class="btn btn-sm btn-primary ml-auto"
-		hx-get="/admin/projects/@Model.Key?handler=CreateKey"
-		hx-target="#key-form"
-		data-testid="project-key-new">
-		+ New Key
-	</button>
+	<span class="text-sm opacity-60">@Model.Keys.Count</span>
 </div>
-
-<div id="key-form"></div>
 
 <div class="overflow-x-auto">
 	<table class="table table-sm" data-testid="project-keys-table">
@@ -95,17 +124,33 @@
 					<td class="text-sm">@k.Scopes</td>
 					<td class="text-xs opacity-70">@k.CreatedAt.ToString("yyyy-MM-dd")</td>
 					<td>
-						<button class="btn btn-xs btn-ghost text-error"
-							hx-delete="/admin/projects/@Model.Key?handler=RevokeKey&keyValue=@k.Key"
-							hx-target="closest tr"
-							hx-swap="outerHTML"
-							hx-confirm="Revoke key @(k.Key[..Math.Min(12, k.Key.Length)])...?"
-							data-testid="project-key-revoke">
-							Revoke
-						</button>
+						<form method="post" asp-page-handler="RevokeKey" asp-route-keyValue="@k.Key"
+							onsubmit="return confirm('Revoke key @(k.Key[..Math.Min(12, k.Key.Length)])...?')" style="display:inline">
+							@Html.AntiForgeryToken()
+							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="project-key-revoke">Revoke</button>
+						</form>
 					</td>
 				</tr>
 			}
 		</tbody>
 	</table>
 </div>
+
+<form method="post" asp-page-handler="CreateKey" class="card bg-base-200 mb-4 mt-4" data-testid="project-key-create-form">
+	@Html.AntiForgeryToken()
+	<div class="card-body p-4">
+		<h3 class="card-title text-sm">New API Key</h3>
+		<div class="flex flex-col gap-3">
+			<label class="form-control">
+				<span class="label-text">Scopes</span>
+				<input type="text" name="Scopes" required
+					class="input input-bordered input-sm font-mono"
+					placeholder="logs:ingest,config:read"
+					data-testid="project-key-create-scopes" />
+			</label>
+		</div>
+		<div class="card-actions mt-3">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="project-key-create-submit">Create</button>
+		</div>
+	</div>
+</form>

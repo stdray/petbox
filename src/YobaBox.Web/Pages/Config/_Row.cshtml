@@ -21,12 +21,13 @@
 	<td class="font-mono text-xs max-w-xs truncate" data-testid="config-value">@Model.Value</td>
 	<td class="text-xs opacity-60" data-testid="config-updated">@Model.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</td>
 	<td class="text-right">
-		<button class="btn btn-xs btn-ghost"
-			hx-get="/config/edit?id=@Model.Id"
-			hx-target="closest tr"
-			hx-swap="outerHTML"
-			data-testid="config-edit-btn">
-			Edit
-		</button>
+		<div class="flex gap-1 justify-end">
+			<a asp-page="/Config/Editor" asp-route-bindingId="@Model.Id" class="btn btn-xs btn-ghost" data-testid="config-edit-btn">Edit</a>
+			<form method="post" asp-page="/Config/Index" asp-page-handler="Delete" asp-route-id="@Model.Id"
+				onsubmit="return confirm('Delete binding @Model.Path?')" style="display:inline">
+				@Html.AntiForgeryToken()
+				<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="config-delete">Del</button>
+			</form>
+		</div>
 	</td>
 </tr>

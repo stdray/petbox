@@ -19,6 +19,8 @@ public sealed class ProjectDetailModel : PageModel
 	public Project? Project { get; private set; }
 	public IReadOnlyList<Service> Services { get; private set; } = [];
 	public IReadOnlyList<ApiKey> Keys { get; private set; } = [];
+	public string? ErrorMessage { get; set; }
+	public string? NewKey { get; set; }
 
 	public void OnGet()
 	{
@@ -29,47 +31,41 @@ public sealed class ProjectDetailModel : PageModel
 		Keys = _db.ApiKeys.Where(k => k.ProjectKey == Key).OrderByDescending(k => k.CreatedAt).ToList();
 	}
 
-	public IActionResult OnGetCreateService()
+	public async Task<IActionResult> OnPostCreateServiceAsync(string serviceKey, ServiceKind Kind, string? Url)
 	{
-		ViewData["ProjectKey"] = Key;
-		return Partial("_CreateService", new Service());
-	}
-
-	public IActionResult OnGetCreateServiceCancel() => new EmptyResult();
-
-	public async Task<IActionResult> OnPostCreateServiceAsync(string Key, ServiceKind Kind, string? Url)
-	{
-		if (string.IsNullOrWhiteSpace(Key))
-			return BadRequest("Service key is required.");
+		if (string.IsNullOrWhiteSpace(serviceKey))
+		{
+			ErrorMessage = "Service key is required.";
+			OnGet();
+			return Page();
+		}
 
 		await _db.InsertAsync(new Service
 		{
-			Key = Key,
-			ProjectKey = this.Key,
+			Key = serviceKey,
+			ProjectKey = Key,
 			Kind = Kind,
 			Url = Url,
 			Health = ServiceHealth.Unknown,
 		});
-		Response.Headers["HX-Redirect"] = this.Url.Page("/Admin/ProjectDetail", new { key = this.Key });
-		return new EmptyResult();
+		return RedirectToPage(new { key = Key });
 	}
 
-	public async Task<IActionResult> OnDeleteServiceAsync(string serviceKey)
+	public async Task<IActionResult> OnPostDeleteServiceAsync(string serviceKey)
 	{
 		await _db.Services.Where(s => s.Key == serviceKey && s.ProjectKey == Key).DeleteAsync();
-		return new EmptyResult();
+		return RedirectToPage(new { key = Key });
 	}
-
-	public IActionResult OnGetCreateKey()
-	{
-		ViewData["ProjectKey"] = Key;
-		return Partial("_CreateKey");
-	}
-
-	public IActionResult OnGetCreateKeyCancel() => new EmptyResult();
 
 	public async Task<IActionResult> OnPostCreateKeyAsync(string Scopes)
 	{
+		if (string.IsNullOrWhiteSpace(Scopes))
+		{
+			ErrorMessage = "Scopes are required.";
+			OnGet();
+			return Page();
+		}
+
 		var keyValue = $"yb_key_{Guid.NewGuid():N}";
 		await _db.InsertAsync(new ApiKey
 		{
@@ -79,14 +75,14 @@ public sealed class ProjectDetailModel : PageModel
 			CreatedAt = DateTime.UtcNow,
 		});
 
-		TempData["NewKey"] = keyValue;
-		Response.Headers["HX-Redirect"] = this.Url.Page("/Admin/ProjectDetail", new { key = Key });
-		return new EmptyResult();
+		NewKey = keyValue;
+		OnGet();
+		return Page();
 	}
 
-	public async Task<IActionResult> OnDeleteRevokeKeyAsync(string keyValue)
+	public async Task<IActionResult> OnPostRevokeKeyAsync(string keyValue)
 	{
 		await _db.ApiKeys.Where(k => k.Key == keyValue && k.ProjectKey == Key).DeleteAsync();
-		return new EmptyResult();
+		return RedirectToPage(new { key = Key });
 	}
 }
