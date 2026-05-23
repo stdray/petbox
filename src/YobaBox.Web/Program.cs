@@ -2,6 +2,9 @@ using YobaBox.Config;
 using YobaBox.Core.Auth;
 using YobaBox.Core.Data;
 using YobaBox.Core.Features;
+using YobaBox.Log.Core;
+using YobaBox.Log.Core.Data;
+using YobaBox.Log.Core.Ingestion;
 using YobaBox.Web;
 
 if (args.Length >= 2 && args[0] == "--hash-password")
@@ -18,6 +21,8 @@ Directory.CreateDirectory(Path.GetDirectoryName(
 	new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!);
 
 builder.Services.AddScoped(_ => new YobaBoxDb(YobaBoxDb.CreateOptions(connectionString)));
+builder.Services.AddScoped(_ => new LogDb(LogDb.CreateOptions(connectionString)));
+builder.Services.AddSingleton<CleFParser>();
 builder.Services.AddSingleton<FeatureFlags>();
 builder.Services.AddRazorPages();
 
@@ -55,6 +60,11 @@ app.MapRazorPages();
 if (new FeatureFlags(app.Configuration).IsEnabled("Config"))
 {
 	app.MapConfigEndpoints();
+}
+
+if (new FeatureFlags(app.Configuration).IsEnabled("Logging"))
+{
+	app.MapLogEndpoints();
 }
 
 app.Run();

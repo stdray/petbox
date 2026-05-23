@@ -2,7 +2,12 @@
 
 	<PropertyGroup>
 		<IsPackable>false</IsPackable>
+		<NoWarn>$(NoWarn);CA1859</NoWarn>
 	</PropertyGroup>
+
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
 
 	<ItemGroup>
 		<ProjectReference Include="..\YobaBox.Core\YobaBox.Core.csproj" />
@@ -13,6 +18,10 @@
 		<PackageReference Include="Microsoft.Data.Sqlite" />
 		<PackageReference Include="Microsoft.Azure.Kusto.Language" />
 		<PackageReference Include="KustoLoco.Core" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="LinqToDB.Async" />
 	</ItemGroup>
 
 </Project>
