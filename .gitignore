@@ -46,10 +46,10 @@ dist/
 .cache/
 
 # Frontend build outputs (bun + tailwind)
-**/wwwroot/js/admin.js
-**/wwwroot/js/admin.js.map
-**/wwwroot/css/app.css
-**/wwwroot/css/app.css.map
+**/wwwroot/js/**
+**/wwwroot/css/**
+!**/wwwroot/js/.gitkeep
+!**/wwwroot/css/.gitkeep
 
 # Bun
 bun.lockb.backup
