@@ -22,6 +22,7 @@ public static class KqlTransformer
 		new("Message", typeof(string)),
 		new("MessageTemplate", typeof(string)),
 		new("Exception", typeof(string)),
+		new("PropertiesJson", typeof(string)),
 	];
 
 	public static KqlResult Execute(IQueryable<LogEntryRecord> source, KustoCode code)
@@ -182,7 +183,8 @@ public static class KqlTransformer
 							if (propIdx < 0)
 								throw new UnsupportedKqlException("summarize by Properties.<key>: input has no PropertiesJson column");
 							outputColumns.Add(new KqlColumn("Properties." + propKey, typeof(string)));
-							extractors.Add(row => KqlSqlExpressions.JsonExtractScalar(row[propIdx] as string, "$." + propKey));
+							var key = propKey;
+							extractors.Add(row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, "$." + key));
 							break;
 						}
 					default:
@@ -314,6 +316,7 @@ public static class KqlTransformer
 				r.Message,
 				r.MessageTemplate,
 				r.Exception,
+				r.PropertiesJson,
 			];
 		}
 	}

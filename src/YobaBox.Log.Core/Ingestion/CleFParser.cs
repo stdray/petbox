@@ -54,6 +54,9 @@ public sealed class CleFParser
 		if (root.TryGetProperty("@mt", out var mtProp) && mtProp.ValueKind == JsonValueKind.String)
 			messageTemplate = mtProp.GetString()!;
 
+		if (string.IsNullOrEmpty(message))
+			message = messageTemplate;
+
 		string? exception = null;
 		if (root.TryGetProperty("@x", out var xProp) && xProp.ValueKind == JsonValueKind.String)
 			exception = xProp.GetString();
