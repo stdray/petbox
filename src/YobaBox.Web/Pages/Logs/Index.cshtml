@@ -10,28 +10,39 @@
 
 @if (Model.KqlError is not null)
 {
-	<div class="alert alert-error mb-4">
+	<div class="alert alert-error mb-4" data-testid="kql-error">
 		<pre class="whitespace-pre-wrap text-xs">@Model.KqlError</pre>
 	</div>
 }
 
 @if (Model.SchemaMissing)
 {
-	<div class="alert">No log entries yet. Ingest some events first.</div>
+	<div class="alert" data-testid="events-empty">No log entries yet. Ingest some events first.</div>
 }
 else if (!Model.IsShapeChanged)
 {
-	<form method="get" class="mb-4 bg-base-200 border border-base-300 rounded-box p-4 flex flex-col gap-3">
-		<div>
-			<textarea name="kql" rows="4"
+	<form method="get" id="kql-search-form" class="mb-4 bg-base-200 border border-base-300 rounded-box p-4 flex flex-col gap-3">
+		<div class="relative" id="kql-editor">
+			<textarea name="kql" rows="6" id="kql-textarea"
 				data-testid="kql-input"
-				placeholder="events | where Level >= 3 | take 100"
+				placeholder="events | where Level >= 3 | where Message contains 'error'"
+				hx-get="/logs?handler=KqlCompletions"
+				hx-trigger="keyup changed delay:250ms, click"
+				hx-target="#kql-completions"
+				hx-swap="innerHTML"
+				hx-vals='js:{ q: document.getElementById("kql-textarea").value, pos: document.getElementById("kql-textarea").selectionStart }'
 				class="textarea textarea-sm textarea-bordered w-full font-mono text-xs">@Model.UserKql</textarea>
+			<div id="kql-completions" class="absolute left-0 right-0 top-full z-10"></div>
 		</div>
-		<p class="text-xs opacity-60 -mt-2">Use KQL: <code>events | where Level &gt;= 3 | where Message contains 'error' | take 50</code></p>
+		<p class="text-xs opacity-60 -mt-2">Paging (<code>order by</code>, <code>take</code>, cursor) appended automatically.</p>
+
 		<div class="flex gap-2 flex-wrap items-center">
 			<button type="submit" data-testid="kql-apply" class="btn btn-sm btn-primary">Apply</button>
 			<a asp-page="/Logs/Index" class="btn btn-sm btn-ghost">Reset</a>
+			<button type="button" id="kql-pin-toggle" data-testid="kql-pin-toggle"
+				class="btn btn-ghost btn-sm"
+				aria-pressed="false"
+				title="Keep search panel visible when scrolling">Pin</button>
 			@if (Model.Services.Count > 0)
 			{
 				<span class="text-xs opacity-60 ml-auto">Services:</span>

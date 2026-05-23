@@ -1,0 +1,31 @@
+@{
+	Layout = null;
+	var projectKey = ViewData["ProjectKey"] as string ?? "";
+}
+
+<form class="card bg-base-200 mb-4" data-testid="project-key-create-form"
+	hx-post="/admin/projects/@projectKey?handler=CreateKey"
+	hx-target="#key-form"
+	hx-swap="outerHTML">
+	@Html.AntiForgeryToken()
+	<div class="card-body p-4">
+		<h3 class="card-title text-sm">New API Key</h3>
+		<div class="flex flex-col gap-3">
+			<label class="form-control">
+				<span class="label-text">Scopes</span>
+				<input type="text" name="Scopes" required
+					class="input input-bordered input-sm font-mono"
+					placeholder="logs:ingest,config:read"
+					data-testid="project-key-create-scopes" />
+			</label>
+		</div>
+		<div class="card-actions mt-3">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="project-key-create-submit">Create</button>
+			<button type="button" class="btn btn-sm btn-ghost"
+				hx-get="/admin/projects/@projectKey?handler=CreateKeyCancel"
+				hx-target="#key-form"
+				hx-swap="innerHTML"
+				data-testid="project-key-create-cancel">Cancel</button>
+		</div>
+	</div>
+</form>

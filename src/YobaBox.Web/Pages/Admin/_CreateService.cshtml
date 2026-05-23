@@ -1,0 +1,49 @@
+@model YobaBox.Core.Models.Service
+@{
+	Layout = null;
+	var projectKey = ViewData["ProjectKey"] as string ?? "";
+}
+
+<form class="card bg-base-200 mb-4" data-testid="project-service-create-form"
+	hx-post="/admin/projects/@projectKey?handler=CreateService"
+	hx-target="#service-form"
+	hx-swap="outerHTML">
+	@Html.AntiForgeryToken()
+	<div class="card-body p-4">
+		<h3 class="card-title text-sm">New Service</h3>
+		<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+			<label class="form-control">
+				<span class="label-text">Key</span>
+				<input type="text" name="Key" required
+					class="input input-bordered input-sm font-mono"
+					placeholder="my-service"
+					data-testid="project-service-create-key" />
+			</label>
+			<label class="form-control">
+				<span class="label-text">Kind</span>
+				<select name="Kind" class="select select-bordered select-sm"
+					data-testid="project-service-create-kind">
+					<option value="Web">Web</option>
+					<option value="Bot">Bot</option>
+					<option value="Cron">Cron</option>
+					<option value="PoC">PoC</option>
+				</select>
+			</label>
+			<label class="form-control">
+				<span class="label-text">URL</span>
+				<input type="text" name="Url"
+					class="input input-bordered input-sm font-mono"
+					placeholder="https://..."
+					data-testid="project-service-create-url" />
+			</label>
+		</div>
+		<div class="card-actions mt-3">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="project-service-create-submit">Create</button>
+			<button type="button" class="btn btn-sm btn-ghost"
+				hx-get="/admin/projects/@projectKey?handler=CreateServiceCancel"
+				hx-target="#service-form"
+				hx-swap="innerHTML"
+				data-testid="project-service-create-cancel">Cancel</button>
+		</div>
+	</div>
+</form>

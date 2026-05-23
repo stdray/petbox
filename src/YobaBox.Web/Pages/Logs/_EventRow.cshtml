@@ -1,40 +1,148 @@
 @using YobaBox.Web.Pages.Logs
 @model LogEntryViewModel
 @{
+	var rowClasses = "align-top hover cursor-pointer" + (Model.IsLive ? " event-live" : "");
+	var showChips = !Model.IsLive;
+	var tsKql = LogEntryViewModel.KqlDatetime(Model.Timestamp);
 	var levelInt = Model.Level.ToString(System.Globalization.CultureInfo.InvariantCulture);
+	var traceKql = LogEntryViewModel.KqlString(Model.TraceId);
 }
-<tr class="align-top hover cursor-pointer" data-testid="events-row" data-event-id="@Model.Id">
-	<td class="font-mono text-xs opacity-70 whitespace-nowrap">
-		<time datetime="@Model.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ")">@Model.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff")</time>
+<tr class="@rowClasses" data-testid="events-row"@(Model.IsLive ? "" : $" data-event-id=\"{Model.Id}\"")>
+	<td class="font-mono text-xs opacity-70 whitespace-nowrap relative group">
+		<time class="local-time" datetime="@LogEntryViewModel.IsoUtc(Model.Timestamp)" title="UTC: @LogEntryViewModel.IsoUtc(Model.Timestamp)">@LogEntryViewModel.IsoUtc(Model.Timestamp)</time>
+		@if (showChips)
+		{
+			<span class="absolute inset-y-0 right-1 hidden group-hover:inline-flex items-center gap-1 bg-base-300 rounded px-1 shadow">
+				<button type="button" class="filter-chip text-success text-xs font-semibold leading-none px-1"
+					data-filter-field="Timestamp" data-filter-op="ge" data-filter-value="@tsKql"
+					title="search from this moment (inclusive)">from</button>
+				<button type="button" class="filter-chip text-error text-xs font-semibold leading-none px-1"
+					data-filter-field="Timestamp" data-filter-op="le" data-filter-value="@tsKql"
+					title="search up to this moment (inclusive)">to</button>
+			</span>
+		}
 	</td>
-	<td>
+	<td class="relative group">
 		<span class="badge badge-sm @LogEntryViewModel.LevelBadge(Model.Level)">@Model.LevelName</span>
+		@if (showChips)
+		{
+			<span class="absolute inset-y-0 right-0 hidden group-hover:inline-flex items-center gap-1 bg-base-300 rounded px-1 shadow">
+				<button type="button" class="filter-chip text-success text-sm leading-none"
+					data-filter-field="Level" data-filter-op="eq" data-filter-value="@levelInt"
+					title="only this level">✓</button>
+				<button type="button" class="filter-chip text-error text-sm leading-none"
+					data-filter-field="Level" data-filter-op="ne" data-filter-value="@levelInt"
+					title="exclude this level">✗</button>
+			</span>
+		}
 	</td>
 	<td class="font-mono text-xs opacity-70">@Model.ServiceKey</td>
 	<td class="break-words">
-		<span data-testid="event-message">@Model.Message</span>
+		<div class="flex items-start gap-2">
+			<span class="flex-1" data-testid="event-message">@Html.Raw(Model.RenderedMessage)</span>
+			<button type="button" class="btn btn-ghost btn-xs opacity-40 hover:opacity-100"
+				data-copy="@Model.ToJson()"
+				data-testid="event-copy-json"
+				title="Copy event as JSON">⧉</button>
+		</div>
 		@if (!string.IsNullOrEmpty(Model.Exception))
 		{
 			<pre class="mt-1 text-xs text-error whitespace-pre-wrap">@Model.Exception</pre>
 		}
 	</td>
 </tr>
-<tr class="event-details hidden bg-base-300/50">
-	<td colspan="4" class="text-xs">
-		<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-mono">
-			<dt class="opacity-60">Id</dt>
-			<dd>@Model.Id</dd>
-			<dt class="opacity-60">Timestamp</dt>
-			<dd>@Model.Timestamp.ToString("yyyy-MM-dd HH:mm:ss.fff")</dd>
-			<dt class="opacity-60">Level</dt>
-			<dd>@Model.LevelName (@Model.Level)</dd>
-			<dt class="opacity-60">Service</dt>
-			<dd>@Model.ServiceKey</dd>
-			@if (!string.IsNullOrEmpty(Model.MessageTemplate) && Model.MessageTemplate != Model.Message)
-			{
-				<dt class="opacity-60">Template</dt>
-				<dd class="break-all">@Model.MessageTemplate</dd>
-			}
-		</dl>
-	</td>
-</tr>
+@if (!Model.IsLive)
+{
+	<tr class="event-details hidden bg-base-300/50">
+		<td colspan="4" class="text-xs">
+			<dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 font-mono">
+				<dt class="opacity-60">Id</dt>
+				<dd class="flex items-center gap-2 group/field">
+					<span>@Model.Id</span>
+					@await Html.PartialAsync("_EqNeChips", new EqNeChipsModel("Id", Model.Id.ToString(System.Globalization.CultureInfo.InvariantCulture)))
+				</dd>
+
+				<dt class="opacity-60">Timestamp</dt>
+				<dd class="flex items-center gap-2 group/field">
+					<time class="local-time" datetime="@LogEntryViewModel.IsoUtc(Model.Timestamp)" title="UTC: @LogEntryViewModel.IsoUtc(Model.Timestamp)">@LogEntryViewModel.IsoUtc(Model.Timestamp)</time>
+					<span class="hidden group-hover/field:inline-flex items-center gap-1">
+						<button type="button" class="filter-chip text-success text-xs font-semibold leading-none px-1"
+							data-filter-field="Timestamp" data-filter-op="ge" data-filter-value="@LogEntryViewModel.KqlDatetime(Model.Timestamp)"
+							title="search from this moment (inclusive)">from</button>
+						<button type="button" class="filter-chip text-error text-xs font-semibold leading-none px-1"
+							data-filter-field="Timestamp" data-filter-op="le" data-filter-value="@LogEntryViewModel.KqlDatetime(Model.Timestamp)"
+							title="search up to this moment (inclusive)">to</button>
+					</span>
+				</dd>
+
+				<dt class="opacity-60">Level</dt>
+				<dd class="flex items-center gap-2 group/field">
+					<span>@Model.LevelName (@((int)Model.Level))</span>
+					@await Html.PartialAsync("_EqNeChips", new EqNeChipsModel("Level", levelInt))
+				</dd>
+
+				<dt class="opacity-60">Service</dt>
+				<dd class="flex items-center gap-2 group/field">
+					<span>@Model.ServiceKey</span>
+					@await Html.PartialAsync("_EqNeChips", new EqNeChipsModel("ServiceKey", LogEntryViewModel.KqlString(Model.ServiceKey)))
+				</dd>
+
+				@if (!string.IsNullOrEmpty(Model.MessageTemplate) && Model.MessageTemplate != Model.Message)
+				{
+					<dt class="opacity-60">Template</dt>
+					<dd class="flex items-center gap-2 break-all group/field">
+						<span>@Model.MessageTemplate</span>
+						@await Html.PartialAsync("_EqNeChips", new EqNeChipsModel("MessageTemplate", LogEntryViewModel.KqlString(Model.MessageTemplate)))
+					</dd>
+				}
+
+				@if (!string.IsNullOrEmpty(Model.TraceId))
+				{
+					<dt class="opacity-60">TraceId</dt>
+					<dd class="flex items-center gap-2 group/field">
+						<span>@Model.TraceId</span>
+						@await Html.PartialAsync("_EqNeChips", new EqNeChipsModel("TraceId", LogEntryViewModel.KqlString(Model.TraceId)))
+						<button type="button" class="btn btn-ghost btn-xs opacity-40 hover:opacity-100"
+							data-copy="@Model.TraceId" title="Copy trace id">⧉</button>
+					</dd>
+				}
+
+				@if (!string.IsNullOrEmpty(Model.SpanId))
+				{
+					<dt class="opacity-60">SpanId</dt>
+					<dd class="flex items-center gap-2 group/field">
+						<span>@Model.SpanId</span>
+						@await Html.PartialAsync("_EqNeChips", new EqNeChipsModel("SpanId", LogEntryViewModel.KqlString(Model.SpanId)))
+					</dd>
+				}
+
+				@if (Model.EventId is { } eid)
+				{
+					var eventIdLit = eid.ToString(System.Globalization.CultureInfo.InvariantCulture);
+					<dt class="opacity-60">EventId</dt>
+					<dd class="flex items-center gap-2 group/field">
+						<span>@eid</span>
+						@await Html.PartialAsync("_EqNeChips", new EqNeChipsModel("EventId", eventIdLit))
+					</dd>
+				}
+
+				@foreach (var (key, value) in Model.Properties)
+				{
+					@if (key is "TraceId" or "SpanId" or "EventId") { continue; }
+					var (display, kqlLit) = LogEntryViewModel.PropertyForDisplay(value);
+					var field = "Properties." + key;
+					<dt class="opacity-60">@key</dt>
+					<dd class="flex items-center gap-2 break-all group/field">
+						<span>@display</span>
+						@if (kqlLit is not null)
+						{
+							@await Html.PartialAsync("_EqNeChips", new EqNeChipsModel(field, kqlLit))
+						}
+						<button type="button" class="btn btn-ghost btn-xs opacity-40 hover:opacity-100"
+							data-copy="@display" title="Copy value">⧉</button>
+					</dd>
+				}
+			</dl>
+		</td>
+	</tr>
+}

@@ -45,7 +45,7 @@ public sealed class WebAppFixture : IAsyncLifetime
 		await seedPage.GetByTestId("login-username").FillAsync(AdminUsername);
 		await seedPage.GetByTestId("login-password").FillAsync(AdminPassword);
 		await seedPage.GetByTestId("login-submit").ClickAsync();
-		await Expect(seedPage.GetByTestId("index-home")).ToBeVisibleAsync();
+		await Expect(seedPage.GetByTestId("dashboard-title")).ToBeVisibleAsync();
 		await seedCtx.StorageStateAsync(new BrowserContextStorageStateOptions { Path = _storageStatePath });
 	}
 

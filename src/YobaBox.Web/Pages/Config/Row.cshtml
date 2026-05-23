@@ -3,12 +3,27 @@
 @{
 	Layout = null;
 }
-
-<tr>
-	<td class="font-mono text-sm">@Model.Binding.Path</td>
-	<td class="font-mono text-sm max-w-xs truncate">@Model.Binding.Value</td>
-	<td class="text-xs opacity-70">@Model.Binding.Tags</td>
-	<td>
+@{
+	var parsedTags = YobaBox.Web.Pages.Config.IndexModel.ParseTagsDisplay(Model.Binding.Tags);
+}
+<tr data-testid="config-row">
+	<td class="text-xs" data-testid="config-tags">
+		@if (parsedTags.Count == 0)
+		{
+			<span class="opacity-50">(root)</span>
+		}
+		else
+		{
+			@foreach (var (k, v) in parsedTags)
+			{
+				<span class="badge badge-sm mr-1">@k=@v</span>
+			}
+		}
+	</td>
+	<td class="font-mono text-xs text-primary" data-testid="config-path">@Model.Binding.Path</td>
+	<td class="font-mono text-xs max-w-xs truncate" data-testid="config-value">@Model.Binding.Value</td>
+	<td class="text-xs opacity-60" data-testid="config-updated">@Model.Binding.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</td>
+	<td class="text-right">
 		<button class="btn btn-xs btn-ghost"
 			hx-get="/config/edit?id=@Model.Binding.Id"
 			hx-target="closest tr"

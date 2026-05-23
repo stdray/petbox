@@ -29,8 +29,19 @@ public sealed class ProjectDetailModel : PageModel
 		Keys = _db.ApiKeys.Where(k => k.ProjectKey == Key).OrderByDescending(k => k.CreatedAt).ToList();
 	}
 
+	public IActionResult OnGetCreateService()
+	{
+		ViewData["ProjectKey"] = Key;
+		return Partial("_CreateService", new Service());
+	}
+
+	public IActionResult OnGetCreateServiceCancel() => new EmptyResult();
+
 	public async Task<IActionResult> OnPostCreateServiceAsync(string Key, ServiceKind Kind, string? Url)
 	{
+		if (string.IsNullOrWhiteSpace(Key))
+			return BadRequest("Service key is required.");
+
 		await _db.InsertAsync(new Service
 		{
 			Key = Key,
@@ -39,7 +50,8 @@ public sealed class ProjectDetailModel : PageModel
 			Url = Url,
 			Health = ServiceHealth.Unknown,
 		});
-		return RedirectToPage(new { key = this.Key });
+		Response.Headers["HX-Redirect"] = this.Url.Page("/Admin/ProjectDetail", new { key = this.Key });
+		return new EmptyResult();
 	}
 
 	public async Task<IActionResult> OnDeleteServiceAsync(string serviceKey)
@@ -47,6 +59,14 @@ public sealed class ProjectDetailModel : PageModel
 		await _db.Services.Where(s => s.Key == serviceKey && s.ProjectKey == Key).DeleteAsync();
 		return new EmptyResult();
 	}
+
+	public IActionResult OnGetCreateKey()
+	{
+		ViewData["ProjectKey"] = Key;
+		return Partial("_CreateKey");
+	}
+
+	public IActionResult OnGetCreateKeyCancel() => new EmptyResult();
 
 	public async Task<IActionResult> OnPostCreateKeyAsync(string Scopes)
 	{
@@ -60,7 +80,8 @@ public sealed class ProjectDetailModel : PageModel
 		});
 
 		TempData["NewKey"] = keyValue;
-		return RedirectToPage(new { key = Key });
+		Response.Headers["HX-Redirect"] = this.Url.Page("/Admin/ProjectDetail", new { key = Key });
+		return new EmptyResult();
 	}
 
 	public async Task<IActionResult> OnDeleteRevokeKeyAsync(string keyValue)

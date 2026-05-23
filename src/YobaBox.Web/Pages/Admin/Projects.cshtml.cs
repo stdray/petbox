@@ -17,13 +17,22 @@ public sealed class ProjectsModel : PageModel
 
 	public void OnGet() => Projects = _db.Projects.OrderBy(p => p.Key).ToList();
 
+	public IActionResult OnGetCreate() => Partial("_CreateProject", new Project());
+
+	public IActionResult OnGetCreateCancel() => new EmptyResult();
+
 	public async Task<IActionResult> OnPostCreateAsync(string Key, string Name, string Description)
 	{
 		if (string.IsNullOrWhiteSpace(Key) || string.IsNullOrWhiteSpace(Name))
 			return BadRequest("Key and Name are required.");
 
+		var exists = _db.Projects.Any(p => p.Key == Key);
+		if (exists)
+			return BadRequest($"Project '{Key}' already exists.");
+
 		await _db.InsertAsync(new Project { Key = Key, Name = Name, Description = Description ?? string.Empty });
-		return RedirectToPage();
+		Response.Headers["HX-Redirect"] = Url.Page("/Admin/Projects");
+		return new EmptyResult();
 	}
 
 	public async Task<IActionResult> OnDeleteAsync(string key)

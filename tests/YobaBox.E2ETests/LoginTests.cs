@@ -35,13 +35,13 @@ public sealed class LoginTests(WebAppFixture app, ITestOutputHelper output) : IA
 	}
 
 	[Fact]
-	public async Task Admin_Login_Redirects_To_Index()
+	public async Task Admin_Login_Redirects_To_Dashboard()
 	{
 		var login = new LoginPage(_page!);
 		await login.GotoAsync();
 		await login.SubmitAsync(WebAppFixture.AdminUsername, WebAppFixture.AdminPassword);
 
-		await Expect(_page!.GetByTestId("index-home")).ToBeVisibleAsync();
+		await Expect(_page!.GetByTestId("dashboard-title")).ToBeVisibleAsync();
 	}
 
 	[Fact]

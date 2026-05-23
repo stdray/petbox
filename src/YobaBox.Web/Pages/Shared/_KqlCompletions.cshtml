@@ -1,0 +1,20 @@
+@model YobaBox.Log.Core.Query.KqlCompletionsResponse
+@{
+	Layout = null;
+}
+@if (Model.Items.Count == 0)
+{
+	<div class="hidden" data-kql-completions data-edit-start="0" data-edit-length="0"></div>
+}
+else
+{
+	<ul data-kql-completions
+		data-edit-start="@Model.EditStart"
+		data-edit-length="@Model.EditLength"
+		class="absolute bg-base-300 border border-primary/40 gap-0.5 grid grid-cols-1 list-none max-h-72 mt-1 overflow-y-auto p-1 rounded-box shadow-2xl sm:grid-cols-2 w-full z-30">
+		@foreach (var item in Model.Items)
+		{
+			<li><button type="button" class="flex font-mono gap-2 hover:bg-base-100 items-center justify-between kql-suggestion px-2 py-1 rounded text-left text-xs w-full" data-before="@item.BeforeText" data-after="@item.AfterText">@item.DisplayText<span class="opacity-50">@item.Kind</span></button></li>
+		}
+	</ul>
+}

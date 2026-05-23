@@ -7,7 +7,7 @@
 <div class="flex items-center gap-3 mb-4">
 	<h1 class="text-xl font-semibold" data-testid="admin-projects-title">Projects</h1>
 	<button class="btn btn-sm btn-primary ml-auto"
-		hx-get="/admin/projects/create"
+		hx-get="/admin/projects?handler=Create"
 		hx-target="#project-form"
 		data-testid="admin-project-new">
 		+ New Project
@@ -37,7 +37,7 @@
 						@if (p.Key != "$system")
 						{
 							<button class="btn btn-xs btn-ghost text-error"
-								hx-delete="/admin/projects/delete?key=@p.Key"
+								hx-delete="/admin/projects?handler=Delete&key=@p.Key"
 								hx-target="closest tr"
 								hx-swap="outerHTML"
 								hx-confirm="Delete project @p.Key?"

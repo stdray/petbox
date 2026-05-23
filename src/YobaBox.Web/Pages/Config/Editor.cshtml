@@ -4,21 +4,24 @@
 	Layout = null;
 }
 
-<tr>
-	<td class="font-mono text-sm">@Model.Binding.Path</td>
-	<td>
-		<input type="text" name="Value" value="@Model.Binding.Value"
-			class="input input-bordered input-sm w-full font-mono"
-			data-testid="config-edit-value" />
+<tr data-testid="config-edit-row">
+	<td data-testid="config-edit-tags">
+		<textarea name="Tags" rows="2"
+			placeholder="project=kpvotes&#10;service=kpvotes-bot"
+			class="textarea textarea-bordered textarea-xs w-full font-mono text-xs">@Model.Tags</textarea>
 	</td>
-	<td>
-		<input type="text" name="Tags" value="@Model.Binding.Tags"
-			class="input input-bordered input-sm w-full"
-			data-testid="config-edit-tags" />
+	<td data-testid="config-edit-path">
+		<input type="text" name="Path" value="@Model.Path"
+			class="input input-bordered input-sm w-full font-mono text-xs" />
 	</td>
+	<td data-testid="config-edit-value">
+		<input type="text" name="Value" value="@Model.Value"
+			class="input input-bordered input-sm w-full font-mono text-xs" />
+	</td>
+	<td></td>
 	<td class="flex gap-1">
 		<button class="btn btn-xs btn-primary"
-			hx-post="/config/save?id=@Model.Binding.Id"
+			hx-post="/config/save?id=@(Model.Id ?? 0)"
 			hx-include="closest tr"
 			hx-target="closest tr"
 			hx-swap="outerHTML"
@@ -26,9 +29,8 @@
 			Save
 		</button>
 		<button class="btn btn-xs btn-ghost"
-			hx-get="/config/row?id=@Model.Binding.Id"
-			hx-target="closest tr"
-			hx-swap="outerHTML"
+			hx-get="@(Model.Id is null ? "" : $"/config/row?id={Model.Id}")"
+			@(Model.Id is null ? "onclick=\"this.closest('tr').remove()\"" : $"hx-target=\"closest tr\" hx-swap=\"outerHTML\"")
 			data-testid="config-cancel-btn">
 			Cancel
 		</button>

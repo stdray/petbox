@@ -273,6 +273,78 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task Admin_CreateProject_Form_Renders()
+	{
+		var resp = await GetPageAsync("/admin/projects?handler=Create");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("admin-project-create-form");
+		html.Should().Contain("admin-project-create-key");
+	}
+
+	[Fact]
+	public async Task Admin_CreateProject_Then_Detail_Renders()
+	{
+		var projectKey = "test-" + Guid.NewGuid().ToString("N")[..8];
+
+		// Login to get auth cookie
+		var loginPage = await _client.GetAsync("/Login");
+		var loginHtml = await loginPage.Content.ReadAsStringAsync();
+		var tokenStart = loginHtml.IndexOf("__RequestVerificationToken");
+		var valueStart = loginHtml.IndexOf("value=\"", tokenStart) + 7;
+		var valueEnd = loginHtml.IndexOf('"', valueStart);
+		var loginToken = loginHtml[valueStart..valueEnd];
+		var loginCookie = string.Join("; ", loginPage.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0]));
+
+		var loginReq = new HttpRequestMessage(HttpMethod.Post, "/Login");
+		loginReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+		{
+			["username"] = "admin",
+			["password"] = TestPassword,
+			["__RequestVerificationToken"] = loginToken,
+		});
+		loginReq.Headers.Add("Cookie", loginCookie);
+
+		var loginResp = await _client.SendAsync(loginReq);
+		loginResp.StatusCode.Should().Be(HttpStatusCode.Redirect);
+		var authCookie = string.Join("; ", loginResp.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0]));
+
+		// GET create form
+		var formReq = new HttpRequestMessage(HttpMethod.Get, "/admin/projects?handler=Create");
+		formReq.Headers.Add("Cookie", authCookie);
+		var formResp = await _client.SendAsync(formReq);
+		formResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var formHtml = await formResp.Content.ReadAsStringAsync();
+		var afTokenStart = formHtml.IndexOf("__RequestVerificationToken");
+		var afValueStart = formHtml.IndexOf("value=\"", afTokenStart) + 7;
+		var afValueEnd = formHtml.IndexOf('"', afValueStart);
+		var afToken = formHtml[afValueStart..afValueEnd];
+
+		// POST to create
+		var createReq = new HttpRequestMessage(HttpMethod.Post, "/admin/projects?handler=Create");
+		createReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+		{
+			["Key"] = projectKey,
+			["Name"] = "Test Project",
+			["Description"] = "A test",
+			["__RequestVerificationToken"] = afToken,
+		});
+		createReq.Headers.Add("Cookie", authCookie);
+
+		var createResp = await _client.SendAsync(createReq);
+		createResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		createResp.Headers.Should().Contain(h => h.Key == "HX-Redirect");
+
+		// Verify project detail page renders
+		var detailReq = new HttpRequestMessage(HttpMethod.Get, "/admin/projects/" + projectKey);
+		detailReq.Headers.Add("Cookie", authCookie);
+		var detailResp = await _client.SendAsync(detailReq);
+		detailResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await detailResp.Content.ReadAsStringAsync();
+		html.Should().Contain("Test Project");
+	}
+
+	[Fact]
 	public async Task ConfigPage_Renders()
 	{
 		var resp = await GetPageAsync("/config");
