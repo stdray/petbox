@@ -1,0 +1,15 @@
+yobabox.3po.su {
+	reverse_proxy 127.0.0.1:8080 {
+		flush_interval -1
+	}
+
+	encode gzip zstd
+
+	log {
+		output file /var/log/caddy/yobabox.access.log {
+			roll_size 50mb
+			roll_keep 5
+		}
+		format json
+	}
+}

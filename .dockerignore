@@ -1,0 +1,41 @@
+# Build outputs
+**/bin
+**/obj
+
+# Node
+**/node_modules
+
+# Generated frontend bundles
+**/wwwroot/js/site.js
+**/wwwroot/js/site.js.map
+**/wwwroot/css/app.css
+**/wwwroot/css/app.css.map
+
+# Databases / runtime data
+**/*.db
+**/*.db-wal
+**/*.db-shm
+data/
+
+# Git / IDE
+.git
+.vscode
+.idea
+*.user
+
+# Test artifacts
+TestResults/
+coverage/
+.playwright-mcp/
+
+# Docs and meta — not needed in image
+doc/
+README.md
+
+# Claude / AI assistant files
+.claude/
+CLAUDE.md
+AGENTS.md
+
+# Benchmarks
+BenchmarkDotNet.Artifacts/
