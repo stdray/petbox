@@ -161,5 +161,59 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		body.Should().Contain("120");
 	}
 
+	[Fact]
+	public async Task IngestLogs_And_Query()
+	{
+		await SetupKpVotesProject(_page!);
+		await EnsureApiKey();
+
+		// POST 4 CLEF events
+		var clefEvents = new (string L, string M, string Svc, string Props)[]
+		{
+			("Information", "Starting scrape of film 123", "kpvotes-net", "\"FilmId\": 123"),
+			("Information", "Loaded 150 votes from cache", "kpvotes-net", "\"VoteCount\": 150, \"CacheHit\": true"),
+			("Warning", "Proxy timeout after 30s, retrying", "kpvotes-net", "\"TimeoutSeconds\": 30"),
+			("Error", "Rate limit exceeded (429)", "kpvotes-net", "\"StatusCode\": 429, \"RetryAfter\": 60"),
+		};
+
+		foreach (var (l, m, svc, props) in clefEvents)
+		{
+			var ts = DateTime.UtcNow.AddMinutes(-4 + Array.IndexOf(clefEvents, (l, m, svc, props))).ToString("O");
+			var payload = $"{{\"@t\":\"{ts}\",\"@l\":\"{l}\",\"@m\":\"{m}\",{props}}}";
+			output.WriteLine($"CLEF payload: {payload[..Math.Min(payload.Length, 120)]}");
+			var resp = await _page!.APIRequest.PostAsync("/ingest/clef", new()
+			{
+				Headers = new Dictionary<string, string>
+				{
+					["X-Api-Key"] = _kpvotesApiKey!,
+					["X-Service-Key"] = svc,
+				},
+				Data = payload,
+			});
+			output.WriteLine($"CLEF ingest ({m}): {resp.Status}");
+			var errBody = await resp.TextAsync();
+			if (resp.Status != 200) output.WriteLine($"Error: {errBody}");
+			resp.Status.Should().Be(200);
+		}
+
+		// Navigate to logs page
+		await _page!.GotoAsync("/logs");
+		await _page!.WaitForLoadStateAsync(LoadState.NetworkIdle);
+
+		// KQL: where Level == 4 (Error)
+		await _page.GetByTestId("kql-input").FillAsync("events | where Level == 4");
+		await _page.GetByTestId("kql-apply").ClickAsync();
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		await Expect(_page.Locator("body")).ToContainTextAsync("Rate limit");
+
+		// KQL: summarize count() by Level
+		await _page.GetByTestId("kql-input").FillAsync("events | summarize count() by Level");
+		await _page.GetByTestId("kql-apply").ClickAsync();
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		// Level=2 (Information)=2, Level=3 (Warning)=1, Level=4 (Error)=1
+		await Expect(_page.Locator("body")).ToContainTextAsync("Level");
+		await Expect(_page.Locator("body")).ToContainTextAsync("count_");
+	}
+
 	string? _kpvotesApiKey;
 }

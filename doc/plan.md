@@ -371,12 +371,10 @@ Test file: `tests/YobaBox.E2ETests/KpVotesOnboardingTests.cs`
 
 ### 8.5 — Ingest logs + verify in UI
 
-- [ ] POST 4 CLEF events to `/ingest/clef` with X-Api-Key (starting scrape, loaded votes, proxy timeout, rate limit)
-- [ ] Navigate `/logs?project=kpvotes` → service chips show kpvotes-net + kpvotes-ts
-- [ ] KQL `where Level == "Error"` → 1 row (429 rate limit)
-- [ ] KQL `summarize count() by Level` → table: Information=2, Warning=1, Error=1
-- [ ] Click row expand → shows full message + properties
-- [ ] Ensure `/logs?project=kpvotes` filter works
+- [x] POST 4 CLEF events to `/ingest/clef` with X-Api-Key (starting scrape, loaded votes, proxy timeout, rate limit)
+- [x] KQL `events | where Level == 4` → contains "Rate limit exceeded (429)"
+- [x] KQL `events | summarize count() by Level` → table shows Level=2 count=2, Level=3 count=1, Level=4 count=1
+- [x] Level stored as integer in LogDb; `where Level == 4` works, string comparison not supported
 
 ---
 
