@@ -36,6 +36,10 @@ public sealed class IndexModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "project")]
 	public string? ProjectFilter { get; set; }
 
+	// Route param from /ui/logs/{projectKey?}
+	[BindProperty(SupportsGet = true, Name = "projectKey")]
+	public string? ProjectKeyRoute { get; set; }
+
 	public string UserKql { get; private set; } = "";
 	public string? KqlError { get; private set; }
 	public bool SchemaMissing { get; private set; }
@@ -59,6 +63,8 @@ public sealed class IndexModel : PageModel
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		// Load project info
+		ProjectFilter ??= ProjectKeyRoute ?? "$system";
+
 		if (!string.IsNullOrWhiteSpace(ProjectFilter))
 		{
 			var project = await _db.Projects
