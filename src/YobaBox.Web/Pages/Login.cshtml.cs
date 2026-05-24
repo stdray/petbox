@@ -6,16 +6,19 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Options;
 using YobaBox.Core.Auth;
+using YobaBox.Core.Data;
 
 namespace YobaBox.Web.Pages;
 
 [AllowAnonymous]
 public sealed class LoginModel : PageModel
 {
+	readonly YobaBoxDb _db;
 	readonly AdminOptions _admin;
 
-	public LoginModel(IOptions<AdminOptions> options)
+	public LoginModel(YobaBoxDb db, IOptions<AdminOptions> options)
 	{
+		_db = db;
 		_admin = options.Value;
 	}
 
@@ -38,8 +41,21 @@ public sealed class LoginModel : PageModel
 			return Page();
 		}
 
-		if (!string.Equals(_admin.Username, username, StringComparison.Ordinal)
-			|| !AdminPasswordHasher.Verify(password, _admin.PasswordHash))
+		var authenticated = false;
+
+		if (string.Equals(_admin.Username, username, StringComparison.Ordinal)
+			&& AdminPasswordHasher.Verify(password, _admin.PasswordHash))
+		{
+			authenticated = true;
+		}
+		else
+		{
+			var user = _db.Users.FirstOrDefault(u => u.Username == username);
+			if (user is not null && AdminPasswordHasher.Verify(password, user.PasswordHash))
+				authenticated = true;
+		}
+
+		if (!authenticated)
 		{
 			ErrorMessage = "Invalid username or password.";
 			return Page();

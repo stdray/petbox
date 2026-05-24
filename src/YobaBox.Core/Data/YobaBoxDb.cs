@@ -15,6 +15,8 @@ public sealed class YobaBoxDb : DataConnection
 
 	public ITable<Project> Projects => this.GetTable<Project>();
 	public ITable<Workspace> Workspaces => this.GetTable<Workspace>();
+	public ITable<User> Users => this.GetTable<User>();
+	public ITable<WorkspaceMember> WorkspaceMembers => this.GetTable<WorkspaceMember>();
 	public ITable<Service> Services => this.GetTable<Service>();
 	public ITable<ApiKey> ApiKeys => this.GetTable<ApiKey>();
 	public ITable<ConfigBinding> ConfigBindings => this.GetTable<ConfigBinding>();
@@ -34,6 +36,21 @@ public sealed class YobaBoxDb : DataConnection
 			.Property(w => w.Key).HasLength(100).IsNullable(false)
 			.Property(w => w.Name).HasLength(200).IsNullable(false)
 			.Property(w => w.Description).HasLength(1000);
+
+		builder.Entity<User>()
+			.HasTableName("Users")
+			.HasIdentity(u => u.Id)
+			.Property(u => u.Id).IsPrimaryKey()
+			.Property(u => u.Username).HasLength(100).IsNullable(false)
+			.Property(u => u.PasswordHash).HasLength(200).IsNullable(false);
+
+		builder.Entity<WorkspaceMember>()
+			.HasTableName("WorkspaceMembers")
+			.HasIdentity(m => m.Id)
+			.Property(m => m.Id).IsPrimaryKey()
+			.Property(m => m.UserId).IsNullable(false)
+			.Property(m => m.WorkspaceKey).HasLength(100).IsNullable(false)
+			.Property(m => m.Role).HasDataType(DataType.Int32).IsNullable(false);
 
 		builder.Entity<Project>()
 			.HasTableName("Projects")

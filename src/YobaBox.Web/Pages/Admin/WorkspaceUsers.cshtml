@@ -1,0 +1,76 @@
+@page "/admin/workspaces/{workspaceKey}/users"
+@model YobaBox.Web.Pages.Admin.WorkspaceUsersModel
+@{
+	ViewData["Title"] = "Users";
+}
+
+<a asp-page="/Admin/WorkspaceDetail" asp-route-key="@RouteData.Values["workspaceKey"]" class="btn btn-sm btn-ghost mb-4">← Back to Workspace</a>
+
+<h1 class="text-xl font-semibold mb-2" data-testid="workspace-users-title">Users</h1>
+<p class="text-sm opacity-70 mb-4 font-mono">@RouteData.Values["workspaceKey"]</p>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3">@Model.ErrorMessage</div>
+}
+
+<div class="overflow-x-auto mb-6">
+	<table class="table table-sm" data-testid="workspace-users-table">
+		<thead>
+			<tr>
+				<th>Username</th>
+				<th>Role</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			@foreach (var (member, username) in Model.Members)
+			{
+				<tr>
+					<td class="font-mono text-sm">@username</td>
+					<td>
+						<span class="badge badge-sm">@member.Role</span>
+					</td>
+					<td>
+						<form method="post" asp-page-handler="Remove" asp-route-userId="@member.UserId" style="display:inline">
+							@Html.AntiForgeryToken()
+							<button type="submit" class="btn btn-xs btn-ghost text-error">Remove</button>
+						</form>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+</div>
+
+<div class="divider"></div>
+
+<h2 class="text-lg font-semibold mb-3">Add User</h2>
+<form method="post" asp-page-handler="Add" class="card bg-base-200 mb-4" data-testid="workspace-user-add-form">
+	@Html.AntiForgeryToken()
+	<div class="card-body p-4">
+		<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+			<label class="form-control">
+				<span class="label-text">Username</span>
+				<input type="text" name="Username" required class="input input-bordered input-sm"
+					placeholder="new-user" data-testid="workspace-user-add-username" />
+			</label>
+			<label class="form-control">
+				<span class="label-text">Password</span>
+				<input type="password" name="Password" required class="input input-bordered input-sm"
+					data-testid="workspace-user-add-password" />
+			</label>
+			<label class="form-control">
+				<span class="label-text">Role</span>
+				<select name="Role" class="select select-bordered select-sm" data-testid="workspace-user-add-role">
+					<option value="Admin">Admin</option>
+					<option value="Member">Member</option>
+					<option value="Viewer">Viewer</option>
+				</select>
+			</label>
+		</div>
+		<div class="card-actions mt-3">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="workspace-user-add-submit">Add</button>
+		</div>
+	</div>
+</form>
