@@ -317,3 +317,155 @@ document.addEventListener("click", (event) => {
 		details.classList.toggle("hidden");
 	}
 });
+
+// ---------- Live-tail SSE ----------
+function liveTailIsActive(): boolean {
+	const toggle = document.getElementById("live-tail-toggle") as HTMLInputElement | null;
+	return toggle?.checked === true;
+}
+
+let stagedPayloads: string[] = [];
+let liveTailFlushing = false;
+
+function isEventsBodyTopVisible(): boolean {
+	const body = document.getElementById("events-body");
+	if (!body) return true;
+	return body.getBoundingClientRect().top >= -40;
+}
+
+function ensureLiveTailBanner(): HTMLTableRowElement {
+	let banner = document.getElementById("live-tail-banner") as HTMLTableRowElement | null;
+	if (banner) return banner;
+	const tbody = document.getElementById("events-body");
+	if (!tbody) throw new Error("no events-body");
+	banner = document.createElement("tr");
+	banner.id = "live-tail-banner";
+	banner.className = "hidden cursor-pointer";
+	banner.setAttribute("data-testid", "live-tail-banner");
+	banner.innerHTML = '<td colspan="4" class="text-center py-2 text-sm font-semibold bg-primary/20 hover:bg-primary/30"><span data-testid="live-tail-count">0</span> new events — click to show</td>';
+	tbody.insertBefore(banner, tbody.firstChild);
+	return banner;
+}
+
+function updateBannerCount(): void {
+	const banner = document.getElementById("live-tail-banner");
+	const countEl = banner?.querySelector<HTMLElement>('[data-testid="live-tail-count"]');
+	if (!banner || !countEl) return;
+	countEl.textContent = String(stagedPayloads.length);
+	banner.classList.toggle("hidden", stagedPayloads.length === 0);
+}
+
+function resetLiveTailStaging(): void {
+	stagedPayloads = [];
+	updateBannerCount();
+}
+
+// Intercept SSE before htmx swaps
+document.addEventListener("htmx:sseBeforeMessage", ((event: CustomEvent) => {
+	const elt = event.detail.elt as HTMLElement;
+	if (!elt.closest("#live-tail-sse")) return;
+	if (!liveTailIsActive()) return;
+	if (liveTailFlushing) return;
+
+	if (isEventsBodyTopVisible()) return;
+
+	event.preventDefault();
+	stagedPayloads.push(String(event.detail.data));
+	ensureLiveTailBanner();
+	updateBannerCount();
+}) as EventListener);
+
+// Click banner → flush all staged events
+document.addEventListener("click", (event) => {
+	const banner = (event.target as HTMLElement)?.closest("#live-tail-banner");
+	if (!banner) return;
+	if (stagedPayloads.length === 0) return;
+
+	const tbody = document.getElementById("events-body");
+	if (!tbody) return;
+
+	liveTailFlushing = true;
+	try {
+		const tmp = document.createElement("tbody");
+		tmp.innerHTML = stagedPayloads.join("");
+		const frag = document.createDocumentFragment();
+		while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+		tbody.insertBefore(frag, banner.nextSibling);
+	} finally {
+		queueMicrotask(() => { liveTailFlushing = false; });
+	}
+	resetLiveTailStaging();
+	window.scrollTo({ top: 0, behavior: "smooth" });
+});
+
+// Live-tail toggle → SSE connect/disconnect
+document.addEventListener("change", (event) => {
+	const target = event.target as HTMLInputElement | null;
+	if (target?.id !== "live-tail-toggle") return;
+
+	const project = target.dataset["project"];
+	const kql = target.dataset["kql"] ?? "";
+	const tbody = document.getElementById("events-body");
+	if (!project || !tbody?.parentElement) return;
+
+	const formField = document.getElementById("live-tail-form-field") as HTMLInputElement | null;
+	if (formField) formField.disabled = !target.checked;
+
+	const containerId = "live-tail-sse";
+	document.getElementById(containerId)?.remove();
+	resetLiveTailStaging();
+
+	if (!target.checked) return;
+
+	const url = `/api/live-tail?project=${encodeURIComponent(project)}&kql=${encodeURIComponent(kql)}`;
+	const container = document.createElement("div");
+	container.id = containerId;
+	container.setAttribute("hx-ext", "sse");
+	container.setAttribute("sse-connect", url);
+	container.setAttribute("sse-retry", "3000");
+	container.innerHTML = '<div sse-swap="event" hx-target="#events-body" hx-swap="afterbegin"></div>';
+	tbody.parentElement.parentElement?.insertBefore(container, tbody.parentElement);
+	(window as any).htmx?.process(container);
+});
+
+// Reconnect live-tail on page reload
+(() => {
+	const params = new URLSearchParams(window.location.search);
+	if (params.get("liveTail") !== "1") return;
+	const toggle = document.getElementById("live-tail-toggle") as HTMLInputElement | null;
+	if (!toggle || toggle.checked) return;
+	toggle.checked = true;
+	toggle.dispatchEvent(new Event("change", { bubbles: true }));
+})();
+
+// ---------- Share modal ----------
+document.addEventListener("click", (event) => {
+	const target = event.target as HTMLElement | null;
+	if (!target) return;
+
+	const openBtn = target.closest("[data-share-modal-open]") as HTMLElement | null;
+	if (openBtn) {
+		const modal = document.getElementById("share-modal") as HTMLDialogElement | null;
+		modal?.showModal();
+		return;
+	}
+
+	if (target.closest("[data-share-copy]")) {
+		const url = (document.getElementById("share-url") as HTMLInputElement | null)?.value ?? "";
+		void navigator.clipboard.writeText(url);
+		return;
+	}
+});
+
+// Pre-fill share URL when modal opens
+document.addEventListener("click", (event) => {
+	const target = event.target as HTMLElement | null;
+	const btn = target?.closest("[data-share-modal-open]") as HTMLElement | null;
+	if (!btn) return;
+	const project = btn.dataset["project"] ?? "";
+	const kql = btn.dataset["kql"] ?? "events";
+	const urlInput = document.getElementById("share-url") as HTMLInputElement | null;
+	if (urlInput) {
+		urlInput.value = `${window.location.origin}/logs?project=${encodeURIComponent(project)}&kql=${encodeURIComponent(kql)}`;
+	}
+});

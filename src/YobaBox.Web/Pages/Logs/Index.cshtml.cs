@@ -5,6 +5,8 @@ using Kusto.Language;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using YobaBox.Core.Data;
+using YobaBox.Core.Models;
 using YobaBox.Log.Core.Data;
 using YobaBox.Log.Core.Query;
 
@@ -14,10 +16,12 @@ namespace YobaBox.Web.Pages.Logs;
 public sealed class IndexModel : PageModel
 {
 	readonly LogDb _logDb;
+	readonly YobaBoxDb _db;
 
-	public IndexModel(LogDb logDb)
+	public IndexModel(LogDb logDb, YobaBoxDb db)
 	{
 		_logDb = logDb;
+		_db = db;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "kql")]
@@ -25,6 +29,12 @@ public sealed class IndexModel : PageModel
 
 	[BindProperty(SupportsGet = true)]
 	public string? Cursor { get; set; }
+
+	[BindProperty(SupportsGet = true, Name = "saved")]
+	public string? SavedName { get; set; }
+
+	[BindProperty(SupportsGet = true, Name = "project")]
+	public string? ProjectFilter { get; set; }
 
 	public string UserKql { get; private set; } = "";
 	public string? KqlError { get; private set; }
@@ -36,11 +46,49 @@ public sealed class IndexModel : PageModel
 	public KqlResult? KqlResult { get; private set; }
 	public string? NextCursor { get; private set; }
 	public List<string> Services { get; private set; } = [];
+	public List<SavedQuery> SavedQueries { get; private set; } = [];
+	public string? ActiveSavedName { get; private set; }
+	public string? ProjectKey { get; private set; }
+	public string? ProjectName { get; private set; }
+
+	[TempData]
+	public string? FlashError { get; set; }
 
 	const int PageSize = 50;
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
+		// Load project info
+		if (!string.IsNullOrWhiteSpace(ProjectFilter))
+		{
+			var project = await _db.Projects
+				.FirstOrDefaultAsync((Project p) => p.Key == ProjectFilter, ct);
+			if (project is not null)
+			{
+				ProjectKey = project.Key;
+				ProjectName = project.Name;
+			}
+		}
+
+		// Load saved queries
+		if (ProjectKey is not null)
+			SavedQueries = await _db.SavedQueries
+				.Where(q => q.ProjectKey == ProjectKey)
+				.OrderBy(q => q.Name)
+				.ToListAsync(ct);
+
+		// Activate saved query
+		if (!string.IsNullOrWhiteSpace(SavedName) && ProjectKey is not null)
+		{
+			var saved = await _db.SavedQueries
+				.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == ProjectKey && q.Name == SavedName, ct);
+			if (saved is not null)
+			{
+				RawKql = saved.Kql;
+				ActiveSavedName = saved.Name;
+			}
+		}
+
 		UserKql = string.IsNullOrWhiteSpace(RawKql) ? "events" : RawKql.Trim();
 
 		KustoCode userCode;
@@ -61,7 +109,6 @@ public sealed class IndexModel : PageModel
 		}
 
 		IsShapeChanged = KqlTransformer.HasShapeChangingOps(userCode);
-
 		var effectiveKql = IsShapeChanged ? UserKql : AppendPageLimits(UserKql);
 
 		KustoCode code;
@@ -127,6 +174,52 @@ public sealed class IndexModel : PageModel
 		return Page();
 	}
 
+	public async Task<IActionResult> OnPostSaveAsync(
+		[FromForm(Name = "name")] string? name,
+		[FromForm(Name = "kql")] string? kql,
+		CancellationToken ct)
+	{
+		if (string.IsNullOrWhiteSpace(ProjectFilter) || string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(kql))
+			return RedirectToPage(new { project = ProjectFilter });
+
+		var existing = await _db.SavedQueries
+			.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == ProjectFilter && q.Name == name.Trim(), ct);
+		if (existing is not null)
+		{
+#pragma warning disable CA2016
+			await _db.UpdateAsync(existing with { Kql = kql, UpdatedAt = DateTime.UtcNow });
+#pragma warning restore CA2016
+		}
+		else
+		{
+#pragma warning disable CA2016
+			await _db.InsertAsync(new SavedQuery
+			{
+				Name = name.Trim(),
+				Kql = kql,
+				ProjectKey = ProjectFilter,
+				CreatedAt = DateTime.UtcNow,
+				UpdatedAt = DateTime.UtcNow,
+			});
+#pragma warning restore CA2016
+		}
+
+		return RedirectToPage(new { project = ProjectFilter, saved = name.Trim() });
+	}
+
+	public async Task<IActionResult> OnPostDeleteAsync(
+		[FromForm(Name = "savedId")] long savedId,
+		CancellationToken ct)
+	{
+#pragma warning disable CA2016
+		await _db.SavedQueries
+			.Where(q => q.Id == savedId)
+			.DeleteAsync();
+#pragma warning restore CA2016
+
+		return RedirectToPage(new { project = ProjectFilter });
+	}
+
 	string AppendPageLimits(string userKql)
 	{
 		var sb = new StringBuilder(userKql.TrimEnd());
@@ -143,21 +236,16 @@ public sealed class IndexModel : PageModel
 
 	static (long TimestampMs, long Id)? DecodeCursor(string? s)
 	{
-		if (string.IsNullOrEmpty(s))
-			return null;
+		if (string.IsNullOrEmpty(s)) return null;
 		try
 		{
 			var bytes = Convert.FromBase64String(s);
-			if (bytes.Length != 16)
-				return null;
+			if (bytes.Length != 16) return null;
 			var ts = BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(0, 8));
 			var id = BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(8, 8));
 			return (ts, id);
 		}
-		catch (FormatException)
-		{
-			return null;
-		}
+		catch (FormatException) { return null; }
 	}
 
 	static string EncodeCursor(DateTime timestamp, long id)

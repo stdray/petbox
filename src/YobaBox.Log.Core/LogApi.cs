@@ -22,6 +22,7 @@ public static class LogApi
 		app.MapPost("/ingest/clef", IngestClefAsync).RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/query", QueryLogsAsync).RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/services", GetServicesAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/live-tail", LiveTailAsync).RequireAuthorization("ApiKey");
 	}
 
 	public static void MapSeqSelfLogEndpoint(this IEndpointRouteBuilder app)
@@ -191,5 +192,55 @@ public static class LogApi
 			await logDb.LogEntries.BulkCopyAsync(records, ct);
 
 		return Results.Ok();
+	}
+
+	static async Task<IResult> LiveTailAsync(
+		HttpContext ctx,
+		LogDb logDb,
+		HttpResponse response,
+		CancellationToken ct)
+	{
+		var kql = ctx.Request.Query["kql"].FirstOrDefault() ?? "events";
+		var lastId = 0L;
+
+		try
+		{
+			var lastEvent = await logDb.LogEntries
+				.OrderByDescending(e => e.Id)
+				.FirstOrDefaultAsync(CancellationToken.None);
+			if (lastEvent is not null)
+				lastId = lastEvent.Id;
+		}
+		catch { }
+
+		ctx.Response.Headers.ContentType = "text/event-stream";
+		ctx.Response.Headers.CacheControl = "no-cache";
+		ctx.Response.Headers["X-Accel-Buffering"] = "no";
+		await ctx.Response.Body.FlushAsync(ct);
+
+		while (!ct.IsCancellationRequested)
+		{
+			await Task.Delay(2000, ct);
+
+			try
+			{
+				var newEvents = await logDb.LogEntries
+					.Where(e => e.Id > lastId)
+					.OrderBy(e => e.Id)
+					.ToListAsync(CancellationToken.None);
+
+				foreach (var e in newEvents)
+				{
+					lastId = e.Id;
+					var html = $"event: event\ndata: <tr data-event-id=\"{e.Id}\"><td><time class=\"local-time\" datetime=\"{DateTimeOffset.FromUnixTimeMilliseconds(e.TimestampMs):yyyy-MM-ddTHH:mm:ss.fffZ}\">{DateTimeOffset.FromUnixTimeMilliseconds(e.TimestampMs):yyyy-MM-dd HH:mm:ss.fff}</time></td><td><span class=\"badge badge-xs\">{e.Level}</span></td><td class=\"text-sm\">{System.Net.WebUtility.HtmlEncode(e.Message)}</td><td class=\"font-mono text-xs\">{System.Net.WebUtility.HtmlEncode(e.ServiceKey)}</td></tr>\n\n";
+					await ctx.Response.WriteAsync(html, ct);
+					await ctx.Response.Body.FlushAsync(ct);
+				}
+			}
+			catch (OperationCanceledException) { break; }
+			catch { /* poll error, retry */ }
+		}
+
+		return Results.Empty;
 	}
 }

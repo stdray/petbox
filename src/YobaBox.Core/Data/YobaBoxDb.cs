@@ -18,6 +18,7 @@ public sealed class YobaBoxDb : DataConnection
 	public ITable<ApiKey> ApiKeys => this.GetTable<ApiKey>();
 	public ITable<ConfigBinding> ConfigBindings => this.GetTable<ConfigBinding>();
 	public ITable<DataTable> DataTables => this.GetTable<DataTable>();
+	public ITable<SavedQuery> SavedQueries => this.GetTable<SavedQuery>();
 
 	public static DataOptions<YobaBoxDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString));
