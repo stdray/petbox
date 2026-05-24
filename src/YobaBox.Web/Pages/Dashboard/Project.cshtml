@@ -21,7 +21,7 @@
 		<thead>
 			<tr>
 				<th>Service</th>
-				<th>Kind</th>
+				<th>Health model</th>
 				<th>Health</th>
 				<th>Version</th>
 				<th>URL</th>
@@ -32,7 +32,7 @@
 			{
 				<tr data-testid="dashboard-project-service-row">
 					<td class="font-mono text-sm">@svc.Key</td>
-					<td><span class="badge badge-xs">@svc.Kind</span></td>
+					<td><span class="badge badge-xs">@svc.HealthModel</span></td>
 					<td><span class="badge badge-xs">@svc.Health</span></td>
 					<td class="text-xs opacity-70">
 						@(svc.Version ?? "—")

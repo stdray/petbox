@@ -39,7 +39,7 @@ public sealed class YobaBoxDb : DataConnection
 			.HasPrimaryKey(s => s.Key)
 			.Property(s => s.Key).HasLength(100).IsNullable(false)
 			.Property(s => s.ProjectKey).HasLength(100).IsNullable(false)
-			.Property(s => s.Kind).HasDataType(DataType.Int32).IsNullable(false)
+			.Property(s => s.HealthModel).HasDataType(DataType.Int32).IsNullable(false)
 			.Property(s => s.Url).HasLength(500)
 			.Property(s => s.Version).HasLength(50)
 			.Property(s => s.ShortSha).HasLength(8)

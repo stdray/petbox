@@ -1,5 +1,5 @@
 namespace YobaBox.Core.Models;
 
-public enum ServiceKind { Web, Bot, Cron, PoC }
+public enum HealthModel { Endpoint, Push }
 
 public enum ServiceHealth { Healthy, Degraded, Down, Unknown }

@@ -48,10 +48,10 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		// Verify services exist (created by SetupKpVotesProject)
 		await _page!.GotoAsync("/admin/projects/kpvotes");
 		var rowNet = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-net" });
-		await Expect(rowNet).ToContainTextAsync("Cron");
+		await Expect(rowNet).ToContainTextAsync("Endpoint");
 
 		var rowTs = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-ts" });
-		await Expect(rowTs).ToContainTextAsync("PoC");
+		await Expect(rowTs).ToContainTextAsync("Push");
 
 		var allRows = await _page.GetByTestId("service-row").AllAsync();
 		output.WriteLine($"Service rows: {allRows.Count}");
@@ -112,12 +112,12 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		{
 			await page.GetByTestId("project-service-create-key").ScrollIntoViewIfNeededAsync();
 			await page.GetByTestId("project-service-create-key").FillAsync("kpvotes-net");
-			await page.GetByTestId("project-service-create-kind").SelectOptionAsync("Cron");
+			await page.GetByTestId("project-service-create-kind").SelectOptionAsync("Endpoint");
 			await page.GetByTestId("project-service-create-submit").ClickAsync();
 			await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 			await page.GetByTestId("project-service-create-key").FillAsync("kpvotes-ts");
-			await page.GetByTestId("project-service-create-kind").SelectOptionAsync("PoC");
+			await page.GetByTestId("project-service-create-kind").SelectOptionAsync("Push");
 			await page.GetByTestId("project-service-create-submit").ClickAsync();
 			await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 		}

@@ -15,7 +15,7 @@ public sealed class M001_Initial : Migration
 		Create.Table("Services")
 			.WithColumn("Key").AsString(100).PrimaryKey().NotNullable()
 			.WithColumn("ProjectKey").AsString(100).NotNullable()
-			.WithColumn("Kind").AsInt32().NotNullable()
+			.WithColumn("HealthModel").AsInt32().NotNullable()
 			.WithColumn("Url").AsString(500).Nullable()
 			.WithColumn("Version").AsString(50).Nullable()
 			.WithColumn("ShortSha").AsString(8).Nullable()

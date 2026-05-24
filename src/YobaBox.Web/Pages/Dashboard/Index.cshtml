@@ -43,7 +43,7 @@ else
 								<thead>
 									<tr>
 										<th>Service</th>
-										<th>Kind</th>
+										<th>Health model</th>
 										<th>Health</th>
 										<th>Version</th>
 									</tr>
@@ -60,7 +60,7 @@ else
 												}
 											</td>
 											<td>
-												<span class="badge badge-xs @KindBadge(svc.Kind)" data-testid="dashboard-service-kind">@svc.Kind</span>
+												<span class="badge badge-xs @HealthModelBadge(svc.HealthModel)" data-testid="dashboard-service-kind">@svc.HealthModel</span>
 											</td>
 											<td>
 												<span class="badge badge-xs @HealthBadge(svc.Health)" data-testid="dashboard-service-health">@svc.Health</span>
@@ -91,12 +91,10 @@ else
 }
 
 @functions {
-	static string KindBadge(ServiceKind kind) => kind switch
+	static string HealthModelBadge(HealthModel hm) => hm switch
 	{
-		ServiceKind.Web => "badge-primary",
-		ServiceKind.Bot => "badge-secondary",
-		ServiceKind.Cron => "badge-accent",
-		ServiceKind.PoC => "badge-ghost",
+		HealthModel.Endpoint => "badge-info",
+		HealthModel.Push => "badge-warning",
 		_ => "badge-ghost",
 	};
 

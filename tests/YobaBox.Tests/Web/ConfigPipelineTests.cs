@@ -11,6 +11,7 @@ using YobaBox.Core.Models;
 
 namespace YobaBox.Tests.Web;
 
+[Collection("WebAppFactory")]
 public sealed class ConfigPipelineTests : IAsyncLifetime
 {
 	readonly WebApplicationFactory<Program> _factory;
@@ -31,7 +32,6 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
-						["ConnectionStrings:YobaBox"] = "Data Source=:memory:;Cache=Shared",
 						["Features:Config"] = "true",
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = TestPasswordHash,

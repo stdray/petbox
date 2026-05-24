@@ -31,7 +31,7 @@ public sealed class ProjectDetailModel : PageModel
 		Keys = _db.ApiKeys.Where(k => k.ProjectKey == Key).OrderByDescending(k => k.CreatedAt).ToList();
 	}
 
-	public async Task<IActionResult> OnPostCreateServiceAsync(string serviceKey, ServiceKind Kind, string? Url)
+	public async Task<IActionResult> OnPostCreateServiceAsync(string serviceKey, HealthModel HealthModel, string? Url)
 	{
 		if (string.IsNullOrWhiteSpace(serviceKey))
 		{
@@ -44,7 +44,7 @@ public sealed class ProjectDetailModel : PageModel
 		{
 			Key = serviceKey,
 			ProjectKey = Key,
-			Kind = Kind,
+			HealthModel = HealthModel,
 			Url = Url,
 			Health = ServiceHealth.Unknown,
 		});

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 
 namespace YobaBox.Tests.Web;
 
+[Collection("WebAppFactory")]
 public sealed class LogPipelineTests : IAsyncLifetime
 {
 	readonly WebApplicationFactory<Program> _factory;
@@ -26,7 +27,6 @@ public sealed class LogPipelineTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
-						["ConnectionStrings:YobaBox"] = "Data Source=:memory:;Cache=Shared",
 						["Features:Logging"] = "true",
 						["Seq:SelfLog:Enabled"] = "true",
 						["Admin:Username"] = "admin",
