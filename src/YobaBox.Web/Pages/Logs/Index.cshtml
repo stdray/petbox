@@ -115,7 +115,7 @@
 
 	<div class="flex gap-2 flex-wrap items-center">
 		<button type="submit" data-testid="kql-apply" class="btn btn-sm btn-primary">Apply</button>
-		<a asp-page="/Logs/Index" asp-route-project="@Model.ProjectKey" class="btn btn-sm btn-ghost">Reset</a>
+		<a asp-page="/Logs/Index" asp-route-project="@Model.ProjectKey" asp-route-kql="" asp-route-cursor="" asp-route-saved="" class="btn btn-sm btn-ghost">Reset</a>
 		<button type="button" id="kql-pin-toggle" data-testid="kql-pin-toggle"
 			class="btn btn-ghost btn-sm"
 			aria-pressed="false"
