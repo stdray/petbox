@@ -7,8 +7,17 @@ public sealed class M001_Initial : Migration
 {
 	public override void Up()
 	{
+		Create.Table("Workspaces")
+			.WithColumn("Key").AsString(100).PrimaryKey().NotNullable()
+			.WithColumn("Name").AsString(200).NotNullable()
+			.WithColumn("Description").AsString(1000).Nullable()
+			.WithColumn("CreatedAt").AsString().NotNullable().WithDefaultValue("");
+
+		Execute.Sql("INSERT INTO Workspaces (Key, Name, Description, CreatedAt) VALUES ('$system', 'System', 'Built-in system workspace', datetime('now'))");
+
 		Create.Table("Projects")
 			.WithColumn("Key").AsString(100).PrimaryKey().NotNullable()
+			.WithColumn("WorkspaceKey").AsString(100).NotNullable()
 			.WithColumn("Name").AsString(200).NotNullable()
 			.WithColumn("Description").AsString(1000).Nullable();
 
@@ -28,7 +37,7 @@ public sealed class M001_Initial : Migration
 			.WithColumn("Scopes").AsString(int.MaxValue).NotNullable()
 			.WithColumn("CreatedAt").AsDateTime().NotNullable();
 
-		Insert.IntoTable("Projects").Row(new { Key = "$system", Name = "System", Description = "Built-in system project" });
+		Insert.IntoTable("Projects").Row(new { Key = "$system", WorkspaceKey = "$system", Name = "System", Description = "Built-in system project" });
 	}
 
 	public override void Down()
@@ -36,5 +45,6 @@ public sealed class M001_Initial : Migration
 		Delete.Table("ApiKeys");
 		Delete.Table("Services");
 		Delete.Table("Projects");
+		Delete.Table("Workspaces");
 	}
 }

@@ -24,6 +24,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 
 	public ConfigPipelineTests()
 	{
+		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", "Data Source=:memory:;Cache=Shared");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
@@ -69,6 +70,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();
+		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", null);
 	}
 
 	async Task<HttpResponseMessage> GetPageAsync(string url)
@@ -325,6 +327,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 		createReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
 		{
 			["Key"] = projectKey,
+			["WorkspaceKey"] = "$system",
 			["Name"] = "Test Project",
 			["Description"] = "A test",
 			["__RequestVerificationToken"] = afToken,

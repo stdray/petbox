@@ -19,6 +19,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 	public LogPipelineTests()
 	{
+		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", "Data Source=:memory:;Cache=Shared");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
@@ -49,6 +50,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();
+		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", null);
 	}
 
 	async Task<HttpResponseMessage> GetPageAsync(string url)

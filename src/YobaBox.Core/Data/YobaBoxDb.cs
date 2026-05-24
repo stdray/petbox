@@ -14,6 +14,7 @@ public sealed class YobaBoxDb : DataConnection
 	}
 
 	public ITable<Project> Projects => this.GetTable<Project>();
+	public ITable<Workspace> Workspaces => this.GetTable<Workspace>();
 	public ITable<Service> Services => this.GetTable<Service>();
 	public ITable<ApiKey> ApiKeys => this.GetTable<ApiKey>();
 	public ITable<ConfigBinding> ConfigBindings => this.GetTable<ConfigBinding>();
@@ -27,10 +28,18 @@ public sealed class YobaBoxDb : DataConnection
 	{
 		var builder = new FluentMappingBuilder(ms);
 
+		builder.Entity<Workspace>()
+			.HasTableName("Workspaces")
+			.HasPrimaryKey(w => w.Key)
+			.Property(w => w.Key).HasLength(100).IsNullable(false)
+			.Property(w => w.Name).HasLength(200).IsNullable(false)
+			.Property(w => w.Description).HasLength(1000);
+
 		builder.Entity<Project>()
 			.HasTableName("Projects")
 			.HasPrimaryKey(p => p.Key)
 			.Property(p => p.Key).HasLength(100).IsNullable(false)
+			.Property(p => p.WorkspaceKey).HasLength(100).IsNullable(false)
 			.Property(p => p.Name).HasLength(200).IsNullable(false)
 			.Property(p => p.Description).HasLength(1000);
 

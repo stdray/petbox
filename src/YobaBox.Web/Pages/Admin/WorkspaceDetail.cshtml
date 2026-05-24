@@ -1,0 +1,47 @@
+@page "/admin/workspaces/{key}"
+@model YobaBox.Web.Pages.Admin.WorkspaceDetailModel
+@{
+	ViewData["Title"] = Model.Workspace?.Name ?? "Workspace";
+}
+
+@if (Model.Workspace is null)
+{
+	<div class="alert alert-warning">Workspace not found.</div>
+	return;
+}
+
+<div class="flex items-center gap-3 mb-4">
+	<h1 class="text-xl font-semibold" data-testid="admin-workspace-detail-title">@Model.Workspace.Name</h1>
+	<span class="text-sm opacity-60 font-mono">@Model.Workspace.Key</span>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.Workspace.Description))
+{
+	<p class="text-sm opacity-70 mb-4">@Model.Workspace.Description</p>
+}
+
+<h2 class="text-lg font-semibold mb-3">Projects</h2>
+
+<div class="overflow-x-auto mb-6">
+	<table class="table table-sm" data-testid="admin-workspace-projects-table">
+		<thead>
+			<tr>
+				<th>Key</th>
+				<th>Name</th>
+				<th>Description</th>
+			</tr>
+		</thead>
+		<tbody>
+			@foreach (var p in Model.Projects)
+			{
+				<tr>
+					<td class="font-mono text-sm">@p.Key</td>
+					<td><a asp-page="/Admin/ProjectDetail" asp-route-key="@p.Key">@p.Name</a></td>
+					<td class="text-sm opacity-70">@p.Description</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+</div>
+
+<a asp-page="/Admin/Workspaces" class="btn btn-sm btn-ghost">← Back to Workspaces</a>

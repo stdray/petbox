@@ -98,6 +98,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		var existing = await page.GetByTestId("project-row").CountAsync();
 		if (existing <= 1) // only $system
 		{
+			await page.GetByTestId("admin-project-create-workspace").SelectOptionAsync("$system");
 			await page.GetByTestId("admin-project-create-key").FillAsync("kpvotes");
 			await page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
 			await page.GetByTestId("admin-project-create-desc").FillAsync("Kinopoisk → Twitter voting tracker");

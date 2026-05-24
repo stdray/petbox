@@ -19,6 +19,7 @@
 		<thead>
 			<tr>
 				<th>Key</th>
+				<th>Workspace</th>
 				<th>Name</th>
 				<th>Description</th>
 				<th></th>
@@ -29,6 +30,7 @@
 			{
 				<tr data-testid="project-row">
 					<td class="font-mono text-sm">@p.Key</td>
+					<td class="text-sm opacity-70">@p.WorkspaceKey</td>
 					<td><a asp-page="/Admin/ProjectDetail" asp-route-key="@p.Key" data-testid="admin-project-link">@p.Name</a></td>
 					<td class="text-sm opacity-70">@p.Description</td>
 					<td>
@@ -54,6 +56,16 @@
 	<div class="card-body p-4">
 		<h3 class="card-title text-sm">New Project</h3>
 		<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+			<label class="form-control">
+				<span class="label-text">Workspace</span>
+				<select name="WorkspaceKey" required class="select select-bordered select-sm" data-testid="admin-project-create-workspace">
+					<option value="">— select —</option>
+					@foreach (var w in Model.Workspaces)
+					{
+						<option value="@w.Key">@w.Name</option>
+					}
+				</select>
+			</label>
 			<label class="form-control">
 				<span class="label-text">Key</span>
 				<input type="text" name="Key" required

@@ -14,15 +14,20 @@ public sealed class ProjectsModel : PageModel
 	public ProjectsModel(YobaBoxDb db) => _db = db;
 
 	public IReadOnlyList<Project> Projects { get; private set; } = [];
+	public IReadOnlyList<Workspace> Workspaces { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet() => Projects = _db.Projects.OrderBy(p => p.Key).ToList();
-
-	public async Task<IActionResult> OnPostCreateAsync(string Key, string Name, string Description)
+	public void OnGet()
 	{
-		if (string.IsNullOrWhiteSpace(Key) || string.IsNullOrWhiteSpace(Name))
+		Projects = _db.Projects.OrderBy(p => p.Key).ToList();
+		Workspaces = _db.Workspaces.OrderBy(w => w.Key).ToList();
+	}
+
+	public async Task<IActionResult> OnPostCreateAsync(string Key, string WorkspaceKey, string Name, string Description)
+	{
+		if (string.IsNullOrWhiteSpace(Key) || string.IsNullOrWhiteSpace(Name) || string.IsNullOrWhiteSpace(WorkspaceKey))
 		{
-			ErrorMessage = "Key and Name are required.";
+			ErrorMessage = "Key, Name, and Workspace are required.";
 			OnGet();
 			return Page();
 		}
@@ -35,7 +40,7 @@ public sealed class ProjectsModel : PageModel
 			return Page();
 		}
 
-		await _db.InsertAsync(new Project { Key = Key, Name = Name, Description = Description ?? string.Empty });
+		await _db.InsertAsync(new Project { Key = Key, WorkspaceKey = WorkspaceKey, Name = Name, Description = Description ?? string.Empty });
 		return RedirectToPage();
 	}
 

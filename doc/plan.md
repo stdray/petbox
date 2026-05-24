@@ -402,6 +402,133 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 - [x] Key with `admin` → `GET /api/auth/validate` → 200 (any valid key), `GET /api/config` → 403
 - [x] Revoked key → `GET /api/auth/validate` → 401
 
+---
+
+## Phase 11: Workspace foundation [NEW]
+
+Goal: workspace organizational layer above projects. Foundation for DB isolation and multi-user.
+
+### 11.1 — Workspace model + migration
+
+- [ ] `YobaBox.Core/Models/Workspace.cs` — record: Key, Name, Description, CreatedAt
+- [ ] `Project.WorkspaceKey` — FK to Workspace
+- [ ] `YobaBox.Core/Data/Migrations/M008_Workspaces.cs` — create `Workspaces` table, add `WorkspaceKey` column to `Projects`. Seed `$system` workspace.
+- [ ] `YobaBox.Core/Data/YobaBoxDb.cs` — add `ITable<Workspace>`, configure mapping
+
+### 11.2 — Workspace admin UI
+
+- [ ] `YobaBox.Web/Pages/Admin/Workspaces.cshtml` + `.cs` — list, create, delete workspaces
+- [ ] `YobaBox.Web/Pages/Admin/WorkspaceDetail.cshtml` + `.cs` — workspace projects + users
+- [ ] Project create form: add Workspace selector
+
+### 11.3 — Seed data
+
+- [ ] M004/M008: `$system` workspace + `$system` project in it
+
+---
+
+## Phase 12: User + WorkspaceMember [NEW]
+
+Goal: multi-user auth with workspace-level roles.
+
+### 12.1 — Models + migration
+
+- [ ] `YobaBox.Core/Models/User.cs` — record: Id, Username, PasswordHash, CreatedAt
+- [ ] `YobaBox.Core/Models/WorkspaceMember.cs` — record: UserId, WorkspaceKey, Role (Admin|Member|Viewer)
+- [ ] M009: `Users` + `WorkspaceMembers` tables
+
+### 12.2 — Auth integration
+
+- [ ] Login: validate username/password, set cookie with UserId + WorkspaceKey claims
+- [ ] Authorization: check WorkspaceMember role for workspace-scoped pages
+- [ ] ApiKey: stays per-project as-is
+
+### 12.3 — Workspace user management UI
+
+- [ ] `/admin/workspaces/{key}/users` — list members, invite, change role, remove
+
+---
+
+## Phase 13: LogDb per-project isolation [NEW]
+
+Goal: separate SQLite per project for log storage.
+
+### 13.1 — LogDbFactory
+
+- [ ] `YobaBox.Log.Core/Data/LogDbFactory.cs` — `GetLogDb(projectKey)` → opens/creates `data/logs/{projectKey}.db`
+- [ ] Auto-migration: `CREATE TABLE IF NOT EXISTS LogEntries (...)` on first open
+- [ ] Interface: `ILogDbFactory` with `(projectKey, serviceKey?)` for future per-service
+
+### 13.2 — Ingestion + query
+
+- [ ] Ingestion: `X-Service-Key` → lookup Service → WorkspaceKey? No, ProjectKey → LogDbFactory(projectKey)
+- [ ] KQL query: accept `projectKey`, open LogDb via factory
+- [ ] Live tail SSE: per-project polling
+- [ ] Remove `LogDb` from core DI — LogDbFactory replaces it
+
+### 13.3 — UI updates
+
+- [ ] `/ui/logs/{projectKey}` — Razor page, projectKey from path
+- [ ] `/ui/logs/{projectKey}/{svcKey}` — page shell (no per-service DB yet)
+
+---
+
+## Phase 14: ConfigDb per-workspace isolation [NEW]
+
+Goal: separate SQLite per workspace for config storage. `ws` tag mandatory.
+
+### 14.1 — ConfigDbFactory
+
+- [ ] `YobaBox.Config/Data/ConfigDbFactory.cs` — `GetConfigDb(workspaceKey)` → `data/config/{workspaceKey}.db`
+- [ ] Auto-migration: `CREATE TABLE IF NOT EXISTS ConfigBindings (...)`
+- [ ] ConfigBinding model stays in YobaBox.Core (shared, but table lives in workspace DB)
+
+### 14.2 — Resolve pipeline update
+
+- [ ] Remove `ConfigBindings` from `YobaBoxDb`
+- [ ] `ConfigApi`: accept `workspaceKey` in path, use ConfigDbFactory
+- [ ] ResolvePipeline: load bindings from workspace's ConfigDb
+- [ ] `ws` tag mandatory — create/update validates presence of `ws:{workspaceKey}`
+
+### 14.3 — UI
+
+- [ ] `/ui/config/{workspaceKey}` — Razor page, workspaceKey from path
+
+---
+
+## Phase 15: /api and /ui prefix routing [NEW]
+
+Goal: clean separation of API and UI URL namespaces.
+
+### 15.1 — UI prefix
+
+- [ ] Move all Razor Pages to `/ui` via `@page` directives + conventions in Program.cs
+- [ ] `/ui/login`, `/ui/dashboard`, `/ui/dashboard/{projectKey}`, `/ui/logs/{projectKey}`, `/ui/config/{workspaceKey}`
+- [ ] `/ui/admin/projects`, `/ui/admin/workspaces`
+
+### 15.2 — API prefix
+
+- [ ] Group all API endpoints under `/api` via `MapGroup("/api")`
+- [ ] `/api/auth/validate`, `/api/auth/login`, `/api/auth/logout`
+- [ ] `/api/ingest/clef`, `/api/events/raw`
+- [ ] `/api/logs/{projectKey}/query`, `/api/logs/{projectKey}/services`, `/api/logs/{projectKey}/live-tail`
+- [ ] `/api/config/{workspaceKey}/resolve`, `/api/config/{workspaceKey}/bindings`
+
+### 15.3 — Backward compat (optional)
+
+- [ ] Redirect old paths or keep until E2E tests updated
+
+---
+
+## Phase 16: Data module rework [BLOCKED]
+
+Goal: fix DataTable / DataApi design. Requires user clarification.
+Current implementation is wrong — to be revisited.
+
+- [ ] Clarify: where do user data tables live? Separate `data/databases/{name}.db` per project?
+- [ ] Clarify: API shape — PostgREST-compatible? CRUD?
+- [ ] Clarify: how DataTables map to projects/workspaces?
+
 ### 8.6 — Create DataTable for votes cache (after log + config flows)
 
 - [x] Navigate `/admin/projects/kpvotes/data` (new page or section)
