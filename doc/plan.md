@@ -395,12 +395,12 @@ Test file: `tests/YobaBox.E2ETests/ConfigResolvePriorityTests.cs`
 
 Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 
-- [ ] Key with only `config:read` → `POST /api/config` → 403, `DELETE /api/config` → 403
-- [ ] Key with only `config:write` → `GET /api/config` → 403
-- [ ] Key with only `logs:ingest` → `GET /api/config` → 403
-- [ ] Key with `data:read,data:write` → `GET /api/dashboard/...` → 403
-- [ ] Key with `admin` → `/admin/projects` → 401 (admin is UI-only, no API access)
-- [ ] Revoked key → `GET /api/auth/validate` → 401
+- [x] Key with only `config:read` → `POST /api/config` → 403, `DELETE /api/config` → 403
+- [x] Key with only `config:write` → `GET /api/config` → 403
+- [x] Key with only `logs:ingest` → `GET /api/config` → 403
+- [x] Key with `logs:ingest` → `POST /ingest/clef` → 200
+- [x] Key with `admin` → `GET /api/auth/validate` → 200 (any valid key), `GET /api/config` → 403
+- [x] Revoked key → `GET /api/auth/validate` → 401
 
 ### 8.6 — Create DataTable for votes cache (after log + config flows)
 
