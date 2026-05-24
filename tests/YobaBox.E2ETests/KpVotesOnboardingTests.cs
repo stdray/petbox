@@ -26,8 +26,9 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	[Fact]
 	public async Task CreateProject_KpVotes()
 	{
-		await _page!.GotoAsync("/admin/projects");
+		await _page!.GotoAsync("/ui/admin/projects");
 
+		await _page.GetByTestId("admin-project-create-workspace").SelectOptionAsync("$system");
 		await _page.GetByTestId("admin-project-create-key").FillAsync("kpvotes");
 		await _page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
 		await _page.GetByTestId("admin-project-create-desc").FillAsync("Kinopoisk → Twitter voting tracker");
@@ -46,7 +47,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		await SetupKpVotesProject(_page!);
 
 		// Verify services exist (created by SetupKpVotesProject)
-		await _page!.GotoAsync("/admin/projects/kpvotes");
+		await _page!.GotoAsync("/ui/ui/admin/projects/kpvotes");
 		var rowNet = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-net" });
 		await Expect(rowNet).ToContainTextAsync("Endpoint");
 
@@ -78,7 +79,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	{
 		if (_kpvotesApiKey is not null) return;
 
-		await _page!.GotoAsync("/admin/projects/kpvotes");
+		await _page!.GotoAsync("/ui/ui/admin/projects/kpvotes");
 		await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
 		await _page.GetByTestId("project-key-create-scopes").FillAsync("config:read,config:write,logs:ingest,data:read,data:write");
 		await _page.GetByTestId("project-key-create-submit").ClickAsync();
@@ -92,7 +93,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 
 	static async Task SetupKpVotesProject(IPage page)
 	{
-		await page.GotoAsync("/admin/projects");
+		await page.GotoAsync("/ui/admin/projects");
 
 		// Create project if not exists
 		var existing = await page.GetByTestId("project-row").CountAsync();
@@ -107,7 +108,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		}
 
 		// Create services if not exist
-		await page.GotoAsync("/admin/projects/kpvotes");
+		await page.GotoAsync("/ui/ui/admin/projects/kpvotes");
 		var svcExisting = await page.GetByTestId("service-row").CountAsync();
 		if (svcExisting == 0)
 		{
@@ -144,7 +145,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 
 		foreach (var (path, value, tags) in bindings)
 		{
-			await _page!.GotoAsync("/config/edit");
+			await _page!.GotoAsync("/ui/config/edit");
 			await _page.GetByTestId("config-edit-path").FillAsync(path);
 			await _page.GetByTestId("config-edit-value").FillAsync(value);
 			await _page.GetByTestId("config-edit-tags").FillAsync(tags);
@@ -153,7 +154,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 			output.WriteLine($"Created binding: {path}={value} [{tags}]");
 		}
 
-		await _page!.GotoAsync("/config");
+		await _page!.GotoAsync("/ui/config");
 		await _page!.WaitForLoadStateAsync(LoadState.NetworkIdle);
 		await Expect(_page.GetByTestId("config-table")).ToContainTextAsync("kpvotes/interval-minutes");
 		await Expect(_page.GetByTestId("config-table")).ToContainTextAsync("proxy.corp.local");
@@ -188,7 +189,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 			var ts = DateTime.UtcNow.AddMinutes(-4 + Array.IndexOf(clefEvents, (l, m, svc, props))).ToString("O");
 			var payload = $"{{\"@t\":\"{ts}\",\"@l\":\"{l}\",\"@m\":\"{m}\",{props}}}";
 			output.WriteLine($"CLEF payload: {payload[..Math.Min(payload.Length, 120)]}");
-			var resp = await _page!.APIRequest.PostAsync("/ingest/clef", new()
+			var resp = await _page!.APIRequest.PostAsync("/api/api/ingest/clef", new()
 			{
 				Headers = new Dictionary<string, string>
 				{
@@ -204,7 +205,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		}
 
 		// Navigate to logs page for kpvotes project
-		await _page!.GotoAsync("/logs?project=kpvotes");
+		await _page!.GotoAsync("/ui/logs?project=kpvotes");
 		await _page!.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 		// KQL: where Level == 4 (Error)
@@ -229,7 +230,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		await EnsureApiKey();
 
 		// Main dashboard
-		await _page!.GotoAsync("/dashboard");
+		await _page!.GotoAsync("/ui/dashboard");
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 		var card = _page.GetByTestId("dashboard-project-card").Filter(new() { HasText = "kpvotes" });
@@ -238,7 +239,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		await Expect(card).ToContainTextAsync("kpvotes-ts");
 
 		// Per-project dashboard
-		await _page.GotoAsync("/dashboard/kpvotes");
+		await _page.GotoAsync("/ui/ui/dashboard/kpvotes");
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 		await Expect(_page.Locator("body")).ToContainTextAsync("KpVotes");
 		await Expect(_page.GetByTestId("dashboard-project-services")).ToContainTextAsync("kpvotes-net");

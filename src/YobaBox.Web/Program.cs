@@ -186,7 +186,7 @@ public partial class Program
 			commitDate = Environment.GetEnvironmentVariable("GIT_COMMIT_DATE") ?? string.Empty,
 		})).AllowAnonymous();
 
-		app.MapPost("/Logout", async (HttpContext ctx) =>
+		app.MapPost("/api/auth/logout", async (HttpContext ctx) =>
 		{
 			await ctx.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
 			return Results.Redirect("/Login");

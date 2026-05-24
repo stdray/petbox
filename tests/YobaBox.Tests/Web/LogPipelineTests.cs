@@ -102,7 +102,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 	async Task<HttpResponseMessage> PostClefAsync(string svc, string jsonl)
 	{
-		var req = LogRequest("/ingest/clef", HttpMethod.Post);
+		var req = LogRequest("/api/ingest/clef", HttpMethod.Post);
 		req.Headers.Add("X-Service-Key", svc);
 		req.Content = new StringContent(jsonl, Encoding.UTF8, "text/plain");
 		return await _client.SendAsync(req);
@@ -149,7 +149,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Ingest_WithoutApiKey_Returns401()
 	{
-		var req = new HttpRequestMessage(HttpMethod.Post, "/ingest/clef");
+		var req = new HttpRequestMessage(HttpMethod.Post, "/api/ingest/clef");
 		req.Headers.Add("X-Service-Key", "svc-b");
 		req.Content = new StringContent(
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("b1")}}"}""",
@@ -161,7 +161,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Ingest_WithoutServiceKey_Returns400()
 	{
-		var req = LogRequest("/ingest/clef", HttpMethod.Post);
+		var req = LogRequest("/api/ingest/clef", HttpMethod.Post);
 		req.Content = new StringContent(
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("c1")}}"}""",
 			Encoding.UTF8, "text/plain");
@@ -322,7 +322,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task LogPage_RendersHtml()
 	{
-		var resp = await GetPageAsync("/logs");
+		var resp = await GetPageAsync("/ui/logs");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("Logs");
@@ -335,7 +335,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		await PostClefAsync("svc-j",
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Error","@m":"{{UniqueMsg("j1")}}"}""");
 
-		using var resp = await GetPageAsync("/logs?kql=events+|+take+10");
+		using var resp = await GetPageAsync("/ui/logs?kql=events+|+take+10");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"events-row\"");
@@ -344,7 +344,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task LogPage_WithShapeChangingKql_RendersColumns()
 	{
-		var resp = await GetPageAsync("/logs?kql=events+|+count");
+		var resp = await GetPageAsync("/ui/logs?kql=events+|+count");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("Count");

@@ -1,4 +1,4 @@
-@page "/logs"
+@page "/ui/logs/{projectKey?}"
 @model YobaBox.Web.Pages.Logs.IndexModel
 @{
 	ViewData["Title"] = Model.ProjectName is not null ? $"Logs — {Model.ProjectName}" : "Logs";
@@ -63,9 +63,9 @@
 				<tbody>
 					<tr>
 						<td class="font-mono">CLEF</td>
-						<td class="font-mono text-xs">@baseUrl/ingest/clef</td>
+						<td class="font-mono text-xs">@baseUrl/api/ingest/clef</td>
 						<td class="text-xs"><code>X-Api-Key</code> header + <code>X-Service-Key</code></td>
-						<td><button type="button" class="btn btn-xs" data-copy="@baseUrl/ingest/clef">Copy</button></td>
+						<td><button type="button" class="btn btn-xs" data-copy="@baseUrl/api/ingest/clef">Copy</button></td>
 					</tr>
 				</tbody>
 			</table>
@@ -103,7 +103,7 @@
 		<textarea name="kql" rows="6" id="kql-textarea"
 			data-testid="kql-input"
 			placeholder="events | where Level >= 3 | where Message contains 'error'"
-			hx-get="/logs?handler=KqlCompletions"
+			hx-get="/ui/logs?handler=KqlCompletions"
 			hx-trigger="keyup changed delay:250ms, click"
 			hx-target="#kql-completions"
 			hx-swap="innerHTML"

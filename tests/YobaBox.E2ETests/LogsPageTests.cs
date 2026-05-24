@@ -26,7 +26,7 @@ public sealed class LogsPageTests(WebAppFixture app, ITestOutputHelper output) :
 	[Fact]
 	public async Task LogsPage_Renders_KqlInput()
 	{
-		await _page!.GotoAsync("/logs");
+		await _page!.GotoAsync("/ui/logs");
 
 		await Expect(_page.GetByTestId("kql-input")).ToBeVisibleAsync();
 		await Expect(_page.GetByTestId("kql-apply")).ToBeVisibleAsync();
@@ -35,7 +35,7 @@ public sealed class LogsPageTests(WebAppFixture app, ITestOutputHelper output) :
 	[Fact]
 	public async Task LogsPage_Shows_Empty_State()
 	{
-		await _page!.GotoAsync("/logs");
+		await _page!.GotoAsync("/ui/logs");
 
 		await Expect(_page.GetByTestId("events-empty")).ToBeVisibleAsync();
 	}
@@ -43,7 +43,7 @@ public sealed class LogsPageTests(WebAppFixture app, ITestOutputHelper output) :
 	[Fact]
 	public async Task LogsPage_Apply_Shows_Empty_Result()
 	{
-		await _page!.GotoAsync("/logs");
+		await _page!.GotoAsync("/ui/logs");
 
 		await _page.GetByTestId("kql-input").FillAsync("events | where Level >= 3");
 		await _page.GetByTestId("kql-apply").ClickAsync();
@@ -54,7 +54,7 @@ public sealed class LogsPageTests(WebAppFixture app, ITestOutputHelper output) :
 	[Fact]
 	public async Task LogsPage_Pin_Toggle_Works()
 	{
-		await _page!.GotoAsync("/logs");
+		await _page!.GotoAsync("/ui/logs");
 
 		var toggle = _page.GetByTestId("kql-pin-toggle");
 		await Expect(toggle).ToBeVisibleAsync();
@@ -66,7 +66,7 @@ public sealed class LogsPageTests(WebAppFixture app, ITestOutputHelper output) :
 	[Fact]
 	public async Task LogsPage_KqlError_On_Bad_Syntax()
 	{
-		await _page!.GotoAsync("/logs");
+		await _page!.GotoAsync("/ui/logs");
 
 		await _page.GetByTestId("kql-input").FillAsync("garbage syntax !!!");
 		await _page.GetByTestId("kql-apply").ClickAsync();

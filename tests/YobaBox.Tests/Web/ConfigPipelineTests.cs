@@ -261,7 +261,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Admin_ProjectsPage_Renders()
 	{
-		var resp = await GetPageAsync("/admin/projects");
+		var resp = await GetPageAsync("/ui/admin/projects");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("$system");
@@ -270,7 +270,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Admin_ProjectDetail_Renders()
 	{
-		var resp = await GetPageAsync("/admin/projects/$system");
+		var resp = await GetPageAsync("/ui/admin/projects/$system");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("$system");
@@ -279,7 +279,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Admin_CreateProject_Form_Renders()
 	{
-		var resp = await GetPageAsync("/admin/projects?handler=Create");
+		var resp = await GetPageAsync("/ui/admin/projects?handler=Create");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("admin-project-create-form");
@@ -314,7 +314,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 		var authCookie = string.Join("; ", loginResp.Headers.GetValues("Set-Cookie").Select(c => c.Split(';')[0]));
 
 		// GET create form (now embedded in the main projects page)
-		var formReq = new HttpRequestMessage(HttpMethod.Get, "/admin/projects");
+		var formReq = new HttpRequestMessage(HttpMethod.Get, "/ui/admin/projects");
 		formReq.Headers.Add("Cookie", authCookie);
 		var formResp = await _client.SendAsync(formReq);
 		formResp.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -325,7 +325,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 		var afToken = formHtml[afValueStart..afValueEnd];
 
 		// POST to create
-		var createReq = new HttpRequestMessage(HttpMethod.Post, "/admin/projects?handler=Create");
+		var createReq = new HttpRequestMessage(HttpMethod.Post, "/ui/admin/projects?handler=Create");
 		createReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
 		{
 			["Key"] = projectKey,
@@ -340,7 +340,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 		createResp.StatusCode.Should().Be(HttpStatusCode.Redirect);
 
 		// Verify project detail page renders
-		var detailReq = new HttpRequestMessage(HttpMethod.Get, "/admin/projects/" + projectKey);
+		var detailReq = new HttpRequestMessage(HttpMethod.Get, "/ui/admin/projects/" + projectKey);
 		detailReq.Headers.Add("Cookie", authCookie);
 		var detailResp = await _client.SendAsync(detailReq);
 		detailResp.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -351,7 +351,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task ConfigPage_Renders()
 	{
-		var resp = await GetPageAsync("/config");
+		var resp = await GetPageAsync("/ui/config");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("Config");

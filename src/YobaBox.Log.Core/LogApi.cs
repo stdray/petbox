@@ -19,7 +19,7 @@ public static class LogApi
 {
 	public static void MapLogEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapPost("/ingest/clef", IngestClefAsync).RequireAuthorization("ApiKey");
+		app.MapPost("/api/ingest/clef", IngestClefAsync).RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/{projectKey}/query", QueryLogsAsync).RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/{projectKey}/services", GetServicesAsync).RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/{projectKey}/live-tail", LiveTailAsync).RequireAuthorization("ApiKey");
