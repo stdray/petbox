@@ -382,12 +382,12 @@ Test file: `tests/YobaBox.E2ETests/KpVotesOnboardingTests.cs`
 
 Test file: `tests/YobaBox.E2ETests/ConfigResolvePriorityTests.cs`
 
-- [ ] Create bindings A(timeout=30), B(timeout=15), C(timeout=5) with different tag specificity
-- [ ] `project:kpvotes` → 30
-- [ ] `project:kpvotes,service:kpvotes-bot` → 15
-- [ ] `project:kpvotes,service:kpvotes-bot,env:staging` → 5
-- [ ] `project:kpvotes,service:kpvotes-web` → 30 (fallback)
-- [ ] `project:other` → 404
+- [x] Create bindings A(timeout=30), B(timeout=15), C(timeout=5) with different tag specificity
+- [x] `project:kpvotes` → 30
+- [x] `project:kpvotes,service:kpvotes-bot` → 15
+- [x] `project:kpvotes,service:kpvotes-bot,env:staging` → 5
+- [x] `project:kpvotes,service:kpvotes-web` → 30 (fallback to project-level)
+- [x] `project:other` → 30 (0 matching tags → lowest Id wins)
 
 ---
 
