@@ -160,7 +160,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 
 		// API resolve
 		var apiResp = await _page.APIRequest.GetAsync(
-			"/api/config?path=kpvotes/interval-minutes&tags=project:kpvotes",
+			"/api/config/$system/resolve?path=kpvotes/interval-minutes&tags=project:kpvotes",
 			new() { Headers = new Dictionary<string, string> { ["X-Api-Key"] = _kpvotesApiKey! } });
 		var body = await apiResp.TextAsync();
 		output.WriteLine($"Resolve status: {apiResp.Status}, body: {body}");

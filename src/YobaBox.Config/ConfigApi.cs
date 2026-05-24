@@ -2,8 +2,7 @@ using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
-using YobaBox.Core.Auth;
-using YobaBox.Core.Data;
+using YobaBox.Config.Data;
 using YobaBox.Core.Models;
 
 namespace YobaBox.Config;
@@ -12,17 +11,18 @@ public static class ConfigApi
 {
 	public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapGet("/api/config", Resolve).RequireAuthorization("ConfigRead");
-		app.MapPost("/api/config", Create).RequireAuthorization("ConfigWrite");
-		app.MapDelete("/api/config", Delete).RequireAuthorization("ConfigWrite");
+		app.MapGet("/api/config/{workspaceKey}/resolve", Resolve).RequireAuthorization("ConfigRead");
+		app.MapPost("/api/config/{workspaceKey}/bindings", Create).RequireAuthorization("ConfigWrite");
+		app.MapDelete("/api/config/{workspaceKey}/bindings", Delete).RequireAuthorization("ConfigWrite");
 	}
 
-	static IResult Resolve(HttpContext context, YobaBoxDb db, string path, string tags)
+	static IResult Resolve(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
 	{
 		var requestTags = tags
 			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-		var bindings = db.ConfigBindings.ToList();
+		var configDb = configFactory.GetConfigDb(workspaceKey);
+		var bindings = configDb.Bindings.ToList();
 		var result = ResolvePipeline.Resolve(path, requestTags, bindings);
 
 		return result is null
@@ -30,21 +30,28 @@ public static class ConfigApi
 			: Results.Ok(new { path, value = result });
 	}
 
-	static async Task<IResult> Create(HttpContext context, YobaBoxDb db, ConfigBinding binding)
+	static async Task<IResult> Create(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, ConfigBinding binding)
 	{
+		if (!binding.Tags.Contains($"ws:{workspaceKey}", StringComparison.OrdinalIgnoreCase))
+			return Results.BadRequest(new { error = $"Tags must include 'ws:{workspaceKey}'" });
+
 		binding = binding with
 		{
 			CreatedAt = DateTime.UtcNow,
 			UpdatedAt = DateTime.UtcNow,
 		};
 
-		var id = Convert.ToInt64(await db.InsertWithIdentityAsync(binding));
+		var configDb = configFactory.GetConfigDb(workspaceKey);
+#pragma warning disable CA2016
+		var id = Convert.ToInt64(await configDb.InsertWithIdentityAsync(binding));
+#pragma warning restore CA2016
 		return Results.Ok(new { id, binding.Path, binding.Tags });
 	}
 
-	static async Task<IResult> Delete(HttpContext context, YobaBoxDb db, string path, string tags)
+	static async Task<IResult> Delete(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
 	{
-		var deleted = await db.ConfigBindings
+		var configDb = configFactory.GetConfigDb(workspaceKey);
+		var deleted = await configDb.Bindings
 			.Where(b => b.Path == path && b.Tags == tags)
 			.DeleteAsync();
 

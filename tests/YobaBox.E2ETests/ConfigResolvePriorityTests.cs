@@ -86,7 +86,7 @@ public sealed class ConfigResolvePriorityTests(WebAppFixture app, ITestOutputHel
 	async Task AssertResolve(string path, string tags, string expectedValue)
 	{
 		var resp = await _page!.APIRequest.GetAsync(
-			$"/api/config?path={path}&tags={tags}",
+			$"/api/config/$system/resolve?path={path}&tags={tags}",
 			new() { Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! } });
 		resp.Status.Should().Be(200);
 		var body = await resp.TextAsync();
@@ -96,7 +96,7 @@ public sealed class ConfigResolvePriorityTests(WebAppFixture app, ITestOutputHel
 	async Task AssertNotFound(string path, string tags)
 	{
 		var resp = await _page!.APIRequest.GetAsync(
-			$"/api/config?path={path}&tags={tags}",
+			$"/api/config/$system/resolve?path={path}&tags={tags}",
 			new() { Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! } });
 		resp.Status.Should().Be(404);
 	}

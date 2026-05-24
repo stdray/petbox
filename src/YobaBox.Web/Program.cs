@@ -5,6 +5,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Seq.Extensions.Logging;
 using YobaBox.Config;
+using YobaBox.Config.Data;
 using YobaBox.Core.Auth;
 using YobaBox.Core.Data;
 using YobaBox.Core.Features;
@@ -39,6 +40,9 @@ public partial class Program
 		builder.Services.AddSingleton<ILogDbFactory>(_ => new LogDbFactory(
 			Path.Combine(Path.GetDirectoryName(
 				new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!, "logs")));
+		builder.Services.AddSingleton<IConfigDbFactory>(_ => new ConfigDbFactory(
+			Path.Combine(Path.GetDirectoryName(
+				new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!, "config")));
 		builder.Services.AddSingleton<CleFParser>();
 		builder.Services.AddSingleton<FeatureFlags>();
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));

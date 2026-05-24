@@ -82,9 +82,9 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		await _page.GetByTestId("config-save-btn").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
-		await AssertStatus("/api/config?path=scope-test&tags=project:kpvotes", "GET", "config:read", 200);
-		await AssertStatus("/api/config", "POST", "config:read", 403);
-		await AssertStatus("/api/config?path=scope-test&tags=project:kpvotes", "DELETE", "config:read", 403);
+		await AssertStatus("/api/config/$system/resolve?path=scope-test&tags=project:kpvotes", "GET", "config:read", 200);
+		await AssertStatus("/api/config/$system/bindings", "POST", "config:read", 403);
+		await AssertStatus("/api/config/$system/bindings?path=scope-test&tags=project:kpvotes", "DELETE", "config:read", 403);
 	}
 
 	[Fact]
@@ -99,7 +99,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		await _page.GetByTestId("config-save-btn").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
-		await AssertStatus("/api/config?path=scope-test-write&tags=project:kpvotes", "GET", "config:write", 403);
+		await AssertStatus("/api/config/$system/resolve?path=scope-test-write&tags=project:kpvotes", "GET", "config:write", 403);
 	}
 
 	[Fact]
@@ -125,7 +125,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		resp.Status.Should().Be(200);
 
 		// But cannot read config
-		await AssertStatus("/api/config?path=scope-test-ingest&tags=project:kpvotes", "GET", "logs:ingest", 403);
+		await AssertStatus("/api/config/$system/resolve?path=scope-test-ingest&tags=project:kpvotes", "GET", "logs:ingest", 403);
 	}
 
 	[Fact]
@@ -141,7 +141,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 		await AssertStatus("/api/auth/validate", "GET", "admin", 200); // Any valid key validates
-		await AssertStatus("/api/config?path=scope-test-admin&tags=project:kpvotes", "GET", "admin", 403);
+		await AssertStatus("/api/config/$system/resolve?path=scope-test-admin&tags=project:kpvotes", "GET", "admin", 403);
 	}
 
 	[Fact]

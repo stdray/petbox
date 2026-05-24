@@ -122,7 +122,8 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 
 	async Task<JsonDocument> PostBindingAsync(string path, string value, string tags)
 	{
-		var req = ApiRequest("/api/config", WriteKey, HttpMethod.Post);
+		tags = $"ws:$system,{tags}";
+		var req = ApiRequest("/api/config/$system/bindings", WriteKey, HttpMethod.Post);
 		req.Content = JsonContent.Create(new { path, value, tags });
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -131,7 +132,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 
 	async Task<JsonDocument?> ResolveAsync(string path, string tags)
 	{
-		var req = ApiRequest($"/api/config?path={Uri.EscapeDataString(path)}&tags={Uri.EscapeDataString(tags)}", ReadKey);
+		var req = ApiRequest($"/api/config/$system/resolve?path={Uri.EscapeDataString(path)}&tags={Uri.EscapeDataString(tags)}", ReadKey);
 		using var resp = await _client.SendAsync(req);
 		if (resp.StatusCode == HttpStatusCode.NotFound)
 			return null;
@@ -141,8 +142,9 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 
 	async Task DeleteBindingAsync(string path, string tags)
 	{
+		tags = $"ws:$system,{tags}";
 		var req = ApiRequest(
-			$"/api/config?path={Uri.EscapeDataString(path)}&tags={Uri.EscapeDataString(tags)}",
+			$"/api/config/$system/bindings?path={Uri.EscapeDataString(path)}&tags={Uri.EscapeDataString(tags)}",
 			WriteKey,
 			HttpMethod.Delete);
 		using var resp = await _client.SendAsync(req);
@@ -163,7 +165,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Resolve_NoMatch_Returns404()
 	{
-		var req = ApiRequest($"/api/config?path=/nonexistent/{Guid.NewGuid():N}&tags=env:dev", ReadKey);
+		var req = ApiRequest($"/api/config/$system/resolve?path=/nonexistent/{Guid.NewGuid():N}&tags=env:dev", ReadKey);
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
 	}
@@ -201,7 +203,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Write_WithoutApiKey_Returns401()
 	{
-		var req = new HttpRequestMessage(HttpMethod.Post, "/api/config");
+		var req = new HttpRequestMessage(HttpMethod.Post, "/api/config/$system/bindings");
 		req.Content = JsonContent.Create(new
 		{
 			path = $"/nokey/{Guid.NewGuid():N}",
@@ -215,14 +217,14 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Read_WithoutApiKey_Returns401()
 	{
-		using var resp = await _client.GetAsync($"/api/config?path=/test&tags=env:dev");
+		using var resp = await _client.GetAsync($"/api/config/$system/resolve?path=/test&tags=env:dev");
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 	}
 
 	[Fact]
 	public async Task Write_WithReadOnlyKey_Returns403()
 	{
-		var req = new HttpRequestMessage(HttpMethod.Post, "/api/config");
+		var req = new HttpRequestMessage(HttpMethod.Post, "/api/config/$system/bindings");
 		req.Headers.Add("X-Api-Key", ReadKey);
 		req.Content = JsonContent.Create(new
 		{
@@ -238,7 +240,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	public async Task Delete_WithReadOnlyKey_Returns403()
 	{
 		var req = new HttpRequestMessage(HttpMethod.Delete,
-			$"/api/config?path=/test&tags=env:dev");
+			$"/api/config/$system/bindings?path=/test&tags=env:dev");
 		req.Headers.Add("X-Api-Key", ReadKey);
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
@@ -251,7 +253,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 		await PostBindingAsync(p, "v1", "env:dev");
 
 		var req = ApiRequest(
-			$"/api/config?path={Uri.EscapeDataString(p)}&tags=env:dev", WriteKey);
+			$"/api/config/$system/resolve?path={Uri.EscapeDataString(p)}&tags=env:dev", WriteKey);
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 	}

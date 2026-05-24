@@ -2,16 +2,16 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using YobaBox.Core.Data;
+using YobaBox.Config.Data;
 
 namespace YobaBox.Web.Pages.Config;
 
 [Authorize]
 public sealed class EditorModel : PageModel
 {
-	readonly YobaBoxDb _db;
+	readonly IConfigDbFactory _configFactory;
 
-	public EditorModel(YobaBoxDb db) => _db = db;
+	public EditorModel(IConfigDbFactory configFactory) => _configFactory = configFactory;
 
 	public long? Id { get; private set; }
 	public string Path { get; private set; } = string.Empty;
@@ -24,7 +24,8 @@ public sealed class EditorModel : PageModel
 		Id = bindingId;
 		if (bindingId is { } bid)
 		{
-			var binding = _db.ConfigBindings.First(b => b.Id == bid);
+			var configDb = _configFactory.GetConfigDb("$system");
+			var binding = configDb.Bindings.First(b => b.Id == bid);
 			Path = binding.Path;
 			Value = binding.Value;
 			Tags = binding.Tags;
@@ -46,15 +47,19 @@ public sealed class EditorModel : PageModel
 			return Page();
 		}
 
+		var configDb = _configFactory.GetConfigDb("$system");
+
 		if (bindingId is > 0)
 		{
-			var binding = _db.ConfigBindings.First(b => b.Id == bindingId.Value);
+			var binding = configDb.Bindings.First(b => b.Id == bindingId.Value);
 			var updated = binding with { Path = Path, Value = Value, Tags = Tags, UpdatedAt = DateTime.UtcNow };
-			await _db.UpdateAsync(updated);
+			await configDb.UpdateAsync(updated);
 		}
 		else
 		{
-			await _db.InsertWithIdentityAsync(new Core.Models.ConfigBinding
+#pragma warning disable CA2016
+			await configDb.InsertWithIdentityAsync(new Core.Models.ConfigBinding
+#pragma warning restore CA2016
 			{
 				Path = Path,
 				Value = Value,

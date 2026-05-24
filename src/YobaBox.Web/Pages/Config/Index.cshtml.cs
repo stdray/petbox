@@ -2,16 +2,16 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Routing;
-using YobaBox.Core.Data;
+using YobaBox.Config.Data;
 
 namespace YobaBox.Web.Pages.Config;
 
 [Authorize]
 public sealed class IndexModel : PageModel
 {
-	readonly YobaBoxDb _db;
+	readonly IConfigDbFactory _configFactory;
 
-	public IndexModel(YobaBoxDb db) => _db = db;
+	public IndexModel(IConfigDbFactory configFactory) => _configFactory = configFactory;
 
 	public string? KeyQuery { get; private set; }
 	public IReadOnlyDictionary<string, string> TagFilter { get; private set; } =
@@ -48,7 +48,8 @@ public sealed class IndexModel : PageModel
 		if (!string.IsNullOrEmpty(flash))
 			SuccessMessage = "Binding deleted.";
 
-		var all = _db.ConfigBindings.OrderBy(b => b.Path).ToList();
+		var configDb = _configFactory.GetConfigDb("$system");
+		var all = configDb.Bindings.OrderBy(b => b.Path).ToList();
 
 		var facetKeys = new SortedSet<string>(StringComparer.Ordinal);
 		var facetValues = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
@@ -97,7 +98,8 @@ public sealed class IndexModel : PageModel
 		}
 		routeValues["deleteSuccess"] = "1";
 
-		_db.ConfigBindings.Where(b => b.Id == id).Delete();
+		var configDb = _configFactory.GetConfigDb("$system");
+		configDb.Bindings.Where(b => b.Id == id).Delete();
 		return RedirectToPage("Index", routeValues);
 	}
 
