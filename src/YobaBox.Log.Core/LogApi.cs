@@ -20,9 +20,9 @@ public static class LogApi
 	public static void MapLogEndpoints(this IEndpointRouteBuilder app)
 	{
 		app.MapPost("/ingest/clef", IngestClefAsync).RequireAuthorization("ApiKey");
-		app.MapGet("/api/logs/query", QueryLogsAsync).RequireAuthorization("ApiKey");
-		app.MapGet("/api/logs/services", GetServicesAsync).RequireAuthorization("ApiKey");
-		app.MapGet("/api/live-tail", LiveTailAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/{projectKey}/query", QueryLogsAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/{projectKey}/services", GetServicesAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/{projectKey}/live-tail", LiveTailAsync).RequireAuthorization("ApiKey");
 	}
 
 	public static void MapSeqSelfLogEndpoint(this IEndpointRouteBuilder app)
@@ -32,13 +32,30 @@ public static class LogApi
 
 	static async Task<IResult> IngestClefAsync(
 		HttpContext ctx,
-		LogDb logDb,
+		YobaBoxDb yobaBoxDb,
+		ILogDbFactory logFactory,
 		CleFParser parser,
 		CancellationToken ct)
 	{
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(serviceKey))
 			return Results.BadRequest("X-Service-Key header required");
+
+		var service = yobaBoxDb.Services.FirstOrDefault(s => s.Key == serviceKey);
+		var projectKey = service?.ProjectKey ?? "$system";
+		if (service is null)
+		{
+			// Auto-register unknown service under $system
+#pragma warning disable CA2016
+			await yobaBoxDb.InsertAsync(new Service
+#pragma warning restore CA2016
+			{
+				Key = serviceKey,
+				ProjectKey = "$system",
+				HealthModel = HealthModel.Endpoint,
+				Health = ServiceHealth.Unknown,
+			});
+		}
 
 		var results = await parser.ParseAsync(ctx.Request.Body, ct)
 			.ToListAsync(ct);
@@ -61,6 +78,7 @@ public static class LogApi
 			.Select(c => LogEntryRecord.FromCandidate(c, LogEntryRecord.ComputeTemplateHash(c.MessageTemplate)))
 			.ToList();
 
+		var logDb = logFactory.GetLogDb(projectKey);
 		await logDb.LogEntries.BulkCopyAsync(records, ct);
 
 		return Results.Ok(new { ingested = records.Count, errors = errors.Count });
@@ -68,7 +86,8 @@ public static class LogApi
 
 	static async Task<IResult> QueryLogsAsync(
 		HttpContext ctx,
-		LogDb logDb,
+		string projectKey,
+		ILogDbFactory logFactory,
 		CancellationToken ct)
 	{
 		var kql = ctx.Request.Query["q"].FirstOrDefault();
@@ -93,6 +112,8 @@ public static class LogApi
 		{
 			return Results.BadRequest(new { error = ex.Message });
 		}
+
+		var logDb = logFactory.GetLogDb(projectKey);
 
 		try
 		{
@@ -145,12 +166,13 @@ public static class LogApi
 
 	static async Task<IResult> GetServicesAsync(
 		HttpContext ctx,
-		LogDb logDb,
+		string projectKey,
+		YobaBoxDb yobaBoxDb,
 		CancellationToken ct)
 	{
-		var services = await logDb.LogEntries
-			.Select(e => e.ServiceKey)
-			.Distinct()
+		var services = await yobaBoxDb.Services
+			.Where(s => s.ProjectKey == projectKey)
+			.Select(s => s.Key)
 			.ToListAsync(ct);
 
 		return Results.Json(services);
@@ -159,7 +181,7 @@ public static class LogApi
 	static async Task<IResult> SeqIngestAsync(
 		HttpContext ctx,
 		YobaBoxDb yobaBoxDb,
-		LogDb logDb,
+		ILogDbFactory logFactory,
 		CleFParser parser,
 		IConfiguration config,
 		CancellationToken ct)
@@ -189,18 +211,23 @@ public static class LogApi
 			.ToList();
 
 		if (records.Count > 0)
+		{
+			var logDb = logFactory.GetLogDb("$system");
 			await logDb.LogEntries.BulkCopyAsync(records, ct);
+		}
 
 		return Results.Ok();
 	}
 
 	static async Task<IResult> LiveTailAsync(
 		HttpContext ctx,
-		LogDb logDb,
+		string projectKey,
+		ILogDbFactory logFactory,
 		HttpResponse response,
 		CancellationToken ct)
 	{
 		var kql = ctx.Request.Query["kql"].FirstOrDefault() ?? "events";
+		var logDb = logFactory.GetLogDb(projectKey);
 		var lastId = 0L;
 
 		try

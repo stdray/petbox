@@ -203,8 +203,8 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 			resp.Status.Should().Be(200);
 		}
 
-		// Navigate to logs page
-		await _page!.GotoAsync("/logs");
+		// Navigate to logs page for kpvotes project
+		await _page!.GotoAsync("/logs?project=kpvotes");
 		await _page!.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 		// KQL: where Level == 4 (Error)

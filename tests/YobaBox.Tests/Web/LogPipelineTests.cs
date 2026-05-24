@@ -108,9 +108,9 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		return await _client.SendAsync(req);
 	}
 
-	async Task<JsonDocument> QueryAsync(string kql)
+	async Task<JsonDocument> QueryAsync(string kql, string projectKey = "$system")
 	{
-		var req = LogRequest($"/api/logs/query?q={Uri.EscapeDataString(kql)}");
+		var req = LogRequest($"/api/logs/{projectKey}/query?q={Uri.EscapeDataString(kql)}");
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var body = await resp.Content.ReadAsStringAsync();
@@ -264,7 +264,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Query_BadKql_Returns400()
 	{
-		var req = LogRequest("/api/logs/query?q=not%20valid%20kql");
+		var req = LogRequest("/api/logs/$system/query?q=not%20valid%20kql");
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 	}
@@ -272,7 +272,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Query_WithoutApiKey_Returns401()
 	{
-		using var resp = await _client.GetAsync("/api/logs/query?q=events");
+		using var resp = await _client.GetAsync("/api/logs/$system/query?q=events");
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 	}
 
@@ -283,7 +283,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		await PostClefAsync(svc,
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("i1")}}"}""");
 
-		var req = LogRequest("/api/logs/services");
+		var req = LogRequest("/api/logs/$system/services");
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var body = await resp.Content.ReadAsStringAsync();

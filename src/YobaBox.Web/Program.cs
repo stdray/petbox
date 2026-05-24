@@ -36,7 +36,9 @@ public partial class Program
 			new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!);
 
 		builder.Services.AddScoped(_ => new YobaBoxDb(YobaBoxDb.CreateOptions(connectionString)));
-		builder.Services.AddScoped(_ => new LogDb(LogDb.CreateOptions(connectionString)));
+		builder.Services.AddSingleton<ILogDbFactory>(_ => new LogDbFactory(
+			Path.Combine(Path.GetDirectoryName(
+				new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!, "logs")));
 		builder.Services.AddSingleton<CleFParser>();
 		builder.Services.AddSingleton<FeatureFlags>();
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));

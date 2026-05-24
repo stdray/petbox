@@ -95,6 +95,14 @@ public sealed class YobaBoxDb : DataConnection
 			.Property(d => d.ProjectKey).HasLength(100).IsNullable(false)
 			.Property(d => d.Columns).HasDataType(DataType.Text).IsNullable(false);
 
+		builder.Entity<SavedQuery>()
+			.HasTableName("SavedQueries")
+			.HasIdentity(q => q.Id)
+			.Property(q => q.Id).IsPrimaryKey()
+			.Property(q => q.Name).HasLength(200).IsNullable(false)
+			.Property(q => q.Kql).HasDataType(DataType.Text).IsNullable(false)
+			.Property(q => q.ProjectKey).HasLength(100).IsNullable(false);
+
 		builder.Build();
 	}
 }

@@ -15,12 +15,12 @@ namespace YobaBox.Web.Pages.Logs;
 [Authorize]
 public sealed class IndexModel : PageModel
 {
-	readonly LogDb _logDb;
+	readonly ILogDbFactory _logFactory;
 	readonly YobaBoxDb _db;
 
-	public IndexModel(LogDb logDb, YobaBoxDb db)
+	public IndexModel(ILogDbFactory logFactory, YobaBoxDb db)
 	{
-		_logDb = logDb;
+		_logFactory = logFactory;
 		_db = db;
 	}
 
@@ -72,16 +72,20 @@ public sealed class IndexModel : PageModel
 
 		// Load saved queries
 		if (ProjectKey is not null)
+		{
+			var pk = ProjectKey;
 			SavedQueries = await _db.SavedQueries
-				.Where(q => q.ProjectKey == ProjectKey)
+				.Where(q => q.ProjectKey == pk)
 				.OrderBy(q => q.Name)
 				.ToListAsync(ct);
+		}
 
 		// Activate saved query
 		if (!string.IsNullOrWhiteSpace(SavedName) && ProjectKey is not null)
 		{
+			var pk = ProjectKey;
 			var saved = await _db.SavedQueries
-				.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == ProjectKey && q.Name == SavedName, ct);
+				.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == pk && q.Name == SavedName, ct);
 			if (saved is not null)
 			{
 				RawKql = saved.Kql;
@@ -128,17 +132,19 @@ public sealed class IndexModel : PageModel
 			return Page();
 		}
 
+		var logDb = _logFactory.GetLogDb(ProjectKey ?? "$system");
+
 		try
 		{
 			if (IsShapeChanged)
 			{
-				KqlResult = KqlTransformer.Execute(_logDb.LogEntries, code);
+				KqlResult = KqlTransformer.Execute(logDb.LogEntries, code);
 				await foreach (var row in KqlResult.Rows.WithCancellation(ct))
 					KqlRows.Add(row);
 			}
 			else
 			{
-				var query = KqlTransformer.Apply(_logDb.LogEntries, code);
+				var query = KqlTransformer.Apply(logDb.LogEntries, code);
 				var list = await query.ToListAsync(ct);
 				foreach (var r in list)
 					Events.Add(LogEntryViewModel.FromRecord(r));
@@ -162,7 +168,7 @@ public sealed class IndexModel : PageModel
 			return Page();
 		}
 
-		Services = await _logDb.LogEntries
+		Services = await logDb.LogEntries
 			.Select(e => e.ServiceKey)
 			.Distinct()
 			.OrderBy(s => s)
