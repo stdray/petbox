@@ -46,7 +46,7 @@
 		<tbody>
 			@foreach (var s in Model.Services)
 			{
-				<tr>
+				<tr data-testid="service-row">
 					<td class="font-mono text-sm">@s.Key</td>
 					<td>@s.Kind</td>
 					<td class="text-sm max-w-xs truncate">@s.Url</td>
@@ -119,7 +119,7 @@
 		<tbody>
 			@foreach (var k in Model.Keys)
 			{
-				<tr>
+				<tr data-testid="key-row">
 					<td class="font-mono text-sm">@(k.Key.Length > 12 ? k.Key[..12] + "..." : k.Key)</td>
 					<td class="text-sm">@k.Scopes</td>
 					<td class="text-xs opacity-70">@k.CreatedAt.ToString("yyyy-MM-dd")</td>

@@ -335,3 +335,95 @@ Source: `D:\my\prj\yobaconf\src\YobaConf.Web\Pages\Bindings\`
 - [ ] `tests/YobaBox.E2ETests/DashboardTests.cs` — dashboard renders `$system` project + services
 - [ ] `tests/YobaBox.E2ETests/LogsPageTests.cs` — KQL input, autocomplete, event rows, filter chips
 - [ ] `tests/YobaBox.E2ETests/ConfigPageTests.cs` — binding list, create/edit, secret reveal
+
+---
+
+## Phase 8: E2E — KpVotes real-world flow [NEW]
+
+Goal: Playwright E2E tests simulating developer onboarding a real project (KpVotes) into YobaBox.
+Test file: `tests/YobaBox.E2ETests/KpVotesOnboardingTests.cs`
+
+### 8.1 — Create Project
+
+- [x] Navigate `/admin/projects`, fill create form: Key=`kpvotes`, Name=`KpVotes`, Description=`Kinopoisk → Twitter voting tracker`
+- [x] Submit → redirected back, table contains new row with `data-testid="project-row"`
+- [x] Add `data-testid="project-row"` to project table rows
+
+### 8.2 — Create Services
+
+- [x] **kpvotes-net** (Kind: Cron): fill service create form on `/admin/projects/kpvotes`, Key=`kpvotes-net`, Kind=`Cron`, Url=(empty). Submit → row appears with `data-testid="service-row"`
+- [x] **kpvotes-ts** (Kind: PoC): Key=`kpvotes-ts`, Kind=`PoC`, Url=(empty)
+- [x] Add `data-testid="service-row"` to service table rows
+
+### 8.3 — Create ApiKey + validate
+
+- [x] Fill key create form on `/admin/projects/kpvotes`: Scopes=`config:read,config:write,logs:ingest,data:read,data:write`
+- [x] Submit → key displayed (capture for API calls), row in keys table with `data-testid="key-row"`
+- [x] `GET /api/auth/validate` with `X-Api-Key: <captured>` → 200 `{ project: "kpvotes", scopes: "..." }`
+- [x] Add `data-testid="key-row"` to key table rows
+
+### 8.4 — Add Config bindings + resolve
+
+- [x] Navigate `/config`, create 7 bindings for kpvotes (kp-uri, votes-uri, interval-minutes, user-agent, cache-path, twitter/consumer-key, proxy/host)
+- [x] Each: click "+ New binding" → fill Path/Value/Tags → submit → row appears in config table
+- [x] `GET /api/config?path=kpvotes/interval-minutes&tags=project:kpvotes` → 200 `{ value: "120" }`
+- [x] Fix `Features:Config=true` in E2E fixture
+
+### 8.5 — Ingest logs + verify in UI
+
+- [ ] POST 4 CLEF events to `/ingest/clef` with X-Api-Key (starting scrape, loaded votes, proxy timeout, rate limit)
+- [ ] Navigate `/logs?project=kpvotes` → service chips show kpvotes-net + kpvotes-ts
+- [ ] KQL `where Level == "Error"` → 1 row (429 rate limit)
+- [ ] KQL `summarize count() by Level` → table: Information=2, Warning=1, Error=1
+- [ ] Click row expand → shows full message + properties
+- [ ] Ensure `/logs?project=kpvotes` filter works
+
+---
+
+## Phase 9: Config resolve priority tests [NEW]
+
+Test file: `tests/YobaBox.E2ETests/ConfigResolvePriorityTests.cs`
+
+- [ ] Create bindings A(timeout=30), B(timeout=15), C(timeout=5) with different tag specificity
+- [ ] `project:kpvotes` → 30
+- [ ] `project:kpvotes,service:kpvotes-bot` → 15
+- [ ] `project:kpvotes,service:kpvotes-bot,env:staging` → 5
+- [ ] `project:kpvotes,service:kpvotes-web` → 30 (fallback)
+- [ ] `project:other` → 404
+
+---
+
+## Phase 10: ApiKey scope enforcement tests [NEW]
+
+Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
+
+- [ ] Key with only `config:read` → `POST /api/config` → 403, `DELETE /api/config` → 403
+- [ ] Key with only `config:write` → `GET /api/config` → 403
+- [ ] Key with only `logs:ingest` → `GET /api/config` → 403
+- [ ] Key with `data:read,data:write` → `GET /api/dashboard/...` → 403
+- [ ] Key with `admin` → `/admin/projects` → 401 (admin is UI-only, no API access)
+- [ ] Revoked key → `GET /api/auth/validate` → 401
+
+### 8.6 — Create DataTable for votes cache (after log + config flows)
+
+- [ ] Navigate `/admin/projects/kpvotes/data` (new page or section)
+- [ ] Create table `votes_cache` with columns: id TEXT PK, film_uri TEXT NOT NULL, vote_value TEXT, cached_at TEXT
+- [ ] Set Read=true, Write=true, Delete=true → submit → table appears in list
+- [ ] `GET /api/data/votes_cache` with X-Api-Key → 200 `[]` (empty)
+- [ ] Build `/admin/projects/{key}/data` page + `/api/data/{table}` endpoint
+
+### 8.7 — Dashboard (after DataTable)
+
+- [ ] Navigate `/dashboard` → project card "KpVotes" visible with health indicator
+- [ ] Shows 2 services: kpvotes-net (degraded — has errors), kpvotes-ts (unknown)
+- [ ] Navigate `/dashboard/kpvotes` → service list with health badges, version, last error
+- [ ] Build `/dashboard/{project}` page if missing
+
+Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
+
+- [ ] Create key with only `config:read`
+- [ ] `GET /api/config?...` → 200
+- [ ] `POST /api/config` → 403
+- [ ] `DELETE /api/config?...` → 403
+- [ ] `POST /ingest/clef` → 403
+- [ ] `GET /api/auth/validate` → 200 (no scope needed)

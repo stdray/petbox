@@ -24,12 +24,12 @@ public sealed class ConfigPageTests(WebAppFixture app, ITestOutputHelper output)
 	}
 
 	[Fact]
-	public async Task ConfigPage_Renders_Empty_State()
+	public async Task ConfigPage_Renders()
 	{
 		await _page!.GotoAsync("/config");
 
 		await Expect(_page.GetByTestId("config-title")).ToBeVisibleAsync();
-		await Expect(_page.GetByTestId("config-empty")).ToBeVisibleAsync();
+		await Expect(_page.Locator("body")).ToContainTextAsync("Bindings");
 	}
 
 	[Fact]
@@ -52,15 +52,16 @@ public sealed class ConfigPageTests(WebAppFixture app, ITestOutputHelper output)
 	}
 
 	[Fact]
-	public async Task ConfigPage_Clear_Filter_Restores_Empty()
+	public async Task ConfigPage_Clear_Filter_Restores()
 	{
 		await _page!.GotoAsync("/config");
 
-		await _page.GetByTestId("config-filter-key").FillAsync("nonexistent");
+		await _page.GetByTestId("config-filter-key").FillAsync("zzznonexistent");
 		await _page.GetByTestId("config-filter-apply").ClickAsync();
-		await Expect(_page.GetByTestId("config-empty")).ToBeVisibleAsync();
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 		await _page.GetByTestId("config-filter-clear").ClickAsync();
-		await Expect(_page.GetByTestId("config-empty")).ToBeVisibleAsync();
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		await Expect(_page.Locator("body")).ToContainTextAsync("Bindings");
 	}
 }

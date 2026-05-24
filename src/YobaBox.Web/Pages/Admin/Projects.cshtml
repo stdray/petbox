@@ -27,7 +27,7 @@
 		<tbody>
 			@foreach (var p in Model.Projects)
 			{
-				<tr>
+				<tr data-testid="project-row">
 					<td class="font-mono text-sm">@p.Key</td>
 					<td><a asp-page="/Admin/ProjectDetail" asp-route-key="@p.Key" data-testid="admin-project-link">@p.Name</a></td>
 					<td class="text-sm opacity-70">@p.Description</td>
