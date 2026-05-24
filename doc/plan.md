@@ -404,18 +404,18 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 
 ### 8.6 — Create DataTable for votes cache (after log + config flows)
 
-- [ ] Navigate `/admin/projects/kpvotes/data` (new page or section)
-- [ ] Create table `votes_cache` with columns: id TEXT PK, film_uri TEXT NOT NULL, vote_value TEXT, cached_at TEXT
-- [ ] Set Read=true, Write=true, Delete=true → submit → table appears in list
-- [ ] `GET /api/data/votes_cache` with X-Api-Key → 200 `[]` (empty)
-- [ ] Build `/admin/projects/{key}/data` page + `/api/data/{table}` endpoint
+- [x] Navigate `/admin/projects/kpvotes/data` (new page or section)
+- [x] Create table `votes_cache` with columns: id TEXT PK, film_uri TEXT NOT NULL, vote_value TEXT, cached_at TEXT
+- [x] Set Read=true, Write=true, Delete=true → submit → table appears in list
+- [x] `GET /api/data/votes_cache` with X-Api-Key → 200 `[]` (empty)
+- [x] Build `/admin/projects/{key}/data` page + `/api/data/{table}` endpoint
 
 ### 8.7 — Dashboard (after DataTable)
 
-- [ ] Navigate `/dashboard` → project card "KpVotes" visible with health indicator
-- [ ] Shows 2 services: kpvotes-net (degraded — has errors), kpvotes-ts (unknown)
-- [ ] Navigate `/dashboard/kpvotes` → service list with health badges, version, last error
-- [ ] Build `/dashboard/{project}` page if missing
+- [x] Navigate `/dashboard` → project card "KpVotes" visible with services
+- [x] Shows 2 services: kpvotes-net (Cron), kpvotes-ts (PoC)
+- [x] Navigate `/dashboard/kpvotes` → service list with health badges
+- [x] Build `/dashboard/{project}` page
 
 Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 

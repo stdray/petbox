@@ -1,0 +1,49 @@
+@page "/dashboard/{projectKey}"
+@model YobaBox.Web.Pages.Dashboard.ProjectModel
+@{
+	ViewData["Title"] = $"Dashboard — {Model.ProjectKey}";
+}
+
+<div class="mb-4">
+	<a asp-page="/Dashboard/Index" class="text-sm opacity-60 hover:underline">&larr; Dashboard</a>
+	<h1 class="text-2xl font-semibold mt-1">@Model.ProjectName</h1>
+	<span class="text-sm opacity-60 font-mono">@Model.ProjectKey</span>
+</div>
+
+@if (Model.ProjectNotFound)
+{
+	<p class="text-error font-semibold" data-testid="dashboard-project-error">Project not found</p>
+	return;
+}
+
+<div class="overflow-x-auto">
+	<table class="table table-sm" data-testid="dashboard-project-services">
+		<thead>
+			<tr>
+				<th>Service</th>
+				<th>Kind</th>
+				<th>Health</th>
+				<th>Version</th>
+				<th>URL</th>
+			</tr>
+		</thead>
+		<tbody>
+			@foreach (var svc in Model.Services)
+			{
+				<tr data-testid="dashboard-project-service-row">
+					<td class="font-mono text-sm">@svc.Key</td>
+					<td><span class="badge badge-xs">@svc.Kind</span></td>
+					<td><span class="badge badge-xs">@svc.Health</span></td>
+					<td class="text-xs opacity-70">
+						@(svc.Version ?? "—")
+						@if (!string.IsNullOrWhiteSpace(svc.ShortSha))
+						{
+							<text>·</text><span class="opacity-50">@svc.ShortSha</span>
+						}
+					</td>
+					<td class="text-sm max-w-xs truncate">@svc.Url</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+</div>

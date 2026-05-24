@@ -26,6 +26,7 @@ public sealed class WebAppFixture : IAsyncLifetime
 			s["Admin:Username"] = AdminUsername;
 			s["Admin:PasswordHash"] = hash;
 			s["Features:Config"] = "true";
+			s["Features:Data"] = "true";
 			s["Features:Logging"] = "true";
 		});
 

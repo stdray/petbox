@@ -1,0 +1,91 @@
+@page "/admin/projects/{projectKey}/data"
+@model YobaBox.Web.Pages.Admin.ProjectDataModel
+@{
+	ViewData["Title"] = $"{Model.ProjectKey} — Data Tables";
+}
+
+<div class="mb-4">
+	<a asp-page="/Admin/ProjectDetail" asp-route-projectKey="@Model.ProjectKey" class="text-sm opacity-60 hover:underline">&larr; @Model.ProjectKey</a>
+	<h1 class="text-2xl font-semibold mt-1">Data Tables</h1>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3">@Model.ErrorMessage</div>
+}
+
+@if (Model.ProjectNotFound)
+{
+	<p class="text-error font-semibold" data-testid="project-data-error">Project not found</p>
+	return;
+}
+
+<div class="overflow-x-auto mb-6" data-testid="data-tables-list">
+	<table class="table table-sm">
+		<thead>
+			<tr>
+				<th>Name</th>
+				<th>Columns</th>
+				<th>Read</th>
+				<th>Write</th>
+				<th>Delete</th>
+				<th></th>
+			</tr>
+		</thead>
+		<tbody>
+			@foreach (var t in Model.Tables)
+			{
+				<tr data-testid="datatable-row">
+					<td class="font-mono text-sm">@t.Name</td>
+					<td class="text-xs">@t.Columns</td>
+					<td><span class="badge badge-xs @(t.Read ? "badge-success" : "badge-ghost")">@(t.Read ? "Yes" : "No")</span></td>
+					<td><span class="badge badge-xs @(t.Write ? "badge-success" : "badge-ghost")">@(t.Write ? "Yes" : "No")</span></td>
+					<td><span class="badge badge-xs @(t.Delete ? "badge-success" : "badge-ghost")">@(t.Delete ? "Yes" : "No")</span></td>
+					<td>
+						<form method="post" asp-page-handler="DeleteTable" asp-route-tableName="@t.Name"
+							onsubmit="return confirm('Delete table @t.Name?')" style="display:inline">
+							@Html.AntiForgeryToken()
+							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="datatable-delete">Del</button>
+						</form>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+</div>
+
+<form method="post" asp-page-handler="CreateTable" class="card bg-base-200" data-testid="datatable-create-form">
+	@Html.AntiForgeryToken()
+	<div class="card-body">
+		<h3 class="card-title text-base">Create Table</h3>
+		<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+			<label class="form-control w-full">
+				<span class="label-text text-xs">Table Name</span>
+				<input type="text" name="TableName" data-testid="datatable-create-name"
+					placeholder="votes_cache" required class="input input-sm input-bordered" />
+			</label>
+			<label class="form-control w-full">
+				<span class="label-text text-xs">Columns (JSON)</span>
+				<input type="text" name="Columns" data-testid="datatable-create-columns"
+					placeholder='[{"name":"id","type":"TEXT","pk":true}]' required class="input input-sm input-bordered font-mono" />
+			</label>
+		</div>
+		<div class="flex gap-3 items-center mt-3">
+			<label class="flex items-center gap-1 cursor-pointer">
+				<input type="checkbox" name="Read" checked value="true" data-testid="datatable-create-read" class="checkbox checkbox-sm" />
+				<span class="text-xs">Read</span>
+			</label>
+			<label class="flex items-center gap-1 cursor-pointer">
+				<input type="checkbox" name="Write" checked value="true" data-testid="datatable-create-write" class="checkbox checkbox-sm" />
+				<span class="text-xs">Write</span>
+			</label>
+			<label class="flex items-center gap-1 cursor-pointer">
+				<input type="checkbox" name="Delete" checked value="true" data-testid="datatable-create-delete" class="checkbox checkbox-sm" />
+				<span class="text-xs">Delete</span>
+			</label>
+		</div>
+		<div class="card-actions mt-4">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="datatable-create-submit">Create</button>
+		</div>
+	</div>
+</form>

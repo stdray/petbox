@@ -43,27 +43,16 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	[Fact]
 	public async Task CreateServices_KpVotes()
 	{
-		// kpvotes-net (Cron)
-		await _page!.GotoAsync("/admin/projects/kpvotes");
-		await _page.GetByTestId("project-service-create-key").ScrollIntoViewIfNeededAsync();
-		await _page.GetByTestId("project-service-create-key").FillAsync("kpvotes-net");
-		await _page.GetByTestId("project-service-create-kind").SelectOptionAsync("Cron");
-		await _page.GetByTestId("project-service-create-submit").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		await SetupKpVotesProject(_page!);
 
+		// Verify services exist (created by SetupKpVotesProject)
+		await _page!.GotoAsync("/admin/projects/kpvotes");
 		var rowNet = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-net" });
 		await Expect(rowNet).ToContainTextAsync("Cron");
-
-		// kpvotes-ts (PoC)
-		await _page.GetByTestId("project-service-create-key").FillAsync("kpvotes-ts");
-		await _page.GetByTestId("project-service-create-kind").SelectOptionAsync("PoC");
-		await _page.GetByTestId("project-service-create-submit").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 		var rowTs = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-ts" });
 		await Expect(rowTs).ToContainTextAsync("PoC");
 
-		// Both rows exist
 		var allRows = await _page.GetByTestId("service-row").AllAsync();
 		output.WriteLine($"Service rows: {allRows.Count}");
 	}
@@ -113,6 +102,23 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 			await page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
 			await page.GetByTestId("admin-project-create-desc").FillAsync("Kinopoisk → Twitter voting tracker");
 			await page.GetByTestId("admin-project-create-submit").ClickAsync();
+			await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		}
+
+		// Create services if not exist
+		await page.GotoAsync("/admin/projects/kpvotes");
+		var svcExisting = await page.GetByTestId("service-row").CountAsync();
+		if (svcExisting == 0)
+		{
+			await page.GetByTestId("project-service-create-key").ScrollIntoViewIfNeededAsync();
+			await page.GetByTestId("project-service-create-key").FillAsync("kpvotes-net");
+			await page.GetByTestId("project-service-create-kind").SelectOptionAsync("Cron");
+			await page.GetByTestId("project-service-create-submit").ClickAsync();
+			await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+
+			await page.GetByTestId("project-service-create-key").FillAsync("kpvotes-ts");
+			await page.GetByTestId("project-service-create-kind").SelectOptionAsync("PoC");
+			await page.GetByTestId("project-service-create-submit").ClickAsync();
 			await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 		}
 	}
@@ -213,6 +219,29 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		// Level=2 (Information)=2, Level=3 (Warning)=1, Level=4 (Error)=1
 		await Expect(_page.Locator("body")).ToContainTextAsync("Level");
 		await Expect(_page.Locator("body")).ToContainTextAsync("count_");
+	}
+
+	[Fact]
+	public async Task Dashboard_ShowsKpVotes()
+	{
+		await SetupKpVotesProject(_page!);
+		await EnsureApiKey();
+
+		// Main dashboard
+		await _page!.GotoAsync("/dashboard");
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+
+		var card = _page.GetByTestId("dashboard-project-card").Filter(new() { HasText = "kpvotes" });
+		await Expect(card).ToContainTextAsync("KpVotes");
+		await Expect(card).ToContainTextAsync("kpvotes-net");
+		await Expect(card).ToContainTextAsync("kpvotes-ts");
+
+		// Per-project dashboard
+		await _page.GotoAsync("/dashboard/kpvotes");
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		await Expect(_page.Locator("body")).ToContainTextAsync("KpVotes");
+		await Expect(_page.GetByTestId("dashboard-project-services")).ToContainTextAsync("kpvotes-net");
+		await Expect(_page.GetByTestId("dashboard-project-services")).ToContainTextAsync("kpvotes-ts");
 	}
 
 	string? _kpvotesApiKey;

@@ -8,6 +8,7 @@ using YobaBox.Config;
 using YobaBox.Core.Auth;
 using YobaBox.Core.Data;
 using YobaBox.Core.Features;
+using YobaBox.Data;
 using YobaBox.Log.Core;
 using YobaBox.Log.Core.Data;
 using YobaBox.Log.Core.Ingestion;
@@ -131,6 +132,16 @@ public partial class Program
 			{
 				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
 				p.AddRequirements(new ScopeRequirement("config:write"));
+			})
+			.AddPolicy("DataRead", p =>
+			{
+				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
+				p.AddRequirements(new ScopeRequirement("data:read"));
+			})
+			.AddPolicy("DataWrite", p =>
+			{
+				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
+				p.AddRequirements(new ScopeRequirement("data:write"));
 			});
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
 		builder.Services.AddRazorPages();
@@ -189,6 +200,11 @@ public partial class Program
 
 			if (app.Configuration.GetValue("Seq:SelfLog:Enabled", false))
 				app.MapSeqSelfLogEndpoint();
+		}
+
+		if (new FeatureFlags(app.Configuration).IsEnabled("Data"))
+		{
+			app.MapDataEndpoints();
 		}
 	}
 }
