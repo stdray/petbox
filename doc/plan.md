@@ -227,94 +227,86 @@ Goal: fix 404 on /admin, create dashboard page.
 
 ---
 
-## Phase 5: Port full logs page from yobalog [NEW]
+## Phase 5: Port full logs page from yobalog [DONE]
 
 Goal: copy ALL logs UI from yobalog Workspace.cshtml + admin.ts, adapt to yobabox entity model (project/service instead of workspace).
 
 Source: `D:\my\prj\yobalog\src\YobaLog.Web\`
 
-### 5.1 — Event row details + filter chips
+### 5.1 — Event row details + filter chips [DONE]
 
-- [ ] `EventRowViewModel.cs` `[PORT yobalog]` — IsLive, RenderedMessage (template substitution), LevelBadge, KqlString/KqlDatetime helpers, ToJson(), PropertyForDisplay
-- [ ] `EqNeChipsModel.cs` `[PORT yobalog]` — `record (string Field, string KqlLiteral)`
-- [ ] `Pages/Logs/_EventRow.cshtml` `[ADAPT yobalog/Shared/_EventRow.cshtml]` — full expandable row: Time/Level/Message/Trace columns, hover chips (✓/✗ for Timestamp, Level, TraceId), message template rendering (`<mark class="msg-sub">`), JSON copy button, exception display, details row with all fields
-- [ ] `Pages/Shared/_EqNeChips.cshtml` `[PORT yobalog]` — filter chip partial: ✓ (eq) and ✗ (ne) chips with data-filter-field/op/value attrs
+- [x] `LogEntryViewModel.cs` — template substitution, LevelBadge, KqlString/KqlDatetime, ToJson, PropertyForDisplay
+- [x] `EqNeChipsModel.cs`
+- [x] `Pages/Logs/_EventRow.cshtml` — full expandable row + chips + JSON copy
+- [x] `Pages/Shared/_EqNeChips.cshtml`
 
-### 5.2 — KQL autocomplete
+### 5.2 — KQL autocomplete [DONE]
 
-- [ ] `Pages/Shared/_KqlCompletions.cshtml` `[PORT yobalog]` — htmx fragment: suggestion list with display text + kind, grid layout, data-before/data-after for insertion
-- [ ] Wire `/api/kql/completions` endpoint in LogApi (KqlCompletionService already ported)
-- [ ] `Logs/Index.cshtml` — add htmx attributes to KQL textarea: `hx-get="/api/kql/completions"`, `hx-trigger="keyup changed delay:250ms"`, `hx-target="#kql-completions"`
+- [x] `Pages/Shared/_KqlCompletions.cshtml`
+- [x] `OnGetKqlCompletions` handler on Logs/Index
+- [x] htmx attributes on KQL textarea
 
-### 5.3 — Live tail (SSE)
+### 5.3 — Live tail (SSE) [DONE]
 
-- [ ] `Logs/Index.cshtml` — live tail toggle checkbox, liveTail hidden form field
-- [ ] `ts/logs.ts` — SSE reconnect logic, live-tail banner staging (accumulate events when scrolled away, click-to-flush), `event-live-flash` animation class
-- [ ] `LogApi.cs` — SSE endpoint for live tail (or defer if SSE infrastructure too complex)
-- [ ] `ts/app.css` — `.event-live` animation keyframe, `.msg-sub` style
+- [x] live-tail toggle in UI
+- [x] `logs.ts` SSE, banner staging, event-live-flash
+- [x] `ITailBroadcaster` + `InMemoryTailBroadcaster` + Publish wiring in CleF ingest
+- [x] SSE endpoint `/api/logs/{projectKey}/live-tail` push-based
 
-### 5.4 — TypeScript: admin.ts [PORT yobalog]
+### 5.4 — admin.ts → logs.ts [DONE]
 
-- [ ] `ts/logs.ts` `[ADAPT yobalog/ts/admin.ts]` — sections to port:
-  - Local-time rendering (`.local-time` → `YYYY-MM-DD HH:mm:ss.SSS` in local TZ)
-  - Button press flash animation (`.btn-flash`)
-  - Hotkey toast system (bottom-right notifications)
-  - Global `/` focus shortcut → `#kql-textarea`
-  - KQL completion (click insert, keyboard navigation, dot re-trigger)
-  - Hover filter chips (✓/✗ → inject `where field ==/!= value`)
-  - Pin search panel (sticky on scroll, localStorage)
-  - Copy-to-clipboard (`data-copy` attribute)
-  - Expandable event row (click to toggle `.event-details`)
-  - Live-tail banner staging + flush
+- [x] Local-time rendering, button flash, hotkey toast, `/`-focus, KQL completion, filter chips, pin/sticky, copy-to-clipboard, expandable row, live-tail staging
 
-### 5.5 — Cursor-based infinite scroll
+### 5.5 — Cursor-based infinite scroll [DONE]
 
-- [ ] `Pages/Logs/_RowsFragment.cshtml` `[ADAPT yobalog/Shared/_RowsFragment.cshtml]` — htmx `intersect once` trigger, sentinel row with loading spinner
-- [ ] `Pages/Logs/Index.cshtml.cs` — add cursor property, encode/decode cursor in OnGetAsync, pass NextCursor to fragment view
+- [x] `_RowsFragment.cshtml` sentinel with htmx intersect
+- [x] Cursor encode/decode in OnGetAsync
 
-### 5.6 — Admin layout + nav
+### 5.6 — Admin layout + nav [PARTIAL]
 
-- [ ] `Pages/Shared/_Layout.cshtml` — update sidebar nav to match logs dashboard structure, add user/sign-out section
-- [ ] Add profile/sign-out link in top nav
+- [x] Sidebar nav for Dashboard/Logs/Config/Workspaces/Admin
+- [ ] Profile/sign-out link (TODO)
 
 ---
 
-## Phase 6: Port full bindings page from yobaconf [NEW]
+## Phase 6: Port full bindings page from yobaconf [DONE]
 
 Goal: copy ALL config/bindings UI from yobaconf Bindings pages, adapt to yobabox ConfigBinding model.
 
 Source: `D:\my\prj\yobaconf\src\YobaConf.Web\Pages\Bindings\`
 
-### 6.1 — Bindings list page
+### 6.1 — Bindings list page [DONE]
 
-- [ ] `Pages/Config/Index.cshtml` `[ADAPT yobaconf/Bindings/Index.cshtml]` — full rewrite:
-  - Filter form: key path text input (glob `*` support), tag key facet dropdowns (populated from all bindings)
-  - Table: TagSet badges, Key path, Value (masked), Updated timestamp, Edit/Delete actions
-  - Delete via POST form with confirmation dialog, preserves filter state
-  - "New binding" link → `/Config/Editor`
-  - All `data-testid` attributes
-- [ ] `Pages/Config/Index.cshtml.cs` `[ADAPT yobaconf/Bindings/Index.cshtml.cs]` — OnGet with tag facet filtering + key query, OnPostDelete, OnPostReveal (AJAX secret reveal)
+- [x] Filter form + tag-key facets + Edit/Delete actions
+- [x] OnPostDelete preserves filter, OnPostReveal AJAX for secrets
 
-### 6.2 — Create/edit binding page
+### 6.2 — Create/edit binding page [DONE]
 
-- [ ] `Pages/Config/Editor.cshtml` `[ADAPT yobaconf/Bindings/Edit.cshtml]` — full rewrite:
-  - Tags textarea (`key=value` per line)
-  - Key path input
-  - Kind radio (Plain/Secret)
-  - Value textarea with JSON validation hint
-  - Error/conflict/unknown-tag warnings
-  - Save/Cancel buttons
-- [ ] `Pages/Config/Editor.cshtml.cs` `[ADAPT yobaconf/Bindings/Edit.cshtml.cs]` — OnGet, OnPost: tag parsing, key path validation, conflict detection
+- [x] Tags textarea (key:value or key=value), Path input, Kind radio (Plain/Secret), Value textarea
+- [x] Tag canonicalization + `ws=` mandatory check, basic conflict detection
 
-### 6.3 — TypeScript for bindings
+### 6.3 — TypeScript for bindings [DONE]
 
-- [ ] `ts/config.ts` `[ADAPT yobaconf/ts/bindings-reveal.ts]` — secret reveal via AJAX POST, show for 10s then re-mask, antiforgery token handling
-- [ ] `ts/config.ts` `[ADAPT yobaconf/ts/copy-token.ts]` — clipboard copy utility (`data-copy` attribute)
-- [ ] `ts/admin.ts` → `ts/site.ts` — entry point importing config + logs modules
+- [x] `ts/config.ts` secret reveal (AJAX → 10s window)
+- [x] `ts/config.ts` clipboard copy via `data-copy`
+- [x] `ts/site.ts` imports both logs and config modules
 
-### 6.4 — Row partial (in-tree editor)
+### 6.4 — Row partial [DONE]
 
-- [ ] `Pages/Config/Row.cshtml` `[ADAPT yobaconf]` — single binding row fragment for htmx inline editing
+- [x] `Pages/Config/_Row.cshtml`
+
+### 6.5 — Secret encryption [DONE]
+
+- [x] AES-GCM `AesGcmSecretEncryptor` (YOBABOX_MASTER_KEY → SHA-256 derived 32-byte key)
+- [x] `ConfigBinding.Kind` + `Ciphertext` + `Iv` + `AuthTag` columns + auto-migration in ConfigDbFactory
+- [x] `ConfigBindingHistory` table — audit on Create/Update/Delete/Reveal
+- [x] `TagVocabulary` table — declared tag keys
+
+### 6.6 — History / Preview / Tags pages [DONE]
+
+- [x] `/ui/config/{wsKey}/history` — audit log
+- [x] `/ui/config/{wsKey}/preview` — resolve preview with tags + paths
+- [x] `/ui/config/{wsKey}/tags` — vocabulary CRUD + used-but-undeclared list
 
 ---
 
@@ -519,6 +511,33 @@ Goal: clean separation of API and UI URL namespaces.
 - [ ] Redirect old paths or keep until E2E tests updated
 
 ---
+
+## Phase 17: Sharing module [DONE]
+
+- [x] `ShareLink` model + M009 migration
+- [x] AES-salted `ValueMasker`, `FieldMaskingPolicy`, `MaskMode`
+- [x] `TsvExporter`
+- [x] POST `/api/share` + public `/ui/share/{token}` page + `/api/share/{token}/tsv`
+
+## Phase 18: Retention [DONE]
+
+- [x] `RetentionPolicy` model (per-project override) + M010 migration
+- [x] `RetentionService` BackgroundService — hourly sweep of `LogEntries` and expired `ShareLinks`
+- [x] `/ui/admin/retention` page — set/clear per-project policies
+
+## Phase 19: Tracing/Spans [DONE]
+
+- [x] `SpanRecord` + Spans table in per-project LogDb (auto-migration in factory)
+- [x] `/ui/logs/{projectKey}/traces` — trace list with root span, duration, status
+- [x] `/ui/logs/{projectKey}/traces/{traceId}` + `_TraceWaterfall.cshtml` — recursive waterfall view
+
+## Phase 20: Cleanup [DONE]
+
+- [x] `doc/spec.md` ported from vault, updated under workspaces / factories / /ui-/api / User-model
+- [x] Dead refs removed (`admin.js`, empty Program.cs Phase 1 if, ConfigBindings from YobaBoxDb)
+- [x] `ts/config.ts` filled (was 6-line stub)
+- [x] User-table login via AdminBootstrapper; M008 no longer seeds empty admin
+- [x] `WorkspaceAdmin/Member/Viewer` policies + `WorkspaceRoleRequirement` handler
 
 ## Phase 16: Data module rework [BLOCKED]
 

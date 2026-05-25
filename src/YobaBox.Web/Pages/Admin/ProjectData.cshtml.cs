@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using YobaBox.Core.Data;
+using YobaBox.Core.Features;
 using YobaBox.Core.Models;
 
 namespace YobaBox.Web.Pages.Admin;
@@ -11,8 +12,13 @@ namespace YobaBox.Web.Pages.Admin;
 public sealed class ProjectDataModel : PageModel
 {
 	readonly YobaBoxDb _db;
+	readonly FeatureFlags _features;
 
-	public ProjectDataModel(YobaBoxDb db) => _db = db;
+	public ProjectDataModel(YobaBoxDb db, FeatureFlags features)
+	{
+		_db = db;
+		_features = features;
+	}
 
 	[BindProperty(SupportsGet = true)]
 	public string ProjectKey { get; set; } = string.Empty;
@@ -21,25 +27,33 @@ public sealed class ProjectDataModel : PageModel
 	public bool ProjectNotFound { get; private set; }
 	public string? ErrorMessage { get; private set; }
 
-	public async Task OnGetAsync()
+	public async Task<IActionResult> OnGetAsync()
 	{
+		if (!_features.IsEnabled("Data"))
+			return NotFound();
+
 		var project = await _db.Projects
 			.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
 
 		if (project is null)
 		{
 			ProjectNotFound = true;
-			return;
+			return Page();
 		}
 
 		Tables = await _db.DataTables
 			.Where(t => t.ProjectKey == ProjectKey)
 			.ToListAsync();
+
+		return Page();
 	}
 
 	public async Task<IActionResult> OnPostCreateTableAsync(
 		string TableName, string Columns, bool Read, bool Write, bool Delete)
 	{
+		if (!_features.IsEnabled("Data"))
+			return NotFound();
+
 		if (string.IsNullOrWhiteSpace(TableName))
 		{
 			ErrorMessage = "Table name is required.";
@@ -71,6 +85,9 @@ public sealed class ProjectDataModel : PageModel
 
 	public async Task<IActionResult> OnPostDeleteTableAsync(string tableName)
 	{
+		if (!_features.IsEnabled("Data"))
+			return NotFound();
+
 		await _db.DataTables
 			.Where(t => t.Name == tableName && t.ProjectKey == ProjectKey)
 			.DeleteAsync();

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using YobaBox.Core.Data;
+using YobaBox.Core.Features;
 using YobaBox.Core.Models;
 
 namespace YobaBox.Web.Pages.Admin;
@@ -10,8 +11,15 @@ namespace YobaBox.Web.Pages.Admin;
 public sealed class ProjectDetailModel : PageModel
 {
 	readonly YobaBoxDb _db;
+	readonly FeatureFlags _features;
 
-	public ProjectDetailModel(YobaBoxDb db) => _db = db;
+	public ProjectDetailModel(YobaBoxDb db, FeatureFlags features)
+	{
+		_db = db;
+		_features = features;
+	}
+
+	public bool DataEnabled => _features.IsEnabled("Data");
 
 	[FromRoute]
 	public string Key { get; set; } = string.Empty;

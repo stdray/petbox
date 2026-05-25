@@ -52,7 +52,7 @@ public sealed class DataTableTests(WebAppFixture app, ITestOutputHelper output) 
 		}
 	}
 
-	[Fact]
+	[Fact(Skip = "Data module deferred — Features:Data=false. See doc/spec.md Phase 12.")]
 	public async Task CreateDataTable_And_Query()
 	{
 		await EnsureProjectAndKey();
