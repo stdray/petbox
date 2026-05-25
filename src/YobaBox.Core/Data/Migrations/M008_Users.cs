@@ -19,8 +19,8 @@ public sealed class M008_Users : Migration
 			.WithColumn("WorkspaceKey").AsString(100).NotNullable()
 			.WithColumn("Role").AsInt32().NotNullable();
 
-		Execute.Sql("INSERT INTO Users (Username, PasswordHash, CreatedAt) VALUES ('admin', '', datetime('now'))");
-		Execute.Sql("INSERT INTO WorkspaceMembers (UserId, WorkspaceKey, Role) VALUES (1, '$system', 0)");
+		// Note: do not seed users here — empty PasswordHash is not loginable.
+		// Actual admin seeding happens at startup via AdminBootstrapper, reading AdminOptions.
 	}
 
 	public override void Down()

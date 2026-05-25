@@ -1,10 +1,10 @@
+using System.Globalization;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Microsoft.Extensions.Options;
 using YobaBox.Core.Auth;
 using YobaBox.Core.Data;
 
@@ -14,13 +14,8 @@ namespace YobaBox.Web.Pages;
 public sealed class LoginModel : PageModel
 {
 	readonly YobaBoxDb _db;
-	readonly AdminOptions _admin;
 
-	public LoginModel(YobaBoxDb db, IOptions<AdminOptions> options)
-	{
-		_db = db;
-		_admin = options.Value;
-	}
+	public LoginModel(YobaBoxDb db) => _db = db;
 
 	[BindProperty(SupportsGet = true)]
 	public string? ReturnUrl { get; set; }
@@ -41,29 +36,30 @@ public sealed class LoginModel : PageModel
 			return Page();
 		}
 
-		var authenticated = false;
-
-		if (string.Equals(_admin.Username, username, StringComparison.Ordinal)
-			&& AdminPasswordHasher.Verify(password, _admin.PasswordHash))
-		{
-			authenticated = true;
-		}
-		else
-		{
-			var user = _db.Users.FirstOrDefault(u => u.Username == username);
-			if (user is not null && AdminPasswordHasher.Verify(password, user.PasswordHash))
-				authenticated = true;
-		}
-
-		if (!authenticated)
+		var user = _db.Users.FirstOrDefault(u => u.Username == username);
+		if (user is null || !AdminPasswordHasher.Verify(password, user.PasswordHash))
 		{
 			ErrorMessage = "Invalid username or password.";
 			return Page();
 		}
 
-		var identity = new ClaimsIdentity(
-			[new Claim(ClaimTypes.Name, username)],
-			CookieAuthenticationDefaults.AuthenticationScheme);
+		var memberships = _db.WorkspaceMembers
+			.Where(m => m.UserId == user.Id)
+			.ToList();
+
+		var activeWs = memberships.FirstOrDefault()?.WorkspaceKey ?? "$system";
+		var rolesClaim = WorkspaceRoleAuthorizationHandler.SerializeRoles(
+			memberships.Select(m => (m.WorkspaceKey, m.Role)));
+
+		var claims = new List<Claim>
+		{
+			new(ClaimTypes.Name, user.Username),
+			new(YobaBoxClaims.UserId, user.Id.ToString(CultureInfo.InvariantCulture)),
+			new(YobaBoxClaims.ActiveWorkspace, activeWs),
+			new(YobaBoxClaims.WorkspaceRoles, rolesClaim),
+		};
+
+		var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
 		await HttpContext.SignInAsync(
 			CookieAuthenticationDefaults.AuthenticationScheme,
 			new ClaimsPrincipal(identity));
