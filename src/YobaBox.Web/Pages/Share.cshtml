@@ -1,0 +1,76 @@
+@page "/ui/share/{token}"
+@model YobaBox.Web.Pages.ShareModel
+@{
+	ViewData["Title"] = "Shared Query";
+	Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" class="h-full">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Shared Query — YobaBox</title>
+	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
+</head>
+<body class="min-h-full p-6">
+	<div class="max-w-6xl mx-auto">
+		<h1 class="text-xl font-semibold mb-2">Shared Query Result</h1>
+
+		@if (Model.ShareNotFound)
+		{
+			<div class="alert alert-error" data-testid="share-notfound">Share link not found.</div>
+		}
+		else if (Model.Expired)
+		{
+			<div class="alert alert-warning" data-testid="share-expired">This share link has expired.</div>
+		}
+		else if (Model.Link is { } link)
+		{
+			<div class="text-sm opacity-70 mb-2">
+				Project: <span class="font-mono">@link.ProjectKey</span> ·
+				Expires: <time class="local-time" datetime="@link.ExpiresAt.ToString("o")">@link.ExpiresAt:yyyy-MM-dd HH:mm:ss</time>
+			</div>
+			<pre class="bg-base-200 rounded p-3 text-xs font-mono mb-4 whitespace-pre-wrap">@link.Kql</pre>
+
+			@if (Model.Error is not null)
+			{
+				<div class="alert alert-error" data-testid="share-error">@Model.Error</div>
+			}
+			else if (Model.Rows.Count == 0)
+			{
+				<div class="alert" data-testid="share-empty">Query returned no rows.</div>
+			}
+			else
+			{
+				<div class="overflow-x-auto">
+					<table class="table table-sm" data-testid="share-table">
+						<thead>
+							<tr>
+								@foreach (var col in Model.Columns)
+								{
+									<th class="font-mono text-xs">@col</th>
+								}
+							</tr>
+						</thead>
+						<tbody>
+							@foreach (var row in Model.Rows)
+							{
+								<tr>
+									@foreach (var cell in row)
+									{
+										<td class="font-mono text-xs">@cell</td>
+									}
+								</tr>
+							}
+						</tbody>
+					</table>
+				</div>
+
+				<div class="mt-4 text-xs opacity-60">
+					<a href="/api/share/@Model.Token/tsv" class="link" data-testid="share-tsv-link">Download as TSV</a>
+				</div>
+			}
+		}
+	</div>
+</body>
+</html>
