@@ -59,6 +59,23 @@ public sealed class LogDbFactory : ILogDbFactory, IAsyncDisposable
 			CREATE INDEX IF NOT EXISTS IX_LogEntries_ServiceKey_TimestampMs ON LogEntries (ServiceKey, TimestampMs DESC);
 			CREATE INDEX IF NOT EXISTS IX_LogEntries_TimestampMs ON LogEntries (TimestampMs DESC);
 			CREATE INDEX IF NOT EXISTS IX_LogEntries_Level ON LogEntries (Level);
+
+			CREATE TABLE IF NOT EXISTS Spans (
+				SpanId            TEXT    PRIMARY KEY,
+				TraceId           TEXT    NOT NULL,
+				ParentSpanId      TEXT,
+				Name              TEXT    NOT NULL,
+				Kind              INTEGER NOT NULL,
+				StartUnixNs       INTEGER NOT NULL,
+				EndUnixNs         INTEGER NOT NULL,
+				StatusCode        INTEGER NOT NULL,
+				StatusDescription TEXT,
+				AttributesJson    TEXT    NOT NULL DEFAULT '{}',
+				EventsJson        TEXT    NOT NULL DEFAULT '[]',
+				LinksJson         TEXT    NOT NULL DEFAULT '[]'
+			);
+			CREATE INDEX IF NOT EXISTS ix_spans_trace_start ON Spans(TraceId, StartUnixNs);
+			CREATE INDEX IF NOT EXISTS ix_spans_start ON Spans(StartUnixNs);
 			""";
 		cmd.ExecuteNonQuery();
 	}

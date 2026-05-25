@@ -1,0 +1,26 @@
+@page "/ui/logs/{projectKey}/traces/{traceId}"
+@model YobaBox.Web.Pages.Logs.TraceModel
+@{
+	ViewData["Title"] = $"Trace {Model.TraceId} — {Model.EffectiveProjectKey}";
+}
+
+<div class="mb-4 flex items-center gap-3">
+	<a asp-page="/Logs/Traces" asp-route-projectKey="@Model.EffectiveProjectKey" class="text-sm opacity-60 hover:opacity-100">&larr; traces</a>
+	<h1 class="text-2xl font-semibold">Trace</h1>
+	<span class="font-mono text-sm opacity-60">@Model.TraceId</span>
+</div>
+
+@if (Model.TraceNotFound)
+{
+	<div class="alert alert-warning" data-testid="trace-notfound">Trace not found.</div>
+}
+else
+{
+	<div class="text-xs opacity-70 mb-3">
+		Start: <time class="local-time" datetime="@Model.StartTime.ToString("o")">@Model.StartTime:yyyy-MM-dd HH:mm:ss.fff</time> ·
+		Duration: @($"{Model.TotalDuration.TotalMilliseconds:0.0} ms") ·
+		Spans: @Model.Rows.Count
+	</div>
+
+	<partial name="_TraceWaterfall" model="Model.Rows" />
+}
