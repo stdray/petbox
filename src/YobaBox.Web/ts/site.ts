@@ -3,6 +3,8 @@ import Alpine from "alpinejs";
 
 import "./logs";
 import { initConfigPage } from "./config";
+import { initWorkspacePersistence } from "./workspace";
 
 Alpine.start();
 initConfigPage();
+initWorkspacePersistence();

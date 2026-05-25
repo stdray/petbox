@@ -14,6 +14,7 @@ using YobaBox.Log.Core;
 using YobaBox.Log.Core.Data;
 using YobaBox.Log.Core.Ingestion;
 using YobaBox.Web;
+using YobaBox.Web.Navigation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using YobaBox.Core.Models;
@@ -185,6 +186,7 @@ public partial class Program
 		builder.Services.AddHttpContextAccessor();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, WorkspaceRoleAuthorizationHandler>();
+		builder.Services.AddScoped<INavigationContext, NavigationContext>();
 		builder.Services.AddRazorPages();
 	}
 
@@ -230,6 +232,7 @@ public partial class Program
 		});
 
 		app.MapAuthEndpoints();
+		app.MapWorkspaceSwitch();
 		app.MapRazorPages();
 
 		if (new FeatureFlags(app.Configuration).IsEnabled("Config"))

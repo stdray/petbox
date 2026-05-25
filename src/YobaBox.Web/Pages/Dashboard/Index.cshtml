@@ -4,8 +4,9 @@
 	ViewData["Title"] = "Dashboard";
 }
 
-<div class="mb-4">
+<div class="mb-4 flex items-center gap-3">
 	<h1 class="text-xl font-semibold" data-testid="dashboard-title">Dashboard</h1>
+	<span class="badge badge-outline font-mono">@Model.WorkspaceKey</span>
 </div>
 
 @if (Model.Projects.Count == 0)

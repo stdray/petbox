@@ -64,6 +64,18 @@ public sealed class LoginModel : PageModel
 			CookieAuthenticationDefaults.AuthenticationScheme,
 			new ClaimsPrincipal(identity));
 
+		HttpContext.Response.Cookies.Append(
+			YobaBox.Web.Navigation.WorkspaceSwitchEndpoint.CookieName,
+			activeWs,
+			new CookieOptions
+			{
+				HttpOnly = false,
+				SameSite = SameSiteMode.Lax,
+				Expires = DateTimeOffset.UtcNow.AddDays(365),
+				IsEssential = true,
+				Path = "/",
+			});
+
 		return !string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl)
 			? LocalRedirect(returnUrl)
 			: RedirectToPage("/Index");
