@@ -14,6 +14,9 @@ using YobaBox.Log.Core;
 using YobaBox.Log.Core.Data;
 using YobaBox.Log.Core.Ingestion;
 using YobaBox.Web;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using YobaBox.Core.Models;
 
 if (args.Length >= 2 && args[0] == "--hash-password")
 {
@@ -43,7 +46,19 @@ public partial class Program
 		builder.Services.AddSingleton<IConfigDbFactory>(_ => new ConfigDbFactory(
 			Path.Combine(Path.GetDirectoryName(
 				new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!, "config")));
+		var masterKey = builder.Configuration["YobaBox:MasterKey"]
+			?? Environment.GetEnvironmentVariable("YOBABOX_MASTER_KEY");
+		builder.Services.AddSingleton(Options.Create(new SecretEncryptorOptions { MasterKey = masterKey }));
+		builder.Services.AddSingleton<ISecretEncryptor, AesGcmSecretEncryptor>();
+		builder.Services.AddMemoryCache();
 		builder.Services.AddSingleton<CleFParser>();
+		builder.Services.AddSingleton<ITailBroadcaster, InMemoryTailBroadcaster>();
+		builder.Services.Configure<YobaBox.Log.Core.Retention.RetentionOptions>(
+			builder.Configuration.GetSection("Retention"));
+		if (new FeatureFlags(builder.Configuration).IsEnabled("Logging"))
+		{
+			builder.Services.AddHostedService<YobaBox.Log.Core.Retention.RetentionService>();
+		}
 		builder.Services.AddSingleton<FeatureFlags>();
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
 
@@ -148,14 +163,29 @@ public partial class Program
 			{
 				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
 				p.AddRequirements(new ScopeRequirement("data:write"));
+			})
+			.AddPolicy("WorkspaceAdmin", p =>
+			{
+				p.AddAuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme);
+				p.RequireAuthenticatedUser();
+				p.AddRequirements(new WorkspaceRoleRequirement(WorkspaceRole.Admin));
+			})
+			.AddPolicy("WorkspaceMember", p =>
+			{
+				p.AddAuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme);
+				p.RequireAuthenticatedUser();
+				p.AddRequirements(new WorkspaceRoleRequirement(WorkspaceRole.Member));
+			})
+			.AddPolicy("WorkspaceViewer", p =>
+			{
+				p.AddAuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme);
+				p.RequireAuthenticatedUser();
+				p.AddRequirements(new WorkspaceRoleRequirement(WorkspaceRole.Viewer));
 			});
+		builder.Services.AddHttpContextAccessor();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
+		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, WorkspaceRoleAuthorizationHandler>();
 		builder.Services.AddRazorPages();
-
-		if (new FeatureFlags(builder.Configuration).IsEnabled("Config"))
-		{
-			// Phase 1: ConfigApi registered
-		}
 	}
 
 	public static void Configure(WebApplication app)
@@ -164,6 +194,13 @@ public partial class Program
 			?? "Data Source=./data/yobabox.db;Cache=Shared";
 
 		MigrationRunner.Run(connectionString);
+
+		using (var scope = app.Services.CreateScope())
+		{
+			var db = scope.ServiceProvider.GetRequiredService<YobaBoxDb>();
+			var adminOptions = scope.ServiceProvider.GetRequiredService<IOptions<AdminOptions>>();
+			AdminBootstrapper.EnsureAdminUser(db, adminOptions);
+		}
 
 		if (!app.Environment.IsDevelopment())
 		{
@@ -203,6 +240,7 @@ public partial class Program
 		if (new FeatureFlags(app.Configuration).IsEnabled("Logging"))
 		{
 			app.MapLogEndpoints();
+			app.MapShareEndpoints();
 
 			if (app.Configuration.GetValue("Seq:SelfLog:Enabled", false))
 				app.MapSeqSelfLogEndpoint();
