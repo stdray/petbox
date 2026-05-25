@@ -1,0 +1,65 @@
+@page "/ui/admin/retention"
+@model YobaBox.Web.Pages.Admin.RetentionModel
+@{
+	ViewData["Title"] = "Retention";
+}
+
+<h1 class="text-xl font-semibold mb-4" data-testid="retention-title">Retention</h1>
+
+<p class="text-sm opacity-70 mb-4">
+	Defaults: <code>$system</code> = @Model.SystemRetainDays days · other projects = @Model.DefaultRetainDays days.
+	Set a per-project override below. Sweep runs hourly.
+</p>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3">@Model.ErrorMessage</div>
+}
+
+<div class="overflow-x-auto">
+	<table class="table table-sm" data-testid="retention-table">
+		<thead>
+			<tr>
+				<th>Project</th>
+				<th class="w-40">Policy (days)</th>
+				<th class="w-32">Effective</th>
+				<th class="w-64"></th>
+			</tr>
+		</thead>
+		<tbody>
+			@foreach (var (project, policyDays) in Model.Rows)
+			{
+				var effective = policyDays
+					?? (project.Key == "$system" ? Model.SystemRetainDays : Model.DefaultRetainDays);
+				<tr data-testid="retention-row" data-project-key="@project.Key">
+					<td class="font-mono text-xs">@project.Key</td>
+					<td>
+						@if (policyDays is { } d)
+						{
+							<span class="badge badge-sm">@d</span>
+						}
+						else
+						{
+							<span class="text-xs opacity-50">(default)</span>
+						}
+					</td>
+					<td class="text-xs">@effective</td>
+					<td>
+						<form method="post" asp-page-handler="Set" class="flex items-center gap-2">
+							@Html.AntiForgeryToken()
+							<input type="hidden" name="projectKey" value="@project.Key" />
+							<input type="number" name="retainDays" min="1" max="365" value="@effective"
+								class="input input-bordered input-xs w-24" data-testid="retention-input" />
+							<button type="submit" class="btn btn-xs btn-primary" data-testid="retention-set">Set</button>
+							@if (policyDays is not null)
+							{
+								<button type="submit" formaction="?handler=Clear" class="btn btn-xs btn-ghost" data-testid="retention-clear"
+									name="projectKey" value="@project.Key">Reset</button>
+							}
+						</form>
+					</td>
+				</tr>
+			}
+		</tbody>
+	</table>
+</div>
