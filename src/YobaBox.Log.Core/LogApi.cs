@@ -1,4 +1,6 @@
 using System.Collections.Immutable;
+using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using Kusto.Language;
 using LinqToDB;
@@ -35,6 +37,7 @@ public static class LogApi
 		YobaBoxDb yobaBoxDb,
 		ILogDbFactory logFactory,
 		CleFParser parser,
+		ITailBroadcaster broadcaster,
 		CancellationToken ct)
 	{
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
@@ -45,7 +48,6 @@ public static class LogApi
 		var projectKey = service?.ProjectKey ?? "$system";
 		if (service is null)
 		{
-			// Auto-register unknown service under $system
 #pragma warning disable CA2016
 			await yobaBoxDb.InsertAsync(new Service
 #pragma warning restore CA2016
@@ -80,6 +82,8 @@ public static class LogApi
 
 		var logDb = logFactory.GetLogDb(projectKey);
 		await logDb.LogEntries.BulkCopyAsync(records, ct);
+
+		broadcaster.Publish(projectKey, records);
 
 		return Results.Ok(new { ingested = records.Count, errors = errors.Count });
 	}
@@ -136,7 +140,7 @@ public static class LogApi
 				{
 					id = e.Id,
 					serviceKey = e.ServiceKey,
-					timestamp = e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+					timestamp = e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
 					level = e.Level.ToString(),
 					message = e.Message,
 					messageTemplate = e.MessageTemplate,
@@ -183,6 +187,7 @@ public static class LogApi
 		YobaBoxDb yobaBoxDb,
 		ILogDbFactory logFactory,
 		CleFParser parser,
+		ITailBroadcaster broadcaster,
 		IConfiguration config,
 		CancellationToken ct)
 	{
@@ -214,6 +219,7 @@ public static class LogApi
 		{
 			var logDb = logFactory.GetLogDb("$system");
 			await logDb.LogEntries.BulkCopyAsync(records, ct);
+			broadcaster.Publish("$system", records);
 		}
 
 		return Results.Ok();
@@ -222,51 +228,40 @@ public static class LogApi
 	static async Task<IResult> LiveTailAsync(
 		HttpContext ctx,
 		string projectKey,
-		ILogDbFactory logFactory,
-		HttpResponse response,
+		ITailBroadcaster broadcaster,
 		CancellationToken ct)
 	{
-		var kql = ctx.Request.Query["kql"].FirstOrDefault() ?? "events";
-		var logDb = logFactory.GetLogDb(projectKey);
-		var lastId = 0L;
-
-		try
-		{
-			var lastEvent = await logDb.LogEntries
-				.OrderByDescending(e => e.Id)
-				.FirstOrDefaultAsync(CancellationToken.None);
-			if (lastEvent is not null)
-				lastId = lastEvent.Id;
-		}
-		catch { }
-
 		ctx.Response.Headers.ContentType = "text/event-stream";
 		ctx.Response.Headers.CacheControl = "no-cache";
 		ctx.Response.Headers["X-Accel-Buffering"] = "no";
 		await ctx.Response.Body.FlushAsync(ct);
 
-		while (!ct.IsCancellationRequested)
+		try
 		{
-			await Task.Delay(2000, ct);
-
-			try
+			await foreach (var record in broadcaster.Subscribe(projectKey, ct).ConfigureAwait(false))
 			{
-				var newEvents = await logDb.LogEntries
-					.Where(e => e.Id > lastId)
-					.OrderBy(e => e.Id)
-					.ToListAsync(CancellationToken.None);
-
-				foreach (var e in newEvents)
-				{
-					lastId = e.Id;
-					var html = $"event: event\ndata: <tr data-event-id=\"{e.Id}\"><td><time class=\"local-time\" datetime=\"{DateTimeOffset.FromUnixTimeMilliseconds(e.TimestampMs):yyyy-MM-ddTHH:mm:ss.fffZ}\">{DateTimeOffset.FromUnixTimeMilliseconds(e.TimestampMs):yyyy-MM-dd HH:mm:ss.fff}</time></td><td><span class=\"badge badge-xs\">{e.Level}</span></td><td class=\"text-sm\">{System.Net.WebUtility.HtmlEncode(e.Message)}</td><td class=\"font-mono text-xs\">{System.Net.WebUtility.HtmlEncode(e.ServiceKey)}</td></tr>\n\n";
-					await ctx.Response.WriteAsync(html, ct);
-					await ctx.Response.Body.FlushAsync(ct);
-				}
+				var sb = new System.Text.StringBuilder();
+				sb.Append("event: event\n");
+				sb.Append("data: ");
+				sb.Append("<tr class=\"event-live\" data-event-id=\"");
+				sb.Append(record.Id);
+				sb.Append("\"><td><time class=\"local-time\" datetime=\"");
+				var dt = DateTimeOffset.FromUnixTimeMilliseconds(record.TimestampMs);
+				sb.Append(dt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+				sb.Append("\">");
+				sb.Append(dt.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture));
+				sb.Append("</time></td><td><span class=\"badge badge-xs\">");
+				sb.Append(record.Level);
+				sb.Append("</span></td><td class=\"text-sm\">");
+				sb.Append(WebUtility.HtmlEncode(record.Message ?? string.Empty));
+				sb.Append("</td><td class=\"font-mono text-xs\">");
+				sb.Append(WebUtility.HtmlEncode(record.ServiceKey ?? string.Empty));
+				sb.Append("</td></tr>\n\n");
+				await ctx.Response.WriteAsync(sb.ToString(), ct);
+				await ctx.Response.Body.FlushAsync(ct);
 			}
-			catch (OperationCanceledException) { break; }
-			catch { /* poll error, retry */ }
 		}
+		catch (OperationCanceledException) { }
 
 		return Results.Empty;
 	}

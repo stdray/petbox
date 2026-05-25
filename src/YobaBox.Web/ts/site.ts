@@ -2,9 +2,7 @@ import "htmx.org";
 import Alpine from "alpinejs";
 
 import "./logs";
+import { initConfigPage } from "./config";
 
 Alpine.start();
-
-document.addEventListener("alpine:init", () => {
-	// Sidebar mobile toggle and other Alpine components will be registered here.
-});
+initConfigPage();

@@ -7,12 +7,11 @@ function formatLocalTime(iso: string): string {
 }
 
 function renderLocalTimes(root: ParentNode): void {
-	for (const el of root.querySelectorAll<HTMLElement>(
-		"time.local-time[datetime]",
-	)) {
+	const list = root.querySelectorAll<HTMLElement>("time.local-time[datetime]");
+	list.forEach((el) => {
 		const iso = el.getAttribute("datetime");
 		if (iso) el.textContent = formatLocalTime(iso);
-	}
+	});
 }
 
 renderLocalTimes(document);
@@ -37,6 +36,60 @@ document.addEventListener("click", (event) => {
 	if (btn) flashButton(btn);
 });
 
+// ---------- Hotkey toast ----------
+function ensureToastRoot(): HTMLDivElement {
+	const existing = document.getElementById("hotkey-toast-root") as HTMLDivElement | null;
+	if (existing) return existing;
+	const root = document.createElement("div");
+	root.id = "hotkey-toast-root";
+	root.className = "fixed bottom-4 right-4 z-50 flex flex-col gap-2 pointer-events-none";
+	document.body.appendChild(root);
+	return root;
+}
+
+function showHotkeyToast(combo: string, action: string): void {
+	const root = ensureToastRoot();
+	const toast = document.createElement("div");
+	toast.className =
+		"flex items-center gap-2 px-3 py-2 rounded-md bg-base-300 shadow-lg text-xs transition-opacity duration-150 opacity-0";
+	const kbd = document.createElement("kbd");
+	kbd.className = "kbd kbd-xs";
+	kbd.textContent = combo;
+	const text = document.createElement("span");
+	text.textContent = action;
+	toast.appendChild(kbd);
+	toast.appendChild(text);
+	root.appendChild(toast);
+	requestAnimationFrame(() => toast.classList.remove("opacity-0"));
+	setTimeout(() => {
+		toast.classList.add("opacity-0");
+		setTimeout(() => toast.remove(), 150);
+	}, 900);
+}
+
+const PendingToastKey = "yobabox.pendingToast";
+
+function deferHotkeyToast(combo: string, action: string): void {
+	try {
+		sessionStorage.setItem(PendingToastKey, JSON.stringify({ combo, action, t: Date.now() }));
+	} catch {
+		showHotkeyToast(combo, action);
+	}
+}
+
+(() => {
+	try {
+		const raw = sessionStorage.getItem(PendingToastKey);
+		if (!raw) return;
+		sessionStorage.removeItem(PendingToastKey);
+		const data = JSON.parse(raw) as { combo: string; action: string; t: number };
+		if (Date.now() - data.t < 5_000)
+			showHotkeyToast(data.combo, data.action);
+	} catch {
+		// ignore
+	}
+})();
+
 // ---------- Global focus shortcut: "/" jumps to KQL textarea ----------
 document.addEventListener("keydown", (event) => {
 	if (event.key !== "/") return;
@@ -54,6 +107,7 @@ document.addEventListener("keydown", (event) => {
 	event.preventDefault();
 	textarea.focus();
 	textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+	showHotkeyToast("/", "focus query");
 });
 
 // ---------- KQL completion ----------
@@ -68,10 +122,10 @@ document.addEventListener("click", (event) => {
 	) as HTMLTextAreaElement | null;
 	if (!list || !textarea) return;
 
-	const editStart = Number(list.dataset.editStart ?? "0");
-	const editLength = Number(list.dataset.editLength ?? "0");
-	const before = button.dataset.before ?? "";
-	const after = button.dataset.after ?? "";
+	const editStart = Number(list.dataset["editStart"] ?? "0");
+	const editLength = Number(list.dataset["editLength"] ?? "0");
+	const before = button.dataset["before"] ?? "";
+	const after = button.dataset["after"] ?? "";
 
 	const value = textarea.value;
 	const left = value.substring(0, editStart);
@@ -111,6 +165,7 @@ document.addEventListener("keydown", (event) => {
 			'button[type="submit"]',
 		);
 		if (submit) flashButton(submit);
+		deferHotkeyToast(event.metaKey ? "⌘+Enter" : "Ctrl+Enter", "apply");
 		target.form?.requestSubmit();
 		return;
 	}
@@ -128,7 +183,7 @@ document.addEventListener("keydown", (event) => {
 
 	if (items.length === 0) return;
 
-	const current = items.findIndex((b) => b.dataset.kqlActive === "1");
+	const current = items.findIndex((b) => b.dataset["kqlActive"] === "1");
 	const cols = countKqlCols(items);
 	const n = items.length;
 	const start = current < 0 ? 0 : current;
@@ -183,7 +238,7 @@ function highlightKqlItem(
 		const btn = items[idx];
 		if (!btn) continue;
 		if (idx === i) {
-			btn.dataset.kqlActive = "1";
+			btn.dataset["kqlActive"] = "1";
 			btn.classList.add("bg-primary", "text-primary-content");
 			btn.scrollIntoView({ block: "nearest" });
 		} else {
@@ -211,9 +266,9 @@ document.addEventListener("click", (event) => {
 
 	if (chipSubmitLock) return;
 
-	const field = btn.dataset.filterField ?? "";
-	const op = btn.dataset.filterOp ?? "eq";
-	const value = btn.dataset.filterValue ?? "";
+	const field = btn.dataset["filterField"] ?? "";
+	const op = btn.dataset["filterOp"] ?? "eq";
+	const value = btn.dataset["filterValue"] ?? "";
 	if (!field || !value) return;
 
 	const sym =
@@ -289,11 +344,11 @@ document.addEventListener("click", (event) => {
 	event.stopPropagation();
 	event.preventDefault();
 
-	const text = btn.dataset.copy ?? "";
+	const text = btn.dataset["copy"] ?? "";
 	void navigator.clipboard.writeText(text).then(() => {
 		const original = btn.textContent;
 		btn.textContent = "copied";
-		btn.dataset.state = "copied";
+		btn.dataset["state"] = "copied";
 		setTimeout(() => {
 			btn.textContent = original;
 			btn.removeAttribute("data-state");
@@ -417,7 +472,7 @@ document.addEventListener("change", (event) => {
 
 	if (!target.checked) return;
 
-	const url = `/api/live-tail?project=${encodeURIComponent(project)}&kql=${encodeURIComponent(kql)}`;
+	const url = `/api/logs/${encodeURIComponent(project)}/live-tail?kql=${encodeURIComponent(kql)}`;
 	const container = document.createElement("div");
 	container.id = containerId;
 	container.setAttribute("hx-ext", "sse");
@@ -466,6 +521,6 @@ document.addEventListener("click", (event) => {
 	const kql = btn.dataset["kql"] ?? "events";
 	const urlInput = document.getElementById("share-url") as HTMLInputElement | null;
 	if (urlInput) {
-		urlInput.value = `${window.location.origin}/logs?project=${encodeURIComponent(project)}&kql=${encodeURIComponent(kql)}`;
+		urlInput.value = `${window.location.origin}/ui/logs/${encodeURIComponent(project)}?kql=${encodeURIComponent(kql)}`;
 	}
 });
