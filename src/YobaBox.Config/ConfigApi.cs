@@ -7,6 +7,8 @@ using YobaBox.Core.Models;
 
 namespace YobaBox.Config;
 
+public sealed record ConfigBindingDto(string Path, string Value, string Tags, BindingKind Kind = BindingKind.Plain);
+
 public static class ConfigApi
 {
 	public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
@@ -30,15 +32,22 @@ public static class ConfigApi
 			: Results.Ok(new { path, value = result });
 	}
 
-	static async Task<IResult> Create(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, ConfigBinding binding)
+	static async Task<IResult> Create(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, ConfigBindingDto dto)
 	{
-		if (!binding.Tags.Contains($"ws:{workspaceKey}", StringComparison.OrdinalIgnoreCase))
+		if (string.IsNullOrWhiteSpace(dto.Path))
+			return Results.BadRequest(new { error = "path is required" });
+		if (!dto.Tags.Contains($"ws:{workspaceKey}", StringComparison.OrdinalIgnoreCase))
 			return Results.BadRequest(new { error = $"Tags must include 'ws:{workspaceKey}'" });
 
-		binding = binding with
+		var now = DateTime.UtcNow;
+		var binding = new ConfigBinding
 		{
-			CreatedAt = DateTime.UtcNow,
-			UpdatedAt = DateTime.UtcNow,
+			Path = dto.Path,
+			Value = dto.Value ?? string.Empty,
+			Tags = dto.Tags,
+			Kind = dto.Kind,
+			CreatedAt = now,
+			UpdatedAt = now,
 		};
 
 		var configDb = configFactory.GetConfigDb(workspaceKey);

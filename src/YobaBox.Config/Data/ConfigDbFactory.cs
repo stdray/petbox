@@ -29,10 +29,10 @@ public sealed class ConfigDbFactory : IConfigDbFactory, IAsyncDisposable
 
 			var dbPath = Path.Combine(_baseDir, $"{workspaceKey}.db");
 			var cs = $"Data Source={dbPath}";
-			var db = new ConfigDb(ConfigDb.CreateOptions(cs));
 
 			CreateSchema(cs);
 
+			var db = new ConfigDb(ConfigDb.CreateOptions(cs));
 			_dbs[workspaceKey] = db;
 			return db;
 		}
@@ -42,19 +42,68 @@ public sealed class ConfigDbFactory : IConfigDbFactory, IAsyncDisposable
 	{
 		using var raw = new SqliteConnection(cs);
 		raw.Open();
-		using var cmd = raw.CreateCommand();
-		cmd.CommandText = """
-			CREATE TABLE IF NOT EXISTS ConfigBindings (
-				Id INTEGER PRIMARY KEY AUTOINCREMENT,
-				Path TEXT NOT NULL,
-				Value TEXT NOT NULL,
-				Tags TEXT NOT NULL,
-				CreatedAt TEXT NOT NULL,
-				UpdatedAt TEXT NOT NULL
-			);
-			CREATE INDEX IF NOT EXISTS IX_ConfigBindings_Path ON ConfigBindings (Path);
-			""";
-		cmd.ExecuteNonQuery();
+		using (var cmd = raw.CreateCommand())
+		{
+			cmd.CommandText = """
+				CREATE TABLE IF NOT EXISTS ConfigBindings (
+					Id INTEGER PRIMARY KEY AUTOINCREMENT,
+					Path TEXT NOT NULL,
+					Value TEXT NOT NULL,
+					Tags TEXT NOT NULL,
+					Kind INTEGER NOT NULL DEFAULT 0,
+					Ciphertext TEXT,
+					Iv TEXT,
+					AuthTag TEXT,
+					CreatedAt TEXT NOT NULL,
+					UpdatedAt TEXT NOT NULL
+				);
+				CREATE INDEX IF NOT EXISTS IX_ConfigBindings_Path ON ConfigBindings (Path);
+
+				CREATE TABLE IF NOT EXISTS ConfigBindingHistory (
+					Id INTEGER PRIMARY KEY AUTOINCREMENT,
+					BindingId INTEGER NOT NULL,
+					Action TEXT NOT NULL,
+					Path TEXT NOT NULL,
+					Tags TEXT NOT NULL,
+					Kind INTEGER NOT NULL DEFAULT 0,
+					OldValue TEXT,
+					NewValue TEXT,
+					Actor TEXT NOT NULL DEFAULT 'system',
+					At TEXT NOT NULL
+				);
+				CREATE INDEX IF NOT EXISTS IX_ConfigBindingHistory_At ON ConfigBindingHistory (At DESC);
+				CREATE INDEX IF NOT EXISTS IX_ConfigBindingHistory_Path ON ConfigBindingHistory (Path);
+
+				CREATE TABLE IF NOT EXISTS TagVocabulary (
+					Id INTEGER PRIMARY KEY AUTOINCREMENT,
+					TagKey TEXT NOT NULL UNIQUE,
+					Description TEXT,
+					CreatedAt TEXT NOT NULL
+				);
+				""";
+			cmd.ExecuteNonQuery();
+		}
+
+		AddColumnIfMissing(raw, "ConfigBindings", "Kind", "INTEGER NOT NULL DEFAULT 0");
+		AddColumnIfMissing(raw, "ConfigBindings", "Ciphertext", "TEXT");
+		AddColumnIfMissing(raw, "ConfigBindings", "Iv", "TEXT");
+		AddColumnIfMissing(raw, "ConfigBindings", "AuthTag", "TEXT");
+	}
+
+	static void AddColumnIfMissing(SqliteConnection raw, string table, string column, string definition)
+	{
+		using var check = raw.CreateCommand();
+		check.CommandText = $"PRAGMA table_info({table})";
+		using var reader = check.ExecuteReader();
+		while (reader.Read())
+		{
+			if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+				return;
+		}
+		reader.Close();
+		using var alter = raw.CreateCommand();
+		alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {definition}";
+		alter.ExecuteNonQuery();
 	}
 
 	public async ValueTask DisposeAsync()

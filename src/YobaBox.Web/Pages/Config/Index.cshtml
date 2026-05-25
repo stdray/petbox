@@ -1,15 +1,25 @@
 @page "/ui/config/{workspaceKey?}"
 @model YobaBox.Web.Pages.Config.IndexModel
+@inject Microsoft.AspNetCore.Antiforgery.IAntiforgery antiforgery
 @{
-	ViewData["Title"] = "Config";
+	ViewData["Title"] = $"Config — {Model.EffectiveWorkspaceKey}";
+	var tokens = antiforgery.GetAndStoreTokens(ViewContext.HttpContext);
 }
 
-<div class="flex items-center gap-3 mb-4">
+<div class="flex items-center gap-3 mb-4 flex-wrap">
 	<h1 class="text-xl font-semibold" data-testid="config-title">Bindings (@Model.Rows.Count)</h1>
-	<a asp-page="/Config/Editor" class="btn btn-sm btn-primary ml-auto" data-testid="config-new">
-		+ New binding
-	</a>
+	<span class="badge badge-outline font-mono">@Model.EffectiveWorkspaceKey</span>
+
+	<div class="ml-auto flex items-center gap-2">
+		<a asp-page="/Config/History" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-ghost" data-testid="config-history-link">History</a>
+		<a asp-page="/Config/Preview" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-ghost" data-testid="config-preview-link">Preview</a>
+		<a asp-page="/Config/Tags" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-ghost" data-testid="config-tags-link">Tags</a>
+		<a asp-page="/Config/Editor" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-primary" data-testid="config-new">+ New binding</a>
+	</div>
 </div>
+
+<input type="hidden" id="__requestVerificationToken" value="@tokens.RequestToken" />
+<meta name="config-workspace-key" content="@Model.EffectiveWorkspaceKey" />
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {
@@ -45,30 +55,32 @@
 	}
 
 	<button type="submit" class="btn btn-sm" data-testid="config-filter-apply">Apply</button>
-	<a href="/config" class="btn btn-sm btn-ghost" data-testid="config-filter-clear">Clear</a>
+	<a asp-page="/Config/Index" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-ghost" data-testid="config-filter-clear">Clear</a>
 </form>
 
 @if (Model.Rows.Count == 0)
 {
 	<div class="text-xs opacity-60 italic mb-4" data-testid="config-empty">No bindings match the current filter.</div>
 }
-
-<div class="overflow-x-auto">
-	<table class="table table-sm" data-testid="config-table">
-		<thead>
-			<tr>
-				<th>Tags</th>
-				<th>Key</th>
-				<th>Value</th>
-				<th>Updated</th>
-				<th></th>
-			</tr>
-		</thead>
-		<tbody>
-			@foreach (var b in Model.Rows)
-			{
-				<partial name="_Row" model="b" />
-			}
-		</tbody>
-	</table>
-</div>
+else
+{
+	<div class="overflow-x-auto">
+		<table class="table table-sm" data-testid="config-table">
+			<thead>
+				<tr>
+					<th>Tags</th>
+					<th>Key</th>
+					<th>Value</th>
+					<th>Updated</th>
+					<th></th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var b in Model.Rows)
+				{
+					<partial name="_Row" model='new YobaBox.Web.Pages.Config.RowViewModel(b, Model.EffectiveWorkspaceKey, Model.KeyQuery, Model.TagFilter)' />
+				}
+			</tbody>
+		</table>
+	</div>
+}

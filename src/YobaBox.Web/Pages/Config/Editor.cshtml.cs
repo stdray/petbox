@@ -2,7 +2,10 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using YobaBox.Config;
 using YobaBox.Config.Data;
+using YobaBox.Core.Auth;
+using YobaBox.Core.Models;
 
 namespace YobaBox.Web.Pages.Config;
 
@@ -10,65 +13,235 @@ namespace YobaBox.Web.Pages.Config;
 public sealed class EditorModel : PageModel
 {
 	readonly IConfigDbFactory _configFactory;
+	readonly ISecretEncryptor _encryptor;
 
-	public EditorModel(IConfigDbFactory configFactory) => _configFactory = configFactory;
-
-	public long? Id { get; private set; }
-	public string Path { get; private set; } = string.Empty;
-	public string Value { get; private set; } = string.Empty;
-	public string Tags { get; private set; } = string.Empty;
-	public bool IsNew { get; private set; }
-
-	public void OnGet(long? bindingId)
+	public EditorModel(IConfigDbFactory configFactory, ISecretEncryptor encryptor)
 	{
-		Id = bindingId;
-		if (bindingId is { } bid)
+		_configFactory = configFactory;
+		_encryptor = encryptor;
+	}
+
+	[BindProperty(SupportsGet = true)]
+	public string? WorkspaceKey { get; set; }
+
+	[BindProperty(SupportsGet = true)]
+	public long? BindingId { get; set; }
+
+	public string EffectiveWorkspaceKey { get; private set; } = "$system";
+	public bool IsNew => BindingId is null or <= 0;
+
+	[BindProperty]
+	public string Path { get; set; } = string.Empty;
+
+	[BindProperty]
+	public string Value { get; set; } = string.Empty;
+
+	[BindProperty]
+	public string TagsText { get; set; } = string.Empty;
+
+	[BindProperty]
+	public BindingKind Kind { get; set; } = BindingKind.Plain;
+
+	public string? ErrorMessage { get; set; }
+	public string? ConflictMessage { get; set; }
+	public bool SecretsAvailable => _encryptor.IsAvailable;
+
+	public IActionResult OnGet()
+	{
+		EffectiveWorkspaceKey = ResolveWorkspace();
+
+		if (BindingId is { } id and > 0)
 		{
-			var configDb = _configFactory.GetConfigDb("$system");
-			var binding = configDb.Bindings.First(b => b.Id == bid);
+			var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+			var binding = configDb.Bindings.FirstOrDefault(b => b.Id == id);
+			if (binding is null)
+			{
+				ErrorMessage = $"Binding #{id} not found.";
+				return Page();
+			}
+
 			Path = binding.Path;
-			Value = binding.Value;
-			Tags = binding.Tags;
-			IsNew = false;
+			Kind = binding.Kind;
+			Value = binding.Kind == BindingKind.Plain ? binding.Value : string.Empty;
+			TagsText = string.Join('\n', binding.Tags
+				.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 		}
 		else
 		{
-			IsNew = true;
+			TagsText = $"ws={EffectiveWorkspaceKey}";
 		}
+
+		return Page();
 	}
 
-	public async Task<IActionResult> OnPostSaveAsync(long? bindingId, string Path, string Value, string Tags)
+	public async Task<IActionResult> OnPostSaveAsync()
 	{
+		EffectiveWorkspaceKey = ResolveWorkspace();
+
 		if (string.IsNullOrWhiteSpace(Path))
 		{
-			ModelState.AddModelError("Path", "Path is required.");
-			Id = bindingId;
-			IsNew = bindingId is null or <= 0;
+			ErrorMessage = "Path is required.";
 			return Page();
 		}
 
-		var configDb = _configFactory.GetConfigDb("$system");
-
-		if (bindingId is > 0)
+		var (canonicalTags, parseError) = CanonicalizeTags(TagsText);
+		if (parseError is not null)
 		{
-			var binding = configDb.Bindings.First(b => b.Id == bindingId.Value);
-			var updated = binding with { Path = Path, Value = Value, Tags = Tags, UpdatedAt = DateTime.UtcNow };
-			await configDb.UpdateAsync(updated);
+			ErrorMessage = parseError;
+			return Page();
+		}
+
+		if (!canonicalTags.Contains($"ws={EffectiveWorkspaceKey}", StringComparison.Ordinal))
+		{
+			ErrorMessage = $"Tags must include 'ws={EffectiveWorkspaceKey}' (workspace mandatory).";
+			return Page();
+		}
+
+		if (Kind == BindingKind.Secret && !_encryptor.IsAvailable)
+		{
+			ErrorMessage = "Secret bindings require YOBABOX_MASTER_KEY to be configured.";
+			return Page();
+		}
+
+		if (string.IsNullOrWhiteSpace(Value))
+		{
+			ErrorMessage = "Value is required.";
+			return Page();
+		}
+
+		var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+		var now = DateTime.UtcNow;
+		var actor = User.Identity?.Name ?? "system";
+
+		string storedValue;
+		string? cipher = null;
+		string? iv = null;
+		string? authTag = null;
+
+		if (Kind == BindingKind.Secret)
+		{
+			var bundle = _encryptor.Encrypt(Value);
+			cipher = bundle.Ciphertext;
+			iv = bundle.Iv;
+			authTag = bundle.AuthTag;
+			storedValue = string.Empty;
 		}
 		else
 		{
-#pragma warning disable CA2016
-			await configDb.InsertWithIdentityAsync(new Core.Models.ConfigBinding
-#pragma warning restore CA2016
+			storedValue = Value;
+		}
+
+		if (BindingId is { } id and > 0)
+		{
+			var existing = configDb.Bindings.FirstOrDefault(b => b.Id == id);
+			if (existing is null)
+			{
+				ErrorMessage = $"Binding #{id} not found.";
+				return Page();
+			}
+
+			var updated = existing with
 			{
 				Path = Path,
-				Value = Value,
-				Tags = Tags,
-				CreatedAt = DateTime.UtcNow,
-				UpdatedAt = DateTime.UtcNow,
+				Tags = canonicalTags,
+				Kind = Kind,
+				Value = storedValue,
+				Ciphertext = cipher,
+				Iv = iv,
+				AuthTag = authTag,
+				UpdatedAt = now,
+			};
+			await configDb.UpdateAsync(updated);
+
+			await configDb.InsertAsync(new ConfigBindingHistoryEntry
+			{
+				BindingId = id,
+				Action = "Update",
+				Path = Path,
+				Tags = canonicalTags,
+				Kind = Kind,
+				OldValue = existing.Kind == BindingKind.Plain ? existing.Value : "(secret)",
+				NewValue = Kind == BindingKind.Plain ? storedValue : "(secret)",
+				Actor = actor,
+				At = now,
+			});
+		}
+		else
+		{
+			var newId = await configDb.InsertWithInt64IdentityAsync(new ConfigBinding
+			{
+				Path = Path,
+				Tags = canonicalTags,
+				Kind = Kind,
+				Value = storedValue,
+				Ciphertext = cipher,
+				Iv = iv,
+				AuthTag = authTag,
+				CreatedAt = now,
+				UpdatedAt = now,
+			});
+
+			await configDb.InsertAsync(new ConfigBindingHistoryEntry
+			{
+				BindingId = newId,
+				Action = "Create",
+				Path = Path,
+				Tags = canonicalTags,
+				Kind = Kind,
+				OldValue = null,
+				NewValue = Kind == BindingKind.Plain ? storedValue : "(secret)",
+				Actor = actor,
+				At = now,
 			});
 		}
 
-		return RedirectToPage("/Config/Index");
+		var conflict = DetectConflict(configDb, Path, canonicalTags, BindingId);
+		if (conflict is not null)
+		{
+			ConflictMessage = conflict;
+			return Page();
+		}
+
+		return RedirectToPage("/Config/Index", new { workspaceKey = EffectiveWorkspaceKey });
+	}
+
+	string ResolveWorkspace()
+	{
+		if (!string.IsNullOrEmpty(WorkspaceKey))
+			return WorkspaceKey;
+		var claimWs = User.FindFirst(YobaBoxClaims.ActiveWorkspace)?.Value;
+		return string.IsNullOrEmpty(claimWs) ? "$system" : claimWs;
+	}
+
+	static (string Canonical, string? Error) CanonicalizeTags(string raw)
+	{
+		if (string.IsNullOrWhiteSpace(raw))
+			return (string.Empty, "Tags are required (at least 'ws=...').");
+
+		var pairs = new List<(string, string)>();
+		foreach (var line in raw.Split(['\r', '\n', ','], StringSplitOptions.RemoveEmptyEntries))
+		{
+			var trimmed = line.Trim();
+			if (trimmed.Length == 0) continue;
+			var eq = trimmed.IndexOf('=');
+			if (eq <= 0 || eq == trimmed.Length - 1)
+				return (string.Empty, $"'{trimmed}' is not a 'key=value' pair.");
+			pairs.Add((trimmed[..eq].Trim(), trimmed[(eq + 1)..].Trim()));
+		}
+
+		pairs.Sort((a, b) => string.CompareOrdinal(a.Item1, b.Item1));
+		return (string.Join(",", pairs.Select(p => $"{p.Item1}={p.Item2}")), null);
+	}
+
+	static string? DetectConflict(ConfigDb db, string path, string tags, long? selfId)
+	{
+		var sameKey = db.Bindings.Where(b => b.Path == path).ToList();
+		foreach (var other in sameKey)
+		{
+			if (other.Id == selfId) continue;
+			if (string.Equals(other.Tags, tags, StringComparison.Ordinal))
+				return $"Binding #{other.Id} has the same Path and Tags. Saved as a duplicate — older wins by Id.";
+		}
+		return null;
 	}
 }
