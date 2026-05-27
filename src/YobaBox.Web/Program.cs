@@ -187,7 +187,19 @@ public partial class Program
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, WorkspaceRoleAuthorizationHandler>();
 		builder.Services.AddScoped<INavigationContext, NavigationContext>();
-		builder.Services.AddRazorPages();
+		builder.Services.AddRazorPages(options =>
+		{
+			// Cross-project logs/traces — same page, workspace-only route (no projectKey).
+			options.Conventions.AddPageRoute("/Logs/Index", "/ui/{workspaceKey}/logs");
+			options.Conventions.AddPageRoute("/Logs/Traces", "/ui/{workspaceKey}/traces");
+			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.
+			options.Conventions.AddPageRoute("/Config/Index", "/ui/{workspaceKey}/{projectKey}/config");
+			options.Conventions.AddPageRoute("/Config/Editor", "/ui/{workspaceKey}/{projectKey}/config/editor/{bindingId:long?}");
+			options.Conventions.AddPageRoute("/Config/History", "/ui/{workspaceKey}/{projectKey}/config/history");
+			options.Conventions.AddPageRoute("/Config/Preview", "/ui/{workspaceKey}/{projectKey}/config/preview");
+			// Workspace admin landing — alias to Members until the merge step adds a tabbed parent.
+			options.Conventions.AddPageRoute("/Admin/WorkspaceUsers", "/ui/{workspaceKey}/admin");
+		});
 	}
 
 	public static void Configure(WebApplication app)

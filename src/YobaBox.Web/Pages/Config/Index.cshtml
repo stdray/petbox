@@ -2,19 +2,41 @@
 @model YobaBox.Web.Pages.Config.IndexModel
 @inject Microsoft.AspNetCore.Antiforgery.IAntiforgery antiforgery
 @{
-	ViewData["Title"] = $"Config — {Model.EffectiveWorkspaceKey}";
+	ViewData["Title"] = Model.IsProjectScoped
+		? $"Config — {Model.ProjectKey}"
+		: $"Shared config — {Model.EffectiveWorkspaceKey}";
 	var tokens = antiforgery.GetAndStoreTokens(ViewContext.HttpContext);
 }
 
+@if (Model.IsProjectScoped)
+{
+	<div class="mb-2 flex items-baseline gap-3 flex-wrap">
+		<h1 class="text-2xl font-semibold">@Model.ProjectKey</h1>
+		<span class="text-sm opacity-60">Config</span>
+	</div>
+	<partial name="_ProjectTabs" />
+}
+
 <div class="flex items-center gap-3 mb-4 flex-wrap">
-	<h1 class="text-xl font-semibold" data-testid="config-title">Bindings (@Model.Rows.Count)</h1>
-	<span class="badge badge-outline font-mono">@Model.EffectiveWorkspaceKey</span>
+	@if (Model.IsProjectScoped)
+	{
+		<h2 class="text-lg font-semibold" data-testid="config-title">Bindings (@Model.Rows.Count)</h2>
+		<span class="badge badge-info badge-sm font-mono" data-testid="config-project-filter" title="Auto-filter: project:@Model.ProjectKey">project:@Model.ProjectKey</span>
+	}
+	else
+	{
+		<h1 class="text-xl font-semibold" data-testid="config-title">Shared bindings (@Model.Rows.Count)</h1>
+		<span class="badge badge-outline font-mono">@Model.EffectiveWorkspaceKey</span>
+	}
 
 	<div class="ml-auto flex items-center gap-2">
-		<a asp-page="/Config/History" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-ghost" data-testid="config-history-link">History</a>
-		<a asp-page="/Config/Preview" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-ghost" data-testid="config-preview-link">Preview</a>
-		<a asp-page="/Config/Tags" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-ghost" data-testid="config-tags-link">Tags</a>
-		<a asp-page="/Config/Editor" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-primary" data-testid="config-new">+ New binding</a>
+		<a asp-page="/Config/History" class="btn btn-sm btn-ghost" data-testid="config-history-link">History</a>
+		<a asp-page="/Config/Preview" class="btn btn-sm btn-ghost" data-testid="config-preview-link">Preview</a>
+		@if (!Model.IsProjectScoped)
+		{
+			<a asp-page="/Config/Tags" class="btn btn-sm btn-ghost" data-testid="config-tags-link">Tags</a>
+		}
+		<a asp-page="/Config/Editor" class="btn btn-sm btn-primary" data-testid="config-new">+ New binding</a>
 	</div>
 </div>
 

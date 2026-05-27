@@ -30,7 +30,14 @@ public sealed class IndexModel : PageModel
 	[BindProperty(SupportsGet = true)]
 	public string? WorkspaceKey { get; set; }
 
+	// Set when the page is mounted under /ui/{ws}/{projectKey}/config — auto-filters bindings
+	// whose Tags include "project:{projectKey}".
+	[BindProperty(SupportsGet = true)]
+	public string? ProjectKey { get; set; }
+
 	public string EffectiveWorkspaceKey { get; private set; } = "$system";
+
+	public bool IsProjectScoped => !string.IsNullOrEmpty(ProjectKey);
 
 	public string? KeyQuery { get; private set; }
 	public IReadOnlyDictionary<string, string> TagFilter { get; private set; } =
@@ -101,8 +108,18 @@ public sealed class IndexModel : PageModel
 		}
 		TagFilter = filter;
 
-		Rows = [.. all.Where(b => MatchesTagFilter(b, filter) && MatchesKeyQuery(b, KeyQuery))];
+		Rows = [.. all.Where(b => MatchesTagFilter(b, filter) && MatchesKeyQuery(b, KeyQuery) && MatchesProjectScope(b))];
 		return Page();
+	}
+
+	bool MatchesProjectScope(Core.Models.ConfigBinding b)
+	{
+		if (!IsProjectScoped) return true;
+		var tag = $"project:{ProjectKey}";
+		foreach (var t in b.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+			if (string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))
+				return true;
+		return false;
 	}
 
 	public IActionResult OnPostDelete(long id)
