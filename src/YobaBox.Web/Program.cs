@@ -72,29 +72,23 @@ public partial class Program
 			ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
 
 		var selfLogEnabled = builder.Configuration.GetValue("Seq:SelfLog:Enabled", false);
-		if (selfLogEnabled)
+		if (selfLogEnabled && new FeatureFlags(builder.Configuration).IsEnabled("Logging"))
 		{
-			var selfUrl = builder.Configuration["Seq:SelfLog:ServerUrl"];
-			var selfApiKey = builder.Configuration["Seq:SelfLog:ApiKey"];
-			if (!string.IsNullOrWhiteSpace(selfUrl) && !string.IsNullOrWhiteSpace(selfApiKey))
-			{
-				var props = new Dictionary<string, object>
-				{
-					["Env"] = builder.Environment.EnvironmentName,
-					["Ver"] = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev",
-					["Sha"] = Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local",
-					["Host"] = Environment.MachineName,
-				};
+			var staticProps = System.Collections.Immutable.ImmutableDictionary.CreateBuilder<string, System.Text.Json.JsonElement>();
+			staticProps["Env"] = System.Text.Json.JsonSerializer.SerializeToElement(builder.Environment.EnvironmentName);
+			staticProps["Ver"] = System.Text.Json.JsonSerializer.SerializeToElement(Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev");
+			staticProps["Sha"] = System.Text.Json.JsonSerializer.SerializeToElement(Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local");
+			staticProps["Host"] = System.Text.Json.JsonSerializer.SerializeToElement(Environment.MachineName);
 
-				builder.Logging.AddSeq(
-					serverUrl: selfUrl,
-					apiKey: selfApiKey,
-					enrichers:
-					[
-						.. props.Select(kv => (Action<EnrichingEvent>)(evt =>
-							evt.AddOrUpdateProperty(kv.Key, kv.Value))),
-					]);
-			}
+			builder.Services.Configure<YobaBox.Log.Core.SelfLogging.SystemLoggerOptions>(
+				builder.Configuration.GetSection("SelfLogging"));
+			builder.Services.PostConfigure<YobaBox.Log.Core.SelfLogging.SystemLoggerOptions>(o =>
+				o.StaticProperties = staticProps.ToImmutable());
+
+			builder.Services.AddSingleton<YobaBox.Log.Core.SelfLogging.SystemLoggerProvider>();
+			builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(
+				sp => sp.GetRequiredService<YobaBox.Log.Core.SelfLogging.SystemLoggerProvider>());
+			builder.Services.AddHostedService<YobaBox.Log.Core.SelfLogging.SystemLogFlusher>();
 		}
 
 		var otelEnabled = builder.Configuration.GetValue("OpenTelemetry:Enabled", false);
