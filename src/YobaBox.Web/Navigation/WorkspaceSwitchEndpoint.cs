@@ -2,6 +2,7 @@ using System.Globalization;
 using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using YobaBox.Core.Auth;
 using YobaBox.Core.Data;
@@ -14,10 +15,16 @@ public static class WorkspaceSwitchEndpoint
 
 	public static void MapWorkspaceSwitch(this IEndpointRouteBuilder app)
 	{
-		app.MapPost("/api/ui/workspace", Switch).RequireAuthorization();
+		app.MapPost("/api/ui/workspace", Switch)
+			.RequireAuthorization()
+			.DisableAntiforgery();
 	}
 
-	static async Task<IResult> Switch(HttpContext ctx, YobaBoxDb db, string ws, string? returnUrl)
+	static async Task<IResult> Switch(
+		HttpContext ctx,
+		YobaBoxDb db,
+		[FromForm] string ws,
+		[FromForm] string? returnUrl)
 	{
 		if (string.IsNullOrWhiteSpace(ws))
 			return Results.BadRequest(new { error = "ws is required" });
