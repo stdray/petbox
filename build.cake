@@ -205,6 +205,47 @@ Task("DockerPush")
 		DockerPush(targetImage);
 	});
 
+// ─── Dev loop ───
+
+Task("Dev")
+	.Description("Run bun + dotnet watchers side by side. Ctrl+C to stop both.")
+	.Does(() =>
+	{
+		var webDir = "./src/YobaBox.Web";
+
+		Information("Installing frontend deps (bun install)...");
+		var bunInstallExit = StartProcess("bun", new ProcessSettings
+		{
+			Arguments = "install",
+			WorkingDirectory = webDir,
+		});
+		if (bunInstallExit != 0)
+			throw new CakeException($"bun install failed with exit code {bunInstallExit}");
+
+		Information("Starting bun run dev (ts + css watchers)...");
+		var bunProc = StartAndReturnProcess("bun", new ProcessSettings
+		{
+			Arguments = "run dev",
+			WorkingDirectory = webDir,
+		});
+
+		try
+		{
+			Information("Starting dotnet watch (Ctrl+C to stop both)...");
+			StartProcess("dotnet", new ProcessSettings
+			{
+				Arguments = "watch run",
+				WorkingDirectory = webDir,
+			});
+		}
+		finally
+		{
+			Information("Stopping bun watcher...");
+			try { bunProc.Kill(); } catch (Exception ex) { Warning("Failed to stop bun: {0}", ex.Message); }
+			bunProc.Dispose();
+		}
+	});
+
 // ─── Lint / verify ───
 
 Task("FormatVerify")
