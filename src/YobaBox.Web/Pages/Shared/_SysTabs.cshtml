@@ -5,7 +5,6 @@
 	var homeUrl = Routes.Sys();
 	var wsUrl = Routes.SysWorkspaces();
 	var usersUrl = Routes.SysUsers();
-	var retentionUrl = Routes.SysRetention();
 }
 <div role="tablist" class="tabs tabs-bordered mb-6" data-testid="sys-tabs">
 	<a role="tab" class="tab @(At(homeUrl) ? "tab-active" : "")"
@@ -17,7 +16,4 @@
 	<a role="tab" class="tab @(At(usersUrl) ? "tab-active" : "")"
 		href="@usersUrl"
 		data-testid="sys-tab-users">Users</a>
-	<a role="tab" class="tab @(At(retentionUrl) ? "tab-active" : "")"
-		href="@retentionUrl"
-		data-testid="sys-tab-retention">Retention</a>
 </div>

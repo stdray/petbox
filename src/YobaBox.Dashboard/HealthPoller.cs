@@ -2,55 +2,64 @@ using LinqToDB;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using YobaBox.Core.Data;
 using YobaBox.Core.Models;
+using YobaBox.Core.Settings;
 
 namespace YobaBox.Dashboard;
 
 public sealed partial class HealthPoller(
 	IServiceProvider services,
 	IHttpClientFactory httpClientFactory,
-	IOptions<HealthPollerOptions> options,
 	ILogger<HealthPoller> logger) : BackgroundService
 {
-	readonly HealthPollerOptions _options = options.Value;
-
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
 		// Grace period: let DI + migrations settle.
 		try { await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false); }
 		catch (OperationCanceledException) { return; }
 
-		var interval = TimeSpan.FromSeconds(Math.Max(5, _options.HealthPollIntervalSeconds));
-
 		while (!stoppingToken.IsCancellationRequested)
 		{
+			DashboardSettings settings;
 			try
 			{
-				await RunPassAsync(stoppingToken).ConfigureAwait(false);
+				settings = await ReadSettingsAsync(stoppingToken).ConfigureAwait(false);
+				await RunPassAsync(settings, stoppingToken).ConfigureAwait(false);
 			}
 			catch (OperationCanceledException) { break; }
 			catch (Exception ex)
 			{
 				LogPassFailed(logger, ex);
+				settings = new DashboardSettings();
 			}
 
-			try { await Task.Delay(interval, stoppingToken).ConfigureAwait(false); }
+			try
+			{
+				var interval = TimeSpan.FromSeconds(Math.Max(5, settings.HealthPollIntervalSeconds));
+				await Task.Delay(interval, stoppingToken).ConfigureAwait(false);
+			}
 			catch (OperationCanceledException) { break; }
 		}
 	}
 
-	async Task RunPassAsync(CancellationToken ct)
+	async Task<DashboardSettings> ReadSettingsAsync(CancellationToken ct)
+	{
+		using var scope = services.CreateScope();
+		var resolver = scope.ServiceProvider.GetRequiredService<ISettingsResolver>();
+		return await resolver.GetAsync<DashboardSettings>(Scope.System, "$", ct).ConfigureAwait(false);
+	}
+
+	async Task RunPassAsync(DashboardSettings settings, CancellationToken ct)
 	{
 		using var scope = services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<YobaBoxDb>();
 		var allServices = await db.Services.ToListAsync(ct);
 		var now = DateTime.UtcNow;
-		var pushCutoff = now.AddSeconds(-Math.Max(30, _options.PushTtlSeconds));
+		var pushCutoff = now.AddSeconds(-Math.Max(30, settings.PushTtlSeconds));
 
 		var http = httpClientFactory.CreateClient("HealthPoller");
-		http.Timeout = TimeSpan.FromSeconds(Math.Max(1, _options.RequestTimeoutSeconds));
+		http.Timeout = TimeSpan.FromSeconds(Math.Max(1, settings.RequestTimeoutSeconds));
 
 		foreach (var service in allServices)
 		{

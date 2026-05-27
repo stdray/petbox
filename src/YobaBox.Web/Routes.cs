@@ -14,7 +14,8 @@ public static class Routes
 	public static string SysWorkspaces() => $"{UiPrefix}/sys/workspaces";
 	public static string SysWorkspace(string key) => $"{UiPrefix}/sys/workspaces/{key}";
 	public static string SysUsers() => $"{UiPrefix}/sys/users";
-	public static string SysRetention() => $"{UiPrefix}/sys/retention";
+	// /ui/sys/retention removed in Phase 23.3 — per-project log retention lives in
+	// L2 Settings store (LogSettings.RetentionDays). Defaults page comes in 23.4.
 
 	// Workspace level
 	public static string Workspace(string ws) => $"{UiPrefix}/{ws}";

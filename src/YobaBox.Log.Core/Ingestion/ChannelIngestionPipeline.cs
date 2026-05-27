@@ -1,9 +1,10 @@
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using LinqToDB.Data;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
+using YobaBox.Core.Settings;
 using YobaBox.Log.Core.Data;
 using YobaBox.Log.Core.Models;
 using YobaBox.Log.Core.Observability;
@@ -14,20 +15,21 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 {
 	readonly ILogDbFactory _factory;
 	readonly ITailBroadcaster? _tail;
-	readonly IngestionOptions _options;
+	readonly IServiceScopeFactory _scopeFactory;
 	readonly ILogger<ChannelIngestionPipeline> _logger;
 	readonly ConcurrentDictionary<string, ProjectChannel> _channels = new(StringComparer.Ordinal);
+	IngestionSettings _settings = new();
 	int _disposed;
 
 	public ChannelIngestionPipeline(
 		ILogDbFactory factory,
-		IOptions<IngestionOptions> options,
+		IServiceScopeFactory scopeFactory,
 		ILogger<ChannelIngestionPipeline> logger,
 		ITailBroadcaster? tail = null)
 	{
 		_factory = factory;
 		_tail = tail;
-		_options = options.Value;
+		_scopeFactory = scopeFactory;
 		_logger = logger;
 	}
 
@@ -49,7 +51,7 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 
 	ProjectChannel StartChannel(string projectKey)
 	{
-		var channel = Channel.CreateBounded<LogEntryCandidate>(new BoundedChannelOptions(_options.ChannelCapacity)
+		var channel = Channel.CreateBounded<LogEntryCandidate>(new BoundedChannelOptions(_settings.ChannelCapacity)
 		{
 			FullMode = BoundedChannelFullMode.Wait,
 			SingleReader = true,
@@ -61,11 +63,11 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 
 	async Task WriterLoopAsync(string projectKey, ChannelReader<LogEntryCandidate> reader)
 	{
-		var batch = new List<LogEntryCandidate>(_options.MaxBatchSize);
+		var batch = new List<LogEntryCandidate>(_settings.MaxBatchSize);
 		while (await reader.WaitToReadAsync().ConfigureAwait(false))
 		{
 			batch.Clear();
-			while (batch.Count < _options.MaxBatchSize && reader.TryRead(out var candidate))
+			while (batch.Count < _settings.MaxBatchSize && reader.TryRead(out var candidate))
 				batch.Add(candidate);
 
 			if (batch.Count == 0)
@@ -88,7 +90,14 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 		}
 	}
 
-	public Task StartAsync(CancellationToken cancellationToken) => Task.CompletedTask;
+	public async Task StartAsync(CancellationToken cancellationToken)
+	{
+		// Snapshot settings once. Pipeline is a singleton — channel sizes can't
+		// hot-reload without recreating channels (their capacity is baked at create).
+		using var scope = _scopeFactory.CreateScope();
+		var resolver = scope.ServiceProvider.GetRequiredService<ISettingsResolver>();
+		_settings = await resolver.GetAsync<IngestionSettings>(Scope.System, "$", cancellationToken).ConfigureAwait(false);
+	}
 
 	public async Task StopAsync(CancellationToken cancellationToken)
 	{

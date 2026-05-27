@@ -23,7 +23,6 @@ public sealed class YobaBoxDb : DataConnection
 	public ITable<DataTable> DataTables => this.GetTable<DataTable>();
 	public ITable<SavedQuery> SavedQueries => this.GetTable<SavedQuery>();
 	public ITable<ShareLink> ShareLinks => this.GetTable<ShareLink>();
-	public ITable<RetentionPolicy> RetentionPolicies => this.GetTable<RetentionPolicy>();
 	public ITable<Setting> Settings => this.GetTable<Setting>();
 
 	public static DataOptions<YobaBoxDb> CreateOptions(string connectionString) =>

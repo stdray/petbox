@@ -55,10 +55,8 @@ public partial class Program
 		builder.Services.AddMemoryCache();
 		builder.Services.AddSingleton<CleFParser>();
 		builder.Services.AddSingleton<ITailBroadcaster, InMemoryTailBroadcaster>();
-		builder.Services.Configure<IngestionOptions>(
-			builder.Configuration.GetSection("Ingestion"));
-		builder.Services.Configure<YobaBox.Log.Core.Retention.RetentionOptions>(
-			builder.Configuration.GetSection("Retention"));
+		// IngestionSettings / LogSettings / DashboardSettings — Phase 23.3 L2 records.
+		// Consumers read via ISettingsResolver; no IOptions bindings here.
 		if (new FeatureFlags(builder.Configuration).IsEnabled("Logging"))
 		{
 			builder.Services.AddSingleton<ChannelIngestionPipeline>();
@@ -68,8 +66,6 @@ public partial class Program
 		}
 		if (new FeatureFlags(builder.Configuration).IsEnabled("Dashboard"))
 		{
-			builder.Services.Configure<YobaBox.Dashboard.HealthPollerOptions>(
-				builder.Configuration.GetSection("Dashboard"));
 			builder.Services.AddHttpClient();
 			builder.Services.AddHostedService<YobaBox.Dashboard.HealthPoller>();
 		}

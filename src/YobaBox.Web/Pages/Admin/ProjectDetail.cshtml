@@ -193,13 +193,13 @@
 		}
 		else
 		{
-			<span class="badge badge-ghost badge-sm" data-testid="project-retention-default-badge">default: @Model.DefaultRetainDays days</span>
+			<span class="badge badge-ghost badge-sm" data-testid="project-retention-default-badge">default: @Model.EffectiveRetentionDays days</span>
 		}
 	</div>
 	<p class="text-xs opacity-60 mb-3">
 		How long to keep log entries before the hourly sweep deletes them. Without an override, this project uses the
-		<a href="@Routes.SysRetention()" class="link" data-testid="project-retention-sys-link">system default</a>
-		(@Model.DefaultRetainDays days).
+		<a href="@Routes.Sys()" class="link" data-testid="project-retention-sys-link">system default</a>
+		(@Model.EffectiveRetentionDays days).
 	</p>
 
 	<form method="post" asp-page-handler="SetRetention" class="card bg-base-200 border border-base-300" data-testid="project-retention-form">
@@ -208,7 +208,7 @@
 			<label class="form-control">
 				<span class="label-text">Retain for (days)</span>
 				<input type="number" name="retainDays" min="1" max="3650"
-					value="@(Model.RetentionOverrideDays ?? Model.DefaultRetainDays)" required
+					value="@(Model.RetentionOverrideDays ?? Model.EffectiveRetentionDays)" required
 					class="input input-bordered input-sm w-32"
 					data-testid="project-retention-input" />
 			</label>

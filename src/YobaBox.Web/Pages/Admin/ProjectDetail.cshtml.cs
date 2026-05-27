@@ -2,11 +2,10 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Microsoft.Extensions.Options;
 using YobaBox.Core.Data;
 using YobaBox.Core.Features;
 using YobaBox.Core.Models;
-using YobaBox.Log.Core.Retention;
+using YobaBox.Core.Settings;
 
 namespace YobaBox.Web.Pages.Admin;
 
@@ -15,19 +14,20 @@ public sealed class ProjectDetailModel : PageModel
 {
 	readonly YobaBoxDb _db;
 	readonly FeatureFlags _features;
-	readonly RetentionOptions _retentionOptions;
+	readonly ISettingsResolver _settings;
 
-	public ProjectDetailModel(YobaBoxDb db, FeatureFlags features, IOptions<RetentionOptions> retentionOptions)
+	public ProjectDetailModel(YobaBoxDb db, FeatureFlags features, ISettingsResolver settings)
 	{
 		_db = db;
 		_features = features;
-		_retentionOptions = retentionOptions.Value;
+		_settings = settings;
 	}
 
 	public bool DataEnabled => _features.IsEnabled("Data");
-	public int DefaultRetainDays => string.Equals(ProjectKey, "$system", StringComparison.Ordinal)
-		? _retentionOptions.SystemRetainDays
-		: _retentionOptions.DefaultRetainDays;
+
+	// Effective retention as resolved by the cascade. Shown to the user as a hint
+	// next to the per-project override field.
+	public int EffectiveRetentionDays { get; private set; }
 	public int? RetentionOverrideDays { get; private set; }
 
 	[BindProperty(SupportsGet = true)]
@@ -45,17 +45,26 @@ public sealed class ProjectDetailModel : PageModel
 	public string? ErrorMessage { get; set; }
 	public string? NewKey { get; set; }
 
-	public void OnGet()
+	public async Task OnGetAsync()
 	{
 		Project = _db.Projects.FirstOrDefault(p => p.Key == ProjectKey);
 		if (Project is null) return;
 
 		Services = _db.Services.Where(s => s.ProjectKey == ProjectKey).OrderBy(s => s.Key).ToList();
 		Keys = _db.ApiKeys.Where(k => k.ProjectKey == ProjectKey).OrderByDescending(k => k.CreatedAt).ToList();
-		RetentionOverrideDays = _db.RetentionPolicies
-			.Where(r => r.ProjectKey == ProjectKey)
-			.Select(r => (int?)r.RetainDays)
-			.FirstOrDefault();
+
+		// Effective LogSettings via cascade (project → workspace → system).
+		var effective = await _settings.GetAsync<LogSettings>(Scope.Project, ProjectKey);
+		EffectiveRetentionDays = string.Equals(ProjectKey, "$system", StringComparison.Ordinal)
+			? effective.SystemRetainDays
+			: effective.RetentionDays;
+
+		// Has the project explicitly overridden its own retention?
+		var overrideRow = _db.Settings.FirstOrDefault(s =>
+			s.Scope == "Project" && s.ScopeKey == ProjectKey && s.Path == "log.retention.days");
+		RetentionOverrideDays = overrideRow is null
+			? null
+			: int.TryParse(overrideRow.Value, out var d) ? d : null;
 	}
 
 	public async Task<IActionResult> OnPostSetRetentionAsync(int retainDays)
@@ -63,32 +72,21 @@ public sealed class ProjectDetailModel : PageModel
 		if (retainDays < 1)
 		{
 			ErrorMessage = "Retain days must be ≥ 1.";
-			OnGet();
+			await OnGetAsync();
 			return Page();
 		}
 
-		var now = DateTime.UtcNow;
-		var existing = _db.RetentionPolicies.FirstOrDefault(r => r.ProjectKey == ProjectKey);
-		if (existing is null)
-		{
-			await _db.InsertAsync(new RetentionPolicy
-			{
-				ProjectKey = ProjectKey,
-				RetainDays = retainDays,
-				CreatedAt = now,
-				UpdatedAt = now,
-			});
-		}
-		else
-		{
-			await _db.UpdateAsync(existing with { RetainDays = retainDays, UpdatedAt = now });
-		}
+		var oldSettings = await _settings.GetAsync<LogSettings>(Scope.Project, ProjectKey);
+		var newSettings = oldSettings with { RetentionDays = retainDays };
+		var userIdRaw = User.FindFirst(YobaBox.Core.Auth.YobaBoxClaims.UserId)?.Value;
+		long? userId = long.TryParse(userIdRaw, out var id) ? id : null;
+		await _settings.SetAsync(Scope.Project, ProjectKey, newSettings, oldSettings, userId);
 		return Self();
 	}
 
 	public async Task<IActionResult> OnPostClearRetentionAsync()
 	{
-		await _db.RetentionPolicies.Where(r => r.ProjectKey == ProjectKey).DeleteAsync();
+		await _settings.ResetAsync<LogSettings>(Scope.Project, ProjectKey, nameof(LogSettings.RetentionDays));
 		return Self();
 	}
 
@@ -99,7 +97,7 @@ public sealed class ProjectDetailModel : PageModel
 		if (string.IsNullOrWhiteSpace(serviceKey))
 		{
 			ErrorMessage = "Service key is required.";
-			OnGet();
+			await OnGetAsync();
 			return Page();
 		}
 
@@ -125,7 +123,7 @@ public sealed class ProjectDetailModel : PageModel
 		if (string.IsNullOrWhiteSpace(Scopes))
 		{
 			ErrorMessage = "Scopes are required.";
-			OnGet();
+			await OnGetAsync();
 			return Page();
 		}
 
@@ -139,7 +137,7 @@ public sealed class ProjectDetailModel : PageModel
 		});
 
 		NewKey = keyValue;
-		OnGet();
+		await OnGetAsync();
 		return Page();
 	}
 

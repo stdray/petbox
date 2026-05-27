@@ -1,60 +1,59 @@
 using LinqToDB;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Options;
 using YobaBox.Core.Data;
 using YobaBox.Core.Models;
+using YobaBox.Core.Settings;
 using YobaBox.Log.Core.Data;
-using Microsoft.Extensions.DependencyInjection;
 
 namespace YobaBox.Log.Core.Retention;
 
 public sealed partial class RetentionService(
 	IServiceProvider services,
-	IOptions<RetentionOptions> options,
 	ILogger<RetentionService> logger) : BackgroundService
 {
-	readonly RetentionOptions _options = options.Value;
-
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
+		// Grace period — let DI + migrations settle.
 		try { await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken).ConfigureAwait(false); }
 		catch (OperationCanceledException) { return; }
 
 		while (!stoppingToken.IsCancellationRequested)
 		{
+			TimeSpan nextDelay;
 			try
 			{
-				await RunPassAsync(DateTime.UtcNow, stoppingToken).ConfigureAwait(false);
+				nextDelay = await RunPassAsync(DateTime.UtcNow, stoppingToken).ConfigureAwait(false);
 			}
 			catch (OperationCanceledException) { break; }
 			catch (Exception ex)
 			{
 				LogPassFailed(logger, ex);
+				nextDelay = TimeSpan.FromHours(1);
 			}
 
-			try { await Task.Delay(_options.RunInterval, stoppingToken).ConfigureAwait(false); }
+			try { await Task.Delay(nextDelay, stoppingToken).ConfigureAwait(false); }
 			catch (OperationCanceledException) { break; }
 		}
 	}
 
-	public async Task RunPassAsync(DateTime now, CancellationToken ct)
+	public async Task<TimeSpan> RunPassAsync(DateTime now, CancellationToken ct)
 	{
 		using var scope = services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<YobaBoxDb>();
 		var logFactory = scope.ServiceProvider.GetRequiredService<ILogDbFactory>();
+		var resolver = scope.ServiceProvider.GetRequiredService<ISettingsResolver>();
+
+		var systemDefaults = await resolver.GetAsync<LogSettings>(Scope.System, "$", ct).ConfigureAwait(false);
+		var nextDelay = TimeSpan.FromSeconds(Math.Max(60, systemDefaults.RunIntervalSeconds));
 
 		var projects = await db.Projects.ToListAsync(ct);
-		var policies = await db.RetentionPolicies.ToListAsync(ct);
-		var policyByProject = policies.ToDictionary(p => p.ProjectKey, StringComparer.Ordinal);
 
 		foreach (var project in projects)
 		{
-			var retainDays = policyByProject.TryGetValue(project.Key, out var p)
-				? p.RetainDays
-				: project.Key == "$system"
-					? _options.SystemRetainDays
-					: _options.DefaultRetainDays;
+			var settings = await resolver.GetAsync<LogSettings>(Scope.Project, project.Key, ct).ConfigureAwait(false);
+			var retainDays = project.Key == "$system" ? settings.SystemRetainDays : settings.RetentionDays;
 
 			var cutoff = now.AddDays(-retainDays);
 			var cutoffMs = new DateTimeOffset(cutoff, TimeSpan.Zero).ToUnixTimeMilliseconds();
@@ -83,6 +82,8 @@ public sealed partial class RetentionService(
 		{
 			LogShareLinksFailed(logger, ex);
 		}
+
+		return nextDelay;
 	}
 
 	[LoggerMessage(EventId = 100, Level = LogLevel.Information,
