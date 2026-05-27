@@ -872,9 +872,9 @@ Phase 24 чистит: все administrative страницы переезжаю
 - [x] `Me/Account`, `Me/Security`, `Me/Preferences` переключены на `Layout = "_AccountLayout"`
 - [x] `Account` блок удалён из `_AdminSidebar` (account живёт отдельно)
 
-### 24.3 — Плоский `_AdminSidebar` + контекстный блок проекта [DONE]
+### 24.3 — Плоский `_AdminSidebar` + контекстный блок проекта [SUPERSEDED by 24.5]
 
-Дерево было отвергнуто в discovery: смазанная семантика клика по `<summary>`, состояние open/closed не персистится между навигациями, сервисы как nav-таргеты ещё не существуют. Победил плоский подход с контекстным блоком.
+Первая итерация: дерево было отвергнуто; победил плоский подход с контекстным блоком. **Но затем пользователь reframed**: "более явного чем полное дерево, ничего нет — давай делать полное дерево". Контекстный блок проблематичен: непонятно как переключить workspace в админке (выходить в обычный UI?). См. 24.5.
 
 - [x] Workspace-секция — плоский список ссылок (Overview / Members / Projects / Shared config / Defaults / Info)
 - [x] Project context-блок появляется ТОЛЬКО когда `path` содержит `/ui/admin/ws/{ws}/projects/{key}/...` (Info / Log settings / Data)
@@ -883,7 +883,20 @@ Phase 24 чистит: все administrative страницы переезжаю
 - [x] Лейбл "System" переименован в "Server administration" чтобы не путаться с `$system` workspace
 - [x] `_WorkspaceAdminTabs`: "Settings" tab переименован в "Info" + URL обновлён под новый `WorkspaceAdminInfo()`
 
+### 24.5 — Полное дерево в `_AdminSidebar` [DONE]
+
+Reframe: tree сам считается "более explicit чем context-block" в navigation. Memory `feedback-explicit-over-implicit` обновлено соответствующе.
+
+- [x] `INavigationContext.ProjectsByWorkspace` — словарь `wsKey → projects[]` для всех available workspace'ов (sysadmin видит все; member — только свои)
+- [x] Корневые узлы: `▼ Workspaces (N)` (все доступные ws) + `▼ Server administration` (sysadmin)
+- [x] Workspace-узел: collapsible, открыт если это currentWs. Внутри — Overview / Members / Shared config / Defaults / Info + collapsible `▼ Projects (N)`
+- [x] Projects-узел: открыт если workspace currentWs. Внутри — "All projects" + список проектов
+- [x] Project-узел: collapsible, открыт если currentProject. Внутри — Info / Log settings / Data
+- [x] Используется raw `<details>`/`<summary>` + daisyUI menu styling — без JS, без localStorage. Состояние "open" вычисляется server-side из URL
+- [x] $system workspace помечен badge `sys`
+- [x] Переключение workspace в админке: разворачиваешь другой workspace → клик Overview → URL содержит другой `workspaceKey` → `CurrentWorkspaceKey` обновляется. Сookie `yb_ws` остаётся прежним (это OK — он для non-admin areas; обновляется обычным workspace switcher'ом)
+
 ### 24.4 — E2E + verification [DONE]
 
 - [x] Обновлены пути в 7 E2E файлах: `ProjectDetailTests`, `LoginTests`, `KpVotesOnboardingTests`, `ApiKeyScopeTests`, `ConfigResolvePriorityTests`, `DataTableTests`, `Infrastructure/TestWorkspace`
-- [x] 29/29 E2E зелёные (10 skipped pre-existing)
+- [x] 29/29 E2E зелёные (10 skipped pre-existing) — для 24.1-24.4 И для 24.5

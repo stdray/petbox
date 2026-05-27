@@ -15,6 +15,7 @@ public interface INavigationContext
 	string? CurrentProjectKey { get; }
 	IReadOnlyList<WorkspaceOption> AvailableWorkspaces { get; }
 	IReadOnlyList<Project> ProjectsInCurrentWorkspace { get; }
+	IReadOnlyDictionary<string, IReadOnlyList<Project>> ProjectsByWorkspace { get; }
 	bool DataEnabled { get; }
 }
 
@@ -29,6 +30,7 @@ public sealed class NavigationContext(
 
 	IReadOnlyList<WorkspaceOption>? _workspaces;
 	IReadOnlyList<Project>? _projects;
+	IReadOnlyDictionary<string, IReadOnlyList<Project>>? _projectsByWs;
 	string? _resolvedWorkspace;
 
 	HttpContext? Http => accessor.HttpContext;
@@ -104,6 +106,23 @@ public sealed class NavigationContext(
 			var wsKey = CurrentWorkspaceKey;
 			_projects = [.. db.Projects.Where(p => p.WorkspaceKey == wsKey).OrderBy(p => p.Key)];
 			return _projects;
+		}
+	}
+
+	public IReadOnlyDictionary<string, IReadOnlyList<Project>> ProjectsByWorkspace
+	{
+		get
+		{
+			if (_projectsByWs is not null) return _projectsByWs;
+			var wsKeys = AvailableWorkspaces.Select(w => w.Key).ToHashSet(StringComparer.Ordinal);
+			var grouped = db.Projects
+				.Where(p => wsKeys.Contains(p.WorkspaceKey))
+				.OrderBy(p => p.Key)
+				.ToList()
+				.GroupBy(p => p.WorkspaceKey, StringComparer.Ordinal)
+				.ToDictionary(g => g.Key, g => (IReadOnlyList<Project>)g.ToList(), StringComparer.Ordinal);
+			_projectsByWs = grouped;
+			return _projectsByWs;
 		}
 	}
 
