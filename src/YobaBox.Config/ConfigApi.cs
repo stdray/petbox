@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -34,14 +36,36 @@ public static class ConfigApi
 		try
 		{
 			var result = ResolvePipeline.Resolve(path, requestTags, bindings);
-			return result is null
-				? Results.NotFound(new { error = "no matching binding" })
-				: Results.Ok(new { path, value = result });
+			if (result is null)
+				return Results.NotFound(new { error = "no matching binding" });
+
+			var etag = ComputeETag(path, result);
+			var ifNoneMatch = context.Request.Headers.IfNoneMatch.ToString();
+			if (!string.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch == etag)
+			{
+				context.Response.Headers.ETag = etag;
+				return Results.StatusCode(StatusCodes.Status304NotModified);
+			}
+
+			context.Response.Headers.ETag = etag;
+			return Results.Ok(new { path, value = result });
 		}
 		catch (AmbiguousConfigException ex)
 		{
 			return Results.Conflict(new { error = "ambiguous", path = ex.Path, candidates = ex.CandidateBindingIds });
 		}
+	}
+
+	// Strong validator over the resolved value. Path is included so clients caching
+	// across paths can't collide; value is the canonical resolved string. Tag set isn't
+	// part of the ETag — same (path, value) tuple is cache-equivalent regardless of which
+	// binding produced it.
+	static string ComputeETag(string path, string value)
+	{
+		Span<byte> hash = stackalloc byte[32];
+		var bytes = Encoding.UTF8.GetBytes($"{path}\0{value}");
+		SHA256.HashData(bytes, hash);
+		return $"\"{Convert.ToHexStringLower(hash[..16])}\"";
 	}
 
 	static async Task<IResult> Create(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, ConfigBindingDto dto)
