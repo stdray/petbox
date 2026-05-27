@@ -22,6 +22,7 @@ Empty repository. Template files copied from `wiki/cross-project/templates/dotne
 - **`doc/decision-log.md`** — architectural decisions (newest on top).
 - **`doc/invariants.md`** — copy of `wiki/cross-project/invariants.md`.
 - **`doc/ui-conventions.md`** — canonical UI/component recipes (Tailwind/daisyUI choices, htmx/Alpine boundary, modals, tables, etc.). Consult before building new UI.
+- **`doc/settings-taxonomy.md`** — where every setting lives (entity catalog, L1/L2/L3 storage rules, C# records-with-attributes catalog model, admin area structure, extensibility scenarios). Read before adding a new configurable parameter.
 - **`doc/tasks-mcp/`** — bench of real plan/memory operations by coding agents. Used as design input for the future Tasks module. See `doc/tasks-mcp/README.md`.
 
 ## Recording plan/memory actions
