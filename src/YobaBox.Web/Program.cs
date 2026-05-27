@@ -14,6 +14,7 @@ using YobaBox.Log.Core;
 using YobaBox.Log.Core.Data;
 using YobaBox.Log.Core.Ingestion;
 using YobaBox.Web;
+using YobaBox.Web.Ingestion;
 using YobaBox.Web.Navigation;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
@@ -107,7 +108,9 @@ public partial class Program
 						opts.Filter = ctx =>
 							!ctx.Request.Path.StartsWithSegments("/health")
 							&& !ctx.Request.Path.StartsWithSegments("/version")
-							&& !ctx.Request.Path.StartsWithSegments("/api/events/raw");
+							&& !ctx.Request.Path.StartsWithSegments("/api/events/raw")
+							&& !ctx.Request.Path.StartsWithSegments("/v1/logs")
+							&& !ctx.Request.Path.StartsWithSegments("/v1/traces");
 					})
 					.AddOtlpExporter(o =>
 					{

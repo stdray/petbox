@@ -2,6 +2,8 @@
 
 	<PropertyGroup>
 		<UserSecretsId>e3b7c1a2-4d56-7890-abcd-ef1234567890</UserSecretsId>
+		<!-- Generated *.pb.cs sprinkle `?` on reference types without #nullable enable. -->
+		<NoWarn>$(NoWarn);CS8632</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -19,6 +21,18 @@
 		<PackageReference Include="OpenTelemetry.Extensions.Hosting" />
 		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
 		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+	</ItemGroup>
+
+	<!-- OTLP HTTP/Protobuf ingestion. `OpenTelemetry.Proto` NuGet doesn't exist; vendored
+	     opentelemetry-proto v1.5.0 files under Proto/ are compiled by Grpc.Tools at build.
+	     GrpcServices=None — we only need message types, not service stubs. -->
+	<ItemGroup>
+		<PackageReference Include="Google.Protobuf" />
+		<PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Protobuf Include="Proto\**\*.proto" ProtoRoot="Proto" GrpcServices="None" />
 	</ItemGroup>
 
 	<Target Name="BuildFrontend" BeforeTargets="Build" Condition="'$(Configuration)' == 'Release'">
