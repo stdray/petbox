@@ -190,6 +190,12 @@ public partial class Program
 				p.RequireAuthenticatedUser();
 				p.AddRequirements(new WorkspaceRoleRequirement(WorkspaceRole.Member));
 			})
+			.AddPolicy("SysAdmin", p =>
+			{
+				p.AddAuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme);
+				p.RequireAuthenticatedUser();
+				p.RequireClaim(YobaBoxClaims.IsSysAdmin, "true");
+			})
 			.AddPolicy("WorkspaceViewer", p =>
 			{
 				p.AddAuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -200,6 +206,7 @@ public partial class Program
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, WorkspaceRoleAuthorizationHandler>();
 		builder.Services.AddScoped<INavigationContext, NavigationContext>();
+		builder.Services.AddScoped<YobaBox.Core.Settings.ISettingsResolver, YobaBox.Web.Settings.SettingsResolver>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Cross-project logs/traces — same page, workspace-only route (no projectKey).

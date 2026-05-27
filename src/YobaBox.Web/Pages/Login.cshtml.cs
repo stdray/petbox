@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Options;
 using YobaBox.Core.Auth;
 using YobaBox.Core.Data;
 
@@ -14,8 +15,13 @@ namespace YobaBox.Web.Pages;
 public sealed class LoginModel : PageModel
 {
 	readonly YobaBoxDb _db;
+	readonly AdminOptions _adminOptions;
 
-	public LoginModel(YobaBoxDb db) => _db = db;
+	public LoginModel(YobaBoxDb db, IOptions<AdminOptions> adminOptions)
+	{
+		_db = db;
+		_adminOptions = adminOptions.Value;
+	}
 
 	[BindProperty(SupportsGet = true)]
 	public string? ReturnUrl { get; set; }
@@ -58,6 +64,14 @@ public sealed class LoginModel : PageModel
 			new(YobaBoxClaims.ActiveWorkspace, activeWs),
 			new(YobaBoxClaims.WorkspaceRoles, rolesClaim),
 		};
+
+		// Bootstrap admin (username matches Admin:Username from appsettings) gets the sysadmin claim.
+		// See doc/settings-taxonomy.md §4 for the permission model.
+		if (!string.IsNullOrEmpty(_adminOptions.Username)
+			&& string.Equals(user.Username, _adminOptions.Username, StringComparison.Ordinal))
+		{
+			claims.Add(new Claim(YobaBoxClaims.IsSysAdmin, "true"));
+		}
 
 		var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
 		await HttpContext.SignInAsync(

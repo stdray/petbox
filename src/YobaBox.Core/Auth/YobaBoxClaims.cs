@@ -9,4 +9,5 @@ public static class YobaBoxClaims
 	public const string ProjectKey = "yb:project";
 	public const string Scopes = "yb:scopes";
 	public const string WorkspaceRoles = "yb:ws_roles";
+	public const string IsSysAdmin = "yb:sysadmin";
 }

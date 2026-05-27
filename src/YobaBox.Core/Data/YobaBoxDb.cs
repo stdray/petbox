@@ -3,6 +3,7 @@ using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using LinqToDB.Mapping;
 using YobaBox.Core.Models;
+using YobaBox.Core.Settings;
 
 namespace YobaBox.Core.Data;
 
@@ -23,6 +24,7 @@ public sealed class YobaBoxDb : DataConnection
 	public ITable<SavedQuery> SavedQueries => this.GetTable<SavedQuery>();
 	public ITable<ShareLink> ShareLinks => this.GetTable<ShareLink>();
 	public ITable<RetentionPolicy> RetentionPolicies => this.GetTable<RetentionPolicy>();
+	public ITable<Setting> Settings => this.GetTable<Setting>();
 
 	public static DataOptions<YobaBoxDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString));
