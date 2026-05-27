@@ -1,4 +1,4 @@
-#addin nuget:?package=Cake.Docker&version=1.3.0
+#addin nuget:?package=Cake.Docker&version=1.5.0-beta.1&prerelease
 #tool dotnet:?package=GitVersion.Tool&version=6.4.0
 
 var target = Argument("target", "Default");
