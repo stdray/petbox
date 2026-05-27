@@ -1,14 +1,35 @@
 @inject YobaBox.Web.Navigation.INavigationContext Nav
+@inject YobaBox.Core.Settings.ISettingsResolver Settings
 @{
 	var currentWs = Nav.CurrentWorkspaceKey;
 	var path = Context.Request.Path.Value ?? string.Empty;
 	var isSysAdmin = path.StartsWith("/ui/sys", StringComparison.OrdinalIgnoreCase);
-	var contextLabel = isSysAdmin ? "System administration" : $"{currentWs} workspace administration";
-	var backUrl = isSysAdmin ? Routes.Workspace(currentWs) : Routes.Workspace(currentWs);
-	var backLabel = isSysAdmin ? $"Back to {currentWs}" : $"Back to {currentWs}";
+	var isSelfArea = path.StartsWith("/ui/me", StringComparison.OrdinalIgnoreCase);
+	var contextLabel = isSysAdmin
+		? "System administration"
+		: isSelfArea
+			? "Account"
+			: $"{currentWs} workspace administration";
+	var backUrl = Routes.Workspace(currentWs);
+	var backLabel = $"Back to {currentWs}";
+
+	var theme = "dark";
+	var userIdRaw = Nav.IsAuthenticated
+		? Context.User.FindFirst(YobaBox.Core.Auth.YobaBoxClaims.UserId)?.Value
+		: null;
+	if (!string.IsNullOrEmpty(userIdRaw))
+	{
+		var ui = await Settings.GetAsync<YobaBox.Core.Settings.UiSettings>(YobaBox.Core.Settings.Scope.User, userIdRaw);
+		theme = ui.Theme switch
+		{
+			YobaBox.Core.Settings.Theme.Light => "light",
+			YobaBox.Core.Settings.Theme.System => "dark",
+			_ => "dark",
+		};
+	}
 }
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" class="h-full">
+<html lang="en" data-theme="@theme" class="h-full">
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -38,7 +59,7 @@
 			<div class="flex-none flex items-center gap-1">
 				@if (Nav.IsAuthenticated)
 				{
-					<span class="text-xs opacity-60 hidden md:inline font-mono">@Nav.Username</span>
+					<a href="/ui/me/account" class="text-xs opacity-60 hover:opacity-100 hidden md:inline font-mono" data-testid="nav-username" title="Account settings">@Nav.Username</a>
 					<form method="post" action="@Routes.Logout()" class="m-0">
 						@Html.AntiForgeryToken()
 						<button type="submit" class="btn btn-ghost btn-sm" data-testid="nav-signout" title="Sign out">

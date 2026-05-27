@@ -1,4 +1,5 @@
 @inject YobaBox.Web.Navigation.INavigationContext Nav
+@inject YobaBox.Core.Settings.ISettingsResolver Settings
 @{
 	var currentWs = Nav.CurrentWorkspaceKey;
 	var currentProject = Nav.CurrentProjectKey;
@@ -10,9 +11,24 @@
 	var logsAllUrl = Routes.WorkspaceLogs(currentWs);
 	var sharedConfigUrl = Routes.SharedConfig(currentWs);
 	var wsAdminUrl = Routes.WorkspaceAdmin(currentWs);
+
+	var theme = "dark";
+	var userIdRaw = Nav.IsAuthenticated
+		? Context.User.FindFirst(YobaBox.Core.Auth.YobaBoxClaims.UserId)?.Value
+		: null;
+	if (!string.IsNullOrEmpty(userIdRaw))
+	{
+		var ui = await Settings.GetAsync<YobaBox.Core.Settings.UiSettings>(YobaBox.Core.Settings.Scope.User, userIdRaw);
+		theme = ui.Theme switch
+		{
+			YobaBox.Core.Settings.Theme.Light => "light",
+			YobaBox.Core.Settings.Theme.System => "dark",
+			_ => "dark",
+		};
+	}
 }
 <!DOCTYPE html>
-<html lang="en" data-theme="dark" class="h-full">
+<html lang="en" data-theme="@theme" class="h-full">
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -39,7 +55,7 @@
 				<div class="flex-none flex items-center gap-1">
 					@if (Nav.IsAuthenticated)
 					{
-						<span class="text-xs opacity-60 hidden md:inline font-mono">@Nav.Username</span>
+						<a href="/ui/me/account" class="text-xs opacity-60 hover:opacity-100 hidden md:inline font-mono" data-testid="nav-username" title="Account settings">@Nav.Username</a>
 						<a href="@Routes.Sys()" class="btn btn-ghost btn-sm @(IsActive("/ui/sys") ? "btn-active" : "")" data-testid="nav-sysadmin" title="System administration">
 							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />

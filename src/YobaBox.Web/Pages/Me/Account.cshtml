@@ -1,0 +1,39 @@
+@page "/ui/me/account"
+@model YobaBox.Web.Pages.Me.AccountModel
+@{
+	ViewData["Title"] = "Account";
+	Layout = "_AdminLayout";
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="me-account-title">Account</h1>
+	<p class="text-sm opacity-60">Your YobaBox identity. Username and role are bootstrap-controlled — not editable here.</p>
+</div>
+
+<div class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="me-account-card">
+	<div class="card-body p-4 grid gap-3">
+		<div>
+			<div class="text-xs opacity-60 uppercase tracking-wide">Username</div>
+			<div class="font-mono" data-testid="me-account-username">@Model.Username</div>
+		</div>
+		<div>
+			<div class="text-xs opacity-60 uppercase tracking-wide">User id</div>
+			<div class="font-mono text-sm opacity-70">@Model.UserId</div>
+		</div>
+		<div>
+			<div class="text-xs opacity-60 uppercase tracking-wide">Role</div>
+			<div class="flex flex-wrap gap-1">
+				@if (Model.IsSysAdmin)
+				{
+					<span class="badge badge-primary badge-sm" data-testid="me-account-role-sysadmin">System administrator</span>
+				}
+				else
+				{
+					<span class="badge badge-ghost badge-sm">Regular user</span>
+				}
+			</div>
+		</div>
+	</div>
+</div>
+
+<p class="text-xs opacity-60 mt-3">Change your password on <a href="/ui/me/security" class="link">Security</a>. UI preferences live on <a href="/ui/me/preferences" class="link">Preferences</a>.</p>

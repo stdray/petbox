@@ -3,7 +3,8 @@
 	<PropertyGroup>
 		<UserSecretsId>e3b7c1a2-4d56-7890-abcd-ef1234567890</UserSecretsId>
 		<!-- Generated *.pb.cs sprinkle `?` on reference types without #nullable enable. -->
-		<NoWarn>$(NoWarn);CS8632</NoWarn>
+		<!-- CA1716: 'Me' folder name collides with VB.NET keyword. Folder maps to /ui/me/ URL. -->
+		<NoWarn>$(NoWarn);CS8632;CA1716</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>
