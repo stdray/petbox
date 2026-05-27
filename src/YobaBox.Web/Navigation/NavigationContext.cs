@@ -73,6 +73,16 @@ public sealed class NavigationContext(
 				return _workspaces;
 			}
 
+			// Sysadmin sees everything regardless of membership.
+			var isSysAdmin = Http!.User.HasClaim(YobaBoxClaims.IsSysAdmin, "true");
+			if (isSysAdmin)
+			{
+				_workspaces = [.. db.Workspaces
+					.OrderBy(w => w.Key)
+					.Select(w => new WorkspaceOption(w.Key, w.Name))];
+				return _workspaces;
+			}
+
 			var userIdRaw = Http!.User.FindFirst(YobaBoxClaims.UserId)?.Value;
 			if (!long.TryParse(userIdRaw, out var userId))
 			{

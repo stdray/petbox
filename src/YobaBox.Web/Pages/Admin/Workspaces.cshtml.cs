@@ -9,7 +9,7 @@ using YobaBox.Core.Models;
 
 namespace YobaBox.Web.Pages.Admin;
 
-[Authorize]
+[Authorize(Policy = "SysAdmin")]
 public sealed class WorkspacesModel : PageModel
 {
 	readonly YobaBoxDb _db;

@@ -22,6 +22,14 @@ public sealed class WorkspaceRoleAuthorizationHandler(IHttpContextAccessor acces
 		if (http is null)
 			return Task.CompletedTask;
 
+		// Sysadmin implicitly satisfies any workspace role (Admin/Member/Viewer)
+		// across every workspace.
+		if (context.User.HasClaim(YobaBoxClaims.IsSysAdmin, "true"))
+		{
+			context.Succeed(requirement);
+			return Task.CompletedTask;
+		}
+
 		var routeWsKey = http.GetRouteValue("workspaceKey")?.ToString()
 			?? http.GetRouteValue("key")?.ToString();
 

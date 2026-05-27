@@ -29,8 +29,9 @@ public static class WorkspaceSwitchEndpoint
 		if (string.IsNullOrWhiteSpace(ws))
 			return Results.BadRequest(new { error = "ws is required" });
 
+		var isSysAdmin = ctx.User.HasClaim(YobaBoxClaims.IsSysAdmin, "true");
 		var userIdRaw = ctx.User.FindFirst(YobaBoxClaims.UserId)?.Value;
-		if (long.TryParse(userIdRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId))
+		if (!isSysAdmin && long.TryParse(userIdRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId))
 		{
 			var member = await db.WorkspaceMembers
 				.FirstOrDefaultAsync((Core.Models.WorkspaceMember m) => m.UserId == userId && m.WorkspaceKey == ws);

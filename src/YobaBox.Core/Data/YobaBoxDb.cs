@@ -71,7 +71,8 @@ public sealed class YobaBoxDb : DataConnection
 			.Property(s => s.Url).HasLength(500)
 			.Property(s => s.Version).HasLength(50)
 			.Property(s => s.ShortSha).HasLength(8)
-			.Property(s => s.Health).HasDataType(DataType.Int32).IsNullable(false);
+			.Property(s => s.Health).HasDataType(DataType.Int32).IsNullable(false)
+			.Property(s => s.CheckedAt).HasDataType(DataType.DateTime).IsNullable(true);
 
 		builder.Entity<ApiKey>()
 			.HasTableName("ApiKeys")
