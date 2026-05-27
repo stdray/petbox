@@ -1,12 +1,9 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
-using LinqToDB;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using YobaBox.Core.Data;
-using YobaBox.Core.Models;
 
 namespace YobaBox.Core.Auth;
 
@@ -20,18 +17,17 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 		UrlEncoder encoder)
 		: base(options, logger, encoder) { }
 
-	protected override async Task<AuthenticateResult> HandleAuthenticateAsync()
+	protected override Task<AuthenticateResult> HandleAuthenticateAsync()
 	{
 		var apiKey = Request.Headers["X-Api-Key"].FirstOrDefault();
 		if (string.IsNullOrEmpty(apiKey))
-			return AuthenticateResult.NoResult();
+			return Task.FromResult(AuthenticateResult.NoResult());
 
-		var db = Context.RequestServices.GetRequiredService<YobaBoxDb>();
-		var key = await db.ApiKeys
-			.FirstOrDefaultAsync((ApiKey k) => k.Key == apiKey);
+		var lookup = Context.RequestServices.GetRequiredService<IApiKeyLookup>();
+		var key = lookup.FindByKey(apiKey);
 
 		if (key is null)
-			return AuthenticateResult.Fail("Invalid API key");
+			return Task.FromResult(AuthenticateResult.Fail("Invalid API key"));
 
 		var claims = new[]
 		{
@@ -42,6 +38,6 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 		var principal = new ClaimsPrincipal(identity);
 		var ticket = new AuthenticationTicket(principal, SchemeName);
 
-		return AuthenticateResult.Success(ticket);
+		return Task.FromResult(AuthenticateResult.Success(ticket));
 	}
 }

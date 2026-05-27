@@ -75,6 +75,10 @@ public partial class Program
 		}
 		builder.Services.AddSingleton<FeatureFlags>();
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
+		builder.Services.Configure<ConfigApiKeyOptions>(builder.Configuration.GetSection("Auth"));
+		builder.Services.AddSingleton<ConfigApiKeyLookup>();
+		builder.Services.AddScoped<DbApiKeyLookup>();
+		builder.Services.AddScoped<IApiKeyLookup, CompositeApiKeyLookup>();
 
 		builder.Logging.Configure(o => o.ActivityTrackingOptions =
 			ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
