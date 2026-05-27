@@ -34,16 +34,18 @@ public sealed class ConfigResolvePriorityTests(WebAppFixture app, ITestOutputHel
 		await CreateConfigBinding("kpvotes/timeout", "15", "project:kpvotes,service:kpvotes-bot");
 		await CreateConfigBinding("kpvotes/timeout", "5", "project:kpvotes,service:kpvotes-bot,env:staging");
 
-		// Most specific wins
+		// Most specific subset wins
 		await AssertResolve("kpvotes/timeout", "project:kpvotes", "30");
 		await AssertResolve("kpvotes/timeout", "project:kpvotes,service:kpvotes-bot", "15");
 		await AssertResolve("kpvotes/timeout", "project:kpvotes,service:kpvotes-bot,env:staging", "5");
 
-		// Fallback: no match for service:kpvotes-web → returns project:kpvotes match
+		// Fallback: service:kpvotes-web is not in any binding, but project:kpvotes alone matches A
+		// (A's tags are a subset of the request). B and C are not subsets — they have service:kpvotes-bot
+		// which is not in the request — so they don't match.
 		await AssertResolve("kpvotes/timeout", "project:kpvotes,service:kpvotes-web", "30");
 
-		// No matching tags → returns first binding by Id (lowest)
-		await AssertResolve("kpvotes/timeout", "project:other", "30");
+		// No binding's tags are a subset of {project:other} → 404. Old behavior (first by Id) was a bug.
+		await AssertNotFound("kpvotes/timeout", "project:other");
 	}
 
 	async Task EnsureProjectAndKey()

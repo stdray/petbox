@@ -44,28 +44,32 @@
 				<tr>
 					<th>Path</th>
 					<th>Value</th>
-					<th class="w-32">Matched tags</th>
+					<th class="w-32">Specificity</th>
 					<th class="w-32">Binding</th>
 				</tr>
 			</thead>
 			<tbody>
-				@foreach (var (path, value, matched, bindingId) in Model.Results)
+				@foreach (var row in Model.Results)
 				{
 					<tr data-testid="config-preview-row">
-						<td class="font-mono text-xs text-primary">@path</td>
+						<td class="font-mono text-xs text-primary">@row.Path</td>
 						<td class="font-mono text-xs">
-							@if (value is null)
+							@if (row.AmbiguityNote is not null)
+							{
+								<span class="text-error" data-testid="config-preview-ambiguous">@row.AmbiguityNote</span>
+							}
+							else if (row.Value is null)
 							{
 								<span class="opacity-50">(no match)</span>
 							}
 							else
 							{
-								<span>@value</span>
+								<span>@row.Value</span>
 							}
 						</td>
-						<td class="text-xs">@matched</td>
+						<td class="text-xs">@row.Specificity</td>
 						<td class="text-xs">
-							@if (bindingId is { } id)
+							@if (row.BindingId is { } id)
 							{
 								<a asp-page="/Config/Editor" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" asp-route-bindingId="@id" class="link">#@id</a>
 							}

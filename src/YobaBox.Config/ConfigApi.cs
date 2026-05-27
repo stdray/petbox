@@ -20,16 +20,28 @@ public static class ConfigApi
 
 	static IResult Resolve(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
 	{
-		var requestTags = tags
-			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		var requestTags = (tags ?? string.Empty)
+			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+			.ToList();
+
+		var wsTag = $"ws:{workspaceKey}";
+		if (!requestTags.Any(t => string.Equals(t, wsTag, StringComparison.OrdinalIgnoreCase)))
+			requestTags.Add(wsTag);
 
 		var configDb = configFactory.GetConfigDb(workspaceKey);
 		var bindings = configDb.Bindings.ToList();
-		var result = ResolvePipeline.Resolve(path, requestTags, bindings);
 
-		return result is null
-			? Results.NotFound(new { error = "no matching binding" })
-			: Results.Ok(new { path, value = result });
+		try
+		{
+			var result = ResolvePipeline.Resolve(path, requestTags, bindings);
+			return result is null
+				? Results.NotFound(new { error = "no matching binding" })
+				: Results.Ok(new { path, value = result });
+		}
+		catch (AmbiguousConfigException ex)
+		{
+			return Results.Conflict(new { error = "ambiguous", path = ex.Path, candidates = ex.CandidateBindingIds });
+		}
 	}
 
 	static async Task<IResult> Create(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, ConfigBindingDto dto)
