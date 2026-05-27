@@ -25,12 +25,12 @@
 	@Html.AntiForgeryToken()
 
 	<label class="form-control">
-		<span class="label-text">Tags (one <code class="font-mono text-xs">key=value</code> per line)</span>
+		<span class="label-text">Tags (one <code class="font-mono text-xs">key:value</code> per line)</span>
 		<textarea name="TagsText" rows="3"
 			class="textarea textarea-bordered font-mono text-xs"
-			placeholder="ws=@Model.EffectiveWorkspaceKey&#10;project=kpvotes&#10;env=prod"
+			placeholder="ws:@Model.EffectiveWorkspaceKey&#10;project:kpvotes&#10;env:prod"
 			data-testid="config-edit-tags">@Model.TagsText</textarea>
-		<span class="text-xs opacity-60 mt-1">Tag <code>ws=@Model.EffectiveWorkspaceKey</code> is mandatory.</span>
+		<span class="text-xs opacity-60 mt-1">Tag <code>ws:@Model.EffectiveWorkspaceKey</code> is mandatory.</span>
 	</label>
 
 	<label class="form-control">

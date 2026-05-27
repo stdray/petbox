@@ -29,7 +29,7 @@ public sealed class DashboardTests(WebAppFixture app, ITestOutputHelper output) 
 		await _page!.GotoAsync("/ui/$system");
 
 		await Expect(_page.GetByTestId("dashboard-title")).ToBeVisibleAsync();
-		await Expect(_page.Locator("[data-project-key=\"$system\"]")).ToBeVisibleAsync();
+		await Expect(_page.Locator("[data-testid='dashboard-project-card'][data-project-key='$system']")).ToBeVisibleAsync();
 	}
 
 	[Fact]
@@ -37,7 +37,8 @@ public sealed class DashboardTests(WebAppFixture app, ITestOutputHelper output) 
 	{
 		await _page!.GotoAsync("/ui/$system");
 
-		var name = _page.Locator("[data-project-key=\"$system\"]").GetByTestId("dashboard-project-name");
+		var card = _page.Locator("[data-testid='dashboard-project-card'][data-project-key='$system']");
+		var name = card.GetByTestId("dashboard-project-name");
 		await Expect(name).ToBeVisibleAsync();
 		await Expect(name).ToHaveTextAsync("System");
 	}

@@ -68,7 +68,7 @@ public sealed class EditorModel : PageModel
 		}
 		else
 		{
-			TagsText = $"ws={EffectiveWorkspaceKey}";
+			TagsText = $"ws:{EffectiveWorkspaceKey}";
 		}
 
 		return Page();
@@ -91,9 +91,9 @@ public sealed class EditorModel : PageModel
 			return Page();
 		}
 
-		if (!canonicalTags.Contains($"ws={EffectiveWorkspaceKey}", StringComparison.Ordinal))
+		if (!canonicalTags.Contains($"ws:{EffectiveWorkspaceKey}", StringComparison.Ordinal))
 		{
-			ErrorMessage = $"Tags must include 'ws={EffectiveWorkspaceKey}' (workspace mandatory).";
+			ErrorMessage = $"Tags must include 'ws:{EffectiveWorkspaceKey}' (workspace mandatory).";
 			return Page();
 		}
 
@@ -216,21 +216,22 @@ public sealed class EditorModel : PageModel
 	static (string Canonical, string? Error) CanonicalizeTags(string raw)
 	{
 		if (string.IsNullOrWhiteSpace(raw))
-			return (string.Empty, "Tags are required (at least 'ws=...').");
+			return (string.Empty, "Tags are required (at least 'ws:...').");
 
 		var pairs = new List<(string, string)>();
 		foreach (var line in raw.Split(['\r', '\n', ','], StringSplitOptions.RemoveEmptyEntries))
 		{
 			var trimmed = line.Trim();
 			if (trimmed.Length == 0) continue;
-			var eq = trimmed.IndexOf('=');
-			if (eq <= 0 || eq == trimmed.Length - 1)
-				return (string.Empty, $"'{trimmed}' is not a 'key=value' pair.");
-			pairs.Add((trimmed[..eq].Trim(), trimmed[(eq + 1)..].Trim()));
+			// Accept both 'key:value' (canonical) and 'key=value' (legacy) — store as ':'.
+			var sep = trimmed.IndexOfAny([':', '=']);
+			if (sep <= 0 || sep == trimmed.Length - 1)
+				return (string.Empty, $"'{trimmed}' is not a 'key:value' pair.");
+			pairs.Add((trimmed[..sep].Trim(), trimmed[(sep + 1)..].Trim()));
 		}
 
 		pairs.Sort((a, b) => string.CompareOrdinal(a.Item1, b.Item1));
-		return (string.Join(",", pairs.Select(p => $"{p.Item1}={p.Item2}")), null);
+		return (string.Join(",", pairs.Select(p => $"{p.Item1}:{p.Item2}")), null);
 	}
 
 	static string? DetectConflict(ConfigDb db, string path, string tags, long? selfId)
