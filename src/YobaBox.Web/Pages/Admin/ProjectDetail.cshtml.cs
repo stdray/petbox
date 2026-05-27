@@ -1,3 +1,4 @@
+using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -21,8 +22,14 @@ public sealed class ProjectDetailModel : PageModel
 
 	public bool DataEnabled => _features.IsEnabled("Data");
 
-	[FromRoute]
-	public string Key { get; set; } = string.Empty;
+	[BindProperty(SupportsGet = true)]
+	public string WorkspaceKey { get; set; } = string.Empty;
+
+	[BindProperty(SupportsGet = true)]
+	public string ProjectKey { get; set; } = string.Empty;
+
+	// Back-compat alias for the old testid/template that referenced `Model.Key`.
+	public string Key => ProjectKey;
 
 	public Project? Project { get; private set; }
 	public IReadOnlyList<Service> Services { get; private set; } = [];
@@ -32,12 +39,14 @@ public sealed class ProjectDetailModel : PageModel
 
 	public void OnGet()
 	{
-		Project = _db.Projects.FirstOrDefault(p => p.Key == Key);
+		Project = _db.Projects.FirstOrDefault(p => p.Key == ProjectKey);
 		if (Project is null) return;
 
-		Services = _db.Services.Where(s => s.ProjectKey == Key).OrderBy(s => s.Key).ToList();
-		Keys = _db.ApiKeys.Where(k => k.ProjectKey == Key).OrderByDescending(k => k.CreatedAt).ToList();
+		Services = _db.Services.Where(s => s.ProjectKey == ProjectKey).OrderBy(s => s.Key).ToList();
+		Keys = _db.ApiKeys.Where(k => k.ProjectKey == ProjectKey).OrderByDescending(k => k.CreatedAt).ToList();
 	}
+
+	RedirectResult Self() => Redirect(Routes.ProjectSettings(WorkspaceKey, ProjectKey));
 
 	public async Task<IActionResult> OnPostCreateServiceAsync(string serviceKey, HealthModel HealthModel, string? Url)
 	{
@@ -51,18 +60,18 @@ public sealed class ProjectDetailModel : PageModel
 		await _db.InsertAsync(new Service
 		{
 			Key = serviceKey,
-			ProjectKey = Key,
+			ProjectKey = ProjectKey,
 			HealthModel = HealthModel,
 			Url = Url,
 			Health = ServiceHealth.Unknown,
 		});
-		return RedirectToPage(new { key = Key });
+		return Self();
 	}
 
 	public async Task<IActionResult> OnPostDeleteServiceAsync(string serviceKey)
 	{
-		await _db.Services.Where(s => s.Key == serviceKey && s.ProjectKey == Key).DeleteAsync();
-		return RedirectToPage(new { key = Key });
+		await _db.Services.Where(s => s.Key == serviceKey && s.ProjectKey == ProjectKey).DeleteAsync();
+		return Self();
 	}
 
 	public async Task<IActionResult> OnPostCreateKeyAsync(string Scopes)
@@ -78,7 +87,7 @@ public sealed class ProjectDetailModel : PageModel
 		await _db.InsertAsync(new ApiKey
 		{
 			Key = keyValue,
-			ProjectKey = Key,
+			ProjectKey = ProjectKey,
 			Scopes = Scopes,
 			CreatedAt = DateTime.UtcNow,
 		});
@@ -90,7 +99,7 @@ public sealed class ProjectDetailModel : PageModel
 
 	public async Task<IActionResult> OnPostRevokeKeyAsync(string keyValue)
 	{
-		await _db.ApiKeys.Where(k => k.Key == keyValue && k.ProjectKey == Key).DeleteAsync();
-		return RedirectToPage(new { key = Key });
+		await _db.ApiKeys.Where(k => k.Key == keyValue && k.ProjectKey == ProjectKey).DeleteAsync();
+		return Self();
 	}
 }

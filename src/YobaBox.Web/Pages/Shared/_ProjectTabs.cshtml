@@ -1,0 +1,35 @@
+@inject YobaBox.Web.Navigation.INavigationContext Nav
+@inject YobaBox.Core.Features.FeatureFlags Features
+@{
+	var ws = Nav.CurrentWorkspaceKey;
+	var key = Nav.CurrentProjectKey ?? string.Empty;
+	var path = Context.Request.Path.Value ?? string.Empty;
+	bool At(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
+	bool Under(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+	var logsUrl = Routes.Project(ws, key);
+	var configUrl = Routes.ProjectConfig(ws, key);
+	var dataUrl = Routes.ProjectData(ws, key);
+	var settingsUrl = Routes.ProjectSettings(ws, key);
+	var tracesUrl = Routes.ProjectTraces(ws, key);
+	bool logsActive = At(logsUrl) || Under(tracesUrl);
+}
+@if (!string.IsNullOrEmpty(key))
+{
+	<div role="tablist" class="tabs tabs-bordered mb-4" data-testid="proj-tabs">
+		<a role="tab" class="tab @(logsActive ? "tab-active" : "")"
+			href="@logsUrl"
+			data-testid="proj-tab-logs">Logs</a>
+		<a role="tab" class="tab @(Under(configUrl) ? "tab-active" : "")"
+			href="@configUrl"
+			data-testid="proj-tab-config">Config</a>
+		@if (Features.IsEnabled("Data"))
+		{
+			<a role="tab" class="tab @(At(dataUrl) ? "tab-active" : "")"
+				href="@dataUrl"
+				data-testid="proj-tab-data">Data</a>
+		}
+		<a role="tab" class="tab @(At(settingsUrl) ? "tab-active" : "")"
+			href="@settingsUrl"
+			data-testid="proj-tab-settings">Settings</a>
+	</div>
+}

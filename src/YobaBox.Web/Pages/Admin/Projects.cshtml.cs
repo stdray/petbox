@@ -1,3 +1,4 @@
+using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -13,47 +14,42 @@ public sealed class ProjectsModel : PageModel
 
 	public ProjectsModel(YobaBoxDb db) => _db = db;
 
-	public IReadOnlyList<Project> Projects { get; private set; } = [];
-	public IReadOnlyList<Workspace> Workspaces { get; private set; } = [];
+	[BindProperty(SupportsGet = true)]
+	public string WorkspaceKey { get; set; } = string.Empty;
+
+	public IReadOnlyList<Project> ProjectsInWorkspace { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet()
-	{
-		Projects = _db.Projects.OrderBy(p => p.Key).ToList();
-		Workspaces = _db.Workspaces.OrderBy(w => w.Key).ToList();
-	}
+	public void OnGet() =>
+		ProjectsInWorkspace = _db.Projects
+			.Where(p => p.WorkspaceKey == WorkspaceKey)
+			.OrderBy(p => p.Key)
+			.ToList();
 
-	public async Task<IActionResult> OnPostCreateAsync(string Key, string WorkspaceKey, string Name, string Description)
+	public async Task<IActionResult> OnPostCreateAsync(string key, string name, string description)
 	{
-		if (string.IsNullOrWhiteSpace(Key) || string.IsNullOrWhiteSpace(Name) || string.IsNullOrWhiteSpace(WorkspaceKey))
+		if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(name))
 		{
-			ErrorMessage = "Key, Name, and Workspace are required.";
+			ErrorMessage = "Key and Name are required.";
 			OnGet();
 			return Page();
 		}
 
-		var exists = _db.Projects.Any(p => p.Key == Key);
-		if (exists)
+		if (await _db.Projects.AnyAsync(p => p.Key == key))
 		{
-			ErrorMessage = $"Project '{Key}' already exists.";
+			ErrorMessage = $"Project '{key}' already exists.";
 			OnGet();
 			return Page();
 		}
 
-		await _db.InsertAsync(new Project { Key = Key, WorkspaceKey = WorkspaceKey, Name = Name, Description = Description ?? string.Empty });
-		return RedirectToPage();
-	}
-
-	public async Task<IActionResult> OnPostDeleteAsync(string key)
-	{
-		if (key == "$system")
+		await _db.InsertAsync(new Project
 		{
-			ErrorMessage = "Cannot delete $system project.";
-			OnGet();
-			return Page();
-		}
+			Key = key,
+			WorkspaceKey = WorkspaceKey,
+			Name = name,
+			Description = description ?? string.Empty,
+		});
 
-		await _db.Projects.Where(p => p.Key == key).DeleteAsync();
-		return RedirectToPage();
+		return Redirect(Routes.Project(WorkspaceKey, key));
 	}
 }

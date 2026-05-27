@@ -10,15 +10,14 @@
 	return;
 }
 
-<div class="flex items-center gap-3 mb-4">
-	<a asp-page="/Admin/Projects" class="btn btn-sm btn-ghost">&larr; Projects</a>
-	<h1 class="text-xl font-semibold" data-testid="project-detail-title">@Model.Project.Name</h1>
-	<span class="text-sm opacity-60 font-mono">@Model.Project.Key</span>
-	@if (Model.DataEnabled)
-	{
-		<a asp-page="/Admin/ProjectData" asp-route-projectKey="@Model.Project.Key" class="btn btn-sm btn-ghost" data-testid="project-data-link">Data</a>
-	}
+<div class="mb-2 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold" data-testid="project-detail-title">@Model.Project.Name</h1>
+	<span class="font-mono text-sm opacity-60">@Model.Project.Key</span>
 </div>
+
+<partial name="_ProjectTabs" />
+
+<h2 class="text-lg font-semibold mb-3">Project settings</h2>
 
 <div class="flex items-center gap-3 mb-4">
 	<h2 class="text-lg font-semibold">Services</h2>

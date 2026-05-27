@@ -1,94 +1,62 @@
 @page "/ui/{workspaceKey}/projects/new"
 @model YobaBox.Web.Pages.Admin.ProjectsModel
 @{
-	ViewData["Title"] = "Projects";
+	ViewData["Title"] = "New project";
 }
 
 <div class="flex items-center gap-3 mb-4">
-	<h1 class="text-xl font-semibold" data-testid="admin-projects-title">Projects</h1>
-	<span class="text-sm opacity-60">@Model.Projects.Count total</span>
+	<a href="@Routes.Workspace(Model.WorkspaceKey)" class="btn btn-sm btn-ghost" data-testid="admin-projects-back">&larr; Status</a>
+	<h1 class="text-xl font-semibold" data-testid="admin-projects-title">New project</h1>
+	<span class="badge badge-outline font-mono">@Model.WorkspaceKey</span>
 </div>
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {
-	<div class="alert alert-error mb-3">@Model.ErrorMessage</div>
+	<div class="alert alert-error mb-3" data-testid="admin-projects-error">@Model.ErrorMessage</div>
 }
 
-<div class="overflow-x-auto">
-	<table class="table table-sm" data-testid="admin-projects-table">
-		<thead>
-			<tr>
-				<th>Key</th>
-				<th>Workspace</th>
-				<th>Name</th>
-				<th>Description</th>
-				<th></th>
-			</tr>
-		</thead>
-		<tbody>
-			@foreach (var p in Model.Projects)
-			{
-				<tr data-testid="project-row">
-					<td class="font-mono text-sm">@p.Key</td>
-					<td class="text-sm opacity-70">@p.WorkspaceKey</td>
-					<td><a asp-page="/Admin/ProjectDetail" asp-route-key="@p.Key" data-testid="admin-project-link">@p.Name</a></td>
-					<td class="text-sm opacity-70">@p.Description</td>
-					<td>
-						@if (p.Key != "$system")
-						{
-							<form method="post" asp-page-handler="Delete" asp-route-key="@p.Key"
-								onsubmit="return confirm('Delete project @p.Key?')" style="display:inline">
-								@Html.AntiForgeryToken()
-								<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="admin-project-delete">Delete</button>
-							</form>
-						}
-					</td>
-				</tr>
-			}
-		</tbody>
-	</table>
-</div>
-
-<div class="divider"></div>
-
-<form method="post" asp-page-handler="Create" class="card bg-base-200 mb-4" data-testid="admin-project-create-form">
+<form method="post" asp-page-handler="Create" class="card bg-base-200 mb-4 max-w-2xl" data-testid="admin-project-create-form">
 	@Html.AntiForgeryToken()
 	<div class="card-body p-4">
-		<h3 class="card-title text-sm">New Project</h3>
-		<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-			<label class="form-control">
-				<span class="label-text">Workspace</span>
-				<select name="WorkspaceKey" required class="select select-bordered select-sm" data-testid="admin-project-create-workspace">
-					<option value="">— select —</option>
-					@foreach (var w in Model.Workspaces)
-					{
-						<option value="@w.Key">@w.Name</option>
-					}
-				</select>
-			</label>
+		<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
 			<label class="form-control">
 				<span class="label-text">Key</span>
-				<input type="text" name="Key" required
+				<input type="text" name="key" required
 					class="input input-bordered input-sm font-mono"
 					placeholder="my-project"
+					pattern="[a-z0-9][a-z0-9\-]*"
 					data-testid="admin-project-create-key" />
+				<span class="text-xs opacity-60 mt-1">lowercase letters, digits, hyphens</span>
 			</label>
 			<label class="form-control">
 				<span class="label-text">Name</span>
-				<input type="text" name="Name" required
+				<input type="text" name="name" required
 					class="input input-bordered input-sm"
 					placeholder="My Project"
 					data-testid="admin-project-create-name" />
 			</label>
-			<label class="form-control">
-				<span class="label-text">Description</span>
-				<input type="text" name="Description"
-					class="input input-bordered input-sm"
-					data-testid="admin-project-create-desc" />
-			</label>
 		</div>
+		<label class="form-control mt-3">
+			<span class="label-text">Description</span>
+			<input type="text" name="description"
+				class="input input-bordered input-sm"
+				data-testid="admin-project-create-desc" />
+		</label>
 		<div class="card-actions mt-3">
 			<button type="submit" class="btn btn-sm btn-primary" data-testid="admin-project-create-submit">Create</button>
+			<a href="@Routes.Workspace(Model.WorkspaceKey)" class="btn btn-sm btn-ghost" data-testid="admin-project-create-cancel">Cancel</a>
 		</div>
 	</div>
 </form>
+
+@if (Model.ProjectsInWorkspace.Count > 0)
+{
+	<div class="divider"></div>
+	<div class="text-sm opacity-70 mb-2">Existing projects in @Model.WorkspaceKey:</div>
+	<ul class="menu menu-sm">
+		@foreach (var p in Model.ProjectsInWorkspace)
+		{
+			<li><a href="@Routes.Project(Model.WorkspaceKey, p.Key)" class="font-mono text-xs" data-testid="admin-project-link">@p.Key @if (!string.IsNullOrWhiteSpace(p.Name)) { <text>· @p.Name</text> }</a></li>
+		}
+	</ul>
+}

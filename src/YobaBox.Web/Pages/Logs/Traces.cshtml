@@ -4,11 +4,12 @@
 	ViewData["Title"] = $"Traces — {Model.ProjectName ?? Model.EffectiveProjectKey}";
 }
 
-<div class="mb-4 flex items-center gap-3">
-	<a asp-page="/Logs/Index" asp-route-projectKey="@Model.EffectiveProjectKey" class="text-sm opacity-60 hover:opacity-100">&larr; logs</a>
-	<h1 class="text-2xl font-semibold">Traces</h1>
-	<span class="font-mono text-sm opacity-60">@Model.EffectiveProjectKey</span>
+<div class="mb-2 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold">@(Model.ProjectName ?? Model.EffectiveProjectKey)</h1>
+	<span class="text-sm opacity-60">Traces</span>
 </div>
+
+<partial name="_ProjectTabs" />
 
 @if (Model.SchemaMissing)
 {

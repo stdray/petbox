@@ -21,6 +21,9 @@ public sealed class ProjectDataModel : PageModel
 	}
 
 	[BindProperty(SupportsGet = true)]
+	public string WorkspaceKey { get; set; } = string.Empty;
+
+	[BindProperty(SupportsGet = true)]
 	public string ProjectKey { get; set; } = string.Empty;
 
 	public List<DataTable> Tables { get; private set; } = [];

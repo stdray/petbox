@@ -4,10 +4,12 @@
 	ViewData["Title"] = $"{Model.ProjectKey} — Data Tables";
 }
 
-<div class="mb-4">
-	<a asp-page="/Admin/ProjectDetail" asp-route-projectKey="@Model.ProjectKey" class="text-sm opacity-60 hover:underline">&larr; @Model.ProjectKey</a>
-	<h1 class="text-2xl font-semibold mt-1">Data Tables</h1>
+<div class="mb-2 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold">@Model.ProjectKey</h1>
+	<span class="text-sm opacity-60">Data Tables</span>
 </div>
+
+<partial name="_ProjectTabs" />
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {
