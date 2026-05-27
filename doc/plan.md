@@ -638,3 +638,102 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 - [ ] `DELETE /api/config?...` → 403
 - [ ] `POST /ingest/clef` → 403
 - [ ] `GET /api/auth/validate` → 200 (no scope needed)
+
+---
+
+## Phase 22: Доперенести остатки yobaconf + yobalog [NEW]
+
+Цель: закрыть последние пробелы относительно источников, чтобы yobaconf/yobalog можно было архивировать. Lightpanda НЕ берём (остаёмся на Playwright + Chromium).
+
+Работы разбиты на волны. Внутри волны порядок гибкий.
+
+### Wave 1 — Backend ingest (изолировано от UI/IA)
+
+#### 22.1 — ChannelIngestionPipeline `[PORT yobalog/Ingestion/]`
+
+- [ ] `YobaBox.Log.Core/Ingestion/IIngestionPipeline.cs`
+- [ ] `YobaBox.Log.Core/Ingestion/IngestionOptions.cs` (ChannelCapacity, MaxBatchSize)
+- [ ] `YobaBox.Log.Core/Ingestion/ChannelIngestionPipeline.cs` — per-project bounded channel + writer-loop с batched `BulkCopyAsync` + Publish в `ITailBroadcaster`. `IHostedService` для graceful drain на shutdown.
+- [ ] `YobaBox.Log.Core/Ingestion/IngestionLog.cs` — `LoggerMessage` partial для AppendBatchFailed/ShutdownTimedOut
+- [ ] `YobaBox.Log.Core/Observability/ActivitySources.cs` `[PORT yobalog/Observability/Tracing.cs]` — `ActivitySources.Ingestion` + `.Retention` для OTel span'ов
+- [ ] `LogApi.IngestClefAsync` + `SeqIngestAsync` — заменить прямой `BulkCopyAsync` на `pipeline.IngestAsync(projectKey, records, ct)`
+- [ ] Регистрация в `Program.cs` под `Features:Logging` (singleton + hosted service)
+
+#### 22.2 — SystemLogger direct-to-DB `[PORT yobalog/SelfLogging/]`
+
+- [ ] `YobaBox.Log.Core/SelfLogging/SystemLoggerOptions.cs` — ServiceKey, MinLevel, FlushIntervalMs
+- [ ] `YobaBox.Log.Core/SelfLogging/SystemLogger.cs` — `ILogger` записывающий в `IIngestionPipeline` напрямую (без HTTP roundtrip)
+- [ ] `YobaBox.Log.Core/SelfLogging/SystemLoggerProvider.cs`
+- [ ] `YobaBox.Log.Core/SelfLogging/SystemLogFlusher.cs` — `IHostedService` для финального flush на shutdown
+- [ ] Регистрация в `Program.cs` под `Features:Logging` + `Seq:SelfLog:Enabled=true`
+- [ ] Опционально: оставить `Seq.Extensions.Logging` как fallback, новый `SystemLogger` приоритетнее
+
+#### 22.3 — OTLP gRPC ingest `[PORT yobalog/Web/Ingestion + Proto/]`
+
+- [ ] `src/YobaBox.Web/Proto/opentelemetry/...` — скопировать всё `.proto`-дерево (logs/v1, trace/v1, common/v1, resource/v1, collector/{logs,trace}/v1)
+- [ ] `YobaBox.Web.csproj` — добавить `Grpc.Tools` + `<Protobuf Include="...">` элементы
+- [ ] `YobaBox.Web/Ingestion/OtlpLogsParser.cs` `[PORT yobalog]` — OTLP logs → `LogEntryCandidate` (ResourceAttributes + ScopeAttributes flatten в properties)
+- [ ] `YobaBox.Web/Ingestion/OtlpTracesParser.cs` `[PORT yobalog]` — OTLP traces → `SpanRecord` (per-resource batching)
+- [ ] OTLP HTTP endpoints (protobuf body):
+  - [ ] `POST /v1/logs` → `OtlpLogsParser` → `IIngestionPipeline.IngestAsync`
+  - [ ] `POST /v1/traces` → `OtlpTracesParser` → `Spans.BulkCopyAsync`
+- [ ] Авторизация через `X-Api-Key` (тот же `ApiKey`-policy что и CLEF ingest)
+- [ ] OTel-сэмплинг: `opts.Filter` исключает `/v1/logs` и `/v1/traces` из собственного трейсинга (как сейчас исключает `/api/events/raw`)
+
+### Wave 2 — Config engine (расширяет L3 ConfigBindings)
+
+#### 22.4 — ETag на resolve `[PORT yobaconf]`
+
+- [ ] `GET /api/config/{workspaceKey}/resolve` возвращает `ETag: "<hash>"` (sha256 от `Value + canonical Tags`)
+- [ ] Поддержка `If-None-Match` → 304 без тела
+- [ ] Клиент кэширует значение между poll'ами
+
+#### 22.5 — Binding soft-delete + версионирование `[ADAPT yobaconf/Bindings + Storage]`
+
+- [ ] `ConfigBinding`: добавить `IsDeleted` (bool), `DeletedAt` (DateTime?), `Version` (int), `ContentHash` (string sha256 of canonical content)
+- [ ] Auto-migration `ConfigDbFactory` — `ALTER TABLE ConfigBindings ADD COLUMN ...` гарды
+- [ ] `OnPostDelete` в `Config/Index.cshtml.cs` — soft (`UPDATE ... SET IsDeleted=1`), не `DELETE`
+- [ ] Editor.OnPostSave — `Version + 1` при апдейте + новая `ContentHash`
+- [ ] Список биндингов фильтрует `IsDeleted=0` по умолчанию; History теперь показывает по версиям
+- [ ] ResolvePipeline игнорирует `IsDeleted=1`
+- [ ] "Undelete" кнопка в History для последней удалённой версии
+
+### Wave 3 — Operational (extends L1 entities)
+
+#### 22.6 — Health-poller для Services `[PORT yobaconf health module]`
+
+- [ ] `YobaBox.Dashboard/HealthPoller.cs` — `BackgroundService`, опрашивает `Services` с `HealthModel=Endpoint`
+- [ ] Для каждого `Service.Url`: `HEAD` (или `GET /health` если path заканчивается на `/health`) с 5s timeout; 2xx → `Healthy`, 5xx → `Degraded`, timeout/connect-error → `Down`
+- [ ] Для `HealthModel=Push` — `Health=Down` если `CheckedAt` старше TTL (по умолчанию 2× ожидаемого интервала; пока 5min)
+- [ ] Обновлять `Service.Health` + `Service.CheckedAt` в `YobaBoxDb`
+- [ ] Интервал опроса: 30s default (`Dashboard:HealthPollIntervalSeconds` в appsettings)
+- [ ] Регистрация под `Features:Dashboard`
+
+#### 22.7 — CompositeApiKeyStore + ConfigApiKeyStore `[PORT yobaconf/Auth/]`
+
+- [ ] `IApiKeyLookup` интерфейс (текущий `ApiKeyAuthenticationHandler` использует прямой `YobaBoxDb.ApiKeys`)
+- [ ] `DbApiKeyLookup` — текущая реализация в одном классе
+- [ ] `ConfigApiKeyLookup` — читает `Auth:ApiKeys[]` из appsettings (массив `{ Key, ProjectKey, Scopes }`)
+- [ ] `CompositeApiKeyLookup` — пробует config-store первым (для bootstrap-ключей с фиксированным значением), затем DB
+- [ ] `ApiKeyAuthenticationHandler` — резолв через `IApiKeyLookup` вместо прямого DB
+- [ ] Полезно для CI/bootstrap: ключ с фиксированным значением в appsettings без UI-чеканки
+
+### Wave 4 — DEFERRED (требует дизайна)
+
+#### 22.8 — Agent surface (S-12) [BLOCKED — design needed]
+
+Изначально планировалось как `/agent/instructions` page + temporary scope-bound ApiKey. Альтернатива: **MCP-сервер поверх существующего API** — агент дёргает через standard MCP протокол, инструкции и discovery через MCP, никаких отдельных HTTP-страниц.
+
+- [ ] Решить: `/agent/` prefix vs MCP endpoint vs оба?
+- [ ] Если MCP: какие tools экспонируем (`yobabox.ingest_log`, `yobabox.resolve_config`, `yobabox.query_logs`...)?
+- [ ] Скоупы для агента: одноразовые с TTL (1h)? Persistent с rev?
+- [ ] Discovery: статичная `/agent/.well-known/instructions.md` или динамический MCP `tools/list`?
+
+### Что НЕ берём из источников
+
+- **Lightpanda** (Playwright + Chromium остаются)
+- yobalog `WorkspaceBootstrapper` / `WorkspaceSchema` (заменено `LogDbFactory.CreateSchema`)
+- yobalog `IShareLinkStore` / `IKqlShareLinkStore` (тонкий `ShareLink` в `YobaBoxDb` уже достаточен)
+- yobaconf `IBindingStoreAdmin` интерфейс (используем `IConfigDbFactory` + прямой linq2db)
+- yobaconf `SqliteSchema.cs` (FluentMigrator для main DB + auto-migrate в фабриках)
+- `TagSet` typed VO — оставляем строку `Tags` (резолв уже починен под subset-семантику; рефактор сейчас принесёт больше боли, чем пользы)
