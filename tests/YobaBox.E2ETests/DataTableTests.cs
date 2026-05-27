@@ -26,7 +26,7 @@ public sealed class DataTableTests(WebAppFixture app, ITestOutputHelper output) 
 
 	async Task EnsureProjectAndKey()
 	{
-		await _page!.GotoAsync("/ui/admin/projects");
+		await _page!.GotoAsync("/ui/$system/projects/new");
 		var hasKpvotes = await _page.GetByTestId("project-row").Filter(new() { HasText = "kpvotes" }).CountAsync();
 		if (hasKpvotes == 0)
 		{
@@ -40,7 +40,7 @@ public sealed class DataTableTests(WebAppFixture app, ITestOutputHelper output) 
 
 		if (_apiKey is null)
 		{
-			await _page.GotoAsync("/ui/admin/projects/kpvotes");
+			await _page.GotoAsync("/ui/$system/kpvotes/settings");
 			await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
 			await _page.GetByTestId("project-key-create-scopes").FillAsync("data:read,data:write");
 			await _page.GetByTestId("project-key-create-submit").ClickAsync();
@@ -58,7 +58,7 @@ public sealed class DataTableTests(WebAppFixture app, ITestOutputHelper output) 
 		await EnsureProjectAndKey();
 
 		// Navigate to Data Tables page
-		await _page!.GotoAsync("/ui/admin/projects/kpvotes/data");
+		await _page!.GotoAsync("/ui/$system/kpvotes/data");
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 		await Expect(_page.Locator("body")).ToContainTextAsync("Data Tables");

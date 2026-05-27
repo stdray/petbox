@@ -26,7 +26,7 @@ public sealed class ConfigPageTests(WebAppFixture app, ITestOutputHelper output)
 	[Fact]
 	public async Task ConfigPage_Renders()
 	{
-		await _page!.GotoAsync("/ui/config");
+		await _page!.GotoAsync("/ui/$system/config");
 
 		await Expect(_page.GetByTestId("config-title")).ToBeVisibleAsync();
 		await Expect(_page.Locator("body")).ToContainTextAsync("Bindings");
@@ -35,7 +35,7 @@ public sealed class ConfigPageTests(WebAppFixture app, ITestOutputHelper output)
 	[Fact]
 	public async Task ConfigPage_New_Button_Visible()
 	{
-		await _page!.GotoAsync("/ui/config");
+		await _page!.GotoAsync("/ui/$system/config");
 
 		await Expect(_page.GetByTestId("config-new")).ToBeVisibleAsync();
 	}
@@ -43,7 +43,7 @@ public sealed class ConfigPageTests(WebAppFixture app, ITestOutputHelper output)
 	[Fact]
 	public async Task ConfigPage_Filter_Form_Renders()
 	{
-		await _page!.GotoAsync("/ui/config");
+		await _page!.GotoAsync("/ui/$system/config");
 
 		await Expect(_page.GetByTestId("config-filter-form")).ToBeVisibleAsync();
 		await Expect(_page.GetByTestId("config-filter-key")).ToBeVisibleAsync();
@@ -54,7 +54,7 @@ public sealed class ConfigPageTests(WebAppFixture app, ITestOutputHelper output)
 	[Fact]
 	public async Task ConfigPage_Clear_Filter_Restores()
 	{
-		await _page!.GotoAsync("/ui/config");
+		await _page!.GotoAsync("/ui/$system/config");
 
 		await _page.GetByTestId("config-filter-key").FillAsync("zzznonexistent");
 		await _page.GetByTestId("config-filter-apply").ClickAsync();

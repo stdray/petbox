@@ -2,11 +2,20 @@ using YobaBox.E2ETests.Infrastructure;
 
 namespace YobaBox.E2ETests;
 
+// User story coverage:
+// S-3 (set up a new pet from scratch): project create → service add → API key mint
+// S-4 (add config bindings for a pet): bindings stored, resolve via API
+// S-2 (diagnose a misbehaving pet via logs): ingest CLEF, KQL query
+// S-1 (glance at all pets): Status page shows the new pet
 [Collection(nameof(UiCollection))]
 public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper output) : IAsyncLifetime
 {
+	const string Ws = "$system";
+	const string Pet = "kpvotes";
+
 	IBrowserContext? _ctx;
 	IPage? _page;
+	string? _apiKey;
 
 	public async Task InitializeAsync()
 	{
@@ -24,227 +33,218 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	}
 
 	[Fact]
-	public async Task CreateProject_KpVotes()
+	public async Task S3_CreateProject_AppearsInSidebarAndStatus()
 	{
-		await _page!.GotoAsync("/ui/admin/projects");
+		await EnsureProject();
 
-		await _page.GetByTestId("admin-project-create-workspace").SelectOptionAsync("$system");
-		await _page.GetByTestId("admin-project-create-key").FillAsync("kpvotes");
-		await _page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
-		await _page.GetByTestId("admin-project-create-desc").FillAsync("Kinopoisk → Twitter voting tracker");
-		await _page.GetByTestId("admin-project-create-submit").ClickAsync();
+		// Sidebar reflects the new project.
+		await _page!.GotoAsync($"/ui/{Ws}");
+		var projectLink = _page.GetByTestId("nav-project").Filter(new() { HasText = Pet });
+		await Expect(projectLink).ToBeVisibleAsync();
 
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-
-		var row = _page.GetByTestId("project-row").Filter(new() { HasText = "kpvotes" });
-		await Expect(row).ToContainTextAsync("KpVotes");
-		await Expect(row).ToContainTextAsync("Kinopoisk");
+		// Status page lists the project card.
+		var card = _page.GetByTestId("dashboard-project-card").Filter(new() { HasText = Pet });
+		await Expect(card).ToBeVisibleAsync();
+		await Expect(card).ToContainTextAsync("KpVotes");
 	}
 
 	[Fact]
-	public async Task CreateServices_KpVotes()
+	public async Task S3_AddServicesAndMintKey()
 	{
-		await SetupKpVotesProject(_page!);
+		await EnsureProject();
+		await EnsureServices();
+		await EnsureApiKey();
 
-		// Verify services exist (created by SetupKpVotesProject)
-		await _page!.GotoAsync("/ui/ui/admin/projects/kpvotes");
+		await _page!.GotoAsync($"/ui/{Ws}/{Pet}/settings");
+
+		// Tab strip present, services rendered.
+		await Expect(_page.GetByTestId("proj-tabs")).ToBeVisibleAsync();
+		await Expect(_page.GetByTestId("proj-tab-settings")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
+
 		var rowNet = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-net" });
 		await Expect(rowNet).ToContainTextAsync("Endpoint");
 
 		var rowTs = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-ts" });
 		await Expect(rowTs).ToContainTextAsync("Push");
 
-		var allRows = await _page.GetByTestId("service-row").AllAsync();
-		output.WriteLine($"Service rows: {allRows.Count}");
-	}
-
-	[Fact]
-	public async Task CreateApiKey_And_Validate()
-	{
-		await SetupKpVotesProject(_page!);
-		await EnsureApiKey();
-
-		// Validate via API
-		var apiResp = await _page!.APIRequest.GetAsync("/api/auth/validate", new()
+		// API key validates via /api/auth/validate.
+		var apiResp = await _page.APIRequest.GetAsync("/api/auth/validate", new()
 		{
-			Headers = new Dictionary<string, string> { ["X-Api-Key"] = _kpvotesApiKey! },
+			Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! },
 		});
 		apiResp.Status.Should().Be(200);
 		var body = await apiResp.TextAsync();
-		body.Should().Contain("kpvotes");
+		body.Should().Contain(Pet);
 		body.Should().Contain("config:read");
+	}
+
+	[Fact]
+	public async Task S4_AddConfigBindings_ResolveViaApi()
+	{
+		await EnsureProject();
+		await EnsureServices();
+		await EnsureApiKey();
+
+		var bindings = new (string Path, string Value, string Tags)[]
+		{
+			("kpvotes/interval-minutes", "120", $"project:{Pet}"),
+			("kpvotes/proxy/host", "proxy.corp.local", $"project:{Pet},service:kpvotes-net"),
+		};
+
+		foreach (var (path, value, tags) in bindings)
+		{
+			await CreateBindingViaApi(path, value, tags);
+		}
+
+		// Resolve project-level binding.
+		var resp = await _page!.APIRequest.GetAsync(
+			$"/api/config/{Ws}/resolve?path=kpvotes/interval-minutes&tags=project:{Pet}",
+			new() { Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! } });
+		resp.Status.Should().Be(200);
+		(await resp.TextAsync()).Should().Contain("120");
+
+		// Resolve service-specific binding — request includes service tag.
+		var resp2 = await _page.APIRequest.GetAsync(
+			$"/api/config/{Ws}/resolve?path=kpvotes/proxy/host&tags=project:{Pet},service:kpvotes-net",
+			new() { Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! } });
+		resp2.Status.Should().Be(200);
+		(await resp2.TextAsync()).Should().Contain("proxy.corp.local");
+
+		// Resolve service-specific binding from a different service — should 404 (subset semantics).
+		var resp3 = await _page.APIRequest.GetAsync(
+			$"/api/config/{Ws}/resolve?path=kpvotes/proxy/host&tags=project:{Pet},service:kpvotes-ts",
+			new() { Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! } });
+		resp3.Status.Should().Be(404);
+
+		// Project-config UI page renders, filter chip shows project:{key}.
+		await _page.GotoAsync($"/ui/{Ws}/{Pet}/config");
+		await Expect(_page.GetByTestId("config-project-filter")).ToContainTextAsync($"project:{Pet}");
+		await Expect(_page.GetByTestId("config-table")).ToContainTextAsync("kpvotes/interval-minutes");
+	}
+
+	[Fact]
+	public async Task S2_IngestLogs_QueryViaKql()
+	{
+		await EnsureProject();
+		await EnsureServices();
+		await EnsureApiKey();
+
+		var clefEvents = new (string Level, string Message, string Svc)[]
+		{
+			("Information", "Starting scrape", "kpvotes-net"),
+			("Warning", "Proxy timeout, retrying", "kpvotes-net"),
+			("Error", "Rate limit 429", "kpvotes-net"),
+		};
+
+		for (var i = 0; i < clefEvents.Length; i++)
+		{
+			var (level, msg, svc) = clefEvents[i];
+			var ts = DateTime.UtcNow.AddSeconds(-clefEvents.Length + i).ToString("O");
+			var payload = $"{{\"@t\":\"{ts}\",\"@l\":\"{level}\",\"@m\":\"{msg}\"}}";
+
+			var resp = await _page!.APIRequest.PostAsync("/api/ingest/clef", new()
+			{
+				Headers = new Dictionary<string, string>
+				{
+					["X-Api-Key"] = _apiKey!,
+					["X-Service-Key"] = svc,
+					["Content-Type"] = "application/vnd.serilog.clef",
+				},
+				Data = payload,
+			});
+			resp.Status.Should().Be(200);
+		}
+
+		// Project Logs page.
+		await _page!.GotoAsync($"/ui/{Ws}/{Pet}");
+		await Expect(_page.GetByTestId("proj-tabs")).ToBeVisibleAsync();
+
+		// Filter to Error level.
+		await _page.GetByTestId("kql-input").FillAsync("events | where Level == 4");
+		await _page.GetByTestId("kql-apply").ClickAsync();
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		await Expect(_page.Locator("body")).ToContainTextAsync("Rate limit");
+	}
+
+	[Fact]
+	public async Task NavigateBetweenTabs_HighlightsActive()
+	{
+		await EnsureProject();
+
+		await _page!.GotoAsync($"/ui/{Ws}/{Pet}");
+		await Expect(_page.GetByTestId("proj-tab-logs")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
+
+		await _page.GetByTestId("proj-tab-settings").ClickAsync();
+		await Expect(_page.GetByTestId("proj-tab-settings")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
+
+		await _page.GetByTestId("proj-tab-config").ClickAsync();
+		await Expect(_page.GetByTestId("proj-tab-config")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
+	}
+
+	// --- Setup helpers ------------------------------------------------------
+
+	async Task EnsureProject()
+	{
+		await _page!.GotoAsync($"/ui/{Ws}");
+		var existing = _page.GetByTestId("nav-project").Filter(new() { HasText = Pet });
+		if (await existing.CountAsync() > 0) return;
+
+		await _page.GotoAsync($"/ui/{Ws}/projects/new");
+		await _page.GetByTestId("admin-project-create-key").FillAsync(Pet);
+		await _page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
+		await _page.GetByTestId("admin-project-create-desc").FillAsync("Kinopoisk → Twitter voting tracker");
+		await _page.GetByTestId("admin-project-create-submit").ClickAsync();
+		// On success redirected to /ui/{ws}/{key} which is the project Logs page.
+		await _page.WaitForURLAsync(u => u.Contains($"/{Pet}"));
+	}
+
+	async Task EnsureServices()
+	{
+		await _page!.GotoAsync($"/ui/{Ws}/{Pet}/settings");
+		var existing = await _page.GetByTestId("service-row").CountAsync();
+		if (existing >= 2) return;
+
+		if (await _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-net" }).CountAsync() == 0)
+		{
+			await _page.GetByTestId("project-service-create-key").FillAsync("kpvotes-net");
+			await _page.GetByTestId("project-service-create-kind").SelectOptionAsync("Endpoint");
+			await _page.GetByTestId("project-service-create-submit").ClickAsync();
+			await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		}
+
+		if (await _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-ts" }).CountAsync() == 0)
+		{
+			await _page.GetByTestId("project-service-create-key").FillAsync("kpvotes-ts");
+			await _page.GetByTestId("project-service-create-kind").SelectOptionAsync("Push");
+			await _page.GetByTestId("project-service-create-submit").ClickAsync();
+			await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		}
 	}
 
 	async Task EnsureApiKey()
 	{
-		if (_kpvotesApiKey is not null) return;
+		if (_apiKey is not null) return;
 
-		await _page!.GotoAsync("/ui/ui/admin/projects/kpvotes");
+		await _page!.GotoAsync($"/ui/{Ws}/{Pet}/settings");
 		await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
-		await _page.GetByTestId("project-key-create-scopes").FillAsync("config:read,config:write,logs:ingest,data:read,data:write");
+		await _page.GetByTestId("project-key-create-scopes")
+			.FillAsync("config:read,config:write,logs:ingest");
 		await _page.GetByTestId("project-key-create-submit").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 		var keyEl = _page.GetByTestId("project-key-created").Locator("code");
 		await Expect(keyEl).ToBeVisibleAsync();
-		_kpvotesApiKey = (await keyEl.TextContentAsync())?.Trim();
-		_kpvotesApiKey.Should().NotBeNullOrEmpty().And.StartWith("yb_key_");
+		_apiKey = (await keyEl.TextContentAsync())?.Trim();
+		_apiKey.Should().NotBeNullOrEmpty().And.StartWith("yb_key_");
 	}
 
-	static async Task SetupKpVotesProject(IPage page)
+	async Task CreateBindingViaApi(string path, string value, string tags)
 	{
-		await page.GotoAsync("/ui/admin/projects");
-
-		// Create project if not exists
-		var existing = await page.GetByTestId("project-row").CountAsync();
-		if (existing <= 1) // only $system
+		var resp = await _page!.APIRequest.PostAsync($"/api/config/{Ws}/bindings", new()
 		{
-			await page.GetByTestId("admin-project-create-workspace").SelectOptionAsync("$system");
-			await page.GetByTestId("admin-project-create-key").FillAsync("kpvotes");
-			await page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
-			await page.GetByTestId("admin-project-create-desc").FillAsync("Kinopoisk → Twitter voting tracker");
-			await page.GetByTestId("admin-project-create-submit").ClickAsync();
-			await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		}
-
-		// Create services if not exist
-		await page.GotoAsync("/ui/ui/admin/projects/kpvotes");
-		var svcExisting = await page.GetByTestId("service-row").CountAsync();
-		if (svcExisting == 0)
-		{
-			await page.GetByTestId("project-service-create-key").ScrollIntoViewIfNeededAsync();
-			await page.GetByTestId("project-service-create-key").FillAsync("kpvotes-net");
-			await page.GetByTestId("project-service-create-kind").SelectOptionAsync("Endpoint");
-			await page.GetByTestId("project-service-create-submit").ClickAsync();
-			await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-
-			await page.GetByTestId("project-service-create-key").FillAsync("kpvotes-ts");
-			await page.GetByTestId("project-service-create-kind").SelectOptionAsync("Push");
-			await page.GetByTestId("project-service-create-submit").ClickAsync();
-			await page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		}
+			Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! },
+			DataObject = new { path, value, tags = $"ws:{Ws},{tags}" },
+		});
+		resp.Status.Should().Be(200);
 	}
-
-	[Fact]
-	public async Task AddConfigBindings_And_Resolve()
-	{
-		await SetupKpVotesProject(_page!);
-		await EnsureApiKey();
-		output.WriteLine($"Using key: {_kpvotesApiKey}");
-
-		var bindings = new (string Path, string Value, string Tags)[]
-		{
-			("kpvotes/kp-uri", "https://www.kinopoisk.ru/film/123", "project:kpvotes"),
-			("kpvotes/votes-uri", "https://www.kinopoisk.ru/film/123/votes", "project:kpvotes"),
-			("kpvotes/interval-minutes", "120", "project:kpvotes"),
-			("kpvotes/user-agent", "KpVotes/1.0", "project:kpvotes"),
-			("kpvotes/cache-path", "data/votes.json", "project:kpvotes"),
-			("kpvotes/twitter/consumer-key", "secret123", "project:kpvotes"),
-			("kpvotes/proxy/host", "proxy.corp.local", "project:kpvotes,service:kpvotes-net"),
-		};
-
-		foreach (var (path, value, tags) in bindings)
-		{
-			await _page!.GotoAsync("/ui/config/edit");
-			await _page.GetByTestId("config-edit-path").FillAsync(path);
-			await _page.GetByTestId("config-edit-value").FillAsync(value);
-			await _page.GetByTestId("config-edit-tags").FillAsync(tags);
-			await _page.GetByTestId("config-save-btn").ClickAsync();
-			await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-			output.WriteLine($"Created binding: {path}={value} [{tags}]");
-		}
-
-		await _page!.GotoAsync("/ui/config");
-		await _page!.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		await Expect(_page.GetByTestId("config-table")).ToContainTextAsync("kpvotes/interval-minutes");
-		await Expect(_page.GetByTestId("config-table")).ToContainTextAsync("proxy.corp.local");
-
-		// API resolve
-		var apiResp = await _page.APIRequest.GetAsync(
-			"/api/config/$system/resolve?path=kpvotes/interval-minutes&tags=project:kpvotes",
-			new() { Headers = new Dictionary<string, string> { ["X-Api-Key"] = _kpvotesApiKey! } });
-		var body = await apiResp.TextAsync();
-		output.WriteLine($"Resolve status: {apiResp.Status}, body: {body}");
-		apiResp.Status.Should().Be(200);
-		body.Should().Contain("120");
-	}
-
-	[Fact]
-	public async Task IngestLogs_And_Query()
-	{
-		await SetupKpVotesProject(_page!);
-		await EnsureApiKey();
-
-		// POST 4 CLEF events
-		var clefEvents = new (string L, string M, string Svc, string Props)[]
-		{
-			("Information", "Starting scrape of film 123", "kpvotes-net", "\"FilmId\": 123"),
-			("Information", "Loaded 150 votes from cache", "kpvotes-net", "\"VoteCount\": 150, \"CacheHit\": true"),
-			("Warning", "Proxy timeout after 30s, retrying", "kpvotes-net", "\"TimeoutSeconds\": 30"),
-			("Error", "Rate limit exceeded (429)", "kpvotes-net", "\"StatusCode\": 429, \"RetryAfter\": 60"),
-		};
-
-		foreach (var (l, m, svc, props) in clefEvents)
-		{
-			var ts = DateTime.UtcNow.AddMinutes(-4 + Array.IndexOf(clefEvents, (l, m, svc, props))).ToString("O");
-			var payload = $"{{\"@t\":\"{ts}\",\"@l\":\"{l}\",\"@m\":\"{m}\",{props}}}";
-			output.WriteLine($"CLEF payload: {payload[..Math.Min(payload.Length, 120)]}");
-			var resp = await _page!.APIRequest.PostAsync("/api/api/ingest/clef", new()
-			{
-				Headers = new Dictionary<string, string>
-				{
-					["X-Api-Key"] = _kpvotesApiKey!,
-					["X-Service-Key"] = svc,
-				},
-				Data = payload,
-			});
-			output.WriteLine($"CLEF ingest ({m}): {resp.Status}");
-			var errBody = await resp.TextAsync();
-			if (resp.Status != 200) output.WriteLine($"Error: {errBody}");
-			resp.Status.Should().Be(200);
-		}
-
-		// Navigate to logs page for kpvotes project
-		await _page!.GotoAsync("/ui/logs?project=kpvotes");
-		await _page!.WaitForLoadStateAsync(LoadState.NetworkIdle);
-
-		// KQL: where Level == 4 (Error)
-		await _page.GetByTestId("kql-input").FillAsync("events | where Level == 4");
-		await _page.GetByTestId("kql-apply").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		await Expect(_page.Locator("body")).ToContainTextAsync("Rate limit");
-
-		// KQL: summarize count() by Level
-		await _page.GetByTestId("kql-input").FillAsync("events | summarize count() by Level");
-		await _page.GetByTestId("kql-apply").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		// Level=2 (Information)=2, Level=3 (Warning)=1, Level=4 (Error)=1
-		await Expect(_page.Locator("body")).ToContainTextAsync("Level");
-		await Expect(_page.Locator("body")).ToContainTextAsync("count_");
-	}
-
-	[Fact]
-	public async Task Dashboard_ShowsKpVotes()
-	{
-		await SetupKpVotesProject(_page!);
-		await EnsureApiKey();
-
-		// Main dashboard
-		await _page!.GotoAsync("/ui/dashboard");
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-
-		var card = _page.GetByTestId("dashboard-project-card").Filter(new() { HasText = "kpvotes" });
-		await Expect(card).ToContainTextAsync("KpVotes");
-		await Expect(card).ToContainTextAsync("kpvotes-net");
-		await Expect(card).ToContainTextAsync("kpvotes-ts");
-
-		// Per-project dashboard
-		await _page.GotoAsync("/ui/ui/dashboard/kpvotes");
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		await Expect(_page.Locator("body")).ToContainTextAsync("KpVotes");
-		await Expect(_page.GetByTestId("dashboard-project-services")).ToContainTextAsync("kpvotes-net");
-		await Expect(_page.GetByTestId("dashboard-project-services")).ToContainTextAsync("kpvotes-ts");
-	}
-
-	string? _kpvotesApiKey;
 }

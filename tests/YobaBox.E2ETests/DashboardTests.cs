@@ -26,7 +26,7 @@ public sealed class DashboardTests(WebAppFixture app, ITestOutputHelper output) 
 	[Fact]
 	public async Task Dashboard_Renders_System_Project()
 	{
-		await _page!.GotoAsync("/ui/dashboard");
+		await _page!.GotoAsync("/ui/$system");
 
 		await Expect(_page.GetByTestId("dashboard-title")).ToBeVisibleAsync();
 		await Expect(_page.Locator("[data-project-key=\"$system\"]")).ToBeVisibleAsync();
@@ -35,7 +35,7 @@ public sealed class DashboardTests(WebAppFixture app, ITestOutputHelper output) 
 	[Fact]
 	public async Task Dashboard_Shows_Project_Name()
 	{
-		await _page!.GotoAsync("/ui/dashboard");
+		await _page!.GotoAsync("/ui/$system");
 
 		var name = _page.Locator("[data-project-key=\"$system\"]").GetByTestId("dashboard-project-name");
 		await Expect(name).ToBeVisibleAsync();
@@ -45,9 +45,9 @@ public sealed class DashboardTests(WebAppFixture app, ITestOutputHelper output) 
 	[Fact]
 	public async Task Index_Redirects_To_Dashboard()
 	{
-		await _page!.GotoAsync("/ui/dashboard");
+		await _page!.GotoAsync("/ui/$system");
 
 		await Task.Delay(300);
-		_page.Url.Should().Contain("/ui/dashboard");
+		_page.Url.Should().Contain("/ui/$system");
 	}
 }

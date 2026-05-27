@@ -26,11 +26,11 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 
 	async Task EnsureProject()
 	{
-		await _page!.GotoAsync("/ui/admin/projects");
-		var hasKpvotes = await _page.GetByTestId("project-row").Filter(new() { HasText = "kpvotes" }).CountAsync();
+		await _page!.GotoAsync("/ui/$system");
+		var hasKpvotes = await _page.GetByTestId("nav-project").Filter(new() { HasText = "kpvotes" }).CountAsync();
 		if (hasKpvotes == 0)
 		{
-			await _page.GetByTestId("admin-project-create-workspace").SelectOptionAsync("$system");
+			await _page.GotoAsync("/ui/$system/projects/new");
 			await _page.GetByTestId("admin-project-create-key").FillAsync("kpvotes");
 			await _page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
 			await _page.GetByTestId("admin-project-create-desc").FillAsync("Test");
@@ -44,7 +44,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		if (_keys.TryGetValue(scopes, out var cached))
 			return cached;
 
-		await _page!.GotoAsync("/ui/admin/projects/kpvotes");
+		await _page!.GotoAsync("/ui/$system/kpvotes/settings");
 		await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
 		await _page.GetByTestId("project-key-create-scopes").FillAsync(scopes);
 		await _page.GetByTestId("project-key-create-submit").ClickAsync();
@@ -76,7 +76,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 	{
 		await EnsureProject();
 		// Create a test binding first (via UI, uses cookie auth)
-		await _page!.GotoAsync("/ui/config/edit");
+		await _page!.GotoAsync("/ui/$system/config/editor");
 		await _page.GetByTestId("config-edit-path").FillAsync("scope-test");
 		await _page.GetByTestId("config-edit-value").FillAsync("42");
 		await _page.GetByTestId("config-edit-tags").FillAsync("project:kpvotes");
@@ -93,7 +93,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 	{
 		await EnsureProject();
 		// Create a test binding first
-		await _page!.GotoAsync("/ui/config/edit");
+		await _page!.GotoAsync("/ui/$system/config/editor");
 		await _page.GetByTestId("config-edit-path").FillAsync("scope-test-write");
 		await _page.GetByTestId("config-edit-value").FillAsync("7");
 		await _page.GetByTestId("config-edit-tags").FillAsync("project:kpvotes");
@@ -108,7 +108,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 	{
 		await EnsureProject();
 		// Create test binding
-		await _page!.GotoAsync("/ui/config/edit");
+		await _page!.GotoAsync("/ui/$system/config/editor");
 		await _page.GetByTestId("config-edit-path").FillAsync("scope-test-ingest");
 		await _page.GetByTestId("config-edit-value").FillAsync("1");
 		await _page.GetByTestId("config-edit-tags").FillAsync("project:kpvotes");
@@ -118,7 +118,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		// logs:ingest can POST to /ingest/clef (ApiKey policy)
 		var key = await CreateApiKey("logs:ingest");
 		var payload = """{"@t":"2025-01-01T00:00:00Z","@l":"Information","@m":"test"}""";
-		var resp = await _page!.APIRequest.PostAsync("/ingest/clef", new()
+		var resp = await _page!.APIRequest.PostAsync("/api/ingest/clef", new()
 		{
 			Headers = new Dictionary<string, string> { ["X-Api-Key"] = key, ["X-Service-Key"] = "kpvotes-net" },
 			Data = payload,
@@ -134,7 +134,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 	{
 		await EnsureProject();
 		// Create test binding
-		await _page!.GotoAsync("/ui/config/edit");
+		await _page!.GotoAsync("/ui/$system/config/editor");
 		await _page.GetByTestId("config-edit-path").FillAsync("scope-test-admin");
 		await _page.GetByTestId("config-edit-value").FillAsync("1");
 		await _page.GetByTestId("config-edit-tags").FillAsync("project:kpvotes");

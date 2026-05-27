@@ -50,11 +50,11 @@ public sealed class ConfigResolvePriorityTests(WebAppFixture app, ITestOutputHel
 
 	async Task EnsureProjectAndKey()
 	{
-		await _page!.GotoAsync("/ui/admin/projects");
-		var hasKpvotes = await _page.GetByTestId("project-row").Filter(new() { HasText = "kpvotes" }).CountAsync();
+		await _page!.GotoAsync("/ui/$system");
+		var hasKpvotes = await _page.GetByTestId("nav-project").Filter(new() { HasText = "kpvotes" }).CountAsync();
 		if (hasKpvotes == 0)
 		{
-			await _page.GetByTestId("admin-project-create-workspace").SelectOptionAsync("$system");
+			await _page.GotoAsync("/ui/$system/projects/new");
 			await _page.GetByTestId("admin-project-create-key").FillAsync("kpvotes");
 			await _page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
 			await _page.GetByTestId("admin-project-create-desc").FillAsync("Test project");
@@ -64,7 +64,7 @@ public sealed class ConfigResolvePriorityTests(WebAppFixture app, ITestOutputHel
 
 		if (_apiKey is null)
 		{
-			await _page.GotoAsync("/ui/admin/projects/kpvotes");
+			await _page.GotoAsync("/ui/$system/kpvotes/settings");
 			await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
 			await _page.GetByTestId("project-key-create-scopes").FillAsync("config:read,config:write");
 			await _page.GetByTestId("project-key-create-submit").ClickAsync();
@@ -78,7 +78,7 @@ public sealed class ConfigResolvePriorityTests(WebAppFixture app, ITestOutputHel
 
 	async Task CreateConfigBinding(string path, string value, string tags)
 	{
-		await _page!.GotoAsync("/ui/config/edit");
+		await _page!.GotoAsync("/ui/$system/config/editor");
 		await _page.GetByTestId("config-edit-path").FillAsync(path);
 		await _page.GetByTestId("config-edit-value").FillAsync(value);
 		await _page.GetByTestId("config-edit-tags").FillAsync(tags);

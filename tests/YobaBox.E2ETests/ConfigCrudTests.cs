@@ -26,7 +26,7 @@ public sealed class ConfigCrudTests(WebAppFixture app, ITestOutputHelper output)
 	[Fact]
 	public async Task New_Binding_Link_Opens_Editor()
 	{
-		await _page!.GotoAsync("/ui/config");
+		await _page!.GotoAsync("/ui/$system/config");
 		await _page.GetByTestId("config-new").ClickAsync();
 		await _page.WaitForURLAsync("**/ui/config/edit");
 		await Expect(_page.GetByTestId("config-edit-form")).ToBeVisibleAsync();
@@ -35,7 +35,7 @@ public sealed class ConfigCrudTests(WebAppFixture app, ITestOutputHelper output)
 	[Fact]
 	public async Task Binding_Create_And_Appears_In_Table()
 	{
-		await _page!.GotoAsync("/ui/config/edit");
+		await _page!.GotoAsync("/ui/$system/config/editor");
 
 		await _page.GetByTestId("config-edit-path").FillAsync("db.host");
 		await _page.GetByTestId("config-edit-value").FillAsync("localhost");
@@ -51,7 +51,7 @@ public sealed class ConfigCrudTests(WebAppFixture app, ITestOutputHelper output)
 	public async Task Binding_Edit_And_Save()
 	{
 		// First create a binding
-		await _page!.GotoAsync("/ui/config/edit");
+		await _page!.GotoAsync("/ui/$system/config/editor");
 		await _page.GetByTestId("config-edit-path").FillAsync("cache.ttl");
 		await _page.GetByTestId("config-edit-value").FillAsync("300");
 		await _page.GetByTestId("config-edit-tags").FillAsync("env=prod");
@@ -86,7 +86,7 @@ public sealed class ConfigCrudTests(WebAppFixture app, ITestOutputHelper output)
 	[Fact]
 	public async Task Binding_Edit_Cancel_Returns_To_Index()
 	{
-		await _page!.GotoAsync("/ui/config/edit");
+		await _page!.GotoAsync("/ui/$system/config/editor");
 		await _page.GetByTestId("config-edit-path").FillAsync("cancel.test");
 		await _page.GetByTestId("config-edit-value").FillAsync("original");
 		await _page.GetByTestId("config-edit-tags").FillAsync("env=dev");
@@ -109,7 +109,7 @@ public sealed class ConfigCrudTests(WebAppFixture app, ITestOutputHelper output)
 	[Fact]
 	public async Task Binding_Delete_Removes_From_Table()
 	{
-		await _page!.GotoAsync("/ui/config/edit");
+		await _page!.GotoAsync("/ui/$system/config/editor");
 		await _page.GetByTestId("config-edit-path").FillAsync("to.delete");
 		await _page.GetByTestId("config-edit-value").FillAsync("x");
 		await _page.GetByTestId("config-edit-tags").FillAsync("env=test");
