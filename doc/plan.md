@@ -651,74 +651,74 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 
 ### Wave 1 — Backend ingest (изолировано от UI/IA)
 
-#### 22.1 — ChannelIngestionPipeline `[PORT yobalog/Ingestion/]`
+#### 22.1 — ChannelIngestionPipeline `[PORT yobalog/Ingestion/]` [DONE — `e6b24a0`]
 
-- [ ] `YobaBox.Log.Core/Ingestion/IIngestionPipeline.cs`
-- [ ] `YobaBox.Log.Core/Ingestion/IngestionOptions.cs` (ChannelCapacity, MaxBatchSize) — биндится из `Ingestion:*` в `appsettings.json` через `IOptions<T>`. Phase 23 перевезёт в L2.
-- [ ] `YobaBox.Log.Core/Ingestion/ChannelIngestionPipeline.cs` — per-project bounded channel + writer-loop с batched `BulkCopyAsync` + Publish в `ITailBroadcaster`. `IHostedService` для graceful drain на shutdown.
-- [ ] `YobaBox.Log.Core/Ingestion/IngestionLog.cs` — `LoggerMessage` partial для AppendBatchFailed/ShutdownTimedOut
-- [ ] `YobaBox.Log.Core/Observability/ActivitySources.cs` `[PORT yobalog/Observability/Tracing.cs]` — `ActivitySources.Ingestion` + `.Retention` для OTel span'ов
-- [ ] `LogApi.IngestClefAsync` + `SeqIngestAsync` — заменить прямой `BulkCopyAsync` на `pipeline.IngestAsync(projectKey, records, ct)`
-- [ ] Регистрация в `Program.cs` под `Features:Logging` (singleton + hosted service)
+- [x] `YobaBox.Log.Core/Ingestion/IIngestionPipeline.cs`
+- [x] `YobaBox.Log.Core/Ingestion/IngestionOptions.cs` (ChannelCapacity, MaxBatchSize) — биндится из `Ingestion:*` в `appsettings.json` через `IOptions<T>`. Phase 23 перевезёт в L2.
+- [x] `YobaBox.Log.Core/Ingestion/ChannelIngestionPipeline.cs` — per-project bounded channel + writer-loop с batched `BulkCopyAsync` + Publish в `ITailBroadcaster`. `IHostedService` для graceful drain на shutdown.
+- [x] `YobaBox.Log.Core/Ingestion/IngestionLog.cs` — `LoggerMessage` partial для AppendBatchFailed/ShutdownTimedOut
+- [x] `YobaBox.Log.Core/Observability/ActivitySources.cs` `[PORT yobalog/Observability/Tracing.cs]` — `ActivitySources.Ingestion` + `.Retention` для OTel span'ов
+- [x] `LogApi.IngestClefAsync` + `SeqIngestAsync` — заменить прямой `BulkCopyAsync` на `pipeline.IngestAsync(projectKey, records, ct)`
+- [x] Регистрация в `Program.cs` под `Features:Logging` (singleton + hosted service)
 
-#### 22.2 — SystemLogger direct-to-DB `[PORT yobalog/SelfLogging/]`
+#### 22.2 — SystemLogger direct-to-DB `[PORT yobalog/SelfLogging/]` [DONE — `aac7deb`]
 
-- [ ] `YobaBox.Log.Core/SelfLogging/SystemLoggerOptions.cs` — ServiceKey, MinLevel, FlushIntervalMs — биндится из `SelfLogging:*` в `appsettings.json`. Phase 23 перевезёт в L2.
-- [ ] `YobaBox.Log.Core/SelfLogging/SystemLogger.cs` — `ILogger` записывающий в `IIngestionPipeline` напрямую (без HTTP roundtrip)
-- [ ] `YobaBox.Log.Core/SelfLogging/SystemLoggerProvider.cs`
-- [ ] `YobaBox.Log.Core/SelfLogging/SystemLogFlusher.cs` — `IHostedService` для финального flush на shutdown
-- [ ] Регистрация в `Program.cs` под `Features:Logging` + `Seq:SelfLog:Enabled=true`
-- [ ] Опционально: оставить `Seq.Extensions.Logging` как fallback, новый `SystemLogger` приоритетнее
+- [x] `YobaBox.Log.Core/SelfLogging/SystemLoggerOptions.cs` — ServiceKey, MinLevel, FlushIntervalMs — биндится из `SelfLogging:*` в `appsettings.json`. Phase 23 перевезёт в L2.
+- [x] `YobaBox.Log.Core/SelfLogging/SystemLogger.cs` — `ILogger` записывающий в `IIngestionPipeline` напрямую (без HTTP roundtrip)
+- [x] `YobaBox.Log.Core/SelfLogging/SystemLoggerProvider.cs`
+- [x] `YobaBox.Log.Core/SelfLogging/SystemLogFlusher.cs` — `IHostedService` для финального flush на shutdown
+- [x] Регистрация в `Program.cs` под `Features:Logging` + `Seq:SelfLog:Enabled=true`
+- [x] Заменили `Seq.Extensions.Logging` → прямой путь через `SystemLogger`
 
-#### 22.3 — OTLP gRPC ingest `[PORT yobalog/Web/Ingestion + Proto/]`
+#### 22.3 — OTLP gRPC ingest `[PORT yobalog/Web/Ingestion + Proto/]` [DONE — `60f1462`]
 
-- [ ] `src/YobaBox.Web/Proto/opentelemetry/...` — скопировать всё `.proto`-дерево (logs/v1, trace/v1, common/v1, resource/v1, collector/{logs,trace}/v1)
-- [ ] `YobaBox.Web.csproj` — добавить `Grpc.Tools` + `<Protobuf Include="...">` элементы
-- [ ] `YobaBox.Web/Ingestion/OtlpLogsParser.cs` `[PORT yobalog]` — OTLP logs → `LogEntryCandidate` (ResourceAttributes + ScopeAttributes flatten в properties)
-- [ ] `YobaBox.Web/Ingestion/OtlpTracesParser.cs` `[PORT yobalog]` — OTLP traces → `SpanRecord` (per-resource batching)
-- [ ] OTLP HTTP endpoints (protobuf body):
-  - [ ] `POST /v1/logs` → `OtlpLogsParser` → `IIngestionPipeline.IngestAsync`
-  - [ ] `POST /v1/traces` → `OtlpTracesParser` → `Spans.BulkCopyAsync`
-- [ ] Авторизация через `X-Api-Key` (тот же `ApiKey`-policy что и CLEF ingest)
-- [ ] OTel-сэмплинг: `opts.Filter` исключает `/v1/logs` и `/v1/traces` из собственного трейсинга (как сейчас исключает `/api/events/raw`)
+- [x] `src/YobaBox.Web/Proto/opentelemetry/...` — скопировано всё `.proto`-дерево (logs/v1, trace/v1, common/v1, resource/v1, collector/{logs,trace}/v1)
+- [x] `YobaBox.Web.csproj` — `Grpc.Tools` + `<Protobuf Include="...">` + `NoWarn=CS8632`
+- [x] `YobaBox.Web/Ingestion/OtlpLogsParser.cs` — OTLP logs → `LogEntryCandidate` (TraceId/SpanId hex в Properties JSON)
+- [x] `YobaBox.Web/Ingestion/OtlpTracesParser.cs` — OTLP traces → `SpanRecord` (Events/Links JSON-serialized в существующие колонки)
+- [x] OTLP HTTP endpoints (protobuf body):
+  - [x] `POST /v1/logs` → `OtlpLogsParser` → `IIngestionPipeline.IngestAsync`
+  - [x] `POST /v1/traces` → `OtlpTracesParser` → `Spans.BulkCopyAsync`
+- [x] Авторизация через `X-Api-Key` (тот же `ApiKey`-policy что и CLEF ingest)
+- [x] OTel-сэмплинг: `opts.Filter` исключает `/v1/logs` и `/v1/traces`
 
 ### Wave 2 — Config engine (расширяет L3 ConfigBindings)
 
-#### 22.4 — ETag на resolve `[PORT yobaconf]`
+#### 22.4 — ETag на resolve `[PORT yobaconf]` [DONE — `d81c0c4`]
 
-- [ ] `GET /api/config/{workspaceKey}/resolve` возвращает `ETag: "<hash>"` (sha256 от `Value + canonical Tags`)
-- [ ] Поддержка `If-None-Match` → 304 без тела
-- [ ] Клиент кэширует значение между poll'ами
+- [x] `GET /api/config/{workspaceKey}/resolve` возвращает `ETag: "<hash>"` (sha256 от `Path \0 Value`, не Tags — равные значения кэш-эквивалентны)
+- [x] Поддержка `If-None-Match` → 304 без тела
+- [x] Клиент кэширует значение между poll'ами
 
-#### 22.5 — Binding soft-delete + версионирование `[ADAPT yobaconf/Bindings + Storage]`
+#### 22.5 — Binding soft-delete + версионирование `[ADAPT yobaconf/Bindings + Storage]` [DONE — `989eda0`]
 
-- [ ] `ConfigBinding`: добавить `IsDeleted` (bool), `DeletedAt` (DateTime?), `Version` (int), `ContentHash` (string sha256 of canonical content)
-- [ ] Auto-migration `ConfigDbFactory` — `ALTER TABLE ConfigBindings ADD COLUMN ...` гарды
-- [ ] `OnPostDelete` в `Config/Index.cshtml.cs` — soft (`UPDATE ... SET IsDeleted=1`), не `DELETE`
-- [ ] Editor.OnPostSave — `Version + 1` при апдейте + новая `ContentHash`
-- [ ] Список биндингов фильтрует `IsDeleted=0` по умолчанию; History теперь показывает по версиям
-- [ ] ResolvePipeline игнорирует `IsDeleted=1`
-- [ ] "Undelete" кнопка в History для последней удалённой версии
+- [x] `ConfigBinding`: `IsDeleted` (bool), `DeletedAt` (DateTime?), `Version` (int, start 1), `ContentHash` (sha256 hex)
+- [x] Auto-migration `ConfigDbFactory` — `ALTER TABLE ConfigBindings ADD COLUMN ...` гарды
+- [x] `OnPostDelete` в `Config/Index.cshtml.cs` — soft (`UPDATE ... SET IsDeleted=1`), не `DELETE`
+- [x] Editor.OnPostSave — `Version + 1` + новая `ContentHash`; no-op edits (тот же ContentHash) не бампают версию
+- [x] Список биндингов фильтрует `IsDeleted=0`
+- [x] ResolvePipeline игнорирует `IsDeleted=1`
+- [x] Undelete = редактирование IsDeleted=1 строки в Editor (история пишет `Undelete` action)
+- [ ] UI History: кнопка "Undelete" inline на последней удалённой версии (follow-up — пока в Editor приходить руками)
 
 ### Wave 3 — Operational (extends L1 entities)
 
-#### 22.6 — Health-poller для Services `[PORT yobaconf health module]`
+#### 22.6 — Health-poller для Services `[NEW — design adapted]` [DONE — `954bf68`]
 
-- [ ] `YobaBox.Dashboard/HealthPoller.cs` — `BackgroundService`, опрашивает `Services` с `HealthModel=Endpoint`
-- [ ] Для каждого `Service.Url`: `HEAD` (или `GET /health` если path заканчивается на `/health`) с 5s timeout; 2xx → `Healthy`, 5xx → `Degraded`, timeout/connect-error → `Down`
-- [ ] Для `HealthModel=Push` — `Health=Down` если `CheckedAt` старше TTL (по умолчанию 2× ожидаемого интервала; пока 5min)
-- [ ] Обновлять `Service.Health` + `Service.CheckedAt` в `YobaBoxDb`
-- [ ] Интервал опроса: 30s default (`Dashboard:HealthPollIntervalSeconds` в appsettings) — Phase 23 перевезёт в L2.
-- [ ] Регистрация под `Features:Dashboard`
+- [x] `YobaBox.Dashboard/HealthPoller.cs` — `BackgroundService`, опрашивает `Services` с `HealthModel=Endpoint`
+- [x] Для каждого `Service.Url`: `GET {Url}/health` (auto-append /health если нет) с 5s timeout; 2xx → `Healthy`, 5xx → `Degraded`, иное (timeout/connect/4xx) → `Down`
+- [x] Для `HealthModel=Push` — `Health=Down` если `CheckedAt` старше TTL (`PushTtlSeconds`, default 5min)
+- [x] Обновляет `Service.Health` + `Service.CheckedAt` в `YobaBoxDb`
+- [x] Интервал опроса: 30s default (`Dashboard:HealthPollIntervalSeconds` в appsettings) — Phase 23 перевезёт в L2.
+- [x] Регистрация под `Features:Dashboard`
 
-#### 22.7 — CompositeApiKeyStore + ConfigApiKeyStore `[PORT yobaconf/Auth/]`
+#### 22.7 — CompositeApiKeyStore + ConfigApiKeyStore `[ADAPT yobaconf/Auth/]` [DONE — `ccc74f2`]
 
-- [ ] `IApiKeyLookup` интерфейс (текущий `ApiKeyAuthenticationHandler` использует прямой `YobaBoxDb.ApiKeys`)
-- [ ] `DbApiKeyLookup` — текущая реализация в одном классе
-- [ ] `ConfigApiKeyLookup` — читает `Auth:ApiKeys[]` из appsettings (массив `{ Key, ProjectKey, Scopes }`)
-- [ ] `CompositeApiKeyLookup` — пробует config-store первым (для bootstrap-ключей с фиксированным значением), затем DB
-- [ ] `ApiKeyAuthenticationHandler` — резолв через `IApiKeyLookup` вместо прямого DB
-- [ ] Полезно для CI/bootstrap: ключ с фиксированным значением в appsettings без UI-чеканки
+- [x] `IApiKeyLookup` интерфейс
+- [x] `DbApiKeyLookup` — текущая реализация в одном классе
+- [x] `ConfigApiKeyLookup` — читает `Auth:ApiKeys[]` из appsettings (массив `{ Key, ProjectKey, Scopes }`)
+- [x] `CompositeApiKeyLookup` — пробует config-store первым, затем DB; config wins on collision
+- [x] `ApiKeyAuthenticationHandler` — резолв через `IApiKeyLookup` вместо прямого DB
 
 ### Wave 4 — DEFERRED (требует дизайна)
 
