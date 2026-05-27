@@ -21,7 +21,7 @@ done
 dotnet tool restore >/dev/null
 
 if [ "$QUIET" -eq 1 ]; then
-	dotnet cake build.cake \
+	dotnet run build.cs \
 		--target="$TARGET" \
 		--configuration="$CONFIGURATION" \
 		"${EXTRA_ARGS[@]}" 2>&1 | grep -E '^(Totals|Task|Error|Warning|[0-9]+ (passed|failed))'
@@ -29,7 +29,7 @@ if [ "$QUIET" -eq 1 ]; then
 fi
 
 if [ ${#EXTRA_ARGS[@]} -gt 0 ]; then
-	dotnet cake build.cake --target="$TARGET" --configuration="$CONFIGURATION" "${EXTRA_ARGS[@]}"
+	dotnet run build.cs --target="$TARGET" --configuration="$CONFIGURATION" "${EXTRA_ARGS[@]}"
 else
-	dotnet cake build.cake --target="$TARGET" --configuration="$CONFIGURATION"
+	dotnet run build.cs --target="$TARGET" --configuration="$CONFIGURATION"
 fi

@@ -1,5 +1,9 @@
-#addin nuget:?package=Cake.Docker&version=1.5.0-beta.1&prerelease
-#tool dotnet:?package=GitVersion.Tool&version=6.4.0
+#:sdk Cake.Sdk@6.2.0
+#:property ManagePackageVersionsCentrally=false
+#:property Nullable=disable
+#:property TreatWarningsAsErrors=false
+#:package Cake.Docker@1.5.0-beta.1
+// GitVersion.Tool is installed via .config/dotnet-tools.json (dotnet tool restore runs in build.ps1/build.sh)
 
 var target = Argument("target", "Default");
 var configuration = Argument("configuration", "Release");

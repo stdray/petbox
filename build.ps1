@@ -3,7 +3,7 @@ param(
 	[string]$Configuration = "Release"
 )
 
-$script = Join-Path $PSScriptRoot "build.cake"
+$script = Join-Path $PSScriptRoot "build.cs"
 
 dotnet tool restore
 if ($LASTEXITCODE -ne 0) {
@@ -12,5 +12,5 @@ if ($LASTEXITCODE -ne 0) {
 
 $arguments = @($script, "--target=$Target", "--configuration=$Configuration") + $args
 
-dotnet cake @arguments
+dotnet run @arguments
 exit $LASTEXITCODE
