@@ -1,71 +1,88 @@
 @page "/ui/{workspaceKey}/admin/members"
 @model YobaBox.Web.Pages.Admin.WorkspaceUsersModel
+@inject YobaBox.Web.Navigation.INavigationContext Nav
 @{
-	ViewData["Title"] = "Users";
+	ViewData["Title"] = "Members";
+	var ws = Nav.CurrentWorkspaceKey;
 }
 
-<a asp-page="/Admin/WorkspaceDetail" asp-route-key="@RouteData.Values["workspaceKey"]" class="btn btn-sm btn-ghost mb-4">← Back to Workspace</a>
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="workspace-users-title">@ws workspace</h1>
+	<p class="text-sm opacity-60">Manage who can access this workspace and at what level.</p>
+</div>
 
-<h1 class="text-xl font-semibold mb-2" data-testid="workspace-users-title">Users</h1>
-<p class="text-sm opacity-70 mb-4 font-mono">@RouteData.Values["workspaceKey"]</p>
+<partial name="_WorkspaceAdminTabs" />
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {
-	<div class="alert alert-error mb-3">@Model.ErrorMessage</div>
+	<div class="alert alert-error mb-3" data-testid="workspace-users-error">@Model.ErrorMessage</div>
 }
 
-<div class="overflow-x-auto mb-6">
-	<table class="table table-sm" data-testid="workspace-users-table">
-		<thead>
-			<tr>
-				<th>Username</th>
-				<th>Role</th>
-				<th></th>
-			</tr>
-		</thead>
-		<tbody>
-			@foreach (var (member, username) in Model.Members)
-			{
-				<tr>
-					<td class="font-mono text-sm">@username</td>
-					<td>
-						<span class="badge badge-sm">@member.Role</span>
-					</td>
-					<td>
-						<form method="post" asp-page-handler="Remove" asp-route-userId="@member.UserId" style="display:inline">
-							@Html.AntiForgeryToken()
-							<button type="submit" class="btn btn-xs btn-ghost text-error">Remove</button>
-						</form>
-					</td>
-				</tr>
-			}
-		</tbody>
-	</table>
+<div class="flex items-center gap-3 mb-3">
+	<h2 class="text-lg font-semibold">Members</h2>
+	<span class="badge badge-ghost">@Model.Members.Count</span>
 </div>
 
-<div class="divider"></div>
+@if (Model.Members.Count == 0)
+{
+	<div class="text-xs opacity-60 italic mb-4" data-testid="workspace-users-empty">No members yet. Add the first below.</div>
+}
+else
+{
+	<div class="overflow-x-auto mb-6">
+		<table class="table table-sm" data-testid="workspace-users-table">
+			<thead>
+				<tr>
+					<th>Username</th>
+					<th class="w-24">Role</th>
+					<th class="w-32"></th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var (member, username) in Model.Members)
+				{
+					<tr data-testid="workspace-user-row">
+						<td class="font-mono text-sm">@username</td>
+						<td>
+							<span class="badge badge-sm @(member.Role == YobaBox.Core.Models.WorkspaceRole.Admin ? "badge-primary" : "badge-ghost")">@member.Role</span>
+						</td>
+						<td>
+							<form method="post" asp-page-handler="Remove" asp-route-userId="@member.UserId"
+								onsubmit="return confirm('Remove @username from this workspace?')" style="display:inline">
+								@Html.AntiForgeryToken()
+								<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="workspace-user-remove">Remove</button>
+							</form>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
 
-<h2 class="text-lg font-semibold mb-3">Add User</h2>
-<form method="post" asp-page-handler="Add" class="card bg-base-200 mb-4" data-testid="workspace-user-add-form">
+<h2 class="text-lg font-semibold mb-3">Add member</h2>
+<form method="post" asp-page-handler="Add" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="workspace-user-add-form">
 	@Html.AntiForgeryToken()
 	<div class="card-body p-4">
 		<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
 			<label class="form-control">
 				<span class="label-text">Username</span>
-				<input type="text" name="Username" required class="input input-bordered input-sm"
+				<input type="text" name="Username" required class="input input-bordered input-sm font-mono"
 					placeholder="new-user" data-testid="workspace-user-add-username" />
+				<span class="text-xs opacity-60 mt-1">Re-using an existing username will not re-create the account; only membership is added.</span>
 			</label>
 			<label class="form-control">
 				<span class="label-text">Password</span>
 				<input type="password" name="Password" required class="input input-bordered input-sm"
 					data-testid="workspace-user-add-password" />
+				<span class="text-xs opacity-60 mt-1">Set for new users; ignored if the username already exists.</span>
 			</label>
 			<label class="form-control">
 				<span class="label-text">Role</span>
 				<select name="Role" class="select select-bordered select-sm" data-testid="workspace-user-add-role">
-					<option value="Admin">Admin</option>
-					<option value="Member">Member</option>
-					<option value="Viewer">Viewer</option>
+					<option value="Admin">Admin — full management</option>
+					<option value="Member" selected>Member — read & write data</option>
+					<option value="Viewer">Viewer — read only</option>
 				</select>
 			</label>
 		</div>

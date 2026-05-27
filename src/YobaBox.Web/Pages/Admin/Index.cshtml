@@ -1,6 +1,54 @@
 @page "/ui/sys"
 @model YobaBox.Web.Pages.Admin.IndexModel
 @{
-	Layout = null;
-	Response.Redirect("/ui/sys/workspaces");
+	ViewData["Title"] = "System administration";
 }
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="sys-title">System administration</h1>
+	<p class="text-sm opacity-60">Cross-workspace settings. Affects every tenant.</p>
+</div>
+
+<partial name="_SysTabs" />
+
+<div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" data-testid="sys-cards">
+	<a href="@Routes.SysWorkspaces()" class="card bg-base-200 border border-base-300 hover:border-primary transition-colors" data-testid="sys-card-workspaces">
+		<div class="card-body p-4">
+			<div class="flex items-baseline justify-between">
+				<h2 class="card-title text-base">Workspaces</h2>
+				<span class="font-mono text-2xl opacity-80">@Model.WorkspaceCount</span>
+			</div>
+			<p class="text-xs opacity-60">Create, rename, delete tenants. <code class="font-mono">$system</code> is always present.</p>
+		</div>
+	</a>
+
+	<a href="@Routes.SysUsers()" class="card bg-base-200 border border-base-300 hover:border-primary transition-colors" data-testid="sys-card-users">
+		<div class="card-body p-4">
+			<div class="flex items-baseline justify-between">
+				<h2 class="card-title text-base">Users</h2>
+				<span class="font-mono text-2xl opacity-80">@Model.UserCount</span>
+			</div>
+			<p class="text-xs opacity-60">Accounts that can sign in to the UI. Workspace membership is set per workspace.</p>
+		</div>
+	</a>
+
+	<a href="@Routes.SysRetention()" class="card bg-base-200 border border-base-300 hover:border-primary transition-colors" data-testid="sys-card-retention">
+		<div class="card-body p-4">
+			<div class="flex items-baseline justify-between">
+				<h2 class="card-title text-base">Retention</h2>
+				<span class="font-mono text-2xl opacity-80">@Model.RetentionOverrideCount<span class="text-xs opacity-50"> overrides</span></span>
+			</div>
+			<p class="text-xs opacity-60">Log retention defaults and per-project overrides. Sweep runs hourly.</p>
+		</div>
+	</a>
+
+	<div class="card bg-base-200 border border-base-300 opacity-60" data-testid="sys-card-projects">
+		<div class="card-body p-4">
+			<div class="flex items-baseline justify-between">
+				<h2 class="card-title text-base">Projects (all workspaces)</h2>
+				<span class="font-mono text-2xl">@Model.ProjectCount</span>
+			</div>
+			<p class="text-xs opacity-60">Manage projects within their workspace via the sidebar.</p>
+		</div>
+	</div>
+</div>

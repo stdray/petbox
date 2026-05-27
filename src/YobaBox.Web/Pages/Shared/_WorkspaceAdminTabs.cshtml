@@ -1,0 +1,16 @@
+@inject YobaBox.Web.Navigation.INavigationContext Nav
+@{
+	var ws = Nav.CurrentWorkspaceKey;
+	var path = Context.Request.Path.Value ?? string.Empty;
+	bool At(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
+	var membersUrl = Routes.WorkspaceAdminMembers(ws);
+	var settingsUrl = Routes.WorkspaceAdminSettings(ws);
+}
+<div role="tablist" class="tabs tabs-bordered mb-6" data-testid="ws-admin-tabs">
+	<a role="tab" class="tab @(At(membersUrl) ? "tab-active" : "")"
+		href="@membersUrl"
+		data-testid="ws-admin-tab-members">Members</a>
+	<a role="tab" class="tab @(At(settingsUrl) ? "tab-active" : "")"
+		href="@settingsUrl"
+		data-testid="ws-admin-tab-settings">Settings</a>
+</div>

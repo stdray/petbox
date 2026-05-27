@@ -55,9 +55,11 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 		await Expect(_page.GetByTestId("project-services-table")).ToContainTextAsync(svcKey);
 
-		// Delete
+		// Delete the row we just created — target by row text to be robust against
+		// other services that may have been created by sibling tests in the shared DB.
 		_page.Dialog += (_, dialog) => dialog.AcceptAsync();
-		await _page.GetByTestId("project-service-delete").ClickAsync();
+		var row = _page.GetByTestId("service-row").Filter(new() { HasText = svcKey });
+		await row.GetByTestId("project-service-delete").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 		await Expect(_page.GetByTestId("project-services-table")).Not.ToContainTextAsync(svcKey);
 	}

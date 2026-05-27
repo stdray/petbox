@@ -1,0 +1,63 @@
+@page "/ui/sys/users"
+@model YobaBox.Web.Pages.Admin.UsersModel
+@{
+	ViewData["Title"] = "Users";
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="sys-users-title">Users</h1>
+	<p class="text-sm opacity-60">All accounts that can sign in. Membership is granted per workspace from <code class="font-mono">/ui/{ws}/admin/members</code>.</p>
+</div>
+
+<partial name="_SysTabs" />
+
+<div class="flex items-center gap-3 mb-3">
+	<h2 class="text-lg font-semibold">All users</h2>
+	<span class="badge badge-ghost">@Model.Users.Count</span>
+</div>
+
+@if (Model.Users.Count == 0)
+{
+	<div class="text-xs opacity-60 italic" data-testid="sys-users-empty">No users.</div>
+}
+else
+{
+	<div class="overflow-x-auto">
+		<table class="table table-sm" data-testid="sys-users-table">
+			<thead>
+				<tr>
+					<th>Username</th>
+					<th>Memberships</th>
+					<th class="w-32">Created</th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var u in Model.Users)
+				{
+					<tr data-testid="sys-user-row" data-user-id="@u.Id">
+						<td class="font-mono text-sm">@u.Username</td>
+						<td>
+							@if (u.Memberships.Count == 0)
+							{
+								<span class="text-xs opacity-50">— none —</span>
+							}
+							else
+							{
+								<div class="flex flex-wrap gap-1">
+									@foreach (var m in u.Memberships)
+									{
+										<a href="@Routes.SysWorkspace(m.WorkspaceKey)"
+											class="badge badge-outline badge-sm font-mono"
+											title="@m.Role in @m.WorkspaceKey">@m.WorkspaceKey<span class="opacity-50 ml-1">@m.Role</span></a>
+									}
+								</div>
+							}
+						</td>
+						<td class="text-xs opacity-70 font-mono">@u.CreatedAt.ToString("yyyy-MM-dd")</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+	<p class="text-xs opacity-50 mt-3">User creation happens from a workspace Members page (a user is created when first added to a workspace).</p>
+}

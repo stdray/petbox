@@ -197,8 +197,6 @@ public partial class Program
 			options.Conventions.AddPageRoute("/Config/Editor", "/ui/{workspaceKey}/{projectKey}/config/editor/{bindingId:long?}");
 			options.Conventions.AddPageRoute("/Config/History", "/ui/{workspaceKey}/{projectKey}/config/history");
 			options.Conventions.AddPageRoute("/Config/Preview", "/ui/{workspaceKey}/{projectKey}/config/preview");
-			// Workspace admin landing — alias to Members until the merge step adds a tabbed parent.
-			options.Conventions.AddPageRoute("/Admin/WorkspaceUsers", "/ui/{workspaceKey}/admin");
 		});
 	}
 
