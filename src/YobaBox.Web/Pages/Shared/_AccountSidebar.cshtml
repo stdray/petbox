@@ -1,0 +1,26 @@
+@inject YobaBox.Web.Navigation.INavigationContext Nav
+@{
+	var path = Context.Request.Path.Value ?? string.Empty;
+	bool At(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
+}
+<aside class="bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col" data-testid="account-sidebar">
+	@if (Nav.IsAuthenticated)
+	{
+		<div class="p-3 border-b border-base-300">
+			<div class="text-xs opacity-50 uppercase tracking-wide">Signed in as</div>
+			<div class="font-mono text-sm truncate" data-testid="account-sidebar-user">@Nav.Username</div>
+		</div>
+
+		<ul class="menu menu-sm w-full p-2 gap-0.5">
+			<li>
+				<a href="@Routes.MeProfile()" class="@(At(Routes.MeProfile()) ? "active" : "")" data-testid="account-side-profile">Profile</a>
+			</li>
+			<li>
+				<a href="@Routes.MeSecurity()" class="@(At(Routes.MeSecurity()) ? "active" : "")" data-testid="account-side-security">Security</a>
+			</li>
+			<li>
+				<a href="@Routes.MePreferences()" class="@(At(Routes.MePreferences()) ? "active" : "")" data-testid="account-side-preferences">Preferences</a>
+			</li>
+		</ul>
+	}
+</aside>

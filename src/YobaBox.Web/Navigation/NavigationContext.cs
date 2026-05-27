@@ -50,17 +50,7 @@ public sealed class NavigationContext(
 		}
 	}
 
-	bool IsProjectRoute()
-	{
-		// New URL scheme: @page templates set the route value "projectKey" for project-scoped pages.
-		if (Http?.GetRouteValue("projectKey") is not null) return true;
-		// Legacy path-prefix detection — kept until all pages migrated.
-		var path = Http?.Request.Path.Value;
-		return path is not null
-			&& (path.StartsWith("/ui/admin/projects/", StringComparison.OrdinalIgnoreCase)
-				|| path.StartsWith("/ui/dashboard/", StringComparison.OrdinalIgnoreCase)
-				|| path.StartsWith("/ui/logs/", StringComparison.OrdinalIgnoreCase));
-	}
+	bool IsProjectRoute() => Http?.GetRouteValue("projectKey") is not null;
 
 	public IReadOnlyList<WorkspaceOption> AvailableWorkspaces
 	{

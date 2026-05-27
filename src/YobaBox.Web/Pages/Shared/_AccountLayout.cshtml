@@ -2,11 +2,6 @@
 @inject YobaBox.Core.Settings.ISettingsResolver Settings
 @{
 	var currentWs = Nav.CurrentWorkspaceKey;
-	var path = Context.Request.Path.Value ?? string.Empty;
-	var isSysArea = path.StartsWith("/ui/admin/sys", StringComparison.OrdinalIgnoreCase);
-	var contextLabel = isSysArea
-		? "Server administration"
-		: $"{currentWs} workspace administration";
 	var backUrl = Routes.Workspace(currentWs);
 	var backLabel = $"Back to {currentWs}";
 
@@ -30,42 +25,35 @@
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>@ViewData["Title"] · admin · YobaBox</title>
+	<title>@ViewData["Title"] · account · YobaBox</title>
 	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
 	<meta name="yb-current-ws" content="@currentWs" />
 	<script type="module" src="~/js/site.js" asp-append-version="true"></script>
 </head>
 <body class="min-h-full bg-base-100">
 	<div class="drawer lg:drawer-open">
-		<input id="admin-sidebar-toggle" type="checkbox" class="drawer-toggle" />
+		<input id="account-sidebar-toggle" type="checkbox" class="drawer-toggle" />
 		<div class="drawer-content flex flex-col min-h-screen">
-			<header class="navbar bg-warning/10 border-b border-warning/40 px-2 lg:px-4 min-h-12" data-testid="admin-navbar">
+			<header class="navbar bg-base-200 border-b border-base-300 px-2 lg:px-4 min-h-12" data-testid="account-navbar">
 				<div class="flex-none lg:hidden">
-					<label for="admin-sidebar-toggle" class="btn btn-ghost btn-sm drawer-button" data-testid="admin-nav-toggle">
+					<label for="account-sidebar-toggle" class="btn btn-ghost btn-sm drawer-button" data-testid="account-nav-toggle">
 						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
 						</svg>
 					</label>
 				</div>
 				<div class="flex-1 flex items-center gap-3 min-w-0">
-					<a href="@backUrl" class="btn btn-ghost btn-sm gap-1" data-testid="admin-back">
+					<a href="@backUrl" class="btn btn-ghost btn-sm gap-1" data-testid="account-back">
 						<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
 						</svg>
 						<span class="hidden sm:inline">@backLabel</span>
 					</a>
-					<span class="badge badge-warning badge-sm gap-1" data-testid="admin-mode-badge">
-						<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-						</svg>
-						Admin mode
-					</span>
-					<span class="text-sm opacity-70 hidden md:inline truncate" data-testid="admin-context-label">@contextLabel</span>
+					<span class="text-sm font-semibold" data-testid="account-context-label">Account settings</span>
 				</div>
 				<div class="flex-none flex items-center gap-1">
 					@if (Nav.IsAuthenticated)
 					{
-						<a href="/ui/me/account" class="text-xs opacity-60 hover:opacity-100 hidden md:inline font-mono" data-testid="nav-username" title="Account settings">@Nav.Username</a>
 						<form method="post" action="@Routes.Logout()" class="m-0">
 							@Html.AntiForgeryToken()
 							<button type="submit" class="btn btn-ghost btn-sm" data-testid="nav-signout" title="Sign out">
@@ -78,7 +66,7 @@
 				</div>
 			</header>
 
-			<main class="flex-1 p-4 lg:p-6 max-w-6xl w-full mx-auto">
+			<main class="flex-1 p-4 lg:p-6 max-w-4xl w-full mx-auto">
 				@RenderBody()
 			</main>
 
@@ -89,8 +77,8 @@
 		</div>
 
 		<div class="drawer-side">
-			<label for="admin-sidebar-toggle" aria-label="close sidebar" class="drawer-overlay"></label>
-			<partial name="_AdminSidebar" />
+			<label for="account-sidebar-toggle" aria-label="close sidebar" class="drawer-overlay"></label>
+			<partial name="_AccountSidebar" />
 		</div>
 	</div>
 	@await RenderSectionAsync("Scripts", required: false)

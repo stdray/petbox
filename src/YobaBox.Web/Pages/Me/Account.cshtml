@@ -2,7 +2,7 @@
 @model YobaBox.Web.Pages.Me.AccountModel
 @{
 	ViewData["Title"] = "Account";
-	Layout = "_AdminLayout";
+	Layout = "_AccountLayout";
 }
 
 <div class="mb-4">
@@ -36,4 +36,4 @@
 	</div>
 </div>
 
-<p class="text-xs opacity-60 mt-3">Change your password on <a href="/ui/me/security" class="link">Security</a>. UI preferences live on <a href="/ui/me/preferences" class="link">Preferences</a>.</p>
+<p class="text-xs opacity-60 mt-3">Change your password on <a href="@Routes.MeSecurity()" class="link">Security</a>. UI preferences live on <a href="@Routes.MePreferences()" class="link">Preferences</a>.</p>

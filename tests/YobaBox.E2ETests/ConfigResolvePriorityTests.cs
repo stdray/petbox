@@ -54,7 +54,7 @@ public sealed class ConfigResolvePriorityTests(WebAppFixture app, ITestOutputHel
 		var hasKpvotes = await _page.GetByTestId("nav-project").Filter(new() { HasText = "kpvotes" }).CountAsync();
 		if (hasKpvotes == 0)
 		{
-			await _page.GotoAsync("/ui/$system/admin/projects");
+			await _page.GotoAsync("/ui/admin/ws/$system/projects");
 			await _page.GetByTestId("admin-project-create-key").FillAsync("kpvotes");
 			await _page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
 			await _page.GetByTestId("admin-project-create-desc").FillAsync("Test project");
@@ -64,7 +64,7 @@ public sealed class ConfigResolvePriorityTests(WebAppFixture app, ITestOutputHel
 
 		if (_apiKey is null)
 		{
-			await _page.GotoAsync("/ui/$system/admin/projects/kpvotes/info");
+			await _page.GotoAsync("/ui/admin/ws/$system/projects/kpvotes/info");
 			await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
 			await _page.GetByTestId("project-key-create-scopes").FillAsync("config:read,config:write");
 			await _page.GetByTestId("project-key-create-submit").ClickAsync();

@@ -1,4 +1,4 @@
-@page "/ui/sys/users"
+@page "/ui/admin/sys/users"
 @model YobaBox.Web.Pages.Admin.UsersModel
 @{
 	ViewData["Title"] = "Users";
@@ -7,7 +7,7 @@
 
 <div class="mb-4">
 	<h1 class="text-2xl font-semibold" data-testid="sys-users-title">Users</h1>
-	<p class="text-sm opacity-60">All accounts that can sign in. Membership is granted per workspace from <code class="font-mono">/ui/{ws}/admin/members</code>.</p>
+	<p class="text-sm opacity-60">All accounts that can sign in. Membership is granted per workspace from <code class="font-mono">/ui/admin/ws/{ws}/members</code>.</p>
 </div>
 
 <partial name="_SysTabs" />

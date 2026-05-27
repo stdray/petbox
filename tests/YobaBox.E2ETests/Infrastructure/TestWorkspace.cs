@@ -10,7 +10,7 @@ public static class TestWorkspace
 
 	public static async Task EnsureAsync(IPage page)
 	{
-		await page.GotoAsync("/ui/sys/workspaces");
+		await page.GotoAsync("/ui/admin/sys/workspaces");
 		var row = page.GetByTestId("workspace-row").Filter(new() { HasText = Key });
 		if (await row.CountAsync() > 0) return;
 

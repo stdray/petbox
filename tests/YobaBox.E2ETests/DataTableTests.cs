@@ -26,7 +26,7 @@ public sealed class DataTableTests(WebAppFixture app, ITestOutputHelper output) 
 
 	async Task EnsureProjectAndKey()
 	{
-		await _page!.GotoAsync("/ui/$system/admin/projects");
+		await _page!.GotoAsync("/ui/admin/ws/$system/projects");
 		var hasKpvotes = await _page.GetByTestId("project-row").Filter(new() { HasText = "kpvotes" }).CountAsync();
 		if (hasKpvotes == 0)
 		{
@@ -40,7 +40,7 @@ public sealed class DataTableTests(WebAppFixture app, ITestOutputHelper output) 
 
 		if (_apiKey is null)
 		{
-			await _page.GotoAsync("/ui/$system/admin/projects/kpvotes/info");
+			await _page.GotoAsync("/ui/admin/ws/$system/projects/kpvotes/info");
 			await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
 			await _page.GetByTestId("project-key-create-scopes").FillAsync("data:read,data:write");
 			await _page.GetByTestId("project-key-create-submit").ClickAsync();

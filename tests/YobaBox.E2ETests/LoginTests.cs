@@ -48,12 +48,12 @@ public sealed class LoginTests(WebAppFixture app, ITestOutputHelper output) : IA
 	public async Task Login_Preserves_ReturnUrl()
 	{
 		var login = new LoginPage(_page!);
-		await login.GotoAsync("/ui/$system/admin/projects/$system/info");
+		await login.GotoAsync("/ui/admin/ws/$system/projects/$system/info");
 		await login.SubmitAsync(WebAppFixture.AdminUsername, WebAppFixture.AdminPassword);
 
 		// Should redirect to /admin/projects, not /Login
 		await Task.Delay(300);
-		_page!.Url.Should().Contain("/ui/$system/admin/projects/$system/info");
+		_page!.Url.Should().Contain("/ui/admin/ws/$system/projects/$system/info");
 	}
 
 	[Fact]

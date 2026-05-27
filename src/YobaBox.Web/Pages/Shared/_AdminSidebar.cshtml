@@ -9,15 +9,16 @@
 	var isSysAdmin = isAuthenticated
 		&& Context.User.FindFirst(YobaBox.Core.Auth.YobaBoxClaims.IsSysAdmin)?.Value == "true";
 
-	// Project sub-context: URL looks like /ui/{ws}/admin/projects/{key}/...
-	string? projectKey = null;
-	if (Under($"/ui/{ws}/admin/projects/"))
+	// Project sub-context: URL looks like /ui/admin/ws/{ws}/projects/{key}/...
+	string? currentProject = null;
+	var projectPrefix = $"/ui/admin/ws/{ws}/projects/";
+	if (Under(projectPrefix))
 	{
-		var rest = path.Substring($"/ui/{ws}/admin/projects/".Length);
+		var rest = path.Substring(projectPrefix.Length);
 		var slash = rest.IndexOf('/');
 		var maybeKey = slash > 0 ? rest[..slash] : rest;
 		if (!string.IsNullOrEmpty(maybeKey) && maybeKey != "new")
-			projectKey = maybeKey;
+			currentProject = maybeKey;
 	}
 }
 <aside class="bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col" data-testid="admin-sidebar">
@@ -28,10 +29,12 @@
 			<div class="font-mono text-sm" data-testid="admin-sidebar-ws">@ws</div>
 		</div>
 
-		<div class="px-3 pt-3 pb-1 text-xs opacity-50 uppercase tracking-wide">Workspace</div>
 		<ul class="menu menu-sm w-full p-2 gap-0.5">
 			<li>
-				<a href="@Routes.WorkspaceAdmin(ws)" class="@(At(Routes.WorkspaceAdmin(ws)) || At(Routes.WorkspaceAdminMembers(ws)) ? "active" : "")" data-testid="admin-side-ws-members">Members</a>
+				<a href="@Routes.WorkspaceAdmin(ws)" class="@(At(Routes.WorkspaceAdmin(ws)) ? "active" : "")" data-testid="admin-side-ws-overview">Overview</a>
+			</li>
+			<li>
+				<a href="@Routes.WorkspaceAdminMembers(ws)" class="@(At(Routes.WorkspaceAdminMembers(ws)) ? "active" : "")" data-testid="admin-side-ws-members">Members</a>
 			</li>
 			<li>
 				<a href="@Routes.WorkspaceAdminProjects(ws)" class="@(At(Routes.WorkspaceAdminProjects(ws)) ? "active" : "")" data-testid="admin-side-ws-projects">Projects</a>
@@ -40,35 +43,35 @@
 				<a href="@Routes.SharedConfig(ws)" class="@(Under(Routes.SharedConfig(ws)) ? "active" : "")" data-testid="admin-side-ws-config">Shared config</a>
 			</li>
 			<li>
-				<a href="/ui/@ws/admin/defaults" class="@(At($"/ui/{ws}/admin/defaults") ? "active" : "")" data-testid="admin-side-ws-defaults">Defaults</a>
+				<a href="@Routes.WorkspaceAdminDefaults(ws)" class="@(At(Routes.WorkspaceAdminDefaults(ws)) ? "active" : "")" data-testid="admin-side-ws-defaults">Defaults</a>
 			</li>
 			<li>
-				<a href="@Routes.WorkspaceAdminSettings(ws)" class="@(At(Routes.WorkspaceAdminSettings(ws)) ? "active" : "")" data-testid="admin-side-ws-settings">Info</a>
+				<a href="@Routes.WorkspaceAdminInfo(ws)" class="@(At(Routes.WorkspaceAdminInfo(ws)) ? "active" : "")" data-testid="admin-side-ws-info">Info</a>
 			</li>
 		</ul>
 
-		@if (projectKey is not null)
+		@if (currentProject is not null)
 		{
-			<div class="px-3 pt-3 pb-1 text-xs opacity-50 uppercase tracking-wide flex items-center justify-between">
-				<span>Project</span>
-				<span class="font-mono opacity-70 text-[10px]">@projectKey</span>
+			<div class="px-3 pt-3 pb-1 text-xs opacity-50 uppercase tracking-wide flex items-center justify-between border-t border-base-300 mt-2">
+				<span>Current project</span>
+				<span class="font-mono opacity-70 text-[10px]">@currentProject</span>
 			</div>
-			<ul class="menu menu-sm w-full p-2 gap-0.5">
+			<ul class="menu menu-sm w-full p-2 gap-0.5" data-testid="admin-side-project-context">
 				<li>
-					<a href="@Routes.ProjectSettings(ws, projectKey)" class="@(At(Routes.ProjectSettings(ws, projectKey)) ? "active" : "")" data-testid="admin-side-proj-info">Info</a>
+					<a href="@Routes.ProjectSettings(ws, currentProject)" class="@(At(Routes.ProjectSettings(ws, currentProject)) ? "active" : "")" data-testid="admin-side-proj-info">Info</a>
 				</li>
 				<li>
-					<a href="/ui/@ws/admin/projects/@projectKey/log" class="@(At($"/ui/{ws}/admin/projects/{projectKey}/log") ? "active" : "")" data-testid="admin-side-proj-log">Log settings</a>
+					<a href="@Routes.ProjectLogSettings(ws, currentProject)" class="@(At(Routes.ProjectLogSettings(ws, currentProject)) ? "active" : "")" data-testid="admin-side-proj-log">Log settings</a>
 				</li>
 				<li>
-					<a href="@Routes.ProjectData(ws, projectKey)" class="@(At(Routes.ProjectData(ws, projectKey)) ? "active" : "")" data-testid="admin-side-proj-data">Data</a>
+					<a href="@Routes.ProjectData(ws, currentProject)" class="@(At(Routes.ProjectData(ws, currentProject)) ? "active" : "")" data-testid="admin-side-proj-data">Data</a>
 				</li>
 			</ul>
 		}
 
 		@if (isSysAdmin)
 		{
-			<div class="px-3 pt-3 pb-1 text-xs opacity-50 uppercase tracking-wide">System</div>
+			<div class="px-3 pt-3 pb-1 text-xs opacity-50 uppercase tracking-wide border-t border-base-300 mt-2">Server administration</div>
 			<ul class="menu menu-sm w-full p-2 gap-0.5">
 				<li>
 					<a href="@Routes.Sys()" class="@(At(Routes.Sys()) ? "active" : "")" data-testid="admin-side-sys-home">Overview</a>
@@ -80,22 +83,9 @@
 					<a href="@Routes.SysUsers()" class="@(At(Routes.SysUsers()) ? "active" : "")" data-testid="admin-side-sys-users">Users</a>
 				</li>
 				<li>
-					<a href="/ui/sys/defaults" class="@(At("/ui/sys/defaults") ? "active" : "")" data-testid="admin-side-sys-defaults">Defaults</a>
+					<a href="@Routes.SysDefaults()" class="@(At(Routes.SysDefaults()) ? "active" : "")" data-testid="admin-side-sys-defaults">Defaults</a>
 				</li>
 			</ul>
 		}
-
-		<div class="px-3 pt-3 pb-1 text-xs opacity-50 uppercase tracking-wide">Account</div>
-		<ul class="menu menu-sm w-full p-2 gap-0.5">
-			<li>
-				<a href="/ui/me/account" class="@(At("/ui/me/account") ? "active" : "")" data-testid="admin-side-me-account">Profile</a>
-			</li>
-			<li>
-				<a href="/ui/me/security" class="@(At("/ui/me/security") ? "active" : "")" data-testid="admin-side-me-security">Security</a>
-			</li>
-			<li>
-				<a href="/ui/me/preferences" class="@(At("/ui/me/preferences") ? "active" : "")" data-testid="admin-side-me-preferences">Preferences</a>
-			</li>
-		</ul>
 	}
 </aside>

@@ -9,13 +9,17 @@ public static class Routes
 
 	public static string Home() => "/";
 
+	// All admin pages live under /ui/admin/ — workspace admin under ws/{ws}/...,
+	// sysadmin under sys/.... Phase 24 unification. Account pages stay at /ui/me/*
+	// with their own _AccountLayout.
+	public const string AdminPrefix = $"{UiPrefix}/admin";
+
 	// System level (sysadmin)
-	public static string Sys() => $"{UiPrefix}/sys";
-	public static string SysWorkspaces() => $"{UiPrefix}/sys/workspaces";
-	public static string SysWorkspace(string key) => $"{UiPrefix}/sys/workspaces/{key}";
-	public static string SysUsers() => $"{UiPrefix}/sys/users";
-	// /ui/sys/retention removed in Phase 23.3 — per-project log retention lives in
-	// L2 Settings store (LogSettings.RetentionDays). Defaults page comes in 23.4.
+	public static string Sys() => $"{AdminPrefix}/sys";
+	public static string SysWorkspaces() => $"{AdminPrefix}/sys/workspaces";
+	public static string SysWorkspace(string key) => $"{AdminPrefix}/sys/workspaces/{key}";
+	public static string SysUsers() => $"{AdminPrefix}/sys/users";
+	public static string SysDefaults() => $"{AdminPrefix}/sys/defaults";
 
 	// Workspace level
 	public static string Workspace(string ws) => $"{UiPrefix}/{ws}";
@@ -30,10 +34,11 @@ public static class Routes
 	public static string SharedConfigPreview(string ws) => $"{UiPrefix}/{ws}/config/preview";
 	public static string SharedConfigTags(string ws) => $"{UiPrefix}/{ws}/config/tags";
 
-	public static string WorkspaceAdmin(string ws) => $"{UiPrefix}/{ws}/admin";
-	public static string WorkspaceAdminMembers(string ws) => $"{UiPrefix}/{ws}/admin/members";
-	public static string WorkspaceAdminProjects(string ws) => $"{UiPrefix}/{ws}/admin/projects";
-	public static string WorkspaceAdminSettings(string ws) => $"{UiPrefix}/{ws}/admin/settings";
+	public static string WorkspaceAdmin(string ws) => $"{AdminPrefix}/ws/{ws}";
+	public static string WorkspaceAdminMembers(string ws) => $"{AdminPrefix}/ws/{ws}/members";
+	public static string WorkspaceAdminProjects(string ws) => $"{AdminPrefix}/ws/{ws}/projects";
+	public static string WorkspaceAdminInfo(string ws) => $"{AdminPrefix}/ws/{ws}/info";
+	public static string WorkspaceAdminDefaults(string ws) => $"{AdminPrefix}/ws/{ws}/defaults";
 
 	// Project level — /ui/{ws}/{key} IS the Logs view directly (no redirect).
 	public static string Project(string ws, string key) => $"{UiPrefix}/{ws}/{key}";
@@ -48,14 +53,17 @@ public static class Routes
 	public static string ProjectConfigHistory(string ws, string key) => $"{Project(ws, key)}/config/history";
 	public static string ProjectConfigPreview(string ws, string key) => $"{Project(ws, key)}/config/preview";
 
-	// Project admin pages live under /ui/{ws}/admin/projects/{key}/... — separate
-	// admin area with its own layout/sidebar (Phase 23.4). The legacy /ui/{ws}/{key}/settings
-	// and /ui/{ws}/{key}/data URLs are gone.
-	public static string ProjectData(string ws, string key) => $"{UiPrefix}/{ws}/admin/projects/{key}/data";
-	public static string ProjectSettings(string ws, string key) => $"{UiPrefix}/{ws}/admin/projects/{key}/info";
-	public static string ProjectLogSettings(string ws, string key) => $"{UiPrefix}/{ws}/admin/projects/{key}/log";
+	// Project admin pages live under /ui/admin/ws/{ws}/projects/{key}/...
+	public static string ProjectData(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/data";
+	public static string ProjectSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/info";
+	public static string ProjectLogSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/log";
 
 	public static string Service(string ws, string key, string serviceKey) => $"{Project(ws, key)}/services/{serviceKey}";
+
+	// Account / self-service — separate _AccountLayout, deliberately NOT under /ui/admin/.
+	public static string MeProfile() => $"{UiPrefix}/me/account";
+	public static string MeSecurity() => $"{UiPrefix}/me/security";
+	public static string MePreferences() => $"{UiPrefix}/me/preferences";
 
 	// Auth & misc — not under /ui prefix
 	public static string Login() => "/Login";

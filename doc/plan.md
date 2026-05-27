@@ -845,3 +845,45 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 - [ ] Reserved path prefix validator на `SettingAttribute` (`auth.*`, `sys.*` → sysadmin-only write)
 - [ ] `[SettingsSection]` group attribute если рефлексивная группировка по record-type перестанет хватать
 - [ ] L1 кандидаты-на-перенос-в-L2 (мониторим): пока ничего; шкаф L2 проверяется на будущих фичах
+
+---
+
+## Phase 24: Admin/Account IA cleanup [DONE]
+
+После Phase 23 admin-страницы были разбросаны по разным URL-пространствам: `/ui/{ws}/admin/*` для workspace, `/ui/sys/*` для sysadmin, `/ui/me/*` для self-service. Сайдбар повторял ту же структуру с генерик-лейблами "Workspace" / "System" / "Account" — последнее путалось со специальным workspace ключом `$system`.
+
+Phase 24 чистит: все administrative страницы переезжают под единый `/ui/admin/*` префикс. Self-service Account выделен в отдельный layout (свой сайдбар, не admin-warning topbar). Project context в сайдбаре теперь появляется отдельным блоком только когда вы внутри проекта.
+
+### 24.1 — URL унификация под `/ui/admin/*` [DONE]
+
+- [x] Workspace admin: `/ui/{ws}/admin/*` → `/ui/admin/ws/{ws}/*`
+  - `/admin` (overview), `/admin/members`, `/admin/projects`, `/admin/projects/{key}/info`, `/admin/projects/{key}/log`, `/admin/projects/{key}/data`, `/admin/defaults`, `/admin/info` (бывший `/admin/settings`)
+- [x] Sysadmin: `/ui/sys/*` → `/ui/admin/sys/*`
+  - `/ui/admin/sys` (overview), `/ui/admin/sys/workspaces`, `/ui/admin/sys/workspaces/{key}`, `/ui/admin/sys/users`, `/ui/admin/sys/defaults`
+- [x] Account: остался `/ui/me/*` (account/security/preferences) — НЕ admin-зона
+- [x] `Routes.cs`: `AdminPrefix = "/ui/admin"` константа; все методы возвращающие admin URL обновлены; добавлены `MeProfile()` / `MeSecurity()` / `MePreferences()` / `SysDefaults()` / `WorkspaceAdminDefaults()` / `WorkspaceAdminInfo()`; убран `WorkspaceAdminSettings()`
+- [x] Legacy URL без redirects (per memory: no legacy redirects, sole user)
+- [x] `IsProjectRoute()` упрощён до проверки route value `projectKey` — legacy path-prefix fallback больше не нужен
+
+### 24.2 — `_AccountLayout` + `_AccountSidebar` [DONE]
+
+- [x] `_AccountLayout.cshtml` — копия `_AdminLayout` без warning-tinted топбара (обычная `bg-base-200`)
+- [x] `_AccountSidebar.cshtml` — три пункта: Profile / Security / Preferences + блок "Signed in as {username}"
+- [x] `Me/Account`, `Me/Security`, `Me/Preferences` переключены на `Layout = "_AccountLayout"`
+- [x] `Account` блок удалён из `_AdminSidebar` (account живёт отдельно)
+
+### 24.3 — Плоский `_AdminSidebar` + контекстный блок проекта [DONE]
+
+Дерево было отвергнуто в discovery: смазанная семантика клика по `<summary>`, состояние open/closed не персистится между навигациями, сервисы как nav-таргеты ещё не существуют. Победил плоский подход с контекстным блоком.
+
+- [x] Workspace-секция — плоский список ссылок (Overview / Members / Projects / Shared config / Defaults / Info)
+- [x] Project context-блок появляется ТОЛЬКО когда `path` содержит `/ui/admin/ws/{ws}/projects/{key}/...` (Info / Log settings / Data)
+- [x] Server administration секция — только если sysadmin (Overview / Workspaces / Users / Defaults)
+- [x] Account-блок убран — он теперь в `_AccountSidebar`
+- [x] Лейбл "System" переименован в "Server administration" чтобы не путаться с `$system` workspace
+- [x] `_WorkspaceAdminTabs`: "Settings" tab переименован в "Info" + URL обновлён под новый `WorkspaceAdminInfo()`
+
+### 24.4 — E2E + verification [DONE]
+
+- [x] Обновлены пути в 7 E2E файлах: `ProjectDetailTests`, `LoginTests`, `KpVotesOnboardingTests`, `ApiKeyScopeTests`, `ConfigResolvePriorityTests`, `DataTableTests`, `Infrastructure/TestWorkspace`
+- [x] 29/29 E2E зелёные (10 skipped pre-existing)

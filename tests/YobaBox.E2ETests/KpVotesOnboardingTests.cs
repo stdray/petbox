@@ -55,7 +55,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		await EnsureServices();
 		await EnsureApiKey();
 
-		await _page!.GotoAsync($"/ui/{Ws}/admin/projects/{Pet}/info");
+		await _page!.GotoAsync($"/ui/admin/ws/{Ws}/projects/{Pet}/info");
 
 		// Admin area has its own layout (no project tabs). Just verify the services rendered.
 		var rowNet = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-net" });
@@ -176,7 +176,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 
 		// "Admin" link leaves the project tab strip and enters the admin area.
 		await _page.GetByTestId("proj-admin-link").ClickAsync();
-		await _page.WaitForURLAsync($"**/ui/{Ws}/admin/projects/{Pet}/info");
+		await _page.WaitForURLAsync($"**/ui/admin/ws/{Ws}/projects/{Pet}/info");
 	}
 
 	// --- Setup helpers ------------------------------------------------------
@@ -188,7 +188,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		var existing = _page.GetByTestId("nav-project").Filter(new() { HasText = Pet });
 		if (await existing.CountAsync() > 0) return;
 
-		await _page.GotoAsync($"/ui/{Ws}/admin/projects");
+		await _page.GotoAsync($"/ui/admin/ws/{Ws}/projects");
 		await _page.GetByTestId("admin-project-create-key").FillAsync(Pet);
 		await _page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
 		await _page.GetByTestId("admin-project-create-desc").FillAsync("Kinopoisk → Twitter voting tracker");
@@ -198,7 +198,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 
 	async Task EnsureServices()
 	{
-		await _page!.GotoAsync($"/ui/{Ws}/admin/projects/{Pet}/info");
+		await _page!.GotoAsync($"/ui/admin/ws/{Ws}/projects/{Pet}/info");
 		var existing = await _page.GetByTestId("service-row").CountAsync();
 		if (existing >= 2) return;
 
@@ -223,7 +223,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	{
 		if (_apiKey is not null) return;
 
-		await _page!.GotoAsync($"/ui/{Ws}/admin/projects/{Pet}/info");
+		await _page!.GotoAsync($"/ui/admin/ws/{Ws}/projects/{Pet}/info");
 		await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
 		await _page.GetByTestId("project-key-create-scopes")
 			.FillAsync("config:read,config:write,logs:ingest");
