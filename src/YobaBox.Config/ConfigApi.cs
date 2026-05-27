@@ -76,12 +76,15 @@ public static class ConfigApi
 			return Results.BadRequest(new { error = $"Tags must include 'ws:{workspaceKey}'" });
 
 		var now = DateTime.UtcNow;
+		var value = dto.Value ?? string.Empty;
 		var binding = new ConfigBinding
 		{
 			Path = dto.Path,
-			Value = dto.Value ?? string.Empty,
+			Value = value,
 			Tags = dto.Tags,
 			Kind = dto.Kind,
+			Version = 1,
+			ContentHash = BindingContentHash.Compute(dto.Path, dto.Tags, dto.Kind, value, null),
 			CreatedAt = now,
 			UpdatedAt = now,
 		};
@@ -93,12 +96,18 @@ public static class ConfigApi
 		return Results.Ok(new { id, binding.Path, binding.Tags });
 	}
 
+	// Soft-delete: mark IsDeleted=1, keep the row. Resolve filters it out.
+	// UI's history page can offer "Undelete" for the last deleted version.
 	static async Task<IResult> Delete(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
 	{
 		var configDb = configFactory.GetConfigDb(workspaceKey);
+		var now = DateTime.UtcNow;
 		var deleted = await configDb.Bindings
-			.Where(b => b.Path == path && b.Tags == tags)
-			.DeleteAsync();
+			.Where(b => b.Path == path && b.Tags == tags && !b.IsDeleted)
+			.Set(b => b.IsDeleted, true)
+			.Set(b => b.DeletedAt, (DateTime?)now)
+			.Set(b => b.UpdatedAt, now)
+			.UpdateAsync();
 
 		return deleted > 0
 			? Results.Ok(new { deleted = true })

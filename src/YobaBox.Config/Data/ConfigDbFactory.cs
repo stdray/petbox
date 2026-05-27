@@ -54,6 +54,10 @@ public sealed class ConfigDbFactory : IConfigDbFactory, IAsyncDisposable
 					Ciphertext TEXT,
 					Iv TEXT,
 					AuthTag TEXT,
+					Version INTEGER NOT NULL DEFAULT 1,
+					ContentHash TEXT NOT NULL DEFAULT '',
+					IsDeleted INTEGER NOT NULL DEFAULT 0,
+					DeletedAt TEXT,
 					CreatedAt TEXT NOT NULL,
 					UpdatedAt TEXT NOT NULL
 				);
@@ -88,6 +92,16 @@ public sealed class ConfigDbFactory : IConfigDbFactory, IAsyncDisposable
 		AddColumnIfMissing(raw, "ConfigBindings", "Ciphertext", "TEXT");
 		AddColumnIfMissing(raw, "ConfigBindings", "Iv", "TEXT");
 		AddColumnIfMissing(raw, "ConfigBindings", "AuthTag", "TEXT");
+		AddColumnIfMissing(raw, "ConfigBindings", "Version", "INTEGER NOT NULL DEFAULT 1");
+		AddColumnIfMissing(raw, "ConfigBindings", "ContentHash", "TEXT NOT NULL DEFAULT ''");
+		AddColumnIfMissing(raw, "ConfigBindings", "IsDeleted", "INTEGER NOT NULL DEFAULT 0");
+		AddColumnIfMissing(raw, "ConfigBindings", "DeletedAt", "TEXT");
+
+		using (var idx = raw.CreateCommand())
+		{
+			idx.CommandText = "CREATE INDEX IF NOT EXISTS IX_ConfigBindings_IsDeleted ON ConfigBindings (IsDeleted);";
+			idx.ExecuteNonQuery();
+		}
 	}
 
 	static void AddColumnIfMissing(SqliteConnection raw, string table, string column, string definition)

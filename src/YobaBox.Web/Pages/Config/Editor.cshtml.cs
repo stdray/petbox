@@ -6,6 +6,7 @@ using YobaBox.Config;
 using YobaBox.Config.Data;
 using YobaBox.Core.Auth;
 using YobaBox.Core.Models;
+using BindingContentHash = YobaBox.Config.BindingContentHash;
 
 namespace YobaBox.Web.Pages.Config;
 
@@ -131,6 +132,8 @@ public sealed class EditorModel : PageModel
 			storedValue = Value;
 		}
 
+		var newHash = BindingContentHash.Compute(Path, canonicalTags, Kind, storedValue, cipher);
+
 		if (BindingId is { } id and > 0)
 		{
 			var existing = configDb.Bindings.FirstOrDefault(b => b.Id == id);
@@ -139,6 +142,10 @@ public sealed class EditorModel : PageModel
 				ErrorMessage = $"Binding #{id} not found.";
 				return Page();
 			}
+
+			// Skip Version bump on no-op edits (same content + same tags + same kind).
+			var isNoOp = string.Equals(existing.ContentHash, newHash, StringComparison.Ordinal)
+				&& !existing.IsDeleted;
 
 			var updated = existing with
 			{
@@ -149,22 +156,29 @@ public sealed class EditorModel : PageModel
 				Ciphertext = cipher,
 				Iv = iv,
 				AuthTag = authTag,
+				Version = isNoOp ? existing.Version : existing.Version + 1,
+				ContentHash = newHash,
+				IsDeleted = false,
+				DeletedAt = null,
 				UpdatedAt = now,
 			};
 			await configDb.UpdateAsync(updated);
 
-			await configDb.InsertAsync(new ConfigBindingHistoryEntry
+			if (!isNoOp)
 			{
-				BindingId = id,
-				Action = "Update",
-				Path = Path,
-				Tags = canonicalTags,
-				Kind = Kind,
-				OldValue = existing.Kind == BindingKind.Plain ? existing.Value : "(secret)",
-				NewValue = Kind == BindingKind.Plain ? storedValue : "(secret)",
-				Actor = actor,
-				At = now,
-			});
+				await configDb.InsertAsync(new ConfigBindingHistoryEntry
+				{
+					BindingId = id,
+					Action = existing.IsDeleted ? "Undelete" : "Update",
+					Path = Path,
+					Tags = canonicalTags,
+					Kind = Kind,
+					OldValue = existing.Kind == BindingKind.Plain ? existing.Value : "(secret)",
+					NewValue = Kind == BindingKind.Plain ? storedValue : "(secret)",
+					Actor = actor,
+					At = now,
+				});
+			}
 		}
 		else
 		{
@@ -177,6 +191,8 @@ public sealed class EditorModel : PageModel
 				Ciphertext = cipher,
 				Iv = iv,
 				AuthTag = authTag,
+				Version = 1,
+				ContentHash = newHash,
 				CreatedAt = now,
 				UpdatedAt = now,
 			});

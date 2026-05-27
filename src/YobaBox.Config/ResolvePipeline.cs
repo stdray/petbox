@@ -21,7 +21,7 @@ public static class ResolvePipeline
 		var requestSet = new HashSet<string>(requestTags, StringComparer.OrdinalIgnoreCase);
 
 		var candidates = bindings
-			.Where(b => PathMatches(b.Path, path))
+			.Where(b => !b.IsDeleted && PathMatches(b.Path, path))
 			.Select(b => (Binding: b, Tags: ParseTags(b.Tags)))
 			.Where(c => c.Tags.IsSubsetOf(requestSet))
 			.ToList();

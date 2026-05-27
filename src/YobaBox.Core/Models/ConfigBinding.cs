@@ -24,6 +24,14 @@ public sealed record ConfigBinding
 	[Column]
 	public string? AuthTag { get; init; }
 	[Column]
+	public int Version { get; init; } = 1;
+	[Column]
+	public string ContentHash { get; init; } = string.Empty;
+	[Column]
+	public bool IsDeleted { get; init; }
+	[Column]
+	public DateTime? DeletedAt { get; init; }
+	[Column]
 	public DateTime CreatedAt { get; init; }
 	[Column]
 	public DateTime UpdatedAt { get; init; }

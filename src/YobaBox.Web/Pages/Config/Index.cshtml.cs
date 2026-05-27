@@ -77,7 +77,7 @@ public sealed class IndexModel : PageModel
 			SuccessMessage = "Binding deleted.";
 
 		var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
-		var all = configDb.Bindings.OrderBy(b => b.Path).ToList();
+		var all = configDb.Bindings.Where(b => !b.IsDeleted).OrderBy(b => b.Path).ToList();
 
 		var facetKeys = new SortedSet<string>(StringComparer.Ordinal);
 		var facetValues = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
@@ -127,9 +127,10 @@ public sealed class IndexModel : PageModel
 		EffectiveWorkspaceKey = ResolveWorkspace();
 		var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
 
-		var existing = configDb.Bindings.FirstOrDefault(b => b.Id == id);
+		var existing = configDb.Bindings.FirstOrDefault(b => b.Id == id && !b.IsDeleted);
 		if (existing is not null)
 		{
+			var now = DateTime.UtcNow;
 			configDb.Insert(new ConfigBindingHistoryEntry
 			{
 				BindingId = existing.Id,
@@ -140,9 +141,14 @@ public sealed class IndexModel : PageModel
 				OldValue = existing.Kind == Core.Models.BindingKind.Plain ? existing.Value : "(secret)",
 				NewValue = null,
 				Actor = User.Identity?.Name ?? "system",
-				At = DateTime.UtcNow,
+				At = now,
 			});
-			configDb.Bindings.Where(b => b.Id == id).Delete();
+			configDb.Bindings
+				.Where(b => b.Id == id)
+				.Set(b => b.IsDeleted, true)
+				.Set(b => b.DeletedAt, (DateTime?)now)
+				.Set(b => b.UpdatedAt, now)
+				.Update();
 		}
 
 		var routeValues = new RouteValueDictionary { ["workspaceKey"] = EffectiveWorkspaceKey };
