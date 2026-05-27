@@ -48,8 +48,12 @@ public static class Routes
 	public static string ProjectConfigHistory(string ws, string key) => $"{Project(ws, key)}/config/history";
 	public static string ProjectConfigPreview(string ws, string key) => $"{Project(ws, key)}/config/preview";
 
-	public static string ProjectData(string ws, string key) => $"{Project(ws, key)}/data";
-	public static string ProjectSettings(string ws, string key) => $"{Project(ws, key)}/settings";
+	// Project admin pages live under /ui/{ws}/admin/projects/{key}/... — separate
+	// admin area with its own layout/sidebar (Phase 23.4). The legacy /ui/{ws}/{key}/settings
+	// and /ui/{ws}/{key}/data URLs are gone.
+	public static string ProjectData(string ws, string key) => $"{UiPrefix}/{ws}/admin/projects/{key}/data";
+	public static string ProjectSettings(string ws, string key) => $"{UiPrefix}/{ws}/admin/projects/{key}/info";
+	public static string ProjectLogSettings(string ws, string key) => $"{UiPrefix}/{ws}/admin/projects/{key}/log";
 
 	public static string Service(string ws, string key, string serviceKey) => $"{Project(ws, key)}/services/{serviceKey}";
 

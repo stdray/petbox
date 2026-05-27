@@ -1,0 +1,53 @@
+@page "/ui/{workspaceKey}/admin/defaults"
+@model YobaBox.Web.Pages.Admin.WorkspaceDefaultsModel
+@using YobaBox.Core.Settings
+@using YobaBox.Web.Settings
+@{
+	ViewData["Title"] = "Workspace defaults";
+	Layout = "_AdminLayout";
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="ws-defaults-title">@Model.WorkspaceKey workspace defaults</h1>
+	<p class="text-sm opacity-60">Defaults that apply to projects/services in this workspace when they don't override.</p>
+</div>
+
+<partial name="_WorkspaceAdminTabs" />
+
+@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+{
+	<div class="alert alert-success mb-3 max-w-3xl" data-testid="ws-defaults-success">@Model.SuccessMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3 max-w-3xl" data-testid="ws-defaults-error">@Model.ErrorMessage</div>
+}
+
+@if (Model.Sections.Count == 0)
+{
+	<div class="text-xs opacity-60 italic" data-testid="ws-defaults-empty">No settings configurable at workspace scope.</div>
+}
+else
+{
+	@foreach (var grp in Model.Sections)
+	{
+		var groupName = grp.RecordType.Name;
+		var fieldsModel = new SettingsFormFieldsModel
+		{
+			RecordType = grp.RecordType,
+			Current = grp.Current,
+			CurrentScope = Scope.Workspace,
+		};
+		<h2 class="text-lg font-semibold mt-6 mb-2" data-testid="@($"ws-defaults-section-{groupName}")">@groupName</h2>
+		<form method="post" asp-page-handler="Save" class="card bg-base-200 border border-base-300 max-w-3xl mb-3" data-testid="@($"ws-defaults-form-{groupName}")">
+			@Html.AntiForgeryToken()
+			<input type="hidden" name="recordType" value="@groupName" />
+			<div class="card-body p-4">
+				<partial name="_SettingsFormFields" model="fieldsModel" />
+				<div class="card-actions mt-3">
+					<button type="submit" class="btn btn-sm btn-primary" data-testid="@($"ws-defaults-save-{groupName}")">Save</button>
+				</div>
+			</div>
+		</form>
+	}
+}

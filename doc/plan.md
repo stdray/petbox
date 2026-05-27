@@ -748,86 +748,55 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 
 **Идёт ПОСЛЕ Phase 22.** Все tunable'ы введённые в 22 (`IngestionOptions`, `SystemLoggerOptions`, `Dashboard:HealthPollIntervalSeconds`) перевозятся в L2 разом в одной фазе вместе с уже существующими (`RetentionOptions`). Частичная миграция «по одной» — двойная работа, поэтому мы её избегаем.
 
-### 23.1 — Foundation: Settings table + resolver
+### 23.1 — Foundation: Settings table + resolver [DONE]
 
-- [ ] `M0XX_Settings.cs` миграция: `Settings(Scope, ScopeKey, Path, Type, Value, UpdatedAt, UpdatedBy)`, PK `(Scope, ScopeKey, Path)`
-- [ ] `YobaBox.Core/Settings/Scope.cs` — enum `System/Workspace/Project/Service/User/Membership`
-- [ ] `YobaBox.Core/Settings/SettingAttribute.cs` — `TopLevel`, `Key`, `Description`
-- [ ] `YobaBox.Core/Settings/ISettingsResolver.cs` + реализация:
-  - `Get<T>(deepestScope, deepestScopeKey)` — default-init T, для каждого `[Setting]`-свойства ходит вверх до `TopLevel`, первое найденное побеждает
-  - `Set<T>(scope, scopeKey, diff)` — пишет только изменённые свойства
-  - `mapKey(scope, deepestScopeKey)` — Project→workspaceKey, Service→`{project}/{service}`, Membership→`{userId}:{ws}` + раздельный обход по User и Workspace
-- [ ] Encryption для `type=secret` — через `ISecretEncryptor` на read/write пути; в `Value` хранится `base64(cipher+iv+tag)`
-- [ ] Sysadmin claim source — решить (env-флаг? первый юзер? config?); до решения весь sysadmin-gating wired через `false`-stub
+- [x] `M011_Settings.cs` миграция: `Settings(Scope, ScopeKey, Path, Type, Value, UpdatedAt, UpdatedBy)`, PK `(Scope, ScopeKey, Path)` — inline PK для SQLite compatibility
+- [x] `YobaBox.Core/Settings/Scope.cs` — enum `System/Workspace/Project/Service/User/Membership`
+- [x] `YobaBox.Core/Settings/SettingAttribute.cs` — `TopLevel`, `Key`, `Description`, `IsSecret`
+- [x] `YobaBox.Core/Settings/ISettingsResolver.cs` + реализация:
+  - `GetAsync<T>(deepestScope, deepestScopeKey)` — default-init T, для каждого `[Setting]`-свойства ходит вверх до `TopLevel`, первое найденное побеждает
+  - `SetAsync<T>(scope, scopeKey, newValues, oldValues, updatedBy)` — пишет только изменённые свойства
+  - `ResetAsync<T>(scope, scopeKey, propertyName)` — удаляет override на данном уровне
+- [x] Encryption для `IsSecret`-свойств — через `ISecretEncryptor` на read/write пути; в `Value` хранится зашифрованный blob
+- [x] Sysadmin claim source — bootstrap admin (username matches `Admin:Username` из appsettings); `SysAdmin` policy + `YobaBoxClaims.IsSysAdmin`
 
-### 23.2 — Reflection-based UI
+### 23.2 — Reflection-based UI [DONE]
 
-- [ ] `Pages/Shared/_SettingsForm.cshtml` partial — принимает `(record type, scope, scopeKey)`:
+- [x] `Pages/Shared/_SettingsForm.cshtml` partial — принимает `SettingsFormModel(Type RecordType, Scope CurrentScope, string ScopeKey, …)`:
   - Резолвит запись через `ISettingsResolver`
   - Reflects каждое `[Setting]`-property: type → input (number/text/select/checkbox/password+reveal/textarea)
   - Permission gate — скрывает свойства где `TopLevel > currentScope`
   - Submit — diff против резолвнутых значений, пишет только изменения в `Settings` при `currentScope`
-- [ ] `Pages/Shared/_SettingsFormHandler.cs` — общий POST-обработчик, который сабмит формы для любого record-типа
+- [x] `_SettingsFormFields.cshtml` — fields-only sub-partial для defaults-страниц с несколькими секциями
+- [x] `Settings/SettingsFormBinder.cs` — reflection-based form → typed record binding (типизирует form values по property type)
 
-### 23.3 — Mass migration: все tunable'ы из appsettings + RetentionPolicies → L2
+### 23.3 — Mass migration: все tunable'ы из appsettings + RetentionPolicies → L2 [DONE]
 
 Одна фаза перевозит **всё накопленное** на L2 одним проходом.
 
 **Драп точечных хранилищ:**
 
-- [ ] `M0XX_DropRetentionPolicies.cs` — `DROP TABLE RetentionPolicies` (данные не переносим, дефолт стартует заново)
-- [ ] Удалить `Models/RetentionPolicy.cs` + маппинг в `YobaBoxDb`
-- [ ] Удалить `Pages/Admin/Retention.cshtml(.cs)` — заменяется leaf-страницей `LogSettings` ниже
-- [ ] Удалить из `appsettings.json` секции: `Retention:*`, `Ingestion:*`, `SelfLogging:*` (кроме `Seq:SelfLog:Enabled/ServerUrl/ApiKey` — это env-owner), `Dashboard:HealthPollIntervalSeconds`
+- [x] `M012_DropRetentionPolicies.cs` — `DROP TABLE RetentionPolicies` (данные не переносим, дефолт стартует заново)
+- [x] Удалить `Models/RetentionPolicy.cs` + маппинг в `YobaBoxDb`
+- [x] Удалить `Pages/Admin/Retention.cshtml(.cs)` — заменяется leaf-страницей `LogSettings` ниже
+- [x] Удалить из `appsettings.json` секции: `Retention:*`, `Ingestion:*`, `Dashboard:HealthPollIntervalSeconds`. SelfLogging оставлен (Seq sink — env-owner)
 
 **Settings-record'ы:**
 
-- [ ] `YobaBox.Log.Core/Settings/LogSettings.cs`:
-  ```csharp
-  public sealed record LogSettings
-  {
-      [Setting(TopLevel = Scope.Workspace, Key = "log.retention.days")]
-      public int RetentionDays { get; init; } = 20;
-
-      [Setting(TopLevel = Scope.System, Key = "log.retention.sizeBytes")]
-      public long RetentionSize { get; init; } = 40_000_000;
-  }
-  ```
-- [ ] `YobaBox.Log.Core/Settings/IngestionSettings.cs` (TopLevel=System для обоих):
-  ```csharp
-  [Setting(TopLevel = Scope.System, Key = "log.ingestion.channelCapacity")]
-  public int ChannelCapacity { get; init; } = 10000;
-
-  [Setting(TopLevel = Scope.System, Key = "log.ingestion.maxBatchSize")]
-  public int MaxBatchSize { get; init; } = 500;
-  ```
-- [ ] `YobaBox.Log.Core/Settings/SelfLoggingSettings.cs` (TopLevel=System):
-  ```csharp
-  [Setting(TopLevel = Scope.System, Key = "log.selfLogging.serviceKey")]
-  public string ServiceKey { get; init; } = "yobabox-web";
-
-  [Setting(TopLevel = Scope.System, Key = "log.selfLogging.minLevel")]
-  public LogLevel MinLevel { get; init; } = LogLevel.Information;
-
-  [Setting(TopLevel = Scope.System, Key = "log.selfLogging.flushIntervalMs")]
-  public int FlushIntervalMs { get; init; } = 1000;
-  ```
-- [ ] `YobaBox.Dashboard/Settings/DashboardSettings.cs`:
-  ```csharp
-  [Setting(TopLevel = Scope.System, Key = "dashboard.healthPollIntervalSeconds")]
-  public int HealthPollIntervalSeconds { get; init; } = 30;
-  ```
+- [x] `YobaBox.Core/Settings/LogSettings.cs` — `RetentionDays` (TopLevel=Workspace, default 7), `SystemRetainDays` (TopLevel=System, default 30), `RunIntervalSeconds` (TopLevel=System, default 3600)
+- [x] `YobaBox.Core/Settings/IngestionSettings.cs` — `ChannelCapacity` (10000), `MaxBatchSize` (1000) — оба TopLevel=System
+- [x] `YobaBox.Core/Settings/DashboardSettings.cs` — `HealthPollIntervalSeconds` (30), `RequestTimeoutSeconds` (5), `PushTtlSeconds` (300) — все TopLevel=System
+- [skip] SelfLoggingSettings — Seq self-log остался в appsettings (env-owner credentials)
 
 **Переключение consumer'ов:**
 
-- [ ] `RetentionService`: вместо `IOptions<RetentionOptions>` — `ISettingsResolver.Get<LogSettings>(Scope.Project, projectKey)`
-- [ ] `ChannelIngestionPipeline`: вместо `IOptions<IngestionOptions>` — `ISettingsResolver.Get<IngestionSettings>(Scope.System, "$")`
-- [ ] `SystemLogger*`: вместо `IOptions<SystemLoggerOptions>` — `ISettingsResolver.Get<SelfLoggingSettings>(...)`
-- [ ] `HealthPoller`: вместо `IConfiguration["Dashboard:HealthPollIntervalSeconds"]` — `ISettingsResolver.Get<DashboardSettings>(...)`
+- [x] `RetentionService`: читает `LogSettings` per project через `ISettingsResolver`
+- [x] `ChannelIngestionPipeline`: snapshots `IngestionSettings` в `StartAsync`
+- [x] `HealthPoller`: читает `DashboardSettings` каждую итерацию
 
 **Удалить пустые option-классы:**
 
-- [ ] `RetentionOptions.cs`, `IngestionOptions.cs`, `SystemLoggerOptions.cs` — удалить (их роль теперь играют records выше)
+- [x] `RetentionOptions.cs`, `IngestionOptions.cs`, `HealthPollerOptions.cs` — удалены
 
 **Что остаётся в appsettings.json (env-owner, не L2):**
 
@@ -839,46 +808,36 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 - `OpenTelemetry:Enabled/OtlpEndpoint/ServiceName` — OTel sink
 - `Seq:SelfLog:Enabled/ServerUrl/ApiKey/ServiceKey` — Seq sink credentials (если оставляем Seq как fallback)
 
-### 23.4 — Auto-generated defaults pages
+### 23.4 — Auto-generated defaults pages [DONE]
 
-- [ ] `Pages/Sys/Defaults.cshtml` — `/ui/sys/defaults`. Reflection находит все `[Setting]` с `TopLevel >= System`, группирует по типу записи, рендерит `_SettingsForm(type, Scope.System, "$")` на группу
-- [ ] `Pages/Workspace/Admin/Defaults.cshtml` — `/ui/{ws}/admin/defaults`. То же при `TopLevel >= Workspace`, `scope=workspace`
-- [ ] `Pages/Workspace/Admin/Projects/Log.cshtml` — `/ui/{ws}/admin/projects/{key}/log`. Leaf-страница `LogSettings` при `scope=project` — каноническая edit-страница группы
+- [x] `Pages/Admin/SysDefaults.cshtml` — `/ui/sys/defaults`, `[SysAdmin]` policy. Reflection находит все `[Setting]` с `TopLevel >= System`, группирует по типу записи, рендерит `_SettingsFormFields` для каждой группы
+- [x] `Pages/Admin/WorkspaceDefaults.cshtml` — `/ui/{ws}/admin/defaults`, `[WorkspaceAdmin]`. То же при `TopLevel >= Workspace`, `scope=workspace`
+- [x] `Pages/Admin/ProjectLogSettings.cshtml` — `/ui/{ws}/admin/projects/{key}/log`. Leaf-страница `LogSettings` при `scope=project` — каноническая edit-страница группы
 
-### 23.5 — Admin area separation
+### 23.5 — Admin area separation [DONE]
 
-- [ ] `Pages/Shared/_AdminLayout.cshtml` — отдельный layout с admin-sidebar
-- [ ] Admin-sidebar с секциями (URL-aware highlight):
+- [x] `Pages/Shared/_AdminLayout.cshtml` — отдельный layout с admin-sidebar (warning-tinted topbar)
+- [x] `Pages/Shared/_AdminSidebar.cshtml` — URL-aware admin nav, секции:
   - WORKSPACE: Info / Members / Projects / Shared config / Defaults
   - PROJECT (когда в project-admin): Info / Log settings / Services / API keys / Data tables
   - SYSTEM (если sysadmin): Workspaces / Users / Defaults
   - ACCOUNT: Profile / Security / Preferences
-- [ ] Route миграция (см. `doc/settings-taxonomy.md` секция 4):
-  - `/ui/{ws}/{key}/settings` → `/ui/{ws}/admin/projects/{key}/info` + sub-pages
-  - `/ui/{ws}/{key}/data` → `/ui/{ws}/admin/projects/{key}/data`
-  - `/ui/{ws}/admin/settings` → `/ui/{ws}/admin/info`
+- [x] Route миграция (см. `doc/settings-taxonomy.md` секция 4):
+  - `/ui/{ws}/{key}/settings` → `/ui/{ws}/admin/projects/{key}/info` (ProjectDetail)
+  - `/ui/{ws}/{key}/data` → `/ui/{ws}/admin/projects/{key}/data` (ProjectData)
   - `/ui/sys/retention` → `/ui/sys/defaults` (auto-gen)
-- [ ] Удалить `Settings` tab из `_ProjectTabs`; добавить "→ Admin" link справа сверху на project page
-- [ ] `_AdminLayout` требует `[Authorize]`; каждая admin-страница enforce-ит свою policy (sysadmin / ws-admin / ws-member / self)
+  - NEW: `/ui/{ws}/admin/defaults`, `/ui/{ws}/admin/projects/{key}/log`
+- [x] Удалить `Settings` и `Data` tabs из `_ProjectTabs`; добавить "→ Admin" link (testid `proj-admin-link`) справа сверху на project page
+- [x] `_AdminLayout` требует `[Authorize]`; admin-страницы enforce policy (`SysAdmin` / `WorkspaceAdmin`)
 
-### 23.6 — Self-service `/ui/me/*`
+### 23.6 — Self-service `/ui/me/*` [partial DONE]
 
-- [ ] `Pages/Me/Account.cshtml` — `/ui/me/account` — username (read-only пока), смена не реализована
-- [ ] `Pages/Me/Security.cshtml` — `/ui/me/security` — смена пароля (форма: old + new + confirm)
-- [ ] `Pages/Me/Preferences.cshtml` — `/ui/me/preferences` — `UiSettings` (theme, defaultHome) через `_SettingsForm(typeof(UiSettings), Scope.User, userId)`
-- [ ] `YobaBox.Core/Settings/UiSettings.cs`:
-  ```csharp
-  public sealed record UiSettings
-  {
-      [Setting(TopLevel = Scope.User, Key = "ui.theme")]
-      public Theme Theme { get; init; } = Theme.Dark;
-
-      [Setting(TopLevel = Scope.User, Key = "ui.defaultHome")]
-      public DefaultHome DefaultHome { get; init; } = DefaultHome.Status;
-  }
-  ```
-- [ ] Применение `UiSettings.Theme` к `data-theme` в `_Layout`
-- [ ] Применение `DefaultHome` после login (`/ui/{ws}` vs `/ui/{ws}/{lastProject}` vs `/ui/{ws}/logs`)
+- [x] `Pages/Me/Account.cshtml` — `/ui/me/account` — username + IsSysAdmin badge (read-only)
+- [x] `Pages/Me/Security.cshtml` — `/ui/me/security` — смена пароля (форма: old + new + confirm)
+- [x] `Pages/Me/Preferences.cshtml` — `/ui/me/preferences` — `UiSettings` (theme, defaultHome) через `_SettingsForm`
+- [x] `YobaBox.Core/Settings/UiSettings.cs` — `Theme` (Dark/Light/System), `DefaultHome` (Status/LastProject/AllLogs), оба TopLevel=User
+- [x] Применение `UiSettings.Theme` к `data-theme` в `_Layout` + `_AdminLayout` (через DI-resolved injection)
+- [ ] Применение `DefaultHome` после login (`/ui/{ws}` vs `/ui/{ws}/{lastProject}` vs `/ui/{ws}/logs`) — оставлено follow-up
 
 ### 23.7 — Follow-ups (вне фазы)
 

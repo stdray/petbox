@@ -40,7 +40,7 @@ public sealed class DataTableTests(WebAppFixture app, ITestOutputHelper output) 
 
 		if (_apiKey is null)
 		{
-			await _page.GotoAsync("/ui/$system/kpvotes/settings");
+			await _page.GotoAsync("/ui/$system/admin/projects/kpvotes/info");
 			await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
 			await _page.GetByTestId("project-key-create-scopes").FillAsync("data:read,data:write");
 			await _page.GetByTestId("project-key-create-submit").ClickAsync();

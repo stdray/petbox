@@ -55,12 +55,9 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		await EnsureServices();
 		await EnsureApiKey();
 
-		await _page!.GotoAsync($"/ui/{Ws}/{Pet}/settings");
+		await _page!.GotoAsync($"/ui/{Ws}/admin/projects/{Pet}/info");
 
-		// Tab strip present, services rendered.
-		await Expect(_page.GetByTestId("proj-tabs")).ToBeVisibleAsync();
-		await Expect(_page.GetByTestId("proj-tab-settings")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
-
+		// Admin area has its own layout (no project tabs). Just verify the services rendered.
 		var rowNet = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-net" });
 		await Expect(rowNet).ToContainTextAsync("Endpoint");
 
@@ -174,11 +171,12 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		await _page!.GotoAsync($"/ui/{Ws}/{Pet}");
 		await Expect(_page.GetByTestId("proj-tab-logs")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
 
-		await _page.GetByTestId("proj-tab-settings").ClickAsync();
-		await Expect(_page.GetByTestId("proj-tab-settings")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
-
 		await _page.GetByTestId("proj-tab-config").ClickAsync();
 		await Expect(_page.GetByTestId("proj-tab-config")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
+
+		// "Admin" link leaves the project tab strip and enters the admin area.
+		await _page.GetByTestId("proj-admin-link").ClickAsync();
+		await _page.WaitForURLAsync($"**/ui/{Ws}/admin/projects/{Pet}/info");
 	}
 
 	// --- Setup helpers ------------------------------------------------------
@@ -200,7 +198,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 
 	async Task EnsureServices()
 	{
-		await _page!.GotoAsync($"/ui/{Ws}/{Pet}/settings");
+		await _page!.GotoAsync($"/ui/{Ws}/admin/projects/{Pet}/info");
 		var existing = await _page.GetByTestId("service-row").CountAsync();
 		if (existing >= 2) return;
 
@@ -225,7 +223,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	{
 		if (_apiKey is not null) return;
 
-		await _page!.GotoAsync($"/ui/{Ws}/{Pet}/settings");
+		await _page!.GotoAsync($"/ui/{Ws}/admin/projects/{Pet}/info");
 		await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
 		await _page.GetByTestId("project-key-create-scopes")
 			.FillAsync("config:read,config:write,logs:ingest");

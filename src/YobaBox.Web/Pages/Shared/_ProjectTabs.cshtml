@@ -8,28 +8,26 @@
 	bool Under(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
 	var logsUrl = Routes.Project(ws, key);
 	var configUrl = Routes.ProjectConfig(ws, key);
-	var dataUrl = Routes.ProjectData(ws, key);
 	var settingsUrl = Routes.ProjectSettings(ws, key);
 	var tracesUrl = Routes.ProjectTraces(ws, key);
 	bool logsActive = At(logsUrl) || Under(tracesUrl);
 }
 @if (!string.IsNullOrEmpty(key))
 {
-	<div role="tablist" class="tabs tabs-bordered mb-4" data-testid="proj-tabs">
-		<a role="tab" class="tab @(logsActive ? "tab-active" : "")"
-			href="@logsUrl"
-			data-testid="proj-tab-logs">Logs</a>
-		<a role="tab" class="tab @(Under(configUrl) ? "tab-active" : "")"
-			href="@configUrl"
-			data-testid="proj-tab-config">Config</a>
-		@if (Features.IsEnabled("Data"))
-		{
-			<a role="tab" class="tab @(At(dataUrl) ? "tab-active" : "")"
-				href="@dataUrl"
-				data-testid="proj-tab-data">Data</a>
-		}
-		<a role="tab" class="tab @(At(settingsUrl) ? "tab-active" : "")"
-			href="@settingsUrl"
-			data-testid="proj-tab-settings">Settings</a>
+	<div class="flex items-center mb-4" data-testid="proj-tabs-row">
+		<div role="tablist" class="tabs tabs-bordered" data-testid="proj-tabs">
+			<a role="tab" class="tab @(logsActive ? "tab-active" : "")"
+				href="@logsUrl"
+				data-testid="proj-tab-logs">Logs</a>
+			<a role="tab" class="tab @(Under(configUrl) ? "tab-active" : "")"
+				href="@configUrl"
+				data-testid="proj-tab-config">Config</a>
+		</div>
+		<a href="@settingsUrl" class="ml-auto btn btn-sm btn-ghost" data-testid="proj-admin-link" title="Project administration">
+			Admin
+			<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+			</svg>
+		</a>
 	</div>
 }

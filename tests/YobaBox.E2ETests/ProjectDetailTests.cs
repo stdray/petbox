@@ -26,7 +26,7 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 	[Fact]
 	public async Task Service_Create_Form_Is_Visible()
 	{
-		await _page!.GotoAsync("/ui/$system/$system/settings");
+		await _page!.GotoAsync("/ui/$system/admin/projects/$system/info");
 		await Expect(_page.GetByTestId("project-service-create-form")).ToBeVisibleAsync();
 	}
 
@@ -34,7 +34,7 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 	public async Task Service_Create_And_Appears_In_Table()
 	{
 		var svcKey = "svc-" + Guid.NewGuid().ToString("N")[..6];
-		await _page!.GotoAsync("/ui/$system/$system/settings");
+		await _page!.GotoAsync("/ui/$system/admin/projects/$system/info");
 
 		await _page.GetByTestId("project-service-create-key").FillAsync(svcKey);
 		await _page.GetByTestId("project-service-create-submit").ClickAsync();
@@ -47,7 +47,7 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 	public async Task Service_Delete_Removes_From_Table()
 	{
 		var svcKey = "svc-" + Guid.NewGuid().ToString("N")[..6];
-		await _page!.GotoAsync("/ui/$system/$system/settings");
+		await _page!.GotoAsync("/ui/$system/admin/projects/$system/info");
 
 		// Create
 		await _page.GetByTestId("project-service-create-key").FillAsync(svcKey);
@@ -67,14 +67,14 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 	[Fact]
 	public async Task Key_Create_Form_Is_Visible()
 	{
-		await _page!.GotoAsync("/ui/$system/$system/settings");
+		await _page!.GotoAsync("/ui/$system/admin/projects/$system/info");
 		await Expect(_page.GetByTestId("project-key-create-form")).ToBeVisibleAsync();
 	}
 
 	[Fact]
 	public async Task Key_Create_And_Appears_In_Table()
 	{
-		await _page!.GotoAsync("/ui/$system/$system/settings");
+		await _page!.GotoAsync("/ui/$system/admin/projects/$system/info");
 
 		await _page.GetByTestId("project-key-create-scopes").FillAsync("logs:ingest");
 		await _page.GetByTestId("project-key-create-submit").ClickAsync();
@@ -86,7 +86,7 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 	[Fact]
 	public async Task Key_Revoke_Removes_From_Table()
 	{
-		await _page!.GotoAsync("/ui/$system/$system/settings");
+		await _page!.GotoAsync("/ui/$system/admin/projects/$system/info");
 
 		// Create
 		await _page.GetByTestId("project-key-create-scopes").FillAsync("dashboard:read");

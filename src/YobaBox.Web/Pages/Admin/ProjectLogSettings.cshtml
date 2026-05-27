@@ -1,0 +1,40 @@
+@page "/ui/{workspaceKey}/admin/projects/{projectKey}/log"
+@model YobaBox.Web.Pages.Admin.ProjectLogSettingsModel
+@using YobaBox.Core.Settings
+@using YobaBox.Web.Settings
+@{
+	ViewData["Title"] = "Log settings";
+	Layout = "_AdminLayout";
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="proj-log-title">@Model.ProjectKey · log settings</h1>
+	<p class="text-sm opacity-60">Per-project log retention. Cascades up to workspace and system defaults when fields are empty.</p>
+</div>
+
+@if (!Model.ProjectExists)
+{
+	<div class="alert alert-warning" data-testid="proj-log-missing">Project not found.</div>
+}
+else
+{
+	@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+	{
+		<div class="alert alert-success mb-3 max-w-3xl" data-testid="proj-log-success">@Model.SuccessMessage</div>
+	}
+	@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+	{
+		<div class="alert alert-error mb-3 max-w-3xl" data-testid="proj-log-error">@Model.ErrorMessage</div>
+	}
+
+	var formModel = new SettingsFormModel
+	{
+		RecordType = typeof(LogSettings),
+		Current = Model.Current,
+		CurrentScope = Scope.Project,
+		ScopeKey = Model.ProjectKey,
+		Handler = "Save",
+		FormTestId = "proj-log-form",
+	};
+	<partial name="_SettingsForm" model="formModel" />
+}
