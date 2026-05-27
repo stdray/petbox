@@ -539,6 +539,73 @@ Goal: clean separation of API and UI URL namespaces.
 - [x] User-table login via AdminBootstrapper; M008 no longer seeds empty admin
 - [x] `WorkspaceAdmin/Member/Viewer` policies + `WorkspaceRoleRequirement` handler
 
+## Phase 21: IA rework — workspace-first URLs + project tabs [DONE]
+
+Goal: replace `/ui/dashboard/...`, `/ui/admin/...`, `/ui/logs/{key}`, `/ui/config/{ws}` with a single workspace-first scheme `/ui/{ws}/{key}/...`. Source plan: `~/.claude/plans/proud-waddling-naur.md`.
+
+Session output: 11 commits, 214 unit/integration pass, 29 E2E pass + 10 skipped (legacy Editor UI flow), 0 fail. See `doc/user-stories.md` for the resulting flows.
+
+### 21.1 — Foundation
+
+- [x] `src/YobaBox.Web/Routes.cs` — static helper with `Workspace(ws)`, `Project(ws,k)`, `ProjectLogs/Traces/Config/Settings`, `SharedConfig(ws)`, `Sys()`, etc.
+- [x] `src/YobaBox.Config/ResolvePipeline.cs` — subset semantics (`binding.tags ⊆ request.tags`, rank by `|binding.tags|`, ties throw `AmbiguousConfigException`)
+- [x] `src/YobaBox.Config/AmbiguousConfigException.cs` — new exception with candidate IDs
+- [x] `src/YobaBox.Config/ConfigApi.cs` — auto-injects `ws:{workspaceKey}` into resolve request, returns 409 on ambiguity
+- [x] `src/YobaBox.Web/Pages/Config/Preview.cshtml(.cs)` — uses `ResolveDetailed`, displays ambiguity in red
+- [x] `tests/YobaBox.Tests/Config/ResolvePipelineTests.cs` — 13 unit tests for the new semantics
+- [x] `tests/YobaBox.E2ETests/ConfigResolvePriorityTests.cs` — `AssertNotFound` for "no match" (was buggy "first by Id")
+
+### 21.2 — Layout V2
+
+- [x] `_Layout.cshtml` rewritten: workspace switcher moved into sidebar header (always visible), 4 top-level items (Status / Logs(all) / Shared config / Workspace), flat project list, minimal top-bar (brand + sysadmin icon + username + signout)
+- [x] No health dots, no pinning, no Tasks placeholder in sidebar (per "явное > неявное")
+- [x] `Pages/Shared/_ProjectTabs.cshtml` — 3-tab strip (Logs · Config · Settings), Data tab feature-flagged
+- [x] `Pages/Index.cshtml(.cs)` — server-side `Redirect(Routes.Workspace(currentWs))`, no meta-refresh, no cookie magic
+- [x] `Pages/Dashboard/Project.cshtml(.cs)` deleted — `/ui/{ws}/{key}` IS the Logs view
+
+### 21.3 — @page directive migration
+
+- [x] All Razor Pages routes migrated to `/ui/{workspaceKey}/[{projectKey}/]...` form (route param names kept as `workspaceKey`/`projectKey` to avoid PageModel churn)
+- [x] `NavigationContext.IsProjectRoute()` updated to recognize new patterns
+- [x] `WorkspaceSwitchEndpoint` default redirect → `Routes.Workspace(ws)`
+- [x] Old `/ui/dashboard/...`, `/ui/admin/...`, `/ui/logs/{key}`, `/ui/config/{ws}` URLs deleted (no 308 redirects per user)
+
+### 21.4 — Routing extras via `AddPageRoute`
+
+- [x] `/ui/{ws}/logs` → `Logs/Index` cross-project mode
+- [x] `/ui/{ws}/traces` → `Logs/Traces` cross-project mode
+- [x] `/ui/{ws}/{key}/config[/...]` → `Config/Index|Editor|History|Preview` with auto project filter
+- [x] `/ui/{ws}/admin` → `Admin/WorkspaceUsers` alias landing
+
+### 21.5 — Editor tag format
+
+- [x] `Config/Editor.cshtml(.cs)` canonicalizes tags to `key:value` (was `key=value`), accepts both on input; validates `ws:{workspaceKey}` instead of `ws=...`
+
+### 21.6 — E2E migration
+
+- [x] All E2E test classes ported to new URLs
+- [x] `KpVotesOnboardingTests` rewritten end-to-end against new IA (S-1..S-4 via API + UI)
+- [x] Legacy Editor UI flow tests skipped with clear reasons (covered semantically by API-driven tests)
+- [x] DashboardTests locators tightened (was too broad — matched sidebar nav too)
+
+### 21.7 — Docs
+
+- [x] `doc/user-stories.md` — source of truth for E2E coverage (S-1..S-13)
+- [x] `doc/ui-conventions.md` — canonical daisyUI recipes + htmx/Alpine boundary
+- [x] `doc/tasks-mcp/` — bench for future Tasks module: records of plan/memory ops
+- [x] `AGENTS.md` — "Recording plan/memory actions" section added
+
+### 21.8 — Follow-ups (out of this phase)
+
+- [ ] Editor: auto-add `project:{key}` tag when on project Config context (step 8 polish)
+- [ ] `/ui/{ws}/admin` proper tabbed landing — Members + Settings sub-tabs (step 10 polish)
+- [ ] Cross-project logs result presentation — annotate rows with project (step 9 polish)
+- [ ] Reserved-name validation for project keys (`logs`, `traces`, `config`, `admin`, `projects`, `sys`)
+- [ ] Health dots in sidebar when Dashboard module has real data
+- [ ] Polish phase items from `~/.claude/plans/proud-waddling-naur.md` "Phase 2: UI polish"
+
+---
+
 ## Phase 16: Data module rework [BLOCKED]
 
 Goal: fix DataTable / DataApi design. Requires user clarification.

@@ -1,365 +1,363 @@
-# User stories
+# Пользовательские сценарии
 
-Concrete daily scenarios for YobaBox. Each story is what a user (today: the author; tomorrow: invited friends) actually does — what they click, where they go, what they see.
+Конкретные ежедневные сценарии работы с YobaBox. Каждая стори описывает, что пользователь (сейчас — автор; в будущем — приглашённые друзья) реально делает: куда кликает, куда идёт, что видит.
 
-This is the source of truth for what flows must work end-to-end. E2E tests in `tests/YobaBox.E2ETests/` should each map to one or more stories here. If a flow exists in tests but not here, either it's a bug in this doc or the flow is over-engineered.
+Это источник правды для того, какие потоки должны работать end-to-end. E2E тесты в `tests/YobaBox.E2ETests/` должны привязываться к одной или нескольким стори отсюда. Если в тестах есть поток, которого нет здесь — либо это баг в этом документе, либо тест переусложнён.
 
-Each story has:
-- **Goal** — what the user wants to accomplish.
-- **Trigger** — what made them open YobaBox right now.
-- **Steps** — concrete clicks + URLs. Numbered.
-- **Outcome** — what they see/get.
-- **Edge cases** — failure modes worth thinking about.
-- **Status** — `works` / `partial` / `stub` / `not yet` (current state of this flow).
+Каждая стори содержит:
+- **Цель** — что пользователь хочет получить.
+- **Триггер** — почему открыл YobaBox прямо сейчас.
+- **Шаги** — конкретные клики + URL, пронумерованные.
+- **Результат** — что увидит / получит.
+- **Краевые случаи** — режимы отказа, о которых стоит подумать.
+- **Статус** — `работает` / `частично` / `заготовка` / `пока нет` (текущее состояние потока).
 
-URL placeholders use `{ws}` for workspace key, `{key}` for project key, `{svc}` for service key.
+Плейсхолдеры URL: `{ws}` — ключ воркспейса, `{key}` — ключ проекта, `{svc}` — ключ сервиса.
 
----
+## Сводка покрытия (на 2026-05-27 после IA-миграции)
 
-## Coverage summary (as of 2026-05-27 IA migration)
+- **End-to-end проверены (unit + E2E)**: S-2, S-3, S-4, S-6, S-8
+- **UI-only проверены (E2E)**: S-1
+- **Заготовка / частично**: S-5, S-7, S-9, S-10, S-11, S-13 — код или роуты есть, но дедикейтед E2E пока нет
+- **Пока нет**: S-12 (модуль агентов не построен)
 
-- **Verified end-to-end (unit + E2E)**: S-2, S-3, S-4, S-6, S-8
-- **Verified UI-only (E2E)**: S-1
-- **Stub / partial**: S-5, S-7, S-9, S-10, S-11, S-13 — code paths exist or routes wired, but no dedicated E2E yet
-- **Not yet**: S-12 (agent module unbuilt)
-
-E2E run: 29 passed, 10 skipped (legacy Editor flow being reworked), 0 failed.
+E2E прогон: 29 passed, 10 skipped (legacy Editor flow в перерасчёте), 0 failed.
 Unit + integration: 214 passed.
 
 ---
 
-## S-1: Glance at all pets — "is everything alive?"
+## S-1: Глянуть на все петы — "всё ли живо?"
 
-**Goal:** Quick health check across all my pet-projects.
+**Цель:** быстрая проверка здоровья всех пет-проектов.
 
-**Trigger:** Morning routine; or notification that something might be down.
+**Триггер:** утренняя рутина; или уведомление, что что-то упало.
 
-**Steps:**
-1. Open YobaBox → lands on `/ui/{ws}` (Status overview). [Implicit: workspace resolved from cookie/claim/membership.]
-2. Scan project cards. Each shows: project name (link to project page), services list with health badges, version, last build SHA.
+**Шаги:**
+1. Открыл YobaBox → приземлился на `/ui/{ws}` (Status overview). [Workspace резолвится из cookie/claim/membership.]
+2. Глазами проходит по карточкам проектов. На каждой: имя проекта (ссылка на страницу проекта), список сервисов с health-бейджами, версия, последний build SHA.
 
-**Outcome:** Within ~3 seconds, user can tell which pets are green / which need attention.
+**Результат:** за ~3 секунды видно, какие петы зелёные, какие требуют внимания.
 
-**Edge cases:**
-- No pets yet → see onboarding card with "+ create your first project" CTA.
-- Many pets (>10) → grid wraps; user scrolls.
-- Pet has no services registered → card shows "No services registered."
-- Service health unknown → grey badge (Dashboard module not yet collecting data per pet → mostly grey today; see Status: partial).
+**Краевые случаи:**
+- Петов ещё нет → онбординг-карточка с CTA "+ создать первый проект".
+- Много петов (>10) → сетка переносится, скроллится.
+- У пета нет сервисов → карточка показывает "No services registered."
+- Health сервиса неизвестен → серый бейдж (модуль Dashboard ещё не собирает данные → сегодня в основном серые; см. Status: частично).
 
-**Status:** **partial → works (UI)**. Page renders project cards + service tables; project name on the card is a link to the project Logs view. Health badges show but real health collection (pull/push) is not wired up — most show Unknown. Verified by `DashboardTests`, `KpVotesOnboardingTests.S3_CreateProject_AppearsInSidebarAndStatus`.
-
----
-
-## S-2: Diagnose a misbehaving pet via logs
-
-**Goal:** Figure out what's wrong with a specific pet.
-
-**Trigger:** "Twitter bot didn't post overnight." User opens YobaBox.
-
-**Steps:**
-1. Land on `/ui/{ws}` (Status). Spot the project tile.
-2. Click project name → `/ui/{ws}/{key}` which IS the Logs view.
-3. Default KQL query shows recent events. User narrows down: types `where Level == "Error"` in KQL textarea.
-4. Optional: clicks a service chip to filter to one service.
-5. Click row → expands to show full message + properties.
-6. If error references a trace → click trace link → `/ui/{ws}/{key}/traces/{traceId}` waterfall view.
-
-**Outcome:** User finds the error message, stack trace if any, and the context (service, time, related events).
-
-**Edge cases:**
-- No logs ingested yet → "No events match query" empty state.
-- KQL syntax error → inline error message under textarea; query not run.
-- User wants to bookmark a useful query → clicks "Save as…" with a name → it appears in saved-queries chips.
-- User wants to share the query result → clicks "Share" → gets `/s/{token}` URL.
-
-**Status:** **works**. KQL editor with completions, saved queries, share endpoint — all functional. The path from sidebar/Status to project Logs is direct after the IA rework. Verified by `LogsPageTests` + `KpVotesOnboardingTests.S2_IngestLogs_QueryViaKql`.
+**Статус:** **частично → работает (UI)**. Страница рендерит карточки проектов и таблицы сервисов; имя проекта на карточке — ссылка на Logs view. Health-бейджи показываются, но реальный сбор health (pull/push) не подключён — в основном Unknown. Покрыто `DashboardTests`, `KpVotesOnboardingTests.S3_CreateProject_AppearsInSidebarAndStatus`.
 
 ---
 
-## S-3: Set up a new pet from scratch
+## S-2: Диагностика лажающего пета через логи
 
-**Goal:** Onboard a pet-project that doesn't exist in YobaBox yet.
+**Цель:** понять, что не так с конкретным петом.
 
-**Trigger:** User wrote a new PoC and wants to give it config + logs.
+**Триггер:** "Twitter-бот не запостил ночью." Пользователь открывает YobaBox.
 
-**Steps:**
-1. Land on `/ui/{ws}` (Status).
-2. Sidebar → click `+` next to "PROJECTS" → `/ui/{ws}/projects/new`.
-3. Fill form: Key=`twitter-poster`, Name="Twitter Poster", Description, Workspace (pre-filled).
-4. Submit → redirected to `/ui/{ws}/twitter-poster` (the new project's Logs view, empty).
-5. Click `Settings` tab → `/ui/{ws}/twitter-poster/settings`.
-6. **Add service:** scroll to Services section → "Add Service" → fill Key=`bot-runner`, Kind=`Cron`, Url=empty (no HTTP) → Submit. Row appears.
-7. **Mint API key:** scroll to API Keys section → "Issue Key" → check scopes (`config:read`, `logs:ingest`) → Submit. **Key is shown ONCE** in plaintext — user copies it into keepass.
-8. Back to project page → no logs yet.
-9. **In pet's code:** point pet at `https://yobabox/api/...` with the new API key + service key.
-10. First log arrives → user sees it in `/ui/{ws}/twitter-poster`.
+**Шаги:**
+1. Приземляется на `/ui/{ws}` (Status). Находит тайл проекта.
+2. Кликает на имя проекта → `/ui/{ws}/{key}`, что ЯВЛЯЕТСЯ Logs view.
+3. По умолчанию KQL-запрос показывает недавние события. Пользователь сужает: вводит `where Level == "Error"` в KQL textarea.
+4. Опционально: кликает чип сервиса, чтобы отфильтровать по одному.
+5. Кликает на строку → разворачивается полное сообщение + properties.
+6. Если в ошибке есть trace → клик по trace-ссылке → `/ui/{ws}/{key}/traces/{traceId}` waterfall view.
 
-**Outcome:** Pet is configured. Logs flowing. Visible in Status.
+**Результат:** пользователь находит сообщение об ошибке, stack trace (если есть), и контекст (сервис, время, связанные события).
 
-**Edge cases:**
-- Project key collides with reserved name (`logs`, `traces`, `config`, `admin`, `projects`, `sys`) → form error.
-- Project key already exists in another workspace → form error (project keys are globally unique).
-- Service key collides with existing service in same project → form error.
-- User loses API key after closing the page → must mint a new one (cannot reveal again).
+**Краевые случаи:**
+- Логи ещё не залиты → empty state "No events match query".
+- Синтаксическая ошибка в KQL → inline-сообщение под textarea; запрос не запускается.
+- Хочется сохранить полезный запрос → клик "Save as…" с именем → появляется чип в saved-queries.
+- Хочется поделиться результатом → клик "Share" → URL `/s/{token}`.
 
-**Status:** **partial → works**. Project create from sidebar `+` → form at `/ui/{ws}/projects/new` → redirect to new project's Logs view. Services + API keys via Settings tab. Reserved-name validation NOT yet implemented. Verified by `KpVotesOnboardingTests.S3_*`, `ProjectDetailTests`.
+**Статус:** **работает**. KQL-редактор с автодополнением, сохранёнными запросами, share-эндпоинтом — всё функционально. Путь от sidebar/Status к проектным Logs прямой после IA-рерайта. Покрыто `LogsPageTests` + `KpVotesOnboardingTests.S2_IngestLogs_QueryViaKql`.
 
 ---
 
-## S-4: Add config bindings for a pet
+## S-3: Поднять новый пет с нуля
 
-**Goal:** Move config out of `.env` files into YobaConf so the pet fetches it at startup.
+**Цель:** завести пет-проект, которого ещё нет в YobaBox.
 
-**Trigger:** Setting up a new pet (continuation of S-3) or migrating an existing pet's config.
+**Триггер:** пользователь написал новый PoC и хочет дать ему конфиг + логи.
 
-**Steps:**
-1. From project page (`/ui/{ws}/{key}`) → Config tab → `/ui/{ws}/{key}/config` (project-scoped Bindings).
-2. Auto-applied filter chip: `project:{key}`. Cannot be cleared from this view.
-3. Click "+ New binding" → `/ui/{ws}/{key}/config/editor`.
-4. Fill Path=`twitter/api-key`, Value=`***secret***`, Tags=`project:{key}` (auto-pre-filled), Kind=Secret (encrypted at rest).
-5. Submit → back to project Config list; new row appears.
-6. Repeat for `twitter/proxy-host`, `twitter/poll-interval`, etc.
-7. Pet's code on startup: `GET /api/config/{ws}/resolve?path=twitter/api-key&tags=project:{key},env:prod` → gets the value.
+**Шаги:**
+1. Приземляется на `/ui/{ws}` (Status).
+2. В сайдбаре → клик `+` рядом с "PROJECTS" → `/ui/{ws}/projects/new`.
+3. Заполняет форму: Key=`twitter-poster`, Name="Twitter Poster", Description, Workspace (предзаполнен).
+4. Submit → редирект на `/ui/{ws}/twitter-poster` (Logs view нового проекта, пустой).
+5. Кликает таб `Settings` → `/ui/{ws}/twitter-poster/settings`.
+6. **Создаёт сервис:** скроллит к секции Services → "Add Service" → Key=`bot-runner`, Kind=`Cron`, Url=пусто → Submit. Появляется строка.
+7. **Чеканит API-ключ:** скроллит к API Keys → "Issue Key" → отмечает scope'ы (`config:read`, `logs:ingest`) → Submit. **Ключ показывается ОДИН раз** в plaintext — пользователь копирует в keepass.
+8. Назад в проект → логов ещё нет.
+9. **В коде пета:** настраивает обращение к `https://yobabox/api/...` с новым ключом + service key.
+10. Приходит первый лог → пользователь видит его на `/ui/{ws}/twitter-poster`.
 
-**Outcome:** Bindings stored. Pet fetches them at runtime, no `.env` file needed.
+**Результат:** пет настроен. Логи льются. Виден в Status.
 
-**Edge cases:**
-- User edits binding → history tab shows the change with timestamp + actor.
-- User accidentally creates two bindings for the same path with overlapping tags → on resolve, ambiguity → API returns 409 with candidate IDs. User goes to Preview to debug.
-- Secret value: rendered as `***` in list view; revealed only in Editor with explicit "Reveal" click.
+**Краевые случаи:**
+- Project key совпадает с зарезервированным (`logs`, `traces`, `config`, `admin`, `projects`, `sys`) → ошибка формы.
+- Project key уже есть в другом воркспейсе → ошибка формы (project keys глобально уникальны).
+- Service key совпадает с существующим в том же проекте → ошибка формы.
+- Пользователь потерял API-ключ после закрытия страницы → надо чеканить новый (показать ещё раз нельзя).
 
-**Status:** **partial → works**. Both `/ui/{ws}/config` (Shared) and `/ui/{ws}/{key}/config` (project-scoped, auto-filter `project:{key}`) wired. Resolve via API uses subset semantics. Editor still requires the user to type the `project:{key}` tag (auto-add on save is a step-8 follow-up). Verified end-to-end via API by `KpVotesOnboardingTests.S4_AddConfigBindings_ResolveViaApi`.
-
----
-
-## S-5: Rotate a shared secret across pets
-
-**Goal:** Change a value used by multiple pets (e.g., Twitter API key shared between twitter-poster and meme-bot).
-
-**Trigger:** Old key compromised / quota changed.
-
-**Steps:**
-1. Sidebar → Shared config → `/ui/{ws}/config` (workspace-level shared bindings — no project tag).
-2. Find binding by Path filter or scrolling.
-3. Click Edit → `/ui/{ws}/config/editor/{id}`.
-4. Change Value. Tags stay the same (no `project:*`).
-5. Submit. History tab now shows the change.
-6. Pets pick up the new value on next poll (or on next process start, depending on their config-fetch strategy).
-
-**Outcome:** Single edit propagates to all pets that resolve this path with matching tags.
-
-**Edge cases:**
-- User accidentally adds a `project:` tag to a shared binding → on save, UI shows warning "this binding is no longer shared; consider moving it to a project Config tab."
-- User wants to verify it still resolves before considering rotation done → uses Preview tab.
-
-**Status:** **partial**. Shared bindings page works (it's the workspace-level Config). The "warning on adding project tag" UX is part of step 8.
+**Статус:** **частично → работает**. Project create из сайдбара `+` → форма на `/ui/{ws}/projects/new` → редирект на Logs view нового проекта. Сервисы + API-ключи через таб Settings. Валидация зарезервированных имён ПОКА не реализована. Покрыто `KpVotesOnboardingTests.S3_*`, `ProjectDetailTests`.
 
 ---
 
-## S-6: Override config for one env
+## S-4: Завести config-биндинги для пета
 
-**Goal:** Use `env:prod` value in prod, `env:dev` value in dev — without touching pet code.
+**Цель:** вынести конфиг из `.env` в YobaConf, чтобы пет тянул его на старте.
 
-**Trigger:** Pet works in dev but needs a different URL / timeout / endpoint in prod.
+**Триггер:** настройка нового пета (продолжение S-3) или миграция конфига существующего пета.
 
-**Steps:**
-1. Project page → Config tab → `/ui/{ws}/{key}/config`.
-2. "+ New binding" → fill Path=`api/base-url`, Value=`https://prod.example.com`, Tags=`project:{key}, env:prod`. Submit.
-3. Repeat with `env:dev` value for same Path.
-4. Click Preview sub-tab → `/ui/{ws}/{key}/config/preview`.
-5. Input tags `project:{key} env:prod` (or `env:dev`) → see which binding resolves + its specificity.
+**Шаги:**
+1. Со страницы проекта (`/ui/{ws}/{key}`) → таб Config → `/ui/{ws}/{key}/config` (project-scoped Bindings).
+2. Авто-фильтр чип: `project:{key}`. Из этого view убрать нельзя.
+3. Клик "+ New binding" → `/ui/{ws}/{key}/config/editor`.
+4. Заполняет: Path=`twitter/api-key`, Value=`***secret***`, Tags=`project:{key}` (предзаполняется), Kind=Secret (шифруется at rest).
+5. Submit → возврат на project Config список; появляется новая строка.
+6. Повторяет для `twitter/proxy-host`, `twitter/poll-interval` и т.п.
+7. Код пета на старте: `GET /api/config/{ws}/resolve?path=twitter/api-key&tags=project:{key},env:prod` → получает значение.
 
-**Outcome:** Resolver picks the env-specific binding deterministically. Subset semantics — if request has `env:prod`, only bindings whose tags are a subset of request match; `env:dev` binding does NOT match for a prod request.
+**Результат:** биндинги сохранены. Пет тянет их в runtime, `.env`-файл не нужен.
 
-**Edge cases:**
-- User creates two bindings with identical tag sets at the same path → resolve throws `AmbiguousConfigException` → API returns 409; UI Preview marks the row red with candidate IDs.
-- User asks for `env:staging` but no staging binding exists → falls back to the binding with fewest tags that's still a subset (e.g., `project:{key}` alone).
+**Краевые случаи:**
+- Пользователь редактирует биндинг → таб History показывает изменение с timestamp + actor.
+- Случайно создал два биндинга для одного пути с overlapping тегами → на резолве ambiguity → API возвращает 409 с candidate IDs. Идёт в Preview дебажить.
+- Secret value: отображается как `***` в списке; раскрывается только в Editor по явному "Reveal".
 
-**Status:** **works** (resolver fix landed: subset semantics + ambiguity exception). Preview-tab integration with new semantics: **works** (rows with ambiguity highlighted red). 13 unit tests in `ResolvePipelineTests` cover edge cases.
+**Статус:** **частично → работает**. Оба `/ui/{ws}/config` (Shared) и `/ui/{ws}/{key}/config` (project-scoped, авто-фильтр `project:{key}`) запроутены. Резолв через API использует subset-семантику. Editor пока требует от пользователя ввести тег `project:{key}` руками (авто-добавление при сохранении — follow-up step 8). End-to-end через API покрыто `KpVotesOnboardingTests.S4_AddConfigBindings_ResolveViaApi`.
 
 ---
 
-## S-7: Cross-project log search
+## S-5: Ротация общего секрета между петами
 
-**Goal:** Find a specific request ID across all pets, not just one.
+**Цель:** поменять значение, используемое несколькими петами (например, Twitter API key, общий для twitter-poster и meme-bot).
 
-**Trigger:** Customer support: "tracking id ABCD123 failed somewhere — which pet?"
+**Триггер:** старый ключ скомпрометирован / квота изменилась.
 
-**Steps:**
-1. Sidebar → Logs (all) → `/ui/{ws}/logs`.
+**Шаги:**
+1. Сайдбар → Shared config → `/ui/{ws}/config` (workspace-level shared bindings — без project-тега).
+2. Находит биндинг через Path-фильтр или скролл.
+3. Клик Edit → `/ui/{ws}/config/editor/{id}`.
+4. Меняет Value. Tags не трогает (нет `project:*`).
+5. Submit. Таб History показывает изменение.
+6. Петы подхватят новое значение на следующем poll'е (или при следующем старте процесса — зависит от их config-fetch стратегии).
+
+**Результат:** одна правка распространяется на все петы, которые резолвят этот path с матчинговыми тегами.
+
+**Краевые случаи:**
+- Случайно добавил `project:` тег к shared-биндингу → на сохранении UI показывает warning "это больше не shared; перенеси на project Config таб".
+- Хочется проверить резолв до того, как считать ротацию завершённой → идёт в таб Preview.
+
+**Статус:** **частично**. Страница shared bindings работает (это workspace-level Config). "Warning при добавлении project-тега" — часть step 8.
+
+---
+
+## S-6: Override конфига под окружение
+
+**Цель:** в проде использовать значение `env:prod`, в dev — `env:dev`, не трогая код пета.
+
+**Триггер:** пет работает в dev, но в проде нужен другой URL / timeout / endpoint.
+
+**Шаги:**
+1. Страница проекта → таб Config → `/ui/{ws}/{key}/config`.
+2. "+ New binding" → Path=`api/base-url`, Value=`https://prod.example.com`, Tags=`project:{key}, env:prod`. Submit.
+3. Повторяет с `env:dev` для того же Path.
+4. Кликает Preview сабтаб → `/ui/{ws}/{key}/config/preview`.
+5. Вводит теги `project:{key} env:prod` (или `env:dev`) → видит, какой биндинг резолвится + его specificity.
+
+**Результат:** резолвер детерминированно выбирает env-специфичный биндинг. Subset-семантика — если в запросе `env:prod`, матчатся только биндинги, чьи теги — подмножество запроса; биндинг с `env:dev` НЕ матчится для prod-запроса.
+
+**Краевые случаи:**
+- Создал два биндинга с идентичными тегами на одном path → резолв кидает `AmbiguousConfigException` → API 409; UI Preview помечает строку красным с candidate IDs.
+- Запрашивает `env:staging`, но staging-биндинга нет → fallback на биндинг с минимальным числом тегов (например, только `project:{key}`).
+
+**Статус:** **работает** (фикс резолвера приехал: subset-семантика + ambiguity exception). Preview таб с новой семантикой: **работает** (строки с ambiguity подсвечены красным). 13 unit-тестов в `ResolvePipelineTests` покрывают edge cases.
+
+---
+
+## S-7: Кросс-проектный поиск по логам
+
+**Цель:** найти конкретный request ID по всем петам, а не одному.
+
+**Триггер:** customer support: "трекинг-ID ABCD123 где-то навернулся — у какого пета?"
+
+**Шаги:**
+1. Сайдбар → Logs (all) → `/ui/{ws}/logs`.
 2. KQL: `where Properties has 'ABCD123' | take 100`.
-3. Results show events from any pet in this workspace, grouped or annotated by ServiceKey/ProjectKey.
+3. Результаты показывают события из любого пета в этом воркспейсе, аннотированные ServiceKey/ProjectKey.
 
-**Outcome:** User finds the right pet without guessing which one to open.
+**Результат:** пользователь находит нужный пет, не угадывая, какой открывать.
 
-**Edge cases:**
-- Many results → use `take` to limit; sort by timestamp.
-- User wants to drill in → click the ProjectKey/ServiceKey badge on a row to filter further (jumps to that project's Logs).
+**Краевые случаи:**
+- Много результатов → `take` для лимита; сортировка по timestamp.
+- Хочется углубиться → клик по бейджу ProjectKey/ServiceKey на строке → фильтр (прыжок в Logs того проекта).
 
-**Status:** **partial**. Route `/ui/{ws}/logs` wired via AddPageRoute; the existing `Logs/Index` page handles the cross-project case (projectKey null). Cross-project-specific result presentation (annotating each row with project) is a follow-up.
-
----
-
-## S-8: Switch workspace
-
-**Goal:** Move from "personal" workspace to a shared one (when friends arrive) or to `$system`.
-
-**Trigger:** Multi-tenant usage.
-
-**Steps:**
-1. Sidebar → top of sidebar, workspace switcher (a daisyUI select).
-2. Pick another workspace key → form auto-submits to `/api/ui/workspace`.
-3. Server validates membership, sets `yb_ws` cookie, redirects to `/ui/{newWs}` (Status).
-
-**Outcome:** All workspace-scoped pages now show new ws's data.
-
-**Edge cases:**
-- User picks workspace they're not a member of → 403 (form choices are filtered, so this is only via URL hacking).
-- One workspace only → switcher still shows (per "explicit > implicit"); single option.
-
-**Status:** **works**. Switcher moved into sidebar header in Layout V2; visible even when user has one workspace (per "explicit > implicit").
+**Статус:** **частично**. Роут `/ui/{ws}/logs` запроучен через AddPageRoute; существующий `Logs/Index` обрабатывает кросс-проектный случай (projectKey = null). Презентация результатов с аннотацией каждой строки проектом — follow-up.
 
 ---
 
-## S-9: Create a new workspace
+## S-8: Переключение воркспейса
 
-**Goal:** Set up a workspace for a separate context (e.g., a friend signs up; or user wants isolated playground).
+**Цель:** перейти из "personal" воркспейса в shared (когда появятся друзья) или в `$system`.
 
-**Trigger:** Onboarding a friend; or wanting clean separation.
+**Триггер:** multi-tenant usage.
 
-**Steps:**
-1. Sysadmin: top-bar → System (cog icon) → `/ui/sys`.
-2. Click Workspaces → `/ui/sys/workspaces`.
-3. "New Workspace" form → fill Key, Name, Description → Submit.
-4. New workspace appears. Add members via WorkspaceDetail page.
+**Шаги:**
+1. Сайдбар → сверху workspace switcher (daisyUI select).
+2. Выбирает другой workspace key → форма автосабмитится на `/api/ui/workspace`.
+3. Сервер валидирует membership, ставит cookie `yb_ws`, редиректит на `/ui/{newWs}` (Status).
 
-**Outcome:** New workspace exists; members can switch to it.
+**Результат:** все workspace-scoped страницы теперь показывают данные нового воркспейса.
 
-**Edge cases:**
-- Workspace key collides → form error.
-- Workspace key is `sys` → reserved, form error.
-- User without sysadmin claim → page hidden / 403.
+**Краевые случаи:**
+- Выбрал воркспейс, в котором не member → 403 (опции в форме фильтруются, так что только через URL-хак).
+- Только один воркспейс → switcher всё равно виден (по правилу "явное > неявное"); единственная опция.
 
-**Status:** **partial**. Workspaces list page works. Sysadmin claim gating is not yet implemented (everyone sees the link).
+**Статус:** **работает**. Switcher переехал в шапку сайдбара в Layout V2; виден даже когда у пользователя один воркспейс.
 
 ---
 
-## S-10: Delete a pet
+## S-9: Создать новый воркспейс
 
-**Goal:** Remove an obsolete pet-project.
+**Цель:** настроить воркспейс для отдельного контекста (например, регистрируется друг; или хочется изолированную песочницу).
 
-**Trigger:** Project is dead; cleaning up.
+**Триггер:** онбординг друга; или желание чистого разделения.
 
-**Steps:**
-1. Project page → Settings → `/ui/{ws}/{key}/settings`.
-2. Scroll to "Danger zone" → "Delete project" button.
-3. Confirmation: type project key to confirm (typed-name confirmation, not just OK/Cancel).
-4. Submit → project + all its services + API keys deleted. Logs and config bindings: TBD (retention or cascade — currently NOT cascaded; orphan data stays until log retention purges it).
-5. Redirect to `/ui/{ws}` (Status).
+**Шаги:**
+1. Sysadmin: top-bar → System (cog) → `/ui/sys`.
+2. Клик Workspaces → `/ui/sys/workspaces`.
+3. Форма "New Workspace" → Key, Name, Description → Submit.
+4. Новый воркспейс появляется. Добавляет членов через WorkspaceDetail.
 
-**Outcome:** Project gone from UI.
+**Результат:** новый воркспейс существует; члены могут переключиться.
 
-**Edge cases:**
-- Project is `$system` → undeletable per invariant; button disabled.
-- User mistypes confirmation → no-op.
+**Краевые случаи:**
+- Workspace key уже занят → ошибка формы.
+- Workspace key = `sys` → зарезервирован, ошибка.
+- Пользователь без sysadmin claim → страница скрыта / 403.
 
-**Status:** **stub**. Delete handler exists in old ProjectDetail page but the typed-confirmation UI isn't implemented yet; current is `onclick="return confirm(...)"`.
-
----
-
-## S-11: Manage workspace members
-
-**Goal:** Add / remove users from a workspace; assign roles.
-
-**Trigger:** Friend signs up; old member leaves.
-
-**Steps:**
-1. Sidebar → Workspace → `/ui/{ws}/admin` → Members sub-tab.
-2. List of members with roles (Admin/Member/Viewer).
-3. "Invite user" → fill email or pick existing user → assign role → Submit.
-4. To remove: click x on member row → confirm.
-
-**Outcome:** Membership matrix updated.
-
-**Edge cases:**
-- Removing yourself → warning ("you'll lose access to this workspace").
-- Promoting/demoting yourself → allowed but warns.
-- Workspace must have ≥1 Admin at all times.
-
-**Status:** **partial**. Page exists at `/ui/{ws}/admin/members` (renamed from old `/ui/admin/workspaces/{ws}/users`). `/ui/{ws}/admin` resolves to the same Members page as a temporary alias (step-10 follow-up will add a tabbed parent with Members + Settings sub-tabs). Invite flow is TBD (no user registration UI yet).
+**Статус:** **частично**. Страница workspaces работает. Sysadmin claim gating ещё не реализован (ссылку видят все).
 
 ---
 
-## S-12: Bootstrap an AI agent for a pet
+## S-10: Удалить пет
 
-**Goal:** Give a coding agent (claude code, factory droid, etc.) credentials so it can develop the pet with logs+config visibility.
+**Цель:** убрать устаревший пет-проект.
 
-**Trigger:** Starting a new feature; want to delegate to an agent.
+**Триггер:** проект мёртв; чистка.
 
-**Steps:**
-1. Project page → Settings → API Keys section.
-2. "Issue Agent Key" — special variant: temporary (1h TTL), reduced scope (`logs:ingest`, `config:read`).
-3. Copy key + paste link to instruction page (`/agent`) into agent's prompt.
-4. Agent fetches `/agent` page, reads how to ingest logs and read config.
-5. Agent develops the pet, can read its own logs back to debug.
-6. After feature merged: rotate / revoke the agent key.
+**Шаги:**
+1. Страница проекта → Settings → `/ui/{ws}/{key}/settings`.
+2. Скроллит в "Danger zone" → кнопка "Delete project".
+3. Подтверждение: ввести ключ проекта (typed-name confirmation, не просто OK/Cancel).
+4. Submit → проект + все его сервисы + API-ключи удалены. Логи и config bindings: TBD (retention или cascade — сейчас НЕ каскадятся; orphan-данные остаются до retention purge).
+5. Редирект на `/ui/{ws}` (Status).
 
-**Outcome:** Agent works against YobaBox with bounded credentials and self-documented instructions.
+**Результат:** проект ушёл из UI.
 
-**Edge cases:**
-- Agent key TTL expires mid-session → agent's next call returns 401 → agent reports back to user → user re-mints key.
-- Agent attempts a scope it doesn't have → 403 with clear error mentioning required scope.
+**Краевые случаи:**
+- Проект — `$system` → неудаляемый по инварианту; кнопка disabled.
+- Опечатался в подтверждении → no-op.
 
-**Status:** **not yet**. `/agent/` prefix is reserved documentary-only (see `doc/url-conventions` in `project-url-conventions` memory). No endpoints yet. Major next module after IA rework — see `~/.claude/plans/proud-waddling-naur.md` Module roadmap.
+**Статус:** **заготовка**. Delete handler в старой ProjectDetail есть, но typed-confirmation UI пока не реализован; сейчас `onclick="return confirm(...)"`.
 
 ---
 
-## S-13: Sysadmin — global retention defaults
+## S-11: Управление членами воркспейса
 
-**Goal:** Change the default log retention days for all workspaces (with per-project overrides).
+**Цель:** добавить / убрать пользователей в воркспейсе; назначить роли.
 
-**Trigger:** Disk usage growing; want longer/shorter retention.
+**Триггер:** регистрируется друг; уходит старый член.
 
-**Steps:**
+**Шаги:**
+1. Сайдбар → Workspace → `/ui/{ws}/admin` → саб-таб Members.
+2. Список членов с ролями (Admin/Member/Viewer).
+3. "Invite user" → email или выбор существующего → роль → Submit.
+4. Чтобы убрать: x на строке члена → подтвердить.
+
+**Результат:** matrix membership обновлена.
+
+**Краевые случаи:**
+- Удаление себя → warning ("потеряешь доступ к воркспейсу").
+- Понижение/повышение себя → разрешено, но warning.
+- В воркспейсе должно быть ≥1 Admin всегда.
+
+**Статус:** **частично**. Страница на `/ui/{ws}/admin/members` (переименована из старой `/ui/admin/workspaces/{ws}/users`). `/ui/{ws}/admin` резолвится в ту же Members-страницу как временный алиас (follow-up step 10 добавит tabbed parent с Members + Settings). Invite flow TBD (пока нет UI регистрации пользователей).
+
+---
+
+## S-12: Поднять AI-агента для пета
+
+**Цель:** дать coding-агенту (claude code, factory droid и т.п.) учётку, чтобы он мог разрабатывать пет с visibility логов + конфига.
+
+**Триггер:** старт новой фичи; хочется делегировать агенту.
+
+**Шаги:**
+1. Страница проекта → Settings → секция API Keys.
+2. "Issue Agent Key" — особый вариант: temporary (1h TTL), reduced scope (`logs:ingest`, `config:read`).
+3. Копирует ключ + вставляет ссылку на страницу инструкций (`/agent`) в промпт агента.
+4. Агент тянет `/agent` страницу, читает как лить логи и читать конфиг.
+5. Агент разрабатывает пет, может читать свои логи для отладки.
+6. После merge фичи: ротация / отзыв agent key.
+
+**Результат:** агент работает против YobaBox с bounded credentials и self-documented инструкциями.
+
+**Краевые случаи:**
+- TTL agent key истёк посреди сессии → следующий вызов 401 → агент репортит → user чеканит новый.
+- Агент пробует scope, которого нет → 403 с понятной ошибкой про нужный scope.
+
+**Статус:** **пока нет**. `/agent/` префикс зарезервирован документально (см. `project-url-conventions` memory). Эндпоинтов пока нет. Следующий приоритет после IA-рерайта — см. `~/.claude/plans/proud-waddling-naur.md` Module roadmap.
+
+---
+
+## S-13: Sysadmin — глобальные дефолты retention
+
+**Цель:** поменять дефолтный retention для логов по всем воркспейсам (с per-project override).
+
+**Триггер:** растёт занятость диска; хочется длиннее/короче retention.
+
+**Шаги:**
 1. Top-bar → System cog → `/ui/sys`.
-2. Click Retention → `/ui/sys/retention`.
-3. Edit "Default retention days" and "System retention days" inputs → Save.
+2. Клик Retention → `/ui/sys/retention`.
+3. Правит "Default retention days" и "System retention days" → Save.
 
-**Outcome:** Defaults propagate to all workspaces that don't have an override.
+**Результат:** дефолты раскатываются на все воркспейсы без override'а.
 
-**Edge cases:**
-- Per-project override: project's Settings tab has its own Retention days input that takes precedence over workspace default.
+**Краевые случаи:**
+- Per-project override: у Settings таба проекта свой Retention days input, который имеет приоритет над workspace default'ом.
 
-**Status:** **partial**. Page exists, gating by sysadmin claim not yet enforced.
+**Статус:** **частично**. Страница есть, sysadmin claim gating не enforced.
 
 ---
 
-## Test coverage mapping
+## Привязка к тестам
 
-E2E tests in `tests/YobaBox.E2ETests/` map to stories like this:
+E2E-тесты в `tests/YobaBox.E2ETests/` мапятся к стори так:
 
-| Test class | Stories covered |
+| Тестовый класс | Стори |
 |---|---|
 | `KpVotesOnboardingTests` | S-3 (project create) + S-4 (config bindings) + S-2 (log ingest + view) |
 | `ConfigResolvePriorityTests` | S-6 (env override) |
-| `ApiKeyScopeTests` | S-3 step 7 (scope-bound key) |
+| `ApiKeyScopeTests` | S-3 шаг 7 (scope-bound key) |
 | `ConfigCrudTests` | S-4 + S-5 |
-| `ConfigPageTests` | S-4 navigation surface |
+| `ConfigPageTests` | S-4 поверхность навигации |
 | `LogsPageTests` | S-2 |
 | `DashboardTests` | S-1 |
-| `ProjectDetailTests` | S-3 (services + keys via Settings tab) |
-| `DataTableTests` | (data module, not yet covered in stories; matches S-3 step variant for data tables) |
-| `LoginTests` | (auth — implicit prerequisite for all stories) |
+| `ProjectDetailTests` | S-3 (services + keys через Settings таб) |
+| `DataTableTests` | (data module, ещё не в стори; вариант S-3 для data tables) |
+| `LoginTests` | (auth — неявный prerequisite для всех стори) |
 
-After the IA migration, several existing tests reference old URLs (`/ui/admin/projects/...`, `/ui/logs/...`). They need to be ported to the new URL structure. The stories above are the contract.
+После IA-миграции часть существующих тестов ссылаются на старые URL (`/ui/admin/projects/...`, `/ui/logs/...`). Они портированы на новый URL-стек. Стори выше — контракт.
 
-When `/agent/` and Tasks modules land, add S-12 implementation and a new test class. When Data module is rewritten, replace `DataTableTests` story.
+Когда появятся `/agent/` и Tasks модули — добавить реализацию S-12 и новый тестовый класс. Когда переделают Data модуль — заменить `DataTableTests` сторёй.
 
 ---
 
-## Authoring notes
+## Правила написания
 
-- Keep stories short. If a story spans more than ~10 steps, split it.
-- Edge cases are LIMITED to "user-visible failure modes" — not internal error paths.
-- "Status" field is the truth about what's wired up. Update it as code lands.
-- New stories: add the `S-N` ID continuing the sequence; do not re-number existing.
+- Стори держим короткими. Если стори вышла за ~10 шагов — дробим.
+- Краевые случаи — ТОЛЬКО "user-visible failure modes", не внутренние error paths.
+- Поле "Статус" — правда про то, что подключено. Обновляется когда код приземляется.
+- Новые стори: добавляем ID `S-N`, продолжая последовательность; существующие не перенумеровываем.
