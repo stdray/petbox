@@ -11,6 +11,7 @@
 		<ProjectReference Include="..\YobaBox.Config\YobaBox.Config.csproj" />
 		<ProjectReference Include="..\YobaBox.Log.Core\YobaBox.Log.Core.csproj" />
 		<ProjectReference Include="..\YobaBox.Data\YobaBox.Data.csproj" />
+		<ProjectReference Include="..\YobaBox.Dashboard\YobaBox.Dashboard.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

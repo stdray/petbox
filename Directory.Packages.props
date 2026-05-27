@@ -10,6 +10,7 @@
 		<PackageVersion Include="Microsoft.Extensions.Configuration.Abstractions" Version="10.0.6" />
 		<PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="10.0.6" />
 		<PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.6" />
+		<PackageVersion Include="Microsoft.Extensions.Http" Version="10.0.6" />
 		<PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.6" />
 		<PackageVersion Include="Microsoft.Extensions.Options" Version="10.0.6" />
 		<PackageVersion Include="linq2db" Version="6.3.0" />

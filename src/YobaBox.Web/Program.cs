@@ -66,6 +66,13 @@ public partial class Program
 			builder.Services.AddHostedService(sp => sp.GetRequiredService<ChannelIngestionPipeline>());
 			builder.Services.AddHostedService<YobaBox.Log.Core.Retention.RetentionService>();
 		}
+		if (new FeatureFlags(builder.Configuration).IsEnabled("Dashboard"))
+		{
+			builder.Services.Configure<YobaBox.Dashboard.HealthPollerOptions>(
+				builder.Configuration.GetSection("Dashboard"));
+			builder.Services.AddHttpClient();
+			builder.Services.AddHostedService<YobaBox.Dashboard.HealthPoller>();
+		}
 		builder.Services.AddSingleton<FeatureFlags>();
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
 
