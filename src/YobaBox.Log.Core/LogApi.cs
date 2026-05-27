@@ -35,9 +35,8 @@ public static class LogApi
 	static async Task<IResult> IngestClefAsync(
 		HttpContext ctx,
 		YobaBoxDb yobaBoxDb,
-		ILogDbFactory logFactory,
 		CleFParser parser,
-		ITailBroadcaster broadcaster,
+		IIngestionPipeline pipeline,
 		CancellationToken ct)
 	{
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
@@ -76,16 +75,9 @@ public static class LogApi
 			.Select(c => c with { ServiceKey = serviceKey })
 			.ToList();
 
-		var records = candidates
-			.Select(c => LogEntryRecord.FromCandidate(c, LogEntryRecord.ComputeTemplateHash(c.MessageTemplate)))
-			.ToList();
+		await pipeline.IngestAsync(projectKey, candidates, ct);
 
-		var logDb = logFactory.GetLogDb(projectKey);
-		await logDb.LogEntries.BulkCopyAsync(records, ct);
-
-		broadcaster.Publish(projectKey, records);
-
-		return Results.Ok(new { ingested = records.Count, errors = errors.Count });
+		return Results.Ok(new { ingested = candidates.Count, errors = errors.Count });
 	}
 
 	static async Task<IResult> QueryLogsAsync(
@@ -185,9 +177,8 @@ public static class LogApi
 	static async Task<IResult> SeqIngestAsync(
 		HttpContext ctx,
 		YobaBoxDb yobaBoxDb,
-		ILogDbFactory logFactory,
 		CleFParser parser,
-		ITailBroadcaster broadcaster,
+		IIngestionPipeline pipeline,
 		IConfiguration config,
 		CancellationToken ct)
 	{
@@ -211,16 +202,8 @@ public static class LogApi
 			.Select(c => c with { ServiceKey = serviceKey })
 			.ToList();
 
-		var records = candidates
-			.Select(c => LogEntryRecord.FromCandidate(c, LogEntryRecord.ComputeTemplateHash(c.MessageTemplate)))
-			.ToList();
-
-		if (records.Count > 0)
-		{
-			var logDb = logFactory.GetLogDb("$system");
-			await logDb.LogEntries.BulkCopyAsync(records, ct);
-			broadcaster.Publish("$system", records);
-		}
+		if (candidates.Count > 0)
+			await pipeline.IngestAsync("$system", candidates, ct);
 
 		return Results.Ok();
 	}

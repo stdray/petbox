@@ -54,10 +54,15 @@ public partial class Program
 		builder.Services.AddMemoryCache();
 		builder.Services.AddSingleton<CleFParser>();
 		builder.Services.AddSingleton<ITailBroadcaster, InMemoryTailBroadcaster>();
+		builder.Services.Configure<IngestionOptions>(
+			builder.Configuration.GetSection("Ingestion"));
 		builder.Services.Configure<YobaBox.Log.Core.Retention.RetentionOptions>(
 			builder.Configuration.GetSection("Retention"));
 		if (new FeatureFlags(builder.Configuration).IsEnabled("Logging"))
 		{
+			builder.Services.AddSingleton<ChannelIngestionPipeline>();
+			builder.Services.AddSingleton<IIngestionPipeline>(sp => sp.GetRequiredService<ChannelIngestionPipeline>());
+			builder.Services.AddHostedService(sp => sp.GetRequiredService<ChannelIngestionPipeline>());
 			builder.Services.AddHostedService<YobaBox.Log.Core.Retention.RetentionService>();
 		}
 		builder.Services.AddSingleton<FeatureFlags>();
