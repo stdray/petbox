@@ -16,6 +16,18 @@ URL placeholders use `{ws}` for workspace key, `{key}` for project key, `{svc}` 
 
 ---
 
+## Coverage summary (as of 2026-05-27 IA migration)
+
+- **Verified end-to-end (unit + E2E)**: S-2, S-3, S-4, S-6, S-8
+- **Verified UI-only (E2E)**: S-1
+- **Stub / partial**: S-5, S-7, S-9, S-10, S-11, S-13 — code paths exist or routes wired, but no dedicated E2E yet
+- **Not yet**: S-12 (agent module unbuilt)
+
+E2E run: 29 passed, 10 skipped (legacy Editor flow being reworked), 0 failed.
+Unit + integration: 214 passed.
+
+---
+
 ## S-1: Glance at all pets — "is everything alive?"
 
 **Goal:** Quick health check across all my pet-projects.
@@ -34,7 +46,7 @@ URL placeholders use `{ws}` for workspace key, `{key}` for project key, `{svc}` 
 - Pet has no services registered → card shows "No services registered."
 - Service health unknown → grey badge (Dashboard module not yet collecting data per pet → mostly grey today; see Status: partial).
 
-**Status:** **partial**. Page renders project cards + service tables. Health badges show but real health collection (pull/push) is not wired up — most show Unknown.
+**Status:** **partial → works (UI)**. Page renders project cards + service tables; project name on the card is a link to the project Logs view. Health badges show but real health collection (pull/push) is not wired up — most show Unknown. Verified by `DashboardTests`, `KpVotesOnboardingTests.S3_CreateProject_AppearsInSidebarAndStatus`.
 
 ---
 
@@ -60,7 +72,7 @@ URL placeholders use `{ws}` for workspace key, `{key}` for project key, `{svc}` 
 - User wants to bookmark a useful query → clicks "Save as…" with a name → it appears in saved-queries chips.
 - User wants to share the query result → clicks "Share" → gets `/s/{token}` URL.
 
-**Status:** **works**. KQL editor with completions, saved queries, share endpoint — all functional. The path from sidebar/Status to project Logs is direct after the IA rework.
+**Status:** **works**. KQL editor with completions, saved queries, share endpoint — all functional. The path from sidebar/Status to project Logs is direct after the IA rework. Verified by `LogsPageTests` + `KpVotesOnboardingTests.S2_IngestLogs_QueryViaKql`.
 
 ---
 
@@ -90,7 +102,7 @@ URL placeholders use `{ws}` for workspace key, `{key}` for project key, `{svc}` 
 - Service key collides with existing service in same project → form error.
 - User loses API key after closing the page → must mint a new one (cannot reveal again).
 
-**Status:** **partial**. Project create exists. Service create + Key issue exist on the new Settings page (renamed from old ProjectDetail). Reserved-name validation NOT yet implemented (see follow-ups).
+**Status:** **partial → works**. Project create from sidebar `+` → form at `/ui/{ws}/projects/new` → redirect to new project's Logs view. Services + API keys via Settings tab. Reserved-name validation NOT yet implemented. Verified by `KpVotesOnboardingTests.S3_*`, `ProjectDetailTests`.
 
 ---
 
@@ -116,7 +128,7 @@ URL placeholders use `{ws}` for workspace key, `{key}` for project key, `{svc}` 
 - User accidentally creates two bindings for the same path with overlapping tags → on resolve, ambiguity → API returns 409 with candidate IDs. User goes to Preview to debug.
 - Secret value: rendered as `***` in list view; revealed only in Editor with explicit "Reveal" click.
 
-**Status:** **partial**. The shared `/ui/{ws}/config` exists. The **project-scoped** `/ui/{ws}/{key}/config` with auto-filter and auto-tag is **step 8** in the IA migration — not yet split. Today, both URLs would route to the same Shared view.
+**Status:** **partial → works**. Both `/ui/{ws}/config` (Shared) and `/ui/{ws}/{key}/config` (project-scoped, auto-filter `project:{key}`) wired. Resolve via API uses subset semantics. Editor still requires the user to type the `project:{key}` tag (auto-add on save is a step-8 follow-up). Verified end-to-end via API by `KpVotesOnboardingTests.S4_AddConfigBindings_ResolveViaApi`.
 
 ---
 
@@ -163,7 +175,7 @@ URL placeholders use `{ws}` for workspace key, `{key}` for project key, `{svc}` 
 - User creates two bindings with identical tag sets at the same path → resolve throws `AmbiguousConfigException` → API returns 409; UI Preview marks the row red with candidate IDs.
 - User asks for `env:staging` but no staging binding exists → falls back to the binding with fewest tags that's still a subset (e.g., `project:{key}` alone).
 
-**Status:** **works** (resolver fix landed). Preview-tab integration with new semantics: **works**. UI to inspect ambiguity in Preview: **works**.
+**Status:** **works** (resolver fix landed: subset semantics + ambiguity exception). Preview-tab integration with new semantics: **works** (rows with ambiguity highlighted red). 13 unit tests in `ResolvePipelineTests` cover edge cases.
 
 ---
 
@@ -184,7 +196,7 @@ URL placeholders use `{ws}` for workspace key, `{key}` for project key, `{svc}` 
 - Many results → use `take` to limit; sort by timestamp.
 - User wants to drill in → click the ProjectKey/ServiceKey badge on a row to filter further (jumps to that project's Logs).
 
-**Status:** **not yet**. Sidebar link exists but the page is not wired. Step 9 in the IA migration.
+**Status:** **partial**. Route `/ui/{ws}/logs` wired via AddPageRoute; the existing `Logs/Index` page handles the cross-project case (projectKey null). Cross-project-specific result presentation (annotating each row with project) is a follow-up.
 
 ---
 
@@ -205,7 +217,7 @@ URL placeholders use `{ws}` for workspace key, `{key}` for project key, `{svc}` 
 - User picks workspace they're not a member of → 403 (form choices are filtered, so this is only via URL hacking).
 - One workspace only → switcher still shows (per "explicit > implicit"); single option.
 
-**Status:** **works**. Switcher moved into sidebar header in Layout V2.
+**Status:** **works**. Switcher moved into sidebar header in Layout V2; visible even when user has one workspace (per "explicit > implicit").
 
 ---
 
@@ -274,7 +286,7 @@ URL placeholders use `{ws}` for workspace key, `{key}` for project key, `{svc}` 
 - Promoting/demoting yourself → allowed but warns.
 - Workspace must have ≥1 Admin at all times.
 
-**Status:** **partial**. Page exists at `/ui/{ws}/admin/members` (renamed from old `/ui/admin/workspaces/{ws}/users`). The combined `/ui/{ws}/admin` tabbed landing is step 10. Invite flow is TBD (no user registration UI yet).
+**Status:** **partial**. Page exists at `/ui/{ws}/admin/members` (renamed from old `/ui/admin/workspaces/{ws}/users`). `/ui/{ws}/admin` resolves to the same Members page as a temporary alias (step-10 follow-up will add a tabbed parent with Members + Settings sub-tabs). Invite flow is TBD (no user registration UI yet).
 
 ---
 
