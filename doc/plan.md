@@ -737,3 +737,99 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 - yobaconf `IBindingStoreAdmin` интерфейс (используем `IConfigDbFactory` + прямой linq2db)
 - yobaconf `SqliteSchema.cs` (FluentMigrator для main DB + auto-migrate в фабриках)
 - `TagSet` typed VO — оставляем строку `Tags` (резолв уже починен под subset-семантику; рефактор сейчас принесёт больше боли, чем пользы)
+
+---
+
+## Phase 23: Settings taxonomy (L1/L2/L3) [NEW]
+
+Источник правды: `doc/settings-taxonomy.md`. Цель — генерик `Settings` таблица + рефлексивный UI вместо точечных таблиц вроде `RetentionPolicies`. После этой фазы любая новая «крутилка» добавляется как `[Setting]`-property на C#-record без миграций.
+
+Может идти параллельно с Phase 22 — ports не пересекаются с этой работой.
+
+### 23.1 — Foundation: Settings table + resolver
+
+- [ ] `M0XX_Settings.cs` миграция: `Settings(Scope, ScopeKey, Path, Type, Value, UpdatedAt, UpdatedBy)`, PK `(Scope, ScopeKey, Path)`
+- [ ] `YobaBox.Core/Settings/Scope.cs` — enum `System/Workspace/Project/Service/User/Membership`
+- [ ] `YobaBox.Core/Settings/SettingAttribute.cs` — `TopLevel`, `Key`, `Description`
+- [ ] `YobaBox.Core/Settings/ISettingsResolver.cs` + реализация:
+  - `Get<T>(deepestScope, deepestScopeKey)` — default-init T, для каждого `[Setting]`-свойства ходит вверх до `TopLevel`, первое найденное побеждает
+  - `Set<T>(scope, scopeKey, diff)` — пишет только изменённые свойства
+  - `mapKey(scope, deepestScopeKey)` — Project→workspaceKey, Service→`{project}/{service}`, Membership→`{userId}:{ws}` + раздельный обход по User и Workspace
+- [ ] Encryption для `type=secret` — через `ISecretEncryptor` на read/write пути; в `Value` хранится `base64(cipher+iv+tag)`
+- [ ] Sysadmin claim source — решить (env-флаг? первый юзер? config?); до решения весь sysadmin-gating wired через `false`-stub
+
+### 23.2 — Reflection-based UI
+
+- [ ] `Pages/Shared/_SettingsForm.cshtml` partial — принимает `(record type, scope, scopeKey)`:
+  - Резолвит запись через `ISettingsResolver`
+  - Reflects каждое `[Setting]`-property: type → input (number/text/select/checkbox/password+reveal/textarea)
+  - Permission gate — скрывает свойства где `TopLevel > currentScope`
+  - Submit — diff против резолвнутых значений, пишет только изменения в `Settings` при `currentScope`
+- [ ] `Pages/Shared/_SettingsFormHandler.cs` — общий POST-обработчик, который сабмит формы для любого record-типа
+
+### 23.3 — Migration: убрать RetentionPolicies, ввести LogSettings
+
+- [ ] `YobaBox.Log.Core/Settings/LogSettings.cs`:
+  ```csharp
+  public sealed record LogSettings
+  {
+      [Setting(TopLevel = Scope.Workspace, Key = "log.retention.days")]
+      public int RetentionDays { get; init; } = 20;
+
+      [Setting(TopLevel = Scope.System, Key = "log.retention.sizeBytes")]
+      public long RetentionSize { get; init; } = 40_000_000;
+  }
+  ```
+- [ ] `RetentionService` читает `ISettingsResolver.Get<LogSettings>(Scope.Project, projectKey).RetentionDays` вместо запроса в `RetentionPolicies`
+- [ ] `M0XX_DropRetentionPolicies.cs` — `DROP TABLE RetentionPolicies` (данные не переносим, дефолт стартует заново)
+- [ ] Убрать `Retention` section из `appsettings.json`
+- [ ] Убрать `Pages/Admin/Retention.cshtml(.cs)` — заменяется leaf-страницей `LogSettings` ниже
+- [ ] Убрать `Models/RetentionPolicy.cs` + соответствующий маппинг в `YobaBoxDb`
+
+### 23.4 — Auto-generated defaults pages
+
+- [ ] `Pages/Sys/Defaults.cshtml` — `/ui/sys/defaults`. Reflection находит все `[Setting]` с `TopLevel >= System`, группирует по типу записи, рендерит `_SettingsForm(type, Scope.System, "$")` на группу
+- [ ] `Pages/Workspace/Admin/Defaults.cshtml` — `/ui/{ws}/admin/defaults`. То же при `TopLevel >= Workspace`, `scope=workspace`
+- [ ] `Pages/Workspace/Admin/Projects/Log.cshtml` — `/ui/{ws}/admin/projects/{key}/log`. Leaf-страница `LogSettings` при `scope=project` — каноническая edit-страница группы
+
+### 23.5 — Admin area separation
+
+- [ ] `Pages/Shared/_AdminLayout.cshtml` — отдельный layout с admin-sidebar
+- [ ] Admin-sidebar с секциями (URL-aware highlight):
+  - WORKSPACE: Info / Members / Projects / Shared config / Defaults
+  - PROJECT (когда в project-admin): Info / Log settings / Services / API keys / Data tables
+  - SYSTEM (если sysadmin): Workspaces / Users / Defaults
+  - ACCOUNT: Profile / Security / Preferences
+- [ ] Route миграция (см. `doc/settings-taxonomy.md` секция 4):
+  - `/ui/{ws}/{key}/settings` → `/ui/{ws}/admin/projects/{key}/info` + sub-pages
+  - `/ui/{ws}/{key}/data` → `/ui/{ws}/admin/projects/{key}/data`
+  - `/ui/{ws}/admin/settings` → `/ui/{ws}/admin/info`
+  - `/ui/sys/retention` → `/ui/sys/defaults` (auto-gen)
+- [ ] Удалить `Settings` tab из `_ProjectTabs`; добавить "→ Admin" link справа сверху на project page
+- [ ] `_AdminLayout` требует `[Authorize]`; каждая admin-страница enforce-ит свою policy (sysadmin / ws-admin / ws-member / self)
+
+### 23.6 — Self-service `/ui/me/*`
+
+- [ ] `Pages/Me/Account.cshtml` — `/ui/me/account` — username (read-only пока), смена не реализована
+- [ ] `Pages/Me/Security.cshtml` — `/ui/me/security` — смена пароля (форма: old + new + confirm)
+- [ ] `Pages/Me/Preferences.cshtml` — `/ui/me/preferences` — `UiSettings` (theme, defaultHome) через `_SettingsForm(typeof(UiSettings), Scope.User, userId)`
+- [ ] `YobaBox.Core/Settings/UiSettings.cs`:
+  ```csharp
+  public sealed record UiSettings
+  {
+      [Setting(TopLevel = Scope.User, Key = "ui.theme")]
+      public Theme Theme { get; init; } = Theme.Dark;
+
+      [Setting(TopLevel = Scope.User, Key = "ui.defaultHome")]
+      public DefaultHome DefaultHome { get; init; } = DefaultHome.Status;
+  }
+  ```
+- [ ] Применение `UiSettings.Theme` к `data-theme` в `_Layout`
+- [ ] Применение `DefaultHome` после login (`/ui/{ws}` vs `/ui/{ws}/{lastProject}` vs `/ui/{ws}/logs`)
+
+### 23.7 — Follow-ups (вне фазы)
+
+- [ ] Master key rotation CLI: `dotnet run -- --rotate-master-key <old> <new>` — перешифровка всех `type=secret` строк в `Settings` + всех `BindingKind=Secret` в `ConfigBindings`
+- [ ] Reserved path prefix validator на `SettingAttribute` (`auth.*`, `sys.*` → sysadmin-only write)
+- [ ] `[SettingsSection]` group attribute если рефлексивная группировка по record-type перестанет хватать
+- [ ] L1 кандидаты-на-перенос-в-L2 (мониторим): пока ничего; шкаф L2 проверяется на будущих фичах
