@@ -645,6 +645,8 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 
 Цель: закрыть последние пробелы относительно источников, чтобы yobaconf/yobalog можно было архивировать. Lightpanda НЕ берём (остаёмся на Playwright + Chromium).
 
+**Идёт ПЕРЕД Phase 23 (settings taxonomy)** — все новые tunable'ы Phase 22 кладутся стандартным `appsettings.json` + `IOptions<T>`. Phase 23 потом перевезёт их **все разом** в L2. Делать частичную миграцию во время Phase 22 — двойная работа.
+
 Работы разбиты на волны. Внутри волны порядок гибкий.
 
 ### Wave 1 — Backend ingest (изолировано от UI/IA)
@@ -652,7 +654,7 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 #### 22.1 — ChannelIngestionPipeline `[PORT yobalog/Ingestion/]`
 
 - [ ] `YobaBox.Log.Core/Ingestion/IIngestionPipeline.cs`
-- [ ] `YobaBox.Log.Core/Ingestion/IngestionOptions.cs` (ChannelCapacity, MaxBatchSize)
+- [ ] `YobaBox.Log.Core/Ingestion/IngestionOptions.cs` (ChannelCapacity, MaxBatchSize) — биндится из `Ingestion:*` в `appsettings.json` через `IOptions<T>`. Phase 23 перевезёт в L2.
 - [ ] `YobaBox.Log.Core/Ingestion/ChannelIngestionPipeline.cs` — per-project bounded channel + writer-loop с batched `BulkCopyAsync` + Publish в `ITailBroadcaster`. `IHostedService` для graceful drain на shutdown.
 - [ ] `YobaBox.Log.Core/Ingestion/IngestionLog.cs` — `LoggerMessage` partial для AppendBatchFailed/ShutdownTimedOut
 - [ ] `YobaBox.Log.Core/Observability/ActivitySources.cs` `[PORT yobalog/Observability/Tracing.cs]` — `ActivitySources.Ingestion` + `.Retention` для OTel span'ов
@@ -661,7 +663,7 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 
 #### 22.2 — SystemLogger direct-to-DB `[PORT yobalog/SelfLogging/]`
 
-- [ ] `YobaBox.Log.Core/SelfLogging/SystemLoggerOptions.cs` — ServiceKey, MinLevel, FlushIntervalMs
+- [ ] `YobaBox.Log.Core/SelfLogging/SystemLoggerOptions.cs` — ServiceKey, MinLevel, FlushIntervalMs — биндится из `SelfLogging:*` в `appsettings.json`. Phase 23 перевезёт в L2.
 - [ ] `YobaBox.Log.Core/SelfLogging/SystemLogger.cs` — `ILogger` записывающий в `IIngestionPipeline` напрямую (без HTTP roundtrip)
 - [ ] `YobaBox.Log.Core/SelfLogging/SystemLoggerProvider.cs`
 - [ ] `YobaBox.Log.Core/SelfLogging/SystemLogFlusher.cs` — `IHostedService` для финального flush на shutdown
@@ -706,7 +708,7 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 - [ ] Для каждого `Service.Url`: `HEAD` (или `GET /health` если path заканчивается на `/health`) с 5s timeout; 2xx → `Healthy`, 5xx → `Degraded`, timeout/connect-error → `Down`
 - [ ] Для `HealthModel=Push` — `Health=Down` если `CheckedAt` старше TTL (по умолчанию 2× ожидаемого интервала; пока 5min)
 - [ ] Обновлять `Service.Health` + `Service.CheckedAt` в `YobaBoxDb`
-- [ ] Интервал опроса: 30s default (`Dashboard:HealthPollIntervalSeconds` в appsettings)
+- [ ] Интервал опроса: 30s default (`Dashboard:HealthPollIntervalSeconds` в appsettings) — Phase 23 перевезёт в L2.
 - [ ] Регистрация под `Features:Dashboard`
 
 #### 22.7 — CompositeApiKeyStore + ConfigApiKeyStore `[PORT yobaconf/Auth/]`
@@ -742,9 +744,9 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 
 ## Phase 23: Settings taxonomy (L1/L2/L3) [NEW]
 
-Источник правды: `doc/settings-taxonomy.md`. Цель — генерик `Settings` таблица + рефлексивный UI вместо точечных таблиц вроде `RetentionPolicies`. После этой фазы любая новая «крутилка» добавляется как `[Setting]`-property на C#-record без миграций.
+Источник правды: `doc/settings-taxonomy.md`. Цель — генерик `Settings` таблица + рефлексивный UI вместо точечных таблиц вроде `RetentionPolicies` И вместо разбросанных `IOptions<T>`-секций в `appsettings.json`. После этой фазы любая новая «крутилка» добавляется как `[Setting]`-property на C#-record без миграций.
 
-Может идти параллельно с Phase 22 — ports не пересекаются с этой работой.
+**Идёт ПОСЛЕ Phase 22.** Все tunable'ы введённые в 22 (`IngestionOptions`, `SystemLoggerOptions`, `Dashboard:HealthPollIntervalSeconds`) перевозятся в L2 разом в одной фазе вместе с уже существующими (`RetentionOptions`). Частичная миграция «по одной» — двойная работа, поэтому мы её избегаем.
 
 ### 23.1 — Foundation: Settings table + resolver
 
@@ -767,7 +769,18 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
   - Submit — diff против резолвнутых значений, пишет только изменения в `Settings` при `currentScope`
 - [ ] `Pages/Shared/_SettingsFormHandler.cs` — общий POST-обработчик, который сабмит формы для любого record-типа
 
-### 23.3 — Migration: убрать RetentionPolicies, ввести LogSettings
+### 23.3 — Mass migration: все tunable'ы из appsettings + RetentionPolicies → L2
+
+Одна фаза перевозит **всё накопленное** на L2 одним проходом.
+
+**Драп точечных хранилищ:**
+
+- [ ] `M0XX_DropRetentionPolicies.cs` — `DROP TABLE RetentionPolicies` (данные не переносим, дефолт стартует заново)
+- [ ] Удалить `Models/RetentionPolicy.cs` + маппинг в `YobaBoxDb`
+- [ ] Удалить `Pages/Admin/Retention.cshtml(.cs)` — заменяется leaf-страницей `LogSettings` ниже
+- [ ] Удалить из `appsettings.json` секции: `Retention:*`, `Ingestion:*`, `SelfLogging:*` (кроме `Seq:SelfLog:Enabled/ServerUrl/ApiKey` — это env-owner), `Dashboard:HealthPollIntervalSeconds`
+
+**Settings-record'ы:**
 
 - [ ] `YobaBox.Log.Core/Settings/LogSettings.cs`:
   ```csharp
@@ -780,11 +793,51 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
       public long RetentionSize { get; init; } = 40_000_000;
   }
   ```
-- [ ] `RetentionService` читает `ISettingsResolver.Get<LogSettings>(Scope.Project, projectKey).RetentionDays` вместо запроса в `RetentionPolicies`
-- [ ] `M0XX_DropRetentionPolicies.cs` — `DROP TABLE RetentionPolicies` (данные не переносим, дефолт стартует заново)
-- [ ] Убрать `Retention` section из `appsettings.json`
-- [ ] Убрать `Pages/Admin/Retention.cshtml(.cs)` — заменяется leaf-страницей `LogSettings` ниже
-- [ ] Убрать `Models/RetentionPolicy.cs` + соответствующий маппинг в `YobaBoxDb`
+- [ ] `YobaBox.Log.Core/Settings/IngestionSettings.cs` (TopLevel=System для обоих):
+  ```csharp
+  [Setting(TopLevel = Scope.System, Key = "log.ingestion.channelCapacity")]
+  public int ChannelCapacity { get; init; } = 10000;
+
+  [Setting(TopLevel = Scope.System, Key = "log.ingestion.maxBatchSize")]
+  public int MaxBatchSize { get; init; } = 500;
+  ```
+- [ ] `YobaBox.Log.Core/Settings/SelfLoggingSettings.cs` (TopLevel=System):
+  ```csharp
+  [Setting(TopLevel = Scope.System, Key = "log.selfLogging.serviceKey")]
+  public string ServiceKey { get; init; } = "yobabox-web";
+
+  [Setting(TopLevel = Scope.System, Key = "log.selfLogging.minLevel")]
+  public LogLevel MinLevel { get; init; } = LogLevel.Information;
+
+  [Setting(TopLevel = Scope.System, Key = "log.selfLogging.flushIntervalMs")]
+  public int FlushIntervalMs { get; init; } = 1000;
+  ```
+- [ ] `YobaBox.Dashboard/Settings/DashboardSettings.cs`:
+  ```csharp
+  [Setting(TopLevel = Scope.System, Key = "dashboard.healthPollIntervalSeconds")]
+  public int HealthPollIntervalSeconds { get; init; } = 30;
+  ```
+
+**Переключение consumer'ов:**
+
+- [ ] `RetentionService`: вместо `IOptions<RetentionOptions>` — `ISettingsResolver.Get<LogSettings>(Scope.Project, projectKey)`
+- [ ] `ChannelIngestionPipeline`: вместо `IOptions<IngestionOptions>` — `ISettingsResolver.Get<IngestionSettings>(Scope.System, "$")`
+- [ ] `SystemLogger*`: вместо `IOptions<SystemLoggerOptions>` — `ISettingsResolver.Get<SelfLoggingSettings>(...)`
+- [ ] `HealthPoller`: вместо `IConfiguration["Dashboard:HealthPollIntervalSeconds"]` — `ISettingsResolver.Get<DashboardSettings>(...)`
+
+**Удалить пустые option-классы:**
+
+- [ ] `RetentionOptions.cs`, `IngestionOptions.cs`, `SystemLoggerOptions.cs` — удалить (их роль теперь играют records выше)
+
+**Что остаётся в appsettings.json (env-owner, не L2):**
+
+- `ConnectionStrings:YobaBox` — connection string
+- `Admin:Username`, `Admin:PasswordHash` — bootstrap admin
+- `YobaBox:MasterKey` (env `YOBABOX_MASTER_KEY`) — master key
+- `Features:Config/Logging/Data/Dashboard` — feature gates
+- `Auth:Mode/RemoteUrl/RemoteApiKey` — auth mode + remote
+- `OpenTelemetry:Enabled/OtlpEndpoint/ServiceName` — OTel sink
+- `Seq:SelfLog:Enabled/ServerUrl/ApiKey/ServiceKey` — Seq sink credentials (если оставляем Seq как fallback)
 
 ### 23.4 — Auto-generated defaults pages
 
