@@ -21,6 +21,18 @@ Empty repository. Template files copied from `wiki/cross-project/templates/dotne
 - **`doc/plan.md`** — phases with checkboxes and progress.
 - **`doc/decision-log.md`** — architectural decisions (newest on top).
 - **`doc/invariants.md`** — copy of `wiki/cross-project/invariants.md`.
+- **`doc/ui-conventions.md`** — canonical UI/component recipes (Tailwind/daisyUI choices, htmx/Alpine boundary, modals, tables, etc.). Consult before building new UI.
+- **`doc/tasks-mcp/`** — bench of real plan/memory operations by coding agents. Used as design input for the future Tasks module. See `doc/tasks-mcp/README.md`.
+
+## Recording plan/memory actions
+
+When an agent (claude-code, factory droid, opencode, oh-my-pi, …) creates, edits, or deletes a plan or memory file while working on this repo, it MUST also append a record under `doc/tasks-mcp/` using the file naming and frontmatter format described in `doc/tasks-mcp/README.md`. Triggers:
+
+- Edits to `doc/plan.md` (project plan).
+- Edits to session plans in `~/.claude/plans/*.md` (or each agent's equivalent location).
+- Edits to memory files in `~/.claude/projects/*/memory/*.md` (or each agent's equivalent location).
+
+One operation per turn → one record file. The point is to accumulate real examples that will inform the design of the YobaBox Tasks module.
 
 ## Target stack
 
