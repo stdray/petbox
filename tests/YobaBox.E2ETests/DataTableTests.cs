@@ -26,7 +26,7 @@ public sealed class DataTableTests(WebAppFixture app, ITestOutputHelper output) 
 
 	async Task EnsureProjectAndKey()
 	{
-		await _page!.GotoAsync("/ui/$system/projects/new");
+		await _page!.GotoAsync("/ui/$system/admin/projects");
 		var hasKpvotes = await _page.GetByTestId("project-row").Filter(new() { HasText = "kpvotes" }).CountAsync();
 		if (hasKpvotes == 0)
 		{

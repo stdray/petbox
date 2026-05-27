@@ -2,11 +2,12 @@
 @model YobaBox.Web.Pages.Admin.RetentionModel
 @{
 	ViewData["Title"] = "Retention";
+	Layout = "_AdminLayout";
 }
 
 <div class="mb-4">
-	<h1 class="text-2xl font-semibold" data-testid="retention-title">Retention</h1>
-	<p class="text-sm opacity-60">Per-project log retention. Sweep runs hourly.</p>
+	<h1 class="text-2xl font-semibold" data-testid="retention-title">Retention defaults</h1>
+	<p class="text-sm opacity-60">Apply globally to projects with no per-project override. Per-project overrides live on each project's Settings tab.</p>
 </div>
 
 <partial name="_SysTabs" />
@@ -15,66 +16,56 @@
 	<div class="card bg-base-200 border border-base-300">
 		<div class="card-body p-3">
 			<div class="text-xs opacity-60 uppercase tracking-wide">$system retention</div>
-			<div class="text-xl font-mono">@Model.SystemRetainDays<span class="text-sm opacity-50"> days</span></div>
+			<div class="text-2xl font-mono" data-testid="retention-system-days">@Model.SystemRetainDays<span class="text-sm opacity-50"> days</span></div>
+			<p class="text-xs opacity-60 mt-1">Applies to <code class="font-mono">$system</code> project logs (yobabox's own).</p>
 		</div>
 	</div>
 	<div class="card bg-base-200 border border-base-300">
 		<div class="card-body p-3">
 			<div class="text-xs opacity-60 uppercase tracking-wide">Default retention</div>
-			<div class="text-xl font-mono">@Model.DefaultRetainDays<span class="text-sm opacity-50"> days</span></div>
+			<div class="text-2xl font-mono" data-testid="retention-default-days">@Model.DefaultRetainDays<span class="text-sm opacity-50"> days</span></div>
+			<p class="text-xs opacity-60 mt-1">Applies to every project without an override.</p>
 		</div>
 	</div>
 </div>
 
-@if (!string.IsNullOrEmpty(Model.ErrorMessage))
-{
-	<div class="alert alert-error mb-3">@Model.ErrorMessage</div>
-}
+<p class="text-xs opacity-60 max-w-3xl mb-4">
+	Defaults are set in <code class="font-mono">appsettings.json</code> under <code class="font-mono">Retention</code>.
+	Editing them at runtime via this UI is a TODO (would require restart-free reload of <code class="font-mono">RetentionOptions</code>).
+</p>
 
-<div class="overflow-x-auto">
-	<table class="table table-sm" data-testid="retention-table">
-		<thead>
-			<tr>
-				<th>Project</th>
-				<th class="w-40">Policy (days)</th>
-				<th class="w-32">Effective</th>
-				<th class="w-64"></th>
-			</tr>
-		</thead>
-		<tbody>
-			@foreach (var (project, policyDays) in Model.Rows)
-			{
-				var effective = policyDays
-					?? (project.Key == "$system" ? Model.SystemRetainDays : Model.DefaultRetainDays);
-				<tr data-testid="retention-row" data-project-key="@project.Key">
-					<td class="font-mono text-xs">@project.Key</td>
-					<td>
-						@if (policyDays is { } d)
-						{
-							<span class="badge badge-sm">@d</span>
-						}
-						else
-						{
-							<span class="text-xs opacity-50">(default)</span>
-						}
-					</td>
-					<td class="text-xs">@effective</td>
-					<td>
-						<form method="post" asp-page-handler="Set" class="flex items-center gap-2">
-							@Html.AntiForgeryToken()
-							<input type="hidden" name="projectKey" value="@project.Key" />
-							<input type="number" name="retainDays" min="1" max="365" value="@effective"
-								class="input input-bordered input-xs w-24" data-testid="retention-input" />
-							<button type="submit" class="btn btn-xs btn-primary" data-testid="retention-set">Set</button>
-							@if (policyDays is not null)
-							{
-								<button type="submit" formaction="?handler=Clear" class="btn btn-xs btn-ghost" data-testid="retention-clear"
-									name="projectKey" value="@project.Key">Reset</button>
-							}
-						</form>
-					</td>
-				</tr>
-			}
-		</tbody>
-	</table>
+<div class="flex items-center gap-3 mb-3">
+	<h2 class="text-lg font-semibold">Project overrides</h2>
+	<span class="badge badge-ghost">@Model.Rows.Count(r => r.PolicyDays is not null)</span>
 </div>
+
+@if (Model.Rows.Count(r => r.PolicyDays is not null) == 0)
+{
+	<div class="text-xs opacity-60 italic" data-testid="retention-no-overrides">No per-project overrides. Set one from the project's Settings tab.</div>
+}
+else
+{
+	<div class="overflow-x-auto max-w-3xl">
+		<table class="table table-sm" data-testid="retention-overrides-table">
+			<thead>
+				<tr>
+					<th>Project</th>
+					<th class="w-32">Override (days)</th>
+					<th class="w-24"></th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var (project, policyDays) in Model.Rows.Where(r => r.PolicyDays is not null))
+				{
+					<tr data-testid="retention-row" data-project-key="@project.Key">
+						<td class="font-mono text-xs">@project.Key</td>
+						<td><span class="badge badge-info badge-sm">@policyDays</span></td>
+						<td>
+							<a href="@Routes.ProjectSettings(project.WorkspaceKey, project.Key)" class="btn btn-xs btn-ghost" data-testid="retention-row-edit">Edit</a>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}

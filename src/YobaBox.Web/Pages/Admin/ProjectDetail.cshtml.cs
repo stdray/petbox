@@ -2,9 +2,11 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.Extensions.Options;
 using YobaBox.Core.Data;
 using YobaBox.Core.Features;
 using YobaBox.Core.Models;
+using YobaBox.Log.Core.Retention;
 
 namespace YobaBox.Web.Pages.Admin;
 
@@ -13,14 +15,20 @@ public sealed class ProjectDetailModel : PageModel
 {
 	readonly YobaBoxDb _db;
 	readonly FeatureFlags _features;
+	readonly RetentionOptions _retentionOptions;
 
-	public ProjectDetailModel(YobaBoxDb db, FeatureFlags features)
+	public ProjectDetailModel(YobaBoxDb db, FeatureFlags features, IOptions<RetentionOptions> retentionOptions)
 	{
 		_db = db;
 		_features = features;
+		_retentionOptions = retentionOptions.Value;
 	}
 
 	public bool DataEnabled => _features.IsEnabled("Data");
+	public int DefaultRetainDays => string.Equals(ProjectKey, "$system", StringComparison.Ordinal)
+		? _retentionOptions.SystemRetainDays
+		: _retentionOptions.DefaultRetainDays;
+	public int? RetentionOverrideDays { get; private set; }
 
 	[BindProperty(SupportsGet = true)]
 	public string WorkspaceKey { get; set; } = string.Empty;
@@ -44,6 +52,44 @@ public sealed class ProjectDetailModel : PageModel
 
 		Services = _db.Services.Where(s => s.ProjectKey == ProjectKey).OrderBy(s => s.Key).ToList();
 		Keys = _db.ApiKeys.Where(k => k.ProjectKey == ProjectKey).OrderByDescending(k => k.CreatedAt).ToList();
+		RetentionOverrideDays = _db.RetentionPolicies
+			.Where(r => r.ProjectKey == ProjectKey)
+			.Select(r => (int?)r.RetainDays)
+			.FirstOrDefault();
+	}
+
+	public async Task<IActionResult> OnPostSetRetentionAsync(int retainDays)
+	{
+		if (retainDays < 1)
+		{
+			ErrorMessage = "Retain days must be ≥ 1.";
+			OnGet();
+			return Page();
+		}
+
+		var now = DateTime.UtcNow;
+		var existing = _db.RetentionPolicies.FirstOrDefault(r => r.ProjectKey == ProjectKey);
+		if (existing is null)
+		{
+			await _db.InsertAsync(new RetentionPolicy
+			{
+				ProjectKey = ProjectKey,
+				RetainDays = retainDays,
+				CreatedAt = now,
+				UpdatedAt = now,
+			});
+		}
+		else
+		{
+			await _db.UpdateAsync(existing with { RetainDays = retainDays, UpdatedAt = now });
+		}
+		return Self();
+	}
+
+	public async Task<IActionResult> OnPostClearRetentionAsync()
+	{
+		await _db.RetentionPolicies.Where(r => r.ProjectKey == ProjectKey).DeleteAsync();
+		return Self();
 	}
 
 	RedirectResult Self() => Redirect(Routes.ProjectSettings(WorkspaceKey, ProjectKey));

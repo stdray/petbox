@@ -26,11 +26,12 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 
 	async Task EnsureProject()
 	{
-		await _page!.GotoAsync("/ui/$system");
+		await TestWorkspace.EnsureAsync(_page!);
+		await _page!.GotoAsync($"/ui/{TestWorkspace.Key}");
 		var hasKpvotes = await _page.GetByTestId("nav-project").Filter(new() { HasText = "kpvotes" }).CountAsync();
 		if (hasKpvotes == 0)
 		{
-			await _page.GotoAsync("/ui/$system/projects/new");
+			await _page.GotoAsync($"/ui/{TestWorkspace.Key}/admin/projects");
 			await _page.GetByTestId("admin-project-create-key").FillAsync("kpvotes");
 			await _page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
 			await _page.GetByTestId("admin-project-create-desc").FillAsync("Test");
@@ -44,7 +45,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		if (_keys.TryGetValue(scopes, out var cached))
 			return cached;
 
-		await _page!.GotoAsync("/ui/$system/kpvotes/settings");
+		await _page!.GotoAsync($"/ui/{TestWorkspace.Key}/kpvotes/settings");
 		await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
 		await _page.GetByTestId("project-key-create-scopes").FillAsync(scopes);
 		await _page.GetByTestId("project-key-create-submit").ClickAsync();

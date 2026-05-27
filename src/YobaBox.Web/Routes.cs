@@ -31,9 +31,8 @@ public static class Routes
 
 	public static string WorkspaceAdmin(string ws) => $"{UiPrefix}/{ws}/admin";
 	public static string WorkspaceAdminMembers(string ws) => $"{UiPrefix}/{ws}/admin/members";
+	public static string WorkspaceAdminProjects(string ws) => $"{UiPrefix}/{ws}/admin/projects";
 	public static string WorkspaceAdminSettings(string ws) => $"{UiPrefix}/{ws}/admin/settings";
-
-	public static string ProjectCreate(string ws) => $"{UiPrefix}/{ws}/projects/new";
 
 	// Project level — /ui/{ws}/{key} IS the Logs view directly (no redirect).
 	public static string Project(string ws, string key) => $"{UiPrefix}/{ws}/{key}";

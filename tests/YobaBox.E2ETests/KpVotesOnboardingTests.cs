@@ -10,7 +10,7 @@ namespace YobaBox.E2ETests;
 [Collection(nameof(UiCollection))]
 public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper output) : IAsyncLifetime
 {
-	const string Ws = "$system";
+	const string Ws = TestWorkspace.Key;
 	const string Pet = "kpvotes";
 
 	IBrowserContext? _ctx;
@@ -185,17 +185,17 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 
 	async Task EnsureProject()
 	{
+		await TestWorkspace.EnsureAsync(_page!);
 		await _page!.GotoAsync($"/ui/{Ws}");
 		var existing = _page.GetByTestId("nav-project").Filter(new() { HasText = Pet });
 		if (await existing.CountAsync() > 0) return;
 
-		await _page.GotoAsync($"/ui/{Ws}/projects/new");
+		await _page.GotoAsync($"/ui/{Ws}/admin/projects");
 		await _page.GetByTestId("admin-project-create-key").FillAsync(Pet);
 		await _page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
 		await _page.GetByTestId("admin-project-create-desc").FillAsync("Kinopoisk → Twitter voting tracker");
 		await _page.GetByTestId("admin-project-create-submit").ClickAsync();
-		// On success redirected to /ui/{ws}/{key} which is the project Logs page.
-		await _page.WaitForURLAsync(u => u.Contains($"/{Pet}"));
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 	}
 
 	async Task EnsureServices()

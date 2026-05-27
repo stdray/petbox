@@ -54,7 +54,7 @@ public sealed class ConfigResolvePriorityTests(WebAppFixture app, ITestOutputHel
 		var hasKpvotes = await _page.GetByTestId("nav-project").Filter(new() { HasText = "kpvotes" }).CountAsync();
 		if (hasKpvotes == 0)
 		{
-			await _page.GotoAsync("/ui/$system/projects/new");
+			await _page.GotoAsync("/ui/$system/admin/projects");
 			await _page.GetByTestId("admin-project-create-key").FillAsync("kpvotes");
 			await _page.GetByTestId("admin-project-create-name").FillAsync("KpVotes");
 			await _page.GetByTestId("admin-project-create-desc").FillAsync("Test project");

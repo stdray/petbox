@@ -2,6 +2,7 @@
 @model YobaBox.Web.Pages.Admin.WorkspaceDetailModel
 @{
 	ViewData["Title"] = Model.Workspace?.Name ?? "Workspace";
+	Layout = "_AdminLayout";
 }
 
 @if (Model.Workspace is null)
