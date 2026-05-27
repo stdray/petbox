@@ -900,3 +900,13 @@ Reframe: tree сам считается "более explicit чем context-bloc
 
 - [x] Обновлены пути в 7 E2E файлах: `ProjectDetailTests`, `LoginTests`, `KpVotesOnboardingTests`, `ApiKeyScopeTests`, `ConfigResolvePriorityTests`, `DataTableTests`, `Infrastructure/TestWorkspace`
 - [x] 29/29 E2E зелёные (10 skipped pre-existing) — для 24.1-24.4 И для 24.5
+
+### 24.6 — Follow-ups [POLISH]
+
+Откладывается до polish-фазы (см. Phase 7 / `~/.claude/plans/proud-waddling-naur.md` "Phase 2: UI polish").
+
+- [ ] Sidebar tree state persistence через переходы. Сейчас каждый клик по ссылке = full page reload → `<details>` сбрасываются на server-rendered defaults (current ws/project развёрнуты, остальные свёрнуты). Варианты:
+  - **hx-boost** на `_AdminLayout` body — клики идут через AJAX, меняется только `<main>`, сайдбар остаётся в DOM с сохранёнными `open` атрибутами. Standard htmx pattern, минимум кода.
+  - **Alpine + localStorage** — каждый `<details>` получает stable id; Alpine синхронизирует open-state с localStorage. Hard reload восстанавливает состояние. Чуть больше JS, но работает универсально (например когда будет tree в `_Layout`).
+  - **Оба** — hx-boost для soft-навигации + Alpine для hard reload.
+  Не делать сейчас: tree работает, server-rendered defaults адекватны. Persistence — quality-of-life улучшение.
