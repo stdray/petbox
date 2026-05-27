@@ -1,4 +1,4 @@
-@page "/ui/logs/{projectKey?}"
+@page "/ui/{workspaceKey}/{projectKey}"
 @model YobaBox.Web.Pages.Logs.IndexModel
 @{
 	ViewData["Title"] = Model.ProjectName is not null ? $"Logs — {Model.ProjectName}" : "Logs";
@@ -103,7 +103,7 @@
 		<textarea name="kql" rows="6" id="kql-textarea"
 			data-testid="kql-input"
 			placeholder="events | where Level >= 3 | where Message contains 'error'"
-			hx-get="/ui/logs?handler=KqlCompletions&project=@Model.ProjectKey"
+			hx-get="?handler=KqlCompletions&project=@Model.ProjectKey"
 			hx-trigger="keyup changed delay:250ms, click"
 			hx-target="#kql-completions"
 			hx-swap="innerHTML"

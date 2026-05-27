@@ -1,4 +1,4 @@
-@page "/ui/logs/{projectKey}/traces/{traceId}"
+@page "/ui/{workspaceKey}/{projectKey}/traces/{traceId}"
 @model YobaBox.Web.Pages.Logs.TraceModel
 @{
 	ViewData["Title"] = $"Trace {Model.TraceId} — {Model.EffectiveProjectKey}";

@@ -1,11 +1,11 @@
-@page "/ui/dashboard"
+@page "/ui/{workspaceKey}"
 @model YobaBox.Web.Pages.Dashboard.IndexModel
 @{
-	ViewData["Title"] = "Dashboard";
+	ViewData["Title"] = $"Status — {Model.WorkspaceKey}";
 }
 
 <div class="mb-4 flex items-center gap-3">
-	<h1 class="text-xl font-semibold" data-testid="dashboard-title">Dashboard</h1>
+	<h1 class="text-xl font-semibold" data-testid="dashboard-title">Status</h1>
 	<span class="badge badge-outline font-mono">@Model.WorkspaceKey</span>
 </div>
 
@@ -26,7 +26,9 @@ else
 			<div class="card bg-base-200" data-testid="dashboard-project-card" data-project-key="@project.Key">
 				<div class="card-body p-4">
 					<div class="flex items-center gap-2 mb-2">
-						<h2 class="card-title text-lg" data-testid="dashboard-project-name">@project.Name</h2>
+						<a href="@Routes.Project(Model.WorkspaceKey, project.Key)"
+							class="card-title text-lg link link-hover"
+							data-testid="dashboard-project-name">@project.Name</a>
 						@if (project.Key == "$system")
 						{
 							<span class="badge badge-sm badge-ghost">system</span>

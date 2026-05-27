@@ -49,7 +49,7 @@ public static class WorkspaceSwitchEndpoint
 
 		var dest = !string.IsNullOrEmpty(returnUrl) && Uri.IsWellFormedUriString(returnUrl, UriKind.Relative)
 			? returnUrl
-			: "/ui/dashboard";
+			: Routes.Workspace(ws);
 		return Results.LocalRedirect(dest);
 	}
 }

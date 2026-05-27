@@ -5,6 +5,11 @@
 	var returnUrl = Context.Request.Path + Context.Request.QueryString;
 	var path = Context.Request.Path.Value ?? string.Empty;
 	bool IsActive(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+	bool IsExactly(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
+	var statusUrl = Routes.Workspace(currentWs);
+	var logsAllUrl = Routes.WorkspaceLogs(currentWs);
+	var sharedConfigUrl = Routes.SharedConfig(currentWs);
+	var wsAdminUrl = Routes.WorkspaceAdmin(currentWs);
 }
 <!DOCTYPE html>
 <html lang="en" data-theme="dark" class="h-full">
@@ -29,37 +34,19 @@
 					</label>
 				</div>
 				<div class="flex-1 flex items-center gap-3">
-					<a href="/ui/dashboard" class="text-lg font-semibold" data-testid="nav-home">YobaBox</a>
-
-					@if (Nav.IsAuthenticated)
-					{
-						<form method="post" action="/api/ui/workspace" class="flex items-center gap-1" data-testid="ws-switch-form">
-							@Html.AntiForgeryToken()
-							<input type="hidden" name="returnUrl" value="@returnUrl" />
-							<select name="ws" onchange="this.form.submit()"
-								class="select select-bordered select-xs font-mono"
-								data-testid="ws-switch-select">
-								@foreach (var ws in Nav.AvailableWorkspaces)
-								{
-									<option value="@ws.Key" selected="@(ws.Key == currentWs)">@ws.Key</option>
-								}
-							</select>
-						</form>
-					}
+					<a href="@statusUrl" class="text-lg font-semibold" data-testid="nav-home">YobaBox</a>
 				</div>
-
 				<div class="flex-none flex items-center gap-1">
 					@if (Nav.IsAuthenticated)
 					{
-						<a href="/ui/admin" class="btn btn-ghost btn-sm @(IsActive("/ui/admin") ? "btn-active" : "")" data-testid="nav-admin">
+						<span class="text-xs opacity-60 hidden md:inline font-mono">@Nav.Username</span>
+						<a href="@Routes.Sys()" class="btn btn-ghost btn-sm @(IsActive("/ui/sys") ? "btn-active" : "")" data-testid="nav-sysadmin" title="System administration">
 							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
 							</svg>
-							<span class="hidden sm:inline">Admin</span>
 						</a>
-						<span class="text-xs opacity-60 hidden md:inline font-mono">@Nav.Username</span>
-						<form method="post" action="/api/auth/logout" class="m-0">
+						<form method="post" action="@Routes.Logout()" class="m-0">
 							@Html.AntiForgeryToken()
 							<button type="submit" class="btn btn-ghost btn-sm" data-testid="nav-signout" title="Sign out">
 								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -84,49 +71,63 @@
 		<div class="drawer-side">
 			<label for="sidebar-toggle" aria-label="close sidebar" class="drawer-overlay"></label>
 			<aside class="bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col">
-				<div class="p-3 border-b border-base-300">
-					<div class="text-xs opacity-50 uppercase tracking-wide">Workspace</div>
-					<div class="font-mono text-sm" data-testid="nav-current-ws">@currentWs</div>
-				</div>
+				@if (Nav.IsAuthenticated)
+				{
+					<div class="p-3 border-b border-base-300">
+						<div class="text-xs opacity-50 uppercase tracking-wide mb-1">Workspace</div>
+						<form method="post" action="/api/ui/workspace" class="flex items-center gap-1" data-testid="ws-switch-form">
+							@Html.AntiForgeryToken()
+							<input type="hidden" name="returnUrl" value="@returnUrl" />
+							<select name="ws" onchange="this.form.submit()"
+								class="select select-bordered select-sm font-mono flex-1"
+								data-testid="ws-switch-select"
+								data-testid-current="@currentWs">
+								@foreach (var ws in Nav.AvailableWorkspaces)
+								{
+									<option value="@ws.Key" selected="@(ws.Key == currentWs)">@ws.Key</option>
+								}
+							</select>
+						</form>
+						<div class="hidden" data-testid="nav-current-ws">@currentWs</div>
+					</div>
 
-				<ul class="menu w-full p-2 gap-1" data-testid="nav-sidebar-ws">
-					<li>
-						<a href="/ui/dashboard" class="@(path.Equals("/ui/dashboard", StringComparison.OrdinalIgnoreCase) ? "active" : "")" data-testid="nav-dashboard">
-							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" />
-							</svg>
-							Dashboard
-						</a>
-					</li>
-					<li>
-						<a href="/ui/config/@currentWs" class="@(IsActive("/ui/config") ? "active" : "")" data-testid="nav-config">
-							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-							</svg>
-							Config
-						</a>
-					</li>
-				</ul>
+					<ul class="menu w-full p-2 gap-1">
+						<li>
+							<a href="@statusUrl" class="@(IsExactly(statusUrl) ? "active" : "")" data-testid="nav-status">
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-4 0a1 1 0 01-1-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 01-1 1" />
+								</svg>
+								Status
+							</a>
+						</li>
+						<li>
+							<a href="@logsAllUrl" class="@(IsExactly(logsAllUrl) ? "active" : "")" data-testid="nav-logs-all">
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+								</svg>
+								Logs (all)
+							</a>
+						</li>
+					</ul>
 
-				<div class="px-3 py-2 mt-2 border-t border-base-300 flex items-center justify-between">
-					<div class="text-xs opacity-50 uppercase tracking-wide">Projects</div>
-					<a href="/ui/admin/projects" class="text-xs link opacity-60 hover:opacity-100" data-testid="nav-projects-manage" title="Manage">+</a>
-				</div>
+					<div class="px-3 py-2 mt-2 border-t border-base-300 flex items-center justify-between">
+						<div class="text-xs opacity-50 uppercase tracking-wide">Projects</div>
+						<a href="@Routes.ProjectCreate(currentWs)" class="text-xs link opacity-60 hover:opacity-100" data-testid="nav-project-create" title="New project">+</a>
+					</div>
 
-				<ul class="menu menu-sm w-full p-2 gap-0.5 flex-1 overflow-y-auto" data-testid="nav-sidebar-projects">
-					@if (Nav.ProjectsInCurrentWorkspace.Count == 0)
-					{
-						<li class="text-xs opacity-50 px-3 py-2 italic" data-testid="nav-no-projects">No projects in this workspace.</li>
-					}
-					else
-					{
-						@foreach (var project in Nav.ProjectsInCurrentWorkspace)
+					<ul class="menu menu-sm w-full p-2 gap-0.5 flex-1 overflow-y-auto" data-testid="nav-sidebar-projects">
+						@if (Nav.ProjectsInCurrentWorkspace.Count == 0)
 						{
-							var isCurrent = string.Equals(currentProject, project.Key, StringComparison.Ordinal);
-							<li class="@(isCurrent ? "menu-disabled" : "")" data-testid="nav-project" data-project-key="@project.Key">
-								<details open="@isCurrent">
-									<summary class="@(isCurrent ? "font-semibold" : "")">
+							<li class="text-xs opacity-50 px-3 py-2 italic" data-testid="nav-no-projects">No projects in this workspace.</li>
+						}
+						else
+						{
+							@foreach (var project in Nav.ProjectsInCurrentWorkspace)
+							{
+								var isCurrent = string.Equals(currentProject, project.Key, StringComparison.Ordinal);
+								var projectUrl = Routes.Project(currentWs, project.Key);
+								<li data-testid="nav-project" data-project-key="@project.Key">
+									<a href="@projectUrl" class="@(isCurrent ? "active font-semibold" : "")">
 										<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
 										</svg>
@@ -135,37 +136,32 @@
 										{
 											<span class="badge badge-ghost badge-xs">sys</span>
 										}
-									</summary>
-									<ul>
-										<li>
-											<a href="/ui/dashboard/@project.Key" class="@(path == $"/ui/dashboard/{project.Key}" ? "active" : "")"
-												data-testid="nav-project-dashboard">Overview</a>
-										</li>
-										<li>
-											<a href="/ui/logs/@project.Key" class="@(path.StartsWith($"/ui/logs/{project.Key}", StringComparison.OrdinalIgnoreCase) && !path.Contains("/traces") ? "active" : "")"
-												data-testid="nav-project-logs">Logs</a>
-										</li>
-										<li>
-											<a href="/ui/logs/@project.Key/traces" class="@(path.StartsWith($"/ui/logs/{project.Key}/traces", StringComparison.OrdinalIgnoreCase) ? "active" : "")"
-												data-testid="nav-project-traces">Traces</a>
-										</li>
-										<li>
-											<a href="/ui/admin/projects/@project.Key" class="@(path == $"/ui/admin/projects/{project.Key}" ? "active" : "")"
-												data-testid="nav-project-admin">Services &amp; keys</a>
-										</li>
-										@if (Nav.DataEnabled)
-										{
-											<li>
-												<a href="/ui/admin/projects/@project.Key/data" class="@(path == $"/ui/admin/projects/{project.Key}/data" ? "active" : "")"
-													data-testid="nav-project-data">Data</a>
-											</li>
-										}
-									</ul>
-								</details>
-							</li>
+									</a>
+								</li>
+							}
 						}
-					}
-				</ul>
+					</ul>
+
+					<ul class="menu w-full p-2 gap-0.5 border-t border-base-300">
+						<li>
+							<a href="@sharedConfigUrl" class="@(IsActive(sharedConfigUrl) && !IsActive(sharedConfigUrl + "/") && IsExactly(sharedConfigUrl) ? "active" : (IsActive($"/ui/{currentWs}/config") ? "active" : ""))" data-testid="nav-shared-config">
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+								</svg>
+								Shared config
+							</a>
+						</li>
+						<li>
+							<a href="@wsAdminUrl" class="@(IsActive(wsAdminUrl) ? "active" : "")" data-testid="nav-ws-admin">
+								<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+								</svg>
+								Workspace
+							</a>
+						</li>
+					</ul>
+				}
 			</aside>
 		</div>
 	</div>

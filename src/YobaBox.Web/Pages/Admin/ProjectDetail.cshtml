@@ -1,4 +1,4 @@
-@page "/ui/admin/projects/{key}"
+@page "/ui/{workspaceKey}/{projectKey}/settings"
 @model YobaBox.Web.Pages.Admin.ProjectDetailModel
 @{
 	ViewData["Title"] = $"Project: {Model.Project?.Name ?? Model.Key}";
