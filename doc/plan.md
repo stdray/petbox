@@ -1046,13 +1046,21 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 
 ### Architecture (модулярная)
 
-- **Core SDK**: `YobaBox.Client` (.NET) / `@stdray-npm/yobabox-client` (TS) — auth (ApiKey), HTTP transport, raw методы (`QueryAsync`, `ExecAsync`, `ResolveConfigAsync`, `IngestLogAsync`)
-- **Framework integrations**:
-  - `YobaBox.Client.Config` — MEC integration (порт `YobaConf.Client`)
-  - `YobaBox.Client.Data.Linq2Db` — linq2db custom provider (deferred to Wave 5+ из Phase 16; см. там reference на `LinqToDB.Remote.HttpClient.Server`)
-  - `YobaBox.Client.Logging.Serilog` / `.MEL` — Serilog sink / Microsoft.Extensions.Logging provider
-  - `@stdray-npm/yobabox-client-drizzle` — Drizzle integration (TS)
-  - `@stdray-npm/yobabox-client-winston` — Winston transport (заменяет `@datalust/winston-seq`)
+**Принцип**: yobabox — drop-in для существующих экосистем там где это возможно. Чем меньше своих пакетов, тем лучше: pet добавляет URL+key к существующим sinks/providers и работает.
+
+- **Logs**: yobabox `/api/ingest/clef` accepts **CLEF/Seq protocol** (это реальный wire standard). Pet использует `Serilog.Sinks.Seq` / `Seq.Extensions.Logging` / `@datalust/winston-seq` / `pino-seq` — никаких yobabox-specific log clients не пишем.
+- **Config**: wire-format **свой** (tag-based resolve API, см. memory [[project-config-design]]). MEC — это .NET DI abstraction, не wire protocol; `YobaConf.Client` оборачивает наш формат в `IConfigurationProvider` для consume через стандартный MEC. Аналога нет в TS/Python — нужны свои клиенты. **Возможный апгрейд**: research compat-endpoint под Spring Cloud Config Server или Consul KV — см. 26.8.
+- **Data**: wire-format **свой** (raw SQL pass-through, no standard exists). Свои core клиенты обязательны.
+
+- **Core SDK** (свой, нужен): `YobaBox.Client` (.NET) / `@stdray-npm/yobabox-client` (TS) / `yobabox-client` (Python, future) — auth (ApiKey), HTTP transport, raw methods для Data API (`QueryAsync`, `ExecAsync`), Config API (`ResolveAsync`), и Log ingestion (`IngestAsync` через `/api/ingest/clef`)
+- **Framework integrations** (свои, нужны где экосистемы нет):
+  - `YobaBox.Client.Config` — MEC integration (порт `YobaConf.Client` — exposes config через стандартный `IConfigurationProvider`)
+  - `YobaBox.Client.Data.Linq2Db` — linq2db custom provider (Wave 5+ из Phase 16; reference: `LinqToDB.Remote.HttpClient.Server`)
+  - `@stdray-npm/yobabox-client-drizzle` — Drizzle integration (TS Data)
+- **НЕ делаем** (используется существующая экосистема через Seq protocol):
+  - **Logging .NET** — pets настраивают `Serilog.Sinks.Seq` или `Seq.Extensions.Logging` с URL=yobabox + ApiKey. Yobabox `/api/ingest/clef` accepts Seq protocol. Свои adapter'ы не пишем.
+  - **Logging TS** — pets используют `@datalust/winston-seq` (например kpvotes-ts) или `pino-seq`. Тот же endpoint. Свой winston transport не пишем.
+  - Если в будущем появится pet на языке без Seq sink — может потребоваться minimal yobabox-specific sink, но это reactive по реальной потребности.
 
 ### Phasing
 
@@ -1070,11 +1078,11 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 - [ ] `src/clients-ts/yobabox-client/tests/` — bun unit-тесты на client.ts (poll cycle, ETag matching, fetch error handling)
 - [ ] Target: ≥80% line coverage для public surface
 
-#### 26.3 — Core SDK extension (Config + Data + Log)
+#### 26.3 — Core SDK extension (Config + Data raw)
 
-- [ ] `YobaBox.Client` (.NET) — extract auth+HTTP transport из `YobaBox.Client.Config` в общий core. Add `Data` namespace: `QueryAsync`, `ExecAsync`. Add `Log` namespace: `IngestAsync`.
-- [ ] `@stdray-npm/yobabox-client` (TS) — to же: extract core auth+fetch, add `data` module + `log` module
-- [ ] Existing `Config` сохраняется как specialized provider (MEC), но core SDK дает raw `ResolveConfigAsync` для use cases без MEC
+- [ ] `YobaBox.Client` (.NET) — extract auth+HTTP transport из `YobaBox.Client.Config` в общий core. Add `Data` namespace: `QueryAsync`, `ExecAsync` (для `/query` + `/exec` Data API). Add `Log` namespace: `IngestAsync` через `/api/ingest/clef` для use cases где Seq sink не подходит (rare).
+- [ ] `@stdray-npm/yobabox-client` (TS) — то же: extract core auth+fetch, add `data` module. Log опциональный raw `ingest()` — основной путь у TS pet'а через `@datalust/winston-seq` напрямую.
+- [ ] Existing `Config` сохраняется как specialized provider (MEC), но core SDK даёт raw `ResolveConfigAsync` для use cases без MEC
 
 #### 26.4 — E2E tests
 
@@ -1082,16 +1090,19 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 - [ ] `src/clients-ts/yobabox-client/tests/e2e.test.ts` — против running yobabox в `beforeAll` (spawn `dotnet run` process или TestContainers)
 - [ ] Покрытие: full round-trip create_db → migrate → exec → query → resolve config → ingest log
 
-#### 26.5 — Publish to GitHub Packages registry (debug)
+#### 26.5 — Versioning + Publishing infra (Cake + GitVersion)
 
-- [ ] `.github/workflows/clients-publish.yml` — на push в main публикует `--registry=https://npm.pkg.github.com` (TS) и в GitHub Packages NuGet (.NET) с `0.x.y-ci.{run_number}` версией
-- [ ] Документировать в `doc/clients.md` как pet добавляет registry source (`.npmrc` / `nuget.config`)
+- [ ] Port `build.cake` из `D:\my\prj\yobaconf\build.cake` — содержит Cake tasks NuGetPublish (NuGet + GitVersion-stamped) и npm publish (stamps `package.json` version из GitVersion, replaces `+` to `-` для npm semver compat)
+- [ ] `GitVersion.yml` уже в yobabox repo (идентичен yobaconf — continuous delivery, label=ci on main, +rc on release/, +hotfix on hotfix/)
+- [ ] Port `.github/workflows/ci.yml` job sections `nuget-publish` (triggered на push tag `nuget`) и npm-publish (triggered на push tag `npm`). Из yobaconf можно скопировать как есть, поменять package paths
+- [ ] Документировать в `doc/clients.md` как pet добавляет dependency: `dotnet add package YobaBox.Client.Config --version 0.x.y-ci.N` / `bun add @stdray-npm/yobabox-client@0.x.y-ci.N`
+- [ ] Debug стадия: публиковать в GitHub Packages registry (npm.pkg.github.com + GitHub Packages NuGet) с `0.x.y-ci.N` версиями
 
 #### 26.6 — kpvotes-ts migration (overlaps с Phase 27 dogfooding)
 
-- [ ] Replace `@stdray-npm/yobaconf-client` → `@stdray-npm/yobabox-client` (config module)
-- [ ] Replace `@datalust/winston-seq` → `@stdray-npm/yobabox-client-winston`
-- [ ] Replace local JSON cache → `yobabox-client.data` API
+- [ ] Replace `@stdray-npm/yobaconf-client` → `@stdray-npm/yobabox-client` (config module). API совместим где возможно.
+- [ ] **НЕ трогать** `@datalust/winston-seq` — yobalog Seq protocol работает, pet просто меняет URL+key в config'е winston'а. Никакой migration на свой transport.
+- [ ] Replace local JSON cache → `@stdray-npm/yobabox-client` data API (`client.data.query/exec`) или `@stdray-npm/yobabox-client-drizzle` если используем Drizzle ORM
 - [ ] См. Phase 27 для полного onboarding scenario
 
 #### 26.7 — Publish to npmjs.org / nuget.org (stable)
@@ -1102,12 +1113,43 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 - [ ] Publish to public registries
 - [ ] Update kpvotes-ts deps на public versions
 
-### Open forks (нужны до 26.1)
+#### 26.8 — Research: Config standards compatibility (research-only, реализация по результату)
 
-1. **Сразу expand до core SDK или сперва точный перенос as-is?** — Recommend: сперва точный перенос (26.1+26.2), потом отдельной фазой (26.3) добавить Data/Log в core. Безопаснее.
-2. **TS workspace tool** — bun (быстрее) vs npm (универсальнее)? kpvotes-ts уже использует bun, YobaBox.Web тоже → **bun**.
-3. **Test framework choice TS** — `bun test` (используется в yobaconf-client-ts) vs vitest (используется в kpvotes-ts)? **bun test** для унификации внутри yobabox monorepo, vitest пет использует у себя.
-4. **TS yobadata thin helper в pet repo или сразу npm package?** — В контексте Phase 26 — сразу как часть `@stdray-npm/yobabox-client.data` module. Не отдельный package, не thin helper в pet'е.
+- [ ] **Spring Cloud Config Server protocol** — REST `GET /{application}/{profile}` returns key=value tree. Если добавить compat-endpoint на стороне yobabox (`/api/config/spring/{app}/{profile}` → внутри tag query `project:{app}, env:{profile}`) — pet'ы могут использовать готовые `spring-cloud-config-client` (Java/.NET/Node/Python). Минус: tag-flexibility теряется, нужно соглашение application=project, profile=env.
+- [ ] **HashiCorp Consul KV** — `GET /v1/kv/{prefix}` flat namespace. Аналогично compat layer возможен, но tag-semantics не лезут.
+- [ ] **Etcd KV gRPC** — то же что Consul но gRPC. Самый низкий ROI для pet contexts.
+- [ ] **OpenFeature** — narrow scope (feature flags), не подходит для full config.
+
+**Decision after research**: либо (a) добавить compat-endpoint(s) и pet'ы могут выбирать наш client vs стандартный, либо (b) подтвердить что наш tag-based достаточно специфичен — оставить только свои клиенты. Reactive по реальной потребности.
+
+### Repo structure
+
+```
+yobabox/
+├── src/
+│   ├── clients-net/              ← NEW (renamed from src/clients/ implied earlier)
+│   │   ├── YobaBox.Client/        — core SDK (auth, HTTP, Data raw, Config raw, Log raw)
+│   │   ├── YobaBox.Client.Config/ — MEC IConfigurationProvider (порт YobaConf.Client)
+│   │   └── YobaBox.Client.Data.Linq2Db/ — Wave 5+ from Phase 16
+│   ├── clients-ts/               ← NEW
+│   │   ├── yobabox-client/        — core SDK (TS, bun workspace member)
+│   │   └── yobabox-client-drizzle/ — Drizzle integration (Wave 5+)
+│   └── clients-py/               ← FUTURE (когда появится первый Python pet)
+└── tests/
+    ├── YobaBox.Client.Tests/
+    ├── YobaBox.Client.Config.Tests/
+    └── YobaBox.Client.E2ETests/
+```
+
+bun workspace для TS (`yobabox/package.json` с `workspaces`). Python organizationally рядом, но toolchain (poetry/uv/hatch) выбирается когда дойдём.
+
+### Resolved decisions (2026-05-28)
+
+1. **Modular over monolith** — confirmed. Monorepo версионирует все пакеты вместе (Cake + GitVersion), но pet тянет только то что нужно
+2. **Bun for TS workspace** — kpvotes-ts споткнулся на bun-lightpanda compat (https://github.com/oven-sh/bun/issues/9911), но мы клиентский кейс — lightpanda не используется. **bun**.
+3. **Test framework choice TS** — `bun test` для clients-ts. (kpvotes-ts choice irrelevant — pet выбирает своё.)
+4. **Order: точный перенос → потом core SDK extend** — minimal risk path. 26.1+26.2 первыми, потом 26.3.
+5. **Drop Logging adapter packages** — Serilog.Sinks.Seq / @datalust/winston-seq работают с yobalog endpoint напрямую. Свои не пишем.
 
 ---
 
@@ -1164,10 +1206,12 @@ Goal: pet developer даёт агенту onboarding URL + agent-key. Агент
 
 ### Open forks (нужны до 27.1)
 
-1. **MCP tool granularity**: declarative `agent.onboard_pet` (одна tool с whole payload) vs набор раздельных (`project.create`, `service.create` и т.д.)? **Recommend declarative** для simpler agent flow.
-2. **Agent-key scope model**: новый scope `agent` или просто TTL + существующий `admin`? **Recommend** просто TTL + `admin` scope. TTL — отличающий признак.
-3. **Onboarding doc location**: static (`doc/agent-onboarding.md`) или dynamic (`/agent/onboarding/{token}`)? **Recommend static**, проще.
-4. **Скейл сервисов в проекте**: kpvotes-net + kpvotes-ts оба в `kpvotes` project, или раздельные projects? Per spec: services внутри project'а. → одна `kpvotes` project, два services.
+Сохранены как design choices, требуют отдельного решения когда дойдём до Phase 27:
+
+1. **MCP tool granularity**: declarative `agent.onboard_pet` (одна tool с whole payload) vs набор раздельных (`project.create`, `service.create` и т.д.). Recommend declarative для simpler agent flow.
+2. **Agent-key scope model**: новый scope `agent` или просто TTL + существующий `admin`. Recommend TTL + `admin` scope. TTL — отличающий признак.
+3. **Onboarding doc location**: static (`doc/agent-onboarding.md`) или dynamic (`/agent/onboarding/{token}`). Recommend static, проще.
+4. **Сервисы в проекте**: kpvotes-net + kpvotes-ts оба в `kpvotes` project (per spec — services внутри project'а). → одна `kpvotes` project, два services.
 
 - [x] **`Feature` enum** (`YobaBox.Core.Features.Feature`) заменяет string-based `IsEnabled("Config")` на 27 call sites в 9 файлах. `_ViewImports.cshtml` импортирует namespace без full-qualification в cshtml.
 - [x] **CA1848 globally suppressed** в `Directory.Build.targets`. Production code теперь может писать `ILogger.LogInformation(...)` напрямую (попадает в Seq self-log → yobalog → MCP). Hot-path остаётся с `[LoggerMessage]` partial methods deliberately.
