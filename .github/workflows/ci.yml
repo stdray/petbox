@@ -27,6 +27,10 @@ jobs:
         with:
           global-json-file: global.json
 
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
@@ -53,6 +57,10 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           global-json-file: global.json
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
