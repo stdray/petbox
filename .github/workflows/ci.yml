@@ -122,12 +122,12 @@ jobs:
             docker pull "$IMAGE"
             docker stop "$CONTAINER_NAME" || true
             docker rm "$CONTAINER_NAME" || true
-            # Host port 8082 per the shared-host convention (yobaconf=8081, yobabox=8082).
+            # Host port 8083 per the shared-host convention (yobaconf=8081, yobalog=8082, yobabox=8083).
             # Only loopback bind — central Caddy terminates TLS and reverse-proxies.
             docker run -d \
               --name "$CONTAINER_NAME" \
               --restart unless-stopped \
-              -p 127.0.0.1:8082:8080 \
+              -p 127.0.0.1:8083:8080 \
               -v /opt/yobabox/data:/app/data \
               -e Admin__Username="$ADMIN_USER" \
               -e Admin__PasswordHash="$ADMIN_PASS_HASH" \
