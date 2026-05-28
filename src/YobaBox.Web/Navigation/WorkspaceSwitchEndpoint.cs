@@ -23,9 +23,13 @@ public static class WorkspaceSwitchEndpoint
 	static async Task<IResult> Switch(
 		HttpContext ctx,
 		YobaBoxDb db,
-		[FromForm] string ws,
+		[FromForm] string? ws,
 		[FromForm] string? returnUrl)
 	{
+		// `ws` is nullable on the binding so an empty-form POST surfaces as
+		// a clean 400, not an unhandled BadHttpRequestException with stack
+		// trace into the error log. The sidebar's onchange-submit form is
+		// the main offender — Alpine fires it before a value is selected.
 		if (string.IsNullOrWhiteSpace(ws))
 			return Results.BadRequest(new { error = "ws is required" });
 

@@ -98,7 +98,22 @@ public sealed class YobaBoxDb : DataConnection
 			.Property(q => q.Kql).HasDataType(DataType.Text).IsNullable(false)
 			.Property(q => q.ProjectKey).HasLength(100).IsNullable(false);
 
-		// ShareLink и RetentionPolicy самомаппятся через [Table]/[Column] атрибуты — здесь не нужны.
+		// ShareLink has all-[Column] attributes but mixing attribute-based mapping
+		// with FluentMapping for other entities seems to drop some columns from
+		// the schema cache — same root cause as the Service.CheckedAt issue.
+		// Explicit Fluent declaration unblocks linq2db's `Where(...ExpiresAt...)`.
+		builder.Entity<ShareLink>()
+			.HasTableName("ShareLinks")
+			.HasPrimaryKey(s => s.Id)
+			.Property(s => s.Id).HasLength(100).IsNullable(false)
+			.Property(s => s.ProjectKey).HasLength(100).IsNullable(false)
+			.Property(s => s.Kql).HasDataType(DataType.Text).IsNullable(false)
+			.Property(s => s.CreatedAt).HasDataType(DataType.DateTime).IsNullable(false)
+			.Property(s => s.ExpiresAt).HasDataType(DataType.DateTime).IsNullable(false)
+			.Property(s => s.SaltBase64).HasDataType(DataType.Text).IsNullable(false)
+			.Property(s => s.ColumnsJson).HasDataType(DataType.Text).IsNullable(false)
+			.Property(s => s.ModesJson).HasDataType(DataType.Text).IsNullable(false)
+			.Property(s => s.CreatedBy).HasLength(100).IsNullable(false);
 
 		builder.Build();
 	}
