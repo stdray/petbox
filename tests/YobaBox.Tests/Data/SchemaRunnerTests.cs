@@ -4,6 +4,7 @@ using YobaBox.Data.Schema;
 
 namespace YobaBox.Tests.Data;
 
+[Collection("DataModule")]
 public sealed class SchemaRunnerTests : IDisposable
 {
 	readonly string _baseDir;

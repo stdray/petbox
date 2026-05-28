@@ -12,6 +12,7 @@
 	<ItemGroup>
 		<PackageReference Include="dbup-core" />
 		<PackageReference Include="dbup-sqlite" />
+		<PackageReference Include="SqlParserCS" />
 		<PackageReference Include="linq2db" />
 		<PackageReference Include="Microsoft.Data.Sqlite" />
 		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />

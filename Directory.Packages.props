@@ -24,6 +24,7 @@
 		<PackageVersion Include="Grpc.Tools" Version="2.72.0" />
 		<PackageVersion Include="Seq.Extensions.Logging" Version="9.0.0" />
 		<PackageVersion Include="dbup-core" Version="6.0.15" />
+		<PackageVersion Include="SqlParserCS" Version="0.6.6-release0000" />
 		<PackageVersion Include="dbup-sqlite" Version="6.0.4" />
 	</ItemGroup>
 

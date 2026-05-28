@@ -3,6 +3,10 @@ using YobaBox.Data;
 
 namespace YobaBox.Tests.Data;
 
+// Tests share the global SqliteConnection pool — serialize across this file
+// and SchemaRunnerTests to avoid one Dispose's ClearAllPools yanking a
+// connection out of the other's in-flight test.
+[Collection("DataModule")]
 public sealed class DataDbFactoryTests : IDisposable
 {
 	readonly string _baseDir;

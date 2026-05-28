@@ -34,7 +34,14 @@ public sealed class SchemaRunner
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 		ArgumentNullException.ThrowIfNull(sql);
 
-		var newHash = SqlNormalizer.Hash(sql);
+		string newHash;
+		try { newHash = SqlNormalizer.Hash(sql); }
+		catch (Exception ex) when (ex is not OperationCanceledException)
+		{
+			// Parse failure (unparseable SQL) — no hash to compare. Pet's script
+			// is malformed; return Failed without touching the journal.
+			return SchemaApplyResult.Failed("SQL parse error: " + ex.Message, hash: "");
+		}
 
 		var existing = ReadExistingHash(connectionString, name);
 		if (existing is not null)
