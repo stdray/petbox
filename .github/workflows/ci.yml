@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['deploy']
+    tags: ['deploy', 'nuget', 'npm']
   pull_request:
 
 permissions:
@@ -41,7 +41,7 @@ jobs:
         run: ./build.sh --target=CI
 
   publish:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm'
     runs-on: ubuntu-latest
     outputs:
       dockerTag: ${{ steps.publish.outputs.dockerTag }}
@@ -109,3 +109,74 @@ jobs:
               -e Admin__Username="$ADMIN_USER" \
               "$IMAGE"
             docker system prune -a -f
+
+  # ─── NuGet publish to GitHub Packages on `nuget` tag push ───
+  nuget-publish:
+    if: github.event_name == 'push' && github.ref == 'refs/tags/nuget'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Ensure build script is executable
+        run: chmod +x ./build.sh
+
+      - name: Publish NuGet package to GitHub Packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: ./build.sh --target=NuGetPush --configuration=Release
+
+      - name: Upload NuGet artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          path: artifacts/*.nupkg
+
+  # ─── npm publish to GitHub Packages on `npm` tag push ───
+  npm-publish:
+    if: github.event_name == 'push' && github.ref == 'refs/tags/npm'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Publish to GitHub Packages npm
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+        run: |
+          chmod +x ./build.sh
+          ./build.sh --target=NpmPublish

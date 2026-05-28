@@ -18,6 +18,12 @@ var dockerCacheTo = Argument("dockerCacheTo", string.Empty);
 var solution = "./YobaBox.slnx";
 var dockerFile = "./Dockerfile";
 
+// .NET client packages — published to GitHub Packages NuGet feed via `nuget` tag push.
+var clientConfigProject = "./src/clients-net/YobaBox.Client.Config/YobaBox.Client.Config.csproj";
+
+// TS SDK — published to GitHub Packages npm registry via `npm` tag push.
+var tsSdkDir = "./src/clients-ts/yobabox-client";
+
 GitVersion gitVersion = null;
 var computedDockerTag = "latest";
 
@@ -207,6 +213,149 @@ Task("DockerPush")
 		DockerTag(sourceImage, targetImage);
 		Information("Pushing {0}", targetImage);
 		DockerPush(targetImage);
+	});
+
+// ─── NuGet packaging + publish (GitHub Packages) ───
+
+Task("Pack")
+	.IsDependentOn("Version")
+	.Does(() =>
+	{
+		var buildVersion = gitVersion.FullSemVer;
+
+		DotNetBuild(clientConfigProject, new DotNetBuildSettings
+		{
+			Configuration = configuration,
+			NoRestore = true,
+			MSBuildSettings = new DotNetMSBuildSettings()
+				.WithProperty("Version", buildVersion)
+				.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
+				.WithProperty("GitShortSha", gitVersion.ShortSha)
+				.WithProperty("GitCommitDate", gitVersion.CommitDate)
+		});
+
+		var packSettings = new DotNetPackSettings
+		{
+			Configuration = configuration,
+			OutputDirectory = "./artifacts",
+			NoBuild = true,
+			NoRestore = true,
+			IncludeSource = false,
+			IncludeSymbols = true,
+			SymbolPackageFormat = "snupkg",
+			MSBuildSettings = new DotNetMSBuildSettings()
+				.WithProperty("Version", buildVersion)
+				.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
+		};
+
+		DotNetPack(clientConfigProject, packSettings);
+	});
+
+// Publishes to GitHub Packages NuGet feed. Requires GITHUB_TOKEN with packages:write
+// and GITHUB_REPOSITORY_OWNER (both set by GitHub Actions automatically). Uses --skip-duplicate
+// because the same FullSemVer can land repeatedly on a single tag (re-runs).
+Task("NuGetPush")
+	.IsDependentOn("Pack")
+	.Does(() =>
+	{
+		var apiKey = EnvironmentVariable("GITHUB_TOKEN");
+		var owner = EnvironmentVariable("GITHUB_REPOSITORY_OWNER");
+
+		if (string.IsNullOrWhiteSpace(apiKey))
+			throw new CakeException("GITHUB_TOKEN environment variable is not set. GitHub Packages publishing requires GITHUB_TOKEN with packages:write.");
+		if (string.IsNullOrWhiteSpace(owner))
+			throw new CakeException("GITHUB_REPOSITORY_OWNER environment variable is not set. Set it to your GitHub username/org.");
+
+		var source = $"https://nuget.pkg.github.com/{owner}/index.json";
+		var packages = GetFiles("./artifacts/*.nupkg");
+
+		foreach (var package in packages)
+		{
+			StartProcess("dotnet", new ProcessSettings
+			{
+				Arguments = $"nuget push \"{package.FullPath}\" --source \"{source}\" --api-key {apiKey} --skip-duplicate"
+			});
+
+			Information("Pushed package {0} to {1}", package.GetFilename(), source);
+		}
+	});
+
+// ─── TS SDK build + publish (GitHub Packages npm) ───
+
+Task("TsSdkInstall")
+	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "install --frozen-lockfile", WorkingDirectory = tsSdkDir }));
+
+Task("TsSdkTypecheck")
+	.IsDependentOn("TsSdkInstall")
+	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "run typecheck", WorkingDirectory = tsSdkDir }));
+
+Task("TsSdkLint")
+	.IsDependentOn("TsSdkInstall")
+	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "run lint", WorkingDirectory = tsSdkDir }));
+
+Task("TsSdkTest")
+	.IsDependentOn("TsSdkInstall")
+	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "test", WorkingDirectory = tsSdkDir }));
+
+Task("TsSdkBuild")
+	.IsDependentOn("TsSdkInstall")
+	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "run build", WorkingDirectory = tsSdkDir }));
+
+// Stamp package.json version from GitVersion, then verify the build output.
+// GitVersion runs standalone (only needs git, not .NET) so we avoid the full
+// Clean→Restore→Version chain which requires the entire solution to build.
+Task("TsSdkPack")
+	.IsDependentOn("TsSdkBuild")
+	.Does(() =>
+	{
+		var gv = GitVersion(new GitVersionSettings { OutputType = GitVersionOutput.Json, NoFetch = true });
+		// npm semver forbids '+', so replace the GitVersion build-metadata separator.
+		var npmVersion = gv.FullSemVer.Replace('+', '-');
+		Information("Stamping TS SDK version: {0} (GitVersion: {1})", npmVersion, gv.FullSemVer);
+		StartProcess("npm", new ProcessSettings
+		{
+			Arguments = $"version {npmVersion} --no-git-tag-version --allow-same-version",
+			WorkingDirectory = tsSdkDir,
+		});
+	});
+
+// Publishes to GitHub Packages npm registry. Requires GITHUB_TOKEN with packages:write.
+// Writes .npmrc with the registry + auth token, then `npm publish`. Token is the same
+// as for NuGet — GitHub Packages uses one token for both registries.
+Task("NpmPublish")
+	.IsDependentOn("TsSdkPack")
+	.Does(() =>
+	{
+		var token = EnvironmentVariable("GITHUB_TOKEN");
+		var owner = EnvironmentVariable("GITHUB_REPOSITORY_OWNER");
+
+		if (string.IsNullOrWhiteSpace(token))
+			throw new CakeException("GITHUB_TOKEN environment variable is not set.");
+		if (string.IsNullOrWhiteSpace(owner))
+			throw new CakeException("GITHUB_REPOSITORY_OWNER environment variable is not set.");
+
+		var absDir = MakeAbsolute(Directory(tsSdkDir)).FullPath;
+		var npmrc = System.IO.Path.Combine(absDir, ".npmrc");
+		// Scope-bound registry: @stdray packages → npm.pkg.github.com. Token used
+		// for authentication. Per-package scope mapping is needed because the
+		// default registry (npmjs.org) is also queried for unscoped deps.
+		System.IO.File.WriteAllText(npmrc,
+			$"@{owner.ToLowerInvariant()}:registry=https://npm.pkg.github.com\n" +
+			$"//npm.pkg.github.com/:_authToken={token}\n");
+		try
+		{
+			StartProcess("npm", new ProcessSettings
+			{
+				Arguments = "publish",
+				WorkingDirectory = tsSdkDir,
+			});
+			Information("Published TS SDK to GitHub Packages (@{0}/yobabox-client)", owner.ToLowerInvariant());
+		}
+		finally
+		{
+			if (System.IO.File.Exists(npmrc))
+				System.IO.File.Delete(npmrc);
+		}
 	});
 
 // ─── Dev loop ───
