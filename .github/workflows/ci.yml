@@ -102,15 +102,13 @@ jobs:
           ADMIN_USER: ${{ secrets.YOBABOX_ADMIN_USERNAME }}
           ADMIN_PASS_HASH: ${{ secrets.YOBABOX_ADMIN_PASSWORD_HASH }}
           MASTER_KEY: ${{ secrets.YOBABOX_MASTER_KEY }}
-          SELFLOG_URL: ${{ secrets.YOBABOX_SELFLOG_URL }}
-          SELFLOG_KEY: ${{ secrets.YOBABOX_SELFLOG_KEY }}
           OTEL_ENABLED: ${{ secrets.YOBABOX_OTEL_ENABLED }}
           OTEL_ENDPOINT: ${{ secrets.YOBABOX_OTEL_ENDPOINT }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USERNAME }}
           password: ${{ secrets.DEPLOY_PASSWORD }}
-          envs: ADMIN_USER,ADMIN_PASS_HASH,MASTER_KEY,SELFLOG_URL,SELFLOG_KEY,OTEL_ENABLED,OTEL_ENDPOINT
+          envs: ADMIN_USER,ADMIN_PASS_HASH,MASTER_KEY,OTEL_ENABLED,OTEL_ENDPOINT
           script: |
             set -euo pipefail
             IMAGE="ghcr.io/${{ github.repository }}:${{ needs.publish.outputs.dockerTag }}"
@@ -122,8 +120,17 @@ jobs:
             docker pull "$IMAGE"
             docker stop "$CONTAINER_NAME" || true
             docker rm "$CONTAINER_NAME" || true
+            # Resolve OTEL_ENDPOINT "self" sentinel → container's own OTLP traces endpoint.
+            # Internal API key (yb_key_system_internal, seeded by migration M004) handles auth.
+            if [ "$OTEL_ENDPOINT" = "self" ]; then
+              OTEL_ENDPOINT="http://localhost:8080/v1/traces"
+            fi
             # Host port 8083 per the shared-host convention (yobaconf=8081, yobalog=8082, yobabox=8083).
             # Only loopback bind — central Caddy terminates TLS and reverse-proxies.
+            #
+            # Self-log: in-process via SystemLogger (Phase 22.2) — writes directly through
+            # IngestionPipeline. No HTTP, no API key. `Seq__SelfLog__Enabled=true` is the
+            # only switch; ServerUrl/ApiKey from appsettings are ignored at runtime.
             docker run -d \
               --name "$CONTAINER_NAME" \
               --restart unless-stopped \
@@ -137,8 +144,6 @@ jobs:
               -e Features__Data=true \
               -e Features__Dashboard=true \
               -e Seq__SelfLog__Enabled=true \
-              -e Seq__SelfLog__ServerUrl="$SELFLOG_URL" \
-              -e Seq__SelfLog__ApiKey="$SELFLOG_KEY" \
               -e OpenTelemetry__Enabled="$OTEL_ENABLED" \
               -e OpenTelemetry__OtlpEndpoint="$OTEL_ENDPOINT" \
               "$IMAGE"

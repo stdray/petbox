@@ -30,37 +30,35 @@ Settings → Secrets and variables → Actions → New repository secret.
 
 | Secret | Что | Когда нужно |
 |---|---|---|
-| `YOBABOX_SELFLOG_URL` | URL Seq-protocol ingest endpoint'а куда yobabox шлёт собственные логи | См. ниже про self-hosted vs external |
-| `YOBABOX_SELFLOG_KEY` | API key для того endpoint'а | то же |
 | `YOBABOX_OTEL_ENABLED` | `true` / `false` | Если хочешь OTel traces |
-| `YOBABOX_OTEL_ENDPOINT` | full OTLP traces endpoint URL | URL ДОЛЖЕН быть endpoint целиком — OTel exporter не добавляет path |
+| `YOBABOX_OTEL_ENDPOINT` | `self` или full external URL | См. ниже |
+
+**SELFLOG секреты не нужны.** Yobabox пишет собственные ILogger calls **in-process** через `SystemLogger` (Phase 22.2) — напрямую в `IngestionPipeline` → LogDb, без HTTP и без API key. Deploy job устанавливает `Seq__SelfLog__Enabled=true` всегда — это единственный switch.
 
 ### Куда yobabox шлёт телеметрию
 
-Yobabox умеет хостить **сам себя** для observability — он экспонирует `/api/ingest/clef` (Seq protocol для логов) и `/v1/logs` + `/v1/traces` (OTLP). То есть destination — это либо external yobalog/Seq, либо сам yobabox.
+**Логи**: всегда in-process в `$system/yobabox-web` LogDb. Видишь через `/ui/$system/yobabox-web/logs` (KQL UI). Никакой настройки.
 
-**Option A — self-hosted (yobabox шлёт в себя):**
+**OTel traces** (опционально):
+
+**Option A — self-hosted ("self" sentinel):**
 ```
-YOBABOX_SELFLOG_URL  = http://localhost:8080/api/ingest/clef
-YOBABOX_SELFLOG_KEY  = <ApiKey с scope logs:ingest для $system project — выдать через UI после первого старта>
 YOBABOX_OTEL_ENABLED = true
-YOBABOX_OTEL_ENDPOINT = http://localhost:8080/v1/traces
+YOBABOX_OTEL_ENDPOINT = self
 ```
-`localhost:8080` — yobabox-web listener внутри своего же контейнера. Плюс: unified observability через один UI, нет внешних зависимостей. Минус: если yobabox упадёт — некуда писать диагностику падения; и слабый риск feedback-loop (логи о приёме логов).
+Deploy script резолвит `self` → `http://localhost:8080/v1/traces`. Auth через `yb_key_system_internal` ApiKey (auto-seeded миграцией M004 в `$system` project) — никаких ключей выпускать руками не нужно. Плюс: unified observability через один UI, нет внешних зависимостей. Минус: если yobabox упадёт — некуда писать диагностику падения; слабый риск feedback-loop.
 
 **Option B — external yobalog:**
 ```
-YOBABOX_SELFLOG_URL  = https://yobalog.3po.su/compat/seq
-YOBABOX_SELFLOG_KEY  = <ApiKey из yobalog admin UI с ingest scope>
 YOBABOX_OTEL_ENABLED = true
 YOBABOX_OTEL_ENDPOINT = https://yobalog.3po.su/v1/traces
 ```
-Плюс: yobalog независим — увидишь логи даже падения yobabox'а. Минус: external dependency, два места смотреть.
+External URL без sentinel'а. Auth по-прежнему через `yb_key_system_internal` (yobalog тоже принимает этот key если seeded там). Плюс: yobalog независим — увидишь spans даже падения yobabox'а. Минус: external dependency.
 
 **Option C — выключено:**
-Не set'ить `YOBABOX_SELFLOG_*` → Seq__SelfLog не включится, логи только в `docker logs yobabox`. Аналогично с OTel.
+Не set'ить `YOBABOX_OTEL_ENABLED` → OTel не активируется. Логи всё равно работают (in-process), просто без traces.
 
-Для первого деплоя рекомендую **Option C** (минимум move parts), потом **Option A** когда подтвердишь что yobabox стабильно работает.
+Для первого деплоя рекомендую **Option C** (минимум moving parts), потом **Option A** (`OTEL_ENDPOINT=self`) когда подтвердишь стабильность.
 
 ## Step 2 — сгенерировать admin password hash
 
@@ -167,43 +165,33 @@ curl https://yobabox.3po.su/version
 
 Открыть `https://yobabox.3po.su/Login` в браузере → форма sign-in. Login с username + password из Step 2. Должен попасть на dashboard `/ui/$system`.
 
-## Step 7 (опционально) — self-log
+## Step 7 — self-log (ничего не делаем)
 
-yobabox умеет писать собственные ILogger calls через Seq protocol — либо в себя (Option A), либо в external yobalog (Option B). См. секцию "Куда yobabox шлёт телеметрию" выше.
+Yobabox пишет собственные ILogger calls **автоматически** через `SystemLogger` (Phase 22.2) — in-process прямо в `$system/yobabox-web` LogDb. Deploy job выставляет `Seq__SelfLog__Enabled=true`. Никаких секретов, никаких ключей.
 
-**Self-hosted setup (Option A):**
-1. После первого деплоя — login в `/Login`, открыть `/ui/admin/sys/projects/$system` (или `/ui/admin/ws/$system/projects/...`), найти service `yobabox-web` или создать.
-2. Issue ApiKey с scope `logs:ingest` — plaintext шоу один раз, скопировать.
-3. Set GitHub secrets:
-   - `YOBABOX_SELFLOG_URL` = `http://localhost:8080/api/ingest/clef`
-   - `YOBABOX_SELFLOG_KEY` = plaintext из шага 2
-4. Следующий `deploy` tag push подхватит. Логи появятся в `/ui/$system/yobabox-web/logs` (через KQL).
-
-**External yobalog setup (Option B):**
-1. В yobalog admin UI (`https://yobalog.3po.su/admin/api-keys`) создать API key с ingest scope. Copy plaintext.
-2. Set GitHub secrets:
-   - `YOBABOX_SELFLOG_URL` = `https://yobalog.3po.su/compat/seq`
-   - `YOBABOX_SELFLOG_KEY` = plaintext
-3. Deploy.
-
-Troubleshoot:
-- `docker logs yobabox` — startup error от Seq provider'а?
-- API key scope/visibility — неправильный workspace = silent 403 на ingest
-- Manual probe (Option B): `curl -X POST https://yobalog.3po.su/compat/seq/api/events/raw -H "X-Seq-ApiKey: <key>" -H "Content-Type: application/vnd.serilog.clef" --data '{"@t":"2026-05-29T00:00:00Z","@l":"Information","@m":"probe"}'` → 201
+После первого деплоя логи смотреть через:
+- `/ui/$system/yobabox-web` — Logs UI с KQL
+- Или прямо в `docker logs yobabox` для startup-time сообщений до того как LogDb инициализировалась
 
 ## Step 8 (опционально) — OpenTelemetry traces
 
-Yobabox emit'ит spans (ASP.NET Core root + ingestion pipeline + KQL queries + Data exec/query). Destination — либо own OTLP endpoint, либо external collector.
+Yobabox emit'ит spans (ASP.NET Core root + ingestion pipeline + KQL queries + Data exec/query). Если хочешь — добавь GitHub secrets:
 
-**Self-hosted (Option A):**
-- `YOBABOX_OTEL_ENABLED` = `true`
-- `YOBABOX_OTEL_ENDPOINT` = `http://localhost:8080/v1/traces`
+**Option A — self-hosted (рекомендую):**
+```
+YOBABOX_OTEL_ENABLED  = true
+YOBABOX_OTEL_ENDPOINT = self
+```
+Deploy script резолвит `self` → `http://localhost:8080/v1/traces`. ApiKey для аутентификации берётся из appsettings `Seq:SelfLog:ApiKey` = `yb_key_system_internal` (auto-seed'ится M004). После deploy spans видны в yobabox waterfall UI.
 
-**External yobalog (Option B):**
-- `YOBABOX_OTEL_ENABLED` = `true`
-- `YOBABOX_OTEL_ENDPOINT` = `https://yobalog.3po.su/v1/traces`
+**Option B — external collector:**
+```
+YOBABOX_OTEL_ENABLED  = true
+YOBABOX_OTEL_ENDPOINT = https://yobalog.3po.su/v1/traces
+```
+ApiKey тот же — auto-seeded. Подходит если хочешь spans в external yobalog для post-mortem.
 
-После deploy spans видны в yobabox или yobalog waterfall UI (зависит куда указал). `YOBABOX_OTEL_ENABLED` должен быть **literal** `true` (не `1`, не `True`).
+`YOBABOX_OTEL_ENABLED` должен быть **literal** `true` (не `1`, не `True`).
 
 ## Rollback
 
