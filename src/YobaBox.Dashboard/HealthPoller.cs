@@ -65,6 +65,13 @@ public sealed partial class HealthPoller(
 		{
 			if (ct.IsCancellationRequested) return;
 
+			// Skip Endpoint-model services that don't have a probeable URL
+			// configured. Without a URL we have no signal — better silent than
+			// a stream of "failed to update" warnings about a row no-one cares
+			// about. Push-model services are independent of URL.
+			if (service.HealthModel == HealthModel.Endpoint && !IsProbeableUrl(service.Url))
+				continue;
+
 			var nextHealth = service.HealthModel switch
 			{
 				HealthModel.Endpoint => await ProbeEndpointAsync(http, service, ct).ConfigureAwait(false),
@@ -122,6 +129,11 @@ public sealed partial class HealthPoller(
 			return ServiceHealth.Down;
 		}
 	}
+
+	static bool IsProbeableUrl(string? url) =>
+		!string.IsNullOrWhiteSpace(url)
+		&& Uri.TryCreate(url, UriKind.Absolute, out var uri)
+		&& (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
 
 	[LoggerMessage(EventId = 200, Level = LogLevel.Error, Message = "Health-poll pass failed")]
 	static partial void LogPassFailed(ILogger logger, Exception ex);
