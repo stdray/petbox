@@ -1,0 +1,103 @@
+@page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/data/{dbName}"
+@model PetBox.Web.Pages.Admin.ProjectDataDbModel
+@{
+	ViewData["Title"] = $"{Model.ProjectKey}/{Model.DbName}";
+	Layout = "_AdminLayout";
+}
+
+<div class="mb-4">
+	<a href="/ui/admin/ws/@Model.WorkspaceKey/projects/@Model.ProjectKey/data" class="link text-xs opacity-70" data-testid="datadb-back">← All databases</a>
+	<h1 class="text-2xl font-semibold mt-1"><span class="opacity-60">@Model.ProjectKey /</span> <span class="font-mono">@Model.DbName</span></h1>
+</div>
+
+@if (Model.DbNotFound || Model.Db is null)
+{
+	<div class="alert alert-error" data-testid="datadb-not-found">DataDb not found.</div>
+	return;
+}
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="datadb-error">@Model.ErrorMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+{
+	<div class="alert alert-success mb-3" data-testid="datadb-success">@Model.SuccessMessage</div>
+}
+
+<section class="mb-6" data-testid="datadb-tables-section">
+	<h2 class="text-lg font-semibold mb-2">Tables</h2>
+	@if (Model.Tables.Count == 0)
+	{
+		<p class="text-xs opacity-60 italic" data-testid="datadb-tables-empty">No tables yet. Apply a CREATE TABLE migration below.</p>
+	}
+	else
+	{
+		<ul class="space-y-2">
+			@foreach (var t in Model.Tables)
+			{
+				<li class="card bg-base-200 border border-base-300" data-testid="datadb-table" data-table-name="@t.Name">
+					<div class="card-body p-3">
+						<div class="font-mono font-semibold">@t.Name</div>
+						<div class="text-xs opacity-70">@string.Join(", ", t.Columns)</div>
+					</div>
+				</li>
+			}
+		</ul>
+	}
+</section>
+
+<section class="mb-6 max-w-3xl" data-testid="datadb-migration-section">
+	<h2 class="text-lg font-semibold mb-2">Apply migration</h2>
+	<form method="post" asp-page-handler="Apply" class="card bg-base-200 border border-base-300" data-testid="datadb-migration-form">
+		@Html.AntiForgeryToken()
+		<div class="card-body p-4">
+			<label class="form-control">
+				<span class="label-text">Name</span>
+				<input type="text" name="name" required
+					class="input input-bordered input-sm font-mono"
+					placeholder="M001_create_votes"
+					data-testid="datadb-migration-name" />
+			</label>
+			<label class="form-control">
+				<span class="label-text">SQL</span>
+				<textarea name="sql" rows="6" required
+					class="textarea textarea-bordered font-mono text-sm"
+					placeholder="CREATE TABLE votes (id INTEGER PRIMARY KEY, film TEXT NOT NULL);"
+					data-testid="datadb-migration-sql"></textarea>
+			</label>
+			<div class="card-actions mt-3">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="datadb-migration-apply">Apply</button>
+			</div>
+		</div>
+	</form>
+</section>
+
+<section class="mb-6" data-testid="datadb-migrations-section">
+	<h2 class="text-lg font-semibold mb-2">Migration history</h2>
+	@if (Model.Migrations.Count == 0)
+	{
+		<p class="text-xs opacity-60 italic">No migrations applied yet.</p>
+	}
+	else
+	{
+		<div class="overflow-x-auto">
+			<table class="table table-sm" data-testid="datadb-migrations-table">
+				<thead>
+					<tr><th>#</th><th>Name</th><th>Applied</th><th>Hash (8)</th></tr>
+				</thead>
+				<tbody>
+					@foreach (var m in Model.Migrations)
+					{
+						<tr data-testid="datadb-migration-row">
+							<td class="text-xs opacity-60">@m.Id</td>
+							<td class="font-mono text-xs">@m.Name</td>
+							<td class="text-xs opacity-70 font-mono">@m.Applied.ToString("yyyy-MM-dd HH:mm:ss")</td>
+							<td class="font-mono text-xs opacity-70">@m.Hash[..8]…</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		</div>
+	}
+</section>

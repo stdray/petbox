@@ -1,11 +1,11 @@
 # Data module — pet-side client pattern
 
-Reference doc for pets migrating from local storage to yobabox's Data module
-(Phase 16 Wave 3). Yobabox itself doesn't implement the client — this is what
+Reference doc for pets migrating from local storage to petbox's Data module
+(Phase 16 Wave 3). PetBox itself doesn't implement the client — this is what
 each pet needs to add to its own repo.
 
 **Strategic note**: once Wave 4 (MCP server) is up, an agentic session can do
-this setup for a pet using yobabox MCP tools — `data.create_db`,
+this setup for a pet using petbox MCP tools — `data.create_db`,
 `data.schema_apply`, plus the file edits to the pet's source. This doc is the
 reference for *what* the agent needs to produce; if you're a human doing
 manual integration, follow it directly.
@@ -17,11 +17,11 @@ phased out. Lead with TS; C# section kept for completeness.
 
 Pet writes its own POCO classes locally, uses linq2db normally to build
 queries. Right before execution, the pet extracts compiled parameterized SQL +
-parameters from the IQueryable, ships them over HTTP to yobabox, and yobabox
+parameters from the IQueryable, ships them over HTTP to petbox, and petbox
 runs them against a SQLite file on its side.
 
 ```
-[pet] linq2db local              [yobabox]
+[pet] linq2db local              [petbox]
    q.GetSqlQueries()                ADO.NET parameterized
    ↓                                ↑
    { sql, params } ─── HTTP ───→ DataConnection.Execute
@@ -35,14 +35,14 @@ Server knows nothing about pet's POCOs — pure pass-through.
 
 ```bash
 # Create the DataDb (one DataDb per logical store; pet can have several).
-curl -X POST "$YOBABOX_URL/api/data/$PROJECT/dbs" \
-  -H "X-Api-Key: $YOBABOX_APIKEY" \
+curl -X POST "$PETBOX_URL/api/data/$PROJECT/dbs" \
+  -H "X-Api-Key: $PETBOX_APIKEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"cache","description":"vote cache","maxPageCount":262144}'
 
 # Apply each existing migration (one POST per script).
-curl -X POST "$YOBABOX_URL/api/data/$PROJECT/cache/schema" \
-  -H "X-Api-Key: $YOBABOX_APIKEY" \
+curl -X POST "$PETBOX_URL/api/data/$PROJECT/cache/schema" \
+  -H "X-Api-Key: $PETBOX_APIKEY" \
   -H "Content-Type: application/json" \
   -d '{"name":"M001_create_votes","sql":"CREATE TABLE votes (id INTEGER PRIMARY KEY, film TEXT NOT NULL)"}'
 ```
@@ -110,8 +110,8 @@ public sealed class YobaDataClient(HttpClient http, string projectKey, string db
 
 ```csharp
 // Setup
-var http = new HttpClient { BaseAddress = new Uri(config["YobaBox:Url"]) };
-http.DefaultRequestHeaders.Add("X-Api-Key", config["YobaBox:ApiKey"]);
+var http = new HttpClient { BaseAddress = new Uri(config["PetBox:Url"]) };
+http.DefaultRequestHeaders.Add("X-Api-Key", config["PetBox:ApiKey"]);
 var data = new YobaDataClient(http, "kpvotes", "cache");
 
 // linq2db query — define POCO + a fake DataConnection just for query building
@@ -133,7 +133,7 @@ await data.ExecAsync(
    → `WHERE Id = @p`. Otherwise the SQL grows unbounded and skew gets cached
    poorly.
 
-2. **No multi-statement transactions.** Yobabox doesn't expose `BEGIN`/`COMMIT`
+2. **No multi-statement transactions.** PetBox doesn't expose `BEGIN`/`COMMIT`
    across HTTP calls. If you need atomicity, restructure the pet logic into
    idempotent UPSERTs (`INSERT OR REPLACE`, `ON CONFLICT DO UPDATE`) or move
    the multi-step logic into a single SQL statement.
@@ -143,7 +143,7 @@ await data.ExecAsync(
    `trusted_schema`). Everything else passes through.
 
 4. **CommandTimeout default 30s.** Long-running queries: send
-   `X-Yobabox-Timeout-Seconds: 120` header (capped at 300).
+   `X-PetBox-Timeout-Seconds: 120` header (capped at 300).
 
 5. **Body limits:** `/query` 1 MB, `/exec` 10 MB. For larger blob writes,
    chunk client-side.
@@ -161,14 +161,14 @@ Equivalent pattern in TS — extract via `query.toSQL()` which returns
 
 ```typescript
 const { sql, bindings } = knex('votes').where('film', 'Matrix').toSQL();
-const res = await fetch(`${YOBABOX_URL}/api/data/kpvotes/cache/query`, {
+const res = await fetch(`${PETBOX_URL}/api/data/kpvotes/cache/query`, {
   method: 'POST',
-  headers: { 'X-Api-Key': YOBABOX_APIKEY, 'Content-Type': 'application/json' },
+  headers: { 'X-Api-Key': PETBOX_APIKEY, 'Content-Type': 'application/json' },
   body: JSON.stringify({ sql, params: bindings.map((v, i) => ({ name: `@p${i}`, value: v })) }),
 });
 const rows = await res.json();
 ```
 
 (Adjust binding-name convention to match your ORM's parameter style — Knex
-uses positional `?`, Drizzle named, Kysely named. Yobabox accepts whatever
+uses positional `?`, Drizzle named, Kysely named. PetBox accepts whatever
 name the SQL uses.)

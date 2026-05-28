@@ -1,4 +1,4 @@
-# YobaBox E2E test plan (Playwright)
+# PetBox E2E test plan (Playwright)
 
 Infrastructure copied from `D:\my\prj\yobaconf\tests\YobaConf.E2ETests\Infrastructure\`:
 - `KestrelAppHost` — boots Kestrel on port 0, exposes `BaseUrl`, creates temp `data/` dir
@@ -6,14 +6,14 @@ Infrastructure copied from `D:\my\prj\yobaconf\tests\YobaConf.E2ETests\Infrastru
 - `TraceArtifact` — attaches Playwright trace on test failure
 - CDN no longer needs stubbing — htmx + Alpine.js are bundled into `site.js`
 
-Fixture wiring: `AssemblyMetadata("YobaBoxWebProjectDir")` in `.csproj` → `KestrelAppHost` resolves `wwwroot/`.
+Fixture wiring: `AssemblyMetadata("PetBoxWebProjectDir")` in `.csproj` → `KestrelAppHost` resolves `wwwroot/`.
 
 ---
 
 ## Flow 1: Register KpVotes project from scratch
 
-Simulates a developer onboarding an existing project into YobaBox.
-KpVotes is a background cron agent (no HTTP server). Uses YobaBox for config, logs,
+Simulates a developer onboarding an existing project into PetBox.
+KpVotes is a background cron agent (no HTTP server). Uses PetBox for config, logs,
 and a simple cache table.
 
 ### 1.1 Create Project
@@ -168,10 +168,10 @@ Create key with only `config:read`:
 
 ---
 
-## Test file structure (in `tests/YobaBox.E2ETests/`)
+## Test file structure (in `tests/PetBox.E2ETests/`)
 
 ```
-tests/YobaBox.E2ETests/
+tests/PetBox.E2ETests/
 ├── Infrastructure/
 │   ├── KestrelAppHost.cs          [PORT yobaconf]
 │   ├── WebAppFixture.cs           [ADAPT yobaconf — no CDN stubs, add ApiKey seed]
@@ -180,13 +180,13 @@ tests/YobaBox.E2ETests/
 ├── KpVotesOnboardingTests.cs      [NEW] — Flow 1.1–1.7
 ├── ConfigResolvePriorityTests.cs  [NEW] — Flow 2
 ├── ApiKeyScopeTests.cs            [NEW] — Flow 3
-└── YobaBox.E2ETests.csproj        [adapt — add AssemblyMetadata + YobaBox.Web ref]
+└── PetBox.E2ETests.csproj        [adapt — add AssemblyMetadata + PetBox.Web ref]
 ```
 
 ## Verification checklist
 
-- [ ] `dotnet test YobaBox.E2ETests` — all green
+- [ ] `dotnet test PetBox.E2ETests` — all green
 - [ ] No CDN fetches in Playwright trace (bundled htmx+Alpine.js)
-- [ ] Seeds use `X-Api-Key` header, not cookie (no login page in YobaBox — auth is key-based for API, browser pages are admin-only with cookie auth)
+- [ ] Seeds use `X-Api-Key` header, not cookie (no login page in PetBox — auth is key-based for API, browser pages are admin-only with cookie auth)
 - [ ] Temp DB cleaned between test runs
 - [ ] Playwright traces saved on failure

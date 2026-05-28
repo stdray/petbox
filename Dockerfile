@@ -8,22 +8,22 @@ ENV PATH="/root/.bun/bin:$PATH"
 
 WORKDIR /src
 COPY global.json Directory.Build.props Directory.Packages.props Directory.Build.targets ./
-COPY src/YobaBox.Core/YobaBox.Core.csproj ./src/YobaBox.Core/
-COPY src/YobaBox.Config/YobaBox.Config.csproj ./src/YobaBox.Config/
-COPY src/YobaBox.Log.Core/YobaBox.Log.Core.csproj ./src/YobaBox.Log.Core/
-COPY src/YobaBox.Data/YobaBox.Data.csproj ./src/YobaBox.Data/
-COPY src/YobaBox.Dashboard/YobaBox.Dashboard.csproj ./src/YobaBox.Dashboard/
-COPY src/YobaBox.Web/YobaBox.Web.csproj ./src/YobaBox.Web/
-COPY src/YobaBox.Web/package.json src/YobaBox.Web/bun.lock ./src/YobaBox.Web/
-RUN dotnet restore src/YobaBox.Web/YobaBox.Web.csproj -r linux-x64
+COPY src/PetBox.Core/PetBox.Core.csproj ./src/PetBox.Core/
+COPY src/PetBox.Config/PetBox.Config.csproj ./src/PetBox.Config/
+COPY src/PetBox.Log.Core/PetBox.Log.Core.csproj ./src/PetBox.Log.Core/
+COPY src/PetBox.Data/PetBox.Data.csproj ./src/PetBox.Data/
+COPY src/PetBox.Dashboard/PetBox.Dashboard.csproj ./src/PetBox.Dashboard/
+COPY src/PetBox.Web/PetBox.Web.csproj ./src/PetBox.Web/
+COPY src/PetBox.Web/package.json src/PetBox.Web/bun.lock ./src/PetBox.Web/
+RUN dotnet restore src/PetBox.Web/PetBox.Web.csproj -r linux-x64
 
-COPY src/YobaBox.Core/ ./src/YobaBox.Core/
-COPY src/YobaBox.Config/ ./src/YobaBox.Config/
-COPY src/YobaBox.Log.Core/ ./src/YobaBox.Log.Core/
-COPY src/YobaBox.Data/ ./src/YobaBox.Data/
-COPY src/YobaBox.Dashboard/ ./src/YobaBox.Dashboard/
-COPY src/YobaBox.Web/ ./src/YobaBox.Web/
-RUN dotnet publish src/YobaBox.Web/YobaBox.Web.csproj \
+COPY src/PetBox.Core/ ./src/PetBox.Core/
+COPY src/PetBox.Config/ ./src/PetBox.Config/
+COPY src/PetBox.Log.Core/ ./src/PetBox.Log.Core/
+COPY src/PetBox.Data/ ./src/PetBox.Data/
+COPY src/PetBox.Dashboard/ ./src/PetBox.Dashboard/
+COPY src/PetBox.Web/ ./src/PetBox.Web/
+RUN dotnet publish src/PetBox.Web/PetBox.Web.csproj \
 	-c Release \
 	-r linux-x64 \
 	--self-contained \
@@ -49,8 +49,8 @@ WORKDIR /app
 COPY --from=build --chown=app:app /app/publish .
 # `data/` holds the SQLite file (Workspaces, Projects, Services, ApiKeys, etc.) +
 # DataProtection keys + per-project Log/Config/Data DB files. In prod mount a host
-# volume here: `docker run ... -v /opt/yobabox/data:/app/data ...` so state survives
+# volume here: `docker run ... -v /opt/petbox/data:/app/data ...` so state survives
 # container restarts.
 VOLUME ["/app/data"]
 EXPOSE 8080
-ENTRYPOINT ["./YobaBox.Web"]
+ENTRYPOINT ["./PetBox.Web"]

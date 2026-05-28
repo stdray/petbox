@@ -1,0 +1,88 @@
+@page "/ui/admin/sys/workspaces/{key}"
+@model PetBox.Web.Pages.Admin.WorkspaceDetailModel
+@{
+	ViewData["Title"] = Model.Workspace?.Name ?? "Workspace";
+	Layout = "_AdminLayout";
+}
+
+@if (Model.Workspace is null)
+{
+	<div class="mb-4">
+		<a href="@Routes.SysWorkspaces()" class="btn btn-sm btn-ghost" data-testid="admin-workspace-detail-back">&larr; Workspaces</a>
+	</div>
+	<div class="alert alert-warning" data-testid="admin-workspace-detail-missing">Workspace not found.</div>
+	return;
+}
+
+<div class="mb-4 flex items-center gap-3 flex-wrap">
+	<a href="@Routes.SysWorkspaces()" class="btn btn-sm btn-ghost" data-testid="admin-workspace-detail-back">&larr; Workspaces</a>
+	<h1 class="text-2xl font-semibold" data-testid="admin-workspace-detail-title">@Model.Workspace.Name</h1>
+	<span class="badge badge-outline font-mono text-xs">@Model.Workspace.Key</span>
+	@if (Model.Workspace.Key == "$system")
+	{
+		<span class="badge badge-ghost badge-xs">built-in</span>
+	}
+</div>
+
+@if (!string.IsNullOrWhiteSpace(Model.Workspace.Description))
+{
+	<p class="text-sm opacity-70 mb-4">@Model.Workspace.Description</p>
+}
+
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6" data-testid="admin-workspace-detail-stats">
+	<div class="card bg-base-200 border border-base-300">
+		<div class="card-body p-3">
+			<div class="text-xs opacity-60 uppercase tracking-wide">Projects</div>
+			<div class="text-xl font-mono" data-testid="admin-workspace-detail-projects-count">@Model.Projects.Count</div>
+		</div>
+	</div>
+	<div class="card bg-base-200 border border-base-300">
+		<div class="card-body p-3">
+			<div class="text-xs opacity-60 uppercase tracking-wide">Members</div>
+			<div class="text-xl font-mono" data-testid="admin-workspace-detail-members-count">@Model.MemberCount</div>
+		</div>
+	</div>
+	<div class="card bg-base-200 border border-base-300">
+		<div class="card-body p-3">
+			<div class="text-xs opacity-60 uppercase tracking-wide">Created</div>
+			<div class="text-sm font-mono">@Model.Workspace.CreatedAt.ToString("yyyy-MM-dd")</div>
+		</div>
+	</div>
+	<a href="@Routes.WorkspaceAdminMembers(Model.Workspace.Key)" class="card bg-base-200 border border-base-300 hover:border-primary transition-colors" data-testid="admin-workspace-detail-manage-members">
+		<div class="card-body p-3">
+			<div class="text-xs opacity-60 uppercase tracking-wide">Manage</div>
+			<div class="text-sm">Members & settings →</div>
+		</div>
+	</a>
+</div>
+
+<h2 class="text-lg font-semibold mb-3">Projects in this workspace</h2>
+
+@if (Model.Projects.Count == 0)
+{
+	<div class="text-xs opacity-60 italic" data-testid="admin-workspace-detail-projects-empty">No projects yet.</div>
+}
+else
+{
+	<div class="overflow-x-auto">
+		<table class="table table-sm" data-testid="admin-workspace-projects-table">
+			<thead>
+				<tr>
+					<th>Key</th>
+					<th>Name</th>
+					<th>Description</th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var p in Model.Projects)
+				{
+					<tr>
+						<td class="font-mono text-xs">@p.Key</td>
+						<td><a href="@Routes.Project(Model.Workspace.Key, p.Key)" class="link link-hover">@p.Name</a></td>
+						<td class="text-sm opacity-70">@p.Description</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}

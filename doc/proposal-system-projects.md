@@ -1,4 +1,4 @@
-# Proposal: `$system` hosts internal YobaBox services as projects
+# Proposal: `$system` hosts internal PetBox services as projects
 
 **Status:** proposed, not implemented. Author response to "Conf, Log, Data, Tasks стоит сделать отдельным проектами или сервисами в $system" (2026-05-27).
 
@@ -9,7 +9,7 @@ Today, **modules** (Conf, Log, Data, Dashboard, Tasks-to-be) live in code as fea
 - Service registrations + endpoint mappings
 - Their own runtime config (e.g., `RetentionOptions`)
 
-There is **no first-class entity** representing a module in the YobaBox data model. Self-logging already writes to `$system` workspace, but the *project* layer underneath that is sparse — there's one `$system` project, no per-module breakout.
+There is **no first-class entity** representing a module in the PetBox data model. Self-logging already writes to `$system` workspace, but the *project* layer underneath that is sparse — there's one `$system` project, no per-module breakout.
 
 Result: the user can't see "what's the health of the Config module?" or "which logs did the Log ingestion subsystem produce?" via the normal IA. Modules are invisible to the navigation that's the heart of the product.
 
@@ -19,7 +19,7 @@ Inside the `$system` workspace, create one project per module:
 
 ```
 $system workspace
-├── $system project       (yobabox shell / web — the existing one)
+├── $system project       (petbox shell / web — the existing one)
 ├── conf project
 ├── log project
 ├── data project
@@ -41,7 +41,7 @@ Each module project has:
 2. **Per-module config decoupled from `appsettings.json`.** Today `RetentionOptions` is read once at startup. With per-module config bindings, runtime changes become possible — same model as user pets.
 3. **Self-documenting boundaries.** The list of modules is the list of projects in `$system`. No `Features` config + `MapXxxEndpoints` archaeology.
 4. **Agent ergonomics.** `/agent/` endpoints — see [[project-url-conventions]] — can offer agent keys scoped to a module (e.g., "give me a key for `$system/log` to ingest").
-5. **Disaster diagnosis.** When yobabox itself is misbehaving, its logs land in `$system/{module}` — a known place — not a mystery service.
+5. **Disaster diagnosis.** When petbox itself is misbehaving, its logs land in `$system/{module}` — a known place — not a mystery service.
 
 ## What this does NOT change
 
@@ -78,10 +78,10 @@ The reserved set already includes `config`, `data`, `tasks`, `admin`, etc. For m
 
 ## Risks / open questions
 
-- **Bootstrapping order.** Modules register before migrations run. If a module wants to self-log into `$system/log` and the `$system/log` project doesn't exist yet, the first few log lines either go nowhere or to a sentinel service. Plan: keep a `$system/yobabox-web` catch-all service for early logs.
+- **Bootstrapping order.** Modules register before migrations run. If a module wants to self-log into `$system/log` and the `$system/log` project doesn't exist yet, the first few log lines either go nowhere or to a sentinel service. Plan: keep a `$system/petbox-web` catch-all service for early logs.
 - **Reserved-name collision.** `conf` and `log` are short and might collide in URL paths (e.g. `/ui/$system/conf` already overlaps with `/ui/{ws}/config` if someone types `config` literally). The `/ui/{ws}/{key}/config` pattern is unambiguous because the workspace key comes first, so `$system` workspace's `conf` project sits at `/ui/$system/conf` cleanly. Verify after implementation.
 - **Health source for modules.** "Is the resolver healthy?" requires a heartbeat or last-success timestamp. Each module needs to write one. That's part of the same Dashboard module-maturity work blocked elsewhere — health collection.
-- **Mismatch with existing $system project.** Today `$system` workspace has one `$system` project. Migration needs to decide: does the existing `$system` project stay as "yobabox shell", and new module projects are siblings? Probably yes.
+- **Mismatch with existing $system project.** Today `$system` workspace has one `$system` project. Migration needs to decide: does the existing `$system` project stay as "petbox shell", and new module projects are siblings? Probably yes.
 
 ## Recommendation
 

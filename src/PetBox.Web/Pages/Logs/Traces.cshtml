@@ -1,0 +1,61 @@
+@page "/ui/{workspaceKey}/{projectKey}/traces"
+@model PetBox.Web.Pages.Logs.TracesModel
+@{
+	ViewData["Title"] = $"Traces — {Model.ProjectName ?? Model.EffectiveProjectKey}";
+}
+
+<div class="mb-2 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold">@(Model.ProjectName ?? Model.EffectiveProjectKey)</h1>
+	<span class="text-sm opacity-60">Traces</span>
+</div>
+
+<partial name="_ProjectTabs" />
+
+@if (Model.SchemaMissing)
+{
+	<div class="alert" data-testid="traces-empty">No spans ingested yet.</div>
+}
+else if (Model.Traces.Count == 0)
+{
+	<div class="alert" data-testid="traces-empty">No traces.</div>
+}
+else
+{
+	<div class="overflow-x-auto">
+		<table class="table table-sm" data-testid="traces-table">
+			<thead>
+				<tr>
+					<th class="w-44">Start</th>
+					<th>Root span</th>
+					<th class="w-24">Duration</th>
+					<th class="w-20">Spans</th>
+					<th class="w-20">Status</th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var t in Model.Traces)
+				{
+					var statusBadge = t.WorstStatus switch
+					{
+						2 => "badge-error",
+						1 => "badge-success",
+						_ => "badge-ghost",
+					};
+					<tr class="hover" data-testid="trace-row" data-trace-id="@t.TraceId">
+						<td class="font-mono text-xs opacity-70">
+							<time class="local-time" datetime="@t.StartTime.ToString("o")">@t.StartTime:yyyy-MM-dd HH:mm:ss.fff</time>
+						</td>
+						<td class="font-mono text-xs">
+							<a asp-page="/Logs/Trace" asp-route-projectKey="@Model.EffectiveProjectKey" asp-route-traceId="@t.TraceId" class="link link-primary">@t.RootName</a>
+						</td>
+						<td class="font-mono text-xs">@($"{t.Duration.TotalMilliseconds:0.0} ms")</td>
+						<td class="text-xs">@t.SpanCount</td>
+						<td>
+							<span class="badge badge-sm @statusBadge">@(t.WorstStatus == 2 ? "Error" : t.WorstStatus == 1 ? "Ok" : "Unset")</span>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}

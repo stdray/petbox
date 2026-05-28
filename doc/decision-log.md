@@ -69,8 +69,8 @@ Resolution of YELLOWs absorbed into Wave 1 update:
 4. **Migration entry**: API (scope `data:schema`) + UI-paste (workspace-admin). Liquibase XML через `DbUp.Extensions` — Wave 5+ optional.
 5. **Auth**: ApiKey scopes `data:read/write/schema`. ApiKey project-level видит все DataDbs данного project'а. **Никаких per-DB/per-table flags** — только scope-level enforcement.
 6. **gRPC + linq2db.Remote.Grpc — drop** (архитектурный mismatch с DDL-driven схемой).
-7. **Pet client MVP**: thin send-helper, native ORM SQL extraction. **Future Wave 5+**: yobabox-side обёртка над `LinqToDB.Remote.HttpClient.Server` (готовое в linq2db), pet-side использует `LinqToDB.Remote.HttpClient.Client` NuGet — full linq2db UX end-to-end. Не custom IDataProvider с нуля.
-8. **MCP отложен в Wave 4** (не MVP). Когда подключится — единый `/mcp` endpoint на весь yobabox через `ModelContextProtocol.AspNetCore` SDK, не модуль-специфичный.
+7. **Pet client MVP**: thin send-helper, native ORM SQL extraction. **Future Wave 5+**: petbox-side обёртка над `LinqToDB.Remote.HttpClient.Server` (готовое в linq2db), pet-side использует `LinqToDB.Remote.HttpClient.Client` NuGet — full linq2db UX end-to-end. Не custom IDataProvider с нуля.
+8. **MCP отложен в Wave 4** (не MVP). Когда подключится — единый `/mcp` endpoint на весь petbox через `ModelContextProtocol.AspNetCore` SDK, не модуль-специфичный.
 9. **Driver pet — kpvotes-net** (Wave 3 dogfooding gate).
 
 **Phasing**: Wave 0 (critique + linq2db PoC gate) → Wave 1 (foundation + APIs combined) → Wave 2 (UI + dogfood через REST) → Wave 3 (real pet integration) → Wave 4 (MCP) → Wave 5+ (deferred).

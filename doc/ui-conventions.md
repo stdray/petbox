@@ -1,6 +1,6 @@
 # UI conventions
 
-Canonical choices for building YobaBox UI. Keep this short. If a recipe isn't here, follow what's already in `Pages/` and add a line here.
+Canonical choices for building PetBox UI. Keep this short. If a recipe isn't here, follow what's already in `Pages/` and add a line here.
 
 Hard invariants live in `AGENTS.md` ("Hard invariants" section) — localization, `data-testid`, no inline JS, English-only chrome. This doc covers component-level "how" only.
 

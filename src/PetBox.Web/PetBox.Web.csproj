@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+	<PropertyGroup>
+		<UserSecretsId>e3b7c1a2-4d56-7890-abcd-ef1234567890</UserSecretsId>
+		<!-- Generated *.pb.cs sprinkle `?` on reference types without #nullable enable. -->
+		<!-- CA1716: 'Me' folder name collides with VB.NET keyword. Folder maps to /ui/me/ URL. -->
+		<NoWarn>$(NoWarn);CS8632;CA1716</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\PetBox.Core\PetBox.Core.csproj" />
+		<ProjectReference Include="..\PetBox.Config\PetBox.Config.csproj" />
+		<ProjectReference Include="..\PetBox.Log.Core\PetBox.Log.Core.csproj" />
+		<ProjectReference Include="..\PetBox.Data\PetBox.Data.csproj" />
+		<ProjectReference Include="..\PetBox.Dashboard\PetBox.Dashboard.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Seq.Extensions.Logging" />
+		<PackageReference Include="ModelContextProtocol.AspNetCore" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="OpenTelemetry.Extensions.Hosting" />
+		<PackageReference Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" />
+		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
+	</ItemGroup>
+
+	<!-- OTLP HTTP/Protobuf ingestion. `OpenTelemetry.Proto` NuGet doesn't exist; vendored
+	     opentelemetry-proto v1.5.0 files under Proto/ are compiled by Grpc.Tools at build.
+	     GrpcServices=None — we only need message types, not service stubs. -->
+	<ItemGroup>
+		<PackageReference Include="Google.Protobuf" />
+		<PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Protobuf Include="Proto\**\*.proto" ProtoRoot="Proto" GrpcServices="None" />
+	</ItemGroup>
+
+	<Target Name="BuildFrontend" BeforeTargets="Build" Condition="'$(Configuration)' == 'Release'">
+		<Exec Command="bun install --frozen-lockfile" WorkingDirectory="$(MSBuildProjectDirectory)" />
+		<Exec Command="bun run build" WorkingDirectory="$(MSBuildProjectDirectory)" />
+	</Target>
+
+	<ItemGroup>
+		<Using Include="LinqToDB" />
+		<Using Include="LinqToDB.Async" />
+	</ItemGroup>
+
+</Project>

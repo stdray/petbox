@@ -1,0 +1,4 @@
+namespace PetBox.E2ETests.Infrastructure;
+
+[CollectionDefinition(nameof(UiCollection))]
+public sealed class UiCollection : ICollectionFixture<WebAppFixture>;

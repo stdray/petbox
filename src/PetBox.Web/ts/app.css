@@ -1,0 +1,56 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+	.event-live {
+		animation: event-live-flash 1.4s ease-out;
+	}
+
+	@keyframes event-live-flash {
+		0% {
+			background-color: oklch(var(--p) / 0.35);
+		}
+		60% {
+			background-color: oklch(var(--p) / 0.15);
+		}
+		100% {
+			background-color: transparent;
+		}
+	}
+
+	.btn.btn-flash {
+		animation: petbox-btn-flash 450ms ease-out;
+	}
+
+	@keyframes petbox-btn-flash {
+		0%,
+		25% {
+			background-color: oklch(var(--wa));
+			color: oklch(var(--wac));
+			border-color: oklch(var(--wa));
+		}
+		100% {
+			background-color: unset;
+			color: unset;
+			border-color: unset;
+		}
+	}
+}
+
+.msg-sub {
+	text-wrap: nowrap;
+	max-width: 18ch;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	display: inline-block;
+	vertical-align: text-bottom;
+	color: inherit;
+	background-color: oklch(var(--p) / 0.08);
+	border-radius: 0.25rem;
+	padding-inline: 0.125rem;
+	font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+	font-size: 0.75rem;
+	line-height: 1rem;
+}

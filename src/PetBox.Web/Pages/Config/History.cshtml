@@ -1,0 +1,77 @@
+@page "/ui/{workspaceKey}/config/history"
+@model PetBox.Web.Pages.Config.HistoryModel
+@{
+	ViewData["Title"] = $"Config History — {Model.EffectiveWorkspaceKey}";
+}
+
+<div class="mb-4 text-sm">
+	<a asp-page="/Config/Index" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey"
+		class="link opacity-70 hover:opacity-100" data-testid="back-to-config">← All bindings</a>
+	<span class="badge badge-outline font-mono ml-2">@Model.EffectiveWorkspaceKey</span>
+</div>
+
+<h1 class="text-xl font-semibold mb-4" data-testid="config-history-title">History</h1>
+
+<form method="get" class="mb-4 flex flex-wrap items-end gap-2" data-testid="config-history-filter">
+	<label class="form-control">
+		<span class="label-text">Path contains</span>
+		<input type="text" name="path" value="@Model.PathFilter"
+			placeholder="app.timeout"
+			class="input input-bordered input-sm font-mono text-xs"
+			data-testid="config-history-filter-path" />
+	</label>
+	<button type="submit" class="btn btn-sm">Apply</button>
+	<a asp-page="/Config/History" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-ghost">Clear</a>
+</form>
+
+@if (Model.Entries.Count == 0)
+{
+	<div class="text-xs opacity-60 italic" data-testid="config-history-empty">No history entries yet.</div>
+}
+else
+{
+	<div class="overflow-x-auto">
+		<table class="table table-sm" data-testid="config-history-table">
+			<thead>
+				<tr>
+					<th class="w-44">At</th>
+					<th class="w-24">Action</th>
+					<th>Path / Tags</th>
+					<th>Old → New</th>
+					<th class="w-32">Actor</th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var h in Model.Entries)
+				{
+					<tr data-testid="config-history-row" data-history-id="@h.Id">
+						<td class="text-xs opacity-70 font-mono">@h.At.ToString("yyyy-MM-dd HH:mm:ss")</td>
+						<td>
+							<span class="badge badge-sm badge-@HistoryBadge(h.Action)">@h.Action</span>
+						</td>
+						<td class="font-mono text-xs">
+							<div class="text-primary">@h.Path</div>
+							<div class="opacity-60">@h.Tags</div>
+						</td>
+						<td class="font-mono text-xs">
+							<div class="opacity-60">@(h.OldValue ?? "—")</div>
+							<div>→ @(h.NewValue ?? "—")</div>
+						</td>
+						<td class="text-xs opacity-70">@h.Actor</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
+
+@functions {
+	static string HistoryBadge(string action) => action switch
+	{
+		"Create" => "success",
+		"Update" => "info",
+		"Delete" => "error",
+		"Reveal" => "warning",
+		_ => "ghost",
+	};
+}

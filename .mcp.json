@@ -1,10 +1,10 @@
 {
 	"mcpServers": {
-		"yobabox": {
+		"petbox": {
 			"type": "http",
 			"url": "http://localhost:5000/mcp",
 			"headers": {
-				"X-Api-Key": "${YOBABOX_DEV_APIKEY}"
+				"X-Api-Key": "${PETBOX_DEV_APIKEY}"
 			}
 		}
 	}

@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/PetBox.Core/PetBox.Core.csproj" />
+    <Project Path="src/PetBox.Web/PetBox.Web.csproj" />
+    <Project Path="src/PetBox.Config/PetBox.Config.csproj" />
+    <Project Path="src/PetBox.Log.Core/PetBox.Log.Core.csproj" />
+    <Project Path="src/PetBox.Data/PetBox.Data.csproj" />
+    <Project Path="src/PetBox.Dashboard/PetBox.Dashboard.csproj" />
+  </Folder>
+  <Folder Name="/src/clients-net/">
+    <Project Path="src/clients-net/PetBox.Client.Config/PetBox.Client.Config.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/PetBox.Tests/PetBox.Tests.csproj" />
+    <Project Path="tests/PetBox.E2ETests/PetBox.E2ETests.csproj" />
+    <Project Path="tests/PetBox.Client.Config.Tests/PetBox.Client.Config.Tests.csproj" />
+  </Folder>
+</Solution>

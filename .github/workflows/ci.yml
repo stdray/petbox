@@ -99,11 +99,11 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         env:
-          ADMIN_USER: ${{ secrets.YOBABOX_ADMIN_USERNAME }}
-          ADMIN_PASS_HASH: ${{ secrets.YOBABOX_ADMIN_PASSWORD_HASH }}
-          MASTER_KEY: ${{ secrets.YOBABOX_MASTER_KEY }}
-          OTEL_ENABLED: ${{ secrets.YOBABOX_OTEL_ENABLED }}
-          OTEL_ENDPOINT: ${{ secrets.YOBABOX_OTEL_ENDPOINT }}
+          ADMIN_USER: ${{ secrets.PETBOX_ADMIN_USERNAME }}
+          ADMIN_PASS_HASH: ${{ secrets.PETBOX_ADMIN_PASSWORD_HASH }}
+          MASTER_KEY: ${{ secrets.PETBOX_MASTER_KEY }}
+          OTEL_ENABLED: ${{ secrets.PETBOX_OTEL_ENABLED }}
+          OTEL_ENDPOINT: ${{ secrets.PETBOX_OTEL_ENDPOINT }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USERNAME }}
@@ -112,9 +112,9 @@ jobs:
           script: |
             set -euo pipefail
             IMAGE="ghcr.io/${{ github.repository }}:${{ needs.publish.outputs.dockerTag }}"
-            CONTAINER_NAME="yobabox"
+            CONTAINER_NAME="petbox"
             # DEPLOY_USERNAME is in the `docker` group → no sudo for docker commands.
-            # /opt/yobabox/data is pre-created during host bootstrap with chown 1654:1654
+            # /opt/petbox/data is pre-created during host bootstrap with chown 1654:1654
             # (chiseled `app` UID) so the container can write its SQLite file on mount.
             # Public GHCR package → docker pull is anonymous.
             docker pull "$IMAGE"
@@ -125,7 +125,7 @@ jobs:
             if [ "$OTEL_ENDPOINT" = "self" ]; then
               OTEL_ENDPOINT="http://localhost:8080/v1/traces"
             fi
-            # Host port 8083 per the shared-host convention (yobaconf=8081, yobalog=8082, yobabox=8083).
+            # Host port 8083 per the shared-host convention (yobaconf=8081, yobalog=8082, petbox=8083).
             # Only loopback bind — central Caddy terminates TLS and reverse-proxies.
             #
             # Self-log: in-process via SystemLogger (Phase 22.2) — writes directly through
@@ -135,10 +135,10 @@ jobs:
               --name "$CONTAINER_NAME" \
               --restart unless-stopped \
               -p 127.0.0.1:8083:8080 \
-              -v /opt/yobabox/data:/app/data \
+              -v /opt/petbox/data:/app/data \
               -e Admin__Username="$ADMIN_USER" \
               -e Admin__PasswordHash="$ADMIN_PASS_HASH" \
-              -e YOBABOX_MASTER_KEY="$MASTER_KEY" \
+              -e PETBOX_MASTER_KEY="$MASTER_KEY" \
               -e Features__Config=true \
               -e Features__Logging=true \
               -e Features__Data=true \

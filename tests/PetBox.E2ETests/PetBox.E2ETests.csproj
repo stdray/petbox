@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+		<IsTestProject>true</IsTestProject>
+		<NoWarn>$(NoWarn);CA1001;CA1707;CA1711</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<AssemblyMetadata Include="PetBoxWebProjectDir" Value="$(MSBuildThisFileDirectory)..\..\src\PetBox.Web" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="coverlet.collector" />
+		<PackageReference Include="Microsoft.NET.Test.Sdk" />
+		<PackageReference Include="Microsoft.Playwright" />
+		<PackageReference Include="xunit" />
+		<PackageReference Include="xunit.runner.visualstudio" />
+		<PackageReference Include="AwesomeAssertions" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="Xunit" />
+		<Using Include="Xunit.Abstractions" />
+		<Using Include="AwesomeAssertions" />
+		<Using Include="PetBox.Core" />
+		<Using Include="PetBox.Core.Auth" />
+		<Using Include="PetBox.E2ETests.Infrastructure" />
+		<Using Include="PetBox.E2ETests.Pages" />
+		<Using Include="Microsoft.Playwright" />
+		<Using Include="Microsoft.Playwright.Assertions" Static="true" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\..\src\PetBox.Core\PetBox.Core.csproj" />
+		<ProjectReference Include="..\..\src\PetBox.Web\PetBox.Web.csproj" />
+	</ItemGroup>
+
+</Project>

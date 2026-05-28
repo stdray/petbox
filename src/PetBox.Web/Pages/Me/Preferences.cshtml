@@ -1,0 +1,33 @@
+@page "/ui/me/preferences"
+@model PetBox.Web.Pages.Me.PreferencesModel
+@using PetBox.Core.Settings
+@using PetBox.Web.Settings
+@{
+	ViewData["Title"] = "Preferences";
+	Layout = "_AccountLayout";
+	var formModel = new SettingsFormModel
+	{
+		RecordType = typeof(UiSettings),
+		Current = Model.Current,
+		CurrentScope = Scope.User,
+		ScopeKey = Model.UserIdString,
+		Handler = "Save",
+		FormTestId = "me-preferences-form",
+	};
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="me-preferences-title">Preferences</h1>
+	<p class="text-sm opacity-60">UI preferences that follow you across devices and workspaces.</p>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.SuccessMessage))
+{
+	<div class="alert alert-success mb-3 max-w-3xl" data-testid="me-preferences-success">@Model.SuccessMessage</div>
+}
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3 max-w-3xl" data-testid="me-preferences-error">@Model.ErrorMessage</div>
+}
+
+<partial name="_SettingsForm" model="formModel" />

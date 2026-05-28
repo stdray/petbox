@@ -4,14 +4,14 @@ Single source of truth for "where does setting X live, and how is it edited?". U
 
 ## 1. Per-entity catalog
 
-Every configurable thing in YobaBox today, grouped by the entity it belongs to.
+Every configurable thing in PetBox today, grouped by the entity it belongs to.
 
-### YobaBox instance (process-level, restart-only)
+### PetBox instance (process-level, restart-only)
 
 | Parameter | Type | Storage | UI | Permission |
 |---|---|---|---|---|
 | Admin bootstrap (username + password hash) | string | `appsettings.json` | — | env owner |
-| Master key | secret | env `YOBABOX_MASTER_KEY` | — | env owner |
+| Master key | secret | env `PETBOX_MASTER_KEY` | — | env owner |
 | Connection string, OTel endpoint, Seq self-log | various | `appsettings.json` | — | env owner |
 | Feature gates (`Features:Config / Logging / Data / Dashboard`) | bool | `appsettings.json` | — | env owner |
 
@@ -117,7 +117,7 @@ Use for everything **not** entity-shaped: tunable knobs attached to one of L1 en
 
 ### L3 — ConfigBindings (per-workspace `ConfigDb`, existing, untouched)
 
-Only for **external consumers** — pet-projects reading via the resolve API with tags. Invariant in `AGENTS.md`: YobaBox itself never stores its own settings in `ConfigBindings`.
+Only for **external consumers** — pet-projects reading via the resolve API with tags. Invariant in `AGENTS.md`: PetBox itself never stores its own settings in `ConfigBindings`.
 
 ### Decision rule (three lines)
 

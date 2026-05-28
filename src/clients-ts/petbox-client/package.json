@@ -1,0 +1,38 @@
+{
+	"name": "@stdray/petbox-client",
+	"version": "0.1.0",
+	"description": "TypeScript SDK for PetBox — config client with ETag-aware polling. Data + Log surfaces land in 26.3.",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": ["dist", "src"],
+	"scripts": {
+		"build": "tsc",
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"lint": "biome check .",
+		"lint:fix": "biome check --write ."
+	},
+	"devDependencies": {
+		"@biomejs/biome": "1.9.4",
+		"typescript": "5.7.3"
+	},
+	"keywords": ["petbox", "configuration", "config"],
+	"license": "MIT",
+	"sideEffects": false,
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/stdray/petbox.git",
+		"directory": "src/clients-ts/petbox-client"
+	},
+	"publishConfig": {
+		"registry": "https://npm.pkg.github.com"
+	}
+}

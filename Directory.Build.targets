@@ -2,7 +2,7 @@
 
 	<!--
 		CA1848 (use LoggerMessage delegates) is a perf rule for high-volume hot
-		paths. Yobabox uses standard ILogger.LogXxx across UI middleware, admin
+		paths. PetBox uses standard ILogger.LogXxx across UI middleware, admin
 		actions, and one-off operations where the per-call alloc cost is
 		negligible. Hot-path code (e.g. ingestion pipeline) uses explicit
 		[LoggerMessage] partial methods anyway. Suppress globally so the rest of

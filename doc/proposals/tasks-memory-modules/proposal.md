@@ -22,7 +22,7 @@
 **Назначение:** project-plan (структурированное дерево) + session-plan (markdown blob с ревизиями).
 
 Сущности:
-- `ProjectPlan` — 1:1 к yobabox Project.
+- `ProjectPlan` — 1:1 к petbox Project.
 - `PlanNode` — self-referencing tree неограниченной глубины. Поля: `Id, ProjectKey, ParentId?, Order, Title, Status, Body, CreatedAt, UpdatedAt, CompletedAt?`. Статусы: `Pending / InProgress / Done / Blocked / Deferred / Cancelled`.
 - `PlanNodeHistory` — append-only ops log (create/update/complete/reorder/delete).
 - `PlanNodeRef` — junction-table: `Kind` (Commit/GithubIssue/GithubPr/GitlabIssue/GitlabMr/Jira/Url), `Value`, `Label?`.
@@ -45,7 +45,7 @@ Storage: `data/memory/{projectKey}.db` через `MemoryDbFactory`.
 
 ## MCP-контракт
 
-Endpoints `/mcp/tasks` и `/mcp/memory` внутри `YobaBox.Web`. Реализация — отдельные проекты `YobaBox.Tasks` / `YobaBox.Memory` по шаблону `YobaBox.Log.Core`. Auth — существующая X-Api-Key с новыми scope'ами `tasks:read/write`, `memory:read/write`.
+Endpoints `/mcp/tasks` и `/mcp/memory` внутри `PetBox.Web`. Реализация — отдельные проекты `PetBox.Tasks` / `PetBox.Memory` по шаблону `PetBox.Log.Core`. Auth — существующая X-Api-Key с новыми scope'ами `tasks:read/write`, `memory:read/write`.
 
 **Tasks tools:**
 - `plan_get(projectKey)`, `plan_diff(projectKey, since)`, `plan_recent(projectKey, limit)`, `plan_search(query, projectKey?)`
@@ -58,7 +58,7 @@ Endpoints `/mcp/tasks` и `/mcp/memory` внутри `YobaBox.Web`. Реализ
 
 ## Sync архитектура
 
-**yobabox — канон.** Skill устанавливается агенту:
+**petbox — канон.** Skill устанавливается агенту:
 - **Pull**: при старте сессии → `tasks.plan_get` → render markdown → пишет `doc/plan.md`.
 - **Push (MVP write-only)**: агент вызывает MCP-tools при каждой правке. Локальный plan.md/memory dir — устаревший mirror.
 - **Stop-hook**: при завершении turn'а `tasks.session_save` для `~/.claude/plans/{slug}.md` + `memory.upsert` для свежеправленных memory-файлов.
@@ -78,7 +78,7 @@ Endpoints `/mcp/tasks` и `/mcp/memory` внутри `YobaBox.Web`. Реализ
 - Phase C: Claude Code skill + Stop-hook + render plumbing
 - Phase D: Data модуль (независимый prerequisite для kpvotes)
 - Phase E: kpvotes интеграция через Data
-- Phase F: yobabox-self dogfooding — `doc/plan.md` мигрирует через MCP
+- Phase F: petbox-self dogfooding — `doc/plan.md` мигрирует через MCP
 
 ## Открытые вопросы
 

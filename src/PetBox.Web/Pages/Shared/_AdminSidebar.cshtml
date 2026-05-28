@@ -1,0 +1,170 @@
+@inject PetBox.Web.Navigation.INavigationContext Nav
+@inject PetBox.Core.Features.FeatureFlags Features
+@{
+	var path = Context.Request.Path.Value ?? string.Empty;
+	bool At(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
+	bool Under(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+
+	var currentWs = Nav.CurrentWorkspaceKey;
+	var isAuthenticated = Nav.IsAuthenticated;
+	var isSysAdmin = isAuthenticated
+		&& Context.User.FindFirst(PetBox.Core.Auth.PetBoxClaims.IsSysAdmin)?.Value == "true";
+
+	// Current project key (if URL is inside an admin project page).
+	string? currentProject = null;
+	var projectPrefix = $"/ui/admin/ws/{currentWs}/projects/";
+	if (Under(projectPrefix))
+	{
+		var rest = path.Substring(projectPrefix.Length);
+		var slash = rest.IndexOf('/');
+		var maybeKey = slash > 0 ? rest[..slash] : rest;
+		if (!string.IsNullOrEmpty(maybeKey) && maybeKey != "new")
+			currentProject = maybeKey;
+	}
+
+	var workspaces = Nav.AvailableWorkspaces;
+	var projectsByWs = Nav.ProjectsByWorkspace;
+}
+<aside class="bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col" data-testid="admin-sidebar">
+	@if (isAuthenticated)
+	{
+		<ul class="menu menu-sm w-full p-2 gap-0.5" data-testid="admin-side-tree">
+			<li>
+				<details open data-testid="admin-side-workspaces-tree">
+					<summary class="font-semibold">
+						<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
+						</svg>
+						<span>Workspaces</span>
+						<span class="badge badge-ghost badge-xs ml-auto">@workspaces.Count</span>
+					</summary>
+					<ul>
+						@if (workspaces.Count == 0)
+						{
+							<li class="text-xs opacity-50 italic px-3 py-1" data-testid="admin-side-no-workspaces">No accessible workspaces.</li>
+						}
+						else
+						{
+							@foreach (var w in workspaces)
+							{
+								var isCurrentWs = string.Equals(currentWs, w.Key, StringComparison.Ordinal);
+								var wsProjects = projectsByWs.TryGetValue(w.Key, out var ps) ? ps : (IReadOnlyList<PetBox.Core.Models.Project>)Array.Empty<PetBox.Core.Models.Project>();
+								<li data-testid="admin-side-workspace" data-ws-key="@w.Key">
+									<details open="@isCurrentWs">
+										<summary class="@(isCurrentWs ? "font-semibold" : "")">
+											<span class="font-mono text-sm truncate">@w.Key</span>
+											@if (string.Equals(w.Key, "$system", StringComparison.Ordinal))
+											{
+												<span class="badge badge-ghost badge-xs">sys</span>
+											}
+										</summary>
+										<ul>
+											<li>
+												<a href="@Routes.WorkspaceAdmin(w.Key)" class="@(At(Routes.WorkspaceAdmin(w.Key)) ? "active" : "")" data-testid="admin-side-ws-overview">Overview</a>
+											</li>
+											<li>
+												<a href="@Routes.WorkspaceAdminMembers(w.Key)" class="@(At(Routes.WorkspaceAdminMembers(w.Key)) ? "active" : "")" data-testid="admin-side-ws-members">Members</a>
+											</li>
+											@if (Features.IsEnabled(Feature.Config))
+											{
+												<li>
+													<a href="@Routes.SharedConfig(w.Key)" class="@(Under(Routes.SharedConfig(w.Key)) ? "active" : "")" data-testid="admin-side-ws-config">Shared config</a>
+												</li>
+											}
+											<li>
+												<a href="@Routes.WorkspaceAdminDefaults(w.Key)" class="@(At(Routes.WorkspaceAdminDefaults(w.Key)) ? "active" : "")" data-testid="admin-side-ws-defaults">Defaults</a>
+											</li>
+											<li>
+												<a href="@Routes.WorkspaceAdminInfo(w.Key)" class="@(At(Routes.WorkspaceAdminInfo(w.Key)) ? "active" : "")" data-testid="admin-side-ws-info">Info</a>
+											</li>
+											<li>
+												@{
+													var projectsBranchOpen = isCurrentWs;
+												}
+												<details open="@projectsBranchOpen" data-testid="admin-side-projects-tree">
+													<summary>
+														<span>Projects</span>
+														<span class="badge badge-ghost badge-xs ml-auto">@wsProjects.Count</span>
+													</summary>
+													<ul>
+														<li>
+															<a href="@Routes.WorkspaceAdminProjects(w.Key)" class="@(At(Routes.WorkspaceAdminProjects(w.Key)) ? "active" : "") italic opacity-80" data-testid="admin-side-ws-projects">All projects</a>
+														</li>
+														@if (wsProjects.Count == 0)
+														{
+															<li class="text-xs opacity-50 italic px-3 py-1" data-testid="admin-side-no-projects">No projects yet.</li>
+														}
+														else
+														{
+															@foreach (var p in wsProjects)
+															{
+																var isCurrentProject = isCurrentWs && string.Equals(currentProject, p.Key, StringComparison.Ordinal);
+																<li data-testid="admin-side-project" data-project-key="@p.Key">
+																	<details open="@isCurrentProject">
+																		<summary class="@(isCurrentProject ? "font-semibold" : "")">
+																			<span class="font-mono text-xs truncate">@p.Key</span>
+																		</summary>
+																		<ul>
+																			<li>
+																				<a href="@Routes.ProjectSettings(w.Key, p.Key)" class="@(At(Routes.ProjectSettings(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-info">Info</a>
+																			</li>
+																			@if (Features.IsEnabled(Feature.Logging))
+																			{
+																				<li>
+																					<a href="@Routes.ProjectLogSettings(w.Key, p.Key)" class="@(At(Routes.ProjectLogSettings(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-log">Log settings</a>
+																				</li>
+																			}
+																			@if (Features.IsEnabled(Feature.Data))
+																			{
+																				<li>
+																					<a href="@Routes.ProjectData(w.Key, p.Key)" class="@(At(Routes.ProjectData(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-data">Data</a>
+																				</li>
+																			}
+																		</ul>
+																	</details>
+																</li>
+															}
+														}
+													</ul>
+												</details>
+											</li>
+										</ul>
+									</details>
+								</li>
+							}
+						}
+					</ul>
+				</details>
+			</li>
+
+			@if (isSysAdmin)
+			{
+				<li>
+					<details open data-testid="admin-side-sys-tree">
+						<summary class="font-semibold">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+							</svg>
+							<span>Server administration</span>
+						</summary>
+						<ul>
+							<li>
+								<a href="@Routes.Sys()" class="@(At(Routes.Sys()) ? "active" : "")" data-testid="admin-side-sys-home">Overview</a>
+							</li>
+							<li>
+								<a href="@Routes.SysWorkspaces()" class="@(Under(Routes.SysWorkspaces()) ? "active" : "")" data-testid="admin-side-sys-workspaces">Workspaces</a>
+							</li>
+							<li>
+								<a href="@Routes.SysUsers()" class="@(At(Routes.SysUsers()) ? "active" : "")" data-testid="admin-side-sys-users">Users</a>
+							</li>
+							<li>
+								<a href="@Routes.SysDefaults()" class="@(At(Routes.SysDefaults()) ? "active" : "")" data-testid="admin-side-sys-defaults">Defaults</a>
+							</li>
+						</ul>
+					</details>
+				</li>
+			}
+		</ul>
+	}
+</aside>

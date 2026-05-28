@@ -1,0 +1,103 @@
+@page "/ui/admin/ws/{workspaceKey}/projects"
+@model PetBox.Web.Pages.Admin.ProjectsModel
+@{
+	ViewData["Title"] = "Projects";
+	Layout = "_AdminLayout";
+	var isSystem = string.Equals(Model.WorkspaceKey, "$system", StringComparison.Ordinal);
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="admin-projects-title">@Model.WorkspaceKey workspace</h1>
+	<p class="text-sm opacity-60">Projects living in this workspace.</p>
+</div>
+
+<partial name="_WorkspaceAdminTabs" />
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="admin-projects-error">@Model.ErrorMessage</div>
+}
+
+<div class="flex items-center gap-3 mb-3">
+	<h2 class="text-lg font-semibold">Projects</h2>
+	<span class="badge badge-ghost">@Model.ProjectsInWorkspace.Count</span>
+</div>
+
+<div class="overflow-x-auto mb-6">
+	<table class="table table-sm" data-testid="admin-projects-table">
+		<thead>
+			<tr>
+				<th>Key</th>
+				<th>Name</th>
+				<th>Description</th>
+				<th class="w-24"></th>
+			</tr>
+		</thead>
+		<tbody>
+			@if (Model.ProjectsInWorkspace.Count == 0)
+			{
+				<tr data-testid="admin-projects-empty"><td colspan="4" class="text-xs opacity-60 italic text-center">No projects yet. Create the first below.</td></tr>
+			}
+			else
+			{
+				@foreach (var p in Model.ProjectsInWorkspace)
+				{
+					<tr data-testid="project-row" data-project-key="@p.Key">
+						<td class="font-mono text-xs">@p.Key</td>
+						<td><a href="@Routes.Project(Model.WorkspaceKey, p.Key)" class="link link-hover" data-testid="admin-project-link">@p.Name</a></td>
+						<td class="text-sm opacity-70">@p.Description</td>
+						<td>
+							<a href="@Routes.ProjectSettings(Model.WorkspaceKey, p.Key)" class="btn btn-xs btn-ghost" data-testid="admin-project-settings">Settings</a>
+						</td>
+					</tr>
+				}
+			}
+		</tbody>
+	</table>
+</div>
+
+<h2 class="text-lg font-semibold mb-3">New project</h2>
+@if (isSystem)
+{
+	<div class="alert alert-warning max-w-3xl" data-testid="admin-projects-system-locked">
+		<div>
+			<div class="font-semibold">$system is reserved for PetBox-internal services.</div>
+			<p class="text-sm opacity-80">Create new projects in a regular workspace. Switch via the sidebar workspace switcher (or create a workspace in <a href="@Routes.SysWorkspaces()" class="link">system administration</a>).</p>
+		</div>
+	</div>
+}
+else
+{
+	<form method="post" asp-page-handler="Create" class="card bg-base-200 border border-base-300 mb-4 max-w-3xl" data-testid="admin-project-create-form">
+		@Html.AntiForgeryToken()
+		<div class="card-body p-4">
+			<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+				<label class="form-control">
+					<span class="label-text">Key</span>
+					<input type="text" name="key" required
+						class="input input-bordered input-sm font-mono"
+						placeholder="my-project"
+						pattern="[a-z0-9][a-z0-9\-]*"
+						data-testid="admin-project-create-key" />
+					<span class="text-xs opacity-60 mt-1">lowercase letters, digits, hyphens. Reserved: logs, traces, config, admin, projects, sys, tasks, data, settings.</span>
+				</label>
+				<label class="form-control">
+					<span class="label-text">Name</span>
+					<input type="text" name="name" required
+						class="input input-bordered input-sm"
+						placeholder="My Project"
+						data-testid="admin-project-create-name" />
+				</label>
+			</div>
+			<label class="form-control mt-3">
+				<span class="label-text">Description <span class="opacity-50">(optional)</span></span>
+				<input type="text" name="description"
+					class="input input-bordered input-sm"
+					data-testid="admin-project-create-desc" />
+			</label>
+			<div class="card-actions mt-3">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="admin-project-create-submit">Create</button>
+			</div>
+		</div>
+	</form>
+}

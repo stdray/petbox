@@ -6,10 +6,10 @@
 set -e
 
 echo "==> dotnet format --verify-no-changes"
-dotnet format YobaBox.slnx --verify-no-changes --no-restore 2>&1
+dotnet format PetBox.slnx --verify-no-changes --no-restore 2>&1
 
 echo "==> dotnet build"
-dotnet build YobaBox.slnx --no-restore 2>&1
+dotnet build PetBox.slnx --no-restore 2>&1
 
 echo "==> dotnet test"
-dotnet test YobaBox.slnx --no-build 2>&1
+dotnet test PetBox.slnx --no-build 2>&1

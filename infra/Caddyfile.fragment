@@ -1,5 +1,5 @@
-yobabox.3po.su {
-	# Container publishes to 127.0.0.1:8083 (shared-host convention: yobaconf=8081, yobalog=8082, yobabox=8083).
+petbox.3po.su {
+	# Container publishes to 127.0.0.1:8083 (shared-host convention: yobaconf=8081, yobalog=8082, petbox=8083).
 	reverse_proxy 127.0.0.1:8083 {
 		flush_interval -1
 	}
@@ -7,7 +7,7 @@ yobabox.3po.su {
 	encode gzip zstd
 
 	log {
-		output file /var/log/caddy/yobabox.access.log {
+		output file /var/log/caddy/petbox.access.log {
 			roll_size 50mb
 			roll_keep 5
 		}

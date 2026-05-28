@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Guidance for coding agents working in this repository.
-Invariants: see [doc/invariants.md](doc/invariants.md). Status tracked in `my/prj/yobabox/invariant-status.md`.
+Invariants: see [doc/invariants.md](doc/invariants.md). Status tracked in `my/prj/petbox/invariant-status.md`.
 
 ## Status: Phase 0 — Scaffold
 
@@ -17,24 +17,24 @@ Empty repository. Template files copied from `wiki/cross-project/templates/dotne
 
 ## MCP access during development
 
-`.mcp.json` at repo root registers the running yobabox dev server as an MCP
-target named `yobabox`. Tools exposed: `data.*` (7 tools) + `log.query`.
+`.mcp.json` at repo root registers the running petbox dev server as an MCP
+target named `petbox`. Tools exposed: `data.*` (7 tools) + `log.query`.
 Useful during dev for inspecting logs without leaving the editor:
 `log.query` with KQL like `events | where Level >= 4` shows what errored.
 
 Setup (one-time, per machine):
-1. Set env var `YOBABOX_DEV_APIKEY` to a `$system`-scoped ApiKey with
+1. Set env var `PETBOX_DEV_APIKEY` to a `$system`-scoped ApiKey with
    `logs:query,data:read,data:write,data:schema` scopes. Create one at
    `/ui/admin/ws/$system/projects/$system/info`.
-2. Start the dev server (`dotnet watch` in `src/YobaBox.Web/`).
+2. Start the dev server (`dotnet watch` in `src/PetBox.Web/`).
 3. Claude Code (or any MCP-aware agent) picks up `.mcp.json` automatically.
 
-Inspect via `mcp__yobabox__log_query` calls; the key never lands in the
-config file because `.mcp.json` references `${YOBABOX_DEV_APIKEY}`.
+Inspect via `mcp__petbox__log_query` calls; the key never lands in the
+config file because `.mcp.json` references `${PETBOX_DEV_APIKEY}`.
 
 ## Documents — what goes where
 
-- **`doc/spec.md`** — pointer to vault spec at `my/idea/yobabox/spec.md`.
+- **`doc/spec.md`** — pointer to vault spec at `my/idea/petbox/spec.md`.
 - **`doc/plan.md`** — phases with checkboxes and progress.
 - **`doc/decision-log.md`** — architectural decisions (newest on top).
 - **`doc/invariants.md`** — copy of `wiki/cross-project/invariants.md`.
@@ -50,7 +50,7 @@ When an agent (claude-code, factory droid, opencode, oh-my-pi, …) creates, edi
 - Edits to session plans in `~/.claude/plans/*.md` (or each agent's equivalent location).
 - Edits to memory files in `~/.claude/projects/*/memory/*.md` (or each agent's equivalent location).
 
-One operation per turn → one record file. The point is to accumulate real examples that will inform the design of the YobaBox Tasks module.
+One operation per turn → one record file. The point is to accumulate real examples that will inform the design of the PetBox Tasks module.
 
 ## Target stack
 
@@ -68,19 +68,19 @@ One operation per turn → one record file. The point is to accumulate real exam
 
 ## Module architecture
 
-YobaBox is a module monolith. Each subsystem is feature-toggled via `appsettings.json`:
+PetBox is a module monolith. Each subsystem is feature-toggled via `appsettings.json`:
 
 ```
 Features: { Config: true, Logging: true, Data: true, Dashboard: true }
 ```
 
 Projects:
-- `YobaBox.Core` — Auth, Project/Service/ApiKey models, SQLite context, localization, feature toggle infrastructure
-- `YobaBox.Web` — single entry point, Program.cs, Razor Pages, frontend assets
-- `YobaBox.Config` — tag-based config engine, resolve pipeline
-- `YobaBox.Log.Core` — KQL engine, Seq ingestion
-- `YobaBox.Data` — PostgREST HTTP API, linq2db.Remote.Grpc
-- `YobaBox.Dashboard` — HealthPoller, CiPoller, /api/heartbeat, dashboard UI
+- `PetBox.Core` — Auth, Project/Service/ApiKey models, SQLite context, localization, feature toggle infrastructure
+- `PetBox.Web` — single entry point, Program.cs, Razor Pages, frontend assets
+- `PetBox.Config` — tag-based config engine, resolve pipeline
+- `PetBox.Log.Core` — KQL engine, Seq ingestion
+- `PetBox.Data` — PostgREST HTTP API, linq2db.Remote.Grpc
+- `PetBox.Dashboard` — HealthPoller, CiPoller, /api/heartbeat, dashboard UI
 
 ## Entity model
 
@@ -98,8 +98,8 @@ Project/Service are organizational layers for UI. ConfigBinding uses tags (`proj
 
 - **Feature toggle gating.** Every subsystem checks `Features:<Name>` before registering endpoints/middleware/BackgroundServices. Disabled subsystem = zero runtime cost.
 - **Auth: local and remote modes.** Default local (validate against own DB). Remote mode (`Auth:Mode: remote, RemoteUrl: ...`) delegates validation to central instance. Log-only instances don't store users or keys.
-- **No YobaBox self-config via ConfigModule.** YobaBox configures itself from `appsettings.json` only. ConfigModule serves external consumers.
-- **`$system` project is undeletable.** Auto-created on first start. YobaBox logs itself into `$system` services.
+- **No PetBox self-config via ConfigModule.** PetBox configures itself from `appsettings.json` only. ConfigModule serves external consumers.
+- **`$system` project is undeletable.** Auto-created on first start. PetBox logs itself into `$system` services.
 - **Config resolve is deterministic.** Same tags → same binding. Tag-based matching: most specific tag set wins.
 - **ApiKey scopes are enumerable, not wildcards.** `config:read`, `logs:ingest`, `data:write`, `dashboard:read`, `admin`.
 - **LogEntry is append-only, immutable.** No update or delete. Retention policy TBD.

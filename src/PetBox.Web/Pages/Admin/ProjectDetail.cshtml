@@ -1,0 +1,256 @@
+@page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/info"
+@model PetBox.Web.Pages.Admin.ProjectDetailModel
+@{
+	ViewData["Title"] = $"Project: {Model.Project?.Name ?? Model.Key}";
+	Layout = "_AdminLayout";
+}
+
+@if (Model.Project is null)
+{
+	<div class="alert alert-error" data-testid="project-detail-error">Project not found.</div>
+	return;
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold" data-testid="project-detail-title">@Model.Project.Name</h1>
+	<span class="font-mono text-sm opacity-60">@Model.Project.Key</span>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="project-detail-error-msg">@Model.ErrorMessage</div>
+}
+@if (Model.NewKey is not null)
+{
+	<div class="alert alert-success mb-3" data-testid="project-key-created">
+		<div>
+			<div class="font-semibold">New API key — copy now, it will be hidden after refresh:</div>
+			<code class="font-mono text-sm select-all">@Model.NewKey</code>
+		</div>
+	</div>
+}
+
+<section class="mb-6" data-testid="project-services-section">
+	<div class="flex items-center gap-3 mb-3">
+		<h2 class="text-lg font-semibold">Services</h2>
+		<span class="badge badge-ghost">@Model.Services.Count</span>
+	</div>
+
+	<div class="overflow-x-auto mb-3">
+		<table class="table table-sm" data-testid="project-services-table">
+			<thead>
+				<tr>
+					<th>Key</th>
+					<th class="w-32">Health model</th>
+					<th>URL</th>
+					<th class="w-24">Health</th>
+					<th class="w-24"></th>
+				</tr>
+			</thead>
+			<tbody>
+				@if (Model.Services.Count == 0)
+				{
+					<tr data-testid="project-services-empty"><td colspan="5" class="text-xs opacity-60 italic text-center">No services yet. Add one below.</td></tr>
+				}
+				else
+				{
+					@foreach (var s in Model.Services)
+					{
+						<tr data-testid="service-row" data-service-key="@s.Key">
+							<td class="font-mono text-xs">@s.Key</td>
+							<td><span class="badge badge-outline badge-xs">@s.HealthModel</span></td>
+							<td class="text-xs opacity-70 max-w-xs truncate">@s.Url</td>
+							<td><span class="badge badge-sm">@s.Health</span></td>
+							<td>
+								<form method="post" asp-page-handler="DeleteService" asp-route-serviceKey="@s.Key"
+									onsubmit="return confirm('Delete service @s.Key?')" style="display:inline">
+									@Html.AntiForgeryToken()
+									<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="project-service-delete">Delete</button>
+								</form>
+							</td>
+						</tr>
+					}
+				}
+			</tbody>
+		</table>
+	</div>
+
+	<form method="post" asp-page-handler="CreateService" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="project-service-create-form">
+		@Html.AntiForgeryToken()
+		<div class="card-body p-4">
+			<h3 class="card-title text-sm">New service</h3>
+			<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+				<label class="form-control">
+					<span class="label-text">Key</span>
+					<input type="text" name="serviceKey" required
+						class="input input-bordered input-sm font-mono"
+						placeholder="my-service"
+						pattern="[a-z0-9][a-z0-9\-]*"
+						data-testid="project-service-create-key" />
+				</label>
+				<label class="form-control">
+					<span class="label-text">Health model</span>
+					<select name="HealthModel" class="select select-bordered select-sm" data-testid="project-service-create-kind">
+						<option value="Endpoint">Endpoint (poll)</option>
+						<option value="Push">Push (heartbeat)</option>
+					</select>
+				</label>
+				<label class="form-control">
+					<span class="label-text">URL <span class="opacity-50">(optional)</span></span>
+					<input type="text" name="Url"
+						class="input input-bordered input-sm font-mono"
+						placeholder="https://..."
+						data-testid="project-service-create-url" />
+				</label>
+			</div>
+			<div class="card-actions mt-3">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="project-service-create-submit">Add service</button>
+			</div>
+		</div>
+	</form>
+</section>
+
+<div class="divider"></div>
+
+<section class="mb-6" data-testid="project-keys-section">
+	<div class="flex items-center gap-3 mb-3">
+		<h2 class="text-lg font-semibold">API keys</h2>
+		<span class="badge badge-ghost">@Model.Keys.Count</span>
+	</div>
+
+	<div class="overflow-x-auto mb-3">
+		<table class="table table-sm" data-testid="project-keys-table">
+			<thead>
+				<tr>
+					<th>Name</th>
+					<th>Key (prefix)</th>
+					<th>Scopes</th>
+					<th class="w-32">Created</th>
+					<th class="w-24"></th>
+				</tr>
+			</thead>
+			<tbody>
+				@if (Model.Keys.Count == 0)
+				{
+					<tr data-testid="project-keys-empty"><td colspan="5" class="text-xs opacity-60 italic text-center">No keys issued yet.</td></tr>
+				}
+				else
+				{
+					@foreach (var k in Model.Keys)
+					{
+						<tr data-testid="key-row">
+							<td class="text-sm">@(string.IsNullOrEmpty(k.Name) ? "—" : k.Name)</td>
+							<td class="font-mono text-xs">@(k.Key.Length > 12 ? k.Key[..12] + "..." : k.Key)</td>
+							<td>
+								<div class="flex flex-wrap gap-1">
+									@foreach (var scope in (k.Scopes ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+									{
+										<span class="badge badge-outline badge-xs font-mono">@scope</span>
+									}
+								</div>
+							</td>
+							<td class="text-xs opacity-70 font-mono">@k.CreatedAt.ToString("yyyy-MM-dd")</td>
+							<td>
+								<form method="post" asp-page-handler="RevokeKey" asp-route-keyValue="@k.Key"
+									onsubmit="return confirm('Revoke key @(k.Key[..Math.Min(12, k.Key.Length)])...?')" style="display:inline">
+									@Html.AntiForgeryToken()
+									<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="project-key-revoke">Revoke</button>
+								</form>
+							</td>
+						</tr>
+					}
+				}
+			</tbody>
+		</table>
+	</div>
+
+	<form method="post" asp-page-handler="CreateKey" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="project-key-create-form">
+		@Html.AntiForgeryToken()
+		<div class="card-body p-4">
+			<h3 class="card-title text-sm">New API key</h3>
+
+			<label class="form-control">
+				<span class="label-text">Name <span class="opacity-60 text-xs">(what is this key for?)</span></span>
+				<input type="text" name="name" required maxlength="200"
+					class="input input-bordered input-sm"
+					placeholder="ci pipeline · claude code dev · ..."
+					data-testid="project-key-create-name" />
+			</label>
+
+			<div class="form-control mt-3" data-testid="project-key-create-scopes-group">
+				<div class="flex items-center justify-between">
+					<span class="label-text">Scopes</span>
+					<span class="text-xs opacity-60">Click checkboxes — typed input is not supported.</span>
+				</div>
+				@foreach (var module in PetBox.Core.Auth.ApiKeyScopes.All.GroupBy(s => s.Module))
+				{
+					<div class="mt-2">
+						<div class="text-xs font-semibold opacity-70 uppercase tracking-wide">@module.Key</div>
+						<div class="grid gap-1 mt-1">
+							@foreach (var scope in module)
+							{
+								<label class="flex items-baseline gap-2 cursor-pointer hover:bg-base-300/40 rounded px-2 py-1">
+									<input type="checkbox" name="scopes" value="@scope.Value"
+										class="checkbox checkbox-xs mt-1"
+										data-testid="project-key-scope-@scope.Value" />
+									<div class="flex-1">
+										<div class="text-sm">
+											<span class="font-medium">@scope.Title</span>
+											<code class="font-mono text-xs opacity-60 ml-2">@scope.Value</code>
+										</div>
+										<div class="text-xs opacity-60">@scope.Description</div>
+									</div>
+								</label>
+							}
+						</div>
+					</div>
+				}
+			</div>
+
+			<div class="card-actions mt-4">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="project-key-create-submit">Issue key</button>
+			</div>
+		</div>
+	</form>
+</section>
+
+<div class="divider"></div>
+
+<section class="mb-6 max-w-3xl" data-testid="project-retention-section">
+	<div class="flex items-center gap-3 mb-3">
+		<h2 class="text-lg font-semibold">Log retention</h2>
+		@if (Model.RetentionOverrideDays is { } d)
+		{
+			<span class="badge badge-info badge-sm" data-testid="project-retention-override-badge">override: @d days</span>
+		}
+		else
+		{
+			<span class="badge badge-ghost badge-sm" data-testid="project-retention-default-badge">default: @Model.EffectiveRetentionDays days</span>
+		}
+	</div>
+	<p class="text-xs opacity-60 mb-3">
+		How long to keep log entries before the hourly sweep deletes them. Without an override, this project uses the
+		<a href="@Routes.Sys()" class="link" data-testid="project-retention-sys-link">system default</a>
+		(@Model.EffectiveRetentionDays days).
+	</p>
+
+	<form method="post" asp-page-handler="SetRetention" class="card bg-base-200 border border-base-300" data-testid="project-retention-form">
+		@Html.AntiForgeryToken()
+		<div class="card-body p-4">
+			<label class="form-control">
+				<span class="label-text">Retain for (days)</span>
+				<input type="number" name="retainDays" min="1" max="3650"
+					value="@(Model.RetentionOverrideDays ?? Model.EffectiveRetentionDays)" required
+					class="input input-bordered input-sm w-32"
+					data-testid="project-retention-input" />
+			</label>
+			<div class="card-actions mt-3 flex-wrap">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="project-retention-save">Set override</button>
+				@if (Model.RetentionOverrideDays is not null)
+				{
+					<button type="submit" formaction="?handler=ClearRetention" class="btn btn-sm btn-ghost" data-testid="project-retention-clear">Reset to default</button>
+				}
+			</div>
+		</div>
+	</form>
+</section>

@@ -1,0 +1,39 @@
+@inject PetBox.Web.Navigation.INavigationContext Nav
+@inject PetBox.Core.Features.FeatureFlags Features
+@{
+	var ws = Nav.CurrentWorkspaceKey;
+	var key = Nav.CurrentProjectKey ?? string.Empty;
+	var path = Context.Request.Path.Value ?? string.Empty;
+	bool At(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
+	bool Under(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+	var logsUrl = Routes.Project(ws, key);
+	var configUrl = Routes.ProjectConfig(ws, key);
+	var settingsUrl = Routes.ProjectSettings(ws, key);
+	var tracesUrl = Routes.ProjectTraces(ws, key);
+	bool logsActive = At(logsUrl) || Under(tracesUrl);
+}
+@if (!string.IsNullOrEmpty(key))
+{
+	<div class="flex items-center mb-4" data-testid="proj-tabs-row">
+		<div role="tablist" class="tabs tabs-bordered" data-testid="proj-tabs">
+			@if (Features.IsEnabled(Feature.Logging))
+			{
+				<a role="tab" class="tab @(logsActive ? "tab-active" : "")"
+					href="@logsUrl"
+					data-testid="proj-tab-logs">Logs</a>
+			}
+			@if (Features.IsEnabled(Feature.Config))
+			{
+				<a role="tab" class="tab @(Under(configUrl) ? "tab-active" : "")"
+					href="@configUrl"
+					data-testid="proj-tab-config">Config</a>
+			}
+		</div>
+		<a href="@settingsUrl" class="ml-auto btn btn-sm btn-ghost" data-testid="proj-admin-link" title="Project administration">
+			Admin
+			<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+				<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+			</svg>
+		</a>
+	</div>
+}

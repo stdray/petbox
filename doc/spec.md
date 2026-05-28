@@ -1,8 +1,8 @@
-# YobaBox — Specification
+# PetBox — Specification
 
 Module monolith for pet-project infrastructure. Config, logging, data access, dashboard — one service, feature-toggled subsystems. Код собран из портов yobaconf и yobalog плюс новых модулей.
 
-Эта спека — живой документ в репе. Vault-копия (`my/idea/yobabox/spec.md`) считается архивной.
+Эта спека — живой документ в репе. Vault-копия (`my/idea/petbox/spec.md`) считается архивной.
 
 ---
 
@@ -152,7 +152,7 @@ Scopes:
 
 ## Авторизация
 
-Auth — выделенный модуль в YobaBox.Core. Две схемы:
+Auth — выделенный модуль в PetBox.Core. Две схемы:
 
 - **Cookie** для UI (Login → User-таблица → claims: UserId, активный WorkspaceKey).
 - **ApiKey** через `X-Api-Key` для API (ApiKeyAuthenticationHandler → claims: ProjectKey, Scopes).
@@ -161,14 +161,14 @@ Auth — выделенный модуль в YobaBox.Core. Две схемы:
 
 ### Local vs Remote mode
 
-**Main instance** валидирует через свой YobaBoxDb. **Log-only instance** делегирует валидацию ApiKey на main через `GET /api/auth/validate` (cached 60s, см. `RemoteAuthHandler`).
+**Main instance** валидирует через свой PetBoxDb. **Log-only instance** делегирует валидацию ApiKey на main через `GET /api/auth/validate` (cached 60s, см. `RemoteAuthHandler`).
 
 ```json
 // Main:
 { "Auth": { "Mode": "local" }, "Features": { "Config": true, "Logging": true, "Data": false, "Dashboard": true } }
 
 // Log-only:
-{ "Auth": { "Mode": "remote", "RemoteUrl": "https://yobabox.3po.su", "RemoteCacheSeconds": 60 },
+{ "Auth": { "Mode": "remote", "RemoteUrl": "https://petbox.3po.su", "RemoteCacheSeconds": 60 },
   "Features": { "Config": false, "Logging": true, "Data": false, "Dashboard": false } }
 ```
 
@@ -275,15 +275,15 @@ Project — точка входа в навигацию. Дашборд → ло
 
 ## Self-logging: паттерн `$system`
 
-YobaBox логирует сам себя в собственный LogModule:
+PetBox логирует сам себя в собственный LogModule:
 
 ```
 Workspace "$system" (неудаляемый)
 └── Project "$system"
-    ├── Service "yobabox-web"       — HTTP запросы, ошибки
-    ├── Service "yobabox-config"    — resolve pipeline
-    ├── Service "yobabox-log"       — ingest, KQL-запросы
-    └── Service "yobabox-dashboard" — HealthPoller, CiPoller
+    ├── Service "petbox-web"       — HTTP запросы, ошибки
+    ├── Service "petbox-config"    — resolve pipeline
+    ├── Service "petbox-log"       — ingest, KQL-запросы
+    └── Service "petbox-dashboard" — HealthPoller, CiPoller
 ```
 
 `Seq.Extensions.Logging` → собственный `/api/ingest/clef` endpoint при `Features:Logging=true` и `Seq:SelfLog:Enabled=true`.
@@ -300,7 +300,7 @@ Workspace "$system" (неудаляемый)
 - **ApiKey scopes — enumerable, не wildcard.**
 - **LogEntry append-only, immutable.** Retention — единственный путь удаления.
 - **Span хранится в той же per-project LogDb.**
-- **Никакого YobaBox self-config через ConfigModule.** YobaBox конфигурируется через `appsettings.json`.
+- **Никакого PetBox self-config через ConfigModule.** PetBox конфигурируется через `appsettings.json`.
 - **Localization с первого дня.** Все user-facing строки через `IStringLocalizer`. Chrome UI на английском, без кириллицы/иврита/арабского.
 - **`data-testid` для UI селекторов.** Никаких text-match или CSS-class-селекторов в E2E.
 - **No HTML в `.cs` файлах.** Вся разметка в `.cshtml`.
@@ -356,7 +356,7 @@ Workspace "$system" (неудаляемый)
 
 ### Phase 10: Retention
 
-- RetentionPolicy модель + Store (в YobaBoxDb)
+- RetentionPolicy модель + Store (в PetBoxDb)
 - RetentionService BackgroundService
 - Применяется per-project через LogDbFactory
 - Страница `/ui/admin/retention`
@@ -376,7 +376,7 @@ Workspace "$system" (неудаляемый)
 
 ### Phase 13: Миграция прода
 
-- Деплой YobaBox на `3po.su` рядом с yobaconf/yobalog
+- Деплой PetBox на `3po.su` рядом с yobaconf/yobalog
 - Поочерёдное переключение трафика
 - yobaconf/yobalog → архив (read-only)
 

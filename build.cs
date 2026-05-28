@@ -7,7 +7,7 @@
 
 var target = Argument("target", "Default");
 var configuration = Argument("configuration", "Release");
-var dockerImage = Argument("dockerImage", "yobabox");
+var dockerImage = Argument("dockerImage", "petbox");
 var dockerTagArgument = Argument("dockerTag", string.Empty);
 var dockerPushEnabled = Argument("dockerPush", false);
 var ghcrRepositoryArgument = Argument("ghcrRepository", string.Empty);
@@ -15,14 +15,14 @@ var dockerTagOutputArgument = Argument("dockerTagOutput", string.Empty);
 var dockerCacheFrom = Argument("dockerCacheFrom", string.Empty);
 var dockerCacheTo = Argument("dockerCacheTo", string.Empty);
 
-var solution = "./YobaBox.slnx";
+var solution = "./PetBox.slnx";
 var dockerFile = "./Dockerfile";
 
 // .NET client packages — published to GitHub Packages NuGet feed via `nuget` tag push.
-var clientConfigProject = "./src/clients-net/YobaBox.Client.Config/YobaBox.Client.Config.csproj";
+var clientConfigProject = "./src/clients-net/PetBox.Client.Config/PetBox.Client.Config.csproj";
 
 // TS SDK — published to GitHub Packages npm registry via `npm` tag push.
-var tsSdkDir = "./src/clients-ts/yobabox-client";
+var tsSdkDir = "./src/clients-ts/petbox-client";
 
 GitVersion gitVersion = null;
 var computedDockerTag = "latest";
@@ -349,7 +349,7 @@ Task("NpmPublish")
 				Arguments = "publish",
 				WorkingDirectory = tsSdkDir,
 			});
-			Information("Published TS SDK to GitHub Packages (@{0}/yobabox-client)", owner.ToLowerInvariant());
+			Information("Published TS SDK to GitHub Packages (@{0}/petbox-client)", owner.ToLowerInvariant());
 		}
 		finally
 		{
@@ -364,7 +364,7 @@ Task("Dev")
 	.Description("Run bun + dotnet watchers side by side. Ctrl+C to stop both.")
 	.Does(() =>
 	{
-		var webDir = "./src/YobaBox.Web";
+		var webDir = "./src/PetBox.Web";
 
 		Information("Installing frontend deps (bun install)...");
 		var bunInstallExit = StartProcess("bun", new ProcessSettings

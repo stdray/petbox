@@ -1,0 +1,20 @@
+@inject PetBox.Web.Navigation.INavigationContext Nav
+@{
+	var ws = Nav.CurrentWorkspaceKey;
+	var path = Context.Request.Path.Value ?? string.Empty;
+	bool At(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
+	var membersUrl = Routes.WorkspaceAdminMembers(ws);
+	var projectsUrl = Routes.WorkspaceAdminProjects(ws);
+	var infoUrl = Routes.WorkspaceAdminInfo(ws);
+}
+<div role="tablist" class="tabs tabs-bordered mb-6" data-testid="ws-admin-tabs">
+	<a role="tab" class="tab @(At(membersUrl) ? "tab-active" : "")"
+		href="@membersUrl"
+		data-testid="ws-admin-tab-members">Members</a>
+	<a role="tab" class="tab @(At(projectsUrl) ? "tab-active" : "")"
+		href="@projectsUrl"
+		data-testid="ws-admin-tab-projects">Projects</a>
+	<a role="tab" class="tab @(At(infoUrl) ? "tab-active" : "")"
+		href="@infoUrl"
+		data-testid="ws-admin-tab-info">Info</a>
+</div>

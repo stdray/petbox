@@ -1,0 +1,112 @@
+@page "/ui/{workspaceKey}"
+@model PetBox.Web.Pages.Dashboard.IndexModel
+@{
+	ViewData["Title"] = $"Status — {Model.WorkspaceKey}";
+}
+
+<div class="mb-4 flex items-center gap-3">
+	<h1 class="text-xl font-semibold" data-testid="dashboard-title">Status</h1>
+	<span class="badge badge-outline font-mono">@Model.WorkspaceKey</span>
+</div>
+
+@if (Model.Projects.Count == 0)
+{
+	<div class="card bg-base-200" data-testid="dashboard-empty">
+		<div class="card-body items-center text-center">
+			<h2 class="card-title">No projects yet</h2>
+			<p class="opacity-70">Create your first project in <a asp-page="/Admin/Projects" class="link">Admin</a>.</p>
+		</div>
+	</div>
+}
+else
+{
+	<div class="grid gap-4 xl:grid-cols-2" data-testid="dashboard-projects">
+		@foreach (var project in Model.Projects)
+		{
+			<div class="card bg-base-200" data-testid="dashboard-project-card" data-project-key="@project.Key">
+				<div class="card-body p-4">
+					<div class="flex items-center gap-2 mb-2">
+						<a href="@Routes.Project(Model.WorkspaceKey, project.Key)"
+							class="card-title text-lg link link-hover"
+							data-testid="dashboard-project-name">@project.Name</a>
+						@if (project.Key == "$system")
+						{
+							<span class="badge badge-sm badge-ghost">system</span>
+						}
+					</div>
+					@if (!string.IsNullOrWhiteSpace(project.Description))
+					{
+						<p class="text-sm opacity-70 mb-2">@project.Description</p>
+					}
+
+					@if (Model.ServicesByProject.TryGetValue(project.Key, out var services) && services.Count > 0)
+					{
+						<div class="overflow-x-auto">
+							<table class="table table-xs" data-testid="dashboard-service-table">
+								<thead>
+									<tr>
+										<th>Service</th>
+										<th>Health model</th>
+										<th>Health</th>
+										<th>Version</th>
+									</tr>
+								</thead>
+								<tbody>
+									@foreach (var svc in services)
+									{
+										<tr data-testid="dashboard-service-row" data-service-key="@svc.Key">
+											<td>
+												<span class="font-mono text-xs">@svc.Key</span>
+												@if (!string.IsNullOrWhiteSpace(svc.Url))
+												{
+													<a href="@svc.Url" target="_blank" class="link link-hover text-xs ml-1">&#8599;</a>
+												}
+											</td>
+											<td>
+												<span class="badge badge-xs @HealthModelBadge(svc.HealthModel)" data-testid="dashboard-service-kind">@svc.HealthModel</span>
+											</td>
+											<td>
+												<span class="badge badge-xs @HealthBadge(svc.Health)" data-testid="dashboard-service-health">@svc.Health</span>
+											</td>
+											<td>
+												<span class="font-mono text-xs opacity-70">
+													@(svc.Version ?? "—")
+													@if (!string.IsNullOrWhiteSpace(svc.ShortSha))
+													{
+														<text>·</text><span class="opacity-50">@svc.ShortSha</span>
+													}
+												</span>
+											</td>
+										</tr>
+									}
+								</tbody>
+							</table>
+						</div>
+					}
+					else
+					{
+						<p class="text-sm opacity-50">No services registered.</p>
+					}
+				</div>
+			</div>
+		}
+	</div>
+}
+
+@functions {
+	static string HealthModelBadge(HealthModel hm) => hm switch
+	{
+		HealthModel.Endpoint => "badge-info",
+		HealthModel.Push => "badge-warning",
+		_ => "badge-ghost",
+	};
+
+	static string HealthBadge(ServiceHealth health) => health switch
+	{
+		ServiceHealth.Healthy => "badge-success",
+		ServiceHealth.Degraded => "badge-warning",
+		ServiceHealth.Down => "badge-error",
+		ServiceHealth.Unknown => "badge-ghost",
+		_ => "badge-ghost",
+	};
+}

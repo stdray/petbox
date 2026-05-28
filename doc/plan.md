@@ -1,4 +1,4 @@
-# Implementation Plan — YobaBox
+# Implementation Plan — PetBox
 
 **Legend:** `[NEW]` — write from scratch. `[PORT <source>]` — copy with minimal changes. `[ADAPT <source>]` — copy but significant rework for new entity model.
 
@@ -14,81 +14,81 @@ Goal: empty repo → buildable solution with Core models, Auth (local), feature 
 
 ### 0.1 — Solution structure `[NEW]`
 
-- [x] Create `YobaBox.slnx` with solution folders `src`, `tests`
+- [x] Create `PetBox.slnx` with solution folders `src`, `tests`
 - [x] Create `.config/dotnet-tools.json` — GitVersion.Tool 6.4.0 + dotnet-format `[PORT yobaconf/.config/dotnet-tools.json]`
 - [x] Create `Directory.Packages.props` — Central Package Management with transitive pinning `[ADAPT yobaconf/Directory.Packages.props]` (merge deps from both: linq2db 6.3.0, FluentMigrator, KustoLoco, Seq.E.Logging, OTel)
 - [x] Create `Directory.Build.targets` — NoWarn for test projects `[PORT yobalog/Directory.Build.targets]`
 
 ### 0.2 — Projects `[NEW]`
 
-- [x] `src/YobaBox.Core/YobaBox.Core.csproj` — packages: linq2db.SQLite.MS 6.3.0, FluentMigrator, FluentMigrator.Runner.SQLite, Microsoft.Extensions.Options, Microsoft.Extensions.Hosting.Abstractions, Microsoft.Extensions.Logging.Abstractions
-- [x] `src/YobaBox.Web/YobaBox.Web.csproj` — references: YobaBox.Core. Packages: Seq.Extensions.Logging, OTel (Extensions.Hosting, Exporter.OpenTelemetryProtocol, Instrumentation.AspNetCore). MSBuild BuildFrontend target `[PORT yobaconf/src/YobaConf.Web/YobaConf.Web.csproj]`
-- [x] `src/YobaBox.Config/YobaBox.Config.csproj` — references: YobaBox.Core `[NEW stub]`
-- [x] `src/YobaBox.Log.Core/YobaBox.Log.Core.csproj` — references: YobaBox.Core. Packages: KustoLoco.Core, Microsoft.Azure.Kusto.Language, Microsoft.Data.Sqlite, linq2db `[NEW stub, packages from yobalog]`
-- [x] `src/YobaBox.Data/YobaBox.Data.csproj` — references: YobaBox.Core `[NEW stub]`
-- [x] `src/YobaBox.Dashboard/YobaBox.Dashboard.csproj` — references: YobaBox.Core `[NEW stub]`
-- [x] `tests/YobaBox.Tests/YobaBox.Tests.csproj` — xunit + AwesomeAssertions `[NEW]`
-- [x] `tests/YobaBox.E2ETests/YobaBox.E2ETests.csproj` — xunit + Playwright `[ADAPT yobaconf/tests/YobaConf.E2ETests]`
+- [x] `src/PetBox.Core/PetBox.Core.csproj` — packages: linq2db.SQLite.MS 6.3.0, FluentMigrator, FluentMigrator.Runner.SQLite, Microsoft.Extensions.Options, Microsoft.Extensions.Hosting.Abstractions, Microsoft.Extensions.Logging.Abstractions
+- [x] `src/PetBox.Web/PetBox.Web.csproj` — references: PetBox.Core. Packages: Seq.Extensions.Logging, OTel (Extensions.Hosting, Exporter.OpenTelemetryProtocol, Instrumentation.AspNetCore). MSBuild BuildFrontend target `[PORT yobaconf/src/YobaConf.Web/YobaConf.Web.csproj]`
+- [x] `src/PetBox.Config/PetBox.Config.csproj` — references: PetBox.Core `[NEW stub]`
+- [x] `src/PetBox.Log.Core/PetBox.Log.Core.csproj` — references: PetBox.Core. Packages: KustoLoco.Core, Microsoft.Azure.Kusto.Language, Microsoft.Data.Sqlite, linq2db `[NEW stub, packages from yobalog]`
+- [x] `src/PetBox.Data/PetBox.Data.csproj` — references: PetBox.Core `[NEW stub]`
+- [x] `src/PetBox.Dashboard/PetBox.Dashboard.csproj` — references: PetBox.Core `[NEW stub]`
+- [x] `tests/PetBox.Tests/PetBox.Tests.csproj` — xunit + AwesomeAssertions `[NEW]`
+- [x] `tests/PetBox.E2ETests/PetBox.E2ETests.csproj` — xunit + Playwright `[ADAPT yobaconf/tests/YobaConf.E2ETests]`
 
 ### 0.3 — Core models + DB `[NEW]`
 
-- [x] `YobaBox.Core/Models/Project.cs` — record: Key, Name, Description
-- [x] `YobaBox.Core/Models/Service.cs` — record: Key, ProjectKey, Kind (enum: Web, Bot, Cron, PoC), Url, Version, ShortSha, Health (enum: Healthy, Degraded, Down, Unknown), CheckedAt
-- [x] `YobaBox.Core/Models/ApiKey.cs` — record: Key (`yb_key_` prefix), ProjectKey, Scopes (List<string>), CreatedAt
-- [x] `YobaBox.Core/Data/YobaBoxDb.cs` — linq2db DataConnection, FluentMappingBuilder for all tables
-- [x] `YobaBox.Core/Data/Migrations/M001_Initial.cs` — FluentMigrator: create Projects, Services, ApiKeys tables. Seed `$system` project.
-- [x] `YobaBox.Core/Data/MigrationRunner.cs` — runs pending migrations on startup
+- [x] `PetBox.Core/Models/Project.cs` — record: Key, Name, Description
+- [x] `PetBox.Core/Models/Service.cs` — record: Key, ProjectKey, Kind (enum: Web, Bot, Cron, PoC), Url, Version, ShortSha, Health (enum: Healthy, Degraded, Down, Unknown), CheckedAt
+- [x] `PetBox.Core/Models/ApiKey.cs` — record: Key (`yb_key_` prefix), ProjectKey, Scopes (List<string>), CreatedAt
+- [x] `PetBox.Core/Data/PetBoxDb.cs` — linq2db DataConnection, FluentMappingBuilder for all tables
+- [x] `PetBox.Core/Data/Migrations/M001_Initial.cs` — FluentMigrator: create Projects, Services, ApiKeys tables. Seed `$system` project.
+- [x] `PetBox.Core/Data/MigrationRunner.cs` — runs pending migrations on startup
 
 ### 0.4 — Auth (local mode)
 
-- [x] `YobaBox.Core/Auth/AdminPasswordHasher.cs` `[PORT yobaconf/src/YobaConf.Core/Auth/AdminPasswordHasher.cs]`
-- [x] `YobaBox.Core/Auth/ApiKeyAuthMiddleware.cs` `[ADAPT yobaconf/src/YobaConf.Core/Auth/]` — reads `X-Api-Key`, looks up in DB via YobaBoxDb, sets `HttpContext.Items["ProjectKey"]` + `HttpContext.Items["Scopes"]`
-- [x] `YobaBox.Core/Auth/AuthApi.cs` `[NEW]` — `GET /api/auth/validate`: validates key, returns `{ project, scopes }` or 401
+- [x] `PetBox.Core/Auth/AdminPasswordHasher.cs` `[PORT yobaconf/src/YobaConf.Core/Auth/AdminPasswordHasher.cs]`
+- [x] `PetBox.Core/Auth/ApiKeyAuthMiddleware.cs` `[ADAPT yobaconf/src/YobaConf.Core/Auth/]` — reads `X-Api-Key`, looks up in DB via PetBoxDb, sets `HttpContext.Items["ProjectKey"]` + `HttpContext.Items["Scopes"]`
+- [x] `PetBox.Core/Auth/AuthApi.cs` `[NEW]` — `GET /api/auth/validate`: validates key, returns `{ project, scopes }` or 401
 
 ### 0.5 — Feature toggle infrastructure `[NEW]`
 
-- [x] `YobaBox.Core/Features/FeatureFlags.cs` — reads `Features` section from config, exposes `IsEnabled(string name)`
-- [x] `YobaBox.Core/Features/ModuleExtensions.cs` — `AddConfigModule()`, `AddLogModule()`, `AddDataModule()`, `AddDashboardModule()` extensions on `WebApplicationBuilder` + `WebApplication`. Each checks FeatureFlags before registering.
+- [x] `PetBox.Core/Features/FeatureFlags.cs` — reads `Features` section from config, exposes `IsEnabled(string name)`
+- [x] `PetBox.Core/Features/ModuleExtensions.cs` — `AddConfigModule()`, `AddLogModule()`, `AddDataModule()`, `AddDashboardModule()` extensions on `WebApplicationBuilder` + `WebApplication`. Each checks FeatureFlags before registering.
 
 ### 0.6 — Web entry point
 
-- [x] `YobaBox.Web/Program.cs` `[ADAPT yobaconf/src/YobaConf.Web/Program.cs]` — builder calls module extensions, build, run. `--hash-password` CLI shortcut. OTel + Seq.E.Logging setup. `public partial class Program` for test factory.
-- [x] `YobaBox.Web/appsettings.json` `[NEW]` — Features, Auth, ConnectionStrings
-- [x] `YobaBox.Web/appsettings.Development.json` `[NEW]` — local overrides
+- [x] `PetBox.Web/Program.cs` `[ADAPT yobaconf/src/YobaConf.Web/Program.cs]` — builder calls module extensions, build, run. `--hash-password` CLI shortcut. OTel + Seq.E.Logging setup. `public partial class Program` for test factory.
+- [x] `PetBox.Web/appsettings.json` `[NEW]` — Features, Auth, ConnectionStrings
+- [x] `PetBox.Web/appsettings.Development.json` `[NEW]` — local overrides
 - [x] `/health` endpoint `[PORT yobaconf/src/YobaConf.Web/Program.cs health endpoint]`
 - [x] `/version` endpoint `[PORT yobaconf/src/YobaConf.Web/Program.cs version endpoint]`
 
 ### 0.7 — Frontend shell
 
-- [x] `YobaBox.Web/package.json` `[ADAPT yobalog/src/YobaLog.Web/package.json]` — devDependencies: typescript 5.7, @biomejs/biome, tailwindcss 3.4, daisyUI 4, concurrently. htmx.org + alpinejs loaded via CDN. Scripts: dev, build, lint, typecheck.
-- [x] `YobaBox.Web/tsconfig.json` `[PORT yobaconf/src/yobaconf-client-ts/tsconfig.json]` — strict, noUncheckedIndexedAccess, verbatimModuleSyntax
-- [x] `YobaBox.Web/biome.json` `[PORT yobalog/src/YobaLog.Web/biome.json]`
-- [x] `YobaBox.Web/tailwind.config.js` `[PORT yobalog/src/YobaLog.Web/tailwind.config.js]` — content paths to Pages/, daisyUI dark theme
-- [x] `YobaBox.Web/ts/app.css` `[PORT yobalog/src/YobaLog.Web/ts/app.css]` — Tailwind directives
-- [x] `YobaBox.Web/ts/site.ts` `[NEW]` — htmx + Alpine.js init, sidebar nav toggle
-- [x] `YobaBox.Web/Pages/_Layout.cshtml` `[ADAPT yobaconf/src/YobaConf.Web/Pages/Shared/_Layout.cshtml]` — sidebar nav (Dashboard, Logs, Config, Admin), breadcrumb with project selector, CDN script tags for htmx + Alpine.js + site.js
-- [x] `YobaBox.Web/Pages/_ViewImports.cshtml` `[PORT yobaconf/src/YobaConf.Web/Pages/_ViewImports.cshtml]`
-- [x] `YobaBox.Web/Pages/_ViewStart.cshtml` `[PORT yobaconf/src/YobaConf.Web/Pages/_ViewStart.cshtml]`
-- [x] `YobaBox.Web/Pages/Index.cshtml` `[NEW]` — hub stub with links to Logs/Config/Admin, [Authorize] redirects to /Login
-- [x] `YobaBox.Web/Pages/Index.cshtml.cs` `[NEW]` — [Authorize] page model
-- [x] `YobaBox.Web/Pages/Error.cshtml` `[PORT yobaconf/src/YobaConf.Web/Pages/Error.cshtml]`
-- [x] `YobaBox.Web/Pages/Login.cshtml` `[PORT yobaconf]` — standalone daisyUI card, anti-forgery
-- [x] `YobaBox.Web/Pages/Login.cshtml.cs` `[PORT yobaconf]` — AdminPasswordHasher.Verify, SignInAsync cookie
-- [x] `YobaBox.Core/Auth/AdminOptions.cs` `[PORT yobaconf]` — Username, PasswordHash from config
+- [x] `PetBox.Web/package.json` `[ADAPT yobalog/src/YobaLog.Web/package.json]` — devDependencies: typescript 5.7, @biomejs/biome, tailwindcss 3.4, daisyUI 4, concurrently. htmx.org + alpinejs loaded via CDN. Scripts: dev, build, lint, typecheck.
+- [x] `PetBox.Web/tsconfig.json` `[PORT yobaconf/src/yobaconf-client-ts/tsconfig.json]` — strict, noUncheckedIndexedAccess, verbatimModuleSyntax
+- [x] `PetBox.Web/biome.json` `[PORT yobalog/src/YobaLog.Web/biome.json]`
+- [x] `PetBox.Web/tailwind.config.js` `[PORT yobalog/src/YobaLog.Web/tailwind.config.js]` — content paths to Pages/, daisyUI dark theme
+- [x] `PetBox.Web/ts/app.css` `[PORT yobalog/src/YobaLog.Web/ts/app.css]` — Tailwind directives
+- [x] `PetBox.Web/ts/site.ts` `[NEW]` — htmx + Alpine.js init, sidebar nav toggle
+- [x] `PetBox.Web/Pages/_Layout.cshtml` `[ADAPT yobaconf/src/YobaConf.Web/Pages/Shared/_Layout.cshtml]` — sidebar nav (Dashboard, Logs, Config, Admin), breadcrumb with project selector, CDN script tags for htmx + Alpine.js + site.js
+- [x] `PetBox.Web/Pages/_ViewImports.cshtml` `[PORT yobaconf/src/YobaConf.Web/Pages/_ViewImports.cshtml]`
+- [x] `PetBox.Web/Pages/_ViewStart.cshtml` `[PORT yobaconf/src/YobaConf.Web/Pages/_ViewStart.cshtml]`
+- [x] `PetBox.Web/Pages/Index.cshtml` `[NEW]` — hub stub with links to Logs/Config/Admin, [Authorize] redirects to /Login
+- [x] `PetBox.Web/Pages/Index.cshtml.cs` `[NEW]` — [Authorize] page model
+- [x] `PetBox.Web/Pages/Error.cshtml` `[PORT yobaconf/src/YobaConf.Web/Pages/Error.cshtml]`
+- [x] `PetBox.Web/Pages/Login.cshtml` `[PORT yobaconf]` — standalone daisyUI card, anti-forgery
+- [x] `PetBox.Web/Pages/Login.cshtml.cs` `[PORT yobaconf]` — AdminPasswordHasher.Verify, SignInAsync cookie
+- [x] `PetBox.Core/Auth/AdminOptions.cs` `[PORT yobaconf]` — Username, PasswordHash from config
 
 ### 0.75 — Bundle frontend deps (htmx + Alpine.js) `[NEW]`
 
-- [x] `YobaBox.Web/package.json` — add `htmx.org@2.0.4` + `alpinejs@3.14.1` to `dependencies`
-- [x] `YobaBox.Web/ts/site.ts` — `import "htmx.org"` + `import Alpine from "alpinejs"`, call `Alpine.start()`
-- [x] `YobaBox.Web/Pages/_Layout.cshtml` — remove CDN `<script>` tags for htmx and Alpine.js, keep only `<script type="module" src="~/js/site.js">`
-- [x] `YobaBox.Web/wwwroot/js/site.js` added to `.gitignore` (bun output)
+- [x] `PetBox.Web/package.json` — add `htmx.org@2.0.4` + `alpinejs@3.14.1` to `dependencies`
+- [x] `PetBox.Web/ts/site.ts` — `import "htmx.org"` + `import Alpine from "alpinejs"`, call `Alpine.start()`
+- [x] `PetBox.Web/Pages/_Layout.cshtml` — remove CDN `<script>` tags for htmx and Alpine.js, keep only `<script type="module" src="~/js/site.js">`
+- [x] `PetBox.Web/wwwroot/js/site.js` added to `.gitignore` (bun output)
 - [x] Verify: `bun run build:ts` produces `wwwroot/js/site.js` (~107KB) containing htmx + Alpine.js code. `dotnet run` → browser loads without CDN requests.
 
 ### 0.8 — Infra
 
 - [x] `Dockerfile` `[ADAPT yobaconf/src/YobaConf.Web/Dockerfile]` — sdk:10.0 + bun build, chiseled runtime, `/app/data` volume, expose 8080, HEALTHCHECK
 - [x] `.dockerignore` `[PORT yobaconf/.dockerignore]` — add node_modules, .git, artifacts, tmp
-- [x] `infra/Caddyfile.fragment` `[ADAPT yobaconf/infra/Caddyfile.fragment]` — yobabox.3po.su → :8080
+- [x] `infra/Caddyfile.fragment` `[ADAPT yobaconf/infra/Caddyfile.fragment]` — petbox.3po.su → :8080
 - [x] `.githooks/pre-commit` `[PORT yobaconf/.githooks/pre-commit]`
 
 ### 0.9 — Verify gates
@@ -109,17 +109,17 @@ Goal: tag-based config engine working, Config UI, ApiKey scopes.
 
 ### 1.1 — Config engine
 
-- [x] `YobaBox.Config/ConfigBinding.cs` `[ADAPT yobaconf/src/YobaConf.Core/Models/]` — record: Path, Value, Tags, CreatedAt, UpdatedAt. Drop HOCON/YAML, pure string value. Drop Node/Binding distinction — flat list of bindings.
-- [x] `YobaBox.Config/ResolvePipeline.cs` `[ADAPT yobaconf/src/YobaConf.Core/Config/]` — pure function: `(string path, string[] requestTags, List<ConfigBinding>) → string?`. Tag-based matching: most matching tags wins.
-- [x] `YobaBox.Config/ConfigApi.cs` `[ADAPT yobaconf/src/YobaConf.Web/ config endpoints]` — `GET /api/config?path=...&tags=...`, `POST /api/config`, `DELETE /api/config?path=...&tags=...`. Require scopes.
-- [x] `YobaBox.Config/AutoTagger.cs` `[NEW]` — creates binding in context of Project/Service → auto-append `project:{key}`, `service:{key}` tags.
+- [x] `PetBox.Config/ConfigBinding.cs` `[ADAPT yobaconf/src/YobaConf.Core/Models/]` — record: Path, Value, Tags, CreatedAt, UpdatedAt. Drop HOCON/YAML, pure string value. Drop Node/Binding distinction — flat list of bindings.
+- [x] `PetBox.Config/ResolvePipeline.cs` `[ADAPT yobaconf/src/YobaConf.Core/Config/]` — pure function: `(string path, string[] requestTags, List<ConfigBinding>) → string?`. Tag-based matching: most matching tags wins.
+- [x] `PetBox.Config/ConfigApi.cs` `[ADAPT yobaconf/src/YobaConf.Web/ config endpoints]` — `GET /api/config?path=...&tags=...`, `POST /api/config`, `DELETE /api/config?path=...&tags=...`. Require scopes.
+- [x] `PetBox.Config/AutoTagger.cs` `[NEW]` — creates binding in context of Project/Service → auto-append `project:{key}`, `service:{key}` tags.
 
 ### 1.2 — Config UI
 
-- [x] `YobaBox.Web/Pages/Config/Index.cshtml` `[ADAPT yobaconf/src/YobaConf.Web/Pages/Config/]` — tree view grouped by path prefix. Project selector in breadcrumb. Click binding → inline editor.
-- [x] `YobaBox.Web/Pages/Config/Editor.cshtml` `[NEW]` — htmx fragment: edit Value + Tags as tokenized input (add/remove pills).
-- [x] `YobaBox.Web/ts/config.ts` `[NEW]` — Alpine.js: tree expand/collapse, inline edit toggle, tag tokenizer.
-- [x] `YobaBox.Config/ConfigModule.cs` `[NEW]` — registers ConfigApi endpoints, checks FeatureFlags (inlined in Program.cs).
+- [x] `PetBox.Web/Pages/Config/Index.cshtml` `[ADAPT yobaconf/src/YobaConf.Web/Pages/Config/]` — tree view grouped by path prefix. Project selector in breadcrumb. Click binding → inline editor.
+- [x] `PetBox.Web/Pages/Config/Editor.cshtml` `[NEW]` — htmx fragment: edit Value + Tags as tokenized input (add/remove pills).
+- [x] `PetBox.Web/ts/config.ts` `[NEW]` — Alpine.js: tree expand/collapse, inline edit toggle, tag tokenizer.
+- [x] `PetBox.Config/ConfigModule.cs` `[NEW]` — registers ConfigApi endpoints, checks FeatureFlags (inlined in Program.cs).
 
 ### 1.3 — ApiKey scopes in Auth
 
@@ -128,9 +128,9 @@ Goal: tag-based config engine working, Config UI, ApiKey scopes.
 
 ### 1.4 — Admin: Projects + Services `[NEW]`
 
-- [x] `YobaBox.Web/Pages/Admin/Projects.cshtml` — table: project key, name, service count, key count. CRUD.
-- [x] `YobaBox.Web/Pages/Admin/ProjectDetail.cshtml` — services list, CRUD.
-- [x] `YobaBox.Web/Pages/Admin/Keys.cshtml` — masked key list, issue new, revoke (embedded in ProjectDetail).
+- [x] `PetBox.Web/Pages/Admin/Projects.cshtml` — table: project key, name, service count, key count. CRUD.
+- [x] `PetBox.Web/Pages/Admin/ProjectDetail.cshtml` — services list, CRUD.
+- [x] `PetBox.Web/Pages/Admin/Keys.cshtml` — masked key list, issue new, revoke (embedded in ProjectDetail).
 
 ### 1.5 — Verify
 
@@ -147,33 +147,33 @@ Goal: KQL ingestion + query working, Log UI, self-logging `$system`, Remote Auth
 
 ### 2.1 — Log engine
 
-- [x] `YobaBox.Log.Core/Models/LogEntry.cs` `[PORT yobalog/src/YobaLog.Core/Models/]` — record: Id (ULID), ServiceKey, Timestamp, Level, Message, MessageTemplate, Properties (JSON), Exception
-- [x] `YobaBox.Log.Core/Data/LogDb.cs` `[ADAPT yobalog/src/YobaLog.Core/Data/]` — SQLite table via linq2db. Index on (ServiceKey, Timestamp).
-- [x] `YobaBox.Log.Core/Ingestion/SeqIngestionMiddleware.cs` `[ADAPT yobalog/src/YobaLog.Core/Ingestion/]` — POST accepting CLEF. Validates ServiceKey. Inserts rows.
-- [x] `YobaBox.Log.Core/Query/KqlEngine.cs` `[PORT yobalog/src/YobaLog.Core/Query/]` — Kusto.Language + kusto-loco → linq2db translation
-- [x] `YobaBox.Log.Core/LogApi.cs` `[ADAPT yobalog/src/YobaLog.Web/ log endpoints]` — `POST /ingest/clef`, `GET /api/logs/query?q=...`. Scopes: logs:ingest, logs:query.
+- [x] `PetBox.Log.Core/Models/LogEntry.cs` `[PORT yobalog/src/YobaLog.Core/Models/]` — record: Id (ULID), ServiceKey, Timestamp, Level, Message, MessageTemplate, Properties (JSON), Exception
+- [x] `PetBox.Log.Core/Data/LogDb.cs` `[ADAPT yobalog/src/YobaLog.Core/Data/]` — SQLite table via linq2db. Index on (ServiceKey, Timestamp).
+- [x] `PetBox.Log.Core/Ingestion/SeqIngestionMiddleware.cs` `[ADAPT yobalog/src/YobaLog.Core/Ingestion/]` — POST accepting CLEF. Validates ServiceKey. Inserts rows.
+- [x] `PetBox.Log.Core/Query/KqlEngine.cs` `[PORT yobalog/src/YobaLog.Core/Query/]` — Kusto.Language + kusto-loco → linq2db translation
+- [x] `PetBox.Log.Core/LogApi.cs` `[ADAPT yobalog/src/YobaLog.Web/ log endpoints]` — `POST /ingest/clef`, `GET /api/logs/query?q=...`. Scopes: logs:ingest, logs:query.
 
 ### 2.2 — Log UI
 
-- [x] `YobaBox.Web/Pages/Logs/Index.cshtml` `[ADAPT yobalog/src/YobaLog.Web/Pages/]` — KQL textarea + service chips + event table + shape-changing result table. Expandable rows via _EventRow.cshtml, filter chips via data attributes.
-- [x] `YobaBox.Web/Pages/Logs/_EventRow.cshtml` `[ADAPT yobalog detail/expand]` — row expand: full message, properties, exception.
-- [x] `YobaBox.Web/Pages/Logs/_RowsFragment.cshtml` `[NEW]` — htmx fragment: iterates events, renders _EventRow.
-- [x] `YobaBox.Web/ts/logs.ts` `[PORT yobalog/src/YobaLog.Web/ts/admin.ts log sections]` — Alpine.js: local-time rendering, row expand, filter chips.
-- [x] `YobaBox.Log.Core/LogApi.cs` — `MapLogEndpoints` registered in Program.cs when FeatureFlags.Logging enabled.
+- [x] `PetBox.Web/Pages/Logs/Index.cshtml` `[ADAPT yobalog/src/YobaLog.Web/Pages/]` — KQL textarea + service chips + event table + shape-changing result table. Expandable rows via _EventRow.cshtml, filter chips via data attributes.
+- [x] `PetBox.Web/Pages/Logs/_EventRow.cshtml` `[ADAPT yobalog detail/expand]` — row expand: full message, properties, exception.
+- [x] `PetBox.Web/Pages/Logs/_RowsFragment.cshtml` `[NEW]` — htmx fragment: iterates events, renders _EventRow.
+- [x] `PetBox.Web/ts/logs.ts` `[PORT yobalog/src/YobaLog.Web/ts/admin.ts log sections]` — Alpine.js: local-time rendering, row expand, filter chips.
+- [x] `PetBox.Log.Core/LogApi.cs` — `MapLogEndpoints` registered in Program.cs when FeatureFlags.Logging enabled.
 
 ### 2.3 — Auth wiring + Self-logging `$system` `[NEW]`
 
-- [x] `YobaBox.Core/Data/Migrations/M004_SeedSystem.cs` — creates `$system` project + api key for self-logging
-- [x] `YobaBox.Core/Auth/ApiKeyAuthenticationHandler.cs` — proper ASP.NET Core AuthenticationHandler, validates X-Api-Key against YobaBoxDb.ApiKeys
-- [x] `YobaBox.Web/Program.cs` — registered AddAuthentication(ApiKey) + AddAuthorization, UseAuthentication/UseAuthorization middleware
-- [x] `YobaBox.Core/Auth/AuthApi.cs` — updated to read claims from authenticated user
-- [x] `YobaBox.Web/Program.cs` — configure Seq.E.Logging → own `/ingest/clef` when LogModule enabled (self-logging runtime wiring)
+- [x] `PetBox.Core/Data/Migrations/M004_SeedSystem.cs` — creates `$system` project + api key for self-logging
+- [x] `PetBox.Core/Auth/ApiKeyAuthenticationHandler.cs` — proper ASP.NET Core AuthenticationHandler, validates X-Api-Key against PetBoxDb.ApiKeys
+- [x] `PetBox.Web/Program.cs` — registered AddAuthentication(ApiKey) + AddAuthorization, UseAuthentication/UseAuthorization middleware
+- [x] `PetBox.Core/Auth/AuthApi.cs` — updated to read claims from authenticated user
+- [x] `PetBox.Web/Program.cs` — configure Seq.E.Logging → own `/ingest/clef` when LogModule enabled (self-logging runtime wiring)
 - [x] OTel traces → OTLP endpoint
 
 ### 2.4 — Remote Auth API `[NEW]`
 
-- [x] `YobaBox.Core/Auth/RemoteAuthHandler.cs` — validates via HTTP to `RemoteUrl/api/auth/validate`. Caches.
-- [x] `YobaBox.Core/Auth/AuthConfiguration.cs` — binds `Auth` config section
+- [x] `PetBox.Core/Auth/RemoteAuthHandler.cs` — validates via HTTP to `RemoteUrl/api/auth/validate`. Caches.
+- [x] `PetBox.Core/Auth/AuthConfiguration.cs` — binds `Auth` config section
 - [x] Log-only instance config sample
 
 ### 2.5 — Verify
@@ -182,7 +182,7 @@ Goal: KQL ingestion + query working, Log UI, self-logging `$system`, Remote Auth
 - [x] KQL: `where Level >= 3`, `count`, `summarize count() by Level`, `where Message contains` → all pass
 - [x] Log UI: page renders, htmx fragment with KQL, shape-changing KQL → integration tests cover
 - [x] Auth: `/api/auth/validate` returns 200 with valid key, 401 with invalid/missing key → tested
-- [x] Self-logging: error in own module → `$system/yobabox-web` (verified via integration tests — SeqIngest_* 4 tests pass)
+- [x] Self-logging: error in own module → `$system/petbox-web` (verified via integration tests — SeqIngest_* 4 tests pass)
 - [-] Remote auth: run against remote instance → validates, caches, 401 on invalid — SKIPPED, нет второго инстанса. Логика покрыта unit-тестами через `RemoteAuthHandler`
 
 ---
@@ -196,8 +196,8 @@ Goal: after all feature phases are complete, copy ALL remaining tests from yobac
 - [x] Auth tests already ported: AdminPasswordHasherTests
 - [x] Infra tests already ported: CaddyfileFragmentTests
 - [x] CleFParser + LogLevelParser tests already ported
-- [-] Remaining yobaconf tests (38 files) — skip: most test subsystems not present in yobabox (runner CLI, full resolve pipeline with secrets/templates/ETags, client SDK, bindings store, tag vocabulary, admin endpoints, E2E)
-- [-] Remaining yobalog tests (59 files) — skip: most test subsystems not present in yobabox (workspace, retention, sharing, live-tail, OTLP ingestion, spans, self-logging, admin endpoints, E2E)
+- [-] Remaining yobaconf tests (38 files) — skip: most test subsystems not present in petbox (runner CLI, full resolve pipeline with secrets/templates/ETags, client SDK, bindings store, tag vocabulary, admin endpoints, E2E)
+- [-] Remaining yobalog tests (59 files) — skip: most test subsystems not present in petbox (workspace, retention, sharing, live-tail, OTLP ingestion, spans, self-logging, admin endpoints, E2E)
 
 ## Porting rules
 
@@ -215,21 +215,21 @@ Goal: fix 404 on /admin, create dashboard page.
 
 ### 4.1 — Fix /admin route
 
-- [x] `YobaBox.Web/Pages/Admin/Index.cshtml` — это страница `/ui/admin/sys` (sys overview) после Phase 24, не редирект
-- [x] `YobaBox.Web/Pages/Admin/Index.cshtml.cs` — имеет `[Authorize]` (унаследовано от `_AdminLayout` policy chain)
+- [x] `PetBox.Web/Pages/Admin/Index.cshtml` — это страница `/ui/admin/sys` (sys overview) после Phase 24, не редирект
+- [x] `PetBox.Web/Pages/Admin/Index.cshtml.cs` — имеет `[Authorize]` (унаследовано от `_AdminLayout` policy chain)
 
 ### 4.2 — Dashboard page
 
-- [x] `YobaBox.Web/Pages/Dashboard/Index.cshtml` — workspace status на `/ui/{ws}`, карточки проектов + сервисы. Видимая после Phase 21 IA rework.
-- [x] `YobaBox.Web/Pages/Dashboard/Index.cshtml.cs` — `[Authorize]`, queries Projects + Services from YobaBoxDb
-- [x] `YobaBox.Web/Pages/Index.cshtml` — `OnGetAsync` редиректит на workspace status (с учётом `UiSettings.DefaultHome`)
-- [x] `YobaBox.Web/Pages/Shared/_Layout.cshtml` — sidebar содержит workspace + projects nav (sidebar IS the dashboard nav)
+- [x] `PetBox.Web/Pages/Dashboard/Index.cshtml` — workspace status на `/ui/{ws}`, карточки проектов + сервисы. Видимая после Phase 21 IA rework.
+- [x] `PetBox.Web/Pages/Dashboard/Index.cshtml.cs` — `[Authorize]`, queries Projects + Services from PetBoxDb
+- [x] `PetBox.Web/Pages/Index.cshtml` — `OnGetAsync` редиректит на workspace status (с учётом `UiSettings.DefaultHome`)
+- [x] `PetBox.Web/Pages/Shared/_Layout.cshtml` — sidebar содержит workspace + projects nav (sidebar IS the dashboard nav)
 
 ---
 
 ## Phase 5: Port full logs page from yobalog [DONE]
 
-Goal: copy ALL logs UI from yobalog Workspace.cshtml + admin.ts, adapt to yobabox entity model (project/service instead of workspace).
+Goal: copy ALL logs UI from yobalog Workspace.cshtml + admin.ts, adapt to petbox entity model (project/service instead of workspace).
 
 Source: `D:\my\prj\yobalog\src\YobaLog.Web\`
 
@@ -271,7 +271,7 @@ Source: `D:\my\prj\yobalog\src\YobaLog.Web\`
 
 ## Phase 6: Port full bindings page from yobaconf [DONE]
 
-Goal: copy ALL config/bindings UI from yobaconf Bindings pages, adapt to yobabox ConfigBinding model.
+Goal: copy ALL config/bindings UI from yobaconf Bindings pages, adapt to petbox ConfigBinding model.
 
 Source: `D:\my\prj\yobaconf\src\YobaConf.Web\Pages\Bindings\`
 
@@ -297,7 +297,7 @@ Source: `D:\my\prj\yobaconf\src\YobaConf.Web\Pages\Bindings\`
 
 ### 6.5 — Secret encryption [DONE]
 
-- [x] AES-GCM `AesGcmSecretEncryptor` (YOBABOX_MASTER_KEY → SHA-256 derived 32-byte key)
+- [x] AES-GCM `AesGcmSecretEncryptor` (PETBOX_MASTER_KEY → SHA-256 derived 32-byte key)
 - [x] `ConfigBinding.Kind` + `Ciphertext` + `Iv` + `AuthTag` columns + auto-migration in ConfigDbFactory
 - [x] `ConfigBindingHistory` table — audit on Create/Update/Delete/Reveal
 - [x] `TagVocabulary` table — declared tag keys
@@ -324,16 +324,16 @@ Source: `D:\my\prj\yobaconf\src\YobaConf.Web\Pages\Bindings\`
 
 ### 7.3 — E2E test expansion
 
-- [x] `tests/YobaBox.E2ETests/DashboardTests.cs` — workspace status renders projects/services
-- [x] `tests/YobaBox.E2ETests/LogsPageTests.cs` — KQL input + interactions
-- [x] `tests/YobaBox.E2ETests/ConfigPageTests.cs` — экзист, тесты skipped pending UI rework (см. test skip comments)
+- [x] `tests/PetBox.E2ETests/DashboardTests.cs` — workspace status renders projects/services
+- [x] `tests/PetBox.E2ETests/LogsPageTests.cs` — KQL input + interactions
+- [x] `tests/PetBox.E2ETests/ConfigPageTests.cs` — экзист, тесты skipped pending UI rework (см. test skip comments)
 
 ---
 
 ## Phase 8: E2E — KpVotes real-world flow [DONE]
 
-Goal: Playwright E2E tests simulating developer onboarding a real project (KpVotes) into YobaBox.
-Test file: `tests/YobaBox.E2ETests/KpVotesOnboardingTests.cs`
+Goal: Playwright E2E tests simulating developer onboarding a real project (KpVotes) into PetBox.
+Test file: `tests/PetBox.E2ETests/KpVotesOnboardingTests.cs`
 
 ### 8.1 — Create Project
 
@@ -372,7 +372,7 @@ Test file: `tests/YobaBox.E2ETests/KpVotesOnboardingTests.cs`
 
 ## Phase 9: Config resolve priority tests [DONE]
 
-Test file: `tests/YobaBox.E2ETests/ConfigResolvePriorityTests.cs`
+Test file: `tests/PetBox.E2ETests/ConfigResolvePriorityTests.cs`
 
 - [x] Create bindings A(timeout=30), B(timeout=15), C(timeout=5) with different tag specificity
 - [x] `project:kpvotes` → 30
@@ -385,7 +385,7 @@ Test file: `tests/YobaBox.E2ETests/ConfigResolvePriorityTests.cs`
 
 ## Phase 10: ApiKey scope enforcement tests [DONE]
 
-Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
+Test file: `tests/PetBox.E2ETests/ApiKeyScopeTests.cs`
 
 - [x] Key with only `config:read` → `POST /api/config` → 403, `DELETE /api/config` → 403
 - [x] Key with only `config:write` → `GET /api/config` → 403
@@ -402,15 +402,15 @@ Goal: workspace organizational layer above projects. Foundation for DB isolation
 
 ### 11.1 — Workspace model + migration
 
-- [ ] `YobaBox.Core/Models/Workspace.cs` — record: Key, Name, Description, CreatedAt
+- [ ] `PetBox.Core/Models/Workspace.cs` — record: Key, Name, Description, CreatedAt
 - [ ] `Project.WorkspaceKey` — FK to Workspace
-- [ ] `YobaBox.Core/Data/Migrations/M008_Workspaces.cs` — create `Workspaces` table, add `WorkspaceKey` column to `Projects`. Seed `$system` workspace.
-- [ ] `YobaBox.Core/Data/YobaBoxDb.cs` — add `ITable<Workspace>`, configure mapping
+- [ ] `PetBox.Core/Data/Migrations/M008_Workspaces.cs` — create `Workspaces` table, add `WorkspaceKey` column to `Projects`. Seed `$system` workspace.
+- [ ] `PetBox.Core/Data/PetBoxDb.cs` — add `ITable<Workspace>`, configure mapping
 
 ### 11.2 — Workspace admin UI
 
-- [ ] `YobaBox.Web/Pages/Admin/Workspaces.cshtml` + `.cs` — list, create, delete workspaces
-- [ ] `YobaBox.Web/Pages/Admin/WorkspaceDetail.cshtml` + `.cs` — workspace projects + users
+- [ ] `PetBox.Web/Pages/Admin/Workspaces.cshtml` + `.cs` — list, create, delete workspaces
+- [ ] `PetBox.Web/Pages/Admin/WorkspaceDetail.cshtml` + `.cs` — workspace projects + users
 - [ ] Project create form: add Workspace selector
 
 ### 11.3 — Seed data
@@ -425,8 +425,8 @@ Goal: multi-user auth with workspace-level roles.
 
 ### 12.1 — Models + migration
 
-- [ ] `YobaBox.Core/Models/User.cs` — record: Id, Username, PasswordHash, CreatedAt
-- [ ] `YobaBox.Core/Models/WorkspaceMember.cs` — record: UserId, WorkspaceKey, Role (Admin|Member|Viewer)
+- [ ] `PetBox.Core/Models/User.cs` — record: Id, Username, PasswordHash, CreatedAt
+- [ ] `PetBox.Core/Models/WorkspaceMember.cs` — record: UserId, WorkspaceKey, Role (Admin|Member|Viewer)
 - [ ] M009: `Users` + `WorkspaceMembers` tables
 
 ### 12.2 — Auth integration
@@ -447,7 +447,7 @@ Goal: separate SQLite per project for log storage.
 
 ### 13.1 — LogDbFactory
 
-- [ ] `YobaBox.Log.Core/Data/LogDbFactory.cs` — `GetLogDb(projectKey)` → opens/creates `data/logs/{projectKey}.db`
+- [ ] `PetBox.Log.Core/Data/LogDbFactory.cs` — `GetLogDb(projectKey)` → opens/creates `data/logs/{projectKey}.db`
 - [ ] Auto-migration: `CREATE TABLE IF NOT EXISTS LogEntries (...)` on first open
 - [ ] Interface: `ILogDbFactory` with `(projectKey, serviceKey?)` for future per-service
 
@@ -471,13 +471,13 @@ Goal: separate SQLite per workspace for config storage. `ws` tag mandatory.
 
 ### 14.1 — ConfigDbFactory
 
-- [ ] `YobaBox.Config/Data/ConfigDbFactory.cs` — `GetConfigDb(workspaceKey)` → `data/config/{workspaceKey}.db`
+- [ ] `PetBox.Config/Data/ConfigDbFactory.cs` — `GetConfigDb(workspaceKey)` → `data/config/{workspaceKey}.db`
 - [ ] Auto-migration: `CREATE TABLE IF NOT EXISTS ConfigBindings (...)`
-- [ ] ConfigBinding model stays in YobaBox.Core (shared, but table lives in workspace DB)
+- [ ] ConfigBinding model stays in PetBox.Core (shared, but table lives in workspace DB)
 
 ### 14.2 — Resolve pipeline update
 
-- [ ] Remove `ConfigBindings` from `YobaBoxDb`
+- [ ] Remove `ConfigBindings` from `PetBoxDb`
 - [ ] `ConfigApi`: accept `workspaceKey` in path, use ConfigDbFactory
 - [ ] ResolvePipeline: load bindings from workspace's ConfigDb
 - [ ] `ws` tag mandatory — create/update validates presence of `ws:{workspaceKey}`
@@ -534,7 +534,7 @@ Goal: clean separation of API and UI URL namespaces.
 ## Phase 20: Cleanup [DONE]
 
 - [x] `doc/spec.md` ported from vault, updated under workspaces / factories / /ui-/api / User-model
-- [x] Dead refs removed (`admin.js`, empty Program.cs Phase 1 if, ConfigBindings from YobaBoxDb)
+- [x] Dead refs removed (`admin.js`, empty Program.cs Phase 1 if, ConfigBindings from PetBoxDb)
 - [x] `ts/config.ts` filled (was 6-line stub)
 - [x] User-table login via AdminBootstrapper; M008 no longer seeds empty admin
 - [x] `WorkspaceAdmin/Member/Viewer` policies + `WorkspaceRoleRequirement` handler
@@ -547,13 +547,13 @@ Session output: 11 commits, 214 unit/integration pass, 29 E2E pass + 10 skipped 
 
 ### 21.1 — Foundation
 
-- [x] `src/YobaBox.Web/Routes.cs` — static helper with `Workspace(ws)`, `Project(ws,k)`, `ProjectLogs/Traces/Config/Settings`, `SharedConfig(ws)`, `Sys()`, etc.
-- [x] `src/YobaBox.Config/ResolvePipeline.cs` — subset semantics (`binding.tags ⊆ request.tags`, rank by `|binding.tags|`, ties throw `AmbiguousConfigException`)
-- [x] `src/YobaBox.Config/AmbiguousConfigException.cs` — new exception with candidate IDs
-- [x] `src/YobaBox.Config/ConfigApi.cs` — auto-injects `ws:{workspaceKey}` into resolve request, returns 409 on ambiguity
-- [x] `src/YobaBox.Web/Pages/Config/Preview.cshtml(.cs)` — uses `ResolveDetailed`, displays ambiguity in red
-- [x] `tests/YobaBox.Tests/Config/ResolvePipelineTests.cs` — 13 unit tests for the new semantics
-- [x] `tests/YobaBox.E2ETests/ConfigResolvePriorityTests.cs` — `AssertNotFound` for "no match" (was buggy "first by Id")
+- [x] `src/PetBox.Web/Routes.cs` — static helper with `Workspace(ws)`, `Project(ws,k)`, `ProjectLogs/Traces/Config/Settings`, `SharedConfig(ws)`, `Sys()`, etc.
+- [x] `src/PetBox.Config/ResolvePipeline.cs` — subset semantics (`binding.tags ⊆ request.tags`, rank by `|binding.tags|`, ties throw `AmbiguousConfigException`)
+- [x] `src/PetBox.Config/AmbiguousConfigException.cs` — new exception with candidate IDs
+- [x] `src/PetBox.Config/ConfigApi.cs` — auto-injects `ws:{workspaceKey}` into resolve request, returns 409 on ambiguity
+- [x] `src/PetBox.Web/Pages/Config/Preview.cshtml(.cs)` — uses `ResolveDetailed`, displays ambiguity in red
+- [x] `tests/PetBox.Tests/Config/ResolvePipelineTests.cs` — 13 unit tests for the new semantics
+- [x] `tests/PetBox.E2ETests/ConfigResolvePriorityTests.cs` — `AssertNotFound` for "no match" (was buggy "first by Id")
 
 ### 21.2 — Layout V2
 
@@ -603,7 +603,7 @@ Session output: 11 commits, 214 unit/integration pass, 29 E2E pass + 10 skipped 
 
 ## Phase 16: Data module rework [Wave 1, 2, 4 DONE; Wave 3 deferred к pet-repo]
 
-Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite через yobabox REST API + auto-migrations. Уйти от mount'ов, ручных backup'ов, copy-paste файлов между машинами.
+Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite через petbox REST API + auto-migrations. Уйти от mount'ов, ручных backup'ов, copy-paste файлов между машинами.
 
 **Source of truth**: `~/.claude/plans/noble-sniffing-bear.md` — полный session-plan с discovery / critique / решениями. doc/plan.md держит summary + waves.
 
@@ -652,16 +652,16 @@ Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite ч
 - [x] Старый create-table form удалён вместе со старым `DataApi.cs`. `DataTable` model + M005 остаются для backward-compat — drop отдельной cosmetic миграцией позже
 - [ ] `KpVotesOnboardingTests.S5_DataRoundtrip` E2E через REST — **отложено в Wave 3** (выполняется одновременно с реальным pet integration; standalone E2E test = тот же fake gate что предыдущая критика критиковала)
 
-#### Wave 3 — Real pet integration [DEFERRED — outside yobabox repo]
+#### Wave 3 — Real pet integration [DEFERRED — outside petbox repo]
 
-Требует модификаций в `D:\my\prj\KpVotes`. Yobabox-side документация — `doc/data-client-pattern.md` (NEW в этом коммите): pattern + ~30 LOC C# snippet thin client wrapper'а.
+Требует модификаций в `D:\my\prj\KpVotes`. PetBox-side документация — `doc/data-client-pattern.md` (NEW в этом коммите): pattern + ~30 LOC C# snippet thin client wrapper'а.
 
 Чек-лист для KpVotes когда возвращаемся:
-- [ ] Конфиг: `YobaBox:Url`, `YobaBox:ApiKey`, `YobaBox:DbName` вместо local connection string
+- [ ] Конфиг: `PetBox:Url`, `PetBox:ApiKey`, `PetBox:DbName` вместо local connection string
 - [ ] Onboarding: создать DataDb через `POST /api/data/{p}/dbs` (один раз вручную через curl)
 - [ ] Залить существующие миграции через `POST /api/data/{p}/{db}/schema` (по одной)
 - [ ] Заменить `DataConnection` на thin client wrapper из `doc/data-client-pattern.md`
-- [ ] Убедиться что нет multi-statement `BeginTransaction`/`Commit` блоков (yobabox их не поддерживает — переписать в idempotent UPSERT)
+- [ ] Убедиться что нет multi-statement `BeginTransaction`/`Commit` блоков (petbox их не поддерживает — переписать в idempotent UPSERT)
 - [ ] Latency measurement vs local SQLite
 
 E2E dogfooding-тест — пишем после первого успешного pet-rollover, не до (standalone E2E через сам REST API = "fake gate" по прошлой критике).
@@ -672,17 +672,17 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 
 | Question | Decision | Rationale |
 |---|---|---|
-| Transport | **HTTP** (через `ModelContextProtocol.AspNetCore` 1.3.0 SDK) | yobabox = remote service. stdio не подходит, агент не запускает yobabox локально |
+| Transport | **HTTP** (через `ModelContextProtocol.AspNetCore` 1.3.0 SDK) | petbox = remote service. stdio не подходит, агент не запускает petbox локально |
 | Auth | **X-Api-Key** (re-use existing middleware) | Те же scopes (data:*, config:*, logs:*) что REST API. Ноль новой auth infra |
 | Tools (MVP) | **Все enabled-feature tools** через один `/mcp` endpoint | Скоупов и feature toggle'ов достаточно для разграничения. Tools namespaced (`data.query`, `config.get`). Агент сам решает что вызывать через client-side skills/profiles |
 | Discovery | **C# attributes + reflection** | `[McpTool(name = "data.query")]` на методах + auto-register на boot. Идиоматично для .NET |
 
 - [x] `ModelContextProtocol.AspNetCore` 1.3.0 + `Directory.Packages.props`
-- [x] `src/YobaBox.Web/Mcp/DataTools.cs` — 7 Data tools (list_dbs/create_db/delete_db/describe_db/schema_apply/query/exec)
+- [x] `src/PetBox.Web/Mcp/DataTools.cs` — 7 Data tools (list_dbs/create_db/delete_db/describe_db/schema_apply/query/exec)
 - [x] `Program.cs` wire: `AddMcpServer().WithHttpTransport().WithToolsFromAssembly()`, `app.MapMcp("/mcp")` + ApiKey auth
 - [x] `[McpServerTool]` + `[McpServerToolType]` reflection-based registration (built into SDK)
 - [x] 4 sanity тест через `McpClient` + `HttpClientTransport`: tools/list discovery, create→migrate→exec→query roundtrip, cross-project rejection, denied PRAGMA blocking
-- [ ] Config tools — incrementally в `src/YobaBox.Web/Mcp/ConfigTools.cs` (когда понадобится)
+- [ ] Config tools — incrementally в `src/PetBox.Web/Mcp/ConfigTools.cs` (когда понадобится)
 - [ ] Log tools (KQL query — sweet spot для agentic sessions с many-calls pattern) — `LogTools.cs`
 
 #### Wave 5+ — Future (out of MVP)
@@ -714,29 +714,29 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 
 #### 22.1 — ChannelIngestionPipeline `[PORT yobalog/Ingestion/]` [DONE — `e6b24a0`]
 
-- [x] `YobaBox.Log.Core/Ingestion/IIngestionPipeline.cs`
-- [x] `YobaBox.Log.Core/Ingestion/IngestionOptions.cs` (ChannelCapacity, MaxBatchSize) — биндится из `Ingestion:*` в `appsettings.json` через `IOptions<T>`. Phase 23 перевезёт в L2.
-- [x] `YobaBox.Log.Core/Ingestion/ChannelIngestionPipeline.cs` — per-project bounded channel + writer-loop с batched `BulkCopyAsync` + Publish в `ITailBroadcaster`. `IHostedService` для graceful drain на shutdown.
-- [x] `YobaBox.Log.Core/Ingestion/IngestionLog.cs` — `LoggerMessage` partial для AppendBatchFailed/ShutdownTimedOut
-- [x] `YobaBox.Log.Core/Observability/ActivitySources.cs` `[PORT yobalog/Observability/Tracing.cs]` — `ActivitySources.Ingestion` + `.Retention` для OTel span'ов
+- [x] `PetBox.Log.Core/Ingestion/IIngestionPipeline.cs`
+- [x] `PetBox.Log.Core/Ingestion/IngestionOptions.cs` (ChannelCapacity, MaxBatchSize) — биндится из `Ingestion:*` в `appsettings.json` через `IOptions<T>`. Phase 23 перевезёт в L2.
+- [x] `PetBox.Log.Core/Ingestion/ChannelIngestionPipeline.cs` — per-project bounded channel + writer-loop с batched `BulkCopyAsync` + Publish в `ITailBroadcaster`. `IHostedService` для graceful drain на shutdown.
+- [x] `PetBox.Log.Core/Ingestion/IngestionLog.cs` — `LoggerMessage` partial для AppendBatchFailed/ShutdownTimedOut
+- [x] `PetBox.Log.Core/Observability/ActivitySources.cs` `[PORT yobalog/Observability/Tracing.cs]` — `ActivitySources.Ingestion` + `.Retention` для OTel span'ов
 - [x] `LogApi.IngestClefAsync` + `SeqIngestAsync` — заменить прямой `BulkCopyAsync` на `pipeline.IngestAsync(projectKey, records, ct)`
 - [x] Регистрация в `Program.cs` под `Features:Logging` (singleton + hosted service)
 
 #### 22.2 — SystemLogger direct-to-DB `[PORT yobalog/SelfLogging/]` [DONE — `aac7deb`]
 
-- [x] `YobaBox.Log.Core/SelfLogging/SystemLoggerOptions.cs` — ServiceKey, MinLevel, FlushIntervalMs — биндится из `SelfLogging:*` в `appsettings.json`. Phase 23 перевезёт в L2.
-- [x] `YobaBox.Log.Core/SelfLogging/SystemLogger.cs` — `ILogger` записывающий в `IIngestionPipeline` напрямую (без HTTP roundtrip)
-- [x] `YobaBox.Log.Core/SelfLogging/SystemLoggerProvider.cs`
-- [x] `YobaBox.Log.Core/SelfLogging/SystemLogFlusher.cs` — `IHostedService` для финального flush на shutdown
+- [x] `PetBox.Log.Core/SelfLogging/SystemLoggerOptions.cs` — ServiceKey, MinLevel, FlushIntervalMs — биндится из `SelfLogging:*` в `appsettings.json`. Phase 23 перевезёт в L2.
+- [x] `PetBox.Log.Core/SelfLogging/SystemLogger.cs` — `ILogger` записывающий в `IIngestionPipeline` напрямую (без HTTP roundtrip)
+- [x] `PetBox.Log.Core/SelfLogging/SystemLoggerProvider.cs`
+- [x] `PetBox.Log.Core/SelfLogging/SystemLogFlusher.cs` — `IHostedService` для финального flush на shutdown
 - [x] Регистрация в `Program.cs` под `Features:Logging` + `Seq:SelfLog:Enabled=true`
 - [x] Заменили `Seq.Extensions.Logging` → прямой путь через `SystemLogger`
 
 #### 22.3 — OTLP gRPC ingest `[PORT yobalog/Web/Ingestion + Proto/]` [DONE — `60f1462`]
 
-- [x] `src/YobaBox.Web/Proto/opentelemetry/...` — скопировано всё `.proto`-дерево (logs/v1, trace/v1, common/v1, resource/v1, collector/{logs,trace}/v1)
-- [x] `YobaBox.Web.csproj` — `Grpc.Tools` + `<Protobuf Include="...">` + `NoWarn=CS8632`
-- [x] `YobaBox.Web/Ingestion/OtlpLogsParser.cs` — OTLP logs → `LogEntryCandidate` (TraceId/SpanId hex в Properties JSON)
-- [x] `YobaBox.Web/Ingestion/OtlpTracesParser.cs` — OTLP traces → `SpanRecord` (Events/Links JSON-serialized в существующие колонки)
+- [x] `src/PetBox.Web/Proto/opentelemetry/...` — скопировано всё `.proto`-дерево (logs/v1, trace/v1, common/v1, resource/v1, collector/{logs,trace}/v1)
+- [x] `PetBox.Web.csproj` — `Grpc.Tools` + `<Protobuf Include="...">` + `NoWarn=CS8632`
+- [x] `PetBox.Web/Ingestion/OtlpLogsParser.cs` — OTLP logs → `LogEntryCandidate` (TraceId/SpanId hex в Properties JSON)
+- [x] `PetBox.Web/Ingestion/OtlpTracesParser.cs` — OTLP traces → `SpanRecord` (Events/Links JSON-serialized в существующие колонки)
 - [x] OTLP HTTP endpoints (protobuf body):
   - [x] `POST /v1/logs` → `OtlpLogsParser` → `IIngestionPipeline.IngestAsync`
   - [x] `POST /v1/traces` → `OtlpTracesParser` → `Spans.BulkCopyAsync`
@@ -766,10 +766,10 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 
 #### 22.6 — Health-poller для Services `[NEW — design adapted]` [DONE — `954bf68`]
 
-- [x] `YobaBox.Dashboard/HealthPoller.cs` — `BackgroundService`, опрашивает `Services` с `HealthModel=Endpoint`
+- [x] `PetBox.Dashboard/HealthPoller.cs` — `BackgroundService`, опрашивает `Services` с `HealthModel=Endpoint`
 - [x] Для каждого `Service.Url`: `GET {Url}/health` (auto-append /health если нет) с 5s timeout; 2xx → `Healthy`, 5xx → `Degraded`, иное (timeout/connect/4xx) → `Down`
 - [x] Для `HealthModel=Push` — `Health=Down` если `CheckedAt` старше TTL (`PushTtlSeconds`, default 5min)
-- [x] Обновляет `Service.Health` + `Service.CheckedAt` в `YobaBoxDb`
+- [x] Обновляет `Service.Health` + `Service.CheckedAt` в `PetBoxDb`
 - [x] Интервал опроса: 30s default (`Dashboard:HealthPollIntervalSeconds` в appsettings) — Phase 23 перевезёт в L2.
 - [x] Регистрация под `Features:Dashboard`
 
@@ -795,7 +795,7 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 
 - **Lightpanda** (Playwright + Chromium остаются)
 - yobalog `WorkspaceBootstrapper` / `WorkspaceSchema` (заменено `LogDbFactory.CreateSchema`)
-- yobalog `IShareLinkStore` / `IKqlShareLinkStore` (тонкий `ShareLink` в `YobaBoxDb` уже достаточен)
+- yobalog `IShareLinkStore` / `IKqlShareLinkStore` (тонкий `ShareLink` в `PetBoxDb` уже достаточен)
 - yobaconf `IBindingStoreAdmin` интерфейс (используем `IConfigDbFactory` + прямой linq2db)
 - yobaconf `SqliteSchema.cs` (FluentMigrator для main DB + auto-migrate в фабриках)
 - `TagSet` typed VO — оставляем строку `Tags` (резолв уже починен под subset-семантику; рефактор сейчас принесёт больше боли, чем пользы)
@@ -811,14 +811,14 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 ### 23.1 — Foundation: Settings table + resolver [DONE]
 
 - [x] `M011_Settings.cs` миграция: `Settings(Scope, ScopeKey, Path, Type, Value, UpdatedAt, UpdatedBy)`, PK `(Scope, ScopeKey, Path)` — inline PK для SQLite compatibility
-- [x] `YobaBox.Core/Settings/Scope.cs` — enum `System/Workspace/Project/Service/User/Membership`
-- [x] `YobaBox.Core/Settings/SettingAttribute.cs` — `TopLevel`, `Key`, `Description`, `IsSecret`
-- [x] `YobaBox.Core/Settings/ISettingsResolver.cs` + реализация:
+- [x] `PetBox.Core/Settings/Scope.cs` — enum `System/Workspace/Project/Service/User/Membership`
+- [x] `PetBox.Core/Settings/SettingAttribute.cs` — `TopLevel`, `Key`, `Description`, `IsSecret`
+- [x] `PetBox.Core/Settings/ISettingsResolver.cs` + реализация:
   - `GetAsync<T>(deepestScope, deepestScopeKey)` — default-init T, для каждого `[Setting]`-свойства ходит вверх до `TopLevel`, первое найденное побеждает
   - `SetAsync<T>(scope, scopeKey, newValues, oldValues, updatedBy)` — пишет только изменённые свойства
   - `ResetAsync<T>(scope, scopeKey, propertyName)` — удаляет override на данном уровне
 - [x] Encryption для `IsSecret`-свойств — через `ISecretEncryptor` на read/write пути; в `Value` хранится зашифрованный blob
-- [x] Sysadmin claim source — bootstrap admin (username matches `Admin:Username` из appsettings); `SysAdmin` policy + `YobaBoxClaims.IsSysAdmin`
+- [x] Sysadmin claim source — bootstrap admin (username matches `Admin:Username` из appsettings); `SysAdmin` policy + `PetBoxClaims.IsSysAdmin`
 
 ### 23.2 — Reflection-based UI [DONE]
 
@@ -837,15 +837,15 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 **Драп точечных хранилищ:**
 
 - [x] `M012_DropRetentionPolicies.cs` — `DROP TABLE RetentionPolicies` (данные не переносим, дефолт стартует заново)
-- [x] Удалить `Models/RetentionPolicy.cs` + маппинг в `YobaBoxDb`
+- [x] Удалить `Models/RetentionPolicy.cs` + маппинг в `PetBoxDb`
 - [x] Удалить `Pages/Admin/Retention.cshtml(.cs)` — заменяется leaf-страницей `LogSettings` ниже
 - [x] Удалить из `appsettings.json` секции: `Retention:*`, `Ingestion:*`, `Dashboard:HealthPollIntervalSeconds`. SelfLogging оставлен (Seq sink — env-owner)
 
 **Settings-record'ы:**
 
-- [x] `YobaBox.Core/Settings/LogSettings.cs` — `RetentionDays` (TopLevel=Workspace, default 7), `SystemRetainDays` (TopLevel=System, default 30), `RunIntervalSeconds` (TopLevel=System, default 3600)
-- [x] `YobaBox.Core/Settings/IngestionSettings.cs` — `ChannelCapacity` (10000), `MaxBatchSize` (1000) — оба TopLevel=System
-- [x] `YobaBox.Core/Settings/DashboardSettings.cs` — `HealthPollIntervalSeconds` (30), `RequestTimeoutSeconds` (5), `PushTtlSeconds` (300) — все TopLevel=System
+- [x] `PetBox.Core/Settings/LogSettings.cs` — `RetentionDays` (TopLevel=Workspace, default 7), `SystemRetainDays` (TopLevel=System, default 30), `RunIntervalSeconds` (TopLevel=System, default 3600)
+- [x] `PetBox.Core/Settings/IngestionSettings.cs` — `ChannelCapacity` (10000), `MaxBatchSize` (1000) — оба TopLevel=System
+- [x] `PetBox.Core/Settings/DashboardSettings.cs` — `HealthPollIntervalSeconds` (30), `RequestTimeoutSeconds` (5), `PushTtlSeconds` (300) — все TopLevel=System
 - [skip] SelfLoggingSettings — Seq self-log остался в appsettings (env-owner credentials)
 
 **Переключение consumer'ов:**
@@ -860,9 +860,9 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 
 **Что остаётся в appsettings.json (env-owner, не L2):**
 
-- `ConnectionStrings:YobaBox` — connection string
+- `ConnectionStrings:PetBox` — connection string
 - `Admin:Username`, `Admin:PasswordHash` — bootstrap admin
-- `YobaBox:MasterKey` (env `YOBABOX_MASTER_KEY`) — master key
+- `PetBox:MasterKey` (env `PETBOX_MASTER_KEY`) — master key
 - `Features:Config/Logging/Data/Dashboard` — feature gates
 - `Auth:Mode/RemoteUrl/RemoteApiKey` — auth mode + remote
 - `OpenTelemetry:Enabled/OtlpEndpoint/ServiceName` — OTel sink
@@ -895,7 +895,7 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 - [x] `Pages/Me/Account.cshtml` — `/ui/me/account` — username + IsSysAdmin badge (read-only)
 - [x] `Pages/Me/Security.cshtml` — `/ui/me/security` — смена пароля (форма: old + new + confirm)
 - [x] `Pages/Me/Preferences.cshtml` — `/ui/me/preferences` — `UiSettings` (theme, defaultHome) через `_SettingsForm`
-- [x] `YobaBox.Core/Settings/UiSettings.cs` — `Theme` (Dark/Light/System), `DefaultHome` (Status/LastProject/AllLogs), оба TopLevel=User
+- [x] `PetBox.Core/Settings/UiSettings.cs` — `Theme` (Dark/Light/System), `DefaultHome` (Status/LastProject/AllLogs), оба TopLevel=User
 - [x] Применение `UiSettings.Theme` к `data-theme` в `_Layout` + `_AdminLayout` (через DI-resolved injection)
 - [→] Применение `DefaultHome.LastProject` — перенесено в Phase 25.3 (нужно MembershipSettings storage)
 
@@ -910,7 +910,7 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 
 ## Phase 30: Tasks + Agent Memory modules [DEFERRED]
 
-Goal (original): объединить ведение планов и памяти разных coding-агентов (claude-code, factory droid, opencode, pi) в один MCP-canon store с историей и UI для ревью. Два модуля — `YobaBox.Tasks` (project-plan tree + session-plan blob) и `YobaBox.Memory` (общая 4-типовая память с agent-tag).
+Goal (original): объединить ведение планов и памяти разных coding-агентов (claude-code, factory droid, opencode, pi) в один MCP-canon store с историей и UI для ревью. Два модуля — `PetBox.Tasks` (project-plan tree + session-plan blob) и `PetBox.Memory` (общая 4-типовая память с agent-tag).
 
 **Status:** deferred pending validation experiments. См. `doc/decision-log.md` (запись 2026-05-27) и `doc/proposals/tasks-memory-modules/{proposal,critique}.md`.
 
@@ -1034,7 +1034,7 @@ Goal: единая точка для всех "пора, но не сейчас"
 
 ## Phase 26: Clients SDK consolidation [NEW]
 
-Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + `yobaconf-client-ts`) в yobabox repo, переименовать в yobabox namespace, добавить тесты, расширить под все модули (Config + Data + Log). Modular структура: core SDK + framework integrations.
+Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + `yobaconf-client-ts`) в petbox repo, переименовать в petbox namespace, добавить тесты, расширить под все модули (Config + Data + Log). Modular структура: core SDK + framework integrations.
 
 **Драйвер**: prereq для Phase 27 (agentic pet onboarding) и реального kpvotes-ts integration. Без TS yobadata client сценарий "агент создаёт БД и заливает данные" из агентского tooling'а невозможен.
 
@@ -1042,69 +1042,69 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 
 - `D:\my\prj\yobaconf\src\YobaConf.Client` (.NET, 309 LOC, 6 файлов) — `IConfigurationProvider` для MEC. **0 unit-тестов.**
 - `D:\my\prj\yobaconf\src\yobaconf-client-ts` (TS, 414 LOC, 4 файла) — standalone SDK с ETag polling. Опубликован `@stdray-npm/yobaconf-client@0.1.0-ci.132`. Только `e2e-runner.ts`, **0 unit-тестов.**
-- kpvotes-ts уже использует `@stdray-npm/yobaconf-client` (config) + `@datalust/winston-seq` (logs). Data — local JSON, нужно мигрировать на yobabox Data.
+- kpvotes-ts уже использует `@stdray-npm/yobaconf-client` (config) + `@datalust/winston-seq` (logs). Data — local JSON, нужно мигрировать на petbox Data.
 
 ### Architecture (модулярная)
 
-**Принцип**: yobabox — drop-in для существующих экосистем там где это возможно. Чем меньше своих пакетов, тем лучше: pet добавляет URL+key к существующим sinks/providers и работает.
+**Принцип**: petbox — drop-in для существующих экосистем там где это возможно. Чем меньше своих пакетов, тем лучше: pet добавляет URL+key к существующим sinks/providers и работает.
 
-- **Logs**: yobabox `/api/ingest/clef` accepts **CLEF/Seq protocol** (это реальный wire standard). Pet использует `Serilog.Sinks.Seq` / `Seq.Extensions.Logging` / `@datalust/winston-seq` / `pino-seq` — никаких yobabox-specific log clients не пишем.
+- **Logs**: petbox `/api/ingest/clef` accepts **CLEF/Seq protocol** (это реальный wire standard). Pet использует `Serilog.Sinks.Seq` / `Seq.Extensions.Logging` / `@datalust/winston-seq` / `pino-seq` — никаких petbox-specific log clients не пишем.
 - **Config**: wire-format **свой** (tag-based resolve API, см. memory [[project-config-design]]). MEC — это .NET DI abstraction, не wire protocol; `YobaConf.Client` оборачивает наш формат в `IConfigurationProvider` для consume через стандартный MEC. Аналога нет в TS/Python — нужны свои клиенты. **Возможный апгрейд**: research compat-endpoint под Spring Cloud Config Server или Consul KV — см. 26.8.
 - **Data**: wire-format **свой** (raw SQL pass-through, no standard exists). Свои core клиенты обязательны.
 
-- **Core SDK** (свой, нужен): `YobaBox.Client` (.NET) / `@stdray-npm/yobabox-client` (TS) / `yobabox-client` (Python, future) — auth (ApiKey), HTTP transport, raw methods для Data API (`QueryAsync`, `ExecAsync`), Config API (`ResolveAsync`), и Log ingestion (`IngestAsync` через `/api/ingest/clef`)
+- **Core SDK** (свой, нужен): `PetBox.Client` (.NET) / `@stdray-npm/petbox-client` (TS) / `petbox-client` (Python, future) — auth (ApiKey), HTTP transport, raw methods для Data API (`QueryAsync`, `ExecAsync`), Config API (`ResolveAsync`), и Log ingestion (`IngestAsync` через `/api/ingest/clef`)
 - **Framework integrations** (свои, нужны где экосистемы нет):
-  - `YobaBox.Client.Config` — MEC integration (порт `YobaConf.Client` — exposes config через стандартный `IConfigurationProvider`)
-  - `YobaBox.Client.Data.Linq2Db` — linq2db custom provider (Wave 5+ из Phase 16; reference: `LinqToDB.Remote.HttpClient.Server`)
-  - `@stdray-npm/yobabox-client-drizzle` — Drizzle integration (TS Data)
+  - `PetBox.Client.Config` — MEC integration (порт `YobaConf.Client` — exposes config через стандартный `IConfigurationProvider`)
+  - `PetBox.Client.Data.Linq2Db` — linq2db custom provider (Wave 5+ из Phase 16; reference: `LinqToDB.Remote.HttpClient.Server`)
+  - `@stdray-npm/petbox-client-drizzle` — Drizzle integration (TS Data)
 - **НЕ делаем** (используется существующая экосистема через Seq protocol):
-  - **Logging .NET** — pets настраивают `Serilog.Sinks.Seq` или `Seq.Extensions.Logging` с URL=yobabox + ApiKey. Yobabox `/api/ingest/clef` accepts Seq protocol. Свои adapter'ы не пишем.
+  - **Logging .NET** — pets настраивают `Serilog.Sinks.Seq` или `Seq.Extensions.Logging` с URL=petbox + ApiKey. PetBox `/api/ingest/clef` accepts Seq protocol. Свои adapter'ы не пишем.
   - **Logging TS** — pets используют `@datalust/winston-seq` (например kpvotes-ts) или `pino-seq`. Тот же endpoint. Свой winston transport не пишем.
-  - Если в будущем появится pet на языке без Seq sink — может потребоваться minimal yobabox-specific sink, но это reactive по реальной потребности.
+  - Если в будущем появится pet на языке без Seq sink — может потребоваться minimal petbox-specific sink, но это reactive по реальной потребности.
 
 ### Phasing
 
-#### 26.1 — Move existing yobaconf clients to yobabox repo [DONE — `57c6601`]
+#### 26.1 — Move existing yobaconf clients to petbox repo [DONE — `57c6601`]
 
-- [x] Move `D:\my\prj\yobaconf\src\YobaConf.Client` → `src/clients-net/YobaBox.Client.Config`. Namespace `YobaConf.Client` → `YobaBox.Client.Config`. PackageId `YobaBox.Client.Config`. Classes renamed: YobaConfConfiguration{Provider,Source,Options,Extensions} → YobaBoxConfig{Provider,Source,Options,Extensions}. Extension method `AddYobaConf` → `AddYobaBoxConfig`.
-- [x] Move `D:\my\prj\yobaconf\src\yobaconf-client-ts` → `src/clients-ts/yobabox-client`. Package `@stdray-npm/yobaconf-client` → `@stdray/yobabox-client` (GitHub Packages requires scope = github owner). Classes `YobaConfClient` → `YobaBoxConfigClient`, `YobaConfError` → `YobaBoxConfigError`.
-- [x] Wire format strings (X-YobaConf-ApiKey header, /v1/conf path) **preserved as-is** — protocol adaptation to yobabox's `/api/config/{ws}/resolve` shape is Phase 26.3.
+- [x] Move `D:\my\prj\yobaconf\src\YobaConf.Client` → `src/clients-net/PetBox.Client.Config`. Namespace `YobaConf.Client` → `PetBox.Client.Config`. PackageId `PetBox.Client.Config`. Classes renamed: YobaConfConfiguration{Provider,Source,Options,Extensions} → PetBoxConfig{Provider,Source,Options,Extensions}. Extension method `AddYobaConf` → `AddPetBoxConfig`.
+- [x] Move `D:\my\prj\yobaconf\src\yobaconf-client-ts` → `src/clients-ts/petbox-client`. Package `@stdray-npm/yobaconf-client` → `@stdray/petbox-client` (GitHub Packages requires scope = github owner). Classes `YobaConfClient` → `PetBoxConfigClient`, `YobaConfError` → `PetBoxConfigError`.
+- [x] Wire format strings (X-YobaConf-ApiKey header, /v1/conf path) **preserved as-is** — protocol adaptation to petbox's `/api/config/{ws}/resolve` shape is Phase 26.3.
 - [x] Yobaconf репа остаётся как frozen archive — старые опубликованные пакеты не ломаем.
-- [x] Update `YobaBox.slnx` — added `YobaBox.Client.Config` + `YobaBox.Client.Config.Tests`.
+- [x] Update `PetBox.slnx` — added `PetBox.Client.Config` + `PetBox.Client.Config.Tests`.
 - [skip] Bun workspace — deferred (каждый TS-клиент собирается независимо со своим node_modules, как было в yobaconf). Добавим если понадобятся shared deps.
 
 #### 26.2 — Unit tests [DONE — `57c6601`]
 
-- [x] `tests/YobaBox.Client.Config.Tests` (.NET) — 14 xunit tests pass: JsonFlattener (8 — object/array/numbers/booleans/null/nested/case-insensitive/empty) + YobaBoxConfigProvider (6 — ctor validation × 2, Load happy path, Optional swallow, non-Optional propagate, WithTag chaining).
-- [x] `src/clients-ts/yobabox-client/tests/` — 24 bun tests pass: config.test.ts (16 — ResolvedConfig get/getNumber/getBoolean/toEnv/metadata) + client.test.ts (8 — constructor validation × 3, fetch 200/4xx/optional, headers+query verification).
+- [x] `tests/PetBox.Client.Config.Tests` (.NET) — 14 xunit tests pass: JsonFlattener (8 — object/array/numbers/booleans/null/nested/case-insensitive/empty) + PetBoxConfigProvider (6 — ctor validation × 2, Load happy path, Optional swallow, non-Optional propagate, WithTag chaining).
+- [x] `src/clients-ts/petbox-client/tests/` — 24 bun tests pass: config.test.ts (16 — ResolvedConfig get/getNumber/getBoolean/toEnv/metadata) + client.test.ts (8 — constructor validation × 3, fetch 200/4xx/optional, headers+query verification).
 - [skip] ≥80% coverage target — not measured yet (no coverlet integration в TS, .NET coverlet есть в test csproj но не запущен). Wave 26.4 e2e добавит integration coverage.
 
 #### 26.3 — Core SDK extension (Config + Data raw)
 
-- [ ] `YobaBox.Client` (.NET) — extract auth+HTTP transport из `YobaBox.Client.Config` в общий core. Add `Data` namespace: `QueryAsync`, `ExecAsync` (для `/query` + `/exec` Data API). Add `Log` namespace: `IngestAsync` через `/api/ingest/clef` для use cases где Seq sink не подходит (rare).
-- [ ] `@stdray-npm/yobabox-client` (TS) — то же: extract core auth+fetch, add `data` module. Log опциональный raw `ingest()` — основной путь у TS pet'а через `@datalust/winston-seq` напрямую.
+- [ ] `PetBox.Client` (.NET) — extract auth+HTTP transport из `PetBox.Client.Config` в общий core. Add `Data` namespace: `QueryAsync`, `ExecAsync` (для `/query` + `/exec` Data API). Add `Log` namespace: `IngestAsync` через `/api/ingest/clef` для use cases где Seq sink не подходит (rare).
+- [ ] `@stdray-npm/petbox-client` (TS) — то же: extract core auth+fetch, add `data` module. Log опциональный raw `ingest()` — основной путь у TS pet'а через `@datalust/winston-seq` напрямую.
 - [ ] Existing `Config` сохраняется как specialized provider (MEC), но core SDK даёт raw `ResolveConfigAsync` для use cases без MEC
 
 #### 26.4 — E2E tests
 
-- [ ] `tests/YobaBox.Client.E2ETests` (.NET) — против running yobabox через `WebApplicationFactory<Program>` (in-process) или TestContainers (если нужна real network)
-- [ ] `src/clients-ts/yobabox-client/tests/e2e.test.ts` — против running yobabox в `beforeAll` (spawn `dotnet run` process или TestContainers)
+- [ ] `tests/PetBox.Client.E2ETests` (.NET) — против running petbox через `WebApplicationFactory<Program>` (in-process) или TestContainers (если нужна real network)
+- [ ] `src/clients-ts/petbox-client/tests/e2e.test.ts` — против running petbox в `beforeAll` (spawn `dotnet run` process или TestContainers)
 - [ ] Покрытие: full round-trip create_db → migrate → exec → query → resolve config → ingest log
 
 #### 26.5 — Versioning + Publishing infra (Cake + GitVersion) [DONE — `7680fd7`, `e28def3`]
 
 - [x] `build.cs` ported from yobaconf `build.cake`: Pack + NuGetPush (publishes to `https://nuget.pkg.github.com/{owner}/index.json` via GITHUB_TOKEN), TsSdkInstall/Typecheck/Lint/Test/Build/Pack/NpmPublish (writes scoped .npmrc with token, publishes to npm.pkg.github.com)
-- [x] `GitVersion.yml` уже в yobabox repo идентичен yobaconf (continuous delivery, label=ci on main)
+- [x] `GitVersion.yml` уже в petbox repo идентичен yobaconf (continuous delivery, label=ci on main)
 - [x] `.github/workflows/ci.yml` — added `nuget-publish` (triggered на `refs/tags/nuget`) и `npm-publish` (triggered на `refs/tags/npm`) jobs. Existing `publish` (docker) job gated to skip on those tags. Both jobs auth via `GITHUB_TOKEN` + `GITHUB_REPOSITORY_OWNER` (set automatically by GH Actions).
 - [x] Verify (CI alias) extended to include TsSdkLint+Typecheck+Test — PR validation теперь покрывает оба языка.
-- [ ] Документировать в `doc/clients.md` как pet добавляет dependency: `dotnet add package YobaBox.Client.Config --version 0.x.y-ci.N --source https://nuget.pkg.github.com/{owner}/index.json` / scoped npm registry config. (follow-up — нет блокера для первого publish)
+- [ ] Документировать в `doc/clients.md` как pet добавляет dependency: `dotnet add package PetBox.Client.Config --version 0.x.y-ci.N --source https://nuget.pkg.github.com/{owner}/index.json` / scoped npm registry config. (follow-up — нет блокера для первого publish)
 - [x] Debug стадия: GitHub Packages (npm.pkg.github.com + nuget.pkg.github.com) с `0.x.y-ci.N` версиями.
 
 #### 26.6 — kpvotes-ts migration (overlaps с Phase 27 dogfooding)
 
-- [ ] Replace `@stdray-npm/yobaconf-client` → `@stdray-npm/yobabox-client` (config module). API совместим где возможно.
+- [ ] Replace `@stdray-npm/yobaconf-client` → `@stdray-npm/petbox-client` (config module). API совместим где возможно.
 - [ ] **НЕ трогать** `@datalust/winston-seq` — yobalog Seq protocol работает, pet просто меняет URL+key в config'е winston'а. Никакой migration на свой transport.
-- [ ] Replace local JSON cache → `@stdray-npm/yobabox-client` data API (`client.data.query/exec`) или `@stdray-npm/yobabox-client-drizzle` если используем Drizzle ORM
+- [ ] Replace local JSON cache → `@stdray-npm/petbox-client` data API (`client.data.query/exec`) или `@stdray-npm/petbox-client-drizzle` если используем Drizzle ORM
 - [ ] См. Phase 27 для полного onboarding scenario
 
 #### 26.7 — Publish to npmjs.org / nuget.org (stable)
@@ -1117,7 +1117,7 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 
 #### 26.8 — Research: Config standards compatibility (research-only, реализация по результату)
 
-- [ ] **Spring Cloud Config Server protocol** — REST `GET /{application}/{profile}` returns key=value tree. Если добавить compat-endpoint на стороне yobabox (`/api/config/spring/{app}/{profile}` → внутри tag query `project:{app}, env:{profile}`) — pet'ы могут использовать готовые `spring-cloud-config-client` (Java/.NET/Node/Python). Минус: tag-flexibility теряется, нужно соглашение application=project, profile=env.
+- [ ] **Spring Cloud Config Server protocol** — REST `GET /{application}/{profile}` returns key=value tree. Если добавить compat-endpoint на стороне petbox (`/api/config/spring/{app}/{profile}` → внутри tag query `project:{app}, env:{profile}`) — pet'ы могут использовать готовые `spring-cloud-config-client` (Java/.NET/Node/Python). Минус: tag-flexibility теряется, нужно соглашение application=project, profile=env.
 - [ ] **HashiCorp Consul KV** — `GET /v1/kv/{prefix}` flat namespace. Аналогично compat layer возможен, но tag-semantics не лезут.
 - [ ] **Etcd KV gRPC** — то же что Consul но gRPC. Самый низкий ROI для pet contexts.
 - [ ] **OpenFeature** — narrow scope (feature flags), не подходит для full config.
@@ -1127,23 +1127,23 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 ### Repo structure
 
 ```
-yobabox/
+petbox/
 ├── src/
 │   ├── clients-net/              ← NEW (renamed from src/clients/ implied earlier)
-│   │   ├── YobaBox.Client/        — core SDK (auth, HTTP, Data raw, Config raw, Log raw)
-│   │   ├── YobaBox.Client.Config/ — MEC IConfigurationProvider (порт YobaConf.Client)
-│   │   └── YobaBox.Client.Data.Linq2Db/ — Wave 5+ from Phase 16
+│   │   ├── PetBox.Client/        — core SDK (auth, HTTP, Data raw, Config raw, Log raw)
+│   │   ├── PetBox.Client.Config/ — MEC IConfigurationProvider (порт YobaConf.Client)
+│   │   └── PetBox.Client.Data.Linq2Db/ — Wave 5+ from Phase 16
 │   ├── clients-ts/               ← NEW
-│   │   ├── yobabox-client/        — core SDK (TS, bun workspace member)
-│   │   └── yobabox-client-drizzle/ — Drizzle integration (Wave 5+)
+│   │   ├── petbox-client/        — core SDK (TS, bun workspace member)
+│   │   └── petbox-client-drizzle/ — Drizzle integration (Wave 5+)
 │   └── clients-py/               ← FUTURE (когда появится первый Python pet)
 └── tests/
-    ├── YobaBox.Client.Tests/
-    ├── YobaBox.Client.Config.Tests/
-    └── YobaBox.Client.E2ETests/
+    ├── PetBox.Client.Tests/
+    ├── PetBox.Client.Config.Tests/
+    └── PetBox.Client.E2ETests/
 ```
 
-bun workspace для TS (`yobabox/package.json` с `workspaces`). Python organizationally рядом, но toolchain (poetry/uv/hatch) выбирается когда дойдём.
+bun workspace для TS (`petbox/package.json` с `workspaces`). Python organizationally рядом, но toolchain (poetry/uv/hatch) выбирается когда дойдём.
 
 ### Resolved decisions (2026-05-28)
 
@@ -1161,7 +1161,7 @@ Goal: pet developer даёт агенту onboarding URL + agent-key. Агент
 
 **Драйвер**: kpvotes-ts onboarding scenario — реальный pet, реальный test case для agentic flow. Если работает на нём — паттерн валидирован.
 
-**Prerequisites**: Phase 26 (TS yobabox-client с Data модулем).
+**Prerequisites**: Phase 26 (TS petbox-client с Data модулем).
 
 ### Phasing
 
@@ -1184,7 +1184,7 @@ Goal: pet developer даёт агенту onboarding URL + agent-key. Агент
 #### 27.3 — Onboarding doc + skill text
 
 - [ ] `doc/agent-onboarding.md` — пошаговая инструкция для агента. Минимальный template: где взять MCP URL, как зарегистрировать в Claude Code (`.mcp.json` entry), какие tools вызывать, в каком порядке
-- [ ] `.claude/skills/yobabox-onboard-pet.md` (или эквивалент) — skill text. Trigger: "set up yobabox for this pet" / "onboard pet". Шаги enforced — какие MCP tools в каком порядке
+- [ ] `.claude/skills/petbox-onboard-pet.md` (или эквивалент) — skill text. Trigger: "set up petbox for this pet" / "onboard pet". Шаги enforced — какие MCP tools в каком порядке
 - Open fork: doc location — статичный в репе vs dynamic endpoint `/agent/onboarding/{token}`. **Recommend static** — проще, ниже attack surface.
 
 #### 27.4 — kpvotes-ts dogfooding
@@ -1196,8 +1196,8 @@ Goal: pet developer даёт агенту onboarding URL + agent-key. Агент
 - [ ] Агент: batch-INSERT'ит `votes.json` content (~1000 rows) через `data.exec`
 - [ ] Агент: выпускает production ApiKey без TTL со scopes `data:read+write`, `config:read`, `logs:ingest`
 - [ ] Агент: набирает config bindings через `set_config_binding` для kpvotes (kpUri, votesUri, twitterKeys и т.д.)
-- [ ] Pet тулится на yobabox URL + production key. Запускается, читает votes из БД, парсит kinopoisk, постит твиты
-- [ ] Lightpanda networking — kpvotes-ts в docker-compose, yobabox на host'е, через `host.docker.internal:5000`. Документировано в onboarding doc.
+- [ ] Pet тулится на petbox URL + production key. Запускается, читает votes из БД, парсит kinopoisk, постит твиты
+- [ ] Lightpanda networking — kpvotes-ts в docker-compose, petbox на host'е, через `host.docker.internal:5000`. Документировано в onboarding doc.
 
 #### 27.5 — Document gotchas
 
@@ -1215,7 +1215,7 @@ Goal: pet developer даёт агенту onboarding URL + agent-key. Агент
 3. **Onboarding doc location**: static (`doc/agent-onboarding.md`) или dynamic (`/agent/onboarding/{token}`). Recommend static, проще.
 4. **Сервисы в проекте**: kpvotes-net + kpvotes-ts оба в `kpvotes` project (per spec — services внутри project'а). → одна `kpvotes` project, два services.
 
-- [x] **`Feature` enum** (`YobaBox.Core.Features.Feature`) заменяет string-based `IsEnabled("Config")` на 27 call sites в 9 файлах. `_ViewImports.cshtml` импортирует namespace без full-qualification в cshtml.
+- [x] **`Feature` enum** (`PetBox.Core.Features.Feature`) заменяет string-based `IsEnabled("Config")` на 27 call sites в 9 файлах. `_ViewImports.cshtml` импортирует namespace без full-qualification в cshtml.
 - [x] **CA1848 globally suppressed** в `Directory.Build.targets`. Production code теперь может писать `ILogger.LogInformation(...)` напрямую (попадает в Seq self-log → yobalog → MCP). Hot-path остаётся с `[LoggerMessage]` partial methods deliberately.
 - [x] **UI flag-gating** в `_AdminSidebar` и `_ProjectTabs` — Shared config / Log settings / Data link + Logs/Config tabs скрываются когда соответствующий модуль disabled.
 - [x] **Workspace switcher dropdown удалён** из main `_Layout`. Был источник проблемы (returnUrl карри'ил старый workspace в URL, cookie-sync middleware откатывал свич). Свич теперь — через admin sidebar workspace tree или прямым URL `/ui/{ws}/...`.

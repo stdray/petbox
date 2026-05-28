@@ -1,0 +1,19 @@
+@using PetBox.Web.Pages.Logs
+@model PetBox.Web.Pages.Logs.IndexModel
+@foreach (var e in Model.Events)
+{
+	<partial name="_EventRow" model="e" />
+}
+@if (Model.NextCursor is not null)
+{
+	<tr data-testid="events-sentinel"
+		data-next-href="@Url.Page("/Logs/Index", new { projectKey = Model.ProjectKey, kql = Model.RawKql, saved = Model.ActiveSavedName, cursor = Model.NextCursor })"
+		hx-get="@Url.Page("/Logs/Index", new { projectKey = Model.ProjectKey, kql = Model.RawKql, saved = Model.ActiveSavedName, cursor = Model.NextCursor })"
+		hx-trigger="intersect once"
+		hx-swap="outerHTML"
+		hx-target="this">
+		<td colspan="4" class="text-center text-xs opacity-50 py-4">
+			<span class="loading loading-spinner loading-xs"></span> Loading older...
+		</td>
+	</tr>
+}
