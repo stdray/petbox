@@ -24,7 +24,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 
 	public ConfigPipelineTests()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
+		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
@@ -43,6 +43,8 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
+		var __testCs = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>(_factory.Services).GetConnectionString("PetBox")!;
+		PetBox.Core.Data.MigrationRunner.Run(__testCs);
 		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions
 		{
 			AllowAutoRedirect = false,
@@ -70,7 +72,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", null);
+		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", null);
 	}
 
 	async Task<HttpResponseMessage> GetPageAsync(string url)
