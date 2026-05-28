@@ -24,7 +24,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 
 	public ConfigPipelineTests()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", $"Data Source=petbox-{Guid.NewGuid():N};Mode=Memory;Cache=Shared");
+		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{

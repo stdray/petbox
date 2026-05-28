@@ -38,7 +38,7 @@ public sealed class QueryExecApiTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
-						["ConnectionStrings:PetBox"] = $"Data Source=petbox-{Guid.NewGuid():N};Mode=Memory;Cache=Shared",
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
 						["Features:Data"] = "true",
 					});
 				});
