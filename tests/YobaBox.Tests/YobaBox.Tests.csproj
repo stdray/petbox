@@ -29,6 +29,7 @@
 
 	<ItemGroup>
 		<ProjectReference Include="..\..\src\YobaBox.Core\YobaBox.Core.csproj" />
+		<ProjectReference Include="..\..\src\YobaBox.Data\YobaBox.Data.csproj" />
 		<ProjectReference Include="..\..\src\YobaBox.Log.Core\YobaBox.Log.Core.csproj" />
 		<ProjectReference Include="..\..\src\YobaBox.Web\YobaBox.Web.csproj" />
 	</ItemGroup>

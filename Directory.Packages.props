@@ -23,6 +23,8 @@
 		<PackageVersion Include="Google.Protobuf" Version="3.30.0" />
 		<PackageVersion Include="Grpc.Tools" Version="2.72.0" />
 		<PackageVersion Include="Seq.Extensions.Logging" Version="9.0.0" />
+		<PackageVersion Include="dbup-core" Version="6.0.15" />
+		<PackageVersion Include="dbup-sqlite" Version="6.0.4" />
 	</ItemGroup>
 
 	<ItemGroup>

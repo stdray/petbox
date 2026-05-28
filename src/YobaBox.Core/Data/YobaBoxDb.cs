@@ -24,6 +24,7 @@ public sealed class YobaBoxDb : DataConnection
 	public ITable<SavedQuery> SavedQueries => this.GetTable<SavedQuery>();
 	public ITable<ShareLink> ShareLinks => this.GetTable<ShareLink>();
 	public ITable<Setting> Settings => this.GetTable<Setting>();
+	public ITable<DataDb> DataDbs => this.GetTable<DataDb>();
 
 	public static DataOptions<YobaBoxDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString));

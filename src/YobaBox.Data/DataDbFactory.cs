@@ -1,0 +1,119 @@
+using System.Collections.Concurrent;
+using Microsoft.Data.Sqlite;
+
+namespace YobaBox.Data;
+
+// Per-(project, dbName) SQLite database factory for the user-data Data module.
+// Mirrors LogDbFactory: physical file lives at `{baseDir}/{projectKey}/{dbName}.db`,
+// connection strings are SQLite, schema is owned by the pet (yobabox doesn't
+// CREATE TABLE — that's what the /schema endpoint is for).
+//
+// On first creation of a `.db` file we apply two operational PRAGMAs:
+//   - journal_mode = WAL (allows readers concurrent with a writer)
+//   - max_page_count = N (per-DB size quota; INSERT over the limit → SQLITE_FULL)
+// Both PRAGMA settings persist with the DB file.
+//
+// Connection strings only — yobabox opens fresh connections per HTTP request,
+// since SqliteConnection has a built-in pool. A separate hosted service runs
+// PRAGMA wal_checkpoint(TRUNCATE) periodically to keep the .wal sidecar bounded.
+public interface IDataDbFactory
+{
+	// Returns a SQLite connection string for the given (projectKey, dbName).
+	// If the file does not exist, throws — use CreateAsync first.
+	string GetConnectionString(string projectKey, string dbName);
+
+	// Creates a new SQLite file at the resolved path, applies WAL +
+	// max_page_count. Throws if the file already exists.
+	Task CreateAsync(string projectKey, string dbName, long maxPageCount, CancellationToken ct = default);
+
+	// Deletes the file for (projectKey, dbName) along with .wal / .shm sidecars.
+	// Best-effort: if the file is currently open by another connection (Windows
+	// file lock), returns false and the orphan-cleanup service retries later.
+	bool TryDelete(string projectKey, string dbName);
+
+	// Enumerates `.db` files on disk for a project. Used by the orphan-cleanup
+	// service to compare against DataDbs metadata.
+	IReadOnlyList<string> ListPhysicalDbs(string projectKey);
+
+	// Resolved on-disk path for diagnostics.
+	string GetDbPath(string projectKey, string dbName);
+}
+
+public sealed class DataDbFactory : IDataDbFactory
+{
+	public const long DefaultMaxPageCount = 262144; // ~1 GB at 4 KB page size
+
+	readonly string _baseDir;
+
+	public DataDbFactory(string baseDir)
+	{
+		_baseDir = baseDir;
+		Directory.CreateDirectory(_baseDir);
+	}
+
+	public string GetDbPath(string projectKey, string dbName) =>
+		Path.Combine(_baseDir, projectKey, $"{dbName}.db");
+
+	public string GetConnectionString(string projectKey, string dbName)
+	{
+		var path = GetDbPath(projectKey, dbName);
+		if (!File.Exists(path))
+			throw new FileNotFoundException($"DataDb file not found: {path}");
+		return $"Data Source={path}";
+	}
+
+	public async Task CreateAsync(string projectKey, string dbName, long maxPageCount, CancellationToken ct = default)
+	{
+		var projectDir = Path.Combine(_baseDir, projectKey);
+		Directory.CreateDirectory(projectDir);
+
+		var path = Path.Combine(projectDir, $"{dbName}.db");
+		if (File.Exists(path))
+			throw new InvalidOperationException($"DataDb already exists: {path}");
+
+		var cs = $"Data Source={path}";
+		await using var raw = new SqliteConnection(cs);
+		await raw.OpenAsync(ct);
+
+		await using (var pragma = raw.CreateCommand())
+		{
+			// PRAGMA journal_mode is a query that returns the new mode; using
+			// ExecuteScalarAsync ensures it's actually applied and persisted.
+			pragma.CommandText = "PRAGMA journal_mode = WAL;";
+			await pragma.ExecuteScalarAsync(ct);
+		}
+		await using (var pragma = raw.CreateCommand())
+		{
+			pragma.CommandText = $"PRAGMA max_page_count = {maxPageCount};";
+			await pragma.ExecuteNonQueryAsync(ct);
+		}
+	}
+
+	public bool TryDelete(string projectKey, string dbName)
+	{
+		var path = GetDbPath(projectKey, dbName);
+		// SQLite WAL mode produces -wal / -shm sidecars next to the main file.
+		var sidecars = new[] { path, path + "-wal", path + "-shm" };
+
+		// Try all three; if any can't be deleted (file locked, e.g. on Windows
+		// during an in-flight query), bail out. The orphan-cleanup service
+		// retries on its next tick.
+		foreach (var f in sidecars)
+		{
+			if (!File.Exists(f)) continue;
+			try { File.Delete(f); }
+			catch (IOException) { return false; }
+			catch (UnauthorizedAccessException) { return false; }
+		}
+		return true;
+	}
+
+	public IReadOnlyList<string> ListPhysicalDbs(string projectKey)
+	{
+		var projectDir = Path.Combine(_baseDir, projectKey);
+		if (!Directory.Exists(projectDir)) return [];
+		return Directory.GetFiles(projectDir, "*.db")
+			.Select(p => Path.GetFileNameWithoutExtension(p))
+			.ToList();
+	}
+}

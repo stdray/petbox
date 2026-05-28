@@ -2,10 +2,20 @@
 
 	<PropertyGroup>
 		<IsPackable>false</IsPackable>
+		<NoWarn>$(NoWarn);CA1822</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>
 		<ProjectReference Include="..\YobaBox.Core\YobaBox.Core.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="dbup-core" />
+		<PackageReference Include="dbup-sqlite" />
+		<PackageReference Include="linq2db" />
+		<PackageReference Include="Microsoft.Data.Sqlite" />
+		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
 	</ItemGroup>
 
 </Project>
