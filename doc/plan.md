@@ -595,49 +595,74 @@ Session output: 11 commits, 214 unit/integration pass, 29 E2E pass + 10 skipped 
 - [x] `doc/tasks-mcp/` — bench for future Tasks module: records of plan/memory ops
 - [x] `AGENTS.md` — "Recording plan/memory actions" section added
 
-### 21.8 — Follow-ups (out of this phase)
+### 21.8 — Follow-ups [→ Phase 25 Polish]
 
-- [ ] Editor: auto-add `project:{key}` tag when on project Config context (step 8 polish)
-- [ ] `/ui/{ws}/admin` proper tabbed landing — Members + Settings sub-tabs (step 10 polish)
-- [ ] Cross-project logs result presentation — annotate rows with project (step 9 polish)
-- [ ] Reserved-name validation for project keys (`logs`, `traces`, `config`, `admin`, `projects`, `sys`)
-- [ ] Health dots in sidebar when Dashboard module has real data
-- [ ] Polish phase items from `~/.claude/plans/proud-waddling-naur.md` "Phase 2: UI polish"
+Все 6 пунктов перенесены в Phase 25 (UI navigation polish + validation polish + session-plan items).
 
 ---
 
-## Phase 16: Data module rework [BLOCKED]
+## Phase 16: Data module rework [READY]
 
-Goal: fix DataTable / DataApi design. Requires user clarification.
-Current implementation is wrong — to be revisited.
+Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite через yobabox REST API + auto-migrations. Уйти от mount'ов, ручных backup'ов, copy-paste файлов между машинами.
 
-- [ ] Clarify: where do user data tables live? Separate `data/databases/{name}.db` per project?
-- [ ] Clarify: API shape — PostgREST-compatible? CRUD?
-- [ ] Clarify: how DataTables map to projects/workspaces?
+**Source of truth**: `~/.claude/plans/noble-sniffing-bear.md` — полный session-plan с discovery / critique / решениями. doc/plan.md держит summary + waves.
 
-### 8.6 — Create DataTable for votes cache (after log + config flows)
+### Resolved decisions (2026-05-28)
 
-- [x] Navigate `/admin/projects/kpvotes/data` (new page or section)
-- [x] Create table `votes_cache` with columns: id TEXT PK, film_uri TEXT NOT NULL, vote_value TEXT, cached_at TEXT
-- [x] Set Read=true, Write=true, Delete=true → submit → table appears in list
-- [x] `GET /api/data/votes_cache` with X-Api-Key → 200 `[]` (empty)
-- [x] Build `/admin/projects/{key}/data` page + `/api/data/{table}` endpoint
+- **Storage**: `data/db/{projectKey}/{dbName}.db` — multiple DBs per project, явно создаются (не auto-create on first touch). WAL mode + `PRAGMA max_page_count` (quota) при создании.
+- **API**: REST raw SQL pass-through через `/api/data/{p}/{db}/query|exec|schema`. Не PostgREST, не KQL. Pet шлёт parameterized SQL через thin client wrapper (~50 LOC per language).
+- **Маппинг**: per-project-per-db. Один проект может иметь N DataDbs. ApiKey project-level видит все DataDbs данного проекта (нет per-DB allow-list).
+- **Auth scopes**: `data:read` (query/list/describe), `data:write` (exec/DML), `data:schema` (apply/create_db/delete_db).
+- **Schema management**: DbUp + custom `SqliteHashingJournal` (~100-150 LOC). Pet POST'ит named SQL migration; hash conflict → 409, retry-safe.
+- **Существующая `DataTables` таблица**: НЕ трогаем в M013 (dead schema, удалим cosmetic миграцией позже).
+- **MCP**: Wave 4 — shared host `/mcp` через `ModelContextProtocol.AspNetCore` SDK. Закрывает 22.8 Agent surface.
 
-### 8.7 — Dashboard (after DataTable)
+### Waves
 
-- [x] Navigate `/dashboard` → project card "KpVotes" visible with services
-- [x] Shows 2 services: kpvotes-net (Cron), kpvotes-ts (PoC)
-- [x] Navigate `/dashboard/kpvotes` → service list with health badges
-- [x] Build `/dashboard/{project}` page
+#### Wave 0 — Pre-implementation critique gate + linq2db PoC
+- [ ] Snapshot план как baseline
+- [ ] Skeptical critique agent на финальной версии
+- [ ] linq2db `.ToString()` PoC: extraction parameterized SQL отдельно от bindings (для thin send-helper в Wave 3)
+- [ ] Explore `LinqToDB.Remote.HttpClient.Server` clone для Wave 5+ direction
+- [ ] Зафиксировать решение в `doc/decision-log.md`
 
-Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
+#### Wave 1 — Foundation + APIs
+- [ ] `DataDbFactory.GetDb(projectKey, dbName)` (паттерн LogDbFactory двухключевой), WAL + max_page_count при создании
+- [ ] `M013_DataDbs` миграция — только новая `DataDbs(ProjectKey, Name)` таблица
+- [ ] `dbup-sqlite` 6.0.4 + `dbup-core` пакеты + `SqliteHashingJournal` + `SchemaRunner` (~50 LOC, hash pre-check, 409 maps)
+- [ ] DB lifecycle endpoints: `POST /api/data/{p}/dbs`, `GET ...`, `DELETE .../{db}` (hard delete)
+- [ ] Schema push: `POST /api/data/{p}/{db}/schema` через UpgradeEngine + hash pre-check
+- [ ] Query: `POST /api/data/{p}/{db}/query` (ExecuteReader, JSON array, 30s timeout, SQLite errors прокидываются)
+- [ ] Exec: `POST /api/data/{p}/{db}/exec` (ExecuteNonQuery, PRAGMA whitelist, quota → 507)
+- [ ] Main-instance-only guard для `/api/data/*` (log-only instance → 503)
+- [ ] Unit + integration tests: factory, journal idempotency/conflict, lifecycle, schema, query, exec, PRAGMA whitelist, quota, timeout, concurrent migration
 
-- [ ] Create key with only `config:read`
-- [ ] `GET /api/config?...` → 200
-- [ ] `POST /api/config` → 403
-- [ ] `DELETE /api/config?...` → 403
-- [ ] `POST /ingest/clef` → 403
-- [ ] `GET /api/auth/validate` → 200 (no scope needed)
+#### Wave 2 — UI rework + dogfooding
+- [ ] `ProjectData.cshtml(.cs)` rewrite: two-level navigation (DBs list → DB detail с table introspection + paste-migration form)
+- [ ] Удалить старый create-table form (DataTables концепции больше нет)
+- [ ] `KpVotesOnboardingTests.S5_DataRoundtrip` E2E через REST
+
+#### Wave 3 — Real pet integration
+- [ ] kpvotes-net: заменить local SQLite на yobabox URL + ApiKey + DB name. Thin send-helper (~50 LOC) использующий linq2db extraction
+- [ ] kpvotes-ts: SQL-send-helper для TS ORM
+- [ ] Документировать thin-client patterns в `doc/spec.md` (linq2db / SQLAlchemy / Knex / Drizzle)
+- [ ] Latency + transaction-loss measurement
+
+#### Wave 4 — MCP server (subsumes 22.8 Agent surface)
+- [ ] `src/YobaBox.Web/Mcp/McpHost.cs` — shared MCP host через `ModelContextProtocol.AspNetCore` SDK, единый `/mcp` endpoint
+- [ ] Data MCP tools: `data.list_dbs`, `data.create_db`, `data.delete_db`, `data.describe_db`, `data.schema_apply`, `data.query`, `data.exec`
+- [ ] Auth: existing X-Api-Key через standard ASP.NET middleware
+- [ ] Agentic E2E: dogfooding-тест агента через MCP
+
+#### Wave 5+ — Future (out of MVP)
+Batch endpoint, session transactions, Liquibase XML, `LinqToDB.Remote.HttpClient` интеграция для full linq2db UX, hot-backup, per-DB OTEL telemetry, FluentMigrator → DbUp consolidation analysis.
+
+### Старые DataTables endpoints (Phase 8.6/8.7 historical)
+
+Эти были построены в onboarding flow до rework'а — оставляем `[x]` для истории, но они исчезнут в Wave 2:
+
+- [x] (8.6) `/admin/projects/kpvotes/data` + create table form + `/api/data/{table}` endpoint
+- [x] (8.7) `/dashboard` + `/dashboard/{project}` (Dashboard теперь на `/ui/{ws}` после Phase 21 IA rework)
 
 ---
 
@@ -720,16 +745,15 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 - [x] `CompositeApiKeyLookup` — пробует config-store первым, затем DB; config wins on collision
 - [x] `ApiKeyAuthenticationHandler` — резолв через `IApiKeyLookup` вместо прямого DB
 
-### Wave 4 — DEFERRED (требует дизайна)
+### Wave 4 — SUPERSEDED
 
-#### 22.8 — Agent surface (S-12) [BLOCKED — design needed]
+#### 22.8 — Agent surface (S-12) [SUPERSEDED by Phase 16 Wave 4]
 
-Изначально планировалось как `/agent/instructions` page + temporary scope-bound ApiKey. Альтернатива: **MCP-сервер поверх существующего API** — агент дёргает через standard MCP протокол, инструкции и discovery через MCP, никаких отдельных HTTP-страниц.
+Решено в discovery 2026-05-28: **MCP-сервер**, не `/agent/` REST endpoint. Реализация в составе Data модуля Wave 4 (shared MCP host через `ModelContextProtocol.AspNetCore` SDK на единый `/mcp` endpoint, tools от всех модулей собираются через DI). Это закрывает изначальную цель: pet/agent discovery + scoped access. REST `/agent/` отклонён как ненужная альтернатива MCP.
 
-- [ ] Решить: `/agent/` prefix vs MCP endpoint vs оба?
-- [ ] Если MCP: какие tools экспонируем (`yobabox.ingest_log`, `yobabox.resolve_config`, `yobabox.query_logs`...)?
-- [ ] Скоупы для агента: одноразовые с TTL (1h)? Persistent с rev?
-- [ ] Discovery: статичная `/agent/.well-known/instructions.md` или динамический MCP `tools/list`?
+- [-] `/agent/` REST endpoint — DROP. Не строим.
+- [→] MCP server — см. Phase 16 Wave 4 (Data MCP tools + shared host).
+- [→] Tools от других модулей (config resolve, log ingest, log query) — добавятся в shared host инкрементально когда понадобятся; зарезервированный pattern.
 
 ### Что НЕ берём из источников
 
@@ -837,14 +861,14 @@ Test file: `tests/YobaBox.E2ETests/ApiKeyScopeTests.cs`
 - [x] `Pages/Me/Preferences.cshtml` — `/ui/me/preferences` — `UiSettings` (theme, defaultHome) через `_SettingsForm`
 - [x] `YobaBox.Core/Settings/UiSettings.cs` — `Theme` (Dark/Light/System), `DefaultHome` (Status/LastProject/AllLogs), оба TopLevel=User
 - [x] Применение `UiSettings.Theme` к `data-theme` в `_Layout` + `_AdminLayout` (через DI-resolved injection)
-- [ ] Применение `DefaultHome` после login (`/ui/{ws}` vs `/ui/{ws}/{lastProject}` vs `/ui/{ws}/logs`) — оставлено follow-up
+- [→] Применение `DefaultHome.LastProject` — перенесено в Phase 25.3 (нужно MembershipSettings storage)
 
-### 23.7 — Follow-ups (вне фазы)
+### 23.7 — Follow-ups [→ Phase 25 Polish]
 
-- [ ] Master key rotation CLI: `dotnet run -- --rotate-master-key <old> <new>` — перешифровка всех `type=secret` строк в `Settings` + всех `BindingKind=Secret` в `ConfigBindings`
-- [ ] Reserved path prefix validator на `SettingAttribute` (`auth.*`, `sys.*` → sysadmin-only write)
-- [ ] `[SettingsSection]` group attribute если рефлексивная группировка по record-type перестанет хватать
-- [ ] L1 кандидаты-на-перенос-в-L2 (мониторим): пока ничего; шкаф L2 проверяется на будущих фичах
+- Master key rotation CLI → Phase 25.3
+- Reserved path prefix validator на `SettingAttribute` → Phase 25.2
+- `[SettingsSection]` group attribute → Phase 25.3
+- L1 кандидаты-на-перенос-в-L2 (мониторим): пока ничего; шкаф L2 проверяется на будущих фичах
 
 ---
 
@@ -932,12 +956,40 @@ Reframe: tree сам считается "более explicit чем context-bloc
 - [x] Обновлены пути в 7 E2E файлах: `ProjectDetailTests`, `LoginTests`, `KpVotesOnboardingTests`, `ApiKeyScopeTests`, `ConfigResolvePriorityTests`, `DataTableTests`, `Infrastructure/TestWorkspace`
 - [x] 29/29 E2E зелёные (10 skipped pre-existing) — для 24.1-24.4 И для 24.5
 
-### 24.6 — Follow-ups [POLISH]
+### 24.6 — Follow-ups [→ Phase 25 Polish]
 
-Откладывается до polish-фазы (см. Phase 7 / `~/.claude/plans/proud-waddling-naur.md` "Phase 2: UI polish").
+См. Phase 25 — sidebar tree state persistence перенесён туда.
 
-- [ ] Sidebar tree state persistence через переходы. Сейчас каждый клик по ссылке = full page reload → `<details>` сбрасываются на server-rendered defaults (current ws/project развёрнуты, остальные свёрнуты). Варианты:
-  - **hx-boost** на `_AdminLayout` body — клики идут через AJAX, меняется только `<main>`, сайдбар остаётся в DOM с сохранёнными `open` атрибутами. Standard htmx pattern, минимум кода.
-  - **Alpine + localStorage** — каждый `<details>` получает stable id; Alpine синхронизирует open-state с localStorage. Hard reload восстанавливает состояние. Чуть больше JS, но работает универсально (например когда будет tree в `_Layout`).
+---
+
+## Phase 25: Polish [DEFERRED]
+
+Goal: единая точка для всех "пора, но не сейчас" задач. Делается после Phase 16 (Data module) + Phase 17 dogfooding с реальным kpvotes.
+
+**Когда браться**: после того как core functionality стабилизировалась и появляется ощущение "везде немного шершаво". До этого — каждый пункт = "smart-поведение" которое маскирует разработку, см. [feedback_explicit_over_implicit].
+
+### 25.1 — UI navigation polish
+
+- [ ] **Sidebar tree state persistence**. Сейчас каждый клик = full page reload → `<details>` сбрасываются на server-rendered defaults. Варианты:
+  - **hx-boost** на `_AdminLayout` body — клики через AJAX, меняется только `<main>`, sidebar остаётся в DOM с `open` атрибутами. Standard htmx pattern.
+  - **Alpine + localStorage** — каждый `<details>` получает stable id; Alpine синхронизирует open-state. Работает универсально (для tree в `_Layout` тоже).
   - **Оба** — hx-boost для soft-навигации + Alpine для hard reload.
-  Не делать сейчас: tree работает, server-rendered defaults адекватны. Persistence — quality-of-life улучшение.
+- [ ] **Editor: auto-add `project:{key}` tag** когда на project Config context (step 8 polish из 21.8)
+- [ ] **`/ui/admin/ws/{ws}` proper tabbed landing** — Members + Settings sub-tabs (step 10 polish из 21.8)
+- [ ] **Cross-project logs annotation** — annotate rows с project (step 9 polish из 21.8)
+- [ ] **Health dots в sidebar** когда Dashboard module имеет реальные данные (из 21.8)
+
+### 25.2 — Validation polish
+
+- [ ] **Reserved-name validation для project keys** (`logs`, `traces`, `config`, `admin`, `projects`, `sys`) — из 21.8
+- [ ] **Reserved path prefix validator** на `SettingAttribute` (`auth.*`, `sys.*` → sysadmin-only write) — из 23.7
+
+### 25.3 — Auth/Settings polish
+
+- [ ] **Master key rotation CLI**: `dotnet run -- --rotate-master-key <old> <new>` — перешифровка всех `type=secret` строк в `Settings` + всех `BindingKind=Secret` в `ConfigBindings`. Из 23.7.
+- [ ] **`UiSettings.DefaultHome.LastProject`** — нужно `MembershipSettings` (`Scope.Membership` storage). Сейчас fallback в `Workspace(ws)` (см. `Index.cshtml.cs`). Из 23.6.
+- [ ] **`[SettingsSection]` group attribute** — если рефлексивная группировка по record-type перестанет хватать. Из 23.7.
+
+### 25.4 — Polish from session plans
+
+- [ ] Items из `~/.claude/plans/proud-waddling-naur.md` "Phase 2: UI polish" (если ещё актуальны на момент возврата к фазе)
