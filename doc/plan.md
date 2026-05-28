@@ -1029,3 +1029,154 @@ Goal: единая точка для всех "пора, но не сейчас"
 ### 25.4 — Polish from session plans
 
 - [ ] Items из `~/.claude/plans/proud-waddling-naur.md` "Phase 2: UI polish" (если ещё актуальны на момент возврата к фазе)
+
+---
+
+## Phase 26: Clients SDK consolidation [NEW]
+
+Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + `yobaconf-client-ts`) в yobabox repo, переименовать в yobabox namespace, добавить тесты, расширить под все модули (Config + Data + Log). Modular структура: core SDK + framework integrations.
+
+**Драйвер**: prereq для Phase 27 (agentic pet onboarding) и реального kpvotes-ts integration. Без TS yobadata client сценарий "агент создаёт БД и заливает данные" из агентского tooling'а невозможен.
+
+### State входа
+
+- `D:\my\prj\yobaconf\src\YobaConf.Client` (.NET, 309 LOC, 6 файлов) — `IConfigurationProvider` для MEC. **0 unit-тестов.**
+- `D:\my\prj\yobaconf\src\yobaconf-client-ts` (TS, 414 LOC, 4 файла) — standalone SDK с ETag polling. Опубликован `@stdray-npm/yobaconf-client@0.1.0-ci.132`. Только `e2e-runner.ts`, **0 unit-тестов.**
+- kpvotes-ts уже использует `@stdray-npm/yobaconf-client` (config) + `@datalust/winston-seq` (logs). Data — local JSON, нужно мигрировать на yobabox Data.
+
+### Architecture (модулярная)
+
+- **Core SDK**: `YobaBox.Client` (.NET) / `@stdray-npm/yobabox-client` (TS) — auth (ApiKey), HTTP transport, raw методы (`QueryAsync`, `ExecAsync`, `ResolveConfigAsync`, `IngestLogAsync`)
+- **Framework integrations**:
+  - `YobaBox.Client.Config` — MEC integration (порт `YobaConf.Client`)
+  - `YobaBox.Client.Data.Linq2Db` — linq2db custom provider (deferred to Wave 5+ из Phase 16; см. там reference на `LinqToDB.Remote.HttpClient.Server`)
+  - `YobaBox.Client.Logging.Serilog` / `.MEL` — Serilog sink / Microsoft.Extensions.Logging provider
+  - `@stdray-npm/yobabox-client-drizzle` — Drizzle integration (TS)
+  - `@stdray-npm/yobabox-client-winston` — Winston transport (заменяет `@datalust/winston-seq`)
+
+### Phasing
+
+#### 26.1 — Move existing yobaconf clients to yobabox repo
+
+- [ ] Move `D:\my\prj\yobaconf\src\YobaConf.Client` → `src/clients/YobaBox.Client.Config`. Rename namespace `YobaConf.Client` → `YobaBox.Client.Config`. PackageId `YobaConf.Client` → `YobaBox.Client.Config`.
+- [ ] Move `D:\my\prj\yobaconf\src\yobaconf-client-ts` → `src/clients-ts/yobabox-client`. Package name `@stdray-npm/yobaconf-client` → `@stdray-npm/yobabox-client`. Rename внутренних имён.
+- [ ] Сохранить в yobaconf репе как frozen archive (read-only) — старые опубликованные пакеты не ломаем.
+- [ ] Update `YobaBox.slnx` чтобы добавить новый .NET client project.
+- [ ] Workspace для TS — bun workspace (yobabox/package.json + src/clients-ts/*/package.json). Bun уже используется в `YobaBox.Web/package.json`.
+
+#### 26.2 — Unit tests
+
+- [ ] `tests/YobaBox.Client.Config.Tests` (.NET) — xunit тесты на JsonFlattener + Configuration provider behavior (ETag handling, refresh, error scenarios)
+- [ ] `src/clients-ts/yobabox-client/tests/` — bun unit-тесты на client.ts (poll cycle, ETag matching, fetch error handling)
+- [ ] Target: ≥80% line coverage для public surface
+
+#### 26.3 — Core SDK extension (Config + Data + Log)
+
+- [ ] `YobaBox.Client` (.NET) — extract auth+HTTP transport из `YobaBox.Client.Config` в общий core. Add `Data` namespace: `QueryAsync`, `ExecAsync`. Add `Log` namespace: `IngestAsync`.
+- [ ] `@stdray-npm/yobabox-client` (TS) — to же: extract core auth+fetch, add `data` module + `log` module
+- [ ] Existing `Config` сохраняется как specialized provider (MEC), но core SDK дает raw `ResolveConfigAsync` для use cases без MEC
+
+#### 26.4 — E2E tests
+
+- [ ] `tests/YobaBox.Client.E2ETests` (.NET) — против running yobabox через `WebApplicationFactory<Program>` (in-process) или TestContainers (если нужна real network)
+- [ ] `src/clients-ts/yobabox-client/tests/e2e.test.ts` — против running yobabox в `beforeAll` (spawn `dotnet run` process или TestContainers)
+- [ ] Покрытие: full round-trip create_db → migrate → exec → query → resolve config → ingest log
+
+#### 26.5 — Publish to GitHub Packages registry (debug)
+
+- [ ] `.github/workflows/clients-publish.yml` — на push в main публикует `--registry=https://npm.pkg.github.com` (TS) и в GitHub Packages NuGet (.NET) с `0.x.y-ci.{run_number}` версией
+- [ ] Документировать в `doc/clients.md` как pet добавляет registry source (`.npmrc` / `nuget.config`)
+
+#### 26.6 — kpvotes-ts migration (overlaps с Phase 27 dogfooding)
+
+- [ ] Replace `@stdray-npm/yobaconf-client` → `@stdray-npm/yobabox-client` (config module)
+- [ ] Replace `@datalust/winston-seq` → `@stdray-npm/yobabox-client-winston`
+- [ ] Replace local JSON cache → `yobabox-client.data` API
+- [ ] См. Phase 27 для полного onboarding scenario
+
+#### 26.7 — Publish to npmjs.org / nuget.org (stable)
+
+После 1-2 недель реального usage в kpvotes-ts без incidents:
+
+- [ ] Bump version to `1.0.0`
+- [ ] Publish to public registries
+- [ ] Update kpvotes-ts deps на public versions
+
+### Open forks (нужны до 26.1)
+
+1. **Сразу expand до core SDK или сперва точный перенос as-is?** — Recommend: сперва точный перенос (26.1+26.2), потом отдельной фазой (26.3) добавить Data/Log в core. Безопаснее.
+2. **TS workspace tool** — bun (быстрее) vs npm (универсальнее)? kpvotes-ts уже использует bun, YobaBox.Web тоже → **bun**.
+3. **Test framework choice TS** — `bun test` (используется в yobaconf-client-ts) vs vitest (используется в kpvotes-ts)? **bun test** для унификации внутри yobabox monorepo, vitest пет использует у себя.
+4. **TS yobadata thin helper в pet repo или сразу npm package?** — В контексте Phase 26 — сразу как часть `@stdray-npm/yobabox-client.data` module. Не отдельный package, не thin helper в pet'е.
+
+---
+
+## Phase 27: Agentic pet onboarding [NEW]
+
+Goal: pet developer даёт агенту onboarding URL + agent-key. Агент через MCP создаёт project/service/DB/configs, выпускает production ApiKey для pet'а, подключает. После onboarding agent-key экспайрит.
+
+**Драйвер**: kpvotes-ts onboarding scenario — реальный pet, реальный test case для agentic flow. Если работает на нём — паттерн валидирован.
+
+**Prerequisites**: Phase 26 (TS yobabox-client с Data модулем).
+
+### Phasing
+
+#### 27.1 — Agent-key infrastructure
+
+- [ ] `ApiKey` model: добавить `ExpiresAt DateTime?` nullable
+- [ ] `M0NN_ApiKeyExpiresAt` миграция: ADD COLUMN с default NULL
+- [ ] `ApiKeyAuthenticationHandler` — check expiry, возвращать 401 если `ExpiresAt < UtcNow`
+- [ ] `Pages/Admin/Sys/AgentKeys.cshtml(.cs)` — sysadmin блок: list, issue с TTL + scopes, revoke. URL: `/ui/admin/sys/agent-keys`
+
+#### 27.2 — Admin MCP tools
+
+- [ ] `workspace.create_project({workspaceKey, key, name, description?})`
+- [ ] `project.create_service({projectKey, key, kind, url?})`
+- [ ] `project.create_apikey({projectKey, name, scopes, expiresAt?})` — возвращает raw key (показывается один раз)
+- [ ] `project.set_config_binding({workspaceKey, path, value, tags, kind})` — для агента выставить config
+- [ ] Auth: только agent-key scope (новый `agent` или существующий `admin`)
+- Open fork: один declarative `agent.onboard_pet({...})` tool с polnym payload (idempotent end-to-end) vs набор раздельных tools. **Recommend declarative** — меньше шагов агенту, легче idempotency.
+
+#### 27.3 — Onboarding doc + skill text
+
+- [ ] `doc/agent-onboarding.md` — пошаговая инструкция для агента. Минимальный template: где взять MCP URL, как зарегистрировать в Claude Code (`.mcp.json` entry), какие tools вызывать, в каком порядке
+- [ ] `.claude/skills/yobabox-onboard-pet.md` (или эквивалент) — skill text. Trigger: "set up yobabox for this pet" / "onboard pet". Шаги enforced — какие MCP tools в каком порядке
+- Open fork: doc location — статичный в репе vs dynamic endpoint `/agent/onboarding/{token}`. **Recommend static** — проще, ниже attack surface.
+
+#### 27.4 — kpvotes-ts dogfooding
+
+- [ ] Создать agent-key с TTL=24h через sysadmin UI
+- [ ] Дать агенту `doc/agent-onboarding.md` URL + key
+- [ ] Агент: создаёт project `kpvotes`, service `kpvotes-ts`, DB `kpvotes-cache`
+- [ ] Агент: applies migration `M001_create_votes_cache` через `data.schema_apply`
+- [ ] Агент: batch-INSERT'ит `votes.json` content (~1000 rows) через `data.exec`
+- [ ] Агент: выпускает production ApiKey без TTL со scopes `data:read+write`, `config:read`, `logs:ingest`
+- [ ] Агент: набирает config bindings через `set_config_binding` для kpvotes (kpUri, votesUri, twitterKeys и т.д.)
+- [ ] Pet тулится на yobabox URL + production key. Запускается, читает votes из БД, парсит kinopoisk, постит твиты
+- [ ] Lightpanda networking — kpvotes-ts в docker-compose, yobabox на host'е, через `host.docker.internal:5000`. Документировано в onboarding doc.
+
+#### 27.5 — Document gotchas
+
+После dogfooding:
+- [ ] Update `doc/agent-onboarding.md` с реальными ошибками агента (если были) — clarifying language
+- [ ] Update skill text если агент path-of-least-resistance шёл не туда
+- [ ] Compliance check: сколько шагов агент сам сделал vs где требовался human nudge — записать в decision-log
+
+### Open forks (нужны до 27.1)
+
+1. **MCP tool granularity**: declarative `agent.onboard_pet` (одна tool с whole payload) vs набор раздельных (`project.create`, `service.create` и т.д.)? **Recommend declarative** для simpler agent flow.
+2. **Agent-key scope model**: новый scope `agent` или просто TTL + существующий `admin`? **Recommend** просто TTL + `admin` scope. TTL — отличающий признак.
+3. **Onboarding doc location**: static (`doc/agent-onboarding.md`) или dynamic (`/agent/onboarding/{token}`)? **Recommend static**, проще.
+4. **Скейл сервисов в проекте**: kpvotes-net + kpvotes-ts оба в `kpvotes` project, или раздельные projects? Per spec: services внутри project'а. → одна `kpvotes` project, два services.
+
+- [x] **`Feature` enum** (`YobaBox.Core.Features.Feature`) заменяет string-based `IsEnabled("Config")` на 27 call sites в 9 файлах. `_ViewImports.cshtml` импортирует namespace без full-qualification в cshtml.
+- [x] **CA1848 globally suppressed** в `Directory.Build.targets`. Production code теперь может писать `ILogger.LogInformation(...)` напрямую (попадает в Seq self-log → yobalog → MCP). Hot-path остаётся с `[LoggerMessage]` partial methods deliberately.
+- [x] **UI flag-gating** в `_AdminSidebar` и `_ProjectTabs` — Shared config / Log settings / Data link + Logs/Config tabs скрываются когда соответствующий модуль disabled.
+- [x] **Workspace switcher dropdown удалён** из main `_Layout`. Был источник проблемы (returnUrl карри'ил старый workspace в URL, cookie-sync middleware откатывал свич). Свич теперь — через admin sidebar workspace tree или прямым URL `/ui/{ws}/...`.
+- [x] **Cookie-sync middleware** в `Program.cs` — когда URL имеет `workspaceKey` route value, персистит в `yb_ws` cookie. Membership validation downstream.
+- [x] **`WorkspaceSwitchEndpoint.Switch` drops `returnUrl`** — всегда redirects to `Routes.Workspace(newWs)`.
+
+### 25.6 — Follow-ups outside Polish phase
+
+- [ ] **Services placement** — кнопка "Services" сейчас в Logs page header (`/ui/{ws}/{project}` Logs/Index). Логичнее sub-item в admin sidebar под project'ом рядом с Info/Log settings/Data. Move target: `_AdminSidebar.cshtml` + либо отдельная страница `/ui/admin/ws/{ws}/projects/{key}/services`, либо anchor на ProjectDetail.
+- [ ] **CA1711** — кейс с enum `Feature` (singular, не `FeatureFlag`). Будущие enums держать в этом паттерне.
