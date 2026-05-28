@@ -601,7 +601,7 @@ Session output: 11 commits, 214 unit/integration pass, 29 E2E pass + 10 skipped 
 
 ---
 
-## Phase 16: Data module rework [READY]
+## Phase 16: Data module rework [Wave 1-2 DONE; Wave 3-4 DEFERRED]
 
 Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite через yobabox REST API + auto-migrations. Уйти от mount'ов, ручных backup'ов, copy-paste файлов между машинами.
 
@@ -630,39 +630,52 @@ Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite ч
 - [x] Re-investigation `LinqToDB/Remote` (base ns) — ничего полезного для dumb-server модели. Coupled к AST + MappingSchema. **Server использует `DataConnection.Execute(sql, DataParameter[])` из `LinqToDB.Data` namespace** (ADO.NET binding + error wrapping встроены, без AST)
 - [x] Зафиксировать в `doc/decision-log.md`
 
-#### Wave 1 — Foundation + APIs
-- [ ] `DataDbFactory.GetDb(projectKey, dbName)` (паттерн LogDbFactory двухключевой), WAL + max_page_count при создании
-- [ ] `M013_DataDbs` миграция — только новая `DataDbs(ProjectKey, Name)` таблица
-- [ ] `dbup-sqlite` + `dbup-core` пакеты + `SqliteHashingJournal` (sync + async overrides, ~200-300 LOC реалистично с тестами) + `SchemaRunner` (hash pre-check, 409 maps)
-- [ ] **SQL.Formatter NuGet** + спец canonicalization formatter (фиксируем версию + опции) — hash считается от formatted output
-- [ ] DB lifecycle endpoints: `POST /api/data/{p}/dbs`, `GET ...`, `DELETE .../{db}` — DELETE удаляет row из `DataDbs` (name освобождается мгновенно) + best-effort delete файла. Если файл locked (running query) — оставляем как orphan, чистится фоном
-- [ ] Orphan cleanup hosted service: периодически проходит `data/db/{projectKey}/*.db`, удаляет файлы без соответствующей `DataDbs` row (+ `.wal`/`.shm` sidecars). Файл занят → retry на следующем цикле. ~30 LOC
-- [ ] Schema push: `POST /api/data/{p}/{db}/schema` через UpgradeEngine + hash pre-check
-- [ ] Migration history: `GET /api/data/{p}/{db}/migrations` (НЕ через /query — не coupling pets к internal table layout)
-- [ ] Query: `POST /api/data/{p}/{db}/query` (ExecuteReader, JSON array, 30s timeout, SQLite errors прокидываются)
-- [ ] Exec: `POST /api/data/{p}/{db}/exec` (ExecuteNonQuery, **PRAGMA deny-list** для опасных как `writable_schema`, quota → 507)
-- [ ] **WAL checkpoint background service** — `IHostedService` который раз в N минут вызывает `PRAGMA wal_checkpoint(TRUNCATE)` per active DB
-- [ ] Request body size limit per endpoint (явный, не Kestrel default)
-- [ ] Main-instance-only guard для `/api/data/*` (log-only instance → 503)
-- [ ] Unit + integration tests: factory, journal idempotency/conflict (cross-platform hash через formatter), lifecycle, schema, query, exec, PRAGMA deny-list, quota, timeout, concurrent migration → 409, DELETE-during-query (row gone immediately, file cleanup eventual)
+#### Wave 1 — Foundation + APIs [DONE]
+- [x] `DataDbFactory.GetDb*` (две функции: `GetConnectionString` для read, `CreateAsync` для write — pattern проще чем LogDbFactory's cached connections), WAL + max_page_count при создании
+- [x] `M013_DataDbs` миграция — только новая `DataDbs(ProjectKey, Name)` таблица
+- [x] `dbup-sqlite` + `dbup-core` + `SqliteHashingJournal` + `SchemaRunner` (hash pre-check, 409 maps, WithTransactionPerScript для rollback на failure)
+- [x] **SqlParserCS NuGet** (вместо SQL.Formatter, который не нормализует identifier case) — AST roundtrip даёт canonical output, ~15 LOC normalizer вместо ~130 char-walker
+- [x] DB lifecycle endpoints: `POST/GET /api/data/{p}/dbs`, `DELETE .../{db}` — row removed immediately, file best-effort
+- [x] Orphan cleanup hosted service (1 min interval) — RunOncePassAsync internal для тестов
+- [x] Schema push: `POST /api/data/{p}/{db}/schema` через SchemaRunner; 200 Applied/AlreadyApplied, 409 Conflict, 400 ParseError/Failed
+- [x] Migration history: `GET /api/data/{p}/{db}/migrations` (dedicated endpoint, не raw /query)
+- [x] Query: `POST /api/data/{p}/{db}/query` (ExecuteReader → JSON array; null/long/double/string/bool coercion)
+- [x] Exec: `POST /api/data/{p}/{db}/exec` (ExecuteNonQuery, PRAGMA deny-list: writable_schema, temp_store_directory, data_store_directory, trusted_schema; SQLITE_FULL → 507)
+- [x] **WAL checkpoint background service** (5 min interval, `PRAGMA wal_checkpoint(TRUNCATE)` per known DataDb)
+- [x] Request body size limit per endpoint via Request.ContentLength check (1 MB /query, 10 MB /exec). Test для этого Skipped — WebApplicationFactory's in-memory transport не передаёт Content-Length, но real HTTP clients работают
+- [ ] Main-instance-only guard для `/api/data/*` — отложено в polish (Phase 25); single-instance deployment не нуждается
+- [x] Unit + integration tests: 73 теста (72 pass + 1 documented skip). SqlNormalizer/DataDbFactory/SchemaRunner/DataDbsApi/SchemaApi/QueryExecApi/OrphanCleanupService/WalCheckpointService покрыты
 
-#### Wave 2 — UI rework + dogfooding
-- [ ] `ProjectData.cshtml(.cs)` rewrite: two-level navigation (DBs list → DB detail с table introspection + paste-migration form)
-- [ ] Удалить старый create-table form (DataTables концепции больше нет)
-- [ ] `KpVotesOnboardingTests.S5_DataRoundtrip` E2E через REST
+#### Wave 2 — UI rework + dogfooding [DONE для UI, dogfooding отложено в Wave 3]
+- [x] `ProjectData.cshtml(.cs)` rewrite: список DataDbs cards + create form + delete buttons. Auth: `WorkspaceAdmin` policy (sysadmin satisfies via Phase 24 cross-cutting handler)
+- [x] `ProjectDataDb.cshtml(.cs)` (NEW) — detail page: PRAGMA introspection of tables, paste-migration form (calls SchemaRunner directly through cookie auth, не HTTP), migration history table
+- [x] Старый create-table form удалён вместе со старым `DataApi.cs`. `DataTable` model + M005 остаются для backward-compat — drop отдельной cosmetic миграцией позже
+- [ ] `KpVotesOnboardingTests.S5_DataRoundtrip` E2E через REST — **отложено в Wave 3** (выполняется одновременно с реальным pet integration; standalone E2E test = тот же fake gate что предыдущая критика критиковала)
 
-#### Wave 3 — Real pet integration
-- [ ] kpvotes-net (`D:\my\prj\KpVotes`): заменить local SQLite connection на yobabox URL + ApiKey + DB name. Client (~30 LOC pet-side): `((IExpressionQuery)q.GetLinqToDBSource()).GetSqlQueries(null)` → DTO `{statements:[{sql,params:[...]}]}` → POST → materialize rows (через `DataConnection.QueryToList<T>` если pet тоже linq2db, иначе manual map)
+#### Wave 3 — Real pet integration [DEFERRED — outside yobabox repo]
+
+Требует модификаций в `D:\my\prj\KpVotes` (отдельный pet-репозиторий). Не делается из yobabox автономно. Когда возвращаемся:
+
+- [ ] kpvotes-net: thin client wrapper (~30 LOC pet-side) — `((IExpressionQuery)q.GetLinqToDBSource()).GetSqlQueries(null)` → DTO → POST → materialize
 - [ ] Pet ответственен за idempotency своих write-патернов (нет server-side transactions)
-- [ ] kpvotes-ts: SQL-send-helper для TS ORM (Knex/Drizzle/Kysely — `query.toSQL()` → POST → materialize). Размер примерно ~30-50 LOC TS-side
+- [ ] kpvotes-ts: SQL-send-helper для TS ORM (~30-50 LOC TS-side)
 - [ ] Документировать thin-client pattern в `doc/spec.md` (на примере kpvotes-net)
 - [ ] Latency measurement vs local SQLite
+- [ ] Dogfooding-тест в yobabox E2E suite после первого успешного pet-rollover
 
-#### Wave 4 — MCP server (subsumes 22.8 Agent surface)
-- [ ] `src/YobaBox.Web/Mcp/McpHost.cs` — shared MCP host через `ModelContextProtocol.AspNetCore` SDK, единый `/mcp` endpoint
-- [ ] Data MCP tools: `data.list_dbs`, `data.create_db`, `data.delete_db`, `data.describe_db`, `data.schema_apply`, `data.query`, `data.exec`
-- [ ] Auth: existing X-Api-Key через standard ASP.NET middleware
-- [ ] Agentic E2E: dogfooding-тест агента через MCP
+#### Wave 4 — MCP server [DEFERRED — design choices needed]
+
+Subsumes 22.8 Agent surface. Откладывается так как требует design-решений:
+- Какие tools первыми (всё сразу vs incrementally)?
+- Auth: re-use X-Api-Key middleware OR MCP-specific token TTL?
+- Transport: stdio vs HTTP? (`ModelContextProtocol.AspNetCore` SDK supports HTTP, но MCP clients типично stdio).
+- Discovery: статичные tool descriptions vs dynamic via `IHostedService`?
+
+Скелет (когда возьмёмся):
+- [ ] `src/YobaBox.Web/Mcp/McpHost.cs` через `ModelContextProtocol.AspNetCore` SDK
+- [ ] Data MCP tools: list_dbs/create_db/delete_db/describe_db/schema_apply/query/exec
+- [ ] Auth via existing X-Api-Key middleware (если HTTP transport)
+- [ ] Agentic E2E dogfooding
 
 #### Wave 5+ — Future (out of MVP)
 - Server-side **transaction sessions** (если появится pet с нужной семантикой) — POST /tx/begin → token + TTL, X-Tx-Token header, /tx/commit | /tx/rollback. KpVotes не нужны.
