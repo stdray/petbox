@@ -7,8 +7,12 @@
     <Project Path="src/YobaBox.Data/YobaBox.Data.csproj" />
     <Project Path="src/YobaBox.Dashboard/YobaBox.Dashboard.csproj" />
   </Folder>
+  <Folder Name="/src/clients-net/">
+    <Project Path="src/clients-net/YobaBox.Client.Config/YobaBox.Client.Config.csproj" />
+  </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/YobaBox.Tests/YobaBox.Tests.csproj" />
     <Project Path="tests/YobaBox.E2ETests/YobaBox.E2ETests.csproj" />
+    <Project Path="tests/YobaBox.Client.Config.Tests/YobaBox.Client.Config.Tests.csproj" />
   </Folder>
 </Solution>
