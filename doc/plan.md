@@ -635,7 +635,8 @@ Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite ч
 - [ ] `M013_DataDbs` миграция — только новая `DataDbs(ProjectKey, Name)` таблица
 - [ ] `dbup-sqlite` + `dbup-core` пакеты + `SqliteHashingJournal` (sync + async overrides, ~200-300 LOC реалистично с тестами) + `SchemaRunner` (hash pre-check, 409 maps)
 - [ ] **SQL.Formatter NuGet** + спец canonicalization formatter (фиксируем версию + опции) — hash считается от formatted output
-- [ ] DB lifecycle endpoints: `POST /api/data/{p}/dbs`, `GET ...`, `DELETE .../{db}` (hard delete с refcount — отказ если query in-flight)
+- [ ] DB lifecycle endpoints: `POST /api/data/{p}/dbs`, `GET ...`, `DELETE .../{db}` — DELETE удаляет row из `DataDbs` (name освобождается мгновенно) + best-effort delete файла. Если файл locked (running query) — оставляем как orphan, чистится фоном
+- [ ] Orphan cleanup hosted service: периодически проходит `data/db/{projectKey}/*.db`, удаляет файлы без соответствующей `DataDbs` row (+ `.wal`/`.shm` sidecars). Файл занят → retry на следующем цикле. ~30 LOC
 - [ ] Schema push: `POST /api/data/{p}/{db}/schema` через UpgradeEngine + hash pre-check
 - [ ] Migration history: `GET /api/data/{p}/{db}/migrations` (НЕ через /query — не coupling pets к internal table layout)
 - [ ] Query: `POST /api/data/{p}/{db}/query` (ExecuteReader, JSON array, 30s timeout, SQLite errors прокидываются)
@@ -643,7 +644,7 @@ Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite ч
 - [ ] **WAL checkpoint background service** — `IHostedService` который раз в N минут вызывает `PRAGMA wal_checkpoint(TRUNCATE)` per active DB
 - [ ] Request body size limit per endpoint (явный, не Kestrel default)
 - [ ] Main-instance-only guard для `/api/data/*` (log-only instance → 503)
-- [ ] Unit + integration tests: factory, journal idempotency/conflict (cross-platform hash через formatter), lifecycle, schema, query, exec, PRAGMA deny-list, quota, timeout, concurrent migration → 409, DELETE-during-query → 409
+- [ ] Unit + integration tests: factory, journal idempotency/conflict (cross-platform hash через formatter), lifecycle, schema, query, exec, PRAGMA deny-list, quota, timeout, concurrent migration → 409, DELETE-during-query (row gone immediately, file cleanup eventual)
 
 #### Wave 2 — UI rework + dogfooding
 - [ ] `ProjectData.cshtml(.cs)` rewrite: two-level navigation (DBs list → DB detail с table introspection + paste-migration form)
