@@ -20,6 +20,16 @@ done
 
 dotnet tool restore >/dev/null
 
+# Cake's GitVersionRunner uses Tool<T> which probes PATH for `dotnet-gitversion`.
+# Local tools (.config/dotnet-tools.json) aren't on PATH — they're invoked as
+# `dotnet gitversion`, which Tool<T> doesn't try. Install as a global tool and
+# put ~/.dotnet/tools on PATH so the runner finds the binary directly.
+if ! command -v dotnet-gitversion >/dev/null 2>&1; then
+	dotnet tool install --global GitVersion.Tool --version 6.4.0 >/dev/null 2>&1 || \
+	dotnet tool update --global GitVersion.Tool --version 6.4.0 >/dev/null 2>&1 || true
+fi
+export PATH="$PATH:$HOME/.dotnet/tools"
+
 if [ "$QUIET" -eq 1 ]; then
 	dotnet run build.cs \
 		--target="$TARGET" \
