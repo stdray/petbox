@@ -127,7 +127,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 	static string UniqueMsg(string marker) => $"__test__{marker}__{Guid.NewGuid():N}";
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Ingest_ValidClef_ReturnsIngestedCount()
 	{
 		var msg = UniqueMsg("a1");
@@ -148,7 +148,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		c.Should().BeGreaterThanOrEqualTo(3);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Ingest_WithoutApiKey_Returns401()
 	{
 		var req = new HttpRequestMessage(HttpMethod.Post, "/api/ingest/clef");
@@ -160,7 +160,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Ingest_WithoutServiceKey_Returns400()
 	{
 		var req = LogRequest("/api/ingest/clef", HttpMethod.Post);
@@ -171,7 +171,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Query_Events_EndToEnd()
 	{
 		var before = await TotalCount();
@@ -191,7 +191,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		doc.RootElement.GetProperty("events")[0].GetProperty("level").GetString().Should().Be("Information");
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Query_WhereLevel_Basic()
 	{
 		var msgError = UniqueMsg("e2");
@@ -212,7 +212,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		doc2.RootElement.GetProperty("events")[0].GetProperty("level").GetString().Should().Be("Warning");
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Query_WhereMessageContains()
 	{
 		var needle = $"ctest_{Guid.NewGuid():N}";
@@ -230,7 +230,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(2);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Query_Count()
 	{
 		var before = await TotalCount();
@@ -245,7 +245,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		after.Should().Be(before + 3);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Query_SummarizeCountByLevel()
 	{
 		var before = await TotalCount();
@@ -263,7 +263,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		rows.GetArrayLength().Should().BeGreaterThanOrEqualTo(1);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Query_BadKql_Returns400()
 	{
 		var req = LogRequest("/api/logs/$system/query?q=not%20valid%20kql");
@@ -271,14 +271,14 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Query_WithoutApiKey_Returns401()
 	{
 		using var resp = await _client.GetAsync("/api/logs/$system/query?q=events");
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Services_ReturnsDistinctKeys()
 	{
 		var svc = $"svc-i-{Guid.NewGuid():N}"[..12];
@@ -294,7 +294,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		arr.EnumerateArray().Select(x => x.GetString()).Should().Contain(svc);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task AuthValidate_ValidKey_Returns200()
 	{
 		var req = new HttpRequestMessage(HttpMethod.Get, "/api/auth/validate");
@@ -305,7 +305,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		doc.RootElement.GetProperty("project").GetString().Should().Be("$system");
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task AuthValidate_InvalidKey_Returns401()
 	{
 		var req = new HttpRequestMessage(HttpMethod.Get, "/api/auth/validate");
@@ -314,7 +314,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task AuthValidate_NoKey_Returns401()
 	{
 		using var resp = await _client.GetAsync("/api/auth/validate");
@@ -352,7 +352,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		html.Should().Contain("Count");
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task SeqIngest_ValidKey_ReturnsOk()
 	{
 		var msg = UniqueMsg("seq1");
@@ -365,7 +365,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task SeqIngest_BadKey_Returns401()
 	{
 		var req = new HttpRequestMessage(HttpMethod.Post, "/api/events/raw");
@@ -377,7 +377,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task SeqIngest_NoKey_Returns401()
 	{
 		var req = new HttpRequestMessage(HttpMethod.Post, "/api/events/raw");
@@ -388,7 +388,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task SeqIngest_EndToEnd_AppearsInKql()
 	{
 		var msg = UniqueMsg("seq-e2e");
@@ -408,7 +408,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		evt.GetProperty("serviceKey").GetString().Should().Be("petbox-web");
 	}
 
-	[Fact(Skip = "CI flakiness — async Channel pipeline drain timing on slow runners. Passes locally.")]
+	[Fact]
 	public async Task Query_WhereServiceKey_Equality()
 	{
 		var svcA = $"svc-wsk-{Guid.NewGuid():N}"[..12];
