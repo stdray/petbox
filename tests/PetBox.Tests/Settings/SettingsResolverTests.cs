@@ -17,7 +17,7 @@ public sealed class SettingsResolverTests : IAsyncLifetime
 
 	public SettingsResolverTests()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", "Data Source=:memory:;Cache=Shared");
+		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", $"Data Source=petbox-{Guid.NewGuid():N};Mode=Memory;Cache=Shared");
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>

@@ -19,7 +19,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 	public LogPipelineTests()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", "Data Source=:memory:;Cache=Shared");
+		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", $"Data Source=petbox-{Guid.NewGuid():N};Mode=Memory;Cache=Shared");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{

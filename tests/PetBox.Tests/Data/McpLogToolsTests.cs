@@ -41,7 +41,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
-						["ConnectionStrings:PetBox"] = "Data Source=:memory:;Cache=Shared",
+						["ConnectionStrings:PetBox"] = $"Data Source=petbox-{Guid.NewGuid():N};Mode=Memory;Cache=Shared",
 						["Features:Logging"] = "true",
 						["Features:Data"] = "true",
 					});
