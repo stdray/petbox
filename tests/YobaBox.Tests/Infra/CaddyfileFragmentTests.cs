@@ -24,11 +24,11 @@ public sealed class CaddyfileFragmentTests
 	}
 
 	[Fact]
-	public void Fragment_Reverse_Proxies_To_Port_8080()
+	public void Fragment_Reverse_Proxies_To_Port_8082()
 	{
 		var text = File.ReadAllText(FindFragment());
-		text.Should().Contain("127.0.0.1:8080",
-			"yobabox's loopback port is 8080");
+		text.Should().Contain("127.0.0.1:8082",
+			"yobabox's loopback port is 8082 (shared-host convention: yobaconf=8081, yobabox=8082)");
 	}
 
 	[Fact]
