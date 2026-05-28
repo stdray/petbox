@@ -36,21 +36,31 @@ public partial class Program
 {
 	public static void ConfigureServices(WebApplicationBuilder builder)
 	{
-		var connectionString = builder.Configuration.GetConnectionString("PetBox")
+		// Resolve connection string LAZILY at instantiation time via DI — not capturing
+		// builder.Configuration here, because under WebApplicationFactory the test's
+		// ConfigureAppConfiguration callback runs DURING builder.Build(), which is
+		// AFTER ConfigureServices has already executed. Reading builder.Configuration
+		// inline would give the default (./data/petbox.db) instead of the test override.
+		// Each factory resolves IConfiguration from its sp parameter, which sees the
+		// fully composed config including all test providers.
+		static string ResolveCs(IServiceProvider sp) =>
+			sp.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")
+				?? "Data Source=./data/petbox.db;Cache=Shared";
+		static string ResolveDataDir(IServiceProvider sp) =>
+			Path.GetDirectoryName(new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(ResolveCs(sp)).DataSource)!;
+
+		// CreateDirectory still uses builder.Configuration here — fine because we're
+		// only ensuring the default path exists ahead of any first-write; test paths
+		// live in Path.GetTempPath() which already exists.
+		var bootstrapCs = builder.Configuration.GetConnectionString("PetBox")
 			?? "Data Source=./data/petbox.db;Cache=Shared";
 		Directory.CreateDirectory(Path.GetDirectoryName(
-			new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!);
+			new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(bootstrapCs).DataSource)!);
 
-		builder.Services.AddScoped(_ => new PetBoxDb(PetBoxDb.CreateOptions(connectionString)));
-		builder.Services.AddSingleton<ILogDbFactory>(_ => new LogDbFactory(
-			Path.Combine(Path.GetDirectoryName(
-				new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!, "logs")));
-		builder.Services.AddSingleton<IConfigDbFactory>(_ => new ConfigDbFactory(
-			Path.Combine(Path.GetDirectoryName(
-				new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!, "config")));
-		builder.Services.AddSingleton<PetBox.Data.IDataDbFactory>(_ => new PetBox.Data.DataDbFactory(
-			Path.Combine(Path.GetDirectoryName(
-				new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!, "db")));
+		builder.Services.AddScoped(sp => new PetBoxDb(PetBoxDb.CreateOptions(ResolveCs(sp))));
+		builder.Services.AddSingleton<ILogDbFactory>(sp => new LogDbFactory(Path.Combine(ResolveDataDir(sp), "logs")));
+		builder.Services.AddSingleton<IConfigDbFactory>(sp => new ConfigDbFactory(Path.Combine(ResolveDataDir(sp), "config")));
+		builder.Services.AddSingleton<PetBox.Data.IDataDbFactory>(sp => new PetBox.Data.DataDbFactory(Path.Combine(ResolveDataDir(sp), "db")));
 		builder.Services.AddSingleton<PetBox.Data.Schema.SchemaRunner>();
 		var masterKey = builder.Configuration["PetBox:MasterKey"]
 			?? Environment.GetEnvironmentVariable("PETBOX_MASTER_KEY");
@@ -239,7 +249,13 @@ public partial class Program
 
 	public static void Configure(WebApplication app)
 	{
-		var connectionString = app.Configuration.GetConnectionString("PetBox")
+		// Resolve via Services (not app.Configuration directly) — under
+		// WebApplicationFactory the IConfiguration captured by Services has
+		// the full pipeline of providers including the test-override
+		// ConfigureAppConfiguration callbacks, which app.Configuration here
+		// may not yet reflect when the factory composes the host.
+		var configuration = app.Services.GetRequiredService<IConfiguration>();
+		var connectionString = configuration.GetConnectionString("PetBox")
 			?? "Data Source=./data/petbox.db;Cache=Shared";
 
 		MigrationRunner.Run(connectionString);
