@@ -16,12 +16,18 @@
 {
 	<div class="flex items-center mb-4" data-testid="proj-tabs-row">
 		<div role="tablist" class="tabs tabs-bordered" data-testid="proj-tabs">
-			<a role="tab" class="tab @(logsActive ? "tab-active" : "")"
-				href="@logsUrl"
-				data-testid="proj-tab-logs">Logs</a>
-			<a role="tab" class="tab @(Under(configUrl) ? "tab-active" : "")"
-				href="@configUrl"
-				data-testid="proj-tab-config">Config</a>
+			@if (Features.IsEnabled(Feature.Logging))
+			{
+				<a role="tab" class="tab @(logsActive ? "tab-active" : "")"
+					href="@logsUrl"
+					data-testid="proj-tab-logs">Logs</a>
+			}
+			@if (Features.IsEnabled(Feature.Config))
+			{
+				<a role="tab" class="tab @(Under(configUrl) ? "tab-active" : "")"
+					href="@configUrl"
+					data-testid="proj-tab-config">Config</a>
+			}
 		</div>
 		<a href="@settingsUrl" class="ml-auto btn btn-sm btn-ghost" data-testid="proj-admin-link" title="Project administration">
 			Admin

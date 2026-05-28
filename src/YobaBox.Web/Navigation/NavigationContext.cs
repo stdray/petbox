@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using YobaBox.Core.Auth;
 using YobaBox.Core.Data;
+using YobaBox.Core.Features;
 using YobaBox.Core.Models;
 
 namespace YobaBox.Web.Navigation;
@@ -37,7 +38,7 @@ public sealed class NavigationContext(
 
 	public bool IsAuthenticated => Http?.User.Identity?.IsAuthenticated == true;
 	public string? Username => Http?.User.Identity?.Name;
-	public bool DataEnabled => features.IsEnabled("Data");
+	public bool DataEnabled => features.IsEnabled(Feature.Data);
 
 	public string CurrentWorkspaceKey => _resolvedWorkspace ??= ResolveWorkspace();
 

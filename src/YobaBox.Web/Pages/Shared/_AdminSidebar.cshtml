@@ -1,4 +1,5 @@
 @inject YobaBox.Web.Navigation.INavigationContext Nav
+@inject YobaBox.Core.Features.FeatureFlags Features
 @{
 	var path = Context.Request.Path.Value ?? string.Empty;
 	bool At(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
@@ -64,9 +65,12 @@
 											<li>
 												<a href="@Routes.WorkspaceAdminMembers(w.Key)" class="@(At(Routes.WorkspaceAdminMembers(w.Key)) ? "active" : "")" data-testid="admin-side-ws-members">Members</a>
 											</li>
-											<li>
-												<a href="@Routes.SharedConfig(w.Key)" class="@(Under(Routes.SharedConfig(w.Key)) ? "active" : "")" data-testid="admin-side-ws-config">Shared config</a>
-											</li>
+											@if (Features.IsEnabled(Feature.Config))
+											{
+												<li>
+													<a href="@Routes.SharedConfig(w.Key)" class="@(Under(Routes.SharedConfig(w.Key)) ? "active" : "")" data-testid="admin-side-ws-config">Shared config</a>
+												</li>
+											}
 											<li>
 												<a href="@Routes.WorkspaceAdminDefaults(w.Key)" class="@(At(Routes.WorkspaceAdminDefaults(w.Key)) ? "active" : "")" data-testid="admin-side-ws-defaults">Defaults</a>
 											</li>
@@ -104,12 +108,18 @@
 																			<li>
 																				<a href="@Routes.ProjectSettings(w.Key, p.Key)" class="@(At(Routes.ProjectSettings(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-info">Info</a>
 																			</li>
-																			<li>
-																				<a href="@Routes.ProjectLogSettings(w.Key, p.Key)" class="@(At(Routes.ProjectLogSettings(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-log">Log settings</a>
-																			</li>
-																			<li>
-																				<a href="@Routes.ProjectData(w.Key, p.Key)" class="@(At(Routes.ProjectData(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-data">Data</a>
-																			</li>
+																			@if (Features.IsEnabled(Feature.Logging))
+																			{
+																				<li>
+																					<a href="@Routes.ProjectLogSettings(w.Key, p.Key)" class="@(At(Routes.ProjectLogSettings(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-log">Log settings</a>
+																				</li>
+																			}
+																			@if (Features.IsEnabled(Feature.Data))
+																			{
+																				<li>
+																					<a href="@Routes.ProjectData(w.Key, p.Key)" class="@(At(Routes.ProjectData(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-data">Data</a>
+																				</li>
+																			}
 																		</ul>
 																	</details>
 																</li>

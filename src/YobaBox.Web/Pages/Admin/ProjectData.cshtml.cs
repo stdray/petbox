@@ -38,7 +38,7 @@ public sealed class ProjectDataModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync()
 	{
-		if (!_features.IsEnabled("Data"))
+		if (!_features.IsEnabled(Feature.Data))
 			return NotFound();
 
 		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
@@ -53,7 +53,7 @@ public sealed class ProjectDataModel : PageModel
 
 	public async Task<IActionResult> OnPostCreateAsync(string name, string? description, long? maxPageCount)
 	{
-		if (!_features.IsEnabled("Data")) return NotFound();
+		if (!_features.IsEnabled(Feature.Data)) return NotFound();
 		if (string.IsNullOrWhiteSpace(name))
 		{
 			ErrorMessage = "Name is required.";
@@ -96,7 +96,7 @@ public sealed class ProjectDataModel : PageModel
 
 	public async Task<IActionResult> OnPostDeleteAsync(string name)
 	{
-		if (!_features.IsEnabled("Data")) return NotFound();
+		if (!_features.IsEnabled(Feature.Data)) return NotFound();
 
 		await _db.DataDbs.Where(d => d.ProjectKey == ProjectKey && d.Name == name).DeleteAsync();
 		_factory.TryDelete(ProjectKey, name);

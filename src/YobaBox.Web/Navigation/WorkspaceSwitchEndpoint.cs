@@ -23,8 +23,7 @@ public static class WorkspaceSwitchEndpoint
 	static async Task<IResult> Switch(
 		HttpContext ctx,
 		YobaBoxDb db,
-		[FromForm] string? ws,
-		[FromForm] string? returnUrl)
+		[FromForm] string? ws)
 	{
 		// `ws` is nullable on the binding so an empty-form POST surfaces as
 		// a clean 400, not an unhandled BadHttpRequestException with stack
@@ -52,9 +51,11 @@ public static class WorkspaceSwitchEndpoint
 			Path = "/",
 		});
 
-		var dest = !string.IsNullOrEmpty(returnUrl) && Uri.IsWellFormedUriString(returnUrl, UriKind.Relative)
-			? returnUrl
-			: Routes.Workspace(ws);
-		return Results.LocalRedirect(dest);
+		// Always go to the new workspace's landing page. Preserving the
+		// previous URL (returnUrl) is unsafe: most yobabox pages embed
+		// workspaceKey in the path (`/ui/{ws}/...`, `/ui/admin/ws/{ws}/...`),
+		// and the cookie-sync middleware would immediately revert the cookie
+		// back to the URL's workspace — undoing the switch.
+		return Results.LocalRedirect(Routes.Workspace(ws));
 	}
 }

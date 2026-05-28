@@ -7,7 +7,7 @@ public static class ModuleExtensions
 {
 	public static WebApplicationBuilder AddConfigModule(this WebApplicationBuilder builder)
 	{
-		if (builder.GetFeatureFlags().IsEnabled("Config"))
+		if (builder.GetFeatureFlags().IsEnabled(Feature.Config))
 		{
 			// Phase 1: register ConfigApi endpoints
 		}
@@ -16,7 +16,7 @@ public static class ModuleExtensions
 
 	public static WebApplicationBuilder AddLogModule(this WebApplicationBuilder builder)
 	{
-		if (builder.GetFeatureFlags().IsEnabled("Logging"))
+		if (builder.GetFeatureFlags().IsEnabled(Feature.Logging))
 		{
 			// Phase 2: register KQL ingestion + query
 		}
@@ -25,7 +25,7 @@ public static class ModuleExtensions
 
 	public static WebApplicationBuilder AddDataModule(this WebApplicationBuilder builder)
 	{
-		if (builder.GetFeatureFlags().IsEnabled("Data"))
+		if (builder.GetFeatureFlags().IsEnabled(Feature.Data))
 		{
 			// Phase 3: register PostgREST API
 		}
@@ -34,7 +34,7 @@ public static class ModuleExtensions
 
 	public static WebApplicationBuilder AddDashboardModule(this WebApplicationBuilder builder)
 	{
-		if (builder.GetFeatureFlags().IsEnabled("Dashboard"))
+		if (builder.GetFeatureFlags().IsEnabled(Feature.Dashboard))
 		{
 			// Phase 4: register HealthPoller, CiPoller
 		}
@@ -43,7 +43,7 @@ public static class ModuleExtensions
 
 	public static WebApplication UseConfigModule(this WebApplication app)
 	{
-		if (app.GetFeatureFlags().IsEnabled("Config"))
+		if (app.GetFeatureFlags().IsEnabled(Feature.Config))
 		{
 			// Phase 1: map Config endpoints
 		}
@@ -52,7 +52,7 @@ public static class ModuleExtensions
 
 	public static WebApplication UseLogModule(this WebApplication app)
 	{
-		if (app.GetFeatureFlags().IsEnabled("Logging"))
+		if (app.GetFeatureFlags().IsEnabled(Feature.Logging))
 		{
 			// Phase 2: map Log endpoints
 		}
@@ -61,7 +61,7 @@ public static class ModuleExtensions
 
 	public static WebApplication UseDataModule(this WebApplication app)
 	{
-		if (app.GetFeatureFlags().IsEnabled("Data"))
+		if (app.GetFeatureFlags().IsEnabled(Feature.Data))
 		{
 			// Phase 3: map Data endpoints
 		}
@@ -70,7 +70,7 @@ public static class ModuleExtensions
 
 	public static WebApplication UseDashboardModule(this WebApplication app)
 	{
-		if (app.GetFeatureFlags().IsEnabled("Dashboard"))
+		if (app.GetFeatureFlags().IsEnabled(Feature.Dashboard))
 		{
 			// Phase 4: map Dashboard endpoints
 		}

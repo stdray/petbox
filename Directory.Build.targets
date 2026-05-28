@@ -1,7 +1,20 @@
 <Project>
 
+	<!--
+		CA1848 (use LoggerMessage delegates) is a perf rule for high-volume hot
+		paths. Yobabox uses standard ILogger.LogXxx across UI middleware, admin
+		actions, and one-off operations where the per-call alloc cost is
+		negligible. Hot-path code (e.g. ingestion pipeline) uses explicit
+		[LoggerMessage] partial methods anyway. Suppress globally so the rest of
+		the codebase can use ILogger normally and route logs through Seq self-log
+		into yobalog/MCP, instead of falling back to Console.WriteLine.
+	-->
+	<PropertyGroup>
+		<NoWarn>$(NoWarn);CA1848</NoWarn>
+	</PropertyGroup>
+
 	<PropertyGroup Condition="'$(IsTestProject)' == 'true'">
-		<NoWarn>$(NoWarn);CA1707;CA1848;CA1861;CA1873;CA2007</NoWarn>
+		<NoWarn>$(NoWarn);CA1707;CA1861;CA1873;CA2007</NoWarn>
 	</PropertyGroup>
 
 </Project>

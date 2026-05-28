@@ -61,19 +61,19 @@ public partial class Program
 		builder.Services.AddSingleton<ITailBroadcaster, InMemoryTailBroadcaster>();
 		// IngestionSettings / LogSettings / DashboardSettings — Phase 23.3 L2 records.
 		// Consumers read via ISettingsResolver; no IOptions bindings here.
-		if (new FeatureFlags(builder.Configuration).IsEnabled("Logging"))
+		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Logging))
 		{
 			builder.Services.AddSingleton<ChannelIngestionPipeline>();
 			builder.Services.AddSingleton<IIngestionPipeline>(sp => sp.GetRequiredService<ChannelIngestionPipeline>());
 			builder.Services.AddHostedService(sp => sp.GetRequiredService<ChannelIngestionPipeline>());
 			builder.Services.AddHostedService<YobaBox.Log.Core.Retention.RetentionService>();
 		}
-		if (new FeatureFlags(builder.Configuration).IsEnabled("Dashboard"))
+		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Dashboard))
 		{
 			builder.Services.AddHttpClient();
 			builder.Services.AddHostedService<YobaBox.Dashboard.HealthPoller>();
 		}
-		if (new FeatureFlags(builder.Configuration).IsEnabled("Data"))
+		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Data))
 		{
 			builder.Services.AddHostedService<YobaBox.Data.OrphanCleanupService>();
 			builder.Services.AddHostedService<YobaBox.Data.WalCheckpointService>();
@@ -96,7 +96,7 @@ public partial class Program
 			ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
 
 		var selfLogEnabled = builder.Configuration.GetValue("Seq:SelfLog:Enabled", false);
-		if (selfLogEnabled && new FeatureFlags(builder.Configuration).IsEnabled("Logging"))
+		if (selfLogEnabled && new FeatureFlags(builder.Configuration).IsEnabled(Feature.Logging))
 		{
 			var staticProps = System.Collections.Immutable.ImmutableDictionary.CreateBuilder<string, System.Text.Json.JsonElement>();
 			staticProps["Env"] = System.Text.Json.JsonSerializer.SerializeToElement(builder.Environment.EnvironmentName);
@@ -262,6 +262,33 @@ public partial class Program
 		app.UseAuthentication();
 		app.UseAuthorization();
 
+		// Persist URL-driven workspace switch into the yb_ws cookie. Without
+		// this, visiting /ui/{ws}/... shows that workspace for one render but
+		// subsequent pages without an explicit workspaceKey fall back to the
+		// stale cookie value.
+		// Membership validation happens downstream in NavigationContext.ResolveWorkspace,
+		// so it's safe to write the cookie unconditionally when route has the key.
+		app.Use(async (ctx, next) =>
+		{
+			var routeWs = ctx.GetRouteValue("workspaceKey")?.ToString();
+			if (!string.IsNullOrEmpty(routeWs) && ctx.User.Identity?.IsAuthenticated == true)
+			{
+				var cookie = ctx.Request.Cookies[WorkspaceSwitchEndpoint.CookieName];
+				if (!string.Equals(cookie, routeWs, StringComparison.Ordinal))
+				{
+					ctx.Response.Cookies.Append(WorkspaceSwitchEndpoint.CookieName, routeWs, new CookieOptions
+					{
+						HttpOnly = false,
+						SameSite = SameSiteMode.Lax,
+						Expires = DateTimeOffset.UtcNow.AddDays(365),
+						IsEssential = true,
+						Path = "/",
+					});
+				}
+			}
+			await next();
+		});
+
 		app.MapMethods("/health", ["GET", "HEAD"], () => Results.Ok(new { status = "healthy" }))
 			.AllowAnonymous();
 
@@ -282,12 +309,12 @@ public partial class Program
 		app.MapWorkspaceSwitch();
 		app.MapRazorPages();
 
-		if (new FeatureFlags(app.Configuration).IsEnabled("Config"))
+		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Config))
 		{
 			app.MapConfigEndpoints();
 		}
 
-		if (new FeatureFlags(app.Configuration).IsEnabled("Logging"))
+		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Logging))
 		{
 			app.MapLogEndpoints();
 			app.MapShareEndpoints();
@@ -296,7 +323,7 @@ public partial class Program
 				app.MapSeqSelfLogEndpoint();
 		}
 
-		if (new FeatureFlags(app.Configuration).IsEnabled("Data"))
+		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Data))
 		{
 			app.MapDataDbsEndpoints();
 			app.MapSchemaEndpoints();

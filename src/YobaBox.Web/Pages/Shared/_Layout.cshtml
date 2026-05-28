@@ -3,7 +3,6 @@
 @{
 	var currentWs = Nav.CurrentWorkspaceKey;
 	var currentProject = Nav.CurrentProjectKey;
-	var returnUrl = Context.Request.Path + Context.Request.QueryString;
 	var path = Context.Request.Path.Value ?? string.Empty;
 	bool IsActive(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
 	bool IsExactly(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
@@ -89,23 +88,7 @@
 			<aside class="bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col">
 				@if (Nav.IsAuthenticated)
 				{
-					<div class="p-3 border-b border-base-300">
-						<div class="text-xs opacity-50 uppercase tracking-wide mb-1">Workspace</div>
-						<form method="post" action="/api/ui/workspace" class="flex items-center gap-1" data-testid="ws-switch-form">
-							@Html.AntiForgeryToken()
-							<input type="hidden" name="returnUrl" value="@returnUrl" />
-							<select name="ws" onchange="this.form.submit()"
-								class="select select-bordered select-sm font-mono flex-1"
-								data-testid="ws-switch-select"
-								data-testid-current="@currentWs">
-								@foreach (var ws in Nav.AvailableWorkspaces)
-								{
-									<option value="@ws.Key" selected="@(ws.Key == currentWs)">@ws.Key</option>
-								}
-							</select>
-						</form>
-						<div class="hidden" data-testid="nav-current-ws">@currentWs</div>
-					</div>
+					<div class="hidden" data-testid="nav-current-ws">@currentWs</div>
 
 					<ul class="menu w-full p-2 gap-1">
 						<li>

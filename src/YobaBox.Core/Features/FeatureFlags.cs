@@ -2,6 +2,14 @@ using Microsoft.Extensions.Configuration;
 
 namespace YobaBox.Core.Features;
 
+public enum Feature
+{
+	Config,
+	Logging,
+	Data,
+	Dashboard,
+}
+
 public sealed class FeatureFlags
 {
 	readonly Dictionary<string, bool> _flags;
@@ -14,6 +22,6 @@ public sealed class FeatureFlags
 				StringComparer.OrdinalIgnoreCase);
 	}
 
-	public bool IsEnabled(string name) =>
-		_flags.TryGetValue(name, out var enabled) && enabled;
+	public bool IsEnabled(Feature feature) =>
+		_flags.TryGetValue(feature.ToString(), out var enabled) && enabled;
 }

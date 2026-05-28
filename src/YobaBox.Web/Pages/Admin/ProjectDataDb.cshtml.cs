@@ -44,7 +44,7 @@ public sealed class ProjectDataDbModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync()
 	{
-		if (!_features.IsEnabled("Data")) return base.NotFound();
+		if (!_features.IsEnabled(Feature.Data)) return base.NotFound();
 
 		Db = await _db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == ProjectKey && d.Name == DbName);
@@ -56,7 +56,7 @@ public sealed class ProjectDataDbModel : PageModel
 
 	public async Task<IActionResult> OnPostApplyAsync(string name, string sql)
 	{
-		if (!_features.IsEnabled("Data")) return base.NotFound();
+		if (!_features.IsEnabled(Feature.Data)) return base.NotFound();
 
 		Db = await _db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == ProjectKey && d.Name == DbName);

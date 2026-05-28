@@ -23,7 +23,7 @@ public sealed class ProjectDetailModel : PageModel
 		_settings = settings;
 	}
 
-	public bool DataEnabled => _features.IsEnabled("Data");
+	public bool DataEnabled => _features.IsEnabled(Feature.Data);
 
 	// Effective retention as resolved by the cascade. Shown to the user as a hint
 	// next to the per-project override field.
