@@ -1064,19 +1064,20 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 
 ### Phasing
 
-#### 26.1 — Move existing yobaconf clients to yobabox repo
+#### 26.1 — Move existing yobaconf clients to yobabox repo [DONE — `57c6601`]
 
-- [ ] Move `D:\my\prj\yobaconf\src\YobaConf.Client` → `src/clients/YobaBox.Client.Config`. Rename namespace `YobaConf.Client` → `YobaBox.Client.Config`. PackageId `YobaConf.Client` → `YobaBox.Client.Config`.
-- [ ] Move `D:\my\prj\yobaconf\src\yobaconf-client-ts` → `src/clients-ts/yobabox-client`. Package name `@stdray-npm/yobaconf-client` → `@stdray-npm/yobabox-client`. Rename внутренних имён.
-- [ ] Сохранить в yobaconf репе как frozen archive (read-only) — старые опубликованные пакеты не ломаем.
-- [ ] Update `YobaBox.slnx` чтобы добавить новый .NET client project.
-- [ ] Workspace для TS — bun workspace (yobabox/package.json + src/clients-ts/*/package.json). Bun уже используется в `YobaBox.Web/package.json`.
+- [x] Move `D:\my\prj\yobaconf\src\YobaConf.Client` → `src/clients-net/YobaBox.Client.Config`. Namespace `YobaConf.Client` → `YobaBox.Client.Config`. PackageId `YobaBox.Client.Config`. Classes renamed: YobaConfConfiguration{Provider,Source,Options,Extensions} → YobaBoxConfig{Provider,Source,Options,Extensions}. Extension method `AddYobaConf` → `AddYobaBoxConfig`.
+- [x] Move `D:\my\prj\yobaconf\src\yobaconf-client-ts` → `src/clients-ts/yobabox-client`. Package `@stdray-npm/yobaconf-client` → `@stdray/yobabox-client` (GitHub Packages requires scope = github owner). Classes `YobaConfClient` → `YobaBoxConfigClient`, `YobaConfError` → `YobaBoxConfigError`.
+- [x] Wire format strings (X-YobaConf-ApiKey header, /v1/conf path) **preserved as-is** — protocol adaptation to yobabox's `/api/config/{ws}/resolve` shape is Phase 26.3.
+- [x] Yobaconf репа остаётся как frozen archive — старые опубликованные пакеты не ломаем.
+- [x] Update `YobaBox.slnx` — added `YobaBox.Client.Config` + `YobaBox.Client.Config.Tests`.
+- [skip] Bun workspace — deferred (каждый TS-клиент собирается независимо со своим node_modules, как было в yobaconf). Добавим если понадобятся shared deps.
 
-#### 26.2 — Unit tests
+#### 26.2 — Unit tests [DONE — `57c6601`]
 
-- [ ] `tests/YobaBox.Client.Config.Tests` (.NET) — xunit тесты на JsonFlattener + Configuration provider behavior (ETag handling, refresh, error scenarios)
-- [ ] `src/clients-ts/yobabox-client/tests/` — bun unit-тесты на client.ts (poll cycle, ETag matching, fetch error handling)
-- [ ] Target: ≥80% line coverage для public surface
+- [x] `tests/YobaBox.Client.Config.Tests` (.NET) — 14 xunit tests pass: JsonFlattener (8 — object/array/numbers/booleans/null/nested/case-insensitive/empty) + YobaBoxConfigProvider (6 — ctor validation × 2, Load happy path, Optional swallow, non-Optional propagate, WithTag chaining).
+- [x] `src/clients-ts/yobabox-client/tests/` — 24 bun tests pass: config.test.ts (16 — ResolvedConfig get/getNumber/getBoolean/toEnv/metadata) + client.test.ts (8 — constructor validation × 3, fetch 200/4xx/optional, headers+query verification).
+- [skip] ≥80% coverage target — not measured yet (no coverlet integration в TS, .NET coverlet есть в test csproj но не запущен). Wave 26.4 e2e добавит integration coverage.
 
 #### 26.3 — Core SDK extension (Config + Data raw)
 
@@ -1090,13 +1091,14 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 - [ ] `src/clients-ts/yobabox-client/tests/e2e.test.ts` — против running yobabox в `beforeAll` (spawn `dotnet run` process или TestContainers)
 - [ ] Покрытие: full round-trip create_db → migrate → exec → query → resolve config → ingest log
 
-#### 26.5 — Versioning + Publishing infra (Cake + GitVersion)
+#### 26.5 — Versioning + Publishing infra (Cake + GitVersion) [DONE — `7680fd7`, `e28def3`]
 
-- [ ] Port `build.cake` из `D:\my\prj\yobaconf\build.cake` — содержит Cake tasks NuGetPublish (NuGet + GitVersion-stamped) и npm publish (stamps `package.json` version из GitVersion, replaces `+` to `-` для npm semver compat)
-- [ ] `GitVersion.yml` уже в yobabox repo (идентичен yobaconf — continuous delivery, label=ci on main, +rc on release/, +hotfix on hotfix/)
-- [ ] Port `.github/workflows/ci.yml` job sections `nuget-publish` (triggered на push tag `nuget`) и npm-publish (triggered на push tag `npm`). Из yobaconf можно скопировать как есть, поменять package paths
-- [ ] Документировать в `doc/clients.md` как pet добавляет dependency: `dotnet add package YobaBox.Client.Config --version 0.x.y-ci.N` / `bun add @stdray-npm/yobabox-client@0.x.y-ci.N`
-- [ ] Debug стадия: публиковать в GitHub Packages registry (npm.pkg.github.com + GitHub Packages NuGet) с `0.x.y-ci.N` версиями
+- [x] `build.cs` ported from yobaconf `build.cake`: Pack + NuGetPush (publishes to `https://nuget.pkg.github.com/{owner}/index.json` via GITHUB_TOKEN), TsSdkInstall/Typecheck/Lint/Test/Build/Pack/NpmPublish (writes scoped .npmrc with token, publishes to npm.pkg.github.com)
+- [x] `GitVersion.yml` уже в yobabox repo идентичен yobaconf (continuous delivery, label=ci on main)
+- [x] `.github/workflows/ci.yml` — added `nuget-publish` (triggered на `refs/tags/nuget`) и `npm-publish` (triggered на `refs/tags/npm`) jobs. Existing `publish` (docker) job gated to skip on those tags. Both jobs auth via `GITHUB_TOKEN` + `GITHUB_REPOSITORY_OWNER` (set automatically by GH Actions).
+- [x] Verify (CI alias) extended to include TsSdkLint+Typecheck+Test — PR validation теперь покрывает оба языка.
+- [ ] Документировать в `doc/clients.md` как pet добавляет dependency: `dotnet add package YobaBox.Client.Config --version 0.x.y-ci.N --source https://nuget.pkg.github.com/{owner}/index.json` / scoped npm registry config. (follow-up — нет блокера для первого publish)
+- [x] Debug стадия: GitHub Packages (npm.pkg.github.com + nuget.pkg.github.com) с `0.x.y-ci.N` версиями.
 
 #### 26.6 — kpvotes-ts migration (overlaps с Phase 27 dogfooding)
 
