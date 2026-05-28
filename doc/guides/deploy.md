@@ -109,13 +109,33 @@ yobabox.3po.su {
 
 Заменить `yobabox.3po.su` на реальный домен если другой.
 
+**Pre-create access log file** — Caddy user не может создать новый файл в `/var/log/caddy/`, нужно положить заранее с правильным owner:
+
+```bash
+sudo touch /var/log/caddy/yobabox.access.log
+sudo chown caddy:caddy /var/log/caddy/yobabox.access.log
+```
+
+(Если user/group другой — узнай через `ps -ef | grep '[c]addy run'` или `systemctl show caddy --property=User`.)
+
+Без этого reload упадёт с `permission denied` для log writer и застрянет в state `reloading (reload-notify)` — починка через `sudo systemctl reset-failed caddy && sudo systemctl restart caddy`.
+
 Validate + reload:
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl reload caddy
 ```
 
-Caddy получит TLS-cert автоматически на первый HTTPS-запрос (Let's Encrypt) — manual certbot не нужен.
+Caddy получит TLS-cert автоматически на первый HTTPS-запрос (Let's Encrypt) — manual certbot не нужен. После reload в логах будет видно `obtaining certificate` → `served key authentication certificate` → `certificate obtained successfully`.
+
+Если reload завис >2 минут или systemd state в `reloading` дольше нескольких секунд — это corrupt state systemd, ситуация которая была в первый раз когда log file не существовал:
+
+```bash
+sudo systemctl reset-failed caddy
+sudo systemctl restart caddy
+```
+
+`reset-failed` сбрасывает failure-counter unit'а, `restart` форсит полный stop→start cycle (вместо reload).
 
 ## Step 4 — подготовить data directory
 
