@@ -654,28 +654,37 @@ Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite ч
 
 #### Wave 3 — Real pet integration [DEFERRED — outside yobabox repo]
 
-Требует модификаций в `D:\my\prj\KpVotes` (отдельный pet-репозиторий). Не делается из yobabox автономно. Когда возвращаемся:
+Требует модификаций в `D:\my\prj\KpVotes`. Yobabox-side документация — `doc/data-client-pattern.md` (NEW в этом коммите): pattern + ~30 LOC C# snippet thin client wrapper'а.
 
-- [ ] kpvotes-net: thin client wrapper (~30 LOC pet-side) — `((IExpressionQuery)q.GetLinqToDBSource()).GetSqlQueries(null)` → DTO → POST → materialize
-- [ ] Pet ответственен за idempotency своих write-патернов (нет server-side transactions)
-- [ ] kpvotes-ts: SQL-send-helper для TS ORM (~30-50 LOC TS-side)
-- [ ] Документировать thin-client pattern в `doc/spec.md` (на примере kpvotes-net)
+Чек-лист для KpVotes когда возвращаемся:
+- [ ] Конфиг: `YobaBox:Url`, `YobaBox:ApiKey`, `YobaBox:DbName` вместо local connection string
+- [ ] Onboarding: создать DataDb через `POST /api/data/{p}/dbs` (один раз вручную через curl)
+- [ ] Залить существующие миграции через `POST /api/data/{p}/{db}/schema` (по одной)
+- [ ] Заменить `DataConnection` на thin client wrapper из `doc/data-client-pattern.md`
+- [ ] Убедиться что нет multi-statement `BeginTransaction`/`Commit` блоков (yobabox их не поддерживает — переписать в idempotent UPSERT)
 - [ ] Latency measurement vs local SQLite
-- [ ] Dogfooding-тест в yobabox E2E suite после первого успешного pet-rollover
 
-#### Wave 4 — MCP server [DEFERRED — design choices needed]
+E2E dogfooding-тест — пишем после первого успешного pet-rollover, не до (standalone E2E через сам REST API = "fake gate" по прошлой критике).
 
-Subsumes 22.8 Agent surface. Откладывается так как требует design-решений:
-- Какие tools первыми (всё сразу vs incrementally)?
-- Auth: re-use X-Api-Key middleware OR MCP-specific token TTL?
-- Transport: stdio vs HTTP? (`ModelContextProtocol.AspNetCore` SDK supports HTTP, но MCP clients типично stdio).
-- Discovery: статичные tool descriptions vs dynamic via `IHostedService`?
+#### Wave 4 — MCP server [DESIGN APPROVED, IMPLEMENTATION DEFERRED]
+
+Subsumes 22.8 Agent surface. Design-решения зафиксированы 2026-05-28:
+
+| Question | Decision | Rationale |
+|---|---|---|
+| Transport | **HTTP** (через `ModelContextProtocol.AspNetCore` 1.3.0 SDK) | yobabox = remote service. stdio не подходит, агент не запускает yobabox локально |
+| Auth | **X-Api-Key** (re-use existing middleware) | Те же scopes (data:*, config:*, logs:*) что REST API. Ноль новой auth infra |
+| Tools (MVP) | **Все enabled-feature tools** через один `/mcp` endpoint | Скоупов и feature toggle'ов достаточно для разграничения. Tools namespaced (`data.query`, `config.get`). Агент сам решает что вызывать через client-side skills/profiles |
+| Discovery | **C# attributes + reflection** | `[McpTool(name = "data.query")]` на методах + auto-register на boot. Идиоматично для .NET |
 
 Скелет (когда возьмёмся):
-- [ ] `src/YobaBox.Web/Mcp/McpHost.cs` через `ModelContextProtocol.AspNetCore` SDK
-- [ ] Data MCP tools: list_dbs/create_db/delete_db/describe_db/schema_apply/query/exec
-- [ ] Auth via existing X-Api-Key middleware (если HTTP transport)
-- [ ] Agentic E2E dogfooding
+- [ ] Добавить `ModelContextProtocol.AspNetCore` 1.3.0 в `Directory.Packages.props`
+- [ ] `src/YobaBox.Web/Mcp/McpHost.cs` — единый `/mcp` HTTP endpoint, X-Api-Key auth pipeline
+- [ ] `[McpTool]` атрибут + reflection-based registration
+- [ ] Data tools (когда Features:Data=true): list_dbs, create_db, delete_db, describe_db, schema_apply, query, exec
+- [ ] Config tools (когда Features:Config=true) — добавятся позже инкрементально
+- [ ] Log tools — позже
+- [ ] Agentic E2E dogfooding (через MCP client SDK, проверка tools/list + invocation)
 
 #### Wave 5+ — Future (out of MVP)
 - Server-side **transaction sessions** (если появится pet с нужной семантикой) — POST /tx/begin → token + TTL, X-Tx-Token header, /tx/commit | /tx/rollback. KpVotes не нужны.
