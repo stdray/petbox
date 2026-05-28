@@ -601,7 +601,7 @@ Session output: 11 commits, 214 unit/integration pass, 29 E2E pass + 10 skipped 
 
 ---
 
-## Phase 16: Data module rework [Wave 1-2 DONE; Wave 3-4 DEFERRED]
+## Phase 16: Data module rework [Wave 1, 2, 4 DONE; Wave 3 deferred к pet-repo]
 
 Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite через yobabox REST API + auto-migrations. Уйти от mount'ов, ручных backup'ов, copy-paste файлов между машинами.
 
@@ -666,7 +666,7 @@ Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite ч
 
 E2E dogfooding-тест — пишем после первого успешного pet-rollover, не до (standalone E2E через сам REST API = "fake gate" по прошлой критике).
 
-#### Wave 4 — MCP server [DESIGN APPROVED, IMPLEMENTATION DEFERRED]
+#### Wave 4 — MCP server [Data tools DONE; Config/Log tools incrementally]
 
 Subsumes 22.8 Agent surface. Design-решения зафиксированы 2026-05-28:
 
@@ -677,14 +677,13 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 | Tools (MVP) | **Все enabled-feature tools** через один `/mcp` endpoint | Скоупов и feature toggle'ов достаточно для разграничения. Tools namespaced (`data.query`, `config.get`). Агент сам решает что вызывать через client-side skills/profiles |
 | Discovery | **C# attributes + reflection** | `[McpTool(name = "data.query")]` на методах + auto-register на boot. Идиоматично для .NET |
 
-Скелет (когда возьмёмся):
-- [ ] Добавить `ModelContextProtocol.AspNetCore` 1.3.0 в `Directory.Packages.props`
-- [ ] `src/YobaBox.Web/Mcp/McpHost.cs` — единый `/mcp` HTTP endpoint, X-Api-Key auth pipeline
-- [ ] `[McpTool]` атрибут + reflection-based registration
-- [ ] Data tools (когда Features:Data=true): list_dbs, create_db, delete_db, describe_db, schema_apply, query, exec
-- [ ] Config tools (когда Features:Config=true) — добавятся позже инкрементально
-- [ ] Log tools — позже
-- [ ] Agentic E2E dogfooding (через MCP client SDK, проверка tools/list + invocation)
+- [x] `ModelContextProtocol.AspNetCore` 1.3.0 + `Directory.Packages.props`
+- [x] `src/YobaBox.Web/Mcp/DataTools.cs` — 7 Data tools (list_dbs/create_db/delete_db/describe_db/schema_apply/query/exec)
+- [x] `Program.cs` wire: `AddMcpServer().WithHttpTransport().WithToolsFromAssembly()`, `app.MapMcp("/mcp")` + ApiKey auth
+- [x] `[McpServerTool]` + `[McpServerToolType]` reflection-based registration (built into SDK)
+- [x] 4 sanity тест через `McpClient` + `HttpClientTransport`: tools/list discovery, create→migrate→exec→query roundtrip, cross-project rejection, denied PRAGMA blocking
+- [ ] Config tools — incrementally в `src/YobaBox.Web/Mcp/ConfigTools.cs` (когда понадобится)
+- [ ] Log tools (KQL query — sweet spot для agentic sessions с many-calls pattern) — `LogTools.cs`
 
 #### Wave 5+ — Future (out of MVP)
 - Server-side **transaction sessions** (если появится pet с нужной семантикой) — POST /tx/begin → token + TTL, X-Tx-Token header, /tx/commit | /tx/rollback. KpVotes не нужны.
