@@ -118,11 +118,27 @@ public sealed class ProjectDetailModel : PageModel
 		return Self();
 	}
 
-	public async Task<IActionResult> OnPostCreateKeyAsync(string Scopes)
+	public async Task<IActionResult> OnPostCreateKeyAsync(string name, string[]? scopes)
 	{
-		if (string.IsNullOrWhiteSpace(Scopes))
+		if (string.IsNullOrWhiteSpace(name))
 		{
-			ErrorMessage = "Scopes are required.";
+			ErrorMessage = "Name is required.";
+			await OnGetAsync();
+			return Page();
+		}
+
+		var raw = scopes is null ? "" : string.Join(",", scopes);
+		var (valid, invalid) = YobaBox.Core.Auth.ApiKeyScopes.Validate(raw);
+		if (invalid.Count > 0)
+		{
+			ErrorMessage = "Unknown scope(s): " + string.Join(", ", invalid)
+				+ ". Pick from the checkbox list — typed input is not supported.";
+			await OnGetAsync();
+			return Page();
+		}
+		if (valid.Count == 0)
+		{
+			ErrorMessage = "At least one scope is required.";
 			await OnGetAsync();
 			return Page();
 		}
@@ -132,7 +148,8 @@ public sealed class ProjectDetailModel : PageModel
 		{
 			Key = keyValue,
 			ProjectKey = ProjectKey,
-			Scopes = Scopes,
+			Scopes = string.Join(",", valid),
+			Name = name.Trim(),
 			CreatedAt = DateTime.UtcNow,
 		});
 

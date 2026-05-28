@@ -1,0 +1,11 @@
+{
+	"mcpServers": {
+		"yobabox": {
+			"type": "http",
+			"url": "http://localhost:5000/mcp",
+			"headers": {
+				"X-Api-Key": "${YOBABOX_DEV_APIKEY}"
+			}
+		}
+	}
+}

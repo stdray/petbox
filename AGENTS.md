@@ -15,6 +15,23 @@ Empty repository. Template files copied from `wiki/cross-project/templates/dotne
 - **CI:** mirrors `./build.sh --target=CI` (format verify + test). On `main` push + `deploy` tag push also runs `--target=DockerPush` with ghcr.io credentials.
 - **Deploy:** manual tag `deploy` only. `git tag deploy && git push origin deploy --force`.
 
+## MCP access during development
+
+`.mcp.json` at repo root registers the running yobabox dev server as an MCP
+target named `yobabox`. Tools exposed: `data.*` (7 tools) + `log.query`.
+Useful during dev for inspecting logs without leaving the editor:
+`log.query` with KQL like `events | where Level >= 4` shows what errored.
+
+Setup (one-time, per machine):
+1. Set env var `YOBABOX_DEV_APIKEY` to a `$system`-scoped ApiKey with
+   `logs:query,data:read,data:write,data:schema` scopes. Create one at
+   `/ui/admin/ws/$system/projects/$system/info`.
+2. Start the dev server (`dotnet watch` in `src/YobaBox.Web/`).
+3. Claude Code (or any MCP-aware agent) picks up `.mcp.json` automatically.
+
+Inspect via `mcp__yobabox__log_query` calls; the key never lands in the
+config file because `.mcp.json` references `${YOBABOX_DEV_APIKEY}`.
+
 ## Documents — what goes where
 
 - **`doc/spec.md`** — pointer to vault spec at `my/idea/yobabox/spec.md`.
