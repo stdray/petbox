@@ -90,23 +90,57 @@ jobs:
     needs: publish
     runs-on: ubuntu-latest
     steps:
+      # Secrets go through appleboy/ssh-action's `envs:` passthrough, not through
+      # inline `${{ secrets.X }}` expansion inside the script body. Inline expansion
+      # trips bash variable expansion on any `$` in the secret value — PBKDF2 hash
+      # is literally `pbkdf2$<iter>$<salt>$<hash>`, so double-quoting substitutes
+      # `$<iter>` as positional param `$1` under `set -u` and aborts the deploy.
+      # env-var passthrough side-steps that.
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
+        env:
+          ADMIN_USER: ${{ secrets.YOBABOX_ADMIN_USERNAME }}
+          ADMIN_PASS_HASH: ${{ secrets.YOBABOX_ADMIN_PASSWORD_HASH }}
+          MASTER_KEY: ${{ secrets.YOBABOX_MASTER_KEY }}
+          YOBALOG_URL: ${{ secrets.YOBALOG_SERVER_URL }}
+          YOBALOG_KEY: ${{ secrets.YOBALOG_API_KEY }}
+          OTEL_ENABLED: ${{ secrets.YOBABOX_OTEL_ENABLED }}
+          OTLP_ENDPOINT: ${{ secrets.YOBABOX_OTLP_ENDPOINT }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USERNAME }}
           password: ${{ secrets.DEPLOY_PASSWORD }}
+          envs: ADMIN_USER,ADMIN_PASS_HASH,MASTER_KEY,YOBALOG_URL,YOBALOG_KEY,OTEL_ENABLED,OTLP_ENDPOINT
           script: |
             set -euo pipefail
             IMAGE="ghcr.io/${{ github.repository }}:${{ needs.publish.outputs.dockerTag }}"
             CONTAINER_NAME="yobabox"
+            # DEPLOY_USERNAME is in the `docker` group → no sudo for docker commands.
+            # /opt/yobabox/data is pre-created during host bootstrap with chown 1654:1654
+            # (chiseled `app` UID) so the container can write its SQLite file on mount.
+            # Public GHCR package → docker pull is anonymous.
             docker pull "$IMAGE"
             docker stop "$CONTAINER_NAME" || true
             docker rm "$CONTAINER_NAME" || true
+            # Host port 8082 per the shared-host convention (yobaconf=8081, yobabox=8082).
+            # Only loopback bind — central Caddy terminates TLS and reverse-proxies.
             docker run -d \
               --name "$CONTAINER_NAME" \
               --restart unless-stopped \
+              -p 127.0.0.1:8082:8080 \
+              -v /opt/yobabox/data:/app/data \
               -e Admin__Username="$ADMIN_USER" \
+              -e Admin__PasswordHash="$ADMIN_PASS_HASH" \
+              -e YOBABOX_MASTER_KEY="$MASTER_KEY" \
+              -e Features__Config=true \
+              -e Features__Logging=true \
+              -e Features__Data=true \
+              -e Features__Dashboard=true \
+              -e Seq__SelfLog__Enabled=true \
+              -e Seq__SelfLog__ServerUrl="$YOBALOG_URL" \
+              -e Seq__SelfLog__ApiKey="$YOBALOG_KEY" \
+              -e OpenTelemetry__Enabled="$OTEL_ENABLED" \
+              -e OpenTelemetry__OtlpEndpoint="$OTLP_ENDPOINT" \
               "$IMAGE"
             docker system prune -a -f
 
