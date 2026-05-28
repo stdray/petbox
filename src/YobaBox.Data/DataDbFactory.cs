@@ -35,6 +35,11 @@ public interface IDataDbFactory
 	// service to compare against DataDbs metadata.
 	IReadOnlyList<string> ListPhysicalDbs(string projectKey);
 
+	// Enumerates project subdirectories under baseDir. Used by orphan cleanup
+	// to find projects that no longer have any DataDbs metadata rows but still
+	// have leftover files on disk.
+	IReadOnlyList<string> ListProjectDirectories();
+
 	// Resolved on-disk path for diagnostics.
 	string GetDbPath(string projectKey, string dbName);
 }
@@ -114,6 +119,14 @@ public sealed class DataDbFactory : IDataDbFactory
 		if (!Directory.Exists(projectDir)) return [];
 		return Directory.GetFiles(projectDir, "*.db")
 			.Select(p => Path.GetFileNameWithoutExtension(p))
+			.ToList();
+	}
+
+	public IReadOnlyList<string> ListProjectDirectories()
+	{
+		if (!Directory.Exists(_baseDir)) return [];
+		return Directory.GetDirectories(_baseDir)
+			.Select(d => Path.GetFileName(d))
 			.ToList();
 	}
 }

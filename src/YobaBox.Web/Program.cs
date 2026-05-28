@@ -48,6 +48,10 @@ public partial class Program
 		builder.Services.AddSingleton<IConfigDbFactory>(_ => new ConfigDbFactory(
 			Path.Combine(Path.GetDirectoryName(
 				new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!, "config")));
+		builder.Services.AddSingleton<YobaBox.Data.IDataDbFactory>(_ => new YobaBox.Data.DataDbFactory(
+			Path.Combine(Path.GetDirectoryName(
+				new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!, "db")));
+		builder.Services.AddSingleton<YobaBox.Data.Schema.SchemaRunner>();
 		var masterKey = builder.Configuration["YobaBox:MasterKey"]
 			?? Environment.GetEnvironmentVariable("YOBABOX_MASTER_KEY");
 		builder.Services.AddSingleton(Options.Create(new SecretEncryptorOptions { MasterKey = masterKey }));
@@ -68,6 +72,10 @@ public partial class Program
 		{
 			builder.Services.AddHttpClient();
 			builder.Services.AddHostedService<YobaBox.Dashboard.HealthPoller>();
+		}
+		if (new FeatureFlags(builder.Configuration).IsEnabled("Data"))
+		{
+			builder.Services.AddHostedService<YobaBox.Data.OrphanCleanupService>();
 		}
 		builder.Services.AddSingleton<FeatureFlags>();
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
@@ -174,6 +182,11 @@ public partial class Program
 				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
 				p.AddRequirements(new ScopeRequirement("data:write"));
 			})
+			.AddPolicy("DataSchema", p =>
+			{
+				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
+				p.AddRequirements(new ScopeRequirement("data:schema"));
+			})
 			.AddPolicy("WorkspaceAdmin", p =>
 			{
 				p.AddAuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -277,7 +290,7 @@ public partial class Program
 
 		if (new FeatureFlags(app.Configuration).IsEnabled("Data"))
 		{
-			app.MapDataEndpoints();
+			app.MapDataDbsEndpoints();
 		}
 	}
 }
