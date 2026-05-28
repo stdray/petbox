@@ -76,6 +76,7 @@ public partial class Program
 		if (new FeatureFlags(builder.Configuration).IsEnabled("Data"))
 		{
 			builder.Services.AddHostedService<YobaBox.Data.OrphanCleanupService>();
+			builder.Services.AddHostedService<YobaBox.Data.WalCheckpointService>();
 		}
 		builder.Services.AddSingleton<FeatureFlags>();
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
@@ -291,6 +292,8 @@ public partial class Program
 		if (new FeatureFlags(app.Configuration).IsEnabled("Data"))
 		{
 			app.MapDataDbsEndpoints();
+			app.MapSchemaEndpoints();
+			app.MapQueryExecEndpoints();
 		}
 	}
 }

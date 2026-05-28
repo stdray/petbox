@@ -53,7 +53,7 @@ public static partial class DataDbsApi
 		IDataDbFactory factory,
 		CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
 		if (req is null || string.IsNullOrWhiteSpace(req.Name))
 			return Results.BadRequest(new { error = "name is required" });
 		if (!DbNameRegex().IsMatch(req.Name))
@@ -95,7 +95,7 @@ public static partial class DataDbsApi
 		YobaBoxDb db,
 		CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
 
 		var rows = await db.DataDbs
 			.Where(d => d.ProjectKey == projectKey)
@@ -114,7 +114,7 @@ public static partial class DataDbsApi
 		IDataDbFactory factory,
 		CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
 
 		var deleted = await db.DataDbs
 			.Where(d => d.ProjectKey == projectKey && d.Name == name)
@@ -131,20 +131,4 @@ public static partial class DataDbsApi
 		return Results.NoContent();
 	}
 
-	// Cross-checks the ApiKey's ProjectKey claim against the URL. yobabox keys
-	// are project-level — a key for project X cannot reach project Y's DataDbs
-	// even via a crafted URL.
-	static bool AuthorizeProject(HttpContext ctx, string projectKey, out IResult forbid)
-	{
-		// ApiKeyAuthenticationHandler emits the claim under the literal type
-		// "project" (not the YobaBoxClaims constant). Matches AuthApi convention.
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (string.IsNullOrEmpty(claim) || !string.Equals(claim, projectKey, StringComparison.Ordinal))
-		{
-			forbid = Results.Forbid();
-			return false;
-		}
-		forbid = null!;
-		return true;
-	}
 }
