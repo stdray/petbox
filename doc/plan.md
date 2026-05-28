@@ -610,32 +610,40 @@ Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite ч
 ### Resolved decisions (2026-05-28)
 
 - **Storage**: `data/db/{projectKey}/{dbName}.db` — multiple DBs per project, явно создаются (не auto-create on first touch). WAL mode + `PRAGMA max_page_count` (quota) при создании.
-- **API**: REST raw SQL pass-through через `/api/data/{p}/{db}/query|exec|schema`. Не PostgREST, не KQL. Pet шлёт parameterized SQL через thin client wrapper (~50 LOC per language).
+- **API**: REST raw SQL pass-through через `/api/data/{p}/{db}/query|exec|schema`. Не PostgREST, не KQL.
+- **Архитектура клиент-сервер**: pet пишет свои POCO + linq2db локально → клиент извлекает скомпилированный parameterized SQL + параметры через `IExpressionQuery.GetSqlQueries(SqlGenerationOptions?)` → `IReadOnlyList<QuerySql>` (multi-statement support для InsertOrReplace/CreateTable; Wave 0.3 PoC verified `ToSqlQuery` который под капотом тот же `GetSqlQueries[0]`, но truncates to one). POST `{statements: [{sql, params: [{name, dbType, clrType, value}, ...]}, ...]}` JSON → **сервер dumb pass-through**: использует `DataConnection.Execute(sql, DataParameter[])` из `LinqToDB.Data` namespace (ADO.NET binding + error wrapping + reader iteration уже встроено). Никакого `MappingSchema` sharing, никакого `SqlStatement` AST. Wave 0.6 re-investigation: `LinqToDB.Remote.*` ничего не даёт для этого паттерна — оно coupled к AST + MappingSchema. Никакого Remote.HttpClient end-to-end (отклонён в Wave 0.4: ships expression tree, требует shared assemblies, не поддерживает cross-request transactions).
+- **Транзакции**: НЕ поддерживаем в MVP. KpVotes (`D:\my\prj\KpVotes`) их не использует. Появятся pets с transaction needs → отдельная задача.
 - **Маппинг**: per-project-per-db. Один проект может иметь N DataDbs. ApiKey project-level видит все DataDbs данного проекта (нет per-DB allow-list).
 - **Auth scopes**: `data:read` (query/list/describe), `data:write` (exec/DML), `data:schema` (apply/create_db/delete_db).
-- **Schema management**: DbUp + custom `SqliteHashingJournal` (~100-150 LOC). Pet POST'ит named SQL migration; hash conflict → 409, retry-safe.
+- **Schema management**: DbUp + custom `SqliteHashingJournal`. Pet POST'ит named SQL migration; hash conflict → 409. **Hash canonicalization через `SQL.Formatter` NuGet** — нормализует whitespace/case/CRLF перед `sha256`. Спец формат фиксируется в Wave 1.
+- **WAL background checkpoint**: Wave 1 добавляет hosted service который раз в N минут вызывает `PRAGMA wal_checkpoint(TRUNCATE)` per active DB. Иначе `.wal` растёт unbounded на hot writers с короткоживущими connections.
 - **Существующая `DataTables` таблица**: НЕ трогаем в M013 (dead schema, удалим cosmetic миграцией позже).
 - **MCP**: Wave 4 — shared host `/mcp` через `ModelContextProtocol.AspNetCore` SDK. Закрывает 22.8 Agent surface.
 
 ### Waves
 
-#### Wave 0 — Pre-implementation critique gate + linq2db PoC
-- [ ] Snapshot план как baseline
-- [ ] Skeptical critique agent на финальной версии
-- [ ] linq2db `.ToString()` PoC: extraction parameterized SQL отдельно от bindings (для thin send-helper в Wave 3)
-- [ ] Explore `LinqToDB.Remote.HttpClient.Server` clone для Wave 5+ direction
-- [ ] Зафиксировать решение в `doc/decision-log.md`
+#### Wave 0 — Pre-implementation critique gate + linq2db PoC [DONE]
+- [x] Snapshot плана как baseline (`noble-sniffing-bear.v1.md`)
+- [x] Skeptical critique agent — RED1 hash + RED2 WAL → YELLOW (см. resolved decisions); RED3 transactions → DROPPED из MVP (kpvotes не использует)
+- [x] linq2db SQL extraction PoC — `LinqExtensions.ToSqlQuery(query)` верифицирован end-to-end. Артефакт `.tmp/linq2db-poc/`. Для Wave 1 используем `GetSqlQueries()` (multi-statement support)
+- [x] Explore `LinqToDB.Remote.HttpClient.Server` — NO-GO для end-to-end (expression tree + shared assemblies + no cross-request transactions). Оставлено в Wave 5+ как option, dispatch hook известен
+- [x] Re-investigation `LinqToDB/Remote` (base ns) — ничего полезного для dumb-server модели. Coupled к AST + MappingSchema. **Server использует `DataConnection.Execute(sql, DataParameter[])` из `LinqToDB.Data` namespace** (ADO.NET binding + error wrapping встроены, без AST)
+- [x] Зафиксировать в `doc/decision-log.md`
 
 #### Wave 1 — Foundation + APIs
 - [ ] `DataDbFactory.GetDb(projectKey, dbName)` (паттерн LogDbFactory двухключевой), WAL + max_page_count при создании
 - [ ] `M013_DataDbs` миграция — только новая `DataDbs(ProjectKey, Name)` таблица
-- [ ] `dbup-sqlite` 6.0.4 + `dbup-core` пакеты + `SqliteHashingJournal` + `SchemaRunner` (~50 LOC, hash pre-check, 409 maps)
-- [ ] DB lifecycle endpoints: `POST /api/data/{p}/dbs`, `GET ...`, `DELETE .../{db}` (hard delete)
+- [ ] `dbup-sqlite` + `dbup-core` пакеты + `SqliteHashingJournal` (sync + async overrides, ~200-300 LOC реалистично с тестами) + `SchemaRunner` (hash pre-check, 409 maps)
+- [ ] **SQL.Formatter NuGet** + спец canonicalization formatter (фиксируем версию + опции) — hash считается от formatted output
+- [ ] DB lifecycle endpoints: `POST /api/data/{p}/dbs`, `GET ...`, `DELETE .../{db}` (hard delete с refcount — отказ если query in-flight)
 - [ ] Schema push: `POST /api/data/{p}/{db}/schema` через UpgradeEngine + hash pre-check
+- [ ] Migration history: `GET /api/data/{p}/{db}/migrations` (НЕ через /query — не coupling pets к internal table layout)
 - [ ] Query: `POST /api/data/{p}/{db}/query` (ExecuteReader, JSON array, 30s timeout, SQLite errors прокидываются)
-- [ ] Exec: `POST /api/data/{p}/{db}/exec` (ExecuteNonQuery, PRAGMA whitelist, quota → 507)
+- [ ] Exec: `POST /api/data/{p}/{db}/exec` (ExecuteNonQuery, **PRAGMA deny-list** для опасных как `writable_schema`, quota → 507)
+- [ ] **WAL checkpoint background service** — `IHostedService` который раз в N минут вызывает `PRAGMA wal_checkpoint(TRUNCATE)` per active DB
+- [ ] Request body size limit per endpoint (явный, не Kestrel default)
 - [ ] Main-instance-only guard для `/api/data/*` (log-only instance → 503)
-- [ ] Unit + integration tests: factory, journal idempotency/conflict, lifecycle, schema, query, exec, PRAGMA whitelist, quota, timeout, concurrent migration
+- [ ] Unit + integration tests: factory, journal idempotency/conflict (cross-platform hash через formatter), lifecycle, schema, query, exec, PRAGMA deny-list, quota, timeout, concurrent migration → 409, DELETE-during-query → 409
 
 #### Wave 2 — UI rework + dogfooding
 - [ ] `ProjectData.cshtml(.cs)` rewrite: two-level navigation (DBs list → DB detail с table introspection + paste-migration form)
@@ -643,10 +651,11 @@ Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite ч
 - [ ] `KpVotesOnboardingTests.S5_DataRoundtrip` E2E через REST
 
 #### Wave 3 — Real pet integration
-- [ ] kpvotes-net: заменить local SQLite на yobabox URL + ApiKey + DB name. Thin send-helper (~50 LOC) использующий linq2db extraction
-- [ ] kpvotes-ts: SQL-send-helper для TS ORM
-- [ ] Документировать thin-client patterns в `doc/spec.md` (linq2db / SQLAlchemy / Knex / Drizzle)
-- [ ] Latency + transaction-loss measurement
+- [ ] kpvotes-net (`D:\my\prj\KpVotes`): заменить local SQLite connection на yobabox URL + ApiKey + DB name. Client (~30 LOC pet-side): `((IExpressionQuery)q.GetLinqToDBSource()).GetSqlQueries(null)` → DTO `{statements:[{sql,params:[...]}]}` → POST → materialize rows (через `DataConnection.QueryToList<T>` если pet тоже linq2db, иначе manual map)
+- [ ] Pet ответственен за idempotency своих write-патернов (нет server-side transactions)
+- [ ] kpvotes-ts: SQL-send-helper для TS ORM (Knex/Drizzle/Kysely — `query.toSQL()` → POST → materialize). Размер примерно ~30-50 LOC TS-side
+- [ ] Документировать thin-client pattern в `doc/spec.md` (на примере kpvotes-net)
+- [ ] Latency measurement vs local SQLite
 
 #### Wave 4 — MCP server (subsumes 22.8 Agent surface)
 - [ ] `src/YobaBox.Web/Mcp/McpHost.cs` — shared MCP host через `ModelContextProtocol.AspNetCore` SDK, единый `/mcp` endpoint
@@ -655,7 +664,12 @@ Goal: replace local pet-side SQLite files с per-project-per-db remote SQLite ч
 - [ ] Agentic E2E: dogfooding-тест агента через MCP
 
 #### Wave 5+ — Future (out of MVP)
-Batch endpoint, session transactions, Liquibase XML, `LinqToDB.Remote.HttpClient` интеграция для full linq2db UX, hot-backup, per-DB OTEL telemetry, FluentMigrator → DbUp consolidation analysis.
+- Server-side **transaction sessions** (если появится pet с нужной семантикой) — POST /tx/begin → token + TTL, X-Tx-Token header, /tx/commit | /tx/rollback. KpVotes не нужны.
+- **Batch endpoint** для массовых INSERT'ов (один HTTP, серверная BEGIN/COMMIT, non-query only)
+- **Liquibase XML** через `DbUp.Extensions.WithLiquibaseScriptsFromFileSystem`
+- **Per-project quota** (агрегат по всем DataDb проекта, не только per-DB)
+- `LinqToDB.Remote.HttpClient` end-to-end (full IQueryable on pet side) — если когда-нибудь потребуется, dispatch hook через `configuration` URL segment + `IDataContextFactory<DataConnection>` известен из Wave 0.4 explore
+- hot-backup, per-DB OTEL telemetry, FluentMigrator → DbUp consolidation analysis
 
 ### Старые DataTables endpoints (Phase 8.6/8.7 historical)
 

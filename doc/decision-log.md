@@ -4,6 +4,59 @@ Newest decisions on top. Each entry: short title, date, context, decision, conse
 
 ---
 
+## 2026-05-28 — Data module Wave 0 gate passed (refactored architecture, build approved)
+
+**Context.** Phase 16 Wave 0 gate (critique + 2 PoCs) запущен. Изначальная plan rule: 0 RED + ≤3 YELLOW → build; 1+ RED → defer; ≥4 YELLOW → refactor. Skeptical critique вернулся с **3 RED + 8 YELLOW** — formally defer territory. Но после разбора каждого RED оказались либо solvable, либо неактуальными при пересмотре scope.
+
+**Wave 0 results:**
+
+1. **Critique (0.2)** — 3 RED: hash canonicalization undefined, WAL+per-call connection не даёт claimed benefit, thin send-helper рушится на transactions. 8 YELLOW (dialect concerns, refcount on DELETE, per-project quota, `__SchemaVersions` exposure, dogfooding semantics, log-only-instance failover, journal LOC underestimate, PRAGMA whitelist maintenance, request body size limit).
+
+2. **linq2db SQL extraction PoC (0.3)** — `LinqExtensions.ToSqlQuery(query)` верифицирован end-to-end. Возвращает `QuerySql { Sql, Parameters: IReadOnlyList<DataParameter> }`. Артефакт в `.tmp/linq2db-poc/`. Gotchas: literal constants инлайнятся (pet оборачивает в captured locals), `query.ToString()` бесполезен, .NET 10 `AsyncEnumerable.ToListAsync` коллидирует.
+
+3. **Explore Remote.HttpClient.Server (0.4)** — **NO-GO для end-to-end use**. Ships expression tree (требует shared assemblies/MappingSchema), не поддерживает cross-request transactions (только batch non-query внутри `ExecuteBatchAsync`). Per-DB routing через `configuration` URL segment + `IDataContextFactory` хороший, но недостаточно. Wave 5+ option если потребуется.
+
+4. **Re-investigate Remote base namespace (0.6)** — confirms NO-GO для Remote-based dumb server. `LinqService` + `LinqServiceSerializer` (3209 LOC) coupled к `SqlStatement` AST + MappingSchema. **Нашли правильный server-side primitive: `DataConnection.Execute(sql, DataParameter[])` из `LinqToDB.Data` namespace** — ADO.NET binding + error wrapping встроены, AST не требуется. Client-side primitive обновлён: `IExpressionQuery.GetSqlQueries(SqlGenerationOptions?)` вместо `ToSqlQuery` (multi-statement support для InsertOrReplace/CreateTable).
+
+**Decision: BUILD with refactored Wave 1 + DROP transactions from MVP.**
+
+Resolution of REDs:
+- **RED1 hash canonicalization → solved**: `SQL.Formatter` NuGet нормализует whitespace/case/CRLF; sha256 от formatted output. Спец фиксируется в Wave 1.
+- **RED2 WAL+connection lifetime → solved**: Wave 1 добавляет `IHostedService` который раз в N минут вызывает `PRAGMA wal_checkpoint(TRUNCATE)` per active DataDb. Не блокер для MVP single-pet.
+- **RED3 transactions → DROPPED**: KpVotes (`D:\my\prj\KpVotes` — verified by user) не использует BeginTransaction. Если появятся pets с tx needs — Wave 5+ server-side session protocol с TTL token. Не sweep'им под ковёр: explicitly documented limitation.
+
+Resolution of YELLOWs absorbed into Wave 1 update:
+- Migration history endpoint (`GET /api/data/{p}/{db}/migrations`) — не coupling pets к `__SchemaVersions` internal layout
+- Refcount on DataDb DELETE (отказ если query in-flight)
+- PRAGMA **deny**-list (не allow-list) — раз раз в release переписывать
+- Explicit request body size limit per endpoint
+- Cross-platform hash test (CRLF, BOM, comments)
+- Journal LOC реалистично 200-300 (sync + async paths) — просто корректирую estimate, не блокер
+- Per-project quota aggregate → Wave 5+ (single-pet не нужно)
+- Log-only-instance 503 → уже в плане
+
+**Decision rule re-application after refactor**: 0 RED + 2 absorbed-YELLOW + 6 fixed-YELLOW = build approved.
+
+**Architecture clarified (overrides original plan):**
+
+- **Server is dumb pass-through**. No `MappingSchema`, no `SqlStatement` AST, no Remote.HttpClient. Just:
+  ```csharp
+  using var db = new DataConnection(sqliteProvider, $"Data Source={dbPath}");
+  db.Execute(request.Sql, request.Parameters.Select(p => new DataParameter(p.Name, p.Value, p.DataType)).ToArray());
+  // or db.ExecuteReader for /query
+  ```
+- **Client extracts compiled SQL on its side** via `GetSqlQueries()`, ships `{statements: [{sql, params}]}` JSON. ~30 LOC pet-side wrapper.
+- **Server side**: ~150-200 LOC (controller + DTOs + SQLite error → HTTP code mapping). Pulls `linq2db` for `DataConnection.Execute` (or just `Microsoft.Data.Sqlite` directly — even thinner).
+
+**Consequences:**
+
+- Phase 16 Wave 0 gate **closed: build approved**. Wave 1 starts next.
+- `Wave 5+` теперь содержит explicit list: transaction sessions, batch endpoint, per-project quota, Liquibase XML, full Remote.HttpClient (если когда-нибудь нужен — dispatch hook известен).
+- Memory `feedback-discovery-before-design` validated again: 2 PoCs + 2 critiques + 2 re-investigations спасли нас от потенциального Wave 5 path-of-no-return (полная Remote.HttpClient infra с MappingSchema sharing).
+- KpVotes integration (Wave 3) — единственный pet до конца phase. tasks-mcp records 2026-05-28-{03+04+05+06} (Wave 0 артефакты + PoC report + plan revisions).
+
+---
+
 ## 2026-05-28 — Data module design approved (multi-DB, REST pass-through, DbUp)
 
 **Context.** Phase 16 был BLOCKED по нерешённым вопросам: storage layout, API shape, schema ownership. Memory: "Data — не сделан, возможно не строить (Turso/PocketBase делают лучше)". Dispatcher текущий — заглушка (stub endpoints, misleading DataTable model). Запрос /plan через несколько раундов discovery + 2 раунда critique привёл к утверждённой архитектуре.
