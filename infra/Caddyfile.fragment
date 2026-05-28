@@ -1,5 +1,6 @@
 yobabox.3po.su {
-	reverse_proxy 127.0.0.1:8080 {
+	# Container publishes to 127.0.0.1:8082 (shared-host convention: yobaconf=8081, yobabox=8082).
+	reverse_proxy 127.0.0.1:8082 {
 		flush_interval -1
 	}
 
