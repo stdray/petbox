@@ -410,7 +410,10 @@ Task("FormatVerify")
 
 Task("Verify")
 	.IsDependentOn("FormatVerify")
-	.IsDependentOn("Test");
+	.IsDependentOn("Test")
+	.IsDependentOn("TsSdkLint")
+	.IsDependentOn("TsSdkTypecheck")
+	.IsDependentOn("TsSdkTest");
 
 Task("CI")
 	.IsDependentOn("Verify");
