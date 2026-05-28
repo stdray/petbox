@@ -17,6 +17,7 @@
 
 	<ItemGroup>
 		<PackageReference Include="Seq.Extensions.Logging" />
+		<PackageReference Include="ModelContextProtocol.AspNetCore" />
 	</ItemGroup>
 
 	<ItemGroup>

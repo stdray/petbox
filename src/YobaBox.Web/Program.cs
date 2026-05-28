@@ -78,6 +78,13 @@ public partial class Program
 			builder.Services.AddHostedService<YobaBox.Data.OrphanCleanupService>();
 			builder.Services.AddHostedService<YobaBox.Data.WalCheckpointService>();
 		}
+
+		// MCP server. Tools are discovered via reflection from the Web assembly
+		// (Mcp/*Tools.cs). HTTP transport — agents reach yobabox at /mcp with
+		// X-Api-Key just like the REST endpoints.
+		builder.Services.AddMcpServer()
+			.WithHttpTransport()
+			.WithToolsFromAssembly(typeof(Program).Assembly);
 		builder.Services.AddSingleton<FeatureFlags>();
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
 		builder.Services.Configure<ConfigApiKeyOptions>(builder.Configuration.GetSection("Auth"));
@@ -295,5 +302,14 @@ public partial class Program
 			app.MapSchemaEndpoints();
 			app.MapQueryExecEndpoints();
 		}
+
+		// MCP HTTP endpoint. Tools auto-registered via reflection in builder.Services
+		// (see AddMcpServer above). The endpoint goes through the same ApiKey
+		// authentication scheme as /api/data/*, so X-Api-Key works identically.
+		app.MapMcp("/mcp").RequireAuthorization(p =>
+		{
+			p.AddAuthenticationSchemes(YobaBox.Core.Auth.ApiKeyAuthenticationHandler.SchemeName);
+			p.RequireAuthenticatedUser();
+		});
 	}
 }
