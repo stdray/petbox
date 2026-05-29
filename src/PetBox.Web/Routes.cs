@@ -24,8 +24,6 @@ public static class Routes
 
 	// Workspace level
 	public static string Workspace(string ws) => $"{UiPrefix}/{ws}";
-	public static string WorkspaceLogs(string ws) => $"{UiPrefix}/{ws}/logs";
-	public static string WorkspaceTraces(string ws) => $"{UiPrefix}/{ws}/traces";
 	public static string WorkspaceTasks(string ws) => $"{UiPrefix}/{ws}/tasks";
 
 	public static string SharedConfig(string ws) => $"{UiPrefix}/{ws}/config";
@@ -42,9 +40,11 @@ public static class Routes
 	public static string WorkspaceAdminDefaults(string ws) => $"{AdminPrefix}/ws/{ws}/defaults";
 
 	// Project level — /ui/{ws}/{key} IS the Logs view directly (no redirect).
+	// A project has many named logs; /ui/{ws}/{key}/logs/{log} views a specific one,
+	// the bare project URL picks the default/first log.
 	public static string Project(string ws, string key) => $"{UiPrefix}/{ws}/{key}";
 	public static string ProjectLogs(string ws, string key) => Project(ws, key);
-	public static string ProjectLogsForService(string ws, string key, string serviceKey) => $"{Project(ws, key)}?service={serviceKey}";
+	public static string ProjectLog(string ws, string key, string log) => $"{Project(ws, key)}/logs/{log}";
 	public static string ProjectTraces(string ws, string key) => $"{Project(ws, key)}/traces";
 	public static string ProjectTrace(string ws, string key, string traceId) => $"{Project(ws, key)}/traces/{traceId}";
 
@@ -56,6 +56,7 @@ public static class Routes
 
 	// Project admin pages live under /ui/admin/ws/{ws}/projects/{key}/...
 	public static string ProjectData(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/data";
+	public static string ProjectLogsAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/logs";
 	public static string ProjectSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/info";
 	public static string ProjectLogSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/log";
 

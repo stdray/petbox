@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Log.Core.Data;
@@ -21,10 +22,91 @@ public static class LogApi
 {
 	public static void MapLogEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapPost("/api/ingest/clef", IngestClefAsync).RequireAuthorization("ApiKey");
-		app.MapGet("/api/logs/{projectKey}/query", QueryLogsAsync).RequireAuthorization("ApiKey");
+		// Ingestion. Path-based carries the destination log explicitly so one
+		// project-scoped key can write to many named logs. The header-based route
+		// resolves the project from X-Service-Key and targets the `default` log.
+		app.MapPost("/api/ingest/{projectKey}/{logName}/clef", IngestClefPathAsync).RequireAuthorization("ApiKey");
+		app.MapPost("/api/ingest/clef", IngestClefLegacyAsync).RequireAuthorization("ApiKey");
+
+		// Lifecycle — create / list / delete named logs (mirrors /api/data/{p}/dbs).
+		app.MapPost("/api/logs/{projectKey}/logs", CreateLogAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/{projectKey}/logs", ListLogsAsync).RequireAuthorization("ApiKey");
+		app.MapDelete("/api/logs/{projectKey}/logs/{name}", DeleteLogAsync).RequireAuthorization("ApiKey");
+
+		// Read. Query + live-tail are per named log; the services list is
+		// project-level (it reads the Services table, not a log DB).
+		app.MapGet("/api/logs/{projectKey}/{logName}/query", QueryLogsAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/{projectKey}/{logName}/live-tail", LiveTailAsync).RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/{projectKey}/services", GetServicesAsync).RequireAuthorization("ApiKey");
-		app.MapGet("/api/logs/{projectKey}/live-tail", LiveTailAsync).RequireAuthorization("ApiKey");
+	}
+
+	public sealed record CreateLogRequest(string Name, string? Description);
+	public sealed record LogInfo(string Name, string? Description, DateTime CreatedAt, DateTime UpdatedAt);
+
+	static async Task<IResult> CreateLogAsync(
+		HttpContext ctx, string projectKey, CreateLogRequest req, ILogStore store, CancellationToken ct)
+	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!HasScope(ctx, ApiKeyScopes.LogsAdmin)) return Results.Forbid();
+		if (req is null || string.IsNullOrWhiteSpace(req.Name))
+			return Results.BadRequest(new { error = "name is required" });
+
+		try
+		{
+			var meta = await store.CreateAsync(projectKey, req.Name.Trim(), req.Description, ct);
+			return Results.Created(
+				$"/api/logs/{projectKey}/logs/{meta.Name}",
+				new LogInfo(meta.Name, meta.Description, meta.CreatedAt, meta.UpdatedAt));
+		}
+		catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+		catch (InvalidOperationException ex) when (ex.Message.Contains("already exists", StringComparison.Ordinal))
+		{
+			return Results.Conflict(new { error = ex.Message });
+		}
+		catch (InvalidOperationException ex) { return Results.NotFound(new { error = ex.Message }); }
+	}
+
+	static async Task<IResult> ListLogsAsync(
+		HttpContext ctx, string projectKey, ILogStore store, CancellationToken ct)
+	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
+
+		var rows = (await store.ListAsync(projectKey, ct))
+			.Select(l => new LogInfo(l.Name, l.Description, l.CreatedAt, l.UpdatedAt))
+			.ToList();
+		return Results.Ok(rows);
+	}
+
+	static async Task<IResult> DeleteLogAsync(
+		HttpContext ctx, string projectKey, string name, ILogStore store, CancellationToken ct)
+	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!HasScope(ctx, ApiKeyScopes.LogsAdmin)) return Results.Forbid();
+		if (projectKey == LogNames.SystemProject && name == LogNames.SelfLog)
+			return Results.BadRequest(new { error = "the petbox self-log cannot be deleted" });
+
+		var deleted = await store.DeleteAsync(projectKey, name, ct);
+		return deleted ? Results.NoContent() : Results.NotFound(new { error = "log not found" });
+	}
+
+	static bool AuthorizeProject(HttpContext ctx, string projectKey, out IResult forbid)
+	{
+		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		if (string.IsNullOrEmpty(claim) || !string.Equals(claim, projectKey, StringComparison.Ordinal))
+		{
+			forbid = Results.Forbid();
+			return false;
+		}
+		forbid = null!;
+		return true;
+	}
+
+	static bool HasScope(HttpContext ctx, string required)
+	{
+		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
+		return scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+			.Contains(required, StringComparer.Ordinal);
 	}
 
 	public static void MapSeqSelfLogEndpoint(this IEndpointRouteBuilder app)
@@ -32,9 +114,21 @@ public static class LogApi
 		app.MapPost("/api/events/raw", SeqIngestAsync).AllowAnonymous();
 	}
 
-	static async Task<IResult> IngestClefAsync(
+	static Task<IResult> IngestClefPathAsync(
+		HttpContext ctx,
+		string projectKey,
+		string logName,
+		PetBoxDb yobaBoxDb,
+		ILogStore store,
+		CleFParser parser,
+		IIngestionPipeline pipeline,
+		CancellationToken ct) =>
+		IngestClefCoreAsync(ctx, projectKey, logName, yobaBoxDb, store, parser, pipeline, ct);
+
+	static async Task<IResult> IngestClefLegacyAsync(
 		HttpContext ctx,
 		PetBoxDb yobaBoxDb,
+		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
 		CancellationToken ct)
@@ -43,23 +137,46 @@ public static class LogApi
 		if (string.IsNullOrWhiteSpace(serviceKey))
 			return Results.BadRequest("X-Service-Key header required");
 
-		var service = yobaBoxDb.Services.FirstOrDefault(s => s.Key == serviceKey);
-		var projectKey = service?.ProjectKey ?? "$system";
+		var service = await yobaBoxDb.Services.FirstOrDefaultAsync(s => s.Key == serviceKey, ct);
+		if (service is null)
+			return Results.BadRequest(
+				$"unknown service '{serviceKey}'; use the path-based ingest URL /api/ingest/{{projectKey}}/{{logName}}/clef");
+
+		return await IngestClefCoreAsync(ctx, service.ProjectKey, LogNames.Default, yobaBoxDb, store, parser, pipeline, ct);
+	}
+
+	static async Task<IResult> IngestClefCoreAsync(
+		HttpContext ctx,
+		string projectKey,
+		string logName,
+		PetBoxDb yobaBoxDb,
+		ILogStore store,
+		CleFParser parser,
+		IIngestionPipeline pipeline,
+		CancellationToken ct)
+	{
+		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
+		if (string.IsNullOrWhiteSpace(serviceKey))
+			return Results.BadRequest("X-Service-Key header required");
+
+		if (!await store.ExistsAsync(projectKey, logName, ct))
+			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'; create it first" });
+
+		// X-Service-Key tags the emitter. Register unknown services under this
+		// project so they appear in the project's services list.
+		var service = await yobaBoxDb.Services.FirstOrDefaultAsync(s => s.Key == serviceKey, ct);
 		if (service is null)
 		{
-#pragma warning disable CA2016
 			await yobaBoxDb.InsertAsync(new Service
-#pragma warning restore CA2016
 			{
 				Key = serviceKey,
-				ProjectKey = "$system",
+				ProjectKey = projectKey,
 				HealthModel = HealthModel.Endpoint,
 				Health = ServiceHealth.Unknown,
-			});
+			}, token: ct);
 		}
 
-		var results = await parser.ParseAsync(ctx.Request.Body, ct)
-			.ToListAsync(ct);
+		var results = await parser.ParseAsync(ctx.Request.Body, ct).ToListAsync(ct);
 
 		var errors = results.Where(r => !r.IsSuccess).ToList();
 		if (errors.Count > 0 && results.All(r => !r.IsSuccess))
@@ -75,7 +192,7 @@ public static class LogApi
 			.Select(c => c with { ServiceKey = serviceKey })
 			.ToList();
 
-		await pipeline.IngestAsync(projectKey, candidates, ct);
+		await pipeline.IngestAsync(projectKey, logName, candidates, ct);
 
 		return Results.Ok(new { ingested = candidates.Count, errors = errors.Count });
 	}
@@ -83,12 +200,16 @@ public static class LogApi
 	static async Task<IResult> QueryLogsAsync(
 		HttpContext ctx,
 		string projectKey,
-		ILogDbFactory logFactory,
+		string logName,
+		ILogStore store,
 		CancellationToken ct)
 	{
 		var kql = ctx.Request.Query["q"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(kql))
 			return Results.BadRequest("q parameter required");
+
+		if (!await store.ExistsAsync(projectKey, logName, ct))
+			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'" });
 
 		KustoCode code;
 		try
@@ -109,7 +230,7 @@ public static class LogApi
 			return Results.BadRequest(new { error = ex.Message });
 		}
 
-		var logDb = logFactory.GetLogDb(projectKey);
+		var logDb = store.GetContext(projectKey, logName);
 
 		try
 		{
@@ -203,7 +324,7 @@ public static class LogApi
 			.ToList();
 
 		if (candidates.Count > 0)
-			await pipeline.IngestAsync("$system", candidates, ct);
+			await pipeline.IngestAsync(LogNames.SystemProject, LogNames.SelfLog, candidates, ct);
 
 		return Results.Ok();
 	}
@@ -211,6 +332,7 @@ public static class LogApi
 	static async Task<IResult> LiveTailAsync(
 		HttpContext ctx,
 		string projectKey,
+		string logName,
 		ITailBroadcaster broadcaster,
 		CancellationToken ct)
 	{
@@ -221,7 +343,7 @@ public static class LogApi
 
 		try
 		{
-			await foreach (var record in broadcaster.Subscribe(projectKey, ct).ConfigureAwait(false))
+			await foreach (var record in broadcaster.Subscribe(projectKey, logName, ct).ConfigureAwait(false))
 			{
 				var sb = new System.Text.StringBuilder();
 				sb.Append("event: event\n");

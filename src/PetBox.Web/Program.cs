@@ -58,8 +58,14 @@ public partial class Program
 			new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(bootstrapCs).DataSource)!);
 
 		builder.Services.AddScoped(sp => new PetBoxDb(PetBoxDb.CreateOptions(ResolveCs(sp))));
-		builder.Services.AddSingleton<ILogDbFactory>(sp => new LogDbFactory(Path.Combine(ResolveDataDir(sp), "logs")));
-		builder.Services.AddSingleton<IConfigDbFactory>(sp => new ConfigDbFactory(Path.Combine(ResolveDataDir(sp), "config")));
+		builder.Services.AddSingleton<IScopedDbFactory<LogDb>>(sp => new ScopedDbFactory<LogDb>(
+				Path.Combine(ResolveDataDir(sp), "logs"), PetBox.Core.Settings.Scope.Project,
+				cs => new LogDb(LogDb.CreateOptions(cs)), LogSchema.Ensure));
+		builder.Services.AddScoped<ILogStore, LogStore>();
+		builder.Services.AddSingleton<IScopedDbFactory<ConfigDb>>(sp => new ScopedDbFactory<ConfigDb>(
+				Path.Combine(ResolveDataDir(sp), "config"), PetBox.Core.Settings.Scope.Workspace,
+				cs => new ConfigDb(ConfigDb.CreateOptions(cs)), ConfigSchema.Ensure));
+		builder.Services.AddSingleton<IConfigDbFactory>(sp => new ConfigDbFactory(sp.GetRequiredService<IScopedDbFactory<ConfigDb>>()));
 		builder.Services.AddSingleton<PetBox.Data.IDataDbFactory>(sp => new PetBox.Data.DataDbFactory(Path.Combine(ResolveDataDir(sp), "db")));
 		builder.Services.AddSingleton<PetBox.Data.Schema.SchemaRunner>();
 		var masterKey = builder.Configuration["PetBox:MasterKey"]
@@ -77,6 +83,7 @@ public partial class Program
 			builder.Services.AddSingleton<IIngestionPipeline>(sp => sp.GetRequiredService<ChannelIngestionPipeline>());
 			builder.Services.AddHostedService(sp => sp.GetRequiredService<ChannelIngestionPipeline>());
 			builder.Services.AddHostedService<PetBox.Log.Core.Retention.RetentionService>();
+			builder.Services.AddHostedService<PetBox.Log.Core.Retention.LogOrphanCleanupService>();
 		}
 		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Dashboard))
 		{
@@ -184,27 +191,27 @@ public partial class Program
 			.AddPolicy("ConfigRead", p =>
 			{
 				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
-				p.AddRequirements(new ScopeRequirement("config:read"));
+				p.AddRequirements(new ScopeRequirement(ApiKeyScopes.ConfigRead));
 			})
 			.AddPolicy("ConfigWrite", p =>
 			{
 				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
-				p.AddRequirements(new ScopeRequirement("config:write"));
+				p.AddRequirements(new ScopeRequirement(ApiKeyScopes.ConfigWrite));
 			})
 			.AddPolicy("DataRead", p =>
 			{
 				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
-				p.AddRequirements(new ScopeRequirement("data:read"));
+				p.AddRequirements(new ScopeRequirement(ApiKeyScopes.DataRead));
 			})
 			.AddPolicy("DataWrite", p =>
 			{
 				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
-				p.AddRequirements(new ScopeRequirement("data:write"));
+				p.AddRequirements(new ScopeRequirement(ApiKeyScopes.DataWrite));
 			})
 			.AddPolicy("DataSchema", p =>
 			{
 				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
-				p.AddRequirements(new ScopeRequirement("data:schema"));
+				p.AddRequirements(new ScopeRequirement(ApiKeyScopes.DataSchema));
 			})
 			.AddPolicy("WorkspaceAdmin", p =>
 			{
@@ -237,9 +244,9 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Core.Settings.ISettingsResolver, PetBox.Web.Settings.SettingsResolver>();
 		builder.Services.AddRazorPages(options =>
 		{
-			// Cross-project logs/traces — same page, workspace-only route (no projectKey).
-			options.Conventions.AddPageRoute("/Logs/Index", "/ui/{workspaceKey}/logs");
-			options.Conventions.AddPageRoute("/Logs/Traces", "/ui/{workspaceKey}/traces");
+			// A named log within a project — same Logs/Index page; the bare
+			// /ui/{ws}/{projectKey} route picks the project's default/first log.
+			options.Conventions.AddPageRoute("/Logs/Index", "/ui/{workspaceKey}/{projectKey}/logs/{logName}");
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.
 			options.Conventions.AddPageRoute("/Config/Index", "/ui/{workspaceKey}/{projectKey}/config");
 			options.Conventions.AddPageRoute("/Config/Editor", "/ui/{workspaceKey}/{projectKey}/config/editor/{bindingId:long?}");
@@ -266,6 +273,16 @@ public partial class Program
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			var adminOptions = scope.ServiceProvider.GetRequiredService<IOptions<AdminOptions>>();
 			AdminBootstrapper.EnsureAdminUser(db, adminOptions);
+
+			// The petbox self-log is the one log created automatically — petbox's
+			// own ILogger + Seq self-log write here. User logs are created explicitly.
+			if (new FeatureFlags(configuration).IsEnabled(Feature.Logging))
+			{
+				var logStore = scope.ServiceProvider.GetRequiredService<ILogStore>();
+				if (!logStore.ExistsAsync(LogNames.SystemProject, LogNames.SelfLog).GetAwaiter().GetResult())
+					logStore.CreateAsync(LogNames.SystemProject, LogNames.SelfLog, "PetBox self-log")
+						.GetAwaiter().GetResult();
+			}
 		}
 
 		if (!app.Environment.IsDevelopment())

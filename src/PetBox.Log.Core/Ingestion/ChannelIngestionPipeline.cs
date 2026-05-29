@@ -4,6 +4,7 @@ using LinqToDB.Data;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using PetBox.Core.Data;
 using PetBox.Core.Settings;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Models;
@@ -13,16 +14,17 @@ namespace PetBox.Log.Core.Ingestion;
 
 public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedService, IAsyncDisposable
 {
-	readonly ILogDbFactory _factory;
+	readonly IScopedDbFactory<LogDb> _factory;
 	readonly ITailBroadcaster? _tail;
 	readonly IServiceScopeFactory _scopeFactory;
 	readonly ILogger<ChannelIngestionPipeline> _logger;
+	// Keyed by "{projectKey}/{logName}" — one channel + writer loop per named log.
 	readonly ConcurrentDictionary<string, ProjectChannel> _channels = new(StringComparer.Ordinal);
 	IngestionSettings _settings = new();
 	int _disposed;
 
 	public ChannelIngestionPipeline(
-		ILogDbFactory factory,
+		IScopedDbFactory<LogDb> factory,
 		IServiceScopeFactory scopeFactory,
 		ILogger<ChannelIngestionPipeline> logger,
 		ITailBroadcaster? tail = null)
@@ -33,23 +35,24 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 		_logger = logger;
 	}
 
-	public async ValueTask IngestAsync(string projectKey, IReadOnlyList<LogEntryCandidate> batch, CancellationToken ct)
+	public async ValueTask IngestAsync(string projectKey, string logName, IReadOnlyList<LogEntryCandidate> batch, CancellationToken ct)
 	{
 		if (batch.Count == 0)
 			return;
 
-		using var activity = projectKey == "$system"
+		using var activity = projectKey == LogNames.SystemProject
 			? null
 			: ActivitySources.Ingestion.StartActivity("ingest.enqueue");
 		activity?.SetTag("project", projectKey);
+		activity?.SetTag("log", logName);
 		activity?.SetTag("batch.size", batch.Count);
 
-		var wc = _channels.GetOrAdd(projectKey, StartChannel);
+		var wc = _channels.GetOrAdd($"{projectKey}/{logName}", _ => StartChannel(projectKey, logName));
 		foreach (var candidate in batch)
 			await wc.Writer.WriteAsync(candidate, ct).ConfigureAwait(false);
 	}
 
-	ProjectChannel StartChannel(string projectKey)
+	ProjectChannel StartChannel(string projectKey, string logName)
 	{
 		var channel = Channel.CreateBounded<LogEntryCandidate>(new BoundedChannelOptions(_settings.ChannelCapacity)
 		{
@@ -57,11 +60,11 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 			SingleReader = true,
 			SingleWriter = false,
 		});
-		var loop = Task.Run(() => WriterLoopAsync(projectKey, channel.Reader));
+		var loop = Task.Run(() => WriterLoopAsync(projectKey, logName, channel.Reader));
 		return new ProjectChannel(channel.Writer, loop);
 	}
 
-	async Task WriterLoopAsync(string projectKey, ChannelReader<LogEntryCandidate> reader)
+	async Task WriterLoopAsync(string projectKey, string logName, ChannelReader<LogEntryCandidate> reader)
 	{
 		var batch = new List<LogEntryCandidate>(_settings.MaxBatchSize);
 		while (await reader.WaitToReadAsync().ConfigureAwait(false))
@@ -79,13 +82,13 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 				foreach (var c in batch)
 					records.Add(LogEntryRecord.FromCandidate(c, LogEntryRecord.ComputeTemplateHash(c.MessageTemplate)));
 
-				var logDb = _factory.GetLogDb(projectKey);
+				var logDb = _factory.GetDb(projectKey, logName);
 				await logDb.LogEntries.BulkCopyAsync(records, CancellationToken.None).ConfigureAwait(false);
-				_tail?.Publish(projectKey, records);
+				_tail?.Publish(projectKey, logName, records);
 			}
 			catch (Exception ex)
 			{
-				IngestionLog.AppendBatchFailed(_logger, ex, batch.Count, projectKey);
+				IngestionLog.AppendBatchFailed(_logger, ex, batch.Count, $"{projectKey}/{logName}");
 			}
 		}
 	}

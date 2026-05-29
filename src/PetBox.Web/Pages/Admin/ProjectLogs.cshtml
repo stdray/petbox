@@ -1,0 +1,90 @@
+@page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/logs"
+@model PetBox.Web.Pages.Admin.ProjectLogsModel
+@{
+	ViewData["Title"] = $"{Model.ProjectKey} — Logs";
+	Layout = "_AdminLayout";
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold">@Model.ProjectKey · logs</h1>
+	<span class="badge badge-ghost">@Model.Logs.Count log(s)</span>
+</div>
+
+@if (Model.ProjectNotFound)
+{
+	<p class="text-error font-semibold" data-testid="project-logs-error">Project not found</p>
+	return;
+}
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="project-logs-error-msg">@Model.ErrorMessage</div>
+}
+
+<section class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6" data-testid="logs-list">
+	@if (Model.Logs.Count == 0)
+	{
+		<div class="text-xs opacity-60 italic" data-testid="logs-empty">No logs yet. Create one below.</div>
+	}
+	else
+	{
+		@foreach (var l in Model.Logs)
+		{
+			<div class="card bg-base-200 border border-base-300" data-testid="log-card" data-log-name="@l.Name">
+				<div class="card-body p-4">
+					<div class="flex items-baseline justify-between">
+						<a href="@Routes.ProjectLog(Model.WorkspaceKey, Model.ProjectKey, l.Name)"
+							class="font-mono font-semibold link link-hover" data-testid="log-open">@l.Name</a>
+						@if (Model.IsSelfLog(l))
+						{
+							<span class="badge badge-ghost badge-xs">self</span>
+						}
+					</div>
+					@if (!string.IsNullOrEmpty(l.Description))
+					{
+						<p class="text-sm opacity-80">@l.Description</p>
+					}
+					<div class="card-actions justify-between mt-2">
+						<span class="text-xs opacity-50 font-mono">@l.CreatedAt.ToString("yyyy-MM-dd")</span>
+						@if (!Model.IsSelfLog(l))
+						{
+							<form method="post" asp-page-handler="Delete" asp-route-name="@l.Name"
+								onsubmit="return confirm('Delete log @l.Name? File and all events will be removed.')" style="display:inline">
+								@Html.AntiForgeryToken()
+								<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="log-delete">Delete</button>
+							</form>
+						}
+					</div>
+				</div>
+			</div>
+		}
+	}
+</section>
+
+<form method="post" asp-page-handler="Create" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="log-create-form">
+	@Html.AntiForgeryToken()
+	<div class="card-body p-4">
+		<h3 class="card-title text-base">Create log</h3>
+		<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+			<label class="form-control">
+				<span class="label-text">Name</span>
+				<input type="text" name="name" required minlength="1"
+					pattern="[a-z][a-z0-9_\-]*"
+					class="input input-bordered input-sm font-mono"
+					placeholder="audit"
+					data-testid="log-create-name" />
+				<span class="text-xs opacity-60 mt-1">Lowercase letters, digits, `_` or `-`. Starts with a letter.</span>
+			</label>
+			<label class="form-control sm:col-span-1">
+				<span class="label-text">Description (optional)</span>
+				<input type="text" name="description"
+					class="input input-bordered input-sm"
+					placeholder="audit trail"
+					data-testid="log-create-desc" />
+			</label>
+		</div>
+		<div class="card-actions mt-3">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="log-create-submit">Create</button>
+		</div>
+	</div>
+</form>

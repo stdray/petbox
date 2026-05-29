@@ -44,7 +44,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			});
 	}
 
-	public Task InitializeAsync()
+	public async Task InitializeAsync()
 	{
 		var __testCs = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>(_factory.Services).GetConnectionString("PetBox")!;
 		PetBox.Core.Data.MigrationRunner.Run(__testCs);
@@ -52,7 +52,14 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		{
 			AllowAutoRedirect = false,
 		});
-		return Task.CompletedTask;
+
+		// Logs are explicit now; create the $system/default log these tests ingest into.
+		using var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+			.CreateScope(_factory.Services);
+		var store = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+			.GetRequiredService<PetBox.Log.Core.Data.ILogStore>(scope.ServiceProvider);
+		if (!await store.ExistsAsync("$system", "default"))
+			await store.CreateAsync("$system", "default", null);
 	}
 
 	public async Task DisposeAsync()
@@ -110,15 +117,16 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 	async Task<HttpResponseMessage> PostClefAsync(string svc, string jsonl)
 	{
-		var req = LogRequest("/api/ingest/clef", HttpMethod.Post);
+		// Path-based ingest into $system/default; X-Service-Key tags the emitter.
+		var req = LogRequest("/api/ingest/$system/default/clef", HttpMethod.Post);
 		req.Headers.Add("X-Service-Key", svc);
 		req.Content = new StringContent(jsonl, Encoding.UTF8, "text/plain");
 		return await _client.SendAsync(req);
 	}
 
-	async Task<JsonDocument> QueryAsync(string kql, string projectKey = "$system")
+	async Task<JsonDocument> QueryAsync(string kql, string projectKey = "$system", string logName = "default")
 	{
-		var req = LogRequest($"/api/logs/{projectKey}/query?q={Uri.EscapeDataString(kql)}");
+		var req = LogRequest($"/api/logs/{projectKey}/{logName}/query?q={Uri.EscapeDataString(kql)}");
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var body = await resp.Content.ReadAsStringAsync();
@@ -272,7 +280,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Query_BadKql_Returns400()
 	{
-		var req = LogRequest("/api/logs/$system/query?q=not%20valid%20kql");
+		var req = LogRequest("/api/logs/$system/default/query?q=not%20valid%20kql");
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 	}
@@ -280,7 +288,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Query_WithoutApiKey_Returns401()
 	{
-		using var resp = await _client.GetAsync("/api/logs/$system/query?q=events");
+		using var resp = await _client.GetAsync("/api/logs/$system/default/query?q=events");
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 	}
 
@@ -380,7 +388,8 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
-		var doc = await QueryAsync($"events | where Message == \"{msg}\" | take 1");
+		// Seq self-log lands in the petbox self-log ($system/petbox), not default.
+		var doc = await QueryAsync($"events | where Message == \"{msg}\" | take 1", "$system", "petbox");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
 		var evt = doc.RootElement.GetProperty("events")[0];
 		evt.GetProperty("level").GetString().Should().Be("Error");

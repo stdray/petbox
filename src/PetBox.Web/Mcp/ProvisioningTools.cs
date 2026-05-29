@@ -34,7 +34,7 @@ public static class ProvisioningTools
 		[Description("Optional description.")] string? description = null,
 		CancellationToken ct = default)
 	{
-		AssertScope(http, "admin:provision");
+		AssertScope(http, ApiKeyScopes.AdminProvision);
 		Require(workspaceKey, nameof(workspaceKey));
 		RequireKey(key, nameof(key));
 
@@ -65,7 +65,7 @@ public static class ProvisioningTools
 		[Description("Optional URL for endpoint health checks.")] string? url = null,
 		CancellationToken ct = default)
 	{
-		AssertScope(http, "admin:provision");
+		AssertScope(http, ApiKeyScopes.AdminProvision);
 		Require(projectKey, nameof(projectKey));
 		RequireKey(key, nameof(key));
 
@@ -101,7 +101,7 @@ public static class ProvisioningTools
 		[Description("Optional TTL in seconds. Omit for a non-expiring key.")] long? expiresInSeconds = null,
 		CancellationToken ct = default)
 	{
-		AssertScope(http, "admin:provision");
+		AssertScope(http, ApiKeyScopes.AdminProvision);
 		Require(projectKey, nameof(projectKey));
 
 		if (!await db.Projects.AnyAsync((Project p) => p.Key == projectKey, ct))
@@ -142,7 +142,7 @@ public static class ProvisioningTools
 		[Description("Comma-separated tags. Must include 'ws:{workspaceKey}'.")] string tags,
 		CancellationToken ct = default)
 	{
-		AssertScope(http, "admin:provision");
+		AssertScope(http, ApiKeyScopes.AdminProvision);
 		Require(workspaceKey, nameof(workspaceKey));
 		Require(path, nameof(path));
 

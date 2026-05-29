@@ -96,10 +96,18 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 	{
 		await EnsureProject();
 
-		// logs:ingest can POST to /ingest/clef (ApiKey policy)
+		// Managing logs needs logs:admin; ingesting needs logs:ingest.
+		var adminKey = await CreateApiKey("logs:admin");
+		var createLog = await _page!.APIRequest.PostAsync("/api/logs/kpvotes/logs", new()
+		{
+			Headers = new Dictionary<string, string> { ["X-Api-Key"] = adminKey },
+			DataObject = new { name = "default" },
+		});
+		createLog.Status.Should().BeOneOf(201, 409);
+
 		var key = await CreateApiKey("logs:ingest");
 		var payload = """{"@t":"2025-01-01T00:00:00Z","@l":"Information","@m":"test"}""";
-		var resp = await _page!.APIRequest.PostAsync("/api/ingest/clef", new()
+		var resp = await _page!.APIRequest.PostAsync("/api/ingest/kpvotes/default/clef", new()
 		{
 			Headers = new Dictionary<string, string> { ["X-Api-Key"] = key, ["X-Service-Key"] = "kpvotes-net" },
 			Data = payload,

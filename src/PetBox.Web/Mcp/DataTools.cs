@@ -5,6 +5,7 @@ using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
 using ModelContextProtocol.Server;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Data;
@@ -35,7 +36,7 @@ public static class DataTools
 		CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
-		AssertScope(http, "data:read");
+		AssertScope(http, ApiKeyScopes.DataRead);
 
 		var rows = await db.DataDbs
 			.Where(d => d.ProjectKey == projectKey)
@@ -58,7 +59,7 @@ public static class DataTools
 		CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
-		AssertScope(http, "data:schema");
+		AssertScope(http, ApiKeyScopes.DataSchema);
 
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 
@@ -93,7 +94,7 @@ public static class DataTools
 		CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
-		AssertScope(http, "data:schema");
+		AssertScope(http, ApiKeyScopes.DataSchema);
 
 		var deleted = await db.DataDbs.Where(d => d.ProjectKey == projectKey && d.Name == name).DeleteAsync(ct);
 		if (deleted == 0) throw new InvalidOperationException("DataDb not found");
@@ -112,7 +113,7 @@ public static class DataTools
 		CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
-		AssertScope(http, "data:read");
+		AssertScope(http, ApiKeyScopes.DataRead);
 
 		var row = await db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
@@ -164,7 +165,7 @@ public static class DataTools
 		CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
-		AssertScope(http, "data:schema");
+		AssertScope(http, ApiKeyScopes.DataSchema);
 
 		var row = await db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
@@ -188,7 +189,7 @@ public static class DataTools
 		CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
-		AssertScope(http, "data:read");
+		AssertScope(http, ApiKeyScopes.DataRead);
 
 		var row = await db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
@@ -227,7 +228,7 @@ public static class DataTools
 		CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
-		AssertScope(http, "data:write");
+		AssertScope(http, ApiKeyScopes.DataWrite);
 		AssertNotDeniedPragma(sql);
 
 		var row = await db.DataDbs.FirstOrDefaultAsync(

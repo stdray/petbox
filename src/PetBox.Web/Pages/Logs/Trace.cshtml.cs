@@ -10,17 +10,20 @@ namespace PetBox.Web.Pages.Logs;
 [Authorize]
 public sealed class TraceModel : PageModel
 {
-	readonly ILogDbFactory _logFactory;
+	readonly ILogStore _logStore;
 
-	public TraceModel(ILogDbFactory logFactory) => _logFactory = logFactory;
+	public TraceModel(ILogStore logStore) => _logStore = logStore;
 
 	[BindProperty(SupportsGet = true)]
 	public string? ProjectKey { get; set; }
 
+	[BindProperty(SupportsGet = true, Name = "log")]
+	public string? LogName { get; set; }
+
 	[BindProperty(SupportsGet = true)]
 	public string TraceId { get; set; } = string.Empty;
 
-	public string EffectiveProjectKey { get; private set; } = "$system";
+	public string EffectiveProjectKey { get; private set; } = "";
 	public IReadOnlyList<WaterfallRow> Rows { get; private set; } = [];
 	public bool TraceNotFound { get; private set; }
 	public DateTime StartTime { get; private set; }
@@ -34,8 +37,16 @@ public sealed class TraceModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		EffectiveProjectKey = string.IsNullOrEmpty(ProjectKey) ? "$system" : ProjectKey;
-		var logDb = _logFactory.GetLogDb(EffectiveProjectKey);
+		EffectiveProjectKey = ProjectKey ?? "";
+		if (string.IsNullOrEmpty(EffectiveProjectKey)) { TraceNotFound = true; return; }
+
+		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
+		var selectedLog = !string.IsNullOrWhiteSpace(LogName) && logs.Contains(LogName, StringComparer.Ordinal)
+			? LogName
+			: logs.Contains(LogNames.Default, StringComparer.Ordinal) ? LogNames.Default : logs.FirstOrDefault();
+		if (selectedLog is null) { TraceNotFound = true; return; }
+
+		var logDb = _logStore.GetContext(EffectiveProjectKey, selectedLog);
 
 		var spans = await logDb.Spans
 			.Where(s => s.TraceId == TraceId)

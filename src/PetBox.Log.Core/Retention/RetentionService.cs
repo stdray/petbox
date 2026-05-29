@@ -42,33 +42,36 @@ public sealed partial class RetentionService(
 	{
 		using var scope = services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
-		var logFactory = scope.ServiceProvider.GetRequiredService<ILogDbFactory>();
+		var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
 		var resolver = scope.ServiceProvider.GetRequiredService<ISettingsResolver>();
 
 		var systemDefaults = await resolver.GetAsync<LogSettings>(Scope.System, "$", ct).ConfigureAwait(false);
 		var nextDelay = TimeSpan.FromSeconds(Math.Max(60, systemDefaults.RunIntervalSeconds));
 
-		var projects = await db.Projects.ToListAsync(ct);
+		// Retention runs per named log. Settings cascade at project scope; the
+		// self-log (in the system project) gets the system retention window.
+		var logs = await db.Logs.ToListAsync(ct);
 
-		foreach (var project in projects)
+		foreach (var log in logs)
 		{
-			var settings = await resolver.GetAsync<LogSettings>(Scope.Project, project.Key, ct).ConfigureAwait(false);
-			var retainDays = project.Key == "$system" ? settings.SystemRetainDays : settings.RetentionDays;
+			var logRef = $"{log.ProjectKey}/{log.Name}";
+			var settings = await resolver.GetAsync<LogSettings>(Scope.Project, log.ProjectKey, ct).ConfigureAwait(false);
+			var retainDays = log.ProjectKey == LogNames.SystemProject ? settings.SystemRetainDays : settings.RetentionDays;
 
 			var cutoff = now.AddDays(-retainDays);
 			var cutoffMs = new DateTimeOffset(cutoff, TimeSpan.Zero).ToUnixTimeMilliseconds();
 			try
 			{
-				var logDb = logFactory.GetLogDb(project.Key);
+				var logDb = store.GetContext(log.ProjectKey, log.Name);
 				var deleted = await logDb.LogEntries
 					.Where(e => e.TimestampMs < cutoffMs)
 					.DeleteAsync(token: ct);
 				if (deleted > 0)
-					LogSwept(logger, project.Key, deleted, cutoff);
+					LogSwept(logger, logRef, deleted, cutoff);
 			}
 			catch (Exception ex) when (ex is not OperationCanceledException)
 			{
-				LogProjectFailed(logger, ex, project.Key);
+				LogProjectFailed(logger, ex, logRef);
 			}
 		}
 

@@ -9,16 +9,30 @@ public sealed record ApiKeyScope(string Value, string Title, string Description,
 
 public static class ApiKeyScopes
 {
+	// Canonical scope identifiers — the single source of truth. Reference these
+	// constants everywhere (policies, AssertScope/HasScope, catalog) instead of
+	// repeating colon-separated string literals.
+	public const string ConfigRead = "config:read";
+	public const string ConfigWrite = "config:write";
+	public const string LogsIngest = "logs:ingest";
+	public const string LogsQuery = "logs:query";
+	public const string LogsAdmin = "logs:admin";
+	public const string DataRead = "data:read";
+	public const string DataWrite = "data:write";
+	public const string DataSchema = "data:schema";
+	public const string AdminProvision = "admin:provision";
+
 	public static readonly IReadOnlyList<ApiKeyScope> All =
 	[
-		new("config:read",  "Read shared config",     "GET /v1/conf (resolved config bundle).",                                       "Config"),
-		new("config:write", "Write shared config",    "POST/PATCH bindings; create new bindings; edit secrets.",                     "Config"),
-		new("logs:ingest",  "Ingest log events",      "POST /api/ingest/clef (CLEF JSON lines). Used by pets to ship log lines.",   "Logs"),
-		new("logs:query",   "Query logs (KQL)",       "KQL search via /api/logs/{p}/query and the MCP `log.query` tool.",           "Logs"),
-		new("data:read",    "Read DataDbs",           "List DataDbs, SELECT via /api/data/{p}/{db}/query, describe schemas.",       "Data"),
-		new("data:write",   "Write DataDb rows",      "INSERT/UPDATE/DELETE via /api/data/{p}/{db}/exec.",                          "Data"),
-		new("data:schema",  "Schema apply / lifecycle","CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs.",          "Data"),
-		new("admin:provision", "Provision projects & keys", "Agent onboarding: create projects/services, mint API keys, set config bindings via MCP. Issue only on short-lived agent keys.", "Admin"),
+		new(ConfigRead,  "Read shared config",     "GET /v1/conf (resolved config bundle).",                                       "Config"),
+		new(ConfigWrite, "Write shared config",    "POST/PATCH bindings; create new bindings; edit secrets.",                     "Config"),
+		new(LogsIngest,  "Ingest log events",      "POST /api/ingest/{p}/{log}/clef (CLEF JSON lines). Used by pets to ship log lines.", "Logs"),
+		new(LogsQuery,   "Query logs (KQL)",       "KQL search via /api/logs/{p}/{log}/query and the MCP `log.query` tool; list logs.", "Logs"),
+		new(LogsAdmin,   "Manage logs",            "Create and delete named logs via /api/logs/{p}/logs.",                        "Logs"),
+		new(DataRead,    "Read DataDbs",           "List DataDbs, SELECT via /api/data/{p}/{db}/query, describe schemas.",       "Data"),
+		new(DataWrite,   "Write DataDb rows",      "INSERT/UPDATE/DELETE via /api/data/{p}/{db}/exec.",                          "Data"),
+		new(DataSchema,  "Schema apply / lifecycle","CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs.",          "Data"),
+		new(AdminProvision, "Provision projects & keys", "Agent onboarding: create projects/services, mint API keys, set config bindings via MCP. Issue only on short-lived agent keys.", "Admin"),
 	];
 
 	static readonly HashSet<string> Allowed =

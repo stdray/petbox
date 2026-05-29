@@ -127,6 +127,14 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		await EnsureServices();
 		await EnsureApiKey();
 
+		// Logs are explicit now — create the default log before ingesting into it.
+		var createLog = await _page!.APIRequest.PostAsync($"/api/logs/{Pet}/logs", new()
+		{
+			Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! },
+			DataObject = new { name = "default" },
+		});
+		createLog.Status.Should().BeOneOf(201, 409);
+
 		var clefEvents = new (string Level, string Message, string Svc)[]
 		{
 			("Information", "Starting scrape", "kpvotes-net"),
@@ -140,7 +148,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 			var ts = DateTime.UtcNow.AddSeconds(-clefEvents.Length + i).ToString("O");
 			var payload = $"{{\"@t\":\"{ts}\",\"@l\":\"{level}\",\"@m\":\"{msg}\"}}";
 
-			var resp = await _page!.APIRequest.PostAsync("/api/ingest/clef", new()
+			var resp = await _page!.APIRequest.PostAsync($"/api/ingest/{Pet}/default/clef", new()
 			{
 				Headers = new Dictionary<string, string>
 				{
@@ -234,6 +242,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 
 		await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-key-{System.Guid.NewGuid():N}");
 		await _page.GetByTestId("project-key-scope-logs:ingest").CheckAsync();
+		await _page.GetByTestId("project-key-scope-logs:admin").CheckAsync();
 		await _page.GetByTestId("project-key-create-submit").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 

@@ -18,12 +18,12 @@ namespace PetBox.Web.Pages;
 public sealed class ShareModel : PageModel
 {
 	readonly PetBoxDb _db;
-	readonly ILogDbFactory _logFactory;
+	readonly ILogStore _logStore;
 
-	public ShareModel(PetBoxDb db, ILogDbFactory logFactory)
+	public ShareModel(PetBoxDb db, ILogStore logStore)
 	{
 		_db = db;
-		_logFactory = logFactory;
+		_logStore = logStore;
 	}
 
 	[BindProperty(SupportsGet = true)]
@@ -61,7 +61,7 @@ public sealed class ShareModel : PageModel
 			kv => kv.Key, kv => kv.Value, StringComparer.Ordinal));
 		var masker = new ValueMasker(Convert.FromBase64String(share.SaltBase64));
 
-		var logDb = _logFactory.GetLogDb(share.ProjectKey);
+		var logDb = _logStore.GetContext(share.ProjectKey, share.LogName);
 		try
 		{
 			var records = await KqlTransformer.Apply(logDb.LogEntries, code).ToListAsync(ct);

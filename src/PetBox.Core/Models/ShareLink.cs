@@ -10,6 +10,8 @@ public sealed record ShareLink
 	[Column, NotNull]
 	public string ProjectKey { get; init; } = string.Empty;
 	[Column, NotNull]
+	public string LogName { get; init; } = "default";
+	[Column, NotNull]
 	public string Kql { get; init; } = string.Empty;
 	[Column]
 	public DateTime CreatedAt { get; init; }

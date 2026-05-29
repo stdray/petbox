@@ -25,6 +25,7 @@ public sealed class PetBoxDb : DataConnection
 	public ITable<ShareLink> ShareLinks => this.GetTable<ShareLink>();
 	public ITable<Setting> Settings => this.GetTable<Setting>();
 	public ITable<DataDb> DataDbs => this.GetTable<DataDb>();
+	public ITable<LogMeta> Logs => this.GetTable<LogMeta>();
 
 	public static DataOptions<PetBoxDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString));
@@ -111,6 +112,7 @@ public sealed class PetBoxDb : DataConnection
 			.HasPrimaryKey(s => s.Id)
 			.Property(s => s.Id).HasLength(100).IsNullable(false)
 			.Property(s => s.ProjectKey).HasLength(100).IsNullable(false)
+			.Property(s => s.LogName).HasLength(100).IsNullable(false)
 			.Property(s => s.Kql).HasDataType(DataType.Text).IsNullable(false)
 			.Property(s => s.CreatedAt).HasDataType(DataType.DateTime).IsNullable(false)
 			.Property(s => s.ExpiresAt).HasDataType(DataType.DateTime).IsNullable(false)

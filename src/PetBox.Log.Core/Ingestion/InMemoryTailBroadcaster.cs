@@ -14,8 +14,10 @@ public sealed class InMemoryTailBroadcaster : ITailBroadcaster
 
 	public async IAsyncEnumerable<LogEntryRecord> Subscribe(
 		string projectKey,
+		string logName,
 		[EnumeratorCancellation] CancellationToken ct)
 	{
+		var key = $"{projectKey}/{logName}";
 		var channel = Channel.CreateBounded<LogEntryRecord>(new BoundedChannelOptions(WindowSize)
 		{
 			FullMode = BoundedChannelFullMode.DropOldest,
@@ -24,7 +26,7 @@ public sealed class InMemoryTailBroadcaster : ITailBroadcaster
 		});
 
 		_subscribers.AddOrUpdate(
-			projectKey,
+			key,
 			_ => [channel.Writer],
 			(_, list) => list.Add(channel.Writer));
 
@@ -36,17 +38,17 @@ public sealed class InMemoryTailBroadcaster : ITailBroadcaster
 		finally
 		{
 			_subscribers.AddOrUpdate(
-				projectKey,
+				key,
 				_ => [],
 				(_, list) => list.Remove(channel.Writer));
 			channel.Writer.TryComplete();
 		}
 	}
 
-	public void Publish(string projectKey, IReadOnlyList<LogEntryRecord> batch)
+	public void Publish(string projectKey, string logName, IReadOnlyList<LogEntryRecord> batch)
 	{
 		if (batch.Count == 0) return;
-		if (!_subscribers.TryGetValue(projectKey, out var writers) || writers.Count == 0)
+		if (!_subscribers.TryGetValue($"{projectKey}/{logName}", out var writers) || writers.Count == 0)
 			return;
 
 		foreach (var writer in writers)

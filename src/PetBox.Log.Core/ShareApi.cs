@@ -22,7 +22,8 @@ public sealed record ShareCreateRequest(
 	string Kql,
 	int TtlMinutes,
 	string[]? Columns,
-	Dictionary<string, MaskMode>? Modes);
+	Dictionary<string, MaskMode>? Modes,
+	string? LogName = null);
 
 public static class ShareApi
 {
@@ -54,6 +55,7 @@ public static class ShareApi
 		{
 			Id = id,
 			ProjectKey = req.ProjectKey,
+			LogName = string.IsNullOrWhiteSpace(req.LogName) ? LogNames.Default : req.LogName,
 			Kql = req.Kql,
 			CreatedAt = DateTime.UtcNow,
 			ExpiresAt = DateTime.UtcNow.AddMinutes(ttl),
@@ -70,7 +72,7 @@ public static class ShareApi
 	static async Task<IResult> GetTsvAsync(
 		HttpContext ctx,
 		PetBoxDb db,
-		ILogDbFactory logFactory,
+		ILogStore store,
 		string token,
 		CancellationToken ct)
 	{
@@ -88,7 +90,7 @@ public static class ShareApi
 			kv => kv.Key, kv => kv.Value, StringComparer.Ordinal));
 		var masker = new ValueMasker(Convert.FromBase64String(share.SaltBase64));
 
-		var logDb = logFactory.GetLogDb(share.ProjectKey);
+		var logDb = store.GetContext(share.ProjectKey, share.LogName);
 		var records = await KqlTransformer.Apply(logDb.LogEntries, code).ToListAsync(ct);
 		var entries = records.Select(r => r.ToEntry()).ToList();
 

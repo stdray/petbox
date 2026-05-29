@@ -13,18 +13,22 @@ namespace PetBox.Web.Pages.Logs;
 public sealed class TracesModel : PageModel
 {
 	readonly PetBoxDb _db;
-	readonly ILogDbFactory _logFactory;
+	readonly ILogStore _logStore;
 
-	public TracesModel(PetBoxDb db, ILogDbFactory logFactory)
+	public TracesModel(PetBoxDb db, ILogStore logStore)
 	{
 		_db = db;
-		_logFactory = logFactory;
+		_logStore = logStore;
 	}
 
 	[BindProperty(SupportsGet = true)]
 	public string? ProjectKey { get; set; }
 
-	public string EffectiveProjectKey { get; private set; } = "$system";
+	[BindProperty(SupportsGet = true, Name = "log")]
+	public string? LogName { get; set; }
+
+	public string EffectiveProjectKey { get; private set; } = "";
+	public string? SelectedLog { get; private set; }
 	public string? ProjectName { get; private set; }
 	public IReadOnlyList<TraceSummary> Traces { get; private set; } = [];
 	public bool SchemaMissing { get; private set; }
@@ -33,11 +37,19 @@ public sealed class TracesModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		EffectiveProjectKey = string.IsNullOrEmpty(ProjectKey) ? "$system" : ProjectKey;
+		EffectiveProjectKey = ProjectKey ?? "";
+		if (string.IsNullOrEmpty(EffectiveProjectKey)) { SchemaMissing = true; return; }
+
 		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == EffectiveProjectKey, ct);
 		ProjectName = project?.Name;
 
-		var logDb = _logFactory.GetLogDb(EffectiveProjectKey);
+		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
+		SelectedLog = !string.IsNullOrWhiteSpace(LogName) && logs.Contains(LogName, StringComparer.Ordinal)
+			? LogName
+			: logs.Contains(LogNames.Default, StringComparer.Ordinal) ? LogNames.Default : logs.FirstOrDefault();
+		if (SelectedLog is null) { SchemaMissing = true; return; }
+
+		var logDb = _logStore.GetContext(EffectiveProjectKey, SelectedLog);
 		try
 		{
 			var grouped = await logDb.Spans

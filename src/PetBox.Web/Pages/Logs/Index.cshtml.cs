@@ -15,12 +15,12 @@ namespace PetBox.Web.Pages.Logs;
 [Authorize]
 public sealed class IndexModel : PageModel
 {
-	readonly ILogDbFactory _logFactory;
+	readonly ILogStore _logStore;
 	readonly PetBoxDb _db;
 
-	public IndexModel(ILogDbFactory logFactory, PetBoxDb db)
+	public IndexModel(ILogStore logStore, PetBoxDb db)
 	{
-		_logFactory = logFactory;
+		_logStore = logStore;
 		_db = db;
 	}
 
@@ -33,17 +33,20 @@ public sealed class IndexModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "saved")]
 	public string? SavedName { get; set; }
 
-	[BindProperty(SupportsGet = true, Name = "project")]
-	public string? ProjectFilter { get; set; }
+	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
+	public string? WorkspaceKey { get; set; }
 
-	// Route param from /ui/logs/{projectKey?}
 	[BindProperty(SupportsGet = true, Name = "projectKey")]
 	public string? ProjectKeyRoute { get; set; }
+
+	[BindProperty(SupportsGet = true, Name = "logName")]
+	public string? LogNameRoute { get; set; }
 
 	public string UserKql { get; private set; } = "";
 	public string? KqlError { get; private set; }
 	public bool SchemaMissing { get; private set; }
 	public bool IsShapeChanged { get; private set; }
+	public bool NoLogs { get; private set; }
 
 	public List<LogEntryViewModel> Events { get; } = [];
 	public List<object?[]> KqlRows { get; } = [];
@@ -54,6 +57,8 @@ public sealed class IndexModel : PageModel
 	public string? ActiveSavedName { get; private set; }
 	public string? ProjectKey { get; private set; }
 	public string? ProjectName { get; private set; }
+	public List<string> AvailableLogs { get; private set; } = [];
+	public string? SelectedLog { get; private set; }
 
 	[TempData]
 	public string? FlashError { get; set; }
@@ -62,34 +67,37 @@ public sealed class IndexModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
-		// Load project info
-		ProjectFilter ??= ProjectKeyRoute ?? "$system";
+		var projectFilter = ProjectKeyRoute;
+		if (string.IsNullOrWhiteSpace(projectFilter))
+			return Page();
 
-		if (!string.IsNullOrWhiteSpace(ProjectFilter))
+		var project = await _db.Projects
+			.FirstOrDefaultAsync((Project p) => p.Key == projectFilter, ct);
+		if (project is null)
+			return Page();
+
+		ProjectKey = project.Key;
+		ProjectName = project.Name;
+
+		// Named logs available in this project; pick the requested one, else the
+		// conventional `default`, else the first alphabetically.
+		AvailableLogs = (await _logStore.ListAsync(ProjectKey, ct)).Select(l => l.Name).ToList();
+		SelectedLog = ResolveSelectedLog();
+		if (SelectedLog is null)
 		{
-			var project = await _db.Projects
-				.FirstOrDefaultAsync((Project p) => p.Key == ProjectFilter, ct);
-			if (project is not null)
-			{
-				ProjectKey = project.Key;
-				ProjectName = project.Name;
-			}
+			NoLogs = true;
+			return Page();
 		}
 
-		// Load saved queries
-		if (ProjectKey is not null)
-		{
-			var pk = ProjectKey;
-			SavedQueries = await _db.SavedQueries
-				.Where(q => q.ProjectKey == pk)
-				.OrderBy(q => q.Name)
-				.ToListAsync(ct);
-		}
+		// Saved queries are project-scoped (shared across the project's logs).
+		var pk = ProjectKey;
+		SavedQueries = await _db.SavedQueries
+			.Where(q => q.ProjectKey == pk)
+			.OrderBy(q => q.Name)
+			.ToListAsync(ct);
 
-		// Activate saved query
-		if (!string.IsNullOrWhiteSpace(SavedName) && ProjectKey is not null)
+		if (!string.IsNullOrWhiteSpace(SavedName))
 		{
-			var pk = ProjectKey;
 			var saved = await _db.SavedQueries
 				.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == pk && q.Name == SavedName, ct);
 			if (saved is not null)
@@ -138,7 +146,7 @@ public sealed class IndexModel : PageModel
 			return Page();
 		}
 
-		var logDb = _logFactory.GetLogDb(ProjectKey ?? "$system");
+		var logDb = _logStore.GetContext(ProjectKey, SelectedLog);
 
 		try
 		{
@@ -186,16 +194,27 @@ public sealed class IndexModel : PageModel
 		return Page();
 	}
 
+	string? ResolveSelectedLog()
+	{
+		if (AvailableLogs.Count == 0)
+			return null;
+		if (!string.IsNullOrWhiteSpace(LogNameRoute) && AvailableLogs.Contains(LogNameRoute, StringComparer.Ordinal))
+			return LogNameRoute;
+		if (AvailableLogs.Contains(LogNames.Default, StringComparer.Ordinal))
+			return LogNames.Default;
+		return AvailableLogs[0];
+	}
+
 	public async Task<IActionResult> OnPostSaveAsync(
 		[FromForm(Name = "name")] string? name,
 		[FromForm(Name = "kql")] string? kql,
 		CancellationToken ct)
 	{
-		if (string.IsNullOrWhiteSpace(ProjectFilter) || string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(kql))
-			return RedirectToPage(new { project = ProjectFilter });
+		if (string.IsNullOrWhiteSpace(ProjectKeyRoute) || string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(kql))
+			return RedirectToProject();
 
 		var existing = await _db.SavedQueries
-			.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == ProjectFilter && q.Name == name.Trim(), ct);
+			.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == ProjectKeyRoute && q.Name == name.Trim(), ct);
 		if (existing is not null)
 		{
 #pragma warning disable CA2016
@@ -209,14 +228,14 @@ public sealed class IndexModel : PageModel
 			{
 				Name = name.Trim(),
 				Kql = kql,
-				ProjectKey = ProjectFilter,
+				ProjectKey = ProjectKeyRoute,
 				CreatedAt = DateTime.UtcNow,
 				UpdatedAt = DateTime.UtcNow,
 			});
 #pragma warning restore CA2016
 		}
 
-		return RedirectToPage(new { project = ProjectFilter, saved = name.Trim() });
+		return RedirectToProject(name.Trim());
 	}
 
 	public async Task<IActionResult> OnPostDeleteAsync(
@@ -229,8 +248,17 @@ public sealed class IndexModel : PageModel
 			.DeleteAsync();
 #pragma warning restore CA2016
 
-		return RedirectToPage(new { project = ProjectFilter });
+		return RedirectToProject();
 	}
+
+	RedirectToPageResult RedirectToProject(string? saved = null) =>
+		RedirectToPage("/Logs/Index", new
+		{
+			workspaceKey = WorkspaceKey,
+			projectKey = ProjectKeyRoute,
+			logName = LogNameRoute,
+			saved,
+		});
 
 	string AppendPageLimits(string userKql)
 	{

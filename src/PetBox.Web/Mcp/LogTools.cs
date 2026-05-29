@@ -5,6 +5,7 @@ using Kusto.Language;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
+using PetBox.Core.Auth;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Query;
 
@@ -17,18 +18,21 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class LogTools
 {
-	[McpServerTool(Name = "log.query", Title = "Run KQL query against a project's logs", ReadOnly = true)]
-	[Description("Executes a KQL (Kusto Query Language) query against the project's LogDb. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Requires logs:query scope.")]
+	[McpServerTool(Name = "log.query", Title = "Run KQL query against a named log", ReadOnly = true)]
+	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Requires logs:query scope.")]
 	public static async Task<object> QueryAsync(
 		IHttpContextAccessor http,
-		ILogDbFactory logFactory,
+		ILogStore store,
 		[Description("Project key — must match the calling ApiKey's project claim.")] string projectKey,
+		[Description("Log name within the project (e.g. 'default', 'audit').")] string logName,
 		[Description("KQL query, e.g. 'events | where Level == 4 | take 50' or 'events | summarize count() by ServiceKey'.")] string kql,
 		CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
-		AssertScope(http, "logs:query");
+		AssertScope(http, ApiKeyScopes.LogsQuery);
 		if (string.IsNullOrWhiteSpace(kql)) throw new ArgumentException("kql is required");
+		if (!await store.ExistsAsync(projectKey, logName, ct))
+			throw new InvalidOperationException($"log '{logName}' not found in project '{projectKey}'");
 
 		KustoCode code;
 		try
@@ -46,7 +50,7 @@ public static class LogTools
 			throw new ArgumentException(ex.Message);
 		}
 
-		var logDb = logFactory.GetLogDb(projectKey);
+		var logDb = store.GetContext(projectKey, logName);
 
 		try
 		{

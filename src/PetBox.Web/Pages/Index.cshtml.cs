@@ -30,10 +30,9 @@ public sealed class IndexModel : PageModel
 			var ui = await _settings.GetAsync<UiSettings>(Scope.User, userIdRaw!);
 			return ui.DefaultHome switch
 			{
-				DefaultHome.AllLogs => Redirect(Routes.WorkspaceLogs(ws)),
-				// LastProject support pends MembershipSettings (next migration);
-				// fall back to Status until then.
-				DefaultHome.LastProject => Redirect(Routes.Workspace(ws)),
+				// "Logs (all)" was removed (no cross-project merge); AllLogs now
+				// resolves to the workspace status page like the other options.
+				// LastProject support pends MembershipSettings (next migration).
 				_ => Redirect(Routes.Workspace(ws)),
 			};
 		}

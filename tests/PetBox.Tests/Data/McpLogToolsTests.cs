@@ -56,9 +56,11 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 				});
 				b.ConfigureServices(svc =>
 				{
-					var logFactory = svc.SingleOrDefault(d => d.ServiceType == typeof(ILogDbFactory));
+					var logFactory = svc.SingleOrDefault(d => d.ServiceType == typeof(IScopedDbFactory<LogDb>));
 					if (logFactory is not null) svc.Remove(logFactory);
-					svc.AddSingleton<ILogDbFactory>(_ => new LogDbFactory(Path.Combine(_baseDir, "logs")));
+					svc.AddSingleton<IScopedDbFactory<LogDb>>(_ => new ScopedDbFactory<LogDb>(
+						Path.Combine(_baseDir, "logs"), PetBox.Core.Settings.Scope.Project,
+						cs => new LogDb(LogDb.CreateOptions(cs)), LogSchema.Ensure));
 				});
 			});
 	}
@@ -83,6 +85,9 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 			await db.InsertAsync(new Project { Key = TestProjectKey, WorkspaceKey = "test", Name = "KpVotes" });
 			await db.InsertAsync(new Service { Key = TestServiceKey, ProjectKey = TestProjectKey, HealthModel = HealthModel.Endpoint, Health = ServiceHealth.Unknown });
 			await db.InsertAsync(new ApiKey { Key = TestApiKey, ProjectKey = TestProjectKey, Scopes = "logs:query,logs:ingest", CreatedAt = DateTime.UtcNow });
+
+			var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
+			await store.CreateAsync(TestProjectKey, LogNames.Default, null);
 		}
 
 		// Seed two log entries so log.query has something to return.
@@ -110,7 +115,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 					Properties = "{}",
 				},
 			};
-			await pipeline.IngestAsync(TestProjectKey, records, default);
+			await pipeline.IngestAsync(TestProjectKey, LogNames.Default, records, default);
 			// Give the channel pipeline a moment to drain its writer loop.
 			await Task.Delay(500);
 		}
@@ -148,6 +153,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,
+			["logName"] = LogNames.Default,
 			["kql"] = "events",
 		});
 
@@ -165,6 +171,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,
+			["logName"] = LogNames.Default,
 			["kql"] = "events | summarize count() by Level",
 		});
 
@@ -180,6 +187,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = "some-other-project",
+			["logName"] = LogNames.Default,
 			["kql"] = "events",
 		});
 		result.IsError.Should().Be(true);
@@ -201,6 +209,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,
+			["logName"] = LogNames.Default,
 			["kql"] = "events",
 		});
 		result.IsError.Should().Be(true);

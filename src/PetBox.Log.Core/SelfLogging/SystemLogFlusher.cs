@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Hosting;
+using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Ingestion;
 using PetBox.Log.Core.Models;
 
@@ -41,7 +42,7 @@ public sealed class SystemLogFlusher : BackgroundService
 
 			try
 			{
-				await _pipeline.IngestAsync("$system", batch, CancellationToken.None).ConfigureAwait(false);
+				await _pipeline.IngestAsync(LogNames.SystemProject, LogNames.SelfLog, batch, CancellationToken.None).ConfigureAwait(false);
 			}
 			catch (Exception ex)
 			{

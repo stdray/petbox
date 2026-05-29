@@ -4,6 +4,49 @@ Newest decisions on top. Each entry: short title, date, context, decision, conse
 
 ---
 
+## 2026-05-29 — Логи стали именованными сущностями per-project + обобщённая scope-фабрика (Phase 1)
+
+**Context.** Был один лог на проект (`logs/{projectKey}.db`), создавался неявно при первой записи; роутинг только по `X-Service-Key → Service → ProjectKey`; self-логи petbox и неизвестные сервисы сваливались в псевдо-проект `$system`; workspace-страница «Logs (all)» читала этот агрегат. Пользователь захотел, чтобы логи создавались пользователями (UI + агент) как именованные сущности — по образцу `DataDb` (`db/{projectKey}/{dbName}.db` + таблица `DataDbs` + CRUD). Рамка: «нет принципиальной разницы между созданием БД и созданием лога».
+
+**Decision.**
+- Обобщил `LogDbFactory`/`ConfigDbFactory` в `IScopedDbFactory<TContext>` (`PetBox.Core/Data`): scope-ключ (+опц. name) → кэшируемый lazy-schema linq2db-контекст. Путь: `{moduleDir}/{scopeKey}.db` или `{moduleDir}/{scopeKey}/{name}.db`. Переиспользует enum `Scope`. Отличия от наброска в записи ниже: метод назван `GetDb` (CA1716 запрещает `Get`), scope привязан в конструкторе (`ScopedDbFactory<LogDb>("logs", Scope.Project, …)`), а не передаётся на каждый вызов. Общий `ScopedDbFiles` (path/delete/list) шарится с `DataDbFactory`. `DataDbFactory` остаётся исключением (connection-string, user-owned schema).
+- Логи теперь именованные per-project: `logs/{projectKey}/{logName}.db`, метаданные в таблице `Logs` (миграция M016, зеркало `DataDbs`), фасад `ILogStore` (GetContext/Create/Delete/List/Exists). Без auto-vivify: ingestion в несуществующий лог → ошибка (explicit over implicit).
+- Ingestion path-based: `/api/ingest/{projectKey}/{logName}/clef`, `/v1/logs/{projectKey}/{logName}`, `/v1/traces/{projectKey}/{logName}`; legacy без logName резолвит проект по `X-Service-Key` и пишет в лог `default`. Pipeline/broadcaster ключуются по `{projectKey}/{logName}`. Query/live-tail/share — per-log; REST lifecycle `/api/logs/{projectKey}/logs` (create/list/delete).
+- Системный лог: авто-создаётся только petbox self-log `($system, petbox)` на старте; SystemLogFlusher + seq self-log пишут туда. Проектные логи создаются явно.
+- «Logs (all)» удалён (нет дешёвого cross-project merge): убраны nav-пункт, роуты `/ui/{ws}/logs|traces`, `Routes.WorkspaceLogs/Traces`. Viewer стал per-log (`/ui/{ws}/{projectKey}/logs/{logName}` + селектор), добавлены admin-страницы создания/удаления логов. Retention и новый orphan-cleanup идут по строкам `Logs`.
+
+**Consequences.**
+- Миграции M016 (Logs), M017 (ShareLinks.LogName). `ILogDbFactory`/`LogDbFactory` удалены — все вызовы на `ILogStore`/`IScopedDbFactory<LogDb>`.
+- Phase 1 проверена: 315/315 unit/integration зелёные, TS typecheck зелёный, E2E обновлены под новую модель.
+- Phase 2 (унификация MCP в generic `entity.*` CRUD) — отдельным заходом; требует переписать `McpDataToolsTests` + `ProvisioningToolsTests` под новые имена.
+- `$system` как system workspace/project (admin/auth/config) НЕ затронут — менялись только его log-routing использования.
+
+---
+
+## 2026-05-29 — Tasks + Memory пересмотрены под MCP-only (критика частично снята, перед стройкой — пилот)
+
+**Context.** Модуль Tasks + Agent Memory был отложен 2026-05-27 (запись ниже) с вердиктом «в честном — не делать вообще». Главный провал — синхронизация серверного store ↔ локального `doc/plan.md`. С тех пор три новых вводных: (1) в petbox появился **рабочий MCP** (HTTP `/mcp`, инструменты через рефлексию, auth по scopes, 12 живых tools); (2) появился **реальный мульти-агентный мульти-разработческий кейс** — 2 проекта по 4 разработчика, у всех разные агенты, локальный `plan.md` вести нельзя; (3) сменилась рамка на **MCP-only** (не MCP-first) — MCP единственный интерфейс, локального файла нет вообще, адоптация навязывается средой (конфиг + хуки). Повторный анализ — `doc/proposals/tasks-memory-modules/proposal-v2.md`.
+
+**Переигровка критики (из ~12 претензий):**
+1. **Sync hell (главный аргумент) — СНЯТ.** Держался на двойном представлении (сервер-канон + локальный рендер). Нет файла → нет pull→render→правка→push→конфликт, нет write-only mirror, нет неразрешимого merge-конфликта markdown. Исчезает целая фаза работы (bidirectional parser) и класс рисков.
+2. **«Дублирование 4 мест / SoT неясен» — СНЯТ.** Один источник истины (DB).
+3. **«Велосипед, нет смысла для single-user» — ПЕРЕВЁРНУТ.** Предпосылка (single-user) ушла. Локальные файлы НЕ являются общим знаменателем между разными агентами (каждый кладёт по-своему). Единственная общая шина у гетерогенных агентов — MCP. mcp-server-memory (file-based, per-machine, без multi-tenant), GitHub Issues (не моделирует session-plan, не интегрирован), Obsidian+git (локально-файловые) — кейс не закрывают.
+4. **Multi-machine — частично СНЯТ**, остаток трансформируется из «data corruption» в обычный concurrent-write (server-generated sessionId + optimistic concurrency). Multi-machine стал аргументом *за* централизацию.
+5. **Compliance-парадокс — ОСТАЁТСЯ риском №1**, но меняет форму: лёгкой альтернативы (локальный файл) больше нет — выбор «MCP или ничего»; адоптация навязывается средой; и впервые измерим на настоящей команде.
+
+**Правки дизайна для v2:** убрать sync-слой; server `sessionId` + `Version`/etag вместо slug-natural-key; memory scope `global|workspace|project`; типы памяти → свободные tags; глубина дерева ~3 уровня (prose в session-blob и `Body`); гибрид (structured project-plan + markdown session-plan); dogfood с первого дня.
+
+**Размещение БД.** Обобщить три существующие фабрики (`LogDbFactory`/`ConfigDbFactory`/`DataDbFactory`) в `IScopedDbFactory<TContext>.Get(scope, key, name?)`. Tasks → `tasks/{projectKey}.db` (project-scope, все таблицы модуля в одном файле). Memory → multi-scope (`memory/$global.db`, `memory/{workspaceKey}.db`, `memory/{projectKey}.db`). **Не объединять logs+tasks+memory в один `project.db`**: SQLite single-writer — hot log-ingest заблокировал бы запись плана; разные нагрузочные профили, миграции, feature-toggle. Физическое разделение per-module = изоляция writer-lock, generic-фабрика делает его бесплатным.
+
+**Decision.** Рамка пересмотрена: дизайн под MCP-only жизнеспособен, сложность **ниже** исходной (удалён sync-слой, остальное ложится на готовый MCP/auth/data стек). **Но перед стройкой — дешёвый пилот** на реальной команде: тонкие mock-инструменты `tasks.session_save`/`tasks.node_upsert` + навязать средой у 4×2 разработчиков + 1–2 недели мерить compliance (порог ~70%) + честный бенч (одна задача → разные агенты). Проходит → полноценный план реализации отдельной сессией. Не проходит → не строим даже при готовой инфраструктуре.
+
+**Consequences.**
+- `doc/proposals/tasks-memory-modules/proposal-v2.md` — новый документ; исходные `proposal.md`/`critique.md` сохранены как история.
+- `doc/plan.md` Phase 30 в этот заход **не трогался** (узкий scope правки). Обновление статуса Phase 30 на «pilot» — отдельным шагом.
+- Главный труд/риск модуля переехал из «написать код» в «заставить агентов пользоваться» — и это теперь проверяемо до стройки.
+
+---
+
 ## 2026-05-28 — Data module Wave 0 gate passed (refactored architecture, build approved)
 
 **Context.** Phase 16 Wave 0 gate (critique + 2 PoCs) запущен. Изначальная plan rule: 0 RED + ≤3 YELLOW → build; 1+ RED → defer; ≥4 YELLOW → refactor. Skeptical critique вернулся с **3 RED + 8 YELLOW** — formally defer territory. Но после разбора каждого RED оказались либо solvable, либо неактуальными при пересмотре scope.

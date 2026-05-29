@@ -1,47 +1,15 @@
-using LinqToDB;
 using Microsoft.Data.Sqlite;
 
 namespace PetBox.Log.Core.Data;
 
-public interface ILogDbFactory
+// Lazy schema bootstrap for a per-log SQLite file (LogEntries + Spans). Passed to
+// ScopedDbFactory<LogDb> as the ensure-schema delegate; runs once per file on
+// first open. Idempotent (CREATE TABLE/INDEX IF NOT EXISTS).
+public static class LogSchema
 {
-	LogDb GetLogDb(string projectKey);
-	ValueTask DisposeAsync();
-}
-
-public sealed class LogDbFactory : ILogDbFactory, IAsyncDisposable
-{
-	readonly string _baseDir;
-	readonly Dictionary<string, LogDb> _dbs = [];
-	readonly object _lock = new();
-
-	public LogDbFactory(string baseDir)
+	public static void Ensure(string connectionString)
 	{
-		_baseDir = baseDir;
-		Directory.CreateDirectory(_baseDir);
-	}
-
-	public LogDb GetLogDb(string projectKey)
-	{
-		lock (_lock)
-		{
-			if (_dbs.TryGetValue(projectKey, out var existing))
-				return existing;
-
-			var dbPath = Path.Combine(_baseDir, $"{projectKey}.db");
-			var cs = $"Data Source={dbPath}";
-			var db = new LogDb(LogDb.CreateOptions(cs));
-
-			CreateSchema(db, cs);
-
-			_dbs[projectKey] = db;
-			return db;
-		}
-	}
-
-	static void CreateSchema(LogDb db, string cs)
-	{
-		using var raw = new SqliteConnection(cs);
+		using var raw = new SqliteConnection(connectionString);
 		raw.Open();
 		using var cmd = raw.CreateCommand();
 		cmd.CommandText = """
@@ -78,12 +46,5 @@ public sealed class LogDbFactory : ILogDbFactory, IAsyncDisposable
 			CREATE INDEX IF NOT EXISTS ix_spans_start ON Spans(StartUnixNs);
 			""";
 		cmd.ExecuteNonQuery();
-	}
-
-	public async ValueTask DisposeAsync()
-	{
-		foreach (var db in _dbs.Values)
-			await db.DisposeAsync();
-		_dbs.Clear();
 	}
 }

@@ -459,9 +459,10 @@ document.addEventListener("change", (event) => {
 	if (target?.id !== "live-tail-toggle") return;
 
 	const project = target.dataset["project"];
+	const log = target.dataset["log"];
 	const kql = target.dataset["kql"] ?? "";
 	const tbody = document.getElementById("events-body");
-	if (!project || !tbody?.parentElement) return;
+	if (!project || !log || !tbody?.parentElement) return;
 
 	const formField = document.getElementById("live-tail-form-field") as HTMLInputElement | null;
 	if (formField) formField.disabled = !target.checked;
@@ -472,7 +473,7 @@ document.addEventListener("change", (event) => {
 
 	if (!target.checked) return;
 
-	const url = `/api/logs/${encodeURIComponent(project)}/live-tail?kql=${encodeURIComponent(kql)}`;
+	const url = `/api/logs/${encodeURIComponent(project)}/${encodeURIComponent(log)}/live-tail?kql=${encodeURIComponent(kql)}`;
 	const container = document.createElement("div");
 	container.id = containerId;
 	container.setAttribute("hx-ext", "sse");
@@ -517,10 +518,10 @@ document.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement | null;
 	const btn = target?.closest("[data-share-modal-open]") as HTMLElement | null;
 	if (!btn) return;
-	const project = btn.dataset["project"] ?? "";
 	const kql = btn.dataset["kql"] ?? "events";
 	const urlInput = document.getElementById("share-url") as HTMLInputElement | null;
 	if (urlInput) {
-		urlInput.value = `${window.location.origin}/ui/logs/${encodeURIComponent(project)}?kql=${encodeURIComponent(kql)}`;
+		// Share the current per-log viewer URL with the active query.
+		urlInput.value = `${window.location.origin}${window.location.pathname}?kql=${encodeURIComponent(kql)}`;
 	}
 });
