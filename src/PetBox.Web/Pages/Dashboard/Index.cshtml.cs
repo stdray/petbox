@@ -28,6 +28,11 @@ public sealed class IndexModel : PageModel
 		= new Dictionary<string, IReadOnlyList<HealthRow>>();
 	public int StaleSeconds { get; private set; } = 300;
 
+	// Cheap per-project counts (petbox.db metadata only — no log/data file opens).
+	public IReadOnlyDictionary<string, int> LogCount { get; private set; } = new Dictionary<string, int>();
+	public IReadOnlyDictionary<string, int> DbCount { get; private set; } = new Dictionary<string, int>();
+	public IReadOnlyDictionary<string, int> KeyCount { get; private set; } = new Dictionary<string, int>();
+
 	public sealed record HealthRow(
 		string Svc, string? Name, IReadOnlyDictionary<string, string> OtherTags,
 		string? Version, string? Sha, string? BuildDate, string Status, DateTime ReceivedAt);
@@ -41,6 +46,10 @@ public sealed class IndexModel : PageModel
 
 		var dash = await _settings.GetAsync<DashboardSettings>(Scope.System, "$", ct);
 		StaleSeconds = dash.StaleSeconds;
+
+		LogCount = await CountByProjectAsync(_db.Logs.Where(l => projectKeys.Contains(l.ProjectKey)).Select(l => l.ProjectKey), ct);
+		DbCount = await CountByProjectAsync(_db.DataDbs.Where(d => projectKeys.Contains(d.ProjectKey)).Select(d => d.ProjectKey), ct);
+		KeyCount = await CountByProjectAsync(_db.ApiKeys.Where(k => projectKeys.Contains(k.ProjectKey)).Select(k => k.ProjectKey), ct);
 
 		// Latest report per (Svc, Tags): Id is identity-ascending, so max Id = newest.
 		var maxIds = await _db.HealthReports
@@ -66,5 +75,14 @@ public sealed class IndexModel : PageModel
 			kv => kv.Key,
 			kv => (IReadOnlyList<HealthRow>)kv.Value.OrderBy(h => h.Svc, StringComparer.Ordinal).ToList(),
 			StringComparer.Ordinal);
+	}
+
+	static async Task<IReadOnlyDictionary<string, int>> CountByProjectAsync(IQueryable<string> projectKeys, CancellationToken ct)
+	{
+		var rows = await projectKeys
+			.GroupBy(k => k)
+			.Select(g => new { Key = g.Key, Count = g.Count() })
+			.ToListAsync(ct);
+		return rows.ToDictionary(r => r.Key, r => r.Count, StringComparer.Ordinal);
 	}
 }

@@ -41,6 +41,18 @@ else
 						<p class="text-sm opacity-70 mb-2">@project.Description</p>
 					}
 
+					<div class="flex flex-wrap gap-1 mb-3" data-testid="dashboard-counts">
+						<a href="@Routes.Project(Model.WorkspaceKey, project.Key)"
+							class="badge badge-sm badge-ghost gap-1" data-testid="count-logs">
+							@(Model.LogCount.GetValueOrDefault(project.Key)) logs</a>
+						<a href="@Routes.ProjectData(Model.WorkspaceKey, project.Key)"
+							class="badge badge-sm badge-ghost gap-1" data-testid="count-dbs">
+							@(Model.DbCount.GetValueOrDefault(project.Key)) dbs</a>
+						<a href="@Routes.ProjectSettings(Model.WorkspaceKey, project.Key)"
+							class="badge badge-sm badge-ghost gap-1" data-testid="count-keys">
+							@(Model.KeyCount.GetValueOrDefault(project.Key)) keys</a>
+					</div>
+
 					@if (rows.Count > 0)
 					{
 						<div class="overflow-x-auto">
