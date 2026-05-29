@@ -93,25 +93,26 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 			await CreateBindingViaApi(path, value, tags);
 		}
 
-		// Resolve project-level binding.
+		// /v1/conf bulk-resolve — workspace derived from the key's project. Project-level binding present.
 		var resp = await _page!.APIRequest.GetAsync(
-			$"/api/config/{Ws}/resolve?path=kpvotes/interval-minutes&tags=project:{Pet}",
+			$"/v1/conf?project={Pet}",
 			new() { Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! } });
 		resp.Status.Should().Be(200);
 		(await resp.TextAsync()).Should().Contain("120");
 
-		// Resolve service-specific binding — request includes service tag.
+		// Service-specific binding is visible when the request carries the matching service tag.
 		var resp2 = await _page.APIRequest.GetAsync(
-			$"/api/config/{Ws}/resolve?path=kpvotes/proxy/host&tags=project:{Pet},service:kpvotes-net",
+			$"/v1/conf?project={Pet}&service=kpvotes-net",
 			new() { Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! } });
 		resp2.Status.Should().Be(200);
 		(await resp2.TextAsync()).Should().Contain("proxy.corp.local");
 
-		// Resolve service-specific binding from a different service — should 404 (subset semantics).
+		// From a different service the override is NOT in the resolved set (subset semantics).
 		var resp3 = await _page.APIRequest.GetAsync(
-			$"/api/config/{Ws}/resolve?path=kpvotes/proxy/host&tags=project:{Pet},service:kpvotes-ts",
+			$"/v1/conf?project={Pet}&service=kpvotes-ts",
 			new() { Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! } });
-		resp3.Status.Should().Be(404);
+		resp3.Status.Should().Be(200);
+		(await resp3.TextAsync()).Should().NotContain("proxy.corp.local");
 
 		// Project-config UI page renders, filter chip shows project:{key}.
 		await _page.GotoAsync($"/ui/{Ws}/{Pet}/config");

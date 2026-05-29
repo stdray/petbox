@@ -132,74 +132,14 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 		return JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
 	}
 
-	async Task<JsonDocument?> ResolveAsync(string path, string tags)
-	{
-		var req = ApiRequest($"/api/config/$system/resolve?path={Uri.EscapeDataString(path)}&tags={Uri.EscapeDataString(tags)}", ReadKey);
-		using var resp = await _client.SendAsync(req);
-		if (resp.StatusCode == HttpStatusCode.NotFound)
-			return null;
-		resp.StatusCode.Should().Be(HttpStatusCode.OK);
-		return JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
-	}
-
-	async Task DeleteBindingAsync(string path, string tags)
-	{
-		tags = $"ws:$system,{tags}";
-		var req = ApiRequest(
-			$"/api/config/$system/bindings?path={Uri.EscapeDataString(path)}&tags={Uri.EscapeDataString(tags)}",
-			WriteKey,
-			HttpMethod.Delete);
-		using var resp = await _client.SendAsync(req);
-		resp.StatusCode.Should().Be(HttpStatusCode.OK);
-	}
-
 	[Fact]
-	public async Task CreateAndResolve_SingleBinding()
+	public async Task CreateBinding_ReturnsOk()
 	{
+		// Resolution semantics live in ResolvePipelineTests (unit) and ConfV1Tests (/v1/conf);
+		// here we just assert the write API accepts a binding.
 		var p = $"/test/{Guid.NewGuid():N}";
-		await PostBindingAsync(p, "v42", "env:dev");
-
-		var doc = await ResolveAsync(p, "env:dev");
-		doc.Should().NotBeNull();
-		doc!.RootElement.GetProperty("value").GetString().Should().Be("v42");
-	}
-
-	[Fact]
-	public async Task Resolve_NoMatch_Returns404()
-	{
-		var req = ApiRequest($"/api/config/$system/resolve?path=/nonexistent/{Guid.NewGuid():N}&tags=env:dev", ReadKey);
-		using var resp = await _client.SendAsync(req);
-		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
-	}
-
-	[Fact]
-	public async Task Resolve_MostSpecificTagWins()
-	{
-		var p = $"/override/{Guid.NewGuid():N}";
-
-		await PostBindingAsync(p, "generic", "env:dev");
-		await PostBindingAsync(p, "specific", "env:dev,service:alpha");
-
-		var doc = await ResolveAsync(p, "env:dev");
-		doc.Should().NotBeNull();
-		doc!.RootElement.GetProperty("value").GetString().Should().Be("generic");
-
-		var doc2 = await ResolveAsync(p, "env:dev,service:alpha");
-		doc2.Should().NotBeNull();
-		doc2!.RootElement.GetProperty("value").GetString().Should().Be("specific");
-	}
-
-	[Fact]
-	public async Task Delete_Binding_ThenNotFound()
-	{
-		var p = $"/del/{Guid.NewGuid():N}";
-		var tag = $"marker:{Guid.NewGuid():N}";
-
-		await PostBindingAsync(p, "gone", tag);
-		await DeleteBindingAsync(p, tag);
-
-		var doc = await ResolveAsync(p, tag);
-		doc.Should().BeNull();
+		using var doc = await PostBindingAsync(p, "v42", "env:dev");
+		doc.RootElement.GetProperty("path").GetString().Should().Be(p);
 	}
 
 	[Fact]
@@ -213,13 +153,6 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 			tags = "env:dev",
 		});
 		using var resp = await _client.SendAsync(req);
-		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
-	}
-
-	[Fact]
-	public async Task Read_WithoutApiKey_Returns401()
-	{
-		using var resp = await _client.GetAsync($"/api/config/$system/resolve?path=/test&tags=env:dev");
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 	}
 
@@ -246,18 +179,6 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 		req.Headers.Add("X-Api-Key", ReadKey);
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
-	}
-
-	[Fact]
-	public async Task Read_WithWriteKey_Returns200()
-	{
-		var p = $"/readwrite/{Guid.NewGuid():N}";
-		await PostBindingAsync(p, "v1", "env:dev");
-
-		var req = ApiRequest(
-			$"/api/config/$system/resolve?path={Uri.EscapeDataString(p)}&tags=env:dev", WriteKey);
-		using var resp = await _client.SendAsync(req);
-		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 	}
 
 	[Fact]

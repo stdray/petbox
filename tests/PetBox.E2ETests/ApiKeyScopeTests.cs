@@ -74,19 +74,12 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		resp.Status.Should().Be(expectedStatus);
 	}
 
-	[Fact(Skip = "Tag-format change made the binding-via-UI seed fragile in shared-DB tests. Covered via API in KpVotesOnboardingTests.")]
+	[Fact]
 	public async Task ConfigRead_CannotWriteOrDelete()
 	{
 		await EnsureProject();
-		// Create a test binding first (via UI, uses cookie auth)
-		await _page!.GotoAsync("/ui/$system/config/editor");
-		await _page.GetByTestId("config-edit-path").FillAsync("scope-test");
-		await _page.GetByTestId("config-edit-value").FillAsync("42");
-		await _page.GetByTestId("config-edit-tags").FillAsync("ws:$system,project:kpvotes");
-		await _page.GetByTestId("config-save-btn").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-
-		await AssertStatus("/api/config/$system/resolve?path=scope-test&tags=project:kpvotes", "GET", "config:read", 200);
+		// /v1/conf returns 200 for any config:read key (bulk resolve, empty result is still 200).
+		await AssertStatus("/v1/conf", "GET", "config:read", 200);
 		await AssertStatus("/api/config/$system/bindings", "POST", "config:read", 403);
 		await AssertStatus("/api/config/$system/bindings?path=scope-test&tags=project:kpvotes", "DELETE", "config:read", 403);
 	}
@@ -95,28 +88,13 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 	public async Task ConfigWrite_CannotRead()
 	{
 		await EnsureProject();
-		// Create a test binding first
-		await _page!.GotoAsync("/ui/$system/config/editor");
-		await _page.GetByTestId("config-edit-path").FillAsync("scope-test-write");
-		await _page.GetByTestId("config-edit-value").FillAsync("7");
-		await _page.GetByTestId("config-edit-tags").FillAsync("ws:$system,project:kpvotes");
-		await _page.GetByTestId("config-save-btn").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-
-		await AssertStatus("/api/config/$system/resolve?path=scope-test-write&tags=project:kpvotes", "GET", "config:write", 403);
+		await AssertStatus("/v1/conf", "GET", "config:write", 403);
 	}
 
 	[Fact]
 	public async Task LogsIngest_CanIngest_CannotConfigRead()
 	{
 		await EnsureProject();
-		// Create test binding
-		await _page!.GotoAsync("/ui/$system/config/editor");
-		await _page.GetByTestId("config-edit-path").FillAsync("scope-test-ingest");
-		await _page.GetByTestId("config-edit-value").FillAsync("1");
-		await _page.GetByTestId("config-edit-tags").FillAsync("ws:$system,project:kpvotes");
-		await _page.GetByTestId("config-save-btn").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 		// logs:ingest can POST to /ingest/clef (ApiKey policy)
 		var key = await CreateApiKey("logs:ingest");
@@ -128,24 +106,8 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		});
 		resp.Status.Should().Be(200);
 
-		// But cannot read config
-		await AssertStatus("/api/config/$system/resolve?path=scope-test-ingest&tags=project:kpvotes", "GET", "logs:ingest", 403);
-	}
-
-	[Fact(Skip = "admin scope removed in scope catalog rework (commit d326ce8); test no longer applicable")]
-	public async Task AdminScope_NoApiAccess()
-	{
-		await EnsureProject();
-		// Create test binding
-		await _page!.GotoAsync("/ui/$system/config/editor");
-		await _page.GetByTestId("config-edit-path").FillAsync("scope-test-admin");
-		await _page.GetByTestId("config-edit-value").FillAsync("1");
-		await _page.GetByTestId("config-edit-tags").FillAsync("ws:$system,project:kpvotes");
-		await _page.GetByTestId("config-save-btn").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-
-		await AssertStatus("/api/auth/validate", "GET", "admin", 200); // Any valid key validates
-		await AssertStatus("/api/config/$system/resolve?path=scope-test-admin&tags=project:kpvotes", "GET", "admin", 403);
+		// But cannot read config.
+		await AssertStatus("/v1/conf", "GET", "logs:ingest", 403);
 	}
 
 	[Fact]

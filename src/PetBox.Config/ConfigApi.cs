@@ -16,11 +16,10 @@ public static class ConfigApi
 {
 	public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapGet("/api/config/{workspaceKey}/resolve", Resolve).RequireAuthorization("ConfigRead");
 		app.MapPost("/api/config/{workspaceKey}/bindings", Create).RequireAuthorization("ConfigWrite");
 		app.MapDelete("/api/config/{workspaceKey}/bindings", Delete).RequireAuthorization("ConfigWrite");
 
-		// Legacy yobaconf-compatible bulk resolve. The published config clients
+		// Canonical read API (yobaconf-compatible bulk resolve). The published config clients
 		// (@stdray/petbox-client, PetBox.Client.Config) target this shape: GET /v1/conf?<tags>
 		// with optional ?template=, header X-YobaConf-ApiKey, ETag/If-None-Match.
 		app.MapGet("/v1/conf", Conf).RequireAuthorization("ConfigRead");
@@ -101,54 +100,6 @@ public static class ConfigApi
 			sb.Append(kv.Key).Append('\0').Append(kv.Value).Append('\n');
 		Span<byte> hash = stackalloc byte[32];
 		SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()), hash);
-		return $"\"{Convert.ToHexStringLower(hash[..16])}\"";
-	}
-
-	static IResult Resolve(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
-	{
-		var requestTags = (tags ?? string.Empty)
-			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-			.ToList();
-
-		var wsTag = $"ws:{workspaceKey}";
-		if (!requestTags.Any(t => string.Equals(t, wsTag, StringComparison.OrdinalIgnoreCase)))
-			requestTags.Add(wsTag);
-
-		var configDb = configFactory.GetConfigDb(workspaceKey);
-		var bindings = configDb.Bindings.ToList();
-
-		try
-		{
-			var result = ResolvePipeline.Resolve(path, requestTags, bindings);
-			if (result is null)
-				return Results.NotFound(new { error = "no matching binding" });
-
-			var etag = ComputeETag(path, result);
-			var ifNoneMatch = context.Request.Headers.IfNoneMatch.ToString();
-			if (!string.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch == etag)
-			{
-				context.Response.Headers.ETag = etag;
-				return Results.StatusCode(StatusCodes.Status304NotModified);
-			}
-
-			context.Response.Headers.ETag = etag;
-			return Results.Ok(new { path, value = result });
-		}
-		catch (AmbiguousConfigException ex)
-		{
-			return Results.Conflict(new { error = "ambiguous", path = ex.Path, candidates = ex.CandidateBindingIds });
-		}
-	}
-
-	// Strong validator over the resolved value. Path is included so clients caching
-	// across paths can't collide; value is the canonical resolved string. Tag set isn't
-	// part of the ETag — same (path, value) tuple is cache-equivalent regardless of which
-	// binding produced it.
-	static string ComputeETag(string path, string value)
-	{
-		Span<byte> hash = stackalloc byte[32];
-		var bytes = Encoding.UTF8.GetBytes($"{path}\0{value}");
-		SHA256.HashData(bytes, hash);
 		return $"\"{Convert.ToHexStringLower(hash[..16])}\"";
 	}
 

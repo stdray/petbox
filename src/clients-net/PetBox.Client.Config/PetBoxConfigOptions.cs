@@ -1,10 +1,9 @@
 namespace PetBox.Client.Config;
 
 // Caller-provided knobs for AddPetBoxConfig. Tag-vector — not a single hierarchical
-// path — selects which bindings resolve into the configuration tree. Matches petbox
-// resolve API shape at `/v1/conf?tag1=v1&tag2=v2&…`. (Phase 26.3 will adapt to
-// petbox's actual `/api/config/{workspaceKey}/resolve` shape; for now the wire
-// format matches the legacy yobaconf protocol — port-as-is.)
+// path — selects which bindings resolve into the configuration tree. Matches petbox's
+// canonical read API at `/v1/conf?tag1=v1&tag2=v2&…` (workspace derived from the key's
+// project). This is the single config-read surface; there is no per-path resolve endpoint.
 //
 // `Handler` is an escape hatch for tests — inject WebApplicationFactory's
 // Server.CreateHandler() so the SDK talks to an in-process petbox without touching

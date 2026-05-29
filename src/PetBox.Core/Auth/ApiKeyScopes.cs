@@ -11,7 +11,7 @@ public static class ApiKeyScopes
 {
 	public static readonly IReadOnlyList<ApiKeyScope> All =
 	[
-		new("config:read",  "Read shared config",     "GET /api/config/{ws}/resolve and the bindings list.",                          "Config"),
+		new("config:read",  "Read shared config",     "GET /v1/conf (resolved config bundle).",                                       "Config"),
 		new("config:write", "Write shared config",    "POST/PATCH bindings; create new bindings; edit secrets.",                     "Config"),
 		new("logs:ingest",  "Ingest log events",      "POST /api/ingest/clef (CLEF JSON lines). Used by pets to ship log lines.",   "Logs"),
 		new("logs:query",   "Query logs (KQL)",       "KQL search via /api/logs/{p}/query and the MCP `log.query` tool.",           "Logs"),
