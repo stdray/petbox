@@ -23,13 +23,13 @@ public sealed class ConfigPageTests(WebAppFixture app, ITestOutputHelper output)
 		}
 	}
 
-	[Fact(Skip = "Shared config page initial render depends on no-bindings empty state under new IA — superseded by KpVotesOnboardingTests S4 which navigates to /ui/{ws}/{key}/config.")]
+	[Fact]
 	public async Task ConfigPage_Renders()
 	{
 		await _page!.GotoAsync("/ui/$system/config");
 
 		await Expect(_page.GetByTestId("config-title")).ToBeVisibleAsync();
-		await Expect(_page.Locator("body")).ToContainTextAsync("Bindings");
+		await Expect(_page.GetByTestId("config-new")).ToBeVisibleAsync();
 	}
 
 	[Fact]
@@ -51,17 +51,4 @@ public sealed class ConfigPageTests(WebAppFixture app, ITestOutputHelper output)
 		await Expect(_page.GetByTestId("config-filter-clear")).ToBeVisibleAsync();
 	}
 
-	[Fact(Skip = "Shared config page initial render depends on no-bindings empty state — superseded by KpVotesOnboardingTests S4.")]
-	public async Task ConfigPage_Clear_Filter_Restores()
-	{
-		await _page!.GotoAsync("/ui/$system/config");
-
-		await _page.GetByTestId("config-filter-key").FillAsync("zzznonexistent");
-		await _page.GetByTestId("config-filter-apply").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-
-		await _page.GetByTestId("config-filter-clear").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		await Expect(_page.Locator("body")).ToContainTextAsync("Bindings");
-	}
 }

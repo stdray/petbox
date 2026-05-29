@@ -210,16 +210,9 @@ public sealed class QueryExecApiTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.InsufficientStorage);
 	}
 
-	[Fact(Skip = "WebApplicationFactory's in-memory transport doesn't surface Content-Length to the handler; "
-		+ "the per-endpoint body limit is enforced only when the client sets Content-Length (real HTTP clients do, "
-		+ "the test framework's chunked transport doesn't). Kestrel's server-level limit still applies in production.")]
-	public async Task Query_BodyOverLimit_Returns413()
-	{
-		var hugeSql = "SELECT '" + new string('x', 2 * 1024 * 1024) + "'";
-		var resp = await _client.PostAsJsonAsync($"/api/data/{TestProjectKey}/{TestDbName}/query",
-			new { sql = hugeSql });
-		resp.StatusCode.Should().Be(HttpStatusCode.RequestEntityTooLarge);
-	}
+	// (The per-endpoint body-size guard can't be exercised here: WebApplicationFactory's
+	// in-memory transport doesn't set Content-Length, so CheckBodySize sees null and passes.
+	// Kestrel's server-level limit covers it in production.)
 
 	[Fact]
 	public async Task Query_TimeoutHeader_AcceptedWithinLimit()

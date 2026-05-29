@@ -140,7 +140,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		tools.Select(t => t.Name).Should().Contain("log.query");
 	}
 
-	[Fact(Skip = "assertion drift after UI/route changes; unblocks first publish, fix in follow-up")]
+	[Fact]
 	public async Task LogQuery_Events_ReturnsSeededRows()
 	{
 		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
@@ -153,11 +153,11 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 
 		result.IsError.Should().NotBe(true);
 		var text = result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
-		text.Should().Contain("\"kind\": \"events\"");
+		text.Should().Contain("\"kind\":\"events\"");
 		text.Should().Contain("Boom");
 	}
 
-	[Fact(Skip = "assertion drift after UI/route changes; unblocks first publish, fix in follow-up")]
+	[Fact]
 	public async Task LogQuery_ShapeChanging_ReturnsTable()
 	{
 		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
@@ -170,7 +170,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 
 		result.IsError.Should().NotBe(true);
 		var text = result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
-		text.Should().Contain("\"kind\": \"table\"");
+		text.Should().Contain("\"kind\":\"table\"");
 	}
 
 	[Fact]

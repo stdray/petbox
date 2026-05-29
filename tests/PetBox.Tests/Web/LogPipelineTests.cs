@@ -327,36 +327,9 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
 	}
 
-	[Fact(Skip = "assertion drift after UI/route changes; unblocks first publish, fix in follow-up")]
-	public async Task LogPage_RendersHtml()
-	{
-		var resp = await GetPageAsync("/ui/logs");
-		resp.StatusCode.Should().Be(HttpStatusCode.OK);
-		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("Logs");
-		html.Should().Contain("kql-input");
-	}
-
-	[Fact(Skip = "assertion drift after UI/route changes; unblocks first publish, fix in follow-up")]
-	public async Task LogPage_WithKql_HtmxFragment()
-	{
-		await PostClefAsync("svc-j",
-			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Error","@m":"{{UniqueMsg("j1")}}"}""");
-
-		using var resp = await GetPageAsync("/ui/logs?kql=events+|+take+10");
-		resp.StatusCode.Should().Be(HttpStatusCode.OK);
-		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("data-testid=\"events-row\"");
-	}
-
-	[Fact(Skip = "assertion drift after UI/route changes; unblocks first publish, fix in follow-up")]
-	public async Task LogPage_WithShapeChangingKql_RendersColumns()
-	{
-		var resp = await GetPageAsync("/ui/logs?kql=events+|+count");
-		resp.StatusCode.Should().Be(HttpStatusCode.OK);
-		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("Count");
-	}
+	// Log-page HTML rendering moved to workspace/project-scoped routes (/ui/{ws}/{proj})
+	// during the IA rework and is covered by the Playwright E2E suite. The old /ui/logs
+	// smoke tests were deleted rather than re-pointed (low-value HTML-contains duplicates).
 
 	[Fact]
 	public async Task SeqIngest_ValidKey_ReturnsOk()
