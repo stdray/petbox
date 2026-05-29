@@ -23,21 +23,19 @@ public static class LogApi
 	public static void MapLogEndpoints(this IEndpointRouteBuilder app)
 	{
 		// Ingestion. Path-based carries the destination log explicitly so one
-		// project-scoped key can write to many named logs. The header-based route
-		// resolves the project from X-Service-Key and targets the `default` log.
+		// project-scoped key can write to many named logs. X-Service-Key tags the
+		// emitter (a free string, no Service entity).
 		app.MapPost("/api/ingest/{projectKey}/{logName}/clef", IngestClefPathAsync).RequireAuthorization("ApiKey");
-		app.MapPost("/api/ingest/clef", IngestClefLegacyAsync).RequireAuthorization("ApiKey");
 
 		// Lifecycle — create / list / delete named logs (mirrors /api/data/{p}/dbs).
 		app.MapPost("/api/logs/{projectKey}/logs", CreateLogAsync).RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/{projectKey}/logs", ListLogsAsync).RequireAuthorization("ApiKey");
 		app.MapDelete("/api/logs/{projectKey}/logs/{name}", DeleteLogAsync).RequireAuthorization("ApiKey");
 
-		// Read. Query + live-tail are per named log; the services list is
-		// project-level (it reads the Services table, not a log DB).
+		// Read — per named log. services = distinct emitter ServiceKey within the log.
 		app.MapGet("/api/logs/{projectKey}/{logName}/query", QueryLogsAsync).RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/{projectKey}/{logName}/live-tail", LiveTailAsync).RequireAuthorization("ApiKey");
-		app.MapGet("/api/logs/{projectKey}/services", GetServicesAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/{projectKey}/{logName}/services", GetServicesAsync).RequireAuthorization("ApiKey");
 	}
 
 	public sealed record CreateLogRequest(string Name, string? Description);
@@ -114,42 +112,10 @@ public static class LogApi
 		app.MapPost("/api/events/raw", SeqIngestAsync).AllowAnonymous();
 	}
 
-	static Task<IResult> IngestClefPathAsync(
+	static async Task<IResult> IngestClefPathAsync(
 		HttpContext ctx,
 		string projectKey,
 		string logName,
-		PetBoxDb yobaBoxDb,
-		ILogStore store,
-		CleFParser parser,
-		IIngestionPipeline pipeline,
-		CancellationToken ct) =>
-		IngestClefCoreAsync(ctx, projectKey, logName, yobaBoxDb, store, parser, pipeline, ct);
-
-	static async Task<IResult> IngestClefLegacyAsync(
-		HttpContext ctx,
-		PetBoxDb yobaBoxDb,
-		ILogStore store,
-		CleFParser parser,
-		IIngestionPipeline pipeline,
-		CancellationToken ct)
-	{
-		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
-		if (string.IsNullOrWhiteSpace(serviceKey))
-			return Results.BadRequest("X-Service-Key header required");
-
-		var service = await yobaBoxDb.Services.FirstOrDefaultAsync(s => s.Key == serviceKey, ct);
-		if (service is null)
-			return Results.BadRequest(
-				$"unknown service '{serviceKey}'; use the path-based ingest URL /api/ingest/{{projectKey}}/{{logName}}/clef");
-
-		return await IngestClefCoreAsync(ctx, service.ProjectKey, LogNames.Default, yobaBoxDb, store, parser, pipeline, ct);
-	}
-
-	static async Task<IResult> IngestClefCoreAsync(
-		HttpContext ctx,
-		string projectKey,
-		string logName,
-		PetBoxDb yobaBoxDb,
 		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
@@ -161,20 +127,6 @@ public static class LogApi
 
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'; create it first" });
-
-		// X-Service-Key tags the emitter. Register unknown services under this
-		// project so they appear in the project's services list.
-		var service = await yobaBoxDb.Services.FirstOrDefaultAsync(s => s.Key == serviceKey, ct);
-		if (service is null)
-		{
-			await yobaBoxDb.InsertAsync(new Service
-			{
-				Key = serviceKey,
-				ProjectKey = projectKey,
-				HealthModel = HealthModel.Endpoint,
-				Health = ServiceHealth.Unknown,
-			}, token: ct);
-		}
 
 		var results = await parser.ParseAsync(ctx.Request.Body, ct).ToListAsync(ct);
 
@@ -284,12 +236,18 @@ public static class LogApi
 	static async Task<IResult> GetServicesAsync(
 		HttpContext ctx,
 		string projectKey,
-		PetBoxDb yobaBoxDb,
+		string logName,
+		ILogStore store,
 		CancellationToken ct)
 	{
-		var services = await yobaBoxDb.Services
-			.Where(s => s.ProjectKey == projectKey)
-			.Select(s => s.Key)
+		if (!await store.ExistsAsync(projectKey, logName, ct))
+			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'" });
+
+		var logDb = store.GetContext(projectKey, logName);
+		var services = await logDb.LogEntries
+			.Select(e => e.ServiceKey)
+			.Distinct()
+			.OrderBy(s => s)
 			.ToListAsync(ct);
 
 		return Results.Json(services);

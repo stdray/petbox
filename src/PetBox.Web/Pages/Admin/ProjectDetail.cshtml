@@ -30,42 +30,43 @@
 	</div>
 }
 
-<section class="mb-6" data-testid="project-services-section">
+<section class="mb-6" data-testid="project-health-section">
 	<div class="flex items-center gap-3 mb-3">
-		<h2 class="text-lg font-semibold">Services</h2>
-		<span class="badge badge-ghost">@Model.Services.Count</span>
+		<h2 class="text-lg font-semibold">Health endpoints</h2>
+		<span class="badge badge-ghost">@Model.HealthEndpoints.Count</span>
 	</div>
+	<p class="text-xs opacity-60 mb-3">
+		Pull sources: petbox periodically GETs each URL and expects a status structure
+		(<code>{ svc, tags, version, status }</code>). Services can also <strong>push</strong> to
+		<code>POST /api/health</code> with a <code>health:write</code> key — no row needed here.
+	</p>
 
 	<div class="overflow-x-auto mb-3">
-		<table class="table table-sm" data-testid="project-services-table">
+		<table class="table table-sm" data-testid="project-health-table">
 			<thead>
 				<tr>
-					<th>Key</th>
-					<th class="w-32">Health model</th>
 					<th>URL</th>
-					<th class="w-24">Health</th>
+					<th class="w-24">Interval</th>
 					<th class="w-24"></th>
 				</tr>
 			</thead>
 			<tbody>
-				@if (Model.Services.Count == 0)
+				@if (Model.HealthEndpoints.Count == 0)
 				{
-					<tr data-testid="project-services-empty"><td colspan="5" class="text-xs opacity-60 italic text-center">No services yet. Add one below.</td></tr>
+					<tr data-testid="project-health-empty"><td colspan="3" class="text-xs opacity-60 italic text-center">No pull endpoints. Add one below or push to /api/health.</td></tr>
 				}
 				else
 				{
-					@foreach (var s in Model.Services)
+					@foreach (var e in Model.HealthEndpoints)
 					{
-						<tr data-testid="service-row" data-service-key="@s.Key">
-							<td class="font-mono text-xs">@s.Key</td>
-							<td><span class="badge badge-outline badge-xs">@s.HealthModel</span></td>
-							<td class="text-xs opacity-70 max-w-xs truncate">@s.Url</td>
-							<td><span class="badge badge-sm">@s.Health</span></td>
+						<tr data-testid="health-endpoint-row" data-endpoint-id="@e.Id">
+							<td class="font-mono text-xs max-w-md truncate">@e.Url</td>
+							<td class="text-xs opacity-70">@e.IntervalSeconds s</td>
 							<td>
-								<form method="post" asp-page-handler="DeleteService" asp-route-serviceKey="@s.Key"
-									onsubmit="return confirm('Delete service @s.Key?')" style="display:inline">
+								<form method="post" asp-page-handler="DeleteHealthEndpoint" asp-route-id="@e.Id"
+									onsubmit="return confirm('Delete health endpoint?')" style="display:inline">
 									@Html.AntiForgeryToken()
-									<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="project-service-delete">Delete</button>
+									<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="project-health-delete">Delete</button>
 								</form>
 							</td>
 						</tr>
@@ -75,36 +76,27 @@
 		</table>
 	</div>
 
-	<form method="post" asp-page-handler="CreateService" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="project-service-create-form">
+	<form method="post" asp-page-handler="CreateHealthEndpoint" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="project-health-create-form">
 		@Html.AntiForgeryToken()
 		<div class="card-body p-4">
-			<h3 class="card-title text-sm">New service</h3>
+			<h3 class="card-title text-sm">New pull endpoint</h3>
 			<div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
-				<label class="form-control">
-					<span class="label-text">Key</span>
-					<input type="text" name="serviceKey" required
+				<label class="form-control sm:col-span-2">
+					<span class="label-text">URL</span>
+					<input type="url" name="url" required
 						class="input input-bordered input-sm font-mono"
-						placeholder="my-service"
-						pattern="[a-z0-9][a-z0-9\-]*"
-						data-testid="project-service-create-key" />
+						placeholder="https://my-service/health"
+						data-testid="project-health-create-url" />
 				</label>
 				<label class="form-control">
-					<span class="label-text">Health model</span>
-					<select name="HealthModel" class="select select-bordered select-sm" data-testid="project-service-create-kind">
-						<option value="Endpoint">Endpoint (poll)</option>
-						<option value="Push">Push (heartbeat)</option>
-					</select>
-				</label>
-				<label class="form-control">
-					<span class="label-text">URL <span class="opacity-50">(optional)</span></span>
-					<input type="text" name="Url"
-						class="input input-bordered input-sm font-mono"
-						placeholder="https://..."
-						data-testid="project-service-create-url" />
+					<span class="label-text">Interval (s)</span>
+					<input type="number" name="intervalSeconds" min="5" value="60"
+						class="input input-bordered input-sm"
+						data-testid="project-health-create-interval" />
 				</label>
 			</div>
 			<div class="card-actions mt-3">
-				<button type="submit" class="btn btn-sm btn-primary" data-testid="project-service-create-submit">Add service</button>
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="project-health-create-submit">Add endpoint</button>
 			</div>
 		</div>
 	</form>

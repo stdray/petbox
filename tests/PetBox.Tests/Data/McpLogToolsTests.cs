@@ -77,13 +77,11 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			await db.ApiKeys.Where(k => k.Key == TestApiKey).DeleteAsync();
-			await db.Services.Where(s => s.Key == TestServiceKey).DeleteAsync();
 			await db.Projects.Where(p => p.Key == TestProjectKey).DeleteAsync();
 			await db.Workspaces.Where(w => w.Key == "test").DeleteAsync();
 
 			await db.InsertAsync(new Workspace { Key = "test", Name = "Test", CreatedAt = DateTime.UtcNow });
 			await db.InsertAsync(new Project { Key = TestProjectKey, WorkspaceKey = "test", Name = "KpVotes" });
-			await db.InsertAsync(new Service { Key = TestServiceKey, ProjectKey = TestProjectKey, HealthModel = HealthModel.Endpoint, Health = ServiceHealth.Unknown });
 			await db.InsertAsync(new ApiKey { Key = TestApiKey, ProjectKey = TestProjectKey, Scopes = "logs:query,logs:ingest", CreatedAt = DateTime.UtcNow });
 
 			var store = scope.ServiceProvider.GetRequiredService<ILogStore>();

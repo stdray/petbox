@@ -165,7 +165,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Ingest_WithoutApiKey_Returns401()
 	{
-		var req = new HttpRequestMessage(HttpMethod.Post, "/api/ingest/clef");
+		var req = new HttpRequestMessage(HttpMethod.Post, "/api/ingest/$system/default/clef");
 		req.Headers.Add("X-Service-Key", "svc-b");
 		req.Content = new StringContent(
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("b1")}}"}""",
@@ -177,7 +177,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Ingest_WithoutServiceKey_Returns400()
 	{
-		var req = LogRequest("/api/ingest/clef", HttpMethod.Post);
+		var req = LogRequest("/api/ingest/$system/default/clef", HttpMethod.Post);
 		req.Content = new StringContent(
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("c1")}}"}""",
 			Encoding.UTF8, "text/plain");
@@ -299,7 +299,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		await PostClefAsync(svc,
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("i1")}}"}""");
 
-		var req = LogRequest("/api/logs/$system/services");
+		var req = LogRequest("/api/logs/$system/default/services");
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var body = await resp.Content.ReadAsStringAsync();

@@ -2,6 +2,7 @@
 @model PetBox.Web.Pages.Dashboard.IndexModel
 @{
 	ViewData["Title"] = $"Status — {Model.WorkspaceKey}";
+	var now = DateTime.UtcNow;
 }
 
 <div class="mb-4 flex items-center gap-3">
@@ -23,6 +24,7 @@ else
 	<div class="grid gap-4 xl:grid-cols-2" data-testid="dashboard-projects">
 		@foreach (var project in Model.Projects)
 		{
+			var rows = Model.ByProject.TryGetValue(project.Key, out var r) ? r : [];
 			<div class="card bg-base-200" data-testid="dashboard-project-card" data-project-key="@project.Key">
 				<div class="card-body p-4">
 					<div class="flex items-center gap-2 mb-2">
@@ -39,43 +41,55 @@ else
 						<p class="text-sm opacity-70 mb-2">@project.Description</p>
 					}
 
-					@if (Model.ServicesByProject.TryGetValue(project.Key, out var services) && services.Count > 0)
+					@if (rows.Count > 0)
 					{
 						<div class="overflow-x-auto">
-							<table class="table table-xs" data-testid="dashboard-service-table">
+							<table class="table table-xs" data-testid="dashboard-health-table">
 								<thead>
 									<tr>
 										<th>Service</th>
-										<th>Health model</th>
-										<th>Health</th>
+										<th>Tags</th>
+										<th>Status</th>
 										<th>Version</th>
+										<th>Seen</th>
 									</tr>
 								</thead>
 								<tbody>
-									@foreach (var svc in services)
+									@foreach (var h in rows)
 									{
-										<tr data-testid="dashboard-service-row" data-service-key="@svc.Key">
+										var stale = (now - h.ReceivedAt).TotalSeconds > Model.StaleSeconds;
+										<tr data-testid="dashboard-health-row" data-svc="@h.Svc">
 											<td>
-												<span class="font-mono text-xs">@svc.Key</span>
-												@if (!string.IsNullOrWhiteSpace(svc.Url))
+												<span class="font-mono text-xs">@h.Svc</span>
+												@if (!string.IsNullOrWhiteSpace(h.Name))
 												{
-													<a href="@svc.Url" target="_blank" class="link link-hover text-xs ml-1">&#8599;</a>
+													<span class="opacity-60 text-xs ml-1">@h.Name</span>
+												}
+											</td>
+											<td class="text-xs opacity-70 font-mono">
+												@string.Join(" ", h.OtherTags.Select(t => $"{t.Key}={t.Value}"))
+											</td>
+											<td>
+												@if (stale)
+												{
+													<span class="badge badge-xs badge-ghost" data-testid="dashboard-health-status" title="No recent report">stale</span>
+												}
+												else
+												{
+													<span class="badge badge-xs @StatusBadge(h.Status)" data-testid="dashboard-health-status">@h.Status</span>
 												}
 											</td>
 											<td>
-												<span class="badge badge-xs @HealthModelBadge(svc.HealthModel)" data-testid="dashboard-service-kind">@svc.HealthModel</span>
-											</td>
-											<td>
-												<span class="badge badge-xs @HealthBadge(svc.Health)" data-testid="dashboard-service-health">@svc.Health</span>
-											</td>
-											<td>
 												<span class="font-mono text-xs opacity-70">
-													@(svc.Version ?? "—")
-													@if (!string.IsNullOrWhiteSpace(svc.ShortSha))
+													@(string.IsNullOrWhiteSpace(h.Version) ? "—" : h.Version)
+													@if (!string.IsNullOrWhiteSpace(h.Sha))
 													{
-														<text>·</text><span class="opacity-50">@svc.ShortSha</span>
+														<text>·</text><span class="opacity-50">@h.Sha</span>
 													}
 												</span>
+											</td>
+											<td class="text-xs opacity-60">
+												<time class="local-time" datetime="@h.ReceivedAt.ToString("o")">@h.ReceivedAt.ToString("yyyy-MM-dd HH:mm")</time>
 											</td>
 										</tr>
 									}
@@ -85,7 +99,7 @@ else
 					}
 					else
 					{
-						<p class="text-sm opacity-50">No services registered.</p>
+						<p class="text-sm opacity-50" data-testid="dashboard-health-empty">No health reports.</p>
 					}
 				</div>
 			</div>
@@ -94,19 +108,11 @@ else
 }
 
 @functions {
-	static string HealthModelBadge(HealthModel hm) => hm switch
+	static string StatusBadge(string status) => status.ToLowerInvariant() switch
 	{
-		HealthModel.Endpoint => "badge-info",
-		HealthModel.Push => "badge-warning",
-		_ => "badge-ghost",
-	};
-
-	static string HealthBadge(ServiceHealth health) => health switch
-	{
-		ServiceHealth.Healthy => "badge-success",
-		ServiceHealth.Degraded => "badge-warning",
-		ServiceHealth.Down => "badge-error",
-		ServiceHealth.Unknown => "badge-ghost",
+		"ok" or "healthy" or "up" or "pass" => "badge-success",
+		"degraded" or "warn" or "warning" => "badge-warning",
+		"down" or "error" or "fail" or "critical" => "badge-error",
 		_ => "badge-ghost",
 	};
 }

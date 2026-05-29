@@ -54,42 +54,6 @@ public static class ProvisioningTools
 		return new { key, workspaceKey, name, description };
 	}
 
-	[McpServerTool(Name = "project.create_service", Title = "Create service")]
-	[Description("Registers a service under a project. Requires admin:provision scope.")]
-	public static async Task<object> CreateServiceAsync(
-		IHttpContextAccessor http,
-		PetBoxDb db,
-		[Description("Project key the service belongs to.")] string projectKey,
-		[Description("Service key, unique across the instance.")] string key,
-		[Description("Health model: 'endpoint' (petbox polls a URL) or 'push' (service reports in).")] string healthModel = "push",
-		[Description("Optional URL for endpoint health checks.")] string? url = null,
-		CancellationToken ct = default)
-	{
-		AssertScope(http, ApiKeyScopes.AdminProvision);
-		Require(projectKey, nameof(projectKey));
-		RequireKey(key, nameof(key));
-
-		if (!await db.Projects.AnyAsync((Project p) => p.Key == projectKey, ct))
-			throw new InvalidOperationException($"Project '{projectKey}' not found");
-		if (await db.Services.AnyAsync((Service s) => s.Key == key, ct))
-			throw new InvalidOperationException($"Service '{key}' already exists");
-
-		var model = string.Equals(healthModel, "endpoint", StringComparison.OrdinalIgnoreCase)
-			? HealthModel.Endpoint
-			: HealthModel.Push;
-
-		await db.InsertAsync(new Service
-		{
-			Key = key,
-			ProjectKey = projectKey,
-			HealthModel = model,
-			Url = url,
-			Health = ServiceHealth.Unknown,
-		}, token: ct);
-
-		return new { key, projectKey, healthModel = model.ToString(), url };
-	}
-
 	[McpServerTool(Name = "project.create_apikey", Title = "Mint API key")]
 	[Description("Mints a project-scoped API key and returns the raw key value ONCE. Optionally time-limited via expiresInSeconds. Requires admin:provision scope.")]
 	public static async Task<object> CreateApiKeyAsync(

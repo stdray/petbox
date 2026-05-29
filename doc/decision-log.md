@@ -4,6 +4,41 @@ Newest decisions on top. Each entry: short title, date, context, decision, conse
 
 ---
 
+## 2026-05-29 — Редизайн навигации /ui (дерево) + «сервис» → Health/Status (tag-отчёты)
+
+**Context.** После named-logs обнаружилось, что из основного UI пропал переключатель воркспейсов
+(бэкенд `WorkspaceSwitchEndpoint` цел — выпилен только UI-контрол в IA-рефакторинге Phase 24). Пользователь
+решил задать полный визуальный скелет `/ui`. Прогнаны 3 adversarial-критика (UX/IA, перформанс, продукт);
+их тех-замечания приняты, скоуп-возражения отклонены пользователем (all-in-one консоль ≠ узкий Seq/Grafana;
+скелет намеренный + задел под мульти-юзер). Параллельно пользователь переосмыслил сущность «сервис».
+
+**Decision (навигация).** Единое дерево-сайдбар `/ui`: workspace-selector → workspace dashboard →
+project → {memory, logs→логи, databases→db→таблицы, config, tasks, agent session}. Глубина ≤5,
+**shallow+lazy** (глубокие узлы — htmx по раскрытию, load-once; localStorage для раскрытия без авто-GET).
+Дашборды — один параметризованный партиал; **счётчики live только из `petbox.db`**, размеры — `FileInfo.Length`
+(+`-wal`/`-shm`, не `PRAGMA`), биндинги — одно открытие `config/{ws}.db` **на странице** (не в сайдбаре);
+**отдельный фоновый StatsService не вводим** (метрики on-page). Клик по счётчику → страница-список раздела.
+config-дерево из чипов отложено → панель «сохранённые фильтры» (новая `SavedConfigFilter`, зеркало `SavedQuery`).
+Инварианты: рендер сайдбара трогает только `petbox.db`; открытие user/лог-файлов — только lazy/на leaf;
+единый UI-authz для lazy-партиалов (против IDOR).
+
+**Decision (Health).** Сущность `Service` (контейнер) **удаляется полностью** — её единственное per-service
+(логи) стало per-project именованными логами. Вводятся **tag-идентифицируемые health-отчёты**: структура
+`{svc, name?, tags{project,region,env,…}, version, sha, buildDate, status}`, идентичность = `(svc + tags)`.
+Приём: **push** `POST /api/health` (scope `health:write`) или **pull** (`HealthPoller` опрашивает
+`HealthEndpoint`-URL). История — **append-all + retention** (sweep как у логов). Статус-страница (workspace
+dashboard) показывает последний отчёт по `(svc,tags)`, группировка по проекту, stale-детекция.
+`LogEntries.ServiceKey` остаётся свободным тегом-эмиттером; `project.create_service` MCP и тип `service`
+из named-logs Phase 2 `entity.*` убираются; `HealthPoller` перепрофилируется со `Service.Url` на `HealthEndpoint`.
+
+**Consequences.**
+- Новые модели: `HealthReport`, `HealthEndpoint`, `SavedConfigFilter` + миграции (drop `Services`).
+- Дашборд/админка переезжают со `Service.Health` на `HealthReport`; админ-CRUD сервисов → конфиг `HealthEndpoint`.
+- Затрагивает logs (services-эндпоинт → distinct из лога), ingestion (не создаёт Services), MCP, HealthPoller.
+- План: `~/.claude/plans/parallel-herding-haven.md`; запись `doc/tasks-mcp/2026-05-29-05-…md`.
+
+---
+
 ## 2026-05-29 — Логи стали именованными сущностями per-project + обобщённая scope-фабрика (Phase 1)
 
 **Context.** Был один лог на проект (`logs/{projectKey}.db`), создавался неявно при первой записи; роутинг только по `X-Service-Key → Service → ProjectKey`; self-логи petbox и неизвестные сервисы сваливались в псевдо-проект `$system`; workspace-страница «Logs (all)» читала этот агрегат. Пользователь захотел, чтобы логи создавались пользователями (UI + агент) как именованные сущности — по образцу `DataDb` (`db/{projectKey}/{dbName}.db` + таблица `DataDbs` + CRUD). Рамка: «нет принципиальной разницы между созданием БД и созданием лога».

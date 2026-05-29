@@ -8,10 +8,14 @@ public sealed record DashboardSettings
 	public int HealthPollIntervalSeconds { get; init; } = 30;
 
 	[Setting(TopLevel = Scope.System, Key = "dashboard.requestTimeoutSeconds",
-		Description = "Per-request timeout when probing service /health endpoints (seconds).")]
+		Description = "Per-request timeout when pulling a HealthEndpoint URL (seconds).")]
 	public int RequestTimeoutSeconds { get; init; } = 5;
 
 	[Setting(TopLevel = Scope.System, Key = "dashboard.pushTtlSeconds",
-		Description = "For HealthModel=Push services, max staleness before flipping to Down.")]
-	public int PushTtlSeconds { get; init; } = 300;
+		Description = "Max age of the latest health report before the status page marks it stale (seconds).")]
+	public int StaleSeconds { get; init; } = 300;
+
+	[Setting(TopLevel = Scope.System, Key = "dashboard.healthRetentionDays",
+		Description = "How long to keep health report history before the sweep deletes it (days).")]
+	public int HealthRetentionDays { get; init; } = 30;
 }

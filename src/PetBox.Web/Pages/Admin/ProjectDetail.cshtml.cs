@@ -40,7 +40,7 @@ public sealed class ProjectDetailModel : PageModel
 	public string Key => ProjectKey;
 
 	public Project? Project { get; private set; }
-	public IReadOnlyList<Service> Services { get; private set; } = [];
+	public IReadOnlyList<HealthEndpoint> HealthEndpoints { get; private set; } = [];
 	public IReadOnlyList<ApiKey> Keys { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
 	public string? NewKey { get; set; }
@@ -50,7 +50,7 @@ public sealed class ProjectDetailModel : PageModel
 		Project = _db.Projects.FirstOrDefault(p => p.Key == ProjectKey);
 		if (Project is null) return;
 
-		Services = _db.Services.Where(s => s.ProjectKey == ProjectKey).OrderBy(s => s.Key).ToList();
+		HealthEndpoints = _db.HealthEndpoints.Where(e => e.ProjectKey == ProjectKey).OrderBy(e => e.Url).ToList();
 		Keys = _db.ApiKeys.Where(k => k.ProjectKey == ProjectKey).OrderByDescending(k => k.CreatedAt).ToList();
 
 		// Effective LogSettings via cascade (project → workspace → system).
@@ -92,29 +92,30 @@ public sealed class ProjectDetailModel : PageModel
 
 	RedirectResult Self() => Redirect(Routes.ProjectSettings(WorkspaceKey, ProjectKey));
 
-	public async Task<IActionResult> OnPostCreateServiceAsync(string serviceKey, HealthModel HealthModel, string? Url)
+	public async Task<IActionResult> OnPostCreateHealthEndpointAsync(string url, int? intervalSeconds)
 	{
-		if (string.IsNullOrWhiteSpace(serviceKey))
+		if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out _))
 		{
-			ErrorMessage = "Service key is required.";
+			ErrorMessage = "A valid absolute URL is required.";
 			await OnGetAsync();
 			return Page();
 		}
 
-		await _db.InsertAsync(new Service
+		await _db.InsertAsync(new HealthEndpoint
 		{
-			Key = serviceKey,
 			ProjectKey = ProjectKey,
-			HealthModel = HealthModel,
-			Url = Url,
-			Health = ServiceHealth.Unknown,
+			Url = url.Trim(),
+			Enabled = true,
+			IntervalSeconds = intervalSeconds is { } s && s >= 5 ? s : 60,
+			CreatedAt = DateTime.UtcNow,
+			CreatedBy = User.Identity?.Name,
 		});
 		return Self();
 	}
 
-	public async Task<IActionResult> OnPostDeleteServiceAsync(string serviceKey)
+	public async Task<IActionResult> OnPostDeleteHealthEndpointAsync(long id)
 	{
-		await _db.Services.Where(s => s.Key == serviceKey && s.ProjectKey == ProjectKey).DeleteAsync();
+		await _db.HealthEndpoints.Where(e => e.Id == id && e.ProjectKey == ProjectKey).DeleteAsync();
 		return Self();
 	}
 

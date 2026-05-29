@@ -17,6 +17,7 @@ public static class ApiKeyScopes
 	public const string LogsIngest = "logs:ingest";
 	public const string LogsQuery = "logs:query";
 	public const string LogsAdmin = "logs:admin";
+	public const string HealthWrite = "health:write";
 	public const string DataRead = "data:read";
 	public const string DataWrite = "data:write";
 	public const string DataSchema = "data:schema";
@@ -29,6 +30,7 @@ public static class ApiKeyScopes
 		new(LogsIngest,  "Ingest log events",      "POST /api/ingest/{p}/{log}/clef (CLEF JSON lines). Used by pets to ship log lines.", "Logs"),
 		new(LogsQuery,   "Query logs (KQL)",       "KQL search via /api/logs/{p}/{log}/query and the MCP `log.query` tool; list logs.", "Logs"),
 		new(LogsAdmin,   "Manage logs",            "Create and delete named logs via /api/logs/{p}/logs.",                        "Logs"),
+		new(HealthWrite, "Push health/status",     "POST /api/health — push a service status report (svc + tags + version/status).", "Health"),
 		new(DataRead,    "Read DataDbs",           "List DataDbs, SELECT via /api/data/{p}/{db}/query, describe schemas.",       "Data"),
 		new(DataWrite,   "Write DataDb rows",      "INSERT/UPDATE/DELETE via /api/data/{p}/{db}/exec.",                          "Data"),
 		new(DataSchema,  "Schema apply / lifecycle","CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs.",          "Data"),

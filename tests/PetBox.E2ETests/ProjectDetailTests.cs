@@ -24,44 +24,43 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 	}
 
 	[Fact]
-	public async Task Service_Create_Form_Is_Visible()
+	public async Task HealthEndpoint_Create_Form_Is_Visible()
 	{
 		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/info");
-		await Expect(_page.GetByTestId("project-service-create-form")).ToBeVisibleAsync();
+		await Expect(_page.GetByTestId("project-health-create-form")).ToBeVisibleAsync();
 	}
 
 	[Fact]
-	public async Task Service_Create_And_Appears_In_Table()
+	public async Task HealthEndpoint_Create_And_Appears_In_Table()
 	{
-		var svcKey = "svc-" + Guid.NewGuid().ToString("N")[..6];
+		var url = $"https://svc-{Guid.NewGuid().ToString("N")[..6]}.example/health";
 		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/info");
 
-		await _page.GetByTestId("project-service-create-key").FillAsync(svcKey);
-		await _page.GetByTestId("project-service-create-submit").ClickAsync();
+		await _page.GetByTestId("project-health-create-url").FillAsync(url);
+		await _page.GetByTestId("project-health-create-submit").ClickAsync();
 
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		await Expect(_page.GetByTestId("project-services-table")).ToContainTextAsync(svcKey);
+		await Expect(_page.GetByTestId("project-health-table")).ToContainTextAsync(url);
 	}
 
 	[Fact]
-	public async Task Service_Delete_Removes_From_Table()
+	public async Task HealthEndpoint_Delete_Removes_From_Table()
 	{
-		var svcKey = "svc-" + Guid.NewGuid().ToString("N")[..6];
+		var url = $"https://svc-{Guid.NewGuid().ToString("N")[..6]}.example/health";
 		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/info");
 
-		// Create
-		await _page.GetByTestId("project-service-create-key").FillAsync(svcKey);
-		await _page.GetByTestId("project-service-create-submit").ClickAsync();
+		await _page.GetByTestId("project-health-create-url").FillAsync(url);
+		await _page.GetByTestId("project-health-create-submit").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		await Expect(_page.GetByTestId("project-services-table")).ToContainTextAsync(svcKey);
+		await Expect(_page.GetByTestId("project-health-table")).ToContainTextAsync(url);
 
 		// Delete the row we just created — target by row text to be robust against
-		// other services that may have been created by sibling tests in the shared DB.
+		// rows created by sibling tests in the shared DB.
 		_page.Dialog += (_, dialog) => dialog.AcceptAsync();
-		var row = _page.GetByTestId("service-row").Filter(new() { HasText = svcKey });
-		await row.GetByTestId("project-service-delete").ClickAsync();
+		var row = _page.GetByTestId("health-endpoint-row").Filter(new() { HasText = url });
+		await row.GetByTestId("project-health-delete").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		await Expect(_page.GetByTestId("project-services-table")).Not.ToContainTextAsync(svcKey);
+		await Expect(_page.GetByTestId("project-health-table")).Not.ToContainTextAsync(url);
 	}
 
 	[Fact]

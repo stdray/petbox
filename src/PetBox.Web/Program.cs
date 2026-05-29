@@ -14,6 +14,7 @@ using PetBox.Log.Core;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Ingestion;
 using PetBox.Web;
+using PetBox.Web.Health;
 using PetBox.Web.Ingestion;
 using PetBox.Web.Navigation;
 using Microsoft.Extensions.DependencyInjection;
@@ -355,6 +356,11 @@ public partial class Program
 
 			if (app.Configuration.GetValue("Seq:SelfLog:Enabled", false))
 				app.MapSeqSelfLogEndpoint();
+		}
+
+		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Dashboard))
+		{
+			app.MapHealthEndpoints();
 		}
 
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Data))

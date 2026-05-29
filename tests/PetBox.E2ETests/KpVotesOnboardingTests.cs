@@ -49,23 +49,13 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	}
 
 	[Fact]
-	public async Task S3_AddServicesAndMintKey()
+	public async Task S3_MintKey()
 	{
 		await EnsureProject();
-		await EnsureServices();
 		await EnsureApiKey();
 
-		await _page!.GotoAsync($"/ui/admin/ws/{Ws}/projects/{Pet}/info");
-
-		// Admin area has its own layout (no project tabs). Just verify the services rendered.
-		var rowNet = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-net" });
-		await Expect(rowNet).ToContainTextAsync("Endpoint");
-
-		var rowTs = _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-ts" });
-		await Expect(rowTs).ToContainTextAsync("Push");
-
 		// API key validates via /api/auth/validate.
-		var apiResp = await _page.APIRequest.GetAsync("/api/auth/validate", new()
+		var apiResp = await _page!.APIRequest.GetAsync("/api/auth/validate", new()
 		{
 			Headers = new Dictionary<string, string> { ["X-Api-Key"] = _apiKey! },
 		});
@@ -79,7 +69,6 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	public async Task S4_AddConfigBindings_ResolveViaApi()
 	{
 		await EnsureProject();
-		await EnsureServices();
 		await EnsureApiKey();
 
 		var bindings = new (string Path, string Value, string Tags)[]
@@ -124,7 +113,6 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	public async Task S2_IngestLogs_QueryViaKql()
 	{
 		await EnsureProject();
-		await EnsureServices();
 		await EnsureApiKey();
 
 		// Logs are explicit now — create the default log before ingesting into it.
@@ -203,29 +191,6 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		await _page.GetByTestId("admin-project-create-desc").FillAsync("Kinopoisk → Twitter voting tracker");
 		await _page.GetByTestId("admin-project-create-submit").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-	}
-
-	async Task EnsureServices()
-	{
-		await _page!.GotoAsync($"/ui/admin/ws/{Ws}/projects/{Pet}/info");
-		var existing = await _page.GetByTestId("service-row").CountAsync();
-		if (existing >= 2) return;
-
-		if (await _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-net" }).CountAsync() == 0)
-		{
-			await _page.GetByTestId("project-service-create-key").FillAsync("kpvotes-net");
-			await _page.GetByTestId("project-service-create-kind").SelectOptionAsync("Endpoint");
-			await _page.GetByTestId("project-service-create-submit").ClickAsync();
-			await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		}
-
-		if (await _page.GetByTestId("service-row").Filter(new() { HasText = "kpvotes-ts" }).CountAsync() == 0)
-		{
-			await _page.GetByTestId("project-service-create-key").FillAsync("kpvotes-ts");
-			await _page.GetByTestId("project-service-create-kind").SelectOptionAsync("Push");
-			await _page.GetByTestId("project-service-create-submit").ClickAsync();
-			await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
-		}
 	}
 
 	async Task EnsureApiKey()

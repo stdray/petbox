@@ -60,7 +60,6 @@ public static class Routes
 	public static string ProjectSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/info";
 	public static string ProjectLogSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/log";
 
-	public static string Service(string ws, string key, string serviceKey) => $"{Project(ws, key)}/services/{serviceKey}";
 
 	// Account / self-service — separate _AccountLayout, deliberately NOT under /ui/admin/.
 	public static string MeProfile() => $"{UiPrefix}/me/account";

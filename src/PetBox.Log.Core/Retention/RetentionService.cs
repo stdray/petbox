@@ -86,6 +86,19 @@ public sealed partial class RetentionService(
 			LogShareLinksFailed(logger, ex);
 		}
 
+		try
+		{
+			var dash = await resolver.GetAsync<DashboardSettings>(Scope.System, "$", ct).ConfigureAwait(false);
+			var healthCutoff = now.AddDays(-Math.Max(1, dash.HealthRetentionDays));
+			var deletedHealth = await db.HealthReports.Where(h => h.ReceivedAt < healthCutoff).DeleteAsync(token: ct);
+			if (deletedHealth > 0)
+				LogHealthSwept(logger, deletedHealth);
+		}
+		catch (Exception ex) when (ex is not OperationCanceledException)
+		{
+			LogHealthFailed(logger, ex);
+		}
+
 		return nextDelay;
 	}
 
@@ -105,4 +118,11 @@ public sealed partial class RetentionService(
 
 	[LoggerMessage(EventId = 104, Level = LogLevel.Error, Message = "Share-link retention sweep failed")]
 	static partial void LogShareLinksFailed(ILogger logger, Exception ex);
+
+	[LoggerMessage(EventId = 105, Level = LogLevel.Information,
+		Message = "Retention: deleted {Count} expired health reports")]
+	static partial void LogHealthSwept(ILogger logger, int count);
+
+	[LoggerMessage(EventId = 106, Level = LogLevel.Error, Message = "Health-report retention sweep failed")]
+	static partial void LogHealthFailed(ILogger logger, Exception ex);
 }

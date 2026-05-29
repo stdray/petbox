@@ -18,7 +18,6 @@ public sealed class PetBoxDb : DataConnection
 	public ITable<Workspace> Workspaces => this.GetTable<Workspace>();
 	public ITable<User> Users => this.GetTable<User>();
 	public ITable<WorkspaceMember> WorkspaceMembers => this.GetTable<WorkspaceMember>();
-	public ITable<Service> Services => this.GetTable<Service>();
 	public ITable<ApiKey> ApiKeys => this.GetTable<ApiKey>();
 	public ITable<DataTable> DataTables => this.GetTable<DataTable>();
 	public ITable<SavedQuery> SavedQueries => this.GetTable<SavedQuery>();
@@ -26,6 +25,8 @@ public sealed class PetBoxDb : DataConnection
 	public ITable<Setting> Settings => this.GetTable<Setting>();
 	public ITable<DataDb> DataDbs => this.GetTable<DataDb>();
 	public ITable<LogMeta> Logs => this.GetTable<LogMeta>();
+	public ITable<HealthReport> HealthReports => this.GetTable<HealthReport>();
+	public ITable<HealthEndpoint> HealthEndpoints => this.GetTable<HealthEndpoint>();
 
 	public static DataOptions<PetBoxDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString));
@@ -63,18 +64,6 @@ public sealed class PetBoxDb : DataConnection
 			.Property(p => p.WorkspaceKey).HasLength(100).IsNullable(false)
 			.Property(p => p.Name).HasLength(200).IsNullable(false)
 			.Property(p => p.Description).HasLength(1000);
-
-		builder.Entity<Service>()
-			.HasTableName("Services")
-			.HasPrimaryKey(s => s.Key)
-			.Property(s => s.Key).HasLength(100).IsNullable(false)
-			.Property(s => s.ProjectKey).HasLength(100).IsNullable(false)
-			.Property(s => s.HealthModel).HasDataType(DataType.Int32).IsNullable(false)
-			.Property(s => s.Url).HasLength(500)
-			.Property(s => s.Version).HasLength(50)
-			.Property(s => s.ShortSha).HasLength(8)
-			.Property(s => s.Health).HasDataType(DataType.Int32).IsNullable(false)
-			.Property(s => s.CheckedAt).HasDataType(DataType.DateTime).IsNullable(true);
 
 		builder.Entity<ApiKey>()
 			.HasTableName("ApiKeys")

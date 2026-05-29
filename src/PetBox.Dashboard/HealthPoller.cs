@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LinqToDB;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -8,14 +9,20 @@ using PetBox.Core.Settings;
 
 namespace PetBox.Dashboard;
 
+// Pull side of health: periodically GETs each enabled HealthEndpoint URL,
+// expects the status structure { svc, name?, tags{}, version?, sha?, buildDate?,
+// status }, and appends a HealthReport (Source="pull"). Push side is
+// PetBox.Web.Health.HealthApi (POST /api/health). On fetch/parse failure we skip
+// — the status page flags a (svc,tags) whose latest report has gone stale.
 public sealed partial class HealthPoller(
 	IServiceProvider services,
 	IHttpClientFactory httpClientFactory,
 	ILogger<HealthPoller> logger) : BackgroundService
 {
+	static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
+
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
 	{
-		// Grace period: let DI + migrations settle.
 		try { await Task.Delay(TimeSpan.FromSeconds(10), stoppingToken).ConfigureAwait(false); }
 		catch (OperationCanceledException) { return; }
 
@@ -50,94 +57,68 @@ public sealed partial class HealthPoller(
 		return await resolver.GetAsync<DashboardSettings>(Scope.System, "$", ct).ConfigureAwait(false);
 	}
 
+	sealed record PolledStatus(
+		string? Svc, string? Name, Dictionary<string, string>? Tags,
+		string? Version, string? Sha, string? BuildDate, string? Status);
+
 	async Task RunPassAsync(DashboardSettings settings, CancellationToken ct)
 	{
 		using var scope = services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
-		var allServices = await db.Services.ToListAsync(ct);
-		var now = DateTime.UtcNow;
-		var pushCutoff = now.AddSeconds(-Math.Max(30, settings.PushTtlSeconds));
+		var endpoints = await db.HealthEndpoints.Where(e => e.Enabled).ToListAsync(ct);
+		if (endpoints.Count == 0) return;
 
 		var http = httpClientFactory.CreateClient("HealthPoller");
 		http.Timeout = TimeSpan.FromSeconds(Math.Max(1, settings.RequestTimeoutSeconds));
+		var now = DateTime.UtcNow;
 
-		foreach (var service in allServices)
+		foreach (var ep in endpoints)
 		{
 			if (ct.IsCancellationRequested) return;
-
-			// Skip Endpoint-model services that don't have a probeable URL
-			// configured. Without a URL we have no signal — better silent than
-			// a stream of "failed to update" warnings about a row no-one cares
-			// about. Push-model services are independent of URL.
-			if (service.HealthModel == HealthModel.Endpoint && !IsProbeableUrl(service.Url))
-				continue;
-
-			var nextHealth = service.HealthModel switch
+			try
 			{
-				HealthModel.Endpoint => await ProbeEndpointAsync(http, service, ct).ConfigureAwait(false),
-				HealthModel.Push => service.CheckedAt is { } checkedAt && checkedAt >= pushCutoff
-					? service.Health
-					: ServiceHealth.Down,
-				_ => ServiceHealth.Unknown,
-			};
+				using var resp = await http.GetAsync(ep.Url, HttpCompletionOption.ResponseContentRead, ct).ConfigureAwait(false);
+				resp.EnsureSuccessStatusCode();
+				var json = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+				var polled = JsonSerializer.Deserialize<PolledStatus>(json, JsonOpts);
+				if (polled is null || string.IsNullOrWhiteSpace(polled.Svc))
+				{
+					LogBadResponse(logger, ep.Url);
+					continue;
+				}
 
-			if (service.HealthModel != HealthModel.Push || nextHealth == ServiceHealth.Down)
+				// Endpoint owns the project; ensure the project tag matches it.
+				var tags = polled.Tags is null
+					? new Dictionary<string, string>(StringComparer.Ordinal)
+					: new Dictionary<string, string>(polled.Tags, StringComparer.Ordinal);
+				tags["project"] = ep.ProjectKey;
+
+				await db.InsertAsync(new HealthReport
+				{
+					Svc = polled.Svc.Trim(),
+					Name = polled.Name,
+					Tags = HealthTags.Canonical(tags),
+					Version = polled.Version,
+					Sha = polled.Sha,
+					BuildDate = polled.BuildDate,
+					Status = string.IsNullOrWhiteSpace(polled.Status) ? "unknown" : polled.Status.Trim(),
+					ReceivedAt = now,
+					Source = "pull",
+				}, token: ct);
+			}
+			catch (Exception ex) when (ex is not OperationCanceledException)
 			{
-				try
-				{
-					await db.Services
-						.Where(s => s.Key == service.Key)
-						.Set(s => s.Health, nextHealth)
-						.Set(s => s.CheckedAt, (DateTime?)now)
-						.UpdateAsync(token: ct);
-				}
-				catch (Exception ex) when (ex is not OperationCanceledException)
-				{
-					LogUpdateFailed(logger, ex, service.Key);
-				}
+				LogPollFailed(logger, ex, ep.Url);
 			}
 		}
 	}
 
-	static async Task<ServiceHealth> ProbeEndpointAsync(HttpClient http, Service service, CancellationToken ct)
-	{
-		if (string.IsNullOrWhiteSpace(service.Url))
-			return ServiceHealth.Unknown;
-
-		var url = service.Url.EndsWith("/health", StringComparison.OrdinalIgnoreCase)
-			? service.Url
-			: service.Url.TrimEnd('/') + "/health";
-
-		try
-		{
-			using var req = new HttpRequestMessage(HttpMethod.Get, url);
-			using var resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-			var code = (int)resp.StatusCode;
-			return code switch
-			{
-				>= 200 and < 300 => ServiceHealth.Healthy,
-				>= 500 => ServiceHealth.Degraded,
-				_ => ServiceHealth.Down,
-			};
-		}
-		catch (TaskCanceledException) when (!ct.IsCancellationRequested)
-		{
-			return ServiceHealth.Down;
-		}
-		catch (HttpRequestException)
-		{
-			return ServiceHealth.Down;
-		}
-	}
-
-	static bool IsProbeableUrl(string? url) =>
-		!string.IsNullOrWhiteSpace(url)
-		&& Uri.TryCreate(url, UriKind.Absolute, out var uri)
-		&& (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
-
 	[LoggerMessage(EventId = 200, Level = LogLevel.Error, Message = "Health-poll pass failed")]
 	static partial void LogPassFailed(ILogger logger, Exception ex);
 
-	[LoggerMessage(EventId = 201, Level = LogLevel.Warning, Message = "Health-poll: failed to update {ServiceKey}")]
-	static partial void LogUpdateFailed(ILogger logger, Exception ex, string serviceKey);
+	[LoggerMessage(EventId = 201, Level = LogLevel.Warning, Message = "Health-poll: GET failed for {Url}")]
+	static partial void LogPollFailed(ILogger logger, Exception ex, string url);
+
+	[LoggerMessage(EventId = 202, Level = LogLevel.Warning, Message = "Health-poll: malformed/empty status from {Url}")]
+	static partial void LogBadResponse(ILogger logger, string url);
 }
