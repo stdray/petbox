@@ -8,6 +8,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Options;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
+using PetBox.Core.Models;
 
 namespace PetBox.Web.Pages;
 
@@ -49,6 +50,22 @@ public sealed class LoginModel : PageModel
 			return Page();
 		}
 
+		// Bootstrap-admin lockdown: once another $system administrator exists, the env-admin
+		// (PETBOX_ADMIN_*) account can no longer sign in. Set PETBOX_ADMIN_FORCE=true to re-enable
+		// it for recovery. See AGENTS.md. No lockout risk: if env-admin is the only admin, nothing changes.
+		var isBootstrapAdmin = !string.IsNullOrEmpty(_adminOptions.Username)
+			&& string.Equals(user.Username, _adminOptions.Username, StringComparison.Ordinal);
+		if (isBootstrapAdmin && !AdminForceEnabled())
+		{
+			var otherSysAdminExists = _db.WorkspaceMembers
+				.Any(m => m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin && m.UserId != user.Id);
+			if (otherSysAdminExists)
+			{
+				ErrorMessage = "The bootstrap admin account is disabled because another administrator exists. Sign in with your own account.";
+				return Page();
+			}
+		}
+
 		var memberships = _db.WorkspaceMembers
 			.Where(m => m.UserId == user.Id)
 			.ToList();
@@ -74,9 +91,12 @@ public sealed class LoginModel : PageModel
 		}
 
 		var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
+		// IsPersistent makes the browser write Expires/Max-Age (driven by ExpireTimeSpan),
+		// so the cookie survives browser close instead of being a session cookie.
 		await HttpContext.SignInAsync(
 			CookieAuthenticationDefaults.AuthenticationScheme,
-			new ClaimsPrincipal(identity));
+			new ClaimsPrincipal(identity),
+			new AuthenticationProperties { IsPersistent = true });
 
 		HttpContext.Response.Cookies.Append(
 			PetBox.Web.Navigation.WorkspaceSwitchEndpoint.CookieName,
@@ -94,4 +114,7 @@ public sealed class LoginModel : PageModel
 			? LocalRedirect(returnUrl)
 			: RedirectToPage("/Index");
 	}
+
+	static bool AdminForceEnabled() =>
+		string.Equals(Environment.GetEnvironmentVariable("PETBOX_ADMIN_FORCE"), "true", StringComparison.OrdinalIgnoreCase);
 }

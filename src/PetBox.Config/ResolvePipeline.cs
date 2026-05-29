@@ -12,6 +12,25 @@ public static class ResolvePipeline
 		return match?.Binding.Value;
 	}
 
+	// Resolves every distinct path present in the binding set against the request tag-vector.
+	// Used by the bulk /v1/conf endpoint. Throws AmbiguousConfigException for the first path
+	// that has competing equally-specific bindings — surfaced to the caller as 409 (we fail
+	// loudly rather than silently dropping a misconfigured key).
+	public static IReadOnlyList<ResolveMatch> ResolveAll(IReadOnlyList<string> requestTags, IReadOnlyList<ConfigBinding> bindings)
+	{
+		ArgumentNullException.ThrowIfNull(requestTags);
+		ArgumentNullException.ThrowIfNull(bindings);
+
+		var matches = new List<ResolveMatch>();
+		foreach (var path in bindings.Where(b => !b.IsDeleted).Select(b => b.Path).Distinct(StringComparer.OrdinalIgnoreCase))
+		{
+			var match = ResolveDetailed(path, requestTags, bindings);
+			if (match is not null)
+				matches.Add(match);
+		}
+		return matches;
+	}
+
 	public static ResolveMatch? ResolveDetailed(string path, IReadOnlyList<string> requestTags, IReadOnlyList<ConfigBinding> bindings)
 	{
 		ArgumentNullException.ThrowIfNull(path);

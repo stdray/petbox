@@ -11,8 +11,6 @@
 	<p class="text-sm opacity-60">Projects living in this workspace.</p>
 </div>
 
-<partial name="_WorkspaceAdminTabs" />
-
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {
 	<div class="alert alert-error mb-3" data-testid="admin-projects-error">@Model.ErrorMessage</div>

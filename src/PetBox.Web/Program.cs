@@ -161,7 +161,8 @@ public partial class Program
 			.AddPolicyScheme("Smart", "Cookie or API Key", o =>
 			{
 				o.ForwardDefaultSelector = ctx =>
-					ctx.Request.Headers.ContainsKey("X-Api-Key")
+					ctx.Request.Headers.ContainsKey(ApiKeyAuthenticationHandler.ApiKeyHeader)
+					|| ctx.Request.Headers.ContainsKey(ApiKeyAuthenticationHandler.LegacyApiKeyHeader)
 						? ApiKeyAuthenticationHandler.SchemeName
 						: CookieAuthenticationDefaults.AuthenticationScheme;
 				o.ForwardChallenge = CookieAuthenticationDefaults.AuthenticationScheme;

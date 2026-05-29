@@ -81,6 +81,10 @@ public sealed class PetBoxDb : DataConnection
 			.Property(a => a.Key).HasLength(100).IsNullable(false)
 			.Property(a => a.ProjectKey).HasLength(100).IsNullable(false)
 			.Property(a => a.Scopes).HasDataType(DataType.Text).IsNullable(false)
+			.Property(a => a.Name).HasLength(200).IsNullable(false)
+			// Explicitly declared so it isn't dropped from the schema cache (see ShareLink note
+			// above) — otherwise ExpiresAt reads back null and Where(...ExpiresAt...) won't translate.
+			.Property(a => a.ExpiresAt).HasDataType(DataType.DateTime).IsNullable(true)
 			.Property(a => a.CreatedAt).IsNullable(false);
 
 		builder.Entity<DataTable>()

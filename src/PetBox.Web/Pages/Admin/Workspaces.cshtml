@@ -10,8 +10,6 @@
 	<p class="text-sm opacity-60">All tenants in this instance. <code class="font-mono">$system</code> is built-in and undeletable.</p>
 </div>
 
-<partial name="_SysTabs" />
-
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
 {
 	<div class="alert alert-error mb-3" data-testid="admin-workspaces-error">@Model.ErrorMessage</div>

@@ -13,8 +13,15 @@ public static class AdminBootstrapper
 		if (string.IsNullOrWhiteSpace(admin.Username) || string.IsNullOrWhiteSpace(admin.PasswordHash))
 			return;
 
-		var existing = db.Users.FirstOrDefault(u => u.Username == admin.Username);
+		// Seed the env-admin account only on first boot — i.e. while no $system administrator
+		// exists yet. Once you've created your own admin, we never re-create or refresh the
+		// env-admin account, and the Login handler refuses its credentials (PETBOX_ADMIN_FORCE
+		// re-enables login for recovery). This mirrors yobaconf's bootstrap-then-lockdown.
+		var anySystemAdmin = db.WorkspaceMembers.Any(m => m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin);
+		if (anySystemAdmin)
+			return;
 
+		var existing = db.Users.FirstOrDefault(u => u.Username == admin.Username);
 		long userId;
 		if (existing is null)
 		{
@@ -37,15 +44,11 @@ public static class AdminBootstrapper
 			}
 		}
 
-		var hasSystem = db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == "$system");
-		if (!hasSystem)
+		db.Insert(new WorkspaceMember
 		{
-			db.Insert(new WorkspaceMember
-			{
-				UserId = userId,
-				WorkspaceKey = "$system",
-				Role = WorkspaceRole.Admin,
-			});
-		}
+			UserId = userId,
+			WorkspaceKey = "$system",
+			Role = WorkspaceRole.Admin,
+		});
 	}
 }

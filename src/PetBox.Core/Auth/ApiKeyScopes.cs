@@ -18,6 +18,7 @@ public static class ApiKeyScopes
 		new("data:read",    "Read DataDbs",           "List DataDbs, SELECT via /api/data/{p}/{db}/query, describe schemas.",       "Data"),
 		new("data:write",   "Write DataDb rows",      "INSERT/UPDATE/DELETE via /api/data/{p}/{db}/exec.",                          "Data"),
 		new("data:schema",  "Schema apply / lifecycle","CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs.",          "Data"),
+		new("admin:provision", "Provision projects & keys", "Agent onboarding: create projects/services, mint API keys, set config bindings via MCP. Issue only on short-lived agent keys.", "Admin"),
 	];
 
 	static readonly HashSet<string> Allowed =

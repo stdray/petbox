@@ -12,8 +12,6 @@
 	<p class="text-sm opacity-60">Settings with TopLevel = System. These apply to any workspace/project/service that hasn't set its own value.</p>
 </div>
 
-<partial name="_SysTabs" />
-
 @if (!string.IsNullOrEmpty(Model.SuccessMessage))
 {
 	<div class="alert alert-success mb-3 max-w-3xl" data-testid="sys-defaults-success">@Model.SuccessMessage</div>

@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Config.Data;
+using PetBox.Core.Data;
 using PetBox.Core.Models;
 
 namespace PetBox.Config;
@@ -18,6 +19,89 @@ public static class ConfigApi
 		app.MapGet("/api/config/{workspaceKey}/resolve", Resolve).RequireAuthorization("ConfigRead");
 		app.MapPost("/api/config/{workspaceKey}/bindings", Create).RequireAuthorization("ConfigWrite");
 		app.MapDelete("/api/config/{workspaceKey}/bindings", Delete).RequireAuthorization("ConfigWrite");
+
+		// Legacy yobaconf-compatible bulk resolve. The published config clients
+		// (@stdray/petbox-client, PetBox.Client.Config) target this shape: GET /v1/conf?<tags>
+		// with optional ?template=, header X-YobaConf-ApiKey, ETag/If-None-Match.
+		app.MapGet("/v1/conf", Conf).RequireAuthorization("ConfigRead");
+	}
+
+	// Resolves every config path visible to the calling API key's project, shaped by template.
+	// Workspace is derived from the key's project (ApiKey is project-scoped); tags come from the
+	// query string plus auto ws:/project: tags.
+	static IResult Conf(HttpContext context, PetBoxDb db, IConfigDbFactory configFactory, ISecretEncryptor encryptor)
+	{
+		var projectKey = context.User.FindFirst("project")?.Value;
+		if (string.IsNullOrEmpty(projectKey))
+			return Results.Unauthorized();
+
+		var project = db.Projects.FirstOrDefault(p => p.Key == projectKey);
+		if (project is null)
+			return Results.NotFound(new { error = "project not found", project = projectKey });
+
+		var workspaceKey = project.WorkspaceKey;
+
+		string? template = null;
+		var requestTags = new List<string> { $"ws:{workspaceKey}", $"project:{projectKey}" };
+		foreach (var (key, vals) in context.Request.Query)
+		{
+			if (string.Equals(key, "template", StringComparison.OrdinalIgnoreCase))
+			{
+				template = vals.ToString();
+				continue;
+			}
+			requestTags.Add($"{key}:{vals}");
+		}
+
+		var configDb = configFactory.GetConfigDb(workspaceKey);
+		var bindings = configDb.Bindings.ToList();
+
+		IReadOnlyList<ResolveMatch> matches;
+		try
+		{
+			matches = ResolvePipeline.ResolveAll(requestTags, bindings);
+		}
+		catch (AmbiguousConfigException ex)
+		{
+			return Results.Conflict(new { error = "ambiguous", path = ex.Path, candidates = ex.CandidateBindingIds });
+		}
+
+		var values = new Dictionary<string, string>(StringComparer.Ordinal);
+		foreach (var m in matches)
+			values[m.Binding.Path] = ResolveValue(m.Binding, encryptor);
+
+		var etag = ComputeSetETag(values);
+		var ifNoneMatch = context.Request.Headers.IfNoneMatch.ToString();
+		if (!string.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch == etag)
+		{
+			context.Response.Headers.ETag = etag;
+			return Results.StatusCode(StatusCodes.Status304NotModified);
+		}
+
+		context.Response.Headers.ETag = etag;
+		return Results.Ok(ConfigTemplates.Shape(values, template));
+	}
+
+	static string ResolveValue(ConfigBinding b, ISecretEncryptor encryptor)
+	{
+		if (b.Kind == BindingKind.Secret && encryptor.IsAvailable
+			&& b.Ciphertext is not null && b.Iv is not null && b.AuthTag is not null)
+		{
+			try { return encryptor.Decrypt(b.Ciphertext, b.Iv, b.AuthTag); }
+			catch { return string.Empty; }
+		}
+		return b.Value;
+	}
+
+	// ETag over the whole resolved set: sorted path\0value lines, hashed. Same (set) → same tag.
+	static string ComputeSetETag(IReadOnlyDictionary<string, string> values)
+	{
+		var sb = new StringBuilder();
+		foreach (var kv in values.OrderBy(k => k.Key, StringComparer.Ordinal))
+			sb.Append(kv.Key).Append('\0').Append(kv.Value).Append('\n');
+		Span<byte> hash = stackalloc byte[32];
+		SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()), hash);
+		return $"\"{Convert.ToHexStringLower(hash[..16])}\"";
 	}
 
 	static IResult Resolve(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)

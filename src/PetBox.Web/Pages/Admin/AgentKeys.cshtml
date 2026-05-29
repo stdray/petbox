@@ -1,0 +1,112 @@
+@page "/ui/admin/sys/agent-keys"
+@model PetBox.Web.Pages.Admin.AgentKeysModel
+@{
+	ViewData["Title"] = "Agent Keys";
+	Layout = "_AdminLayout";
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="sys-agent-keys-title">Agent Keys</h1>
+	<p class="text-sm opacity-60">Temporary, time-limited API keys for agent onboarding. Issue one with <code class="font-mono">admin:provision</code> so an agent can create a project, services, keys, and config via MCP. The key auto-expires.</p>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3 text-sm" data-testid="sys-agent-keys-error">@Model.ErrorMessage</div>
+}
+
+@if (!string.IsNullOrEmpty(Model.IssuedKey))
+{
+	<div class="alert alert-success mb-4 flex-col items-start" data-testid="sys-agent-key-issued">
+		<div class="font-semibold">Key issued — copy it now, it won't be shown again.</div>
+		<code class="font-mono break-all">@Model.IssuedKey</code>
+	</div>
+}
+
+<div class="card bg-base-200 mb-4">
+	<div class="card-body p-4">
+		<h2 class="text-base font-semibold mb-2">Issue agent key</h2>
+		<form method="post" asp-page-handler="Issue" class="space-y-3">
+			<div class="flex flex-wrap items-end gap-2">
+				<div>
+					<label class="text-xs opacity-60 block" for="ak-name">Name</label>
+					<input id="ak-name" name="name" class="input input-bordered input-sm" placeholder="kpvotes onboarding" data-testid="agent-key-name" />
+				</div>
+				<div>
+					<label class="text-xs opacity-60 block" for="ak-project">Project key</label>
+					<input id="ak-project" name="projectKey" class="input input-bordered input-sm font-mono" value="$system" data-testid="agent-key-project" />
+				</div>
+				<div>
+					<label class="text-xs opacity-60 block" for="ak-ttl">TTL (hours)</label>
+					<input id="ak-ttl" name="ttlHours" type="number" min="1" value="24" class="input input-bordered input-sm w-24" data-testid="agent-key-ttl" />
+				</div>
+			</div>
+			<div data-testid="agent-key-scopes-group">
+				<div class="text-xs opacity-60 mb-1">Scopes</div>
+				<div class="flex flex-wrap gap-3">
+					@foreach (var s in Model.AllScopes)
+					{
+						<label class="label cursor-pointer gap-2 p-0">
+							<input type="checkbox" name="scopes" value="@s.Value" class="checkbox checkbox-sm"
+								data-testid="agent-key-scope-@s.Value" @(s.Value == "admin:provision" ? "checked" : "") />
+							<span class="font-mono text-xs" title="@s.Description">@s.Value</span>
+						</label>
+					}
+				</div>
+			</div>
+			<button type="submit" class="btn btn-primary btn-sm" data-testid="agent-key-issue-submit">Issue key</button>
+		</form>
+	</div>
+</div>
+
+<div class="flex items-center gap-3 mb-3">
+	<h2 class="text-lg font-semibold">Active &amp; expired keys</h2>
+	<span class="badge badge-ghost">@Model.Keys.Count</span>
+</div>
+
+@if (Model.Keys.Count == 0)
+{
+	<div class="text-xs opacity-60 italic" data-testid="sys-agent-keys-empty">No agent keys.</div>
+}
+else
+{
+	<div class="overflow-x-auto">
+		<table class="table table-sm" data-testid="sys-agent-keys-table">
+			<thead>
+				<tr>
+					<th>Name</th>
+					<th>Project</th>
+					<th>Scopes</th>
+					<th>Expires</th>
+					<th class="w-24">Actions</th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var k in Model.Keys)
+				{
+					<tr data-testid="agent-key-row">
+						<td>@k.Name</td>
+						<td class="font-mono text-xs">@k.ProjectKey</td>
+						<td class="font-mono text-xs">@k.Scopes</td>
+						<td class="text-xs">
+							@if (k.Expired)
+							{
+								<span class="badge badge-error badge-sm" data-testid="agent-key-expired">expired</span>
+							}
+							else
+							{
+								<span class="font-mono opacity-70">@k.ExpiresAt?.ToString("yyyy-MM-dd HH:mm")</span>
+							}
+						</td>
+						<td>
+							<form method="post" asp-page-handler="Revoke" onsubmit="return confirm('Revoke this key?');">
+								<input type="hidden" name="key" value="@k.Key" />
+								<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="agent-key-revoke">Revoke</button>
+							</form>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}

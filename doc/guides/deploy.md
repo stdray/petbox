@@ -32,6 +32,18 @@ Settings → Secrets and variables → Actions → New repository secret.
 |---|---|---|
 | `PETBOX_OTEL_ENABLED` | `true` / `false` | Если хочешь OTel traces |
 | `PETBOX_OTEL_ENDPOINT` | `self` или full external URL | См. ниже |
+| `PETBOX_ADMIN_FORCE` | `true` | Только для recovery — см. ниже |
+
+### Bootstrap-admin lockdown
+
+`PETBOX_ADMIN_USERNAME`/`PETBOX_ADMIN_PASSWORD_HASH` — это **bootstrap** аккаунт: он создаётся
+только на первом запуске (пока в системе нет ни одного `$system` администратора). Как только ты
+создашь собственного админа (`/ui/admin/sys/users` → Create user, затем выдать ему `$system` Admin
+в `/ui/admin/ws/$system/members`), вход под bootstrap-аккаунтом **отклоняется** — это штатное
+поведение (как в yobaconf). Сам bootstrap-аккаунт при этом не удаляется.
+
+Если заблокировался (потерял доступ к собственному админу) — выставь `PETBOX_ADMIN_FORCE=true` в
+env контейнера, перезапусти, войди под bootstrap-аккаунтом, почини доступ, затем убери переменную.
 
 **SELFLOG секреты не нужны.** PetBox пишет собственные ILogger calls **in-process** через `SystemLogger` (Phase 22.2) — напрямую в `IngestionPipeline` → LogDb, без HTTP и без API key. Deploy job устанавливает `Seq__SelfLog__Enabled=true` всегда — это единственный switch.
 
