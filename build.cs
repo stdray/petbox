@@ -75,6 +75,24 @@ Task("Test")
 	.IsDependentOn("Build")
 	.Does(() =>
 	{
+		// Ensure Playwright browser binaries are installed for the E2E suite.
+		// Microsoft.Playwright drops `playwright.ps1` into the test bin dir;
+		// invoke it via pwsh. `--with-deps` pulls Linux libs the chromium
+		// headless shell needs. No-op fast if already installed.
+		var playwrightScript = GetFiles("./tests/PetBox.E2ETests/bin/" + configuration + "/**/playwright.ps1").FirstOrDefault();
+		if (playwrightScript != null)
+		{
+			var args = new ProcessArgumentBuilder()
+				.Append(playwrightScript.FullPath)
+				.Append("install")
+				.Append("chromium");
+			if (!IsRunningOnWindows())
+				args.Append("--with-deps");
+			var exit = StartProcess("pwsh", new ProcessSettings { Arguments = args });
+			if (exit != 0)
+				throw new Exception($"Playwright install exited with code {exit}");
+		}
+
 		var testProjects = GetFiles("./tests/**/*.csproj");
 		foreach (var testProj in testProjects)
 		{
