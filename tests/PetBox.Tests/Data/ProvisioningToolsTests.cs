@@ -117,6 +117,19 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task CreateProject_InvalidKey_Rejected()
+	{
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "workspace.create_project");
+		var result = await tool.CallAsync(new Dictionary<string, object?>
+		{
+			["workspaceKey"] = Workspace,
+			["key"] = "Bad Key!", // uppercase + space + punctuation
+			["name"] = "x",
+		});
+		result.IsError.Should().Be(true);
+	}
+
+	[Fact]
 	public async Task WithoutProvisionScope_Rejected()
 	{
 		// Reconnect with a key that lacks admin:provision.

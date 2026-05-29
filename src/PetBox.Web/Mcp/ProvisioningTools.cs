@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Text.RegularExpressions;
 using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
@@ -19,6 +20,9 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class ProvisioningTools
 {
+	// Project/service keys share the DataDb name spec: lowercase identifier, a-z0-9_- , ≤100 chars.
+	static readonly Regex KeyRegex = new("^[a-z][a-z0-9_-]{0,99}$", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
 	[McpServerTool(Name = "workspace.create_project", Title = "Create project")]
 	[Description("Creates a project inside a workspace. Requires admin:provision scope.")]
 	public static async Task<object> CreateProjectAsync(
@@ -32,7 +36,7 @@ public static class ProvisioningTools
 	{
 		AssertScope(http, "admin:provision");
 		Require(workspaceKey, nameof(workspaceKey));
-		Require(key, nameof(key));
+		RequireKey(key, nameof(key));
 
 		if (!await db.Workspaces.AnyAsync((Workspace w) => w.Key == workspaceKey, ct))
 			throw new InvalidOperationException($"Workspace '{workspaceKey}' not found");
@@ -63,7 +67,7 @@ public static class ProvisioningTools
 	{
 		AssertScope(http, "admin:provision");
 		Require(projectKey, nameof(projectKey));
-		Require(key, nameof(key));
+		RequireKey(key, nameof(key));
 
 		if (!await db.Projects.AnyAsync((Project p) => p.Key == projectKey, ct))
 			throw new InvalidOperationException($"Project '{projectKey}' not found");
@@ -180,5 +184,12 @@ public static class ProvisioningTools
 	{
 		if (string.IsNullOrWhiteSpace(value))
 			throw new ArgumentException($"{name} is required");
+	}
+
+	static void RequireKey(string value, string name)
+	{
+		Require(value, name);
+		if (!KeyRegex.IsMatch(value))
+			throw new ArgumentException($"{name} '{value}' is invalid; must match ^[a-z][a-z0-9_-]{{0,99}}$");
 	}
 }
