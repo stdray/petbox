@@ -89,6 +89,18 @@
 				{
 					<div class="hidden" data-testid="nav-current-ws">@currentWs</div>
 
+					<div class="px-2 pt-2">
+						<form method="post" action="/api/ui/workspace" data-testid="nav-workspace-switch">
+							<select name="ws" onchange="this.form.submit()" aria-label="Switch workspace" title="Switch workspace"
+								class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-workspace-select">
+								@foreach (var w in Nav.AvailableWorkspaces)
+								{
+									<option value="@w.Key" selected="@(string.Equals(w.Key, currentWs, StringComparison.Ordinal))">@w.Key</option>
+								}
+							</select>
+						</form>
+					</div>
+
 					<ul class="menu w-full p-2 gap-1">
 						<li>
 							<a href="@statusUrl" class="@(IsExactly(statusUrl) ? "active" : "")" data-testid="nav-status">
@@ -114,18 +126,34 @@
 							@foreach (var project in Nav.ProjectsInCurrentWorkspace)
 							{
 								var isCurrent = string.Equals(currentProject, project.Key, StringComparison.Ordinal);
-								var projectUrl = Routes.Project(currentWs, project.Key);
+								var pLogs = Routes.Project(currentWs, project.Key);
+								var pTraces = Routes.ProjectTraces(currentWs, project.Key);
+								var pConfig = Routes.ProjectConfig(currentWs, project.Key);
+								var pData = Routes.ProjectData(currentWs, project.Key);
 								<li data-testid="nav-project" data-project-key="@project.Key">
-									<a href="@projectUrl" class="@(isCurrent ? "active font-semibold" : "")">
-										<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-											<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-										</svg>
-										<span class="font-mono text-xs truncate">@project.Key</span>
-										@if (project.Key == "$system")
-										{
-											<span class="badge badge-ghost badge-xs">sys</span>
-										}
-									</a>
+									<details open="@isCurrent">
+										<summary class="@(isCurrent ? "active font-semibold" : "")">
+											<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+											</svg>
+											<span class="font-mono text-xs truncate">@project.Key</span>
+											@if (project.Key == "$system")
+											{
+												<span class="badge badge-ghost badge-xs">sys</span>
+											}
+										</summary>
+										<ul>
+											<li><a href="@pLogs" class="@(IsExactly(pLogs) ? "active" : "")" data-testid="nav-proj-logs">Logs</a></li>
+											<li><a href="@pTraces" class="@(IsActive(pTraces) ? "active" : "")" data-testid="nav-proj-traces">Traces</a></li>
+											@if (Nav.DataEnabled)
+											{
+												<li><a href="@pData" class="@(IsActive(pData) ? "active" : "")" data-testid="nav-proj-data">Databases</a></li>
+											}
+											<li><a href="@pConfig" class="@(IsActive(pConfig) ? "active" : "")" data-testid="nav-proj-config">Config</a></li>
+											<li><span class="opacity-40" title="coming soon" data-testid="nav-proj-tasks">Tasks</span></li>
+											<li><span class="opacity-40" title="coming soon" data-testid="nav-proj-memory">Memory</span></li>
+										</ul>
+									</details>
 								</li>
 							}
 						}
