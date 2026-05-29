@@ -46,8 +46,10 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 			return cached;
 
 		await _page!.GotoAsync($"/ui/admin/ws/{TestWorkspace.Key}/projects/kpvotes/info");
-		await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
-		await _page.GetByTestId("project-key-create-scopes").FillAsync(scopes);
+		await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-{System.Guid.NewGuid():N}");
+		await _page.GetByTestId("project-key-create-scopes-group").ScrollIntoViewIfNeededAsync();
+		foreach (var __s in scopes.Split(',', System.StringSplitOptions.RemoveEmptyEntries | System.StringSplitOptions.TrimEntries))
+			await _page.GetByTestId($"project-key-scope-{__s}").CheckAsync();
 		await _page.GetByTestId("project-key-create-submit").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
@@ -130,7 +132,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 		await AssertStatus("/api/config/$system/resolve?path=scope-test-ingest&tags=project:kpvotes", "GET", "logs:ingest", 403);
 	}
 
-	[Fact]
+	[Fact(Skip = "admin scope removed in scope catalog rework (commit d326ce8); test no longer applicable")]
 	public async Task AdminScope_NoApiAccess()
 	{
 		await EnsureProject();

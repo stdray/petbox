@@ -76,7 +76,8 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 	{
 		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/info");
 
-		await _page.GetByTestId("project-key-create-scopes").FillAsync("logs:ingest");
+		await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-key-{System.Guid.NewGuid():N}");
+		await _page.GetByTestId("project-key-scope-logs:ingest").CheckAsync();
 		await _page.GetByTestId("project-key-create-submit").ClickAsync();
 
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
@@ -88,20 +89,23 @@ public sealed class ProjectDetailTests(WebAppFixture app, ITestOutputHelper outp
 	{
 		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/info");
 
-		// Create
-		await _page.GetByTestId("project-key-create-scopes").FillAsync("dashboard:read");
+		await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-key-{System.Guid.NewGuid():N}");
+		await _page.GetByTestId("project-key-scope-logs:ingest").CheckAsync();
 		await _page.GetByTestId("project-key-create-submit").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
-		// Revoke the key we just created (find row with our scopes)
+		// The success banner shows the full just-issued key value; use its prefix
+		// to target the row in the table (sibling tests share the DB and may add
+		// rows with the same scope set, so filtering by scope text isn't unique).
+		var newKey = await _page.GetByTestId("project-key-created").Locator("code").InnerTextAsync();
+		var keyPrefix = newKey[..12];
+
 		var row = _page.GetByTestId("project-keys-table")
-			.Locator("tr").Filter(new() { HasText = "dashboard:read" });
-		var revokeBtn = row.GetByTestId("project-key-revoke");
+			.Locator("tr").Filter(new() { HasText = keyPrefix });
 		_page.Dialog += (_, dialog) => dialog.AcceptAsync();
-		await revokeBtn.ClickAsync();
+		await row.GetByTestId("project-key-revoke").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
-		// The key should be gone (only system internal key remains)
-		await Expect(_page.GetByTestId("project-keys-table")).Not.ToContainTextAsync("dashboard:read");
+		await Expect(_page.GetByTestId("project-keys-table")).Not.ToContainTextAsync(keyPrefix);
 	}
 }

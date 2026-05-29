@@ -65,8 +65,12 @@ public sealed class ConfigResolvePriorityTests(WebAppFixture app, ITestOutputHel
 		if (_apiKey is null)
 		{
 			await _page.GotoAsync("/ui/admin/ws/$system/projects/kpvotes/info");
-			await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
-			await _page.GetByTestId("project-key-create-scopes").FillAsync("config:read,config:write");
+			await _page.GetByTestId("project-key-create-scopes-group").ScrollIntoViewIfNeededAsync();
+			await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-key-{System.Guid.NewGuid():N}");
+			await _page.GetByTestId("project-key-scope-config:read").CheckAsync();
+
+			await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-key-{System.Guid.NewGuid():N}");
+			await _page.GetByTestId("project-key-scope-config:write").CheckAsync();
 			await _page.GetByTestId("project-key-create-submit").ClickAsync();
 			await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 

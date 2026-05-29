@@ -224,9 +224,15 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		if (_apiKey is not null) return;
 
 		await _page!.GotoAsync($"/ui/admin/ws/{Ws}/projects/{Pet}/info");
-		await _page.GetByTestId("project-key-create-scopes").ScrollIntoViewIfNeededAsync();
-		await _page.GetByTestId("project-key-create-scopes")
-			.FillAsync("config:read,config:write,logs:ingest");
+		await _page.GetByTestId("project-key-create-scopes-group").ScrollIntoViewIfNeededAsync();
+		await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-key-{System.Guid.NewGuid():N}");
+		await _page.GetByTestId("project-key-scope-config:read").CheckAsync();
+
+		await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-key-{System.Guid.NewGuid():N}");
+		await _page.GetByTestId("project-key-scope-config:write").CheckAsync();
+
+		await _page.GetByTestId("project-key-create-name").FillAsync($"e2e-key-{System.Guid.NewGuid():N}");
+		await _page.GetByTestId("project-key-scope-logs:ingest").CheckAsync();
 		await _page.GetByTestId("project-key-create-submit").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
