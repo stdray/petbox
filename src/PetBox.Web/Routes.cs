@@ -42,8 +42,8 @@ public static class Routes
 	// Project level — /ui/{ws}/{key} IS the Logs view directly (no redirect).
 	// A project has many named logs; /ui/{ws}/{key}/logs/{log} views a specific one,
 	// the bare project URL picks the default/first log.
-	public static string Project(string ws, string key) => $"{UiPrefix}/{ws}/{key}";
-	public static string ProjectLogs(string ws, string key) => Project(ws, key);
+	public static string Project(string ws, string key) => $"{UiPrefix}/{ws}/{key}";          // project dashboard
+	public static string ProjectLogs(string ws, string key) => $"{Project(ws, key)}/logs";     // logs dashboard
 	public static string ProjectLog(string ws, string key, string log) => $"{Project(ws, key)}/logs/{log}";
 	public static string ProjectTraces(string ws, string key) => $"{Project(ws, key)}/traces";
 	public static string ProjectTrace(string ws, string key, string traceId) => $"{Project(ws, key)}/traces/{traceId}";

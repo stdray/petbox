@@ -6,16 +6,20 @@
 	var path = Context.Request.Path.Value ?? string.Empty;
 	bool At(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
 	bool Under(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
-	var logsUrl = Routes.Project(ws, key);
+	var dashUrl = Routes.Project(ws, key);
+	var logsUrl = Routes.ProjectLogs(ws, key);
 	var configUrl = Routes.ProjectConfig(ws, key);
 	var settingsUrl = Routes.ProjectSettings(ws, key);
 	var tracesUrl = Routes.ProjectTraces(ws, key);
-	bool logsActive = At(logsUrl) || Under(tracesUrl);
+	bool logsActive = Under(logsUrl) || Under(tracesUrl);
 }
 @if (!string.IsNullOrEmpty(key))
 {
 	<div class="flex items-center mb-4" data-testid="proj-tabs-row">
 		<div role="tablist" class="tabs tabs-bordered" data-testid="proj-tabs">
+			<a role="tab" class="tab @(At(dashUrl) ? "tab-active" : "")"
+				href="@dashUrl"
+				data-testid="proj-tab-dashboard">Dashboard</a>
 			@if (Features.IsEnabled(Feature.Logging))
 			{
 				<a role="tab" class="tab @(logsActive ? "tab-active" : "")"

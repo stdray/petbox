@@ -127,7 +127,8 @@
 							@foreach (var project in Nav.ProjectsInCurrentWorkspace)
 							{
 								var isCurrent = string.Equals(currentProject, project.Key, StringComparison.Ordinal);
-								var pLogs = Routes.Project(currentWs, project.Key);
+								var pDash = Routes.Project(currentWs, project.Key);
+								var pLogs = Routes.ProjectLogs(currentWs, project.Key);
 								var pTraces = Routes.ProjectTraces(currentWs, project.Key);
 								var pConfig = Routes.ProjectConfig(currentWs, project.Key);
 								var pData = Routes.ProjectData(currentWs, project.Key);
@@ -144,7 +145,8 @@
 											}
 										</summary>
 										<ul>
-											<li><a href="@pLogs" class="@(IsExactly(pLogs) ? "active" : "")" data-testid="nav-proj-logs">Logs</a></li>
+											<li><a href="@pDash" class="@(IsExactly(pDash) ? "active" : "")" data-testid="nav-proj-dashboard">Dashboard</a></li>
+											<li><a href="@pLogs" class="@(IsActive(pLogs) ? "active" : "")" data-testid="nav-proj-logs">Logs</a></li>
 											<li><a href="@pTraces" class="@(IsActive(pTraces) ? "active" : "")" data-testid="nav-proj-traces">Traces</a></li>
 											@if (Nav.DataEnabled)
 											{

@@ -150,7 +150,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		}
 
 		// Project Logs page.
-		await _page!.GotoAsync($"/ui/{Ws}/{Pet}");
+		await _page!.GotoAsync($"/ui/{Ws}/{Pet}/logs");
 		await Expect(_page.GetByTestId("proj-tabs")).ToBeVisibleAsync();
 
 		// Filter to Error level.
@@ -166,6 +166,9 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 		await EnsureProject();
 
 		await _page!.GotoAsync($"/ui/{Ws}/{Pet}");
+		await Expect(_page.GetByTestId("proj-tab-dashboard")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
+
+		await _page.GetByTestId("proj-tab-logs").ClickAsync();
 		await Expect(_page.GetByTestId("proj-tab-logs")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
 
 		await _page.GetByTestId("proj-tab-config").ClickAsync();

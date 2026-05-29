@@ -1,0 +1,115 @@
+@page "/ui/{workspaceKey}/{projectKey}"
+@model PetBox.Web.Pages.ProjectHome.IndexModel
+@{
+	ViewData["Title"] = Model.Project?.Name ?? Model.ProjectKey;
+	var now = DateTime.UtcNow;
+	var ws = Model.WorkspaceKey;
+	var key = Model.ProjectKey;
+}
+
+<div class="mb-2 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold" data-testid="project-dashboard-title">@(Model.Project?.Name ?? key)</h1>
+	<span class="font-mono text-sm opacity-60">@key</span>
+</div>
+
+@if (Model.Project is null)
+{
+	<div class="alert alert-error" data-testid="project-dashboard-notfound">Project not found.</div>
+	return;
+}
+
+<partial name="_ProjectTabs" />
+
+@if (!string.IsNullOrWhiteSpace(Model.Project.Description))
+{
+	<p class="text-sm opacity-70 mb-4">@Model.Project.Description</p>
+}
+
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6" data-testid="project-dashboard-counts">
+	<a href="@Routes.ProjectLogs(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-logs">
+		<div class="card-body p-4">
+			<div class="text-2xl font-semibold">@Model.LogCount</div>
+			<div class="text-xs opacity-60">logs</div>
+		</div>
+	</a>
+	<a href="@Routes.ProjectData(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-dbs">
+		<div class="card-body p-4">
+			<div class="text-2xl font-semibold">@Model.DbCount</div>
+			<div class="text-xs opacity-60">databases</div>
+		</div>
+	</a>
+	<a href="@Routes.ProjectConfig(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-config">
+		<div class="card-body p-4">
+			<div class="text-2xl font-semibold">cfg</div>
+			<div class="text-xs opacity-60">config</div>
+		</div>
+	</a>
+	<a href="@Routes.ProjectSettings(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-keys">
+		<div class="card-body p-4">
+			<div class="text-2xl font-semibold">@Model.KeyCount</div>
+			<div class="text-xs opacity-60">api keys</div>
+		</div>
+	</a>
+</div>
+
+<h2 class="text-lg font-semibold mb-2">Health</h2>
+@if (Model.Health.Count == 0)
+{
+	<p class="text-sm opacity-50" data-testid="project-health-empty">No health reports.</p>
+}
+else
+{
+	<div class="overflow-x-auto rounded-box border border-base-300 bg-base-200">
+		<table class="table table-sm" data-testid="project-health-table">
+			<thead>
+				<tr><th>Service</th><th>Tags</th><th>Status</th><th>Version</th><th>Seen</th></tr>
+			</thead>
+			<tbody>
+				@foreach (var h in Model.Health)
+				{
+					var stale = (now - h.ReceivedAt).TotalSeconds > Model.StaleSeconds;
+					<tr data-testid="project-health-row" data-svc="@h.Svc">
+						<td>
+							<span class="font-mono text-xs">@h.Svc</span>
+							@if (!string.IsNullOrWhiteSpace(h.Name))
+							{
+								<span class="opacity-60 text-xs ml-1">@h.Name</span>
+							}
+						</td>
+						<td class="text-xs opacity-70 font-mono">@string.Join(" ", h.OtherTags.Select(t => $"{t.Key}={t.Value}"))</td>
+						<td>
+							@if (stale)
+							{
+								<span class="badge badge-xs badge-ghost" title="No recent report">stale</span>
+							}
+							else
+							{
+								<span class="badge badge-xs @StatusBadge(h.Status)">@h.Status</span>
+							}
+						</td>
+						<td class="font-mono text-xs opacity-70">
+							@(string.IsNullOrWhiteSpace(h.Version) ? "—" : h.Version)
+							@if (!string.IsNullOrWhiteSpace(h.Sha))
+							{
+								<text>·</text><span class="opacity-50">@h.Sha</span>
+							}
+						</td>
+						<td class="text-xs opacity-60">
+							<time class="local-time" datetime="@h.ReceivedAt.ToString("o")">@h.ReceivedAt.ToString("yyyy-MM-dd HH:mm")</time>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
+
+@functions {
+	static string StatusBadge(string status) => status.ToLowerInvariant() switch
+	{
+		"ok" or "healthy" or "up" or "pass" => "badge-success",
+		"degraded" or "warn" or "warning" => "badge-warning",
+		"down" or "error" or "fail" or "critical" => "badge-error",
+		_ => "badge-ghost",
+	};
+}

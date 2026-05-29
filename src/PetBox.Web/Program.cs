@@ -245,9 +245,6 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Core.Settings.ISettingsResolver, PetBox.Web.Settings.SettingsResolver>();
 		builder.Services.AddRazorPages(options =>
 		{
-			// A named log within a project — same Logs/Index page; the bare
-			// /ui/{ws}/{projectKey} route picks the project's default/first log.
-			options.Conventions.AddPageRoute("/Logs/Index", "/ui/{workspaceKey}/{projectKey}/logs/{logName}");
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.
 			options.Conventions.AddPageRoute("/Config/Index", "/ui/{workspaceKey}/{projectKey}/config");
 			options.Conventions.AddPageRoute("/Config/Editor", "/ui/{workspaceKey}/{projectKey}/config/editor/{bindingId:long?}");

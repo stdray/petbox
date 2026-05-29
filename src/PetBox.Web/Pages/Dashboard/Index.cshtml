@@ -42,7 +42,7 @@ else
 					}
 
 					<div class="flex flex-wrap gap-1 mb-3" data-testid="dashboard-counts">
-						<a href="@Routes.Project(Model.WorkspaceKey, project.Key)"
+						<a href="@Routes.ProjectLogs(Model.WorkspaceKey, project.Key)"
 							class="badge badge-sm badge-ghost gap-1" data-testid="count-logs">
 							@(Model.LogCount.GetValueOrDefault(project.Key)) logs</a>
 						<a href="@Routes.ProjectData(Model.WorkspaceKey, project.Key)"

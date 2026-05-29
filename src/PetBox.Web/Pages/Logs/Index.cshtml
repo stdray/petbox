@@ -1,4 +1,4 @@
-@page "/ui/{workspaceKey}/{projectKey}"
+@page "/ui/{workspaceKey}/{projectKey}/logs/{logName?}"
 @model PetBox.Web.Pages.Logs.IndexModel
 @{
 	ViewData["Title"] = Model.ProjectName is not null ? $"Logs — {Model.ProjectName}" : "Logs";
