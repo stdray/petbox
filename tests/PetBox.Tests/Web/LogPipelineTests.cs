@@ -19,7 +19,13 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 	public LogPipelineTests()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
+		// WebApplication.CreateBuilder reads ASPNETCORE_ENVIRONMENT at construction
+		// — before WithWebHostBuilder.UseEnvironment("Testing") gets a chance to
+		// apply — so set it here. Without this, on Linux CI the env defaults to
+		// Production, appsettings.Testing.json never loads, Features:Logging is
+		// false at ConfigureServices time, and IIngestionPipeline isn't registered.
+		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
+		var dbPath = Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
@@ -28,6 +34,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
+						["ConnectionStrings:PetBox"] = $"Data Source={dbPath};Cache=Shared",
 						["Features:Logging"] = "true",
 						["Seq:SelfLog:Enabled"] = "true",
 						["Admin:Username"] = "admin",
@@ -52,7 +59,6 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", null);
 	}
 
 	async Task<HttpResponseMessage> GetPageAsync(string url)

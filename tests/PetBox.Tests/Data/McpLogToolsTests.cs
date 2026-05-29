@@ -32,6 +32,14 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-mcp-log-test-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
+		// WebApplication.CreateBuilder reads ASPNETCORE_ENVIRONMENT + Features__*
+		// env vars at construction — before WithWebHostBuilder callbacks apply —
+		// so the feature flag checks in ConfigureServices see them. Without these,
+		// on Linux CI the env defaults to Production, Features:Logging/Data are
+		// false, and IIngestionPipeline / DataDbFactory aren't registered.
+		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
+		Environment.SetEnvironmentVariable("Features__Logging", "true");
+		Environment.SetEnvironmentVariable("Features__Data", "true");
 
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
