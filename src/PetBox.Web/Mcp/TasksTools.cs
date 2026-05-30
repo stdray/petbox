@@ -85,6 +85,7 @@ public static class TasksTools
 					depth = id?.Depth ?? 1,
 					parentKey = id?.ParentKey,
 					status = n.Status.ToString(),
+					name = n.Name,
 					body = n.Body,
 					commitRef = n.CommitRef,
 					priority = n.Priority,
