@@ -11,7 +11,12 @@ function isPinned(): boolean {
 }
 
 function apply(pinned: boolean): void {
+	// Pinned: docked open inline on >= md (the md:drawer-open class).
+	// Unpinned: a floating drawer — collapse it (uncheck the toggle) so it hides;
+	// the always-visible navbar hamburger reopens it as an overlay.
 	document.getElementById("app-drawer")?.classList.toggle(PINNED_CLASS, pinned);
+	const toggle = document.getElementById("sidebar-toggle") as HTMLInputElement | null;
+	if (toggle && !pinned) toggle.checked = false;
 	document.querySelectorAll<HTMLElement>("[data-sidebar-pin]").forEach((btn) => {
 		btn.setAttribute("aria-pressed", String(pinned));
 		btn.classList.toggle("btn-active", pinned);
