@@ -56,10 +56,21 @@ public sealed record TemporalUpsertResult(
 // The flow is three steps: read current state → classify each row → apply.
 public static class TemporalStore
 {
-	public static async Task<TemporalUpsertResult> UpsertAsync<TRow>(
+	public static Task<TemporalUpsertResult> UpsertAsync<TRow>(
 		DataConnection db,
 		IReadOnlyList<TRow> desired,
 		CancellationToken ct = default)
+		where TRow : TemporalRow =>
+		UpsertAsync(db, desired, onBeforeApply: null, ct);
+
+	// onBeforeApply is a test-only seam: it runs after classification but before
+	// the close+insert transaction, to deterministically exercise the CloseRace
+	// branch (a concurrent writer commits inside our read→close window).
+	internal static async Task<TemporalUpsertResult> UpsertAsync<TRow>(
+		DataConnection db,
+		IReadOnlyList<TRow> desired,
+		Func<Task>? onBeforeApply,
+		CancellationToken ct)
 		where TRow : TemporalRow
 	{
 		var table = db.GetTable<TRow>();
@@ -75,6 +86,9 @@ public static class TemporalStore
 			return TemporalUpsertResult.Rejected(fromVersion, batch.Conflicts);
 		if (batch.IsEmpty)
 			return TemporalUpsertResult.NoChanges(fromVersion);
+
+		if (onBeforeApply is not null)
+			await onBeforeApply();
 
 		return await ApplyAsync(db, table, batch, fromVersion, nextVersion, now, ct);
 	}

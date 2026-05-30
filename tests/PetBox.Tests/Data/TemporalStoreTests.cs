@@ -103,6 +103,23 @@ public sealed class TemporalStoreTests : IDisposable
 	}
 
 	[Fact]
+	public async Task CloseRace_WhenBaselineClosedDuringApply_IsDetected()
+	{
+		await Upsert(Node("wal", PlanStatus.Pending, "WAL-v1")); // v1
+
+		// A is about to edit wal@v1. The seam fires after A classifies but before
+		// A's close: a concurrent writer advances wal to v2, so A's close finds no
+		// active baseline row -> CloseRace (the in-window race, vs Stale before-read).
+		var r = await UpsertRacing(
+			Node("wal", PlanStatus.Done, "WAL-by-A", baseline: 1),
+			onBeforeApply: () => Upsert(Node("wal", PlanStatus.Done, "WAL-by-B", baseline: 1)));
+
+		r.Applied.Should().BeFalse();
+		r.Conflicts.Should().ContainSingle(c => c.Kind == TemporalConflictKind.CloseRace);
+		ActiveOf("wal")!.Body.Should().Be("WAL-by-B"); // B stands; A wrote nothing
+	}
+
+	[Fact]
 	public async Task CommitRef_IsPartOfPayload_TriggersNewRevision()
 	{
 		await Upsert(Node("wal", PlanStatus.Done, "WAL"));                                       // v1, no commit
@@ -155,6 +172,13 @@ public sealed class TemporalStoreTests : IDisposable
 	{
 		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
 		return await TemporalStore.UpsertAsync(db, rows);
+	}
+
+	// Drives the internal seam to reproduce CloseRace deterministically.
+	async Task<TemporalUpsertResult> UpsertRacing(PlanRow row, Func<Task> onBeforeApply)
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return await TemporalStore.UpsertAsync(db, new[] { row }, onBeforeApply, CancellationToken.None);
 	}
 
 	List<PlanRow> Active()

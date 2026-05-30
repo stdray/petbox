@@ -25,4 +25,8 @@
 		<Using Include="LinqToDB.Async" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<InternalsVisibleTo Include="PetBox.Tests" />
+	</ItemGroup>
+
 </Project>
