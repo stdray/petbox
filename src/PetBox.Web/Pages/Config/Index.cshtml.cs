@@ -7,6 +7,8 @@ using Microsoft.Extensions.Caching.Memory;
 using PetBox.Config;
 using PetBox.Config.Data;
 using PetBox.Core.Auth;
+using PetBox.Core.Data;
+using PetBox.Core.Models;
 
 namespace PetBox.Web.Pages.Config;
 
@@ -16,16 +18,21 @@ public sealed class IndexModel : PageModel
 	readonly IConfigDbFactory _configFactory;
 	readonly ISecretEncryptor _encryptor;
 	readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _cache;
+	readonly PetBoxDb _db;
 
 	public IndexModel(
 		IConfigDbFactory configFactory,
 		ISecretEncryptor encryptor,
-		Microsoft.Extensions.Caching.Memory.IMemoryCache cache)
+		Microsoft.Extensions.Caching.Memory.IMemoryCache cache,
+		PetBoxDb db)
 	{
 		_configFactory = configFactory;
 		_encryptor = encryptor;
 		_cache = cache;
+		_db = db;
 	}
+
+	public IReadOnlyList<SavedConfigFilter> SavedFilters { get; private set; } = [];
 
 	[BindProperty(SupportsGet = true)]
 	public string? WorkspaceKey { get; set; }
@@ -71,6 +78,11 @@ public sealed class IndexModel : PageModel
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
 		KeyQuery = string.IsNullOrWhiteSpace(q) ? null : q.Trim();
+
+		SavedFilters = _db.SavedConfigFilters
+			.Where(f => f.WorkspaceKey == EffectiveWorkspaceKey)
+			.OrderBy(f => f.Name)
+			.ToList();
 
 		var flash = Request.Query["deleteSuccess"].FirstOrDefault();
 		if (!string.IsNullOrEmpty(flash))
@@ -163,6 +175,55 @@ public sealed class IndexModel : PageModel
 		}
 		routeValues["deleteSuccess"] = "1";
 		return RedirectToPage("Index", routeValues);
+	}
+
+	public IActionResult OnPostSaveFilter(string name)
+	{
+		EffectiveWorkspaceKey = ResolveWorkspace();
+		var pairs = new List<string>();
+		foreach (var k in Request.Form.Keys)
+		{
+			if (!k.StartsWith("t.", StringComparison.Ordinal)) continue;
+			var v = Request.Form[k].LastOrDefault();
+			if (!string.IsNullOrEmpty(v)) pairs.Add($"{k[2..]}={v}");
+		}
+		if (!string.IsNullOrWhiteSpace(name) && pairs.Count > 0)
+		{
+			var filterTags = string.Join(",", pairs.OrderBy(p => p, StringComparer.Ordinal));
+			var trimmed = name.Trim();
+			var existing = _db.SavedConfigFilters.FirstOrDefault(
+				f => f.WorkspaceKey == EffectiveWorkspaceKey && f.Name == trimmed);
+			if (existing is null)
+				_db.Insert(new SavedConfigFilter { WorkspaceKey = EffectiveWorkspaceKey, Name = trimmed, FilterTags = filterTags, CreatedAt = DateTime.UtcNow });
+			else
+				_db.SavedConfigFilters.Where(f => f.Id == existing.Id).Set(f => f.FilterTags, filterTags).Update();
+		}
+		return RedirectBack();
+	}
+
+	public IActionResult OnPostDeleteFilter(long id)
+	{
+		EffectiveWorkspaceKey = ResolveWorkspace();
+		_db.SavedConfigFilters.Where(f => f.Id == id && f.WorkspaceKey == EffectiveWorkspaceKey).Delete();
+		return RedirectBack();
+	}
+
+	LocalRedirectResult RedirectBack()
+	{
+		var path = string.IsNullOrEmpty(ProjectKey)
+			? $"/ui/{EffectiveWorkspaceKey}/config"
+			: $"/ui/{EffectiveWorkspaceKey}/{ProjectKey}/config";
+		var query = new List<string>();
+		if (Request.Form.TryGetValue("q", out var qv) && !string.IsNullOrEmpty(qv))
+			query.Add($"q={Uri.EscapeDataString(qv!)}");
+		foreach (var k in Request.Form.Keys)
+		{
+			if (!k.StartsWith("t.", StringComparison.Ordinal)) continue;
+			var v = Request.Form[k].LastOrDefault();
+			if (!string.IsNullOrEmpty(v))
+				query.Add($"{Uri.EscapeDataString(k)}={Uri.EscapeDataString(v)}");
+		}
+		return LocalRedirect(query.Count > 0 ? $"{path}?{string.Join("&", query)}" : path);
 	}
 
 	public IActionResult OnPostReveal(long id)

@@ -80,6 +80,75 @@
 	<a asp-page="/Config/Index" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-ghost" data-testid="config-filter-clear">Clear</a>
 </form>
 
+@{
+	string ChipHref(string filterTags)
+	{
+		var parts = PetBox.Web.Pages.Config.IndexModel.ParseTagsDisplay(filterTags)
+			.Select(p => $"t.{Uri.EscapeDataString(p.Key)}={Uri.EscapeDataString(p.Value)}");
+		return "?" + string.Join("&", parts);
+	}
+	bool ChipActive(string filterTags)
+	{
+		var parts = PetBox.Web.Pages.Config.IndexModel.ParseTagsDisplay(filterTags);
+		return parts.Count > 0 && parts.Count == Model.TagFilter.Count
+			&& parts.All(p => Model.TagFilter.TryGetValue(p.Key, out var v) && v == p.Value);
+	}
+}
+
+<div class="card card-compact bg-base-200/40 border border-base-300 mb-4" data-testid="config-saved-filters">
+	<div class="card-body gap-2">
+		<div class="flex items-center gap-2 flex-wrap">
+			<span class="text-xs font-semibold uppercase opacity-60">Saved filters</span>
+			@if (Model.SavedFilters.Count == 0)
+			{
+				<span class="text-xs opacity-50 italic" data-testid="config-saved-filters-empty">none yet — apply a tag filter, then save it below</span>
+			}
+			@foreach (var f in Model.SavedFilters)
+			{
+				var label = string.Join(" & ", PetBox.Web.Pages.Config.IndexModel.ParseTagsDisplay(f.FilterTags).Select(p => $"{p.Key} = {p.Value}"));
+				<span class="join" data-testid="config-saved-filter" data-filter-name="@f.Name">
+					<a href="@ChipHref(f.FilterTags)"
+						class="btn btn-xs join-item @(ChipActive(f.FilterTags) ? "btn-primary" : "btn-outline")"
+						title="@label" data-testid="config-saved-filter-apply">
+						<span class="font-medium">@f.Name</span>
+						<span class="font-mono opacity-70 ml-1">@label</span>
+					</a>
+					<form method="post" asp-page-handler="DeleteFilter" class="join-item"
+						asp-route-workspaceKey="@Model.WorkspaceKey" asp-route-projectKey="@Model.ProjectKey">
+						<input type="hidden" name="id" value="@f.Id" />
+						<button type="submit" class="btn btn-xs btn-outline btn-error" title="Delete saved filter"
+							data-testid="config-saved-filter-delete">✕</button>
+					</form>
+				</span>
+			}
+		</div>
+
+		@if (Model.TagFilter.Count > 0)
+		{
+			<form method="post" asp-page-handler="SaveFilter" class="flex items-end gap-2 flex-wrap"
+				asp-route-workspaceKey="@Model.WorkspaceKey" asp-route-projectKey="@Model.ProjectKey"
+				data-testid="config-save-filter-form">
+				@foreach (var (k, v) in Model.TagFilter)
+				{
+					<input type="hidden" name="t.@k" value="@v" />
+				}
+				@if (!string.IsNullOrEmpty(Model.KeyQuery))
+				{
+					<input type="hidden" name="q" value="@Model.KeyQuery" />
+				}
+				<label class="form-control">
+					<span class="label-text text-xs">Save current filter
+						<span class="font-mono opacity-60">(@string.Join(" & ", Model.TagFilter.Select(p => $"{p.Key} = {p.Value}")))</span>
+					</span>
+					<input type="text" name="name" required maxlength="200" placeholder="filter name"
+						class="input input-bordered input-xs" data-testid="config-save-filter-name" />
+				</label>
+				<button type="submit" class="btn btn-xs btn-primary" data-testid="config-save-filter-submit">Save</button>
+			</form>
+		}
+	</div>
+</div>
+
 @if (Model.Rows.Count == 0)
 {
 	<div class="text-xs opacity-60 italic mb-4" data-testid="config-empty">No bindings match the current filter.</div>

@@ -27,6 +27,7 @@ public sealed class PetBoxDb : DataConnection
 	public ITable<LogMeta> Logs => this.GetTable<LogMeta>();
 	public ITable<HealthReport> HealthReports => this.GetTable<HealthReport>();
 	public ITable<HealthEndpoint> HealthEndpoints => this.GetTable<HealthEndpoint>();
+	public ITable<SavedConfigFilter> SavedConfigFilters => this.GetTable<SavedConfigFilter>();
 
 	public static DataOptions<PetBoxDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString));
