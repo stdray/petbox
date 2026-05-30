@@ -1,0 +1,179 @@
+using LinqToDB;
+using LinqToDB.Data;
+using LinqToDB.Mapping;
+using Microsoft.Data.Sqlite;
+using PetBox.Core.Data.Temporal;
+
+namespace PetBox.Tests.Data;
+
+// Exercises the generic temporal-upsert engine through a sample "plan node"
+// payload (enum Status + Body + optional CommitRef). Ports the LINQPad
+// concurrency scenarios into the repo with a temp-file SQLite DB.
+[Collection("DataModule")]
+public sealed class TemporalStoreTests : IDisposable
+{
+	readonly string _dir;
+	readonly string _cs;
+
+	public TemporalStoreTests()
+	{
+		_dir = Path.Combine(Path.GetTempPath(), "petbox-temporal-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(_dir);
+		_cs = $"Data Source={Path.Combine(_dir, "plan.db")}";
+		EnsureSchema(_cs);
+	}
+
+	public void Dispose()
+	{
+		SqliteConnection.ClearAllPools();
+		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+	}
+
+	[Fact]
+	public async Task Insert_NewNodes_AreActive_AtVersion1()
+	{
+		var r = await Upsert(
+			Node("p16", PlanStatus.InProgress, "Phase 16"),
+			Node("p16/w1", PlanStatus.Done, "Wave 1"));
+
+		r.Applied.Should().BeTrue();
+		r.Inserted.Should().Be(2);
+		(Active()).Should().HaveCount(2);
+		(ActiveOf("p16"))!.Version.Should().Be(1);
+	}
+
+	[Fact]
+	public async Task Edit_ClosesOld_InsertsNewRevision_KeepsHistory()
+	{
+		await Upsert(Node("wal", PlanStatus.Pending, "WAL"));                         // v1
+		var r = await Upsert(Node("wal", PlanStatus.Done, "WAL done", baseline: 1));  // v2
+
+		r.Applied.Should().BeTrue();
+		r.Closed.Should().Be(1);
+		r.Inserted.Should().Be(1);
+		(ActiveOf("wal"))!.Status.Should().Be(PlanStatus.Done);
+		(All()).Count(x => x.Key == "wal").Should().Be(2); // history preserved
+	}
+
+	[Fact]
+	public async Task Resubmit_IdenticalPayload_IsNoOp()
+	{
+		await Upsert(Node("wal", PlanStatus.Done, "WAL"));                       // v1
+		var r = await Upsert(Node("wal", PlanStatus.Done, "WAL", baseline: 1)); // identical
+
+		r.Applied.Should().BeTrue();
+		r.Inserted.Should().Be(0);
+		r.Closed.Should().Be(0);
+		(All()).Count(x => x.Key == "wal").Should().Be(1);
+	}
+
+	[Fact]
+	public async Task StaleEdit_Conflicts_AndDoesNotClobber()
+	{
+		await Upsert(Node("wal", PlanStatus.Pending, "WAL-v1"));                     // v1
+		await Upsert(Node("wal", PlanStatus.Done, "WAL-by-B", baseline: 1));         // B -> v2
+
+		// A still believes baseline is v1 (it read the plan before B committed).
+		var r = await Upsert(Node("wal", PlanStatus.Done, "WAL-by-A", baseline: 1));
+
+		r.Applied.Should().BeFalse();
+		r.Conflicts.Should().ContainSingle(c => c.Key == "wal" && c.Kind == TemporalConflictKind.Stale);
+		(ActiveOf("wal"))!.Body.Should().Be("WAL-by-B"); // B's change preserved
+	}
+
+	[Fact]
+	public async Task IndependentNodes_DoNotConflict()
+	{
+		await Upsert(Node("p16", PlanStatus.InProgress, "Phase 16"));            // v1
+		await Upsert(Node("p30", PlanStatus.Pending, "Phase 30"));              // B adds, v2
+
+		var r = await Upsert(Node("p16", PlanStatus.Done, "Phase 16 done", baseline: 1));
+
+		r.Applied.Should().BeTrue();
+		(ActiveOf("p30"))!.Body.Should().Be("Phase 30"); // untouched, survives
+	}
+
+	[Fact]
+	public async Task EditingVanishedNode_Conflicts()
+	{
+		var r = await Upsert(Node("ghost", PlanStatus.Done, "was here", baseline: 5));
+
+		r.Applied.Should().BeFalse();
+		r.Conflicts.Should().ContainSingle(c => c.Kind == TemporalConflictKind.Vanished);
+	}
+
+	[Fact]
+	public async Task CommitRef_IsPartOfPayload_TriggersNewRevision()
+	{
+		await Upsert(Node("wal", PlanStatus.Done, "WAL"));                                       // v1, no commit
+		var r = await Upsert(Node("wal", PlanStatus.Done, "WAL", baseline: 1, commit: "8b2e97d")); // only CommitRef changes
+
+		r.Applied.Should().BeTrue();
+		r.Inserted.Should().Be(1);
+		(ActiveOf("wal"))!.CommitRef.Should().Be("8b2e97d");
+	}
+
+	// ---- helpers ----
+	static PlanRow Node(string key, PlanStatus status, string body, long baseline = 0, string? commit = null) =>
+		new() { Key = key, Version = baseline, Status = status, Body = body, CommitRef = commit };
+
+	async Task<TemporalUpsertResult> Upsert(params PlanRow[] rows)
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return await TemporalStore.UpsertAsync(db, rows);
+	}
+
+	List<PlanRow> Active()
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return db.GetTable<PlanRow>().Where(x => x.ActiveTo == null).OrderBy(x => x.Key).ToList();
+	}
+
+	List<PlanRow> All()
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return db.GetTable<PlanRow>().OrderBy(x => x.Key).ThenBy(x => x.Version).ToList();
+	}
+
+	PlanRow? ActiveOf(string key) => Active().FirstOrDefault(x => x.Key == key);
+
+	static void EnsureSchema(string cs)
+	{
+		using var c = new SqliteConnection(cs);
+		c.Open();
+		using var cmd = c.CreateCommand();
+		cmd.CommandText = """
+			CREATE TABLE IF NOT EXISTS PlanNode (
+				Key        TEXT    NOT NULL,
+				Version    INTEGER NOT NULL,
+				Status     INTEGER NOT NULL,
+				Body       TEXT    NOT NULL,
+				CommitRef  TEXT,
+				ActiveFrom INTEGER NOT NULL,
+				ActiveTo   INTEGER,
+				Created    TEXT    NOT NULL,
+				Updated    TEXT    NOT NULL,
+				PRIMARY KEY (Key, Version)
+			);
+			""";
+		cmd.ExecuteNonQuery();
+	}
+}
+
+public enum PlanStatus { Pending, InProgress, Done, Blocked, Deferred, Cancelled }
+
+// Sample domain payload: the extra columns (enum Status, CommitRef) ride along
+// for free — the engine only calls SamePayload / AsRevision.
+[Table("PlanNode")]
+public sealed record PlanRow : TemporalRow
+{
+	[Column] public PlanStatus Status { get; init; }
+	[Column, NotNull] public string Body { get; init; } = string.Empty;
+	[Column, Nullable] public string? CommitRef { get; init; }
+
+	public override bool SamePayload(TemporalRow other) =>
+		other is PlanRow p && p.Status == Status && p.Body == Body && p.CommitRef == CommitRef;
+
+	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
+		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };
+}

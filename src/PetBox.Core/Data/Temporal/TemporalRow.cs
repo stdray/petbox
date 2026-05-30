@@ -1,0 +1,33 @@
+using LinqToDB.Mapping;
+
+namespace PetBox.Core.Data.Temporal;
+
+// Base row of a bitemporal (SCD type-2) store: one logical record is identified
+// by Key, its revisions are numbered by Version, and the *active* revision is the
+// one whose ActiveTo is null. Payload columns are defined by the derived type;
+// the engine (TemporalStore) only knows the identity/temporal columns plus the
+// two hooks below.
+public abstract record TemporalRow
+{
+	[Column, NotNull] public string Key { get; init; } = string.Empty;
+
+	// Revision number of this row. On a submitted (desired) row it carries the
+	// version the author last saw; 0 means "I believe this is a new node".
+	[Column] public long Version { get; init; }
+
+	[Column] public long ActiveFrom { get; init; }
+
+	// null => this is the current (active) revision.
+	[Column, Nullable] public long? ActiveTo { get; init; }
+
+	[Column] public DateTime Created { get; init; }
+	[Column] public DateTime Updated { get; init; }
+
+	// Compares ONLY the payload (ignores Key/Version/temporal columns). Lets the
+	// engine collapse no-op resubmits and absorb identical concurrent edits.
+	public abstract bool SamePayload(TemporalRow other);
+
+	// Returns a copy of this row as a fresh active revision numbered `version`.
+	// Derived records implement via `this with { ... }`.
+	public abstract TemporalRow AsRevision(long version, DateTime created, DateTime updated);
+}
