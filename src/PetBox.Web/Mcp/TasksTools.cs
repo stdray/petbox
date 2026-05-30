@@ -55,7 +55,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]
-	[Description("Return the active plan nodes of a board ordered by priority then key, with rename lineage. Requires tasks:read.")]
+	[Description("Return the active plan nodes of a board as a Phase>Wave>Task tree, ordered by priority then path. Each node carries key, phase, wave, task, depth, parentKey, status, body, priority, version, renamedFrom. Requires tasks:read.")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
 		string projectKey, string board, CancellationToken ct = default)
@@ -73,15 +73,24 @@ public static class TasksTools
 		return new
 		{
 			currentVersion = current,
-			nodes = active.Select(n => new
+			nodes = active.Select(n =>
 			{
-				key = n.Key,
-				status = n.Status.ToString(),
-				body = n.Body,
-				commitRef = n.CommitRef,
-				priority = n.Priority,
-				version = n.Version,
-				renamedFrom = lineage.TryGetValue(n.Key, out var p) ? p : [],
+				var id = TaskNodeId.TryParse(n.Key, out var pid) ? pid : null;
+				return new
+				{
+					key = n.Key,
+					phase = id?.PhaseKey ?? n.Key,
+					wave = id?.WaveKey,
+					task = id?.TaskKey,
+					depth = id?.Depth ?? 1,
+					parentKey = id?.ParentKey,
+					status = n.Status.ToString(),
+					body = n.Body,
+					commitRef = n.CommitRef,
+					priority = n.Priority,
+					version = n.Version,
+					renamedFrom = lineage.TryGetValue(n.Key, out var p) ? p : [],
+				};
 			}).ToList(),
 		};
 	}
@@ -89,11 +98,25 @@ public static class TasksTools
 	[McpServerTool(Name = "tasks.upsert", Title = "Upsert plan nodes")]
 	[Description("""
 		Declarative temporal upsert of plan nodes into a board. Requires tasks:write.
-		`nodes` is a JSON array of { key, status, body, commitRef?, priority?, version?, prevKey? }.
-		`version` is the baseline you last saw (0 = new node). `status` is one of
-		Pending|InProgress|Done|Blocked|Deferred|Cancelled. Set `prevKey` to rename a node
-		(retires the old key, creates the new linked one). `sinceVersion` selects the delta
-		returned. Result: { applied, currentVersion, inserted, closed, conflicts[], added[], updated[], removed[] }.
+
+		A plan is a 1-to-3 level TREE: Phase > Wave > Task. Identify each node by its
+		path, NOT a flat label. Preferred per-node fields:
+		  phase (required), wave (optional), task (optional, requires wave)
+		e.g. {phase:"logging"} (a phase), {phase:"logging",wave:"ingest"} (a wave),
+		{phase:"logging",wave:"ingest",task:"endpoint"} (a leaf task). Each segment is
+		lowercase ^[a-z][a-z0-9_-]{0,99}$. (You may instead pass a canonical
+		"phase/wave/task" string in `key`.) Always create the parent before/with its
+		children and give every node a meaningful `body` (the actual task text).
+
+		Other per-node fields: status (Pending|InProgress|Done|Blocked|Deferred|Cancelled),
+		body, commitRef?, priority? (sparse ordering int — lower first), version (the
+		baseline you last saw; 0 = new node). Rename/move a node by setting prevPhase/
+		prevWave/prevTask (or prevKey) to its old path — retires the old node and creates
+		the new one linked.
+
+		`sinceVersion` selects the returned delta. Result: { applied, currentVersion,
+		inserted, closed, conflicts[], added[], updated[], removed[] }. Each returned node
+		carries key, phase, wave, task, depth, parentKey, status, body, priority, version.
 		""")]
 	public static async Task<object> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
@@ -152,15 +175,24 @@ public static class TasksTools
 		removed = r.Removed.ToList(),
 	};
 
-	static object NodeDto(PlanNode n) => new
+	static object NodeDto(PlanNode n)
 	{
-		key = n.Key,
-		status = n.Status.ToString(),
-		body = n.Body,
-		commitRef = n.CommitRef,
-		priority = n.Priority,
-		version = n.Version,
-	};
+		var id = TaskNodeId.TryParse(n.Key, out var p) ? p : null;
+		return new
+		{
+			key = n.Key,
+			phase = id?.PhaseKey ?? n.Key,
+			wave = id?.WaveKey,
+			task = id?.TaskKey,
+			depth = id?.Depth ?? 1,
+			parentKey = id?.ParentKey,
+			status = n.Status.ToString(),
+			body = n.Body,
+			commitRef = n.CommitRef,
+			priority = n.Priority,
+			version = n.Version,
+		};
+	}
 
 	static PlanNode[] ParseNodes(JsonElement nodes)
 	{
@@ -171,16 +203,43 @@ public static class TasksTools
 		{
 			list.Add(new PlanNode
 			{
-				Key = ModuleMcp.ReqStr(e, "key"),
+				Key = ResolveKey(e),
 				Version = ModuleMcp.OptLong(e, "version", 0),
 				Status = ParseStatus(ModuleMcp.OptStr(e, "status") ?? "Pending"),
 				Body = ModuleMcp.OptStr(e, "body") ?? string.Empty,
 				CommitRef = ModuleMcp.OptStr(e, "commitRef"),
 				Priority = ModuleMcp.OptLong(e, "priority", 0),
-				PrevKey = ModuleMcp.OptStr(e, "prevKey"),
+				PrevKey = ResolvePrevKey(e),
 			});
 		}
 		return list.ToArray();
+	}
+
+	// A node's identity is the Phase/Wave/Task path. Preferred input is the
+	// structured form (phase + optional wave + optional task); a canonical
+	// "phase/wave/task" string in `key` is accepted as an alternative. Both are
+	// validated and canonicalised through TaskNodeId.
+	static string ResolveKey(JsonElement e)
+	{
+		var phase = ModuleMcp.OptStr(e, "phase");
+		if (phase is not null)
+			return new TaskNodeId(phase, ModuleMcp.OptStr(e, "wave"), ModuleMcp.OptStr(e, "task")).ToKey();
+
+		var key = ModuleMcp.OptStr(e, "key");
+		if (key is not null)
+			return TaskNodeId.Parse(key).ToKey();
+
+		throw new ArgumentException("each node needs 'phase' (+optional wave/task) or a 'key' path");
+	}
+
+	static string? ResolvePrevKey(JsonElement e)
+	{
+		var prevPhase = ModuleMcp.OptStr(e, "prevPhase");
+		if (prevPhase is not null)
+			return new TaskNodeId(prevPhase, ModuleMcp.OptStr(e, "prevWave"), ModuleMcp.OptStr(e, "prevTask")).ToKey();
+
+		var prevKey = ModuleMcp.OptStr(e, "prevKey");
+		return prevKey is not null ? TaskNodeId.Parse(prevKey).ToKey() : null;
 	}
 
 	static PlanStatus ParseStatus(string s) =>

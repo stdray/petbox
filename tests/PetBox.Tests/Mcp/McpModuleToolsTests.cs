@@ -72,8 +72,8 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		var nodes = JsonSerializer.SerializeToElement(new[]
 		{
-			new { key = "Phase 16", status = "InProgress", body = "Data", priority = 100 },
-			new { key = "Phase 16/Wave 1", status = "Done", body = "Foundation", priority = 200 },
+			new { key = "phase-16", status = "InProgress", body = "Data", priority = 100 },
+			new { key = "phase-16/wave-1", status = "Done", body = "Foundation", priority = 200 },
 		});
 		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _boards, Proj, "roadmap", nodes, 0));
 		up.GetProperty("applied").GetBoolean().Should().BeTrue();
@@ -81,7 +81,7 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		var get = Json(await TasksTools.GetAsync(http, Flags(), _boards, Proj, "roadmap"));
 		var keys = get.GetProperty("nodes").EnumerateArray().Select(n => n.GetProperty("key").GetString()).ToList();
-		keys.Should().Equal("Phase 16", "Phase 16/Wave 1"); // priority order
+		keys.Should().Equal("phase-16", "phase-16/wave-1"); // priority order
 	}
 
 	[Fact]
