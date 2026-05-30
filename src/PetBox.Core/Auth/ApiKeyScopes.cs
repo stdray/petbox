@@ -21,6 +21,10 @@ public static class ApiKeyScopes
 	public const string DataRead = "data:read";
 	public const string DataWrite = "data:write";
 	public const string DataSchema = "data:schema";
+	public const string TasksRead = "tasks:read";
+	public const string TasksWrite = "tasks:write";
+	public const string MemoryRead = "memory:read";
+	public const string MemoryWrite = "memory:write";
 	public const string AdminProvision = "admin:provision";
 
 	public static readonly IReadOnlyList<ApiKeyScope> All =
@@ -34,6 +38,10 @@ public static class ApiKeyScopes
 		new(DataRead,    "Read DataDbs",           "List DataDbs, SELECT via /api/data/{p}/{db}/query, describe schemas.",       "Data"),
 		new(DataWrite,   "Write DataDb rows",      "INSERT/UPDATE/DELETE via /api/data/{p}/{db}/exec.",                          "Data"),
 		new(DataSchema,  "Schema apply / lifecycle","CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs.",          "Data"),
+		new(TasksRead,   "Read tasks",             "List/read task boards and plan nodes (and sessions) via the MCP tasks.*/session.* tools.", "Tasks"),
+		new(TasksWrite,  "Write tasks",            "Create boards and upsert plan nodes / append sessions via the MCP tasks.*/session.* tools and entity.create taskboard.", "Tasks"),
+		new(MemoryRead,  "Read memory",            "List/read memory stores and entries via the MCP memory.* tools.", "Memory"),
+		new(MemoryWrite, "Write memory",           "Create stores and upsert entries via the MCP memory.* tools and entity.create memorystore.", "Memory"),
 		new(AdminProvision, "Provision projects & keys", "Agent onboarding: create projects, mint API keys, set config bindings via the entity.* MCP tools. Issue only on short-lived agent keys.", "Admin"),
 	];
 

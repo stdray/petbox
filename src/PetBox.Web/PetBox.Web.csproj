@@ -8,11 +8,18 @@
 	</PropertyGroup>
 
 	<ItemGroup>
+		<FrameworkReference Include="Microsoft.AspNetCore.App" />
+	</ItemGroup>
+
+	<ItemGroup>
 		<ProjectReference Include="..\PetBox.Core\PetBox.Core.csproj" />
 		<ProjectReference Include="..\PetBox.Config\PetBox.Config.csproj" />
 		<ProjectReference Include="..\PetBox.Log.Core\PetBox.Log.Core.csproj" />
 		<ProjectReference Include="..\PetBox.Data\PetBox.Data.csproj" />
 		<ProjectReference Include="..\PetBox.Dashboard\PetBox.Dashboard.csproj" />
+		<ProjectReference Include="..\PetBox.Tasks\PetBox.Tasks.csproj" />
+		<ProjectReference Include="..\PetBox.Memory\PetBox.Memory.csproj" />
+		<ProjectReference Include="..\PetBox.Sessions\PetBox.Sessions.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>
@@ -26,26 +33,12 @@
 		<PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
 	</ItemGroup>
 
-	<!-- OTLP HTTP/Protobuf ingestion. `OpenTelemetry.Proto` NuGet doesn't exist; vendored
-	     opentelemetry-proto v1.5.0 files under Proto/ are compiled by Grpc.Tools at build.
-	     GrpcServices=None — we only need message types, not service stubs. -->
 	<ItemGroup>
-		<PackageReference Include="Google.Protobuf" />
-		<PackageReference Include="Grpc.Tools" PrivateAssets="all" />
+		<PackageReference Include="Microsoft.Extensions.Caching.Memory" />
 	</ItemGroup>
 
 	<ItemGroup>
-		<Protobuf Include="Proto\**\*.proto" ProtoRoot="Proto" GrpcServices="None" />
-	</ItemGroup>
-
-	<Target Name="BuildFrontend" BeforeTargets="Build" Condition="'$(Configuration)' == 'Release'">
-		<Exec Command="bun install --frozen-lockfile" WorkingDirectory="$(MSBuildProjectDirectory)" />
-		<Exec Command="bun run build" WorkingDirectory="$(MSBuildProjectDirectory)" />
-	</Target>
-
-	<ItemGroup>
-		<Using Include="LinqToDB" />
-		<Using Include="LinqToDB.Async" />
+		<Protobuf Include="Proto\**\*.proto" GrpcServices="Server" />
 	</ItemGroup>
 
 </Project>

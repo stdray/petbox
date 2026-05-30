@@ -28,10 +28,10 @@
 	</ItemGroup>
 
 	<ItemGroup>
-		<ProjectReference Include="..\..\src\PetBox.Core\PetBox.Core.csproj" />
-		<ProjectReference Include="..\..\src\PetBox.Data\PetBox.Data.csproj" />
-		<ProjectReference Include="..\..\src\PetBox.Log.Core\PetBox.Log.Core.csproj" />
 		<ProjectReference Include="..\..\src\PetBox.Web\PetBox.Web.csproj" />
+		<ProjectReference Include="..\..\src\PetBox.Tasks\PetBox.Tasks.csproj" />
+		<ProjectReference Include="..\..\src\PetBox.Memory\PetBox.Memory.csproj" />
+		<ProjectReference Include="..\..\src\PetBox.Sessions\PetBox.Sessions.csproj" />
 	</ItemGroup>
 
 </Project>

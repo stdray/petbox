@@ -8,6 +8,8 @@ public enum Feature
 	Logging,
 	Data,
 	Dashboard,
+	Tasks,
+	Memory,
 }
 
 public sealed class FeatureFlags

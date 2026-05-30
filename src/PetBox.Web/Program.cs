@@ -69,6 +69,22 @@ public partial class Program
 		builder.Services.AddSingleton<IConfigDbFactory>(sp => new ConfigDbFactory(sp.GetRequiredService<IScopedDbFactory<ConfigDb>>()));
 		builder.Services.AddSingleton<PetBox.Data.IDataDbFactory>(sp => new PetBox.Data.DataDbFactory(Path.Combine(ResolveDataDir(sp), "db")));
 		builder.Services.AddSingleton<PetBox.Data.Schema.SchemaRunner>();
+		// Tasks / Memory / Sessions — scope-keyed temporal stores. Registered
+		// unconditionally (like the log factory); feature flags gate nav, pages and
+		// MCP tools, not DI. Each named board/store is its own file; sessions are a
+		// single per-project file.
+		builder.Services.AddSingleton<IScopedDbFactory<PetBox.Tasks.Data.TasksDb>>(sp => new ScopedDbFactory<PetBox.Tasks.Data.TasksDb>(
+				Path.Combine(ResolveDataDir(sp), "tasks"), PetBox.Core.Settings.Scope.Project,
+				cs => new PetBox.Tasks.Data.TasksDb(PetBox.Tasks.Data.TasksDb.CreateOptions(cs)), PetBox.Tasks.Data.TasksSchema.Ensure));
+		builder.Services.AddScoped<PetBox.Tasks.Data.ITaskBoardStore, PetBox.Tasks.Data.TaskBoardStore>();
+		builder.Services.AddSingleton<IScopedDbFactory<PetBox.Memory.Data.MemoryDb>>(sp => new ScopedDbFactory<PetBox.Memory.Data.MemoryDb>(
+				Path.Combine(ResolveDataDir(sp), "memory"), PetBox.Core.Settings.Scope.Project,
+				cs => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(cs)), PetBox.Memory.Data.MemorySchema.Ensure));
+		builder.Services.AddScoped<PetBox.Memory.Data.IMemoryStore, PetBox.Memory.Data.MemoryStore>();
+		builder.Services.AddSingleton<IScopedDbFactory<PetBox.Sessions.Data.SessionsDb>>(sp => new ScopedDbFactory<PetBox.Sessions.Data.SessionsDb>(
+				Path.Combine(ResolveDataDir(sp), "sessions"), PetBox.Core.Settings.Scope.Project,
+				cs => new PetBox.Sessions.Data.SessionsDb(PetBox.Sessions.Data.SessionsDb.CreateOptions(cs)), PetBox.Sessions.Data.SessionsSchema.Ensure));
+		builder.Services.AddScoped<PetBox.Sessions.Data.ISessionStore, PetBox.Sessions.Data.SessionStore>();
 		var masterKey = builder.Configuration["PetBox:MasterKey"]
 			?? Environment.GetEnvironmentVariable("PETBOX_MASTER_KEY");
 		builder.Services.AddSingleton(Options.Create(new SecretEncryptorOptions { MasterKey = masterKey }));
