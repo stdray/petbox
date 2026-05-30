@@ -1,0 +1,48 @@
+@page "/ui/{workspaceKey}/{projectKey}/databases"
+@model PetBox.Web.Pages.ProjectHome.DatabasesModel
+@{
+	ViewData["Title"] = $"Databases — {Model.Project?.Name ?? Model.ProjectKey}";
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold" data-testid="databases-title">@(Model.Project?.Name ?? Model.ProjectKey) · databases</h1>
+	<span class="badge badge-ghost">@Model.Dbs.Count</span>
+</div>
+
+@if (Model.Project is null)
+{
+	<div class="alert alert-error" data-testid="databases-notfound">Project not found.</div>
+	return;
+}
+
+@if (!Model.DataEnabled)
+{
+	<div class="alert" data-testid="databases-disabled">The Data module is disabled.</div>
+	return;
+}
+
+@if (Model.Dbs.Count == 0)
+{
+	<div class="alert" data-testid="databases-empty">No databases yet. Create one in admin (gear → project → Data).</div>
+}
+else
+{
+	<section class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="databases-list">
+		@foreach (var d in Model.Dbs)
+		{
+			<div class="card bg-base-200 border border-base-300" data-testid="database-card" data-db-name="@d.Name">
+				<div class="card-body p-4">
+					<div class="flex items-baseline justify-between">
+						<span class="font-mono font-semibold">@d.Name</span>
+						<span class="text-xs opacity-60">@(d.MaxPageCount * 4 / 1024) MB quota</span>
+					</div>
+					@if (!string.IsNullOrEmpty(d.Description))
+					{
+						<p class="text-sm opacity-80">@d.Description</p>
+					}
+					<div class="text-xs opacity-50 font-mono mt-2">created @d.CreatedAt.ToString("yyyy-MM-dd")</div>
+				</div>
+			</div>
+		}
+	</section>
+}

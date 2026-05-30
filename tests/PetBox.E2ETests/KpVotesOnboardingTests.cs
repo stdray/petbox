@@ -151,7 +151,6 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 
 		// Project Logs page.
 		await _page!.GotoAsync($"/ui/{Ws}/{Pet}/logs");
-		await Expect(_page.GetByTestId("proj-tabs")).ToBeVisibleAsync();
 
 		// Filter to Error level.
 		await _page.GetByTestId("kql-input").FillAsync("events | where Level == 4");
@@ -161,22 +160,13 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	}
 
 	[Fact]
-	public async Task NavigateBetweenTabs_HighlightsActive()
+	public async Task ProjectDashboard_IsLanding()
 	{
 		await EnsureProject();
 
 		await _page!.GotoAsync($"/ui/{Ws}/{Pet}");
-		await Expect(_page.GetByTestId("proj-tab-dashboard")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
-
-		await _page.GetByTestId("proj-tab-logs").ClickAsync();
-		await Expect(_page.GetByTestId("proj-tab-logs")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
-
-		await _page.GetByTestId("proj-tab-config").ClickAsync();
-		await Expect(_page.GetByTestId("proj-tab-config")).ToHaveClassAsync(new System.Text.RegularExpressions.Regex(".*tab-active.*"));
-
-		// "Admin" link leaves the project tab strip and enters the admin area.
-		await _page.GetByTestId("proj-admin-link").ClickAsync();
-		await _page.WaitForURLAsync($"**/ui/admin/ws/{Ws}/projects/{Pet}/info");
+		await Expect(_page.GetByTestId("project-dashboard-title")).ToBeVisibleAsync();
+		await Expect(_page.GetByTestId("project-dashboard-counts")).ToBeVisibleAsync();
 	}
 
 	// --- Setup helpers ------------------------------------------------------

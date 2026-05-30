@@ -4,6 +4,8 @@
 	ViewData["Title"] = $"Config Preview — {Model.EffectiveWorkspaceKey}";
 }
 
+<partial name="_ConfigTabs" />
+
 <div class="mb-4 text-sm">
 	<a asp-page="/Config/Index" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey"
 		class="link opacity-70 hover:opacity-100" data-testid="back-to-config">← All bindings</a>

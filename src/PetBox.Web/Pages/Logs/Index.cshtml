@@ -15,7 +15,6 @@
 	}
 </div>
 
-<partial name="_ProjectTabs" />
 
 @if (Model.ProjectKey is not null && Model.AvailableLogs.Count > 0)
 {
@@ -66,11 +65,6 @@
 				data-log="@Model.SelectedLog"
 				data-kql="@Model.UserKql"
 				title="Share query as TSV">Share</button>
-		}
-		@if (Model.ProjectKey is not null)
-		{
-			<a asp-page="/Admin/ProjectDetail" asp-route-projectKey="@Model.ProjectKey"
-				class="btn btn-ghost btn-xs" title="Project services &amp; keys">Services</a>
 		}
 	</div>
 </div>

@@ -3,6 +3,7 @@
 @{
 	var currentWs = Nav.CurrentWorkspaceKey;
 	var currentProject = Nav.CurrentProjectKey;
+	var fewProjects = Nav.ProjectsInCurrentWorkspace.Count < 3;
 	var path = Context.Request.Path.Value ?? string.Empty;
 	bool IsActive(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
 	bool IsExactly(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
@@ -36,7 +37,7 @@
 	<script type="module" src="~/js/site.js" asp-append-version="true"></script>
 </head>
 <body class="min-h-full">
-	<div class="drawer lg:drawer-open">
+	<div id="app-drawer" class="drawer md:drawer-open">
 		<input id="sidebar-toggle" type="checkbox" class="drawer-toggle" />
 		<div class="drawer-content flex flex-col min-h-screen">
 			<header class="navbar bg-base-200 border-b border-base-300 px-2 lg:px-4 min-h-12">
@@ -89,8 +90,8 @@
 				{
 					<div class="hidden" data-testid="nav-current-ws">@currentWs</div>
 
-					<div class="px-2 pt-2">
-						<form method="post" action="/api/ui/workspace" data-testid="nav-workspace-switch">
+					<div class="px-2 pt-2 flex items-center gap-1">
+						<form method="post" action="/api/ui/workspace" data-testid="nav-workspace-switch" class="flex-1">
 							<select name="ws" onchange="this.form.submit()" aria-label="Switch workspace" title="Switch workspace"
 								class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-workspace-select">
 								@foreach (var w in Nav.AvailableWorkspaces)
@@ -99,6 +100,12 @@
 								}
 							</select>
 						</form>
+						<button type="button" class="btn btn-sm btn-ghost btn-square" data-sidebar-pin
+							aria-pressed="true" title="Pin sidebar" data-testid="nav-sidebar-pin">
+							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+							</svg>
+						</button>
 					</div>
 
 					<ul class="menu w-full p-2 gap-1">
@@ -131,9 +138,9 @@
 								var pLogs = Routes.ProjectLogs(currentWs, project.Key);
 								var pTraces = Routes.ProjectTraces(currentWs, project.Key);
 								var pConfig = Routes.ProjectConfig(currentWs, project.Key);
-								var pData = Routes.ProjectData(currentWs, project.Key);
+								var pData = Routes.ProjectDatabases(currentWs, project.Key);
 								<li data-testid="nav-project" data-project-key="@project.Key">
-									<details open="@isCurrent">
+									<details open="@(isCurrent || fewProjects)">
 										<summary class="@(isCurrent ? "active font-semibold" : "")">
 											<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />

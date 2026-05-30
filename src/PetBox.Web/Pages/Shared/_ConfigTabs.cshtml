@@ -1,0 +1,18 @@
+@inject PetBox.Web.Navigation.INavigationContext Nav
+@{
+	var ws = Nav.CurrentWorkspaceKey;
+	var key = Nav.CurrentProjectKey ?? string.Empty;
+	var path = Context.Request.Path.Value ?? string.Empty;
+	var manageUrl = Routes.ProjectConfig(ws, key);
+	var previewUrl = Routes.ProjectConfigPreview(ws, key);
+	bool previewActive = path.StartsWith(previewUrl, StringComparison.OrdinalIgnoreCase);
+}
+@if (!string.IsNullOrEmpty(key))
+{
+	<div role="tablist" class="tabs tabs-bordered mb-4" data-testid="config-tabs">
+		<a role="tab" class="tab @(!previewActive ? "tab-active" : "")"
+			href="@manageUrl" data-testid="config-tab-manage">Manage</a>
+		<a role="tab" class="tab @(previewActive ? "tab-active" : "")"
+			href="@previewUrl" data-testid="config-tab-preview">Preview</a>
+	</div>
+}
