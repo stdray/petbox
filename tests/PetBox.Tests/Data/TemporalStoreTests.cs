@@ -157,9 +157,51 @@ public sealed class TemporalStoreTests : IDisposable
 		All().Count(x => x.Key == "c").Should().Be(1);
 	}
 
+	[Fact]
+	public async Task Rename_RetiresOldKey_CreatesNewWithLineage()
+	{
+		await Upsert(Node("old", PlanStatus.Done, "body"));                          // v1 at "old"
+		var r = await Upsert(Node("new", PlanStatus.Done, "body", baseline: 1, prevKey: "old"));
+
+		r.Applied.Should().BeTrue();
+		ActiveOf("old").Should().BeNull();                  // old retired
+		ActiveOf("new")!.PrevKey.Should().Be("old");        // lineage edge on the birth revision
+	}
+
+	[Fact]
+	public async Task Rename_OntoOccupiedKey_Conflicts()
+	{
+		await Upsert(Node("old", PlanStatus.Done, "o"));    // v1
+		await Upsert(Node("taken", PlanStatus.Done, "t"));  // v2
+
+		var r = await Upsert(Node("taken", PlanStatus.Done, "x", baseline: 1, prevKey: "old"));
+
+		r.Applied.Should().BeFalse();
+		r.Conflicts.Should().ContainSingle(c => c.Kind == TemporalConflictKind.TargetOccupied);
+		ActiveOf("old").Should().NotBeNull();               // both untouched
+		ActiveOf("taken")!.Body.Should().Be("t");
+	}
+
+	[Fact]
+	public async Task Delta_SinceCursor_ReturnsAdded_Updated_Removed()
+	{
+		var time = new SteppingTimeProvider(); // distinct, increasing per-batch timestamps
+		await Upsert(0, time, Node("a", PlanStatus.Done, "A"));                              // v1
+		await Upsert(0, time, Node("b", PlanStatus.Done, "B"));                              // v2
+		await Upsert(0, time, Node("a", PlanStatus.InProgress, "A2", baseline: 1));          // v3: edit a
+		await Upsert(0, time, Node("b2", PlanStatus.Done, "B", baseline: 2, prevKey: "b"));  // v4: rename b -> b2
+
+		var r = await Upsert(0, time); // empty submit, just pull the delta since cursor 0
+
+		r.Added.Select(x => x.Key).Should().BeEquivalentTo(["b2"]);   // never-edited new identity
+		r.Updated.Select(x => x.Key).Should().BeEquivalentTo(["a"]);  // edited (Created carried)
+		r.Removed.Should().BeEquivalentTo(["b"]);                     // renamed away, no active row
+	}
+
 	// ---- helpers ----
-	static PlanRow Node(string key, PlanStatus status, string body, long baseline = 0, string? commit = null, long priority = 0) =>
-		new() { Key = key, Version = baseline, Status = status, Body = body, CommitRef = commit, Priority = priority };
+	static PlanRow Node(string key, PlanStatus status, string body,
+		long baseline = 0, string? commit = null, long priority = 0, string? prevKey = null) =>
+		new() { Key = key, Version = baseline, Status = status, Body = body, CommitRef = commit, Priority = priority, PrevKey = prevKey };
 
 	List<PlanRow> Ordered()
 	{
@@ -168,17 +210,24 @@ public sealed class TemporalStoreTests : IDisposable
 			.OrderBy(x => x.Priority).ThenBy(x => x.Key).ToList();
 	}
 
-	async Task<TemporalUpsertResult> Upsert(params PlanRow[] rows)
+	async Task<TemporalUpsertResult<PlanRow>> Upsert(params PlanRow[] rows)
 	{
 		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
 		return await TemporalStore.UpsertAsync(db, rows);
 	}
 
-	// Drives the internal seam to reproduce CloseRace deterministically.
-	async Task<TemporalUpsertResult> UpsertRacing(PlanRow row, Func<Task> onBeforeApply)
+	// Advances a shared clock and reads the delta from `since`.
+	async Task<TemporalUpsertResult<PlanRow>> Upsert(long since, TimeProvider time, params PlanRow[] rows)
 	{
 		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
-		return await TemporalStore.UpsertAsync(db, new[] { row }, onBeforeApply, CancellationToken.None);
+		return await TemporalStore.UpsertAsync(db, rows, since, time);
+	}
+
+	// Drives the internal seam to reproduce CloseRace deterministically.
+	async Task<TemporalUpsertResult<PlanRow>> UpsertRacing(PlanRow row, Func<Task> onBeforeApply)
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return await TemporalStore.UpsertAsync(db, new[] { row }, 0, time: null, onBeforeApply, CancellationToken.None);
 	}
 
 	List<PlanRow> Active()
@@ -208,6 +257,7 @@ public sealed class TemporalStoreTests : IDisposable
 				Body       TEXT    NOT NULL,
 				CommitRef  TEXT,
 				Priority   INTEGER NOT NULL DEFAULT 0,
+				PrevKey    TEXT,
 				ActiveFrom INTEGER NOT NULL,
 				ActiveTo   INTEGER,
 				Created    TEXT    NOT NULL,
@@ -240,4 +290,18 @@ public sealed record PlanRow : TemporalRow
 
 	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
 		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };
+}
+
+// Returns a distinct, strictly-increasing timestamp per call, so consecutive
+// upserts get separable Created/Updated values regardless of wall-clock resolution.
+sealed class SteppingTimeProvider : TimeProvider
+{
+	DateTimeOffset _now = new(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
+	public override DateTimeOffset GetUtcNow()
+	{
+		var now = _now;
+		_now = _now.AddSeconds(1);
+		return now;
+	}
 }

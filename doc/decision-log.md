@@ -4,6 +4,27 @@ Newest decisions on top. Each entry: short title, date, context, decision, conse
 
 ---
 
+## 2026-05-30 — Temporal-store движок: rename, дельта-курсор, порядок, идентичность
+
+**Context.** Прототип generic temporal-upsert движка (`PetBox.Core/Data/Temporal`) обкатан на LINQPad и портирован в репу с тестами (ветка `feat/temporal-store`). Это переиспользуемая инфраструктура под plan/session/memory; по ходу проектирования закрыли набор решений по семантике upsert. Движок строится до pilot-gate как изолированная инфра (не вплетён в миграции/MCP/Program).
+
+**Decisions.**
+
+1. **Sparse partial upsert, не «весь план».** Клиент шлёт только изменённые ноды; отсутствующий в батче Key = не трогаем. Неизменный трафик не гоняем.
+2. **Оптимистичная конкуренция по baseline автора** (не по перечитанной версии): close по `(Key, baselineVersion)`. Truth table: insert (`Version==0`) / absorb (совпал payload) / edit / Stale / Vanished / CloseRace.
+3. **Идентичность = человекочитаемый путь (path-as-key).** Метка — идентичность, не атрибут. Клиентский id — `record TaskNodeId(PhaseKey, WaveKey?, TaskKey?)`, канонизируется в строковый `Key`; движок остаётся string-keyed, домен владеет своим id-типом.
+4. **Rename/move = `PrevKey`** (nullable на `TemporalRow`): «закрыть старый узел + создать новый, связанные ребром PrevKey» — решает невыразимость rename в чистом upsert. Новый конфликт `TargetOccupied` (rename на занятый путь). `PrevKey` вне `SamePayload` (lineage, не payload). История переименований — рекурсивный CTE по рёбрам PrevKey (read-слой).
+5. **Move узла с детьми — слоями.** Движок плоский (про детей не знает). Клиент либо шлёт потомков явно, либо ставит `MoveChildren` на rename-строке → доменный слой плана разворачивает в батч rename по префиксу `oldPath/`. Если ни то ни другое, а активные дети есть → **orphan-guard** (доменный) отдаёт ошибку. `MoveChildren`/orphan-guard — доменные (PlanStore), не в generic-движке.
+6. **`ActiveTo = nextVersion`** при закрытии (а не fromVersion) — чтобы дельта-курсор ловил и рождения (`Version > N`), и смерти (`ActiveTo > N`).
+7. **Дельта-since-cursor в ответе.** Запрос несёт plan-level `sinceVersion`; результат — `Added`/`Updated` (активные с `Version > sinceVersion`) + `Removed` (ключи, умершие с N и без активной строки) + `CurrentVersion`. Один round-trip: клиент шлёт частичное, получает всё, что сдвинулось с его курсора (свои и чужие), двигает единственный курсор без перечитывания. Added/Updated делятся по инварианту «в рамках одного upsert Created==Updated у новых строк; у правок Created перенесён из прошлой ревизии».
+8. **Порядок = разреженный `Priority` (payload-поле) + path-sort.** `ORDER BY Priority, Key`. Приоритет живёт на узле → меняется через ту же пер-нодовую конкуренцию и не перенумеровывает соседей (плотный `Order` рушился бы параллельными агентами).
+
+**Layering.** Generic-движок (`TemporalStore`, `TemporalRow`) — string-keyed, payload-агностичен, знает только identity/temporal-колонки + `SamePayload`/`AsRevision`/`PrevKey`. Доменное (TaskNodeId, MoveChildren, orphan-guard, lineage-CTE, тумбстоун-статусы) — в будущих PlanStore/MemoryStore, за pilot-gate.
+
+**Consequences.** В движке реализовано с тестами: baseline-concurrency, PrevKey-rename + TargetOccupied, ActiveTo=nextVersion, дельта-результат (Added/Updated/Removed), sparse priority. Доменные обёртки — отдельной фазой, когда/если pilot подтвердит модуль. Generic результат стал `TemporalUpsertResult<TRow>`.
+
+---
+
 ## 2026-05-29 — Редизайн навигации /ui (дерево) + «сервис» → Health/Status (tag-отчёты)
 
 **Context.** После named-logs обнаружилось, что из основного UI пропал переключатель воркспейсов

@@ -11,7 +11,10 @@ public enum TemporalConflictKind
 	// The author edited a node (baseline > 0) that no longer exists.
 	Vanished,
 
-	// A concurrent writer closed the baseline row inside our read→write window.
+	// A rename targets a Key that is already occupied by an active node.
+	TargetOccupied,
+
+	// A concurrent writer closed the baseline row inside our read→close window.
 	CloseRace,
 }
 
@@ -22,53 +25,56 @@ public sealed record TemporalConflict(
 	long BaselineVersion,
 	long? ActiveVersion);
 
-public sealed record TemporalUpsertResult(
+// Result of an upsert. Besides what was applied, carries the delta the caller
+// asked for via `sinceVersion`: every active row that changed since that cursor
+// (own edits AND others'), split into Added/Updated, plus keys that died. The
+// caller advances its single cursor to CurrentVersion without re-reading.
+public sealed record TemporalUpsertResult<TRow>(
 	bool Applied,
-	long FromVersion,
-	long ToVersion,
+	long CurrentVersion,
 	int Inserted,
 	int Closed,
-	IReadOnlyList<TemporalConflict> Conflicts)
+	IReadOnlyList<TemporalConflict> Conflicts,
+	IReadOnlyList<TRow> Added,
+	IReadOnlyList<TRow> Updated,
+	IReadOnlyList<string> Removed)
+	where TRow : TemporalRow
 {
 	public bool HasConflicts => Conflicts.Count > 0;
-
-	internal static TemporalUpsertResult Rejected(long version, IReadOnlyList<TemporalConflict> conflicts) =>
-		new(false, version, version, 0, 0, conflicts);
-
-	internal static TemporalUpsertResult NoChanges(long version) =>
-		new(true, version, version, 0, 0, []);
-
-	internal static TemporalUpsertResult Committed(long fromVersion, long toVersion, int inserted, int closed) =>
-		new(true, fromVersion, toVersion, inserted, closed, []);
 }
 
 // Declarative, append-only upsert for a batch of keyed rows.
 //
-// Each desired row carries the version its author last saw (Version == 0 means
-// "I believe this is new"). Optimistic concurrency keys on the AUTHOR's baseline
-// version, not on a freshly re-read version, so a change that landed any time
-// during the author's think-time is caught. Any conflict aborts the whole batch
-// (nothing is written) and the conflicts are returned so the caller can rebase.
+// Each desired row carries the version its author last saw (Version == 0 = "new").
+// Optimistic concurrency keys on the AUTHOR's baseline, not a freshly re-read
+// version, so a change that landed during the author's think-time is caught. Any
+// conflict aborts the whole batch; conflicts are returned so the caller rebases.
 //
-// The batch is meant to flow through a single-writer SQLite file (one DB per
-// scope), which serialises writers and keeps the global Version a clean cursor.
+// A desired row may also carry PrevKey to express a rename/re-key: retire the
+// active row at PrevKey and create a new identity at Key (linked via PrevKey).
 //
-// The flow is three steps: read current state → classify each row → apply.
+// Meant to flow through a single-writer SQLite file (one DB per scope), which
+// serialises writers and keeps the global Version a clean cursor.
+//
+// Flow: read current state → classify each row → apply → compute the delta.
 public static class TemporalStore
 {
-	public static Task<TemporalUpsertResult> UpsertAsync<TRow>(
+	public static Task<TemporalUpsertResult<TRow>> UpsertAsync<TRow>(
 		DataConnection db,
 		IReadOnlyList<TRow> desired,
+		long sinceVersion = 0,
+		TimeProvider? time = null,
 		CancellationToken ct = default)
 		where TRow : TemporalRow =>
-		UpsertAsync(db, desired, onBeforeApply: null, ct);
+		UpsertAsync(db, desired, sinceVersion, time, onBeforeApply: null, ct);
 
-	// onBeforeApply is a test-only seam: it runs after classification but before
-	// the close+insert transaction, to deterministically exercise the CloseRace
-	// branch (a concurrent writer commits inside our read→close window).
-	internal static async Task<TemporalUpsertResult> UpsertAsync<TRow>(
+	// onBeforeApply is a test-only seam: it fires after classification but before
+	// the close+insert transaction, to drive the CloseRace branch deterministically.
+	internal static async Task<TemporalUpsertResult<TRow>> UpsertAsync<TRow>(
 		DataConnection db,
 		IReadOnlyList<TRow> desired,
+		long sinceVersion,
+		TimeProvider? time,
 		Func<Task>? onBeforeApply,
 		CancellationToken ct)
 		where TRow : TemporalRow
@@ -78,19 +84,37 @@ public static class TemporalStore
 		var active = await ActiveByKeyAsync(table, desired, ct);
 		var fromVersion = await MaxVersionAsync(table, ct);
 		var nextVersion = fromVersion + 1;
-		var now = DateTime.UtcNow;
+		var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
 
 		var batch = Classify(desired, active, nextVersion, now);
 
-		if (batch.Conflicts.Count > 0)
-			return TemporalUpsertResult.Rejected(fromVersion, batch.Conflicts);
-		if (batch.IsEmpty)
-			return TemporalUpsertResult.NoChanges(fromVersion);
+		var conflicts = batch.Conflicts;
+		var applied = conflicts.Count == 0;
+		var inserted = 0;
+		var closed = 0;
 
-		if (onBeforeApply is not null)
-			await onBeforeApply();
+		if (applied && !batch.IsEmpty)
+		{
+			if (onBeforeApply is not null)
+				await onBeforeApply();
 
-		return await ApplyAsync(db, table, batch, fromVersion, nextVersion, now, ct);
+			var race = await ApplyAsync(db, table, batch, nextVersion, now, ct);
+			if (race is not null)
+			{
+				conflicts = [race];
+				applied = false;
+			}
+			else
+			{
+				inserted = batch.ToInsert.Count;
+				closed = batch.ToClose.Count;
+			}
+		}
+
+		var (added, updated, removed) = await DeltaAsync(table, sinceVersion, ct);
+		var currentVersion = await MaxVersionAsync(table, ct);
+
+		return new TemporalUpsertResult<TRow>(applied, currentVersion, inserted, closed, conflicts, added, updated, removed);
 	}
 
 	// ── 1. read current state ────────────────────────────────────────────────
@@ -99,7 +123,11 @@ public static class TemporalStore
 		ITable<TRow> table, IReadOnlyList<TRow> desired, CancellationToken ct)
 		where TRow : TemporalRow
 	{
-		var keys = desired.Select(d => d.Key).Distinct().ToList();
+		// Renames need the active row at PrevKey too.
+		var keys = desired.Select(d => d.Key)
+			.Concat(desired.Where(d => d.PrevKey is not null).Select(d => d.PrevKey!))
+			.Distinct()
+			.ToList();
 		return await table
 			.Where(x => x.ActiveTo == null && keys.Contains(x.Key))
 			.ToDictionaryAsync(x => x.Key, ct);
@@ -129,12 +157,32 @@ public static class TemporalStore
 
 		foreach (var d in desired)
 		{
+			if (d.PrevKey is not null)
+			{
+				// rename / re-key: retire PrevKey, create Key as a new linked identity
+				active.TryGetValue(d.Key, out var occupied);
+				active.TryGetValue(d.PrevKey, out var source);
+
+				if (occupied is not null)
+					batch.Conflicts.Add(new(d.Key, TemporalConflictKind.TargetOccupied, d.Version, occupied.Version));
+				else if (source is null)
+					batch.Conflicts.Add(new(d.PrevKey, TemporalConflictKind.Vanished, d.Version, null));
+				else if (source.Version != d.Version)
+					batch.Conflicts.Add(new(d.PrevKey, TemporalConflictKind.Stale, d.Version, source.Version));
+				else
+				{
+					batch.ToClose.Add((d.PrevKey, d.Version));
+					batch.ToInsert.Add(Revision(d, nextVersion, created: now, now)); // new identity -> Added in delta
+				}
+				continue;
+			}
+
 			active.TryGetValue(d.Key, out var current);
 
 			if (current is null)
 			{
 				if (d.Version == 0)
-					batch.ToInsert.Add(Revision(d, nextVersion, created: now, now));            // new node
+					batch.ToInsert.Add(Revision(d, nextVersion, created: now, now));
 				else
 					batch.Conflicts.Add(new(d.Key, TemporalConflictKind.Vanished, d.Version, null));
 			}
@@ -144,12 +192,12 @@ public static class TemporalStore
 			}
 			else if (current.Version == d.Version)
 			{
-				batch.ToClose.Add((d.Key, d.Version));                                          // baseline current → legal edit
+				batch.ToClose.Add((d.Key, d.Version));
 				batch.ToInsert.Add(Revision(d, nextVersion, created: current.Created, now));
 			}
 			else
 			{
-				batch.Conflicts.Add(new(d.Key, TemporalConflictKind.Stale, d.Version, current.Version)); // changed under the author
+				batch.Conflicts.Add(new(d.Key, TemporalConflictKind.Stale, d.Version, current.Version));
 			}
 		}
 
@@ -162,29 +210,27 @@ public static class TemporalStore
 
 	// ── 3. apply atomically: close baselines, insert new revisions ───────────
 
-	static async Task<TemporalUpsertResult> ApplyAsync<TRow>(
-		DataConnection db, ITable<TRow> table, Batch<TRow> batch,
-		long fromVersion, long nextVersion, DateTime now, CancellationToken ct)
+	// Returns null on commit, or a CloseRace conflict if a baseline row was no
+	// longer active (a writer slipped into our read→close window).
+	static async Task<TemporalConflict?> ApplyAsync<TRow>(
+		DataConnection db, ITable<TRow> table, Batch<TRow> batch, long nextVersion, DateTime now, CancellationToken ct)
 		where TRow : TemporalRow
 	{
 		using var tx = await db.BeginTransactionAsync(ct);
 		try
 		{
-			var closed = await CloseBaselinesAsync(table, batch.ToClose, activeTo: fromVersion, now, ct);
+			var closed = await CloseBaselinesAsync(table, batch.ToClose, activeTo: nextVersion, now, ct);
 			if (closed != batch.ToClose.Count)
 			{
-				// the baseline row(s) we meant to close are no longer active:
-				// a writer slipped into our read→write window. Abort, let caller retry.
 				await tx.RollbackAsync(ct);
-				return TemporalUpsertResult.Rejected(fromVersion,
-					[new("*", TemporalConflictKind.CloseRace, fromVersion, null)]);
+				return new("*", TemporalConflictKind.CloseRace, nextVersion - 1, null);
 			}
 
 			foreach (var row in batch.ToInsert)
 				await db.InsertAsync(row, token: ct);
 
 			await tx.CommitAsync(ct);
-			return TemporalUpsertResult.Committed(fromVersion, nextVersion, batch.ToInsert.Count, closed);
+			return null;
 		}
 		catch
 		{
@@ -203,8 +249,39 @@ public static class TemporalStore
 		var keys = toClose.Select(c => new { c.Key, c.Version }).ToList();
 		return await table
 			.Where(x => x.ActiveTo == null && new { x.Key, x.Version }.In(keys))
-			.Set(x => x.ActiveTo, _ => (long?)activeTo)
+			.Set(x => x.ActiveTo, _ => (long?)activeTo) // stamp the retiring version, so deaths are queryable by cursor
 			.Set(x => x.Updated, _ => now)
 			.UpdateAsync(ct);
+	}
+
+	// ── 4. delta since the caller's cursor ───────────────────────────────────
+
+	static async Task<(List<TRow> Added, List<TRow> Updated, List<string> Removed)> DeltaAsync<TRow>(
+		ITable<TRow> table, long sinceVersion, CancellationToken ct)
+		where TRow : TemporalRow
+	{
+		var changed = await table.Where(x => x.ActiveTo == null && x.Version > sinceVersion).ToListAsync(ct);
+		// Per-batch invariant: a row born this batch has Created == Updated; an
+		// edited row carried its Created from a prior batch -> Created != Updated.
+		var added = changed.Where(x => x.Created == x.Updated).ToList();
+		var updated = changed.Where(x => x.Created != x.Updated).ToList();
+
+		var died = await table
+			.Where(x => x.ActiveTo != null && x.ActiveTo > sinceVersion)
+			.Select(x => x.Key)
+			.Distinct()
+			.ToListAsync(ct);
+
+		var removed = new List<string>();
+		if (died.Count > 0)
+		{
+			var stillActive = await table
+				.Where(x => x.ActiveTo == null && died.Contains(x.Key))
+				.Select(x => x.Key)
+				.ToListAsync(ct);
+			removed = died.Except(stillActive).ToList();
+		}
+
+		return (added, updated, removed);
 	}
 }

@@ -20,6 +20,12 @@ public abstract record TemporalRow
 	// null => this is the current (active) revision.
 	[Column, Nullable] public long? ActiveTo { get; init; }
 
+	// Lineage edge: on a rename, the desired row sets PrevKey to the old Key. The
+	// engine retires the active row at PrevKey and creates this one at Key, so the
+	// birth revision of the new identity records where it came from. NOT payload —
+	// excluded from SamePayload; reconstruct rename history by walking PrevKey.
+	[Column, Nullable] public string? PrevKey { get; init; }
+
 	[Column] public DateTime Created { get; init; }
 	[Column] public DateTime Updated { get; init; }
 

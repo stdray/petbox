@@ -66,7 +66,7 @@ public sealed class TemporalSessionTests : IDisposable
 		Active("s1")!.Content.Should().Be("by-laptop");
 	}
 
-	async Task<TemporalUpsertResult> Save(SessionRow row)
+	async Task<TemporalUpsertResult<SessionRow>> Save(SessionRow row)
 	{
 		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
 		return await TemporalStore.UpsertAsync(db, new[] { row });
@@ -95,6 +95,7 @@ public sealed class TemporalSessionTests : IDisposable
 				Version    INTEGER NOT NULL,
 				Agent      TEXT    NOT NULL,
 				Content    TEXT    NOT NULL,
+				PrevKey    TEXT,
 				ActiveFrom INTEGER NOT NULL,
 				ActiveTo   INTEGER,
 				Created    TEXT    NOT NULL,
@@ -150,7 +151,7 @@ public sealed class TemporalMemoryTests : IDisposable
 		Active("feedback-x")!.Body.Should().Be("by-B");
 	}
 
-	async Task<TemporalUpsertResult> Up(MemoryRow row)
+	async Task<TemporalUpsertResult<MemoryRow>> Up(MemoryRow row)
 	{
 		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
 		return await TemporalStore.UpsertAsync(db, new[] { row });
@@ -174,6 +175,7 @@ public sealed class TemporalMemoryTests : IDisposable
 				Description TEXT    NOT NULL,
 				Body        TEXT    NOT NULL,
 				Tags        TEXT    NOT NULL,
+				PrevKey     TEXT,
 				ActiveFrom  INTEGER NOT NULL,
 				ActiveTo    INTEGER,
 				Created     TEXT    NOT NULL,
