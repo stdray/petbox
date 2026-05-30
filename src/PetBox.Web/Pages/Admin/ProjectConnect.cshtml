@@ -1,0 +1,174 @@
+@page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/connect"
+@model PetBox.Web.Pages.Admin.ProjectConnectModel
+@{
+	ViewData["Title"] = $"{Model.ProjectKey} — Connect agent";
+	Layout = "_AdminLayout";
+	var mcp = Model.McpUrl;
+	var key = Model.NewKey;
+	var proj = Model.ProjectKey;
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold">@Model.ProjectKey · connect agent</h1>
+</div>
+
+@if (Model.ProjectNotFound)
+{
+	<p class="text-error font-semibold" data-testid="project-connect-error">Project not found</p>
+	return;
+}
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="project-connect-error-msg">@Model.ErrorMessage</div>
+}
+
+<div class="prose prose-sm max-w-3xl mb-6">
+	<p>
+		This wires a coding agent to PetBox over <strong>MCP</strong> (Model Context Protocol).
+		Once connected, the agent can read and write this project's <strong>task boards</strong>,
+		<strong>memory stores</strong> and <strong>session plans</strong> using the
+		<code>tasks.*</code>, <code>memory.*</code> and <code>session.*</code> tools — a shared,
+		durable plan/notes store that survives across sessions and agents.
+	</p>
+	<p class="text-sm opacity-70">
+		MCP endpoint: <code data-testid="connect-mcp-url">@mcp</code> · auth header:
+		<code>X-Api-Key</code> · project key: <code>@proj</code>
+	</p>
+</div>
+
+@if (key is null)
+{
+	<form method="post" asp-page-handler="Mint" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="connect-mint-form">
+		@Html.AntiForgeryToken()
+		<div class="card-body p-4">
+			<h3 class="card-title text-base">Mint an agent key</h3>
+			<label class="form-control max-w-sm">
+				<span class="label-text">Key name</span>
+				<input type="text" name="name" required value="agent" class="input input-bordered input-sm font-mono" data-testid="connect-key-name" />
+			</label>
+
+			<div class="mt-3" data-testid="connect-scopes-group">
+				<div class="text-sm font-semibold mb-1">Scopes</div>
+				<div class="grid grid-cols-1 sm:grid-cols-2 gap-1">
+					@foreach (var scope in Model.AllScopes)
+					{
+						var pre = PetBox.Web.Pages.Admin.ProjectConnectModel.AgentDefaultScopes.Contains(scope.Value);
+						<label class="flex items-start gap-2 cursor-pointer" data-testid="connect-scope-@scope.Value">
+							<input class="checkbox checkbox-sm" type="checkbox" name="scopes" value="@scope.Value" checked="@pre" />
+							<span>
+								<span class="font-mono text-xs">@scope.Value</span>
+								<span class="block text-xs opacity-60">@scope.Title</span>
+							</span>
+						</label>
+					}
+				</div>
+			</div>
+
+			<div class="card-actions mt-3">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="connect-mint-submit">Mint key &amp; show instructions</button>
+			</div>
+		</div>
+	</form>
+}
+else
+{
+	<div class="alert alert-warning mb-4 max-w-3xl" data-testid="connect-key-shown">
+		<div>
+			<div class="font-semibold">Copy this key now — it is shown only once.</div>
+			<code class="font-mono text-sm break-all" data-testid="connect-key-value">@key</code>
+		</div>
+	</div>
+
+	<div class="prose prose-sm max-w-3xl" data-testid="connect-instructions">
+		<h3>1. Save the key outside version control</h3>
+		<p>Put the key in a gitignored file so it never lands in a commit. For example:</p>
+		<pre><code>echo "PETBOX_API_KEY=@key" >> .env.local
+echo ".env.local" >> .gitignore</code></pre>
+		<p>
+			The MCP config snippets below inline the key for the quickest start. If you prefer,
+			reference an env var instead (Claude Code expands <code>${PETBOX_API_KEY}</code> in
+			<code>.mcp.json</code>) and gitignore only the env file.
+		</p>
+
+		<h3>2. Add a project-level MCP server</h3>
+		<p>Create the file in your repo root (committed config that references the key, or gitignored if it inlines it):</p>
+
+		<h4>Claude Code — <code>.mcp.json</code></h4>
+		<pre><code>{
+  "mcpServers": {
+    "petbox": {
+      "type": "http",
+      "url": "@mcp",
+      "headers": { "X-Api-Key": "@key" }
+    }
+  }
+}</code></pre>
+
+		<h4>Factory Droid — <code>.factory/mcp.json</code></h4>
+		<pre><code>{
+  "mcpServers": {
+    "petbox": {
+      "type": "http",
+      "url": "@mcp",
+      "headers": { "X-Api-Key": "@key" }
+    }
+  }
+}</code></pre>
+
+		<h4>opencode — <code>opencode.json</code></h4>
+		<pre><code>{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "petbox": {
+      "type": "remote",
+      "url": "@mcp",
+      "headers": { "X-Api-Key": "@key" },
+      "enabled": true
+    }
+  }
+}</code></pre>
+
+		<h4>pi / omp</h4>
+		<p class="text-sm">
+			<strong>omp</strong> (oh-my-pi) has native MCP — add the <code>petbox</code> server in its
+			project MCP config the same way (HTTP url <code>@mcp</code>, header <code>X-Api-Key: @key</code>).
+			<strong>pi</strong> has no built-in MCP: bridge it with <code>pi-mcp-adapter</code>, pointing the
+			adapter at the same url + header. (Both inherit pi's <code>.pi/skills/</code> for the skill below.)
+		</p>
+
+		<h3>3. (Optional) Add a project skill</h3>
+		<p>
+			For agents that support Agent Skills, drop a <code>SKILL.md</code> into the project skills
+			folder (Claude Code: <code>.claude/skills/petbox/SKILL.md</code>; pi/omp:
+			<code>.pi/skills/petbox/SKILL.md</code> or <code>.agents/skills/petbox/SKILL.md</code>;
+			Factory Droid: <code>.factory/skills/petbox/SKILL.md</code>; opencode:
+			<code>.opencode/skills/petbox/SKILL.md</code>):
+		</p>
+		<pre><code>---
+name: petbox
+description: Shared task boards, memory and session plans for this project via the PetBox MCP server (server name `petbox`). Use to record and read plans, durable notes, and working-session state.
+---
+
+This project is connected to a PetBox instance over MCP (server `petbox`).
+Project key for every call: `@proj`.
+
+Tools:
+- tasks.board_list / tasks.board_create / tasks.get / tasks.upsert — plan boards (status, body, priority; temporal upsert with optimistic concurrency).
+- memory.store_list / memory.store_create / memory.list / memory.search / memory.get / memory.upsert — durable notes (description, body, tags).
+- session.* — record/read the working-session plan blob.
+
+Create a board or store before writing nodes/entries — there is no implicit creation.</code></pre>
+
+		<h3>4. Verify</h3>
+		<p>
+			Restart the agent session and confirm the <code>petbox</code> tools are listed
+			(e.g. <code>tasks.board_list</code> with <code>projectKey=@proj</code> should return an
+			empty list, not an auth error).
+		</p>
+	</div>
+
+	<div class="mt-4">
+		<a href="@Routes.ProjectConnect(Model.WorkspaceKey, Model.ProjectKey)" class="btn btn-sm btn-ghost" data-testid="connect-mint-another">Mint another key</a>
+	</div>
+}

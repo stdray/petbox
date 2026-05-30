@@ -72,6 +72,7 @@ public static class Routes
 	public static string ProjectLogsAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/logs";
 	public static string ProjectTasksAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/tasks";
 	public static string ProjectMemoryAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/memory";
+	public static string ProjectConnect(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/connect";
 	public static string ProjectSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/info";
 	public static string ProjectLogSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/log";
 
