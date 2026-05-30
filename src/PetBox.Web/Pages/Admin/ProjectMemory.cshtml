@@ -1,0 +1,81 @@
+@page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/memory"
+@model PetBox.Web.Pages.Admin.ProjectMemoryModel
+@{
+	ViewData["Title"] = $"{Model.ProjectKey} — Memory";
+	Layout = "_AdminLayout";
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold">@Model.ProjectKey · memory stores</h1>
+	<span class="badge badge-ghost">@Model.Stores.Count store(s)</span>
+</div>
+
+@if (Model.ProjectNotFound)
+{
+	<p class="text-error font-semibold" data-testid="project-memory-error">Project not found</p>
+	return;
+}
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="project-memory-error-msg">@Model.ErrorMessage</div>
+}
+
+<section class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6" data-testid="stores-list">
+	@if (Model.Stores.Count == 0)
+	{
+		<div class="text-xs opacity-60 italic" data-testid="stores-empty">No memory stores yet. Create one below.</div>
+	}
+	else
+	{
+		@foreach (var s in Model.Stores)
+		{
+			<div class="card bg-base-200 border border-base-300" data-testid="store-card" data-store-name="@s.Name">
+				<div class="card-body p-4">
+					<a href="@Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, s.Name)"
+						class="font-mono font-semibold link link-hover" data-testid="store-open">@s.Name</a>
+					@if (!string.IsNullOrEmpty(s.Description))
+					{
+						<p class="text-sm opacity-80">@s.Description</p>
+					}
+					<div class="card-actions justify-between mt-2">
+						<span class="text-xs opacity-50 font-mono">@s.CreatedAt.ToString("yyyy-MM-dd")</span>
+						<form method="post" asp-page-handler="Delete" asp-route-name="@s.Name"
+							onsubmit="return confirm('Delete store @s.Name? All entries will be removed.')" style="display:inline">
+							@Html.AntiForgeryToken()
+							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="store-delete">Delete</button>
+						</form>
+					</div>
+				</div>
+			</div>
+		}
+	}
+</section>
+
+<form method="post" asp-page-handler="Create" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="store-create-form">
+	@Html.AntiForgeryToken()
+	<div class="card-body p-4">
+		<h3 class="card-title text-base">Create store</h3>
+		<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+			<label class="form-control">
+				<span class="label-text">Name</span>
+				<input type="text" name="name" required minlength="1"
+					pattern="[a-z][a-z0-9_\-]*"
+					class="input input-bordered input-sm font-mono"
+					placeholder="notes"
+					data-testid="store-create-name" />
+				<span class="text-xs opacity-60 mt-1">Lowercase letters, digits, `_` or `-`. Starts with a letter.</span>
+			</label>
+			<label class="form-control sm:col-span-1">
+				<span class="label-text">Description (optional)</span>
+				<input type="text" name="description"
+					class="input input-bordered input-sm"
+					placeholder="agent notes"
+					data-testid="store-create-desc" />
+			</label>
+		</div>
+		<div class="card-actions mt-3">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="store-create-submit">Create</button>
+		</div>
+	</div>
+</form>

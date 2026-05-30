@@ -133,4 +133,24 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("sessions-empty");
 	}
+
+	[Fact]
+	public async Task TasksAdmin_RendersCreateForm_AndListsBoard()
+	{
+		using var resp = await GetAuthedAsync("/ui/admin/ws/$system/projects/$system/tasks");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("board-create-form");
+		html.Should().Contain("data-board-name=\"roadmap\"");
+	}
+
+	[Fact]
+	public async Task MemoryAdmin_RendersCreateForm_AndListsStore()
+	{
+		using var resp = await GetAuthedAsync("/ui/admin/ws/$system/projects/$system/memory");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("store-create-form");
+		html.Should().Contain("data-store-name=\"notes\"");
+	}
 }

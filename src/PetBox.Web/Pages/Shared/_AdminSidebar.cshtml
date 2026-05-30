@@ -123,6 +123,18 @@
 																					<a href="@Routes.ProjectData(w.Key, p.Key)" class="@(At(Routes.ProjectData(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-data">Data</a>
 																				</li>
 																			}
+																			@if (Features.IsEnabled(Feature.Tasks))
+																			{
+																				<li>
+																					<a href="@Routes.ProjectTasksAdmin(w.Key, p.Key)" class="@(At(Routes.ProjectTasksAdmin(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-tasks">Tasks</a>
+																				</li>
+																			}
+																			@if (Features.IsEnabled(Feature.Memory))
+																			{
+																				<li>
+																					<a href="@Routes.ProjectMemoryAdmin(w.Key, p.Key)" class="@(At(Routes.ProjectMemoryAdmin(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-memory">Memory</a>
+																				</li>
+																			}
 																		</ul>
 																	</details>
 																</li>
