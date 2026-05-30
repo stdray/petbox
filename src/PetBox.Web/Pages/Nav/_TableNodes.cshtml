@@ -1,0 +1,15 @@
+@model PetBox.Web.Pages.Nav.TreeModel
+@if (Model.Names.Count == 0)
+{
+	<li class="text-xs opacity-50 italic px-3 py-1" data-testid="nav-tables-empty">no tables</li>
+}
+else
+{
+	@foreach (var name in Model.Names)
+	{
+		var url = PetBox.Web.Routes.ProjectTable(Model.Ws, Model.ProjectKey, Model.DbName, name);
+		<li data-testid="nav-table-node" data-table-name="@name">
+			<a href="@url" class="font-mono text-xs truncate">@name</a>
+		</li>
+	}
+}

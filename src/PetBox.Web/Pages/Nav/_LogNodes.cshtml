@@ -1,0 +1,15 @@
+@model PetBox.Web.Pages.Nav.TreeModel
+@if (Model.Names.Count == 0)
+{
+	<li class="text-xs opacity-50 italic px-3 py-1" data-testid="nav-logs-empty">no logs</li>
+}
+else
+{
+	@foreach (var name in Model.Names)
+	{
+		var url = PetBox.Web.Routes.ProjectLog(Model.Ws, Model.ProjectKey, name);
+		<li data-testid="nav-log-node" data-log-name="@name">
+			<a href="@url" class="font-mono text-xs truncate">@name</a>
+		</li>
+	}
+}

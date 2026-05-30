@@ -1,0 +1,23 @@
+@model PetBox.Web.Pages.Nav.TreeModel
+@if (Model.Names.Count == 0)
+{
+	<li class="text-xs opacity-50 italic px-3 py-1" data-testid="nav-dbs-empty">no databases</li>
+}
+else
+{
+	@foreach (var name in Model.Names)
+	{
+		var dbUrl = PetBox.Web.Routes.ProjectDatabase(Model.Ws, Model.ProjectKey, name);
+		var tablesUrl = $"/ui/_nav/tree?handler=Tables&project={Uri.EscapeDataString(Model.ProjectKey)}&db={Uri.EscapeDataString(name)}";
+		<li data-testid="nav-db-node" data-db-name="@name">
+			<details hx-get="@tablesUrl" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
+				<summary>
+					<a href="@dbUrl" class="font-mono text-xs truncate" data-testid="nav-db-link">@name</a>
+				</summary>
+				<ul class="tree-lazy">
+					<li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-tables-loading">loading…</li>
+				</ul>
+			</details>
+		</li>
+	}
+}
