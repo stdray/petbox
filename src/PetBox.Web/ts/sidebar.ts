@@ -3,7 +3,9 @@
 // reachable via the hamburger. Choice persists in localStorage. On narrow
 // viewports the sidebar is always a collapsible drawer regardless.
 const KEY = "petbox.sidebar.pinned";
-const PINNED_CLASS = "md:drawer-open";
+// Pinned keeps the sidebar docked open at ALL widths (not just >= md), so
+// shrinking the window doesn't hide it. Unpinned = collapsible overlay.
+const PINNED_CLASS = "drawer-open";
 
 function isPinned(): boolean {
 	const v = localStorage.getItem(KEY);
@@ -11,7 +13,7 @@ function isPinned(): boolean {
 }
 
 function apply(pinned: boolean): void {
-	// Pinned: docked open inline on >= md (the md:drawer-open class).
+	// Pinned: docked open inline at any width (the drawer-open class).
 	// Unpinned: a floating drawer — collapse it (uncheck the toggle) so it hides;
 	// the always-visible navbar hamburger reopens it as an overlay.
 	document.getElementById("app-drawer")?.classList.toggle(PINNED_CLASS, pinned);

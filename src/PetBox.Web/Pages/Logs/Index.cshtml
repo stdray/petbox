@@ -26,7 +26,6 @@
 				data-testid="log-tab" data-log-name="@log"
 				class="btn btn-xs font-mono @(Model.SelectedLog == log ? "btn-primary" : "btn-ghost")">@log</a>
 		}
-		<a href="@Routes.ProjectLogsAdmin(ws, Model.ProjectKey)" class="btn btn-xs btn-ghost ml-1" title="Manage logs">+ manage</a>
 	</div>
 }
 
