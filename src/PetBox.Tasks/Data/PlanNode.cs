@@ -12,12 +12,14 @@ public enum PlanStatus { Pending, InProgress, Done, Blocked, Deferred, Cancelled
 public sealed record PlanNode : TemporalRow
 {
 	[Column] public PlanStatus Status { get; init; }
+	// Short human title shown as the node heading; Body holds the longer detail.
+	[Column, NotNull] public string Name { get; init; } = string.Empty;
 	[Column, NotNull] public string Body { get; init; } = string.Empty;
 	[Column, Nullable] public string? CommitRef { get; init; }
 	[Column] public long Priority { get; init; }
 
 	public override bool SamePayload(TemporalRow other) =>
-		other is PlanNode p && p.Status == Status && p.Body == Body && p.CommitRef == CommitRef && p.Priority == Priority;
+		other is PlanNode p && p.Status == Status && p.Name == Name && p.Body == Body && p.CommitRef == CommitRef && p.Priority == Priority;
 
 	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
 		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };

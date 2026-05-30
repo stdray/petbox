@@ -55,7 +55,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]
-	[Description("Return the active plan nodes of a board as a Phase>Wave>Task tree, ordered by priority then path. Each node carries key, phase, wave, task, depth, parentKey, status, body, priority, version, renamedFrom. Requires tasks:read.")]
+	[Description("Return the active plan nodes of a board as a Phase>Wave>Task tree, ordered by priority then path. Each node carries key, phase, wave, task, depth, parentKey, status, name, body, priority, version, renamedFrom. Requires tasks:read.")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
 		string projectKey, string board, CancellationToken ct = default)
@@ -106,17 +106,24 @@ public static class TasksTools
 		{phase:"logging",wave:"ingest",task:"endpoint"} (a leaf task). Each segment is
 		lowercase ^[a-z][a-z0-9_-]{0,99}$. (You may instead pass a canonical
 		"phase/wave/task" string in `key`.) Always create the parent before/with its
-		children and give every node a meaningful `body` (the actual task text).
+		children.
+
+		Give every node a short `name` (the title, one line) AND a `body` (the detail —
+		markdown, what to actually do). Keep `name` terse; put prose in `body`.
 
 		Other per-node fields: status (Pending|InProgress|Done|Blocked|Deferred|Cancelled),
-		body, commitRef?, priority? (sparse ordering int — lower first), version (the
-		baseline you last saw; 0 = new node). Rename/move a node by setting prevPhase/
-		prevWave/prevTask (or prevKey) to its old path — retires the old node and creates
-		the new one linked.
+		commitRef?, priority? (sparse ordering int — lower first), version (the baseline
+		you last saw; 0 = new node). Rename/move a node by setting prevPhase/prevWave/
+		prevTask (or prevKey) to its old path — retires the old node and creates the new
+		one linked.
 
 		`sinceVersion` selects the returned delta. Result: { applied, currentVersion,
-		inserted, closed, conflicts[], added[], updated[], removed[] }. Each returned node
-		carries key, phase, wave, task, depth, parentKey, status, body, priority, version.
+		inserted, closed, conflicts[], added[], updated[], removed[] }. The delta IS the
+		fresh state of everything that changed since your cursor (your edits and others'),
+		so you do NOT need to re-read the board after upserting — advance your cursor to
+		currentVersion and merge added/updated/removed into what you already hold. Each
+		returned node carries key, phase, wave, task, depth, parentKey, status, name,
+		body, priority, version.
 		""")]
 	public static async Task<object> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
@@ -206,6 +213,7 @@ public static class TasksTools
 				Key = ResolveKey(e),
 				Version = ModuleMcp.OptLong(e, "version", 0),
 				Status = ParseStatus(ModuleMcp.OptStr(e, "status") ?? "Pending"),
+				Name = ModuleMcp.OptStr(e, "name") ?? string.Empty,
 				Body = ModuleMcp.OptStr(e, "body") ?? string.Empty,
 				CommitRef = ModuleMcp.OptStr(e, "commitRef"),
 				Priority = ModuleMcp.OptLong(e, "priority", 0),

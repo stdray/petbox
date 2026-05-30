@@ -18,6 +18,7 @@ public static class TasksSchema
 				Key        TEXT    NOT NULL,
 				Version    INTEGER NOT NULL,
 				Status     INTEGER NOT NULL,
+				Name       TEXT    NOT NULL DEFAULT '',
 				Body       TEXT    NOT NULL,
 				CommitRef  TEXT,
 				Priority   INTEGER NOT NULL DEFAULT 0,

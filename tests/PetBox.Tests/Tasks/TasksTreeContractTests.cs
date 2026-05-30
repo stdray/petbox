@@ -54,9 +54,9 @@ public sealed class TasksTreeContractTests : IDisposable
 
 		var nodes = JsonSerializer.SerializeToElement(new object[]
 		{
-			new { phase = "logging", status = "InProgress", body = "winston -> PetBox", priority = 0 },
-			new { phase = "logging", wave = "ingest", status = "Pending", body = "ship CLEF", priority = 1 },
-			new { phase = "logging", wave = "ingest", task = "endpoint", status = "Pending", body = "POST endpoint", priority = 2 },
+			new { phase = "logging", status = "InProgress", name = "Logging", body = "winston -> PetBox", priority = 0 },
+			new { phase = "logging", wave = "ingest", status = "Pending", name = "Ingest", body = "ship CLEF", priority = 1 },
+			new { phase = "logging", wave = "ingest", task = "endpoint", status = "Pending", name = "Endpoint", body = "POST endpoint", priority = 2 },
 		});
 		await TasksTools.UpsertAsync(http, Flags(), _store, Proj, "roadmap", nodes);
 
@@ -70,6 +70,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		leaf.GetProperty("wave").GetString().Should().Be("ingest");
 		leaf.GetProperty("task").GetString().Should().Be("endpoint");
 		leaf.GetProperty("parentKey").GetString().Should().Be("logging/ingest");
+		leaf.GetProperty("name").GetString().Should().Be("Endpoint");
 		leaf.GetProperty("body").GetString().Should().Be("POST endpoint");
 
 		var phase = arr.Single(n => n.GetProperty("depth").GetInt32() == 1);
