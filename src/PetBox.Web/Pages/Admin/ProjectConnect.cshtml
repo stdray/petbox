@@ -80,92 +80,46 @@ else
 		</div>
 	</div>
 
-	<div class="prose prose-sm max-w-3xl" data-testid="connect-instructions">
-		<h3>1. Save the key outside version control</h3>
-		<p>Put the key in a gitignored file so it never lands in a commit. For example:</p>
-		<pre><code>echo "PETBOX_API_KEY=@key" >> .env.local
-echo ".env.local" >> .gitignore</code></pre>
-		<p>
-			The MCP config snippets below inline the key for the quickest start. If you prefer,
-			reference an env var instead (Claude Code expands <code>${PETBOX_API_KEY}</code> in
-			<code>.mcp.json</code>) and gitignore only the env file.
+	<div class="max-w-3xl" data-testid="connect-instructions">
+		<p class="text-sm mb-2">
+			Paste the block below to your coding agent. It contains everything the agent needs to
+			wire itself up — it will create the right MCP config for its own type, hide the key in a
+			gitignored file, optionally add a skill, and verify the connection. No manual file editing.
 		</p>
+		<pre class="bg-base-200 border border-base-300 rounded p-3 text-xs whitespace-pre-wrap" data-testid="connect-agent-prompt"><code>Connect yourself to this project's PetBox server over MCP, then verify.
 
-		<h3>2. Add a project-level MCP server</h3>
-		<p>Create the file in your repo root (committed config that references the key, or gitignored if it inlines it):</p>
+Connection details:
+- MCP endpoint (HTTP/streamable): @mcp
+- Auth: send header  X-Api-Key: @key
+- Project key (pass as projectKey in every tool call): @proj
+- MCP server name to register: petbox
 
-		<h4>Claude Code — <code>.mcp.json</code></h4>
-		<pre><code>{
-  "mcpServers": {
-    "petbox": {
-      "type": "http",
-      "url": "@mcp",
-      "headers": { "X-Api-Key": "@key" }
-    }
-  }
-}</code></pre>
+Do the following, adapting paths to YOUR agent type:
+1. Add a PROJECT-level MCP server named "petbox" pointing at the endpoint above
+   with the X-Api-Key header. Pick the config file your agent actually reads, e.g.:
+   - Claude Code:    .mcp.json            (mcpServers.petbox, type "http", url + headers)
+   - Factory Droid:  .factory/mcp.json    (same shape)
+   - opencode:       opencode.json        (mcp.petbox, type "remote", url + headers, enabled true)
+   - omp:            its native project MCP config (HTTP url + header)
+   - pi:             no native MCP — set up pi-mcp-adapter against the same url + header
+2. Do NOT commit the key. Put it in a gitignored file (e.g. add the API key value to
+   .env.local and append ".env.local" to .gitignore), and reference it from the MCP
+   config via an env var if your agent supports expansion; otherwise inline it but keep
+   the config file gitignored.
+3. If your agent supports Agent Skills, add a project skill at the right path
+   (Claude Code .claude/skills/petbox/SKILL.md; pi/omp .pi/skills/ or .agents/skills/;
+   Droid .factory/skills/; opencode .opencode/skills/) with frontmatter name "petbox"
+   and a description telling future sessions to use the petbox MCP tools for plans,
+   durable memory and session state, always passing projectKey "@proj". Note in it that
+   boards and stores must be created explicitly (tasks.board_create / memory.store_create)
+   before writing nodes/entries — there is no implicit creation.
+4. Restart your MCP connection and verify by calling  tasks.board_list  with
+   projectKey "@proj". An empty list (not an auth error) means it works.
 
-		<h4>Factory Droid — <code>.factory/mcp.json</code></h4>
-		<pre><code>{
-  "mcpServers": {
-    "petbox": {
-      "type": "http",
-      "url": "@mcp",
-      "headers": { "X-Api-Key": "@key" }
-    }
-  }
-}</code></pre>
-
-		<h4>opencode — <code>opencode.json</code></h4>
-		<pre><code>{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "petbox": {
-      "type": "remote",
-      "url": "@mcp",
-      "headers": { "X-Api-Key": "@key" },
-      "enabled": true
-    }
-  }
-}</code></pre>
-
-		<h4>pi / omp</h4>
-		<p class="text-sm">
-			<strong>omp</strong> (oh-my-pi) has native MCP — add the <code>petbox</code> server in its
-			project MCP config the same way (HTTP url <code>@mcp</code>, header <code>X-Api-Key: @key</code>).
-			<strong>pi</strong> has no built-in MCP: bridge it with <code>pi-mcp-adapter</code>, pointing the
-			adapter at the same url + header. (Both inherit pi's <code>.pi/skills/</code> for the skill below.)
-		</p>
-
-		<h3>3. (Optional) Add a project skill</h3>
-		<p>
-			For agents that support Agent Skills, drop a <code>SKILL.md</code> into the project skills
-			folder (Claude Code: <code>.claude/skills/petbox/SKILL.md</code>; pi/omp:
-			<code>.pi/skills/petbox/SKILL.md</code> or <code>.agents/skills/petbox/SKILL.md</code>;
-			Factory Droid: <code>.factory/skills/petbox/SKILL.md</code>; opencode:
-			<code>.opencode/skills/petbox/SKILL.md</code>):
-		</p>
-		<pre><code>---
-name: petbox
-description: Shared task boards, memory and session plans for this project via the PetBox MCP server (server name `petbox`). Use to record and read plans, durable notes, and working-session state.
----
-
-This project is connected to a PetBox instance over MCP (server `petbox`).
-Project key for every call: `@proj`.
-
-Tools:
-- tasks.board_list / tasks.board_create / tasks.get / tasks.upsert — plan boards (status, body, priority; temporal upsert with optimistic concurrency).
-- memory.store_list / memory.store_create / memory.list / memory.search / memory.get / memory.upsert — durable notes (description, body, tags).
-- session.* — record/read the working-session plan blob.
-
-Create a board or store before writing nodes/entries — there is no implicit creation.</code></pre>
-
-		<h3>4. Verify</h3>
-		<p>
-			Restart the agent session and confirm the <code>petbox</code> tools are listed
-			(e.g. <code>tasks.board_list</code> with <code>projectKey=@proj</code> should return an
-			empty list, not an auth error).
-		</p>
+Available tools once connected:
+- tasks.board_list / board_create / board_delete / get / upsert / delta
+- memory.store_list / store_create / store_delete / list / search / get / upsert / delta
+- session.append / get / list</code></pre>
 	</div>
 
 	<div class="mt-4">
