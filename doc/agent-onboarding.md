@@ -22,25 +22,30 @@ Point the agent's MCP client at `https://<petbox-host>/mcp` with header
 
 ## 3. Provisioning tools
 
-| Tool | Purpose |
-|---|---|
-| `workspace.create_project({workspaceKey, key, name, description?})` | Create the pet's project. |
-| `project.create_service({projectKey, key, healthModel?, url?})` | Register a service (`healthModel`: `push` or `endpoint`). |
-| `project.create_apikey({projectKey, name, scopes, expiresInSeconds?})` | Mint the pet's **production** key. Returns the raw key once — hand it to the pet. Omit `expiresInSeconds` for a non-expiring key. |
-| `project.set_config_binding({workspaceKey, path, value, tags})` | Seed config. `tags` must include `ws:{workspaceKey}`. |
+Provisioning is done through the generic **`entity.*`** tools with a `type`
+discriminator. The provisioning types (`project`, `apikey`, `config_binding`)
+require the `admin:provision` scope.
 
-Data-module tools (`data.create_db`, `data.schema_apply`, `data.query`, `data.exec`) are also
-available once the minted key carries `data:*` scopes.
+| Call | Purpose |
+|---|---|
+| `entity.create({ type: "project", props: { workspaceKey, key, name, description? } })` | Create the pet's project. |
+| `entity.create({ type: "apikey", props: { projectKey, name, scopes, expiresInSeconds? } })` | Mint the pet's **production** key. Returns the raw key once — hand it to the pet. Omit `expiresInSeconds` for a non-expiring key. |
+| `entity.create({ type: "config_binding", props: { workspaceKey, path, value, tags } })` | Seed config. `tags` must include `ws:{workspaceKey}`. |
+| `entity.list({ type, filter })` / `entity.delete({ type, key })` | List / remove entities. `project` has no delete. |
+
+Project-scoped entity types `db` and `log` (created with the minted key, gated on
+`data:schema` / `logs:admin`) plus the operational tools `data.schema_apply`,
+`data.query`, `data.exec`, `log.query`, and `entity.describe({ type: "db" })`
+round out the surface.
 
 ## 4. Typical flow
 
-1. `workspace.create_project({ workspaceKey: "myws", key: "kpvotes", name: "KpVotes" })`
-2. `project.create_service({ projectKey: "kpvotes", key: "kpvotes-ts", healthModel: "push" })`
-3. `project.create_apikey({ projectKey: "kpvotes", name: "kpvotes-ts prod", scopes: "config:read,data:read,data:write,data:schema" })` → **save the returned key**
-4. `data.create_db({ projectKey: "kpvotes", name: "kpvotes-cache" })` (using the minted key)
-5. `data.schema_apply({ projectKey: "kpvotes", dbName: "kpvotes-cache", name: "M001_votes", sql: "CREATE TABLE votes (...)" })`
-6. `project.set_config_binding({ workspaceKey: "myws", path: "kpvotes.kp-uri", value: "...", tags: "ws:myws,project:kpvotes" })`
-7. Give the pet its production key + endpoint; the agent key expires on its own.
+1. `entity.create({ type: "project", props: { workspaceKey: "myws", key: "kpvotes", name: "KpVotes" } })`
+2. `entity.create({ type: "apikey", props: { projectKey: "kpvotes", name: "kpvotes-ts prod", scopes: "config:read,data:read,data:write,data:schema" } })` → **save the returned key**
+3. `entity.create({ type: "db", props: { projectKey: "kpvotes", name: "kpvotes-cache" } })` (using the minted key)
+4. `data.schema_apply({ projectKey: "kpvotes", dbName: "kpvotes-cache", name: "M001_votes", sql: "CREATE TABLE votes (...)" })`
+5. `entity.create({ type: "config_binding", props: { workspaceKey: "myws", path: "kpvotes.kp-uri", value: "...", tags: "ws:myws,project:kpvotes" } })`
+6. Give the pet its production key + endpoint; the agent key expires on its own.
 
 ## Errors
 

@@ -1174,12 +1174,19 @@ Goal: pet developer даёт агенту onboarding URL + agent-key. Агент
 
 #### 27.2 — Admin MCP tools
 
-- [ ] `workspace.create_project({workspaceKey, key, name, description?})`
-- [ ] `project.create_service({projectKey, key, kind, url?})`
-- [ ] `project.create_apikey({projectKey, name, scopes, expiresAt?})` — возвращает raw key (показывается один раз)
-- [ ] `project.set_config_binding({workspaceKey, path, value, tags, kind})` — для агента выставить config
-- [ ] Auth: только agent-key scope (новый `agent` или существующий `admin`)
-- Open fork: один declarative `agent.onboard_pet({...})` tool с polnym payload (idempotent end-to-end) vs набор раздельных tools. **Recommend declarative** — меньше шагов агенту, легче idempotency.
+Реализовано (named-logs **Phase 2**) как **обобщённые `entity.*`** инструменты вместо набора
+раздельных per-entity tools — `entity.create/list/delete/describe({type, props|filter|key})`,
+`type ∈ {project, apikey, config_binding, db, log}` (тип `service` отпал вместе с удалением сущности
+`Service`). Auth — per-handler: provisioning-типы на `admin:provision`, project-scoped (`db`/`log`) —
+project-claim + module scope. Запрещённые `(type, op)` → ошибка (`project` без delete; describe только
+для `db`). Операционные tools (`data.query/exec/schema_apply`, `log.query`) остались отдельными.
+
+- [x] `entity.create({type: "project", props: {workspaceKey, key, name, description?}})`
+- [x] `entity.create({type: "apikey", props: {projectKey, name, scopes, expiresInSeconds?}})` — возвращает raw key (показывается один раз)
+- [x] `entity.create({type: "config_binding", props: {workspaceKey, path, value, tags}})` — для агента выставить config
+- [x] `entity.create({type: "db"|"log", ...})` + `entity.list/delete/describe`
+- [x] Auth: `admin:provision` (provisioning) / project-claim + module scope (db/log)
+- ~~Open fork: declarative `agent.onboard_pet` vs раздельные tools~~ — выбран generic CRUD `entity.*` (один tool-family, type-параметр).
 
 #### 27.3 — Onboarding doc + skill text
 
