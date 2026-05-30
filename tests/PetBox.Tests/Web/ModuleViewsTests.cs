@@ -153,4 +153,24 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		html.Should().Contain("store-create-form");
 		html.Should().Contain("data-store-name=\"notes\"");
 	}
+
+	[Fact]
+	public async Task Doc_Index_IsPublic_NoRedirect()
+	{
+		// Anonymous client (no cookie) — doc pages must NOT redirect to /Login.
+		using var resp = await _client.GetAsync("/doc");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("doc-index-title");
+	}
+
+	[Fact]
+	public async Task Doc_Agent_IsPublic_ShowsMcpUrlAndTree()
+	{
+		using var resp = await _client.GetAsync("/doc/agent");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("doc-agent");
+		html.Should().Contain("/mcp");
+		html.Should().Contain("Phase"); // tree model documented
+	}
 }

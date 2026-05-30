@@ -82,6 +82,10 @@ public static class Routes
 	public static string MeSecurity() => $"{UiPrefix}/me/security";
 	public static string MePreferences() => $"{UiPrefix}/me/preferences";
 
+	// Public documentation — no auth, so agents can fetch it by URL with no cookie/key.
+	public static string Doc() => "/doc";
+	public static string DocAgent() => "/doc/agent";
+
 	// Auth & misc — not under /ui prefix
 	public static string Login() => "/Login";
 	public static string Login(string returnUrl) => $"/Login?returnUrl={Uri.EscapeDataString(returnUrl)}";

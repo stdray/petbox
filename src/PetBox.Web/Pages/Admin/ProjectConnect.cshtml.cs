@@ -52,6 +52,10 @@ public sealed class ProjectConnectModel : PageModel
 	// it works behind a reverse proxy without extra config.
 	public string McpUrl => $"{Request.Scheme}://{Request.Host}{Request.PathBase}/mcp";
 
+	// Public, key-free setup guide (tree model, per-agent config, SKILL.md template).
+	// The prompt links here instead of duplicating that content.
+	public string DocAgentUrl => $"{Request.Scheme}://{Request.Host}{Request.PathBase}/doc/agent";
+
 	public async Task<IActionResult> OnGetAsync()
 	{
 		Project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);

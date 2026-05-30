@@ -1,0 +1,34 @@
+@page "/doc"
+@model PetBox.Web.Pages.Doc.IndexModel
+@{
+	ViewData["Title"] = "PetBox docs";
+	Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" class="h-full">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>PetBox docs</title>
+	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
+</head>
+<body class="min-h-full">
+	<main class="max-w-3xl mx-auto p-6">
+		<h1 class="text-2xl font-semibold mb-4" data-testid="doc-index-title">PetBox documentation</h1>
+		<p class="text-sm opacity-70 mb-6">
+			Public, no sign-in required — safe to open from an agent or share by link.
+		</p>
+		<ul class="flex flex-col gap-3" data-testid="doc-index-list">
+			<li class="card bg-base-200 border border-base-300">
+				<a href="@Routes.DocAgent()" class="card-body p-4 hover:text-primary" data-testid="doc-link-agent">
+					<div class="font-semibold">Connect a coding agent (MCP)</div>
+					<div class="text-sm opacity-70">
+						What PetBox exposes over MCP, the Phase&nbsp;&gt;&nbsp;Wave&nbsp;&gt;&nbsp;Task plan model,
+						the full tool list, and a SKILL.md template. Point your agent here after it is wired up.
+					</div>
+				</a>
+			</li>
+		</ul>
+	</main>
+</body>
+</html>

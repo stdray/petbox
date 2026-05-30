@@ -6,6 +6,7 @@
 	var mcp = Model.McpUrl;
 	var key = Model.NewKey;
 	var proj = Model.ProjectKey;
+	var doc = Model.DocAgentUrl;
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
@@ -82,9 +83,9 @@ else
 
 	<div class="max-w-3xl" data-testid="connect-instructions">
 		<p class="text-sm mb-2">
-			Paste the block below to your coding agent. It contains everything the agent needs to
-			wire itself up — it will create the right MCP config for its own type, hide the key in a
-			gitignored file, optionally add a skill, and verify the connection. No manual file editing.
+			Paste the block below to your coding agent. It carries the connection secrets and points the
+			agent at the full, public setup guide (<a href="@doc" target="_blank" rel="noopener">@doc</a>)
+			for the per-agent config, the plan-tree model and a SKILL.md template — so nothing is duplicated.
 		</p>
 		<pre class="bg-base-200 border border-base-300 rounded p-3 text-xs whitespace-pre-wrap" data-testid="connect-agent-prompt"><code>Connect yourself to this project's PetBox server over MCP, then verify.
 
@@ -94,36 +95,22 @@ Connection details:
 - Project key (pass as projectKey in every tool call): @proj
 - MCP server name to register: petbox
 
-Do the following, adapting paths to YOUR agent type:
-1. Add a PROJECT-level MCP server named "petbox" pointing at the endpoint above
-   with the X-Api-Key header. Pick the config file your agent actually reads, e.g.:
-   - Claude Code:    .mcp.json            (mcpServers.petbox, type "http", url + headers)
-   - Factory Droid:  .factory/mcp.json    (same shape)
-   - opencode:       opencode.json        (mcp.petbox, type "remote", url + headers, enabled true)
-   - omp:            its native project MCP config (HTTP url + header)
-   - pi:             no native MCP — set up pi-mcp-adapter against the same url + header
-2. Do NOT commit the key. Put it in a gitignored file (e.g. add the API key value to
-   .env.local and append ".env.local" to .gitignore), and reference it from the MCP
-   config via an env var if your agent supports expansion; otherwise inline it but keep
-   the config file gitignored.
-3. If your agent supports Agent Skills, add a project skill at the right path
-   (Claude Code .claude/skills/petbox/SKILL.md; pi/omp .pi/skills/ or .agents/skills/;
-   Droid .factory/skills/; opencode .opencode/skills/) with frontmatter name "petbox"
-   and a description telling future sessions to use the petbox MCP tools for plans,
-   durable memory and session state, always passing projectKey "@proj". Note in it that
-   boards and stores must be created explicitly (tasks.board_create / memory.store_create)
-   before writing nodes/entries — there is no implicit creation. A plan is a 1-3 level
-   TREE (Phase > Wave > Task): pass phase/wave/task per node (not a flat label) and give
-   every node a meaningful body.
+Full setup guide (public, no auth — fetch and follow it):
+  @doc
+
+Do the following:
+1. Read the guide above. Add a PROJECT-level MCP server named "petbox" in the config
+   file YOUR agent reads (the guide lists the path per agent type), using the MCP
+   endpoint + X-Api-Key header above.
+2. Do NOT commit the key — put it in a gitignored file (e.g. .env.local) as the guide
+   describes.
+3. Optionally add the petbox SKILL.md from the guide.
 4. Restart your MCP connection and verify by calling  tasks.board_list  with
    projectKey "@proj". An empty list (not an auth error) means it works.
 
-Available tools once connected:
-- tasks.board_list / board_create / board_delete / get / upsert / delta
-  (a plan is a Phase > Wave > Task tree: each node takes phase + optional wave + optional
-   task, plus status/body/priority; create parents before children; always fill body)
-- memory.store_list / store_create / store_delete / list / search / get / upsert / delta
-- session.append / get / list</code></pre>
+Remember: a plan is a Phase > Wave > Task tree — identify nodes by phase/wave/task (not a
+flat label), and give each node a short name plus a detailed body. See the guide for the
+full tool list and examples.</code></pre>
 	</div>
 
 	<div class="mt-4">
