@@ -113,9 +113,43 @@ public sealed class TemporalStoreTests : IDisposable
 		(ActiveOf("wal"))!.CommitRef.Should().Be("8b2e97d");
 	}
 
+	[Fact]
+	public async Task Priority_ThenPath_DeterminesOrder()
+	{
+		await Upsert(
+			Node("z", PlanStatus.Done, "Z", priority: 100),
+			Node("a", PlanStatus.Done, "A", priority: 100),  // same priority -> path tiebreak
+			Node("m", PlanStatus.Done, "M", priority: 50));
+
+		Ordered().Select(x => x.Key).Should().Equal("m", "a", "z"); // pri 50 first; then a < z by path
+	}
+
+	[Fact]
+	public async Task SparsePriority_InsertBetween_DoesNotTouchNeighbours()
+	{
+		await Upsert(
+			Node("a", PlanStatus.Done, "A", priority: 100),
+			Node("c", PlanStatus.Done, "C", priority: 300));
+
+		// new node slots between via a gap priority — no renumbering of a/c
+		var r = await Upsert(Node("b", PlanStatus.Pending, "B", priority: 200));
+
+		r.Applied.Should().BeTrue();
+		Ordered().Select(x => x.Key).Should().Equal("a", "b", "c");
+		All().Count(x => x.Key == "a").Should().Be(1); // neighbours untouched: still one revision each
+		All().Count(x => x.Key == "c").Should().Be(1);
+	}
+
 	// ---- helpers ----
-	static PlanRow Node(string key, PlanStatus status, string body, long baseline = 0, string? commit = null) =>
-		new() { Key = key, Version = baseline, Status = status, Body = body, CommitRef = commit };
+	static PlanRow Node(string key, PlanStatus status, string body, long baseline = 0, string? commit = null, long priority = 0) =>
+		new() { Key = key, Version = baseline, Status = status, Body = body, CommitRef = commit, Priority = priority };
+
+	List<PlanRow> Ordered()
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return db.GetTable<PlanRow>().Where(x => x.ActiveTo == null)
+			.OrderBy(x => x.Priority).ThenBy(x => x.Key).ToList();
+	}
 
 	async Task<TemporalUpsertResult> Upsert(params PlanRow[] rows)
 	{
@@ -149,6 +183,7 @@ public sealed class TemporalStoreTests : IDisposable
 				Status     INTEGER NOT NULL,
 				Body       TEXT    NOT NULL,
 				CommitRef  TEXT,
+				Priority   INTEGER NOT NULL DEFAULT 0,
 				ActiveFrom INTEGER NOT NULL,
 				ActiveTo   INTEGER,
 				Created    TEXT    NOT NULL,
@@ -171,8 +206,13 @@ public sealed record PlanRow : TemporalRow
 	[Column, NotNull] public string Body { get; init; } = string.Empty;
 	[Column, Nullable] public string? CommitRef { get; init; }
 
+	// Sparse ordering key: order is `Priority ASC, Key ASC`. Living as a per-node
+	// payload field, a priority change goes through normal optimistic concurrency
+	// and never renumbers siblings (unlike a dense Order column).
+	[Column] public long Priority { get; init; }
+
 	public override bool SamePayload(TemporalRow other) =>
-		other is PlanRow p && p.Status == Status && p.Body == Body && p.CommitRef == CommitRef;
+		other is PlanRow p && p.Status == Status && p.Body == Body && p.CommitRef == CommitRef && p.Priority == Priority;
 
 	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
 		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };
