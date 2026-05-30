@@ -1,0 +1,52 @@
+@page "/ui/{workspaceKey}/{projectKey}/tasks/{board}"
+@model PetBox.Web.Pages.ProjectHome.TaskBoardModel
+@{
+	ViewData["Title"] = $"{Model.Board} — Tasks";
+}
+
+@functions {
+	static string StatusBadge(PetBox.Tasks.Data.PlanStatus s) => s switch
+	{
+		PetBox.Tasks.Data.PlanStatus.Done => "badge-success",
+		PetBox.Tasks.Data.PlanStatus.InProgress => "badge-info",
+		PetBox.Tasks.Data.PlanStatus.Blocked => "badge-error",
+		PetBox.Tasks.Data.PlanStatus.Deferred or PetBox.Tasks.Data.PlanStatus.Cancelled => "badge-ghost",
+		_ => "badge-neutral",
+	};
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<a href="@Routes.ProjectTasks(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70" data-testid="board-breadcrumb">tasks</a>
+	<span class="opacity-40">/</span>
+	<h1 class="text-2xl font-semibold font-mono" data-testid="board-title">@Model.Board</h1>
+	<span class="badge badge-ghost">@Model.Nodes.Count node(s)</span>
+</div>
+
+@if (Model.Nodes.Count == 0)
+{
+	<div class="alert" data-testid="board-empty">This board has no active plan nodes.</div>
+}
+else
+{
+	<ul class="flex flex-col gap-2" data-testid="board-nodes">
+		@foreach (var n in Model.Nodes)
+		{
+			<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key">
+				<div class="card-body p-3">
+					<div class="flex items-baseline justify-between gap-2">
+						<span class="font-mono font-semibold">@n.Key</span>
+						<span class="badge @StatusBadge(n.Status) badge-sm" data-testid="node-status">@n.Status</span>
+					</div>
+					@if (!string.IsNullOrEmpty(n.Body))
+					{
+						<p class="text-sm opacity-80 whitespace-pre-wrap">@n.Body</p>
+					}
+					@if (!string.IsNullOrEmpty(n.CommitRef))
+					{
+						<div class="text-xs opacity-50 font-mono mt-1">@n.CommitRef</div>
+					}
+				</div>
+			</li>
+		}
+	</ul>
+}

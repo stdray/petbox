@@ -139,6 +139,9 @@
 								var pTraces = Routes.ProjectTraces(currentWs, project.Key);
 								var pConfig = Routes.ProjectConfig(currentWs, project.Key);
 								var pData = Routes.ProjectDatabases(currentWs, project.Key);
+								var pTasks = Routes.ProjectTasks(currentWs, project.Key);
+								var pMemory = Routes.ProjectMemory(currentWs, project.Key);
+								var pSessions = Routes.ProjectSessions(currentWs, project.Key);
 								<li data-testid="nav-project" data-project-key="@project.Key">
 									<details data-tree-key="proj:@project.Key" open="@(isCurrent || fewProjects)">
 										<summary class="@(isCurrent ? "active font-semibold" : "")">
@@ -170,9 +173,18 @@
 												</li>
 											}
 											<li><a href="@pConfig" class="@(IsActive(pConfig) ? "active" : "")" data-testid="nav-proj-config">Config</a></li>
-											<li><span class="opacity-40" title="coming soon" data-testid="nav-proj-tasks">Tasks</span></li>
-											<li><span class="opacity-40" title="coming soon" data-testid="nav-proj-memory">Memory</span></li>
-											<li><span class="opacity-40" title="coming soon" data-testid="nav-proj-agent">Agent session</span></li>
+											@if (Nav.TasksEnabled)
+											{
+												<li><a href="@pTasks" class="@(IsActive(pTasks) ? "active" : "")" data-testid="nav-proj-tasks">Tasks</a></li>
+											}
+											@if (Nav.MemoryEnabled)
+											{
+												<li><a href="@pMemory" class="@(IsActive(pMemory) ? "active" : "")" data-testid="nav-proj-memory">Memory</a></li>
+											}
+											@if (Nav.TasksEnabled)
+											{
+												<li><a href="@pSessions" class="@(IsActive(pSessions) ? "active" : "")" data-testid="nav-proj-agent">Sessions</a></li>
+											}
 										</ul>
 									</details>
 								</li>

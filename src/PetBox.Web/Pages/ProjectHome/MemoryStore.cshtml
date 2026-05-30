@@ -1,0 +1,49 @@
+@page "/ui/{workspaceKey}/{projectKey}/memory/{store}"
+@model PetBox.Web.Pages.ProjectHome.MemoryStoreModel
+@{
+	ViewData["Title"] = $"{Model.Store} — Memory";
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<a href="@Routes.ProjectMemory(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70" data-testid="store-breadcrumb">memory</a>
+	<span class="opacity-40">/</span>
+	<h1 class="text-2xl font-semibold font-mono" data-testid="store-title">@Model.Store</h1>
+	<span class="badge badge-ghost">@Model.Entries.Count entr@(Model.Entries.Count == 1 ? "y" : "ies")</span>
+</div>
+
+@if (Model.Entries.Count == 0)
+{
+	<div class="alert" data-testid="store-empty">This store has no active entries.</div>
+}
+else
+{
+	<ul class="flex flex-col gap-2" data-testid="store-entries">
+		@foreach (var e in Model.Entries)
+		{
+			<li class="card bg-base-200 border border-base-300" data-testid="memory-entry" data-entry-key="@e.Key">
+				<div class="card-body p-3">
+					<div class="flex items-baseline justify-between gap-2">
+						<span class="font-mono font-semibold">@e.Key</span>
+						@if (!string.IsNullOrEmpty(e.Tags))
+						{
+							<span class="flex gap-1 flex-wrap">
+								@foreach (var tag in e.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+								{
+									<span class="badge badge-ghost badge-sm" data-testid="entry-tag">@tag</span>
+								}
+							</span>
+						}
+					</div>
+					@if (!string.IsNullOrEmpty(e.Description))
+					{
+						<p class="text-sm opacity-70">@e.Description</p>
+					}
+					@if (!string.IsNullOrEmpty(e.Body))
+					{
+						<p class="text-sm opacity-90 whitespace-pre-wrap">@e.Body</p>
+					}
+				</div>
+			</li>
+		}
+	</ul>
+}

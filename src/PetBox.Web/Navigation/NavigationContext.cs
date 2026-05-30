@@ -18,6 +18,8 @@ public interface INavigationContext
 	IReadOnlyList<Project> ProjectsInCurrentWorkspace { get; }
 	IReadOnlyDictionary<string, IReadOnlyList<Project>> ProjectsByWorkspace { get; }
 	bool DataEnabled { get; }
+	bool TasksEnabled { get; }
+	bool MemoryEnabled { get; }
 }
 
 public sealed record WorkspaceOption(string Key, string Name);
@@ -39,6 +41,9 @@ public sealed class NavigationContext(
 	public bool IsAuthenticated => Http?.User.Identity?.IsAuthenticated == true;
 	public string? Username => Http?.User.Identity?.Name;
 	public bool DataEnabled => features.IsEnabled(Feature.Data);
+	// Sessions ship with the Tasks module — gated on the same flag (see SessionTools).
+	public bool TasksEnabled => features.IsEnabled(Feature.Tasks);
+	public bool MemoryEnabled => features.IsEnabled(Feature.Memory);
 
 	public string CurrentWorkspaceKey => _resolvedWorkspace ??= ResolveWorkspace();
 

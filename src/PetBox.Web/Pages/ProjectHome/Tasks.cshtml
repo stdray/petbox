@@ -1,0 +1,47 @@
+@page "/ui/{workspaceKey}/{projectKey}/tasks"
+@model PetBox.Web.Pages.ProjectHome.TasksModel
+@{
+	ViewData["Title"] = $"Tasks — {Model.Project?.Name ?? Model.ProjectKey}";
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold" data-testid="tasks-title">@(Model.Project?.Name ?? Model.ProjectKey) · tasks</h1>
+	<span class="badge badge-ghost">@Model.Boards.Count</span>
+</div>
+
+@if (Model.Project is null)
+{
+	<div class="alert alert-error" data-testid="tasks-notfound">Project not found.</div>
+	return;
+}
+
+@if (!Model.TasksEnabled)
+{
+	<div class="alert" data-testid="tasks-disabled">The Tasks module is disabled.</div>
+	return;
+}
+
+@if (Model.Boards.Count == 0)
+{
+	<div class="alert" data-testid="tasks-empty">No task boards yet. Agents create them via the tasks MCP tools.</div>
+}
+else
+{
+	<section class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="tasks-list">
+		@foreach (var b in Model.Boards)
+		{
+			<a href="@Routes.ProjectTaskBoard(Model.WorkspaceKey, Model.ProjectKey, b.Name)"
+				class="card bg-base-200 border border-base-300 hover:border-primary transition-colors"
+				data-testid="board-card" data-board-name="@b.Name">
+				<div class="card-body p-4">
+					<span class="font-mono font-semibold">@b.Name</span>
+					@if (!string.IsNullOrEmpty(b.Description))
+					{
+						<p class="text-sm opacity-80">@b.Description</p>
+					}
+					<div class="text-xs opacity-50 font-mono mt-2">created @b.CreatedAt.ToString("yyyy-MM-dd")</div>
+				</div>
+			</a>
+		}
+	</section>
+}

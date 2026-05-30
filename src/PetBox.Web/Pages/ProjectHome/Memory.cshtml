@@ -1,0 +1,47 @@
+@page "/ui/{workspaceKey}/{projectKey}/memory"
+@model PetBox.Web.Pages.ProjectHome.MemoryModel
+@{
+	ViewData["Title"] = $"Memory — {Model.Project?.Name ?? Model.ProjectKey}";
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold" data-testid="memory-title">@(Model.Project?.Name ?? Model.ProjectKey) · memory</h1>
+	<span class="badge badge-ghost">@Model.Stores.Count</span>
+</div>
+
+@if (Model.Project is null)
+{
+	<div class="alert alert-error" data-testid="memory-notfound">Project not found.</div>
+	return;
+}
+
+@if (!Model.MemoryEnabled)
+{
+	<div class="alert" data-testid="memory-disabled">The Memory module is disabled.</div>
+	return;
+}
+
+@if (Model.Stores.Count == 0)
+{
+	<div class="alert" data-testid="memory-empty">No memory stores yet. Agents create them via the memory MCP tools.</div>
+}
+else
+{
+	<section class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="memory-list">
+		@foreach (var s in Model.Stores)
+		{
+			<a href="@Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, s.Name)"
+				class="card bg-base-200 border border-base-300 hover:border-primary transition-colors"
+				data-testid="store-card" data-store-name="@s.Name">
+				<div class="card-body p-4">
+					<span class="font-mono font-semibold">@s.Name</span>
+					@if (!string.IsNullOrEmpty(s.Description))
+					{
+						<p class="text-sm opacity-80">@s.Description</p>
+					}
+					<div class="text-xs opacity-50 font-mono mt-2">created @s.CreatedAt.ToString("yyyy-MM-dd")</div>
+				</div>
+			</a>
+		}
+	</section>
+}

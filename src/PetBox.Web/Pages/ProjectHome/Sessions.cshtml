@@ -1,0 +1,46 @@
+@page "/ui/{workspaceKey}/{projectKey}/sessions"
+@model PetBox.Web.Pages.ProjectHome.SessionsModel
+@{
+	ViewData["Title"] = $"Sessions — {Model.Project?.Name ?? Model.ProjectKey}";
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold" data-testid="sessions-title">@(Model.Project?.Name ?? Model.ProjectKey) · sessions</h1>
+	<span class="badge badge-ghost">@Model.Sessions.Count</span>
+</div>
+
+@if (Model.Project is null)
+{
+	<div class="alert alert-error" data-testid="sessions-notfound">Project not found.</div>
+	return;
+}
+
+@if (!Model.SessionsEnabled)
+{
+	<div class="alert" data-testid="sessions-disabled">The Sessions module is disabled.</div>
+	return;
+}
+
+@if (Model.Sessions.Count == 0)
+{
+	<div class="alert" data-testid="sessions-empty">No sessions yet. Agents record them via the session MCP tools.</div>
+}
+else
+{
+	<section class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="sessions-list">
+		@foreach (var s in Model.Sessions)
+		{
+			<a href="@Routes.ProjectSession(Model.WorkspaceKey, Model.ProjectKey, s.Key)"
+				class="card bg-base-200 border border-base-300 hover:border-primary transition-colors"
+				data-testid="session-card" data-session-id="@s.Key">
+				<div class="card-body p-4">
+					<div class="flex items-baseline justify-between gap-2">
+						<span class="font-mono font-semibold truncate">@s.Key</span>
+						<span class="badge badge-ghost badge-sm">@s.Agent</span>
+					</div>
+					<div class="text-xs opacity-50 font-mono mt-2">updated @s.Updated.ToString("yyyy-MM-dd HH:mm")</div>
+				</div>
+			</a>
+		}
+	</section>
+}

@@ -51,6 +51,16 @@ public static class Routes
 	public static string ProjectTraces(string ws, string key) => $"{Project(ws, key)}/traces";
 	public static string ProjectTrace(string ws, string key, string traceId) => $"{Project(ws, key)}/traces/{traceId}";
 
+	// Tasks / Memory / Sessions — read-only views over the per-container temporal
+	// stores. A project has many named boards/stores; the bare URL lists them and
+	// /{board|store} views one. Sessions have no catalog (one file per project).
+	public static string ProjectTasks(string ws, string key) => $"{Project(ws, key)}/tasks";
+	public static string ProjectTaskBoard(string ws, string key, string board) => $"{Project(ws, key)}/tasks/{board}";
+	public static string ProjectMemory(string ws, string key) => $"{Project(ws, key)}/memory";
+	public static string ProjectMemoryStore(string ws, string key, string store) => $"{Project(ws, key)}/memory/{store}";
+	public static string ProjectSessions(string ws, string key) => $"{Project(ws, key)}/sessions";
+	public static string ProjectSession(string ws, string key, string sessionId) => $"{Project(ws, key)}/sessions/{sessionId}";
+
 	public static string ProjectConfig(string ws, string key) => $"{Project(ws, key)}/config";
 	public static string ProjectConfigEditor(string ws, string key) => $"{Project(ws, key)}/config/editor";
 	public static string ProjectConfigEditor(string ws, string key, long bindingId) => $"{Project(ws, key)}/config/editor/{bindingId}";

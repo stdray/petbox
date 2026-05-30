@@ -63,6 +63,8 @@ appsettings.*.json
 # SQLite runtime
 *.db
 *.db-log
+*.db-wal
+*.db-shm
 
 # OS
 .DS_Store

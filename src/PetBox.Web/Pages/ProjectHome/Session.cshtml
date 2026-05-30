@@ -1,0 +1,24 @@
+@page "/ui/{workspaceKey}/{projectKey}/sessions/{sessionId}"
+@model PetBox.Web.Pages.ProjectHome.SessionModel
+@{
+	ViewData["Title"] = $"{Model.SessionId} — Session";
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<a href="@Routes.ProjectSessions(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70" data-testid="session-breadcrumb">sessions</a>
+	<span class="opacity-40">/</span>
+	<h1 class="text-2xl font-semibold font-mono truncate" data-testid="session-title">@Model.SessionId</h1>
+	@if (Model.Session is not null)
+	{
+		<span class="badge badge-ghost" data-testid="session-agent">@Model.Session.Agent</span>
+	}
+</div>
+
+@if (Model.Session is not null)
+{
+	<article class="card bg-base-200 border border-base-300" data-testid="session-content">
+		<div class="card-body p-4">
+			<pre class="whitespace-pre-wrap text-sm font-mono">@Model.Session.Content</pre>
+		</div>
+	</article>
+}
