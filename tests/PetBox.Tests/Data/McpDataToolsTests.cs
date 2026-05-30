@@ -110,10 +110,14 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 		var tools = await _mcp.ListToolsAsync();
 		var names = tools.Select(t => t.Name).ToHashSet();
 
-		names.Should().Contain("data.list_dbs");
-		names.Should().Contain("data.create_db");
-		names.Should().Contain("data.delete_db");
-		names.Should().Contain("data.describe_db");
+		// DataDb lifecycle moved to the generic entity.* tools (type "db").
+		names.Should().Contain("entity.create");
+		names.Should().Contain("entity.list");
+		names.Should().Contain("entity.delete");
+		names.Should().Contain("entity.describe");
+		names.Should().NotContain("data.create_db");
+		names.Should().NotContain("data.list_dbs");
+		// Operational SQL/migration tools stay.
 		names.Should().Contain("data.schema_apply");
 		names.Should().Contain("data.query");
 		names.Should().Contain("data.exec");
@@ -124,10 +128,10 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 	{
 		var tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
 
-		var create = await tools["data.create_db"].CallAsync(new Dictionary<string, object?>
+		var create = await tools["entity.create"].CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = TestProjectKey,
-			["name"] = TestDbName,
+			["type"] = "db",
+			["props"] = JsonSerializer.SerializeToElement(new { projectKey = TestProjectKey, name = TestDbName }),
 		});
 		create.IsError.Should().NotBe(true);
 
@@ -170,9 +174,10 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 	{
 		var tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
 
-		var result = await tools["data.list_dbs"].CallAsync(new Dictionary<string, object?>
+		var result = await tools["entity.list"].CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = "some-other-project",
+			["type"] = "db",
+			["filter"] = JsonSerializer.SerializeToElement(new { projectKey = "some-other-project" }),
 		});
 		result.IsError.Should().Be(true);
 	}
@@ -181,10 +186,10 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 	public async Task DeniedPragma_Blocked()
 	{
 		var tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
-		await tools["data.create_db"].CallAsync(new Dictionary<string, object?>
+		await tools["entity.create"].CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = TestProjectKey,
-			["name"] = "tmp",
+			["type"] = "db",
+			["props"] = JsonSerializer.SerializeToElement(new { projectKey = TestProjectKey, name = "tmp" }),
 		});
 
 		var result = await tools["data.exec"].CallAsync(new Dictionary<string, object?>

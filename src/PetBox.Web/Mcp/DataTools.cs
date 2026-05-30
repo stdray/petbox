@@ -13,144 +13,19 @@ using PetBox.Data.Schema;
 
 namespace PetBox.Web.Mcp;
 
-// MCP tools for the Data module. Each tool maps 1:1 onto a /api/data/* REST
-// endpoint — same auth (X-Api-Key flows through the standard pipeline before
-// reaching the tool), same scopes (data:read / data:write / data:schema), same
-// project-claim cross-check.
+// MCP tools for the Data module's *operational* surface — the SQL/migration
+// ops that don't fit generic CRUD: data.schema_apply / data.query / data.exec.
+// DataDb lifecycle (list/create/delete/describe) moved to the generic
+// entity.* tools (type "db") — see EntityTools.
 //
-// We do NOT proxy through the HTTP handlers — that'd serialize through the
-// network just to come back. Instead, tools call the same underlying services
+// Each tool maps 1:1 onto a /api/data/* REST endpoint — same auth (X-Api-Key
+// flows through the standard pipeline before reaching the tool), same scopes
+// (data:read / data:write / data:schema), same project-claim cross-check. We do
+// NOT proxy through the HTTP handlers; tools call the same underlying services
 // (PetBoxDb, IDataDbFactory, SchemaRunner) that the REST handlers use.
-//
-// Naming: dot-separated namespace + verb (`data.list_dbs`) so multiple modules
-// can coexist without collisions when Config / Log tools land later.
 [McpServerToolType]
 public static class DataTools
 {
-	[McpServerTool(Name = "data.list_dbs", Title = "List DataDbs", ReadOnly = true)]
-	[Description("Lists all DataDb entries for the project. Returns name + description + quota + timestamps. Requires data:read scope.")]
-	public static async Task<object> ListDbsAsync(
-		IHttpContextAccessor http,
-		PetBoxDb db,
-		[Description("Project key — must match the calling ApiKey's project claim.")] string projectKey,
-		CancellationToken ct = default)
-	{
-		AssertProject(http, projectKey);
-		AssertScope(http, ApiKeyScopes.DataRead);
-
-		var rows = await db.DataDbs
-			.Where(d => d.ProjectKey == projectKey)
-			.OrderBy(d => d.Name)
-			.Select(d => new { d.Name, d.Description, d.MaxPageCount, d.CreatedAt, d.UpdatedAt })
-			.ToListAsync(ct);
-		return new { dbs = rows };
-	}
-
-	[McpServerTool(Name = "data.create_db", Title = "Create DataDb")]
-	[Description("Creates a new DataDb. Returns the resolved metadata. Requires data:schema scope.")]
-	public static async Task<object> CreateDbAsync(
-		IHttpContextAccessor http,
-		PetBoxDb db,
-		IDataDbFactory factory,
-		[Description("Project key.")] string projectKey,
-		[Description("DataDb name. Must match ^[a-z][a-z0-9_-]{0,99}$ and not be a reserved name.")] string name,
-		[Description("Optional human description.")] string? description = null,
-		[Description("Max SQLite pages (×4KB) for quota. Default 262144 ≈ 1GB. Minimum 1024.")] long? maxPageCount = null,
-		CancellationToken ct = default)
-	{
-		AssertProject(http, projectKey);
-		AssertScope(http, ApiKeyScopes.DataSchema);
-
-		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
-
-		var exists = await db.DataDbs.AnyAsync((DataDb d) => d.ProjectKey == projectKey && d.Name == name, ct);
-		if (exists) throw new InvalidOperationException($"DataDb '{name}' already exists");
-
-		var quota = maxPageCount ?? DataDbFactory.DefaultMaxPageCount;
-		await factory.CreateAsync(projectKey, name, quota, ct);
-
-		var now = DateTime.UtcNow;
-		await db.InsertAsync(new DataDb
-		{
-			ProjectKey = projectKey,
-			Name = name,
-			Description = description,
-			MaxPageCount = quota,
-			CreatedAt = now,
-			UpdatedAt = now,
-		}, token: ct);
-
-		return new { name, description, maxPageCount = quota, createdAt = now };
-	}
-
-	[McpServerTool(Name = "data.delete_db", Title = "Delete DataDb", Destructive = true)]
-	[Description("Removes the DataDbs metadata row immediately. File is best-effort deleted; orphan cleanup service mops up locked files. Requires data:schema scope.")]
-	public static async Task<object> DeleteDbAsync(
-		IHttpContextAccessor http,
-		PetBoxDb db,
-		IDataDbFactory factory,
-		string projectKey,
-		string name,
-		CancellationToken ct = default)
-	{
-		AssertProject(http, projectKey);
-		AssertScope(http, ApiKeyScopes.DataSchema);
-
-		var deleted = await db.DataDbs.Where(d => d.ProjectKey == projectKey && d.Name == name).DeleteAsync(ct);
-		if (deleted == 0) throw new InvalidOperationException("DataDb not found");
-		factory.TryDelete(projectKey, name);
-		return new { deleted = true, name };
-	}
-
-	[McpServerTool(Name = "data.describe_db", Title = "Describe DataDb tables", ReadOnly = true)]
-	[Description("Introspects the SQLite file via PRAGMA: returns each non-system, non-journal table with its columns. Requires data:read scope.")]
-	public static async Task<object> DescribeDbAsync(
-		IHttpContextAccessor http,
-		PetBoxDb db,
-		IDataDbFactory factory,
-		string projectKey,
-		string dbName,
-		CancellationToken ct = default)
-	{
-		AssertProject(http, projectKey);
-		AssertScope(http, ApiKeyScopes.DataRead);
-
-		var row = await db.DataDbs.FirstOrDefaultAsync(
-			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
-		if (row is null) throw new InvalidOperationException("DataDb not found");
-
-		var cs = factory.GetConnectionString(projectKey, dbName);
-		await using var conn = new SqliteConnection(cs);
-		await conn.OpenAsync(ct);
-
-		var tables = new List<object>();
-		await using (var cmd = conn.CreateCommand())
-		{
-			cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' "
-				+ "AND name NOT LIKE 'sqlite_%' AND name <> @journal ORDER BY name";
-			var p = cmd.CreateParameter();
-			p.ParameterName = "@journal";
-			p.Value = SchemaRunner.JournalTableName;
-			cmd.Parameters.Add(p);
-			await using var reader = await cmd.ExecuteReaderAsync(ct);
-			while (await reader.ReadAsync(ct))
-				tables.Add(new { name = reader.GetString(0) });
-		}
-
-		var result = new List<object>();
-		foreach (var t in tables.Cast<dynamic>())
-		{
-			var cols = new List<object>();
-			await using var cmd = conn.CreateCommand();
-			cmd.CommandText = $"PRAGMA table_info({t.name})";
-			await using var reader = await cmd.ExecuteReaderAsync(ct);
-			while (await reader.ReadAsync(ct))
-				cols.Add(new { name = reader.GetString(1), type = reader.GetString(2), notNull = reader.GetInt32(3) == 1, pk = reader.GetInt32(5) > 0 });
-			result.Add(new { name = (string)t.name, columns = cols });
-		}
-		return new { tables = result };
-	}
-
 	[McpServerTool(Name = "data.schema_apply", Title = "Apply schema migration", Idempotent = true)]
 	[Description("Applies a named SQL migration via DbUp + hash-based idempotency. Re-applying with same name+sql is a no-op; same name with different sql is a 409-style conflict. Requires data:schema scope.")]
 	public static async Task<object> SchemaApplyAsync(

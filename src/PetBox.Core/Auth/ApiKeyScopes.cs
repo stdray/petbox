@@ -34,7 +34,7 @@ public static class ApiKeyScopes
 		new(DataRead,    "Read DataDbs",           "List DataDbs, SELECT via /api/data/{p}/{db}/query, describe schemas.",       "Data"),
 		new(DataWrite,   "Write DataDb rows",      "INSERT/UPDATE/DELETE via /api/data/{p}/{db}/exec.",                          "Data"),
 		new(DataSchema,  "Schema apply / lifecycle","CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs.",          "Data"),
-		new(AdminProvision, "Provision projects & keys", "Agent onboarding: create projects/services, mint API keys, set config bindings via MCP. Issue only on short-lived agent keys.", "Admin"),
+		new(AdminProvision, "Provision projects & keys", "Agent onboarding: create projects, mint API keys, set config bindings via the entity.* MCP tools. Issue only on short-lived agent keys.", "Admin"),
 	];
 
 	static readonly HashSet<string> Allowed =

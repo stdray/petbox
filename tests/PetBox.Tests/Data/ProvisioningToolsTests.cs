@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
@@ -81,9 +82,13 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	[Fact]
 	public async Task ProvisioningTools_AreDiscoverable()
 	{
+		// Provisioning verbs are now the generic entity.* tools; the old
+		// workspace.create_project / project.create_apikey names are gone.
 		var names = (await _mcp.ListToolsAsync()).Select(t => t.Name).ToList();
-		names.Should().Contain("workspace.create_project");
-		names.Should().Contain("project.create_apikey");
+		names.Should().Contain("entity.create");
+		names.Should().Contain("entity.list");
+		names.Should().NotContain("workspace.create_project");
+		names.Should().NotContain("project.create_apikey");
 	}
 
 	[Fact]
@@ -91,22 +96,18 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	{
 		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
 
-		var createProject = (await _mcp.ListToolsAsync()).First(t => t.Name == "workspace.create_project");
-		var r1 = await createProject.CallAsync(new Dictionary<string, object?>
+		var create = (await _mcp.ListToolsAsync()).First(t => t.Name == "entity.create");
+		var r1 = await create.CallAsync(new Dictionary<string, object?>
 		{
-			["workspaceKey"] = Workspace,
-			["key"] = projectKey,
-			["name"] = "Provisioned",
+			["type"] = "project",
+			["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = Workspace, key = projectKey, name = "Provisioned" }),
 		});
 		r1.IsError.Should().NotBe(true);
 
-		var mintKey = (await _mcp.ListToolsAsync()).First(t => t.Name == "project.create_apikey");
-		var r2 = await mintKey.CallAsync(new Dictionary<string, object?>
+		var r2 = await create.CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = projectKey,
-			["name"] = "pet",
-			["scopes"] = "data:read,data:write",
-			["expiresInSeconds"] = 3600,
+			["type"] = "apikey",
+			["props"] = JsonSerializer.SerializeToElement(new { projectKey, name = "pet", scopes = "data:read,data:write", expiresInSeconds = 3600 }),
 		});
 		r2.IsError.Should().NotBe(true);
 
@@ -119,12 +120,25 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	[Fact]
 	public async Task CreateProject_InvalidKey_Rejected()
 	{
-		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "workspace.create_project");
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "entity.create");
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
-			["workspaceKey"] = Workspace,
-			["key"] = "Bad Key!", // uppercase + space + punctuation
-			["name"] = "x",
+			["type"] = "project",
+			["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = Workspace, key = "Bad Key!", name = "x" }),
+		});
+		result.IsError.Should().Be(true);
+	}
+
+	[Fact]
+	public async Task CreateProject_DeleteIsForbidden()
+	{
+		// entity delete deliberately does not support 'project' (would orphan
+		// logs/dbs/keys) — the call must surface an error.
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "entity.delete");
+		var result = await tool.CallAsync(new Dictionary<string, object?>
+		{
+			["type"] = "project",
+			["key"] = JsonSerializer.SerializeToElement(new { key = "$system" }),
 		});
 		result.IsError.Should().Be(true);
 	}
@@ -143,12 +157,11 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 		var mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
 		try
 		{
-			var tool = (await mcp.ListToolsAsync()).First(t => t.Name == "workspace.create_project");
+			var tool = (await mcp.ListToolsAsync()).First(t => t.Name == "entity.create");
 			var result = await tool.CallAsync(new Dictionary<string, object?>
 			{
-				["workspaceKey"] = Workspace,
-				["key"] = "shouldfail",
-				["name"] = "x",
+				["type"] = "project",
+				["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = Workspace, key = "shouldfail", name = "x" }),
 			});
 			result.IsError.Should().Be(true);
 		}
