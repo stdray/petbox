@@ -30,7 +30,9 @@ else
 	<section class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="databases-list">
 		@foreach (var d in Model.Dbs)
 		{
-			<div class="card bg-base-200 border border-base-300" data-testid="database-card" data-db-name="@d.Name">
+			<a href="@Routes.ProjectDatabase(Model.WorkspaceKey, Model.ProjectKey, d.Name)"
+				class="card bg-base-200 border border-base-300 hover:border-primary transition-colors"
+				data-testid="database-card" data-db-name="@d.Name">
 				<div class="card-body p-4">
 					<div class="flex items-baseline justify-between">
 						<span class="font-mono font-semibold">@d.Name</span>
@@ -42,7 +44,7 @@ else
 					}
 					<div class="text-xs opacity-50 font-mono mt-2">created @d.CreatedAt.ToString("yyyy-MM-dd")</div>
 				</div>
-			</div>
+			</a>
 		}
 	</section>
 }

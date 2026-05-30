@@ -46,6 +46,8 @@ public static class Routes
 	public static string ProjectLogs(string ws, string key) => $"{Project(ws, key)}/logs";     // logs dashboard
 	public static string ProjectLog(string ws, string key, string log) => $"{Project(ws, key)}/logs/{log}";
 	public static string ProjectDatabases(string ws, string key) => $"{Project(ws, key)}/databases";
+	public static string ProjectDatabase(string ws, string key, string db) => $"{Project(ws, key)}/databases/{db}";
+	public static string ProjectTable(string ws, string key, string db, string table) => $"{Project(ws, key)}/databases/{db}/{table}";
 	public static string ProjectTraces(string ws, string key) => $"{Project(ws, key)}/traces";
 	public static string ProjectTrace(string ws, string key, string traceId) => $"{Project(ws, key)}/traces/{traceId}";
 

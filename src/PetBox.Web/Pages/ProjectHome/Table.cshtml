@@ -1,0 +1,101 @@
+@page "/ui/{workspaceKey}/{projectKey}/databases/{dbName}/{tableName}"
+@model PetBox.Web.Pages.ProjectHome.TableModel
+@{
+	ViewData["Title"] = $"{Model.TableName} — {Model.DbName}";
+
+	string PageHref(int page) =>
+		$"{PetBox.Web.Routes.ProjectTable(Model.WorkspaceKey, Model.ProjectKey, Model.DbName, Model.TableName)}"
+		+ $"?sql={Uri.EscapeDataString(Model.Sql)}&page={page}";
+}
+
+<div class="mb-3 flex items-baseline gap-2 flex-wrap text-sm">
+	<a href="@PetBox.Web.Routes.ProjectDatabases(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70">databases</a>
+	<span class="opacity-40">/</span>
+	<a href="@PetBox.Web.Routes.ProjectDatabase(Model.WorkspaceKey, Model.ProjectKey, Model.DbName)" class="link link-hover opacity-70" data-testid="table-breadcrumb-db">@Model.DbName</a>
+	<span class="opacity-40">/</span>
+	<span class="font-mono font-semibold text-base" data-testid="table-title">@Model.TableName</span>
+</div>
+
+@if (!Model.DataEnabled)
+{
+	<div class="alert" data-testid="table-disabled">The Data module is disabled.</div>
+	return;
+}
+@if (Model.DbNotFound)
+{
+	<div class="alert alert-error" data-testid="table-notfound">Database not found.</div>
+	return;
+}
+
+<form method="get" class="mb-3" data-testid="table-sql-form">
+	<div class="flex items-start gap-2">
+		<textarea name="sql" rows="2" spellcheck="false"
+			class="textarea textarea-bordered font-mono text-xs flex-1 leading-relaxed"
+			data-testid="table-sql-input">@Model.Sql</textarea>
+		<div class="flex flex-col gap-1">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="table-sql-run">Run</button>
+			<a href="@PetBox.Web.Routes.ProjectTable(Model.WorkspaceKey, Model.ProjectKey, Model.DbName, Model.TableName)"
+				class="btn btn-sm btn-ghost" data-testid="table-sql-reset">Reset</a>
+		</div>
+	</div>
+	<p class="text-xs opacity-50 mt-1">Read-only — connection opens in SQLite read-only mode. Use admin or the API for writes.</p>
+</form>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="table-error">
+		<span class="font-mono text-xs">@Model.ErrorMessage</span>
+	</div>
+}
+else
+{
+	<div class="overflow-x-auto">
+		<table class="table table-xs table-zebra" data-testid="table-results">
+			<thead>
+				<tr>
+					@foreach (var c in Model.Columns)
+					{
+						<th class="font-mono">@c</th>
+					}
+				</tr>
+			</thead>
+			<tbody>
+				@if (Model.Rows.Count == 0)
+				{
+					<tr><td colspan="@Math.Max(1, Model.Columns.Count)" class="text-center opacity-50 italic" data-testid="table-empty">No rows.</td></tr>
+				}
+				@foreach (var row in Model.Rows)
+				{
+					<tr data-testid="table-row">
+						@foreach (var cell in row)
+						{
+							<td class="font-mono text-xs whitespace-pre-wrap">@(cell ?? "")</td>
+						}
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+
+	<div class="flex items-center justify-between mt-3 text-sm">
+		<span class="opacity-60" data-testid="table-page-info">page @(Model.PageNum + 1) · @Model.Rows.Count rows</span>
+		<div class="join">
+			@if (Model.PageNum > 0)
+			{
+				<a href="@PageHref(Model.PageNum - 1)" class="btn btn-sm join-item" data-testid="table-prev">‹ Prev</a>
+			}
+			else
+			{
+				<button class="btn btn-sm join-item btn-disabled" disabled>‹ Prev</button>
+			}
+			@if (Model.HasNext)
+			{
+				<a href="@PageHref(Model.PageNum + 1)" class="btn btn-sm join-item" data-testid="table-next">Next ›</a>
+			}
+			else
+			{
+				<button class="btn btn-sm join-item btn-disabled" disabled>Next ›</button>
+			}
+		</div>
+	</div>
+}

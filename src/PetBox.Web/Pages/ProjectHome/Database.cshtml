@@ -1,0 +1,54 @@
+@page "/ui/{workspaceKey}/{projectKey}/databases/{dbName}"
+@model PetBox.Web.Pages.ProjectHome.DatabaseModel
+@{
+	ViewData["Title"] = $"{Model.DbName} — {Model.ProjectKey}";
+}
+
+<div class="mb-4 flex items-baseline gap-2 flex-wrap text-sm">
+	<a href="@PetBox.Web.Routes.ProjectDatabases(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70" data-testid="database-breadcrumb">databases</a>
+	<span class="opacity-40">/</span>
+	<span class="font-mono font-semibold text-base" data-testid="database-title">@Model.DbName</span>
+</div>
+
+@if (!Model.DataEnabled)
+{
+	<div class="alert" data-testid="database-disabled">The Data module is disabled.</div>
+	return;
+}
+@if (Model.Project is null || Model.Db is null)
+{
+	<div class="alert alert-error" data-testid="database-notfound">Database not found.</div>
+	return;
+}
+
+@if (Model.Tables.Count == 0)
+{
+	<div class="alert" data-testid="database-empty">No tables yet. Apply a migration in admin (gear → project → Data → @Model.DbName).</div>
+}
+else
+{
+	<div class="overflow-x-auto">
+		<table class="table table-sm" data-testid="database-tables">
+			<thead>
+				<tr>
+					<th>Table</th>
+					<th>Columns</th>
+					<th class="text-right">Rows</th>
+				</tr>
+			</thead>
+			<tbody>
+				@foreach (var t in Model.Tables)
+				{
+					<tr data-testid="database-table-row" data-table-name="@t.Name">
+						<td>
+							<a href="@PetBox.Web.Routes.ProjectTable(Model.WorkspaceKey, Model.ProjectKey, Model.DbName, t.Name)"
+								class="link link-primary font-mono font-medium" data-testid="database-table-link">@t.Name</a>
+						</td>
+						<td class="font-mono text-xs opacity-70">@string.Join(", ", t.Columns)</td>
+						<td class="text-right font-mono tabular-nums">@t.RowCount.ToString("N0")</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
