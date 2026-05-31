@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Seq.Extensions.Logging;
@@ -181,6 +182,17 @@ public partial class Program
 						if (!string.IsNullOrWhiteSpace(otelApiKey))
 							o.Headers = $"X-Seq-ApiKey={otelApiKey}";
 					}));
+		}
+
+		// Persist DataProtection keys to the configured directory (the data volume in
+		// Docker via DataProtection__KeysDirectory) so the auth cookie survives container
+		// restarts / deploys. Without this the default ephemeral keyring regenerates on
+		// every restart and logs everyone out. Env unset (local/tests) -> default keyring.
+		var dpKeysDir = builder.Configuration["DataProtection:KeysDirectory"];
+		if (!string.IsNullOrWhiteSpace(dpKeysDir))
+		{
+			Directory.CreateDirectory(dpKeysDir);
+			builder.Services.AddDataProtection().PersistKeysToFileSystem(new DirectoryInfo(dpKeysDir));
 		}
 
 		builder.Services.AddAuthentication(options =>

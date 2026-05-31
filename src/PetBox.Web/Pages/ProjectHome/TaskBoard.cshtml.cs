@@ -1,7 +1,9 @@
+using System.Text.RegularExpressions;
 using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Data.Temporal;
 using PetBox.Core.Features;
 using PetBox.Tasks.Data;
 
@@ -46,5 +48,34 @@ public sealed class TaskBoardModel : PageModel
 			.ThenBy(n => n.Key)
 			.ToListAsync(ct);
 		return Page();
+	}
+
+	// Quick-add from the board UI: drops a new task into the `incoming` phase with an
+	// auto-generated key (slug of the name + short unique suffix).
+	public async Task<IActionResult> OnPostCreateAsync(string name, long priority, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		if (!await _store.ExistsAsync(ProjectKey, Board, ct)) return NotFound();
+
+		if (!string.IsNullOrWhiteSpace(name))
+		{
+			var key = new TaskNodeId("incoming", GenKey(name), null).ToKey();
+			var ctx = _store.GetContext(ProjectKey, Board);
+			await TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PlanNode { Key = key, Version = 0, Status = PlanStatus.Pending, Name = name.Trim(), Body = string.Empty, Priority = priority },
+			}, ct: ct);
+		}
+
+		return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey, board = Board });
+	}
+
+	static string GenKey(string name)
+	{
+		var ascii = Regex.Replace(name.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
+		if (ascii.Length == 0 || !char.IsLetter(ascii[0])) ascii = "task-" + ascii;
+		ascii = ascii.Trim('-');
+		if (ascii.Length > 80) ascii = ascii[..80].Trim('-');
+		return $"{ascii}-{Guid.NewGuid():N}"[..(Math.Min(ascii.Length, 80) + 7)];
 	}
 }
