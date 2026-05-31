@@ -51,17 +51,16 @@
 								var wsProjects = projectsByWs.TryGetValue(w.Key, out var ps) ? ps : (IReadOnlyList<PetBox.Core.Models.Project>)Array.Empty<PetBox.Core.Models.Project>();
 								<li data-testid="admin-side-workspace" data-ws-key="@w.Key">
 									<details open="@isCurrentWs">
-										<summary class="@(isCurrentWs ? "font-semibold" : "")">
-											<span class="font-mono text-sm truncate">@w.Key</span>
+										<summary class="@(At(Routes.WorkspaceAdmin(w.Key)) ? "active " : "")@(isCurrentWs ? "font-semibold" : "")">
+											@* The workspace name links straight to its Overview; the disclosure
+											   triangle still toggles the subtree. Saves a redundant "Overview" row. *@
+											<a href="@Routes.WorkspaceAdmin(w.Key)" class="font-mono text-sm truncate flex-1" data-testid="admin-side-ws-overview">@w.Key</a>
 											@if (string.Equals(w.Key, "$system", StringComparison.Ordinal))
 											{
 												<span class="badge badge-ghost badge-xs">sys</span>
 											}
 										</summary>
 										<ul>
-											<li>
-												<a href="@Routes.WorkspaceAdmin(w.Key)" class="@(At(Routes.WorkspaceAdmin(w.Key)) ? "active" : "")" data-testid="admin-side-ws-overview">Overview</a>
-											</li>
 											<li>
 												<a href="@Routes.WorkspaceAdminMembers(w.Key)" class="@(At(Routes.WorkspaceAdminMembers(w.Key)) ? "active" : "")" data-testid="admin-side-ws-members">Members</a>
 											</li>
@@ -82,14 +81,12 @@
 													var projectsBranchOpen = isCurrentWs;
 												}
 												<details open="@projectsBranchOpen" data-testid="admin-side-projects-tree">
-													<summary>
-														<span>Projects</span>
+													<summary class="@(At(Routes.WorkspaceAdminProjects(w.Key)) ? "active" : "")">
+														@* "Projects" links to the all-projects page; triangle toggles the per-project subtree. *@
+														<a href="@Routes.WorkspaceAdminProjects(w.Key)" class="flex-1" data-testid="admin-side-ws-projects">Projects</a>
 														<span class="badge badge-ghost badge-xs ml-auto">@wsProjects.Count</span>
 													</summary>
 													<ul>
-														<li>
-															<a href="@Routes.WorkspaceAdminProjects(w.Key)" class="@(At(Routes.WorkspaceAdminProjects(w.Key)) ? "active" : "") italic opacity-80" data-testid="admin-side-ws-projects">All projects</a>
-														</li>
 														@if (wsProjects.Count == 0)
 														{
 															<li class="text-xs opacity-50 italic px-3 py-1" data-testid="admin-side-no-projects">No projects yet.</li>
@@ -101,13 +98,11 @@
 																var isCurrentProject = isCurrentWs && string.Equals(currentProject, p.Key, StringComparison.Ordinal);
 																<li data-testid="admin-side-project" data-project-key="@p.Key">
 																	<details open="@isCurrentProject">
-																		<summary class="@(isCurrentProject ? "font-semibold" : "")">
-																			<span class="font-mono text-xs truncate">@p.Key</span>
+																		<summary class="@(At(Routes.ProjectSettings(w.Key, p.Key)) ? "active " : "")@(isCurrentProject ? "font-semibold" : "")">
+																			@* Project name links to its Info/settings page; triangle toggles. *@
+																			<a href="@Routes.ProjectSettings(w.Key, p.Key)" class="font-mono text-xs truncate flex-1" data-testid="admin-side-proj-info">@p.Key</a>
 																		</summary>
 																		<ul>
-																			<li>
-																				<a href="@Routes.ProjectSettings(w.Key, p.Key)" class="@(At(Routes.ProjectSettings(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-info">Info</a>
-																			</li>
 																			@if (Features.IsEnabled(Feature.Logging))
 																			{
 																				<li>
