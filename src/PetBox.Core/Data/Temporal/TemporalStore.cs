@@ -66,13 +66,28 @@ public static class TemporalStore
 		TimeProvider? time = null,
 		CancellationToken ct = default)
 		where TRow : TemporalRow =>
-		UpsertAsync(db, desired, sinceVersion, time, onBeforeApply: null, ct);
+		UpsertAsync(db, desired, [], sinceVersion, time, onBeforeApply: null, ct);
+
+	// Overload that also soft-deletes (closes the active row with no new revision) the
+	// given keys — used by memory.upsert's `deleted:true`. version 0 = delete the
+	// current active row regardless; a non-zero version that no longer matches yields a
+	// Stale conflict; deleting a key with no active row is a no-op (idempotent).
+	public static Task<TemporalUpsertResult<TRow>> UpsertAsync<TRow>(
+		DataConnection db,
+		IReadOnlyList<TRow> desired,
+		IReadOnlyList<(string Key, long Version)> delete,
+		long sinceVersion = 0,
+		TimeProvider? time = null,
+		CancellationToken ct = default)
+		where TRow : TemporalRow =>
+		UpsertAsync(db, desired, delete, sinceVersion, time, onBeforeApply: null, ct);
 
 	// onBeforeApply is a test-only seam: it fires after classification but before
 	// the close+insert transaction, to drive the CloseRace branch deterministically.
 	internal static async Task<TemporalUpsertResult<TRow>> UpsertAsync<TRow>(
 		DataConnection db,
 		IReadOnlyList<TRow> desired,
+		IReadOnlyList<(string Key, long Version)> delete,
 		long sinceVersion,
 		TimeProvider? time,
 		Func<Task>? onBeforeApply,
@@ -81,12 +96,25 @@ public static class TemporalStore
 	{
 		var table = db.GetTable<TRow>();
 
-		var active = await ActiveByKeyAsync(table, desired, ct);
+		var active = await ActiveByKeyAsync(table, desired, delete, ct);
 		var fromVersion = await MaxVersionAsync(table, ct);
 		var nextVersion = fromVersion + 1;
 		var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
 
 		var batch = Classify(desired, active, nextVersion, now);
+
+		// Soft-delete: close the active row, no replacement revision -> shows up in
+		// the delta's `removed`.
+		foreach (var (key, version) in delete)
+		{
+			active.TryGetValue(key, out var current);
+			if (current is null)
+				continue; // idempotent: already gone
+			if (version != 0 && current.Version != version)
+				batch.Conflicts.Add(new(key, TemporalConflictKind.Stale, version, current.Version));
+			else
+				batch.ToClose.Add((key, current.Version));
+		}
 
 		var conflicts = batch.Conflicts;
 		var applied = conflicts.Count == 0;
@@ -120,12 +148,13 @@ public static class TemporalStore
 	// ── 1. read current state ────────────────────────────────────────────────
 
 	static async Task<Dictionary<string, TRow>> ActiveByKeyAsync<TRow>(
-		ITable<TRow> table, IReadOnlyList<TRow> desired, CancellationToken ct)
+		ITable<TRow> table, IReadOnlyList<TRow> desired, IReadOnlyList<(string Key, long Version)> delete, CancellationToken ct)
 		where TRow : TemporalRow
 	{
-		// Renames need the active row at PrevKey too.
+		// Renames need the active row at PrevKey too; deletes need their key's active row.
 		var keys = desired.Select(d => d.Key)
 			.Concat(desired.Where(d => d.PrevKey is not null).Select(d => d.PrevKey!))
+			.Concat(delete.Select(t => t.Key))
 			.Distinct()
 			.ToList();
 		return await table

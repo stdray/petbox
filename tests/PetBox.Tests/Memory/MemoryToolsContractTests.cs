@@ -114,6 +114,25 @@ public sealed class MemoryToolsContractTests : IDisposable
 			.Which.GetProperty("key").GetString().Should().Be("k");
 	}
 
+	[Fact]
+	public async Task Upsert_DeletedTrue_SoftRemovesEntry()
+	{
+		var http = Http("memory:read,memory:write");
+		var entries = JsonSerializer.SerializeToElement(new object[]
+		{
+			new { key = "temp", type = "project", description = "temp", body = "to be removed" },
+		});
+		await MemoryTools.UpsertAsync(http, Flags(), _store, Proj, "notes", entries);
+
+		var del = JsonSerializer.SerializeToElement(new object[] { new { key = "temp", deleted = true } });
+		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _store, Proj, "notes", del));
+		res.GetProperty("removed").EnumerateArray().Select(e => e.GetString()).Should().Contain("temp");
+
+		var list = Json(await MemoryTools.ListAsync(http, Flags(), _store, Proj, "notes"));
+		list.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("key").GetString())
+			.Should().NotContain("temp");
+	}
+
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");

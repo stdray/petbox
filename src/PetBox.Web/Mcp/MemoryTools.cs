@@ -135,6 +135,8 @@ public static class MemoryTools
 		preference on how to work) | Project (durable project fact/constraint) | Reference
 		(pointer to an external resource). Pick one. `tags` is free CSV, normalised on write.
 		`version` is the baseline you last saw (0 = new). Set `prevKey` to rename.
+		To delete an entry, pass { key, deleted:true } (optional version baseline) — it is
+		soft-closed (history kept) and appears in the result's `removed`.
 		Store durable facts not derivable from code/git/config; actionable work goes to a
 		task board, not here.
 		Result: { applied, currentVersion, inserted, closed, conflicts[], added[], updated[], removed[] }.
@@ -149,9 +151,9 @@ public static class MemoryTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		await stores.EnsureAsync(projectKey, store, ct); // auto-vivify on first write
-		var desired = ParseEntries(entries);
+		var (desired, deletes) = ParseEntries(entries);
 		var ctx = stores.GetContext(projectKey, store);
-		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
+		var r = await TemporalStore.UpsertAsync(ctx, desired, deletes, sinceVersion, ct: ct);
 		if (r.Applied) RebuildFts(ctx);
 		return Serialize(r);
 	});
@@ -205,7 +207,7 @@ public static class MemoryTools
 		version = e.Version,
 	};
 
-	static MemoryEntry[] ParseEntries(JsonElement entries)
+	static (MemoryEntry[] Upserts, (string Key, long Version)[] Deletes) ParseEntries(JsonElement entries)
 	{
 		// MCP clients sometimes pass the array as a JSON *string* (the param is an
 		// untyped JsonElement, so the client may stringify it); accept both forms.
@@ -215,10 +217,18 @@ public static class MemoryTools
 		var arr = doc?.RootElement ?? entries;
 		if (arr.ValueKind != JsonValueKind.Array)
 			throw new ArgumentException($"entries must be a JSON array (got {arr.ValueKind})");
-		var list = new List<MemoryEntry>();
+		var upserts = new List<MemoryEntry>();
+		var deletes = new List<(string, long)>();
 		foreach (var e in arr.EnumerateArray())
 		{
-			list.Add(new MemoryEntry
+			// `deleted:true` soft-deletes the entry (only key + optional version needed).
+			if (e.ValueKind == JsonValueKind.Object
+				&& e.TryGetProperty("deleted", out var del) && del.ValueKind == JsonValueKind.True)
+			{
+				deletes.Add((ModuleMcp.ReqStr(e, "key"), ModuleMcp.OptLong(e, "version", 0)));
+				continue;
+			}
+			upserts.Add(new MemoryEntry
 			{
 				Key = ModuleMcp.ReqStr(e, "key"),
 				Version = ModuleMcp.OptLong(e, "version", 0),
@@ -229,7 +239,7 @@ public static class MemoryTools
 				PrevKey = ModuleMcp.OptStr(e, "prevKey"),
 			});
 		}
-		return list.ToArray();
+		return (upserts.ToArray(), deletes.ToArray());
 	}
 
 	static MemoryType ParseType(string s) =>

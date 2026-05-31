@@ -62,6 +62,31 @@ When recording state via the MCP tools, pick by lifetime:
 
 Memory entries are typed (`user` | `feedback` | `project` | `reference`) — `type` is required on `memory.upsert`. Store durable facts not derivable from code/git/config; do **not** store what the repo/git already records, transient state, secrets, or actionable work (that's a task). `feedback`/`project` entries should include the *why* and *how to apply*. Search before writing, update over duplicating, delete when wrong (temporal history makes deletes safe). A cold `tasks.upsert` / `memory.upsert` auto-creates the board/store.
 
+## Live plan board (petbox `$system`/roadmap)
+
+The **live plan lives in petbox**, not in `doc/plan.md` — the tasks board
+`$system`/roadmap (via the `tasks.*` MCP tools) is the source of truth for active
+and upcoming work. `doc/plan.md` is kept as the historical/decision record (phases
+0–29) and is not the working plan anymore.
+
+Board phases (Phase > Wave > Task):
+
+- **`incoming`** — raw intake. New requests land here. The agent periodically
+  re-reads and triages: simple items it implements directly; complex items or ones
+  needing discussion get moved into a real phase.
+- **`parking`** ("Непонятные") — tasks the user doesn't understand from the
+  description or doesn't yet know what to do with. **When the user says "отправь X в
+  непонятные" (send X to parking), move/create that task under `parking` with a
+  Russian description.** The user reviews these in the UI, thinks, and returns them
+  to a real phase when ready.
+- **`polish`** — UX/polish doced items (incl. pending Phase 25 items migrated from
+  `doc/plan.md`).
+- Real work phases (e.g. `phase30`) — tracked features.
+
+Keep board node descriptions in Russian when the user will triage them in the UI
+(parking especially). Record durable findings/decisions into `$system`/dogfooding
+memory seamlessly (no "should I record this?" prompts) — see the memory rules above.
+
 ## Target stack
 
 - .NET 10 monolith, Razor Pages SSR + htmx + Alpine.js
