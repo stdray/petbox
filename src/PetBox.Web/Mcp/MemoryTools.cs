@@ -143,7 +143,7 @@ public static class MemoryTools
 		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
 		string projectKey, string store,
 		[Description("JSON array of entry objects")] JsonElement entries,
-		long sinceVersion = 0, CancellationToken ct = default)
+		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -154,7 +154,7 @@ public static class MemoryTools
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
 		if (r.Applied) RebuildFts(ctx);
 		return Serialize(r);
-	}
+	});
 
 	[McpServerTool(Name = "memory.delta", Title = "Memory delta since cursor", ReadOnly = true)]
 	[Description("Return entries added/updated/removed since `sinceVersion` (no writes). Requires memory:read.")]

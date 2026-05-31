@@ -2,9 +2,16 @@
 	"mcpServers": {
 		"petbox": {
 			"type": "http",
-			"url": "http://localhost:5000/mcp",
+			"url": "https://petbox.3po.su/mcp",
 			"headers": {
-				"X-Api-Key": "${PETBOX_DEV_APIKEY}"
+				"X-Api-Key": "${PETBOX_API_KEY}"
+			}
+		},
+		"petbox-sys": {
+			"type": "http",
+			"url": "https://petbox.3po.su/mcp",
+			"headers": {
+				"X-Api-Key": "${PETBOX_SYS_API_KEY}"
 			}
 		}
 	}

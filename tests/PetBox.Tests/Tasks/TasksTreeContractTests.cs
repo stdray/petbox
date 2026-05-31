@@ -88,8 +88,10 @@ public sealed class TasksTreeContractTests : IDisposable
 		{
 			new { phase = "Bad Phase", status = "Pending", body = "x" },
 		});
-		await Assert.ThrowsAsync<ArgumentException>(() =>
-			TasksTools.UpsertAsync(http, Flags(), _store, Proj, "roadmap", nodes));
+		// GuardAsync surfaces the validation failure as a structured error result
+		// (not a thrown, opaque MCP error).
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, Proj, "roadmap", nodes));
+		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
 	}
 
 	[Fact]

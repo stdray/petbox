@@ -117,7 +117,7 @@ public static class TasksTools
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
 		string projectKey, string board,
 		[Description("JSON array of node objects")] JsonElement nodes,
-		long sinceVersion = 0, CancellationToken ct = default)
+		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -128,7 +128,7 @@ public static class TasksTools
 		var ctx = boards.GetContext(projectKey, board);
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
 		return Serialize(r);
-	}
+	});
 
 	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true)]
 	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes). Requires tasks:read.")]

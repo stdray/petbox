@@ -33,6 +33,19 @@ static class ModuleMcp
 			throw new InvalidOperationException($"feature '{feature}' is disabled");
 	}
 
+	// Runs a tool body, converting any thrown exception into a structured, agent-
+	// readable error result instead of the MCP framework's opaque "An error occurred
+	// invoking 'X'". Surfaces the cause (scope/feature/project assert, or a deeper
+	// server-side failure with its message + stack) so an agent can self-diagnose.
+	public static async Task<object> GuardAsync(Func<Task<object>> body)
+	{
+		try { return await body(); }
+		catch (Exception ex)
+		{
+			return new { error = new { type = ex.GetType().Name, message = ex.Message, detail = ex.ToString() } };
+		}
+	}
+
 	public static string? OptStr(JsonElement o, string name) =>
 		o.ValueKind == JsonValueKind.Object && o.TryGetProperty(name, out var e) && e.ValueKind == JsonValueKind.String
 			? e.GetString()
