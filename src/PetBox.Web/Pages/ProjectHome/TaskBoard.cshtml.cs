@@ -75,7 +75,7 @@ public sealed class TaskBoardModel : PageModel
 		var ascii = Regex.Replace(name.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
 		if (ascii.Length == 0 || !char.IsLetter(ascii[0])) ascii = "task-" + ascii;
 		ascii = ascii.Trim('-');
-		if (ascii.Length > 80) ascii = ascii[..80].Trim('-');
-		return $"{ascii}-{Guid.NewGuid():N}"[..(Math.Min(ascii.Length, 80) + 7)];
+		if (ascii.Length > 32) ascii = ascii[..32].Trim('-'); // keep keys short/readable
+		return $"{ascii}-{Guid.NewGuid():N}"[..(Math.Min(ascii.Length, 32) + 7)];
 	}
 }

@@ -36,7 +36,6 @@
 			</span>
 		}
 	</td>
-	<td class="font-mono text-xs opacity-70">@Model.ServiceKey</td>
 	<td class="break-words">
 		<div class="flex items-start gap-2">
 			<span class="flex-1" data-testid="event-message">@Html.Raw(Model.RenderedMessage)</span>
@@ -50,6 +49,7 @@
 			<pre class="mt-1 text-xs text-error whitespace-pre-wrap">@Model.Exception</pre>
 		}
 	</td>
+	<td class="font-mono text-xs opacity-70">@Model.ServiceKey</td>
 </tr>
 @if (!Model.IsLive)
 {

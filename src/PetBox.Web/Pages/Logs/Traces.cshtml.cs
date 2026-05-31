@@ -22,6 +22,9 @@ public sealed class TracesModel : PageModel
 	}
 
 	[BindProperty(SupportsGet = true)]
+	public string? WorkspaceKey { get; set; }
+
+	[BindProperty(SupportsGet = true)]
 	public string? ProjectKey { get; set; }
 
 	[BindProperty(SupportsGet = true, Name = "log")]
