@@ -53,7 +53,10 @@ else
 			var leaf = id is null ? n.Key : (id.TaskKey ?? id.WaveKey ?? id.PhaseKey);
 			var parent = id?.ParentKey;
 			var closed = n.Status is PetBox.Tasks.Data.PlanStatus.Done or PetBox.Tasks.Data.PlanStatus.Cancelled;
-			var showExpr = closed ? "!activeOnly" : "true";
+			// A closed node hides under "active only" — unless it still has open
+			// descendants, in which case it stays so its children aren't orphaned.
+			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.Key);
+			var showExpr = keepVisible ? "true" : "!activeOnly";
 			<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@depth" data-closed="@closed.ToString().ToLowerInvariant()" style="margin-left:@((depth - 1) * 1.5)rem" x-show="@showExpr">
 				<div class="card-body p-3">
 					<div class="flex items-baseline justify-between gap-2">

@@ -110,6 +110,46 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task TaskBoard_OrdersByTree_NotFlatPriority_AndRendersThreeLevels()
+	{
+		const string board = "ordertest";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "ordering");
+			var ctx = boards.GetContext("$system", board);
+			// Early phase p1 (priority 10) whose wave has a deliberately huge priority,
+			// and a later phase p2 (priority 500) in between. A flat priority sort would
+			// emit p1(10), p2(500), p1/wlow(900) — the wave drifting past p2 (finding D11).
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Key = "p1", Version = 0, Status = PetBox.Tasks.Data.PlanStatus.Pending, Name = "Phase one", Body = "", Priority = 10 },
+				new PetBox.Tasks.Data.PlanNode { Key = "p1/wlow", Version = 0, Status = PetBox.Tasks.Data.PlanStatus.Pending, Name = "Low wave", Body = "", Priority = 900 },
+				new PetBox.Tasks.Data.PlanNode { Key = "p1/wlow/deep", Version = 0, Status = PetBox.Tasks.Data.PlanStatus.Pending, Name = "Deep task", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Key = "p2", Version = 0, Status = PetBox.Tasks.Data.PlanStatus.Pending, Name = "Phase two", Body = "", Priority = 500 },
+			});
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		var wlow = html.IndexOf("data-node-key=\"p1/wlow\"", StringComparison.Ordinal);
+		var deep = html.IndexOf("data-node-key=\"p1/wlow/deep\"", StringComparison.Ordinal);
+		var p2 = html.IndexOf("data-node-key=\"p2\"", StringComparison.Ordinal);
+
+		wlow.Should().BeGreaterThan(0);
+		deep.Should().BeGreaterThan(0);
+		p2.Should().BeGreaterThan(0);
+		// DFS keeps the wave (and its deep task) under p1, before p2 — not flat by priority.
+		wlow.Should().BeLessThan(p2);
+		deep.Should().BeLessThan(p2);
+		// The third level (Phase/Wave/Task) renders, indented at depth 3.
+		html.Should().Contain("data-node-key=\"p1/wlow/deep\" data-depth=\"3\"");
+	}
+
+	[Fact]
 	public async Task Memory_ListsCreatedStore()
 	{
 		using var resp = await GetAuthedAsync("/ui/$system/$system/memory");
