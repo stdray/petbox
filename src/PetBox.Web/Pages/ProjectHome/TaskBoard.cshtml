@@ -22,14 +22,16 @@
 	<span class="badge badge-ghost">@Model.Nodes.Count node(s)</span>
 </div>
 
-<form method="post" asp-page-handler="Create" class="mb-4 flex items-end gap-2 flex-wrap" data-testid="task-create">
-	<input name="name" required maxlength="200" class="input input-bordered input-sm w-80" placeholder="New task → incoming…" data-testid="task-create-name" />
-	<select name="priority" class="select select-bordered select-sm" data-testid="task-create-priority" aria-label="Priority">
-		<option value="10">High</option>
-		<option value="50" selected>Normal</option>
-		<option value="90">Low</option>
-	</select>
-	<button type="submit" class="btn btn-sm btn-primary" data-testid="task-create-submit">Add</button>
+<form method="post" asp-page-handler="Create" class="mb-4 flex flex-col gap-2" data-testid="task-create">
+	<textarea name="name" required maxlength="2000" rows="2" class="textarea textarea-bordered textarea-sm w-full" placeholder="New task → incoming…" data-testid="task-create-name"></textarea>
+	<div class="flex items-center gap-2">
+		<select name="priority" class="select select-bordered select-sm" data-testid="task-create-priority" aria-label="Priority">
+			<option value="10">High</option>
+			<option value="50" selected>Normal</option>
+			<option value="90">Low</option>
+		</select>
+		<button type="submit" class="btn btn-sm btn-primary" data-testid="task-create-submit">Add</button>
+	</div>
 </form>
 
 @if (Model.Nodes.Count == 0)
@@ -38,7 +40,7 @@
 }
 else
 {
-	<div x-data="{ activeOnly: true }">
+	<div x-data="{ activeOnly: JSON.parse(localStorage.getItem('tasksActiveOnly') ?? 'true') }" x-init="$watch('activeOnly', v => localStorage.setItem('tasksActiveOnly', v))">
 	<label class="label cursor-pointer justify-start gap-2 text-xs mb-2 w-fit">
 		<input type="checkbox" class="toggle toggle-sm" x-model="activeOnly" data-testid="active-only-toggle" />
 		<span>active only</span>
