@@ -389,6 +389,9 @@ public partial class Program
 		{
 			app.MapLogEndpoints();
 			app.MapShareEndpoints();
+			// OTLP receivers: project-scoped (/v1/{logs,traces}/{project}/{log}) + bare
+			// self-export paths (/v1/{logs,traces}) that feed the $system self-log.
+			PetBox.Web.Ingestion.OtlpEndpoints.MapOtlpEndpoints(app);
 
 			if (app.Configuration.GetValue("Seq:SelfLog:Enabled", false))
 				app.MapSeqSelfLogEndpoint();

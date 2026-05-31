@@ -2,6 +2,7 @@ using LinqToDB.Data;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.Configuration;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Ingestion;
 
@@ -11,10 +12,58 @@ public static class OtlpEndpoints
 {
 	public static void MapOtlpEndpoints(this IEndpointRouteBuilder app)
 	{
-		// Path-based only: the destination log is explicit in the URL. X-Service-Key
-		// tags the emitter (free string, no Service entity).
+		// Path-based: the destination log is explicit in the URL. X-Service-Key tags
+		// the emitter (free string, no Service entity).
 		app.MapPost("/v1/logs/{projectKey}/{logName}", IngestLogs).RequireAuthorization("ApiKey");
 		app.MapPost("/v1/traces/{projectKey}/{logName}", IngestTraces).RequireAuthorization("ApiKey");
+
+		// Bare OTLP paths for PetBox's OWN self-export: the standard OTLP exporter posts
+		// to {endpoint}/v1/traces|/v1/logs and authenticates with X-Seq-ApiKey. Route to
+		// the $system self-log, validating the key against the configured Seq:SelfLog:ApiKey
+		// (mirrors the Seq self-log endpoint /api/events/raw).
+		app.MapPost("/v1/traces", SelfIngestTraces).AllowAnonymous();
+		app.MapPost("/v1/logs", SelfIngestLogs).AllowAnonymous();
+	}
+
+	static IResult? ValidateSelfKey(HttpContext ctx, IConfiguration config)
+	{
+		var configured = config["Seq:SelfLog:ApiKey"];
+		var sent = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
+		return string.IsNullOrWhiteSpace(configured) || !string.Equals(sent, configured, StringComparison.Ordinal)
+			? Results.Unauthorized()
+			: null;
+	}
+
+	static async Task<IResult> SelfIngestTraces(HttpContext ctx, ILogStore store, IConfiguration config, CancellationToken ct)
+	{
+		if (ValidateSelfKey(ctx, config) is { } unauth) return unauth;
+
+		var body = await ReadBodyAsync(ctx.Request.Body, ct);
+		var result = OtlpTracesParser.Parse(body);
+		if (result.IsMalformed)
+			return Results.BadRequest(new { error = "malformed protobuf body" });
+
+		if (result.Spans.Count > 0)
+		{
+			var logDb = store.GetContext(LogNames.SystemProject, LogNames.SelfLog);
+			await logDb.Spans.BulkCopyAsync(result.Spans, ct);
+		}
+		return Results.Ok(new { ingested = result.Spans.Count, errors = result.Errors });
+	}
+
+	static async Task<IResult> SelfIngestLogs(HttpContext ctx, IIngestionPipeline pipeline, IConfiguration config, CancellationToken ct)
+	{
+		if (ValidateSelfKey(ctx, config) is { } unauth) return unauth;
+
+		var serviceKey = config["Seq:SelfLog:ServiceKey"] ?? "petbox-web";
+		var body = await ReadBodyAsync(ctx.Request.Body, ct);
+		var result = OtlpLogsParser.Parse(body, serviceKey);
+		if (result.IsMalformed)
+			return Results.BadRequest(new { error = "malformed protobuf body" });
+
+		if (result.Candidates.Count > 0)
+			await pipeline.IngestAsync(LogNames.SystemProject, LogNames.SelfLog, result.Candidates, ct);
+		return Results.Ok(new { ingested = result.Candidates.Count, errors = result.Errors });
 	}
 
 	static async Task<IResult> IngestLogs(
