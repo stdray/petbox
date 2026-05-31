@@ -397,6 +397,9 @@ public partial class Program
 				app.MapSeqSelfLogEndpoint();
 		}
 
+		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Tasks))
+			PetBox.Web.Sessions.SessionApi.MapSessionEndpoints(app);
+
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Dashboard))
 		{
 			app.MapHealthEndpoints();
