@@ -117,7 +117,7 @@ public static class TasksTools
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
 		string projectKey, string board,
 		[Description("JSON array of node objects")] JsonElement nodes,
-		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync("tasks.upsert", async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);

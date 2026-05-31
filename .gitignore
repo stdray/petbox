@@ -81,7 +81,7 @@ desktop.ini
 .env.*.local
 
 # Claude Code (personal)
-.claude/settings.local.json
+.claude/
 
 # Playwright MCP artifacts
 .playwright-mcp/

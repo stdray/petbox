@@ -143,7 +143,7 @@ public static class MemoryTools
 		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
 		string projectKey, string store,
 		[Description("JSON array of entry objects")] JsonElement entries,
-		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync("memory.upsert", async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);

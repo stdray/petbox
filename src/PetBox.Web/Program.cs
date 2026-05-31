@@ -285,6 +285,10 @@ public partial class Program
 		var connectionString = configuration.GetConnectionString("PetBox")
 			?? "Data Source=./data/petbox.db;Cache=Shared";
 
+		// Let the static MCP tool guard log into the PetBox.Web.Mcp.* category (which
+		// the self-log captures), so MCP tool activity + errors reach the $system log.
+		PetBox.Web.Mcp.ModuleMcp.Configure(app.Services.GetRequiredService<ILoggerFactory>());
+
 		// Snapshot existing dbs before applying migrations — best-effort, never block
 		// startup on a backup failure (the periodic BackupService covers later passes).
 		var dataDir = Path.GetDirectoryName(
