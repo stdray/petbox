@@ -159,13 +159,6 @@
 								var pTasks = Routes.ProjectTasks(currentWs, project.Key);
 								var pMemory = Routes.ProjectMemory(currentWs, project.Key);
 								var pSessions = Routes.ProjectSessions(currentWs, project.Key);
-								// On a deep-link to a logs/data page, render that lazy node open and load
-								// its children immediately ("load once") so the tree expands to the current
-								// page; otherwise stay lazy ("toggle once") to avoid GET storms.
-								var logsActive = IsActive(pLogs);
-								var dataActive = IsActive(pData);
-								var logsTrigger = logsActive ? "load once" : "toggle once";
-								var dataTrigger = dataActive ? "load once" : "toggle once";
 								<li data-testid="nav-project" data-project-key="@project.Key">
 									<details data-tree-key="proj:@project.Key" open="@(isCurrent || fewProjects || openTree.Contains($"proj:{project.Key}"))">
 										<summary class="@(isCurrent ? "active font-semibold" : "")">
@@ -181,8 +174,8 @@
 										<ul>
 											<li><a href="@pDash" class="@(IsExactly(pDash) ? "active" : "")" data-testid="nav-proj-dashboard">Dashboard</a></li>
 											<li data-testid="nav-proj-logs-node">
-												<details hx-get="/ui/_nav/tree?handler=Logs&project=@project.Key" hx-trigger="@logsTrigger" hx-target="find ul.tree-lazy" hx-swap="innerHTML" open="@logsActive">
-													<summary class="@(logsActive ? "active" : "")"><a href="@pLogs" data-testid="nav-proj-logs">Logs</a></summary>
+												<details hx-get="/ui/_nav/tree?handler=Logs&project=@project.Key" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
+													<summary class="@(IsActive(pLogs) ? "active" : "")"><a href="@pLogs" data-testid="nav-proj-logs">Logs</a></summary>
 													<ul class="tree-lazy"><li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-logs-loading">loading…</li></ul>
 												</details>
 											</li>
@@ -190,8 +183,8 @@
 											@if (Nav.DataEnabled)
 											{
 												<li data-testid="nav-proj-data-node">
-													<details hx-get="/ui/_nav/tree?handler=Databases&project=@project.Key" hx-trigger="@dataTrigger" hx-target="find ul.tree-lazy" hx-swap="innerHTML" open="@dataActive">
-														<summary class="@(dataActive ? "active" : "")"><a href="@pData" data-testid="nav-proj-data">Databases</a></summary>
+													<details hx-get="/ui/_nav/tree?handler=Databases&project=@project.Key" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
+														<summary class="@(IsActive(pData) ? "active" : "")"><a href="@pData" data-testid="nav-proj-data">Databases</a></summary>
 														<ul class="tree-lazy"><li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-dbs-loading">loading…</li></ul>
 													</details>
 												</li>
