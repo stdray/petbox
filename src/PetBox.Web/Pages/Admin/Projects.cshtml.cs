@@ -69,6 +69,8 @@ public sealed class ProjectsModel : PageModel
 			Description = description ?? string.Empty,
 		});
 
-		return Redirect(Routes.Project(WorkspaceKey, key));
+		// Stay in the admin zone after creating a project (was bouncing to the /ui
+		// project dashboard / log view).
+		return Redirect(Routes.ProjectSettings(WorkspaceKey, key));
 	}
 }

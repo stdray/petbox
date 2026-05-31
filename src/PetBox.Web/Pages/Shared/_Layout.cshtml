@@ -77,10 +77,7 @@
 				@RenderBody()
 			</main>
 
-			<footer class="p-3 text-center text-xs opacity-60 border-t border-base-300" data-testid="footer-version">
-				v@(Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev")
-				· @(Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local")
-			</footer>
+			<partial name="_Footer" />
 		</div>
 
 		<div class="drawer-side">

@@ -1,0 +1,16 @@
+@using PetBox.Core.Features
+@inject Microsoft.Extensions.Configuration.IConfiguration Configuration
+@{
+	var flags = new FeatureFlags(Configuration);
+}
+<footer class="p-3 text-center text-xs opacity-60 border-t border-base-300" data-testid="footer-version">
+	v@(Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev")
+	· @(Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local")
+	· <span data-testid="footer-features">
+		@foreach (var f in Enum.GetValues<Feature>())
+		{
+			var on = flags.IsEnabled(f);
+			<span class="@(on ? "text-success" : "opacity-40 line-through")" title="@(on ? "enabled" : "disabled")">@f.ToString().ToLowerInvariant()</span><text> </text>
+		}
+	</span>
+</footer>
