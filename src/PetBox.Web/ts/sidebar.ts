@@ -26,33 +26,35 @@ function apply(pinned: boolean): void {
 }
 
 // --- Tree expand memory -----------------------------------------------------
-// Persist which project nodes are expanded. Only nodes carrying a
-// `data-tree-key` are tracked — those are the statically-rendered project
-// <details>, NOT the htmx lazy log/db/table nodes. That deliberately avoids
-// firing a storm of lazy GETs on page load (the plan's "no auto-GET on restore").
-const TREE_KEY = "petbox.sidebar.tree";
+// Persist which project nodes are expanded. State lives in a COOKIE (not
+// localStorage) so the server can read it and render `<details open>` up front —
+// no post-load reflow / flicker (the JS no longer opens nodes after paint).
+// Only nodes carrying a `data-tree-key` are tracked — the statically-rendered
+// project <details>, NOT the htmx lazy log/db/table nodes; persisting those
+// would fire a storm of lazy GETs on every page load.
+const TREE_COOKIE = "petbox.sidebar.tree";
 
 function readOpenSet(): Set<string> {
+	const m = document.cookie.match(/(?:^|;\s*)petbox\.sidebar\.tree=([^;]*)/);
+	if (!m) return new Set();
 	try {
-		const raw = localStorage.getItem(TREE_KEY);
-		return new Set(raw ? (JSON.parse(raw) as string[]) : []);
+		return new Set(JSON.parse(decodeURIComponent(m[1] ?? "")) as string[]);
 	} catch {
 		return new Set();
 	}
 }
 
 function persistOpenSet(set: Set<string>): void {
-	localStorage.setItem(TREE_KEY, JSON.stringify([...set]));
+	const v = encodeURIComponent(JSON.stringify([...set]));
+	document.cookie = `${TREE_COOKIE}=${v};path=/;max-age=31536000;samesite=lax`;
 }
 
 function initTreeMemory(): void {
-	const open = readOpenSet();
+	// Open state is rendered server-side from the cookie (no FOUC); here we only
+	// keep the cookie in sync as the user expands/collapses project nodes.
 	document.querySelectorAll<HTMLDetailsElement>("details[data-tree-key]").forEach((d) => {
 		const key = d.getAttribute("data-tree-key");
 		if (!key) return;
-		// Apply stored state only when we have an explicit record; otherwise keep
-		// the server-rendered default (current project / few-projects auto-open).
-		if (open.has(key)) d.open = true;
 		d.addEventListener("toggle", () => {
 			const set = readOpenSet();
 			if (d.open) set.add(key);
