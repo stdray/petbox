@@ -115,6 +115,19 @@ public sealed class TasksTreeContractTests : IDisposable
 		added.GetProperty("name").GetString().Should().Be("Alpha");
 	}
 
+	[Fact]
+	public async Task Upsert_AcceptsNodesAsJsonString()
+	{
+		var http = Http("tasks:read,tasks:write");
+		// Real MCP clients pass the untyped `nodes` param as a JSON *string*, not an
+		// array element — the upsert must accept that (regression for D6).
+		var arrayJson = """[{"phase":"alpha","name":"Alpha","status":"Pending","body":"b","priority":0}]""";
+		var nodesAsString = JsonSerializer.SerializeToElement(arrayJson); // ValueKind == String
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, Proj, "strboard", nodesAsString));
+		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
+			.Which.GetProperty("name").GetString().Should().Be("Alpha");
+	}
+
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");

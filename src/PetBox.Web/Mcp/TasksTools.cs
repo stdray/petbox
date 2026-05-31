@@ -192,10 +192,16 @@ public static class TasksTools
 
 	static PlanNode[] ParseNodes(JsonElement nodes)
 	{
-		if (nodes.ValueKind != JsonValueKind.Array)
-			throw new ArgumentException("nodes must be a JSON array");
+		// MCP clients sometimes pass the array as a JSON *string* (the param is an
+		// untyped JsonElement, so the client may stringify it); accept both forms.
+		using var doc = nodes.ValueKind == JsonValueKind.String
+			? JsonDocument.Parse(nodes.GetString() ?? "")
+			: (JsonDocument?)null;
+		var arr = doc?.RootElement ?? nodes;
+		if (arr.ValueKind != JsonValueKind.Array)
+			throw new ArgumentException($"nodes must be a JSON array (got {arr.ValueKind})");
 		var list = new List<PlanNode>();
-		foreach (var e in nodes.EnumerateArray())
+		foreach (var e in arr.EnumerateArray())
 		{
 			list.Add(new PlanNode
 			{

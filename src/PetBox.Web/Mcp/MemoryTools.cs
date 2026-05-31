@@ -207,10 +207,16 @@ public static class MemoryTools
 
 	static MemoryEntry[] ParseEntries(JsonElement entries)
 	{
-		if (entries.ValueKind != JsonValueKind.Array)
-			throw new ArgumentException("entries must be a JSON array");
+		// MCP clients sometimes pass the array as a JSON *string* (the param is an
+		// untyped JsonElement, so the client may stringify it); accept both forms.
+		using var doc = entries.ValueKind == JsonValueKind.String
+			? JsonDocument.Parse(entries.GetString() ?? "")
+			: (JsonDocument?)null;
+		var arr = doc?.RootElement ?? entries;
+		if (arr.ValueKind != JsonValueKind.Array)
+			throw new ArgumentException($"entries must be a JSON array (got {arr.ValueKind})");
 		var list = new List<MemoryEntry>();
-		foreach (var e in entries.EnumerateArray())
+		foreach (var e in arr.EnumerateArray())
 		{
 			list.Add(new MemoryEntry
 			{

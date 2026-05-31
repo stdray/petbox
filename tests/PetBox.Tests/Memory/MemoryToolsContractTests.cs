@@ -102,6 +102,18 @@ public sealed class MemoryToolsContractTests : IDisposable
 		keys.Should().NotContain("go-style");
 	}
 
+	[Fact]
+	public async Task Upsert_AcceptsEntriesAsJsonString()
+	{
+		var http = Http("memory:read,memory:write");
+		// Real MCP clients pass the untyped `entries` param as a JSON *string* (D6).
+		var arrayJson = """[{"key":"k","type":"project","description":"d","body":"b"}]""";
+		var entriesAsString = JsonSerializer.SerializeToElement(arrayJson); // ValueKind == String
+		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _store, Proj, "strstore", entriesAsString));
+		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
+			.Which.GetProperty("key").GetString().Should().Be("k");
+	}
+
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");
