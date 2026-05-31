@@ -154,7 +154,7 @@ public static class MemoryTools
 		var (desired, deletes) = ParseEntries(entries);
 		var ctx = stores.GetContext(projectKey, store);
 		var r = await TemporalStore.UpsertAsync(ctx, desired, deletes, sinceVersion, ct: ct);
-		if (r.Applied) RebuildFts(ctx);
+		if (r.Applied) { RebuildFts(ctx); await stores.TouchAsync(projectKey, store, ct); }
 		return Serialize(r);
 	});
 

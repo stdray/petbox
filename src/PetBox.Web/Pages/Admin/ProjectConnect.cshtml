@@ -102,8 +102,8 @@ Do the following:
 1. Read the guide above. Add a PROJECT-level MCP server named "petbox" in the config
    file YOUR agent reads (the guide lists the path per agent type), using the MCP
    endpoint + X-Api-Key header above.
-2. Do NOT commit the key — put it in a gitignored file (e.g. .env.local) as the guide
-   describes.
+2. Set the key as an environment variable PETBOX_API_KEY (the config references it as
+   ${PETBOX_API_KEY}, expanded from your agent's process env) — and never commit it.
 3. Optionally add the petbox SKILL.md from the guide.
 4. Restart your MCP connection and verify by calling  tasks.board_list  with
    projectKey "@proj". An empty list (not an auth error) means it works.

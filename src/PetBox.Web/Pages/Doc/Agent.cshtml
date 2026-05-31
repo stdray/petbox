@@ -60,11 +60,19 @@
 
 		<h2>3. Keep the key out of version control</h2>
 		<p>
-			Never commit the key. Put it in a gitignored file and reference it from the MCP config via an
-			env var if your agent supports expansion; otherwise inline it but keep the config file gitignored.
+			Never commit the key. The config above references it as <code>${PETBOX_API_KEY}</code>, which your
+			agent expands from its <strong>process environment</strong> — not from a <code>.env</code> file. Export
+			it in your shell (or set it OS-wide) before launching the agent:
 		</p>
-		<pre><code>echo "PETBOX_API_KEY=&lt;your key&gt;" >> .env.local
-echo ".env.local" >> .gitignore</code></pre>
+		<pre><code># macOS / Linux (current shell)
+export PETBOX_API_KEY=&lt;your key&gt;
+
+# Windows (persisted for new shells)
+setx PETBOX_API_KEY "&lt;your key&gt;"</code></pre>
+		<p class="text-sm opacity-70">
+			If your agent can't expand env vars, inline the key directly in the MCP config instead — but keep that
+			config file gitignored.
+		</p>
 
 		<h2>4. The plan is a tree: Phase &gt; Wave &gt; Task</h2>
 		<p>

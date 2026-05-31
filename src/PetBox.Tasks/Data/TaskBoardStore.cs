@@ -18,6 +18,9 @@ public interface ITaskBoardStore
 	// explicit-create rule, decided 2026-05-31 for agent ergonomics).
 	Task EnsureAsync(string projectKey, string board, CancellationToken ct = default);
 	Task<IReadOnlyList<TaskBoardMeta>> ListAsync(string projectKey, CancellationToken ct = default);
+	// Bump UpdatedAt to now — called after a node upsert so the catalog reflects
+	// last activity (the nodes live in a separate file, not this meta row).
+	Task TouchAsync(string projectKey, string board, CancellationToken ct = default);
 	Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, CancellationToken ct = default);
 	Task<bool> DeleteAsync(string projectKey, string board, CancellationToken ct = default);
 }
@@ -48,6 +51,12 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 			.Where(b => b.ProjectKey == projectKey)
 			.OrderBy(b => b.Name)
 			.ToListAsync(ct);
+
+	public Task TouchAsync(string projectKey, string board, CancellationToken ct = default) =>
+		_db.TaskBoards
+			.Where(b => b.ProjectKey == projectKey && b.Name == board)
+			.Set(b => b.UpdatedAt, DateTime.UtcNow)
+			.UpdateAsync(ct);
 
 	public async Task EnsureAsync(string projectKey, string board, CancellationToken ct = default)
 	{

@@ -134,12 +134,38 @@
 							<td class="text-sm">@(string.IsNullOrEmpty(k.Name) ? "—" : k.Name)</td>
 							<td class="font-mono text-xs">@(k.Key.Length > 12 ? k.Key[..12] + "..." : k.Key)</td>
 							<td>
+								@{
+									var keyScopes = (k.Scopes ?? string.Empty)
+										.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+										.ToHashSet(StringComparer.Ordinal);
+								}
 								<div class="flex flex-wrap gap-1">
-									@foreach (var scope in (k.Scopes ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+									@foreach (var scope in keyScopes)
 									{
 										<span class="badge badge-outline badge-xs font-mono">@scope</span>
 									}
 								</div>
+								<details class="mt-1" data-testid="project-key-edit">
+									<summary class="text-xs opacity-60 cursor-pointer">edit scopes</summary>
+									<form method="post" asp-page-handler="UpdateKeyScopes" asp-route-keyValue="@k.Key"
+										class="mt-2 border border-base-300 rounded p-2 bg-base-200 max-w-md" data-testid="project-key-edit-form">
+										@Html.AntiForgeryToken()
+										@foreach (var module in PetBox.Core.Auth.ApiKeyScopes.All.GroupBy(s => s.Module))
+										{
+											<div class="text-xs font-semibold opacity-70 uppercase tracking-wide mt-1">@module.Key</div>
+											@foreach (var scope in module)
+											{
+												<label class="flex items-baseline gap-2 cursor-pointer hover:bg-base-300/40 rounded px-1">
+													<input type="checkbox" name="scopes" value="@scope.Value" class="checkbox checkbox-xs"
+														checked="@keyScopes.Contains(scope.Value)"
+														data-testid="project-key-edit-scope-@scope.Value" />
+													<code class="font-mono text-xs">@scope.Value</code>
+												</label>
+											}
+										}
+										<button type="submit" class="btn btn-xs btn-primary mt-2" data-testid="project-key-edit-save">Save scopes</button>
+									</form>
+								</details>
 							</td>
 							<td class="text-xs opacity-70 font-mono">@k.CreatedAt.ToString("yyyy-MM-dd")</td>
 							<td>

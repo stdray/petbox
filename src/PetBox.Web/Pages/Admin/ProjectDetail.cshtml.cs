@@ -164,4 +164,30 @@ public sealed class ProjectDetailModel : PageModel
 		await _db.ApiKeys.Where(k => k.Key == keyValue && k.ProjectKey == ProjectKey).DeleteAsync();
 		return Self();
 	}
+
+	// Edit the scopes of an existing key in place (scopes were previously fixed at
+	// mint time — finding D5). Same validation as minting: known scopes, at least one.
+	public async Task<IActionResult> OnPostUpdateKeyScopesAsync(string keyValue, string[]? scopes)
+	{
+		var raw = scopes is null ? "" : string.Join(",", scopes);
+		var (valid, invalid) = PetBox.Core.Auth.ApiKeyScopes.Validate(raw);
+		if (invalid.Count > 0)
+		{
+			ErrorMessage = "Unknown scope(s): " + string.Join(", ", invalid);
+			await OnGetAsync();
+			return Page();
+		}
+		if (valid.Count == 0)
+		{
+			ErrorMessage = "At least one scope is required.";
+			await OnGetAsync();
+			return Page();
+		}
+
+		await _db.ApiKeys
+			.Where(k => k.Key == keyValue && k.ProjectKey == ProjectKey)
+			.Set(k => k.Scopes, string.Join(",", valid))
+			.UpdateAsync();
+		return Self();
+	}
 }

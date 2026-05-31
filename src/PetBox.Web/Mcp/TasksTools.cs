@@ -127,6 +127,7 @@ public static class TasksTools
 		var desired = ParseNodes(nodes);
 		var ctx = boards.GetContext(projectKey, board);
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
+		if (r.Applied) await boards.TouchAsync(projectKey, board, ct);
 		return Serialize(r);
 	});
 

@@ -83,6 +83,19 @@ public sealed class TaskBoardStoreTests : IDisposable
 		await Assert.ThrowsAsync<InvalidOperationException>(() => _store.CreateAsync("nope", "roadmap", null));
 
 	[Fact]
+	public async Task Touch_AdvancesUpdatedAt()
+	{
+		await _store.CreateAsync("proj", "roadmap", null);
+		var past = DateTime.UtcNow.AddHours(-1);
+		await _db.TaskBoards.Where(b => b.ProjectKey == "proj" && b.Name == "roadmap")
+			.Set(b => b.UpdatedAt, past).UpdateAsync();
+
+		await _store.TouchAsync("proj", "roadmap");
+
+		(await _store.ListAsync("proj")).Single().UpdatedAt.Should().BeAfter(past);
+	}
+
+	[Fact]
 	public async Task PlanNode_TemporalRoundtrip_ThroughBoardFile()
 	{
 		await _store.CreateAsync("proj", "roadmap", null);

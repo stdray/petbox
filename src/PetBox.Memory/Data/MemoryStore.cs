@@ -18,6 +18,9 @@ public interface IMemoryStore
 	// explicit-create rule, decided 2026-05-31 for agent ergonomics).
 	Task EnsureAsync(string projectKey, string store, CancellationToken ct = default);
 	Task<IReadOnlyList<MemoryStoreMeta>> ListAsync(string projectKey, CancellationToken ct = default);
+	// Bump UpdatedAt to now — called after an entry upsert so the catalog reflects
+	// last activity (entries live in a separate file, not this meta row).
+	Task TouchAsync(string projectKey, string store, CancellationToken ct = default);
 	Task<MemoryStoreMeta> CreateAsync(string projectKey, string store, string? description, CancellationToken ct = default);
 	Task<bool> DeleteAsync(string projectKey, string store, CancellationToken ct = default);
 }
@@ -47,6 +50,12 @@ public sealed partial class MemoryStore : IMemoryStore
 			.Where(s => s.ProjectKey == projectKey)
 			.OrderBy(s => s.Name)
 			.ToListAsync(ct);
+
+	public Task TouchAsync(string projectKey, string store, CancellationToken ct = default) =>
+		_db.MemoryStores
+			.Where(s => s.ProjectKey == projectKey && s.Name == store)
+			.Set(s => s.UpdatedAt, DateTime.UtcNow)
+			.UpdateAsync(ct);
 
 	public async Task EnsureAsync(string projectKey, string store, CancellationToken ct = default)
 	{
