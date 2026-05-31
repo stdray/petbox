@@ -285,10 +285,6 @@ public partial class Program
 		var connectionString = configuration.GetConnectionString("PetBox")
 			?? "Data Source=./data/petbox.db;Cache=Shared";
 
-		// Let the static MCP tool guard log into the PetBox.Web.Mcp.* category (which
-		// the self-log captures), so MCP tool activity + errors reach the $system log.
-		PetBox.Web.Mcp.ModuleMcp.Configure(app.Services.GetRequiredService<ILoggerFactory>());
-
 		// Snapshot existing dbs before applying migrations — best-effort, never block
 		// startup on a backup failure (the periodic BackupService covers later passes).
 		var dataDir = Path.GetDirectoryName(
@@ -332,6 +328,10 @@ public partial class Program
 		app.UseRouting();
 		app.UseAuthentication();
 		app.UseAuthorization();
+
+		// App-wide request logging into the self-log (after auth so the project claim is
+		// available; below UseExceptionHandler so it logs+rethrows unhandled exceptions).
+		app.UseMiddleware<PetBox.Web.Logging.RequestLoggingMiddleware>();
 
 		// Persist URL-driven workspace switch into the yb_ws cookie. Without
 		// this, visiting /ui/{ws}/... shows that workspace for one render but
