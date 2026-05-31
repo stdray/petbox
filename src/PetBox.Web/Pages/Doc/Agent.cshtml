@@ -92,14 +92,36 @@ echo ".env.local" >> .gitignore</code></pre>
 
 		<h2>5. Tools</h2>
 		<ul>
-			<li><code>tasks.board_list / board_create / board_delete</code> — named boards (explicit creation, no auto-create).</li>
+			<li><code>tasks.board_list / board_create / board_delete</code> — named boards. A cold <code>tasks.upsert</code> auto-creates the board; <code>board_create</code> is only for setting a description up front.</li>
 			<li><code>tasks.get / upsert / delta</code> — the plan tree (returns key, phase, wave, task, depth, parentKey, status, name, body, priority, version).</li>
-			<li><code>memory.store_list / store_create / store_delete</code> — named memory stores.</li>
-			<li><code>memory.list / search / get / upsert / delta</code> — durable notes (description, body, tags).</li>
+			<li><code>memory.store_list / store_create / store_delete</code> — named memory stores (a cold <code>memory.upsert</code> auto-creates the store).</li>
+			<li><code>memory.list / search / get / upsert / delta</code> — durable notes. Each entry needs a <code>type</code> (User|Feedback|Project|Reference) plus description, body, optional tags. <code>search</code> is FTS5-ranked; <code>list</code>/<code>search</code> accept an optional <code>type</code> filter.</li>
 			<li><code>session.append / get / list</code> — the working-session plan blob (one per project).</li>
 		</ul>
 
-		<h2>6. (Optional) add a project skill</h2>
+		<h2>6. Memory: tasks vs memory vs session</h2>
+		<p>Three stores, pick by lifetime:</p>
+		<ul>
+			<li><strong>Session</strong> (<code>session.*</code>) — your <em>current</em> working plan/thinking. Ephemeral, last-write-wins. Test: “stale next week?” → session.</li>
+			<li><strong>Tasks</strong> (<code>tasks.*</code>) — a <em>unit of work with a status</em> you track to Done. Test: “has a status that changes (Pending→Done)?” → task.</li>
+			<li><strong>Memory</strong> (<code>memory.*</code>) — a <em>durable fact</em> that should outlive the work. Test: “will a future agent need this to avoid re-learning it?” → memory.</li>
+		</ul>
+		<p>
+			What belongs in <strong>memory</strong>: durable facts not derivable from code/git/config — user
+			preferences, project constraints, decisions-with-rationale, references. What does <em>not</em>:
+			anything the repo/git already records, transient state, secrets, or actionable work (that's a task).
+			Pick a <code>type</code>: <code>user</code> (who the user is), <code>feedback</code> (a correction/
+			preference on how to work — include why + how to apply), <code>project</code> (a durable project
+			fact/constraint — why + how to apply), <code>reference</code> (a pointer to an external resource).
+		</p>
+		<p>
+			Maintenance: search before you write; update an existing entry rather than duplicating; delete when
+			wrong (history is kept, so deletes are safe). Put prose in <code>session</code> content or a task's
+			<code>body</code>; when a finished task yields a generalizable lesson, move that lesson to memory as
+			<code>feedback</code> — the task's <code>commitRef</code> stays on the node.
+		</p>
+
+		<h2>7. (Optional) add a project skill</h2>
 		<p>
 			If your agent supports Agent Skills, drop a <code>SKILL.md</code> at the right path (Claude Code
 			<code>.claude/skills/petbox/</code>; pi/omp <code>.pi/skills/</code> or <code>.agents/skills/</code>;
@@ -114,15 +136,16 @@ This project is connected to a PetBox instance over MCP (server `petbox`).
 Pass projectKey "&lt;proj&gt;" in every call.
 
 Plans are a Phase > Wave > Task tree: identify nodes by phase/wave/task (not a flat
-label); give each a short `name` and a detailed `body`. Create boards/stores explicitly
-(tasks.board_create / memory.store_create) before writing — there is no implicit creation.
-The upsert response is the fresh state; advance your cursor instead of re-reading.
+label); give each a short `name` and a detailed `body`. A cold upsert auto-creates the
+board/store. Memory entries need a `type` (User|Feedback|Project|Reference); store durable
+facts there, actionable work on a task board. The upsert response is the fresh state;
+advance your cursor instead of re-reading.
 
 Tools: tasks.board_list/board_create/board_delete/get/upsert/delta,
 memory.store_list/store_create/store_delete/list/search/get/upsert/delta,
 session.append/get/list.</code></pre>
 
-		<h2>7. Verify</h2>
+		<h2>8. Verify</h2>
 		<p>
 			Restart your MCP connection and call <code>tasks.board_list</code> with your <code>projectKey</code>.
 			An empty list (not an auth error) means it works.

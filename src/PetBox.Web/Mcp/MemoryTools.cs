@@ -1,5 +1,8 @@
 using System.ComponentModel;
 using System.Text.Json;
+using System.Text.RegularExpressions;
+using LinqToDB;
+using LinqToDB.DataProvider.SQLite;
 using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
@@ -53,17 +56,20 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory.list", Title = "List memory entries", ReadOnly = true)]
-	[Description("List active entries of a memory store, ordered by key. Requires memory:read.")]
+	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Requires memory:read.")]
 	public static async Task<object> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
-		string projectKey, string store, CancellationToken ct = default)
+		string projectKey, string store, string? type = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		await EnsureStore(stores, projectKey, store, ct);
 		var ctx = stores.GetContext(projectKey, store);
-		var active = ctx.Entries.Where(e => e.ActiveTo == null).OrderBy(e => e.Key).ToList();
+		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
+		var q = ctx.Entries.Where(e => e.ActiveTo == null);
+		if (typeFilter is not null) q = q.Where(e => e.Type == typeFilter.Value);
+		var active = q.OrderBy(e => e.Key).ToList();
 		return new { entries = active.Select(EntryDto).ToList() };
 	}
 
@@ -83,22 +89,40 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory.search", Title = "Search memory entries", ReadOnly = true)]
-	[Description("Substring search over active entries' description/body/tags. Requires memory:read.")]
+	[Description("FTS5 full-text search over active entries' description/body/tags, ranked by relevance. Matches by token (prefix), so paraphrases hit. Optional `type` filter (User|Feedback|Project|Reference). Requires memory:read.")]
 	public static async Task<object> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
-		string projectKey, string store, string query, CancellationToken ct = default)
+		string projectKey, string store, string query, string? type = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		await EnsureStore(stores, projectKey, store, ct);
 		var ctx = stores.GetContext(projectKey, store);
-		var q = query ?? string.Empty;
-		var hits = ctx.Entries.Where(e => e.ActiveTo == null).ToList()
-			.Where(e => e.Description.Contains(q, StringComparison.OrdinalIgnoreCase)
-				|| e.Body.Contains(q, StringComparison.OrdinalIgnoreCase)
-				|| e.Tags.Contains(q, StringComparison.OrdinalIgnoreCase))
-			.OrderBy(e => e.Key)
+		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
+
+		var match = BuildMatch(query);
+		if (match is null)
+		{
+			// No searchable tokens — degrade to a type-filtered listing.
+			var allQ = ctx.Entries.Where(e => e.ActiveTo == null);
+			if (typeFilter is not null) allQ = allQ.Where(e => e.Type == typeFilter.Value);
+			return new { entries = allQ.OrderBy(e => e.Key).ToList().Select(EntryDto).ToList() };
+		}
+
+		// FTS5 MATCH + rank ordering via linq2db's SQLite extensions.
+		var ranked = ctx.MemoryFts
+			.Where(f => Sql.Ext.SQLite().Match(f, match))
+			.OrderBy(f => Sql.Ext.SQLite().Rank(f))
+			.Select(f => f.Key)
+			.ToList();
+		if (ranked.Count == 0)
+			return new { entries = Array.Empty<object>() };
+
+		var order = ranked.Select((k, i) => (k, i)).ToDictionary(x => x.k, x => x.i);
+		var hits = ctx.Entries.Where(e => e.ActiveTo == null && ranked.Contains(e.Key)).ToList()
+			.Where(e => typeFilter == null || e.Type == typeFilter)
+			.OrderBy(e => order[e.Key])
 			.ToList();
 		return new { entries = hits.Select(EntryDto).ToList() };
 	}
@@ -106,8 +130,13 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory.upsert", Title = "Upsert memory entries")]
 	[Description("""
 		Declarative temporal upsert of entries into a store. Requires memory:write.
-		`entries` is a JSON array of { key, description, body, tags?, version?, prevKey? }.
+		`entries` is a JSON array of { key, type, description, body, tags?, version?, prevKey? }.
+		`type` (required) is the taxonomy: User (about the user) | Feedback (a correction/
+		preference on how to work) | Project (durable project fact/constraint) | Reference
+		(pointer to an external resource). Pick one. `tags` is free CSV, normalised on write.
 		`version` is the baseline you last saw (0 = new). Set `prevKey` to rename.
+		Store durable facts not derivable from code/git/config; actionable work goes to a
+		task board, not here.
 		Result: { applied, currentVersion, inserted, closed, conflicts[], added[], updated[], removed[] }.
 		""")]
 	public static async Task<object> UpsertAsync(
@@ -119,10 +148,11 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
-		await EnsureStore(stores, projectKey, store, ct);
+		await stores.EnsureAsync(projectKey, store, ct); // auto-vivify on first write
 		var desired = ParseEntries(entries);
 		var ctx = stores.GetContext(projectKey, store);
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
+		if (r.Applied) RebuildFts(ctx);
 		return Serialize(r);
 	}
 
@@ -168,6 +198,7 @@ public static class MemoryTools
 	static object EntryDto(MemoryEntry e) => new
 	{
 		key = e.Key,
+		type = e.Type.ToString(),
 		description = e.Description,
 		body = e.Body,
 		tags = e.Tags,
@@ -185,12 +216,53 @@ public static class MemoryTools
 			{
 				Key = ModuleMcp.ReqStr(e, "key"),
 				Version = ModuleMcp.OptLong(e, "version", 0),
+				Type = ParseType(ModuleMcp.ReqStr(e, "type")),
 				Description = ModuleMcp.OptStr(e, "description") ?? string.Empty,
 				Body = ModuleMcp.OptStr(e, "body") ?? string.Empty,
-				Tags = ModuleMcp.OptStr(e, "tags") ?? string.Empty,
+				Tags = NormalizeTags(ModuleMcp.OptStr(e, "tags")),
 				PrevKey = ModuleMcp.OptStr(e, "prevKey"),
 			});
 		}
 		return list.ToArray();
+	}
+
+	static MemoryType ParseType(string s) =>
+		Enum.TryParse<MemoryType>(s, ignoreCase: true, out var v)
+			? v
+			: throw new ArgumentException($"invalid type '{s}' (User|Feedback|Project|Reference)");
+
+	// Free CSV tags, normalised on write: split on comma, trim, lowercase, drop
+	// blanks, de-dup, re-join. Keeps the column queryable and stops accidental
+	// case/whitespace duplicates ("Go" vs "go ").
+	static string NormalizeTags(string? raw) =>
+		string.IsNullOrWhiteSpace(raw)
+			? string.Empty
+			: string.Join(',', raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+				.Select(t => t.ToLowerInvariant())
+				.Distinct());
+
+	// The FTS5 mirror only holds the current active set; rebuild it wholesale after
+	// a write (stores are small — avoids temporal-aware trigger plumbing).
+	static void RebuildFts(MemoryDb ctx)
+	{
+		ctx.MemoryFts.Delete();
+		ctx.Entries.Where(e => e.ActiveTo == null)
+			.Insert(ctx.MemoryFts, e => new MemoryFts
+			{
+				Key = e.Key,
+				Description = e.Description,
+				Body = e.Body,
+				Tags = e.Tags,
+			});
+	}
+
+	// Lenient FTS5 MATCH expression: alnum tokens, prefix-matched (tok*) and ANDed.
+	// Null when there's nothing to match (caller degrades to a plain listing).
+	static string? BuildMatch(string? query)
+	{
+		if (string.IsNullOrWhiteSpace(query)) return null;
+		var tokens = Regex.Matches(query.ToLowerInvariant(), "[a-z0-9]+").Select(m => m.Value + "*");
+		var joined = string.Join(' ', tokens);
+		return joined.Length == 0 ? null : joined;
 	}
 }

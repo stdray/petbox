@@ -13,6 +13,10 @@ public interface IMemoryStore
 {
 	MemoryDb GetContext(string projectKey, string store);
 	Task<bool> ExistsAsync(string projectKey, string store, CancellationToken ct = default);
+	// Create the store if it does not yet exist; no-op if it does. Used by the
+	// upsert write path to auto-vivify on first write (deliberate exception to the
+	// explicit-create rule, decided 2026-05-31 for agent ergonomics).
+	Task EnsureAsync(string projectKey, string store, CancellationToken ct = default);
 	Task<IReadOnlyList<MemoryStoreMeta>> ListAsync(string projectKey, CancellationToken ct = default);
 	Task<MemoryStoreMeta> CreateAsync(string projectKey, string store, string? description, CancellationToken ct = default);
 	Task<bool> DeleteAsync(string projectKey, string store, CancellationToken ct = default);
@@ -43,6 +47,13 @@ public sealed partial class MemoryStore : IMemoryStore
 			.Where(s => s.ProjectKey == projectKey)
 			.OrderBy(s => s.Name)
 			.ToListAsync(ct);
+
+	public async Task EnsureAsync(string projectKey, string store, CancellationToken ct = default)
+	{
+		if (await ExistsAsync(projectKey, store, ct))
+			return;
+		await CreateAsync(projectKey, store, null, ct);
+	}
 
 	public async Task<MemoryStoreMeta> CreateAsync(string projectKey, string store, string? description, CancellationToken ct = default)
 	{

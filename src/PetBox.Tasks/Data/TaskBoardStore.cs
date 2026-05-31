@@ -13,6 +13,10 @@ public interface ITaskBoardStore
 {
 	TasksDb GetContext(string projectKey, string board);
 	Task<bool> ExistsAsync(string projectKey, string board, CancellationToken ct = default);
+	// Create the board if it does not yet exist; no-op if it does. Used by the
+	// upsert write path to auto-vivify on first write (deliberate exception to the
+	// explicit-create rule, decided 2026-05-31 for agent ergonomics).
+	Task EnsureAsync(string projectKey, string board, CancellationToken ct = default);
 	Task<IReadOnlyList<TaskBoardMeta>> ListAsync(string projectKey, CancellationToken ct = default);
 	Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, CancellationToken ct = default);
 	Task<bool> DeleteAsync(string projectKey, string board, CancellationToken ct = default);
@@ -44,6 +48,13 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 			.Where(b => b.ProjectKey == projectKey)
 			.OrderBy(b => b.Name)
 			.ToListAsync(ct);
+
+	public async Task EnsureAsync(string projectKey, string board, CancellationToken ct = default)
+	{
+		if (await ExistsAsync(projectKey, board, ct))
+			return;
+		await CreateAsync(projectKey, board, null, ct);
+	}
 
 	public async Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, CancellationToken ct = default)
 	{

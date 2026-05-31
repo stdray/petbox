@@ -98,33 +98,20 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks.upsert", Title = "Upsert plan nodes")]
 	[Description("""
-		Declarative temporal upsert of plan nodes into a board. Requires tasks:write.
+		Declarative temporal upsert of plan nodes. Requires tasks:write.
 
-		A plan is a 1-to-3 level TREE: Phase > Wave > Task. Identify each node by its
-		path, NOT a flat label. Preferred per-node fields:
-		  phase (required), wave (optional), task (optional, requires wave)
-		e.g. {phase:"logging"} (a phase), {phase:"logging",wave:"ingest"} (a wave),
-		{phase:"logging",wave:"ingest",task:"endpoint"} (a leaf task). Each segment is
-		lowercase ^[a-z][a-z0-9_-]{0,99}$. (You may instead pass a canonical
-		"phase/wave/task" string in `key`.) Always create the parent before/with its
-		children.
+		A plan is a 1-to-3 level tree: Phase > Wave > Task. Identify each node by path —
+		phase (required), optional wave, optional task (needs wave), or a "phase/wave/task"
+		string in `key`. Segments are lowercase [a-z][a-z0-9_-]{0,99}. Create parents
+		with/before children. Give each node a short `name` (title) and a `body` (markdown
+		detail). Other fields: status (Pending|InProgress|Done|Blocked|Deferred|Cancelled),
+		commitRef?, priority? (sparse int, lower first), version (baseline you last saw; 0 =
+		new). Rename via prevPhase/prevWave/prevTask or prevKey. A cold call auto-creates the board.
 
-		Give every node a short `name` (the title, one line) AND a `body` (the detail —
-		markdown, what to actually do). Keep `name` terse; put prose in `body`.
-
-		Other per-node fields: status (Pending|InProgress|Done|Blocked|Deferred|Cancelled),
-		commitRef?, priority? (sparse ordering int — lower first), version (the baseline
-		you last saw; 0 = new node). Rename/move a node by setting prevPhase/prevWave/
-		prevTask (or prevKey) to its old path — retires the old node and creates the new
-		one linked.
-
-		`sinceVersion` selects the returned delta. Result: { applied, currentVersion,
-		inserted, closed, conflicts[], added[], updated[], removed[] }. The delta IS the
-		fresh state of everything that changed since your cursor (your edits and others'),
-		so you do NOT need to re-read the board after upserting — advance your cursor to
-		currentVersion and merge added/updated/removed into what you already hold. Each
-		returned node carries key, phase, wave, task, depth, parentKey, status, name,
-		body, priority, version.
+		Returns { applied, currentVersion, inserted, closed, conflicts[], added[], updated[],
+		removed[] }; added/updated carry the full node (key, phase, wave, task, depth,
+		parentKey, status, name, body, commitRef, priority, version). The delta IS the fresh
+		state since `sinceVersion` — advance your cursor and merge, no need to re-read.
 		""")]
 	public static async Task<object> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
@@ -135,7 +122,7 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		await EnsureBoard(boards, projectKey, board, ct);
+		await boards.EnsureAsync(projectKey, board, ct); // auto-vivify on first write
 
 		var desired = ParseNodes(nodes);
 		var ctx = boards.GetContext(projectKey, board);
@@ -195,6 +182,7 @@ public static class TasksTools
 			depth = id?.Depth ?? 1,
 			parentKey = id?.ParentKey,
 			status = n.Status.ToString(),
+			name = n.Name,
 			body = n.Body,
 			commitRef = n.CommitRef,
 			priority = n.Priority,

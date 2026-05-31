@@ -141,7 +141,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		await MemoryTools.UpsertAsync(http, Flags(), _stores, Proj, "notes",
 			JsonSerializer.SerializeToElement(new[]
 			{
-				new { key = "go", description = "Go style", body = "tabs not spaces", tags = "go,style" },
+				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = "go,style" },
 			}), 0);
 
 		var hits = Json(await MemoryTools.SearchAsync(http, Flags(), _stores, Proj, "notes", "tabs"));

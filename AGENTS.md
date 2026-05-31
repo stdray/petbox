@@ -52,6 +52,16 @@ When an agent (claude-code, factory droid, opencode, oh-my-pi, …) creates, edi
 
 One operation per turn → one record file. The point is to accumulate real examples that will inform the design of the PetBox Tasks module.
 
+## Tasks / Memory / Session — what goes where
+
+When recording state via the MCP tools, pick by lifetime:
+
+- **Session** (`session.*`) — the *current* working plan/thinking. Ephemeral, last-write-wins. "Stale next week?" → session.
+- **Tasks** (`tasks.*`) — a *unit of work with a status* tracked to Done. "Has a status that changes (Pending→Done)?" → task.
+- **Memory** (`memory.*`) — a *durable fact* that should outlive the work. "Will a future agent need this to avoid re-learning it?" → memory.
+
+Memory entries are typed (`user` | `feedback` | `project` | `reference`) — `type` is required on `memory.upsert`. Store durable facts not derivable from code/git/config; do **not** store what the repo/git already records, transient state, secrets, or actionable work (that's a task). `feedback`/`project` entries should include the *why* and *how to apply*. Search before writing, update over duplicating, delete when wrong (temporal history makes deletes safe). A cold `tasks.upsert` / `memory.upsert` auto-creates the board/store.
+
 ## Target stack
 
 - .NET 10 monolith, Razor Pages SSR + htmx + Alpine.js

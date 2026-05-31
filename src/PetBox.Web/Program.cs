@@ -85,6 +85,11 @@ public partial class Program
 				Path.Combine(ResolveDataDir(sp), "sessions"), PetBox.Core.Settings.Scope.Project,
 				cs => new PetBox.Sessions.Data.SessionsDb(PetBox.Sessions.Data.SessionsDb.CreateOptions(cs)), PetBox.Sessions.Data.SessionsSchema.Ensure));
 		builder.Services.AddScoped<PetBox.Sessions.Data.ISessionStore, PetBox.Sessions.Data.SessionStore>();
+		// Periodic VACUUM INTO snapshots of every internal db; unconditional (data
+		// safety is cross-cutting, not feature-gated).
+		builder.Services.AddHostedService(sp => new PetBox.Core.Data.BackupService(
+			ResolveDataDir(sp),
+			sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PetBox.Core.Data.BackupService>>()));
 		var masterKey = builder.Configuration["PetBox:MasterKey"]
 			?? Environment.GetEnvironmentVariable("PETBOX_MASTER_KEY");
 		builder.Services.AddSingleton(Options.Create(new SecretEncryptorOptions { MasterKey = masterKey }));
@@ -279,6 +284,20 @@ public partial class Program
 		var configuration = app.Services.GetRequiredService<IConfiguration>();
 		var connectionString = configuration.GetConnectionString("PetBox")
 			?? "Data Source=./data/petbox.db;Cache=Shared";
+
+		// Snapshot existing dbs before applying migrations — best-effort, never block
+		// startup on a backup failure (the periodic BackupService covers later passes).
+		var dataDir = Path.GetDirectoryName(
+			new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString).DataSource)!;
+		try
+		{
+			PetBox.Core.Data.Backup.SnapshotAll(
+				dataDir, DateTime.UtcNow.ToString("yyyyMMdd-HHmmss"), "pre-migration", PetBox.Core.Data.BackupService.RetainSets);
+		}
+		catch (Exception ex)
+		{
+			Console.Error.WriteLine($"PetBox pre-migration backup failed: {ex.Message}");
+		}
 
 		MigrationRunner.Run(connectionString);
 

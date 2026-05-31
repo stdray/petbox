@@ -69,12 +69,13 @@ public sealed class MemoryStoreTests : IDisposable
 
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new MemoryEntry { Key = "go-style", Version = 0, Description = "Go conventions", Body = "tabs", Tags = "go,style" },
+			new MemoryEntry { Key = "go-style", Version = 0, Type = MemoryType.Reference, Description = "Go conventions", Body = "tabs", Tags = "go,style" },
 		});
 		r.Applied.Should().BeTrue();
 
 		var active = ctx.Entries.Where(e => e.ActiveTo == null).ToList();
 		active.Should().ContainSingle();
 		active[0].Tags.Should().Be("go,style");
+		active[0].Type.Should().Be(MemoryType.Reference);
 	}
 }

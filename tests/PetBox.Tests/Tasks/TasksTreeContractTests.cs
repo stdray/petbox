@@ -92,6 +92,27 @@ public sealed class TasksTreeContractTests : IDisposable
 			TasksTools.UpsertAsync(http, Flags(), _store, Proj, "roadmap", nodes));
 	}
 
+	[Fact]
+	public async Task Upsert_AutoVivifiesBoard_AndDeltaCarriesName()
+	{
+		var http = Http("tasks:read,tasks:write");
+
+		// No BoardCreate first — a cold upsert must auto-create the board (F2), so
+		// following the agent guide literally no longer throws.
+		var nodes = JsonSerializer.SerializeToElement(new object[]
+		{
+			new { phase = "alpha", status = "Pending", name = "Alpha", body = "do alpha", priority = 0 },
+		});
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, Proj, "fresh", nodes));
+
+		(await _store.ExistsAsync(Proj, "fresh")).Should().BeTrue();
+
+		// F4: the added node in the upsert delta carries `name` (matches the
+		// documented contract and tasks.get), so a client merge won't drop titles.
+		var added = res.GetProperty("added").EnumerateArray().Single();
+		added.GetProperty("name").GetString().Should().Be("Alpha");
+	}
+
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");
