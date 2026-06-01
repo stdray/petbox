@@ -360,4 +360,55 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		});
 		r.IsError.Should().NotBe(true);
 	}
+
+	// 11. a work task can't be Blocked without naming a blocker (blocked requires a `blocks` link).
+	[Fact]
+	public async Task Blocked_WithoutBlocker_Rejected()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", name = "F", body = "x" }) });
+		var specId = NodeId(spec, "f");
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+
+		var r = await Agent("tasks.upsert", new
+		{
+			projectKey = ProjectKey, board = "work",
+			nodes = Nodes(new { key = "t", type = "feature", status = "Blocked", name = "T", body = "x", specRef = specId }),
+		});
+		IsErr(r).Should().BeTrue();
+		Text(r).Should().Contain("block");
+	}
+
+	// 12. blockedBy creates a `blocks` edge; when the blocker reaches Done, the blocked task auto-unblocks.
+	[Fact]
+	public async Task Block_AutoUnblocksWhenBlockerDone()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", name = "F", body = "x" }) });
+		var specId = NodeId(spec, "f");
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+
+		var a = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Review", name = "A", body = "x", specRef = specId }) });
+		var aId = NodeId(a, "a");
+		var b = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", name = "B", body = "x", specRef = specId, blockedBy = aId }) });
+		IsErr(b).Should().BeFalse();
+
+		// blocker A → Done (baseline version 1: A was the first node on the work board)
+		var done = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Done", version = 1, name = "A", body = "x", specRef = specId }) });
+		IsErr(done).Should().BeFalse();
+
+		var get = await Agent("tasks.get", new { projectKey = ProjectKey, board = "work" });
+		StatusOf(get, "b").Should().Be("InProgress", "the blocked task auto-unblocks when its only blocker is Done");
+	}
+
+	static string StatusOf(CallToolResult r, string key)
+	{
+		using var doc = JsonDocument.Parse(Text(r));
+		foreach (var el in Descend(doc.RootElement))
+			if (el.ValueKind == JsonValueKind.Object
+				&& el.TryGetProperty("key", out var k) && k.GetString() == key
+				&& el.TryGetProperty("status", out var s))
+				return s.GetString()!;
+		throw new Xunit.Sdk.XunitException($"no status for key '{key}' in: {Text(r)}");
+	}
 }

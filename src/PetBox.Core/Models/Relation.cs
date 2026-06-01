@@ -16,4 +16,7 @@ public sealed record Relation
 	[Column, NotNull] public string FromNodeId { get; init; } = string.Empty;
 	[Column, NotNull] public string ToNodeId { get; init; } = string.Empty;
 	[Column, NotNull] public DateTime CreatedAt { get; init; }
+	// Interval-temporal: null = active edge; set = the edge was retired at this time.
+	// Soft-close keeps history ("B was blocked by A from CreatedAt to ClosedAt").
+	[Column, Nullable] public DateTime? ClosedAt { get; init; }
 }

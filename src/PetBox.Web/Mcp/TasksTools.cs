@@ -132,12 +132,17 @@ public static class TasksTools
 		var prior = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
 			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
 		var desired = ParseNodes(nodes).Select(n => ApplyWorkflow(kind, n, prior)).ToArray();
-		RequireSpecLinks(kind, desired, prior, ParseSpecRefs(nodes));
+		var specRefs = ParseNodeField(nodes, "specRef");
+		var blockedBy = ParseNodeField(nodes, "blockedBy");
+		RequireSpecLinks(kind, desired, prior, specRefs);
+		await RequireBlockersAsync(relations, kind, projectKey, desired, blockedBy, ct);
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
 		if (r.Applied)
 		{
 			await boards.TouchAsync(projectKey, board, ct);
-			await LinkSpecRefsAsync(relations, projectKey, nodes, desired, ct);
+			await LinkRefsAsync(relations, projectKey, "task_spec", desired, specRefs, blockerIsFrom: false, ct);
+			await LinkRefsAsync(relations, projectKey, "blocks", desired, blockedBy, blockerIsFrom: true, ct);
+			await CloseBlocksOnLeaveAsync(relations, projectKey, desired, prior, ct);
 			await RunDoneEffectsAsync(boards, relations, projectKey, kind, desired, ct);
 		}
 		return Serialize(r);
@@ -151,41 +156,82 @@ public static class TasksTools
 		if (kind != BoardKind.Work) return;
 		foreach (var n in desired.Where(n => WorkflowCatalog.KindOfSlug(n.Status) == StatusKind.TerminalOk))
 		{
-			var edges = await relations.ListAsync(projectKey, n.NodeId, "to", ct);
-			foreach (var e in edges.Where(e => e.Kind == "issue_task"))
-				await CloseLinkedNodeAsync(boards, projectKey, e.FromNodeId, ct);
+			// (a) close the intake issue(s) this task resolved (issue_task: task is the `to` end)
+			foreach (var e in (await relations.ListAsync(projectKey, n.NodeId, "to", ct: ct)).Where(e => e.Kind == "issue_task"))
+				await SetActiveNodeStatusAsync(boards, projectKey, e.FromNodeId,
+					(wf, node) => WorkflowCatalog.IsTerminalSlug(node.Status) ? null : wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalOk)?.Slug, ct);
+
+			// (b) unblock tasks this one was blocking (blocks: this is the blocker / `from` end).
+			// Close the edge (history kept); if the blocked task has no blockers left, Blocked -> InProgress.
+			foreach (var e in (await relations.ListAsync(projectKey, n.NodeId, "from", ct: ct)).Where(e => e.Kind == "blocks"))
+			{
+				await relations.CloseAsync(projectKey, "blocks", e.FromNodeId, e.ToNodeId, ct);
+				var stillBlocked = (await relations.ListAsync(projectKey, e.ToNodeId, "to", ct: ct)).Any(x => x.Kind == "blocks");
+				if (!stillBlocked)
+					await SetActiveNodeStatusAsync(boards, projectKey, e.ToNodeId,
+						(_, node) => string.Equals(node.Status, "Blocked", StringComparison.OrdinalIgnoreCase) ? "InProgress" : null, ct);
+			}
 		}
 	}
 
-	// Find the active node with this NodeId across the project's boards and move it to
-	// its workflow's TerminalOk status (e.g. intake issue -> done). No-op if missing/terminal.
-	static async Task CloseLinkedNodeAsync(ITaskBoardStore boards, string projectKey, string nodeId, CancellationToken ct)
+	// Find the active node with this NodeId across the project's boards and move it to a
+	// target status chosen by `pick` (null = leave as-is). System action (no approve gate).
+	static async Task SetActiveNodeStatusAsync(ITaskBoardStore boards, string projectKey, string nodeId, Func<Workflow?, PlanNode, string?> pick, CancellationToken ct)
 	{
 		foreach (var b in await boards.ListAsync(projectKey, ct))
 		{
 			var ctx = boards.GetContext(projectKey, b.Name);
 			var node = ctx.PlanNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
 			if (node is null) continue;
-			if (WorkflowCatalog.IsTerminalSlug(node.Status)) return; // already closed
 			var wf = WorkflowCatalog.For(WorkflowCatalog.ParseKind(b.Kind), node.Type.Length == 0 ? null : node.Type);
-			var doneSlug = wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalOk)?.Slug;
-			if (doneSlug is null) return;
-			await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = doneSlug } }, ct: ct);
+			var target = pick(wf, node);
+			if (target is null || string.Equals(target, node.Status, StringComparison.OrdinalIgnoreCase)) return;
+			await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = target } }, ct: ct);
 			await boards.TouchAsync(projectKey, b.Name, ct);
 			return;
 		}
 	}
 
-	// specRef on a node = "this task implements that spec node" → create a task_spec
-	// edge (task NodeId -> spec NodeId) after the upsert applies. Idempotent.
-	static async Task LinkSpecRefsAsync(IRelationStore relations, string projectKey, JsonElement nodes, PlanNode[] desired, CancellationToken ct)
+	// Create relation edges from a per-node field after the upsert applies. task_spec
+	// (specRef): task -> spec (blockerIsFrom=false). blocks (blockedBy): blocker -> task
+	// (blockerIsFrom=true). Idempotent (RelationStore returns the active edge if present).
+	static async Task LinkRefsAsync(IRelationStore relations, string projectKey, string kind, PlanNode[] desired, Dictionary<string, string> refs, bool blockerIsFrom, CancellationToken ct)
 	{
-		var specRefs = ParseSpecRefs(nodes);
-		if (specRefs.Count == 0) return;
+		if (refs.Count == 0) return;
 		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		foreach (var (key, specRef) in specRefs)
+		foreach (var (key, other) in refs)
 			if (byKey.TryGetValue(key, out var nid) && nid.Length > 0)
-				await relations.CreateAsync(projectKey, "task_spec", nid, specRef, ct);
+			{
+				var (from, to) = blockerIsFrom ? (other, nid) : (nid, other);
+				await relations.CreateAsync(projectKey, kind, from, to, ct);
+			}
+	}
+
+	// Invariant: a work task in `Blocked` must name a blocker (blockedBy in this call, or
+	// an already-active `blocks` edge into it). "Blocked requires a link."
+	static async Task RequireBlockersAsync(IRelationStore relations, BoardKind kind, string projectKey, PlanNode[] desired, Dictionary<string, string> blockedBy, CancellationToken ct)
+	{
+		if (kind != BoardKind.Work) return;
+		foreach (var n in desired)
+		{
+			if (!string.Equals(n.Status, "Blocked", StringComparison.OrdinalIgnoreCase)) continue;
+			if (blockedBy.ContainsKey(n.Key)) continue; // a blocker is being linked now
+			var hasActiveBlocker = (await relations.ListAsync(projectKey, n.NodeId, "to", ct: ct)).Any(e => e.Kind == "blocks");
+			if (!hasActiveBlocker)
+				throw new ArgumentException($"a Blocked task must name a blocker — provide blockedBy (node '{n.Key}')");
+		}
+	}
+
+	// Leaving Blocked manually closes the active `blocks` edges into the node (history kept).
+	static async Task CloseBlocksOnLeaveAsync(IRelationStore relations, string projectKey, PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
+	{
+		foreach (var n in desired)
+		{
+			var wasBlocked = prior.TryGetValue(n.Key, out var cur) && string.Equals(cur.Status, "Blocked", StringComparison.OrdinalIgnoreCase);
+			if (!wasBlocked || string.Equals(n.Status, "Blocked", StringComparison.OrdinalIgnoreCase)) continue;
+			foreach (var e in (await relations.ListAsync(projectKey, n.NodeId, "to", ct: ct)).Where(e => e.Kind == "blocks"))
+				await relations.CloseAsync(projectKey, "blocks", e.FromNodeId, e.ToNodeId, ct);
+		}
 	}
 
 	// Invariant: a NEW work feature/bug must link a spec node (specRef). Edits of an
@@ -202,7 +248,9 @@ public static class TasksTools
 		}
 	}
 
-	static Dictionary<string, string> ParseSpecRefs(JsonElement nodes)
+	// Map node-key -> value of a per-node string field (specRef, blockedBy, ...), across
+	// both the array and stringified-array param forms.
+	static Dictionary<string, string> ParseNodeField(JsonElement nodes, string field)
 	{
 		using var doc = nodes.ValueKind == JsonValueKind.String
 			? JsonDocument.Parse(nodes.GetString() ?? "")
@@ -212,8 +260,8 @@ public static class TasksTools
 		if (arr.ValueKind != JsonValueKind.Array) return map;
 		foreach (var e in arr.EnumerateArray())
 		{
-			var sr = ModuleMcp.OptStr(e, "specRef");
-			if (!string.IsNullOrWhiteSpace(sr)) map[ResolveKey(e)] = sr!;
+			var v = ModuleMcp.OptStr(e, field);
+			if (!string.IsNullOrWhiteSpace(v)) map[ResolveKey(e)] = v!;
 		}
 		return map;
 	}
