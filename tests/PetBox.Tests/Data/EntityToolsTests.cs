@@ -178,7 +178,9 @@ public sealed class EntityToolsTests : IAsyncLifetime
 			["type"] = "log",
 			["key"] = JsonSerializer.SerializeToElement(new { projectKey = ProjectKey, name = "default" }),
 		});
-		r.IsError.Should().Be(true);
+		// GuardAsync turns the thrown NotSupportedException into a structured error
+		// payload (so the agent sees the cause) rather than an opaque tool failure.
+		Text(r).Should().Contain("does not support");
 	}
 
 	[Fact]
@@ -190,6 +192,53 @@ public sealed class EntityToolsTests : IAsyncLifetime
 			["type"] = "banana",
 			["props"] = JsonSerializer.SerializeToElement(new { name = "x" }),
 		});
-		r.IsError.Should().Be(true);
+		Text(r).Should().Contain("Unknown entity type");
 	}
+
+	[Fact]
+	public async Task ConfigBinding_Create_List_Delete_AndSecretIsEncrypted()
+	{
+		var create = await ToolAsync("entity.create");
+
+		var r1 = await create.CallAsync(new Dictionary<string, object?>
+		{
+			["type"] = "config_binding",
+			["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = "test", path = "app/name", value = "petbox", tags = "ws:test,env:prod" }),
+		});
+		Text(r1).Should().NotContain("\"error\"");
+
+		// Secret: PETBOX_MASTER_KEY is set in the ctor, so encryption is available.
+		var r2 = await create.CallAsync(new Dictionary<string, object?>
+		{
+			["type"] = "config_binding",
+			["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = "test", path = "app/token", value = "s3cr3t", tags = "ws:test", kind = "Secret" }),
+		});
+		Text(r2).Should().NotContain("\"error\"");
+
+		// List used to throw (Enum.ToString() not translatable by linq2db).
+		var list = await ToolAsync("entity.list");
+		var r3 = await list.CallAsync(new Dictionary<string, object?>
+		{
+			["type"] = "config_binding",
+			["filter"] = JsonSerializer.SerializeToElement(new { workspaceKey = "test" }),
+		});
+		var listText = Text(r3);
+		listText.Should().Contain("app/name");
+		listText.Should().Contain("app/token");
+		listText.Should().Contain("Secret");
+		listText.Should().NotContain("s3cr3t"); // plaintext secret never in the listing
+
+		// The secret is stored encrypted, not as plaintext in Value.
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var cf = scope.ServiceProvider.GetRequiredService<PetBox.Config.Data.IConfigDbFactory>();
+			var cdb = cf.GetConfigDb("test");
+			var secret = cdb.Bindings.First(b => b.Path == "app/token" && !b.IsDeleted);
+			secret.Value.Should().BeEmpty();
+			secret.Ciphertext.Should().NotBeNullOrEmpty();
+		}
+	}
+
+	static string Text(ModelContextProtocol.Protocol.CallToolResult r) =>
+		r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
 }

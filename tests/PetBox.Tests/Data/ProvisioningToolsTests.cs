@@ -126,7 +126,8 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 			["type"] = "project",
 			["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = Workspace, key = "Bad Key!", name = "x" }),
 		});
-		result.IsError.Should().Be(true);
+		// entity.* now surfaces failures as a structured {error} payload (GuardAsync).
+		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text.Should().Contain("error");
 	}
 
 	[Fact]
@@ -140,7 +141,8 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 			["type"] = "project",
 			["key"] = JsonSerializer.SerializeToElement(new { key = "$system" }),
 		});
-		result.IsError.Should().Be(true);
+		// entity.* now surfaces failures as a structured {error} payload (GuardAsync).
+		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text.Should().Contain("error");
 	}
 
 	[Fact]
@@ -163,7 +165,8 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 				["type"] = "project",
 				["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = Workspace, key = "shouldfail", name = "x" }),
 			});
-			result.IsError.Should().Be(true);
+			// entity.* now surfaces failures as a structured {error} payload (GuardAsync).
+		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text.Should().Contain("error");
 		}
 		finally
 		{

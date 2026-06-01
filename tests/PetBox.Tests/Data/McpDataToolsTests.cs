@@ -179,7 +179,8 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 			["type"] = "db",
 			["filter"] = JsonSerializer.SerializeToElement(new { projectKey = "some-other-project" }),
 		});
-		result.IsError.Should().Be(true);
+		// entity.* now surfaces the project-scope rejection as a structured {error} (GuardAsync).
+		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text.Should().Contain("error");
 	}
 
 	[Fact]

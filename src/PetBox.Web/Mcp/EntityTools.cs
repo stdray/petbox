@@ -63,17 +63,17 @@ public static class EntityTools
 		Creates an entity of `type` from the `props` object.
 		  • project (admin:provision): props { workspaceKey, key, name, description? }
 		  • apikey (admin:provision): props { projectKey, name, scopes, expiresInSeconds? } — returns the raw key ONCE
-		  • config_binding (admin:provision): props { workspaceKey, path, value, tags } — tags must include 'ws:{workspaceKey}'
+		  • config_binding (admin:provision): props { workspaceKey, path, value, tags, kind? } — tags must include 'ws:{workspaceKey}'; kind is 'Plain' (default) or 'Secret' (value stored encrypted; needs PETBOX_MASTER_KEY)
 		  • db (data:schema, project-scoped): props { projectKey, name, description?, maxPageCount? }
 		  • log (logs:admin, project-scoped): props { projectKey, name, description? }
 		""")]
 	public static Task<object> CreateAsync(
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory dataFactory,
-		IConfigDbFactory configFactory, ILogStore logStore,
+		IConfigDbFactory configFactory, ILogStore logStore, ISecretEncryptor secrets,
 		[Description("Entity type: project | apikey | config_binding | db | log.")] string type,
 		[Description("Type-specific fields as a JSON object. See the tool description.")] JsonElement props,
 		CancellationToken ct = default)
-		=> Resolve(type).CreateAsync(Ctx(http, db, dataFactory, configFactory, logStore), props, ct);
+		=> ModuleMcp.GuardAsync(() => Resolve(type).CreateAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), props, ct));
 
 	[McpServerTool(Name = "entity.list", Title = "List entities", ReadOnly = true)]
 	[Description("""
@@ -86,11 +86,11 @@ public static class EntityTools
 		""")]
 	public static Task<object> ListAsync(
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory dataFactory,
-		IConfigDbFactory configFactory, ILogStore logStore,
+		IConfigDbFactory configFactory, ILogStore logStore, ISecretEncryptor secrets,
 		[Description("Entity type: project | apikey | config_binding | db | log.")] string type,
 		[Description("Optional scope/filter as a JSON object. See the tool description.")] JsonElement? filter = null,
 		CancellationToken ct = default)
-		=> Resolve(type).ListAsync(Ctx(http, db, dataFactory, configFactory, logStore), filter ?? default, ct);
+		=> ModuleMcp.GuardAsync(() => Resolve(type).ListAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), filter ?? default, ct));
 
 	[McpServerTool(Name = "entity.delete", Title = "Delete an entity", Destructive = true)]
 	[Description("""
@@ -102,11 +102,11 @@ public static class EntityTools
 		""")]
 	public static Task<object> DeleteAsync(
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory dataFactory,
-		IConfigDbFactory configFactory, ILogStore logStore,
+		IConfigDbFactory configFactory, ILogStore logStore, ISecretEncryptor secrets,
 		[Description("Entity type: apikey | config_binding | db | log.")] string type,
 		[Description("Identifier fields as a JSON object. See the tool description.")] JsonElement key,
 		CancellationToken ct = default)
-		=> Resolve(type).DeleteAsync(Ctx(http, db, dataFactory, configFactory, logStore), key, ct);
+		=> ModuleMcp.GuardAsync(() => Resolve(type).DeleteAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), key, ct));
 
 	[McpServerTool(Name = "entity.describe", Title = "Describe an entity", ReadOnly = true)]
 	[Description("""
@@ -116,21 +116,21 @@ public static class EntityTools
 		""")]
 	public static Task<object> DescribeAsync(
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory dataFactory,
-		IConfigDbFactory configFactory, ILogStore logStore,
+		IConfigDbFactory configFactory, ILogStore logStore, ISecretEncryptor secrets,
 		[Description("Entity type: db.")] string type,
 		[Description("Identifier fields as a JSON object. See the tool description.")] JsonElement key,
 		CancellationToken ct = default)
-		=> Resolve(type).DescribeAsync(Ctx(http, db, dataFactory, configFactory, logStore), key, ct);
+		=> ModuleMcp.GuardAsync(() => Resolve(type).DescribeAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), key, ct));
 
 	static EntityCtx Ctx(IHttpContextAccessor http, PetBoxDb db, IDataDbFactory dataFactory,
-		IConfigDbFactory configFactory, ILogStore logStore)
-		=> new(http.HttpContext ?? throw new InvalidOperationException("No HttpContext"), db, dataFactory, configFactory, logStore);
+		IConfigDbFactory configFactory, ILogStore logStore, ISecretEncryptor secrets)
+		=> new(http.HttpContext ?? throw new InvalidOperationException("No HttpContext"), db, dataFactory, configFactory, logStore, secrets);
 
 	// --- Context ---------------------------------------------------------
 
 	internal readonly record struct EntityCtx(
 		HttpContext Http, PetBoxDb Db, IDataDbFactory DataFactory,
-		IConfigDbFactory ConfigFactory, ILogStore LogStore);
+		IConfigDbFactory ConfigFactory, ILogStore LogStore, ISecretEncryptor Secrets);
 
 	// --- Handler base ----------------------------------------------------
 
@@ -259,9 +259,23 @@ public static class EntityTools
 			var path = ReqStr(props, "path");
 			var value = OptStr(props, "value") ?? string.Empty;
 			var tags = ReqStr(props, "tags");
+			var kind = ParseKind(OptStr(props, "kind"));
 
 			if (!tags.Contains($"ws:{workspaceKey}", StringComparison.OrdinalIgnoreCase))
 				throw new ArgumentException($"Tags must include 'ws:{workspaceKey}'");
+
+			// A Secret is stored encrypted (ciphertext/iv/authTag), never as plaintext
+			// in Value — mirrors the config Editor's write path so resolve can decrypt.
+			var storedValue = value;
+			string? cipher = null, iv = null, authTag = null;
+			if (kind == BindingKind.Secret)
+			{
+				if (!c.Secrets.IsAvailable)
+					throw new InvalidOperationException("Secret bindings require PETBOX_MASTER_KEY to be configured.");
+				var bundle = c.Secrets.Encrypt(value);
+				(cipher, iv, authTag) = (bundle.Ciphertext, bundle.Iv, bundle.AuthTag);
+				storedValue = string.Empty;
+			}
 
 			var now = DateTime.UtcNow;
 			var configDb = c.ConfigFactory.GetConfigDb(workspaceKey);
@@ -269,16 +283,26 @@ public static class EntityTools
 			var id = Convert.ToInt64(await configDb.InsertWithIdentityAsync(new ConfigBinding
 			{
 				Path = path,
-				Value = value,
+				Value = storedValue,
 				Tags = tags,
-				Kind = BindingKind.Plain,
+				Kind = kind,
+				Ciphertext = cipher,
+				Iv = iv,
+				AuthTag = authTag,
 				Version = 1,
-				ContentHash = BindingContentHash.Compute(path, tags, BindingKind.Plain, value, null),
+				ContentHash = BindingContentHash.Compute(path, tags, kind, storedValue, cipher),
 				CreatedAt = now,
 				UpdatedAt = now,
 			}));
 #pragma warning restore CA2016
-			return new { id, path, tags };
+			return new { id, path, tags, kind = kind.ToString() };
+		}
+
+		static BindingKind ParseKind(string? raw)
+		{
+			if (string.IsNullOrWhiteSpace(raw)) return BindingKind.Plain;
+			if (Enum.TryParse<BindingKind>(raw, ignoreCase: true, out var k)) return k;
+			throw new ArgumentException($"Unknown kind '{raw}'. Known: {string.Join(", ", Enum.GetNames<BindingKind>())}");
 		}
 
 		public override async Task<object> ListAsync(EntityCtx c, JsonElement filter, CancellationToken ct)
@@ -286,12 +310,14 @@ public static class EntityTools
 			AssertScope(c.Http, ApiKeyScopes.AdminProvision);
 			var workspaceKey = ReqStr(filter, "workspaceKey");
 			var configDb = c.ConfigFactory.GetConfigDb(workspaceKey);
+			// Project the enum column raw, then stringify in memory — linq2db does not
+			// translate Enum.ToString() to SQL and throws on materialization otherwise.
 			var rows = await configDb.Bindings
 				.Where(b => !b.IsDeleted)
 				.OrderBy(b => b.Path)
-				.Select(b => new { b.Id, b.Path, b.Tags, Kind = b.Kind.ToString() })
+				.Select(b => new { b.Id, b.Path, b.Tags, b.Kind })
 				.ToListAsync(ct);
-			return new { bindings = rows };
+			return new { bindings = rows.Select(b => new { b.Id, b.Path, b.Tags, Kind = b.Kind.ToString() }) };
 		}
 
 		public override async Task<object> DeleteAsync(EntityCtx c, JsonElement key, CancellationToken ct)
