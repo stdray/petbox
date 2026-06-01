@@ -132,14 +132,49 @@ public static class TasksTools
 		var prior = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
 			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
 		var desired = ParseNodes(nodes).Select(n => ApplyWorkflow(kind, n, prior)).ToArray();
+		RequireSpecLinks(kind, desired, prior, ParseSpecRefs(nodes));
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
 		if (r.Applied)
 		{
 			await boards.TouchAsync(projectKey, board, ct);
 			await LinkSpecRefsAsync(relations, projectKey, nodes, desired, ct);
+			await RunDoneEffectsAsync(boards, relations, projectKey, kind, desired, ct);
 		}
 		return Serialize(r);
 	});
+
+	// FSM effect: when a work node reaches a TerminalOk status, auto-close any intake
+	// issue that spawned it (reverse-traverse issue_task: the task is the `to` end).
+	// Runs as a system action (no approve gate). Idempotent: already-closed issues skip.
+	static async Task RunDoneEffectsAsync(ITaskBoardStore boards, IRelationStore relations, string projectKey, BoardKind kind, PlanNode[] desired, CancellationToken ct)
+	{
+		if (kind != BoardKind.Work) return;
+		foreach (var n in desired.Where(n => WorkflowCatalog.KindOfSlug(n.Status) == StatusKind.TerminalOk))
+		{
+			var edges = await relations.ListAsync(projectKey, n.NodeId, "to", ct);
+			foreach (var e in edges.Where(e => e.Kind == "issue_task"))
+				await CloseLinkedNodeAsync(boards, projectKey, e.FromNodeId, ct);
+		}
+	}
+
+	// Find the active node with this NodeId across the project's boards and move it to
+	// its workflow's TerminalOk status (e.g. intake issue -> done). No-op if missing/terminal.
+	static async Task CloseLinkedNodeAsync(ITaskBoardStore boards, string projectKey, string nodeId, CancellationToken ct)
+	{
+		foreach (var b in await boards.ListAsync(projectKey, ct))
+		{
+			var ctx = boards.GetContext(projectKey, b.Name);
+			var node = ctx.PlanNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
+			if (node is null) continue;
+			if (WorkflowCatalog.IsTerminalSlug(node.Status)) return; // already closed
+			var wf = WorkflowCatalog.For(WorkflowCatalog.ParseKind(b.Kind), node.Type.Length == 0 ? null : node.Type);
+			var doneSlug = wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalOk)?.Slug;
+			if (doneSlug is null) return;
+			await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = doneSlug } }, ct: ct);
+			await boards.TouchAsync(projectKey, b.Name, ct);
+			return;
+		}
+	}
 
 	// specRef on a node = "this task implements that spec node" → create a task_spec
 	// edge (task NodeId -> spec NodeId) after the upsert applies. Idempotent.
@@ -151,6 +186,20 @@ public static class TasksTools
 		foreach (var (key, specRef) in specRefs)
 			if (byKey.TryGetValue(key, out var nid) && nid.Length > 0)
 				await relations.CreateAsync(projectKey, "task_spec", nid, specRef, ct);
+	}
+
+	// Invariant: a NEW work feature/bug must link a spec node (specRef). Edits of an
+	// existing node don't re-require it. Holds "no work task without a spec link".
+	static void RequireSpecLinks(BoardKind kind, PlanNode[] desired, Dictionary<string, PlanNode> prior, Dictionary<string, string> specRefs)
+	{
+		if (kind != BoardKind.Work) return;
+		foreach (var n in desired)
+		{
+			if (n.Type is not ("feature" or "bug")) continue;
+			var isNew = !prior.ContainsKey(n.Key) && (n.PrevKey is null || !prior.ContainsKey(n.PrevKey));
+			if (isNew && !specRefs.ContainsKey(n.Key))
+				throw new ArgumentException($"a work {n.Type} must link a spec node — provide specRef (node '{n.Key}')");
+		}
 	}
 
 	static Dictionary<string, string> ParseSpecRefs(JsonElement nodes)

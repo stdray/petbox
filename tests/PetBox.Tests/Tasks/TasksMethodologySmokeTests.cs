@@ -290,7 +290,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var work = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Pending", name = "Fix login", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Review", name = "Fix login", body = "x", specRef = specId }),
 		});
 		var taskId = NodeId(work, "fix-login");
 		await Agent("relations.create", new { projectKey = ProjectKey, kind = "issue_task", fromNodeId = issueId, toNodeId = taskId });
@@ -299,9 +299,9 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var done = await Call(_approver, "tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Done", name = "Fix login", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Done", version = 1, name = "Fix login", body = "x", specRef = specId }),
 		});
-		done.IsError.Should().NotBe(true);
+		IsErr(done).Should().BeFalse();
 
 		var intake = await Agent("tasks.get", new { projectKey = ProjectKey, board = "intake" });
 		Text(intake).Should().Contain("done");
