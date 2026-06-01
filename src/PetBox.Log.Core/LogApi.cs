@@ -107,6 +107,55 @@ public static class LogApi
 		(scopes ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 			.Contains(required, StringComparer.Ordinal);
 
+	// Parse a CLEF ingest body into per-event results. Two wire formats are accepted
+	// (parity with yobalog's ingest, lost in the merge to PetBox):
+	//   1. application/vnd.serilog.clef (or unspecified): NDJSON — one CLEF event per line.
+	//   2. application/json: a {"Events":[…]} envelope (seq-logging 3.x / @datalust/winston-seq).
+	//      Inner events are either CLEF (@t…) or seq-logging's legacy Raw shape
+	//      (Timestamp/Level/MessageTemplate/Exception/Properties), normalised by RawEventEnvelope.
+	static async Task<List<CleFLineResult>> ParseIngestBodyAsync(
+		HttpContext ctx, CleFParser parser, CancellationToken ct)
+	{
+		var contentType = ctx.Request.ContentType ?? "";
+		var isJsonEnvelope = contentType.Contains("application/json", StringComparison.OrdinalIgnoreCase)
+			&& !contentType.Contains("clef", StringComparison.OrdinalIgnoreCase);
+
+		if (!isJsonEnvelope)
+			return await parser.ParseAsync(ctx.Request.Body, ct).ToListAsync(ct);
+
+		var results = new List<CleFLineResult>();
+		JsonDocument doc;
+		try
+		{
+			doc = await JsonDocument.ParseAsync(ctx.Request.Body, cancellationToken: ct);
+		}
+		catch (JsonException ex)
+		{
+			results.Add(CleFLineResult.Failure(1, CleFErrorKind.MalformedJson, ex.Message));
+			return results;
+		}
+		using (doc)
+		{
+			if (doc.RootElement.ValueKind != JsonValueKind.Object
+				|| !doc.RootElement.TryGetProperty("Events", out var events)
+				|| events.ValueKind != JsonValueKind.Array)
+			{
+				results.Add(CleFLineResult.Failure(1, CleFErrorKind.MalformedJson,
+					"expected {\"Events\": [...]} envelope for application/json"));
+				return results;
+			}
+
+			var idx = 0;
+			foreach (var evt in events.EnumerateArray())
+			{
+				idx++;
+				var lineJson = evt.TryGetProperty("@t", out _) ? evt.GetRawText() : RawEventEnvelope.ToClefLine(evt);
+				results.Add(CleFParser.ParseLine(lineJson, idx));
+			}
+		}
+		return results;
+	}
+
 	public static void MapSeqSelfLogEndpoint(this IEndpointRouteBuilder app)
 	{
 		app.MapPost("/api/events/raw", SeqIngestAsync).AllowAnonymous();
@@ -128,7 +177,7 @@ public static class LogApi
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'; create it first" });
 
-		var results = await parser.ParseAsync(ctx.Request.Body, ct).ToListAsync(ct);
+		var results = await ParseIngestBodyAsync(ctx, parser, ct);
 
 		var errors = results.Where(r => !r.IsSuccess).ToList();
 		if (errors.Count > 0 && results.All(r => !r.IsSuccess))
@@ -318,8 +367,7 @@ public static class LogApi
 				});
 		}
 
-		var results = await parser.ParseAsync(ctx.Request.Body, ct)
-			.ToListAsync(ct);
+		var results = await ParseIngestBodyAsync(ctx, parser, ct);
 
 		var candidates = results
 			.Where(r => r.IsSuccess)

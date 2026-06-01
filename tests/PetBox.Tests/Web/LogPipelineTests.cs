@@ -559,4 +559,74 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		using var resp = await SendWithKeyAsync(key, "/api/logs/$system/default/services");
 		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 	}
+
+	// --- application/json {"Events":[…]} envelope (seq-logging / @datalust/winston-seq parity) ---
+
+	static HttpRequestMessage JsonEnvelope(string path, string apiKey, string apiKeyHeader, string serviceKey, string json)
+	{
+		var req = new HttpRequestMessage(HttpMethod.Post, path);
+		req.Headers.Add(apiKeyHeader, apiKey);
+		if (serviceKey is not null) req.Headers.Add("X-Service-Key", serviceKey);
+		req.Content = new StringContent(json, Encoding.UTF8, "application/json");
+		return req;
+	}
+
+	[Fact]
+	public async Task Ingest_JsonEnvelope_ClefEvents_Lands()
+	{
+		var msg = UniqueMsg("env-clef");
+		var body = $$"""{"Events":[{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}]}""";
+		using var resp = await _client.SendAsync(
+			JsonEnvelope("/api/ingest/$system/default/clef", ApiKey, "X-Api-Key", "env-svc", body));
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		JsonDocument.Parse(await resp.Content.ReadAsStringAsync())
+			.RootElement.GetProperty("ingested").GetInt32().Should().Be(1);
+
+		var q = await QueryAsync($"events | where Message == \"{msg}\" | take 1");
+		q.RootElement.GetProperty("count").GetInt32().Should().Be(1);
+	}
+
+	[Fact]
+	public async Task Ingest_JsonEnvelope_RawSeqEvents_NormalizedAndLands()
+	{
+		// seq-logging's legacy Raw shape — what @datalust/winston-seq posts.
+		var msg = UniqueMsg("env-raw");
+		var body = $$$"""{"Events":[{"Timestamp":"2024-01-01T00:00:00.000Z","Level":"Warning","MessageTemplate":"{{{msg}}}","Properties":{"Sha":"abc123"}}]}""";
+		using var resp = await _client.SendAsync(
+			JsonEnvelope("/api/ingest/$system/default/clef", ApiKey, "X-Api-Key", "env-raw-svc", body));
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		var doc = await QueryAsync($"events | where Message == \"{msg}\" | take 1");
+		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
+		var evt = doc.RootElement.GetProperty("events")[0];
+		evt.GetProperty("level").GetString().Should().Be("Warning");
+		evt.GetProperty("properties").GetProperty("Sha").GetString().Should().Contain("abc123");
+	}
+
+	[Fact]
+	public async Task SeqIngest_JsonEnvelope_RawSeqEvents_RoutesToProjectDefault()
+	{
+		// The full @datalust/winston-seq path: application/json {"Events":[Raw]} POSTed to
+		// /api/events/raw with a project key → lands in the project's default log.
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: true);
+
+		var msg = UniqueMsg("seq-env-raw");
+		var body = $$"""{"Events":[{"Timestamp":"2024-01-01T00:00:00.000Z","Level":"Error","MessageTemplate":"{{msg}}"}]}""";
+		using var resp = await _client.SendAsync(
+			JsonEnvelope("/api/events/raw", key, "X-Seq-ApiKey", null!, body));
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		ProjectLogCount(proj, LogNames.Default, msg).Should().Be(1);
+	}
+
+	[Fact]
+	public async Task Ingest_JsonEnvelope_Malformed_Returns400()
+	{
+		// application/json that is not a {"Events":[…]} envelope is rejected.
+		using var resp = await _client.SendAsync(
+			JsonEnvelope("/api/ingest/$system/default/clef", ApiKey, "X-Api-Key", "env-bad", """{"not":"an envelope"}"""));
+		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+	}
 }
