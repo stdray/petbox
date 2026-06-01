@@ -263,6 +263,30 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		Text(r2).Should().Contain("app/str");
 	}
 
+	[Fact]
+	public async Task ConfigTools_TypedBinding_RoundTrips_AndSecretEncrypted()
+	{
+		// The typed per-type tool (mcp-typing) — flat scalar params, so the client
+		// sends a real schema, no stringified-object trap.
+		var create = await ToolAsync("config.create_binding");
+		Text(await create.CallAsync(new Dictionary<string, object?>
+		{
+			["workspaceKey"] = "test", ["path"] = "svc/url", ["value"] = "https://x", ["tags"] = "ws:test",
+		})).Should().NotContain("\"error\"");
+
+		Text(await create.CallAsync(new Dictionary<string, object?>
+		{
+			["workspaceKey"] = "test", ["path"] = "svc/key", ["value"] = "topsecret", ["tags"] = "ws:test", ["kind"] = "Secret",
+		})).Should().NotContain("\"error\"");
+
+		var list = await ToolAsync("config.list_bindings");
+		var listed = Text(await list.CallAsync(new Dictionary<string, object?> { ["workspaceKey"] = "test" }));
+		listed.Should().Contain("svc/url");
+		listed.Should().Contain("svc/key");
+		listed.Should().Contain("Secret");
+		listed.Should().NotContain("topsecret");
+	}
+
 	static string Text(ModelContextProtocol.Protocol.CallToolResult r) =>
 		r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
 }
