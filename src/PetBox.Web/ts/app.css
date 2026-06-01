@@ -54,3 +54,15 @@
 	font-size: 0.75rem;
 	line-height: 1rem;
 }
+
+/* Selection contrast inside code/pre blocks. The default browser selection was
+   near-invisible on the dark theme (light highlight under light monospace text),
+   so selecting an agent key / MCP snippet on the Connect page made it unreadable.
+   Force the daisyUI primary pair, which contrasts in both light and dark themes. */
+code::selection,
+code *::selection,
+pre::selection,
+pre *::selection {
+	background-color: oklch(var(--p));
+	color: oklch(var(--pc));
+}
