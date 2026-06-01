@@ -156,6 +156,9 @@ public static class LogApi
 		ILogStore store,
 		CancellationToken ct)
 	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
+
 		var kql = ctx.Request.Query["q"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(kql))
 			return Results.BadRequest("q parameter required");
@@ -240,6 +243,9 @@ public static class LogApi
 		ILogStore store,
 		CancellationToken ct)
 	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
+
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'" });
 
@@ -334,6 +340,9 @@ public static class LogApi
 		ITailBroadcaster broadcaster,
 		CancellationToken ct)
 	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
+
 		ctx.Response.Headers.ContentType = "text/event-stream";
 		ctx.Response.Headers.CacheControl = "no-cache";
 		ctx.Response.Headers["X-Accel-Buffering"] = "no";

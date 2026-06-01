@@ -505,4 +505,58 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("seq-403")}}"}""" + "\n"));
 		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 	}
+
+	// --- Log read endpoints enforce project ownership + logs:query scope ---
+
+	async Task<HttpResponseMessage> SendWithKeyAsync(string apiKey, string path)
+	{
+		var req = new HttpRequestMessage(HttpMethod.Get, path);
+		req.Headers.Add("X-Api-Key", apiKey);
+		return await _client.SendAsync(req);
+	}
+
+	[Fact]
+	public async Task LogQuery_ForeignProject_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:query,logs:ingest", createDefaultLog: true);
+
+		// proj's key must not be able to read the foreign $system/default log.
+		using var resp = await SendWithKeyAsync(key, "/api/logs/$system/default/query?q=events%20%7C%20count");
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+	}
+
+	[Fact]
+	public async Task LogQuery_OwnProject_WithScope_Returns200()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:query", createDefaultLog: true);
+
+		using var resp = await SendWithKeyAsync(key, $"/api/logs/{proj}/default/query?q=events%20%7C%20count");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+	}
+
+	[Fact]
+	public async Task LogQuery_OwnProject_WithoutQueryScope_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: true);
+
+		using var resp = await SendWithKeyAsync(key, $"/api/logs/{proj}/default/query?q=events%20%7C%20count");
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+	}
+
+	[Fact]
+	public async Task LogServices_ForeignProject_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:query,logs:ingest", createDefaultLog: true);
+
+		using var resp = await SendWithKeyAsync(key, "/api/logs/$system/default/services");
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+	}
 }
