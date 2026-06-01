@@ -239,6 +239,30 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		}
 	}
 
+	[Fact]
+	public async Task ConfigBinding_StringEncodedProps_Works()
+	{
+		// Real MCP clients serialize the untyped object param as a JSON *string*
+		// (the tool schema has no type:object). The object-shaped tests above masked
+		// this — send the string shape a real client actually sends.
+		var create = await ToolAsync("entity.create");
+		var r1 = await create.CallAsync(new Dictionary<string, object?>
+		{
+			["type"] = "config_binding",
+			["props"] = JsonSerializer.Serialize(new { workspaceKey = "test", path = "app/str", value = "v", tags = "ws:test" }),
+		});
+		Text(r1).Should().NotContain("required");
+		Text(r1).Should().NotContain("\"error\"");
+
+		var list = await ToolAsync("entity.list");
+		var r2 = await list.CallAsync(new Dictionary<string, object?>
+		{
+			["type"] = "config_binding",
+			["filter"] = JsonSerializer.Serialize(new { workspaceKey = "test" }),
+		});
+		Text(r2).Should().Contain("app/str");
+	}
+
 	static string Text(ModelContextProtocol.Protocol.CallToolResult r) =>
 		r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
 }

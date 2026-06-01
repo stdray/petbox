@@ -73,7 +73,7 @@ public static class EntityTools
 		[Description("Entity type: project | apikey | config_binding | db | log.")] string type,
 		[Description("Type-specific fields as a JSON object. See the tool description.")] JsonElement props,
 		CancellationToken ct = default)
-		=> ModuleMcp.GuardAsync(() => Resolve(type).CreateAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), props, ct));
+		=> ModuleMcp.GuardAsync(() => Resolve(type).CreateAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), Normalize(props), ct));
 
 	[McpServerTool(Name = "entity.list", Title = "List entities", ReadOnly = true)]
 	[Description("""
@@ -90,7 +90,7 @@ public static class EntityTools
 		[Description("Entity type: project | apikey | config_binding | db | log.")] string type,
 		[Description("Optional scope/filter as a JSON object. See the tool description.")] JsonElement? filter = null,
 		CancellationToken ct = default)
-		=> ModuleMcp.GuardAsync(() => Resolve(type).ListAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), filter ?? default, ct));
+		=> ModuleMcp.GuardAsync(() => Resolve(type).ListAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), Normalize(filter ?? default), ct));
 
 	[McpServerTool(Name = "entity.delete", Title = "Delete an entity", Destructive = true)]
 	[Description("""
@@ -106,7 +106,7 @@ public static class EntityTools
 		[Description("Entity type: apikey | config_binding | db | log.")] string type,
 		[Description("Identifier fields as a JSON object. See the tool description.")] JsonElement key,
 		CancellationToken ct = default)
-		=> ModuleMcp.GuardAsync(() => Resolve(type).DeleteAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), key, ct));
+		=> ModuleMcp.GuardAsync(() => Resolve(type).DeleteAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), Normalize(key), ct));
 
 	[McpServerTool(Name = "entity.describe", Title = "Describe an entity", ReadOnly = true)]
 	[Description("""
@@ -120,7 +120,7 @@ public static class EntityTools
 		[Description("Entity type: db.")] string type,
 		[Description("Identifier fields as a JSON object. See the tool description.")] JsonElement key,
 		CancellationToken ct = default)
-		=> ModuleMcp.GuardAsync(() => Resolve(type).DescribeAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), key, ct));
+		=> ModuleMcp.GuardAsync(() => Resolve(type).DescribeAsync(Ctx(http, db, dataFactory, configFactory, logStore, secrets), Normalize(key), ct));
 
 	static EntityCtx Ctx(IHttpContextAccessor http, PetBoxDb db, IDataDbFactory dataFactory,
 		IConfigDbFactory configFactory, ILogStore logStore, ISecretEncryptor secrets)
@@ -495,6 +495,21 @@ public static class EntityTools
 		var claim = ctx.User.Claims.FirstOrDefault(cl => cl.Type == "project")?.Value;
 		if (string.IsNullOrEmpty(claim) || !string.Equals(claim, projectKey, StringComparison.Ordinal))
 			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
+	}
+
+	// MCP clients serialize an untyped JsonElement object param (props/filter/key) as
+	// a JSON *string* — the generated tool schema has no `type: object` — so it can
+	// arrive as "{\"workspaceKey\":...}" rather than a real object, and OptStr's
+	// ValueKind==Object check then misses every field. Unwrap a stringified object
+	// back into one. Mirrors ParseNodes/ParseEntries in TasksTools/MemoryTools (D6).
+	// Clone() detaches the value from the parsed document so it outlives this method.
+	static JsonElement Normalize(JsonElement e)
+	{
+		if (e.ValueKind != JsonValueKind.String) return e;
+		var raw = e.GetString();
+		if (string.IsNullOrWhiteSpace(raw)) return e;
+		using var doc = JsonDocument.Parse(raw);
+		return doc.RootElement.Clone();
 	}
 
 	static string? OptStr(JsonElement o, string name) =>
