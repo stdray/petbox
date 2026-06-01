@@ -11,8 +11,13 @@ permissions:
   packages: write
 
 concurrency:
-  group: ci-${{ github.ref_name }}-${{ github.sha }}
-  cancel-in-progress: true
+  # A push to main and the `deploy` tag move land the SAME commit, firing two
+  # redundant CI runs. Group both by commit so the `deploy` run cancels the
+  # `main` run (deploy runs everything main does, plus the deploy job). Other
+  # refs (PRs, nuget/npm tags) keep their per-ref+sha group and still cancel
+  # their own stale runs.
+  group: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/tags/deploy') && format('ci-commit-{0}', github.sha) || format('ci-{0}-{1}', github.ref_name, github.sha) }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   ci:
