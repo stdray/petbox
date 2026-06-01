@@ -100,12 +100,12 @@ public static class LogApi
 		return true;
 	}
 
-	static bool HasScope(HttpContext ctx, string required)
-	{
-		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
-		return scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+	static bool HasScope(HttpContext ctx, string required) =>
+		HasScope(ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "", required);
+
+	static bool HasScope(string scopes, string required) =>
+		(scopes ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 			.Contains(required, StringComparer.Ordinal);
-	}
 
 	public static void MapSeqSelfLogEndpoint(this IEndpointRouteBuilder app)
 	{
@@ -156,6 +156,9 @@ public static class LogApi
 		ILogStore store,
 		CancellationToken ct)
 	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
+
 		var kql = ctx.Request.Query["q"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(kql))
 			return Results.BadRequest("q parameter required");
@@ -240,6 +243,9 @@ public static class LogApi
 		ILogStore store,
 		CancellationToken ct)
 	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
+
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'" });
 
@@ -253,9 +259,17 @@ public static class LogApi
 		return Results.Json(services);
 	}
 
+	// Seq-protocol ingest. winston-seq (and any Seq client) always POSTs here with
+	// no log in the URL, so the destination is *header-routed*: the configured
+	// self-log key lands in petbox's own $system self-log, while every other
+	// (project-scoped) key writes to its project's `default` log — the fallback
+	// LogNames.Default exists precisely for this. Previously this hardcoded the
+	// $system self-log for ALL keys, so a project's winston-seq lines silently went
+	// to petbox's system log instead of the project's.
 	static async Task<IResult> SeqIngestAsync(
 		HttpContext ctx,
 		PetBoxDb yobaBoxDb,
+		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
 		IConfiguration config,
@@ -265,12 +279,44 @@ public static class LogApi
 		if (string.IsNullOrWhiteSpace(apiKey))
 			return Results.Unauthorized();
 
-		var key = await yobaBoxDb.ApiKeys
-			.FirstOrDefaultAsync((ApiKey k) => k.Key == apiKey, CancellationToken.None);
-		if (key is null)
-			return Results.Unauthorized();
+		string projectKey;
+		string logName;
+		string serviceKey;
 
-		var serviceKey = config["Seq:SelfLog:ServiceKey"] ?? "petbox-web";
+		var selfKey = config["Seq:SelfLog:ApiKey"];
+		if (!string.IsNullOrWhiteSpace(selfKey) && string.Equals(apiKey, selfKey, StringComparison.Ordinal))
+		{
+			// petbox's own self-log export.
+			projectKey = LogNames.SystemProject;
+			logName = LogNames.SelfLog;
+			serviceKey = config["Seq:SelfLog:ServiceKey"] ?? "petbox-web";
+		}
+		else
+		{
+			var key = await yobaBoxDb.ApiKeys
+				.FirstOrDefaultAsync((ApiKey k) => k.Key == apiKey, CancellationToken.None);
+			if (key is null || (key.ExpiresAt is { } exp && exp <= DateTime.UtcNow))
+				return Results.Unauthorized();
+			// Explicit 403 (not Results.Forbid(), which on this AllowAnonymous endpoint
+			// would invoke the cookie scheme's challenge and 302-redirect to /Login).
+			if (!HasScope(key.Scopes, ApiKeyScopes.LogsIngest))
+				return Results.Json(
+					new { error = $"key lacks the '{ApiKeyScopes.LogsIngest}' scope" },
+					statusCode: StatusCodes.Status403Forbidden);
+
+			projectKey = key.ProjectKey;
+			logName = LogNames.Default;
+			serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault() is { Length: > 0 } svc ? svc : "seq";
+
+			// Header-routed ingest has no auto-vivify (mirrors path-based): the
+			// project's `default` log must exist first.
+			if (!await store.ExistsAsync(projectKey, logName, ct))
+				return Results.NotFound(new
+				{
+					error = $"log '{logName}' not found in project '{projectKey}'; create it first " +
+						$"(Seq/header-routed ingest targets the project's '{LogNames.Default}' log)",
+				});
+		}
 
 		var results = await parser.ParseAsync(ctx.Request.Body, ct)
 			.ToListAsync(ct);
@@ -282,7 +328,7 @@ public static class LogApi
 			.ToList();
 
 		if (candidates.Count > 0)
-			await pipeline.IngestAsync(LogNames.SystemProject, LogNames.SelfLog, candidates, ct);
+			await pipeline.IngestAsync(projectKey, logName, candidates, ct);
 
 		return Results.Ok();
 	}
@@ -294,6 +340,9 @@ public static class LogApi
 		ITailBroadcaster broadcaster,
 		CancellationToken ct)
 	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
+
 		ctx.Response.Headers.ContentType = "text/event-stream";
 		ctx.Response.Headers.CacheControl = "no-cache";
 		ctx.Response.Headers["X-Accel-Buffering"] = "no";

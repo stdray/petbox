@@ -1,9 +1,14 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using LinqToDB;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using PetBox.Core.Data;
+using PetBox.Core.Models;
+using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Web;
 
@@ -412,5 +417,146 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		var doc = await QueryAsync($"events | where ServiceKey == \"{svcA}\" | take 10");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
 		doc.RootElement.GetProperty("events")[0].GetProperty("message").GetString().Should().Contain(msgA);
+	}
+
+	// --- Seq header-routed ingest by project key (no log in URL) ---
+
+	async Task SeedProjectKeyAsync(string apiKey, string projectKey, string scopes, bool createDefaultLog)
+	{
+		using var scope = _factory.Services.CreateScope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		await db.InsertAsync(new Project
+		{
+			Key = projectKey,
+			WorkspaceKey = LogNames.SystemProject,
+			Name = projectKey,
+		});
+		await db.InsertAsync(new ApiKey
+		{
+			Key = apiKey,
+			ProjectKey = projectKey,
+			Scopes = scopes,
+			Name = apiKey,
+			CreatedAt = DateTime.UtcNow,
+		});
+		if (createDefaultLog)
+		{
+			var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
+			if (!await store.ExistsAsync(projectKey, LogNames.Default))
+				await store.CreateAsync(projectKey, LogNames.Default, null);
+		}
+	}
+
+	int ProjectLogCount(string projectKey, string logName, string message)
+	{
+		using var scope = _factory.Services.CreateScope();
+		var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
+		var ctx = store.GetContext(projectKey, logName);
+		return ctx.LogEntries.Count(e => e.Message == message);
+	}
+
+	static HttpRequestMessage SeqRequest(string apiKey, string jsonl, string? serviceKey = null)
+	{
+		var req = new HttpRequestMessage(HttpMethod.Post, "/api/events/raw");
+		req.Headers.Add("X-Seq-ApiKey", apiKey);
+		if (serviceKey is not null) req.Headers.Add("X-Service-Key", serviceKey);
+		req.Content = new StringContent(jsonl, Encoding.UTF8, "text/plain");
+		return req;
+	}
+
+	[Fact]
+	public async Task SeqIngest_ProjectKey_RoutesToProjectDefaultLog()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest,logs:query", createDefaultLog: true);
+
+		var msg = UniqueMsg("seq-proj");
+		using var resp = await _client.SendAsync(SeqRequest(key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		// Lands in the project's OWN default log — not petbox's $system self-log.
+		ProjectLogCount(proj, LogNames.Default, msg).Should().Be(1);
+		ProjectLogCount(LogNames.SystemProject, LogNames.SelfLog, msg).Should().Be(0);
+	}
+
+	[Fact]
+	public async Task SeqIngest_ProjectKey_MissingDefaultLog_Returns404()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: false);
+
+		using var resp = await _client.SendAsync(SeqRequest(key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("seq-404")}}"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("not found");
+	}
+
+	[Fact]
+	public async Task SeqIngest_ProjectKey_WithoutIngestScope_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:query", createDefaultLog: true);
+
+		using var resp = await _client.SendAsync(SeqRequest(key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("seq-403")}}"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+	}
+
+	// --- Log read endpoints enforce project ownership + logs:query scope ---
+
+	async Task<HttpResponseMessage> SendWithKeyAsync(string apiKey, string path)
+	{
+		var req = new HttpRequestMessage(HttpMethod.Get, path);
+		req.Headers.Add("X-Api-Key", apiKey);
+		return await _client.SendAsync(req);
+	}
+
+	[Fact]
+	public async Task LogQuery_ForeignProject_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:query,logs:ingest", createDefaultLog: true);
+
+		// proj's key must not be able to read the foreign $system/default log.
+		using var resp = await SendWithKeyAsync(key, "/api/logs/$system/default/query?q=events%20%7C%20count");
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+	}
+
+	[Fact]
+	public async Task LogQuery_OwnProject_WithScope_Returns200()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:query", createDefaultLog: true);
+
+		using var resp = await SendWithKeyAsync(key, $"/api/logs/{proj}/default/query?q=events%20%7C%20count");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+	}
+
+	[Fact]
+	public async Task LogQuery_OwnProject_WithoutQueryScope_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: true);
+
+		using var resp = await SendWithKeyAsync(key, $"/api/logs/{proj}/default/query?q=events%20%7C%20count");
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+	}
+
+	[Fact]
+	public async Task LogServices_ForeignProject_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:query,logs:ingest", createDefaultLog: true);
+
+		using var resp = await SendWithKeyAsync(key, "/api/logs/$system/default/services");
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 	}
 }
