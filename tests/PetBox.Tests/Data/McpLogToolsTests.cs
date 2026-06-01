@@ -194,6 +194,10 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 	[Fact]
 	public async Task LogQuery_MissingScope_Rejected()
 	{
+		// Grab the tool while the key still lists it (A7b hides log.* once the logs
+		// scope is gone); call-time AssertScope is the actual boundary under test.
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
+
 		// Re-key without logs:query.
 		using (var scope = _factory.Services.CreateScope())
 		{
@@ -202,8 +206,6 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 				.Set(k => k.Scopes, "data:read")
 				.UpdateAsync();
 		}
-
-		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,

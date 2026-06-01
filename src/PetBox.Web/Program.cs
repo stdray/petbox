@@ -124,7 +124,8 @@ public partial class Program
 		// X-Api-Key just like the REST endpoints.
 		builder.Services.AddMcpServer()
 			.WithHttpTransport()
-			.WithToolsFromAssembly(typeof(Program).Assembly);
+			.WithToolsFromAssembly(typeof(Program).Assembly)
+			.WithRequestFilters(PetBox.Web.Mcp.McpToolScopeFilter.Register); // A7b: scope-trim tools/list
 		builder.Services.AddSingleton<FeatureFlags>();
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
 		builder.Services.Configure<ConfigApiKeyOptions>(builder.Configuration.GetSection("Auth"));

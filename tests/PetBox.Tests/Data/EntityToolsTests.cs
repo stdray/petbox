@@ -287,6 +287,46 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		listed.Should().NotContain("topsecret");
 	}
 
+	[Fact]
+	public async Task ToolsList_FilteredByKeyScope()
+	{
+		// A7b: a tasks-only key should see tasks.* but not other modules' tools
+		// (call-time scope still enforces; this only trims the listing).
+		const string narrowKey = "yb_key_tasks_only";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			await db.ApiKeys.Where(k => k.Key == narrowKey).DeleteAsync();
+			await db.InsertAsync(new ApiKey
+			{
+				Key = narrowKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write", CreatedAt = DateTime.UtcNow,
+			});
+		}
+
+		var http = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		http.DefaultRequestHeaders.Add("X-Api-Key", narrowKey);
+		var transport = new HttpClientTransport(new HttpClientTransportOptions
+		{
+			Endpoint = new Uri(http.BaseAddress!, "/mcp"),
+			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = narrowKey },
+		}, http);
+		var mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		try
+		{
+			var names = (await mcp.ListToolsAsync()).Select(t => t.Name).ToList();
+			names.Should().Contain(n => n.StartsWith("tasks.", StringComparison.Ordinal));
+			names.Should().NotContain(n => n.StartsWith("memory.", StringComparison.Ordinal));
+			names.Should().NotContain(n => n.StartsWith("data.", StringComparison.Ordinal));
+			names.Should().NotContain(n => n.StartsWith("log.", StringComparison.Ordinal));
+			names.Should().NotContain(n => n.StartsWith("config.", StringComparison.Ordinal));
+		}
+		finally
+		{
+			await mcp.DisposeAsync();
+			http.Dispose();
+		}
+	}
+
 	static string Text(ModelContextProtocol.Protocol.CallToolResult r) =>
 		r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
 }
