@@ -69,6 +69,11 @@ The **live plan lives in petbox**, not in `doc/plan.md` — the tasks board
 and upcoming work. `doc/plan.md` is kept as the historical/decision record (phases
 0–29) and is not the working plan anymore.
 
+> **Project methodology** (how we run PetBox) is in [doc/methodology.md](doc/methodology.md).
+> **Approve gate (binding):** an agent's ceiling on a work item is **`Review`** —
+> mark a finished item `Review`, never `Done`. Only the maintainer confirms `Done`.
+> (Work was repeatedly reopened because agents self-certified completion.)
+
 Board phases (Phase > Wave > Task):
 
 - **`incoming`** — raw intake. New requests land here. The agent periodically
