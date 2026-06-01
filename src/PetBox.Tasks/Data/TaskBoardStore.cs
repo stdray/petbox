@@ -3,6 +3,7 @@ using LinqToDB;
 using LinqToDB.Async;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Tasks.Workflow;
 
 namespace PetBox.Tasks.Data;
 
@@ -21,7 +22,9 @@ public interface ITaskBoardStore
 	// Bump UpdatedAt to now — called after a node upsert so the catalog reflects
 	// last activity (the nodes live in a separate file, not this meta row).
 	Task TouchAsync(string projectKey, string board, CancellationToken ct = default);
-	Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, CancellationToken ct = default);
+	Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "free", CancellationToken ct = default);
+	// Board role (free|spec|ideas|intake|work), or null if the board doesn't exist.
+	Task<string?> KindAsync(string projectKey, string board, CancellationToken ct = default);
 	Task<bool> DeleteAsync(string projectKey, string board, CancellationToken ct = default);
 }
 
@@ -62,10 +65,16 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 	{
 		if (await ExistsAsync(projectKey, board, ct))
 			return;
-		await CreateAsync(projectKey, board, null, ct);
+		await CreateAsync(projectKey, board, null, "free", ct);
 	}
 
-	public async Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, CancellationToken ct = default)
+	public Task<string?> KindAsync(string projectKey, string board, CancellationToken ct = default) =>
+		_db.TaskBoards
+			.Where(b => b.ProjectKey == projectKey && b.Name == board)
+			.Select(b => (string?)b.Kind)
+			.FirstOrDefaultAsync(ct);
+
+	public async Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "free", CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(board))
 			throw new ArgumentException("board name is required", nameof(board));
@@ -85,6 +94,7 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 			ProjectKey = projectKey,
 			Name = board,
 			Description = description,
+			Kind = WorkflowCatalog.ParseKind(kind).ToString().ToLowerInvariant(),
 			CreatedAt = now,
 			UpdatedAt = now,
 		};

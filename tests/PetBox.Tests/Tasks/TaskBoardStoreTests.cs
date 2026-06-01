@@ -103,14 +103,14 @@ public sealed class TaskBoardStoreTests : IDisposable
 
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new PlanNode { Key = "Phase 1", Version = 0, Status = PlanStatus.InProgress, Body = "Foundation", Priority = 100 },
+			new PlanNode { Key = "Phase 1", Version = 0, Status = "InProgress", Body = "Foundation", Priority = 100 },
 		});
 		r.Applied.Should().BeTrue();
 		r.Inserted.Should().Be(1);
 
 		var active = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList();
 		active.Should().ContainSingle();
-		active[0].Status.Should().Be(PlanStatus.InProgress);
+		active[0].Status.Should().Be("InProgress");
 		active[0].Body.Should().Be("Foundation");
 	}
 }

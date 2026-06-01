@@ -103,6 +103,24 @@ public static class WorkflowCatalog
 		_ => [],
 	};
 
+	static readonly BoardKind[] AllKinds = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
+
+	// StatusKind for a status slug across ALL presets (case-insensitive), or null if
+	// the slug isn't in any workflow (e.g. a free board's arbitrary status).
+	public static StatusKind? KindOfSlug(string slug)
+	{
+		foreach (var k in AllKinds)
+			foreach (var wf in Types(k))
+				if (wf.Status(slug) is { } s)
+					return s.Kind;
+		return null;
+	}
+
+	// A node is "closed" (hidden under active-only) if its status is terminal in some
+	// preset. Free-board slugs match the legacy Done/Cancelled by name.
+	public static bool IsTerminalSlug(string slug) =>
+		KindOfSlug(slug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;
+
 	// Valid type slugs for a kind (for error messages).
 	public static string ValidTypes(BoardKind kind) => kind switch
 	{

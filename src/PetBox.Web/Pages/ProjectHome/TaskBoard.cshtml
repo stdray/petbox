@@ -5,12 +5,13 @@
 }
 
 @functions {
-	static string StatusBadge(PetBox.Tasks.Data.PlanStatus s) => s switch
+	// Status is a workflow slug; the catalog tells us its StatusKind (domain), the
+	// view maps that to a daisyUI class (presentation stays here, not in the domain).
+	static string StatusBadge(string slug) => PetBox.Tasks.Workflow.WorkflowCatalog.KindOfSlug(slug) switch
 	{
-		PetBox.Tasks.Data.PlanStatus.Done => "badge-success",
-		PetBox.Tasks.Data.PlanStatus.InProgress => "badge-info",
-		PetBox.Tasks.Data.PlanStatus.Blocked => "badge-error",
-		PetBox.Tasks.Data.PlanStatus.Deferred or PetBox.Tasks.Data.PlanStatus.Cancelled => "badge-ghost",
+		PetBox.Tasks.Workflow.StatusKind.TerminalOk => "badge-success",
+		PetBox.Tasks.Workflow.StatusKind.TerminalCancel => "badge-ghost",
+		PetBox.Tasks.Workflow.StatusKind.Open => "badge-info",
 		_ => "badge-neutral",
 	};
 }
@@ -52,7 +53,7 @@ else
 			var depth = id?.Depth ?? 1;
 			var leaf = id is null ? n.Key : (id.TaskKey ?? id.WaveKey ?? id.PhaseKey);
 			var parent = id?.ParentKey;
-			var closed = n.Status is PetBox.Tasks.Data.PlanStatus.Done or PetBox.Tasks.Data.PlanStatus.Cancelled;
+			var closed = PetBox.Tasks.Workflow.WorkflowCatalog.IsTerminalSlug(n.Status);
 			// A closed node hides under "active only" — unless it still has open
 			// descendants, in which case it stays so its children aren't orphaned.
 			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.Key);

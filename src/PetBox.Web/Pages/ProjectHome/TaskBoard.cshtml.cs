@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Features;
 using PetBox.Tasks.Data;
+using PetBox.Tasks.Workflow;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -96,7 +97,7 @@ public sealed class TaskBoardModel : PageModel
 		bool Emit(PlanNode node)
 		{
 			ordered.Add(node);
-			var closed = node.Status is PlanStatus.Done or PlanStatus.Cancelled;
+			var closed = WorkflowCatalog.IsTerminalSlug(node.Status);
 			var hasActiveDescendant = false;
 			if (childMap.TryGetValue(node.Key, out var kids))
 			{
@@ -125,7 +126,7 @@ public sealed class TaskBoardModel : PageModel
 			var ctx = _store.GetContext(ProjectKey, Board);
 			await TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PlanNode { Key = key, Version = 0, Status = PlanStatus.Pending, Name = name.Trim(), Body = string.Empty, Priority = priority },
+				new PlanNode { Key = key, Version = 0, Status = "Pending", Name = name.Trim(), Body = string.Empty, Priority = priority },
 			}, ct: ct);
 		}
 

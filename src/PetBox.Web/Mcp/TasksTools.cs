@@ -6,6 +6,7 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Features;
 using PetBox.Tasks.Data;
+using PetBox.Tasks.Workflow;
 
 namespace PetBox.Web.Mcp;
 
@@ -17,16 +18,16 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks.board_create", Title = "Create a task board")]
-	[Description("Create a named task board in a project. Requires tasks:write.")]
+	[Description("Create a named task board in a project. `kind` sets the board role (free|spec|ideas|intake|work; default free) which drives the workflow — see tasks.workflow. Requires tasks:write.")]
 	public static async Task<object> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
-		string projectKey, string board, string? description = null, CancellationToken ct = default)
+		string projectKey, string board, string? kind = null, string? description = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var meta = await boards.CreateAsync(projectKey, board, description, ct);
-		return new { meta.ProjectKey, meta.Name, meta.Description, meta.CreatedAt };
+		var meta = await boards.CreateAsync(projectKey, board, description, kind ?? "free", ct);
+		return new { meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.CreatedAt };
 	}
 
 	[McpServerTool(Name = "tasks.board_list", Title = "List task boards", ReadOnly = true)]
@@ -39,7 +40,7 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await boards.ListAsync(projectKey, ct);
-		return new { boards = list.Select(b => new { b.Name, b.Description, b.CreatedAt }).ToList() };
+		return new { boards = list.Select(b => new { b.Name, b.Kind, b.Description, b.CreatedAt }).ToList() };
 	}
 
 	[McpServerTool(Name = "tasks.board_delete", Title = "Delete a task board", Destructive = true)]
@@ -84,7 +85,8 @@ public static class TasksTools
 					task = id?.TaskKey,
 					depth = id?.Depth ?? 1,
 					parentKey = id?.ParentKey,
-					status = n.Status.ToString(),
+					status = n.Status,
+					type = n.Type,
 					name = n.Name,
 					body = n.Body,
 					commitRef = n.CommitRef,
@@ -124,12 +126,29 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		await boards.EnsureAsync(projectKey, board, ct); // auto-vivify on first write
 
-		var desired = ParseNodes(nodes);
+		var kind = WorkflowCatalog.ParseKind(await boards.KindAsync(projectKey, board, ct));
 		var ctx = boards.GetContext(projectKey, board);
+		var prior = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
+			.ToDictionary(n => n.Key, n => n.Status, StringComparer.Ordinal);
+		var desired = ParseNodes(nodes).Select(n => ApplyWorkflow(kind, n, prior)).ToArray();
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
 		if (r.Applied) await boards.TouchAsync(projectKey, board, ct);
 		return Serialize(r);
 	});
+
+	// Default the status (to the workflow's initial) and validate status/transition
+	// against the board's kind/type — the single workflow validation point.
+	static PlanNode ApplyWorkflow(BoardKind kind, PlanNode node, Dictionary<string, string> prior)
+	{
+		var type = node.Type.Length == 0 ? null : node.Type;
+		var wf = WorkflowCatalog.For(kind, type);
+		var n = node.Status.Length > 0 ? node : node with { Status = wf?.Initial ?? "Pending" };
+		var from = prior.TryGetValue(n.Key, out var s) ? s
+			: (n.PrevKey is not null && prior.TryGetValue(n.PrevKey, out var ps) ? ps : null);
+		var res = WorkflowEngine.Validate(kind, type, from, n.Status, hasReason: !string.IsNullOrWhiteSpace(n.Body));
+		if (!res.Ok) throw new ArgumentException(res.Error);
+		return n;
+	}
 
 	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true)]
 	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes). Requires tasks:read.")]
@@ -146,6 +165,31 @@ public static class TasksTools
 		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion, ct: ct);
 		return Serialize(r);
 	}
+
+	[McpServerTool(Name = "tasks.workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true)]
+	[Description("Return the workflow for a board: its kind and the task types it hosts, each with statuses (slug, name, kind=open|terminalok|terminalcancel), the initial status, and transitions (from, to, requiresApproval, requiresReason). Use this to learn the legal statuses before tasks.upsert. Requires tasks:read.")]
+	public static async Task<object> WorkflowAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
+		string projectKey, string board, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		await EnsureBoard(boards, projectKey, board, ct);
+
+		var kind = WorkflowCatalog.ParseKind(await boards.KindAsync(projectKey, board, ct));
+		return (object)new
+		{
+			kind = kind.ToString().ToLowerInvariant(),
+			types = WorkflowCatalog.Types(kind).Select(w => new
+			{
+				type = w.Type,
+				initial = w.Initial,
+				statuses = w.Statuses.Select(s => new { slug = s.Slug, name = s.Name, kind = s.Kind.ToString().ToLowerInvariant() }).ToList(),
+				transitions = w.Transitions.Select(t => new { from = t.From, to = t.To, requiresApproval = t.RequiresApproval, requiresReason = t.RequiresReason }).ToList(),
+			}).ToList(),
+		};
+	});
 
 	static async Task EnsureBoard(ITaskBoardStore boards, string projectKey, string board, CancellationToken ct)
 	{
@@ -182,7 +226,8 @@ public static class TasksTools
 			task = id?.TaskKey,
 			depth = id?.Depth ?? 1,
 			parentKey = id?.ParentKey,
-			status = n.Status.ToString(),
+			status = n.Status,
+			type = n.Type,
 			name = n.Name,
 			body = n.Body,
 			commitRef = n.CommitRef,
@@ -208,7 +253,8 @@ public static class TasksTools
 			{
 				Key = ResolveKey(e),
 				Version = ModuleMcp.OptLong(e, "version", 0),
-				Status = ParseStatus(ModuleMcp.OptStr(e, "status") ?? "Pending"),
+				Status = ModuleMcp.OptStr(e, "status") ?? string.Empty,
+				Type = (ModuleMcp.OptStr(e, "type") ?? string.Empty).ToLowerInvariant(),
 				Name = ModuleMcp.OptStr(e, "name") ?? string.Empty,
 				Body = ModuleMcp.OptStr(e, "body") ?? string.Empty,
 				CommitRef = ModuleMcp.OptStr(e, "commitRef"),
@@ -245,11 +291,6 @@ public static class TasksTools
 		var prevKey = ModuleMcp.OptStr(e, "prevKey");
 		return prevKey is not null ? TaskNodeId.Parse(prevKey).ToKey() : null;
 	}
-
-	static PlanStatus ParseStatus(string s) =>
-		Enum.TryParse<PlanStatus>(s, ignoreCase: true, out var v)
-			? v
-			: throw new ArgumentException($"invalid status '{s}' (Pending|InProgress|Done|Blocked|Deferred|Cancelled)");
 
 	// Active node key -> chain of prior keys it was renamed from (walk PrevKey edges
 	// across the full revision history).

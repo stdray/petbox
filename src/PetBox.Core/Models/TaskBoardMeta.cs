@@ -18,6 +18,11 @@ public sealed record TaskBoardMeta
 	[Column, Nullable]
 	public string? Description { get; init; }
 
+	// Board role: free|spec|ideas|intake|work (default free). Drives the workflow
+	// (types/statuses/transitions) + invariants/effects via WorkflowCatalog.
+	[Column, NotNull]
+	public string Kind { get; init; } = "free";
+
 	[Column, NotNull]
 	public DateTime CreatedAt { get; init; }
 

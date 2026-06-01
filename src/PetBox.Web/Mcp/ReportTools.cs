@@ -48,7 +48,7 @@ public static partial class ReportTools
 		var ctx = boards.GetContext(IssuesProject, IssuesBoard);
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new PlanNode { Key = key, Version = 0, Status = PlanStatus.Pending, Name = title.Trim(), Body = body, Priority = 50 },
+			new PlanNode { Key = key, Version = 0, Status = "reported", Type = "issue", Name = title.Trim(), Body = body, Priority = 50 },
 		}, ct: ct);
 		if (r.Applied) await boards.TouchAsync(IssuesProject, IssuesBoard, ct);
 		return (object)new { reported = true, project = IssuesProject, board = IssuesBoard, key };

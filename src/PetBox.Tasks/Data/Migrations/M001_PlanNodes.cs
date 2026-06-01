@@ -17,7 +17,7 @@ public sealed class M001_PlanNodes : Migration
 		CREATE TABLE IF NOT EXISTS plan_nodes (
 			Key        TEXT    NOT NULL,
 			Version    INTEGER NOT NULL,
-			Status     INTEGER NOT NULL,
+			Status     TEXT    NOT NULL DEFAULT '',
 			Name       TEXT    NOT NULL DEFAULT '',
 			Body       TEXT    NOT NULL,
 			CommitRef  TEXT,

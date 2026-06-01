@@ -124,10 +124,10 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 			// emit p1(10), p2(500), p1/wlow(900) — the wave drifting past p2 (finding D11).
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Key = "p1", Version = 0, Status = PetBox.Tasks.Data.PlanStatus.Pending, Name = "Phase one", Body = "", Priority = 10 },
-				new PetBox.Tasks.Data.PlanNode { Key = "p1/wlow", Version = 0, Status = PetBox.Tasks.Data.PlanStatus.Pending, Name = "Low wave", Body = "", Priority = 900 },
-				new PetBox.Tasks.Data.PlanNode { Key = "p1/wlow/deep", Version = 0, Status = PetBox.Tasks.Data.PlanStatus.Pending, Name = "Deep task", Body = "", Priority = 1 },
-				new PetBox.Tasks.Data.PlanNode { Key = "p2", Version = 0, Status = PetBox.Tasks.Data.PlanStatus.Pending, Name = "Phase two", Body = "", Priority = 500 },
+				new PetBox.Tasks.Data.PlanNode { Key = "p1", Version = 0, Status = "Pending", Name = "Phase one", Body = "", Priority = 10 },
+				new PetBox.Tasks.Data.PlanNode { Key = "p1/wlow", Version = 0, Status = "Pending", Name = "Low wave", Body = "", Priority = 900 },
+				new PetBox.Tasks.Data.PlanNode { Key = "p1/wlow/deep", Version = 0, Status = "Pending", Name = "Deep task", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Key = "p2", Version = 0, Status = "Pending", Name = "Phase two", Body = "", Priority = 500 },
 			});
 		}
 

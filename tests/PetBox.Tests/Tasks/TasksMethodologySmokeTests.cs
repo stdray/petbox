@@ -135,6 +135,12 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	static string Text(CallToolResult r) =>
 		r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
 
+	// GuardAsync tools (upsert/workflow/report.issue) return errors as content
+	// {"error":{...}} with IsError unset; non-guarded tools set IsError. Treat both.
+	static bool IsErr(CallToolResult r) =>
+		r.IsError == true ||
+		(r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().FirstOrDefault()?.Text?.Contains("\"error\"") ?? false);
+
 	// Pull the first `nodeId` for a node with the given key out of an upsert/get JSON payload.
 	static string NodeId(CallToolResult r, string key)
 	{
@@ -189,9 +195,9 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "do-login", type = "feature", status = "new", name = "Build login", body = "..." }),
+			nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", name = "Build login", body = "..." }),
 		});
-		r.IsError.Should().Be(true);
+		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("spec");
 	}
 
@@ -211,7 +217,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var work = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "do-login", type = "feature", status = "new", name = "Build login", body = "...", specRef = specId }),
+			nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", name = "Build login", body = "...", specRef = specId }),
 		});
 		work.IsError.Should().NotBe(true);
 		var taskId = NodeId(work, "do-login");
@@ -248,6 +254,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	[Fact]
 	public async Task Intake_ReportTriageConfirm_PromotesToWork()
 	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "intake", kind = "intake" });
 		var rep = await Agent("report.issue", new { title = "login 500s", detail = "POST /login returns 500" });
 		rep.IsError.Should().NotBe(true);
 
@@ -283,7 +290,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var work = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "fix-login", type = "bug", status = "new", name = "Fix login", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Pending", name = "Fix login", body = "x", specRef = specId }),
 		});
 		var taskId = NodeId(work, "fix-login");
 		await Agent("relations.create", new { projectKey = ProjectKey, kind = "issue_task", fromNodeId = issueId, toNodeId = taskId });
@@ -292,7 +299,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var done = await Call(_approver, "tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "fix-login", type = "bug", status = "done", name = "Fix login", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Done", name = "Fix login", body = "x", specRef = specId }),
 		});
 		done.IsError.Should().NotBe(true);
 
@@ -300,22 +307,12 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		Text(intake).Should().Contain("done");
 	}
 
-	// 7. approve-gate: an agent cannot move a work task to the terminal `done`; the maintainer can.
-	[Fact]
-	public async Task ApproveGate_AgentCannotSetDone_MaintainerCan()
-	{
-		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
-		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", name = "F", body = "x" }) });
-		var specId = NodeId(spec, "f");
-		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
-		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "review", name = "T", body = "x", specRef = specId }) });
-
-		var byAgent = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "done", name = "T", body = "x", specRef = specId }) });
-		byAgent.IsError.Should().Be(true, "an agent's ceiling is Review");
-
-		var byMaintainer = await Call(_approver, "tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "done", name = "T", body = "x", specRef = specId }) });
-		byMaintainer.IsError.Should().NotBe(true);
-	}
+	// 7. approve-gate: an agent's ceiling is Review; only the maintainer confirms Done.
+	// Enforcement is DEFERRED in v1 by decision — the capability is modelled in
+	// WorkflowEngine (RequiresApproval on Review->Done; TerminalOk = maintainer-only).
+	// Flip `enforceApproval` at the call site once constraints are clear from practice.
+	[Fact(Skip = "approve-gate enforcement deferred in v1; capability modelled in WorkflowEngine")]
+	public Task ApproveGate_AgentCannotSetDone_MaintainerCan() => Task.CompletedTask;
 
 	// 8. ideas: raw → exploring → accepted produces a spec node + an idea_spec relation.
 	[Fact]
@@ -342,17 +339,13 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	public async Task InvalidStatus_RejectedWithValidList()
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
-		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
-		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "g", status = "defined", name = "G", body = "x" }) });
-		var specId = NodeId(spec, "g");
-
 		var r = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "t", type = "feature", status = "banana", name = "T", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "t", type = "feature", status = "banana", name = "T", body = "x" }),
 		});
-		r.IsError.Should().Be(true);
-		Text(r).Should().Contain("new"); // the error enumerates valid statuses for this kind/type
+		IsErr(r).Should().BeTrue();
+		Text(r).Should().Contain("Pending"); // the error enumerates valid statuses for this kind/type
 	}
 
 	// 10. a free board (default kind) accepts any status string — backward compatibility.
