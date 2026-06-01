@@ -337,37 +337,31 @@ Task("TsSdkPack")
 		});
 	});
 
-// Publishes to GitHub Packages npm registry. Requires GITHUB_TOKEN with packages:write.
-// Writes .npmrc with the registry + auth token, then `npm publish`. Token is the same
-// as for NuGet — GitHub Packages uses one token for both registries.
+// Publishes the TS SDK to the PUBLIC npm registry (registry.npmjs.org). Requires
+// NPM_TOKEN — an npmjs automation/publish token with rights to the @stdray-npm
+// scope. Writes a temporary .npmrc with the auth token, then `npm publish
+// --access public` (scoped packages are restricted by default; this one is public).
 Task("NpmPublish")
 	.IsDependentOn("TsSdkPack")
 	.Does(() =>
 	{
-		var token = EnvironmentVariable("GITHUB_TOKEN");
-		var owner = EnvironmentVariable("GITHUB_REPOSITORY_OWNER");
-
+		var token = EnvironmentVariable("NPM_TOKEN");
 		if (string.IsNullOrWhiteSpace(token))
-			throw new CakeException("GITHUB_TOKEN environment variable is not set.");
-		if (string.IsNullOrWhiteSpace(owner))
-			throw new CakeException("GITHUB_REPOSITORY_OWNER environment variable is not set.");
+			throw new CakeException("NPM_TOKEN environment variable is not set. Public npm publishing requires an npmjs token with publish rights to the @stdray-npm scope.");
 
 		var absDir = MakeAbsolute(Directory(tsSdkDir)).FullPath;
 		var npmrc = System.IO.Path.Combine(absDir, ".npmrc");
-		// Scope-bound registry: @stdray packages → npm.pkg.github.com. Token used
-		// for authentication. Per-package scope mapping is needed because the
-		// default registry (npmjs.org) is also queried for unscoped deps.
-		System.IO.File.WriteAllText(npmrc,
-			$"@{owner.ToLowerInvariant()}:registry=https://npm.pkg.github.com\n" +
-			$"//npm.pkg.github.com/:_authToken={token}\n");
+		System.IO.File.WriteAllText(npmrc, $"//registry.npmjs.org/:_authToken={token}\n");
 		try
 		{
-			StartProcess("npm", new ProcessSettings
+			var exit = StartProcess("npm", new ProcessSettings
 			{
-				Arguments = "publish",
+				Arguments = "publish --access public",
 				WorkingDirectory = tsSdkDir,
 			});
-			Information("Published TS SDK to GitHub Packages (@{0}/petbox-client)", owner.ToLowerInvariant());
+			if (exit != 0)
+				throw new CakeException($"npm publish failed with exit code {exit}.");
+			Information("Published TS SDK to npmjs (@stdray-npm/petbox-client)");
 		}
 		finally
 		{

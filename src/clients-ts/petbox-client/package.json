@@ -1,5 +1,5 @@
 {
-	"name": "@stdray/petbox-client",
+	"name": "@stdray-npm/petbox-client",
 	"version": "0.1.0",
 	"description": "TypeScript SDK for PetBox — config client with ETag-aware polling. Data + Log surfaces land in 26.3.",
 	"type": "module",
@@ -33,6 +33,7 @@
 		"directory": "src/clients-ts/petbox-client"
 	},
 	"publishConfig": {
-		"registry": "https://npm.pkg.github.com"
+		"registry": "https://registry.npmjs.org",
+		"access": "public"
 	}
 }

@@ -192,7 +192,7 @@ jobs:
           name: nuget-packages
           path: artifacts/*.nupkg
 
-  # ─── npm publish to GitHub Packages on `npm` tag push ───
+  # ─── npm publish to public npmjs on `npm` tag push ───
   npm-publish:
     if: github.event_name == 'push' && github.ref == 'refs/tags/npm'
     runs-on: ubuntu-latest
@@ -220,10 +220,9 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
           restore-keys: nuget-${{ runner.os }}-
 
-      - name: Publish to GitHub Packages npm
+      - name: Publish to public npmjs
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           chmod +x ./build.sh
           ./build.sh --target=NpmPublish
