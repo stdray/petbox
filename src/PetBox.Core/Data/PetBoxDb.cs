@@ -9,10 +9,7 @@ namespace PetBox.Core.Data;
 
 public sealed class PetBoxDb : DataConnection
 {
-	public PetBoxDb(DataOptions<PetBoxDb> options) : base(options.Options)
-	{
-		ConfigureMapping(MappingSchema);
-	}
+	public PetBoxDb(DataOptions<PetBoxDb> options) : base(options.Options) { }
 
 	public ITable<Project> Projects => this.GetTable<Project>();
 	public ITable<Workspace> Workspaces => this.GetTable<Workspace>();
@@ -32,10 +29,19 @@ public sealed class PetBoxDb : DataConnection
 	public ITable<MemoryStoreMeta> MemoryStores => this.GetTable<MemoryStoreMeta>();
 
 	public static DataOptions<PetBoxDb> CreateOptions(string connectionString) =>
-		new(new DataOptions().UseSQLite(connectionString));
+		new(new DataOptions().UseSQLite(connectionString).UseMappingSchema(SharedMappingSchema));
 
-	static void ConfigureMapping(MappingSchema ms)
+	// Fluent mapping is built ONCE into this shared schema and handed to every
+	// connection via DataOptions.UseMappingSchema. The previous approach rebuilt it
+	// in the constructor against each instance's own MappingSchema; since PetBoxDb is
+	// AddScoped (one per request), every request created a fresh MappingSchema and
+	// linq2db's per-schema MappingAttributesCache grew without bound (~290 MB / 3M+
+	// nodes by mid-day, driving the prod OOM — see roadmap ops/petbox-mem-profiling).
+	static readonly MappingSchema SharedMappingSchema = BuildMappingSchema();
+
+	static MappingSchema BuildMappingSchema()
 	{
+		var ms = new MappingSchema();
 		var builder = new FluentMappingBuilder(ms);
 
 		builder.Entity<Workspace>()
@@ -114,5 +120,6 @@ public sealed class PetBoxDb : DataConnection
 			.Property(s => s.CreatedBy).HasLength(100).IsNullable(false);
 
 		builder.Build();
+		return ms;
 	}
 }
