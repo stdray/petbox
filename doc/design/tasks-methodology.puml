@@ -1,0 +1,145 @@
+' PetBox Tasks methodology — design diagrams.
+' Render: plantuml doc/design/tasks-methodology.puml  (emits one image per @startuml block),
+' or open in VS Code (PlantUML ext), or paste a block into plantuml.com/uml.
+
+@startuml 1-db-schema
+title Единая БД tasks-домена
+hide circle
+skinparam linetype ortho
+
+entity TaskBoards {
+  * ProjectKey : text <<PK>>
+  * Name : text <<PK>>
+  --
+  Kind : text  ' spec|ideas|intake|work|free (def free)
+  Description : text?
+  CreatedAt / UpdatedAt
+}
+entity plan_nodes {
+  * Key : text <<PK>>
+  * Version : long <<PK>>
+  --
+  NodeId : text  ' СТАБИЛЬНЫЙ: через ревизии и rename
+  Board : text   ' какая доска
+  Type : text?   ' feature|bug (null на free)
+  Status : text  ' slug
+  Name / Body / Priority / CommitRef?
+  PrevKey? / ActiveFrom / ActiveTo? / Created / Updated
+}
+entity relations {
+  * Id : text <<PK>>
+  --
+  Kind : text  ' task_spec|issue_task|idea_spec|blocks|nfr|dup
+  FromNodeId : text
+  ToNodeId : text
+  ActiveFrom / ActiveTo? / Created / Updated  ' темпорально
+}
+TaskBoards ||--o{ plan_nodes : "Board -> Name"
+plan_nodes ||--o{ relations : "NodeId = FromNodeId"
+plan_nodes ||--o{ relations : "NodeId = ToNodeId"
+note bottom of relations
+  Конец ребра = NodeId (стабильный).
+  Индекс по From и по To — обратный обход для эффектов.
+end note
+@enduml
+
+@startuml 2-board-kinds
+title Роли досок (kind -> типы / поведение) и рёбра между ними
+left to right direction
+rectangle "free (default)\nлюбой тип/статус, без инвариантов" as free
+rectangle "ideas\nidea — быстрый захват, без spec-link" as ideas
+rectangle "intake\nissue (source agent|user)\nбыстрый захват, без spec-link" as intake
+rectangle "work\nfeature|bug\nИНВАРИАНТ: task->spec-leaf" as work
+rectangle "spec\nузлы-требования\nстатус ВЫЧИСЛЯЕМЫЙ (не flow)" as spec
+intake --> work : confirmed => ребро issue->task
+ideas  --> spec : accepted => ребро idea->spec
+work   --> spec : ребро task->spec-leaf (обязателен)
+@enduml
+
+@startuml 3-work-state
+title Автомат work-задачи (feature|bug)
+[*] --> Pending
+Pending --> InProgress
+InProgress --> Review
+Review --> InProgress : reject (с причиной)
+Review --> Done : guard = maintainer\n(агент НЕ может)
+InProgress --> Blocked
+Blocked --> InProgress
+Pending --> Deferred
+Deferred --> Pending
+Pending --> Cancelled
+InProgress --> Cancelled
+Review --> Cancelled
+Done --> [*]
+Cancelled --> [*]
+note right of Review : потолок агента = Review (approve-gate)
+note bottom of Done : effect: закрыть связанный intake-issue\n(обратный обход по issue->task)
+note left of Blocked : живёт только при ребре\n«task blocks task» (фаза позже)
+@enduml
+
+@startuml 4-idea-state
+title Автомат идеи (ideas)
+[*] --> Raw
+Raw --> Exploring
+Exploring --> Rejected : с причиной
+Exploring --> Deferred
+Exploring --> Accepted
+Deferred --> Exploring
+Rejected --> [*]
+Accepted --> [*]
+note right of Accepted : effect: ребро idea->spec\n(создать/уточнить версию спеки)
+note bottom of Rejected : остаётся записью\n«рассмотрено, отклонено: почему»
+@enduml
+
+@startuml 5-issue-state
+title Автомат issue (intake)
+[*] --> Reported
+Reported --> Triage
+Triage --> Confirmed
+Triage --> Duplicate : ребро dup
+Triage --> WontFix : с причиной
+Confirmed --> Done : фаерит ЭФФЕКТ со стороны work\n(когда связанный баг -> Done)
+Duplicate --> [*]
+WontFix --> [*]
+Done --> [*]
+note right of Confirmed : промоут: создать feature/bug на work,\nребро issue->task
+@enduml
+
+@startuml 6-effect-autoclose
+title Сценарий: кросс-бордный эффект авто-закрытия
+actor Agent
+actor Maintainer as M
+participant "Intake" as I
+participant "Work" as W
+database "Relations" as R
+control "FSM effects" as FX
+
+Agent -> I : report.issue -> Issue (reported)
+M -> I : triage -> confirmed
+M -> W : создать bug (new)
+W -> R : ребро issue->task
+W -> W : inprogress -> review (потолок агента)
+M -> W : Done (guard: maintainer)
+W -> FX : on transition -> done
+FX -> R : обратный поиск: to=task, kind=issue_task
+FX -> I : закрыть связанный Issue -> done
+@enduml
+
+@startuml 7-dogfood-e2e
+title Сценарий: сквозной dogfood (idea -> spec -> work -> Done)
+actor Maintainer as M
+actor Agent as A
+participant "Ideas" as ID
+participant "Spec" as SP
+participant "Work" as WK
+database "Relations" as R
+
+M -> ID : idea (raw) «хочу X»
+A -> ID : exploring -> accepted
+ID -> SP : effect idea->spec: создать/уточнить ЛИСТ требования
+A -> WK : feature (new) для листа
+WK -> R : ребро task->spec-leaf (ОБЯЗАТЕЛЕН)
+A -> WK : inprogress -> review (потолок агента)
+M -> WK : Done (approve-gate)
+SP -> SP : rollup листа: пересчитать статус\n(Done / Done-с-дефектами при открытом баге)
+@enduml
