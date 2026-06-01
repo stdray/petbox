@@ -1,8 +1,12 @@
 using System.Net;
+using LinqToDB.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using PetBox.Core.Data;
+using PetBox.Core.Settings;
 
 namespace PetBox.Tests.Web;
 
@@ -14,6 +18,7 @@ namespace PetBox.Tests.Web;
 public sealed class ModuleViewsTests : IAsyncLifetime
 {
 	readonly WebApplicationFactory<Program> _factory;
+	readonly string _baseDir;
 	HttpClient _client = null!;
 
 	const string TestPassword = "test123";
@@ -22,6 +27,7 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 	public ModuleViewsTests()
 	{
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
+		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-modviews-" + Guid.NewGuid().ToString("N"));
 		var dbPath = Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
@@ -38,7 +44,23 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 						["Admin:PasswordHash"] = TestPasswordHash,
 					});
 				});
+				// Isolate Tasks/Memory/Sessions files to a per-test temp dir — otherwise the
+				// test writes into the shared dev data dir and runs migrations there.
+				b.ConfigureServices(svc =>
+				{
+					Replace<PetBox.Tasks.Data.TasksDb>(svc, "tasks", c => new PetBox.Tasks.Data.TasksDb(PetBox.Tasks.Data.TasksDb.CreateOptions(c)), PetBox.Tasks.Data.TasksSchema.Ensure);
+					Replace<PetBox.Memory.Data.MemoryDb>(svc, "memory", c => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(c)), PetBox.Memory.Data.MemorySchema.Ensure);
+					Replace<PetBox.Sessions.Data.SessionsDb>(svc, "sessions", c => new PetBox.Sessions.Data.SessionsDb(PetBox.Sessions.Data.SessionsDb.CreateOptions(c)), PetBox.Sessions.Data.SessionsSchema.Ensure);
+				});
 			});
+	}
+
+	void Replace<TDb>(IServiceCollection svc, string sub, Func<string, TDb> create, Action<string> ensure) where TDb : DataConnection
+	{
+		var existing = svc.SingleOrDefault(d => d.ServiceType == typeof(IScopedDbFactory<TDb>));
+		if (existing is not null) svc.Remove(existing);
+		svc.AddSingleton<IScopedDbFactory<TDb>>(_ => new ScopedDbFactory<TDb>(
+			Path.Combine(_baseDir, sub), Scope.Project, create, ensure));
 	}
 
 	public async Task InitializeAsync()
@@ -60,6 +82,8 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();
+		SqliteConnection.ClearAllPools();
+		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
 	}
 
 	// Logs in (anti-forgery + cookie) and returns the authenticated response for url.
