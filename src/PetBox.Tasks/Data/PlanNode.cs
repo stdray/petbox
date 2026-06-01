@@ -10,6 +10,10 @@ namespace PetBox.Tasks.Data;
 [Table("plan_nodes")]
 public sealed record PlanNode : TemporalRow
 {
+	// Stable identity: assigned at birth, carried across revisions AND renames
+	// (the upsert layer copies it from the prior/source row). Relations bind to
+	// this, not to Key, so links survive a re-key. NOT part of SamePayload.
+	[Column, NotNull] public string NodeId { get; init; } = string.Empty;
 	[Column, NotNull] public string Status { get; init; } = string.Empty;
 	[Column, NotNull] public string Type { get; init; } = string.Empty;
 	// Short human title shown as the node heading; Body holds the longer detail.

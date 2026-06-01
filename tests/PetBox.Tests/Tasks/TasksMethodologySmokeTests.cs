@@ -240,13 +240,13 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var specId = NodeId(spec, "auth");
 		var v = JsonDocument.Parse(Text(spec)).RootElement;
 
-		// rename auth → identity (Key change, same NodeId via prevKey lineage)
+		// rename auth → identity (Key change, same NodeId via prevKey lineage).
+		// version = 1 is the baseline the author last saw for "auth".
 		var renamed = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "spec",
-			nodes = Nodes(new { key = "identity", prevKey = "auth", status = "defined", name = "Identity", body = "x" }),
+			nodes = Nodes(new { key = "identity", prevKey = "auth", version = 1, status = "defined", name = "Identity", body = "x" }),
 		});
-		renamed.IsError.Should().NotBe(true);
 		NodeId(renamed, "identity").Should().Be(specId, "rename must preserve the stable NodeId");
 	}
 

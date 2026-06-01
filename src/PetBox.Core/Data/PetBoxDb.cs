@@ -30,6 +30,7 @@ public sealed class PetBoxDb : DataConnection
 	public ITable<SavedConfigFilter> SavedConfigFilters => this.GetTable<SavedConfigFilter>();
 	public ITable<TaskBoardMeta> TaskBoards => this.GetTable<TaskBoardMeta>();
 	public ITable<MemoryStoreMeta> MemoryStores => this.GetTable<MemoryStoreMeta>();
+	public ITable<Relation> Relations => this.GetTable<Relation>();
 
 	public static DataOptions<PetBoxDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString));

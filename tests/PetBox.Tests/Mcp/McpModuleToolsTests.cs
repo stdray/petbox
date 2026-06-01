@@ -30,6 +30,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	readonly ScopedDbFactory<MemoryDb> _memFactory;
 	readonly ScopedDbFactory<SessionsDb> _sessFactory;
 	readonly TaskBoardStore _boards;
+	readonly RelationStore _relations;
 	readonly MemoryStore _stores;
 	readonly SessionStore _sessions;
 
@@ -50,6 +51,7 @@ public sealed class McpModuleToolsTests : IDisposable
 			c => new SessionsDb(SessionsDb.CreateOptions(c)), SessionsSchema.Ensure);
 
 		_boards = new TaskBoardStore(_db, _tasksFactory);
+		_relations = new RelationStore(_db);
 		_stores = new MemoryStore(_db, _memFactory);
 		_sessions = new SessionStore(_sessFactory);
 	}
@@ -75,7 +77,7 @@ public sealed class McpModuleToolsTests : IDisposable
 			new { key = "phase-16", status = "InProgress", body = "Data", priority = 100 },
 			new { key = "phase-16/wave-1", status = "Done", body = "Foundation", priority = 200 },
 		});
-		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _boards, Proj, "roadmap", nodes, 0));
+		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "roadmap", nodes, 0));
 		up.GetProperty("applied").GetBoolean().Should().BeTrue();
 		up.GetProperty("inserted").GetInt32().Should().Be(2);
 
@@ -89,11 +91,11 @@ public sealed class McpModuleToolsTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _boards, Proj, "b");
-		await TasksTools.UpsertAsync(http, Flags(), _boards, Proj, "b",
+		await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "n", status = "Pending", body = "v1" } }), 0);
-		await TasksTools.UpsertAsync(http, Flags(), _boards, Proj, "b",
+		await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "n", status = "Done", body = "byB", version = 1 } }), 0);
-		var r = Json(await TasksTools.UpsertAsync(http, Flags(), _boards, Proj, "b",
+		var r = Json(await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "n", status = "Done", body = "byA", version = 1 } }), 0));
 
 		r.GetProperty("applied").GetBoolean().Should().BeFalse();
@@ -106,9 +108,9 @@ public sealed class McpModuleToolsTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _boards, Proj, "b");
-		await TasksTools.UpsertAsync(http, Flags(), _boards, Proj, "b",
+		await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "old", status = "Done", body = "x" } }), 0);
-		await TasksTools.UpsertAsync(http, Flags(), _boards, Proj, "b",
+		await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "new", status = "Done", body = "x", version = 1, prevKey = "old" } }), 0);
 
 		var get = Json(await TasksTools.GetAsync(http, Flags(), _boards, Proj, "b"));

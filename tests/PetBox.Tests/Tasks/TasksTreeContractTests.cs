@@ -24,6 +24,7 @@ public sealed class TasksTreeContractTests : IDisposable
 	readonly PetBoxDb _db;
 	readonly ScopedDbFactory<TasksDb> _factory;
 	readonly TaskBoardStore _store;
+	readonly RelationStore _relations;
 
 	public TasksTreeContractTests()
 	{
@@ -36,6 +37,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db, _factory);
+		_relations = new RelationStore(_db);
 	}
 
 	public void Dispose()
@@ -58,7 +60,7 @@ public sealed class TasksTreeContractTests : IDisposable
 			new { phase = "logging", wave = "ingest", status = "Pending", name = "Ingest", body = "ship CLEF", priority = 1 },
 			new { phase = "logging", wave = "ingest", task = "endpoint", status = "Pending", name = "Endpoint", body = "POST endpoint", priority = 2 },
 		});
-		await TasksTools.UpsertAsync(http, Flags(), _store, Proj, "roadmap", nodes);
+		await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "roadmap", nodes);
 
 		var got = Json(await TasksTools.GetAsync(http, Flags(), _store, Proj, "roadmap"));
 		var arr = got.GetProperty("nodes").EnumerateArray().ToList();
@@ -90,7 +92,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		});
 		// GuardAsync surfaces the validation failure as a structured error result
 		// (not a thrown, opaque MCP error).
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, Proj, "roadmap", nodes));
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "roadmap", nodes));
 		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
 	}
 
@@ -105,7 +107,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		{
 			new { phase = "alpha", status = "Pending", name = "Alpha", body = "do alpha", priority = 0 },
 		});
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, Proj, "fresh", nodes));
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "fresh", nodes));
 
 		(await _store.ExistsAsync(Proj, "fresh")).Should().BeTrue();
 
@@ -123,7 +125,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		// array element — the upsert must accept that (regression for D6).
 		var arrayJson = """[{"phase":"alpha","name":"Alpha","status":"Pending","body":"b","priority":0}]""";
 		var nodesAsString = JsonSerializer.SerializeToElement(arrayJson); // ValueKind == String
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, Proj, "strboard", nodesAsString));
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "strboard", nodesAsString));
 		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
 			.Which.GetProperty("name").GetString().Should().Be("Alpha");
 	}

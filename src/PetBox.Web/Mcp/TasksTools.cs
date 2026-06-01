@@ -80,6 +80,7 @@ public static class TasksTools
 				return new
 				{
 					key = n.Key,
+					nodeId = n.NodeId,
 					phase = id?.PhaseKey ?? n.Key,
 					wave = id?.WaveKey,
 					task = id?.TaskKey,
@@ -116,9 +117,9 @@ public static class TasksTools
 		state since `sinceVersion` — advance your cursor and merge, no need to re-read.
 		""")]
 	public static async Task<object> UpsertAsync(
-		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
+		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards, IRelationStore relations,
 		string projectKey, string board,
-		[Description("JSON array of node objects")] JsonElement nodes,
+		[Description("JSON array of node objects. A node may carry specRef (a spec NodeId) — on a work board this links the task to that spec node (task_spec edge).")] JsonElement nodes,
 		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -129,22 +130,62 @@ public static class TasksTools
 		var kind = WorkflowCatalog.ParseKind(await boards.KindAsync(projectKey, board, ct));
 		var ctx = boards.GetContext(projectKey, board);
 		var prior = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
-			.ToDictionary(n => n.Key, n => n.Status, StringComparer.Ordinal);
+			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
 		var desired = ParseNodes(nodes).Select(n => ApplyWorkflow(kind, n, prior)).ToArray();
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
-		if (r.Applied) await boards.TouchAsync(projectKey, board, ct);
+		if (r.Applied)
+		{
+			await boards.TouchAsync(projectKey, board, ct);
+			await LinkSpecRefsAsync(relations, projectKey, nodes, desired, ct);
+		}
 		return Serialize(r);
 	});
 
-	// Default the status (to the workflow's initial) and validate status/transition
-	// against the board's kind/type — the single workflow validation point.
-	static PlanNode ApplyWorkflow(BoardKind kind, PlanNode node, Dictionary<string, string> prior)
+	// specRef on a node = "this task implements that spec node" → create a task_spec
+	// edge (task NodeId -> spec NodeId) after the upsert applies. Idempotent.
+	static async Task LinkSpecRefsAsync(IRelationStore relations, string projectKey, JsonElement nodes, PlanNode[] desired, CancellationToken ct)
+	{
+		var specRefs = ParseSpecRefs(nodes);
+		if (specRefs.Count == 0) return;
+		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
+		foreach (var (key, specRef) in specRefs)
+			if (byKey.TryGetValue(key, out var nid) && nid.Length > 0)
+				await relations.CreateAsync(projectKey, "task_spec", nid, specRef, ct);
+	}
+
+	static Dictionary<string, string> ParseSpecRefs(JsonElement nodes)
+	{
+		using var doc = nodes.ValueKind == JsonValueKind.String
+			? JsonDocument.Parse(nodes.GetString() ?? "")
+			: (JsonDocument?)null;
+		var arr = doc?.RootElement ?? nodes;
+		var map = new Dictionary<string, string>(StringComparer.Ordinal);
+		if (arr.ValueKind != JsonValueKind.Array) return map;
+		foreach (var e in arr.EnumerateArray())
+		{
+			var sr = ModuleMcp.OptStr(e, "specRef");
+			if (!string.IsNullOrWhiteSpace(sr)) map[ResolveKey(e)] = sr!;
+		}
+		return map;
+	}
+
+	// Default status, assign/carry the stable NodeId (new = fresh, edit = keep,
+	// rename = inherit from source), and validate status/transition — the single
+	// workflow validation point.
+	static PlanNode ApplyWorkflow(BoardKind kind, PlanNode node, Dictionary<string, PlanNode> prior)
 	{
 		var type = node.Type.Length == 0 ? null : node.Type;
 		var wf = WorkflowCatalog.For(kind, type);
 		var n = node.Status.Length > 0 ? node : node with { Status = wf?.Initial ?? "Pending" };
-		var from = prior.TryGetValue(n.Key, out var s) ? s
-			: (n.PrevKey is not null && prior.TryGetValue(n.PrevKey, out var ps) ? ps : null);
+
+		var current = prior.GetValueOrDefault(n.Key);
+		var source = n.PrevKey is not null ? prior.GetValueOrDefault(n.PrevKey) : null;
+		var nodeId = current?.NodeId is { Length: > 0 } cid ? cid
+			: source?.NodeId is { Length: > 0 } sid ? sid
+			: Guid.NewGuid().ToString("N");
+		n = n with { NodeId = nodeId };
+
+		var from = current?.Status ?? source?.Status;
 		var res = WorkflowEngine.Validate(kind, type, from, n.Status, hasReason: !string.IsNullOrWhiteSpace(n.Body));
 		if (!res.Ok) throw new ArgumentException(res.Error);
 		return n;
@@ -221,6 +262,7 @@ public static class TasksTools
 		return new
 		{
 			key = n.Key,
+			nodeId = n.NodeId,
 			phase = id?.PhaseKey ?? n.Key,
 			wave = id?.WaveKey,
 			task = id?.TaskKey,
