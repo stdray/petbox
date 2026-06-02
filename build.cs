@@ -24,6 +24,9 @@ var clientConfigProject = "./src/clients-net/PetBox.Client.Config/PetBox.Client.
 // TS SDK — published to GitHub Packages npm registry via `npm` tag push.
 var tsSdkDir = "./src/clients-ts/petbox-client";
 
+// Python SDK — published to public PyPI via `pypi` tag push.
+var pyClientDir = "./src/clients-py/petbox-client";
+
 GitVersion gitVersion = null;
 var computedDockerTag = "latest";
 
@@ -38,6 +41,13 @@ DotNetBuildSettings CreateVersionedBuildSettings(string buildVersion, string sho
 			.WithProperty("GitShortSha", shortSha)
 			.WithProperty("GitCommitDate", commitDate)
 	};
+
+void RunUv(string args, string workingDir)
+{
+	var exit = StartProcess("uv", new ProcessSettings { Arguments = args, WorkingDirectory = workingDir });
+	if (exit != 0)
+		throw new CakeException($"uv {args} failed with exit code {exit}");
+}
 
 // ─── Tasks ───
 
@@ -370,6 +380,69 @@ Task("NpmPublish")
 		}
 	});
 
+// ─── Python SDK build + publish (PyPI) ───
+
+Task("PyClientInstall")
+	.Does(() => RunUv("sync --frozen", pyClientDir));
+
+Task("PyClientLint")
+	.IsDependentOn("PyClientInstall")
+	.Does(() =>
+	{
+		RunUv("run ruff check .", pyClientDir);
+		RunUv("run ruff format --check .", pyClientDir);
+	});
+
+Task("PyClientTypecheck")
+	.IsDependentOn("PyClientInstall")
+	.Does(() => RunUv("run mypy", pyClientDir));
+
+Task("PyClientTest")
+	.IsDependentOn("PyClientInstall")
+	.Does(() => RunUv("run pytest", pyClientDir));
+
+Task("PyClientBuild")
+	.IsDependentOn("PyClientInstall")
+	.Does(() => RunUv("build", pyClientDir));
+
+// Stamp the version from GitVersion (PEP 440), then build sdist + wheel into dist/.
+// GitVersion runs standalone (only needs git, not .NET) so we avoid the full
+// Clean→Restore→Version chain which requires the entire solution to build.
+Task("PyClientPack")
+	.IsDependentOn("PyClientBuild")
+	.Does(() =>
+	{
+		var gv = GitVersion(new GitVersionSettings { OutputType = GitVersionOutput.Json, NoFetch = true });
+		// Map GitVersion → PEP 440. Tagged releases use MajorMinorPatch; everything else
+		// becomes a developmental release (.devN) so PyPI accepts it (no '+' local segment,
+		// which PyPI rejects) and it sorts before the matching release.
+		var pep440 = string.IsNullOrEmpty(gv.PreReleaseTag)
+			? gv.MajorMinorPatch
+			: $"{gv.MajorMinorPatch}.dev{gv.CommitsSinceVersionSource ?? 0}";
+		Information("Stamping Python SDK version: {0} (GitVersion: {1})", pep440, gv.FullSemVer);
+
+		// Wipe stale artifacts so `uv publish` only sees this build's files.
+		CleanDirectory($"{pyClientDir}/dist");
+		RunUv($"version --no-sync {pep440}", pyClientDir);
+		RunUv("build", pyClientDir);
+	});
+
+// Publishes the Python SDK to the PUBLIC PyPI registry. Requires PYPI_TOKEN — a PyPI
+// API token (project- or account-scoped) with upload rights. `uv publish` uploads
+// everything under dist/; re-runs of the same version are rejected by PyPI, so the
+// `pypi` tag should move only when the version actually advances.
+Task("PyPiPublish")
+	.IsDependentOn("PyClientPack")
+	.Does(() =>
+	{
+		var token = EnvironmentVariable("PYPI_TOKEN");
+		if (string.IsNullOrWhiteSpace(token))
+			throw new CakeException("PYPI_TOKEN environment variable is not set. Public PyPI publishing requires a PyPI API token with upload rights.");
+
+		RunUv($"publish --token {token}", pyClientDir);
+		Information("Published Python SDK to PyPI (petbox-client)");
+	});
+
 // ─── Dev loop ───
 
 Task("Dev")
@@ -425,7 +498,10 @@ Task("Verify")
 	.IsDependentOn("Test")
 	.IsDependentOn("TsSdkLint")
 	.IsDependentOn("TsSdkTypecheck")
-	.IsDependentOn("TsSdkTest");
+	.IsDependentOn("TsSdkTest")
+	.IsDependentOn("PyClientLint")
+	.IsDependentOn("PyClientTypecheck")
+	.IsDependentOn("PyClientTest");
 
 Task("CI")
 	.IsDependentOn("Verify");

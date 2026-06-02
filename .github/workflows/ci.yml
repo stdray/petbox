@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['deploy', 'nuget', 'npm']
+    tags: ['deploy', 'nuget', 'npm', 'pypi']
   pull_request:
 
 permissions:
@@ -36,6 +36,8 @@ jobs:
         with:
           bun-version: latest
 
+      - uses: astral-sh/setup-uv@v5
+
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
@@ -50,7 +52,7 @@ jobs:
         run: ./build.sh --target=CI
 
   publish:
-    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm'
+    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/pypi'
     runs-on: ubuntu-latest
     outputs:
       dockerTag: ${{ steps.publish.outputs.dockerTag }}
@@ -231,3 +233,32 @@ jobs:
         run: |
           chmod +x ./build.sh
           ./build.sh --target=NpmPublish
+
+  # ─── Python SDK publish to public PyPI on `pypi` tag push ───
+  pypi-publish:
+    if: github.event_name == 'push' && github.ref == 'refs/tags/pypi'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Publish to public PyPI
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          chmod +x ./build.sh
+          ./build.sh --target=PyPiPublish
