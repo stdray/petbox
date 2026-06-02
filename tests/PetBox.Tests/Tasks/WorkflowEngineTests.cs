@@ -88,6 +88,25 @@ public sealed class WorkflowEngineTests
 	}
 
 	[Fact]
+	public void UnchangedStatus_IsAllowed_EvenIfInvalidForKind()
+	{
+		// A node carrying a legacy/invalid-for-kind status (e.g. "Pending" left by an older
+		// creation path on an ideas board) must stay editable: an upsert that doesn't change
+		// the status should not re-litigate it. (Bug #2.)
+		WorkflowEngine.Validate(BoardKind.Ideas, "idea", "Pending", "Pending").Ok.Should().BeTrue();
+		WorkflowEngine.Validate(BoardKind.Spec, "spec", "Pending", "Pending").Ok.Should().BeTrue();
+	}
+
+	[Fact]
+	public void RecoverFromUnknownStatus_ToValidStatus_IsAllowed()
+	{
+		// Moving OUT of an unknown current status into a valid one is recovery, not a transition.
+		WorkflowEngine.Validate(BoardKind.Ideas, "idea", "Pending", "raw").Ok.Should().BeTrue();
+		// ...but the target must still be valid for the kind.
+		WorkflowEngine.Validate(BoardKind.Ideas, "idea", "Pending", "banana").Ok.Should().BeFalse();
+	}
+
+	[Fact]
 	public void ParseKind_DefaultsToFree()
 	{
 		WorkflowCatalog.ParseKind(null).Should().Be(BoardKind.Free);

@@ -21,6 +21,12 @@ public static class WorkflowEngine
 		if (kind == BoardKind.Free)
 			return WorkflowResult.Success; // free boards: any status, no flow
 
+		// Unchanged status: don't re-litigate it. Editing a node's other fields must not fail
+		// because its (carried-over) status isn't in this kind's workflow — e.g. a legacy/invalid
+		// status left by an older creation path. The status only gets validated when it CHANGES.
+		if (fromSlug is not null && string.Equals(fromSlug, toSlug, StringComparison.OrdinalIgnoreCase))
+			return WorkflowResult.Success;
+
 		var wf = WorkflowCatalog.For(kind, type);
 		if (wf is null)
 			return WorkflowResult.Fail($"board kind '{kind.ToString().ToLowerInvariant()}' needs a known type ({WorkflowCatalog.ValidTypes(kind)}); got '{type}'");
@@ -28,6 +34,11 @@ public static class WorkflowEngine
 		var to = wf.Status(toSlug);
 		if (to is null)
 			return WorkflowResult.Fail($"invalid status '{toSlug}' for {kind.ToString().ToLowerInvariant()}/{wf.Type}; valid: {wf.Slugs()}");
+
+		// Recovery: if the current status isn't known to this workflow (legacy/invalid), treat the
+		// move as a fresh start so a stuck node can be brought back to any valid status.
+		if (fromSlug is not null && wf.Status(fromSlug) is null)
+			fromSlug = null;
 
 		var isChange = fromSlug is not null && !string.Equals(fromSlug, toSlug, StringComparison.OrdinalIgnoreCase);
 		if (isChange)

@@ -122,11 +122,25 @@ public sealed class TaskBoardModel : PageModel
 
 		if (!string.IsNullOrWhiteSpace(name))
 		{
+			// Status/type must fit the board's kind — a cold "Pending" is invalid on kinded
+			// boards (ideas/spec/intake) and strands the node outside its FSM. Use the kind's
+			// initial status + its node type.
+			var meta = await _store.FindAsync(ProjectKey, Board, ct);
+			var kind = WorkflowCatalog.ParseKind(meta?.Kind);
+			var type = kind switch
+			{
+				BoardKind.Ideas => "idea",
+				BoardKind.Spec => "spec",
+				BoardKind.Intake => "issue",
+				_ => "",
+			};
+			var status = WorkflowCatalog.For(kind, type.Length == 0 ? null : type)?.Initial ?? "Pending";
+
 			var key = new TaskNodeId("incoming", GenKey(name), null).ToKey();
 			var ctx = _store.GetContext(ProjectKey, Board);
 			await TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PlanNode { Key = key, Version = 0, Status = "Pending", Name = name.Trim(), Body = body?.Trim() ?? string.Empty, Priority = priority },
+				new PlanNode { Key = key, Version = 0, Status = status, Type = type, Name = name.Trim(), Body = body?.Trim() ?? string.Empty, Priority = priority },
 			}, ct: ct);
 		}
 
