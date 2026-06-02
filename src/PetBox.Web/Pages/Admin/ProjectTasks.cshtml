@@ -86,6 +86,17 @@
 					placeholder="the plan"
 					data-testid="board-create-desc" />
 			</label>
+			<label class="form-control sm:col-span-1">
+				<span class="label-text">Kind</span>
+				<select name="kind" class="select select-bordered select-sm" data-testid="board-create-kind">
+					<option value="free" selected>free — no rules (scratch / legacy)</option>
+					<option value="spec">spec — requirement tree</option>
+					<option value="work">work — feature/bug, FSM</option>
+					<option value="ideas">ideas — fuzzy thinking</option>
+					<option value="intake">intake — inbound issues</option>
+				</select>
+				<span class="text-xs opacity-60 mt-1">Drives statuses, links and invariants. Can't be changed later.</span>
+			</label>
 		</div>
 		<div class="card-actions mt-3">
 			<button type="submit" class="btn btn-sm btn-primary" data-testid="board-create-submit">Create</button>

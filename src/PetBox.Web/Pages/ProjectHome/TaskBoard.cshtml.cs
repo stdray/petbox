@@ -115,7 +115,7 @@ public sealed class TaskBoardModel : PageModel
 
 	// Quick-add from the board UI: drops a new task into the `incoming` phase with an
 	// auto-generated key (slug of the name + short unique suffix).
-	public async Task<IActionResult> OnPostCreateAsync(string name, long priority, CancellationToken ct)
+	public async Task<IActionResult> OnPostCreateAsync(string name, string? body, long priority, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _store.ExistsAsync(ProjectKey, Board, ct)) return NotFound();
@@ -126,7 +126,7 @@ public sealed class TaskBoardModel : PageModel
 			var ctx = _store.GetContext(ProjectKey, Board);
 			await TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PlanNode { Key = key, Version = 0, Status = "Pending", Name = name.Trim(), Body = string.Empty, Priority = priority },
+				new PlanNode { Key = key, Version = 0, Status = "Pending", Name = name.Trim(), Body = body?.Trim() ?? string.Empty, Priority = priority },
 			}, ct: ct);
 		}
 

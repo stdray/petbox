@@ -48,13 +48,13 @@ public sealed class ProjectTasksModel : PageModel
 		return Page();
 	}
 
-	public async Task<IActionResult> OnPostCreateAsync(string name, string? description)
+	public async Task<IActionResult> OnPostCreateAsync(string name, string? description, string? kind)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
 		try
 		{
-			await _store.CreateAsync(ProjectKey, name?.Trim() ?? string.Empty, description);
+			await _store.CreateAsync(ProjectKey, name?.Trim() ?? string.Empty, description, kind ?? "free");
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{
