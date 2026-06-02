@@ -255,4 +255,25 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		(await resp.Content.ReadAsStringAsync()).Should().Contain("doc-philosophy");
 	}
+
+	[Fact]
+	public async Task Doc_Overview_IsPublic_ShowsModules()
+	{
+		using var resp = await _client.GetAsync("/doc/overview");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("doc-overview");
+		html.Should().Contain("petbox-client"); // published client lib documented
+	}
+
+	[Fact]
+	public async Task Doc_Onboarding_IsPublic_ShowsStagesAndGates()
+	{
+		using var resp = await _client.GetAsync("/doc/onboarding");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("doc-onboarding");
+		html.Should().Contain("PETBOX_API_KEY"); // env-var stage
+		html.Should().Contain("approve gate"); // comprehension gate content
+	}
 }

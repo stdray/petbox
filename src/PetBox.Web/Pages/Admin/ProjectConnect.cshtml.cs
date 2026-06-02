@@ -52,9 +52,12 @@ public sealed class ProjectConnectModel : PageModel
 	// it works behind a reverse proxy without extra config.
 	public string McpUrl => $"{Request.Scheme}://{Request.Host}{Request.PathBase}/mcp";
 
-	// Public, key-free setup guide (tree model, per-agent config, SKILL.md template).
-	// The prompt links here instead of duplicating that content.
-	public string DocAgentUrl => $"{Request.Scheme}://{Request.Host}{Request.PathBase}/doc/agent";
+	// Public, key-free docs. The prompt links here instead of duplicating content.
+	string DocBase => $"{Request.Scheme}://{Request.Host}{Request.PathBase}";
+	public string DocAgentUrl => $"{DocBase}/doc/agent";
+	public string DocOverviewUrl => $"{DocBase}/doc/overview";
+	public string DocMethodologyUrl => $"{DocBase}/doc/methodology";
+	public string DocOnboardingUrl => $"{DocBase}/doc/onboarding";
 
 	public async Task<IActionResult> OnGetAsync()
 	{

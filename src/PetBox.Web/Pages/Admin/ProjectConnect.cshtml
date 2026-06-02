@@ -7,6 +7,9 @@
 	var key = Model.NewKey;
 	var proj = Model.ProjectKey;
 	var doc = Model.DocAgentUrl;
+	var onboarding = Model.DocOnboardingUrl;
+	var overview = Model.DocOverviewUrl;
+	var methodology = Model.DocMethodologyUrl;
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
@@ -84,10 +87,12 @@ else
 	<div class="max-w-3xl" data-testid="connect-instructions">
 		<p class="text-sm mb-2">
 			Paste the block below to your coding agent. It carries the connection secrets and points the
-			agent at the full, public setup guide (<a href="@doc" target="_blank" rel="noopener">@doc</a>)
-			for the per-agent config, the plan-tree model and a SKILL.md template — so nothing is duplicated.
+			agent at the public docs — the staged
+			<a href="@onboarding" target="_blank" rel="noopener">onboarding runbook</a>, the
+			<a href="@overview" target="_blank" rel="noopener">overview</a> and the
+			<a href="@methodology" target="_blank" rel="noopener">methodology</a> — so nothing is duplicated.
 		</p>
-		<pre class="bg-base-200 border border-base-300 rounded p-3 text-xs whitespace-pre-wrap" data-testid="connect-agent-prompt"><code>Connect yourself to this project's PetBox server over MCP, then verify.
+		<pre class="bg-base-200 border border-base-300 rounded p-3 text-xs whitespace-pre-wrap" data-testid="connect-agent-prompt"><code>Connect yourself to this project's PetBox server over MCP, then onboard end-to-end.
 
 Connection details:
 - MCP endpoint (HTTP/streamable): @mcp
@@ -95,22 +100,34 @@ Connection details:
 - Project key (pass as projectKey in every tool call): @proj
 - MCP server name to register: petbox
 
-Full setup guide (public, no auth — fetch and follow it):
-  @doc
+Follow the staged onboarding runbook (public, no auth — fetch and follow it):
+  @onboarding
+It links the overview (@overview) and the methodology, and walks you through each
+stage with a validation gate. Do the stages in order and do not skip a gate:
 
-Do the following:
-1. Read the guide above. Add a PROJECT-level MCP server named "petbox" in the config
-   file YOUR agent reads (the guide lists the path per agent type), using the MCP
-   endpoint + X-Api-Key header above.
-2. Set the key as an environment variable PETBOX_API_KEY (the config references it as
-   ${PETBOX_API_KEY}, expanded from your agent's process env) — and never commit it.
-3. Optionally add the petbox SKILL.md from the guide.
-4. Restart your MCP connection and verify by calling  tasks.board_list  with
-   projectKey "@proj". An empty list (not an auth error) means it works.
+1. Set PETBOX_API_KEY in your process env from the key above (never commit it). Confirm
+   it is non-empty.
+2. Add a PROJECT-level MCP server named "petbox" (HTTP/streamable, the endpoint above,
+   header  X-Api-Key: ${PETBOX_API_KEY} ), then RESTART your MCP connection. Verify with
+   tasks.board_list projectKey "@proj" — an empty list (not an auth error) means it works.
+3. Read the overview + methodology, then report back, in your own words: the board kinds,
+   how nodes are addressed (l1/l2/l3 + title), the spec-link invariant, and the approve
+   gate (your ceiling is Review — never set Done). Wait for the maintainer to confirm.
+4. Optionally install the petbox SKILL.md (see the connect guide: @doc).
+5. Then plan your implementation ON this PetBox backend and track it IN PetBox: capture
+   requirements on a spec board, technical tasks on a work board (linked via specRef),
+   ideas on an ideas board. Drive work to Review; leave Done to the maintainer.</code></pre>
+	</div>
 
-Remember: a plan is a Phase > Wave > Task tree — identify nodes by phase/wave/task (not a
-flat label), and give each node a short name plus a detailed body. See the guide for the
-full tool list and examples.</code></pre>
+	<div class="mt-4 flex flex-wrap items-center gap-2" data-testid="connect-doc-links">
+		<span class="text-sm opacity-70">Docs for the agent:</span>
+		<a href="@onboarding" target="_blank" rel="noopener" class="link link-primary text-sm">Onboarding</a>
+		<span class="opacity-40">·</span>
+		<a href="@overview" target="_blank" rel="noopener" class="link link-primary text-sm">Overview</a>
+		<span class="opacity-40">·</span>
+		<a href="@doc" target="_blank" rel="noopener" class="link link-primary text-sm">Connect guide</a>
+		<span class="opacity-40">·</span>
+		<a href="@methodology" target="_blank" rel="noopener" class="link link-primary text-sm">Methodology</a>
 	</div>
 
 	<div class="mt-4">

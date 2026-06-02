@@ -84,6 +84,8 @@ public static class Routes
 
 	// Public documentation — no auth, so agents can fetch it by URL with no cookie/key.
 	public static string Doc() => "/doc";
+	public static string DocOverview() => "/doc/overview";
+	public static string DocOnboarding() => "/doc/onboarding";
 	public static string DocAgent() => "/doc/agent";
 	public static string DocMethodology() => "/doc/methodology";
 	public static string DocPhilosophy() => "/doc/methodology/philosophy";

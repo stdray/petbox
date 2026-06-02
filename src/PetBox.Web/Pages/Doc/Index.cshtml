@@ -20,6 +20,24 @@
 		</p>
 		<ul class="flex flex-col gap-3" data-testid="doc-index-list">
 			<li class="card bg-base-200 border border-base-300">
+				<a href="@Routes.DocOverview()" class="card-body p-4 hover:text-primary" data-testid="doc-link-overview">
+					<div class="font-semibold">PetBox overview</div>
+					<div class="text-sm opacity-70">
+						What PetBox is, the modules (config, logs, data, dashboard, tasks/memory/sessions) and how
+						to consume them — REST/MCP and the published client libraries. Start here.
+					</div>
+				</a>
+			</li>
+			<li class="card bg-base-200 border border-base-300">
+				<a href="@Routes.DocOnboarding()" class="card-body p-4 hover:text-primary" data-testid="doc-link-onboarding">
+					<div class="font-semibold">Agent onboarding (staged runbook)</div>
+					<div class="text-sm opacity-70">
+						The end-to-end sequence — key → env var → MCP → comprehension → skill → first real plan —
+						with a validation gate at every stage. Follow this when bringing an agent online.
+					</div>
+				</a>
+			</li>
+			<li class="card bg-base-200 border border-base-300">
 				<a href="@Routes.DocAgent()" class="card-body p-4 hover:text-primary" data-testid="doc-link-agent">
 					<div class="font-semibold">Connect a coding agent (MCP)</div>
 					<div class="text-sm opacity-70">
