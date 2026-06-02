@@ -49,35 +49,37 @@ re-expression must keep the suite green and preserve error messages.
 
 ---
 
-## Phase 3 — single physical DB with per-module bounded context: OPEN DECISION + MIGRATION
+## Phase 3 — single physical DB with per-module bounded context: CLOSED (won't do)
 
-Plan target: one physical SQLite DB, each module mapped to only its own tables (a bounded
-context) so it can be split back out later. Two unresolved points:
+**Decision 2026-06-03 (user): Phase 3 is closed, not executed.** Rationale:
 
-1. **Per-scope file fate (the flagged sub-decision):** today Tasks/Memory/Log/Data are
-   *sharded per scope* (`tasks/<proj>/<board>.db`, one file per board/store/log/userdb) via
-   `IScopedDbFactory<T>`. "One physical DB" forces a choice:
-   - (a) **Collapse** every scope's rows into shared tables keyed by (project, scope) — true
-     single DB, but loses per-file isolation/quota and is a large temporal-data migration.
-   - (b) **Keep sharding**, and only merge the *catalog* (already in `petbox.db`) — i.e. Phase 3
-     becomes "single catalog DB + bounded contexts over the existing shards." Much lower risk.
-   - The user-facing Data tier explicitly stays per-file (quota/isolation per user DB), so (b)
-     is likely right at least there. **NEEDS A DECISION before any code.**
-2. **Migration is the stop line.** The plan's zero-loss procedure (SSH to prod, `.backup`/
-   `VACUUM INTO` snapshot, off-box `tar`+`scp`, FluentMigrator-based migrator preserving
-   temporal columns + `Relation`, row-count reconciliation, cutover keeping originals) is the
-   *physical transfer of data* — explicitly out of scope for the autonomous run.
+- Per-module *content* contexts already exist and are already bounded: `TasksDb` / `MemoryDb`
+  / `SessionsDb` / `LogDb` are each a `DataConnection` over their own shard file and see only
+  their own tables. Only the *catalog* god-context `PetBoxDb` mixes modules' rows — splitting
+  it would be the same file/tables behind narrower views (cosmetic, and risky given its reach).
+- So the "keep-shard + single catalog + bounded contexts" option (b) moves NO data and has
+  almost no material code to write — it largely affirms what already exists.
+- The "collapse all shards into shared tables" option (a) would be a true single DB but: (i)
+  loses per-file isolation + quotas (the user-facing Data tier must stay per-file regardless),
+  and (ii) requires a large temporal-data migration on prod.
+- The only concrete wins of a physical merge are atomic cross-module writes (today a
+  `tasks.upsert` writes the node to its shard and the `Relation` edge to `petbox.db` in two
+  files, non-atomic) and one-file backup. For a single-user system the atomicity gap is
+  low-stakes and idempotently self-heals on re-upsert; if it ever bites, fix it narrowly
+  (move `Relations` into the board shard, or wrap the two writers in one transaction where it
+  matters) rather than merging every DB.
 
-**Phase 3 is blocked on decision (1).** No code should land until the file-fate question is
-answered, because it dictates the entire context/mapping shape.
+Sharding is treated as a **feature** (isolation, per-file quota, `rm`-to-delete), not debt.
+The service layer (Phases 1–2) already delivered the actual goal — one door per module, no
+divergent DB paths. **The refactor is considered complete at Phase 2.**
 
 ---
 
-## Recommended next steps (need user input)
+## Done / remaining
 
-- Confirm the Phase 2 immutable-field invariants (type/NodeId after create) → then implement
-  the `EntityChange<PlanNode>` validator slice on Tasks as the exemplar.
-- Decide Phase 3 file-fate (collapse vs keep-shard + single catalog) → then design the context
-  mapping; run the prod migration as a separate, supervised step.
-- Merge/deploy `feat/service-layer` (Phase 1 + 1g) when ready; per deploy ritual, run a live
-  smoke against prod MCP/REST after (see `feedback_post_deploy_live_smoke`).
+- Phase 1 + 1g + Phase 2 slice: **done**, committed on `feat/service-layer`.
+- Phase 3: **closed (won't do)** — see above.
+- Remaining: merge/deploy `feat/service-layer` when ready; per deploy ritual run a live smoke
+  against prod MCP/REST after (see `feedback_post_deploy_live_smoke`). Optional low-priority
+  follow-ups: route the Data/Log browse pages + OTLP ingestion through their services; tighten
+  the Tasks quick-add path.
