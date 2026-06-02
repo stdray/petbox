@@ -62,6 +62,19 @@ cfg.on("change", next => { /* hot-reload */ });
     o.Tags    = new() { ["project"] = "kpvotes", ["service"] = "bot" };
 });
 // resolved config flows into IConfiguration; ETag polling hot-reloads it.</code></pre>
+		<h3>Python — <code>petbox-client</code> (PyPI)</h3>
+		<pre><code>pip install petbox-client</code></pre>
+		<pre><code>import os
+from petbox_client import PetBoxConfigClient, PetBoxConfigClientOptions
+
+client = PetBoxConfigClient(PetBoxConfigClientOptions(
+    endpoint="@origin",
+    api_key=os.environ["PETBOX_API_KEY"],
+    tags={"project": "kpvotes", "service": "bot"},
+))
+config = client.start()                  # first fetch + background ETag polling
+client.on("change", lambda cfg: ...)     # hot-reload
+# one-shot (no polling): fetch_config(...)</code></pre>
 
 		<h2>Building on PetBox (for agents)</h2>
 		<p>
