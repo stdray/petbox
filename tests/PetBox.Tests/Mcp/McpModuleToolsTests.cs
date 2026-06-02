@@ -12,6 +12,7 @@ using PetBox.Core.Settings;
 using PetBox.Memory.Data;
 using PetBox.Sessions.Data;
 using PetBox.Memory.Services;
+using PetBox.Sessions.Services;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
@@ -36,6 +37,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	readonly TasksService _tasks;
 	readonly MemoryStore _stores;
 	readonly MemoryService _memory;
+	readonly SessionService _sessionSvc;
 	readonly SessionStore _sessions;
 
 	public McpModuleToolsTests()
@@ -60,6 +62,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		_stores = new MemoryStore(_db, _memFactory);
 		_memory = new MemoryService(_stores);
 		_sessions = new SessionStore(_sessFactory);
+		_sessionSvc = new SessionService(_sessions);
 	}
 
 	public void Dispose()
@@ -175,12 +178,12 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Session_Append_Get_List()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await SessionTools.AppendAsync(http, Flags(), _sessions, Proj, "s1", "claude-code", "# plan");
+		await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "s1", "claude-code", "# plan");
 
-		var got = Json(await SessionTools.GetAsync(http, Flags(), _sessions, Proj, "s1"));
+		var got = Json(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s1"));
 		got.GetProperty("content").GetString().Should().Be("# plan");
 
-		var list = Json(await SessionTools.ListAsync(http, Flags(), _sessions, Proj));
+		var list = Json(await SessionTools.ListAsync(http, Flags(), _sessionSvc, Proj));
 		list.GetProperty("sessions").EnumerateArray().Should().ContainSingle();
 	}
 

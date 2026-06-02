@@ -89,6 +89,7 @@ public partial class Program
 				Path.Combine(ResolveDataDir(sp), "sessions"), PetBox.Core.Settings.Scope.Project,
 				cs => new PetBox.Sessions.Data.SessionsDb(PetBox.Sessions.Data.SessionsDb.CreateOptions(cs)), PetBox.Sessions.Data.SessionsSchema.Ensure));
 		builder.Services.AddScoped<PetBox.Sessions.Data.ISessionStore, PetBox.Sessions.Data.SessionStore>();
+		builder.Services.AddScoped<PetBox.Sessions.Contract.ISessionService, PetBox.Sessions.Services.SessionService>();
 		// Periodic VACUUM INTO snapshots of every internal db; unconditional (data
 		// safety is cross-cutting, not feature-gated).
 		builder.Services.AddHostedService(sp => new PetBox.Core.Data.BackupService(

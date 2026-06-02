@@ -2,8 +2,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
-using PetBox.Core.Data.Temporal;
-using PetBox.Sessions.Data;
+using PetBox.Sessions.Contract;
 
 namespace PetBox.Web.Sessions;
 
@@ -18,7 +17,7 @@ public static class SessionApi
 	}
 
 	static async Task<IResult> AppendAsync(
-		HttpContext ctx, string projectKey, string sessionId, ISessionStore sessions, CancellationToken ct)
+		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
 	{
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
 		if (!ProjectScope.Authorizes(claim, projectKey))
@@ -33,12 +32,10 @@ public static class SessionApi
 		if (string.IsNullOrWhiteSpace(content))
 			return Results.BadRequest(new { error = "empty body" });
 
+		// Last-write-wins: read the current version as the baseline so repeated per-turn
+		// pushes never conflict.
 		var current = await sessions.GetAsync(projectKey, sessionId, ct);
-		var db = sessions.GetContext(projectKey);
-		var r = await TemporalStore.UpsertAsync(db, new[]
-		{
-			new SessionRow { Key = sessionId, Version = current?.Version ?? 0, Agent = agent, Content = content },
-		}, ct: ct);
+		var r = (await sessions.AppendAsync(projectKey, sessionId, agent, content, current?.Version ?? 0, ct)).Result;
 		return Results.Ok(new { applied = r.Applied, currentVersion = r.CurrentVersion });
 	}
 }
