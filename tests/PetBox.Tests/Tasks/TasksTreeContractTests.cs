@@ -62,7 +62,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		});
 		await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "roadmap", nodes);
 
-		var got = Json(await TasksTools.GetAsync(http, Flags(), _store, Proj, "roadmap"));
+		var got = Json(await TasksTools.GetAsync(http, Flags(), _store, _relations, Proj, "roadmap"));
 		var arr = got.GetProperty("nodes").EnumerateArray().ToList();
 		arr.Should().HaveCount(3);
 

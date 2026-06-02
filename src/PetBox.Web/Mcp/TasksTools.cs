@@ -56,9 +56,9 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]
-	[Description("Return the active plan nodes of a board as a 1-to-3 level tree, ordered by priority then path. Each node carries key, nodeId, l1, l2, l3, depth, parentKey, status, type, title, body, priority, version, renamedFrom. Requires tasks:read.")]
+	[Description("Return the active plan nodes of a board as a 1-to-3 level tree, ordered by priority then path. Each node carries key, nodeId, l1, l2, l3, depth, parentKey, status, type, title, body, priority, version, renamedFrom. On a spec board each node also carries `delivery` — the COMPUTED roll-up from linked tasks (not_started|in_progress|done|done_with_defects). Requires tasks:read.")]
 	public static async Task<object> GetAsync(
-		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
+		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards, IRelationStore relations,
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -71,6 +71,9 @@ public static class TasksTools
 		var lineage = BuildLineage(all);
 		var active = all.Where(n => n.ActiveTo == null).OrderBy(n => n.Priority).ThenBy(n => n.Key).ToList();
 		var current = all.Count == 0 ? 0 : all.Max(n => n.Version);
+
+		var kind = WorkflowCatalog.ParseKind(await boards.KindAsync(projectKey, board, ct));
+		var delivery = kind == BoardKind.Spec ? await ComputeSpecDeliveryAsync(boards, relations, projectKey, active, ct) : null;
 		return new
 		{
 			currentVersion = current,
@@ -93,10 +96,50 @@ public static class TasksTools
 					commitRef = n.CommitRef,
 					priority = n.Priority,
 					version = n.Version,
+					delivery = delivery is not null && delivery.TryGetValue(n.Key, out var dv) ? dv : null,
 					renamedFrom = lineage.TryGetValue(n.Key, out var p) ? p : [],
 				};
 			}).ToList(),
 		};
+	}
+
+	// COMPUTED spec roll-up: a spec node's delivery status derives from the tasks linked
+	// (task_spec) to it AND its descendants. not_started (no feature tasks) / in_progress
+	// (some feature not Done) / done (all features Done, no open bug) / done_with_defects
+	// (all features Done but an open bug remains). Type-aware: feature = build unit, bug =
+	// defect. Subtree by key prefix, so parents aggregate children.
+	static async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(
+		ITaskBoardStore boards, IRelationStore relations, string projectKey, IReadOnlyList<PlanNode> specNodes, CancellationToken ct)
+	{
+		var byNodeId = new Dictionary<string, (string Type, string Status)>(StringComparer.Ordinal);
+		foreach (var b in await boards.ListAsync(projectKey, ct))
+			foreach (var n in boards.GetContext(projectKey, b.Name).PlanNodes.Where(x => x.ActiveTo == null).ToList())
+				if (n.NodeId.Length > 0) byNodeId[n.NodeId] = (n.Type, n.Status);
+
+		var tasksOf = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+		foreach (var s in specNodes)
+			tasksOf[s.NodeId] = (await relations.ListAsync(projectKey, s.NodeId, "to", ct: ct))
+				.Where(e => e.Kind == "task_spec").Select(e => e.FromNodeId).ToList();
+
+		var result = new Dictionary<string, string>(StringComparer.Ordinal);
+		foreach (var s in specNodes)
+		{
+			var taskIds = specNodes
+				.Where(x => x.Key == s.Key || x.Key.StartsWith(s.Key + "/", StringComparison.Ordinal))
+				.SelectMany(x => tasksOf.TryGetValue(x.NodeId, out var t) ? t : new List<string>())
+				.Distinct();
+			result[s.Key] = Delivery(taskIds.Where(byNodeId.ContainsKey).Select(id => byNodeId[id]).ToList());
+		}
+		return result;
+	}
+
+	static string Delivery(List<(string Type, string Status)> tasks)
+	{
+		var features = tasks.Where(t => t.Type == "feature").ToList();
+		if (features.Count == 0) return "not_started";
+		if (!features.All(f => WorkflowCatalog.KindOfSlug(f.Status) == StatusKind.TerminalOk)) return "in_progress";
+		var openBug = tasks.Any(t => t.Type == "bug" && WorkflowCatalog.KindOfSlug(t.Status) == StatusKind.Open);
+		return openBug ? "done_with_defects" : "done";
 	}
 
 	[McpServerTool(Name = "tasks.upsert", Title = "Upsert plan nodes")]

@@ -411,4 +411,43 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 				return s.GetString()!;
 		throw new Xunit.Sdk.XunitException($"no status for key '{key}' in: {Text(r)}");
 	}
+
+	static string FieldOf(CallToolResult r, string key, string field)
+	{
+		using var doc = JsonDocument.Parse(Text(r));
+		foreach (var el in Descend(doc.RootElement))
+			if (el.ValueKind == JsonValueKind.Object
+				&& el.TryGetProperty("key", out var k) && k.GetString() == key
+				&& el.TryGetProperty(field, out var v))
+				return v.ValueKind == JsonValueKind.Null ? "null" : v.GetString()!;
+		throw new Xunit.Sdk.XunitException($"no {field} for key '{key}' in: {Text(r)}");
+	}
+
+	// 13. spec node delivery status is COMPUTED from linked tasks (type-aware), rolled up the tree.
+	[Fact]
+	public async Task SpecRollup_ComputedFromLinkedTasks()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(
+			new { key = "auth", status = "defined", title = "Auth", body = "x" },
+			new { key = "auth/login", status = "defined", title = "Login", body = "x" }) });
+		var loginId = NodeId(await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" }), "auth/login");
+
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", specRef = loginId }) });
+
+		var s1 = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
+		FieldOf(s1, "auth/login", "delivery").Should().Be("in_progress");
+		FieldOf(s1, "auth", "delivery").Should().Be("in_progress", "parent aggregates the subtree");
+
+		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Done", version = 1, title = "F", body = "x", specRef = loginId }) });
+		var s2 = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
+		FieldOf(s2, "auth/login", "delivery").Should().Be("done");
+		FieldOf(s2, "auth", "delivery").Should().Be("done");
+
+		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "bug1", type = "bug", status = "Pending", title = "Bug", body = "x", specRef = loginId }) });
+		var s3 = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
+		FieldOf(s3, "auth/login", "delivery").Should().Be("done_with_defects", "all features Done but an open bug remains");
+		FieldOf(s3, "auth", "delivery").Should().Be("done_with_defects");
+	}
 }

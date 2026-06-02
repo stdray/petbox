@@ -81,7 +81,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		up.GetProperty("applied").GetBoolean().Should().BeTrue();
 		up.GetProperty("inserted").GetInt32().Should().Be(2);
 
-		var get = Json(await TasksTools.GetAsync(http, Flags(), _boards, Proj, "roadmap"));
+		var get = Json(await TasksTools.GetAsync(http, Flags(), _boards, _relations, Proj, "roadmap"));
 		var keys = get.GetProperty("nodes").EnumerateArray().Select(n => n.GetProperty("key").GetString()).ToList();
 		keys.Should().Equal("phase-16", "phase-16/wave-1"); // priority order
 	}
@@ -113,7 +113,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "new", status = "Done", body = "x", version = 1, prevKey = "old" } }), 0);
 
-		var get = Json(await TasksTools.GetAsync(http, Flags(), _boards, Proj, "b"));
+		var get = Json(await TasksTools.GetAsync(http, Flags(), _boards, _relations, Proj, "b"));
 		var node = get.GetProperty("nodes").EnumerateArray().Single();
 		node.GetProperty("key").GetString().Should().Be("new");
 		node.GetProperty("renamedFrom").EnumerateArray().Select(x => x.GetString()).Should().Equal("old");
