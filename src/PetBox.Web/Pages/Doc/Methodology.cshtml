@@ -82,6 +82,15 @@
 		</ul>
 		<p class="text-sm opacity-70">Fast capture lives on ideas/intake (no spec link); committed work lives on the work board (spec-linked). That separation is the point — see the <a href="@Routes.DocPhilosophy()">philosophy</a>.</p>
 
+		<h2>Right-size the rails</h2>
+		<p>Match the structure to the work — the full rails pay off on a long-lived, multi-agent project where the spec is the asset; don't over-ceremony a small one-off.</p>
+		<ul>
+			<li><strong>Scratch / spike / throwaway</strong> → one <code>free</code> board. No types, no spec, any status. Use when the work is exploratory or won't be maintained.</li>
+			<li><strong>Small self-contained build</strong> (a small game, a script, a single feature) → a <code>spec</code> board with a few <em>thin</em> leaves (the acceptance criteria, one line each) + a <code>work</code> board (<code>specBoard</code> set), features linked. <strong>Skip <code>ideas</code> and <code>intake</code>.</strong></li>
+			<li><strong>Ongoing / multi-session / multi-agent project</strong> → the full rails: <code>ideas</code> (fuzzy thinking) → <code>spec</code> (requirement tree) → <code>work</code> (linked) + <code>intake</code> (inbound reports).</li>
+		</ul>
+		<p class="text-sm opacity-70"><code>ideas</code> is for <em>fuzzy</em> deliberation — a clear, small idea goes straight to a thin spec; don't run it through raw→exploring→accepted just to tick boxes. The spec-link invariant on <code>work</code> holds at every tier (it's the forcing function); a tier just decides how thick the spec is.</p>
+
 		<h2>Tools</h2>
 		<ul>
 			<li><code>tasks.board_create(kind?, specBoard?) / board_list / board_delete / board_set_spec / board_close / board_reopen</code> — boards (all report kind, specBoard, closed).</li>

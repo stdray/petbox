@@ -142,22 +142,44 @@ setx PETBOX_&lt;PROJECT&gt;_API_KEY "&lt;your key&gt;"</code></pre>
 		</p>
 		<pre><code>---
 name: petbox
-description: Shared task boards, memory and session plans for this project via the PetBox MCP server (server name `petbox`). Use to record/read plans, durable notes and working-session state.
+description: Shared task boards, memory and session plans for this project via the PetBox MCP server (server name `petbox`). Record/read plans, durable notes and working-session state on the spec/work/idea rails.
 ---
 
 This project is connected to a PetBox instance over MCP (server `petbox`).
 Pass projectKey "&lt;proj&gt;" in every call.
 
-Plans are a 1-to-3 level tree: address nodes by l1/l2/l3 (or key "l1/l2/l3"), not a flat
-label; give each a short `title` and a detailed `body`. A board has a kind (spec|work|
-ideas|intake|free) — read /doc/methodology for the rails and call tasks.workflow for a
-board's statuses. A cold upsert auto-creates a free board. Memory entries need a `type`
-(User|Feedback|Project|Reference). The upsert response is the fresh state; advance your
-cursor instead of re-reading.
+BOARDS have a kind, set at board_create and IMMUTABLE: free (no rules) | spec
+(requirements, computed delivery) | work (feature|bug, FSM) | ideas (fuzzy thinking) |
+intake (inbound issues). A cold upsert to a missing board auto-creates a FREE one —
+create spec/work explicitly with the right kind.
 
-Tools: tasks.board_create/board_list/board_delete/get/upsert/delta/workflow,
-relations.create/list/delete, memory.store_*/list/search/get/upsert/delta,
-session.append/get/list.</code></pre>
+NODES are a 1-to-3 level tree: address by l1 (required) + optional l2/l3, or "l1/l2/l3"
+in key (lowercase [a-z][a-z0-9_-]). Short `title` + markdown `body`. Links bind to the
+returned `nodeId`, not the path.
+
+RIGHT-SIZE the rails — don't over-ceremony small work:
+  throwaway spike  -> one free board
+  small build      -> thin spec (a few one-line leaves) + work; skip ideas/intake
+  ongoing project  -> ideas -> spec -> work + intake
+
+WORK rules: a new feature/bug MUST link a spec node — pass specRef = the spec node's
+nodeId (read it from the spec upsert response); pin the spec board via
+board_create(specBoard) or board_set_spec. Statuses Pending-&gt;InProgress-&gt;Review-&gt;Done;
+your ceiling is Review — never set Done, the maintainer confirms it. Blocked needs blockedBy.
+
+READING: tasks.get returns kind, specBoard and per-node links (spec/blockedBy/linkedTasks)
+plus spec `delivery`. It HIDES terminal nodes by default — includeClosed=true to include;
+under="l1/l2" scopes a subtree. Partial update: send only what changes — a status change
+needs just path + version + status. The upsert response IS the fresh state; advance your
+cursor, don't re-read.
+
+STORE by lifetime: durable fact -> memory (type User|Feedback|Project|Reference); current
+thinking -> session; a unit of work with a status -> task.
+
+Depth: /doc/methodology (contract) + /doc/overview (modules).
+Tools: tasks.board_create/board_list/board_delete/board_set_spec/board_close/board_reopen/
+get/upsert/delta/workflow, relations.create/list/delete,
+memory.store_*/list/search/get/upsert/delta, session.append/get/list.</code></pre>
 
 		<h2>8. Verify</h2>
 		<p>
