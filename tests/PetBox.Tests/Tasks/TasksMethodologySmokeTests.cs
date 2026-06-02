@@ -548,4 +548,23 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		Text(get).Should().Contain(specId);             // the linked spec node id is surfaced
 		Text(get).Should().Contain("\"board\":\"spec\""); // resolved to the spec board it lives on
 	}
+
+	// 20. a node's type is immutable once set — reclassifying a work feature to a bug is
+	// rejected (Phase 2 declarative invariant), exercised end-to-end through the MCP tool.
+	[Fact]
+	public async Task Work_FeatureType_IsImmutable()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "auth/login", status = "defined", title = "Login", body = "x" }) });
+		var specId = NodeId(spec, "auth/login");
+
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", title = "Build login", body = "x", specRef = specId }) }))
+			.IsError.Should().NotBe(true);
+
+		// Editing the feature into a bug must be rejected — type can't change after creation.
+		var r = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "bug", version = 1, title = "Build login", body = "x", specRef = specId }) });
+		IsErr(r).Should().BeTrue();
+		Text(r).Should().Contain("immutable");
+	}
 }
