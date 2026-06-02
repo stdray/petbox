@@ -56,9 +56,9 @@ public sealed class TasksTreeContractTests : IDisposable
 
 		var nodes = JsonSerializer.SerializeToElement(new object[]
 		{
-			new { phase = "logging", status = "InProgress", name = "Logging", body = "winston -> PetBox", priority = 0 },
-			new { phase = "logging", wave = "ingest", status = "Pending", name = "Ingest", body = "ship CLEF", priority = 1 },
-			new { phase = "logging", wave = "ingest", task = "endpoint", status = "Pending", name = "Endpoint", body = "POST endpoint", priority = 2 },
+			new { l1 = "logging", status = "InProgress", title = "Logging", body = "winston -> PetBox", priority = 0 },
+			new { l1 = "logging", l2 = "ingest", status = "Pending", title = "Ingest", body = "ship CLEF", priority = 1 },
+			new { l1 = "logging", l2 = "ingest", l3 = "endpoint", status = "Pending", title = "Endpoint", body = "POST endpoint", priority = 2 },
 		});
 		await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "roadmap", nodes);
 
@@ -68,16 +68,16 @@ public sealed class TasksTreeContractTests : IDisposable
 
 		var leaf = arr.Single(n => n.GetProperty("depth").GetInt32() == 3);
 		leaf.GetProperty("key").GetString().Should().Be("logging/ingest/endpoint");
-		leaf.GetProperty("phase").GetString().Should().Be("logging");
-		leaf.GetProperty("wave").GetString().Should().Be("ingest");
-		leaf.GetProperty("task").GetString().Should().Be("endpoint");
+		leaf.GetProperty("l1").GetString().Should().Be("logging");
+		leaf.GetProperty("l2").GetString().Should().Be("ingest");
+		leaf.GetProperty("l3").GetString().Should().Be("endpoint");
 		leaf.GetProperty("parentKey").GetString().Should().Be("logging/ingest");
-		leaf.GetProperty("name").GetString().Should().Be("Endpoint");
+		leaf.GetProperty("title").GetString().Should().Be("Endpoint");
 		leaf.GetProperty("body").GetString().Should().Be("POST endpoint");
 
-		var phase = arr.Single(n => n.GetProperty("depth").GetInt32() == 1);
-		phase.GetProperty("key").GetString().Should().Be("logging");
-		phase.GetProperty("parentKey").ValueKind.Should().Be(JsonValueKind.Null);
+		var root = arr.Single(n => n.GetProperty("depth").GetInt32() == 1);
+		root.GetProperty("key").GetString().Should().Be("logging");
+		root.GetProperty("parentKey").ValueKind.Should().Be(JsonValueKind.Null);
 	}
 
 	[Fact]
@@ -88,7 +88,7 @@ public sealed class TasksTreeContractTests : IDisposable
 
 		var nodes = JsonSerializer.SerializeToElement(new object[]
 		{
-			new { phase = "Bad Phase", status = "Pending", body = "x" },
+			new { l1 = "Bad Phase", status = "Pending", body = "x" },
 		});
 		// GuardAsync surfaces the validation failure as a structured error result
 		// (not a thrown, opaque MCP error).
@@ -105,16 +105,16 @@ public sealed class TasksTreeContractTests : IDisposable
 		// following the agent guide literally no longer throws.
 		var nodes = JsonSerializer.SerializeToElement(new object[]
 		{
-			new { phase = "alpha", status = "Pending", name = "Alpha", body = "do alpha", priority = 0 },
+			new { l1 = "alpha", status = "Pending", title = "Alpha", body = "do alpha", priority = 0 },
 		});
 		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "fresh", nodes));
 
 		(await _store.ExistsAsync(Proj, "fresh")).Should().BeTrue();
 
-		// F4: the added node in the upsert delta carries `name` (matches the
+		// F4: the added node in the upsert delta carries `title` (matches the
 		// documented contract and tasks.get), so a client merge won't drop titles.
 		var added = res.GetProperty("added").EnumerateArray().Single();
-		added.GetProperty("name").GetString().Should().Be("Alpha");
+		added.GetProperty("title").GetString().Should().Be("Alpha");
 	}
 
 	[Fact]
@@ -123,11 +123,11 @@ public sealed class TasksTreeContractTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		// Real MCP clients pass the untyped `nodes` param as a JSON *string*, not an
 		// array element — the upsert must accept that (regression for D6).
-		var arrayJson = """[{"phase":"alpha","name":"Alpha","status":"Pending","body":"b","priority":0}]""";
+		var arrayJson = """[{"l1":"alpha","title":"Alpha","status":"Pending","body":"b","priority":0}]""";
 		var nodesAsString = JsonSerializer.SerializeToElement(arrayJson); // ValueKind == String
 		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "strboard", nodesAsString));
 		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
-			.Which.GetProperty("name").GetString().Should().Be("Alpha");
+			.Which.GetProperty("title").GetString().Should().Be("Alpha");
 	}
 
 	static IHttpContextAccessor Http(string scopes)

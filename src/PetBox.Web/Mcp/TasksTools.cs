@@ -56,7 +56,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]
-	[Description("Return the active plan nodes of a board as a Phase>Wave>Task tree, ordered by priority then path. Each node carries key, phase, wave, task, depth, parentKey, status, name, body, priority, version, renamedFrom. Requires tasks:read.")]
+	[Description("Return the active plan nodes of a board as a 1-to-3 level tree, ordered by priority then path. Each node carries key, nodeId, l1, l2, l3, depth, parentKey, status, type, title, body, priority, version, renamedFrom. Requires tasks:read.")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
 		string projectKey, string board, CancellationToken ct = default)
@@ -81,14 +81,14 @@ public static class TasksTools
 				{
 					key = n.Key,
 					nodeId = n.NodeId,
-					phase = id?.PhaseKey ?? n.Key,
-					wave = id?.WaveKey,
-					task = id?.TaskKey,
+					l1 = id?.PhaseKey ?? n.Key,
+					l2 = id?.WaveKey,
+					l3 = id?.TaskKey,
 					depth = id?.Depth ?? 1,
 					parentKey = id?.ParentKey,
 					status = n.Status,
 					type = n.Type,
-					name = n.Name,
+					title = n.Name,
 					body = n.Body,
 					commitRef = n.CommitRef,
 					priority = n.Priority,
@@ -103,18 +103,20 @@ public static class TasksTools
 	[Description("""
 		Declarative temporal upsert of plan nodes. Requires tasks:write.
 
-		A plan is a 1-to-3 level tree: Phase > Wave > Task. Identify each node by path —
-		phase (required), optional wave, optional task (needs wave), or a "phase/wave/task"
-		string in `key`. Segments are lowercase [a-z][a-z0-9_-]{0,99}. Create parents
-		with/before children. Give each node a short `name` (title) and a `body` (markdown
-		detail). Other fields: status (Pending|InProgress|Done|Blocked|Deferred|Cancelled),
-		commitRef?, priority? (sparse int, lower first), version (baseline you last saw; 0 =
-		new). Rename via prevPhase/prevWave/prevTask or prevKey. A cold call auto-creates the board.
+		A plan is a 1-to-3 level tree. Address each node by path: l1 (required), optional l2,
+		optional l3 (needs l2) — short anchor keys [a-z][a-z0-9_-]{0,99} — or an "l1/l2/l3"
+		string in `key`. The path is the stable citation; create parents with/before children.
+		Give each node a `title` (short heading) and `body` (markdown). Other fields: status
+		(slug — see tasks.workflow for the board's kind), type (feature|bug on work boards),
+		specRef (a spec NodeId — links a work task to the spec node it implements), blockedBy
+		(a NodeId — marks this task Blocked by that one), commitRef?, priority? (sparse int,
+		lower first), version (baseline you last saw; 0 = new). Rename via prevL1/prevL2/prevL3
+		or prevKey. A cold call auto-creates the board.
 
 		Returns { applied, currentVersion, inserted, closed, conflicts[], added[], updated[],
-		removed[] }; added/updated carry the full node (key, phase, wave, task, depth,
-		parentKey, status, name, body, commitRef, priority, version). The delta IS the fresh
-		state since `sinceVersion` — advance your cursor and merge, no need to re-read.
+		removed[] }; added/updated carry the full node (key, nodeId, l1, l2, l3, depth,
+		parentKey, status, type, title, body, commitRef, priority, version). The delta IS the
+		fresh state since `sinceVersion` — advance your cursor and merge, no need to re-read.
 		""")]
 	public static async Task<object> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards, IRelationStore relations,
@@ -360,14 +362,14 @@ public static class TasksTools
 		{
 			key = n.Key,
 			nodeId = n.NodeId,
-			phase = id?.PhaseKey ?? n.Key,
-			wave = id?.WaveKey,
-			task = id?.TaskKey,
+			l1 = id?.PhaseKey ?? n.Key,
+			l2 = id?.WaveKey,
+			l3 = id?.TaskKey,
 			depth = id?.Depth ?? 1,
 			parentKey = id?.ParentKey,
 			status = n.Status,
 			type = n.Type,
-			name = n.Name,
+			title = n.Name,
 			body = n.Body,
 			commitRef = n.CommitRef,
 			priority = n.Priority,
@@ -394,7 +396,7 @@ public static class TasksTools
 				Version = ModuleMcp.OptLong(e, "version", 0),
 				Status = ModuleMcp.OptStr(e, "status") ?? string.Empty,
 				Type = (ModuleMcp.OptStr(e, "type") ?? string.Empty).ToLowerInvariant(),
-				Name = ModuleMcp.OptStr(e, "name") ?? string.Empty,
+				Name = ModuleMcp.OptStr(e, "title") ?? string.Empty,
 				Body = ModuleMcp.OptStr(e, "body") ?? string.Empty,
 				CommitRef = ModuleMcp.OptStr(e, "commitRef"),
 				Priority = ModuleMcp.OptLong(e, "priority", 0),
@@ -404,28 +406,27 @@ public static class TasksTools
 		return list.ToArray();
 	}
 
-	// A node's identity is the Phase/Wave/Task path. Preferred input is the
-	// structured form (phase + optional wave + optional task); a canonical
-	// "phase/wave/task" string in `key` is accepted as an alternative. Both are
-	// validated and canonicalised through TaskNodeId.
+	// A node's identity is its 1-to-3 level path of anchor keys. Preferred input is the
+	// structured form (l1 + optional l2 + optional l3); a canonical "l1/l2/l3" string in
+	// `key` is accepted as an alternative. Both are validated/canonicalised via TaskNodeId.
 	static string ResolveKey(JsonElement e)
 	{
-		var phase = ModuleMcp.OptStr(e, "phase");
-		if (phase is not null)
-			return new TaskNodeId(phase, ModuleMcp.OptStr(e, "wave"), ModuleMcp.OptStr(e, "task")).ToKey();
+		var l1 = ModuleMcp.OptStr(e, "l1");
+		if (l1 is not null)
+			return new TaskNodeId(l1, ModuleMcp.OptStr(e, "l2"), ModuleMcp.OptStr(e, "l3")).ToKey();
 
 		var key = ModuleMcp.OptStr(e, "key");
 		if (key is not null)
 			return TaskNodeId.Parse(key).ToKey();
 
-		throw new ArgumentException("each node needs 'phase' (+optional wave/task) or a 'key' path");
+		throw new ArgumentException("each node needs 'l1' (+optional l2/l3) or a 'key' path");
 	}
 
 	static string? ResolvePrevKey(JsonElement e)
 	{
-		var prevPhase = ModuleMcp.OptStr(e, "prevPhase");
-		if (prevPhase is not null)
-			return new TaskNodeId(prevPhase, ModuleMcp.OptStr(e, "prevWave"), ModuleMcp.OptStr(e, "prevTask")).ToKey();
+		var prevL1 = ModuleMcp.OptStr(e, "prevL1");
+		if (prevL1 is not null)
+			return new TaskNodeId(prevL1, ModuleMcp.OptStr(e, "prevL2"), ModuleMcp.OptStr(e, "prevL3")).ToKey();
 
 		var prevKey = ModuleMcp.OptStr(e, "prevKey");
 		return prevKey is not null ? TaskNodeId.Parse(prevKey).ToKey() : null;

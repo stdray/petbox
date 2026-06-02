@@ -176,9 +176,9 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 			projectKey = ProjectKey,
 			board = "spec",
 			nodes = Nodes(
-				new { key = "auth", status = "defined", name = "Auth", body = "auth area" },
-				new { key = "auth/login", status = "defined", name = "Login", body = "login flow" },
-				new { key = "auth/login/mfa", status = "defined", name = "MFA", body = "second factor" }),
+				new { key = "auth", status = "defined", title = "Auth", body = "auth area" },
+				new { key = "auth/login", status = "defined", title = "Login", body = "login flow" },
+				new { key = "auth/login/mfa", status = "defined", title = "MFA", body = "second factor" }),
 		})).IsError.Should().NotBe(true);
 
 		var tree = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
@@ -195,7 +195,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		{
 			projectKey = ProjectKey,
 			board = "work",
-			nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", name = "Build login", body = "..." }),
+			nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", title = "Build login", body = "..." }),
 		});
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("spec");
@@ -209,7 +209,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var spec = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "spec",
-			nodes = Nodes(new { key = "auth/login", status = "defined", name = "Login", body = "login flow" }),
+			nodes = Nodes(new { key = "auth/login", status = "defined", title = "Login", body = "login flow" }),
 		});
 		var specId = NodeId(spec, "auth/login");
 
@@ -217,7 +217,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var work = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", name = "Build login", body = "...", specRef = specId }),
+			nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", title = "Build login", body = "...", specRef = specId }),
 		});
 		work.IsError.Should().NotBe(true);
 		var taskId = NodeId(work, "do-login");
@@ -235,7 +235,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var spec = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "spec",
-			nodes = Nodes(new { key = "auth", status = "defined", name = "Auth", body = "x" }),
+			nodes = Nodes(new { key = "auth", status = "defined", title = "Auth", body = "x" }),
 		});
 		var specId = NodeId(spec, "auth");
 		var v = JsonDocument.Parse(Text(spec)).RootElement;
@@ -245,7 +245,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var renamed = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "spec",
-			nodes = Nodes(new { key = "identity", prevKey = "auth", version = 1, status = "defined", name = "Identity", body = "x" }),
+			nodes = Nodes(new { key = "identity", prevKey = "auth", version = 1, status = "defined", title = "Identity", body = "x" }),
 		});
 		NodeId(renamed, "identity").Should().Be(specId, "rename must preserve the stable NodeId");
 	}
@@ -274,7 +274,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var spec = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "spec",
-			nodes = Nodes(new { key = "auth/login", status = "defined", name = "Login", body = "x" }),
+			nodes = Nodes(new { key = "auth/login", status = "defined", title = "Login", body = "x" }),
 		});
 		var specId = NodeId(spec, "auth/login");
 
@@ -282,7 +282,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var issue = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "intake",
-			nodes = Nodes(new { key = "login-500", type = "issue", status = "confirmed", name = "login 500", body = "x" }),
+			nodes = Nodes(new { key = "login-500", type = "issue", status = "confirmed", title = "login 500", body = "x" }),
 		});
 		var issueId = NodeId(issue, "login-500");
 
@@ -290,7 +290,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var work = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Review", name = "Fix login", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Review", title = "Fix login", body = "x", specRef = specId }),
 		});
 		var taskId = NodeId(work, "fix-login");
 		await Agent("relations.create", new { projectKey = ProjectKey, kind = "issue_task", fromNodeId = issueId, toNodeId = taskId });
@@ -299,7 +299,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var done = await Call(_approver, "tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Done", version = 1, name = "Fix login", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "fix-login", type = "bug", status = "Done", version = 1, title = "Fix login", body = "x", specRef = specId }),
 		});
 		IsErr(done).Should().BeFalse();
 
@@ -319,15 +319,15 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	public async Task Idea_Accepted_LinksToSpec()
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "ideas", kind = "ideas" });
-		var idea = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "ideas", nodes = Nodes(new { key = "want-x", status = "raw", name = "Want X", body = "rough" }) });
+		var idea = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "ideas", nodes = Nodes(new { key = "want-x", status = "raw", title = "Want X", body = "rough" }) });
 		idea.IsError.Should().NotBe(true);
 		var ideaId = NodeId(idea, "want-x");
 
-		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "ideas", nodes = Nodes(new { key = "want-x", status = "accepted", name = "Want X", body = "rough" }) }))
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "ideas", nodes = Nodes(new { key = "want-x", status = "accepted", title = "Want X", body = "rough" }) }))
 			.IsError.Should().NotBe(true);
 
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
-		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "x", status = "defined", name = "X", body = "defined" }) });
+		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "defined" }) });
 		var specId = NodeId(spec, "x");
 
 		var rel = await Agent("relations.create", new { projectKey = ProjectKey, kind = "idea_spec", fromNodeId = ideaId, toNodeId = specId });
@@ -342,7 +342,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var r = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "t", type = "feature", status = "banana", name = "T", body = "x" }),
+			nodes = Nodes(new { key = "t", type = "feature", status = "banana", title = "T", body = "x" }),
 		});
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("Pending"); // the error enumerates valid statuses for this kind/type
@@ -356,7 +356,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var r = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "scratch",
-			nodes = Nodes(new { key = "whatever", status = "Pending", name = "W", body = "x" }),
+			nodes = Nodes(new { key = "whatever", status = "Pending", title = "W", body = "x" }),
 		});
 		r.IsError.Should().NotBe(true);
 	}
@@ -366,14 +366,14 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	public async Task Blocked_WithoutBlocker_Rejected()
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
-		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", name = "F", body = "x" }) });
+		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x" }) });
 		var specId = NodeId(spec, "f");
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 
 		var r = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "work",
-			nodes = Nodes(new { key = "t", type = "feature", status = "Blocked", name = "T", body = "x", specRef = specId }),
+			nodes = Nodes(new { key = "t", type = "feature", status = "Blocked", title = "T", body = "x", specRef = specId }),
 		});
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("block");
@@ -384,17 +384,17 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	public async Task Block_AutoUnblocksWhenBlockerDone()
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
-		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", name = "F", body = "x" }) });
+		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x" }) });
 		var specId = NodeId(spec, "f");
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 
-		var a = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Review", name = "A", body = "x", specRef = specId }) });
+		var a = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Review", title = "A", body = "x", specRef = specId }) });
 		var aId = NodeId(a, "a");
-		var b = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", name = "B", body = "x", specRef = specId, blockedBy = aId }) });
+		var b = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "b", type = "feature", status = "Blocked", title = "B", body = "x", specRef = specId, blockedBy = aId }) });
 		IsErr(b).Should().BeFalse();
 
 		// blocker A → Done (baseline version 1: A was the first node on the work board)
-		var done = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Done", version = 1, name = "A", body = "x", specRef = specId }) });
+		var done = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Done", version = 1, title = "A", body = "x", specRef = specId }) });
 		IsErr(done).Should().BeFalse();
 
 		var get = await Agent("tasks.get", new { projectKey = ProjectKey, board = "work" });
