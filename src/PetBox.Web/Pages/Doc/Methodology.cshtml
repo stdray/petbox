@@ -35,6 +35,19 @@
 			<li><strong><code>intake</code></strong> — raw issues, type <code>issue</code>. Status <code>reported→triage→{confirmed|duplicate|wontfix}→done</code>.</li>
 			<li><strong><code>free</code></strong> — no validation, any status string (legacy / scratch).</li>
 		</ul>
+		<p>
+			<strong>Standard boards.</strong> A project uses one board of each kind, named for its kind:
+			<code>ideas</code>, <code>spec</code>, <code>work</code>, <code>intake</code> (+ <code>free</code>
+			scratch). Use those names so every agent and session finds the same boards.
+		</p>
+		<p>
+			<strong>The flow starts in <code>ideas</code>.</strong> A piece of work begins as a raw idea;
+			deliberating it (raw→exploring→accepted) is what <em>produces</em> the spec entries — the accepted
+			idea's conclusions become <code>spec</code> nodes, and <code>work</code> features implement those.
+			Don't invent spec out of thin air; let it fall out of an idea. (Capturing the deliberation itself —
+			raw idea / worked-out statement+decisions / spec-update plan — as a discussion thread on the idea is
+			coming; for now keep it in the idea's <code>body</code>.)
+		</p>
 
 		<h2>Addressing a node</h2>
 		<p>
@@ -85,11 +98,11 @@
 		<h2>Right-size the rails</h2>
 		<p>Match the structure to the work — the full rails pay off on a long-lived, multi-agent project where the spec is the asset; don't over-ceremony a small one-off.</p>
 		<ul>
-			<li><strong>Scratch / spike / throwaway</strong> → one <code>free</code> board. No types, no spec, any status. Use when the work is exploratory or won't be maintained.</li>
-			<li><strong>Small self-contained build</strong> (a small game, a script, a single feature) → a <code>spec</code> board with a few <em>thin</em> leaves (the acceptance criteria, one line each) + a <code>work</code> board (<code>specBoard</code> set), features linked. <strong>Skip <code>ideas</code> and <code>intake</code>.</strong></li>
-			<li><strong>Ongoing / multi-session / multi-agent project</strong> → the full rails: <code>ideas</code> (fuzzy thinking) → <code>spec</code> (requirement tree) → <code>work</code> (linked) + <code>intake</code> (inbound reports).</li>
+			<li><strong>Scratch / spike / throwaway</strong> → one <code>free</code> board. No idea, no spec, any status. Use when the work is exploratory or won't be maintained.</li>
+			<li><strong>Small self-contained build</strong> (a small game, a script, a single feature) → start with a <em>short</em> idea on <code>ideas</code>, let it settle into a few <em>thin</em> <code>spec</code> leaves (acceptance criteria, one line each), then <code>work</code> features linked (<code>specBoard</code> set). Skip <code>intake</code> until reports actually arrive.</li>
+			<li><strong>Ongoing / multi-session / multi-agent project</strong> → the full rails: <code>ideas</code> → <code>spec</code> → <code>work</code> + <code>intake</code>, with deeper deliberation and a real requirement tree.</li>
 		</ul>
-		<p class="text-sm opacity-70"><code>ideas</code> is for <em>fuzzy</em> deliberation — a clear, small idea goes straight to a thin spec; don't run it through raw→exploring→accepted just to tick boxes. The spec-link invariant on <code>work</code> holds at every tier (it's the forcing function); a tier just decides how thick the spec is.</p>
+		<p class="text-sm opacity-70">A tier scales <em>how deep</em> the idea and how thick the spec are — not whether you start from an idea. Only pure throwaway scratch skips the idea entirely (a <code>free</code> board). The spec-link invariant on <code>work</code> holds at every tier — it's the forcing function.</p>
 
 		<h2>Tools</h2>
 		<ul>

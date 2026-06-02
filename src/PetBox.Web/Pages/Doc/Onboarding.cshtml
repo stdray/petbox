@@ -117,24 +117,24 @@
 		<p>
 			First, <strong>right-size the rails to the work</strong> (see the
 			<a href="@Routes.DocMethodology()">methodology</a> for the tiers): a throwaway spike → one
-			<code>free</code> board; a small self-contained build (e.g. a small game or script) → a thin
-			<code>spec</code> + a <code>work</code> board, skipping <code>ideas</code>/<code>intake</code>; a
-			long-lived project → the full rails. The walk-through below is the small-build tier.
+			<code>free</code> board; a small build → a short idea → a thin <code>spec</code> → <code>work</code>;
+			a long-lived project → the full rails. The flow <strong>starts in <code>ideas</code></strong> — the
+			spec falls out of an accepted idea, you don't invent it from nothing. The walk-through below is the
+			small-build tier.
 		</p>
 
 		<p>
-			Prove the loop on something small but genuine. First make sure the <code>spec</code> and
-			<code>work</code> boards exist <strong>with the right kind</strong> — create them explicitly rather
-			than letting a bare write conjure them, because a cold write makes a plain <code>free</code> board
-			and the kind can't be changed afterwards.
+			Use the standard boards (named for their kind: <code>ideas</code>, <code>spec</code>,
+			<code>work</code>, <code>intake</code>) — create them explicitly <strong>with the right kind</strong>,
+			not by a bare write (a cold write makes a plain <code>free</code> board and the kind can't change).
 		</p>
 
 		<p>
-			Record one requirement on the spec board and note the <code>nodeId</code> it returns. Create one
-			<code>work</code> feature that links to it by passing that <code>nodeId</code> as
-			<code>specRef</code>. Move the feature <code>Pending → InProgress → Review</code> as you go, and
-			stop at <code>Review</code>. The <a href="@Routes.DocMethodology()">methodology</a> spells out the
-			contract if anything here is unfamiliar.
+			Capture the work as a short idea on <code>ideas</code> and accept it; record the requirement(s) it
+			settles into on <code>spec</code> and note each <code>nodeId</code>; then create a <code>work</code>
+			feature that links one by passing that <code>nodeId</code> as <code>specRef</code>. Move the feature
+			<code>Pending → InProgress → Review</code> as you go, and stop at <code>Review</code>. The
+			<a href="@Routes.DocMethodology()">methodology</a> spells out the contract if anything is unfamiliar.
 		</p>
 
 		<p class="text-sm opacity-80">

@@ -151,16 +151,21 @@ Pass projectKey "&lt;proj&gt;" in every call.
 BOARDS have a kind, set at board_create and IMMUTABLE: free (no rules) | spec
 (requirements, computed delivery) | work (feature|bug, FSM) | ideas (fuzzy thinking) |
 intake (inbound issues). A cold upsert to a missing board auto-creates a FREE one —
-create spec/work explicitly with the right kind.
+create boards explicitly with the right kind. Standard board names = their kind:
+ideas, spec, work, intake (+ free for scratch). Use those names.
+
+FLOW starts in `ideas`: a raw idea, deliberated (raw->exploring->accepted), is what
+PRODUCES the spec — the accepted idea's conclusions become spec nodes; work features
+implement them. Don't invent spec from nothing; let it fall out of an idea.
 
 NODES are a 1-to-3 level tree: address by l1 (required) + optional l2/l3, or "l1/l2/l3"
 in key (lowercase [a-z][a-z0-9_-]). Short `title` + markdown `body`. Links bind to the
 returned `nodeId`, not the path.
 
-RIGHT-SIZE the rails — don't over-ceremony small work:
-  throwaway spike  -> one free board
-  small build      -> thin spec (a few one-line leaves) + work; skip ideas/intake
-  ongoing project  -> ideas -> spec -> work + intake
+RIGHT-SIZE the rails — scale how deep, not whether to start from an idea:
+  throwaway spike  -> one free board (no idea)
+  small build      -> short idea -> a few thin spec leaves -> work
+  ongoing project  -> ideas -> spec -> work + intake (deeper)
 
 WORK rules: a new feature/bug MUST link a spec node — pass specRef = the spec node's
 nodeId (read it from the spec upsert response); pin the spec board via
