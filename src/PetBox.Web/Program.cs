@@ -84,6 +84,7 @@ public partial class Program
 				Path.Combine(ResolveDataDir(sp), "memory"), PetBox.Core.Settings.Scope.Project,
 				cs => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(cs)), PetBox.Memory.Data.MemorySchema.Ensure));
 		builder.Services.AddScoped<PetBox.Memory.Data.IMemoryStore, PetBox.Memory.Data.MemoryStore>();
+		builder.Services.AddScoped<PetBox.Memory.Contract.IMemoryService, PetBox.Memory.Services.MemoryService>();
 		builder.Services.AddSingleton<IScopedDbFactory<PetBox.Sessions.Data.SessionsDb>>(sp => new ScopedDbFactory<PetBox.Sessions.Data.SessionsDb>(
 				Path.Combine(ResolveDataDir(sp), "sessions"), PetBox.Core.Settings.Scope.Project,
 				cs => new PetBox.Sessions.Data.SessionsDb(PetBox.Sessions.Data.SessionsDb.CreateOptions(cs)), PetBox.Sessions.Data.SessionsSchema.Ensure));

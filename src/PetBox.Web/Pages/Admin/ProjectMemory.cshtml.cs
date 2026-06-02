@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
-using PetBox.Memory.Data;
+using PetBox.Memory.Contract;
 
 namespace PetBox.Web.Pages.Admin;
 
@@ -17,13 +17,13 @@ public sealed class ProjectMemoryModel : PageModel
 {
 	readonly PetBoxDb _db;
 	readonly FeatureFlags _features;
-	readonly IMemoryStore _store;
+	readonly IMemoryService _memory;
 
-	public ProjectMemoryModel(PetBoxDb db, FeatureFlags features, IMemoryStore store)
+	public ProjectMemoryModel(PetBoxDb db, FeatureFlags features, IMemoryService memory)
 	{
 		_db = db;
 		_features = features;
-		_store = store;
+		_memory = memory;
 	}
 
 	[BindProperty(SupportsGet = true)]
@@ -44,7 +44,7 @@ public sealed class ProjectMemoryModel : PageModel
 		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
-		Stores = [.. await _store.ListAsync(ProjectKey)];
+		Stores = [.. await _memory.ListStoresAsync(ProjectKey)];
 		return Page();
 	}
 
@@ -54,7 +54,7 @@ public sealed class ProjectMemoryModel : PageModel
 
 		try
 		{
-			await _store.CreateAsync(ProjectKey, name?.Trim() ?? string.Empty, description);
+			await _memory.CreateStoreAsync(ProjectKey, name?.Trim() ?? string.Empty, description);
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{
@@ -70,7 +70,7 @@ public sealed class ProjectMemoryModel : PageModel
 	{
 		if (!_features.IsEnabled(Feature.Memory)) return NotFound();
 
-		await _store.DeleteAsync(ProjectKey, name);
+		await _memory.DeleteStoreAsync(ProjectKey, name);
 		return RedirectToPage();
 	}
 }

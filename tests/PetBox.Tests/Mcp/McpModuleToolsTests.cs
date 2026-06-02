@@ -11,6 +11,7 @@ using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Memory.Data;
 using PetBox.Sessions.Data;
+using PetBox.Memory.Services;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
@@ -34,6 +35,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	readonly RelationStore _relations;
 	readonly TasksService _tasks;
 	readonly MemoryStore _stores;
+	readonly MemoryService _memory;
 	readonly SessionStore _sessions;
 
 	public McpModuleToolsTests()
@@ -56,6 +58,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		_relations = new RelationStore(_db);
 		_tasks = new TasksService(_boards, _relations);
 		_stores = new MemoryStore(_db, _memFactory);
+		_memory = new MemoryService(_stores);
 		_sessions = new SessionStore(_sessFactory);
 	}
 
@@ -157,14 +160,14 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Memory_Upsert_Search_Roundtrip()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.StoreCreateAsync(http, Flags(), _stores, Proj, "notes");
-		await MemoryTools.UpsertAsync(http, Flags(), _stores, Proj, "notes",
+		await MemoryTools.StoreCreateAsync(http, Flags(), _memory, Proj, "notes");
+		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes",
 			JsonSerializer.SerializeToElement(new[]
 			{
 				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = "go,style" },
 			}), 0);
 
-		var hits = Json(await MemoryTools.SearchAsync(http, Flags(), _stores, Proj, "notes", "tabs"));
+		var hits = Json(await MemoryTools.SearchAsync(http, Flags(), _memory, Proj, "notes", "tabs"));
 		hits.GetProperty("entries").EnumerateArray().Should().ContainSingle();
 	}
 

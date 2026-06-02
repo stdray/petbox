@@ -9,6 +9,7 @@ using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Memory.Data;
+using PetBox.Memory.Services;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Memory;
@@ -24,6 +25,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 	readonly PetBoxDb _db;
 	readonly ScopedDbFactory<MemoryDb> _factory;
 	readonly MemoryStore _store;
+	readonly MemoryService _memory;
 
 	public MemoryToolsContractTests()
 	{
@@ -36,6 +38,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
 		_store = new MemoryStore(_db, _factory);
+		_memory = new MemoryService(_store);
 	}
 
 	public void Dispose()
@@ -55,7 +58,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "k", description = "d", body = "b" },
 		});
 		// GuardAsync surfaces the missing-type validation as a structured error result.
-		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _store, Proj, "notes", entries));
+		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries));
 		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
 	}
 
@@ -70,17 +73,17 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "go-style", type = "reference", description = "Go", body = "tabs", tags = "Go, STYLE ,go" },
 			new { key = "prefers-tabs", type = "feedback", description = "tabs", body = "user likes tabs" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _store, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 		(await _store.ExistsAsync(Proj, "notes")).Should().BeTrue();
 
 		// Tags normalised: lowercased, trimmed, de-duped.
-		var all = Json(await MemoryTools.ListAsync(http, Flags(), _store, Proj, "notes"));
+		var all = Json(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes"));
 		var go = all.GetProperty("entries").EnumerateArray().Single(e => e.GetProperty("key").GetString() == "go-style");
 		go.GetProperty("tags").GetString().Should().Be("go,style");
 		go.GetProperty("type").GetString().Should().Be("Reference");
 
 		// Type filter narrows the listing.
-		var feedback = Json(await MemoryTools.ListAsync(http, Flags(), _store, Proj, "notes", "feedback"));
+		var feedback = Json(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", "feedback"));
 		var keys = feedback.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("key").GetString()).ToList();
 		keys.Should().BeEquivalentTo(["prefers-tabs"]);
 	}
@@ -94,9 +97,9 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "auth-scopes", type = "project", description = "API key scopes", body = "scopes are enumerable, not wildcards" },
 			new { key = "go-style", type = "reference", description = "Go conventions", body = "use tabs not spaces" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _store, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 
-		var res = Json(await MemoryTools.SearchAsync(http, Flags(), _store, Proj, "notes", "scope"));
+		var res = Json(await MemoryTools.SearchAsync(http, Flags(), _memory, Proj, "notes", "scope"));
 		var keys = res.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("key").GetString()).ToList();
 		keys.Should().Contain("auth-scopes");      // "scope*" prefix-matches "scopes"
 		keys.Should().NotContain("go-style");
@@ -109,7 +112,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		// Real MCP clients pass the untyped `entries` param as a JSON *string* (D6).
 		var arrayJson = """[{"key":"k","type":"project","description":"d","body":"b"}]""";
 		var entriesAsString = JsonSerializer.SerializeToElement(arrayJson); // ValueKind == String
-		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _store, Proj, "strstore", entriesAsString));
+		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "strstore", entriesAsString));
 		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
 			.Which.GetProperty("key").GetString().Should().Be("k");
 	}
@@ -122,13 +125,13 @@ public sealed class MemoryToolsContractTests : IDisposable
 		{
 			new { key = "temp", type = "project", description = "temp", body = "to be removed" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _store, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 
 		var del = JsonSerializer.SerializeToElement(new object[] { new { key = "temp", deleted = true } });
-		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _store, Proj, "notes", del));
+		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", del));
 		res.GetProperty("removed").EnumerateArray().Select(e => e.GetString()).Should().Contain("temp");
 
-		var list = Json(await MemoryTools.ListAsync(http, Flags(), _store, Proj, "notes"));
+		var list = Json(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes"));
 		list.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("key").GetString())
 			.Should().NotContain("temp");
 	}
@@ -149,5 +152,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		return new FeatureFlags(cfg);
 	}
 
-	static JsonElement Json(object? o) => JsonSerializer.SerializeToElement(o);
+	// Mirror the MCP boundary (camelCase policy) so typed-record results read like live JSON.
+	static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+	static JsonElement Json(object? o) => JsonSerializer.SerializeToElement(o, CamelCase);
 }

@@ -1,130 +1,95 @@
 using System.ComponentModel;
 using System.Text.Json;
-using System.Text.RegularExpressions;
-using LinqToDB;
-using LinqToDB.DataProvider.SQLite;
 using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Features;
+using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
 
 namespace PetBox.Web.Mcp;
 
-// MCP surface for the Memory module: named store lifecycle + temporal entry
-// content. v1 is project-scoped. Scopes: memory:read / memory:write. Feature: Memory.
+// MCP surface for the Memory module: named store lifecycle + temporal entry content.
+// A THIN adapter — it asserts the scope/feature/project guards, parses the JSON entry
+// payload, and delegates every domain decision (taxonomy, tags, FTS, temporal write)
+// to IMemoryService. It must not touch the store or DB context directly (a NetArchTest
+// enforces this). v1 is project-scoped. Scopes: memory:read / memory:write.
 [McpServerToolType]
 public static class MemoryTools
 {
 	[McpServerTool(Name = "memory.store_create", Title = "Create a memory store")]
 	[Description("Create a named memory store in a project. Requires memory:write.")]
 	public static async Task<object> StoreCreateAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string? description = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
-		var meta = await stores.CreateAsync(projectKey, store, description, ct);
+		var meta = await memory.CreateStoreAsync(projectKey, store, description, ct);
 		return new { meta.ProjectKey, meta.Name, meta.Description, meta.CreatedAt };
 	}
 
 	[McpServerTool(Name = "memory.store_list", Title = "List memory stores", ReadOnly = true)]
 	[Description("List memory stores in a project. Requires memory:read.")]
 	public static async Task<object> StoreListAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		var list = await stores.ListAsync(projectKey, ct);
+		var list = await memory.ListStoresAsync(projectKey, ct);
 		return new { stores = list.Select(s => new { s.Name, s.Description, s.CreatedAt }).ToList() };
 	}
 
 	[McpServerTool(Name = "memory.store_delete", Title = "Delete a memory store", Destructive = true)]
 	[Description("Delete a memory store and its entries. Requires memory:write.")]
 	public static async Task<object> StoreDeleteAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
-		return new { deleted = await stores.DeleteAsync(projectKey, store, ct) };
+		return new { deleted = await memory.DeleteStoreAsync(projectKey, store, ct) };
 	}
 
 	[McpServerTool(Name = "memory.list", Title = "List memory entries", ReadOnly = true)]
 	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Requires memory:read.")]
 	public static async Task<object> ListAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string? type = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		await EnsureStore(stores, projectKey, store, ct);
-		var ctx = stores.GetContext(projectKey, store);
-		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
-		var q = ctx.Entries.Where(e => e.ActiveTo == null);
-		if (typeFilter is not null) q = q.Where(e => e.Type == typeFilter.Value);
-		var active = q.OrderBy(e => e.Key).ToList();
-		return new { entries = active.Select(EntryDto).ToList() };
+		return new { entries = await memory.ListAsync(projectKey, store, type, ct) };
 	}
 
 	[McpServerTool(Name = "memory.get", Title = "Get a memory entry", ReadOnly = true)]
 	[Description("Get the active entry by key, or null. Requires memory:read.")]
 	public static async Task<object?> GetAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string key, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		await EnsureStore(stores, projectKey, store, ct);
-		var ctx = stores.GetContext(projectKey, store);
-		var e = ctx.Entries.Where(x => x.Key == key && x.ActiveTo == null).ToList().FirstOrDefault();
-		return e is null ? null : EntryDto(e);
+		return await memory.GetAsync(projectKey, store, key, ct);
 	}
 
 	[McpServerTool(Name = "memory.search", Title = "Search memory entries", ReadOnly = true)]
 	[Description("FTS5 full-text search over active entries' description/body/tags, ranked by relevance. Matches by token (prefix), so paraphrases hit. Optional `type` filter (User|Feedback|Project|Reference). Requires memory:read.")]
 	public static async Task<object> SearchAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string query, string? type = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		await EnsureStore(stores, projectKey, store, ct);
-		var ctx = stores.GetContext(projectKey, store);
-		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
-
-		var match = BuildMatch(query);
-		if (match is null)
-		{
-			// No searchable tokens — degrade to a type-filtered listing.
-			var allQ = ctx.Entries.Where(e => e.ActiveTo == null);
-			if (typeFilter is not null) allQ = allQ.Where(e => e.Type == typeFilter.Value);
-			return new { entries = allQ.OrderBy(e => e.Key).ToList().Select(EntryDto).ToList() };
-		}
-
-		// FTS5 MATCH + rank ordering via linq2db's SQLite extensions.
-		var ranked = ctx.MemoryFts
-			.Where(f => Sql.Ext.SQLite().Match(f, match))
-			.OrderBy(f => Sql.Ext.SQLite().Rank(f))
-			.Select(f => f.Key)
-			.ToList();
-		if (ranked.Count == 0)
-			return new { entries = Array.Empty<object>() };
-
-		var order = ranked.Select((k, i) => (k, i)).ToDictionary(x => x.k, x => x.i);
-		var hits = ctx.Entries.Where(e => e.ActiveTo == null && ranked.Contains(e.Key)).ToList()
-			.Where(e => typeFilter == null || e.Type == typeFilter)
-			.OrderBy(e => order[e.Key])
-			.ToList();
-		return new { entries = hits.Select(EntryDto).ToList() };
+		return new { entries = await memory.SearchAsync(projectKey, store, query, type, ct) };
 	}
 
 	[McpServerTool(Name = "memory.upsert", Title = "Upsert memory entries")]
@@ -142,7 +107,7 @@ public static class MemoryTools
 		Result: { applied, currentVersion, inserted, closed, conflicts[], added[], updated[], removed[] }.
 		""")]
 	public static async Task<object> UpsertAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store,
 		[Description("JSON array of entry objects")] JsonElement entries,
 		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
@@ -150,52 +115,45 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
-		await stores.EnsureAsync(projectKey, store, ct); // auto-vivify on first write
-		var (desired, deletes) = ParseEntries(entries);
-		var ctx = stores.GetContext(projectKey, store);
-		var r = await TemporalStore.UpsertAsync(ctx, desired, deletes, sinceVersion, ct: ct);
-		if (r.Applied) { RebuildFts(ctx); await stores.TouchAsync(projectKey, store, ct); }
-		return Serialize(r);
+		var (upserts, deletes) = ParseEntries(entries);
+		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, sinceVersion, ct));
 	});
 
 	[McpServerTool(Name = "memory.delta", Title = "Memory delta since cursor", ReadOnly = true)]
 	[Description("Return entries added/updated/removed since `sinceVersion` (no writes). Requires memory:read.")]
 	public static async Task<object> DeltaAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryStore stores,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, long sinceVersion, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		await EnsureStore(stores, projectKey, store, ct);
-		var ctx = stores.GetContext(projectKey, store);
-		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<MemoryEntry>(), sinceVersion, ct: ct);
-		return Serialize(r);
+		return Serialize(await memory.DeltaAsync(projectKey, store, sinceVersion, ct));
 	}
 
-	static async Task EnsureStore(IMemoryStore stores, string projectKey, string store, CancellationToken ct)
-	{
-		if (!await stores.ExistsAsync(projectKey, store, ct))
-			throw new InvalidOperationException($"memory store '{store}' not found in project '{projectKey}'");
-	}
+	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 
-	static object Serialize(TemporalUpsertResult<MemoryEntry> r) => new
+	static object Serialize(MemoryUpsertOutcome o)
 	{
-		applied = r.Applied,
-		currentVersion = r.CurrentVersion,
-		inserted = r.Inserted,
-		closed = r.Closed,
-		conflicts = r.Conflicts.Select(c => new
+		var r = o.Result;
+		return new
 		{
-			key = c.Key,
-			kind = c.Kind.ToString(),
-			baselineVersion = c.BaselineVersion,
-			activeVersion = c.ActiveVersion,
-		}).ToList(),
-		added = r.Added.Select(EntryDto).ToList(),
-		updated = r.Updated.Select(EntryDto).ToList(),
-		removed = r.Removed.ToList(),
-	};
+			applied = r.Applied,
+			currentVersion = r.CurrentVersion,
+			inserted = r.Inserted,
+			closed = r.Closed,
+			conflicts = r.Conflicts.Select(c => new
+			{
+				key = c.Key,
+				kind = c.Kind.ToString(),
+				baselineVersion = c.BaselineVersion,
+				activeVersion = c.ActiveVersion,
+			}).ToList(),
+			added = r.Added.Select(EntryDto).ToList(),
+			updated = r.Updated.Select(EntryDto).ToList(),
+			removed = r.Removed.ToList(),
+		};
+	}
 
 	static object EntryDto(MemoryEntry e) => new
 	{
@@ -207,78 +165,38 @@ public static class MemoryTools
 		version = e.Version,
 	};
 
-	static (MemoryEntry[] Upserts, (string Key, long Version)[] Deletes) ParseEntries(JsonElement entries)
+	// Parse the entry array into typed inputs. Taxonomy/tag normalization happens in the
+	// service. MCP clients sometimes pass the array as a JSON *string*, so accept both.
+	static (List<MemoryEntryInput> Upserts, List<MemoryDelete> Deletes) ParseEntries(JsonElement entries)
 	{
-		// MCP clients sometimes pass the array as a JSON *string* (the param is an
-		// untyped JsonElement, so the client may stringify it); accept both forms.
 		using var doc = entries.ValueKind == JsonValueKind.String
 			? JsonDocument.Parse(entries.GetString() ?? "")
 			: (JsonDocument?)null;
 		var arr = doc?.RootElement ?? entries;
 		if (arr.ValueKind != JsonValueKind.Array)
 			throw new ArgumentException($"entries must be a JSON array (got {arr.ValueKind})");
-		var upserts = new List<MemoryEntry>();
-		var deletes = new List<(string, long)>();
+		var upserts = new List<MemoryEntryInput>();
+		var deletes = new List<MemoryDelete>();
 		foreach (var e in arr.EnumerateArray())
 		{
 			// `deleted:true` soft-deletes the entry (only key + optional version needed).
 			if (e.ValueKind == JsonValueKind.Object
 				&& e.TryGetProperty("deleted", out var del) && del.ValueKind == JsonValueKind.True)
 			{
-				deletes.Add((ModuleMcp.ReqStr(e, "key"), ModuleMcp.OptLong(e, "version", 0)));
+				deletes.Add(new MemoryDelete(ModuleMcp.ReqStr(e, "key"), ModuleMcp.OptLong(e, "version", 0)));
 				continue;
 			}
-			upserts.Add(new MemoryEntry
+			upserts.Add(new MemoryEntryInput
 			{
 				Key = ModuleMcp.ReqStr(e, "key"),
 				Version = ModuleMcp.OptLong(e, "version", 0),
-				Type = ParseType(ModuleMcp.ReqStr(e, "type")),
-				Description = ModuleMcp.OptStr(e, "description") ?? string.Empty,
-				Body = ModuleMcp.OptStr(e, "body") ?? string.Empty,
-				Tags = NormalizeTags(ModuleMcp.OptStr(e, "tags")),
+				Type = ModuleMcp.ReqStr(e, "type"),
+				Description = ModuleMcp.OptStr(e, "description"),
+				Body = ModuleMcp.OptStr(e, "body"),
+				Tags = ModuleMcp.OptStr(e, "tags"),
 				PrevKey = ModuleMcp.OptStr(e, "prevKey"),
 			});
 		}
-		return (upserts.ToArray(), deletes.ToArray());
-	}
-
-	static MemoryType ParseType(string s) =>
-		Enum.TryParse<MemoryType>(s, ignoreCase: true, out var v)
-			? v
-			: throw new ArgumentException($"invalid type '{s}' (User|Feedback|Project|Reference)");
-
-	// Free CSV tags, normalised on write: split on comma, trim, lowercase, drop
-	// blanks, de-dup, re-join. Keeps the column queryable and stops accidental
-	// case/whitespace duplicates ("Go" vs "go ").
-	static string NormalizeTags(string? raw) =>
-		string.IsNullOrWhiteSpace(raw)
-			? string.Empty
-			: string.Join(',', raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-				.Select(t => t.ToLowerInvariant())
-				.Distinct());
-
-	// The FTS5 mirror only holds the current active set; rebuild it wholesale after
-	// a write (stores are small — avoids temporal-aware trigger plumbing).
-	static void RebuildFts(MemoryDb ctx)
-	{
-		ctx.MemoryFts.Delete();
-		ctx.Entries.Where(e => e.ActiveTo == null)
-			.Insert(ctx.MemoryFts, e => new MemoryFts
-			{
-				Key = e.Key,
-				Description = e.Description,
-				Body = e.Body,
-				Tags = e.Tags,
-			});
-	}
-
-	// Lenient FTS5 MATCH expression: alnum tokens, prefix-matched (tok*) and ANDed.
-	// Null when there's nothing to match (caller degrades to a plain listing).
-	static string? BuildMatch(string? query)
-	{
-		if (string.IsNullOrWhiteSpace(query)) return null;
-		var tokens = Regex.Matches(query.ToLowerInvariant(), "[a-z0-9]+").Select(m => m.Value + "*");
-		var joined = string.Join(' ', tokens);
-		return joined.Length == 0 ? null : joined;
+		return (upserts, deletes);
 	}
 }

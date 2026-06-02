@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
-using PetBox.Memory.Data;
+using PetBox.Memory.Contract;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -17,13 +17,13 @@ public sealed class MemoryModel : PageModel
 {
 	readonly PetBoxDb _db;
 	readonly FeatureFlags _features;
-	readonly IMemoryStore _store;
+	readonly IMemoryService _memory;
 
-	public MemoryModel(PetBoxDb db, FeatureFlags features, IMemoryStore store)
+	public MemoryModel(PetBoxDb db, FeatureFlags features, IMemoryService memory)
 	{
 		_db = db;
 		_features = features;
-		_store = store;
+		_memory = memory;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -41,6 +41,6 @@ public sealed class MemoryModel : PageModel
 		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null || !MemoryEnabled) return;
 
-		Stores = await _store.ListAsync(ProjectKey, ct);
+		Stores = await _memory.ListStoresAsync(ProjectKey, ct);
 	}
 }

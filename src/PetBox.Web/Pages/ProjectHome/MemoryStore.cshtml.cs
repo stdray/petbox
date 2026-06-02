@@ -1,8 +1,8 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Features;
+using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
 
 namespace PetBox.Web.Pages.ProjectHome;
@@ -14,12 +14,12 @@ namespace PetBox.Web.Pages.ProjectHome;
 public sealed class MemoryStoreModel : PageModel
 {
 	readonly FeatureFlags _features;
-	readonly IMemoryStore _store;
+	readonly IMemoryService _memory;
 
-	public MemoryStoreModel(FeatureFlags features, IMemoryStore store)
+	public MemoryStoreModel(FeatureFlags features, IMemoryService memory)
 	{
 		_features = features;
-		_store = store;
+		_memory = memory;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -36,13 +36,9 @@ public sealed class MemoryStoreModel : PageModel
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Memory)) return NotFound();
-		if (!await _store.ExistsAsync(ProjectKey, Store, ct)) return NotFound();
+		if (!await _memory.StoreExistsAsync(ProjectKey, Store, ct)) return NotFound();
 
-		var ctx = _store.GetContext(ProjectKey, Store);
-		Entries = await ctx.Entries
-			.Where(e => e.ActiveTo == null)
-			.OrderBy(e => e.Key)
-			.ToListAsync(ct);
+		Entries = await _memory.ListActiveEntriesAsync(ProjectKey, Store, ct);
 		return Page();
 	}
 }
