@@ -60,6 +60,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 		var n = await QuickAdd("brain", "ideas");
 		n.Status.Should().Be("raw");   // ideas initial, NOT "Pending"
 		n.Type.Should().Be("idea");
+		n.NodeId.Should().NotBeNullOrEmpty(); // linkable (the direct write must still assign a NodeId)
 	}
 
 	[Fact]

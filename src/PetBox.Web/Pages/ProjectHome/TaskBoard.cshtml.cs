@@ -140,7 +140,9 @@ public sealed class TaskBoardModel : PageModel
 			var ctx = _store.GetContext(ProjectKey, Board);
 			await TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PlanNode { Key = key, Version = 0, Status = status, Type = type, Name = name.Trim(), Body = body?.Trim() ?? string.Empty, Priority = priority },
+				// Assign a stable NodeId (the MCP path does this in ApplyWorkflow; the direct
+				// write bypasses it). Without it the node can't be linked (relations/specRef).
+				new PlanNode { Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = status, Type = type, Name = name.Trim(), Body = body?.Trim() ?? string.Empty, Priority = priority },
 			}, ct: ct);
 		}
 
