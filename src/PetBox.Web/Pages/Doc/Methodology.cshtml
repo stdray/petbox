@@ -1,0 +1,94 @@
+@page "/doc/methodology"
+@model PetBox.Web.Pages.Doc.MethodologyModel
+@{
+	ViewData["Title"] = "Methodology cheatsheet — PetBox docs";
+	Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" class="h-full">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Methodology cheatsheet — PetBox</title>
+	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
+</head>
+<body class="min-h-full">
+	<main class="prose prose-sm max-w-3xl mx-auto p-6" data-testid="doc-methodology">
+		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a></p>
+		<h1>Methodology cheatsheet (agent)</h1>
+		<p>
+			How to drive the spec / work / idea rails. This is the <strong>operational contract</strong>;
+			the reasoning behind it is on the <a href="@Routes.DocPhilosophy()">philosophy page</a>.
+			Call <code>tasks.workflow(projectKey, board)</code> any time to get the live statuses/transitions
+			for a board.
+		</p>
+
+		<h2>Boards have a <code>kind</code></h2>
+		<p>
+			Set <code>kind</code> on <code>tasks.board_create</code> (it can't be changed later). The kind drives
+			which task types, statuses, transitions and invariants apply. Default is <code>free</code>.
+		</p>
+		<ul>
+			<li><strong><code>spec</code></strong> — the requirement tree (only DEFINED requirements). Node status <code>draft|defined|deprecated</code>. Each node also carries a COMPUTED <code>delivery</code> (see below).</li>
+			<li><strong><code>work</code></strong> — technical tasks, type <code>feature|bug</code>. Status <code>Pending→InProgress→Review→Done</code> (+ <code>Blocked|Deferred|Cancelled</code>). A feature/bug MUST link a spec node (see spec-link).</li>
+			<li><strong><code>ideas</code></strong> — deliberation, type <code>idea</code>. Status <code>raw→exploring→{rejected|deferred|accepted}</code>.</li>
+			<li><strong><code>intake</code></strong> — raw issues, type <code>issue</code>. Status <code>reported→triage→{confirmed|duplicate|wontfix}→done</code>.</li>
+			<li><strong><code>free</code></strong> — no validation, any status string (legacy / scratch).</li>
+		</ul>
+
+		<h2>Addressing a node</h2>
+		<p>
+			A board is a 1-to-3 level tree. Address each node by its <strong>path</strong>: <code>l1</code> (required),
+			optional <code>l2</code>, optional <code>l3</code> (needs l2) — or the same as an <code>"l1/l2/l3"</code>
+			string in <code>key</code>. Segments are <code>^[a-z][a-z0-9_-]{0,99}$</code>. The path is a stable anchor
+			you cite (it survives content edits; rename via <code>prevL1/prevL2/prevL3</code> or <code>prevKey</code>).
+			Give each node a short <code>title</code> and a markdown <code>body</code>.
+		</p>
+		<pre><code>tasks.upsert board="spec" projectKey="&lt;proj&gt;" nodes=[
+  { "l1":"auth", "status":"defined", "title":"Auth" },
+  { "l1":"auth", "l2":"login", "status":"defined", "title":"Login flow" }
+]</code></pre>
+
+		<h2>Links (relations)</h2>
+		<p>Edges bind to the stable <code>nodeId</code> (in every upsert/get response), so they survive renames. They are temporal — soft-closed, not deleted (history kept; <code>relations.list ... includeHistory=true</code>).</p>
+		<ul>
+			<li><strong><code>task_spec</code></strong> — set <code>specRef</code> (a spec nodeId) on a work feature/bug: links it to the spec node it implements. <strong>Required</strong> for a new work feature/bug (spec-link invariant — no work without a spec node).</li>
+			<li><strong><code>blocks</code></strong> — set <code>blockedBy</code> (a nodeId) on a work task you move to <code>Blocked</code>. A Blocked task MUST name a blocker.</li>
+			<li><strong><code>issue_task</code></strong> — a confirmed intake issue spawns a work task; link them so the issue auto-closes when the task is done.</li>
+			<li><strong><code>idea_spec</code></strong> — an accepted idea produced this spec node/version.</li>
+		</ul>
+
+		<h2>Effects (run automatically)</h2>
+		<ul>
+			<li>A work task → <code>Done</code> auto-closes any intake issue linked via <code>issue_task</code>.</li>
+			<li>A blocker → <code>Done</code> closes its <code>blocks</code> edges; a blocked task with no remaining blockers auto-moves <code>Blocked → InProgress</code>.</li>
+			<li>A spec node's <code>delivery</code> is COMPUTED from the tasks linked to it and its subtree: <code>not_started</code> (no feature tasks) / <code>in_progress</code> (some feature not Done) / <code>done</code> (all features Done, no open bug) / <code>done_with_defects</code> (all Done but an open bug). You never set <code>delivery</code> by hand.</li>
+		</ul>
+
+		<h2>Approve gate (convention)</h2>
+		<p>
+			An agent's ceiling on a work item is <strong><code>Review</code></strong> — mark a finished item
+			<code>Review</code>, never <code>Done</code>. Only the maintainer confirms <code>Done</code>.
+			(Enforced by convention today; the engine models it.)
+		</p>
+
+		<h2>What goes where</h2>
+		<ul>
+			<li><strong>idea</strong> (ideas board) — thinking in flux, an outcome to reach. Fast capture, no spec link.</li>
+			<li><strong>spec</strong> (spec board) — a DEFINED requirement. Changing a requirement = a new idea → a new spec version.</li>
+			<li><strong>work</strong> (work board) — a technical unit (feature/bug) that implements a spec node. Always links spec.</li>
+			<li><strong>issue</strong> (intake board) — a raw report; triage to confirmed, then spawn work.</li>
+		</ul>
+		<p class="text-sm opacity-70">Fast capture lives on ideas/intake (no spec link); committed work lives on the work board (spec-linked). That separation is the point — see the <a href="@Routes.DocPhilosophy()">philosophy</a>.</p>
+
+		<h2>Tools</h2>
+		<ul>
+			<li><code>tasks.board_create(kind?) / board_list / board_delete</code> — boards.</li>
+			<li><code>tasks.get / upsert / delta</code> — nodes (key, nodeId, l1/l2/l3, depth, parentKey, status, type, title, body, priority, version; on spec boards also <code>delivery</code>).</li>
+			<li><code>tasks.workflow</code> — the live statuses/transitions for a board's kind.</li>
+			<li><code>relations.create / list / delete</code> — typed edges (task_spec|issue_task|idea_spec|blocks|nfr|dup).</li>
+			<li><code>report.issue</code> — file a PetBox bug/issue to the maintainer's intake.</li>
+		</ul>
+	</main>
+</body>
+</html>

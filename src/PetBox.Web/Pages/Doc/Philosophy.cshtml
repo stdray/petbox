@@ -1,0 +1,68 @@
+@page "/doc/methodology/philosophy"
+@model PetBox.Web.Pages.Doc.PhilosophyModel
+@{
+	ViewData["Title"] = "Methodology — PetBox docs";
+	Layout = null;
+}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" class="h-full">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>Methodology (philosophy) — PetBox</title>
+	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
+</head>
+<body class="min-h-full">
+	<main class="prose prose-sm max-w-3xl mx-auto p-6" data-testid="doc-philosophy">
+		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a> · <a href="@Routes.DocMethodology()">cheatsheet</a></p>
+		<h1>PetBox methodology — the model</h1>
+		<p>
+			How we run a project so its state stays <strong>surveyable</strong> and <strong>deliberation is durable</strong>
+			(thinking isn't lost when a session closes). The operational contract is on the
+			<a href="@Routes.DocMethodology()">cheatsheet</a>; this page is the why.
+		</p>
+
+		<h2>Why</h2>
+		<p>State used to smear across many places (a plan file, a board, parking, sessions, a decision log), hand-synced. Two pains:</p>
+		<ul>
+			<li><strong>Thinking gets lost.</strong> Discuss-but-don't-execute (reject an idea, defer it, just explore) → the reasoning dies with the session and we circle back. The asset is the <em>reasoning, not the verdict</em>.</li>
+			<li><strong><code>Done</code> ≠ approved.</strong> Agents marked work Done and shipped; the maintainer had no gate and kept reopening. Agents must not self-certify completion.</li>
+		</ul>
+
+		<h2>Two interacting but separate processes</h2>
+		<p><strong>P1 — requirements evolution.</strong> Artifact: the <strong>spec tree</strong>. Unit of work = an <strong>idea</strong>: <code>raw → refined statement → plan to update the spec → new spec version</code>. A rejected idea never enters the tree — it stays a record "considered, rejected: why". Invariant: <strong>only DEFINED requirements live in the tree</strong>; changing a requirement = a new idea (same cycle).</p>
+		<p><strong>P2 — technical.</strong> Artifact: <strong>tasks</strong>. Bridge from P1: a spec leaf with no linked tasks → create tasks → work board. Each task carries a type (feature|bug), links its spec node (M:N), and a provenance (originating issue + spec item).</p>
+
+		<h2>Entities</h2>
+		<ol>
+			<li><strong>Session</strong> — raw transcript of one episode; source material.</li>
+			<li><strong>Idea / deliberation</strong> — a thread of thinking distilled from sessions, with an outcome (open / exploring / rejected / deferred / accepted) + reasoning. Separate from the plan.</li>
+			<li><strong>Spec / feature</strong> — a temporal tree of defined requirements (functional + non-functional). Its delivery status is COMPUTED, not set by hand.</li>
+			<li><strong>Task</strong> — a technical unit on the work board; feature|bug; links a spec node; carries commitRef.</li>
+			<li><strong>Relation</strong> — typed temporal edges between nodes (task↔spec, issue→task, idea→spec, blocks). They bind to a stable id, so links survive renames, and they're soft-closed so history is kept.</li>
+			<li><strong>Intake</strong> — a queue of raw issues → triage → {reject-with-reason | confirm → spawn task with links}.</li>
+		</ol>
+
+		<h2>Task lifecycle + the approve gate</h2>
+		<p><code>backlog → (selected into an iteration) → InProgress → Review (agent finished) → tests → APPROVE (maintainer) → Done</code>; reject → back with a reason. <strong>An agent never sets the final <code>Done</code> — its ceiling is <code>Review</code>.</strong> The maintainer confirms.</p>
+
+		<h2>Computed spec status — bottom-up, type-aware</h2>
+		<p>A spec node's <code>delivery</code> derives from its linked tasks over the subtree:</p>
+		<ul>
+			<li>no implementing (feature) tasks → <strong>not started</strong>;</li>
+			<li>some feature not Done → <strong>in progress</strong>;</li>
+			<li>all features Done, no open bug → <strong>done</strong>;</li>
+			<li>all features Done, but an open bug → <strong>done with defects</strong> (a bug ≠ "not built").</li>
+		</ul>
+		<p>Parents aggregate their children. <strong>Surveyability:</strong> the feature tree with computed status is the primary view; kanban/Gantt are projections over it.</p>
+
+		<h2>Blocked is a relationship, not a flag</h2>
+		<p>A task is <code>Blocked</code> only when a real <code>blocks</code> edge names what blocks it. When the blocker reaches Done, the edge soft-closes and the task auto-unblocks — and the history ("blocked by X from T1 to T2") is kept.</p>
+
+		<h2>Fast capture vs committed work</h2>
+		<p>Ideas and intake are the fast-capture surfaces (no spec link required) — a quick session lands there without ceremony. The work board is the spec-linked surface: to put a task there you organize the spec. That separation is what keeps the spec tree honest without making every session slow.</p>
+
+		<p class="text-sm opacity-60 mt-8">Adopted incrementally on the current primitives (board kinds, relations, computed status). See the cheatsheet for the live contract.</p>
+	</main>
+</body>
+</html>

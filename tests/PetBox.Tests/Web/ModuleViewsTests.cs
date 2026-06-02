@@ -235,6 +235,24 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("doc-agent");
 		html.Should().Contain("/mcp");
-		html.Should().Contain("Phase"); // tree model documented
+		html.Should().Contain("1-to-3 level"); // tree model documented
+	}
+
+	[Fact]
+	public async Task Doc_Methodology_IsPublic_ShowsRails()
+	{
+		using var resp = await _client.GetAsync("/doc/methodology");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("doc-methodology");
+		html.Should().Contain("spec-link"); // operational contract documented
+	}
+
+	[Fact]
+	public async Task Doc_Philosophy_IsPublic()
+	{
+		using var resp = await _client.GetAsync("/doc/methodology/philosophy");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("doc-philosophy");
 	}
 }

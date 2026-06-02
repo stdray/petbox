@@ -25,6 +25,9 @@ public interface ITaskBoardStore
 	Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "free", CancellationToken ct = default);
 	// Board role (free|spec|ideas|intake|work), or null if the board doesn't exist.
 	Task<string?> KindAsync(string projectKey, string board, CancellationToken ct = default);
+	// Close (archive) or reopen a board. A closed board rejects writes but stays readable.
+	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);
+	Task<bool> IsClosedAsync(string projectKey, string board, CancellationToken ct = default);
 	Task<bool> DeleteAsync(string projectKey, string board, CancellationToken ct = default);
 }
 
@@ -73,6 +76,17 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 			.Where(b => b.ProjectKey == projectKey && b.Name == board)
 			.Select(b => (string?)b.Kind)
 			.FirstOrDefaultAsync(ct);
+
+	public async Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default) =>
+		await _db.TaskBoards
+			.Where(b => b.ProjectKey == projectKey && b.Name == board)
+			.Set(b => b.ClosedAt, _ => closed ? DateTime.UtcNow : (DateTime?)null)
+			.Set(b => b.UpdatedAt, _ => DateTime.UtcNow)
+			.UpdateAsync(ct) > 0;
+
+	public Task<bool> IsClosedAsync(string projectKey, string board, CancellationToken ct = default) =>
+		_db.TaskBoards
+			.AnyAsync(b => b.ProjectKey == projectKey && b.Name == board && b.ClosedAt != null, ct);
 
 	public async Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "free", CancellationToken ct = default)
 	{

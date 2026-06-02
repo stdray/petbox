@@ -28,4 +28,9 @@ public sealed record TaskBoardMeta
 
 	[Column, NotNull]
 	public DateTime UpdatedAt { get; init; }
+
+	// Closed/archived: null = open. A closed board rejects writes (agents stop writing
+	// to it by inertia) but stays readable; history is kept.
+	[Column, Nullable]
+	public DateTime? ClosedAt { get; init; }
 }

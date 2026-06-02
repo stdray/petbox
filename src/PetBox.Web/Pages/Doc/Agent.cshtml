@@ -74,34 +74,37 @@ setx PETBOX_API_KEY "&lt;your key&gt;"</code></pre>
 			config file gitignored.
 		</p>
 
-		<h2>4. The plan is a tree: Phase &gt; Wave &gt; Task</h2>
+		<h2>4. The plan is a 1-to-3 level tree</h2>
 		<p>
-			A task board is a <strong>1-to-3 level tree</strong>. Identify each node by its path, not a flat
-			label — pass <code>phase</code> (required), optional <code>wave</code>, optional <code>task</code>
-			(a task requires a wave). Each segment is lowercase <code>^[a-z][a-z0-9_-]{0,99}$</code>.
-			Create a parent before (or together with) its children.
+			A board is a <strong>1-to-3 level tree</strong>. Address each node by its path, not a flat label —
+			pass <code>l1</code> (required), optional <code>l2</code>, optional <code>l3</code> (needs l2) — or the
+			same as an <code>"l1/l2/l3"</code> string in <code>key</code>. Each segment is lowercase
+			<code>^[a-z][a-z0-9_-]{0,99}$</code>. Create a parent before (or with) its children. Give every node a
+			short <code>title</code> AND a markdown <code>body</code>.
 		</p>
-		<p>Give every node BOTH a short <code>name</code> (one-line title) AND a <code>body</code> (the detail — what to actually do). Keep the title terse; put prose in the body.</p>
-		<pre><code>tasks.upsert board="roadmap" projectKey="&lt;proj&gt;" nodes=[
-  { "phase":"logging", "name":"Logging", "status":"InProgress",
-    "body":"Move winston+Seq output to PetBox; read via log.query (KQL).", "priority":0 },
-  { "phase":"logging", "wave":"ingest", "name":"Ingest pipeline", "status":"Pending",
-    "body":"Ship CLEF lines to the ingest endpoint.", "priority":1 },
-  { "phase":"logging", "wave":"ingest", "task":"endpoint", "name":"POST endpoint", "status":"Pending",
-    "body":"Wire the structured-JSON POST.", "priority":2 }
+		<pre><code>tasks.upsert board="spec" projectKey="&lt;proj&gt;" nodes=[
+  { "l1":"auth", "status":"defined", "title":"Auth" },
+  { "l1":"auth", "l2":"login", "status":"defined", "title":"Login flow" }
 ]</code></pre>
 		<p>
-			Notes: <code>status</code> ∈ Pending|InProgress|Done|Blocked|Deferred|Cancelled. <code>priority</code>
-			is a sparse ordering int (lower first). <code>version</code> is the baseline you last saw (0 = new).
-			Rename/move with <code>prevPhase/prevWave/prevTask</code> (or <code>prevKey</code>). The upsert
-			<strong>response already contains the fresh state</strong> (<code>added/updated/removed</code> +
-			<code>currentVersion</code>) — advance your cursor and merge; you do not need to re-read the board.
+			<code>priority</code> is a sparse ordering int (lower first). <code>version</code> is the baseline you
+			last saw (0 = new). Rename/move with <code>prevL1/prevL2/prevL3</code> (or <code>prevKey</code>). The
+			upsert <strong>response is the fresh state</strong> (<code>added/updated/removed</code> +
+			<code>currentVersion</code>) — advance your cursor; don't re-read.
 		</p>
+		<div class="not-prose my-4 p-4 rounded border border-primary/40 bg-primary/5 text-sm">
+			A board has a <strong>kind</strong> (spec / work / ideas / intake / free) that drives its statuses,
+			links and invariants. Before writing real plans, read the
+			<a class="link" href="@Routes.DocMethodology()">methodology cheatsheet</a> — it's the operational
+			contract (and call <code>tasks.workflow</code> for a board's live statuses).
+		</div>
 
 		<h2>5. Tools</h2>
 		<ul>
-			<li><code>tasks.board_list / board_create / board_delete</code> — named boards. A cold <code>tasks.upsert</code> auto-creates the board; <code>board_create</code> is only for setting a description up front.</li>
-			<li><code>tasks.get / upsert / delta</code> — the plan tree (returns key, phase, wave, task, depth, parentKey, status, name, body, priority, version).</li>
+			<li><code>tasks.board_create(kind?) / board_list / board_delete</code> — named boards; <code>kind</code> ∈ spec|work|ideas|intake|free. A cold <code>tasks.upsert</code> auto-creates a free board.</li>
+			<li><code>tasks.get / upsert / delta</code> — the node tree (key, nodeId, l1, l2, l3, depth, parentKey, status, type, title, body, priority, version; on a spec board also computed <code>delivery</code>). Node fields incl. <code>specRef</code> / <code>blockedBy</code> create links.</li>
+			<li><code>tasks.workflow</code> — the live statuses/transitions for a board's kind.</li>
+			<li><code>relations.create / list / delete</code> — typed temporal edges (task_spec|issue_task|idea_spec|blocks|nfr|dup). See the <a href="@Routes.DocMethodology()">cheatsheet</a>.</li>
 			<li><code>memory.store_list / store_create / store_delete</code> — named memory stores (a cold <code>memory.upsert</code> auto-creates the store).</li>
 			<li><code>memory.list / search / get / upsert / delta</code> — durable notes. Each entry needs a <code>type</code> (User|Feedback|Project|Reference) plus description, body, optional tags. <code>search</code> is FTS5-ranked; <code>list</code>/<code>search</code> accept an optional <code>type</code> filter.</li>
 			<li><code>session.append / get / list</code> — the working-session plan blob (one per project).</li>
@@ -143,14 +146,15 @@ description: Shared task boards, memory and session plans for this project via t
 This project is connected to a PetBox instance over MCP (server `petbox`).
 Pass projectKey "&lt;proj&gt;" in every call.
 
-Plans are a Phase > Wave > Task tree: identify nodes by phase/wave/task (not a flat
-label); give each a short `name` and a detailed `body`. A cold upsert auto-creates the
-board/store. Memory entries need a `type` (User|Feedback|Project|Reference); store durable
-facts there, actionable work on a task board. The upsert response is the fresh state;
-advance your cursor instead of re-reading.
+Plans are a 1-to-3 level tree: address nodes by l1/l2/l3 (or key "l1/l2/l3"), not a flat
+label; give each a short `title` and a detailed `body`. A board has a kind (spec|work|
+ideas|intake|free) — read /doc/methodology for the rails and call tasks.workflow for a
+board's statuses. A cold upsert auto-creates a free board. Memory entries need a `type`
+(User|Feedback|Project|Reference). The upsert response is the fresh state; advance your
+cursor instead of re-reading.
 
-Tools: tasks.board_list/board_create/board_delete/get/upsert/delta,
-memory.store_list/store_create/store_delete/list/search/get/upsert/delta,
+Tools: tasks.board_create/board_list/board_delete/get/upsert/delta/workflow,
+relations.create/list/delete, memory.store_*/list/search/get/upsert/delta,
 session.append/get/list.</code></pre>
 
 		<h2>8. Verify</h2>

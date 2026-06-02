@@ -73,4 +73,12 @@ public sealed class ProjectTasksModel : PageModel
 		await _store.DeleteAsync(ProjectKey, name);
 		return RedirectToPage();
 	}
+
+	public async Task<IActionResult> OnPostCloseAsync(string name, bool closed)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+
+		await _store.SetClosedAsync(ProjectKey, name, closed);
+		return RedirectToPage();
+	}
 }

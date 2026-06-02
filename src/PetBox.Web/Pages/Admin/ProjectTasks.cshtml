@@ -38,13 +38,26 @@
 					{
 						<p class="text-sm opacity-80">@b.Description</p>
 					}
+					<div class="flex gap-1 mt-1">
+						<span class="badge badge-ghost badge-xs" data-testid="board-kind">@b.Kind</span>
+						@if (b.ClosedAt != null)
+						{
+							<span class="badge badge-warning badge-xs" data-testid="board-closed-badge">closed</span>
+						}
+					</div>
 					<div class="card-actions justify-between mt-2">
 						<span class="text-xs opacity-50 font-mono">@b.CreatedAt.ToString("yyyy-MM-dd")</span>
-						<form method="post" asp-page-handler="Delete" asp-route-name="@b.Name"
-							onsubmit="return confirm('Delete board @b.Name? All plan nodes will be removed.')" style="display:inline">
-							@Html.AntiForgeryToken()
-							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="board-delete">Delete</button>
-						</form>
+						<div class="flex gap-1">
+							<form method="post" asp-page-handler="Close" asp-route-name="@b.Name" asp-route-closed="@(b.ClosedAt == null)" style="display:inline">
+								@Html.AntiForgeryToken()
+								<button type="submit" class="btn btn-xs btn-ghost" data-testid="board-close">@(b.ClosedAt == null ? "Close" : "Reopen")</button>
+							</form>
+							<form method="post" asp-page-handler="Delete" asp-route-name="@b.Name"
+								onsubmit="return confirm('Delete board @b.Name? All plan nodes will be removed.')" style="display:inline">
+								@Html.AntiForgeryToken()
+								<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="board-delete">Delete</button>
+							</form>
+						</div>
 					</div>
 				</div>
 			</div>

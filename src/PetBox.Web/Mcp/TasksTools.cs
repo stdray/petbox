@@ -40,7 +40,7 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await boards.ListAsync(projectKey, ct);
-		return new { boards = list.Select(b => new { b.Name, b.Kind, b.Description, b.CreatedAt }).ToList() };
+		return new { boards = list.Select(b => new { b.Name, b.Kind, b.Description, b.CreatedAt, closed = b.ClosedAt != null }).ToList() };
 	}
 
 	[McpServerTool(Name = "tasks.board_delete", Title = "Delete a task board", Destructive = true)]
@@ -53,6 +53,30 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return new { deleted = await boards.DeleteAsync(projectKey, board, ct) };
+	}
+
+	[McpServerTool(Name = "tasks.board_close", Title = "Close (archive) a task board")]
+	[Description("Close a board: it rejects further writes (so agents stop writing to it by inertia) but stays readable; history is kept. Reopen with tasks.board_reopen. Requires tasks:write.")]
+	public static async Task<object> BoardCloseAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
+		string projectKey, string board, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		return new { closed = await boards.SetClosedAsync(projectKey, board, true, ct) };
+	}
+
+	[McpServerTool(Name = "tasks.board_reopen", Title = "Reopen a closed task board")]
+	[Description("Reopen a closed board so it accepts writes again. Requires tasks:write.")]
+	public static async Task<object> BoardReopenAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
+		string projectKey, string board, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		return new { reopened = await boards.SetClosedAsync(projectKey, board, false, ct) };
 	}
 
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]
@@ -171,6 +195,8 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		await boards.EnsureAsync(projectKey, board, ct); // auto-vivify on first write
+		if (await boards.IsClosedAsync(projectKey, board, ct))
+			throw new InvalidOperationException($"board '{board}' is closed — reopen it (tasks.board_reopen) before writing");
 
 		var kind = WorkflowCatalog.ParseKind(await boards.KindAsync(projectKey, board, ct));
 		var ctx = boards.GetContext(projectKey, board);

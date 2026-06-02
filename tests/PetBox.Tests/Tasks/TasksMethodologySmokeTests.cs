@@ -450,4 +450,20 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		FieldOf(s3, "auth/login", "delivery").Should().Be("done_with_defects", "all features Done but an open bug remains");
 		FieldOf(s3, "auth", "delivery").Should().Be("done_with_defects");
 	}
+
+	// 14. a closed board rejects writes (agents stop writing by inertia); reopen restores writes.
+	[Fact]
+	public async Task ClosedBoard_RejectsWrites_UntilReopened()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "tmp" });
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "tmp", nodes = Nodes(new { key = "a", status = "Pending", title = "A", body = "x" }) })).IsError.Should().NotBe(true);
+
+		await Agent("tasks.board_close", new { projectKey = ProjectKey, board = "tmp" });
+		var blocked = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "tmp", nodes = Nodes(new { key = "b", status = "Pending", title = "B", body = "x" }) });
+		IsErr(blocked).Should().BeTrue();
+		Text(blocked).Should().Contain("closed");
+
+		await Agent("tasks.board_reopen", new { projectKey = ProjectKey, board = "tmp" });
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "tmp", nodes = Nodes(new { key = "b", status = "Pending", title = "B", body = "x" }) })).IsError.Should().NotBe(true);
+	}
 }
