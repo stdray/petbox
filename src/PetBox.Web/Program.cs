@@ -70,6 +70,7 @@ public partial class Program
 		builder.Services.AddSingleton<IConfigDbFactory>(sp => new ConfigDbFactory(sp.GetRequiredService<IScopedDbFactory<ConfigDb>>()));
 		builder.Services.AddSingleton<PetBox.Data.IDataDbFactory>(sp => new PetBox.Data.DataDbFactory(Path.Combine(ResolveDataDir(sp), "db")));
 		builder.Services.AddSingleton<PetBox.Data.Schema.SchemaRunner>();
+		builder.Services.AddScoped<PetBox.Data.Contract.IDataSqlService, PetBox.Data.Services.DataSqlService>();
 		// Tasks / Memory / Sessions — scope-keyed temporal stores. Registered
 		// unconditionally (like the log factory); feature flags gate nav, pages and
 		// MCP tools, not DI. Each named board/store is its own file; sessions are a

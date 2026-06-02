@@ -3,26 +3,24 @@ using System.Text.Json;
 using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Data;
+using PetBox.Data.Contract;
 using PetBox.Data.Schema;
 
 namespace PetBox.Web.Mcp;
 
 // MCP tools for the Data module's *operational* surface — the SQL/migration
 // ops that don't fit generic CRUD: data.schema_apply / data.query / data.exec.
-// DataDb lifecycle (list/create/delete/describe) moved to the generic
-// entity.* tools (type "db") — see EntityTools.
+// DataDb lifecycle (list/create/delete/describe) lives on the generic entity.* tools.
 //
-// Each tool maps 1:1 onto a /api/data/* REST endpoint — same auth (X-Api-Key
-// flows through the standard pipeline before reaching the tool), same scopes
-// (data:read / data:write / data:schema), same project-claim cross-check. We do
-// NOT proxy through the HTTP handlers; tools call the same underlying services
-// (PetBoxDb, IDataDbFactory, SchemaRunner) that the REST handlers use.
+// query/exec delegate to the shared IDataSqlService — the same execution path the
+// REST /api/data/* endpoints use — so the PRAGMA deny-list, parameter binding and
+// existence check live in one place (a NetArchTest keeps these tools off the raw
+// connection). schema_apply uses SchemaRunner (DbUp) directly.
 [McpServerToolType]
 public static class DataTools
 {
@@ -55,8 +53,7 @@ public static class DataTools
 	[Description("Executes a parameterized SELECT and returns rows as a JSON array. Requires data:read scope.")]
 	public static async Task<object> QueryAsync(
 		IHttpContextAccessor http,
-		PetBoxDb db,
-		IDataDbFactory factory,
+		IDataSqlService dataSql,
 		string projectKey,
 		string dbName,
 		string sql,
@@ -65,28 +62,7 @@ public static class DataTools
 	{
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.DataRead);
-
-		var row = await db.DataDbs.FirstOrDefaultAsync(
-			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
-		if (row is null) throw new InvalidOperationException("DataDb not found");
-
-		var cs = factory.GetConnectionString(projectKey, dbName);
-		await using var conn = new SqliteConnection(cs);
-		await conn.OpenAsync(ct);
-		await using var cmd = conn.CreateCommand();
-		cmd.CommandText = sql;
-		cmd.CommandTimeout = 30;
-		BindJsonParams(cmd, @params);
-
-		var rows = new List<Dictionary<string, object?>>();
-		await using var reader = await cmd.ExecuteReaderAsync(ct);
-		var n = reader.FieldCount;
-		while (await reader.ReadAsync(ct))
-		{
-			var r = new Dictionary<string, object?>(n, StringComparer.Ordinal);
-			for (var i = 0; i < n; i++) r[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
-			rows.Add(r);
-		}
+		var rows = await dataSql.QueryAsync(projectKey, dbName, sql, ParseArgs(@params), TimeoutSeconds, ct);
 		return new { rows };
 	}
 
@@ -94,8 +70,7 @@ public static class DataTools
 	[Description("Executes a non-query statement. Returns affected row count. PRAGMA writable_schema / temp_store_directory / data_store_directory / trusted_schema are denied. SQLITE_FULL surfaces as a quota error. Requires data:write scope.")]
 	public static async Task<object> ExecAsync(
 		IHttpContextAccessor http,
-		PetBoxDb db,
-		IDataDbFactory factory,
+		IDataSqlService dataSql,
 		string projectKey,
 		string dbName,
 		string sql,
@@ -104,25 +79,29 @@ public static class DataTools
 	{
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.DataWrite);
-		AssertNotDeniedPragma(sql);
-
-		var row = await db.DataDbs.FirstOrDefaultAsync(
-			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
-		if (row is null) throw new InvalidOperationException("DataDb not found");
-
-		var cs = factory.GetConnectionString(projectKey, dbName);
-		await using var conn = new SqliteConnection(cs);
-		await conn.OpenAsync(ct);
-		await using var cmd = conn.CreateCommand();
-		cmd.CommandText = sql;
-		cmd.CommandTimeout = 30;
-		BindJsonParams(cmd, @params);
-
-		var affected = await cmd.ExecuteNonQueryAsync(ct);
+		var affected = await dataSql.ExecAsync(projectKey, dbName, sql, ParseArgs(@params), TimeoutSeconds, ct);
 		return new { affected };
 	}
 
 	// --- Helpers ---------------------------------------------------------
+
+	const int TimeoutSeconds = 30;
+
+	static List<SqlArg> ParseArgs(JsonElement? @params)
+	{
+		if (@params is null || @params.Value.ValueKind != JsonValueKind.Array) return [];
+		var list = new List<SqlArg>();
+		foreach (var el in @params.Value.EnumerateArray())
+		{
+			if (el.ValueKind != JsonValueKind.Object) continue;
+			if (!el.TryGetProperty("name", out var nameEl)) continue;
+			var name = nameEl.GetString();
+			if (string.IsNullOrEmpty(name)) continue;
+			var value = el.TryGetProperty("value", out var v) ? (JsonElement?)v : null;
+			list.Add(SqlArg.FromJson(name, value));
+		}
+		return list;
+	}
 
 	static void AssertProject(IHttpContextAccessor accessor, string projectKey)
 	{
@@ -140,49 +119,4 @@ public static class DataTools
 		if (!parts.Contains(required, StringComparer.Ordinal))
 			throw new UnauthorizedAccessException($"ApiKey lacks required scope '{required}'");
 	}
-
-	static readonly HashSet<string> DeniedPragmas = new(StringComparer.OrdinalIgnoreCase)
-	{
-		"writable_schema", "temp_store_directory", "data_store_directory", "trusted_schema",
-	};
-
-	static void AssertNotDeniedPragma(string sql)
-	{
-		var trimmed = sql.TrimStart();
-		if (!trimmed.StartsWith("PRAGMA", StringComparison.OrdinalIgnoreCase)) return;
-		var rest = trimmed.AsSpan(6).TrimStart();
-		var end = 0;
-		while (end < rest.Length && (char.IsLetterOrDigit(rest[end]) || rest[end] == '_')) end++;
-		if (end == 0) return;
-		var pragmaName = rest[..end].ToString();
-		if (DeniedPragmas.Contains(pragmaName))
-			throw new InvalidOperationException($"PRAGMA {pragmaName} is not allowed");
-	}
-
-	static void BindJsonParams(SqliteCommand cmd, JsonElement? @params)
-	{
-		if (@params is null || @params.Value.ValueKind != JsonValueKind.Array) return;
-		foreach (var el in @params.Value.EnumerateArray())
-		{
-			if (el.ValueKind != JsonValueKind.Object) continue;
-			if (!el.TryGetProperty("name", out var nameEl)) continue;
-			var name = nameEl.GetString();
-			if (string.IsNullOrEmpty(name)) continue;
-			var p = cmd.CreateParameter();
-			p.ParameterName = name;
-			p.Value = el.TryGetProperty("value", out var valEl) ? ConvertJson(valEl) : DBNull.Value;
-			cmd.Parameters.Add(p);
-		}
-	}
-
-	static object ConvertJson(JsonElement el) => el.ValueKind switch
-	{
-		JsonValueKind.Null or JsonValueKind.Undefined => DBNull.Value,
-		JsonValueKind.True => true,
-		JsonValueKind.False => false,
-		JsonValueKind.Number when el.TryGetInt64(out var l) => l,
-		JsonValueKind.Number => el.GetDouble(),
-		JsonValueKind.String => el.GetString() ?? (object)DBNull.Value,
-		_ => el.GetRawText(),
-	};
 }
