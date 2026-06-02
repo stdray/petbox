@@ -14,6 +14,7 @@
 		<PackageReference Include="linq2db" />
 		<PackageReference Include="Microsoft.Data.Sqlite" />
 		<PackageReference Include="FluentMigrator" />
+		<PackageReference Include="FluentValidation" />
 	</ItemGroup>
 
 	<ItemGroup>

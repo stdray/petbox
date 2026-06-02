@@ -133,6 +133,26 @@ public sealed class TasksTreeContractTests : IDisposable
 			.Which.GetProperty("title").GetString().Should().Be("Alpha");
 	}
 
+	[Fact]
+	public async Task Upsert_ChangingType_IsRejected()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b", null);
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+			JsonSerializer.SerializeToElement(new[] { new { key = "n", type = "alpha", status = "todo", body = "x" } }), 0);
+
+		// Editing the node to a different type must fail — type is immutable once set.
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+			JsonSerializer.SerializeToElement(new[] { new { key = "n", type = "beta", version = 1, body = "x" } })));
+		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
+		res.GetProperty("error").GetProperty("message").GetString().Should().Contain("immutable");
+
+		// Editing other fields while keeping the type (or omitting it) still works.
+		var ok = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+			JsonSerializer.SerializeToElement(new[] { new { key = "n", version = 1, body = "edited" } })));
+		ok.GetProperty("applied").GetBoolean().Should().BeTrue();
+	}
+
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");

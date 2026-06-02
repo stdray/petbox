@@ -3,6 +3,7 @@ using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
+using PetBox.Tasks.Validation;
 using PetBox.Tasks.Workflow;
 
 namespace PetBox.Tasks.Services;
@@ -15,6 +16,9 @@ public sealed partial class TasksService : ITasksService
 {
 	readonly ITaskBoardStore _boards;
 	readonly IRelationStore _relations;
+
+	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
+	static readonly PlanNodeChangeValidator ChangeValidator = new();
 
 	public TasksService(ITaskBoardStore boards, IRelationStore relations)
 	{
@@ -232,6 +236,7 @@ public sealed partial class TasksService : ITasksService
 		var prior = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
 			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
 		var desired = nodes.Select(p => ApplyWorkflow(kind, Merge(p, prior), prior)).ToArray();
+		ValidateChanges(desired, prior);
 		var specRefs = LinkFields(nodes, p => p.SpecRef);
 		var blockedBy = LinkFields(nodes, p => p.BlockedBy);
 		RequireSpecLinks(kind, desired, prior, specRefs);
@@ -307,6 +312,20 @@ public sealed partial class TasksService : ITasksService
 		var res = WorkflowEngine.Validate(kind, type, from, n.Status, hasReason: !string.IsNullOrWhiteSpace(n.Body));
 		if (!res.Ok) throw new ArgumentException(res.Error);
 		return n;
+	}
+
+	// Declarative immutable-field invariants (NodeId/type once set). The prior row is the
+	// active node at this key, or — for a rename — at its PrevKey; null means a new node.
+	static void ValidateChanges(PlanNode[] desired, Dictionary<string, PlanNode> prior)
+	{
+		foreach (var n in desired)
+		{
+			var old = prior.GetValueOrDefault(n.Key)
+				?? (n.PrevKey is not null ? prior.GetValueOrDefault(n.PrevKey) : null);
+			var result = ChangeValidator.Validate(new EntityChange<PlanNode>(old, n));
+			if (!result.IsValid)
+				throw new ArgumentException(result.Errors[0].ErrorMessage);
+		}
 	}
 
 	// Validate each specRef target: it must resolve to a node on a spec board, and (if
