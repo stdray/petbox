@@ -202,7 +202,7 @@ public static class LogApi
 		HttpContext ctx,
 		string projectKey,
 		string logName,
-		ILogStore store,
+		ILogQueryService query,
 		CancellationToken ct)
 	{
 		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
@@ -212,44 +212,26 @@ public static class LogApi
 		if (string.IsNullOrWhiteSpace(kql))
 			return Results.BadRequest("q parameter required");
 
-		if (!await store.ExistsAsync(projectKey, logName, ct))
-			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'" });
-
-		KustoCode code;
+		LogQueryResult queryResult;
 		try
 		{
-			code = KustoCode.Parse(kql);
-			var parseErrors = code.GetDiagnostics()
-				.Where(d => d.Severity == "Error")
-				.ToList();
-			if (parseErrors.Count > 0)
-				return Results.BadRequest(new
-				{
-					error = "KQL parse error",
-					details = parseErrors.Select(d => d.Message),
-				});
+			queryResult = await query.QueryAsync(projectKey, logName, kql, ct);
 		}
-		catch (Exception ex)
+		catch (LogNotFoundException ex)
 		{
-			return Results.BadRequest(new { error = ex.Message });
+			return Results.NotFound(new { error = ex.Message });
 		}
-
-		var logDb = store.GetContext(projectKey, logName);
+		catch (KqlParseException ex)
+		{
+			return Results.BadRequest(new { error = "KQL parse error", details = ex.Details });
+		}
 
 		try
 		{
-			if (KqlTransformer.HasShapeChangingOps(code))
-			{
-				var result = KqlTransformer.Execute(logDb.LogEntries, code);
-				return await WriteShapeChangedResult(result, ct);
-			}
+			if (queryResult is LogQueryResult.Table table)
+				return await WriteShapeChangedResult(table.Result, ct);
 
-			var events = new List<Models.LogEntry>();
-			var records = KqlTransformer.Apply(logDb.LogEntries, code);
-			var list = await records.ToListAsync(ct);
-			foreach (var r in list)
-				events.Add(r.ToEntry());
-
+			var events = ((LogQueryResult.Events)queryResult).Items;
 			return Results.Json(new
 			{
 				count = events.Count,

@@ -1,19 +1,17 @@
 using System.ComponentModel;
 using System.Globalization;
 using System.Text.Json;
-using Kusto.Language;
-using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
-using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Query;
 
 namespace PetBox.Web.Mcp;
 
-// Single MCP tool: KQL query against project's LogDb. This is the only
-// real use case for log access from an agent. List-of-services can be
-// derived via `events | summarize count() by ServiceKey`; ingest is for
+// Single MCP tool: KQL query against a project's named log. A thin adapter over
+// ILogQueryService (the shared execution path, also used by the REST log endpoint);
+// it must not open the log context directly (a NetArchTest enforces this). List of
+// services is derivable via `events | summarize count() by ServiceKey`; ingest is for
 // pets via /api/ingest/clef, not agents.
 [McpServerToolType]
 public static class LogTools
@@ -22,7 +20,7 @@ public static class LogTools
 	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Requires logs:query scope.")]
 	public static async Task<object> QueryAsync(
 		IHttpContextAccessor http,
-		ILogStore store,
+		ILogQueryService logs,
 		[Description("Project key — must match the calling ApiKey's project claim.")] string projectKey,
 		[Description("Log name within the project (e.g. 'default', 'audit').")] string logName,
 		[Description("KQL query, e.g. 'events | where Level == 4 | take 50' or 'events | summarize count() by ServiceKey'.")] string kql,
@@ -30,56 +28,36 @@ public static class LogTools
 	{
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.LogsQuery);
-		if (string.IsNullOrWhiteSpace(kql)) throw new ArgumentException("kql is required");
-		if (!await store.ExistsAsync(projectKey, logName, ct))
-			throw new InvalidOperationException($"log '{logName}' not found in project '{projectKey}'");
 
-		KustoCode code;
+		LogQueryResult result;
 		try
 		{
-			code = KustoCode.Parse(kql);
-			var parseErrors = code.GetDiagnostics()
-				.Where(d => d.Severity == "Error")
-				.ToList();
-			if (parseErrors.Count > 0)
-				throw new ArgumentException("KQL parse error: " + string.Join("; ", parseErrors.Select(d => d.Message)));
+			result = await logs.QueryAsync(projectKey, logName, kql, ct);
 		}
-		catch (ArgumentException) { throw; }
-		catch (Exception ex)
-		{
-			throw new ArgumentException(ex.Message);
-		}
-
-		var logDb = store.GetContext(projectKey, logName);
+		catch (KqlParseException ex) { throw new ArgumentException(ex.Message); }
+		catch (LogNotFoundException ex) { throw new InvalidOperationException(ex.Message); }
 
 		try
 		{
-			if (KqlTransformer.HasShapeChangingOps(code))
+			if (result is LogQueryResult.Table table)
 			{
-				var result = KqlTransformer.Execute(logDb.LogEntries, code);
-				var columns = result.Columns.Select(c => c.Name).ToList();
+				var columns = table.Result.Columns.Select(c => c.Name).ToList();
 				var rows = new List<List<object?>>();
-				await foreach (var row in result.Rows.WithCancellation(ct))
+				await foreach (var row in table.Result.Rows.WithCancellation(ct))
 					rows.Add(row.Select(cell => (object?)cell).ToList());
 				return new { kind = "table", columns, rows };
 			}
 
-			var records = KqlTransformer.Apply(logDb.LogEntries, code);
-			var list = await records.ToListAsync(ct);
-			var events = list.Select(r =>
+			var events = ((LogQueryResult.Events)result).Items.Select(e => new
 			{
-				var e = r.ToEntry();
-				return new
-				{
-					id = e.Id,
-					serviceKey = e.ServiceKey,
-					timestamp = e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
-					level = e.Level.ToString(),
-					message = e.Message,
-					messageTemplate = e.MessageTemplate,
-					exception = e.Exception,
-					properties = e.GetProperties().ToDictionary(kv => kv.Key, kv => (object?)JsonSerializer.Serialize(kv.Value)),
-				};
+				id = e.Id,
+				serviceKey = e.ServiceKey,
+				timestamp = e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+				level = e.Level.ToString(),
+				message = e.Message,
+				messageTemplate = e.MessageTemplate,
+				exception = e.Exception,
+				properties = e.GetProperties().ToDictionary(kv => kv.Key, kv => (object?)JsonSerializer.Serialize(kv.Value)),
 			}).ToList();
 			return new { kind = "events", count = events.Count, events };
 		}
