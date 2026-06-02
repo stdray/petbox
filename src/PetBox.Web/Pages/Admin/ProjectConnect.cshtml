@@ -84,6 +84,26 @@ else
 		</div>
 	</div>
 
+	<div class="card bg-base-200 border border-base-300 max-w-3xl mb-4" data-testid="connect-env-step">
+		<div class="card-body p-4">
+			<h3 class="card-title text-base">First: set an environment variable</h3>
+			<p class="text-sm">
+				The agent reads the key from an environment variable named <code>PETBOX_API_KEY</code> — it is
+				never stored in any config file. Set it in the environment where the agent runs, then start the
+				agent from that same shell/session:
+			</p>
+			<pre class="bg-base-300 rounded p-3 text-xs whitespace-pre-wrap"><code># macOS / Linux (current shell)
+export PETBOX_API_KEY="@key"
+
+# Windows PowerShell (persisted for new shells)
+setx PETBOX_API_KEY "@key"</code></pre>
+			<p class="text-xs opacity-70 mb-0">
+				Don't commit it to a file. Pasting the prompt below also puts the key in the agent's chat
+				history — if that matters, rotate the key when you're done.
+			</p>
+		</div>
+	</div>
+
 	<div class="max-w-3xl" data-testid="connect-instructions">
 		<p class="text-sm mb-2">
 			Paste the block below to your coding agent. It carries the connection secrets and points the

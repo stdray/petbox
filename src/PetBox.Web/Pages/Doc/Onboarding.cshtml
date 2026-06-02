@@ -15,168 +15,136 @@
 <body class="min-h-full">
 	<main class="prose prose-sm max-w-3xl mx-auto p-6" data-testid="doc-onboarding">
 		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a></p>
+
 		<h1>Agent onboarding</h1>
+
 		<p>
-			The end-to-end sequence for bringing a coding agent onto a PetBox project: from minting a key to
-			the agent planning real work on the <a href="@Routes.DocMethodology()">spec / work / idea rails</a>.
-			It is <strong>staged</strong> — each stage has a <strong>validation gate</strong>. Do not advance
-			until the gate passes; a silent failure here (wrong key, stale MCP cache, half-understood model)
-			costs far more later. Stages 0–2 are mechanical; 3 is comprehension; 4–5 prove the rails work.
-		</p>
-		<p class="text-sm opacity-70">
-			Who does what: <strong>maintainer (human)</strong> drives stage 0 in the UI; the
-			<strong>agent</strong> drives 1–5; the maintainer <strong>confirms the gate</strong> on stage 3
-			(comprehension) and stage 5 (first <code>Done</code>, per the approve gate).
+			This is the short path for bringing a coding agent onto a PetBox project — from minting a key to
+			the agent planning real work. There are five steps; do them in order and check each one worked
+			before moving on, because a silent failure early (wrong key, stale connection, half-read model) is
+			expensive to debug later.
 		</p>
 
-		<div class="not-prose border border-warning/40 bg-warning/10 rounded p-3 text-sm my-4" data-testid="onboarding-stale-note">
-			<strong>Standing failure mode — stale tool registry.</strong> After any server deploy, an MCP
-			client's tool list goes stale: newly-added tools return <em>“unknown tool”</em> and some writes can
-			silently no-op. This is the most common confusing failure here. <strong>Whenever a tool you expect
-			is missing, or a write seems to do nothing, suspect a stale registry first — re-establish the MCP
-			connection and retry before inventing a workaround.</strong> It applies to every stage below and to
-			steady state, not just the initial connect.
+		<p>
+			The <strong>maintainer</strong> (you) does step 1 in the UI and confirms the checks in steps 3 and
+			5. The <strong>agent</strong> does the rest. The deeper material lives on other pages, linked
+			inline — this page is just the sequence.
+		</p>
+
+		<div class="not-prose border border-warning/40 bg-warning/10 rounded p-3 text-sm my-5" data-testid="onboarding-stale-note">
+			<p class="m-0">
+				<strong>Keep this in mind throughout.</strong> After any server deploy, an MCP client's tool
+				list goes stale: a tool you expect can return <em>“unknown tool”</em>, or a write can quietly do
+				nothing. Whenever that happens, re-establish the MCP connection and retry before assuming the
+				key or the request is wrong. This is the most common confusing failure here.
+			</p>
 		</div>
-		<p class="text-sm opacity-70">
-			Tool names: docs write tools dotted (<code>tasks.board_list</code>); the registered MCP tools are
-			underscored (<code>tasks_board_list</code>). Same tool — call the underscored name.
+
+		<h2>1. Mint a key and set the environment variable</h2>
+
+		<p>
+			On the project's <strong>Connect</strong> page, mint an agent key with the scopes the agent will
+			actually use (at least <code>tasks:write</code> for planning). The key is shown once — copy it
+			immediately.
 		</p>
 
-		<h2>Stage 0 — Mint a key <span class="text-sm opacity-60">(maintainer, in the UI)</span></h2>
-		<p><strong>Goal:</strong> a project-scoped API key in hand, with scopes that cover the intended work.</p>
-		<ul>
-			<li>Open the project's <strong>Connect</strong> page and mint a key. Pick scopes deliberately to
-				match what the agent will actually do: <code>tasks:write</code> for planning, plus
-				<code>config:read</code> / <code>logs:query</code> / <code>data:write</code> only for the
-				modules it will use. Under-scoping surfaces as a 403 mid-stage-5 with no agent-side recovery —
-				so decide now.</li>
-			<li>Copy the key <strong>immediately</strong> — it is shown once and never again.</li>
-			<li><strong>Treat the key as transcript-visible.</strong> The Connect page's kickoff prompt carries
-				it inline for convenience, so pasting that block puts the key in the agent's chat history.
-				Prefer handing it out-of-band (you set the env var yourself, or paste only the connection
-				metadata and supply the key separately); if you do paste the whole block, rotate the key when
-				the work is done.</li>
-		</ul>
-		<p class="text-sm"><strong>✅ Gate:</strong> you have the key string, the MCP endpoint URL, the project
-			key, and the granted scope list. If you lost the key, mint another — don't guess.</p>
-
-		<h2>Stage 1 — Set the environment variable <span class="text-sm opacity-60">(agent)</span></h2>
-		<p><strong>Goal:</strong> the key lives in the agent's process env, never in a committed file.</p>
-		<ul>
-			<li>Export <code>PETBOX_API_KEY</code> in the environment the agent process reads (shell profile,
-				the agent runner's env, a git-ignored <code>.env</code> — never a tracked file).</li>
-			<li>The MCP config references it as <code>${PETBOX_API_KEY}</code>; it is expanded from the
-				process env, so the secret never appears in config on disk.</li>
-		</ul>
-		<p class="text-sm"><strong>✅ Gate:</strong> the agent reads the variable back and confirms it is
-			non-empty (print its length, <em>not</em> its value). Non-empty is necessary but not sufficient — a
-			truncated or wrong-project key also passes here; the real validity check is Stage 2's auth probe. If
-			empty, the agent's process did not inherit the export — fix the env before touching MCP config.</p>
-
-		<h2>Stage 2 — Register the MCP server &amp; check scopes <span class="text-sm opacity-60">(agent)</span></h2>
-		<p><strong>Goal:</strong> the <code>petbox</code> MCP server is wired, the key is accepted, and the
-			granted scopes cover the work.</p>
-		<ul>
-			<li>Add a <strong>project-level</strong> MCP server named <code>petbox</code> in the config file
-				the agent reads (the <a href="@Routes.DocAgent()">connect guide</a> lists the path per agent
-				type): HTTP/streamable transport, the MCP endpoint URL, header
-				<code>X-Api-Key: ${PETBOX_API_KEY}</code>.</li>
-			<li><strong>Restart the MCP connection</strong> so the tool registry loads.</li>
-		</ul>
-		<p class="text-sm"><strong>✅ Gate (three checks):</strong></p>
-		<ol class="text-sm">
-			<li>Call <code>tasks.board_list</code> with the project key. A <strong>list</strong> (even empty)
-				means reachable + valid key + scoped to this project. An <strong>auth error</strong> = bad or
-				wrong-project key (back to Stage 0/1); a <strong>connection error</strong> = wrong
-				server/URL/transport.</li>
-			<li>The agent can enumerate the <code>tasks.*</code> tools. If <code>tasks.board_list</code> is
-				missing → stale registry (see the note up top) → reconnect and retry.</li>
-			<li><strong>Scope fit:</strong> the granted scopes cover every module this project will use (probe
-				one harmless read per intended module, e.g. <code>config.list_bindings</code>). A missing scope
-				means the maintainer re-mints at Stage 0 <em>now</em> — not mid-work.</li>
-		</ol>
-
-		<h2>Stage 3 — Read the platform &amp; pass a comprehension check <span class="text-sm opacity-60">(agent → maintainer grades)</span></h2>
-		<p><strong>Goal:</strong> the agent understands what it is building on and the planning model —
-			<em>before</em> it writes a single node. This is the gate that prevents misuse of the rails, so it
-			is graded on <em>applied</em> answers, not recall.</p>
-		<ul>
-			<li>Fetch and read <a href="@Routes.DocOverview()">/doc/overview</a> (modules, surfaces, client
-				libs) and the <a href="@Routes.DocMethodology()">methodology cheatsheet</a>
-				(+ its <a href="@Routes.DocPhilosophy()">model</a>).</li>
-		</ul>
-		<p class="text-sm"><strong>✅ Gate — the agent answers these applied questions; the maintainer grades
-			against the right answer (not against whether prose was produced):</strong></p>
-		<ol class="text-sm">
-			<li>“Here is a concrete requirement: <em>‘users can reset their password by email’</em>. Which
-				board and <code>kind</code>, what <code>l1/l2/l3</code> path + title would you use, and what
-				link does the implementing task need?” <span class="opacity-60">(checks board kinds, node
-				addressing, and the spec-link invariant in the concrete.)</span></li>
-			<li>“You just finished coding that feature and it passes locally. What status do you set it to, and
-				who sets the one after that?” <span class="opacity-60">(right answer: <code>Review</code> — and
-				the <strong>maintainer</strong> sets <code>Done</code>. Checks the approve gate behaviourally.)</span></li>
-			<li>“A bug report just arrived from a user. Which board does it land on, and how does it become
-				actual work?” <span class="opacity-60">(intake → confirmed → promote to a work task via a link.)</span></li>
-		</ol>
-		<p class="text-sm">A wrong or vague answer means re-read before proceeding — do not let the agent
-			improvise the model.</p>
-
-		<h2>Stage 4 — Install the skill <span class="text-sm opacity-60">(agent, recommended)</span></h2>
-		<p><strong>Goal:</strong> the petbox conventions are loaded as a reusable skill so they survive new
-			sessions.</p>
-		<ul>
-			<li>Copy the <code>SKILL.md</code> template from the <a href="@Routes.DocAgent()">connect guide</a>
-				into the agent's skills path (the guide lists the correct path per agent type — a skill at the
-				wrong path silently won't load), filled with this project's key reference + endpoint.</li>
-		</ul>
-		<p class="text-sm"><strong>✅ Gate:</strong> in a <em>fresh</em> session the agent surfaces the petbox
-			skill in its skill list <em>and</em> can answer one methodology question sourced from it (e.g.
-			“what is your status ceiling?” → <code>Review</code>). That proves it loaded — “a file exists on
-			disk” does not. Skipping this stage is allowed but means re-reading stage 3 each fresh session.</p>
-
-		<h2>Stage 5 — First real plan: smoke the rails <span class="text-sm opacity-60">(agent → maintainer confirms Done)</span></h2>
-		<p><strong>Goal:</strong> prove the spec→work→link→review loop end-to-end on real (small) work, not a
-			throwaway.</p>
-		<ol>
-			<li>Ensure the project's <code>spec</code> and <code>work</code> boards exist <strong>with the
-				right <code>kind</code></strong> via <code>tasks.board_create</code>. <strong>Do not
-				cold-upsert</strong> to a board that doesn't exist — a bare <code>tasks.upsert</code>
-				auto-creates a <code>free</code> board and <strong>kind is immutable</strong>, so a board named
-				“spec” with no spec invariants and no <code>delivery</code> is a dead end (delete and recreate
-				with the right kind).</li>
-			<li>Record one genuine requirement as a spec leaf. <strong>Read the <code>nodeId</code> from the
-				upsert response</strong> — links bind to <code>nodeId</code>, not to the path or title.</li>
-			<li>Create one <code>work</code> feature for it, passing <code>specRef = &lt;that spec
-				nodeId&gt;</code> to satisfy the spec-link invariant.</li>
-			<li>Move it <code>Pending → InProgress → Review</code> as the work proceeds — and <strong>stop at
-				<code>Review</code></strong> (the engine does not block <code>Done</code> today; stopping is the
-				convention the maintainer is checking).</li>
-		</ol>
-		<p class="text-sm"><strong>✅ Gate (in this order — earlier checks explain a later false reading):</strong></p>
-		<ol class="text-sm">
-			<li><code>tasks.get</code> / <code>relations.list</code> shows a <strong>live <code>task_spec</code>
-				edge</strong> from the work node to the correct spec <code>nodeId</code>. If it's missing, the
-				<code>specRef</code> didn't take (wrong id?) — fix before reading delivery.</li>
-			<li>The work node's status is <code>InProgress</code> (or <code>Review</code>).</li>
-			<li><em>Then</em> the spec leaf's computed <code>delivery</code> reads <code>in_progress</code>. If
-				it reads <code>not_started</code>, the link didn't resolve or the work node never left
-				<code>Pending</code> — recheck steps 1–2 above.</li>
-			<li>The agent did <strong>not</strong> set <code>Done</code>.</li>
-		</ol>
-		<p class="text-sm">The maintainer reviews and, if satisfied, sets <code>Done</code> from the UI —
-			closing the loop. The gate's value is precisely that the maintainer <em>observes</em> the agent
-			stopped at <code>Review</code> voluntarily, since the engine does not yet enforce it.</p>
-
-		<h2>Steady state</h2>
 		<p>
-			From here the agent plans on the rails: requirements onto <code>spec</code>, technical tasks onto
+			Then set an <strong>environment variable named <code>PETBOX_API_KEY</code></strong> to that value,
+			in the environment the agent process runs in. The MCP config never stores the key itself — it
+			references <code>${PETBOX_API_KEY}</code> and reads it from the environment. The
+			<a href="@Routes.DocAgent()">connect guide</a> has the exact <code>export</code> /
+			<code>setx</code> commands per platform.
+		</p>
+
+		<p class="text-sm opacity-80">
+			<strong>Check:</strong> the variable resolves to a non-empty value in the agent's environment. (A
+			truncated or wrong-project key still looks non-empty here — step 2 is the real validity test.)
+		</p>
+
+		<h2>2. Register the MCP server</h2>
+
+		<p>
+			Add a project-level MCP server named <code>petbox</code> in the config your agent reads (HTTP /
+			streamable transport, the MCP endpoint URL, and the header
+			<code>X-Api-Key: ${PETBOX_API_KEY}</code>). The <a href="@Routes.DocAgent()">connect guide</a>
+			lists the config-file path per agent type. Then <strong>restart the MCP connection</strong> so the
+			tool list loads.
+		</p>
+
+		<p class="text-sm opacity-80">
+			<strong>Check:</strong> call <code>tasks.board_list</code> for the project. A list — even an empty
+			one — means it works. An auth error means a bad or wrong-project key; a connection error means the
+			URL or transport is wrong; a missing tool means the tool list is stale, so reconnect and retry.
+		</p>
+
+		<h2>3. Read the platform, then confirm understanding</h2>
+
+		<p>
+			Before writing anything, the agent reads the <a href="@Routes.DocOverview()">overview</a> (what
+			PetBox is and its modules) and the <a href="@Routes.DocMethodology()">methodology</a> (the
+			spec / work / idea rails and how nodes are addressed). This is the step that prevents misuse of the
+			rails, so it is confirmed by answering, not by claiming to have read.
+		</p>
+
+		<p class="text-sm opacity-80"><strong>Check — the agent answers, the maintainer grades against the right answer:</strong></p>
+		<ul class="text-sm">
+			<li>“For the requirement <em>‘users can reset their password by email’</em> — which board and kind,
+				roughly what <code>l1/l2/l3</code> path and title, and what must the implementing task link
+				to?”</li>
+			<li>“You just finished coding a feature and it works locally — what status do you set, and who sets
+				the next one?” (Answer: <code>Review</code>; the <strong>maintainer</strong> sets
+				<code>Done</code>.)</li>
+			<li>“A user reports a bug — which board does it land on first?”</li>
+		</ul>
+
+		<h2>4. Install the skill <span class="text-sm opacity-60">(optional, recommended)</span></h2>
+
+		<p>
+			Copy the <code>SKILL.md</code> template from the <a href="@Routes.DocAgent()">connect guide</a>
+			into the agent's skills folder so the conventions survive into new sessions. Put it at the correct
+			path for your agent type — a skill in the wrong place silently won't load.
+		</p>
+
+		<p class="text-sm opacity-80">
+			<strong>Check:</strong> in a fresh session the agent lists the petbox skill and can answer one
+			question from it (e.g. “what is your status ceiling?” → <code>Review</code>). Skipping this step is
+			fine — it just means re-reading step 3 each new session.
+		</p>
+
+		<h2>5. Do one real piece of work end-to-end</h2>
+
+		<p>
+			Prove the loop on something small but genuine. First make sure the <code>spec</code> and
+			<code>work</code> boards exist <strong>with the right kind</strong> — create them explicitly rather
+			than letting a bare write conjure them, because a cold write makes a plain <code>free</code> board
+			and the kind can't be changed afterwards.
+		</p>
+
+		<p>
+			Record one requirement on the spec board and note the <code>nodeId</code> it returns. Create one
+			<code>work</code> feature that links to it by passing that <code>nodeId</code> as
+			<code>specRef</code>. Move the feature <code>Pending → InProgress → Review</code> as you go, and
+			stop at <code>Review</code>. The <a href="@Routes.DocMethodology()">methodology</a> spells out the
+			contract if anything here is unfamiliar.
+		</p>
+
+		<p class="text-sm opacity-80">
+			<strong>Check:</strong> the work node shows a live link to the spec node, and the spec leaf's
+			computed delivery reads <code>in_progress</code>. If delivery still says <code>not_started</code>,
+			the link didn't take (recheck the <code>specRef</code> id) or the feature never left
+			<code>Pending</code>. The agent should <strong>not</strong> have set <code>Done</code> — the
+			maintainer reviews and sets it from the UI, which closes the loop.
+		</p>
+
+		<h2>From here</h2>
+
+		<p>
+			The agent now plans on the rails: requirements onto <code>spec</code>, technical tasks onto
 			<code>work</code> (linked), thoughts onto <code>ideas</code>, inbound reports onto
-			<code>intake</code> — driving each to <code>Review</code> and leaving <code>Done</code> to the
-			maintainer. Build the app against PetBox (config / logs / data) while tracking the work
-			<em>in</em> PetBox. The stages above are re-runnable (<code>board_create</code> on an existing board
-			is a no-op; upserts are keyed by path) — but reuse the first smoke feature rather than creating a
-			second. And keep the stale-registry rule in mind after every deploy. See the
-			<a href="@Routes.DocMethodology()">methodology</a> for the day-to-day contract.
+			<code>intake</code> — always stopping at <code>Review</code> and leaving <code>Done</code> to the
+			maintainer. Build the app against PetBox (config / logs / data) while tracking the work in PetBox.
+			See the <a href="@Routes.DocMethodology()">methodology</a> for the day-to-day contract and the
+			<a href="@Routes.DocOverview()">overview</a> for what each module offers.
 		</p>
 	</main>
 </body>

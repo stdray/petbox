@@ -61,8 +61,8 @@
 		<h2>3. Keep the key out of version control</h2>
 		<p>
 			Never commit the key. The config above references it as <code>${PETBOX_API_KEY}</code>, which your
-			agent expands from its <strong>process environment</strong> — not from a <code>.env</code> file. Export
-			it in your shell (or set it OS-wide) before launching the agent:
+			agent expands from its <strong>process environment</strong>. Set that environment variable in your
+			shell (or OS-wide) before launching the agent:
 		</p>
 		<pre><code># macOS / Linux (current shell)
 export PETBOX_API_KEY=&lt;your key&gt;
