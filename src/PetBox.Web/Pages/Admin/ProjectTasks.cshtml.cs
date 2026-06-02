@@ -5,25 +5,27 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
-using PetBox.Tasks.Data;
+using PetBox.Tasks.Contract;
 
 namespace PetBox.Web.Pages.Admin;
 
-// Lists and manages the named task boards of a project (create / delete).
+// Lists and manages the named task boards of a project (create / delete / close).
 // Mirrors ProjectLogs / ProjectData. Boards are also created by agents via the
-// MCP tasks tools (tasks:write); this is the human-facing equivalent.
+// MCP tasks tools (tasks:write); this is the human-facing equivalent. All board
+// operations go through ITasksService — the same door the MCP tools use — so the
+// admin UI no longer skips spec validation (the divergence this refactor removes).
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectTasksModel : PageModel
 {
 	readonly PetBoxDb _db;
 	readonly FeatureFlags _features;
-	readonly ITaskBoardStore _store;
+	readonly ITasksService _tasks;
 
-	public ProjectTasksModel(PetBoxDb db, FeatureFlags features, ITaskBoardStore store)
+	public ProjectTasksModel(PetBoxDb db, FeatureFlags features, ITasksService tasks)
 	{
 		_db = db;
 		_features = features;
-		_store = store;
+		_tasks = tasks;
 	}
 
 	[BindProperty(SupportsGet = true)]
@@ -36,49 +38,49 @@ public sealed class ProjectTasksModel : PageModel
 	public bool ProjectNotFound { get; private set; }
 	public string? ErrorMessage { get; private set; }
 
-	public async Task<IActionResult> OnGetAsync()
+	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks))
 			return NotFound();
 
-		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
+		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
-		Boards = [.. await _store.ListAsync(ProjectKey)];
+		Boards = [.. await _tasks.ListBoardsAsync(ProjectKey, ct)];
 		return Page();
 	}
 
-	public async Task<IActionResult> OnPostCreateAsync(string name, string? description, string? kind)
+	public async Task<IActionResult> OnPostCreateAsync(string name, string? description, string? kind, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
 		try
 		{
-			await _store.CreateAsync(ProjectKey, name?.Trim() ?? string.Empty, description, kind ?? "free");
+			await _tasks.CreateBoardAsync(ProjectKey, name?.Trim() ?? string.Empty, kind ?? "free", description, specBoard: null, ct);
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{
 			ErrorMessage = ex.Message;
-			await OnGetAsync();
+			await OnGetAsync(ct);
 			return Page();
 		}
 
 		return RedirectToPage();
 	}
 
-	public async Task<IActionResult> OnPostDeleteAsync(string name)
+	public async Task<IActionResult> OnPostDeleteAsync(string name, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
-		await _store.DeleteAsync(ProjectKey, name);
+		await _tasks.DeleteBoardAsync(ProjectKey, name, ct);
 		return RedirectToPage();
 	}
 
-	public async Task<IActionResult> OnPostCloseAsync(string name, bool closed)
+	public async Task<IActionResult> OnPostCloseAsync(string name, bool closed, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
-		await _store.UpdateAsync(ProjectKey, name, m => m with { ClosedAt = closed ? DateTime.UtcNow : null });
+		await _tasks.SetClosedAsync(ProjectKey, name, closed, ct);
 		return RedirectToPage();
 	}
 }

@@ -6,6 +6,7 @@ using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Data;
+using PetBox.Tasks.Services;
 using PetBox.Web.Pages.ProjectHome;
 
 namespace PetBox.Tests.Web;
@@ -20,6 +21,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 	readonly PetBoxDb _db;
 	readonly ScopedDbFactory<TasksDb> _factory;
 	readonly TaskBoardStore _store;
+	readonly TasksService _tasks;
 
 	public TaskBoardQuickAddTests()
 	{
@@ -32,6 +34,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db, _factory);
+		_tasks = new TasksService(_store, new RelationStore(_db));
 	}
 
 	public void Dispose()
@@ -49,7 +52,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 	async Task<PlanNode> QuickAdd(string board, string kind)
 	{
 		await _store.CreateAsync("proj", board, null, kind);
-		var model = new TaskBoardModel(Flags(), _store) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
+		var model = new TaskBoardModel(Flags(), _tasks) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
 		await model.OnPostCreateAsync("My item", "details", 50, default);
 		return _store.GetContext("proj", board).PlanNodes.Where(n => n.ActiveTo == null).ToList().Single();
 	}

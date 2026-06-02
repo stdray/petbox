@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
-using PetBox.Tasks.Data;
+using PetBox.Tasks.Contract;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -17,13 +17,13 @@ public sealed class TasksModel : PageModel
 {
 	readonly PetBoxDb _db;
 	readonly FeatureFlags _features;
-	readonly ITaskBoardStore _store;
+	readonly ITasksService _tasks;
 
-	public TasksModel(PetBoxDb db, FeatureFlags features, ITaskBoardStore store)
+	public TasksModel(PetBoxDb db, FeatureFlags features, ITasksService tasks)
 	{
 		_db = db;
 		_features = features;
-		_store = store;
+		_tasks = tasks;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -41,6 +41,6 @@ public sealed class TasksModel : PageModel
 		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null || !TasksEnabled) return;
 
-		Boards = await _store.ListAsync(ProjectKey, ct);
+		Boards = await _tasks.ListBoardsAsync(ProjectKey, ct);
 	}
 }

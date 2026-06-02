@@ -9,6 +9,7 @@ using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Data;
+using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Tasks;
@@ -25,6 +26,7 @@ public sealed class TasksTreeContractTests : IDisposable
 	readonly ScopedDbFactory<TasksDb> _factory;
 	readonly TaskBoardStore _store;
 	readonly RelationStore _relations;
+	readonly TasksService _tasks;
 
 	public TasksTreeContractTests()
 	{
@@ -38,6 +40,7 @@ public sealed class TasksTreeContractTests : IDisposable
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db, _factory);
 		_relations = new RelationStore(_db);
+		_tasks = new TasksService(_store, _relations);
 	}
 
 	public void Dispose()
@@ -52,7 +55,7 @@ public sealed class TasksTreeContractTests : IDisposable
 	public async Task Upsert_StructuredLevels_CanonicalisesAndDecomposes()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.BoardCreateAsync(http, Flags(), _store, Proj, "roadmap", null);
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "roadmap", null);
 
 		var nodes = JsonSerializer.SerializeToElement(new object[]
 		{
@@ -60,9 +63,9 @@ public sealed class TasksTreeContractTests : IDisposable
 			new { l1 = "logging", l2 = "ingest", status = "Pending", title = "Ingest", body = "ship CLEF", priority = 1 },
 			new { l1 = "logging", l2 = "ingest", l3 = "endpoint", status = "Pending", title = "Endpoint", body = "POST endpoint", priority = 2 },
 		});
-		await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "roadmap", nodes);
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes);
 
-		var got = Json(await TasksTools.GetAsync(http, Flags(), _store, _relations, Proj, "roadmap"));
+		var got = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap"));
 		var arr = got.GetProperty("nodes").EnumerateArray().ToList();
 		arr.Should().HaveCount(3);
 
@@ -84,7 +87,7 @@ public sealed class TasksTreeContractTests : IDisposable
 	public async Task Upsert_InvalidSegment_IsRejected()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.BoardCreateAsync(http, Flags(), _store, Proj, "roadmap", null);
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "roadmap", null);
 
 		var nodes = JsonSerializer.SerializeToElement(new object[]
 		{
@@ -92,7 +95,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		});
 		// GuardAsync surfaces the validation failure as a structured error result
 		// (not a thrown, opaque MCP error).
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "roadmap", nodes));
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes));
 		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
 	}
 
@@ -107,7 +110,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		{
 			new { l1 = "alpha", status = "Pending", title = "Alpha", body = "do alpha", priority = 0 },
 		});
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "fresh", nodes));
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "fresh", nodes));
 
 		(await _store.ExistsAsync(Proj, "fresh")).Should().BeTrue();
 
@@ -125,7 +128,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		// array element — the upsert must accept that (regression for D6).
 		var arrayJson = """[{"l1":"alpha","title":"Alpha","status":"Pending","body":"b","priority":0}]""";
 		var nodesAsString = JsonSerializer.SerializeToElement(arrayJson); // ValueKind == String
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _store, _relations, Proj, "strboard", nodesAsString));
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "strboard", nodesAsString));
 		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
 			.Which.GetProperty("title").GetString().Should().Be("Alpha");
 	}

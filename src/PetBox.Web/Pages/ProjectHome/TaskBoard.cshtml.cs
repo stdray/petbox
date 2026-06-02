@@ -1,29 +1,27 @@
-using System.Text.RegularExpressions;
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data.Temporal;
 using PetBox.Core.Features;
+using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Workflow;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
 // Read-only detail for one task board (/ui/{ws}/{project}/tasks/{board}). Shows
-// the currently-active plan nodes (ActiveTo == null) ordered by sparse Priority
-// then Key. Existence is checked against metadata first so we don't auto-vivify
-// a phantom file for an unknown board name.
+// the currently-active plan nodes (ActiveTo == null) in plan-tree order. Reads and
+// the quick-add write both go through ITasksService — the page never opens the DB
+// context itself, so quick-add gets the same NodeId/status handling the MCP path does.
 [Authorize]
 public sealed class TaskBoardModel : PageModel
 {
 	readonly FeatureFlags _features;
-	readonly ITaskBoardStore _store;
+	readonly ITasksService _tasks;
 
-	public TaskBoardModel(FeatureFlags features, ITaskBoardStore store)
+	public TaskBoardModel(FeatureFlags features, ITasksService tasks)
 	{
 		_features = features;
-		_store = store;
+		_tasks = tasks;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -45,14 +43,11 @@ public sealed class TaskBoardModel : PageModel
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
-		if (!await _store.ExistsAsync(ProjectKey, Board, ct)) return NotFound();
+		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
-		var ctx = _store.GetContext(ProjectKey, Board);
-		var flat = await ctx.PlanNodes
-			.Where(n => n.ActiveTo == null)
-			.ToListAsync(ct);
+		var flat = await _tasks.ListActiveNodesAsync(ProjectKey, Board, ct);
 
-		Nodes = OrderHierarchically(flat, out var keepVisible);
+		Nodes = OrderHierarchically([.. flat], out var keepVisible);
 		ClosedWithActiveDescendant = keepVisible;
 		return Page();
 	}
@@ -114,47 +109,15 @@ public sealed class TaskBoardModel : PageModel
 	}
 
 	// Quick-add from the board UI: drops a new task into the `incoming` phase with an
-	// auto-generated key (slug of the name + short unique suffix).
+	// auto-generated key. Status/type/NodeId are decided by the service (same path the
+	// MCP upsert uses), so a kinded board gets a valid initial status, not a cold "Pending".
 	public async Task<IActionResult> OnPostCreateAsync(string name, string? body, long priority, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
-		if (!await _store.ExistsAsync(ProjectKey, Board, ct)) return NotFound();
+		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
-		if (!string.IsNullOrWhiteSpace(name))
-		{
-			// Status/type must fit the board's kind — a cold "Pending" is invalid on kinded
-			// boards (ideas/spec/intake) and strands the node outside its FSM. Use the kind's
-			// initial status + its node type.
-			var meta = await _store.FindAsync(ProjectKey, Board, ct);
-			var kind = WorkflowCatalog.ParseKind(meta?.Kind);
-			var type = kind switch
-			{
-				BoardKind.Ideas => "idea",
-				BoardKind.Spec => "spec",
-				BoardKind.Intake => "issue",
-				_ => "",
-			};
-			var status = WorkflowCatalog.For(kind, type.Length == 0 ? null : type)?.Initial ?? "Pending";
-
-			var key = new TaskNodeId("incoming", GenKey(name), null).ToKey();
-			var ctx = _store.GetContext(ProjectKey, Board);
-			await TemporalStore.UpsertAsync(ctx, new[]
-			{
-				// Assign a stable NodeId (the MCP path does this in ApplyWorkflow; the direct
-				// write bypasses it). Without it the node can't be linked (relations/specRef).
-				new PlanNode { Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = status, Type = type, Name = name.Trim(), Body = body?.Trim() ?? string.Empty, Priority = priority },
-			}, ct: ct);
-		}
+		await _tasks.QuickAddAsync(ProjectKey, Board, name, body, priority, ct);
 
 		return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey, board = Board });
-	}
-
-	static string GenKey(string name)
-	{
-		var ascii = Regex.Replace(name.ToLowerInvariant(), "[^a-z0-9]+", "-").Trim('-');
-		if (ascii.Length == 0 || !char.IsLetter(ascii[0])) ascii = "task-" + ascii;
-		ascii = ascii.Trim('-');
-		if (ascii.Length > 32) ascii = ascii[..32].Trim('-'); // keep keys short/readable
-		return $"{ascii}-{Guid.NewGuid():N}"[..(Math.Min(ascii.Length, 32) + 7)];
 	}
 }

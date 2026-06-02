@@ -12,6 +12,7 @@ using PetBox.Core.Settings;
 using PetBox.Memory.Data;
 using PetBox.Sessions.Data;
 using PetBox.Tasks.Data;
+using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;
@@ -31,6 +32,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	readonly ScopedDbFactory<SessionsDb> _sessFactory;
 	readonly TaskBoardStore _boards;
 	readonly RelationStore _relations;
+	readonly TasksService _tasks;
 	readonly MemoryStore _stores;
 	readonly SessionStore _sessions;
 
@@ -52,6 +54,7 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		_boards = new TaskBoardStore(_db, _tasksFactory);
 		_relations = new RelationStore(_db);
+		_tasks = new TasksService(_boards, _relations);
 		_stores = new MemoryStore(_db, _memFactory);
 		_sessions = new SessionStore(_sessFactory);
 	}
@@ -70,18 +73,18 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Tasks_Create_Upsert_Get_Roundtrip()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.BoardCreateAsync(http, Flags(), _boards, Proj, "roadmap");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "roadmap");
 
 		var nodes = JsonSerializer.SerializeToElement(new[]
 		{
 			new { key = "phase-16", status = "InProgress", body = "Data", priority = 100 },
 			new { key = "phase-16/wave-1", status = "Done", body = "Foundation", priority = 200 },
 		});
-		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "roadmap", nodes, 0));
+		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes, 0));
 		up.GetProperty("applied").GetBoolean().Should().BeTrue();
 		up.GetProperty("inserted").GetInt32().Should().Be(2);
 
-		var get = Json(await TasksTools.GetAsync(http, Flags(), _boards, _relations, Proj, "roadmap", includeClosed: true));
+		var get = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap", includeClosed: true));
 		var keys = get.GetProperty("nodes").EnumerateArray().Select(n => n.GetProperty("key").GetString()).ToList();
 		keys.Should().Equal("phase-16", "phase-16/wave-1"); // priority order
 	}
@@ -90,12 +93,12 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Tasks_StaleUpsert_ReturnsConflict()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.BoardCreateAsync(http, Flags(), _boards, Proj, "b");
-		await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b");
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "n", status = "Pending", body = "v1" } }), 0);
-		await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "n", status = "Done", body = "byB", version = 1 } }), 0);
-		var r = Json(await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
+		var r = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "n", status = "Done", body = "byA", version = 1 } }), 0));
 
 		r.GetProperty("applied").GetBoolean().Should().BeFalse();
@@ -107,13 +110,13 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Tasks_Rename_ShowsLineage()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.BoardCreateAsync(http, Flags(), _boards, Proj, "b");
-		await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b");
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "old", status = "Done", body = "x" } }), 0);
-		await TasksTools.UpsertAsync(http, Flags(), _boards, _relations, Proj, "b",
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			JsonSerializer.SerializeToElement(new[] { new { key = "new", status = "Done", body = "x", version = 1, prevKey = "old" } }), 0);
 
-		var get = Json(await TasksTools.GetAsync(http, Flags(), _boards, _relations, Proj, "b", includeClosed: true));
+		var get = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "b", includeClosed: true));
 		var node = get.GetProperty("nodes").EnumerateArray().Single();
 		node.GetProperty("key").GetString().Should().Be("new");
 		node.GetProperty("renamedFrom").EnumerateArray().Select(x => x.GetString()).Should().Equal("old");
@@ -124,7 +127,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	{
 		var http = Http("tasks:read");
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.BoardCreateAsync(http, Flags(), _boards, Proj, "b"));
+			TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b"));
 	}
 
 	[Fact]
@@ -132,7 +135,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		await Assert.ThrowsAsync<InvalidOperationException>(() =>
-			TasksTools.BoardCreateAsync(http, Flags(tasks: false), _boards, Proj, "b"));
+			TasksTools.BoardCreateAsync(http, Flags(tasks: false), _tasks, Proj, "b"));
 	}
 
 	[Fact]
@@ -140,14 +143,14 @@ public sealed class McpModuleToolsTests : IDisposable
 	{
 		// A cross-project key (project="*") may operate on any project...
 		var star = Http("tasks:read,tasks:write", project: "*");
-		await TasksTools.BoardCreateAsync(star, Flags(), _boards, Proj, "x");
-		Json(await TasksTools.GetAsync(star, Flags(), _boards, _relations, Proj, "x"))
+		await TasksTools.BoardCreateAsync(star, Flags(), _tasks, Proj, "x");
+		Json(await TasksTools.GetAsync(star, Flags(), _tasks, Proj, "x"))
 			.GetProperty("kind").GetString().Should().Be("free");
 
 		// ...while a key scoped to a different project is rejected for this one.
 		var other = Http("tasks:read,tasks:write", project: "other");
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			TasksTools.BoardListAsync(other, Flags(), _boards, Proj));
+			TasksTools.BoardListAsync(other, Flags(), _tasks, Proj));
 	}
 
 	[Fact]
