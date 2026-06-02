@@ -162,6 +162,25 @@ jobs:
               -e OpenTelemetry__Enabled="$OTEL_ENABLED" \
               -e OpenTelemetry__OtlpEndpoint="$OTEL_ENDPOINT" \
               "$IMAGE"
+
+            # Post-deploy live smoke: the freshly started prod container must answer 200
+            # on /health (same probe the CI image smoke uses, but against the running
+            # container). Fail the deploy — with logs — if it never comes up, so a broken
+            # image that boots-but-doesn't-serve is caught instead of silently "deployed".
+            healthy=false
+            for i in $(seq 1 30); do
+              sleep 1
+              if curl -fsS --max-time 2 -o /dev/null http://localhost:8083/health; then
+                echo "post-deploy health OK after ${i}s"
+                healthy=true
+                break
+              fi
+            done
+            if [ "$healthy" != "true" ]; then
+              echo "post-deploy health check FAILED — dumping last 100 log lines"
+              docker logs --tail 100 "$CONTAINER_NAME" || true
+              exit 1
+            fi
             docker system prune -a -f
 
   # ─── NuGet publish to GitHub Packages on `nuget` tag push ───
