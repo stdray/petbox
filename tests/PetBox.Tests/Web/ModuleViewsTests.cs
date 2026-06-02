@@ -273,7 +273,7 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("doc-onboarding");
-		html.Should().Contain("PETBOX_API_KEY"); // env-var step
+		html.Should().Contain("PETBOX_"); // per-project env-var step
 		html.Should().Contain("specRef"); // spec-link step content
 	}
 }

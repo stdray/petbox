@@ -303,7 +303,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		});
 		IsErr(done).Should().BeFalse();
 
-		var intake = await Agent("tasks.get", new { projectKey = ProjectKey, board = "intake" });
+		var intake = await Agent("tasks.get", new { projectKey = ProjectKey, board = "intake", includeClosed = true });
 		Text(intake).Should().Contain("done");
 	}
 
@@ -465,5 +465,87 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 
 		await Agent("tasks.board_reopen", new { projectKey = ProjectKey, board = "tmp" });
 		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "tmp", nodes = Nodes(new { key = "b", status = "Pending", title = "B", body = "x" }) })).IsError.Should().NotBe(true);
+	}
+
+	// 15. partial update: a field omitted from upsert keeps its prior value — a status-only
+	// change (path + version + status) must not blank title/body/priority.
+	[Fact]
+	public async Task PartialUpdate_OmittedFieldsPreserved()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "pu" });
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "pu", nodes = Nodes(new { key = "a", status = "Pending", title = "Alpha", body = "BODY", priority = 5 }) })).IsError.Should().NotBe(true);
+
+		// send ONLY path + version + status
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "pu", nodes = Nodes(new { key = "a", version = 1, status = "InProgress" }) })).IsError.Should().NotBe(true);
+
+		var get = await Agent("tasks.get", new { projectKey = ProjectKey, board = "pu" });
+		StatusOf(get, "a").Should().Be("InProgress");
+		FieldOf(get, "a", "title").Should().Be("Alpha", "omitted title inherits the prior value");
+		FieldOf(get, "a", "body").Should().Be("BODY", "omitted body inherits the prior value");
+	}
+
+	// 16. specRef must point at a spec board: a ref to a non-spec node is rejected.
+	[Fact]
+	public async Task SpecRef_NonSpecTarget_Rejected()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "notspec" }); // free
+		var nf = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "notspec", nodes = Nodes(new { key = "x", status = "Pending", title = "X", body = "x" }) });
+		var nonSpecId = NodeId(nf, "x");
+
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var r = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", specRef = nonSpecId }) });
+		IsErr(r).Should().BeTrue();
+		Text(r).Should().Contain("not a spec board");
+	}
+
+	// 17. board_set_spec pins a work board to one spec board; a specRef on another spec board is rejected.
+	[Fact]
+	public async Task SpecRef_WrongSpecBoard_Rejected()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec1", kind = "spec" });
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec2", kind = "spec" });
+		var s2 = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec2", nodes = Nodes(new { key = "r", status = "defined", title = "R", body = "x" }) });
+		var s2Id = NodeId(s2, "r");
+
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		(await Agent("tasks.board_set_spec", new { projectKey = ProjectKey, board = "work", specBoard = "spec1" })).IsError.Should().NotBe(true);
+
+		var r = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", specRef = s2Id }) });
+		IsErr(r).Should().BeTrue();
+		Text(r).Should().Contain("spec1"); // names the board this work board is pinned to
+	}
+
+	// 18. tasks.get hides terminal nodes by default; includeClosed=true returns them.
+	[Fact]
+	public async Task Get_HidesClosedByDefault_IncludeClosedReturns()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "hc" });
+		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "hc", nodes = Nodes(
+			new { key = "open1", status = "Pending", title = "Open", body = "x" },
+			new { key = "done1", status = "Done", title = "Done", body = "x" }) });
+
+		var def = await Agent("tasks.get", new { projectKey = ProjectKey, board = "hc" });
+		Text(def).Should().Contain("open1");
+		Text(def).Should().NotContain("done1");
+
+		var all = await Agent("tasks.get", new { projectKey = ProjectKey, board = "hc", includeClosed = true });
+		Text(all).Should().Contain("done1");
+	}
+
+	// 19. tasks.get surfaces the board kind and the task->spec link inline (resolved to the spec node).
+	[Fact]
+	public async Task Get_SurfacesKindAndSpecLink()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "auth/login", status = "defined", title = "Login", body = "x" }) });
+		var specId = NodeId(spec, "auth/login");
+
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "feature", status = "Review", title = "Build login", body = "x", specRef = specId }) });
+
+		var get = await Agent("tasks.get", new { projectKey = ProjectKey, board = "work" });
+		Text(get).Should().Contain("\"kind\":\"work\"");
+		Text(get).Should().Contain(specId);             // the linked spec node id is surfaced
+		Text(get).Should().Contain("\"board\":\"spec\""); // resolved to the spec board it lives on
 	}
 }

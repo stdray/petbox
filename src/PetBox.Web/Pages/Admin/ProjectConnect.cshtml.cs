@@ -52,6 +52,13 @@ public sealed class ProjectConnectModel : PageModel
 	// it works behind a reverse proxy without extra config.
 	public string McpUrl => $"{Request.Scheme}://{Request.Host}{Request.PathBase}/mcp";
 
+	// Per-project env var name for the key, so several projects coexist on one machine
+	// (a single PETBOX_API_KEY can't): PETBOX_<PROJECT>_API_KEY, project sanitised to
+	// A-Z0-9_ (e.g. "$system" -> PETBOX_SYSTEM_API_KEY).
+	public string EnvVarName => $"PETBOX_{EnvSlug(ProjectKey)}_API_KEY";
+	static string EnvSlug(string key) =>
+		System.Text.RegularExpressions.Regex.Replace(key, "[^A-Za-z0-9]+", "_").Trim('_').ToUpperInvariant();
+
 	// Public, key-free docs. The prompt links here instead of duplicating content.
 	string DocBase => $"{Request.Scheme}://{Request.Host}{Request.PathBase}";
 	public string DocAgentUrl => $"{DocBase}/doc/agent";

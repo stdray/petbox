@@ -146,5 +146,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		return new FeatureFlags(cfg);
 	}
 
-	static JsonElement Json(object? o) => JsonSerializer.SerializeToElement(o);
+	// Mirror the MCP boundary (camelCase policy) so typed-record results read like live JSON.
+	static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+	static JsonElement Json(object? o) => JsonSerializer.SerializeToElement(o, CamelCase);
 }

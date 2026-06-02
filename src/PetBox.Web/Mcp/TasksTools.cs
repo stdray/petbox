@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
 using PetBox.Core.Data.Temporal;
+using PetBox.Core.Models;
 using PetBox.Core.Features;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Workflow;
@@ -18,20 +19,49 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks.board_create", Title = "Create a task board")]
-	[Description("Create a named task board in a project. `kind` sets the board role (free|spec|ideas|intake|work; default free) which drives the workflow — see tasks.workflow. Requires tasks:write.")]
+	[Description("Create a named task board in a project. `kind` sets the board role (free|spec|ideas|intake|work; default free) which drives the workflow — see tasks.workflow. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
 	public static async Task<object> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
-		string projectKey, string board, string? kind = null, string? description = null, CancellationToken ct = default)
+		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var meta = await boards.CreateAsync(projectKey, board, description, kind ?? "free", ct);
-		return new { meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.CreatedAt };
+		await ValidateSpecBoardAsync(boards, projectKey, kind ?? "free", specBoard, ct);
+		var meta = await boards.CreateAsync(projectKey, board, description, kind ?? "free", specBoard, ct);
+		return new { meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.SpecBoard, meta.CreatedAt };
+	}
+
+	[McpServerTool(Name = "tasks.board_set_spec", Title = "Set a work board's spec board")]
+	[Description("Set (or clear, when specBoard is omitted) the spec board a work board's tasks link into. The target must be a spec board. Makes the work->spec link explicit. Requires tasks:write.")]
+	public static async Task<object> BoardSetSpecAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
+		string projectKey, string board, string? specBoard = null, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		await EnsureBoard(boards, projectKey, board, ct);
+		var meta = (await boards.FindAsync(projectKey, board, ct))!;
+		await ValidateSpecBoardAsync(boards, projectKey, meta.Kind, specBoard, ct);
+		var norm = string.IsNullOrWhiteSpace(specBoard) ? null : specBoard;
+		return new { set = await boards.UpdateAsync(projectKey, board, m => m with { SpecBoard = norm }, ct), specBoard = norm };
+	}
+
+	// A specBoard link only makes sense on a work board and must point at an existing spec board.
+	static async Task ValidateSpecBoardAsync(ITaskBoardStore boards, string projectKey, string kind, string? specBoard, CancellationToken ct)
+	{
+		if (string.IsNullOrWhiteSpace(specBoard)) return;
+		if (WorkflowCatalog.ParseKind(kind) != BoardKind.Work)
+			throw new ArgumentException($"specBoard applies only to a work board (this board's kind is '{kind}')");
+		var target = await boards.FindAsync(projectKey, specBoard, ct)
+			?? throw new ArgumentException($"spec board '{specBoard}' not found in project '{projectKey}'");
+		if (WorkflowCatalog.ParseKind(target.Kind) != BoardKind.Spec)
+			throw new ArgumentException($"'{specBoard}' is not a spec board (kind is '{target.Kind}')");
 	}
 
 	[McpServerTool(Name = "tasks.board_list", Title = "List task boards", ReadOnly = true)]
-	[Description("List task boards in a project. Requires tasks:read.")]
+	[Description("List task boards in a project, each with its kind, specBoard (work->spec link, if set) and closed flag. Requires tasks:read.")]
 	public static async Task<object> BoardListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards,
 		string projectKey, CancellationToken ct = default)
@@ -40,7 +70,7 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await boards.ListAsync(projectKey, ct);
-		return new { boards = list.Select(b => new { b.Name, b.Kind, b.Description, b.CreatedAt, closed = b.ClosedAt != null }).ToList() };
+		return new { boards = list.Select(b => new { b.Name, b.Kind, b.Description, b.SpecBoard, b.CreatedAt, closed = b.ClosedAt != null }).ToList() };
 	}
 
 	[McpServerTool(Name = "tasks.board_delete", Title = "Delete a task board", Destructive = true)]
@@ -64,7 +94,7 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return new { closed = await boards.SetClosedAsync(projectKey, board, true, ct) };
+		return new { closed = await boards.UpdateAsync(projectKey, board, m => m with { ClosedAt = DateTime.UtcNow }, ct) };
 	}
 
 	[McpServerTool(Name = "tasks.board_reopen", Title = "Reopen a closed task board")]
@@ -76,14 +106,25 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return new { reopened = await boards.SetClosedAsync(projectKey, board, false, ct) };
+		return new { reopened = await boards.UpdateAsync(projectKey, board, m => m with { ClosedAt = null }, ct) };
 	}
 
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]
-	[Description("Return the active plan nodes of a board as a 1-to-3 level tree, ordered by priority then path. Each node carries key, nodeId, l1, l2, l3, depth, parentKey, status, type, title, body, priority, version, renamedFrom. On a spec board each node also carries `delivery` — the COMPUTED roll-up from linked tasks (not_started|in_progress|done|done_with_defects). Requires tasks:read.")]
+	[Description("""
+		Return the active plan nodes of a board as a 1-to-3 level tree, ordered by priority
+		then path. Top level carries `kind` (the board role) and `specBoard` (the spec board
+		work tasks link into, if set). Each node carries key, nodeId, l1, l2, l3, depth,
+		parentKey, status, type, title, body, priority, version, renamedFrom, plus its links:
+		`spec` (spec nodes this task implements — task_spec), `blockedBy` (nodes blocking it),
+		and on a spec board `linkedTasks` (tasks implementing it) plus the COMPUTED `delivery`
+		roll-up (not_started|in_progress|done|done_with_defects). By default terminal/closed
+		nodes (Done/Cancelled/…) are HIDDEN — pass includeClosed=true to include them; closed
+		ancestors of a visible node are kept so the tree stays connected. `under` ("l1" or
+		"l1/l2") restricts to that subtree. Requires tasks:read.
+		""")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITaskBoardStore boards, IRelationStore relations,
-		string projectKey, string board, CancellationToken ct = default)
+		string projectKey, string board, bool includeClosed = false, string? under = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -96,36 +137,106 @@ public static class TasksTools
 		var active = all.Where(n => n.ActiveTo == null).OrderBy(n => n.Priority).ThenBy(n => n.Key).ToList();
 		var current = all.Count == 0 ? 0 : all.Max(n => n.Version);
 
-		var kind = WorkflowCatalog.ParseKind(await boards.KindAsync(projectKey, board, ct));
+		var meta = (await boards.FindAsync(projectKey, board, ct))!;
+		var kind = WorkflowCatalog.ParseKind(meta.Kind);
 		var delivery = kind == BoardKind.Spec ? await ComputeSpecDeliveryAsync(boards, relations, projectKey, active, ct) : null;
-		return new
+
+		var underKey = NormalizeUnder(under);
+		var visible = FilterVisible(active, includeClosed, underKey);
+		var index = await BuildNodeIndexAsync(boards, projectKey, ct);
+
+		var nodes = new List<PlanNodeView>();
+		foreach (var n in visible)
 		{
-			currentVersion = current,
-			nodes = active.Select(n =>
-			{
-				var id = TaskNodeId.TryParse(n.Key, out var pid) ? pid : null;
-				return new
-				{
-					key = n.Key,
-					nodeId = n.NodeId,
-					l1 = id?.PhaseKey ?? n.Key,
-					l2 = id?.WaveKey,
-					l3 = id?.TaskKey,
-					depth = id?.Depth ?? 1,
-					parentKey = id?.ParentKey,
-					status = n.Status,
-					type = n.Type,
-					title = n.Name,
-					body = n.Body,
-					commitRef = n.CommitRef,
-					priority = n.Priority,
-					version = n.Version,
-					delivery = delivery is not null && delivery.TryGetValue(n.Key, out var dv) ? dv : null,
-					renamedFrom = lineage.TryGetValue(n.Key, out var p) ? p : [],
-				};
-			}).ToList(),
-		};
+			var id = TaskNodeId.TryParse(n.Key, out var pid) ? pid : null;
+			var fromEdges = n.NodeId.Length > 0 ? await relations.ListAsync(projectKey, n.NodeId, "from", ct: ct) : [];
+			var toEdges = n.NodeId.Length > 0 ? await relations.ListAsync(projectKey, n.NodeId, "to", ct: ct) : [];
+			var spec = fromEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.ToNodeId, index)).ToList();
+			var blockedBy = toEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.FromNodeId, index)).ToList();
+			var linkedTasks = kind == BoardKind.Spec ? toEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
+			nodes.Add(new PlanNodeView(
+				Key: n.Key,
+				NodeId: n.NodeId,
+				L1: id?.PhaseKey ?? n.Key,
+				L2: id?.WaveKey,
+				L3: id?.TaskKey,
+				Depth: id?.Depth ?? 1,
+				ParentKey: id?.ParentKey,
+				Status: n.Status,
+				Type: n.Type,
+				Title: n.Name,
+				Body: n.Body,
+				CommitRef: n.CommitRef,
+				Priority: n.Priority,
+				Version: n.Version,
+				Delivery: delivery is not null && delivery.TryGetValue(n.Key, out var dv) ? dv : null,
+				Spec: spec.Count > 0 ? spec : null,
+				BlockedBy: blockedBy.Count > 0 ? blockedBy : null,
+				LinkedTasks: linkedTasks is { Count: > 0 } ? linkedTasks : null,
+				RenamedFrom: lineage.TryGetValue(n.Key, out var p) ? p : []));
+		}
+		return new PlanBoardView(current, kind.ToString().ToLowerInvariant(), meta.SpecBoard, nodes);
 	}
+
+	// Typed projections for tasks.get (camelCased by the MCP serializer). LinkDto resolves a
+	// link target to its location; a `status` of "missing" means the target no longer exists.
+	public sealed record LinkDto(string NodeId, string? Board, string? L1, string? L2, string? L3, string? Title, string Status);
+	public sealed record PlanNodeView(
+		string Key, string NodeId, string L1, string? L2, string? L3, int Depth, string? ParentKey,
+		string Status, string Type, string Title, string Body, string? CommitRef, long Priority, long Version,
+		string? Delivery, IReadOnlyList<LinkDto>? Spec, IReadOnlyList<LinkDto>? BlockedBy,
+		IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<string> RenamedFrom);
+	public sealed record PlanBoardView(long CurrentVersion, string Kind, string? SpecBoard, IReadOnlyList<PlanNodeView> Nodes);
+
+	// Hide terminal (closed) nodes unless includeClosed; keep terminal ancestors of any
+	// visible node so the tree stays connected. `underKey` (canonical) restricts to a subtree.
+	static List<PlanNode> FilterVisible(List<PlanNode> active, bool includeClosed, string? underKey)
+	{
+		IEnumerable<PlanNode> scoped = active;
+		if (underKey is not null)
+			scoped = active.Where(n => n.Key == underKey || n.Key.StartsWith(underKey + "/", StringComparison.Ordinal));
+		var pool = scoped.ToList();
+		if (includeClosed) return pool;
+
+		var keep = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var n in pool.Where(n => !WorkflowCatalog.IsTerminalSlug(n.Status)))
+		{
+			keep.Add(n.Key);
+			// add ancestors (l1, l1/l2) so the path to a visible node survives
+			var parts = n.Key.Split('/');
+			for (var i = 1; i < parts.Length; i++)
+				keep.Add(string.Join('/', parts.Take(i)));
+		}
+		return pool.Where(n => keep.Contains(n.Key)).ToList();
+	}
+
+	// Canonicalise an `under` path filter ("l1" or "l1/l2/l3") to a node key, or null.
+	static string? NormalizeUnder(string? under) =>
+		string.IsNullOrWhiteSpace(under) ? null : TaskNodeId.Parse(under).ToKey();
+
+	// A resolvable reference to a node anywhere in the project (links cross boards).
+	sealed record NodeRef(string Board, string BoardKind, string Key, string? L1, string? L2, string? L3, string Title, string Status, string Type);
+
+	// nodeId -> NodeRef across every board in the project (links bind to nodeId, which is
+	// globally unique, so a link target may live on another board).
+	static async Task<Dictionary<string, NodeRef>> BuildNodeIndexAsync(ITaskBoardStore boards, string projectKey, CancellationToken ct)
+	{
+		var index = new Dictionary<string, NodeRef>(StringComparer.Ordinal);
+		foreach (var b in await boards.ListAsync(projectKey, ct))
+			foreach (var n in boards.GetContext(projectKey, b.Name).PlanNodes.Where(x => x.ActiveTo == null).ToList())
+				if (n.NodeId.Length > 0)
+				{
+					var id = TaskNodeId.TryParse(n.Key, out var pid) ? pid : null;
+					index[n.NodeId] = new NodeRef(b.Name, b.Kind, n.Key, id?.PhaseKey ?? n.Key, id?.WaveKey, id?.TaskKey, n.Name, n.Status, n.Type);
+				}
+		return index;
+	}
+
+	// Surface a link target: resolve the nodeId to its board/path/title, or mark it missing.
+	static LinkDto LinkRef(string nodeId, Dictionary<string, NodeRef> index) =>
+		index.TryGetValue(nodeId, out var r)
+			? new LinkDto(nodeId, r.Board, r.L1, r.L2, r.L3, r.Title, r.Status)
+			: new LinkDto(nodeId, null, null, null, null, null, "missing");
 
 	// COMPUTED spec roll-up: a spec node's delivery status derives from the tasks linked
 	// (task_spec) to it AND its descendants. not_started (no feature tasks) / in_progress
@@ -195,17 +306,21 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		await boards.EnsureAsync(projectKey, board, ct); // auto-vivify on first write
-		if (await boards.IsClosedAsync(projectKey, board, ct))
+		var meta = (await boards.FindAsync(projectKey, board, ct))!;
+		if (meta.ClosedAt != null)
 			throw new InvalidOperationException($"board '{board}' is closed — reopen it (tasks.board_reopen) before writing");
 
-		var kind = WorkflowCatalog.ParseKind(await boards.KindAsync(projectKey, board, ct));
+		var kind = WorkflowCatalog.ParseKind(meta.Kind);
 		var ctx = boards.GetContext(projectKey, board);
 		var prior = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
 			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
-		var desired = ParseNodes(nodes).Select(n => ApplyWorkflow(kind, n, prior)).ToArray();
+		// Read-merge: fields omitted from the JSON inherit the prior active row, so a partial
+		// update (e.g. only path + version + status) doesn't blank title/body/type/priority.
+		var desired = ParseNodes(nodes, prior).Select(n => ApplyWorkflow(kind, n, prior)).ToArray();
 		var specRefs = ParseNodeField(nodes, "specRef");
 		var blockedBy = ParseNodeField(nodes, "blockedBy");
 		RequireSpecLinks(kind, desired, prior, specRefs);
+		await ValidateSpecRefsAsync(boards, projectKey, meta, specRefs, ct);
 		await RequireBlockersAsync(relations, kind, projectKey, desired, blockedBy, ct);
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
 		if (r.Applied)
@@ -216,8 +331,26 @@ public static class TasksTools
 			await CloseBlocksOnLeaveAsync(relations, projectKey, desired, prior, ct);
 			await RunDoneEffectsAsync(boards, relations, projectKey, kind, desired, ct);
 		}
-		return Serialize(r);
+		return Serialize(r, kind);
 	});
+
+	// Validate each specRef target: it must resolve to an existing node on a spec board, and
+	// (if this work board has a SpecBoard set) on that specific board — so a link can't point
+	// at a non-spec node or the wrong spec board. Built from current state (the target already exists).
+	static async Task ValidateSpecRefsAsync(ITaskBoardStore boards, string projectKey, TaskBoardMeta workBoard, Dictionary<string, string> specRefs, CancellationToken ct)
+	{
+		if (specRefs.Count == 0) return;
+		var index = await BuildNodeIndexAsync(boards, projectKey, ct);
+		foreach (var (key, refId) in specRefs)
+		{
+			if (!index.TryGetValue(refId, out var t))
+				throw new ArgumentException($"specRef '{refId}' (node '{key}') does not resolve to any node");
+			if (WorkflowCatalog.ParseKind(t.BoardKind) != BoardKind.Spec)
+				throw new ArgumentException($"specRef '{refId}' (node '{key}') points to board '{t.Board}', which is not a spec board");
+			if (workBoard.SpecBoard is { Length: > 0 } sb && t.Board != sb)
+				throw new ArgumentException($"specRef '{refId}' (node '{key}') is on board '{t.Board}', but this work board links spec board '{sb}'");
+		}
+	}
 
 	// FSM effect: when a work node reaches a TerminalOk status, auto-close any intake
 	// issue that spawned it (reverse-traverse issue_task: the task is the `to` end).
@@ -370,9 +503,10 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		await EnsureBoard(boards, projectKey, board, ct);
 
+		var meta = (await boards.FindAsync(projectKey, board, ct))!;
 		var ctx = boards.GetContext(projectKey, board);
 		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion, ct: ct);
-		return Serialize(r);
+		return Serialize(r, WorkflowCatalog.ParseKind(meta.Kind));
 	}
 
 	[McpServerTool(Name = "tasks.workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true)]
@@ -386,7 +520,7 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		await EnsureBoard(boards, projectKey, board, ct);
 
-		var kind = WorkflowCatalog.ParseKind(await boards.KindAsync(projectKey, board, ct));
+		var kind = WorkflowCatalog.ParseKind((await boards.FindAsync(projectKey, board, ct))!.Kind);
 		return (object)new
 		{
 			kind = kind.ToString().ToLowerInvariant(),
@@ -406,10 +540,11 @@ public static class TasksTools
 			throw new InvalidOperationException($"task board '{board}' not found in project '{projectKey}'");
 	}
 
-	static object Serialize(TemporalUpsertResult<PlanNode> r) => new
+	static object Serialize(TemporalUpsertResult<PlanNode> r, BoardKind kind) => new
 	{
 		applied = r.Applied,
 		currentVersion = r.CurrentVersion,
+		kind = kind.ToString().ToLowerInvariant(),
 		inserted = r.Inserted,
 		closed = r.Closed,
 		conflicts = r.Conflicts.Select(c => new
@@ -424,29 +559,36 @@ public static class TasksTools
 		removed = r.Removed.ToList(),
 	};
 
-	static object NodeDto(PlanNode n)
+	// Delta projection of a node (no links/delivery — that's tasks.get). camelCased by the serializer.
+	public sealed record PlanNodeDelta(
+		string Key, string NodeId, string L1, string? L2, string? L3, int Depth, string? ParentKey,
+		string Status, string Type, string Title, string Body, string? CommitRef, long Priority, long Version);
+
+	static PlanNodeDelta NodeDto(PlanNode n)
 	{
 		var id = TaskNodeId.TryParse(n.Key, out var p) ? p : null;
-		return new
-		{
-			key = n.Key,
-			nodeId = n.NodeId,
-			l1 = id?.PhaseKey ?? n.Key,
-			l2 = id?.WaveKey,
-			l3 = id?.TaskKey,
-			depth = id?.Depth ?? 1,
-			parentKey = id?.ParentKey,
-			status = n.Status,
-			type = n.Type,
-			title = n.Name,
-			body = n.Body,
-			commitRef = n.CommitRef,
-			priority = n.Priority,
-			version = n.Version,
-		};
+		return new PlanNodeDelta(
+			Key: n.Key,
+			NodeId: n.NodeId,
+			L1: id?.PhaseKey ?? n.Key,
+			L2: id?.WaveKey,
+			L3: id?.TaskKey,
+			Depth: id?.Depth ?? 1,
+			ParentKey: id?.ParentKey,
+			Status: n.Status,
+			Type: n.Type,
+			Title: n.Name,
+			Body: n.Body,
+			CommitRef: n.CommitRef,
+			Priority: n.Priority,
+			Version: n.Version);
 	}
 
-	static PlanNode[] ParseNodes(JsonElement nodes)
+	// Parse the node array, merging omitted fields from the prior active row (read-merge):
+	// only the path (l1/.. or key) is ever required; any field absent from the JSON keeps
+	// its prior value, so a status-only update needs just path + version + status. A field
+	// present-but-empty ("title":"") is an explicit clear. New nodes inherit nothing.
+	static PlanNode[] ParseNodes(JsonElement nodes, IReadOnlyDictionary<string, PlanNode> prior)
 	{
 		// MCP clients sometimes pass the array as a JSON *string* (the param is an
 		// untyped JsonElement, so the client may stringify it); accept both forms.
@@ -459,20 +601,25 @@ public static class TasksTools
 		var list = new List<PlanNode>();
 		foreach (var e in arr.EnumerateArray())
 		{
+			var key = ResolveKey(e);
+			var prevKey = ResolvePrevKey(e);
+			var cur = prior.GetValueOrDefault(key) ?? (prevKey is not null ? prior.GetValueOrDefault(prevKey) : null);
 			list.Add(new PlanNode
 			{
-				Key = ResolveKey(e),
+				Key = key,
 				Version = ModuleMcp.OptLong(e, "version", 0),
-				Status = ModuleMcp.OptStr(e, "status") ?? string.Empty,
-				Type = (ModuleMcp.OptStr(e, "type") ?? string.Empty).ToLowerInvariant(),
-				Name = ModuleMcp.OptStr(e, "title") ?? string.Empty,
-				Body = ModuleMcp.OptStr(e, "body") ?? string.Empty,
-				CommitRef = ModuleMcp.OptStr(e, "commitRef"),
-				Priority = ModuleMcp.OptLong(e, "priority", 0),
-				PrevKey = ResolvePrevKey(e),
+				Status = Has(e, "status") ? ModuleMcp.OptStr(e, "status") ?? string.Empty : cur?.Status ?? string.Empty,
+				Type = Has(e, "type") ? (ModuleMcp.OptStr(e, "type") ?? string.Empty).ToLowerInvariant() : cur?.Type ?? string.Empty,
+				Name = Has(e, "title") ? ModuleMcp.OptStr(e, "title") ?? string.Empty : cur?.Name ?? string.Empty,
+				Body = Has(e, "body") ? ModuleMcp.OptStr(e, "body") ?? string.Empty : cur?.Body ?? string.Empty,
+				CommitRef = Has(e, "commitRef") ? ModuleMcp.OptStr(e, "commitRef") : cur?.CommitRef,
+				Priority = Has(e, "priority") ? ModuleMcp.OptLong(e, "priority", 0) : cur?.Priority ?? 0,
+				PrevKey = prevKey,
 			});
 		}
 		return list.ToArray();
+
+		static bool Has(JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out _);
 	}
 
 	// A node's identity is its 1-to-3 level path of anchor keys. Preferred input is the

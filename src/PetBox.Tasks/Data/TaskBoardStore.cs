@@ -22,12 +22,12 @@ public interface ITaskBoardStore
 	// Bump UpdatedAt to now — called after a node upsert so the catalog reflects
 	// last activity (the nodes live in a separate file, not this meta row).
 	Task TouchAsync(string projectKey, string board, CancellationToken ct = default);
-	Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "free", CancellationToken ct = default);
-	// Board role (free|spec|ideas|intake|work), or null if the board doesn't exist.
-	Task<string?> KindAsync(string projectKey, string board, CancellationToken ct = default);
-	// Close (archive) or reopen a board. A closed board rejects writes but stays readable.
-	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);
-	Task<bool> IsClosedAsync(string projectKey, string board, CancellationToken ct = default);
+	Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "free", string? specBoard = null, CancellationToken ct = default);
+	// The full metadata row (Kind, SpecBoard, ClosedAt, …), or null if the board doesn't exist.
+	Task<TaskBoardMeta?> FindAsync(string projectKey, string board, CancellationToken ct = default);
+	// Read-modify-write the metadata row via a `with`-mutation; bumps UpdatedAt. Returns
+	// false if the board doesn't exist. Use for any field change (close, spec link, …).
+	Task<bool> UpdateAsync(string projectKey, string board, Func<TaskBoardMeta, TaskBoardMeta> mutate, CancellationToken ct = default);
 	Task<bool> DeleteAsync(string projectKey, string board, CancellationToken ct = default);
 }
 
@@ -68,27 +68,23 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 	{
 		if (await ExistsAsync(projectKey, board, ct))
 			return;
-		await CreateAsync(projectKey, board, null, "free", ct);
+		await CreateAsync(projectKey, board, null, "free", ct: ct);
 	}
 
-	public Task<string?> KindAsync(string projectKey, string board, CancellationToken ct = default) =>
+	public Task<TaskBoardMeta?> FindAsync(string projectKey, string board, CancellationToken ct = default) =>
 		_db.TaskBoards
 			.Where(b => b.ProjectKey == projectKey && b.Name == board)
-			.Select(b => (string?)b.Kind)
-			.FirstOrDefaultAsync(ct);
+			.FirstOrDefaultAsync(ct)!;
 
-	public async Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default) =>
-		await _db.TaskBoards
-			.Where(b => b.ProjectKey == projectKey && b.Name == board)
-			.Set(b => b.ClosedAt, _ => closed ? DateTime.UtcNow : (DateTime?)null)
-			.Set(b => b.UpdatedAt, _ => DateTime.UtcNow)
-			.UpdateAsync(ct) > 0;
+	public async Task<bool> UpdateAsync(string projectKey, string board, Func<TaskBoardMeta, TaskBoardMeta> mutate, CancellationToken ct = default)
+	{
+		var meta = await FindAsync(projectKey, board, ct);
+		if (meta is null) return false;
+		await _db.UpdateAsync(mutate(meta) with { UpdatedAt = DateTime.UtcNow }, token: ct);
+		return true;
+	}
 
-	public Task<bool> IsClosedAsync(string projectKey, string board, CancellationToken ct = default) =>
-		_db.TaskBoards
-			.AnyAsync(b => b.ProjectKey == projectKey && b.Name == board && b.ClosedAt != null, ct);
-
-	public async Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "free", CancellationToken ct = default)
+	public async Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "free", string? specBoard = null, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(board))
 			throw new ArgumentException("board name is required", nameof(board));
@@ -109,6 +105,7 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 			Name = board,
 			Description = description,
 			Kind = WorkflowCatalog.ParseKind(kind).ToString().ToLowerInvariant(),
+			SpecBoard = string.IsNullOrWhiteSpace(specBoard) ? null : specBoard,
 			CreatedAt = now,
 			UpdatedAt = now,
 		};

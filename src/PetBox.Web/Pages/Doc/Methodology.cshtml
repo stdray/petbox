@@ -50,9 +50,10 @@
 ]</code></pre>
 
 		<h2>Links (relations)</h2>
-		<p>Edges bind to the stable <code>nodeId</code> (in every upsert/get response), so they survive renames. They are temporal — soft-closed, not deleted (history kept; <code>relations.list ... includeHistory=true</code>).</p>
+		<p>Edges bind to the stable <code>nodeId</code> (in every upsert/get response), so they survive renames. They are temporal — soft-closed, not deleted (history kept; <code>relations.list ... includeHistory=true</code>). <code>tasks.get</code> surfaces them inline per node: <code>spec</code> (what a task implements), <code>blockedBy</code>, and on spec nodes <code>linkedTasks</code> — each resolved to its board + path + title.</p>
+		<p><strong>Finding the spec board:</strong> set it once per work board with <code>tasks.board_set_spec</code> (or <code>specBoard</code> on <code>board_create</code>); then <code>tasks.get</code>/<code>board_list</code> report it as <code>specBoard</code> and <code>specRef</code> is validated to point at that board. No mapping = the agent picks any <code>kind=spec</code> board and links by nodeId.</p>
 		<ul>
-			<li><strong><code>task_spec</code></strong> — set <code>specRef</code> (a spec nodeId) on a work feature/bug: links it to the spec node it implements. <strong>Required</strong> for a new work feature/bug (spec-link invariant — no work without a spec node).</li>
+			<li><strong><code>task_spec</code></strong> — set <code>specRef</code> (a spec nodeId) on a work feature/bug: links it to the spec node it implements. <strong>Required</strong> for a new work feature/bug (spec-link invariant — no work without a spec node). The target is validated: it must be an existing node on a spec board (and on the board's <code>specBoard</code> if set).</li>
 			<li><strong><code>blocks</code></strong> — set <code>blockedBy</code> (a nodeId) on a work task you move to <code>Blocked</code>. A Blocked task MUST name a blocker.</li>
 			<li><strong><code>issue_task</code></strong> — a confirmed intake issue spawns a work task; link them so the issue auto-closes when the task is done.</li>
 			<li><strong><code>idea_spec</code></strong> — an accepted idea produced this spec node/version.</li>
@@ -83,8 +84,8 @@
 
 		<h2>Tools</h2>
 		<ul>
-			<li><code>tasks.board_create(kind?) / board_list / board_delete</code> — boards.</li>
-			<li><code>tasks.get / upsert / delta</code> — nodes (key, nodeId, l1/l2/l3, depth, parentKey, status, type, title, body, priority, version; on spec boards also <code>delivery</code>).</li>
+			<li><code>tasks.board_create(kind?, specBoard?) / board_list / board_delete / board_set_spec / board_close / board_reopen</code> — boards (all report kind, specBoard, closed).</li>
+			<li><code>tasks.get / upsert / delta</code> — nodes (key, nodeId, l1/l2/l3, depth, parentKey, status, type, title, body, priority, version; plus surfaced links and on spec boards <code>delivery</code>). Responses carry the board <code>kind</code>. <code>get</code> hides terminal nodes by default — pass <code>includeClosed=true</code>; <code>under="l1/l2"</code> scopes to a subtree. <strong>Partial update:</strong> a field omitted from <code>upsert</code> keeps its prior value, so a status change needs only the path + <code>version</code> + <code>status</code>.</li>
 			<li><code>tasks.workflow</code> — the live statuses/transitions for a board's kind.</li>
 			<li><code>relations.create / list / delete</code> — typed edges (task_spec|issue_task|idea_spec|blocks|nfr|dup).</li>
 			<li><code>report.issue</code> — file a PetBox bug/issue to the maintainer's intake.</li>

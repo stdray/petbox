@@ -33,4 +33,10 @@ public sealed record TaskBoardMeta
 	// to it by inertia) but stays readable; history is kept.
 	[Column, Nullable]
 	public DateTime? ClosedAt { get; init; }
+
+	// For a work board: the name of the spec board its tasks link into (task_spec).
+	// Makes the work->spec relationship explicit so an agent doesn't guess among several
+	// spec boards; specRef targets are validated against this board. Null = unset.
+	[Column, Nullable]
+	public string? SpecBoard { get; init; }
 }

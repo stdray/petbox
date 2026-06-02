@@ -49,11 +49,11 @@
 		</p>
 
 		<p>
-			Then set an <strong>environment variable named <code>PETBOX_API_KEY</code></strong> to that value,
-			in the environment the agent process runs in. The MCP config never stores the key itself — it
-			references <code>${PETBOX_API_KEY}</code> and reads it from the environment. The
-			<a href="@Routes.DocAgent()">connect guide</a> has the exact <code>export</code> /
-			<code>setx</code> commands per platform.
+			Then set a <strong>per-project environment variable</strong> to that value — named
+			<code>PETBOX_&lt;PROJECT&gt;_API_KEY</code> (the Connect page shows the exact name), so several
+			projects coexist on one machine. The MCP config never stores the key itself — it references that
+			variable and reads it from the environment. The <a href="@Routes.DocAgent()">connect guide</a> has
+			the exact <code>export</code> / <code>setx</code> commands.
 		</p>
 
 		<p class="text-sm opacity-80">
@@ -66,8 +66,9 @@
 		<p>
 			Add a project-level MCP server named <code>petbox</code> in the config your agent reads (HTTP /
 			streamable transport, the MCP endpoint URL, and the header
-			<code>X-Api-Key: ${PETBOX_API_KEY}</code>). The <a href="@Routes.DocAgent()">connect guide</a>
-			lists the config-file path per agent type. Then <strong>restart the MCP connection</strong> so the
+			<code>X-Api-Key: ${PETBOX_&lt;PROJECT&gt;_API_KEY}</code>). The
+			<a href="@Routes.DocAgent()">connect guide</a> lists the config-file path per agent type. Then
+			<strong>restart the MCP connection</strong> so the
 			tool list loads.
 		</p>
 

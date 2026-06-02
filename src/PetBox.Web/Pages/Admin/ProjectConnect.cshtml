@@ -10,6 +10,7 @@
 	var onboarding = Model.DocOnboardingUrl;
 	var overview = Model.DocOverviewUrl;
 	var methodology = Model.DocMethodologyUrl;
+	var envvar = Model.EnvVarName;
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
@@ -88,15 +89,16 @@ else
 		<div class="card-body p-4">
 			<h3 class="card-title text-base">First: set an environment variable</h3>
 			<p class="text-sm">
-				The agent reads the key from an environment variable named <code>PETBOX_API_KEY</code> — it is
-				never stored in any config file. Set it in the environment where the agent runs, then start the
-				agent from that same shell/session:
+				The agent reads the key from an environment variable named <code>@envvar</code> — it is never
+				stored in any config file. The name is <strong>per project</strong> (not a shared
+				<code>PETBOX_API_KEY</code>) so several projects can coexist on one machine. Set it in the
+				environment where the agent runs, then start the agent from that same shell/session:
 			</p>
 			<pre class="bg-base-300 rounded p-3 text-xs whitespace-pre-wrap"><code># macOS / Linux (current shell)
-export PETBOX_API_KEY="@key"
+export @(envvar)="@key"
 
 # Windows PowerShell (persisted for new shells)
-setx PETBOX_API_KEY "@key"</code></pre>
+setx @envvar "@key"</code></pre>
 			<p class="text-xs opacity-70 mb-0">
 				Don't commit it to a file. Pasting the prompt below also puts the key in the agent's chat
 				history — if that matters, rotate the key when you're done.
@@ -125,10 +127,10 @@ Follow the staged onboarding runbook (public, no auth — fetch and follow it):
 It links the overview (@overview) and the methodology, and walks you through each
 stage with a validation gate. Do the stages in order and do not skip a gate:
 
-1. Set PETBOX_API_KEY in your process env from the key above (never commit it). Confirm
-   it is non-empty.
+1. Set the env var @envvar in your process env from the key above (never commit it).
+   Confirm it is non-empty.
 2. Add a PROJECT-level MCP server named "petbox" (HTTP/streamable, the endpoint above,
-   header  X-Api-Key: ${PETBOX_API_KEY} ), then RESTART your MCP connection. Verify with
+   header  X-Api-Key: ${@envvar} ), then RESTART your MCP connection. Verify with
    tasks.board_list projectKey "@proj" — an empty list (not an auth error) means it works.
 3. Read the overview + methodology, then report back, in your own words: the board kinds,
    how nodes are addressed (l1/l2/l3 + title), the spec-link invariant, and the approve

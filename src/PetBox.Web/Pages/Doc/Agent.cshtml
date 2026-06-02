@@ -53,22 +53,24 @@
     "petbox": {
       "type": "http",
       "url": "@mcp",
-      "headers": { "X-Api-Key": "${PETBOX_API_KEY}" }
+      "headers": { "X-Api-Key": "${PETBOX_&lt;PROJECT&gt;_API_KEY}" }
     }
   }
 }</code></pre>
 
 		<h2>3. Keep the key out of version control</h2>
 		<p>
-			Never commit the key. The config above references it as <code>${PETBOX_API_KEY}</code>, which your
-			agent expands from its <strong>process environment</strong>. Set that environment variable in your
-			shell (or OS-wide) before launching the agent:
+			Never commit the key. The config references it as an environment variable, which your agent expands
+			from its <strong>process environment</strong>. Name the variable <strong>per project</strong> —
+			<code>PETBOX_&lt;PROJECT&gt;_API_KEY</code> (e.g. <code>PETBOX_KPVOTES_API_KEY</code>) — so several
+			projects can coexist on one machine; a single shared <code>PETBOX_API_KEY</code> can't. The project's
+			Connect page shows the exact name and ready-to-paste commands. Set it before launching the agent:
 		</p>
 		<pre><code># macOS / Linux (current shell)
-export PETBOX_API_KEY=&lt;your key&gt;
+export PETBOX_&lt;PROJECT&gt;_API_KEY=&lt;your key&gt;
 
 # Windows (persisted for new shells)
-setx PETBOX_API_KEY "&lt;your key&gt;"</code></pre>
+setx PETBOX_&lt;PROJECT&gt;_API_KEY "&lt;your key&gt;"</code></pre>
 		<p class="text-sm opacity-70">
 			If your agent can't expand env vars, inline the key directly in the MCP config instead — but keep that
 			config file gitignored.

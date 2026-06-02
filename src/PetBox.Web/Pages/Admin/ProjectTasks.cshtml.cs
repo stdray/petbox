@@ -78,7 +78,7 @@ public sealed class ProjectTasksModel : PageModel
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
-		await _store.SetClosedAsync(ProjectKey, name, closed);
+		await _store.UpdateAsync(ProjectKey, name, m => m with { ClosedAt = closed ? DateTime.UtcNow : null });
 		return RedirectToPage();
 	}
 }
