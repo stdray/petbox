@@ -37,7 +37,7 @@ public sealed class AgentKeysModel : PageModel
 			.Select(k => new KeyRow(k.Key, k.Name, k.ProjectKey, k.Scopes, k.CreatedAt, k.ExpiresAt, k.ExpiresAt <= now))];
 	}
 
-	public async Task<IActionResult> OnPostIssueAsync(string? name, string? projectKey, string[]? scopes, int ttlHours)
+	public async Task<IActionResult> OnPostIssueAsync(string? name, string? projectKey, string[]? scopes, int ttlHours, bool allProjects = false)
 	{
 		var (valid, invalid) = ApiKeyScopes.Validate(scopes is null ? null : string.Join(',', scopes));
 		if (invalid.Count > 0)
@@ -63,7 +63,10 @@ public sealed class AgentKeysModel : PageModel
 		await _db.InsertAsync(new ApiKey
 		{
 			Key = keyValue,
-			ProjectKey = string.IsNullOrWhiteSpace(projectKey) ? "$system" : projectKey.Trim(),
+			// allProjects mints a CROSS-PROJECT key (project="*") that reads+writes across every
+			// project — for monitoring/dev override. Otherwise scoped to one project ($system default).
+			ProjectKey = allProjects ? ProjectScope.AllProjects
+				: string.IsNullOrWhiteSpace(projectKey) ? "$system" : projectKey.Trim(),
 			Scopes = string.Join(',', valid),
 			Name = string.IsNullOrWhiteSpace(name) ? "agent-key" : name.Trim(),
 			CreatedAt = DateTime.UtcNow,

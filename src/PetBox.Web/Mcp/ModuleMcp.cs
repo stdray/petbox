@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
 
 namespace PetBox.Web.Mcp;
@@ -14,7 +15,7 @@ static class ModuleMcp
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (string.IsNullOrEmpty(claim) || !string.Equals(claim, projectKey, StringComparison.Ordinal))
+		if (!ProjectScope.Authorizes(claim, projectKey))
 			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
 	}
 

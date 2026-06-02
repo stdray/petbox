@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using PetBox.Core.Auth;
 using PetBox.Core.Data.Temporal;
 using PetBox.Sessions.Data;
 
@@ -20,7 +21,7 @@ public static class SessionApi
 		HttpContext ctx, string projectKey, string sessionId, ISessionStore sessions, CancellationToken ct)
 	{
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!string.Equals(claim, projectKey, StringComparison.Ordinal))
+		if (!ProjectScope.Authorizes(claim, projectKey))
 			return Results.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))

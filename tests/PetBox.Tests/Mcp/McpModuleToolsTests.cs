@@ -136,6 +136,21 @@ public sealed class McpModuleToolsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Tasks_CrossProjectKey_Authorizes_NormalKeyForOtherProjectRejected()
+	{
+		// A cross-project key (project="*") may operate on any project...
+		var star = Http("tasks:read,tasks:write", project: "*");
+		await TasksTools.BoardCreateAsync(star, Flags(), _boards, Proj, "x");
+		Json(await TasksTools.GetAsync(star, Flags(), _boards, _relations, Proj, "x"))
+			.GetProperty("kind").GetString().Should().Be("free");
+
+		// ...while a key scoped to a different project is rejected for this one.
+		var other = Http("tasks:read,tasks:write", project: "other");
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			TasksTools.BoardListAsync(other, Flags(), _boards, Proj));
+	}
+
+	[Fact]
 	public async Task Memory_Upsert_Search_Roundtrip()
 	{
 		var http = Http("memory:read,memory:write");
@@ -163,9 +178,9 @@ public sealed class McpModuleToolsTests : IDisposable
 		list.GetProperty("sessions").EnumerateArray().Should().ContainSingle();
 	}
 
-	static IHttpContextAccessor Http(string scopes)
+	static IHttpContextAccessor Http(string scopes, string? project = null)
 	{
-		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");
+		var id = new ClaimsIdentity([new Claim("project", project ?? Proj), new Claim("scopes", scopes)], "test");
 		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id) } };
 	}
 

@@ -27,19 +27,23 @@
 	<div class="card-body p-4">
 		<h2 class="text-base font-semibold mb-2">Issue agent key</h2>
 		<form method="post" asp-page-handler="Issue" class="space-y-3">
-			<div class="flex flex-wrap items-end gap-2">
+			<div class="flex flex-wrap items-end gap-2" x-data="{ allProjects: false }">
 				<div>
 					<label class="text-xs opacity-60 block" for="ak-name">Name</label>
 					<input id="ak-name" name="name" class="input input-bordered input-sm" placeholder="kpvotes onboarding" data-testid="agent-key-name" />
 				</div>
 				<div>
 					<label class="text-xs opacity-60 block" for="ak-project">Project key</label>
-					<input id="ak-project" name="projectKey" class="input input-bordered input-sm font-mono" value="$system" data-testid="agent-key-project" />
+					<input id="ak-project" name="projectKey" class="input input-bordered input-sm font-mono" value="$system" data-testid="agent-key-project" :disabled="allProjects" :class="{ 'opacity-40': allProjects }" />
 				</div>
 				<div>
 					<label class="text-xs opacity-60 block" for="ak-ttl">TTL (hours)</label>
 					<input id="ak-ttl" name="ttlHours" type="number" min="1" value="24" class="input input-bordered input-sm w-24" data-testid="agent-key-ttl" />
 				</div>
+				<label class="label cursor-pointer gap-2 p-0 pb-1" title="A cross-project key (project='*') reads AND writes across EVERY project — for monitoring / dev override. Powerful; keep the TTL short.">
+					<input type="checkbox" name="allProjects" value="true" class="checkbox checkbox-sm checkbox-warning" x-model="allProjects" data-testid="agent-key-all-projects" />
+					<span class="text-xs">All projects (cross-project <code class="font-mono">*</code>)</span>
+				</label>
 			</div>
 			<div data-testid="agent-key-scopes-group">
 				<div class="text-xs opacity-60 mb-1">Scopes</div>
@@ -86,7 +90,16 @@ else
 				{
 					<tr data-testid="agent-key-row">
 						<td>@k.Name</td>
-						<td class="font-mono text-xs">@k.ProjectKey</td>
+						<td class="font-mono text-xs">
+							@if (k.ProjectKey == "*")
+							{
+								<span class="badge badge-warning badge-sm" data-testid="agent-key-all-projects-badge">all projects</span>
+							}
+							else
+							{
+								@k.ProjectKey
+							}
+						</td>
 						<td class="font-mono text-xs">@k.Scopes</td>
 						<td class="text-xs">
 							@if (k.Expired)

@@ -43,7 +43,7 @@ public static class HealthApi
 
 		// A project-scoped key may only report for its own project.
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (string.IsNullOrEmpty(claim) || !string.Equals(claim, project, StringComparison.Ordinal))
+		if (!ProjectScope.Authorizes(claim, project))
 			return Results.Forbid();
 
 		await db.InsertAsync(new HealthReport

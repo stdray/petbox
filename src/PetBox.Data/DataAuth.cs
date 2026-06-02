@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using PetBox.Core.Auth;
 
 namespace PetBox.Data;
 
@@ -13,7 +14,7 @@ internal static class DataAuth
 	public static bool AuthorizeProject(HttpContext ctx, string projectKey, out IResult forbid)
 	{
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (string.IsNullOrEmpty(claim) || !string.Equals(claim, projectKey, StringComparison.Ordinal))
+		if (!ProjectScope.Authorizes(claim, projectKey))
 		{
 			forbid = Results.Forbid();
 			return false;
