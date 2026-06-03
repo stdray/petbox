@@ -396,16 +396,19 @@ public sealed partial class TasksService : ITasksService
 		ValidateChanges(desired, prior);
 		var specRefs = LinkFields(nodes, p => p.SpecRef);
 		var blockedBy = LinkFields(nodes, p => p.BlockedBy);
+		var ideaRefs = LinkFields(nodes, p => p.IdeaRef);
 		RequireSpecLinks(kind, desired, prior, specRefs);
 		await ValidateSpecRefsAsync(projectKey, meta, specRefs, ct);
 		await RequireBlockersAsync(kind, projectKey, desired, blockedBy, ct);
 		await RequireSpecPlanForReviewAsync(kind, projectKey, board, desired, prior, ct);
+		await RequireAcceptedIdeaForSpecAsync(kind, projectKey, desired, ideaRefs, ct);
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, partition: n => n.Board == board, ct: ct);
 		if (r.Applied)
 		{
 			await _boards.TouchAsync(projectKey, board, ct);
 			await LinkRefsAsync(projectKey, "task_spec", desired, specRefs, blockerIsFrom: false, ct);
 			await LinkRefsAsync(projectKey, "blocks", desired, blockedBy, blockerIsFrom: true, ct);
+			await LinkRefsAsync(projectKey, "idea_spec", desired, ideaRefs, blockerIsFrom: true, ct);
 			await CloseBlocksOnLeaveAsync(projectKey, desired, prior, ct);
 			await RunDoneEffectsAsync(projectKey, kind, desired, ct);
 		}
@@ -534,6 +537,27 @@ public sealed partial class TasksService : ITasksService
 				throw new ArgumentException($"specRef '{refId}' (node '{key}') points to board '{t.Board}', which is not a spec board");
 			if (workBoard.SpecBoard is { Length: > 0 } sb && t.Board != sb)
 				throw new ArgumentException($"specRef '{refId}' (node '{key}') is on board '{t.Board}', but this work board links spec board '{sb}'");
+		}
+	}
+
+	// spec-write-needs-accepted-idea (governance): every create/change of a spec node must
+	// reference an `accepted` idea via ideaRef — which becomes the idea_spec edge (linked
+	// after apply). No accepted idea, no spec write. WorkflowEngine stays pure; the idea
+	// node is read here.
+	async Task RequireAcceptedIdeaForSpecAsync(BoardKind kind, string projectKey, PlanNode[] desired, Dictionary<string, string> ideaRefs, CancellationToken ct)
+	{
+		if (kind != BoardKind.Spec) return;
+		var index = await BuildNodeIndexAsync(projectKey, ct);
+		foreach (var n in desired)
+		{
+			if (!ideaRefs.TryGetValue(n.Key, out var ideaId))
+				throw new ArgumentException($"a spec change must be made under an accepted idea — provide ideaRef (node '{n.Key}')");
+			if (!index.TryGetValue(ideaId, out var idea))
+				throw new ArgumentException($"ideaRef '{ideaId}' (node '{n.Key}') does not resolve to any node");
+			if (WorkflowCatalog.ParseKind(idea.BoardKind) != BoardKind.Ideas)
+				throw new ArgumentException($"ideaRef '{ideaId}' (node '{n.Key}') is not an idea (board '{idea.Board}')");
+			if (!string.Equals(idea.Status, "accepted", StringComparison.OrdinalIgnoreCase))
+				throw new ArgumentException($"ideaRef '{ideaId}' (node '{n.Key}') idea is '{idea.Status}', not accepted — a spec change needs an accepted idea");
 		}
 	}
 

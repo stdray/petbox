@@ -38,6 +38,11 @@ public sealed record NodePatch
 	public string? SpecRef { get; init; }
 	public string? BlockedBy { get; init; }
 
+	// Spec boards only: the NodeId of the `accepted` idea this spec create/change is made
+	// under — becomes the idea_spec edge. Required on every spec node (governance: no spec
+	// change without an accepted idea). Null/empty = no link given.
+	public string? IdeaRef { get; init; }
+
 	// Enforced tags ("namespace:value", namespaces area|concern). null = OMIT (leave the
 	// node's tags as-is); a non-null list (incl. empty) REPLACES the node's full tag set.
 	public IReadOnlyList<string>? Tags { get; init; }

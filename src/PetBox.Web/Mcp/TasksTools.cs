@@ -157,7 +157,9 @@ public static class TasksTools
 		worth of grouping via `tags` (an array of "namespace:value", namespaces area|concern;
 		[] clears, omit leaves as-is). Give each node a `title` and `body` (markdown). Other
 		fields: status (slug — see tasks.workflow), type (feature|bug on work boards), specRef
-		(a spec NodeId the work task implements), blockedBy (a NodeId blocking it), supersedes
+		(a spec NodeId the work task implements), ideaRef (ON A SPEC BOARD: the NodeId of the
+		`accepted` idea this create/change is made under — REQUIRED for every spec node; becomes
+		the idea_spec edge), blockedBy (a NodeId blocking it), supersedes
 		(a slug|NodeId this node replaces — the old one is moved to its terminal-cancel),
 		commitRef?, priority? (sparse int, lower first), version (baseline you last saw; 0 =
 		new). Rename via prevKey. A cold call auto-creates the board.
@@ -280,6 +282,7 @@ public static class TasksTools
 				CommitRef = Has(e, "commitRef") ? ModuleMcp.OptStr(e, "commitRef") : null,
 				Priority = Has(e, "priority") ? ModuleMcp.OptLong(e, "priority", 0) : null,
 				SpecRef = ModuleMcp.OptStr(e, "specRef"),
+				IdeaRef = ModuleMcp.OptStr(e, "ideaRef"),
 				BlockedBy = ModuleMcp.OptStr(e, "blockedBy"),
 				PartOf = Has(e, "partOf") ? ModuleMcp.OptStr(e, "partOf") ?? string.Empty : null,
 				Supersedes = ModuleMcp.OptStr(e, "supersedes"),

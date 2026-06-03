@@ -67,10 +67,12 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 	}
 
 	[Fact]
-	public async Task QuickAdd_OnSpecBoard_UsesDraft()
+	public async Task QuickAdd_OnSpecBoard_UsesDefinedInitial()
 	{
+		// spec FSM has no draft anymore — a node is born `defined`. (UI quick-add bypasses the
+		// service ideaRef guard; the methodology enforcement lives on the MCP/service path.)
 		var n = await QuickAdd("spec", "spec");
-		n.Status.Should().Be("draft");
+		n.Status.Should().Be("defined");
 		n.Type.Should().Be("spec");
 	}
 

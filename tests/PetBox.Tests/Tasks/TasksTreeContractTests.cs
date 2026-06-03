@@ -26,6 +26,7 @@ public sealed class TasksTreeContractTests : IDisposable
 	readonly ScopedDbFactory<TasksDb> _factory;
 	readonly TaskBoardStore _store;
 	readonly RelationStore _relations;
+	readonly CommentService _commentSvc;
 	readonly TasksService _tasks;
 
 	public TasksTreeContractTests()
@@ -40,7 +41,24 @@ public sealed class TasksTreeContractTests : IDisposable
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db, _factory);
 		_relations = new RelationStore(_db);
-		_tasks = new TasksService(_store, _relations, new TagStore(_factory), new CommentService(_factory));
+		_commentSvc = new CommentService(_factory);
+		_tasks = new TasksService(_store, _relations, new TagStore(_factory), _commentSvc);
+	}
+
+	// Spec writes require an `accepted` idea (ideaRef). Drive one through the gate and return
+	// its NodeId.
+	async Task<string> AcceptedIdeaId(IHttpContextAccessor http)
+	{
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "ideas", "ideas");
+		var idea = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			JsonSerializer.SerializeToElement(new[] { new { key = "drv", type = "idea", status = "exploring", body = "x" } })));
+		var ideaId = idea.GetProperty("added")[0].GetProperty("nodeId").GetString()!;
+		await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", ideaId, "t", "plan", parentId: null, tags: new[] { "artifact:spec_plan" });
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			JsonSerializer.SerializeToElement(new[] { new { key = "drv", type = "idea", status = "review", version = 1 } }));
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			JsonSerializer.SerializeToElement(new[] { new { key = "drv", type = "idea", status = "accepted", version = 2 } }));
+		return ideaId;
 	}
 
 	public void Dispose()
@@ -150,12 +168,13 @@ public sealed class TasksTreeContractTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "spec", "spec");
+		var ir = await AcceptedIdeaId(http);
 		// new supersedes old (both in one batch): old is moved to the spec terminal-cancel.
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "spec",
 			JsonSerializer.SerializeToElement(new object[]
 			{
-				new { key = "old", status = "defined", title = "Old req", body = "x" },
-				new { key = "new", status = "defined", title = "New req", body = "x", supersedes = "old" },
+				new { key = "old", status = "defined", title = "Old req", body = "x", ideaRef = ir },
+				new { key = "new", status = "defined", title = "New req", body = "x", supersedes = "old", ideaRef = ir },
 			}));
 
 		var got = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "spec", includeClosed: true));

@@ -34,15 +34,15 @@ public static class WorkflowCatalog
 			new("Review", "Cancelled"),
 		]);
 
+	// A spec node is born `defined` (a worked-out requirement) and can only retire to
+	// `deprecated` when the requirement loses meaning. There is no draft/in-flux status —
+	// undefined thinking lives in an Idea, not the spec tree.
 	static readonly Workflow Spec = new("spec",
 		[
-			new("draft", "Draft", StatusKind.Open),
 			new("defined", "Defined", StatusKind.Open),
 			new("deprecated", "Deprecated", StatusKind.TerminalCancel),
 		],
 		[
-			new("draft", "defined"),
-			new("defined", "draft"),
 			new("defined", "deprecated"),
 		]);
 
