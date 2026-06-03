@@ -116,6 +116,24 @@ public sealed class MemoryVerbsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Recall_AllStores_SkipsSensitiveOps_ButExplicitStoreReaches()
+	{
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "secret deploy token xyz", store: "ops");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "public deploy note", store: "notes");
+
+		// Implicit all-stores sweep must NOT surface the ops store.
+		var sweep = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, "deploy"));
+		sweep.GetProperty("results").EnumerateArray().Select(h => h.GetProperty("store").GetString())
+			.Should().NotContain("ops").And.Contain("notes");
+
+		// Explicit store:ops is a deliberate ask and still reaches it.
+		var explicitOps = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, "deploy", store: "ops"));
+		explicitOps.GetProperty("results").EnumerateArray().Select(h => h.GetProperty("store").GetString())
+			.Should().BeEquivalentTo(["ops"]);
+	}
+
+	[Fact]
 	public async Task Remember_InvalidScope_IsRejected()
 	{
 		var http = Http("memory:read,memory:write");

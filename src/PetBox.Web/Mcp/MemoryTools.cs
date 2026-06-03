@@ -149,6 +149,12 @@ public static class MemoryTools
 	const string WorkspaceContainer = "$workspace";
 	const string DefaultStore = "notes";
 
+	// Stores skipped by the default "search every store" recall: sensitive operational
+	// stores that must never be auto-pulled into an agent's context (e.g. "ops" has held
+	// secrets). An explicit `store:"ops"` recall still reaches it — only the implicit
+	// all-stores sweep excludes it.
+	static readonly HashSet<string> RecallExcludedStores = new(StringComparer.OrdinalIgnoreCase) { "ops" };
+
 	[McpServerTool(Name = "memory.remember", Title = "Remember a fact")]
 	[Description("""
 		Capture one durable fact, verbatim. The low-ceremony way to store a learning.
@@ -208,9 +214,10 @@ public static class MemoryTools
 		var results = new List<object>();
 		foreach (var (scopeName, container) in RecallContainers(http, projectKey, scope))
 		{
-			// Which stores to search in this container: the named one, or all of them.
+			// Which stores to search in this container: the named one, or all of them
+			// except the sensitive ones (the implicit sweep must not leak ops/secrets).
 			IReadOnlyList<string> stores = string.IsNullOrWhiteSpace(store)
-				? (await memory.ListStoresAsync(container, ct)).Select(s => s.Name).ToList()
+				? (await memory.ListStoresAsync(container, ct)).Select(s => s.Name).Where(n => !RecallExcludedStores.Contains(n)).ToList()
 				: [store!.Trim()];
 			foreach (var st in stores)
 			{
