@@ -32,3 +32,10 @@ public sealed record PlanNodeDelta(
 // The raw temporal upsert/delta result plus the board kind, ready for an adapter to
 // serialize. The service owns the logic; the adapter owns the wire shape.
 public sealed record UpsertOutcome(TemporalUpsertResult<PlanNode> Result, BoardKind Kind);
+
+// One board of the methodology quartet with its active nodes (null Name = not provisioned).
+public sealed record MethodologyBoard(string Kind, string? Name, IReadOnlyList<PlanNodeView> Nodes);
+
+// The methodology quartet as one surface: intake → ideas → spec → work (the pipeline
+// order). `Enabled` = all four singleton boards exist. Composes GetAsync per board.
+public sealed record MethodologyView(bool Enabled, IReadOnlyList<MethodologyBoard> Boards);
