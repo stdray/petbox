@@ -49,6 +49,25 @@ tests → APPROVE (maintainer) → Done`; reject → back with a reason.
 **An agent never sets the final `Done` itself — its ceiling is `Review`.** The
 maintainer confirms.
 
+## Idea lifecycle + the spec-approval gate
+
+Symmetric to the task gate: an Idea (deliberation) flows
+`raw → exploring → Review → accepted`; `Review → exploring` sends it back for more
+thinking.
+
+- The agent's ceiling is **`Review`**, not `accepted` — exactly as its ceiling on a task
+  is `Review`, not `Done`. The agent works the idea, puts it in `Review`, and stops.
+- **An idea may not enter `Review` without a `spec_plan` artifact** — an
+  `artifact:spec_plan`-tagged comment on the idea stating the concrete spec changes. No
+  plan, no review.
+- The maintainer approves **`Review → accepted`** (= approves the spec-change set); only
+  then is the spec updated. This is the spec-change equivalent of `Review → Done`.
+
+(Today the ideas FSM is `raw → exploring → accepted` with no `Review` and the spec_plan
+precondition unenforced. So the convention *now* is: the agent leaves the idea at
+`exploring` WITH a spec_plan artifact and stops; the maintainer accepts. The `Review`
+state + the spec_plan guard are the target — see idea `methodology-fsm-gaps`.)
+
 ## Iterations
 
 An iteration = a **filtered backlog** (pull a batch by: no blockers, priority,
