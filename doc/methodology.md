@@ -63,10 +63,12 @@ thinking.
 - The maintainer approves **`Review → accepted`** (= approves the spec-change set); only
   then is the spec updated. This is the spec-change equivalent of `Review → Done`.
 
-(Today the ideas FSM is `raw → exploring → accepted` with no `Review` and the spec_plan
-precondition unenforced. So the convention *now* is: the agent leaves the idea at
-`exploring` WITH a spec_plan artifact and stops; the maintainer accepts. The `Review`
-state + the spec_plan guard are the target — see idea `methodology-fsm-gaps`.)
+Enforced in code: the ideas FSM has `review` (between exploring and accepted) and
+`exploring → review` is rejected without an `artifact:spec_plan` comment (the guard lives
+in `TasksService`, reading `ICommentService`; `WorkflowEngine` stays pure). The direct
+`exploring → accepted` transition was removed — you must pass through `review`. The
+`review → accepted` approval itself stays a convention (the agent shouldn't self-accept);
+`enforceApproval` is off until there's a maintainer/agent role distinction.
 
 ## Iterations
 
