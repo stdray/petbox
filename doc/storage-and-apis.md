@@ -12,9 +12,8 @@ Workspace (Key)               e.g. $system, infra, stdray
 
 - **Project is the unit everything is scoped by.** Memory/sessions/tasks/logs/config all key on `projectKey`.
 - An **API key** carries a `project` claim — either ONE project key, or `*` (cross-project). Most tools assert the call's `projectKey` against that claim.
-- **Reserved projects:**
-  - `$system` — the built-in internal project (self-logs, the dogfooding ideas/spec/roadmap boards, the `ops` memory store). Seeded by M001/M004.
-  - `$workspace` — a **shared cross-project container**, seeded by M028. It is NOT empty: it holds **workspace-scope memory** (`memory/$workspace/notes.db`) and is the home of any **workspace-level methodology quartet**. Memory's `scope=workspace` writes here; deleting the project row breaks that scope. Parallel idea to `$system` but user-facing (cross-project shared) vs. internal.
+- **Reserved project:**
+  - `$system` — the built-in internal project AND the single **shared cross-project container**: self-logs, the dogfooding ideas/spec/roadmap boards, the `ops` memory store, and the destination of `scope=workspace` memory. (There used to be a separate `$workspace` project for cross-project sharing — consolidated into `$system` 2026-06-03; one container, not two.)
 
 ## 2. Storage map (`/opt/petbox/data/`)
 
@@ -50,7 +49,7 @@ Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a sto
 
 **Scope dimension** (over the per-project store files):
 - `project` (default) → the key's own project.
-- `workspace` → the reserved `$workspace` container (cross-project shared).
+- `workspace` → the shared cross-project container (`$system`). When the key's project IS `$system`, project and workspace collapse and a cascade recall searches it once.
 
 **MCP tools** (server `petbox`):
 - Ergonomic: `memory.remember{text,scope?,store?,type?,tags?,description?}` (verbatim capture, auto-key), `memory.recall{query,scope?,store?,type?,limit?}` (FTS; no scope ⇒ **cascade** project ⊕ workspace, searches every store **except `ops`**, hits labelled by scope, project first).
@@ -71,14 +70,10 @@ Storage: `sessions/{projectKey}.db` — an **append-only raw archive** of agent 
 Storage: `tasks/{projectKey}.db` (`plan_nodes` partitioned by `Board`; `node_tag`/`tag_vocab`) + `TaskBoards` meta and `Relation` edges in `petbox.db`.
 
 - **Model (spec-flat-tags):** nodes are FLAT slugs; hierarchy is the `part_of` edge; grouping is enforced tags (`area:*`/`concern:*`); the "tree" is a projection (`tasks.get` returns `parentSlug`/`depth`, or pass `groupBy=area|concern`).
-- **Methodology quartet:** the kinds `spec|ideas|intake|work` are **per-project singletons** (≤1 each; `free` unlimited). `tasks.methodology_enable(project)` idempotently provisions the missing ones and auto-wires `work→spec`; `tasks.methodology_get(project)` returns the quartet as one surface. The admin UI's board-create goes through the same service (so the singleton is enforced) — but the UI does **not yet surface** the methodology (no enable button / quartet view) — that is the current human-facing gap.
+- **Methodology quartet:** the kinds `spec|ideas|intake|work` are **per-project singletons** (≤1 each; `free` unlimited). `tasks.methodology_enable(project)` idempotently provisions the missing ones and auto-wires `work→spec`; `tasks.methodology_get(project)` returns the quartet as one surface. The admin board page (`/ui/.../tasks`) offers EITHER **Enable methodology** (provisions the quartet as one unit) OR a **Free board** form — never per-kind creation by hand.
 - **MCP tools:** `tasks.board_create|list|delete|close|reopen|set_spec|get|upsert|delta|workflow`, `tasks.methodology_enable|get`, `relations.create|list|delete` (kinds `task_spec|issue_task|idea_spec|blocks|part_of|supersedes`).
 - **UI:** `/ui/{ws}/{project}/tasks` (board list, admin) and `/ui/{ws}/{project}/tasks/{board}` (board detail, part_of tree).
 
-## 7. The `$workspace` vs `$system` question
+## 7. One shared container (`$system`)
 
-They are two reserved cross-cutting projects with different intents:
-- `$system` = internal/system (self-logs, ops secrets, the dogfooding boards).
-- `$workspace` = a user-facing **shared** container, so cross-project memory (and, optionally, a cross-project methodology quartet) is not tangled with system internals.
-
-For a single-user install the distinction is thin and could be consolidated onto `$system` — but `$workspace` currently holds live `notes` memory, so consolidating means **migrating that data**, not just deleting the project.
+There is **one** reserved cross-cutting project: `$system`. It is both the internal/system project (self-logs, ops, dogfooding boards) and the shared container that `scope=workspace` memory targets. A separate `$workspace` project briefly existed (for cross-project sharing) but was consolidated into `$system` on 2026-06-03 — for a single-user install two cross-cutting projects were redundant. The methodology quartet is **per-project** (e.g. enable it on `$system` or a real project); there is no separate workspace-level quartet.
