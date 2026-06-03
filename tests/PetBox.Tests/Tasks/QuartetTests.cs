@@ -78,6 +78,21 @@ public sealed class QuartetTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Workspace_Methodology_ReachableByProjectScopedKey()
+	{
+		// A project-scoped key (claim "proj") can provision/read the WORKSPACE-level quartet
+		// on the reserved "$workspace" container — it is shared, like memory's $workspace.
+		var http = Http("tasks:read,tasks:write");
+		var en = Json(await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, "$workspace"));
+		en.GetProperty("enabled").GetBoolean().Should().BeTrue();
+		en.GetProperty("boards").EnumerateArray().Select(b => b.GetProperty("kind").GetString())
+			.Should().Equal("intake", "ideas", "spec", "work");
+
+		var get = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, "$workspace"));
+		get.GetProperty("enabled").GetBoolean().Should().BeTrue();
+	}
+
+	[Fact]
 	public async Task Singleton_FreeBoards_Unlimited()
 	{
 		var http = Http("tasks:read,tasks:write");

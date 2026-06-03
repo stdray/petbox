@@ -28,9 +28,10 @@ public sealed class RelationStore : IRelationStore
 {
 	// task_spec: task→spec. issue_task: intake issue→task. idea_spec: idea→spec.
 	// blocks: blocker→blocked. part_of: child→parent (vertical decomposition; the old
-	// l1/l2/l3 tree is now this edge). nfr/dup were never implemented and are dropped —
-	// cross-cutting concerns are concern:* tags now (spec-flat-tags).
-	static readonly string[] Kinds = ["task_spec", "issue_task", "idea_spec", "blocks", "part_of"];
+	// l1/l2/l3 tree is now this edge). supersedes: new→obsoleted (a changed requirement's
+	// new spec version replaces the old; a fresh idea replaces a rejected one). nfr/dup
+	// were never implemented and are dropped — concerns are concern:* tags now.
+	static readonly string[] Kinds = ["task_spec", "issue_task", "idea_spec", "blocks", "part_of", "supersedes"];
 
 	readonly PetBoxDb _db;
 	public RelationStore(PetBoxDb db) => _db = db;

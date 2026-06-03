@@ -25,7 +25,7 @@ public static class TasksTools
 		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, specBoard, ct);
 		return new { meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.SpecBoard, meta.CreatedAt };
@@ -38,7 +38,7 @@ public static class TasksTools
 		string projectKey, string board, string? specBoard = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var (set, norm) = await tasks.SetSpecBoardAsync(projectKey, board, specBoard, ct);
 		return new { set, specBoard = norm };
@@ -51,7 +51,7 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await tasks.ListBoardsAsync(projectKey, ct);
 		return new { boards = list.Select(b => new { b.Name, b.Kind, b.Description, b.SpecBoard, b.CreatedAt, closed = b.ClosedAt != null }).ToList() };
@@ -64,7 +64,7 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return new { deleted = await tasks.DeleteBoardAsync(projectKey, board, ct) };
 	}
@@ -76,7 +76,7 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return new { closed = await tasks.SetClosedAsync(projectKey, board, true, ct) };
 	}
@@ -88,7 +88,7 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return new { reopened = await tasks.SetClosedAsync(projectKey, board, false, ct) };
 	}
@@ -100,7 +100,7 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return (object)await tasks.EnableMethodologyAsync(projectKey, ct);
 	});
@@ -112,7 +112,7 @@ public static class TasksTools
 		string projectKey, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		return (object)await tasks.GetMethodologyAsync(projectKey, ct);
 	});
@@ -140,7 +140,7 @@ public static class TasksTools
 		string projectKey, string board, bool includeClosed = false, string? under = null, string? groupBy = null, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		return string.IsNullOrWhiteSpace(groupBy)
 			? (object)await tasks.GetAsync(projectKey, board, includeClosed, under, ct)
@@ -157,9 +157,10 @@ public static class TasksTools
 		worth of grouping via `tags` (an array of "namespace:value", namespaces area|concern;
 		[] clears, omit leaves as-is). Give each node a `title` and `body` (markdown). Other
 		fields: status (slug — see tasks.workflow), type (feature|bug on work boards), specRef
-		(a spec NodeId the work task implements), blockedBy (a NodeId blocking it), commitRef?,
-		priority? (sparse int, lower first), version (baseline you last saw; 0 = new). Rename
-		via prevKey. A cold call auto-creates the board.
+		(a spec NodeId the work task implements), blockedBy (a NodeId blocking it), supersedes
+		(a slug|NodeId this node replaces — the old one is moved to its terminal-cancel),
+		commitRef?, priority? (sparse int, lower first), version (baseline you last saw; 0 =
+		new). Rename via prevKey. A cold call auto-creates the board.
 
 		Returns { applied, currentVersion, inserted, closed, conflicts[], added[], updated[],
 		removed[] }; added/updated carry the node (key, nodeId, status, type, title, body,
@@ -173,7 +174,7 @@ public static class TasksTools
 		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var patches = ParseNodePatches(nodes);
 		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, ct));
@@ -186,7 +187,7 @@ public static class TasksTools
 		string projectKey, string board, long sinceVersion, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct));
 	}
@@ -198,7 +199,7 @@ public static class TasksTools
 		string projectKey, string board, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var kind = await tasks.ResolveKindAsync(projectKey, board, ct);
 		return (object)new
@@ -281,6 +282,7 @@ public static class TasksTools
 				SpecRef = ModuleMcp.OptStr(e, "specRef"),
 				BlockedBy = ModuleMcp.OptStr(e, "blockedBy"),
 				PartOf = Has(e, "partOf") ? ModuleMcp.OptStr(e, "partOf") ?? string.Empty : null,
+				Supersedes = ModuleMcp.OptStr(e, "supersedes"),
 				Tags = ParseTags(e),
 			});
 		}

@@ -17,6 +17,11 @@ public sealed record NodePatch
 	// this board) or a NodeId. null = OMIT (leave the node's parent edge as-is); "" =
 	// DETACH (make it a root). Replaces the old l1/l2/l3 path nesting.
 	public string? PartOf { get; init; }
+
+	// This node SUPERSEDES (replaces, obsoletes) another — a slug on this board or a NodeId.
+	// Records a supersedes edge and moves the superseded node to its kind's terminal-cancel
+	// status (deprecated/rejected/cancelled). null = none.
+	public string? Supersedes { get; init; }
 	// Baseline version the author last saw (0 = new) — drives optimistic concurrency.
 	public long Version { get; init; }
 
