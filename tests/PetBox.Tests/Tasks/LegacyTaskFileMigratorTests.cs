@@ -67,4 +67,41 @@ public sealed class LegacyTaskFileMigratorTests : IDisposable
 		// Idempotent: a second run migrates nothing.
 		new LegacyTaskFileMigrator(_tasksDir, _factory).Migrate().Should().Be(0);
 	}
+
+	// Regression for the prod cutover: an OLD-schema board file (M001 era — integer Status,
+	// no Type/NodeId) must still migrate. The migrator copies it to a temp and runs the full
+	// migration chain (M002..M005) there, so the integer Status becomes a slug etc.
+	[Fact]
+	public void Migrate_UpgradesOldSchemaBoardFile_ThroughEnsure()
+	{
+		var dir = Path.Combine(_tasksDir, "proj");
+		Directory.CreateDirectory(dir);
+		var path = Path.Combine(dir, "legacy.db");
+		using (var c = new SqliteConnection($"Data Source={path};Pooling=False"))
+		{
+			c.Open();
+			using var cmd = c.CreateCommand();
+			cmd.CommandText = """
+				CREATE TABLE plan_nodes (Key TEXT NOT NULL, Version INTEGER NOT NULL, Status INTEGER NOT NULL,
+					Name TEXT NOT NULL DEFAULT '', Body TEXT NOT NULL, CommitRef TEXT, Priority INTEGER NOT NULL DEFAULT 0,
+					PrevKey TEXT, ActiveFrom INTEGER NOT NULL, ActiveTo INTEGER, Created TEXT NOT NULL, Updated TEXT NOT NULL,
+					PRIMARY KEY (Key, Version));
+				CREATE UNIQUE INDEX ux_plan_nodes_active_key ON plan_nodes (Key) WHERE ActiveTo IS NULL;
+				CREATE TABLE VersionInfo (Version INTEGER NOT NULL, AppliedOn DATETIME, Description TEXT);
+				INSERT INTO VersionInfo (Version, AppliedOn, Description) VALUES (1,'2026-01-01','M001');
+				INSERT INTO plan_nodes (Key,Version,Status,Name,Body,Priority,ActiveFrom,ActiveTo,Created,Updated) VALUES
+					('a',1,1,'A','x',0,1,NULL,'2026-01-01','2026-01-01');
+				""";
+			cmd.ExecuteNonQuery();
+		}
+		SqliteConnection.ClearAllPools();
+
+		new LegacyTaskFileMigrator(_tasksDir, _factory).Migrate().Should().Be(1);
+
+		var pdb = _factory.GetDb("proj");
+		var node = pdb.PlanNodes.Single(n => n.Board == "legacy");
+		node.Status.Should().Be("InProgress"); // integer 1 remapped via the migration chain
+		node.NodeId.Length.Should().Be(32);     // backfilled by M004
+		File.Exists(Path.Combine(_tasksDir, "proj", "legacy.db.migrated")).Should().BeTrue();
+	}
 }

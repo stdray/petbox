@@ -1,5 +1,4 @@
 using LinqToDB;
-using LinqToDB.Data;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
 
@@ -65,27 +64,53 @@ public sealed class LegacyTaskFileMigrator
 			return false;
 		}
 
-		// Read the legacy file READ-ONLY (Mode=ReadOnly) — never migrate or write it, so we
-		// don't run FluentMigrator on it (its VersionInfo would race across parallel boots).
-		// Pooling=False releases the handle immediately so the rename can't be blocked. The
-		// explicit column list (with a literal '' AS Board) reads any post-M002/M003/M004 file
-		// without depending on a Board column the legacy file doesn't have.
-		var oldCs = $"Data Source={boardFile};Pooling=False;Mode=ReadOnly";
-		List<PlanNode> rows;
-		using (var legacy = new LinqToDB.Data.DataConnection(TasksDb.CreateOptions(oldCs).Options))
-			rows = legacy.Query<PlanNode>(
-				"SELECT '' AS Board, Key, Version, Status, Name, Body, CommitRef, Priority, PrevKey, ActiveFrom, ActiveTo, Created, Updated, Type, NodeId FROM plan_nodes").ToList();
+		// Work on a PRIVATE COPY so the original is never modified and no two processes ever
+		// migrate the same file (a FluentMigrator VersionInfo race). Ensure() upgrades ANY
+		// legacy schema to the current one (M001..M005: adds Type/NodeId/Board, remaps an
+		// integer Status to its slug), so even very old board files migrate. Pooling=False
+		// releases handles immediately so the temp can be deleted and the rename can't block.
+		var temp = Path.Combine(Path.GetTempPath(), $"petbox-legacy-{Guid.NewGuid():N}.db");
+		CopyWithSidecars(boardFile, temp);
+		try
+		{
+			var tempCs = $"Data Source={temp};Pooling=False";
+			TasksSchema.Ensure(tempCs);
 
-		foreach (var r in rows)
-			projectDb.Insert(r with { Board = board }); // preserves all temporal columns
+			List<PlanNode> rows;
+			using (var legacy = new TasksDb(TasksDb.CreateOptions(tempCs)))
+				rows = legacy.PlanNodes.ToList();
 
-		var copied = projectDb.PlanNodes.Count(n => n.Board == board);
-		if (copied != rows.Count)
-			throw new InvalidOperationException($"row-count mismatch for board '{board}': {rows.Count} legacy vs {copied} copied");
+			foreach (var r in rows)
+				projectDb.Insert(r with { Board = board }); // preserves all temporal columns
+
+			var copied = projectDb.PlanNodes.Count(n => n.Board == board);
+			if (copied != rows.Count)
+				throw new InvalidOperationException($"row-count mismatch for board '{board}': {rows.Count} legacy vs {copied} copied");
+
+			_log?.LogInformation("Tasks: migrated board '{Board}' ({Rows} rows) into the per-project file", board, rows.Count);
+		}
+		finally
+		{
+			DeleteWithSidecars(temp);
+		}
 
 		MarkMigrated(boardFile);
-		_log?.LogInformation("Tasks: migrated board '{Board}' ({Rows} rows) into the per-project file", board, rows.Count);
 		return true;
+	}
+
+	// SQLite keeps -wal/-shm sidecars next to the .db; copy them too so a not-yet-checkpointed
+	// legacy file migrates without losing its tail.
+	static void CopyWithSidecars(string src, string dst)
+	{
+		File.Copy(src, dst, overwrite: true);
+		foreach (var ext in new[] { "-wal", "-shm" })
+			if (File.Exists(src + ext)) File.Copy(src + ext, dst + ext, overwrite: true);
+	}
+
+	static void DeleteWithSidecars(string path)
+	{
+		foreach (var p in new[] { path, path + "-wal", path + "-shm" })
+			try { if (File.Exists(p)) File.Delete(p); } catch { /* best effort */ }
 	}
 
 	static void MarkMigrated(string boardFile)
