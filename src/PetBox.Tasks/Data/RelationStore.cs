@@ -19,11 +19,18 @@ public interface IRelationStore
 	Task<bool> DeleteAsync(string projectKey, string id, CancellationToken ct = default);
 	// Soft-close active edges matching (kind, from, to); returns how many were closed.
 	Task<int> CloseAsync(string projectKey, string kind, string fromNodeId, string toNodeId, CancellationToken ct = default);
+	// All ACTIVE edges of a kind in the project (one query) — for building parent/child
+	// maps (part_of) without an N+1 walk.
+	Task<IReadOnlyList<Relation>> ListByKindAsync(string projectKey, string kind, CancellationToken ct = default);
 }
 
 public sealed class RelationStore : IRelationStore
 {
-	static readonly string[] Kinds = ["task_spec", "issue_task", "idea_spec", "blocks", "nfr", "dup"];
+	// task_spec: task→spec. issue_task: intake issue→task. idea_spec: idea→spec.
+	// blocks: blocker→blocked. part_of: child→parent (vertical decomposition; the old
+	// l1/l2/l3 tree is now this edge). nfr/dup were never implemented and are dropped —
+	// cross-cutting concerns are concern:* tags now (spec-flat-tags).
+	static readonly string[] Kinds = ["task_spec", "issue_task", "idea_spec", "blocks", "part_of"];
 
 	readonly PetBoxDb _db;
 	public RelationStore(PetBoxDb db) => _db = db;
@@ -83,5 +90,13 @@ public sealed class RelationStore : IRelationStore
 			.Where(r => r.ProjectKey == projectKey && r.Kind == kind && r.FromNodeId == fromNodeId && r.ToNodeId == toNodeId && r.ClosedAt == null)
 			.Set(r => r.ClosedAt, _ => DateTime.UtcNow)
 			.UpdateAsync(ct);
+	}
+
+	public async Task<IReadOnlyList<Relation>> ListByKindAsync(string projectKey, string kind, CancellationToken ct = default)
+	{
+		kind = (kind ?? "").ToLowerInvariant();
+		return await _db.Relations
+			.Where(r => r.ProjectKey == projectKey && r.Kind == kind && r.ClosedAt == null)
+			.ToListAsync(ct);
 	}
 }

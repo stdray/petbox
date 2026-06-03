@@ -177,13 +177,15 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 			board = "spec",
 			nodes = Nodes(
 				new { key = "auth", status = "defined", title = "Auth", body = "auth area" },
-				new { key = "auth/login", status = "defined", title = "Login", body = "login flow" },
-				new { key = "auth/login/mfa", status = "defined", title = "MFA", body = "second factor" }),
+				new { key = "login", partOf = "auth", status = "defined", title = "Login", body = "login flow" },
+				new { key = "mfa", partOf = "login", status = "defined", title = "MFA", body = "second factor" }),
 		})).IsError.Should().NotBe(true);
 
 		var tree = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
 		tree.IsError.Should().NotBe(true);
-		Text(tree).Should().Contain("auth/login/mfa");
+		// mfa is two part_of edges below auth — its parent is login.
+		Text(tree).Should().Contain("mfa");
+		FieldOf(tree, "mfa", "parentSlug").Should().Be("login");
 	}
 
 	// 2. work board: a feature WITHOUT a spec link is rejected (invariant).
@@ -209,9 +211,9 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var spec = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "spec",
-			nodes = Nodes(new { key = "auth/login", status = "defined", title = "Login", body = "login flow" }),
+			nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "login flow" }),
 		});
-		var specId = NodeId(spec, "auth/login");
+		var specId = NodeId(spec, "login");
 
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 		var work = await Agent("tasks.upsert", new
@@ -274,9 +276,9 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var spec = await Agent("tasks.upsert", new
 		{
 			projectKey = ProjectKey, board = "spec",
-			nodes = Nodes(new { key = "auth/login", status = "defined", title = "Login", body = "x" }),
+			nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x" }),
 		});
-		var specId = NodeId(spec, "auth/login");
+		var specId = NodeId(spec, "login");
 
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "intake", kind = "intake" });
 		var issue = await Agent("tasks.upsert", new
@@ -430,24 +432,24 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(
 			new { key = "auth", status = "defined", title = "Auth", body = "x" },
-			new { key = "auth/login", status = "defined", title = "Login", body = "x" }) });
-		var loginId = NodeId(await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" }), "auth/login");
+			new { key = "login", partOf = "auth", status = "defined", title = "Login", body = "x" }) });
+		var loginId = NodeId(await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" }), "login");
 
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", specRef = loginId }) });
 
 		var s1 = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
-		FieldOf(s1, "auth/login", "delivery").Should().Be("in_progress");
-		FieldOf(s1, "auth", "delivery").Should().Be("in_progress", "parent aggregates the subtree");
+		FieldOf(s1, "login", "delivery").Should().Be("in_progress");
+		FieldOf(s1, "auth", "delivery").Should().Be("in_progress", "parent aggregates the part_of subtree");
 
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Done", version = 1, title = "F", body = "x", specRef = loginId }) });
 		var s2 = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
-		FieldOf(s2, "auth/login", "delivery").Should().Be("done");
+		FieldOf(s2, "login", "delivery").Should().Be("done");
 		FieldOf(s2, "auth", "delivery").Should().Be("done");
 
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "bug1", type = "bug", status = "Pending", title = "Bug", body = "x", specRef = loginId }) });
 		var s3 = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
-		FieldOf(s3, "auth/login", "delivery").Should().Be("done_with_defects", "all features Done but an open bug remains");
+		FieldOf(s3, "login", "delivery").Should().Be("done_with_defects", "all features Done but an open bug remains");
 		FieldOf(s3, "auth", "delivery").Should().Be("done_with_defects");
 	}
 
@@ -537,8 +539,8 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	public async Task Get_SurfacesKindAndSpecLink()
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
-		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "auth/login", status = "defined", title = "Login", body = "x" }) });
-		var specId = NodeId(spec, "auth/login");
+		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x" }) });
+		var specId = NodeId(spec, "login");
 
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "feature", status = "Review", title = "Build login", body = "x", specRef = specId }) });
@@ -555,8 +557,8 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	public async Task Work_FeatureType_IsImmutable()
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
-		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "auth/login", status = "defined", title = "Login", body = "x" }) });
-		var specId = NodeId(spec, "auth/login");
+		var spec = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x" }) });
+		var specId = NodeId(spec, "login");
 
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "feature", status = "Pending", title = "Build login", body = "x", specRef = specId }) }))

@@ -81,10 +81,10 @@ public sealed class McpModuleToolsTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "roadmap");
 
-		var nodes = JsonSerializer.SerializeToElement(new[]
+		var nodes = JsonSerializer.SerializeToElement(new object[]
 		{
 			new { key = "phase-16", status = "InProgress", body = "Data", priority = 100 },
-			new { key = "phase-16/wave-1", status = "Done", body = "Foundation", priority = 200 },
+			new { key = "wave-1", partOf = "phase-16", status = "Done", body = "Foundation", priority = 200 },
 		});
 		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes, 0));
 		up.GetProperty("applied").GetBoolean().Should().BeTrue();
@@ -92,7 +92,7 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		var get = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap", includeClosed: true));
 		var keys = get.GetProperty("nodes").EnumerateArray().Select(n => n.GetProperty("key").GetString()).ToList();
-		keys.Should().Equal("phase-16", "phase-16/wave-1"); // priority order
+		keys.Should().Equal("phase-16", "wave-1"); // priority order
 	}
 
 	[Fact]
