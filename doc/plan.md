@@ -1233,3 +1233,28 @@ project-claim + module scope. Запрещённые `(type, op)` → ошибк
 
 - [ ] **Services placement** — кнопка "Services" сейчас в Logs page header (`/ui/{ws}/{project}` Logs/Index). Логичнее sub-item в admin sidebar под project'ом рядом с Info/Log settings/Data. Move target: `_AdminSidebar.cshtml` + либо отдельная страница `/ui/admin/ws/{ws}/projects/{key}/services`, либо anchor на ProjectDetail.
 - [ ] **CA1711** — кейс с enum `Feature` (singular, не `FeatureFlag`). Будущие enums держать в этом паттерне.
+
+---
+
+## Phase 31: Production / Ops [NEW]
+
+Прод-эксплуатация `yoba-apps.3po.su` (1 ГБ ОЗУ, Caddy + docker, контейнеры petbox/yobalog/yobaconf). Контекст инцидента и применённые митигейшены — в auto-memory `project_server_hang_incident`.
+
+### 31.1 — Сервер зависал из-за OOM [MITIGATED 2026-06-01]
+
+- [x] Диагностика: подтверждён OOM-killer, трижды убивал `PetBox.Web` (30–31 мая), причина — 1 ГБ ОЗУ + 0 swap.
+- [x] Добавлен 2 ГБ swap (`/swapfile`, fstab, `vm.swappiness=10`) — хардлоков больше не ожидается.
+- [x] Остановлены контейнеры YobaLog + YobaConf (функционал переехал в PetBox; данные на bind-томах `/opt/*/data`).
+- [ ] Опционально: ограничить память `PetBox.Web` — `DOTNET_gcServer=0` / `DOTNET_GCHeapHardLimit` + `docker run --memory=512m`. Требует пересоздания контейнера (краткий простой `petbox.3po.su`).
+
+### 31.2 — Профайлинг памяти PetBox.Web [TODO]
+
+**Зачем:** после остановки соседей `PetBox.Web` в одиночку раздулся до ~560 МБ RSS (на свежей загрузке был ~235 МБ) и продолжал расти **без нагрузки**. Открытые вопросы:
+1. Почему PetBox.Web ест в 2–3× больше, чем `YobaLog` (~104 МБ) и `YobaConf` (~78 МБ), при сопоставимом стеке (ASP.NET + linq2db + SQLite, у PetBox ещё KustoLoco)?
+2. Почему RSS растёт в простое (нет трафика) — Server GC, который не отдаёт кучу, или реальная утечка / неограниченный буфер/кэш?
+
+- [ ] Снять baseline: `dotnet-counters monitor` (GC heap, gen0/1/2, LOH, working set) на простаивающем инстансе в течение N часов — отделить «GC держит, но отдаст» от монотонного роста.
+- [ ] Сравнить GC-режим: PetBox vs yobalog/yobaconf (`ServerGarbageCollection`, `ConcurrentGarbageCollection`, `TieredCompilation`, `RetainVMGarbageCollection` в csproj/runtimeconfig). Гипотеза: PetBox на Server GC (per-core heaps → x2–3 на многоядерной VM), а yoba* на Workstation GC.
+- [ ] `dotnet-gcdump` с интервалом → diff по типам: что накапливается в gen2/LOH (KustoLoco-таблицы? кэш конфигов/настроек? логовые буферы? linq2db connection/command кэш? DataProtection?).
+- [ ] Проверить фоновые сервисы PetBox на неограниченные коллекции/таймеры (health-чекеры, OTel-экспорт, retention, in-memory кэши настроек L1/L2/L3).
+- [ ] По итогам: либо зафиксировать GC-настройку (workstation/HeapHardLimit) как штатную для прода, либо завести баг на конкретную утечку. Решение — в auto-memory + сюда.
