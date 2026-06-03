@@ -140,6 +140,7 @@ public partial class Program
 				System.Text.Unicode.UnicodeRanges.BasicLatin,
 				System.Text.Unicode.UnicodeRanges.Latin1Supplement,
 				System.Text.Unicode.UnicodeRanges.LatinExtendedA,
+				System.Text.Unicode.UnicodeRanges.GeneralPunctuation, // — … “” ‘’ etc.
 				System.Text.Unicode.UnicodeRanges.Cyrillic),
 		};
 		builder.Services.AddMcpServer()
