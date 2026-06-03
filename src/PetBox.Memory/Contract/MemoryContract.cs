@@ -17,6 +17,7 @@ public sealed record MemoryEntryInput
 	public string? Description { get; init; }
 	public string? Body { get; init; }
 	public string? Tags { get; init; }
+	public string? Metadata { get; init; }
 	public string? PrevKey { get; init; }
 }
 
@@ -24,7 +25,7 @@ public sealed record MemoryEntryInput
 public sealed record MemoryDelete(string Key, long Version);
 
 // An active entry projected for read surfaces (Type stringified).
-public sealed record MemoryEntryView(string Key, string Type, string Description, string Body, string Tags, long Version);
+public sealed record MemoryEntryView(string Key, string Type, string Description, string Body, string Tags, long Version, string Metadata);
 
 // The raw temporal upsert/delta result, ready for an adapter to serialize.
 public sealed record MemoryUpsertOutcome(TemporalUpsertResult<MemoryEntry> Result);

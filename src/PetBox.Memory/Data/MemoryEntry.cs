@@ -24,9 +24,12 @@ public sealed record MemoryEntry : TemporalRow
 	[Column, NotNull] public string Description { get; init; } = string.Empty;
 	[Column, NotNull] public string Body { get; init; } = string.Empty;
 	[Column, NotNull] public string Tags { get; init; } = string.Empty;
+	// Free-form structured metadata (JSON string). Used by the mem0-compatible
+	// adapter for round-tripping arbitrary key/values; opaque to the service.
+	[Column, NotNull] public string Metadata { get; init; } = string.Empty;
 
 	public override bool SamePayload(TemporalRow other) =>
-		other is MemoryEntry m && m.Type == Type && m.Description == Description && m.Body == Body && m.Tags == Tags;
+		other is MemoryEntry m && m.Type == Type && m.Description == Description && m.Body == Body && m.Tags == Tags && m.Metadata == Metadata;
 
 	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
 		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };

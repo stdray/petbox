@@ -125,11 +125,12 @@ public sealed partial class MemoryService : IMemoryService
 		Description = i.Description ?? string.Empty,
 		Body = i.Body ?? string.Empty,
 		Tags = NormalizeTags(i.Tags),
+		Metadata = i.Metadata ?? string.Empty,
 		PrevKey = i.PrevKey,
 	};
 
 	static MemoryEntryView View(MemoryEntry e) =>
-		new(e.Key, e.Type.ToString(), e.Description, e.Body, e.Tags, e.Version);
+		new(e.Key, e.Type.ToString(), e.Description, e.Body, e.Tags, e.Version, e.Metadata);
 
 	static MemoryType ParseType(string s) =>
 		Enum.TryParse<MemoryType>(s, ignoreCase: true, out var v)
