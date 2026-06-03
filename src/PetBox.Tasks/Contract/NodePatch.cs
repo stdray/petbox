@@ -27,4 +27,8 @@ public sealed record NodePatch
 	// blockedBy → a NodeId that blocks this task (blocks). Null/empty = no link given.
 	public string? SpecRef { get; init; }
 	public string? BlockedBy { get; init; }
+
+	// Enforced tags ("namespace:value", namespaces area|concern). null = OMIT (leave the
+	// node's tags as-is); a non-null list (incl. empty) REPLACES the node's full tag set.
+	public IReadOnlyList<string>? Tags { get; init; }
 }

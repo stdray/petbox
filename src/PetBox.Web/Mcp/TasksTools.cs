@@ -258,11 +258,43 @@ public static class TasksTools
 				Priority = Has(e, "priority") ? ModuleMcp.OptLong(e, "priority", 0) : null,
 				SpecRef = ModuleMcp.OptStr(e, "specRef"),
 				BlockedBy = ModuleMcp.OptStr(e, "blockedBy"),
+				Tags = ParseTags(e),
 			});
 		}
 		return list;
 
 		static bool Has(JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out _);
+	}
+
+	// Enforced tags. Absent → null (omit, inherit). Present → the full replacement set:
+	// a JSON array of strings, a double-encoded JSON-string array (some MCP clients), or a
+	// CSV string. JSON null or [] → empty set (clears the node's tags).
+	static IReadOnlyList<string>? ParseTags(JsonElement e)
+	{
+		if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty("tags", out var t)) return null;
+		switch (t.ValueKind)
+		{
+			case JsonValueKind.Null:
+				return [];
+			case JsonValueKind.Array:
+				return t.EnumerateArray()
+					.Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() ?? "" : x.GetRawText())
+					.Where(s => s.Length > 0).ToList();
+			case JsonValueKind.String:
+				var s = t.GetString() ?? "";
+				if (s.TrimStart().StartsWith('['))
+				{
+					try
+					{
+						using var d = JsonDocument.Parse(s);
+						return d.RootElement.EnumerateArray().Select(x => x.GetString() ?? "").Where(v => v.Length > 0).ToList();
+					}
+					catch { /* not JSON — fall through to CSV */ }
+				}
+				return s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+			default:
+				return null;
+		}
 	}
 
 	// A node's identity is its 1-to-3 level path of anchor keys. Preferred input is the

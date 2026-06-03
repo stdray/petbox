@@ -58,7 +58,7 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		_boards = new TaskBoardStore(_db, _tasksFactory);
 		_relations = new RelationStore(_db);
-		_tasks = new TasksService(_boards, _relations);
+		_tasks = new TasksService(_boards, _relations, new TagStore(_tasksFactory));
 		_stores = new MemoryStore(_db, _memFactory);
 		_memory = new MemoryService(_stores);
 		_sessions = new SessionStore(_sessFactory);

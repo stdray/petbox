@@ -11,12 +11,13 @@ namespace PetBox.Tasks.Contract;
 // no longer exists.
 public sealed record LinkDto(string NodeId, string? Board, string? L1, string? L2, string? L3, string? Title, string Status);
 
-// A plan node enriched with its links and (on a spec board) computed delivery roll-up.
+// A plan node enriched with its links, enforced tags, and (on a spec board) computed
+// delivery roll-up.
 public sealed record PlanNodeView(
 	string Key, string NodeId, string L1, string? L2, string? L3, int Depth, string? ParentKey,
 	string Status, string Type, string Title, string Body, string? CommitRef, long Priority, long Version,
 	string? Delivery, IReadOnlyList<LinkDto>? Spec, IReadOnlyList<LinkDto>? BlockedBy,
-	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<string> RenamedFrom);
+	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<string> RenamedFrom, IReadOnlyList<string> Tags);
 
 // A board's active plan nodes as a 1-to-3 level tree, plus the board's kind and
 // (work boards) the spec board its tasks link into.

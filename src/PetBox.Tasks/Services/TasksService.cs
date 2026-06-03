@@ -16,14 +16,16 @@ public sealed partial class TasksService : ITasksService
 {
 	readonly ITaskBoardStore _boards;
 	readonly IRelationStore _relations;
+	readonly ITagStore _tags;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
 
-	public TasksService(ITaskBoardStore boards, IRelationStore relations)
+	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags)
 	{
 		_boards = boards;
 		_relations = relations;
+		_tags = tags;
 	}
 
 	// ---- board lifecycle ----
@@ -99,6 +101,7 @@ public sealed partial class TasksService : ITasksService
 		var underKey = NormalizeUnder(under);
 		var visible = FilterVisible(active, includeClosed, underKey);
 		var index = await BuildNodeIndexAsync(projectKey, ct);
+		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 
 		var nodes = new List<PlanNodeView>();
 		foreach (var n in visible)
@@ -128,7 +131,8 @@ public sealed partial class TasksService : ITasksService
 				Spec: spec.Count > 0 ? spec : null,
 				BlockedBy: blockedBy.Count > 0 ? blockedBy : null,
 				LinkedTasks: linkedTasks is { Count: > 0 } ? linkedTasks : null,
-				RenamedFrom: lineage.TryGetValue(n.Key, out var p) ? p : []));
+				RenamedFrom: lineage.TryGetValue(n.Key, out var p) ? p : [],
+				Tags: tagsByNode[n.NodeId].OrderBy(t => t, StringComparer.Ordinal).ToList()));
 		}
 		return new PlanBoardView(current, kind.ToString().ToLowerInvariant(), meta.SpecBoard, nodes);
 	}
@@ -251,6 +255,7 @@ public sealed partial class TasksService : ITasksService
 			await LinkRefsAsync(projectKey, "task_spec", desired, specRefs, blockerIsFrom: false, ct);
 			await LinkRefsAsync(projectKey, "blocks", desired, blockedBy, blockerIsFrom: true, ct);
 			await CloseBlocksOnLeaveAsync(projectKey, desired, prior, ct);
+			await SetTagsAsync(projectKey, board, nodes, desired, ct);
 			await RunDoneEffectsAsync(projectKey, kind, desired, ct);
 		}
 		return new UpsertOutcome(r, kind);
@@ -398,6 +403,20 @@ public sealed partial class TasksService : ITasksService
 				var (from, to) = blockerIsFrom ? (other, nid) : (nid, other);
 				await _relations.CreateAsync(projectKey, kind, from, to, ct);
 			}
+	}
+
+	// Apply enforced tags after the upsert. A patch whose Tags is null OMITS tags (leave
+	// as-is); a non-null list (incl. empty) is the new full set for that node. Tags bind
+	// to the node's stable NodeId.
+	async Task SetTagsAsync(string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+	{
+		var nodeIdOf = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
+		foreach (var p in patches)
+		{
+			if (p.Tags is null) continue;
+			if (nodeIdOf.TryGetValue(p.Key, out var nid) && nid.Length > 0)
+				await _tags.SetAsync(projectKey, board, nid, p.Tags, ct);
+		}
 	}
 
 	// Invariant: a work task in `Blocked` must name a blocker (blockedBy in this call, or

@@ -40,7 +40,7 @@ public sealed class TasksTreeContractTests : IDisposable
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db, _factory);
 		_relations = new RelationStore(_db);
-		_tasks = new TasksService(_store, _relations);
+		_tasks = new TasksService(_store, _relations, new TagStore(_factory));
 	}
 
 	public void Dispose()
