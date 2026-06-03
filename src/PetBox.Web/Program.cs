@@ -320,6 +320,14 @@ public partial class Program
 
 		MigrationRunner.Run(connectionString);
 
+			// One-time, idempotent: fold legacy per-board task files (tasks/<proj>/<board>.db)
+			// into the per-project file (tasks/<proj>.db). Keeps originals (renamed .migrated)
+			// and reconciles row counts; the pre-migration snapshot above is the safety net.
+			var tasksFactory = app.Services.GetRequiredService<IScopedDbFactory<PetBox.Tasks.Data.TasksDb>>();
+			var tasksMigLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.LegacyMigration");
+			// Returns the count migrated; the migrator logs each board itself, so ignore it here.
+			new PetBox.Tasks.Data.LegacyTaskFileMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, tasksMigLog).Migrate();
+
 		using (var scope = app.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
