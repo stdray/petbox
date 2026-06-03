@@ -69,6 +69,34 @@ A spec leaf's status is derived from its linked tasks (not set by hand):
 **Surveyability:** the feature tree with computed status is the primary view. Kanban /
 Gantt are projections over it (Gantt is a poor fit here — no estimates, constant churn).
 
+## Writing requirements in the spec tree
+
+A spec node is a **requirement at the owner/value altitude** — a promise that would
+survive a reimplementation. The *mechanism* (data shape, validation rules, API verbs,
+scopes, storage) is NOT a requirement; it lives in the **work task** (and the code).
+
+- **Altitude test:** *"Would this change if we reimplemented the mechanism without
+  changing the promise to the user?"* Yes → it's design → work task. No, it survives →
+  it's a requirement → spec. (E.g. "discussion can be held under a node" is a
+  requirement; "threaded vs flat, keyed by NodeId, optimistic edit, delete-leaf-only"
+  is design → work task.)
+- **Format — terse-normative "shall" (EARS without the boilerplate subject):** the
+  node **title** is the capability; the **body** is one normative line carrying the
+  obligation + any condition/consequence, or empty when the title already says it.
+  Obligation keywords: ДОЛЖЕН / СЛЕДУЕТ / МОЖЕТ (RFC 2119 MUST/SHOULD/MAY). Functional
+  requirement → `area:*` tag; non-functional / invariant → `concern:*`.
+- **Granularity — atomic but few.** One requirement per node, but at the owner altitude
+  there are only a handful. Do NOT pre-atomize implementation detail into nodes. Add a
+  child node only when a part earns its own lifecycle / delivery.
+- **Link tasks at the level that matches the work's scope.** `task_spec` / `specRef`
+  may point at ANY spec node, not only a leaf; `delivery` aggregates a node's tasks over
+  its whole `part_of` subtree (rolls up). So one task on a block node covers the block —
+  no per-leaf link explosion. A leaf with no task of its own reads `not_started` (it is
+  the requirement catalog; read delivery at the level where the work is linked).
+- **Process:** before editing the spec, write the **plan to update it** as the
+  deliberation artifact — an `artifact:spec_plan`-tagged comment on the originating idea
+  — then apply the change.
+
 ## It rides on what PetBox already has
 - Spec = temporal tree ← `TemporalStore` (SCD-2).
 - Iteration = release ← CI `ci.NNN` + `commitRef` + deploy.
