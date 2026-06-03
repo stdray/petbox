@@ -38,7 +38,7 @@ public static class Mem0Tools
 		var project = ModuleMcp.ResolveProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 
-		var body = messages is { } m && m.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)
+		var body = Mem0Map.UnwrapJson(messages) is { } m && m.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null)
 			? Mem0Map.MessagesToBody(m)
 			: text ?? string.Empty;
 		if (string.IsNullOrWhiteSpace(body)) throw new ArgumentException("messages or text is required");

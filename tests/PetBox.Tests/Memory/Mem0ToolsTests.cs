@@ -195,6 +195,25 @@ public sealed class Mem0ToolsTests : IDisposable
 		hits[0].GetProperty("memory").GetString().Should().Be("login uses jwt");
 	}
 
+	[Fact]
+	public async Task Metadata_And_Filters_Unwrap_StringEncodedJson()
+	{
+		// Some MCP clients (e.g. Claude Code) double-encode object args as a JSON *string*.
+		var http = Http("memory:read,memory:write");
+		var metaAsString = JsonSerializer.SerializeToElement("{\"area\":\"auth\"}"); // ValueKind == String
+		await Mem0Tools.AddMemoryAsync(http, Flags(), _memory, Proj, messages: Msg("login jwt"), user_id: "u1", metadata: metaAsString);
+		await Mem0Tools.AddMemoryAsync(http, Flags(), _memory, Proj, messages: Msg("ui jwt token"), user_id: "u1", metadata: Meta(new { area = "ui" }));
+
+		// filters also string-encoded → must still narrow (not silently match-all).
+		var filtersAsString = JsonSerializer.SerializeToElement("{\"area\":\"auth\"}");
+		var res = Json(await Mem0Tools.SearchMemoriesAsync(http, Flags(), _memory, Proj, "jwt", user_id: "u1", filters: filtersAsString));
+		var hits = res.GetProperty("results").EnumerateArray().ToList();
+		hits.Should().ContainSingle();
+		hits[0].GetProperty("memory").GetString().Should().Be("login jwt");
+		// metadata round-trips as an OBJECT (GetProperty would throw if stored as a string).
+		hits[0].GetProperty("metadata").GetProperty("area").GetString().Should().Be("auth");
+	}
+
 	static IHttpContextAccessor Http(string scopes) => HttpFor(Proj, scopes);
 
 	static IHttpContextAccessor HttpFor(string project, string scopes)

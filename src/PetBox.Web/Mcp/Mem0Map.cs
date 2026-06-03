@@ -114,8 +114,31 @@ public static partial class Mem0Map
 		}
 	}
 
-	public static string? MetadataToString(JsonElement? metadata) =>
-		metadata is { } m && m.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null) ? m.GetRawText() : null;
+	// MCP clients vary: some pass object/array args as real JSON, others double-encode
+	// them as a JSON string (Claude Code does). Unwrap a string that is itself a JSON
+	// object/array so metadata/filters/messages behave the same either way (mirrors the
+	// string-or-array handling in MemoryTools.ParseEntries).
+	public static JsonElement? UnwrapJson(JsonElement? value)
+	{
+		if (value is not { } v) return null;
+		if (v.ValueKind == JsonValueKind.String)
+		{
+			var s = v.GetString();
+			var t = s?.TrimStart();
+			if (!string.IsNullOrEmpty(t) && (t[0] == '{' || t[0] == '['))
+			{
+				try { using var d = JsonDocument.Parse(s!); return d.RootElement.Clone(); }
+				catch { /* looks JSON-ish but isn't — keep the original string */ }
+			}
+		}
+		return v;
+	}
+
+	public static string? MetadataToString(JsonElement? metadata)
+	{
+		var m = UnwrapJson(metadata);
+		return m is { } v && v.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null) ? v.GetRawText() : null;
+	}
 
 	// mem0 `filters`: naive top-level metadata equality. An entry matches when, for every
 	// key in the filter object, its Metadata JSON has that key with an equal value
@@ -123,7 +146,7 @@ public static partial class Mem0Map
 	// post-filter in memory (fine at current scale).
 	public static bool MatchesFilters(string metadataJson, JsonElement? filters)
 	{
-		if (filters is not { } f || f.ValueKind != JsonValueKind.Object) return true;
+		if (UnwrapJson(filters) is not { } f || f.ValueKind != JsonValueKind.Object) return true;
 		if (!f.EnumerateObject().Any()) return true;
 		try
 		{
