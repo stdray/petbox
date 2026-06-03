@@ -46,16 +46,9 @@ static class McpToolScopeFilter
 	// The scope-module a tool belongs to. Returns the scope prefix the key needs ANY
 	// of ("tasks" → any tasks:* scope), or the literal "admin:provision" for tools
 	// gated on that single scope, or null for tools we don't classify (→ fail open).
-	// mem0-compatible tools (no "memory." prefix) belong to the memory module.
-	static readonly HashSet<string> Mem0Tools = new(StringComparer.Ordinal)
-	{
-		"add_memory", "search_memories", "get_memories", "get_memory",
-		"update_memory", "delete_memory", "delete_all_memories",
-	};
-
 	static string? ModuleOf(string tool) =>
 		tool.StartsWith("tasks.", StringComparison.Ordinal) || tool.StartsWith("session.", StringComparison.Ordinal) ? "tasks"
-		: tool.StartsWith("memory.", StringComparison.Ordinal) || Mem0Tools.Contains(tool) ? "memory"
+		: tool.StartsWith("memory.", StringComparison.Ordinal) ? "memory"
 		: tool.StartsWith("log.", StringComparison.Ordinal) ? "logs"
 		: tool.StartsWith("data.", StringComparison.Ordinal) ? "data"
 		: tool.StartsWith("config.", StringComparison.Ordinal) ? ApiKeyScopes.AdminProvision

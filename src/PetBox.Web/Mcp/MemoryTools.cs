@@ -131,6 +131,130 @@ public static class MemoryTools
 		return Serialize(await memory.DeltaAsync(projectKey, store, sinceVersion, ct));
 	}
 
+	// ---- ergonomic verbs: remember / recall (thin over the structural tools) ----
+	//
+	// Two low-ceremony verbs for the agent's own working memory, layered on top of the
+	// structural store/upsert/search tools. They add ONE thing the structural surface
+	// lacks: a `scope` dimension over the per-project store files —
+	//   project   → the key's own project  (default; the usual case)
+	//   workspace → reserved "$workspace" container (cross-project shared memory)
+	// `recall` with no scope CASCADES both (project ⊕ workspace) and returns hits
+	// labelled by scope so precedence is visible (project is most specific → listed
+	// first). The "$workspace" container is a plain memory store file under a seeded
+	// built-in project (M028); it is shared across projects by design, so any caller
+	// holding the memory scope may reach it. Per-workspace isolation is future work
+	// (idea workspace-memory). Personal facts are carried by type=User, not a separate
+	// container. Curated/temporal writes still go through memory.upsert.
+
+	const string WorkspaceContainer = "$workspace";
+	const string DefaultStore = "notes";
+
+	[McpServerTool(Name = "memory.remember", Title = "Remember a fact")]
+	[Description("""
+		Capture one durable fact, verbatim. The low-ceremony way to store a learning.
+		`text` (required) is the fact. `scope` picks the container: project (default —
+		the key's project) | workspace (cross-project shared). `store` groups entries
+		within a scope (default "notes"). `type` is the taxonomy
+		(User|Feedback|Project|Reference; default Project) — pick explicitly, no inference.
+		`tags` is free CSV; `description` an optional one-line summary. A unique key is
+		generated. Store durable facts not derivable from code/git/config; actionable work
+		goes to a task board. Requires memory:write. Returns { id, scope, store, key }.
+		""")]
+	public static async Task<object> RememberAsync(
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		string text, string? scope = null, string? projectKey = null, string? store = null,
+		string? type = null, string? tags = null, string? description = null,
+		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+	{
+		ModuleMcp.AssertFeature(features, Feature.Memory);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
+		if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("text is required");
+		var container = ResolveScope(http, projectKey, scope);
+		var st = NormalizeStore(store);
+		var key = "m-" + Guid.NewGuid().ToString("N");
+		var input = new MemoryEntryInput
+		{
+			Key = key,
+			Version = 0,
+			Type = string.IsNullOrWhiteSpace(type) ? "Project" : type,
+			Description = description,
+			Body = text,
+			Tags = tags,
+		};
+		await memory.UpsertAsync(container.Key, st, [input], [], 0, ct);
+		return (object)new { id = $"{container.Key}/{st}/{key}", scope = container.Scope, store = st, key };
+	});
+
+	[McpServerTool(Name = "memory.recall", Title = "Recall facts", ReadOnly = true)]
+	[Description("""
+		Full-text recall over your memory. The low-ceremony way to surface relevant facts.
+		`query` (required) is matched by token (prefix), so paraphrases hit; search a few
+		words you are confident appear (tokens are ANDed). `scope` narrows the search:
+		omit it to CASCADE project ⊕ workspace (results labelled by scope, project
+		first); or pass project | workspace for one. `store` narrows to a single
+		store within each scope (default: search every store). Optional `type` filter
+		(User|Feedback|Project|Reference) and `limit` (default 20). Requires memory:read.
+		Returns { results: [{ scope, store, key, type, description, body, tags }] }.
+		""")]
+	public static async Task<object> RecallAsync(
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		string query, string? scope = null, string? projectKey = null, string? store = null,
+		string? type = null, int limit = 20, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+	{
+		ModuleMcp.AssertFeature(features, Feature.Memory);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
+		if (string.IsNullOrWhiteSpace(query)) throw new ArgumentException("query is required");
+
+		var results = new List<object>();
+		foreach (var (scopeName, container) in RecallContainers(http, projectKey, scope))
+		{
+			// Which stores to search in this container: the named one, or all of them.
+			IReadOnlyList<string> stores = string.IsNullOrWhiteSpace(store)
+				? (await memory.ListStoresAsync(container, ct)).Select(s => s.Name).ToList()
+				: [store!.Trim()];
+			foreach (var st in stores)
+			{
+				if (!await memory.StoreExistsAsync(container, st, ct)) continue;
+				foreach (var v in await memory.SearchAsync(container, st, query, type, ct))
+				{
+					results.Add(new { scope = scopeName, store = st, key = v.Key, type = v.Type, description = v.Description, body = v.Body, tags = v.Tags });
+					if (results.Count >= limit) return (object)new { results };
+				}
+			}
+		}
+		return (object)new { results };
+	});
+
+	// Resolve a single explicit scope to its container projectKey (for remember).
+	// project → the key's project (authorized via the claim); workspace → the reserved
+	// shared container (gated only by the memory scope already asserted).
+	static (string Scope, string Key) ResolveScope(IHttpContextAccessor http, string? projectKey, string? scope) =>
+		(scope?.Trim().ToLowerInvariant()) switch
+		{
+			null or "" or "project" => ("project", ModuleMcp.ResolveProject(http, projectKey)),
+			"workspace" => ("workspace", WorkspaceContainer),
+			var s => throw new ArgumentException($"invalid scope '{s}' (project|workspace)"),
+		};
+
+	// The ordered list of (scope, container) to search for recall. A single scope → that
+	// container; no scope → the full cascade, project first (most specific). The project
+	// container is best-effort: a cross-project ("*") key with no projectKey can't resolve
+	// a single project, so that leg is skipped rather than failing the whole recall.
+	static List<(string Scope, string Key)> RecallContainers(IHttpContextAccessor http, string? projectKey, string? scope)
+	{
+		var s = scope?.Trim().ToLowerInvariant();
+		if (!string.IsNullOrEmpty(s) && s != "all" && s != "cascade")
+			return [ResolveScope(http, projectKey, s)];
+		var list = new List<(string, string)>();
+		try { list.Add(("project", ModuleMcp.ResolveProject(http, projectKey))); }
+		catch (ArgumentException) { /* "*" key without an explicit projectKey — skip the project leg */ }
+		list.Add(("workspace", WorkspaceContainer));
+		return list;
+	}
+
+	static string NormalizeStore(string? store) =>
+		string.IsNullOrWhiteSpace(store) ? DefaultStore : store.Trim();
+
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 
 	static object Serialize(MemoryUpsertOutcome o)

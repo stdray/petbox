@@ -24,8 +24,8 @@ public sealed record MemoryEntry : TemporalRow
 	[Column, NotNull] public string Description { get; init; } = string.Empty;
 	[Column, NotNull] public string Body { get; init; } = string.Empty;
 	[Column, NotNull] public string Tags { get; init; } = string.Empty;
-	// Free-form structured metadata (JSON string). Used by the mem0-compatible
-	// adapter for round-tripping arbitrary key/values; opaque to the service.
+	// Free-form structured metadata (JSON string) for round-tripping arbitrary
+	// client key/values; opaque to the service and NOT FTS-indexed.
 	[Column, NotNull] public string Metadata { get; init; } = string.Empty;
 
 	public override bool SamePayload(TemporalRow other) =>
