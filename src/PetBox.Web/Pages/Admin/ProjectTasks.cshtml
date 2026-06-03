@@ -65,12 +65,35 @@
 	}
 </section>
 
-<form method="post" asp-page-handler="Create" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="board-create-form">
-	@Html.AntiForgeryToken()
-	<div class="card-body p-4">
-		<h3 class="card-title text-base">Create board</h3>
-		<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-			<label class="form-control">
+<div class="grid grid-cols-1 lg:grid-cols-2 gap-3 max-w-4xl">
+
+	@* Methodology: the intake→ideas→spec→work quartet as ONE unit (per-project singletons). *@
+	<div class="card bg-base-200 border border-base-300" data-testid="methodology-card">
+		<div class="card-body p-4">
+			<h3 class="card-title text-base">Methodology</h3>
+			@if (Model.MethodologyEnabled)
+			{
+				<p class="text-sm opacity-80">Enabled — this project runs the <span class="font-mono">intake → ideas → spec → work</span> quartet (one board of each, work auto-linked to spec). Add ad-hoc work as <em>free</em> boards on the right.</p>
+				<div class="mt-1"><span class="badge badge-success badge-sm" data-testid="methodology-enabled">methodology enabled</span></div>
+			}
+			else
+			{
+				<p class="text-sm opacity-80">Provision the four linked boards — <span class="font-mono">intake</span>, <span class="font-mono">ideas</span>, <span class="font-mono">spec</span>, <span class="font-mono">work</span> — as a single unit and auto-wire work → spec. Idempotent (adds only what's missing). The four kinds are one-per-project; pick this <strong>or</strong> free boards.</p>
+				<form method="post" asp-page-handler="EnableMethodology" class="card-actions mt-3" data-testid="methodology-enable-form">
+					@Html.AntiForgeryToken()
+					<button type="submit" class="btn btn-sm btn-primary" data-testid="methodology-enable">Enable methodology</button>
+				</form>
+			}
+		</div>
+	</div>
+
+	@* Free boards: scratch / ad-hoc, unlimited. The only kind a human creates by hand. *@
+	<form method="post" asp-page-handler="Create" class="card bg-base-200 border border-base-300" data-testid="board-create-form">
+		@Html.AntiForgeryToken()
+		<div class="card-body p-4">
+			<h3 class="card-title text-base">Free board</h3>
+			<p class="text-sm opacity-80">A scratch board with no workflow rules — for anything outside the methodology.</p>
+			<label class="form-control mt-1">
 				<span class="label-text">Name</span>
 				<input type="text" name="name" required minlength="1"
 					pattern="[a-z][a-z0-9_\-]*"
@@ -79,27 +102,16 @@
 					data-testid="board-create-name" />
 				<span class="text-xs opacity-60 mt-1">Lowercase letters, digits, `_` or `-`. Starts with a letter.</span>
 			</label>
-			<label class="form-control sm:col-span-1">
+			<label class="form-control mt-2">
 				<span class="label-text">Description (optional)</span>
 				<input type="text" name="description"
 					class="input input-bordered input-sm"
 					placeholder="the plan"
 					data-testid="board-create-desc" />
 			</label>
-			<label class="form-control sm:col-span-1">
-				<span class="label-text">Kind</span>
-				<select name="kind" class="select select-bordered select-sm" data-testid="board-create-kind">
-					<option value="free" selected>free — no rules (scratch / legacy)</option>
-					<option value="spec">spec — requirement tree</option>
-					<option value="work">work — feature/bug, FSM</option>
-					<option value="ideas">ideas — fuzzy thinking</option>
-					<option value="intake">intake — inbound issues</option>
-				</select>
-				<span class="text-xs opacity-60 mt-1">Drives statuses, links and invariants. Can't be changed later.</span>
-			</label>
+			<div class="card-actions mt-3">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="board-create-submit">Create free board</button>
+			</div>
 		</div>
-		<div class="card-actions mt-3">
-			<button type="submit" class="btn btn-sm btn-primary" data-testid="board-create-submit">Create</button>
-		</div>
-	</div>
-</form>
+	</form>
+</div>

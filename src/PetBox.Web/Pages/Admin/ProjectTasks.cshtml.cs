@@ -38,6 +38,11 @@ public sealed class ProjectTasksModel : PageModel
 	public bool ProjectNotFound { get; private set; }
 	public string? ErrorMessage { get; private set; }
 
+	// The four methodology kinds are per-project singletons. The UI offers EITHER enabling
+	// the whole quartet OR adding free boards — never individual methodology-kind boards.
+	static readonly string[] MethodologyKinds = ["spec", "ideas", "intake", "work"];
+	public bool MethodologyEnabled { get; private set; }
+
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks))
@@ -47,16 +52,40 @@ public sealed class ProjectTasksModel : PageModel
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
 		Boards = [.. await _tasks.ListBoardsAsync(ProjectKey, ct)];
+		var openKinds = Boards.Where(b => b.ClosedAt == null).Select(b => b.Kind).ToHashSet(StringComparer.Ordinal);
+		MethodologyEnabled = MethodologyKinds.All(openKinds.Contains);
 		return Page();
 	}
 
-	public async Task<IActionResult> OnPostCreateAsync(string name, string? description, string? kind, CancellationToken ct)
+	// Add a FREE board (scratch / ad-hoc). Methodology-kind boards are not created here —
+	// they come as a quartet via Enable, so the singleton is never hit by hand.
+	public async Task<IActionResult> OnPostCreateAsync(string name, string? description, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
 		try
 		{
-			await _tasks.CreateBoardAsync(ProjectKey, name?.Trim() ?? string.Empty, kind ?? "free", description, specBoard: null, ct);
+			await _tasks.CreateBoardAsync(ProjectKey, name?.Trim() ?? string.Empty, "free", description, specBoard: null, ct);
+		}
+		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+		{
+			ErrorMessage = ex.Message;
+			await OnGetAsync(ct);
+			return Page();
+		}
+
+		return RedirectToPage();
+	}
+
+	// Opt-in: provision the four singleton methodology boards (intake/ideas/spec/work) and
+	// auto-wire work->spec. Idempotent — adds only what's missing.
+	public async Task<IActionResult> OnPostEnableMethodologyAsync(CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+
+		try
+		{
+			await _tasks.EnableMethodologyAsync(ProjectKey, ct);
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{
