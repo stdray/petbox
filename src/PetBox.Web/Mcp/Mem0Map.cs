@@ -117,6 +117,27 @@ public static partial class Mem0Map
 	public static string? MetadataToString(JsonElement? metadata) =>
 		metadata is { } m && m.ValueKind is not (JsonValueKind.Undefined or JsonValueKind.Null) ? m.GetRawText() : null;
 
+	// mem0 `filters`: naive top-level metadata equality. An entry matches when, for every
+	// key in the filter object, its Metadata JSON has that key with an equal value
+	// (compared by raw JSON text). No filters / non-object filters → match all. Perf is
+	// post-filter in memory (fine at current scale).
+	public static bool MatchesFilters(string metadataJson, JsonElement? filters)
+	{
+		if (filters is not { } f || f.ValueKind != JsonValueKind.Object) return true;
+		if (!f.EnumerateObject().Any()) return true;
+		try
+		{
+			using var d = JsonDocument.Parse(string.IsNullOrWhiteSpace(metadataJson) ? "{}" : metadataJson);
+			var md = d.RootElement;
+			if (md.ValueKind != JsonValueKind.Object) return false;
+			foreach (var cond in f.EnumerateObject())
+				if (!md.TryGetProperty(cond.Name, out var actual) || actual.GetRawText() != cond.Value.GetRawText())
+					return false;
+			return true;
+		}
+		catch { return false; }
+	}
+
 	public static object ToMem0Memory(MemoryEntryView v, string store, double? score) => new
 	{
 		id = MakeId(store, v.Key),

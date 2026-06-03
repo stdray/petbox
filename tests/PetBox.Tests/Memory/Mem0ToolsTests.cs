@@ -163,9 +163,43 @@ public sealed class Mem0ToolsTests : IDisposable
 			.GetProperty("results").EnumerateArray().Should().BeEmpty();
 	}
 
-	static IHttpContextAccessor Http(string scopes)
+	[Fact]
+	public async Task ProjectKey_Omitted_DefaultsToKeyClaim()
 	{
-		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");
+		var http = Http("memory:read,memory:write"); // claim project = Proj
+		var add = Json(await Mem0Tools.AddMemoryAsync(http, Flags(), _memory, messages: Msg("from claim project"), user_id: "u1"));
+		add.GetProperty("results")[0].GetProperty("id").GetString().Should().StartWith("u1__");
+		Json(await Mem0Tools.SearchMemoriesAsync(http, Flags(), _memory, query: "claim", user_id: "u1"))
+			.GetProperty("results").EnumerateArray().Should().ContainSingle();
+	}
+
+	[Fact]
+	public async Task ProjectKey_Omitted_WithCrossProjectKey_Errors()
+	{
+		var http = HttpFor("*", "memory:read,memory:write");
+		Json(await Mem0Tools.AddMemoryAsync(http, Flags(), _memory, messages: Msg("x"), user_id: "u1"))
+			.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
+	}
+
+	[Fact]
+	public async Task Search_Filters_NarrowByMetadata()
+	{
+		var http = Http("memory:read,memory:write");
+		await Mem0Tools.AddMemoryAsync(http, Flags(), _memory, Proj, messages: Msg("login uses jwt"), user_id: "u1", metadata: Meta(new { area = "auth" }));
+		await Mem0Tools.AddMemoryAsync(http, Flags(), _memory, Proj, messages: Msg("ui shows jwt token"), user_id: "u1", metadata: Meta(new { area = "ui" }));
+
+		// both bodies match the query "jwt"; the metadata filter narrows to area=auth.
+		var res = Json(await Mem0Tools.SearchMemoriesAsync(http, Flags(), _memory, Proj, "jwt", user_id: "u1", filters: Meta(new { area = "auth" })));
+		var hits = res.GetProperty("results").EnumerateArray().ToList();
+		hits.Should().ContainSingle();
+		hits[0].GetProperty("memory").GetString().Should().Be("login uses jwt");
+	}
+
+	static IHttpContextAccessor Http(string scopes) => HttpFor(Proj, scopes);
+
+	static IHttpContextAccessor HttpFor(string project, string scopes)
+	{
+		var id = new ClaimsIdentity([new Claim("project", project), new Claim("scopes", scopes)], "test");
 		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id) } };
 	}
 
