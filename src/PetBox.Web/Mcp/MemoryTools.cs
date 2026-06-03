@@ -163,6 +163,7 @@ public static class MemoryTools
 		body = e.Body,
 		tags = e.Tags,
 		version = e.Version,
+		metadata = e.Metadata,
 	};
 
 	// Parse the entry array into typed inputs. Taxonomy/tag normalization happens in the
@@ -194,6 +195,7 @@ public static class MemoryTools
 				Description = ModuleMcp.OptStr(e, "description"),
 				Body = ModuleMcp.OptStr(e, "body"),
 				Tags = ModuleMcp.OptStr(e, "tags"),
+				Metadata = ModuleMcp.OptStr(e, "metadata"),
 				PrevKey = ModuleMcp.OptStr(e, "prevKey"),
 			});
 		}
