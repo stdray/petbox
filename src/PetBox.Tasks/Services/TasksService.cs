@@ -17,15 +17,17 @@ public sealed partial class TasksService : ITasksService
 	readonly ITaskBoardStore _boards;
 	readonly IRelationStore _relations;
 	readonly ITagStore _tags;
+	readonly ICommentService _comments;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
 
-	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags)
+	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments)
 	{
 		_boards = boards;
 		_relations = relations;
 		_tags = tags;
+		_comments = comments;
 	}
 
 	// ---- board lifecycle ----
@@ -397,6 +399,7 @@ public sealed partial class TasksService : ITasksService
 		RequireSpecLinks(kind, desired, prior, specRefs);
 		await ValidateSpecRefsAsync(projectKey, meta, specRefs, ct);
 		await RequireBlockersAsync(kind, projectKey, desired, blockedBy, ct);
+		await RequireSpecPlanForReviewAsync(kind, projectKey, board, desired, prior, ct);
 		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, partition: n => n.Board == board, ct: ct);
 		if (r.Applied)
 		{
@@ -455,6 +458,31 @@ public sealed partial class TasksService : ITasksService
 			if (!string.IsNullOrWhiteSpace(v)) map[p.Key] = v!;
 		}
 		return map;
+	}
+
+	// Idea Review gate (idea-review-needs-plan): an idea may not enter `review` without an
+	// `artifact:spec_plan` comment (the spec-update plan) on it. WorkflowEngine stays pure
+	// (kind/type/from/to); this guard lives here because it reads comments (ICommentService).
+	// Only the plan precondition is enforced — approval of review→accepted stays a
+	// convention (enforceApproval is off). NodeId comes from the prior row (desired rows get
+	// their NodeId assigned inside the temporal upsert, after this check).
+	async Task RequireSpecPlanForReviewAsync(
+		BoardKind kind, string projectKey, string board, PlanNode[] desired,
+		IReadOnlyDictionary<string, PlanNode> prior, CancellationToken ct)
+	{
+		if (kind != BoardKind.Ideas) return;
+		foreach (var d in desired)
+		{
+			if (!string.Equals(d.Status, "review", StringComparison.OrdinalIgnoreCase)) continue;
+			var p = prior.GetValueOrDefault(d.Key) ?? (d.PrevKey is not null ? prior.GetValueOrDefault(d.PrevKey) : null);
+			if (p is not null && string.Equals(p.Status, "review", StringComparison.OrdinalIgnoreCase)) continue; // already in review
+			if (p is null || p.NodeId.Length == 0)
+				throw new InvalidOperationException($"idea '{d.Key}' can't be created directly in review — create it, add an artifact:spec_plan comment, then move it to review");
+			var comments = await _comments.ListForNodeAsync(projectKey, board, p.NodeId, ct);
+			var hasPlan = comments.Any(c => c.Tags.Any(t => string.Equals(t, "artifact:spec_plan", StringComparison.OrdinalIgnoreCase)));
+			if (!hasPlan)
+				throw new InvalidOperationException($"idea '{d.Key}' can't enter review without an artifact:spec_plan comment (the spec-update plan)");
+		}
 	}
 
 	// Default status, assign/carry the stable NodeId (new = fresh, edit = keep, rename =

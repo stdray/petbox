@@ -46,17 +46,24 @@ public static class WorkflowCatalog
 			new("defined", "deprecated"),
 		]);
 
+	// Mirrors the work gate: an idea reaches `review` (agent ceiling), the maintainer
+	// approves `review → accepted`. Entering `review` requires an artifact:spec_plan
+	// comment — enforced in TasksService (the engine stays pure), not as a transition flag.
 	static readonly Workflow Idea = new("idea",
 		[
 			new("raw", "Raw", StatusKind.Open),
 			new("exploring", "Exploring", StatusKind.Open),
+			new("review", "Review", StatusKind.Open),
 			new("deferred", "Deferred", StatusKind.Open),
 			new("accepted", "Accepted", StatusKind.TerminalOk),
 			new("rejected", "Rejected", StatusKind.TerminalCancel),
 		],
 		[
 			new("raw", "exploring"),
-			new("exploring", "accepted", RequiresApproval: true),
+			new("exploring", "review"),                        // needs an artifact:spec_plan (guarded in the service)
+			new("review", "accepted", RequiresApproval: true), // approve gate (maintainer)
+			new("review", "exploring"),                        // reject back for more thinking
+			new("review", "rejected", RequiresReason: true),
 			new("exploring", "rejected", RequiresReason: true),
 			new("exploring", "deferred"),
 			new("deferred", "exploring"),

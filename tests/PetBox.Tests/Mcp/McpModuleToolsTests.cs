@@ -59,7 +59,7 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		_boards = new TaskBoardStore(_db, _tasksFactory);
 		_relations = new RelationStore(_db);
-		_tasks = new TasksService(_boards, _relations, new TagStore(_tasksFactory));
+		_tasks = new TasksService(_boards, _relations, new TagStore(_tasksFactory), new CommentService(_tasksFactory));
 		_stores = new MemoryStore(_db, _memFactory);
 		_memory = new MemoryService(_stores);
 		_sessions = new SessionStore(_sessFactory);
@@ -216,6 +216,55 @@ public sealed class McpModuleToolsTests : IDisposable
 		var http = Http("tasks:read"); // no tasks:write
 		var r = Json(await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", "n", "a", "b", parentId: null, tags: null));
 		r.GetProperty("error").GetProperty("type").GetString().Should().Be("UnauthorizedAccessException");
+	}
+
+	[Fact]
+	public async Task Idea_ReviewGate_RequiresSpecPlan_ThenAcceptable()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "ideas", "ideas");
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			JsonSerializer.SerializeToElement(new[] { new { key = "idea-x", type = "idea", status = "exploring", body = "x" } }), 0);
+
+		var node = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
+			.GetProperty("nodes").EnumerateArray().Single();
+		var nodeId = node.GetProperty("nodeId").GetString()!;
+		var v = node.GetProperty("version").GetInt64();
+
+		// exploring -> review WITHOUT a spec_plan artifact: rejected by the gate (tasks.upsert
+		// wraps the body in GuardAsync, so the failure surfaces as a structured error).
+		var blocked = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			JsonSerializer.SerializeToElement(new[] { new { key = "idea-x", type = "idea", status = "review", version = v } }), 0));
+		blocked.GetProperty("error").GetProperty("type").GetString().Should().Be("InvalidOperationException");
+		blocked.GetProperty("error").GetProperty("message").GetString().Should().Contain("spec_plan");
+
+		// Add the spec_plan artifact, then the same transition applies.
+		await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", nodeId, "claude", "the plan", parentId: null, tags: new[] { "artifact:spec_plan" });
+		var rev = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			JsonSerializer.SerializeToElement(new[] { new { key = "idea-x", type = "idea", status = "review", version = v } }), 0));
+		rev.GetProperty("applied").GetBoolean().Should().BeTrue();
+
+		// review -> accepted (the maintainer gate; enforceApproval is off so it applies).
+		var v2 = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
+			.GetProperty("nodes").EnumerateArray().Single().GetProperty("version").GetInt64();
+		var acc = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			JsonSerializer.SerializeToElement(new[] { new { key = "idea-x", type = "idea", status = "accepted", version = v2 } }), 0));
+		acc.GetProperty("applied").GetBoolean().Should().BeTrue();
+	}
+
+	[Fact]
+	public async Task Idea_ExploringToAccepted_NoLongerAllowed_MustGoThroughReview()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "ideas", "ideas");
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			JsonSerializer.SerializeToElement(new[] { new { key = "idea-y", type = "idea", status = "exploring", body = "x" } }), 0);
+		var v = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
+			.GetProperty("nodes").EnumerateArray().Single().GetProperty("version").GetInt64();
+		// The direct exploring->accepted transition was removed; you must pass through review.
+		var r = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			JsonSerializer.SerializeToElement(new[] { new { key = "idea-y", type = "idea", status = "accepted", version = v } }), 0));
+		r.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
 	}
 
 	static IHttpContextAccessor Http(string scopes, string? project = null)

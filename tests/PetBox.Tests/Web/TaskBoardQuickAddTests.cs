@@ -34,7 +34,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db, _factory);
-		_tasks = new TasksService(_store, new RelationStore(_db), new TagStore(_factory));
+		_tasks = new TasksService(_store, new RelationStore(_db), new TagStore(_factory), new CommentService(_factory));
 	}
 
 	public void Dispose()
