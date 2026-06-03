@@ -218,6 +218,56 @@ public sealed partial class TasksService : ITasksService
 		return active.FirstOrDefault(n => n.Key == slug)?.NodeId;
 	}
 
+	// Tag-projection: bucket the board's active nodes by their tag value in `groupBy`'s
+	// namespace (area|concern); a node with several such tags lands in several groups,
+	// untagged nodes in "(none)". Each group carries a delivery roll-up (spec boards).
+	public async Task<GroupedBoardView> GetGroupedAsync(string projectKey, string board, string groupBy, CancellationToken ct = default)
+	{
+		await EnsureBoard(projectKey, board, ct);
+		var ns = (groupBy ?? "").Trim().ToLowerInvariant();
+		if (!TagStore.Namespaces.Contains(ns))
+			throw new ArgumentException($"groupBy must be a tag namespace ({string.Join("|", TagStore.Namespaces)})");
+
+		var ctx = _boards.GetContext(projectKey);
+		var active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
+		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
+		var kind = WorkflowCatalog.ParseKind(meta.Kind);
+		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
+		var delivery = kind == BoardKind.Spec
+			? await ComputeSpecDeliveryAsync(projectKey, active, await ParentMapAsync(projectKey, ct), ct)
+			: null;
+
+		var prefix = ns + ":";
+		var buckets = new Dictionary<string, List<PlanNode>>(StringComparer.Ordinal);
+		foreach (var n in active)
+		{
+			var vals = tagsByNode[n.NodeId].Where(t => t.StartsWith(prefix, StringComparison.Ordinal)).ToList();
+			foreach (var key in vals.Count > 0 ? vals : ["(none)"])
+				(buckets.TryGetValue(key, out var l) ? l : buckets[key] = []).Add(n);
+		}
+
+		var groups = buckets
+			.OrderBy(b => b.Key == "(none)" ? 1 : 0) // "(none)" last
+			.ThenBy(b => b.Key, StringComparer.Ordinal)
+			.Select(b => new TagGroup(
+				b.Key,
+				delivery is null ? null : CombineDelivery(b.Value.Select(n => delivery.GetValueOrDefault(n.NodeId))),
+				b.Value.OrderBy(n => n.Priority).ThenBy(n => n.Key, StringComparer.Ordinal).Select(n => n.Key).ToList()))
+			.ToList();
+		return new GroupedBoardView(ns, kind.ToString().ToLowerInvariant(), groups);
+	}
+
+	// Roll up a group's per-node delivery into one status. not_started if all are (or none);
+	// done only if all done; done_with_defects if all terminal with a defect; else in_progress.
+	static string? CombineDelivery(IEnumerable<string?> deliveries)
+	{
+		var ds = deliveries.Where(d => d is not null).Select(d => d!).ToList();
+		if (ds.Count == 0 || ds.All(d => d == "not_started")) return "not_started";
+		if (ds.All(d => d == "done")) return "done";
+		if (ds.All(d => d is "done" or "done_with_defects")) return "done_with_defects";
+		return "in_progress";
+	}
+
 	public Task<IReadOnlyList<PlanNode>> ListActiveNodesAsync(string projectKey, string board, CancellationToken ct = default)
 	{
 		var ctx = _boards.GetContext(projectKey);

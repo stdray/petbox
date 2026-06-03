@@ -130,17 +130,22 @@ public static class TasksTools
 		done_with_defects), rolled up over the part_of subtree. By default terminal/closed
 		nodes are HIDDEN — pass includeClosed=true; closed part_of ancestors of a visible node
 		are kept so the tree stays connected. `under` (a node slug) restricts to that part_of
-		subtree. Requires tasks:read.
+		subtree. Pass `groupBy` (area|concern) instead to get the tag PROJECTION: nodes
+		bucketed by their tag value in that namespace ("(none)" for untagged), each group
+		with a delivery roll-up — the cross-cutting view a single-parent tree can't give.
+		Requires tasks:read.
 		""")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string board, bool includeClosed = false, string? under = null, CancellationToken ct = default)
+		string projectKey, string board, bool includeClosed = false, string? under = null, string? groupBy = null, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		return await tasks.GetAsync(projectKey, board, includeClosed, under, ct);
-	}
+		return string.IsNullOrWhiteSpace(groupBy)
+			? (object)await tasks.GetAsync(projectKey, board, includeClosed, under, ct)
+			: await tasks.GetGroupedAsync(projectKey, board, groupBy, ct);
+	});
 
 	[McpServerTool(Name = "tasks.upsert", Title = "Upsert plan nodes")]
 	[Description("""
