@@ -25,7 +25,8 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	protected override Task<AuthenticateResult> HandleAuthenticateAsync()
 	{
 		var apiKey = Request.Headers[ApiKeyHeader].FirstOrDefault()
-			?? Request.Headers[LegacyApiKeyHeader].FirstOrDefault();
+			?? Request.Headers[LegacyApiKeyHeader].FirstOrDefault()
+			?? FromAuthorization(Request.Headers.Authorization.FirstOrDefault());
 		if (string.IsNullOrEmpty(apiKey))
 			return Task.FromResult(AuthenticateResult.NoResult());
 
@@ -49,5 +50,22 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 		var ticket = new AuthenticationTicket(principal, SchemeName);
 
 		return Task.FromResult(AuthenticateResult.Success(ticket));
+	}
+
+	// Also accept `Authorization: Token <key>` / `Authorization: Bearer <key>` — the form
+	// the mem0 Claude Code plugin and many SDKs send — so they authenticate against PetBox
+	// unchanged (the token IS the PetBox API key). X-Api-Key still takes precedence.
+	static string? FromAuthorization(string? header)
+	{
+		if (string.IsNullOrWhiteSpace(header)) return null;
+		var sp = header.IndexOf(' ');
+		if (sp <= 0) return null;
+		var scheme = header[..sp];
+		var token = header[(sp + 1)..].Trim();
+		return token.Length > 0
+			&& (scheme.Equals("Token", StringComparison.OrdinalIgnoreCase)
+				|| scheme.Equals("Bearer", StringComparison.OrdinalIgnoreCase))
+			? token
+			: null;
 	}
 }
