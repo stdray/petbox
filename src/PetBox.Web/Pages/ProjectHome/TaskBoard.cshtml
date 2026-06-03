@@ -14,6 +14,15 @@
 		PetBox.Tasks.Workflow.StatusKind.Open => "badge-info",
 		_ => "badge-neutral",
 	};
+
+	// Computed spec delivery roll-up (spec boards only) -> daisyUI class.
+	static string DeliveryBadge(string d) => d switch
+	{
+		"done" => "badge-success",
+		"in_progress" => "badge-warning",
+		"done_with_defects" => "badge-error",
+		_ => "badge-ghost", // not_started
+	};
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
@@ -74,22 +83,37 @@ else
 								<span data-testid="node-leaf">@leaf</span>
 							</span>
 						</div>
-						<span class="badge @StatusBadge(n.Status) badge-sm" data-testid="node-status">@n.Status</span>
+						<div class="flex items-center gap-1 shrink-0">
+							<span class="badge @StatusBadge(n.Status) badge-sm" data-testid="node-status">@n.Status</span>
+							@if (n.Delivery is not null)
+							{
+								<span class="badge @DeliveryBadge(n.Delivery) badge-sm" data-testid="node-delivery" title="delivery — computed from linked tasks">@n.Delivery</span>
+							}
+						</div>
 					</div>
 					@if (!string.IsNullOrEmpty(n.Body))
 					{
-						<p class="text-sm opacity-80 whitespace-pre-wrap mt-1">@n.Body</p>
+						<p class="text-base opacity-90 whitespace-pre-wrap mt-1">@n.Body</p>
 					}
 					@if (!string.IsNullOrEmpty(n.CommitRef))
 					{
 						<div class="text-xs opacity-50 font-mono mt-1">@n.CommitRef</div>
+					}
+					@if (n.LinkedTasks is { Count: > 0 })
+					{
+						<div class="text-xs opacity-70 mt-1 flex flex-wrap gap-x-3 gap-y-1" data-testid="node-linked-tasks">
+							@foreach (var t in n.LinkedTasks)
+							{
+								<span class="font-mono" data-testid="linked-task">@t.Slug<span class="opacity-50"> · @t.Status</span></span>
+							}
+						</div>
 					}
 					@if (Model.CommentThreads.TryGetValue(n.NodeId, out var thread) && thread.Count > 0)
 					{
 						<div class="mt-2 border-t border-base-300 pt-2 flex flex-col gap-1.5" data-testid="node-comments">
 							@foreach (var (c, cdepth) in thread)
 							{
-								<div class="text-xs" data-testid="comment" data-comment-id="@c.Id" style="margin-left:@(cdepth * 1.25)rem">
+								<div class="text-sm" data-testid="comment" data-comment-id="@c.Id" style="margin-left:@(cdepth * 1.25)rem">
 									<div class="flex items-baseline gap-2 flex-wrap">
 										<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
 										@foreach (var tag in c.Tags)

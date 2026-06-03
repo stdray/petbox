@@ -130,9 +130,21 @@ public partial class Program
 		// MCP server. Tools are discovered via reflection from the Web assembly
 		// (Mcp/*Tools.cs). HTTP transport — agents reach petbox at /mcp with
 		// X-Api-Key just like the REST endpoints.
+		// Copy the SDK's default tool-serialization options (camelCase, null-ignore, MCP
+		// converters) and only relax the text encoder: the default escapes every non-ASCII
+		// char (Cyrillic -> \uXXXX), making tool-result JSON unreadable. Allow common ranges
+		// (not UnsafeRelaxed) so output is human-readable while HTML-sensitive chars stay escaped.
+		var mcpJson = new System.Text.Json.JsonSerializerOptions(ModelContextProtocol.McpJsonUtilities.DefaultOptions)
+		{
+			Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(
+				System.Text.Unicode.UnicodeRanges.BasicLatin,
+				System.Text.Unicode.UnicodeRanges.Latin1Supplement,
+				System.Text.Unicode.UnicodeRanges.LatinExtendedA,
+				System.Text.Unicode.UnicodeRanges.Cyrillic),
+		};
 		builder.Services.AddMcpServer()
 			.WithHttpTransport()
-			.WithToolsFromAssembly(typeof(Program).Assembly)
+			.WithToolsFromAssembly(typeof(Program).Assembly, mcpJson)
 			.WithRequestFilters(PetBox.Web.Mcp.McpToolScopeFilter.Register); // A7b: scope-trim tools/list
 		builder.Services.AddSingleton<FeatureFlags>();
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
