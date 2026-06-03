@@ -329,6 +329,16 @@ public partial class Program
 			// Returns the count migrated; the migrator logs each board itself, so ignore it here.
 			new PetBox.Tasks.Data.LegacyTaskFileMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, tasksMigLog).Migrate();
 
+			// One-time, idempotent (spec-flat-tags): convert legacy path-keyed nodes to flat
+			// slugs + synthesize part_of edges. Runs after the legacy fold so every board is in
+			// its per-project file; needs PetBoxDb for the part_of edges (in petbox.db).
+			using (var flatScope = app.Services.CreateScope())
+			{
+				var relations = new PetBox.Tasks.Data.RelationStore(flatScope.ServiceProvider.GetRequiredService<PetBoxDb>());
+				var flatLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.FlatNodeMigration");
+				new PetBox.Tasks.Data.FlatNodePartOfMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, relations, flatLog).Migrate();
+			}
+
 		using (var scope = app.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
