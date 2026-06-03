@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using LinqToDB;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -79,6 +80,17 @@ public sealed class ApiKeyExpiryTests : IAsyncLifetime
 	{
 		var req = new HttpRequestMessage(HttpMethod.Get, "/v1/conf");
 		req.Headers.Add("X-Api-Key", ValidKey);
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+	}
+
+	// `Authorization: Token <key>` is the form the mem0 Claude Code plugin sends; the auth
+	// handler accepts it (token == the PetBox API key) so the plugin works against PetBox.
+	[Fact]
+	public async Task AuthorizationTokenHeader_Accepted()
+	{
+		var req = new HttpRequestMessage(HttpMethod.Get, "/v1/conf");
+		req.Headers.Authorization = new AuthenticationHeaderValue("Token", ValidKey);
 		using var resp = await _client.SendAsync(req);
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 	}
