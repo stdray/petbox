@@ -84,6 +84,25 @@ else
 					{
 						<div class="text-xs opacity-50 font-mono mt-1">@n.CommitRef</div>
 					}
+					@if (Model.CommentThreads.TryGetValue(n.NodeId, out var thread) && thread.Count > 0)
+					{
+						<div class="mt-2 border-t border-base-300 pt-2 flex flex-col gap-1.5" data-testid="node-comments">
+							@foreach (var (c, cdepth) in thread)
+							{
+								<div class="text-xs" data-testid="comment" data-comment-id="@c.Id" style="margin-left:@(cdepth * 1.25)rem">
+									<div class="flex items-baseline gap-2 flex-wrap">
+										<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
+										@foreach (var tag in c.Tags)
+										{
+											var artifact = tag.StartsWith("artifact:", StringComparison.Ordinal);
+											<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
+										}
+									</div>
+									<p class="opacity-80 whitespace-pre-wrap" data-testid="comment-body">@c.Body</p>
+								</div>
+							}
+						</div>
+					}
 				</div>
 			</li>
 		}

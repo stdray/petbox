@@ -16,11 +16,13 @@ public sealed class TaskBoardModel : PageModel
 {
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
+	readonly ICommentService _comments;
 
-	public TaskBoardModel(FeatureFlags features, ITasksService tasks)
+	public TaskBoardModel(FeatureFlags features, ITasksService tasks, ICommentService comments)
 	{
 		_features = features;
 		_tasks = tasks;
+		_comments = comments;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -39,6 +41,12 @@ public sealed class TaskBoardModel : PageModel
 	public IReadOnlySet<string> ClosedWithActiveDescendant { get; private set; }
 		= new HashSet<string>(StringComparer.Ordinal);
 
+	// Per-node discussion thread, DFS-flattened to (comment, depth) so the view renders it
+	// flat with an indent — the same shape as the plan-node list. Empty for nodes with no
+	// comments. Read-only in v1 (writes go through the comments.* MCP tools).
+	public IReadOnlyDictionary<string, List<(CommentView Comment, int Depth)>> CommentThreads { get; private set; }
+		= new Dictionary<string, List<(CommentView Comment, int Depth)>>(StringComparer.Ordinal);
+
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
@@ -49,6 +57,12 @@ public sealed class TaskBoardModel : PageModel
 		var view = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, ct: ct);
 		Nodes = OrderHierarchically([.. view.Nodes], out var keepVisible);
 		ClosedWithActiveDescendant = keepVisible;
+
+		// One query for every comment on the board, grouped by owning node; DFS-flatten each
+		// node's thread by parentId so the view just iterates (no per-node N+1).
+		var byNode = await _comments.ListForBoardAsync(ProjectKey, Board, ct);
+		CommentThreads = byNode
+			.ToDictionary(g => g.Key, g => FlattenThread(g), StringComparer.Ordinal);
 		return Page();
 	}
 
@@ -102,6 +116,32 @@ public sealed class TaskBoardModel : PageModel
 
 		foreach (var r in roots) Emit(r);
 		closedWithActiveDescendant = closedKeep;
+		return ordered;
+	}
+
+	// Flatten one node's flat comment list into DFS order with a depth, building the tree
+	// from ParentId (siblings chronological). An unknown/missing parent is treated as a root
+	// (defensive); a visited-set guards against any parentId cycle.
+	static List<(CommentView Comment, int Depth)> FlattenThread(IEnumerable<CommentView> comments)
+	{
+		var list = comments.ToList();
+		var ids = list.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
+		var byParent = list.Where(c => c.ParentId is not null && ids.Contains(c.ParentId))
+			.ToLookup(c => c.ParentId!, StringComparer.Ordinal);
+		var roots = list
+			.Where(c => c.ParentId is null || !ids.Contains(c.ParentId))
+			.OrderBy(c => c.Created);
+
+		var ordered = new List<(CommentView, int)>(list.Count);
+		var visited = new HashSet<string>(StringComparer.Ordinal);
+		void Emit(CommentView c, int depth)
+		{
+			if (!visited.Add(c.Id)) return;
+			ordered.Add((c, depth));
+			foreach (var kid in byParent[c.Id].OrderBy(k => k.Created))
+				Emit(kid, depth + 1);
+		}
+		foreach (var r in roots) Emit(r, 0);
 		return ordered;
 	}
 

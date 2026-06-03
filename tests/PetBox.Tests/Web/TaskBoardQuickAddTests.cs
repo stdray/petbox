@@ -52,7 +52,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 	async Task<PlanNode> QuickAdd(string board, string kind)
 	{
 		await _store.CreateAsync("proj", board, null, kind);
-		var model = new TaskBoardModel(Flags(), _tasks) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
+		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory)) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
 		await model.OnPostCreateAsync("My item", "details", 50, default);
 		return _store.GetContext("proj").PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList().Single();
 	}

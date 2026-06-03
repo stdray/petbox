@@ -83,6 +83,7 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Tasks.Data.IRelationStore, PetBox.Tasks.Data.RelationStore>();
 		builder.Services.AddScoped<PetBox.Tasks.Data.ITagStore, PetBox.Tasks.Data.TagStore>();
 		builder.Services.AddScoped<PetBox.Tasks.Contract.ITasksService, PetBox.Tasks.Services.TasksService>();
+		builder.Services.AddScoped<PetBox.Tasks.Contract.ICommentService, PetBox.Tasks.Services.CommentService>();
 		builder.Services.AddSingleton<IScopedDbFactory<PetBox.Memory.Data.MemoryDb>>(sp => new ScopedDbFactory<PetBox.Memory.Data.MemoryDb>(
 				Path.Combine(ResolveDataDir(sp), "memory"), PetBox.Core.Settings.Scope.Project,
 				cs => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(cs)), PetBox.Memory.Data.MemorySchema.Ensure));

@@ -39,6 +39,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	readonly MemoryService _memory;
 	readonly SessionService _sessionSvc;
 	readonly SessionStore _sessions;
+	readonly CommentService _commentSvc;
 
 	public McpModuleToolsTests()
 	{
@@ -63,6 +64,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		_memory = new MemoryService(_stores);
 		_sessions = new SessionStore(_sessFactory);
 		_sessionSvc = new SessionService(_sessions);
+		_commentSvc = new CommentService(_tasksFactory);
 	}
 
 	public void Dispose()
@@ -185,6 +187,35 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		var list = Json(await SessionTools.ListAsync(http, Flags(), _sessionSvc, Proj));
 		list.GetProperty("sessions").EnumerateArray().Should().ContainSingle();
+	}
+
+	[Fact]
+	public async Task Comments_Add_Reply_List_DeleteWithChildrenRejected()
+	{
+		var http = Http("tasks:read,tasks:write");
+		var add = Json(await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", "node-1", "alice", "root body", parentId: null, tags: new[] { "artifact:plan" }));
+		add.GetProperty("applied").GetBoolean().Should().BeTrue();
+		var id = add.GetProperty("id").GetString()!;
+
+		await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", "node-1", "bob", "a reply", parentId: id, tags: null);
+
+		var list = Json(await CommentTools.ListAsync(http, Flags(), _commentSvc, Proj, "ideas", "node-1"));
+		var rows = list.GetProperty("comments").EnumerateArray().ToList();
+		rows.Should().HaveCount(2);
+		rows.Single(c => c.GetProperty("id").GetString() == id).GetProperty("tags").EnumerateArray()
+			.Select(t => t.GetString()).Should().Equal("artifact:plan");
+
+		// Deleting a parent with an active reply → GuardAsync surfaces a structured error.
+		var del = Json(await CommentTools.DeleteAsync(http, Flags(), _commentSvc, Proj, "ideas", id));
+		del.TryGetProperty("error", out _).Should().BeTrue();
+	}
+
+	[Fact]
+	public async Task Comments_MissingWriteScope_SurfacesError()
+	{
+		var http = Http("tasks:read"); // no tasks:write
+		var r = Json(await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", "n", "a", "b", parentId: null, tags: null));
+		r.GetProperty("error").GetProperty("type").GetString().Should().Be("UnauthorizedAccessException");
 	}
 
 	static IHttpContextAccessor Http(string scopes, string? project = null)
