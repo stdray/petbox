@@ -19,6 +19,27 @@ static class ModuleMcp
 			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
 	}
 
+	// Resolve the effective projectKey for tools where it is OPTIONAL (mem0-compatible
+	// surface): when omitted, default to the key's single-project claim so off-the-shelf
+	// clients that only send user_id work. A cross-project ("*") key has no single
+	// project to default to, so an explicit projectKey is required there. Always
+	// authorizes the result against the claim.
+	public static string ResolveProject(IHttpContextAccessor http, string? projectKey)
+	{
+		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
+		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		var effective = projectKey;
+		if (string.IsNullOrWhiteSpace(effective))
+		{
+			if (string.IsNullOrEmpty(claim) || claim == ProjectScope.AllProjects)
+				throw new ArgumentException("projectKey is required (the API key is not scoped to a single project)");
+			effective = claim;
+		}
+		if (!ProjectScope.Authorizes(claim, effective))
+			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{effective}'");
+		return effective;
+	}
+
 	public static void AssertScope(IHttpContextAccessor http, string required)
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
