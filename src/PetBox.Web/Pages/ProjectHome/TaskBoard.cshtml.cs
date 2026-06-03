@@ -3,7 +3,6 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Features;
 using PetBox.Tasks.Contract;
-using PetBox.Tasks.Data;
 using PetBox.Tasks.Workflow;
 
 namespace PetBox.Web.Pages.ProjectHome;
@@ -34,9 +33,9 @@ public sealed class TaskBoardModel : PageModel
 	public string Board { get; set; } = string.Empty;
 
 	// Nodes in plan-tree (DFS) render order; ClosedWithActiveDescendant holds the
-	// keys of Done/Cancelled nodes that must stay visible under "active only"
+	// NodeIds of Done/Cancelled nodes that must stay visible under "active only"
 	// because a descendant is still open (else the children would orphan).
-	public IReadOnlyList<PlanNode> Nodes { get; private set; } = [];
+	public IReadOnlyList<PlanNodeView> Nodes { get; private set; } = [];
 	public IReadOnlySet<string> ClosedWithActiveDescendant { get; private set; }
 		= new HashSet<string>(StringComparer.Ordinal);
 
@@ -45,61 +44,59 @@ public sealed class TaskBoardModel : PageModel
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
-		var flat = await _tasks.ListActiveNodesAsync(ProjectKey, Board, ct);
-
-		Nodes = OrderHierarchically([.. flat], out var keepVisible);
+		// includeClosed: we render closed nodes too (the "active only" toggle hides them
+		// client-side); GetAsync supplies each node's part_of parent + depth.
+		var view = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, ct: ct);
+		Nodes = OrderHierarchically([.. view.Nodes], out var keepVisible);
 		ClosedWithActiveDescendant = keepVisible;
 		return Page();
 	}
 
-	// Render order is the plan tree itself — DFS by parentKey, siblings ordered by
-	// Priority then Key. A flat priority sort (the previous behaviour) let a
-	// low-priority child of an early phase visually drift past a later phase, so it
-	// looked like it belonged to that phase (finding D11). DFS keeps every node
-	// under its parent regardless of how its priority compares across the board.
-	static List<PlanNode> OrderHierarchically(
-		List<PlanNode> nodes, out IReadOnlySet<string> closedWithActiveDescendant)
+	// Render order is the plan tree itself — DFS by part_of parent, siblings ordered by
+	// Priority then Key. A flat priority sort let a low-priority child of an early branch
+	// visually drift past a later one (finding D11). DFS keeps every node under its parent.
+	static List<PlanNodeView> OrderHierarchically(
+		List<PlanNodeView> nodes, out IReadOnlySet<string> closedWithActiveDescendant)
 	{
-		var byKey = new Dictionary<string, PlanNode>(StringComparer.Ordinal);
-		foreach (var n in nodes) byKey[n.Key] = n;
+		var byId = new Dictionary<string, PlanNodeView>(StringComparer.Ordinal);
+		foreach (var n in nodes) byId[n.NodeId] = n;
 
-		static string? ParentOf(PlanNode n) => TaskNodeId.TryParse(n.Key, out var id) ? id!.ParentKey : null;
+		// A node is a root when it has no part_of parent, or its parent isn't on this board.
+		static string? ParentOf(PlanNodeView n) => n.ParentNodeId;
 
-		// Children grouped by parent key, each sibling list ordered by priority then key.
 		var childMap = nodes
-			.GroupBy(ParentOf)
+			.Where(n => ParentOf(n) is { } pid && byId.ContainsKey(pid))
+			.GroupBy(n => ParentOf(n)!)
 			.ToDictionary(
-				g => g.Key ?? string.Empty,
-				g => (IReadOnlyList<PlanNode>)g
+				g => g.Key,
+				g => (IReadOnlyList<PlanNodeView>)g
 					.OrderBy(n => n.Priority)
 					.ThenBy(n => n.Key, StringComparer.Ordinal)
 					.ToList(),
 				StringComparer.Ordinal);
 
-		// Roots: phase-level nodes plus any orphan whose parent isn't on the board.
 		var roots = nodes
-			.Where(n => { var pk = ParentOf(n); return pk is null || !byKey.ContainsKey(pk); })
+			.Where(n => { var pk = ParentOf(n); return pk is null || !byId.ContainsKey(pk); })
 			.OrderBy(n => n.Priority)
 			.ThenBy(n => n.Key, StringComparer.Ordinal)
 			.ToList();
 
-		var ordered = new List<PlanNode>(nodes.Count);
+		var ordered = new List<PlanNodeView>(nodes.Count);
 		var closedKeep = new HashSet<string>(StringComparer.Ordinal);
 
-		// Keys are hierarchical (a parent key is a strict prefix), so the tree is
-		// acyclic and recursion is bounded at depth 3. Returns whether the subtree
-		// holds a non-closed node, so a closed parent of open work stays visible.
-		bool Emit(PlanNode node)
+		// Returns whether the subtree holds a non-closed node, so a closed parent of open
+		// work stays visible. Guarded against part_of cycles via the visited set.
+		var visited = new HashSet<string>(StringComparer.Ordinal);
+		bool Emit(PlanNodeView node)
 		{
+			if (!visited.Add(node.NodeId)) return false;
 			ordered.Add(node);
 			var closed = WorkflowCatalog.IsTerminalSlug(node.Status);
 			var hasActiveDescendant = false;
-			if (childMap.TryGetValue(node.Key, out var kids))
-			{
+			if (childMap.TryGetValue(node.NodeId, out var kids))
 				foreach (var kid in kids)
 					hasActiveDescendant |= Emit(kid);
-			}
-			if (closed && hasActiveDescendant) closedKeep.Add(node.Key);
+			if (closed && hasActiveDescendant) closedKeep.Add(node.NodeId);
 			return !closed || hasActiveDescendant;
 		}
 

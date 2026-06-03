@@ -95,16 +95,18 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]
 	[Description("""
-		Return the active plan nodes of a board as a 1-to-3 level tree, ordered by priority
-		then path. Top level carries `kind` (the board role) and `specBoard` (the spec board
-		work tasks link into, if set). Each node carries key, nodeId, l1, l2, l3, depth,
-		parentKey, status, type, title, body, priority, version, renamedFrom, plus its links:
-		`spec` (spec nodes this task implements — task_spec), `blockedBy` (nodes blocking it),
-		and on a spec board `linkedTasks` (tasks implementing it) plus the COMPUTED `delivery`
-		roll-up (not_started|in_progress|done|done_with_defects). By default terminal/closed
-		nodes (Done/Cancelled/…) are HIDDEN — pass includeClosed=true to include them; closed
-		ancestors of a visible node are kept so the tree stays connected. `under` ("l1" or
-		"l1/l2") restricts to that subtree. Requires tasks:read.
+		Return the active plan nodes of a board, ordered by priority then key. Nodes are FLAT
+		(a single slug `key`); hierarchy is the `part_of` edge, surfaced as parentNodeId,
+		parentSlug and a computed `depth` (0 = root) — build the tree from those. Top level
+		carries `kind` (the board role) and `specBoard`. Each node carries key, nodeId,
+		parentNodeId, parentSlug, depth, status, type, title, body, priority, version,
+		renamedFrom, `tags` (enforced area:*/concern:* tags), plus links: `spec` (spec nodes
+		this task implements — task_spec), `blockedBy` (nodes blocking it), and on a spec board
+		`linkedTasks` plus the COMPUTED `delivery` roll-up (not_started|in_progress|done|
+		done_with_defects), rolled up over the part_of subtree. By default terminal/closed
+		nodes are HIDDEN — pass includeClosed=true; closed part_of ancestors of a visible node
+		are kept so the tree stays connected. `under` (a node slug) restricts to that part_of
+		subtree. Requires tasks:read.
 		""")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -120,25 +122,25 @@ public static class TasksTools
 	[Description("""
 		Declarative temporal upsert of plan nodes. Requires tasks:write.
 
-		A plan is a 1-to-3 level tree. Address each node by path: l1 (required), optional l2,
-		optional l3 (needs l2) — short anchor keys [a-z][a-z0-9_-]{0,99} — or an "l1/l2/l3"
-		string in `key`. The path is the stable citation; create parents with/before children.
-		Give each node a `title` (short heading) and `body` (markdown). Other fields: status
-		(slug — see tasks.workflow for the board's kind), type (feature|bug on work boards),
-		specRef (a spec NodeId — links a work task to the spec node it implements), blockedBy
-		(a NodeId — marks this task Blocked by that one), commitRef?, priority? (sparse int,
-		lower first), version (baseline you last saw; 0 = new). Rename via prevL1/prevL2/prevL3
-		or prevKey. A cold call auto-creates the board.
+		Each node has a FLAT `key` — a single slug [a-z][a-z0-9_-]{0,99} (no '/'; the old
+		l1/l2/l3 path is gone). Nesting is the `partOf` field: a parent slug (on this board)
+		or a NodeId — null omits it, "" detaches to a root. A node may carry multiple parents'
+		worth of grouping via `tags` (an array of "namespace:value", namespaces area|concern;
+		[] clears, omit leaves as-is). Give each node a `title` and `body` (markdown). Other
+		fields: status (slug — see tasks.workflow), type (feature|bug on work boards), specRef
+		(a spec NodeId the work task implements), blockedBy (a NodeId blocking it), commitRef?,
+		priority? (sparse int, lower first), version (baseline you last saw; 0 = new). Rename
+		via prevKey. A cold call auto-creates the board.
 
 		Returns { applied, currentVersion, inserted, closed, conflicts[], added[], updated[],
-		removed[] }; added/updated carry the full node (key, nodeId, l1, l2, l3, depth,
-		parentKey, status, type, title, body, commitRef, priority, version). The delta IS the
-		fresh state since `sinceVersion` — advance your cursor and merge, no need to re-read.
+		removed[] }; added/updated carry the node (key, nodeId, status, type, title, body,
+		commitRef, priority, version). The delta IS the fresh state since `sinceVersion` —
+		advance your cursor and merge, no need to re-read.
 		""")]
 	public static async Task<object> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("JSON array of node objects. A node may carry specRef (a spec NodeId) — on a work board this links the task to that spec node (task_spec edge).")] JsonElement nodes,
+		[Description("JSON array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef`, `blockedBy`, status/type/title/body/priority/version.")] JsonElement nodes,
 		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -208,26 +210,17 @@ public static class TasksTools
 		};
 	}
 
-	// Delta projection of a node (no links/delivery — that's tasks.get). camelCased by the serializer.
-	static PlanNodeDelta NodeDto(PlanNode n)
-	{
-		var id = TaskNodeId.TryParse(n.Key, out var p) ? p : null;
-		return new PlanNodeDelta(
-			Key: n.Key,
-			NodeId: n.NodeId,
-			L1: id?.PhaseKey ?? n.Key,
-			L2: id?.WaveKey,
-			L3: id?.TaskKey,
-			Depth: id?.Depth ?? 1,
-			ParentKey: id?.ParentKey,
-			Status: n.Status,
-			Type: n.Type,
-			Title: n.Name,
-			Body: n.Body,
-			CommitRef: n.CommitRef,
-			Priority: n.Priority,
-			Version: n.Version);
-	}
+	// Delta projection of a node (no links/delivery/tags — that's tasks.get). camelCased by the serializer.
+	static PlanNodeDelta NodeDto(PlanNode n) => new(
+		Key: n.Key,
+		NodeId: n.NodeId,
+		Status: n.Status,
+		Type: n.Type,
+		Title: n.Name,
+		Body: n.Body,
+		CommitRef: n.CommitRef,
+		Priority: n.Priority,
+		Version: n.Version);
 
 	// Parse the node array into typed patches. Read-merge (inheriting omitted fields from
 	// the prior row) happens in the service; here a field absent from the JSON maps to
@@ -258,6 +251,8 @@ public static class TasksTools
 				Priority = Has(e, "priority") ? ModuleMcp.OptLong(e, "priority", 0) : null,
 				SpecRef = ModuleMcp.OptStr(e, "specRef"),
 				BlockedBy = ModuleMcp.OptStr(e, "blockedBy"),
+				PartOf = Has(e, "partOf") ? ModuleMcp.OptStr(e, "partOf") ?? string.Empty : null,
+				Tags = ParseTags(e),
 			});
 		}
 		return list;
@@ -265,29 +260,50 @@ public static class TasksTools
 		static bool Has(JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out _);
 	}
 
-	// A node's identity is its 1-to-3 level path of anchor keys. Preferred input is the
-	// structured form (l1 + optional l2 + optional l3); a canonical "l1/l2/l3" string in
-	// `key` is accepted as an alternative. Both are validated/canonicalised via TaskNodeId.
+	// Enforced tags. Absent → null (omit, inherit). Present → the full replacement set:
+	// a JSON array of strings, a double-encoded JSON-string array (some MCP clients), or a
+	// CSV string. JSON null or [] → empty set (clears the node's tags).
+	static IReadOnlyList<string>? ParseTags(JsonElement e)
+	{
+		if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty("tags", out var t)) return null;
+		switch (t.ValueKind)
+		{
+			case JsonValueKind.Null:
+				return [];
+			case JsonValueKind.Array:
+				return t.EnumerateArray()
+					.Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() ?? "" : x.GetRawText())
+					.Where(s => s.Length > 0).ToList();
+			case JsonValueKind.String:
+				var s = t.GetString() ?? "";
+				if (s.TrimStart().StartsWith('['))
+				{
+					try
+					{
+						using var d = JsonDocument.Parse(s);
+						return d.RootElement.EnumerateArray().Select(x => x.GetString() ?? "").Where(v => v.Length > 0).ToList();
+					}
+					catch { /* not JSON — fall through to CSV */ }
+				}
+				return s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+			default:
+				return null;
+		}
+	}
+
+	// A node's address is a flat board-unique slug in `key` (`l1` accepted as an alias).
+	// Nesting is the `partOf` parent, not the key. Validated/normalized via TaskSlug.
 	static string ResolveKey(JsonElement e)
 	{
-		var l1 = ModuleMcp.OptStr(e, "l1");
-		if (l1 is not null)
-			return new TaskNodeId(l1, ModuleMcp.OptStr(e, "l2"), ModuleMcp.OptStr(e, "l3")).ToKey();
-
-		var key = ModuleMcp.OptStr(e, "key");
+		var key = ModuleMcp.OptStr(e, "key") ?? ModuleMcp.OptStr(e, "l1");
 		if (key is not null)
-			return TaskNodeId.Parse(key).ToKey();
-
-		throw new ArgumentException("each node needs 'l1' (+optional l2/l3) or a 'key' path");
+			return TaskSlug.Validate(key);
+		throw new ArgumentException("each node needs a 'key' (a flat slug)");
 	}
 
 	static string? ResolvePrevKey(JsonElement e)
 	{
-		var prevL1 = ModuleMcp.OptStr(e, "prevL1");
-		if (prevL1 is not null)
-			return new TaskNodeId(prevL1, ModuleMcp.OptStr(e, "prevL2"), ModuleMcp.OptStr(e, "prevL3")).ToKey();
-
-		var prevKey = ModuleMcp.OptStr(e, "prevKey");
-		return prevKey is not null ? TaskNodeId.Parse(prevKey).ToKey() : null;
+		var prevKey = ModuleMcp.OptStr(e, "prevKey") ?? ModuleMcp.OptStr(e, "prevL1");
+		return prevKey is not null ? TaskSlug.Validate(prevKey) : null;
 	}
 }

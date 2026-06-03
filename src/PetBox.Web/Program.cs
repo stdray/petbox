@@ -81,6 +81,7 @@ public partial class Program
 				cs => new PetBox.Tasks.Data.TasksDb(PetBox.Tasks.Data.TasksDb.CreateOptions(cs)), PetBox.Tasks.Data.TasksSchema.Ensure));
 		builder.Services.AddScoped<PetBox.Tasks.Data.ITaskBoardStore, PetBox.Tasks.Data.TaskBoardStore>();
 		builder.Services.AddScoped<PetBox.Tasks.Data.IRelationStore, PetBox.Tasks.Data.RelationStore>();
+		builder.Services.AddScoped<PetBox.Tasks.Data.ITagStore, PetBox.Tasks.Data.TagStore>();
 		builder.Services.AddScoped<PetBox.Tasks.Contract.ITasksService, PetBox.Tasks.Services.TasksService>();
 		builder.Services.AddSingleton<IScopedDbFactory<PetBox.Memory.Data.MemoryDb>>(sp => new ScopedDbFactory<PetBox.Memory.Data.MemoryDb>(
 				Path.Combine(ResolveDataDir(sp), "memory"), PetBox.Core.Settings.Scope.Project,
@@ -327,6 +328,16 @@ public partial class Program
 			var tasksMigLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.LegacyMigration");
 			// Returns the count migrated; the migrator logs each board itself, so ignore it here.
 			new PetBox.Tasks.Data.LegacyTaskFileMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, tasksMigLog).Migrate();
+
+			// One-time, idempotent (spec-flat-tags): convert legacy path-keyed nodes to flat
+			// slugs + synthesize part_of edges. Runs after the legacy fold so every board is in
+			// its per-project file; needs PetBoxDb for the part_of edges (in petbox.db).
+			using (var flatScope = app.Services.CreateScope())
+			{
+				var relations = new PetBox.Tasks.Data.RelationStore(flatScope.ServiceProvider.GetRequiredService<PetBoxDb>());
+				var flatLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.FlatNodeMigration");
+				new PetBox.Tasks.Data.FlatNodePartOfMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, relations, flatLog).Migrate();
+			}
 
 		using (var scope = app.Services.CreateScope())
 		{

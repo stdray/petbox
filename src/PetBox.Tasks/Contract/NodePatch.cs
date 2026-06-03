@@ -8,10 +8,15 @@ namespace PetBox.Tasks.Contract;
 // CommitRef is nullable on the row, so its presence is carried by CommitRefSet.
 public sealed record NodePatch
 {
-	// Canonical "l1[/l2[/l3]]" key, already validated/canonicalised by the adapter.
+	// Flat board-unique slug, already validated/normalized by the adapter (no '/').
 	public required string Key { get; init; }
-	// Canonical key of the node being renamed from, or null.
+	// Slug of the node being renamed from, or null.
 	public string? PrevKey { get; init; }
+
+	// Vertical decomposition: the parent this node is part_of. A parent slug (resolved on
+	// this board) or a NodeId. null = OMIT (leave the node's parent edge as-is); "" =
+	// DETACH (make it a root). Replaces the old l1/l2/l3 path nesting.
+	public string? PartOf { get; init; }
 	// Baseline version the author last saw (0 = new) — drives optimistic concurrency.
 	public long Version { get; init; }
 
@@ -27,4 +32,8 @@ public sealed record NodePatch
 	// blockedBy → a NodeId that blocks this task (blocks). Null/empty = no link given.
 	public string? SpecRef { get; init; }
 	public string? BlockedBy { get; init; }
+
+	// Enforced tags ("namespace:value", namespaces area|concern). null = OMIT (leave the
+	// node's tags as-is); a non-null list (incl. empty) REPLACES the node's full tag set.
+	public IReadOnlyList<string>? Tags { get; init; }
 }

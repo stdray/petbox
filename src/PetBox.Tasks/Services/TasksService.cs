@@ -16,14 +16,16 @@ public sealed partial class TasksService : ITasksService
 {
 	readonly ITaskBoardStore _boards;
 	readonly IRelationStore _relations;
+	readonly ITagStore _tags;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
 
-	public TasksService(ITaskBoardStore boards, IRelationStore relations)
+	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags)
 	{
 		_boards = boards;
 		_relations = relations;
+		_tags = tags;
 	}
 
 	// ---- board lifecycle ----
@@ -94,29 +96,29 @@ public sealed partial class TasksService : ITasksService
 
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
 		var kind = WorkflowCatalog.ParseKind(meta.Kind);
-		var delivery = kind == BoardKind.Spec ? await ComputeSpecDeliveryAsync(projectKey, active, ct) : null;
+		var parentOf = await ParentMapAsync(projectKey, ct);
+		var delivery = kind == BoardKind.Spec ? await ComputeSpecDeliveryAsync(projectKey, active, parentOf, ct) : null;
 
-		var underKey = NormalizeUnder(under);
-		var visible = FilterVisible(active, includeClosed, underKey);
 		var index = await BuildNodeIndexAsync(projectKey, ct);
+		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
+		var underId = ResolveUnderNodeId(under, active);
+		var visible = FilterVisible(active, includeClosed, underId, parentOf);
 
 		var nodes = new List<PlanNodeView>();
 		foreach (var n in visible)
 		{
-			var id = TaskNodeId.TryParse(n.Key, out var pid) ? pid : null;
 			var fromEdges = n.NodeId.Length > 0 ? await _relations.ListAsync(projectKey, n.NodeId, "from", ct: ct) : [];
 			var toEdges = n.NodeId.Length > 0 ? await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct) : [];
 			var spec = fromEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var blockedBy = toEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.FromNodeId, index)).ToList();
 			var linkedTasks = kind == BoardKind.Spec ? toEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
+			var parentId = parentOf.GetValueOrDefault(n.NodeId);
 			nodes.Add(new PlanNodeView(
 				Key: n.Key,
 				NodeId: n.NodeId,
-				L1: id?.PhaseKey ?? n.Key,
-				L2: id?.WaveKey,
-				L3: id?.TaskKey,
-				Depth: id?.Depth ?? 1,
-				ParentKey: id?.ParentKey,
+				ParentNodeId: parentId,
+				ParentSlug: parentId is not null && index.TryGetValue(parentId, out var pr) ? pr.Slug : null,
+				Depth: DepthOf(n.NodeId, parentOf),
 				Status: n.Status,
 				Type: n.Type,
 				Title: n.Name,
@@ -124,13 +126,36 @@ public sealed partial class TasksService : ITasksService
 				CommitRef: n.CommitRef,
 				Priority: n.Priority,
 				Version: n.Version,
-				Delivery: delivery is not null && delivery.TryGetValue(n.Key, out var dv) ? dv : null,
+				Delivery: delivery is not null && delivery.TryGetValue(n.NodeId, out var dv) ? dv : null,
 				Spec: spec.Count > 0 ? spec : null,
 				BlockedBy: blockedBy.Count > 0 ? blockedBy : null,
 				LinkedTasks: linkedTasks is { Count: > 0 } ? linkedTasks : null,
-				RenamedFrom: lineage.TryGetValue(n.Key, out var p) ? p : []));
+				RenamedFrom: lineage.TryGetValue(n.Key, out var p) ? p : [],
+				Tags: tagsByNode[n.NodeId].OrderBy(t => t, StringComparer.Ordinal).ToList()));
 		}
 		return new PlanBoardView(current, kind.ToString().ToLowerInvariant(), meta.SpecBoard, nodes);
+	}
+
+	// nodeId -> its active part_of parent nodeId (single parent). One query, project-wide.
+	async Task<Dictionary<string, string>> ParentMapAsync(string projectKey, CancellationToken ct) =>
+		(await _relations.ListByKindAsync(projectKey, "part_of", ct))
+			.GroupBy(e => e.FromNodeId, StringComparer.Ordinal)
+			.ToDictionary(g => g.Key, g => g.First().ToNodeId, StringComparer.Ordinal);
+
+	// Distance from a root along part_of (0 = root). Guarded against cycles.
+	static int DepthOf(string nodeId, Dictionary<string, string> parentOf)
+	{
+		var d = 0; var cur = nodeId; var guard = 0;
+		while (parentOf.TryGetValue(cur, out var par) && guard++ < 1000) { d++; cur = par; }
+		return d;
+	}
+
+	// Resolve `under` (a flat slug on this board) to its nodeId, or null if absent/unset.
+	static string? ResolveUnderNodeId(string? under, List<PlanNode> active)
+	{
+		if (string.IsNullOrWhiteSpace(under)) return null;
+		var slug = TaskSlug.Validate(under);
+		return active.FirstOrDefault(n => n.Key == slug)?.NodeId;
 	}
 
 	public Task<IReadOnlyList<PlanNode>> ListActiveNodesAsync(string projectKey, string board, CancellationToken ct = default)
@@ -140,32 +165,40 @@ public sealed partial class TasksService : ITasksService
 		return Task.FromResult(active);
 	}
 
-	// Hide terminal (closed) nodes unless includeClosed; keep terminal ancestors of any
-	// visible node so the tree stays connected. `underKey` (canonical) restricts to a subtree.
-	static List<PlanNode> FilterVisible(List<PlanNode> active, bool includeClosed, string? underKey)
+	// Hide terminal (closed) nodes unless includeClosed; keep terminal part_of ancestors of
+	// any visible node so the tree stays connected. `underId` restricts to a part_of subtree.
+	static List<PlanNode> FilterVisible(List<PlanNode> active, bool includeClosed, string? underId, Dictionary<string, string> parentOf)
 	{
 		IEnumerable<PlanNode> scoped = active;
-		if (underKey is not null)
-			scoped = active.Where(n => n.Key == underKey || n.Key.StartsWith(underKey + "/", StringComparison.Ordinal));
+		if (underId is not null)
+			scoped = active.Where(n => InSubtree(n.NodeId, underId, parentOf));
 		var pool = scoped.ToList();
 		if (includeClosed) return pool;
 
-		var keep = new HashSet<string>(StringComparer.Ordinal);
+		var keep = new HashSet<string>(StringComparer.Ordinal); // nodeIds
 		foreach (var n in pool.Where(n => !WorkflowCatalog.IsTerminalSlug(n.Status)))
 		{
-			keep.Add(n.Key);
-			var parts = n.Key.Split('/');
-			for (var i = 1; i < parts.Length; i++)
-				keep.Add(string.Join('/', parts.Take(i)));
+			keep.Add(n.NodeId);
+			var cur = n.NodeId; var guard = 0;
+			while (parentOf.TryGetValue(cur, out var par) && guard++ < 1000) { keep.Add(par); cur = par; }
 		}
-		return pool.Where(n => keep.Contains(n.Key)).ToList();
+		return pool.Where(n => keep.Contains(n.NodeId)).ToList();
 	}
 
-	static string? NormalizeUnder(string? under) =>
-		string.IsNullOrWhiteSpace(under) ? null : TaskNodeId.Parse(under).ToKey();
+	// True if `nodeId` is `rootId` or a part_of descendant of it (walk parents up to root).
+	static bool InSubtree(string nodeId, string rootId, Dictionary<string, string> parentOf)
+	{
+		var cur = nodeId; var guard = 0;
+		while (true)
+		{
+			if (cur == rootId) return true;
+			if (!parentOf.TryGetValue(cur, out var par) || guard++ >= 1000) return false;
+			cur = par;
+		}
+	}
 
 	// A resolvable reference to a node anywhere in the project (links cross boards).
-	sealed record NodeRef(string Board, string BoardKind, string Key, string? L1, string? L2, string? L3, string Title, string Status, string Type);
+	sealed record NodeRef(string Board, string BoardKind, string Slug, string Title, string Status, string Type);
 
 	// nodeId -> NodeRef across every board in the project (links bind to nodeId, which is
 	// globally unique, so a link target may live on another board).
@@ -176,21 +209,19 @@ public sealed partial class TasksService : ITasksService
 		foreach (var b in await _boards.ListAsync(projectKey, ct))
 			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
 				if (n.NodeId.Length > 0)
-				{
-					var id = TaskNodeId.TryParse(n.Key, out var pid) ? pid : null;
-					index[n.NodeId] = new NodeRef(b.Name, b.Kind, n.Key, id?.PhaseKey ?? n.Key, id?.WaveKey, id?.TaskKey, n.Name, n.Status, n.Type);
-				}
+					index[n.NodeId] = new NodeRef(b.Name, b.Kind, n.Key, n.Name, n.Status, n.Type);
 		return index;
 	}
 
 	static LinkDto LinkRef(string nodeId, Dictionary<string, NodeRef> index) =>
 		index.TryGetValue(nodeId, out var r)
-			? new LinkDto(nodeId, r.Board, r.L1, r.L2, r.L3, r.Title, r.Status)
-			: new LinkDto(nodeId, null, null, null, null, null, "missing");
+			? new LinkDto(nodeId, r.Board, r.Slug, r.Title, r.Status)
+			: new LinkDto(nodeId, null, null, null, "missing");
 
-	// COMPUTED spec roll-up: a spec node's delivery status derives from the tasks linked
-	// (task_spec) to it AND its descendants.
-	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(string projectKey, IReadOnlyList<PlanNode> specNodes, CancellationToken ct)
+	// COMPUTED spec roll-up (keyed by NodeId): a spec node's delivery derives from the
+	// tasks linked (task_spec) to it AND its part_of descendants (decomposition may cross
+	// boards). Replaces the old path-prefix descent.
+	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(string projectKey, IReadOnlyList<PlanNode> specNodes, Dictionary<string, string> parentOf, CancellationToken ct)
 	{
 		var byNodeId = new Dictionary<string, (string Type, string Status)>(StringComparer.Ordinal);
 		var ctx = _boards.GetContext(projectKey);
@@ -198,19 +229,29 @@ public sealed partial class TasksService : ITasksService
 			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
 				if (n.NodeId.Length > 0) byNodeId[n.NodeId] = (n.Type, n.Status);
 
-		var tasksOf = new Dictionary<string, List<string>>(StringComparer.Ordinal);
-		foreach (var s in specNodes)
-			tasksOf[s.NodeId] = (await _relations.ListAsync(projectKey, s.NodeId, "to", ct: ct))
-				.Where(e => e.Kind == "task_spec").Select(e => e.FromNodeId).ToList();
+		// childrenOf (invert part_of) and tasksOf (inbound task_spec), each one query.
+		var childrenOf = new Dictionary<string, List<string>>(StringComparer.Ordinal);
+		foreach (var (child, parent) in parentOf)
+			(childrenOf.TryGetValue(parent, out var l) ? l : childrenOf[parent] = []).Add(child);
+		var tasksOf = (await _relations.ListByKindAsync(projectKey, "task_spec", ct))
+			.GroupBy(e => e.ToNodeId, StringComparer.Ordinal)
+			.ToDictionary(g => g.Key, g => g.Select(e => e.FromNodeId).ToList(), StringComparer.Ordinal);
 
 		var result = new Dictionary<string, string>(StringComparer.Ordinal);
 		foreach (var s in specNodes)
 		{
-			var taskIds = specNodes
-				.Where(x => x.Key == s.Key || x.Key.StartsWith(s.Key + "/", StringComparison.Ordinal))
-				.SelectMany(x => tasksOf.TryGetValue(x.NodeId, out var t) ? t : new List<string>())
-				.Distinct();
-			result[s.Key] = Delivery(taskIds.Where(byNodeId.ContainsKey).Select(id => byNodeId[id]).ToList());
+			// BFS the spec node's part_of subtree, union each node's inbound tasks.
+			var taskIds = new HashSet<string>(StringComparer.Ordinal);
+			var stack = new Stack<string>(); stack.Push(s.NodeId); var guard = 0;
+			var seen = new HashSet<string>(StringComparer.Ordinal);
+			while (stack.Count > 0 && guard++ < 100000)
+			{
+				var cur = stack.Pop();
+				if (!seen.Add(cur)) continue;
+				if (tasksOf.TryGetValue(cur, out var ts)) foreach (var t in ts) taskIds.Add(t);
+				if (childrenOf.TryGetValue(cur, out var kids)) foreach (var k in kids) stack.Push(k);
+			}
+			result[s.NodeId] = Delivery(taskIds.Where(byNodeId.ContainsKey).Select(id => byNodeId[id]).ToList());
 		}
 		return result;
 	}
@@ -252,6 +293,14 @@ public sealed partial class TasksService : ITasksService
 			await LinkRefsAsync(projectKey, "blocks", desired, blockedBy, blockerIsFrom: true, ct);
 			await CloseBlocksOnLeaveAsync(projectKey, desired, prior, ct);
 			await RunDoneEffectsAsync(projectKey, kind, desired, ct);
+		}
+		// Tags + part_of are node metadata, not a content revision — apply whenever the
+		// upsert did not conflict (so a pure tag/parent change on an unchanged node still
+		// takes effect; on a no-op the NodeId in `desired` is the existing one).
+		if (r.Conflicts.Count == 0)
+		{
+			await SetTagsAsync(projectKey, board, nodes, desired, ct);
+			await SetPartOfAsync(projectKey, board, nodes, desired, ct);
 		}
 		return new UpsertOutcome(r, kind);
 	}
@@ -400,6 +449,65 @@ public sealed partial class TasksService : ITasksService
 			}
 	}
 
+	// Apply enforced tags after the upsert. A patch whose Tags is null OMITS tags (leave
+	// as-is); a non-null list (incl. empty) is the new full set for that node. Tags bind
+	// to the node's stable NodeId.
+	async Task SetTagsAsync(string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+	{
+		var nodeIdOf = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
+		foreach (var p in patches)
+		{
+			if (p.Tags is null) continue;
+			if (nodeIdOf.TryGetValue(p.Key, out var nid) && nid.Length > 0)
+				await _tags.SetAsync(projectKey, board, nid, p.Tags, ct);
+		}
+	}
+
+	// Apply part_of (vertical decomposition) after the upsert. A patch whose PartOf is null
+	// OMITS it (leave as-is); "" DETACHES (make a root); otherwise sets the parent (a slug
+	// on this board or a NodeId). Enforces a single active parent and rejects cycles.
+	async Task SetPartOfAsync(string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+	{
+		if (!patches.Any(p => p.PartOf is not null)) return;
+		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
+		var ctx = _boards.GetContext(projectKey);
+		// Slug -> nodeId for parent resolution on this board: active rows overlaid with this batch.
+		var slugToId = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
+			.Where(n => n.NodeId.Length > 0).ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
+		foreach (var (k, nid) in byKey) slugToId[k] = nid;
+		var parentOf = await ParentMapAsync(projectKey, ct);
+
+		foreach (var p in patches)
+		{
+			if (p.PartOf is null) continue;
+			if (!byKey.TryGetValue(p.Key, out var childId) || childId.Length == 0) continue;
+
+			// Single parent: close any existing part_of from this child first.
+			if (parentOf.TryGetValue(childId, out var oldParent))
+			{
+				await _relations.CloseAsync(projectKey, "part_of", childId, oldParent, ct);
+				parentOf.Remove(childId);
+			}
+			if (p.PartOf.Length == 0) continue; // detach only
+
+			var parentId = ResolveParentId(p.PartOf, slugToId, ctx);
+			if (InSubtree(parentId, childId, parentOf)) // parent is the child or its descendant → cycle
+				throw new ArgumentException($"part_of would create a cycle (node '{p.Key}')");
+			await _relations.CreateAsync(projectKey, "part_of", childId, parentId, ct);
+			parentOf[childId] = parentId;
+		}
+	}
+
+	// Resolve a PartOf value to a parent NodeId: a slug on this board, else an existing
+	// NodeId (cross-board allowed — the project file holds every board's nodes).
+	static string ResolveParentId(string partOf, Dictionary<string, string> slugToId, TasksDb ctx)
+	{
+		var v = partOf.Trim();
+		if (slugToId.TryGetValue(v.ToLowerInvariant(), out var bySlug)) return bySlug;
+		if (ctx.PlanNodes.Any(n => n.ActiveTo == null && n.NodeId == v)) return v;
+		throw new ArgumentException($"part_of parent '{partOf}' is neither a node key on this board nor a known NodeId");
+	}
+
 	// Invariant: a work task in `Blocked` must name a blocker (blockedBy in this call, or
 	// an already-active `blocks` edge into it). "Blocked requires a link."
 	async Task RequireBlockersAsync(BoardKind kind, string projectKey, PlanNode[] desired, Dictionary<string, string> blockedBy, CancellationToken ct)
@@ -486,7 +594,7 @@ public sealed partial class TasksService : ITasksService
 		};
 		var status = WorkflowCatalog.For(kind, type.Length == 0 ? null : type)?.Initial ?? "Pending";
 
-		var key = new TaskNodeId("incoming", GenKey(name), null).ToKey();
+		var key = GenKey(name);
 		var ctx = _boards.GetContext(projectKey);
 		// Assign a stable NodeId so the node can be linked (relations/specRef) later.
 		await TemporalStore.UpsertAsync(ctx, new[]
@@ -510,7 +618,7 @@ public sealed partial class TasksService : ITasksService
 	public async Task<string> ReportIssueAsync(string project, string board, string title, string body, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("title is required");
-		var key = new TaskNodeId("incoming", IssueSlug(title), null).ToKey();
+		var key = IssueSlug(title);
 		await _boards.EnsureAsync(project, board, ct); // auto-create the triage board on first report
 		var ctx = _boards.GetContext(project);
 		var r = await TemporalStore.UpsertAsync(ctx, new[]

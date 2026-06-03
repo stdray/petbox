@@ -14,9 +14,9 @@ using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Tasks;
 
-// Verifies the Phase>Wave>Task tree contract surfaced by the Tasks MCP tools:
-// structured phase/wave/task input canonicalises to the engine Key, and tasks.get
-// returns decomposed levels + depth + parentKey.
+// Verifies the flat-node + part_of tree contract surfaced by the Tasks MCP tools:
+// nodes are flat slugs, vertical structure is the part_of edge, and tasks.get returns
+// parentNodeId/parentSlug + a computed depth (the projection that replaced l1/l2/l3).
 [Collection("DataModule")]
 public sealed class TasksTreeContractTests : IDisposable
 {
@@ -40,7 +40,7 @@ public sealed class TasksTreeContractTests : IDisposable
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db, _factory);
 		_relations = new RelationStore(_db);
-		_tasks = new TasksService(_store, _relations);
+		_tasks = new TasksService(_store, _relations, new TagStore(_factory));
 	}
 
 	public void Dispose()
@@ -52,16 +52,16 @@ public sealed class TasksTreeContractTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Upsert_StructuredLevels_CanonicalisesAndDecomposes()
+	public async Task Upsert_FlatNodesWithPartOf_DecomposeViaEdges()
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "roadmap", null);
 
 		var nodes = JsonSerializer.SerializeToElement(new object[]
 		{
-			new { l1 = "logging", status = "InProgress", title = "Logging", body = "winston -> PetBox", priority = 0 },
-			new { l1 = "logging", l2 = "ingest", status = "Pending", title = "Ingest", body = "ship CLEF", priority = 1 },
-			new { l1 = "logging", l2 = "ingest", l3 = "endpoint", status = "Pending", title = "Endpoint", body = "POST endpoint", priority = 2 },
+			new { key = "logging", status = "InProgress", title = "Logging", body = "winston -> PetBox", priority = 0 },
+			new { key = "ingest", partOf = "logging", status = "Pending", title = "Ingest", body = "ship CLEF", priority = 1 },
+			new { key = "endpoint", partOf = "ingest", status = "Pending", title = "Endpoint", body = "POST endpoint", priority = 2 },
 		});
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes);
 
@@ -69,19 +69,54 @@ public sealed class TasksTreeContractTests : IDisposable
 		var arr = got.GetProperty("nodes").EnumerateArray().ToList();
 		arr.Should().HaveCount(3);
 
-		var leaf = arr.Single(n => n.GetProperty("depth").GetInt32() == 3);
-		leaf.GetProperty("key").GetString().Should().Be("logging/ingest/endpoint");
-		leaf.GetProperty("l1").GetString().Should().Be("logging");
-		leaf.GetProperty("l2").GetString().Should().Be("ingest");
-		leaf.GetProperty("l3").GetString().Should().Be("endpoint");
-		leaf.GetProperty("parentKey").GetString().Should().Be("logging/ingest");
+		// Depth is computed from part_of (root = 0). The leaf is two edges down.
+		var leaf = arr.Single(n => n.GetProperty("depth").GetInt32() == 2);
+		leaf.GetProperty("key").GetString().Should().Be("endpoint");
+		leaf.GetProperty("parentSlug").GetString().Should().Be("ingest");
 		leaf.GetProperty("title").GetString().Should().Be("Endpoint");
 		leaf.GetProperty("body").GetString().Should().Be("POST endpoint");
 
-		var root = arr.Single(n => n.GetProperty("depth").GetInt32() == 1);
+		var root = arr.Single(n => n.GetProperty("depth").GetInt32() == 0);
 		root.GetProperty("key").GetString().Should().Be("logging");
-		root.GetProperty("parentKey").ValueKind.Should().Be(JsonValueKind.Null);
+		root.GetProperty("parentNodeId").ValueKind.Should().Be(JsonValueKind.Null);
 	}
+
+	[Fact]
+	public async Task PartOf_Reparent_SingleParent_AndCycleRejected()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "roadmap", null);
+		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
+			JsonSerializer.SerializeToElement(new object[]
+			{
+				new { key = "a", status = "InProgress", title = "A", body = "x" },
+				new { key = "b", partOf = "a", status = "InProgress", title = "B", body = "x" },
+				new { key = "c", status = "InProgress", title = "C", body = "x" },
+			})));
+		var ver = up.GetProperty("currentVersion").GetInt64();
+
+		FieldOf(Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap")), "b", "parentSlug").Should().Be("a");
+
+		// Reparent b under c (single active parent — the a->b edge is closed).
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
+			JsonSerializer.SerializeToElement(new object[] { new { key = "b", partOf = "c", version = ver } }));
+		FieldOf(Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap")), "b", "parentSlug").Should().Be("c");
+
+		// Cycle: a part_of b, but b is already a descendant of c which... make a a child of b
+		// while b is reachable — a->b->? a is root, b under c. Set c part_of b → c,b,? Let's
+		// make the direct 2-cycle: set a part_of b is fine (a root). Instead force a cycle:
+		// b under c; now set c part_of b → c->b->c? b's parent is c, so c part_of b loops.
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
+			JsonSerializer.SerializeToElement(new object[] { new { key = "c", partOf = "b", version = ver } })));
+		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
+		res.GetProperty("error").GetProperty("message").GetString().Should().Contain("cycle");
+	}
+
+	// Find a node by flat key in a tasks.get result and read a string field.
+	static string FieldOf(JsonElement got, string key, string field) =>
+		got.GetProperty("nodes").EnumerateArray()
+			.Single(n => n.GetProperty("key").GetString() == key)
+			.GetProperty(field).GetString()!;
 
 	[Fact]
 	public async Task Upsert_InvalidSegment_IsRejected()
