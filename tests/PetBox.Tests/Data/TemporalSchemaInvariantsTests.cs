@@ -23,7 +23,7 @@ public sealed class TemporalSchemaInvariantsTests : IDisposable
 	}
 
 	[Theory]
-	[InlineData("tasks", "plan_nodes", "ux_plan_nodes_active_key")]
+	[InlineData("tasks", "plan_nodes", "ux_plan_nodes_active_board_key")]
 	[InlineData("memory", "memory_entries", "ux_memory_entries_active_key")]
 	[InlineData("sessions", "sessions", "ux_sessions_active_key")]
 	public void Ensure_IsIdempotent_SetsWal_AndCreatesPartialUniqueIndex(string tier, string table, string index)

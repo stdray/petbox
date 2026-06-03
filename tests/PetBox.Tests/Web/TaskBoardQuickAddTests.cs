@@ -54,7 +54,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 		await _store.CreateAsync("proj", board, null, kind);
 		var model = new TaskBoardModel(Flags(), _tasks) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
 		await model.OnPostCreateAsync("My item", "details", 50, default);
-		return _store.GetContext("proj", board).PlanNodes.Where(n => n.ActiveTo == null).ToList().Single();
+		return _store.GetContext("proj").PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList().Single();
 	}
 
 	[Fact]

@@ -44,7 +44,8 @@ public sealed class TaskBoardStoreTests : IDisposable
 		var meta = await _store.CreateAsync("proj", "roadmap", "the plan");
 		meta.Name.Should().Be("roadmap");
 		(await _store.ExistsAsync("proj", "roadmap")).Should().BeTrue();
-		File.Exists(ScopedDbFiles.PathFor(_factory.BaseDir, "proj", "roadmap")).Should().BeTrue();
+		// Boards share one per-project file now (not a file per board).
+		File.Exists(ScopedDbFiles.PathFor(_factory.BaseDir, "proj", null)).Should().BeTrue();
 	}
 
 	[Fact]
@@ -99,16 +100,16 @@ public sealed class TaskBoardStoreTests : IDisposable
 	public async Task PlanNode_TemporalRoundtrip_ThroughBoardFile()
 	{
 		await _store.CreateAsync("proj", "roadmap", null);
-		var ctx = _store.GetContext("proj", "roadmap");
+		var ctx = _store.GetContext("proj");
 
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new PlanNode { Key = "Phase 1", Version = 0, Status = "InProgress", Body = "Foundation", Priority = 100 },
-		});
+			new PlanNode { Board = "roadmap", Key = "Phase 1", Version = 0, Status = "InProgress", Body = "Foundation", Priority = 100 },
+		}, partition: n => n.Board == "roadmap");
 		r.Applied.Should().BeTrue();
 		r.Inserted.Should().Be(1);
 
-		var active = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList();
+		var active = ctx.PlanNodes.Where(n => n.Board == "roadmap" && n.ActiveTo == null).ToList();
 		active.Should().ContainSingle();
 		active[0].Status.Should().Be("InProgress");
 		active[0].Body.Should().Be("Foundation");

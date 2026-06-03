@@ -10,6 +10,11 @@ namespace PetBox.Tasks.Data;
 [Table("plan_nodes")]
 public sealed record PlanNode : TemporalRow
 {
+	// Partition: which board this node belongs to. All boards of a project share one
+	// plan_nodes table (one file per project), scoped by Board — so Key uniqueness and
+	// the version cursor are per-board. Set by the service; carried across revisions by
+	// AsRevision. NOT part of SamePayload (it's partition identity, never an edit).
+	[Column, NotNull] public string Board { get; init; } = string.Empty;
 	// Stable identity: assigned at birth, carried across revisions AND renames
 	// (the upsert layer copies it from the prior/source row). Relations bind to
 	// this, not to Key, so links survive a re-key. NOT part of SamePayload.

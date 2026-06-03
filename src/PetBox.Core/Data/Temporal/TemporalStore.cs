@@ -1,3 +1,4 @@
+using System.Linq.Expressions;
 using LinqToDB;
 using LinqToDB.Data;
 
@@ -64,9 +65,13 @@ public static class TemporalStore
 		IReadOnlyList<TRow> desired,
 		long sinceVersion = 0,
 		TimeProvider? time = null,
+		// When set, scopes every read/close/delta to a partition within the table (e.g.
+		// one board's rows in a shared plan_nodes), so several scopes can share one file
+		// with independent keys + per-partition version cursors. Null = whole table.
+		Expression<Func<TRow, bool>>? partition = null,
 		CancellationToken ct = default)
 		where TRow : TemporalRow =>
-		UpsertAsync(db, desired, [], sinceVersion, time, onBeforeApply: null, ct);
+		UpsertAsync(db, desired, [], sinceVersion, time, onBeforeApply: null, partition, ct);
 
 	// Overload that also soft-deletes (closes the active row with no new revision) the
 	// given keys — used by memory.upsert's `deleted:true`. version 0 = delete the
@@ -78,9 +83,10 @@ public static class TemporalStore
 		IReadOnlyList<(string Key, long Version)> delete,
 		long sinceVersion = 0,
 		TimeProvider? time = null,
+		Expression<Func<TRow, bool>>? partition = null,
 		CancellationToken ct = default)
 		where TRow : TemporalRow =>
-		UpsertAsync(db, desired, delete, sinceVersion, time, onBeforeApply: null, ct);
+		UpsertAsync(db, desired, delete, sinceVersion, time, onBeforeApply: null, partition, ct);
 
 	// onBeforeApply is a test-only seam: it fires after classification but before
 	// the close+insert transaction, to drive the CloseRace branch deterministically.
@@ -91,13 +97,14 @@ public static class TemporalStore
 		long sinceVersion,
 		TimeProvider? time,
 		Func<Task>? onBeforeApply,
+		Expression<Func<TRow, bool>>? partition,
 		CancellationToken ct)
 		where TRow : TemporalRow
 	{
 		var table = db.GetTable<TRow>();
 
-		var active = await ActiveByKeyAsync(table, desired, delete, ct);
-		var fromVersion = await MaxVersionAsync(table, ct);
+		var active = await ActiveByKeyAsync(table, desired, delete, partition, ct);
+		var fromVersion = await MaxVersionAsync(table, partition, ct);
 		var nextVersion = fromVersion + 1;
 		var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
 
@@ -126,7 +133,7 @@ public static class TemporalStore
 			if (onBeforeApply is not null)
 				await onBeforeApply();
 
-			var race = await ApplyAsync(db, table, batch, nextVersion, now, ct);
+			var race = await ApplyAsync(db, table, batch, nextVersion, now, partition, ct);
 			if (race is not null)
 			{
 				conflicts = [race];
@@ -139,8 +146,8 @@ public static class TemporalStore
 			}
 		}
 
-		var (added, updated, removed) = await DeltaAsync(table, sinceVersion, ct);
-		var currentVersion = await MaxVersionAsync(table, ct);
+		var (added, updated, removed) = await DeltaAsync(table, sinceVersion, partition, ct);
+		var currentVersion = await MaxVersionAsync(table, partition, ct);
 
 		return new TemporalUpsertResult<TRow>(applied, currentVersion, inserted, closed, conflicts, added, updated, removed);
 	}
@@ -148,7 +155,8 @@ public static class TemporalStore
 	// ── 1. read current state ────────────────────────────────────────────────
 
 	static async Task<Dictionary<string, TRow>> ActiveByKeyAsync<TRow>(
-		ITable<TRow> table, IReadOnlyList<TRow> desired, IReadOnlyList<(string Key, long Version)> delete, CancellationToken ct)
+		ITable<TRow> table, IReadOnlyList<TRow> desired, IReadOnlyList<(string Key, long Version)> delete,
+		Expression<Func<TRow, bool>>? partition, CancellationToken ct)
 		where TRow : TemporalRow
 	{
 		// Renames need the active row at PrevKey too; deletes need their key's active row.
@@ -157,15 +165,19 @@ public static class TemporalStore
 			.Concat(delete.Select(t => t.Key))
 			.Distinct()
 			.ToList();
-		return await table
-			.Where(x => x.ActiveTo == null && keys.Contains(x.Key))
-			.ToDictionaryAsync(x => x.Key, ct);
+		var q = table.Where(x => x.ActiveTo == null && keys.Contains(x.Key));
+		if (partition is not null) q = q.Where(partition);
+		return await q.ToDictionaryAsync(x => x.Key, ct);
 	}
 
-	// Plan-wide cursor: the max revision across the whole (per-scope) table.
-	static async Task<long> MaxVersionAsync<TRow>(ITable<TRow> table, CancellationToken ct)
-		where TRow : TemporalRow =>
-		await table.Select(x => (long?)x.Version).MaxAsync(ct) ?? 0;
+	// Cursor: the max revision within the partition (or the whole table when unpartitioned).
+	static async Task<long> MaxVersionAsync<TRow>(ITable<TRow> table, Expression<Func<TRow, bool>>? partition, CancellationToken ct)
+		where TRow : TemporalRow
+	{
+		IQueryable<TRow> q = table;
+		if (partition is not null) q = q.Where(partition);
+		return await q.Select(x => (long?)x.Version).MaxAsync(ct) ?? 0;
+	}
 
 	// ── 2. classify each desired row against its active revision ─────────────
 
@@ -242,13 +254,14 @@ public static class TemporalStore
 	// Returns null on commit, or a CloseRace conflict if a baseline row was no
 	// longer active (a writer slipped into our read→close window).
 	static async Task<TemporalConflict?> ApplyAsync<TRow>(
-		DataConnection db, ITable<TRow> table, Batch<TRow> batch, long nextVersion, DateTime now, CancellationToken ct)
+		DataConnection db, ITable<TRow> table, Batch<TRow> batch, long nextVersion, DateTime now,
+		Expression<Func<TRow, bool>>? partition, CancellationToken ct)
 		where TRow : TemporalRow
 	{
 		using var tx = await db.BeginTransactionAsync(ct);
 		try
 		{
-			var closed = await CloseBaselinesAsync(table, batch.ToClose, activeTo: nextVersion, now, ct);
+			var closed = await CloseBaselinesAsync(table, batch.ToClose, activeTo: nextVersion, now, partition, ct);
 			if (closed != batch.ToClose.Count)
 			{
 				await tx.RollbackAsync(ct);
@@ -270,14 +283,17 @@ public static class TemporalStore
 
 	static async Task<int> CloseBaselinesAsync<TRow>(
 		ITable<TRow> table, List<(string Key, long Version)> toClose,
-		long activeTo, DateTime now, CancellationToken ct)
+		long activeTo, DateTime now, Expression<Func<TRow, bool>>? partition, CancellationToken ct)
 		where TRow : TemporalRow
 	{
 		if (toClose.Count == 0) return 0;
 
 		var keys = toClose.Select(c => new { c.Key, c.Version }).ToList();
-		return await table
-			.Where(x => x.ActiveTo == null && new { x.Key, x.Version }.In(keys))
+		// Partition filter is essential here: (Key, Version) can collide across partitions
+		// sharing the table, so an unscoped close could retire another partition's row.
+		var q = table.Where(x => x.ActiveTo == null && new { x.Key, x.Version }.In(keys));
+		if (partition is not null) q = q.Where(partition);
+		return await q
 			.Set(x => x.ActiveTo, _ => (long?)activeTo) // stamp the retiring version, so deaths are queryable by cursor
 			.Set(x => x.Updated, _ => now)
 			.UpdateAsync(ct);
@@ -286,28 +302,27 @@ public static class TemporalStore
 	// ── 4. delta since the caller's cursor ───────────────────────────────────
 
 	static async Task<(List<TRow> Added, List<TRow> Updated, List<string> Removed)> DeltaAsync<TRow>(
-		ITable<TRow> table, long sinceVersion, CancellationToken ct)
+		ITable<TRow> table, long sinceVersion, Expression<Func<TRow, bool>>? partition, CancellationToken ct)
 		where TRow : TemporalRow
 	{
-		var changed = await table.Where(x => x.ActiveTo == null && x.Version > sinceVersion).ToListAsync(ct);
+		var changedQ = table.Where(x => x.ActiveTo == null && x.Version > sinceVersion);
+		if (partition is not null) changedQ = changedQ.Where(partition);
+		var changed = await changedQ.ToListAsync(ct);
 		// Per-batch invariant: a row born this batch has Created == Updated; an
 		// edited row carried its Created from a prior batch -> Created != Updated.
 		var added = changed.Where(x => x.Created == x.Updated).ToList();
 		var updated = changed.Where(x => x.Created != x.Updated).ToList();
 
-		var died = await table
-			.Where(x => x.ActiveTo != null && x.ActiveTo > sinceVersion)
-			.Select(x => x.Key)
-			.Distinct()
-			.ToListAsync(ct);
+		var diedQ = table.Where(x => x.ActiveTo != null && x.ActiveTo > sinceVersion);
+		if (partition is not null) diedQ = diedQ.Where(partition);
+		var died = await diedQ.Select(x => x.Key).Distinct().ToListAsync(ct);
 
 		var removed = new List<string>();
 		if (died.Count > 0)
 		{
-			var stillActive = await table
-				.Where(x => x.ActiveTo == null && died.Contains(x.Key))
-				.Select(x => x.Key)
-				.ToListAsync(ct);
+			var stillQ = table.Where(x => x.ActiveTo == null && died.Contains(x.Key));
+			if (partition is not null) stillQ = stillQ.Where(partition);
+			var stillActive = await stillQ.Select(x => x.Key).ToListAsync(ct);
 			removed = died.Except(stillActive).ToList();
 		}
 

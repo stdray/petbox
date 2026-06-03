@@ -567,4 +567,29 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("immutable");
 	}
+
+	// 21. boards of a project now share ONE file, partitioned by Board: the same node key
+	// in two boards is independent (own node, own version cursor), and editing one leaves
+	// the other untouched. Proves the project-level merge keeps boards isolated.
+	[Fact]
+	public async Task TwoBoards_SameKey_AreIsolated()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "a" });
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "b" });
+
+		var ia = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "a", nodes = Nodes(new { key = "phase-1", status = "Pending", title = "A node", body = "x" }) });
+		IsErr(ia).Should().BeFalse(Text(ia));
+		var ib = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "b", nodes = Nodes(new { key = "phase-1", status = "Pending", title = "B node", body = "y" }) });
+		IsErr(ib).Should().BeFalse(Text(ib));
+
+		// Same key, different boards → independent rows, no collision.
+		FieldOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "a" }), "phase-1", "title").Should().Be("A node");
+		FieldOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "b" }), "phase-1", "title").Should().Be("B node");
+
+		// Editing A's node (baseline version 1 within board a's cursor) leaves B untouched.
+		var edit = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "a", nodes = Nodes(new { key = "phase-1", version = 1, status = "InProgress", title = "A node", body = "x" }) });
+		IsErr(edit).Should().BeFalse(Text(edit));
+		StatusOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "a" }), "phase-1").Should().Be("InProgress");
+		StatusOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "b" }), "phase-1").Should().Be("Pending");
+	}
 }

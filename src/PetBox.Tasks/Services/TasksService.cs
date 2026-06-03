@@ -86,8 +86,8 @@ public sealed partial class TasksService : ITasksService
 	{
 		await EnsureBoard(projectKey, board, ct);
 
-		var ctx = _boards.GetContext(projectKey, board);
-		var all = ctx.PlanNodes.ToList();
+		var ctx = _boards.GetContext(projectKey);
+		var all = ctx.PlanNodes.Where(n => n.Board == board).ToList();
 		var lineage = BuildLineage(all);
 		var active = all.Where(n => n.ActiveTo == null).OrderBy(n => n.Priority).ThenBy(n => n.Key).ToList();
 		var current = all.Count == 0 ? 0 : all.Max(n => n.Version);
@@ -135,8 +135,8 @@ public sealed partial class TasksService : ITasksService
 
 	public Task<IReadOnlyList<PlanNode>> ListActiveNodesAsync(string projectKey, string board, CancellationToken ct = default)
 	{
-		var ctx = _boards.GetContext(projectKey, board);
-		IReadOnlyList<PlanNode> active = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList();
+		var ctx = _boards.GetContext(projectKey);
+		IReadOnlyList<PlanNode> active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
 		return Task.FromResult(active);
 	}
 
@@ -172,8 +172,9 @@ public sealed partial class TasksService : ITasksService
 	async Task<Dictionary<string, NodeRef>> BuildNodeIndexAsync(string projectKey, CancellationToken ct)
 	{
 		var index = new Dictionary<string, NodeRef>(StringComparer.Ordinal);
+		var ctx = _boards.GetContext(projectKey);
 		foreach (var b in await _boards.ListAsync(projectKey, ct))
-			foreach (var n in _boards.GetContext(projectKey, b.Name).PlanNodes.Where(x => x.ActiveTo == null).ToList())
+			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
 				if (n.NodeId.Length > 0)
 				{
 					var id = TaskNodeId.TryParse(n.Key, out var pid) ? pid : null;
@@ -192,8 +193,9 @@ public sealed partial class TasksService : ITasksService
 	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(string projectKey, IReadOnlyList<PlanNode> specNodes, CancellationToken ct)
 	{
 		var byNodeId = new Dictionary<string, (string Type, string Status)>(StringComparer.Ordinal);
+		var ctx = _boards.GetContext(projectKey);
 		foreach (var b in await _boards.ListAsync(projectKey, ct))
-			foreach (var n in _boards.GetContext(projectKey, b.Name).PlanNodes.Where(x => x.ActiveTo == null).ToList())
+			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
 				if (n.NodeId.Length > 0) byNodeId[n.NodeId] = (n.Type, n.Status);
 
 		var tasksOf = new Dictionary<string, List<string>>(StringComparer.Ordinal);
@@ -232,17 +234,17 @@ public sealed partial class TasksService : ITasksService
 			throw new InvalidOperationException($"board '{board}' is closed — reopen it (tasks.board_reopen) before writing");
 
 		var kind = WorkflowCatalog.ParseKind(meta.Kind);
-		var ctx = _boards.GetContext(projectKey, board);
-		var prior = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
+		var ctx = _boards.GetContext(projectKey);
+		var prior = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
-		var desired = nodes.Select(p => ApplyWorkflow(kind, Merge(p, prior), prior)).ToArray();
+		var desired = nodes.Select(p => ApplyWorkflow(kind, Merge(p, prior), prior) with { Board = board }).ToArray();
 		ValidateChanges(desired, prior);
 		var specRefs = LinkFields(nodes, p => p.SpecRef);
 		var blockedBy = LinkFields(nodes, p => p.BlockedBy);
 		RequireSpecLinks(kind, desired, prior, specRefs);
 		await ValidateSpecRefsAsync(projectKey, meta, specRefs, ct);
 		await RequireBlockersAsync(kind, projectKey, desired, blockedBy, ct);
-		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, ct: ct);
+		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, partition: n => n.Board == board, ct: ct);
 		if (r.Applied)
 		{
 			await _boards.TouchAsync(projectKey, board, ct);
@@ -258,8 +260,8 @@ public sealed partial class TasksService : ITasksService
 	{
 		await EnsureBoard(projectKey, board, ct);
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
-		var ctx = _boards.GetContext(projectKey, board);
-		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion, ct: ct);
+		var ctx = _boards.GetContext(projectKey);
+		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion, partition: n => n.Board == board, ct: ct);
 		return new UpsertOutcome(r, WorkflowCatalog.ParseKind(meta.Kind));
 	}
 
@@ -371,18 +373,17 @@ public sealed partial class TasksService : ITasksService
 	// target status chosen by `pick` (null = leave as-is). System action (no gate).
 	async Task SetActiveNodeStatusAsync(string projectKey, string nodeId, Func<PetBox.Tasks.Workflow.Workflow?, PlanNode, string?> pick, CancellationToken ct)
 	{
-		foreach (var b in await _boards.ListAsync(projectKey, ct))
-		{
-			var ctx = _boards.GetContext(projectKey, b.Name);
-			var node = ctx.PlanNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
-			if (node is null) continue;
-			var wf = WorkflowCatalog.For(WorkflowCatalog.ParseKind(b.Kind), node.Type.Length == 0 ? null : node.Type);
-			var target = pick(wf, node);
-			if (target is null || string.Equals(target, node.Status, StringComparison.OrdinalIgnoreCase)) return;
-			await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = target } }, ct: ct);
-			await _boards.TouchAsync(projectKey, b.Name, ct);
-			return;
-		}
+		// NodeId is unique across the project, so find the active row directly in the one
+		// project file; its Board tells us which partition to write back into.
+		var ctx = _boards.GetContext(projectKey);
+		var node = ctx.PlanNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
+		if (node is null) return;
+		var meta = await _boards.FindAsync(projectKey, node.Board, ct);
+		var wf = WorkflowCatalog.For(WorkflowCatalog.ParseKind(meta?.Kind), node.Type.Length == 0 ? null : node.Type);
+		var target = pick(wf, node);
+		if (target is null || string.Equals(target, node.Status, StringComparison.OrdinalIgnoreCase)) return;
+		await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = target } }, partition: n => n.Board == node.Board, ct: ct);
+		await _boards.TouchAsync(projectKey, node.Board, ct);
 	}
 
 	// Create relation edges from a per-node field after the upsert applies. task_spec
@@ -486,12 +487,12 @@ public sealed partial class TasksService : ITasksService
 		var status = WorkflowCatalog.For(kind, type.Length == 0 ? null : type)?.Initial ?? "Pending";
 
 		var key = new TaskNodeId("incoming", GenKey(name), null).ToKey();
-		var ctx = _boards.GetContext(projectKey, board);
+		var ctx = _boards.GetContext(projectKey);
 		// Assign a stable NodeId so the node can be linked (relations/specRef) later.
 		await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new PlanNode { Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = status, Type = type, Name = name.Trim(), Body = body?.Trim() ?? string.Empty, Priority = priority },
-		}, ct: ct);
+			new PlanNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = status, Type = type, Name = name.Trim(), Body = body?.Trim() ?? string.Empty, Priority = priority },
+		}, partition: n => n.Board == board, ct: ct);
 		await _boards.TouchAsync(projectKey, board, ct);
 	}
 
@@ -511,11 +512,11 @@ public sealed partial class TasksService : ITasksService
 		if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("title is required");
 		var key = new TaskNodeId("incoming", IssueSlug(title), null).ToKey();
 		await _boards.EnsureAsync(project, board, ct); // auto-create the triage board on first report
-		var ctx = _boards.GetContext(project, board);
+		var ctx = _boards.GetContext(project);
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new PlanNode { Key = key, Version = 0, Status = "reported", Type = "issue", Name = title.Trim(), Body = body, Priority = 50 },
-		}, ct: ct);
+			new PlanNode { Board = board, Key = key, Version = 0, Status = "reported", Type = "issue", Name = title.Trim(), Body = body, Priority = 50 },
+		}, partition: n => n.Board == board, ct: ct);
 		if (r.Applied) await _boards.TouchAsync(project, board, ct);
 		return key;
 	}

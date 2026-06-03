@@ -142,17 +142,17 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
 			if (!await boards.ExistsAsync("$system", board))
 				await boards.CreateAsync("$system", board, "ordering");
-			var ctx = boards.GetContext("$system", board);
+			var ctx = boards.GetContext("$system");
 			// Early phase p1 (priority 10) whose wave has a deliberately huge priority,
 			// and a later phase p2 (priority 500) in between. A flat priority sort would
 			// emit p1(10), p2(500), p1/wlow(900) — the wave drifting past p2 (finding D11).
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Key = "p1", Version = 0, Status = "Pending", Name = "Phase one", Body = "", Priority = 10 },
-				new PetBox.Tasks.Data.PlanNode { Key = "p1/wlow", Version = 0, Status = "Pending", Name = "Low wave", Body = "", Priority = 900 },
-				new PetBox.Tasks.Data.PlanNode { Key = "p1/wlow/deep", Version = 0, Status = "Pending", Name = "Deep task", Body = "", Priority = 1 },
-				new PetBox.Tasks.Data.PlanNode { Key = "p2", Version = 0, Status = "Pending", Name = "Phase two", Body = "", Priority = 500 },
-			});
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "p1", Version = 0, Status = "Pending", Name = "Phase one", Body = "", Priority = 10 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "p1/wlow", Version = 0, Status = "Pending", Name = "Low wave", Body = "", Priority = 900 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "p1/wlow/deep", Version = 0, Status = "Pending", Name = "Deep task", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "p2", Version = 0, Status = "Pending", Name = "Phase two", Body = "", Priority = 500 },
+			}, partition: n => n.Board == board);
 		}
 
 		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}");

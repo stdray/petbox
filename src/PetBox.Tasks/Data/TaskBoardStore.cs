@@ -8,11 +8,13 @@ using PetBox.Tasks.Workflow;
 namespace PetBox.Tasks.Data;
 
 // Catalog over named task boards: metadata CRUD in PetBoxDb.TaskBoards plus the
-// on-disk SQLite file lifecycle via IScopedDbFactory<TasksDb>. Mirrors LogStore.
-// Explicit creation — no auto-vivify on first node write.
+// per-PROJECT SQLite file lifecycle via IScopedDbFactory<TasksDb>. All of a project's
+// boards share one file (tasks/<project>.db); a board's nodes are the rows whose Board
+// column equals its name. Explicit creation — no auto-vivify on first node write.
 public interface ITaskBoardStore
 {
-	TasksDb GetContext(string projectKey, string board);
+	// The project's shared plan file (holds every board's nodes, partitioned by Board).
+	TasksDb GetContext(string projectKey);
 	Task<bool> ExistsAsync(string projectKey, string board, CancellationToken ct = default);
 	// Create the board if it does not yet exist; no-op if it does. Used by the
 	// upsert write path to auto-vivify on first write (deliberate exception to the
@@ -46,8 +48,8 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 		_factory = factory;
 	}
 
-	public TasksDb GetContext(string projectKey, string board) =>
-		_factory.GetDb(projectKey, board);
+	public TasksDb GetContext(string projectKey) =>
+		_factory.GetDb(projectKey);
 
 	public Task<bool> ExistsAsync(string projectKey, string board, CancellationToken ct = default) =>
 		_db.TaskBoards.AnyAsync(b => b.ProjectKey == projectKey && b.Name == board, ct);
@@ -111,8 +113,8 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 		};
 		await _db.InsertAsync(meta, token: ct);
 
-		// Materialize file + schema eagerly (no implicit create-on-first-write).
-		_factory.GetDb(projectKey, board);
+		// Materialize the project file + schema eagerly (no implicit create-on-first-write).
+		_factory.GetDb(projectKey);
 		return meta;
 	}
 
@@ -124,9 +126,10 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 		if (deleted == 0)
 			return false;
 
-		// Drop the cached connection before deleting the file (Windows lock).
-		await _factory.EvictAsync(projectKey, board);
-		ScopedDbFiles.TryDelete(ScopedDbFiles.PathFor(_factory.BaseDir, projectKey, board));
+		// Boards share the project file, so delete just this board's rows (all revisions),
+		// not the file. Relations (in petbox.db) bind to NodeId and are left as-is — they
+		// resolve to "missing", same as when a board file used to be dropped.
+		await _factory.GetDb(projectKey).PlanNodes.Where(n => n.Board == board).DeleteAsync(ct);
 		return true;
 	}
 }
