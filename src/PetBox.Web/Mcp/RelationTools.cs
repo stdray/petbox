@@ -14,14 +14,14 @@ namespace PetBox.Web.Mcp;
 public static class RelationTools
 {
 	[McpServerTool(Name = "relations.create", Title = "Create a relation")]
-	[Description("Create a typed directed edge between two node ids. kind ∈ task_spec|issue_task|idea_spec|blocks|nfr|dup. Idempotent (identical edge is returned, not duplicated). Node ids are stable PlanNode.NodeId values (from tasks.upsert/tasks.get). Requires tasks:write.")]
+	[Description("Create a typed directed edge between two node ids. kind ∈ task_spec|issue_task|idea_spec|blocks|part_of|supersedes. Idempotent (identical edge is returned, not duplicated). Node ids are stable PlanNode.NodeId values (from tasks.upsert/tasks.get). Requires tasks:write.")]
 	public static Task<object> CreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations,
 		string projectKey, string kind, string fromNodeId, string toNodeId,
 		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var rel = await relations.CreateAsync(projectKey, kind, fromNodeId, toNodeId, ct);
 		return (object)new { rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId };
@@ -35,7 +35,7 @@ public static class RelationTools
 		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await relations.ListAsync(projectKey, nodeId, direction ?? "both", includeHistory, ct);
 		return (object)new { relations = list.Select(r => new { r.Id, r.Kind, r.FromNodeId, r.ToNodeId, r.CreatedAt, r.ClosedAt }).ToList() };
@@ -48,7 +48,7 @@ public static class RelationTools
 		string projectKey, string id, CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertProjectOrShared(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return (object)new { deleted = await relations.DeleteAsync(projectKey, id, ct) };
 	});

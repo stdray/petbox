@@ -172,6 +172,7 @@ public sealed partial class TasksService : ITasksService
 			var spec = fromEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var blockedBy = toEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.FromNodeId, index)).ToList();
 			var linkedTasks = kind == BoardKind.Spec ? toEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
+			var supersedes = fromEdges.Where(e => e.Kind == "supersedes").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var parentId = parentOf.GetValueOrDefault(n.NodeId);
 			nodes.Add(new PlanNodeView(
 				Key: n.Key,
@@ -190,6 +191,7 @@ public sealed partial class TasksService : ITasksService
 				Spec: spec.Count > 0 ? spec : null,
 				BlockedBy: blockedBy.Count > 0 ? blockedBy : null,
 				LinkedTasks: linkedTasks is { Count: > 0 } ? linkedTasks : null,
+				Supersedes: supersedes.Count > 0 ? supersedes : null,
 				RenamedFrom: lineage.TryGetValue(n.Key, out var p) ? p : [],
 				Tags: tagsByNode[n.NodeId].OrderBy(t => t, StringComparer.Ordinal).ToList()));
 		}
@@ -411,6 +413,7 @@ public sealed partial class TasksService : ITasksService
 		{
 			await SetTagsAsync(projectKey, board, nodes, desired, ct);
 			await SetPartOfAsync(projectKey, board, nodes, desired, ct);
+			await SetSupersedesAsync(projectKey, board, nodes, desired, ct);
 		}
 		return new UpsertOutcome(r, kind);
 	}
@@ -605,6 +608,31 @@ public sealed partial class TasksService : ITasksService
 				throw new ArgumentException($"part_of would create a cycle (node '{p.Key}')");
 			await _relations.CreateAsync(projectKey, "part_of", childId, parentId, ct);
 			parentOf[childId] = parentId;
+		}
+	}
+
+	// Apply supersedes after the upsert: the new node replaces another, which is moved to
+	// its kind's terminal-cancel (obsoleted). A system effect (no approve gate), like the
+	// Done effects. Self-supersede and a missing target are ignored.
+	async Task SetSupersedesAsync(string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+	{
+		if (!patches.Any(p => !string.IsNullOrWhiteSpace(p.Supersedes))) return;
+		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
+		var ctx = _boards.GetContext(projectKey);
+		var slugToId = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
+			.Where(n => n.NodeId.Length > 0).ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
+		foreach (var (k, nid) in byKey) slugToId[k] = nid;
+
+		foreach (var p in patches)
+		{
+			if (string.IsNullOrWhiteSpace(p.Supersedes)) continue;
+			if (!byKey.TryGetValue(p.Key, out var newId) || newId.Length == 0) continue;
+			var targetId = ResolveParentId(p.Supersedes, slugToId, ctx);
+			if (targetId == newId) continue; // a node can't supersede itself
+			await _relations.CreateAsync(projectKey, "supersedes", newId, targetId, ct);
+			// Obsolete the superseded node: move it to its workflow's terminal-cancel status.
+			await SetActiveNodeStatusAsync(projectKey, targetId,
+				(wf, node) => WorkflowCatalog.IsTerminalSlug(node.Status) ? null : wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalCancel)?.Slug, ct);
 		}
 	}
 

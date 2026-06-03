@@ -18,7 +18,7 @@ public sealed record PlanNodeView(
 	string Key, string NodeId, string? ParentNodeId, string? ParentSlug, int Depth,
 	string Status, string Type, string Title, string Body, string? CommitRef, long Priority, long Version,
 	string? Delivery, IReadOnlyList<LinkDto>? Spec, IReadOnlyList<LinkDto>? BlockedBy,
-	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<string> RenamedFrom, IReadOnlyList<string> Tags);
+	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<LinkDto>? Supersedes, IReadOnlyList<string> RenamedFrom, IReadOnlyList<string> Tags);
 
 // A board's active plan nodes (flat list; the tree is the part_of projection via
 // ParentNodeId/Depth), plus the board's kind and (work boards) its spec board.

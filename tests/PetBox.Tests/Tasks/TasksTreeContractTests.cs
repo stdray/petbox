@@ -146,6 +146,28 @@ public sealed class TasksTreeContractTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Supersedes_RecordsEdge_AndObsoletesOldNode()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "spec", "spec");
+		// new supersedes old (both in one batch): old is moved to the spec terminal-cancel.
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "spec",
+			JsonSerializer.SerializeToElement(new object[]
+			{
+				new { key = "old", status = "defined", title = "Old req", body = "x" },
+				new { key = "new", status = "defined", title = "New req", body = "x", supersedes = "old" },
+			}));
+
+		var got = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "spec", includeClosed: true));
+		var nodes = got.GetProperty("nodes").EnumerateArray().ToList();
+		// old obsoleted → moved to the spec workflow's terminal-cancel (deprecated).
+		nodes.Single(n => n.GetProperty("key").GetString() == "old").GetProperty("status").GetString().Should().Be("deprecated");
+		// new carries a supersedes link to old.
+		var newNode = nodes.Single(n => n.GetProperty("key").GetString() == "new");
+		newNode.GetProperty("supersedes").EnumerateArray().Single().GetProperty("slug").GetString().Should().Be("old");
+	}
+
+	[Fact]
 	public async Task GroupBy_UnknownNamespace_Rejected()
 	{
 		var http = Http("tasks:read,tasks:write");
