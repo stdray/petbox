@@ -88,11 +88,16 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
 - **Granularity — atomic but few.** One requirement per node, but at the owner altitude
   there are only a handful. Do NOT pre-atomize implementation detail into nodes. Add a
   child node only when a part earns its own lifecycle / delivery.
-- **Link tasks at the level that matches the work's scope.** `task_spec` / `specRef`
-  may point at ANY spec node, not only a leaf; `delivery` aggregates a node's tasks over
-  its whole `part_of` subtree (rolls up). So one task on a block node covers the block —
-  no per-leaf link explosion. A leaf with no task of its own reads `not_started` (it is
-  the requirement catalog; read delivery at the level where the work is linked).
+- **Link a task to each requirement it delivers (M:N), not just the umbrella.**
+  `task_spec` / `specRef` may point at ANY spec node; `delivery` aggregates a node's tasks
+  over its whole `part_of` subtree, so leaf links automatically roll up to the block and
+  root. Linking only at the umbrella node leaves the leaves at `not_started` and hides
+  per-requirement progress — so link the leaves the task actually delivers (at the owner
+  altitude they are few: this is honest M:N, not link explosion). A requirement only
+  partially delivered stays `in_progress` because one of its linked tasks isn't Done yet
+  (e.g. a read-only UI delivered now + an interactive-UI task still Pending). Note the two
+  signals: `status` (draft/defined) = is the requirement agreed; `delivery` (computed) =
+  is it built.
 - **Process:** before editing the spec, write the **plan to update it** as the
   deliberation artifact — an `artifact:spec_plan`-tagged comment on the originating idea
   — then apply the change.
