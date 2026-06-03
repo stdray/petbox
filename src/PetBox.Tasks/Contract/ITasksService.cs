@@ -22,6 +22,14 @@ public interface ITasksService
 	Task<(bool Set, string? SpecBoard)> SetSpecBoardAsync(string projectKey, string board, string? specBoard, CancellationToken ct = default);
 	Task<IReadOnlyList<TaskBoardMeta>> ListBoardsAsync(string projectKey, CancellationToken ct = default);
 	Task<bool> DeleteBoardAsync(string projectKey, string board, CancellationToken ct = default);
+
+	// --- methodology quartet (intake+ideas+spec+work as a per-project singleton unit) ---
+
+	// Provision the four singleton boards (intake/ideas/spec/work) if missing and auto-wire
+	// work->spec. Idempotent. Returns the quartet surface.
+	Task<MethodologyView> EnableMethodologyAsync(string projectKey, CancellationToken ct = default);
+	// The quartet as one surface (intake→ideas→spec→work). Enabled = all four exist.
+	Task<MethodologyView> GetMethodologyAsync(string projectKey, CancellationToken ct = default);
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);
 	Task<bool> BoardExistsAsync(string projectKey, string board, CancellationToken ct = default);

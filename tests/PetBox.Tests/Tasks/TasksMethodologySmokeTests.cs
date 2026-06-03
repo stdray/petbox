@@ -500,21 +500,23 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		Text(r).Should().Contain("not a spec board");
 	}
 
-	// 17. board_set_spec pins a work board to one spec board; a specRef on another spec board is rejected.
+	// 17. a specRef must point at a SPEC board node — a node on a non-spec board is rejected.
+	// (The spec kind is now a per-project singleton, so the old two-spec-boards mismatch is
+	// unreachable; the meaningful guard is "the target must live on the spec board".)
 	[Fact]
-	public async Task SpecRef_WrongSpecBoard_Rejected()
+	public async Task SpecRef_NonSpecBoardNode_Rejected()
 	{
-		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec1", kind = "spec" });
-		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec2", kind = "spec" });
-		var s2 = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "spec2", nodes = Nodes(new { key = "r", status = "defined", title = "R", body = "x" }) });
-		var s2Id = NodeId(s2, "r");
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		// A node on a NON-spec (free) board — not a valid spec target.
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "other" });
+		var other = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "other", nodes = Nodes(new { key = "r", status = "Pending", title = "R", body = "x" }) });
+		var otherId = NodeId(other, "r");
 
-		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
-		(await Agent("tasks.board_set_spec", new { projectKey = ProjectKey, board = "work", specBoard = "spec1" })).IsError.Should().NotBe(true);
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" }); // auto-wires to spec
 
-		var r = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", specRef = s2Id }) });
+		var r = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "t", type = "feature", status = "Pending", title = "T", body = "x", specRef = otherId }) });
 		IsErr(r).Should().BeTrue();
-		Text(r).Should().Contain("spec1"); // names the board this work board is pinned to
+		Text(r).Should().Contain("not a spec board");
 	}
 
 	// 18. tasks.get hides terminal nodes by default; includeClosed=true returns them.

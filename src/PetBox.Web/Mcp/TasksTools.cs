@@ -93,6 +93,30 @@ public static class TasksTools
 		return new { reopened = await tasks.SetClosedAsync(projectKey, board, false, ct) };
 	}
 
+	[McpServerTool(Name = "tasks.methodology_enable", Title = "Enable the methodology quartet")]
+	[Description("Provision the four singleton methodology boards (intake/ideas/spec/work) if missing and auto-wire work->spec. Idempotent — opt-in; a project's methodology lives on these, ad-hoc work stays on free boards. The four kinds are one-per-project. Requires tasks:write. Returns the quartet surface (intake→ideas→spec→work).")]
+	public static async Task<object> MethodologyEnableAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		return (object)await tasks.EnableMethodologyAsync(projectKey, ct);
+	});
+
+	[McpServerTool(Name = "tasks.methodology_get", Title = "Get the methodology quartet", ReadOnly = true)]
+	[Description("Return the project's methodology quartet as ONE surface in pipeline order: intake → ideas → spec → work, each board with its active nodes (the spec board carries the computed `delivery` roll-up). `enabled` is true when all four singleton boards exist. Requires tasks:read.")]
+	public static async Task<object> MethodologyGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		return (object)await tasks.GetMethodologyAsync(projectKey, ct);
+	});
+
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]
 	[Description("""
 		Return the active plan nodes of a board, ordered by priority then key. Nodes are FLAT

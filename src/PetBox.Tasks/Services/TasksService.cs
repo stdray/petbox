@@ -30,10 +30,38 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- board lifecycle ----
 
+	// The methodology kinds are per-project singletons (the quartet); `free` is unlimited.
+	static readonly BoardKind[] Methodological = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
+
 	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, CancellationToken ct = default)
 	{
+		var k = WorkflowCatalog.ParseKind(kind ?? "free");
+		await AssertSingletonAsync(projectKey, k, ct);
 		await ValidateSpecBoardAsync(projectKey, kind ?? "free", specBoard, ct);
-		return await _boards.CreateAsync(projectKey, board, description, kind ?? "free", specBoard, ct);
+		var meta = await _boards.CreateAsync(projectKey, board, description, kind ?? "free", specBoard, ct);
+		await AutoWireSpecAsync(projectKey, ct); // a fresh spec or work board may complete the link
+		return meta;
+	}
+
+	// Reject a 2nd active board of a methodology kind (one-per-project). `free` is exempt.
+	async Task AssertSingletonAsync(string projectKey, BoardKind kind, CancellationToken ct)
+	{
+		if (!Methodological.Contains(kind)) return;
+		var existing = (await _boards.ListAsync(projectKey, ct))
+			.FirstOrDefault(b => b.ClosedAt == null && WorkflowCatalog.ParseKind(b.Kind) == kind);
+		if (existing is not null)
+			throw new ArgumentException($"project '{projectKey}' already has an active {kind.ToString().ToLowerInvariant()} board ('{existing.Name}') — the methodology quartet is one-per-project; close it (tasks.board_close) or use a free board");
+	}
+
+	// When exactly one active spec and one active work board exist and the work board has no
+	// spec link, wire it automatically — so the agent need not call board_set_spec by hand.
+	async Task AutoWireSpecAsync(string projectKey, CancellationToken ct)
+	{
+		var boards = await _boards.ListAsync(projectKey, ct);
+		var spec = boards.SingleOrDefault(b => b.ClosedAt == null && WorkflowCatalog.ParseKind(b.Kind) == BoardKind.Spec);
+		var work = boards.SingleOrDefault(b => b.ClosedAt == null && WorkflowCatalog.ParseKind(b.Kind) == BoardKind.Work);
+		if (spec is not null && work is not null && string.IsNullOrWhiteSpace(work.SpecBoard))
+			await _boards.UpdateAsync(projectKey, work.Name, m => m with { SpecBoard = spec.Name }, ct);
 	}
 
 	public async Task<(bool Set, string? SpecBoard)> SetSpecBoardAsync(string projectKey, string board, string? specBoard, CancellationToken ct = default)
@@ -62,6 +90,38 @@ public sealed partial class TasksService : ITasksService
 	{
 		await EnsureBoard(projectKey, board, ct);
 		return WorkflowCatalog.ParseKind((await _boards.FindAsync(projectKey, board, ct))!.Kind);
+	}
+
+	// Pipeline order of the quartet kinds.
+	static readonly BoardKind[] Quartet = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work];
+
+	public async Task<MethodologyView> EnableMethodologyAsync(string projectKey, CancellationToken ct = default)
+	{
+		var boards = await _boards.ListAsync(projectKey, ct);
+		foreach (var kind in Quartet)
+		{
+			if (boards.Any(b => b.ClosedAt == null && WorkflowCatalog.ParseKind(b.Kind) == kind)) continue;
+			var name = kind.ToString().ToLowerInvariant();
+			if (await _boards.ExistsAsync(projectKey, name, ct)) continue; // name taken by another board; leave it
+			await CreateBoardAsync(projectKey, name, name, $"methodology {name}", null, ct);
+		}
+		await AutoWireSpecAsync(projectKey, ct);
+		return await GetMethodologyAsync(projectKey, ct);
+	}
+
+	public async Task<MethodologyView> GetMethodologyAsync(string projectKey, CancellationToken ct = default)
+	{
+		var boards = await _boards.ListAsync(projectKey, ct);
+		var result = new List<MethodologyBoard>(Quartet.Length);
+		var all = true;
+		foreach (var kind in Quartet)
+		{
+			var b = boards.FirstOrDefault(x => x.ClosedAt == null && WorkflowCatalog.ParseKind(x.Kind) == kind);
+			if (b is null) { all = false; result.Add(new MethodologyBoard(kind.ToString().ToLowerInvariant(), null, [])); continue; }
+			var view = await GetAsync(projectKey, b.Name, includeClosed: false, ct: ct);
+			result.Add(new MethodologyBoard(kind.ToString().ToLowerInvariant(), b.Name, view.Nodes));
+		}
+		return new MethodologyView(all, result);
 	}
 
 	// A specBoard link only makes sense on a work board and must point at an existing spec board.
