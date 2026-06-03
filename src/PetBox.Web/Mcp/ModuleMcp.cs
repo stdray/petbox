@@ -19,20 +19,6 @@ static class ModuleMcp
 			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
 	}
 
-	// Reserved cross-cutting containers shared across projects (parallels the memory
-	// module's "$workspace"): a workspace-level methodology quartet lives here. Reachable
-	// by ANY key holding the module scope — the single-project claim is not required, since
-	// the point is to be shared. Per-workspace isolation is future work.
-	public static readonly string[] SharedProjects = ["$workspace"];
-
-	// Like AssertProject, but a reserved shared container is allowed regardless of the
-	// key's project claim (the module scope still gates the call).
-	public static void AssertProjectOrShared(IHttpContextAccessor http, string projectKey)
-	{
-		if (SharedProjects.Contains(projectKey, StringComparer.Ordinal)) return;
-		AssertProject(http, projectKey);
-	}
-
 	// Resolve the effective projectKey for tools where it is OPTIONAL: when omitted,
 	// default to the key's single-project claim so a project-scoped key need not repeat
 	// it. A cross-project ("*") key has no single project to default to, so an explicit

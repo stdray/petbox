@@ -21,7 +21,7 @@ public static class RelationTools
 		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProjectOrShared(http, projectKey);
+		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var rel = await relations.CreateAsync(projectKey, kind, fromNodeId, toNodeId, ct);
 		return (object)new { rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId };
@@ -35,7 +35,7 @@ public static class RelationTools
 		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProjectOrShared(http, projectKey);
+		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await relations.ListAsync(projectKey, nodeId, direction ?? "both", includeHistory, ct);
 		return (object)new { relations = list.Select(r => new { r.Id, r.Kind, r.FromNodeId, r.ToNodeId, r.CreatedAt, r.ClosedAt }).ToList() };
@@ -48,7 +48,7 @@ public static class RelationTools
 		string projectKey, string id, CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProjectOrShared(http, projectKey);
+		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return (object)new { deleted = await relations.DeleteAsync(projectKey, id, ct) };
 	});

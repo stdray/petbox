@@ -137,16 +137,15 @@ public static class MemoryTools
 	// structural store/upsert/search tools. They add ONE thing the structural surface
 	// lacks: a `scope` dimension over the per-project store files —
 	//   project   → the key's own project  (default; the usual case)
-	//   workspace → reserved "$workspace" container (cross-project shared memory)
-	// `recall` with no scope CASCADES both (project ⊕ workspace) and returns hits
-	// labelled by scope so precedence is visible (project is most specific → listed
-	// first). The "$workspace" container is a plain memory store file under a seeded
-	// built-in project (M028); it is shared across projects by design, so any caller
-	// holding the memory scope may reach it. Per-workspace isolation is future work
-	// (idea workspace-memory). Personal facts are carried by type=User, not a separate
-	// container. Curated/temporal writes still go through memory.upsert.
+	//   workspace → the shared cross-project container ("$system") — facts that span
+	//               projects or are about the user live here, one place for everyone.
+	// `recall` with no scope CASCADES both (project ⊕ workspace) and returns hits labelled
+	// by scope so precedence is visible (project first); when the key's project IS the
+	// shared container the two collapse and it's searched once. Any memory-scoped key may
+	// reach the shared container (that's the point). Personal facts are carried by
+	// type=User, not a separate container. Curated/temporal writes go through memory.upsert.
 
-	const string WorkspaceContainer = "$workspace";
+	const string WorkspaceContainer = "$system";
 	const string DefaultStore = "notes";
 
 	// Stores skipped by the default "search every store" recall: sensitive operational
@@ -255,7 +254,10 @@ public static class MemoryTools
 		var list = new List<(string, string)>();
 		try { list.Add(("project", ModuleMcp.ResolveProject(http, projectKey))); }
 		catch (ArgumentException) { /* "*" key without an explicit projectKey — skip the project leg */ }
-		list.Add(("workspace", WorkspaceContainer));
+		// Dedup: when the key's project IS the shared container, project and workspace
+		// collapse to one — don't search the same container (and re-list hits) twice.
+		if (!list.Any(c => c.Item2 == WorkspaceContainer))
+			list.Add(("workspace", WorkspaceContainer));
 		return list;
 	}
 
