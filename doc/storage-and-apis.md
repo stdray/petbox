@@ -1,0 +1,84 @@
+# PetBox: storage, APIs & navigation
+
+A map of *what goes where and through which door*. Verified against prod
+(`petbox.3po.su`) 2026-06-03.
+
+## 1. Hierarchy & reserved keys
+
+```
+Workspace (Key)               e.g. $system, infra, stdray
+  └─ Project (Key, WorkspaceKey)   e.g. $system, petbox, kpvotes, yoba-summarizer, $workspace
+```
+
+- **Project is the unit everything is scoped by.** Memory/sessions/tasks/logs/config all key on `projectKey`.
+- An **API key** carries a `project` claim — either ONE project key, or `*` (cross-project). Most tools assert the call's `projectKey` against that claim.
+- **Reserved projects:**
+  - `$system` — the built-in internal project (self-logs, the dogfooding ideas/spec/roadmap boards, the `ops` memory store). Seeded by M001/M004.
+  - `$workspace` — a **shared cross-project container**, seeded by M028. It is NOT empty: it holds **workspace-scope memory** (`memory/$workspace/notes.db`) and is the home of any **workspace-level methodology quartet**. Memory's `scope=workspace` writes here; deleting the project row breaks that scope. Parallel idea to `$system` but user-facing (cross-project shared) vs. internal.
+
+## 2. Storage map (`/opt/petbox/data/`)
+
+```
+petbox.db            ← CENTRAL relational DB (one file). Holds the METADATA/registries:
+                       Workspaces, Projects, ApiKeys, TaskBoards (board meta: kind/specBoard/closed),
+                       Relation (task graph edges), MemoryStores (store registry), ConfigBindings meta,
+                       Users, ShareLinks, Settings, Health, SavedQueries, …
+memory/{project}/{store}.db   ← per-project, per-store memory (FTS5 + SCD-2 temporal). e.g.
+                                $system/{dogfooding,notes,ops,stdray}, $workspace/notes, petbox/dogfooding
+sessions/{project}.db ← per-project raw agent-session archive (append-only). e.g. $system.db, $workspace.db
+tasks/{project}.db    ← per-project plan_nodes (all boards, partitioned by Board) + node_tag/tag_vocab.
+                        ({project}/ subdirs are the LEGACY one-file-per-board layout, now *.migrated)
+config/               ← per-workspace config DBs (bindings + tag vocab)
+logs/, db/, keys/, backups/   ← logs, infra, secrets, pre-migration snapshots
+```
+
+**Rule of thumb:** the *registry/metadata* lives in `petbox.db`; the *content* (memory entries, session lines, plan nodes) lives in per-project scoped files. Relations & tags are the exception worth knowing: **relations** (the task graph) are in `petbox.db` (project-scoped, bind to stable NodeId, cross-board); **node tags** are in the per-project `tasks.db` (they need a same-file FK to `tag_vocab`).
+
+## 3. Three doors (URL prefixes)
+
+| Prefix | Audience | Auth | Examples |
+|---|---|---|---|
+| `/ui/{ws}/{project}/…` | humans (Razor pages) | cookie login | `/ui/$system/$system/tasks/ideas`, `/ui/{ws}/{project}/sessions/{id}`, `/ui/{ws}/{project}/memory/{store}` |
+| `/api/…` | programmatic REST | `X-Api-Key` / `Authorization: Token\|Bearer` | `/api/sessions/{project}/{sessionId}`, `/api/health`, `/v1/logs/{project}/{logName}` |
+| `/mcp` | agents (MCP, streamable HTTP) | `X-Api-Key` | the whole `tasks.*`/`memory.*`/`session.*`/`relations.*`/`config.*`/`data.*`/`log.*` tool surface |
+
+**Navigation into a project (UI):** log in → land on a workspace → pick a project → its module pages (`tasks`, `sessions`, `memory`, `config`, `logs`). The workspace is switched via `POST /api/ui/workspace`; routes are built in `Routes.cs` (`Project(ws,key)`, `ProjectSession(...)`, …).
+
+## 4. Memory — **MCP only** (no REST)
+
+Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a store holds temporal (SCD-2) entries with a taxonomy `type ∈ User|Feedback|Project|Reference`, CSV tags, FTS5 search, free-form `Metadata`.
+
+**Scope dimension** (over the per-project store files):
+- `project` (default) → the key's own project.
+- `workspace` → the reserved `$workspace` container (cross-project shared).
+
+**MCP tools** (server `petbox`):
+- Ergonomic: `memory.remember{text,scope?,store?,type?,tags?,description?}` (verbatim capture, auto-key), `memory.recall{query,scope?,store?,type?,limit?}` (FTS; no scope ⇒ **cascade** project ⊕ workspace, searches every store **except `ops`**, hits labelled by scope, project first).
+- Structural/curated: `memory.store_create|store_list|store_delete`, `memory.list|get|search|upsert|delta`.
+
+**Capture flow:** the SessionStart hook (`pull-memory.ps1`) injects an instruction; the agent itself calls `memory_recall` at start and `memory_remember` as it learns (instruct-the-agent — there is no memory READ REST). There is **no automatic** writer into memory today; raw capture goes to Sessions (below).
+
+## 5. Sessions — REST + MCP
+
+Storage: `sessions/{projectKey}.db` — an **append-only raw archive** of agent sessions (not structurally searched; full-text is a future DuckDB idea). Keyed by `sessionId`.
+
+- **REST:** `POST /api/sessions/{projectKey}/{sessionId}?agent=…` — append content. This is what the Claude Code **Stop hook** (`push-session.ps1`) calls every turn: it posts the latest `~/.claude/plans/*.md` (or the truncated last assistant message) into `$system`.
+- **MCP:** `session.append|get|list`.
+- **UI:** `/ui/{ws}/{project}/sessions/{sessionId}` (read-only detail).
+
+## 6. Tasks — MCP + Razor UI
+
+Storage: `tasks/{projectKey}.db` (`plan_nodes` partitioned by `Board`; `node_tag`/`tag_vocab`) + `TaskBoards` meta and `Relation` edges in `petbox.db`.
+
+- **Model (spec-flat-tags):** nodes are FLAT slugs; hierarchy is the `part_of` edge; grouping is enforced tags (`area:*`/`concern:*`); the "tree" is a projection (`tasks.get` returns `parentSlug`/`depth`, or pass `groupBy=area|concern`).
+- **Methodology quartet:** the kinds `spec|ideas|intake|work` are **per-project singletons** (≤1 each; `free` unlimited). `tasks.methodology_enable(project)` idempotently provisions the missing ones and auto-wires `work→spec`; `tasks.methodology_get(project)` returns the quartet as one surface. The admin UI's board-create goes through the same service (so the singleton is enforced) — but the UI does **not yet surface** the methodology (no enable button / quartet view) — that is the current human-facing gap.
+- **MCP tools:** `tasks.board_create|list|delete|close|reopen|set_spec|get|upsert|delta|workflow`, `tasks.methodology_enable|get`, `relations.create|list|delete` (kinds `task_spec|issue_task|idea_spec|blocks|part_of|supersedes`).
+- **UI:** `/ui/{ws}/{project}/tasks` (board list, admin) and `/ui/{ws}/{project}/tasks/{board}` (board detail, part_of tree).
+
+## 7. The `$workspace` vs `$system` question
+
+They are two reserved cross-cutting projects with different intents:
+- `$system` = internal/system (self-logs, ops secrets, the dogfooding boards).
+- `$workspace` = a user-facing **shared** container, so cross-project memory (and, optionally, a cross-project methodology quartet) is not tangled with system internals.
+
+For a single-user install the distinction is thin and could be consolidated onto `$system` — but `$workspace` currently holds live `notes` memory, so consolidating means **migrating that data**, not just deleting the project.
