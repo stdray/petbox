@@ -119,6 +119,42 @@ public sealed class TasksTreeContractTests : IDisposable
 			.GetProperty(field).GetString()!;
 
 	[Fact]
+	public async Task GroupBy_TagNamespace_BucketsNodes_NoneLast()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "g", null);
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g",
+			JsonSerializer.SerializeToElement(new object[]
+			{
+				new { key = "a", status = "Pending", title = "A", body = "x", tags = new[] { "area:ui", "concern:security" } },
+				new { key = "b", status = "Pending", title = "B", body = "x", tags = new[] { "area:ui" } },
+				new { key = "c", status = "Pending", title = "C", body = "x", tags = new[] { "area:llm" } },
+			}));
+
+		// group-by area: ui {a,b}, llm {c}.
+		var byArea = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "area"));
+		byArea.GetProperty("groupBy").GetString().Should().Be("area");
+		var areaGroups = byArea.GetProperty("groups").EnumerateArray()
+			.ToDictionary(g => g.GetProperty("key").GetString()!, g => g.GetProperty("nodeKeys").EnumerateArray().Select(k => k.GetString()).ToList());
+		areaGroups["area:ui"].Should().BeEquivalentTo(["a", "b"]);
+		areaGroups["area:llm"].Should().BeEquivalentTo(["c"]);
+
+		// group-by concern: security {a}, and the untagged b,c fall into "(none)" — listed last.
+		var byConcern = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "concern"));
+		var keys = byConcern.GetProperty("groups").EnumerateArray().Select(g => g.GetProperty("key").GetString()).ToList();
+		keys.Should().Equal("concern:security", "(none)"); // (none) last
+	}
+
+	[Fact]
+	public async Task GroupBy_UnknownNamespace_Rejected()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "g", null);
+		var res = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "status"));
+		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
+	}
+
+	[Fact]
 	public async Task Upsert_InvalidSegment_IsRejected()
 	{
 		var http = Http("tasks:read,tasks:write");

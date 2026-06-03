@@ -33,6 +33,15 @@ public sealed record PlanNodeDelta(
 // serialize. The service owns the logic; the adapter owns the wire shape.
 public sealed record UpsertOutcome(TemporalUpsertResult<PlanNode> Result, BoardKind Kind);
 
+// A tag-projection group: nodes sharing one tag value in the grouped namespace (or the
+// "(none)" bucket). `Delivery` is the combined roll-up over the group's nodes (spec
+// boards only). A node with several tags in the namespace appears in several groups.
+public sealed record TagGroup(string Key, string? Delivery, IReadOnlyList<string> NodeKeys);
+
+// A board projected by a tag namespace (area|concern): the "tree" is a grouping view, not
+// stored hierarchy (spec-flat-tags). Groups are ordered by key, "(none)" last.
+public sealed record GroupedBoardView(string GroupBy, string Kind, IReadOnlyList<TagGroup> Groups);
+
 // One board of the methodology quartet with its active nodes (null Name = not provisioned).
 public sealed record MethodologyBoard(string Kind, string? Name, IReadOnlyList<PlanNodeView> Nodes);
 
