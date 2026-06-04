@@ -10,6 +10,7 @@ public enum Feature
 	Dashboard,
 	Tasks,
 	Memory,
+	LlmRouter,
 }
 
 public sealed class FeatureFlags

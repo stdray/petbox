@@ -1,0 +1,126 @@
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
+using PetBox.LlmRouter.Contract;
+using PetBox.LlmRouter.Http;
+using PetBox.LlmRouter.Registry;
+using PetBox.LlmRouter.Routing;
+
+namespace PetBox.Tests.LlmRouter;
+
+// The fallback walk (llm-fallback-chain + llm-fast-down): transient failures fall through to
+// the next provider, a non-transient failure is surfaced without masking, an exhausted chain
+// throws transient, and a circuit-open endpoint is skipped without an attempt.
+public sealed class CapabilityRouterTests
+{
+	// Two embed providers, primary (priority 10) then secondary (priority 20).
+	static ResolvedRegistry TwoEmbed() => new(
+		new LlmRegistry(
+			[new LlmEndpoint("primary", "https://p"), new LlmEndpoint("secondary", "https://s")],
+			[
+				new LlmRoute(LlmCapability.Embed, "primary", "mp", 10),
+				new LlmRoute(LlmCapability.Embed, "secondary", "ms", 20),
+			]),
+		new Dictionary<string, string>());
+
+	static CapabilityRouter Build(ILlmRegistryResolver resolver, IOpenAiCompatibleClient upstream, EndpointBreaker breaker) =>
+		new(resolver, new CertPinningHttpClientProvider(), upstream, breaker, NullLogger<CapabilityRouter>.Instance);
+
+	[Fact]
+	public async Task Falls_back_to_secondary_on_transient_failure()
+	{
+		var upstream = new FakeUpstream();
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(true, "connection refused");
+		upstream.EmbedBehaviour["https://s"] = () => [[1f, 2f, 3f]];
+		var breaker = new EndpointBreaker(new FakeTimeProvider());
+		var router = Build(new FakeResolver(TwoEmbed()), upstream, breaker);
+
+		var res = await router.EmbedAsync("proj", new EmbedRequest(["hello"]));
+
+		res.ServedBy.Endpoint.Should().Be("secondary");
+		res.ServedBy.AttemptCount.Should().Be(2);
+		res.Vectors.Should().ContainSingle();
+		res.Model.Dim.Should().Be(3);
+		upstream.EmbedCalls.Should().Equal("https://p", "https://s");
+	}
+
+	[Fact]
+	public async Task Non_transient_failure_is_not_masked_by_fallback()
+	{
+		var upstream = new FakeUpstream();
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(false, "400 bad request");
+		upstream.EmbedBehaviour["https://s"] = () => [[9f]];
+		var router = Build(new FakeResolver(TwoEmbed()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var act = async () => await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+
+		(await act.Should().ThrowAsync<LlmRouterException>()).Which.Transient.Should().BeFalse();
+		upstream.EmbedCalls.Should().Equal("https://p");
+	}
+
+	[Fact]
+	public async Task All_providers_transient_throws_exhausted_transient()
+	{
+		var upstream = new FakeUpstream();
+		upstream.EmbedBehaviour["https://p"] = () => throw new LlmUpstreamException(true, "down");
+		upstream.EmbedBehaviour["https://s"] = () => throw new LlmUpstreamException(true, "down");
+		var router = Build(new FakeResolver(TwoEmbed()), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var act = async () => await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+
+		(await act.Should().ThrowAsync<LlmRouterException>()).Which.Transient.Should().BeTrue();
+		upstream.EmbedCalls.Should().Equal("https://p", "https://s");
+	}
+
+	[Fact]
+	public async Task Open_circuit_endpoint_is_skipped_without_attempt()
+	{
+		var upstream = new FakeUpstream();
+		// primary not registered -> would throw KeyNotFound if (wrongly) attempted.
+		upstream.EmbedBehaviour["https://s"] = () => [[1f]];
+		var breaker = new EndpointBreaker(new FakeTimeProvider()) { FailureThreshold = 1 };
+		breaker.RecordFailure("primary"); // open it (threshold 1)
+		var router = Build(new FakeResolver(TwoEmbed()), upstream, breaker);
+
+		var res = await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+
+		res.ServedBy.Endpoint.Should().Be("secondary");
+		res.ServedBy.AttemptCount.Should().Be(1, "the open primary was skipped, not attempted");
+		upstream.EmbedCalls.Should().Equal("https://s");
+	}
+
+	[Fact]
+	public async Task No_route_for_capability_throws_non_transient()
+	{
+		var router = Build(new FakeResolver(new ResolvedRegistry(LlmRegistry.Empty, new Dictionary<string, string>())),
+			new FakeUpstream(), new EndpointBreaker(new FakeTimeProvider()));
+
+		var act = async () => await router.EmbedAsync("proj", new EmbedRequest(["x"]));
+
+		(await act.Should().ThrowAsync<LlmRouterException>()).Which.Transient.Should().BeFalse();
+	}
+
+	// ---- fakes ----
+
+	sealed class FakeResolver(ResolvedRegistry reg) : ILlmRegistryResolver
+	{
+		public Task<ResolvedRegistry> ResolveAsync(string projectKey, CancellationToken ct = default) => Task.FromResult(reg);
+	}
+
+	sealed class FakeUpstream : IOpenAiCompatibleClient
+	{
+		public Dictionary<string, Func<IReadOnlyList<float[]>>> EmbedBehaviour { get; } = new(StringComparer.Ordinal);
+		public List<string> EmbedCalls { get; } = [];
+
+		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct)
+		{
+			EmbedCalls.Add(baseUrl);
+			return Task.FromResult(EmbedBehaviour[baseUrl]());
+		}
+
+		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
+			throw new NotSupportedException();
+
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, CancellationToken ct) =>
+			throw new NotSupportedException();
+	}
+}

@@ -16,6 +16,8 @@
 		<ProjectReference Include="..\PetBox.Tasks\PetBox.Tasks.csproj" />
 		<ProjectReference Include="..\PetBox.Memory\PetBox.Memory.csproj" />
 		<ProjectReference Include="..\PetBox.Sessions\PetBox.Sessions.csproj" />
+		<ProjectReference Include="..\PetBox.LlmRouter.Contract\PetBox.LlmRouter.Contract.csproj" />
+		<ProjectReference Include="..\PetBox.LlmRouter\PetBox.LlmRouter.csproj" />
 	</ItemGroup>
 
 	<ItemGroup>

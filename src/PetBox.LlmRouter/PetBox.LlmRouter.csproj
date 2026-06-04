@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+	</PropertyGroup>
+
+	<!-- Impl depends on the Contract + the Config module (registry storage / secrets) +
+	     Core (PetBoxDb project->workspace lookup, ConfigBinding). Consumers must NOT
+	     reference this assembly — only PetBox.LlmRouter.Contract (boundary test enforces). -->
+	<ItemGroup>
+		<ProjectReference Include="..\PetBox.LlmRouter.Contract\PetBox.LlmRouter.Contract.csproj" />
+		<ProjectReference Include="..\PetBox.Core\PetBox.Core.csproj" />
+		<ProjectReference Include="..\PetBox.Config\PetBox.Config.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+		<PackageReference Include="FluentValidation" />
+		<PackageReference Include="linq2db" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="LinqToDB" />
+		<Using Include="LinqToDB.Async" />
+	</ItemGroup>
+
+</Project>

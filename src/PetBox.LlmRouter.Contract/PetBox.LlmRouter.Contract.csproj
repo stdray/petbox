@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<!-- The neutral LLM capability contract. Dependency-free on purpose: consumers
+	     (Memory, external apps) depend ONLY on this assembly, never on the router impl,
+	     so the provider can be swapped by DI (llm-consumer-decoupling). -->
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+	</PropertyGroup>
+
+</Project>
