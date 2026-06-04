@@ -134,6 +134,8 @@ public sealed class EditorModel : PageModel
 
 		var newHash = BindingContentHash.Compute(Path, canonicalTags, Kind, storedValue, cipher);
 
+		long savedId = BindingId ?? 0;
+
 		if (BindingId is { } id and > 0)
 		{
 			var existing = configDb.Bindings.FirstOrDefault(b => b.Id == id);
@@ -209,16 +211,22 @@ public sealed class EditorModel : PageModel
 				Actor = actor,
 				At = now,
 			});
+
+			savedId = newId;
 		}
 
-		var conflict = DetectConflict(configDb, Path, canonicalTags, BindingId);
+		// Use the just-persisted id as self — for a NEW binding BindingId is still null,
+		// so without this the row would match itself and report a spurious duplicate.
+		var conflict = DetectConflict(configDb, Path, canonicalTags, savedId);
 		if (conflict is not null)
 		{
 			ConflictMessage = conflict;
 			return Page();
 		}
 
-		return RedirectToPage("/Config/Index", new { workspaceKey = EffectiveWorkspaceKey });
+		// Direct path via Routes (not RedirectToPage): the config pages carry duplicate
+		// conventional routes that make page-name URL generation fail here.
+		return LocalRedirect(Routes.SharedConfig(EffectiveWorkspaceKey));
 	}
 
 	string ResolveWorkspace()
