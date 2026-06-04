@@ -6,10 +6,12 @@ import "./sidebar";
 import { initBoardPage } from "./board";
 import { initConfigPage } from "./config";
 import { hydrateMarkdown } from "./markdown";
+import { initNodeEdit } from "./nodeEdit";
 import { initWorkspacePersistence } from "./workspace";
 
 Alpine.start();
 initConfigPage();
 initWorkspacePersistence();
 initBoardPage();
+initNodeEdit();
 hydrateMarkdown();
