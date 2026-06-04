@@ -28,8 +28,11 @@ public interface ITasksService
 	// Provision the four singleton boards (intake/ideas/spec/work) if missing and auto-wire
 	// work->spec. Idempotent. Returns the quartet surface.
 	Task<MethodologyView> EnableMethodologyAsync(string projectKey, CancellationToken ct = default);
-	// The quartet as one surface (intake→ideas→spec→work). Enabled = all four exist.
-	Task<MethodologyView> GetMethodologyAsync(string projectKey, CancellationToken ct = default);
+	// The quartet as one compact INDEX (intake→ideas→spec→work): header rows (no body by
+	// default) + a status histogram per board. `bodyLen`>0 slices the first N body chars into
+	// each row; `includeBoards` (kind names) restricts which quartet boards return. Enabled =
+	// all four exist (independent of the filter).
+	Task<MethodologyView> GetMethodologyAsync(string projectKey, int bodyLen = 0, string[]? includeBoards = null, CancellationToken ct = default);
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);
 	Task<bool> BoardExistsAsync(string projectKey, string board, CancellationToken ct = default);

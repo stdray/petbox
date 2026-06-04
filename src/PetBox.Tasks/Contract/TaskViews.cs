@@ -50,8 +50,23 @@ public sealed record TagGroup(string Key, string? Delivery, IReadOnlyList<string
 // stored hierarchy (spec-flat-tags). Groups are ordered by key, "(none)" last.
 public sealed record GroupedBoardView(string GroupBy, string Kind, IReadOnlyList<TagGroup> Groups);
 
-// One board of the methodology quartet with its active nodes (null Name = not provisioned).
-public sealed record MethodologyBoard(string Kind, string? Name, IReadOnlyList<PlanNodeView> Nodes);
+// A compact INDEX projection of a plan node for the methodology surface: identity,
+// part_of navigation, status/type/title, tags (always), links and the computed delivery
+// roll-up — but NO `Body` by default (sliced to the requested length, else null). The full
+// untruncated body is fetched per board/subtree via GetAsync. This is the index altitude
+// (spec read-index-altitude): orientation without paying for every node's body.
+public sealed record PlanNodeHeader(
+	string Key, string NodeId, string? ParentNodeId, string? ParentSlug, int Depth,
+	string Status, string Type, string Title, long Priority,
+	string? Body, string? Delivery,
+	IReadOnlyList<LinkDto>? Spec, IReadOnlyList<LinkDto>? BlockedBy,
+	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<LinkDto>? Supersedes,
+	IReadOnlyList<string> Tags);
+
+// One board of the methodology quartet as a compact INDEX: a status histogram (`Counts`,
+// status slug -> active-node count) plus the board's nodes as header rows (no bodies by
+// default). null Name = not provisioned.
+public sealed record MethodologyBoard(string Kind, string? Name, IReadOnlyDictionary<string, int> Counts, IReadOnlyList<PlanNodeHeader> Nodes);
 
 // The methodology quartet as one surface: intake → ideas → spec → work (the pipeline
 // order). `Enabled` = all four singleton boards exist. Composes GetAsync per board.

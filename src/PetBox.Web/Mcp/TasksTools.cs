@@ -106,15 +106,31 @@ public static class TasksTools
 	});
 
 	[McpServerTool(Name = "tasks.methodology_get", Title = "Get the methodology quartet", ReadOnly = true)]
-	[Description("Return the project's methodology quartet as ONE surface in pipeline order: intake → ideas → spec → work, each board with its active nodes (the spec board carries the computed `delivery` roll-up). `enabled` is true when all four singleton boards exist. Requires tasks:read.")]
+	[Description("""
+		Return the project's methodology quartet as ONE compact INDEX in pipeline order:
+		intake → ideas → spec → work. Each board carries a status histogram (`counts`: status
+		slug -> active-node count) and its active nodes as INDEX rows — `key`, `nodeId`,
+		`parentSlug`/`depth` (part_of nav), `status`, `type`, `title`, `priority`, `tags`
+		(ALWAYS), links (`spec`/`blockedBy`/`linkedTasks`/`supersedes`) and the computed
+		`delivery` roll-up — but NO `body` by default (this is the orientation index, not a
+		dump; null fields are omitted). Pass `bodyLen` > 0 to include the first N chars of
+		each body (a snippet — the key line(s) without detail; "…" appended when cut; a large
+		N ≈ the full body). Pass `includeBoards` (e.g. ["spec","ideas"]) to return only those
+		quartet boards (kinds: intake|ideas|spec|work). For full untruncated bodies or
+		subtree drill-down, use tasks.get (the single-board detail endpoint). `enabled` is
+		true when all four singleton boards exist. Requires tasks:read.
+		""")]
 	public static async Task<object> MethodologyGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		string projectKey,
+		[Description("Slice length (chars) of each node body to include; 0 = index only (no bodies). \"…\" is appended when a body is cut.")] int bodyLen = 0,
+		[Description("Restrict to these quartet boards by kind (intake|ideas|spec|work); empty/omitted = all four.")] string[]? includeBoards = null,
+		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		return (object)await tasks.GetMethodologyAsync(projectKey, ct);
+		return (object)await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, ct);
 	});
 
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]

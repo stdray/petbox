@@ -108,22 +108,68 @@ public sealed partial class TasksService : ITasksService
 			await CreateBoardAsync(projectKey, name, name, $"methodology {name}", null, ct);
 		}
 		await AutoWireSpecAsync(projectKey, ct);
-		return await GetMethodologyAsync(projectKey, ct);
+		return await GetMethodologyAsync(projectKey, ct: ct);
 	}
 
-	public async Task<MethodologyView> GetMethodologyAsync(string projectKey, CancellationToken ct = default)
+	static readonly IReadOnlyDictionary<string, int> EmptyCounts = new Dictionary<string, int>();
+
+	// The quartet as one COMPACT INDEX. By default each node is a header row (no body);
+	// `bodyLen > 0` slices the first N chars of each body into the row, `includeBoards` (kind
+	// names) restricts which quartet boards are returned. `Enabled` reflects true provisioning
+	// (all four exist) regardless of the filter.
+	public async Task<MethodologyView> GetMethodologyAsync(string projectKey, int bodyLen = 0, string[]? includeBoards = null, CancellationToken ct = default)
 	{
+		var want = ResolveBoardFilter(includeBoards); // null = all quartet boards
 		var boards = await _boards.ListAsync(projectKey, ct);
 		var result = new List<MethodologyBoard>(Quartet.Length);
 		var all = true;
 		foreach (var kind in Quartet)
 		{
 			var b = boards.FirstOrDefault(x => x.ClosedAt == null && WorkflowCatalog.ParseKind(x.Kind) == kind);
-			if (b is null) { all = false; result.Add(new MethodologyBoard(kind.ToString().ToLowerInvariant(), null, [])); continue; }
+			if (b is null) all = false; // existence is a global fact, independent of the filter
+			if (want is not null && !want.Contains(kind)) continue;
+			var kindName = kind.ToString().ToLowerInvariant();
+			if (b is null) { result.Add(new MethodologyBoard(kindName, null, EmptyCounts, [])); continue; }
 			var view = await GetAsync(projectKey, b.Name, includeClosed: false, ct: ct);
-			result.Add(new MethodologyBoard(kind.ToString().ToLowerInvariant(), b.Name, view.Nodes));
+			var headers = view.Nodes.Select(n => ToHeader(n, bodyLen)).ToList();
+			var counts = view.Nodes
+				.GroupBy(n => n.Status, StringComparer.Ordinal)
+				.ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+			result.Add(new MethodologyBoard(kindName, b.Name, counts, headers));
 		}
 		return new MethodologyView(all, result);
+	}
+
+	// Project the full node view down to an index header, slicing the body to `bodyLen`.
+	static PlanNodeHeader ToHeader(PlanNodeView n, int bodyLen) => new(
+		n.Key, n.NodeId, n.ParentNodeId, n.ParentSlug, n.Depth,
+		n.Status, n.Type, n.Title, n.Priority,
+		SliceBody(n.Body, bodyLen), n.Delivery,
+		n.Spec, n.BlockedBy, n.LinkedTasks, n.Supersedes, n.Tags);
+
+	// bodyLen <= 0 -> no body (pure index). Otherwise the first N chars, with "…" appended
+	// when the body was cut. Char-based and predictable (no word-boundary cleverness).
+	static string? SliceBody(string? body, int bodyLen)
+	{
+		if (bodyLen <= 0 || string.IsNullOrEmpty(body)) return null;
+		return body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
+	}
+
+	// Map include_boards (quartet kind names) to a BoardKind set; null/empty = all. An
+	// unknown name is rejected (it would otherwise silently return nothing).
+	static HashSet<BoardKind>? ResolveBoardFilter(string[]? includeBoards)
+	{
+		if (includeBoards is null || includeBoards.Length == 0) return null;
+		var set = new HashSet<BoardKind>();
+		foreach (var raw in includeBoards)
+		{
+			var name = (raw ?? "").Trim();
+			var match = Quartet.Cast<BoardKind?>().FirstOrDefault(k => k!.Value.ToString().Equals(name, StringComparison.OrdinalIgnoreCase));
+			if (match is null)
+				throw new ArgumentException($"includeBoards: '{raw}' is not a quartet board (valid: {string.Join("|", Quartet.Select(k => k.ToString().ToLowerInvariant()))})");
+			set.Add(match.Value);
+		}
+		return set;
 	}
 
 	// A specBoard link only makes sense on a work board and must point at an existing spec board.

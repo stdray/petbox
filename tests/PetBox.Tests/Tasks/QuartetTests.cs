@@ -87,6 +87,51 @@ public sealed class QuartetTests : IDisposable
 			.EnumerateArray().Count().Should().Be(2);
 	}
 
+	[Fact]
+	public async Task MethodologyGet_IsCompactIndex_WithBodyLen_AndBoardFilter()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+
+		var body = new string('x', 500);
+		var nodes = JsonSerializer.Deserialize<JsonElement>(
+			$$"""[{"key":"idea-a","status":"raw","type":"idea","title":"A","body":"{{body}}","tags":["area:tasks"]}]""");
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas", nodes);
+
+		// Default: an INDEX — the node carries tags/status/title but the body is sliced to null;
+		// the board exposes a status histogram.
+		var idx = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj));
+		var ideas = idx.GetProperty("boards").EnumerateArray().Single(b => b.GetProperty("kind").GetString() == "ideas");
+		ideas.GetProperty("counts").GetProperty("raw").GetInt32().Should().Be(1);
+		var nodeA = ideas.GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "idea-a");
+		nodeA.GetProperty("body").ValueKind.Should().Be(JsonValueKind.Null);        // no body by default
+		nodeA.GetProperty("title").GetString().Should().Be("A");
+		nodeA.GetProperty("tags").EnumerateArray().Select(t => t.GetString()).Should().Contain("area:tasks"); // tags ALWAYS
+
+		// bodyLen: the first N chars + "…" when cut.
+		var sliced = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, bodyLen: 300))
+			.GetProperty("boards").EnumerateArray().Single(b => b.GetProperty("kind").GetString() == "ideas")
+			.GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "idea-a")
+			.GetProperty("body").GetString()!;
+		sliced.Length.Should().Be(301);
+		sliced.Should().EndWith("…");
+
+		// includeBoards: only the requested quartet boards, in pipeline order.
+		var only = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, includeBoards: ["spec", "ideas"]));
+		only.GetProperty("boards").EnumerateArray().Select(b => b.GetProperty("kind").GetString())
+			.Should().Equal("ideas", "spec");
+	}
+
+	[Fact]
+	public async Task MethodologyGet_InvalidIncludeBoards_Rejected()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+		// The MCP tool wraps errors via GuardAsync, so assert the message on the service directly.
+		var act = () => _tasks.GetMethodologyAsync(Proj, includeBoards: ["bogus"]);
+		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*not a quartet board*");
+	}
+
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");
