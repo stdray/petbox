@@ -38,8 +38,9 @@ Bridge from P1: `spec leaf with no linked tasks → create tasks → backlog`.
 4. **Task** — technical unit; lives in a backlog; carries `type`
    (`feature|bug|chore|…`, `auto` = the agent classifies); M:N-linked to spec leaves;
    provenance (originating issue + spec item); `commitRef`.
-5. **Intake** — two queues (agent issues, user issues) → triage → {reject-with-reason
-   | task into backlog with links | (user) idea → P1}.
+5. **Intake** — the inbox (agent + user queues) → triage → {reject-with-reason |
+   promote to a task (only if a spec node already exists) | escalate to an idea (no spec
+   reflection → P1)}. See "Intake — the inbox, and the no-spec rule" below.
 
 ## Task lifecycle + the approve gate
 
@@ -69,6 +70,31 @@ in `TasksService`, reading `ICommentService`; `WorkflowEngine` stays pure). The 
 `exploring → accepted` transition was removed — you must pass through `review`. The
 `review → accepted` approval itself stays a convention (the agent shouldn't self-accept);
 `enforceApproval` is off until there's a maintainer/agent role distinction.
+
+## Intake — the inbox, and the "no spec yet" rule
+
+Intake is the **inbox for raw observations** that are neither an idea nor a task yet:
+bugs ("font too small"), questions ("does model X cope with the methodology?"), wishes.
+Two queues (agent-reported, user-reported); items land at `reported` (via `report.issue`
+or a direct upsert). It is NOT part of the requirements pipeline — it's a holding area
+until each item is routed. **Triage** moves an item to exactly one of:
+
+- **reject** — `wontfix` / `duplicate`, with a reason (the record stays; thinking isn't lost).
+- **promote to a task** — *only when the item maps to an EXISTING spec node.* The work task
+  links that spec node (`specRef` → `task_spec`) and the intake issue (`issue_task`); the
+  issue auto-closes when the task reaches `Done`.
+- **escalate to an idea** — *when the item has NO reflection in the spec.* You can't make a
+  work task for it: a work feature/bug REQUIRES a `specRef`, and there is no spec node to
+  point at. That absence IS the signal — the requirement was never specified. The item
+  becomes the **seed of an Idea**, which runs the gate (`idea → review[+spec_plan] → accept
+  → spec`) and only then spawns work. (E.g. "font too small" with no UI spec → an idea
+  "tasks are viewable in the UI" → spec → a `bug` task linked to that new spec node.)
+
+So the chain holds end to end: **every work task traces to a spec node, every spec node to
+an accepted idea.** An intake item that can't find a spec node gets no shortcut into work —
+it goes the long way (idea → spec) so the requirement *exists* before the fix does. A bug is
+the common case where a spec node usually already exists (the behaviour was specified, it's
+just broken); a wish/new-capability usually doesn't, and becomes an idea.
 
 ## Iterations
 
