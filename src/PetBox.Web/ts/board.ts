@@ -76,7 +76,10 @@ export function initBoardPage(): void {
 			else if (fs && d["status"] !== fs) show = false;
 			else if (ft && d["type"] !== ft) show = false;
 			else if (q && !(d["search"] ?? "").includes(q)) show = false;
-			el.hidden = !show;
+			// Inline display, NOT the `hidden` attribute: the <li> carries daisyUI's `.card`
+			// (display:flex), an author rule that beats the UA `[hidden]{display:none}` — so
+			// el.hidden wouldn't actually hide anything. Inline style wins the cascade.
+			el.style.display = show ? "" : "none";
 
 			const caret = el.querySelector<HTMLElement>("[data-collapse-toggle]");
 			if (caret) caret.textContent = collapsed.has(id) ? "▸" : "▾";
