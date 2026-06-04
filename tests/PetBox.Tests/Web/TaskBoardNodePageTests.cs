@@ -133,4 +133,107 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		page.NodeId = NodeId("plan", "n");
 		(await page.OnGetAsync(default)).Should().BeOfType<NotFoundResult>();
 	}
+
+	[Fact]
+	public async Task OnGet_ExposesLegalNextStatuses()
+	{
+		await _tasks.CreateBoardAsync(Proj, "ideas", "ideas", null, null);
+		await Upsert("ideas", new NodePatch { Key = "i", Type = "idea", Title = "I" }); // born raw
+
+		var page = Page();
+		page.NodeId = NodeId("ideas", "i");
+		await page.OnGetAsync(default);
+
+		page.NextStatuses.Should().Equal("exploring"); // raw -> exploring is the only edge
+	}
+
+	[Fact]
+	public async Task OnPostEdit_UpdatesTitleAndBody_ThroughTheService()
+	{
+		await Upsert("plan", new NodePatch { Key = "n", Title = "old", Body = "old body" });
+		var id = NodeId("plan", "n");
+		var version = (await _tasks.GetNodeAsync(Proj, id))!.Node.Version;
+
+		var page = Page();
+		page.NodeId = id;
+		var result = await page.OnPostEditAsync("new title", "new **body**", version, default);
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		var after = (await _tasks.GetNodeAsync(Proj, id))!.Node;
+		after.Title.Should().Be("new title");
+		after.Body.Should().Be("new **body**");
+	}
+
+	[Fact]
+	public async Task OnPostStatus_AppliesLegalTransition()
+	{
+		await _tasks.CreateBoardAsync(Proj, "ideas", "ideas", null, null);
+		await Upsert("ideas", new NodePatch { Key = "i", Type = "idea", Title = "I" }); // raw
+		var id = NodeId("ideas", "i");
+		var version = (await _tasks.GetNodeAsync(Proj, id))!.Node.Version;
+
+		var page = Page();
+		page.NodeId = id;
+		var result = await page.OnPostStatusAsync("exploring", version, default);
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		(await _tasks.GetNodeAsync(Proj, id))!.Node.Status.Should().Be("exploring");
+	}
+
+	[Fact]
+	public async Task OnPostStatus_IllegalTransition_RerendersWithError()
+	{
+		await _tasks.CreateBoardAsync(Proj, "ideas", "ideas", null, null);
+		await Upsert("ideas", new NodePatch { Key = "i", Type = "idea", Title = "I" }); // raw
+		var id = NodeId("ideas", "i");
+		var version = (await _tasks.GetNodeAsync(Proj, id))!.Node.Version;
+
+		var page = Page();
+		page.NodeId = id;
+		var result = await page.OnPostStatusAsync("accepted", version, default); // raw -> accepted: no edge
+
+		result.Should().BeOfType<PageResult>();
+		page.Error.Should().NotBeNullOrEmpty();
+		(await _tasks.GetNodeAsync(Proj, id))!.Node.Status.Should().Be("raw"); // unchanged
+	}
+
+	[Fact]
+	public async Task OnPostEdit_StaleVersion_RerendersWithConflict()
+	{
+		await Upsert("plan", new NodePatch { Key = "n", Title = "t", Body = "b" });
+		var id = NodeId("plan", "n");
+		var version = (await _tasks.GetNodeAsync(Proj, id))!.Node.Version;
+
+		var page = Page();
+		page.NodeId = id;
+		var result = await page.OnPostEditAsync("x", "y", version + 5, default); // baseline the user never saw
+
+		result.Should().BeOfType<PageResult>();
+		page.Error.Should().NotBeNullOrEmpty();
+		(await _tasks.GetNodeAsync(Proj, id))!.Node.Title.Should().Be("t"); // unchanged
+	}
+
+	// edit-respects-guards: a spec-node edit from the UI goes through UpsertAsync, which demands an
+	// ideaRef (accepted idea) on every spec change. The edit handler sends none, so the guard
+	// rejects it — the UI can't bypass the rule. (The accepted idea is created directly here:
+	// the approve gate is convention, not enforced in the engine.)
+	[Fact]
+	public async Task OnPostEdit_SpecNodeWithoutIdeaRef_RejectedByGuard()
+	{
+		await _tasks.CreateBoardAsync(Proj, "ideas", "ideas", null, null);
+		await _tasks.CreateBoardAsync(Proj, "spec", "spec", null, null);
+		await Upsert("ideas", new NodePatch { Key = "i", Type = "idea", Status = "accepted", Title = "I" });
+		var ideaId = NodeId("ideas", "i");
+		await Upsert("spec", new NodePatch { Key = "s", Type = "spec", Status = "defined", Title = "S", Body = "req", IdeaRef = ideaId });
+		var id = NodeId("spec", "s");
+		var version = (await _tasks.GetNodeAsync(Proj, id))!.Node.Version;
+
+		var page = Page();
+		page.NodeId = id;
+		var result = await page.OnPostEditAsync("S edited", "req2", version, default);
+
+		result.Should().BeOfType<PageResult>();
+		page.Error.Should().Contain("ideaRef");
+		(await _tasks.GetNodeAsync(Proj, id))!.Node.Title.Should().Be("S"); // unchanged
+	}
 }
