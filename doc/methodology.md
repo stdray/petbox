@@ -50,6 +50,13 @@ tests → APPROVE (maintainer) → Done`; reject → back with a reason.
 **An agent never sets the final `Done` itself — its ceiling is `Review`.** The
 maintainer confirms.
 
+**Hand over a link, not a slug.** Whenever the agent creates a node the maintainer should
+see, or needs a decision from them on one (drive a task to `Review` / an idea to `Review`,
+ask to approve / accept / set `Done`, or "look at X"), it surfaces the node's permalink
+(`include_url:true` on `tasks_upsert`/`tasks_get`/`tasks_methodology_get`, then the returned
+`url`) as a clickable link — the maintainer decides from the UI, and a direct link is the
+shortest path to the thing they must act on.
+
 ## Idea lifecycle + the spec-approval gate
 
 Symmetric to the task gate: an Idea (deliberation) flows
