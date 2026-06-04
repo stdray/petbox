@@ -20,6 +20,7 @@ public interface INavigationContext
 	bool DataEnabled { get; }
 	bool TasksEnabled { get; }
 	bool MemoryEnabled { get; }
+	bool LlmRouterEnabled { get; }
 }
 
 public sealed record WorkspaceOption(string Key, string Name);
@@ -44,6 +45,7 @@ public sealed class NavigationContext(
 	// Sessions ship with the Tasks module — gated on the same flag (see SessionTools).
 	public bool TasksEnabled => features.IsEnabled(Feature.Tasks);
 	public bool MemoryEnabled => features.IsEnabled(Feature.Memory);
+	public bool LlmRouterEnabled => features.IsEnabled(Feature.LlmRouter);
 
 	public string CurrentWorkspaceKey => _resolvedWorkspace ??= ResolveWorkspace();
 

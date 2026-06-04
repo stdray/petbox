@@ -159,6 +159,7 @@
 								var pTasks = Routes.ProjectTasks(currentWs, project.Key);
 								var pMemory = Routes.ProjectMemory(currentWs, project.Key);
 								var pSessions = Routes.ProjectSessions(currentWs, project.Key);
+								var pLlm = Routes.ProjectLlmRouter(currentWs, project.Key);
 								<li data-testid="nav-project" data-project-key="@project.Key">
 									<details data-tree-key="proj:@project.Key" open="@(isCurrent || fewProjects || openTree.Contains($"proj:{project.Key}"))">
 										<summary class="@(isCurrent ? "active font-semibold" : "")">
@@ -190,6 +191,10 @@
 												</li>
 											}
 											<li><a href="@pConfig" class="@(IsActive(pConfig) ? "active" : "")" data-testid="nav-proj-config">Config</a></li>
+												@if (Nav.LlmRouterEnabled)
+												{
+													<li><a href="@pLlm" class="@(IsActive(pLlm) ? "active" : "")" data-testid="nav-proj-llm">LLM router</a></li>
+												}
 											@if (Nav.TasksEnabled)
 											{
 												<li><a href="@pTasks" class="@(IsActive(pTasks) ? "active" : "")" data-testid="nav-proj-tasks">Tasks</a></li>

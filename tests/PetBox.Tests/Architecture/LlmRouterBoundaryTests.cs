@@ -29,4 +29,17 @@ public sealed class LlmRouterBoundaryTests
 			"MCP tools must reach the LLM router only through PetBox.LlmRouter.Contract; offenders: "
 			+ string.Join(", ", result.FailingTypeNames ?? []));
 	}
+
+	[Fact]
+	public void WebPages_DoNotDependOn_RouterImplementation()
+	{
+		var result = Types.InAssembly(Web)
+			.That().ResideInNamespace("PetBox.Web.Pages")
+			.Should().NotHaveDependencyOnAny(ImplNamespaces)
+			.GetResult();
+
+		result.IsSuccessful.Should().BeTrue(
+			"Razor pages must reach the LLM router only through PetBox.LlmRouter.Contract; offenders: "
+			+ string.Join(", ", result.FailingTypeNames ?? []));
+	}
 }

@@ -1,0 +1,105 @@
+@page "/ui/{workspaceKey}/{projectKey}/llm"
+@model PetBox.Web.Pages.Llm.IndexModel
+@{
+	ViewData["Title"] = $"LLM router — {Model.ProjectKey}";
+}
+
+<div class="p-4 space-y-4">
+	<h1 class="text-xl font-semibold">LLM router — провайдеры</h1>
+
+	@if (Model.ProjectNotFound)
+	{
+		<div class="alert alert-error" data-testid="llm-no-project">Проект '@Model.ProjectKey' не найден.</div>
+	}
+	else
+	{
+		@if (Model.Saved)
+		{
+			<div class="alert alert-success" data-testid="llm-saved">Сохранено.</div>
+		}
+		@if (Model.Error is not null)
+		{
+			<div class="alert alert-error" data-testid="llm-error">@Model.Error</div>
+		}
+
+		<p class="text-sm opacity-70">
+			Реестр workspace-уровня. Ключи write-only: оставьте поле пустым, чтобы сохранить текущий ключ.
+			Cert SHA-256 pin — для self-signed эндпойнта (пусто = доверять публичному CA).
+			Маршруты (routes) в этой версии только для просмотра (настраиваются через MCP <code>llm.config_set</code>).
+		</p>
+
+		<div class="space-y-3">
+			<h2 class="font-semibold">Endpoints</h2>
+			@if (Model.Endpoints.Count == 0)
+			{
+				<div class="opacity-60 text-sm" data-testid="llm-no-endpoints">Пока нет провайдеров — добавьте ниже.</div>
+			}
+			@foreach (var ep in Model.Endpoints)
+			{
+				<div class="card bg-base-200 p-3 space-y-2" data-testid="llm-endpoint-row">
+					<form method="post" asp-page-handler="Save" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+						@Html.AntiForgeryToken()
+						<label class="form-control"><span class="label-text">Name</span>
+							<input class="input input-bordered input-sm" name="name" value="@ep.Name" readonly /></label>
+						<label class="form-control md:col-span-2"><span class="label-text">Base URL</span>
+							<input class="input input-bordered input-sm" name="baseUrl" value="@ep.BaseUrl" /></label>
+						<label class="form-control"><span class="label-text">Cert SHA-256 pin</span>
+							<input class="input input-bordered input-sm" name="certThumbprint" value="@ep.CertThumbprint" placeholder="(public CA)" /></label>
+						<label class="form-control"><span class="label-text">Connect ms</span>
+							<input class="input input-bordered input-sm" type="number" name="connectTimeoutMs" value="@ep.ConnectTimeoutMs" /></label>
+						<label class="form-control"><span class="label-text">Request ms</span>
+							<input class="input input-bordered input-sm" type="number" name="requestTimeoutMs" value="@ep.RequestTimeoutMs" /></label>
+						<label class="form-control md:col-span-2"><span class="label-text">API key (set/replace)</span>
+							<input class="input input-bordered input-sm" type="password" name="newKey" placeholder="пусто = сохранить" autocomplete="new-password" /></label>
+						<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-save">Сохранить</button></div>
+					</form>
+					<form method="post" asp-page-handler="Delete" onsubmit="return confirm('Удалить endpoint @ep.Name?')">
+						@Html.AntiForgeryToken()
+						<input type="hidden" name="name" value="@ep.Name" />
+						<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="llm-delete">Удалить «@ep.Name»</button>
+					</form>
+				</div>
+			}
+		</div>
+
+		<div class="card bg-base-100 border p-3 space-y-2">
+			<h2 class="font-semibold">Добавить провайдера</h2>
+			<form method="post" asp-page-handler="Save" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end" data-testid="llm-add">
+				@Html.AntiForgeryToken()
+				<label class="form-control"><span class="label-text">Name</span>
+					<input class="input input-bordered input-sm" name="name" placeholder="напр. home" required /></label>
+				<label class="form-control md:col-span-2"><span class="label-text">Base URL</span>
+					<input class="input input-bordered input-sm" name="baseUrl" placeholder="https://host:port" required /></label>
+				<label class="form-control"><span class="label-text">Cert SHA-256 pin</span>
+					<input class="input input-bordered input-sm" name="certThumbprint" placeholder="(public CA)" /></label>
+				<label class="form-control"><span class="label-text">Connect ms</span>
+					<input class="input input-bordered input-sm" type="number" name="connectTimeoutMs" value="2000" /></label>
+				<label class="form-control"><span class="label-text">Request ms</span>
+					<input class="input input-bordered input-sm" type="number" name="requestTimeoutMs" value="60000" /></label>
+				<label class="form-control md:col-span-2"><span class="label-text">API key</span>
+					<input class="input input-bordered input-sm" type="password" name="newKey" autocomplete="new-password" /></label>
+				<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-add-save">Добавить</button></div>
+			</form>
+		</div>
+
+		<div class="space-y-2">
+			<h2 class="font-semibold">Маршруты (routes) — только просмотр</h2>
+			@if (Model.Routes.Count == 0)
+			{
+				<div class="opacity-60 text-sm">Маршруты не заданы.</div>
+			}
+			else
+			{
+				<table class="table table-sm">
+					<thead><tr><th>Capability</th><th>Endpoint</th><th>Model</th><th>Priority</th><th>Tier</th></tr></thead>
+					<tbody>
+					@foreach (var r in Model.Routes)
+					{
+						<tr><td>@r.Capability</td><td>@r.Endpoint</td><td>@r.Model</td><td>@r.Priority</td><td>@r.Tier</td></tr>
+					}
+					</tbody>
+				</table>
+			}
+		</div>
+	}
+</div>

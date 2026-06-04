@@ -72,6 +72,9 @@ public static class Routes
 	public static string ProjectConfigHistory(string ws, string key) => $"{Project(ws, key)}/config/history";
 	public static string ProjectConfigPreview(string ws, string key) => $"{Project(ws, key)}/config/preview";
 
+	// LLM router provider/key admin page (workspace-scoped registry, project-scoped URL).
+	public static string ProjectLlmRouter(string ws, string key) => $"{Project(ws, key)}/llm";
+
 	// Project admin pages live under /ui/admin/ws/{ws}/projects/{key}/...
 	public static string ProjectData(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/data";
 	public static string ProjectLogsAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/logs";
