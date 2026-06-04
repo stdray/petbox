@@ -48,9 +48,11 @@ public interface ITasksService
 	// board + part_of ancestor chain (root→parent). null when no active node carries the id.
 	// Powers the per-node detail page (addresses a node by id, not by board/slug).
 	Task<NodeDetailView?> GetNodeAsync(string projectKey, string nodeId, CancellationToken ct = default);
-	// Project a board by a tag namespace (area|concern): nodes bucketed by their tag value
-	// in that namespace ("(none)" for untagged), each group with a delivery roll-up.
-	Task<GroupedBoardView> GetGroupedAsync(string projectKey, string board, string groupBy, CancellationToken ct = default);
+	// Project a board by an ORDERED list of tag namespaces (e.g. [area, concern]): nodes
+	// bucketed by their tag value in each namespace ("(none)" for untagged), nested in
+	// dimension order, each group with a delivery roll-up. The projection is a view — it
+	// never touches part_of (tag-grouping-is-projection).
+	Task<GroupedBoardView> GetGroupedAsync(string projectKey, string board, IReadOnlyList<string> groupBy, CancellationToken ct = default);
 	// Declarative temporal upsert of plan nodes (workflow + spec/blocker rules + effects).
 	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, CancellationToken ct = default);
 	// Nodes added/updated/removed since the cursor (no writes).

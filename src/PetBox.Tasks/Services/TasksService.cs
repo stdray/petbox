@@ -298,15 +298,21 @@ public sealed partial class TasksService : ITasksService
 		return active.FirstOrDefault(n => n.Key == slug)?.NodeId;
 	}
 
-	// Tag-projection: bucket the board's active nodes by their tag value in `groupBy`'s
-	// namespace (area|concern); a node with several such tags lands in several groups,
-	// untagged nodes in "(none)". Each group carries a delivery roll-up (spec boards).
-	public async Task<GroupedBoardView> GetGroupedAsync(string projectKey, string board, string groupBy, CancellationToken ct = default)
+	// Tag-projection: bucket the board's active nodes by their tag value in each `groupBy`
+	// namespace, nested in dimension order (e.g. [area, concern] → area buckets, each split
+	// by concern). A node with several values in a dimension lands in several buckets;
+	// untagged nodes go to "(none)" (ordered last). Every group — at every level — carries a
+	// delivery roll-up over its nodes (spec boards). This is a VIEW: part_of is never touched
+	// (tag-grouping-is-projection).
+	public async Task<GroupedBoardView> GetGroupedAsync(string projectKey, string board, IReadOnlyList<string> groupBy, CancellationToken ct = default)
 	{
 		await EnsureBoard(projectKey, board, ct);
-		var ns = (groupBy ?? "").Trim().ToLowerInvariant();
-		if (!TagStore.Namespaces.Contains(ns))
-			throw new ArgumentException($"groupBy must be a tag namespace ({string.Join("|", TagStore.Namespaces)})");
+		var dims = (groupBy ?? []).Select(d => (d ?? "").Trim().ToLowerInvariant()).Where(d => d.Length > 0).ToList();
+		if (dims.Count == 0)
+			throw new ArgumentException($"groupBy needs at least one tag namespace ({string.Join("|", TagStore.Namespaces)})");
+		foreach (var ns in dims)
+			if (!TagStore.Namespaces.Contains(ns))
+				throw new ArgumentException($"groupBy must be tag namespaces ({string.Join("|", TagStore.Namespaces)}); got '{ns}'");
 
 		var ctx = _boards.GetContext(projectKey);
 		var active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
@@ -317,24 +323,37 @@ public sealed partial class TasksService : ITasksService
 			? await ComputeSpecDeliveryAsync(projectKey, active, await ParentMapAsync(projectKey, ct), ct)
 			: null;
 
-		var prefix = ns + ":";
+		var groups = ProjectByTags(active, dims, 0, tagsByNode, delivery);
+		return new GroupedBoardView(dims, kind.ToString().ToLowerInvariant(), groups);
+	}
+
+	// Recursively bucket `nodes` by dimension `dims[depth]`, then by the remaining dimensions.
+	// The final dimension yields leaf groups (NodeKeys filled, SubGroups empty); earlier ones
+	// yield nesting groups (SubGroups filled, NodeKeys empty). Each group's delivery rolls up
+	// over all its nodes regardless of depth.
+	static List<TagGroup> ProjectByTags(
+		List<PlanNode> nodes, IReadOnlyList<string> dims, int depth,
+		ILookup<string, string> tagsByNode, IReadOnlyDictionary<string, string>? delivery)
+	{
+		var prefix = dims[depth] + ":";
 		var buckets = new Dictionary<string, List<PlanNode>>(StringComparer.Ordinal);
-		foreach (var n in active)
+		foreach (var n in nodes)
 		{
 			var vals = tagsByNode[n.NodeId].Where(t => t.StartsWith(prefix, StringComparison.Ordinal)).ToList();
 			foreach (var key in vals.Count > 0 ? vals : ["(none)"])
 				(buckets.TryGetValue(key, out var l) ? l : buckets[key] = []).Add(n);
 		}
 
-		var groups = buckets
+		var last = depth == dims.Count - 1;
+		return buckets
 			.OrderBy(b => b.Key == "(none)" ? 1 : 0) // "(none)" last
 			.ThenBy(b => b.Key, StringComparer.Ordinal)
 			.Select(b => new TagGroup(
 				b.Key,
 				delivery is null ? null : CombineDelivery(b.Value.Select(n => delivery.GetValueOrDefault(n.NodeId))),
-				b.Value.OrderBy(n => n.Priority).ThenBy(n => n.Key, StringComparer.Ordinal).Select(n => n.Key).ToList()))
+				last ? b.Value.OrderBy(n => n.Priority).ThenBy(n => n.Key, StringComparer.Ordinal).Select(n => n.Key).ToList() : [],
+				last ? [] : ProjectByTags(b.Value, dims, depth + 1, tagsByNode, delivery)))
 			.ToList();
-		return new GroupedBoardView(ns, kind.ToString().ToLowerInvariant(), groups);
 	}
 
 	// Roll up a group's per-node delivery into one status. not_started if all are (or none);
