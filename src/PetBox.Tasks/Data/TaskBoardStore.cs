@@ -27,6 +27,10 @@ public interface ITaskBoardStore
 	Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "free", string? specBoard = null, CancellationToken ct = default);
 	// The full metadata row (Kind, SpecBoard, ClosedAt, …), or null if the board doesn't exist.
 	Task<TaskBoardMeta?> FindAsync(string projectKey, string board, CancellationToken ct = default);
+	// The board owning a node's active revision (ActiveTo == null), or null if no active
+	// row carries this NodeId. Lets callers resolve a node from its stable id alone, without
+	// knowing which board it lives on (boards share one plan file, partitioned by Board).
+	Task<string?> FindBoardByNodeIdAsync(string projectKey, string nodeId, CancellationToken ct = default);
 	// Read-modify-write the metadata row via a `with`-mutation; bumps UpdatedAt. Returns
 	// false if the board doesn't exist. Use for any field change (close, spec link, …).
 	Task<bool> UpdateAsync(string projectKey, string board, Func<TaskBoardMeta, TaskBoardMeta> mutate, CancellationToken ct = default);
@@ -76,6 +80,12 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 	public Task<TaskBoardMeta?> FindAsync(string projectKey, string board, CancellationToken ct = default) =>
 		_db.TaskBoards
 			.Where(b => b.ProjectKey == projectKey && b.Name == board)
+			.FirstOrDefaultAsync(ct)!;
+
+	public Task<string?> FindBoardByNodeIdAsync(string projectKey, string nodeId, CancellationToken ct = default) =>
+		_factory.GetDb(projectKey).PlanNodes
+			.Where(n => n.NodeId == nodeId && n.ActiveTo == null)
+			.Select(n => n.Board)
 			.FirstOrDefaultAsync(ct)!;
 
 	public async Task<bool> UpdateAsync(string projectKey, string board, Func<TaskBoardMeta, TaskBoardMeta> mutate, CancellationToken ct = default)

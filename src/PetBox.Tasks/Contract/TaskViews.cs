@@ -24,6 +24,14 @@ public sealed record PlanNodeView(
 // ParentNodeId/Depth), plus the board's kind and (work boards) its spec board.
 public sealed record PlanBoardView(long CurrentVersion, string Kind, string? SpecBoard, IReadOnlyList<PlanNodeView> Nodes);
 
+// One node resolved by its stable NodeId alone (cross-board): its owning board + kind,
+// the fully-enriched node view, and its part_of ancestor chain ordered root→parent (for
+// breadcrumbs). Powers the per-node detail page, which addresses a node by id, not board.
+public sealed record NodeDetailView(string Board, string Kind, PlanNodeView Node, IReadOnlyList<NodeCrumb> Ancestors);
+
+// A lightweight node pointer (no body/links) — used for breadcrumb ancestors.
+public sealed record NodeCrumb(string NodeId, string Slug, string Title);
+
 // Delta projection of a node (no links/delivery/tags — that's GetAsync).
 public sealed record PlanNodeDelta(
 	string Key, string NodeId, string Status, string Type, string Title, string Body,

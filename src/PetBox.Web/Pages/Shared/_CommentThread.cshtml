@@ -1,0 +1,24 @@
+@model IReadOnlyList<PetBox.Web.Pages.Shared.CommentLine>
+@* Read-only discussion thread under one plan node, DFS-flattened with an indent. Shared by
+   the board page and the node detail page. Writes still go through the comments.* MCP tools
+   (interactive UI is a separate task). Renders nothing when the thread is empty. *@
+@if (Model.Count > 0)
+{
+	<div class="mt-2 border-t border-base-300 pt-2 flex flex-col gap-1.5" data-testid="node-comments">
+		@foreach (var line in Model)
+		{
+			var c = line.Comment;
+			<div class="text-sm" data-testid="comment" data-comment-id="@c.Id" style="margin-left:@(line.Depth * 1.25)rem">
+				<div class="flex items-baseline gap-2 flex-wrap">
+					<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
+					@foreach (var tag in c.Tags)
+					{
+						var artifact = tag.StartsWith("artifact:", StringComparison.Ordinal);
+						<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
+					}
+				</div>
+				<p class="opacity-80 whitespace-pre-wrap" data-testid="comment-body">@c.Body</p>
+			</div>
+		}
+	</div>
+}
