@@ -57,15 +57,18 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory.list", Title = "List memory entries", ReadOnly = true)]
-	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Requires memory:read.")]
+	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). Requires memory:read.")]
 	public static async Task<object> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
-		string projectKey, string store, string? type = null, CancellationToken ct = default)
+		string projectKey, string store, string? type = null,
+		[Description("Snippet length (chars) per entry body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Max entries returned (default 20; 0 = no limit).")] int limit = 20,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		return new { entries = await memory.ListAsync(projectKey, store, type, ct) };
+		return new { entries = Project(await memory.ListAsync(projectKey, store, type, ct), bodyLen, limit) };
 	}
 
 	[McpServerTool(Name = "memory.get", Title = "Get a memory entry", ReadOnly = true)]
@@ -81,15 +84,18 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory.search", Title = "Search memory entries", ReadOnly = true)]
-	[Description("FTS5 full-text search over active entries' description/body/tags, ranked by relevance. Matches by token (prefix), so paraphrases hit. Optional `type` filter (User|Feedback|Project|Reference). Requires memory:read.")]
+	[Description("FTS5 full-text search over active entries' description/body/tags, ranked by relevance. Matches by token (prefix), so paraphrases hit. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). Requires memory:read.")]
 	public static async Task<object> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
-		string projectKey, string store, string query, string? type = null, CancellationToken ct = default)
+		string projectKey, string store, string query, string? type = null,
+		[Description("Snippet length (chars) per entry body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Max entries returned (default 20; 0 = no limit).")] int limit = 20,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		return new { entries = await memory.SearchAsync(projectKey, store, query, type, ct) };
+		return new { entries = Project(await memory.SearchAsync(projectKey, store, query, type, ct), bodyLen, limit) };
 	}
 
 	[McpServerTool(Name = "memory.upsert", Title = "Upsert memory entries")]
@@ -206,13 +212,17 @@ public static class MemoryTools
 		omit it to CASCADE project ⊕ workspace (results labelled by scope, project
 		first); or pass project | workspace for one. `store` narrows to a single
 		store within each scope (default: search every store). Optional `type` filter
-		(User|Feedback|Project|Reference) and `limit` (default 20). Requires memory:read.
+		(User|Feedback|Project|Reference) and `limit` (default 20). Bodies are full by
+		default; pass `bodyLen` > 0 for a snippet (description + first N chars), then pull a
+		full body with memory.get. Requires memory:read.
 		Returns { results: [{ scope, store, key, type, description, body, tags }] }.
 		""")]
 	public static async Task<object> RecallAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string query, string? scope = null, string? projectKey = null, string? store = null,
-		string? type = null, int limit = 20, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		string? type = null, int limit = 20,
+		[Description("Snippet length (chars) per result body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
+		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
@@ -231,7 +241,7 @@ public static class MemoryTools
 				if (!await memory.StoreExistsAsync(container, st, ct)) continue;
 				foreach (var v in await memory.SearchAsync(container, st, query, type, ct))
 				{
-					results.Add(new { scope = scopeName, store = st, key = v.Key, type = v.Type, description = v.Description, body = v.Body, tags = v.Tags });
+					results.Add(new { scope = scopeName, store = st, key = v.Key, type = v.Type, description = v.Description, body = ModuleMcp.SnippetBody(v.Body, bodyLen), tags = v.Tags });
 					if (results.Count >= limit) return (object)new { results };
 				}
 			}
@@ -308,6 +318,24 @@ public static class MemoryTools
 		version = e.Version,
 		metadata = e.Metadata,
 	};
+
+	// Read-path projection (spec read-snippet-on-demand + bounded-result-sets): cap at `limit`
+	// (0 = no cap) and snippet each body to `bodyLen` (0 = full, back-compat). description/tags
+	// stay so a hit can be judged without the full body.
+	static List<object> Project(IEnumerable<MemoryEntryView> entries, int bodyLen, int limit)
+	{
+		var capped = limit > 0 ? entries.Take(limit) : entries;
+		return capped.Select(e => (object)new
+		{
+			key = e.Key,
+			type = e.Type,
+			description = e.Description,
+			body = ModuleMcp.SnippetBody(e.Body, bodyLen),
+			tags = e.Tags,
+			version = e.Version,
+			metadata = e.Metadata,
+		}).ToList();
+	}
 
 	// Parse the entry array into typed inputs. Taxonomy/tag normalization happens in the
 	// service. MCP clients sometimes pass the array as a JSON *string*, so accept both.

@@ -220,6 +220,29 @@ public sealed class QuartetTests : IDisposable
 		sliced.Should().EndWith("…");
 	}
 
+	// spec read-snippet-on-demand: tasks.get returns full bodies by default (the Razor board
+	// needs them) but snippets each node body when bodyLen > 0 — the slice is MCP-adapter-only.
+	[Fact]
+	public async Task TasksGet_FullBodyByDefault_SnippetsWithBodyLen()
+	{
+		var http = Http("tasks:read,tasks:write");
+		var big = new string('z', 500);
+		var nodes = JsonSerializer.Deserialize<JsonElement>(
+			$$"""[{"key":"n","status":"Pending","title":"N","body":"{{big}}"}]""");
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
+
+		// Default: the full body.
+		var full = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g"))
+			.GetProperty("nodes").EnumerateArray().Single().GetProperty("body").GetString()!;
+		full.Length.Should().Be(500);
+
+		// bodyLen > 0: first N chars + "…".
+		var snip = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", bodyLen: 100))
+			.GetProperty("nodes").EnumerateArray().Single().GetProperty("body").GetString()!;
+		snip.Length.Should().Be(101);
+		snip.Should().EndWith("…");
+	}
+
 	static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 	static JsonElement Json(object? o) => JsonSerializer.SerializeToElement(o, CamelCase);
 }

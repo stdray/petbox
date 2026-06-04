@@ -152,21 +152,29 @@ public static class TasksTools
 		list of tag namespaces (e.g. "area" or "area,concern") buckets nodes by their value in
 		each namespace ("(none)" for untagged), nested in that order, each group with a delivery
 		roll-up — the cross-cutting view a single-parent tree can't give. The projection is a
-		view; part_of is untouched. Requires tasks:read.
+		view; part_of is untouched. Bodies are returned in FULL by default; pass `bodyLen` > 0
+		for a per-node snippet (first N chars + "…"), then fetch a full body from the node's
+		detail page or a narrower `under`. Requires tasks:read.
 		""")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, bool includeClosed = false, string? under = null,
 		[Description("Tag PROJECTION: an ordered, comma-separated list of tag namespaces (e.g. \"area\" or \"area,concern\"); order sets nesting.")] string? groupBy = null,
+		[Description("Snippet length (chars) per node body; 0 (default) = full body. \"…\" appended when cut. Ignored with groupBy (keys only).")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default; ignored with groupBy).")] bool includeUrl = false,
 		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		return string.IsNullOrWhiteSpace(groupBy)
-			? (object)await tasks.GetAsync(projectKey, board, includeClosed, under, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct), ct)
-			: await tasks.GetGroupedAsync(projectKey, board, ParseGroupBy(groupBy), ct);
+		if (!string.IsNullOrWhiteSpace(groupBy))
+			return await tasks.GetGroupedAsync(projectKey, board, ParseGroupBy(groupBy), ct);
+		var view = await tasks.GetAsync(projectKey, board, includeClosed, under, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct), ct);
+		// Snippet slicing is MCP-adapter-only: the service GetAsync still returns full bodies,
+		// which the Razor board renders — so this never starves the UI (spec read-snippet-on-demand).
+		return bodyLen <= 0
+			? (object)view
+			: view with { Nodes = view.Nodes.Select(n => n with { Body = ModuleMcp.SnippetBody(n.Body, bodyLen) ?? n.Body }).ToList() };
 	});
 
 	// Split a comma-separated groupBy ("area,concern") into the ordered dimension list the

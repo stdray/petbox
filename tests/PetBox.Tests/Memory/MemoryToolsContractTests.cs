@@ -167,6 +167,37 @@ public sealed class MemoryToolsContractTests : IDisposable
 		sliced.Should().EndWith("…");
 	}
 
+	// spec read-snippet-on-demand + bounded-result-sets: list/search cap at `limit` and snippet
+	// bodies at `bodyLen` (full by default), so a read can't dump an unbounded wall of bodies.
+	[Fact]
+	public async Task ListAndSearch_RespectLimit_AndBodyLen()
+	{
+		var http = Http("memory:read,memory:write");
+		var big = new string('x', 300);
+		var entries = JsonSerializer.SerializeToElement(new object[]
+		{
+			new { key = "a", type = "project", description = "da", body = "alpha " + big },
+			new { key = "b", type = "project", description = "db", body = "alpha short" },
+			new { key = "c", type = "project", description = "dc", body = "alpha scope" },
+		});
+		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
+
+		// list: limit caps the count.
+		Json(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", limit: 2))
+			.GetProperty("entries").EnumerateArray().Count().Should().Be(2);
+
+		// list: bodyLen snippets the body of entry 'a' (the long one).
+		var aBody = Json(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", bodyLen: 100))
+			.GetProperty("entries").EnumerateArray().Single(e => e.GetProperty("key").GetString() == "a")
+			.GetProperty("body").GetString()!;
+		aBody.Length.Should().Be(101);
+		aBody.Should().EndWith("…");
+
+		// search: the same limit bounds an FTS sweep ("alpha" hits all three).
+		Json(await MemoryTools.SearchAsync(http, Flags(), _memory, Proj, "notes", "alpha", limit: 2))
+			.GetProperty("entries").EnumerateArray().Count().Should().Be(2);
+	}
+
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");
