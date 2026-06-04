@@ -183,6 +183,43 @@ public sealed class QuartetTests : IDisposable
 		return new FeatureFlags(cfg);
 	}
 
+	// spec echo-compact-by-default: the write-echo is a compact cursor advance — it carries
+	// key/status/title/version but NOT the body unless bodyLen > 0. Defuses the footgun where a
+	// stale sinceVersion re-dumps every recently-changed node's full body (the main context sink).
+	[Fact]
+	public async Task Upsert_EchoOmitsBodyByDefault_SlicesWithBodyLen_AndStaleCursorStaysBodiless()
+	{
+		var http = Http("tasks:read,tasks:write");
+		var big = new string('y', 500);
+
+		// Default echo: title present, body sliced to null (no re-dump of what I just sent).
+		var nodesA = JsonSerializer.Deserialize<JsonElement>(
+			$$"""[{"key":"a","status":"Pending","title":"A","body":"{{big}}"}]""");
+		var resA = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesA));
+		var addedA = resA.GetProperty("added").EnumerateArray().Single();
+		addedA.GetProperty("title").GetString().Should().Be("A");
+		addedA.GetProperty("body").ValueKind.Should().Be(JsonValueKind.Null);
+
+		// A second node with the DEFAULT stale cursor (sinceVersion = 0) echoes BOTH nodes
+		// (version > 0), but every echoed body is still null — the dump is bodiless.
+		var nodesB = JsonSerializer.Deserialize<JsonElement>(
+			"""[{"key":"b","status":"Pending","title":"B","body":"zzz"}]""");
+		var resB = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesB));
+		var echoed = resB.GetProperty("added").EnumerateArray()
+			.Concat(resB.GetProperty("updated").EnumerateArray()).ToList();
+		echoed.Select(n => n.GetProperty("key").GetString()).Should().Contain(["a", "b"]); // stale cursor re-echoes 'a'
+		echoed.Should().OnlyContain(n => n.GetProperty("body").ValueKind == JsonValueKind.Null);
+
+		// bodyLen > 0: the opt-in sliced body — first N chars + "…" when cut.
+		var nodesC = JsonSerializer.Deserialize<JsonElement>(
+			$$"""[{"key":"c","status":"Pending","title":"C","body":"{{big}}"}]""");
+		var sliced = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesC, bodyLen: 300))
+			.GetProperty("added").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "c")
+			.GetProperty("body").GetString()!;
+		sliced.Length.Should().Be(301);
+		sliced.Should().EndWith("…");
+	}
+
 	static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 	static JsonElement Json(object? o) => JsonSerializer.SerializeToElement(o, CamelCase);
 }

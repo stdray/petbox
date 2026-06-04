@@ -192,15 +192,20 @@ public static class TasksTools
 		new). Rename via prevKey. A cold call auto-creates the board.
 
 		Returns { applied, currentVersion, inserted, closed, conflicts[], added[], updated[],
-		removed[] }; added/updated carry the node (key, nodeId, status, type, title, body,
-		commitRef, priority, version). The delta IS the fresh state since `sinceVersion` —
-		advance your cursor and merge, no need to re-read.
+		removed[] }; added/updated carry the node (key, nodeId, status, type, title,
+		commitRef, priority, version) but NOT `body` by default — the echo is a compact
+		cursor-advance, not a re-dump (pass bodyLen > 0 for a sliced body, "…" when cut).
+		The delta IS the fresh state since `sinceVersion` — advance your cursor and merge.
+		CURSOR CONTRACT: pass the PREVIOUS response's `currentVersion` as the next
+		`sinceVersion` (NOT a single node's `version`, which is smaller — that re-echoes the
+		whole recent delta; the default 0 echoes every node, bodiless).
 		""")]
 	public static async Task<object> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
 		[Description("JSON array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef`, `blockedBy`, status/type/title/body/priority/version.")] JsonElement nodes,
-		long sinceVersion = 0,
+		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every node (bodiless).")] long sinceVersion = 0,
+		[Description("Slice length (chars) of each echoed node body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
@@ -209,14 +214,15 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, ct), urlPrefix);
+		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, ct), urlPrefix, bodyLen);
 	});
 
 	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true)]
-	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes). Requires tasks:read.")]
+	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes); bodies omitted unless bodyLen > 0 (compact by default). Requires tasks:read.")]
 	public static async Task<object> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, long sinceVersion,
+		[Description("Slice length (chars) of each node body; 0 (default) = no body (compact). \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
 	{
@@ -224,7 +230,7 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix);
+		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix, bodyLen);
 	}
 
 	[McpServerTool(Name = "tasks.workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true)]
@@ -266,7 +272,7 @@ public static class TasksTools
 		return $"{req.Scheme}://{req.Host}{Routes.TaskBoardNode(ws, projectKey, string.Empty)}";
 	}
 
-	static UpsertResultView Serialize(UpsertOutcome o, string? urlPrefix = null)
+	static UpsertResultView Serialize(UpsertOutcome o, string? urlPrefix = null, int bodyLen = 0)
 	{
 		var r = o.Result;
 		return new UpsertResultView(
@@ -276,19 +282,20 @@ public static class TasksTools
 			Inserted: r.Inserted,
 			Closed: r.Closed,
 			Conflicts: r.Conflicts.Select(c => new UpsertConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion)).ToList(),
-			Added: r.Added.Select(n => NodeDto(n, urlPrefix)).ToList(),
-			Updated: r.Updated.Select(n => NodeDto(n, urlPrefix)).ToList(),
+			Added: r.Added.Select(n => NodeDto(n, urlPrefix, bodyLen)).ToList(),
+			Updated: r.Updated.Select(n => NodeDto(n, urlPrefix, bodyLen)).ToList(),
 			Removed: r.Removed.ToList());
 	}
 
-	// Delta projection of a node (no links/delivery/tags — that's tasks.get). camelCased by the serializer.
-	static PlanNodeDelta NodeDto(PlanNode n, string? urlPrefix = null) => new(
+	// Delta projection of a node (no links/delivery/tags — that's tasks.get). camelCased by the
+	// serializer; `body` is sliced to bodyLen (null when 0 → omitted) for the compact echo.
+	static PlanNodeDelta NodeDto(PlanNode n, string? urlPrefix = null, int bodyLen = 0) => new(
 		Key: n.Key,
 		NodeId: n.NodeId,
 		Status: n.Status,
 		Type: n.Type,
 		Title: n.Name,
-		Body: n.Body,
+		Body: ModuleMcp.SliceBody(n.Body, bodyLen),
 		CommitRef: n.CommitRef,
 		Priority: n.Priority,
 		Version: n.Version,

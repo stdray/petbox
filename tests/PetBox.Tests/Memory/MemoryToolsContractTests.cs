@@ -136,6 +136,37 @@ public sealed class MemoryToolsContractTests : IDisposable
 			.Should().NotContain("temp");
 	}
 
+	// spec echo-compact-by-default (mirror of the tasks side): memory.upsert echoes
+	// key/type/description/version but NOT the body unless bodyLen > 0. description (a one-liner)
+	// stays to orient the merge; the heavy body is opt-in.
+	[Fact]
+	public async Task Upsert_EchoOmitsBodyByDefault_SlicesWithBodyLen()
+	{
+		var http = Http("memory:read,memory:write");
+		var big = new string('y', 500);
+
+		// Default echo: description present, body sliced to null.
+		var entries = JsonSerializer.SerializeToElement(new object[]
+		{
+			new { key = "k", type = "project", description = "one-liner", body = big },
+		});
+		var added = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries))
+			.GetProperty("added").EnumerateArray().Single();
+		added.GetProperty("description").GetString().Should().Be("one-liner");
+		added.GetProperty("body").ValueKind.Should().Be(JsonValueKind.Null);
+
+		// bodyLen > 0: opt-in sliced body — first N chars + "…" when cut.
+		var entries2 = JsonSerializer.SerializeToElement(new object[]
+		{
+			new { key = "k2", type = "project", description = "d", body = big },
+		});
+		var sliced = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries2, bodyLen: 300))
+			.GetProperty("added").EnumerateArray().Single(e => e.GetProperty("key").GetString() == "k2")
+			.GetProperty("body").GetString()!;
+		sliced.Length.Should().Be(301);
+		sliced.Should().EndWith("…");
+	}
+
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");

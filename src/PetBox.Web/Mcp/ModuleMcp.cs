@@ -88,4 +88,14 @@ static class ModuleMcp
 			&& e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out var v)
 			? v
 			: dflt;
+
+	// Adapter-level body slice for the compact-by-default surface (spec surface-economy):
+	// bodyLen <= 0 -> null (no body, the serializer omits the field); otherwise the first N
+	// chars with "…" appended when cut. Mirrors TasksService.SliceBody (the methodology
+	// index slice) so the write-echo and read snippets cut bodies the same way.
+	public static string? SliceBody(string? body, int bodyLen)
+	{
+		if (bodyLen <= 0 || string.IsNullOrEmpty(body)) return null;
+		return body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
+	}
 }

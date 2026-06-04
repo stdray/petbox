@@ -104,31 +104,39 @@ public static class MemoryTools
 		soft-closed (history kept) and appears in the result's `removed`.
 		Store durable facts not derivable from code/git/config; actionable work goes to a
 		task board, not here.
-		Result: { applied, currentVersion, inserted, closed, conflicts[], added[], updated[], removed[] }.
+		Result: { applied, currentVersion, inserted, closed, conflicts[], added[], updated[], removed[] };
+		added/updated carry key/type/description/version but NOT `body` by default — the echo
+		is a compact cursor-advance (pass bodyLen > 0 for a sliced body). CURSOR CONTRACT: pass
+		the prior response's `currentVersion` as the next `sinceVersion` (0 echoes every entry,
+		bodiless); a single entry's `version` is smaller and re-echoes the whole recent delta.
 		""")]
 	public static async Task<object> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store,
 		[Description("JSON array of entry objects")] JsonElement entries,
-		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every entry (bodiless).")] long sinceVersion = 0,
+		[Description("Slice length (chars) of each echoed entry body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
+		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var (upserts, deletes) = ParseEntries(entries);
-		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, sinceVersion, ct));
+		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, sinceVersion, ct), bodyLen);
 	});
 
 	[McpServerTool(Name = "memory.delta", Title = "Memory delta since cursor", ReadOnly = true)]
-	[Description("Return entries added/updated/removed since `sinceVersion` (no writes). Requires memory:read.")]
+	[Description("Return entries added/updated/removed since `sinceVersion` (no writes); bodies omitted unless bodyLen > 0 (compact by default). Requires memory:read.")]
 	public static async Task<object> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
-		string projectKey, string store, long sinceVersion, CancellationToken ct = default)
+		string projectKey, string store, long sinceVersion,
+		[Description("Slice length (chars) of each entry body; 0 (default) = no body (compact). \"…\" appended when cut.")] int bodyLen = 0,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		return Serialize(await memory.DeltaAsync(projectKey, store, sinceVersion, ct));
+		return Serialize(await memory.DeltaAsync(projectKey, store, sinceVersion, ct), bodyLen);
 	}
 
 	// ---- ergonomic verbs: remember / recall (thin over the structural tools) ----
@@ -266,7 +274,7 @@ public static class MemoryTools
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 
-	static object Serialize(MemoryUpsertOutcome o)
+	static object Serialize(MemoryUpsertOutcome o, int bodyLen = 0)
 	{
 		var r = o.Result;
 		return new
@@ -282,18 +290,20 @@ public static class MemoryTools
 				baselineVersion = c.BaselineVersion,
 				activeVersion = c.ActiveVersion,
 			}).ToList(),
-			added = r.Added.Select(EntryDto).ToList(),
-			updated = r.Updated.Select(EntryDto).ToList(),
+			added = r.Added.Select(e => EntryDto(e, bodyLen)).ToList(),
+			updated = r.Updated.Select(e => EntryDto(e, bodyLen)).ToList(),
 			removed = r.Removed.ToList(),
 		};
 	}
 
-	static object EntryDto(MemoryEntry e) => new
+	// `body` is sliced to bodyLen (null when 0 → omitted by the serializer) so the write-echo
+	// stays compact; `description` (a one-liner) is kept to orient the merge.
+	static object EntryDto(MemoryEntry e, int bodyLen = 0) => new
 	{
 		key = e.Key,
 		type = e.Type.ToString(),
 		description = e.Description,
-		body = e.Body,
+		body = ModuleMcp.SliceBody(e.Body, bodyLen),
 		tags = e.Tags,
 		version = e.Version,
 		metadata = e.Metadata,
