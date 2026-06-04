@@ -125,7 +125,10 @@ public sealed class TaskBoardNodeModel : PageModel
 		var type = detail.Node.Type.Length == 0 ? null : detail.Node.Type;
 		NextStatuses = WorkflowCatalog.For(kind, type)?.NextFrom(detail.Node.Status) ?? [];
 
-		var comments = await _comments.ListForNodeAsync(ProjectKey, detail.Board, NodeId, ct);
+		// Use the RESOLVED node id, not the bound NodeId property: on the canonical slug-URL
+		// (/tasks/{board}/{slug}) only Board+Slug are bound and NodeId is empty, which would
+		// otherwise return an empty thread (comments/spec_plan vanish).
+		var comments = await _comments.ListForNodeAsync(ProjectKey, detail.Board, detail.Node.NodeId, ct);
 		Thread = CommentThread.Flatten(comments);
 		return Page();
 	}

@@ -261,10 +261,13 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		(await _tasks.GetNodeBySlugAsync(Proj, "nope", "a")).Should().BeNull();
 	}
 
+	// The thread must load on the slug route too: comments are fetched by the RESOLVED node id,
+	// not the bound NodeId (empty here), else spec_plan/discussion vanish on the canonical URL.
 	[Fact]
-	public async Task OnGet_ResolvesByBoardSlug_RendersNode()
+	public async Task OnGet_ResolvesByBoardSlug_RendersNodeWithThread()
 	{
 		await Upsert("plan", new NodePatch { Key = "n", Title = "N", Body = "full body text" });
+		await _comments.AddAsync(Proj, "plan", NodeId("plan", "n"), parentId: null, author: "t", body: "a remark", tags: null);
 
 		var page = Page();
 		page.Board = "plan";
@@ -274,6 +277,7 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		result.Should().BeOfType<PageResult>();
 		page.Detail.Node.Key.Should().Be("n");
 		page.Detail.Node.Body.Should().Be("full body text");
+		page.Thread.Should().ContainSingle().Which.Comment.Body.Should().Be("a remark");
 	}
 
 	[Fact]
