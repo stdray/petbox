@@ -123,6 +123,39 @@ public sealed class QuartetTests : IDisposable
 	}
 
 	[Fact]
+	public async Task MethodologyGet_IncludeUrl_AddsAbsolutePermalink()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+		var nodes = JsonSerializer.Deserialize<JsonElement>("""[{"key":"idea-u","status":"raw","type":"idea","title":"U"}]""");
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas", nodes);
+
+		// off by default: url is null.
+		var off = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj))
+			.GetProperty("boards").EnumerateArray().Single(b => b.GetProperty("kind").GetString() == "ideas")
+			.GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "idea-u");
+		off.GetProperty("url").ValueKind.Should().Be(JsonValueKind.Null);
+
+		// includeUrl: absolute permalink = base + /ui/{ws}/{project}/tasks/node/{nodeId}.
+		var on = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, includeUrl: true))
+			.GetProperty("boards").EnumerateArray().Single(b => b.GetProperty("kind").GetString() == "ideas")
+			.GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "idea-u");
+		var nodeId = on.GetProperty("nodeId").GetString();
+		on.GetProperty("url").GetString().Should().Be($"https://box.test/ui/ws/{Proj}/tasks/node/{nodeId}");
+	}
+
+	[Fact]
+	public async Task Upsert_IncludeUrl_ReturnsPermalinkForCreatedNode()
+	{
+		var http = Http("tasks:read,tasks:write");
+		var nodes = JsonSerializer.Deserialize<JsonElement>("""[{"key":"a","status":"Pending","title":"A"}]""");
+		var added = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "free1", nodes, includeUrl: true))
+			.GetProperty("added").EnumerateArray().Single();
+		var nodeId = added.GetProperty("nodeId").GetString();
+		added.GetProperty("url").GetString().Should().Be($"https://box.test/ui/ws/{Proj}/tasks/node/{nodeId}");
+	}
+
+	[Fact]
 	public async Task MethodologyGet_InvalidIncludeBoards_Rejected()
 	{
 		var http = Http("tasks:read,tasks:write");
@@ -135,7 +168,10 @@ public sealed class QuartetTests : IDisposable
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");
-		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id) } };
+		var ctx = new DefaultHttpContext { User = new ClaimsPrincipal(id) };
+		ctx.Request.Scheme = "https";
+		ctx.Request.Host = new HostString("box.test");
+		return new HttpContextAccessor { HttpContext = ctx };
 	}
 
 	static FeatureFlags Flags()

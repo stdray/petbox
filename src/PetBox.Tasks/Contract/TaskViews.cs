@@ -18,7 +18,8 @@ public sealed record PlanNodeView(
 	string Key, string NodeId, string? ParentNodeId, string? ParentSlug, int Depth,
 	string Status, string Type, string Title, string Body, string? CommitRef, long Priority, long Version,
 	string? Delivery, IReadOnlyList<LinkDto>? Spec, IReadOnlyList<LinkDto>? BlockedBy,
-	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<LinkDto>? Supersedes, IReadOnlyList<string> RenamedFrom, IReadOnlyList<string> Tags);
+	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<LinkDto>? Supersedes, IReadOnlyList<string> RenamedFrom, IReadOnlyList<string> Tags,
+	string? Url = null);
 
 // A board's active plan nodes (flat list; the tree is the part_of projection via
 // ParentNodeId/Depth), plus the board's kind and (work boards) its spec board.
@@ -35,7 +36,18 @@ public sealed record NodeCrumb(string NodeId, string Slug, string Title);
 // Delta projection of a node (no links/delivery/tags — that's GetAsync).
 public sealed record PlanNodeDelta(
 	string Key, string NodeId, string Status, string Type, string Title, string Body,
-	string? CommitRef, long Priority, long Version);
+	string? CommitRef, long Priority, long Version, string? Url = null);
+
+// One row the caller could not apply (optimistic-concurrency miss), shaped for the wire.
+public sealed record UpsertConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion);
+
+// The tasks.upsert / tasks.delta response: what was applied (counts) plus the delta since the
+// caller's cursor (Added/Updated as node projections, Removed as keys) and any Conflicts. The
+// delta IS the fresh state since `sinceVersion` — the caller advances its cursor and merges.
+public sealed record UpsertResultView(
+	bool Applied, long CurrentVersion, string Kind, int Inserted, int Closed,
+	IReadOnlyList<UpsertConflictView> Conflicts,
+	IReadOnlyList<PlanNodeDelta> Added, IReadOnlyList<PlanNodeDelta> Updated, IReadOnlyList<string> Removed);
 
 // The raw temporal upsert/delta result plus the board kind, ready for an adapter to
 // serialize. The service owns the logic; the adapter owns the wire shape.
@@ -61,7 +73,7 @@ public sealed record PlanNodeHeader(
 	string? Body, string? Delivery,
 	IReadOnlyList<LinkDto>? Spec, IReadOnlyList<LinkDto>? BlockedBy,
 	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<LinkDto>? Supersedes,
-	IReadOnlyList<string> Tags);
+	IReadOnlyList<string> Tags, string? Url = null);
 
 // One board of the methodology quartet as a compact INDEX: a status histogram (`Counts`,
 // status slug -> active-node count) plus the board's nodes as header rows (no bodies by

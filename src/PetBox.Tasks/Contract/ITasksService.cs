@@ -32,7 +32,10 @@ public interface ITasksService
 	// default) + a status histogram per board. `bodyLen`>0 slices the first N body chars into
 	// each row; `includeBoards` (kind names) restricts which quartet boards return. Enabled =
 	// all four exist (independent of the filter).
-	Task<MethodologyView> GetMethodologyAsync(string projectKey, int bodyLen = 0, string[]? includeBoards = null, CancellationToken ct = default);
+	Task<MethodologyView> GetMethodologyAsync(string projectKey, int bodyLen = 0, string[]? includeBoards = null, string? urlPrefix = null, CancellationToken ct = default);
+	// The workspace owning a project, or null if unknown. Adapters use it to assemble per-node
+	// UI permalinks (the URL is workspace-scoped but the MCP surface carries only projectKey).
+	Task<string?> ResolveWorkspaceAsync(string projectKey, CancellationToken ct = default);
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);
 	Task<bool> BoardExistsAsync(string projectKey, string board, CancellationToken ct = default);
@@ -40,7 +43,7 @@ public interface ITasksService
 	// --- nodes ---
 
 	// The active plan nodes as a 1-to-3 level tree with links and (spec boards) delivery.
-	Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, CancellationToken ct = default);
+	Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, string? urlPrefix = null, CancellationToken ct = default);
 	// One node by its stable NodeId alone (cross-board): the enriched node view + its owning
 	// board + part_of ancestor chain (root→parent). null when no active node carries the id.
 	// Powers the per-node detail page (addresses a node by id, not by board/slug).

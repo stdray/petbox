@@ -31,6 +31,9 @@ public interface ITaskBoardStore
 	// row carries this NodeId. Lets callers resolve a node from its stable id alone, without
 	// knowing which board it lives on (boards share one plan file, partitioned by Board).
 	Task<string?> FindBoardByNodeIdAsync(string projectKey, string nodeId, CancellationToken ct = default);
+	// The workspace owning a project (Projects.WorkspaceKey), or null if the project is
+	// unknown — used to build per-node UI permalinks.
+	Task<string?> FindProjectWorkspaceAsync(string projectKey, CancellationToken ct = default);
 	// Read-modify-write the metadata row via a `with`-mutation; bumps UpdatedAt. Returns
 	// false if the board doesn't exist. Use for any field change (close, spec link, …).
 	Task<bool> UpdateAsync(string projectKey, string board, Func<TaskBoardMeta, TaskBoardMeta> mutate, CancellationToken ct = default);
@@ -63,6 +66,9 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 			.Where(b => b.ProjectKey == projectKey)
 			.OrderBy(b => b.Name)
 			.ToListAsync(ct);
+
+	public async Task<string?> FindProjectWorkspaceAsync(string projectKey, CancellationToken ct = default) =>
+		await _db.Projects.Where(p => p.Key == projectKey).Select(p => p.WorkspaceKey).FirstOrDefaultAsync(ct);
 
 	public Task TouchAsync(string projectKey, string board, CancellationToken ct = default) =>
 		_db.TaskBoards

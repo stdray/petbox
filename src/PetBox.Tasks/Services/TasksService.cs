@@ -111,13 +111,16 @@ public sealed partial class TasksService : ITasksService
 		return await GetMethodologyAsync(projectKey, ct: ct);
 	}
 
+	public Task<string?> ResolveWorkspaceAsync(string projectKey, CancellationToken ct = default) =>
+		_boards.FindProjectWorkspaceAsync(projectKey, ct);
+
 	static readonly IReadOnlyDictionary<string, int> EmptyCounts = new Dictionary<string, int>();
 
 	// The quartet as one COMPACT INDEX. By default each node is a header row (no body);
 	// `bodyLen > 0` slices the first N chars of each body into the row, `includeBoards` (kind
 	// names) restricts which quartet boards are returned. `Enabled` reflects true provisioning
 	// (all four exist) regardless of the filter.
-	public async Task<MethodologyView> GetMethodologyAsync(string projectKey, int bodyLen = 0, string[]? includeBoards = null, CancellationToken ct = default)
+	public async Task<MethodologyView> GetMethodologyAsync(string projectKey, int bodyLen = 0, string[]? includeBoards = null, string? urlPrefix = null, CancellationToken ct = default)
 	{
 		var want = ResolveBoardFilter(includeBoards); // null = all quartet boards
 		var boards = await _boards.ListAsync(projectKey, ct);
@@ -130,7 +133,7 @@ public sealed partial class TasksService : ITasksService
 			if (want is not null && !want.Contains(kind)) continue;
 			var kindName = kind.ToString().ToLowerInvariant();
 			if (b is null) { result.Add(new MethodologyBoard(kindName, null, EmptyCounts, [])); continue; }
-			var view = await GetAsync(projectKey, b.Name, includeClosed: false, ct: ct);
+			var view = await GetAsync(projectKey, b.Name, includeClosed: false, urlPrefix: urlPrefix, ct: ct);
 			var headers = view.Nodes.Select(n => ToHeader(n, bodyLen)).ToList();
 			var counts = view.Nodes
 				.GroupBy(n => n.Status, StringComparer.Ordinal)
@@ -145,7 +148,7 @@ public sealed partial class TasksService : ITasksService
 		n.Key, n.NodeId, n.ParentNodeId, n.ParentSlug, n.Depth,
 		n.Status, n.Type, n.Title, n.Priority,
 		SliceBody(n.Body, bodyLen), n.Delivery,
-		n.Spec, n.BlockedBy, n.LinkedTasks, n.Supersedes, n.Tags);
+		n.Spec, n.BlockedBy, n.LinkedTasks, n.Supersedes, n.Tags, n.Url);
 
 	// bodyLen <= 0 -> no body (pure index). Otherwise the first N chars, with "…" appended
 	// when the body was cut. Char-based and predictable (no word-boundary cleverness).
@@ -192,7 +195,7 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- read: tree view ----
 
-	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, CancellationToken ct = default)
+	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, string? urlPrefix = null, CancellationToken ct = default)
 	{
 		await EnsureBoard(projectKey, board, ct);
 
@@ -241,7 +244,8 @@ public sealed partial class TasksService : ITasksService
 				LinkedTasks: linkedTasks is { Count: > 0 } ? linkedTasks : null,
 				Supersedes: supersedes.Count > 0 ? supersedes : null,
 				RenamedFrom: lineage.TryGetValue(n.Key, out var p) ? p : [],
-				Tags: tagsByNode[n.NodeId].OrderBy(t => t, StringComparer.Ordinal).ToList()));
+				Tags: tagsByNode[n.NodeId].OrderBy(t => t, StringComparer.Ordinal).ToList(),
+				Url: urlPrefix is null ? null : urlPrefix + n.NodeId));
 		}
 		return new PlanBoardView(current, kind.ToString().ToLowerInvariant(), meta.SpecBoard, nodes);
 	}

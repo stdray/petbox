@@ -125,12 +125,14 @@ public static class TasksTools
 		string projectKey,
 		[Description("Slice length (chars) of each node body to include; 0 = index only (no bodies). \"…\" is appended when a body is cut.")] int bodyLen = 0,
 		[Description("Restrict to these quartet boards by kind (intake|ideas|spec|work); empty/omitted = all four.")] string[]? includeBoards = null,
+		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		return (object)await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, ct);
+		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
+		return (object)await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, urlPrefix, ct);
 	});
 
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]
@@ -153,13 +155,15 @@ public static class TasksTools
 		""")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string board, bool includeClosed = false, string? under = null, string? groupBy = null, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		string projectKey, string board, bool includeClosed = false, string? under = null, string? groupBy = null,
+		[Description("Include an absolute `url` permalink to each node's detail page (off by default; ignored with groupBy).")] bool includeUrl = false,
+		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		return string.IsNullOrWhiteSpace(groupBy)
-			? (object)await tasks.GetAsync(projectKey, board, includeClosed, under, ct)
+			? (object)await tasks.GetAsync(projectKey, board, includeClosed, under, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct), ct)
 			: await tasks.GetGroupedAsync(projectKey, board, groupBy, ct);
 	});
 
@@ -189,25 +193,31 @@ public static class TasksTools
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
 		[Description("JSON array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef`, `blockedBy`, status/type/title/body/priority/version.")] JsonElement nodes,
-		long sinceVersion = 0, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		long sinceVersion = 0,
+		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
+		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var patches = ParseNodePatches(nodes);
-		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, ct));
+		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
+		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, ct), urlPrefix);
 	});
 
 	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true)]
 	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes). Requires tasks:read.")]
 	public static async Task<object> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string board, long sinceVersion, CancellationToken ct = default)
+		string projectKey, string board, long sinceVersion,
+		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct));
+		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
+		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix);
 	}
 
 	[McpServerTool(Name = "tasks.workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true)]
@@ -235,31 +245,37 @@ public static class TasksTools
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 
-	static object Serialize(UpsertOutcome o)
+	// Build the absolute permalink prefix for this project's nodes
+	// ("{scheme}://{host}/ui/{ws}/{project}/tasks/node/"), or null when include_url is off or
+	// the workspace can't be resolved. Per-node url = prefix + nodeId; scheme/host come from
+	// the request (honor forwarded headers behind a proxy).
+	static async Task<string?> UrlPrefixAsync(IHttpContextAccessor http, ITasksService tasks, string projectKey, bool includeUrl, CancellationToken ct)
+	{
+		if (!includeUrl) return null;
+		var req = http.HttpContext?.Request;
+		if (req is null) return null;
+		var ws = await tasks.ResolveWorkspaceAsync(projectKey, ct);
+		if (string.IsNullOrEmpty(ws)) return null;
+		return $"{req.Scheme}://{req.Host}{Routes.TaskBoardNode(ws, projectKey, string.Empty)}";
+	}
+
+	static UpsertResultView Serialize(UpsertOutcome o, string? urlPrefix = null)
 	{
 		var r = o.Result;
-		return new
-		{
-			applied = r.Applied,
-			currentVersion = r.CurrentVersion,
-			kind = o.Kind.ToString().ToLowerInvariant(),
-			inserted = r.Inserted,
-			closed = r.Closed,
-			conflicts = r.Conflicts.Select(c => new
-			{
-				key = c.Key,
-				kind = c.Kind.ToString(),
-				baselineVersion = c.BaselineVersion,
-				activeVersion = c.ActiveVersion,
-			}).ToList(),
-			added = r.Added.Select(NodeDto).ToList(),
-			updated = r.Updated.Select(NodeDto).ToList(),
-			removed = r.Removed.ToList(),
-		};
+		return new UpsertResultView(
+			Applied: r.Applied,
+			CurrentVersion: r.CurrentVersion,
+			Kind: o.Kind.ToString().ToLowerInvariant(),
+			Inserted: r.Inserted,
+			Closed: r.Closed,
+			Conflicts: r.Conflicts.Select(c => new UpsertConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion)).ToList(),
+			Added: r.Added.Select(n => NodeDto(n, urlPrefix)).ToList(),
+			Updated: r.Updated.Select(n => NodeDto(n, urlPrefix)).ToList(),
+			Removed: r.Removed.ToList());
 	}
 
 	// Delta projection of a node (no links/delivery/tags — that's tasks.get). camelCased by the serializer.
-	static PlanNodeDelta NodeDto(PlanNode n) => new(
+	static PlanNodeDelta NodeDto(PlanNode n, string? urlPrefix = null) => new(
 		Key: n.Key,
 		NodeId: n.NodeId,
 		Status: n.Status,
@@ -268,7 +284,8 @@ public static class TasksTools
 		Body: n.Body,
 		CommitRef: n.CommitRef,
 		Priority: n.Priority,
-		Version: n.Version);
+		Version: n.Version,
+		Url: urlPrefix is null ? null : urlPrefix + n.NodeId);
 
 	// Parse the node array into typed patches. Read-merge (inheriting omitted fields from
 	// the prior row) happens in the service; here a field absent from the JSON maps to
