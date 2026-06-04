@@ -36,7 +36,7 @@
 		{
 			<a asp-page="/Config/Tags" class="btn btn-sm btn-ghost" data-testid="config-tags-link">Tags</a>
 		}
-		<a asp-page="/Config/Editor" class="btn btn-sm btn-primary" data-testid="config-new">+ New binding</a>
+		<a href="@(Model.IsProjectScoped ? PetBox.Web.Routes.ProjectConfigEditor(Model.EffectiveWorkspaceKey, Model.ProjectKey!) : PetBox.Web.Routes.SharedConfigEditor(Model.EffectiveWorkspaceKey))" class="btn btn-sm btn-primary" data-testid="config-new">+ New binding</a>
 	</div>
 </div>
 

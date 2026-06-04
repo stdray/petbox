@@ -21,7 +21,13 @@
 	<div class="alert alert-warning mb-3" data-testid="edit-conflict">@Model.ConflictMessage</div>
 }
 
-<form method="post" asp-page-handler="Save" autocomplete="off" class="grid grid-cols-1 gap-3 max-w-2xl" data-testid="config-edit-form">
+@{
+	var saveAction = (Model.IsNew
+		? PetBox.Web.Routes.SharedConfigEditor(Model.EffectiveWorkspaceKey)
+		: PetBox.Web.Routes.SharedConfigEditor(Model.EffectiveWorkspaceKey, Model.BindingId!.Value))
+		+ "?handler=Save";
+}
+<form method="post" action="@saveAction" autocomplete="off" class="grid grid-cols-1 gap-3 max-w-2xl" data-testid="config-edit-form">
 	@Html.AntiForgeryToken()
 
 	<label class="form-control">
