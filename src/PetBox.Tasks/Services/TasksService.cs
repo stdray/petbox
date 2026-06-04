@@ -200,6 +200,32 @@ public sealed partial class TasksService : ITasksService
 		return new PlanBoardView(current, kind.ToString().ToLowerInvariant(), meta.SpecBoard, nodes);
 	}
 
+	public async Task<NodeDetailView?> GetNodeAsync(string projectKey, string nodeId, CancellationToken ct = default)
+	{
+		if (string.IsNullOrWhiteSpace(nodeId)) return null;
+		var board = await _boards.FindBoardByNodeIdAsync(projectKey, nodeId, ct);
+		if (board is null) return null;
+
+		// Reuse GetAsync (includeClosed: the node or its ancestors may be terminal) — it builds
+		// the fully-enriched view (links, delivery, parent/depth) we'd otherwise duplicate.
+		var view = await GetAsync(projectKey, board, includeClosed: true, ct: ct);
+		var node = view.Nodes.FirstOrDefault(n => n.NodeId == nodeId);
+		if (node is null) return null;
+
+		// Walk part_of up via ParentNodeId (same-board, single-parent, cycle-guarded) to build
+		// the breadcrumb chain, then reverse to root→parent order.
+		var byId = view.Nodes.ToDictionary(n => n.NodeId, StringComparer.Ordinal);
+		var ancestors = new List<NodeCrumb>();
+		var cur = node.ParentNodeId; var guard = 0;
+		while (cur is not null && byId.TryGetValue(cur, out var p) && guard++ < 1000)
+		{
+			ancestors.Add(new NodeCrumb(p.NodeId, p.Key, p.Title));
+			cur = p.ParentNodeId;
+		}
+		ancestors.Reverse();
+		return new NodeDetailView(board, view.Kind, node, ancestors);
+	}
+
 	// nodeId -> its active part_of parent nodeId (single parent). One query, project-wide.
 	async Task<Dictionary<string, string>> ParentMapAsync(string projectKey, CancellationToken ct) =>
 		(await _relations.ListByKindAsync(projectKey, "part_of", ct))

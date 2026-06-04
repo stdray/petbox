@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Features;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
+using PetBox.Web.Pages.Shared;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -43,9 +44,10 @@ public sealed class TaskBoardModel : PageModel
 
 	// Per-node discussion thread, DFS-flattened to (comment, depth) so the view renders it
 	// flat with an indent — the same shape as the plan-node list. Empty for nodes with no
-	// comments. Read-only in v1 (writes go through the comments.* MCP tools).
-	public IReadOnlyDictionary<string, List<(CommentView Comment, int Depth)>> CommentThreads { get; private set; }
-		= new Dictionary<string, List<(CommentView Comment, int Depth)>>(StringComparer.Ordinal);
+	// comments. Read-only in v1 (writes go through the comments.* MCP tools). Rendered via
+	// the shared _CommentThread partial (same flattener as the node detail page).
+	public IReadOnlyDictionary<string, IReadOnlyList<CommentLine>> CommentThreads { get; private set; }
+		= new Dictionary<string, IReadOnlyList<CommentLine>>(StringComparer.Ordinal);
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
@@ -62,7 +64,7 @@ public sealed class TaskBoardModel : PageModel
 		// node's thread by parentId so the view just iterates (no per-node N+1).
 		var byNode = await _comments.ListForBoardAsync(ProjectKey, Board, ct);
 		CommentThreads = byNode
-			.ToDictionary(g => g.Key, g => FlattenThread(g), StringComparer.Ordinal);
+			.ToDictionary(g => g.Key, g => CommentThread.Flatten(g), StringComparer.Ordinal);
 		return Page();
 	}
 
@@ -116,32 +118,6 @@ public sealed class TaskBoardModel : PageModel
 
 		foreach (var r in roots) Emit(r);
 		closedWithActiveDescendant = closedKeep;
-		return ordered;
-	}
-
-	// Flatten one node's flat comment list into DFS order with a depth, building the tree
-	// from ParentId (siblings chronological). An unknown/missing parent is treated as a root
-	// (defensive); a visited-set guards against any parentId cycle.
-	static List<(CommentView Comment, int Depth)> FlattenThread(IEnumerable<CommentView> comments)
-	{
-		var list = comments.ToList();
-		var ids = list.Select(c => c.Id).ToHashSet(StringComparer.Ordinal);
-		var byParent = list.Where(c => c.ParentId is not null && ids.Contains(c.ParentId))
-			.ToLookup(c => c.ParentId!, StringComparer.Ordinal);
-		var roots = list
-			.Where(c => c.ParentId is null || !ids.Contains(c.ParentId))
-			.OrderBy(c => c.Created);
-
-		var ordered = new List<(CommentView, int)>(list.Count);
-		var visited = new HashSet<string>(StringComparer.Ordinal);
-		void Emit(CommentView c, int depth)
-		{
-			if (!visited.Add(c.Id)) return;
-			ordered.Add((c, depth));
-			foreach (var kid in byParent[c.Id].OrderBy(k => k.Created))
-				Emit(kid, depth + 1);
-		}
-		foreach (var r in roots) Emit(r, 0);
 		return ordered;
 	}
 

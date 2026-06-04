@@ -38,6 +38,10 @@ public interface ITasksService
 
 	// The active plan nodes as a 1-to-3 level tree with links and (spec boards) delivery.
 	Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, CancellationToken ct = default);
+	// One node by its stable NodeId alone (cross-board): the enriched node view + its owning
+	// board + part_of ancestor chain (root→parent). null when no active node carries the id.
+	// Powers the per-node detail page (addresses a node by id, not by board/slug).
+	Task<NodeDetailView?> GetNodeAsync(string projectKey, string nodeId, CancellationToken ct = default);
 	// Project a board by a tag namespace (area|concern): nodes bucketed by their tag value
 	// in that namespace ("(none)" for untagged), each group with a delivery roll-up.
 	Task<GroupedBoardView> GetGroupedAsync(string projectKey, string board, string groupBy, CancellationToken ct = default);

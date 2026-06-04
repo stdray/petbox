@@ -1,0 +1,117 @@
+@page "/ui/{workspaceKey}/{projectKey}/tasks/node/{nodeId}"
+@model PetBox.Web.Pages.ProjectHome.TaskBoardNodeModel
+@{
+	var node = Model.Detail.Node;
+	ViewData["Title"] = string.IsNullOrEmpty(node.Title) ? node.Key : node.Title;
+}
+
+@functions {
+	// Status slug -> daisyUI badge (presentation; domain owns the StatusKind). Mirrors TaskBoard.
+	static string StatusBadge(string slug) => PetBox.Tasks.Workflow.WorkflowCatalog.KindOfSlug(slug) switch
+	{
+		PetBox.Tasks.Workflow.StatusKind.TerminalOk => "badge-success",
+		PetBox.Tasks.Workflow.StatusKind.TerminalCancel => "badge-ghost",
+		PetBox.Tasks.Workflow.StatusKind.Open => "badge-info",
+		_ => "badge-neutral",
+	};
+
+	static string DeliveryBadge(string d) => d switch
+	{
+		"done" => "badge-success",
+		"in_progress" => "badge-warning",
+		"done_with_defects" => "badge-error",
+		_ => "badge-ghost",
+	};
+}
+
+@* Breadcrumb: tasks / {board} / {ancestors…} / {this node}. The node is addressed by its
+   stable id, so the trail is reconstructed from the part_of chain the service returns. *@
+<div class="mb-4 flex items-center gap-2 flex-wrap text-sm" data-testid="node-breadcrumb">
+	<a href="@Routes.ProjectTasks(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70">tasks</a>
+	<span class="opacity-40">/</span>
+	<a href="@Routes.ProjectTaskBoard(Model.WorkspaceKey, Model.ProjectKey, Model.Detail.Board)" class="link link-hover opacity-70 font-mono">@Model.Detail.Board</a>
+	@foreach (var a in Model.Detail.Ancestors)
+	{
+		<span class="opacity-40">/</span>
+		<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, a.NodeId)" class="link link-hover opacity-70 font-mono">@(string.IsNullOrEmpty(a.Title) ? a.Slug : a.Title)</a>
+	}
+	<span class="opacity-40">/</span>
+	<span class="font-mono opacity-90" data-testid="node-leaf">@node.Key</span>
+</div>
+
+<div class="card bg-base-200 border border-base-300" data-testid="node-detail" data-node-id="@node.NodeId" data-board="@Model.Detail.Board">
+	<div class="card-body p-4">
+		<div class="flex items-baseline justify-between gap-2 flex-wrap">
+			<h1 class="text-2xl font-semibold" data-testid="node-name">@(string.IsNullOrEmpty(node.Title) ? node.Key : node.Title)</h1>
+			<div class="flex items-center gap-1 shrink-0">
+				@if (!string.IsNullOrEmpty(node.Type))
+				{
+					<span class="badge badge-ghost badge-sm" data-testid="node-type">@node.Type</span>
+				}
+				<span class="badge @StatusBadge(node.Status) badge-sm" data-testid="node-status">@node.Status</span>
+				@if (node.Delivery is not null)
+				{
+					<span class="badge @DeliveryBadge(node.Delivery) badge-sm" data-testid="node-delivery" title="delivery — computed from linked tasks">@node.Delivery</span>
+				}
+			</div>
+		</div>
+
+		@if (node.Tags.Count > 0)
+		{
+			<div class="flex flex-wrap gap-1 mt-1" data-testid="node-tags">
+				@foreach (var tag in node.Tags)
+				{
+					<span class="badge badge-xs badge-outline font-mono">@tag</span>
+				}
+			</div>
+		}
+
+		@* Full body, no truncation (node-page-full-body). Plain pre-wrap for now; markdown
+		   rendering is a separate idea (board-markdown-render). *@
+		@if (!string.IsNullOrEmpty(node.Body))
+		{
+			<p class="text-base opacity-90 whitespace-pre-wrap mt-3" data-testid="node-body">@node.Body</p>
+		}
+		else
+		{
+			<p class="text-base opacity-40 italic mt-3" data-testid="node-body-empty">(no body)</p>
+		}
+
+		@if (!string.IsNullOrEmpty(node.CommitRef))
+		{
+			<div class="text-xs opacity-50 font-mono mt-2">@node.CommitRef</div>
+		}
+
+		@{
+			var sections = new (string Label, IReadOnlyList<PetBox.Tasks.Contract.LinkDto>? Links)[]
+			{
+				("implements (spec)", node.Spec),
+				("linked tasks", node.LinkedTasks),
+				("blocked by", node.BlockedBy),
+				("supersedes", node.Supersedes),
+			};
+		}
+		@foreach (var (label, links) in sections)
+		{
+			@if (links is { Count: > 0 })
+			{
+				<div class="text-sm opacity-80 mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1" data-testid="node-links">
+					<span class="opacity-60">@label:</span>
+					@foreach (var l in links)
+					{
+						@if (l.NodeId.Length > 0 && l.Status != "missing")
+						{
+							<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, l.NodeId)" class="link link-hover font-mono" data-testid="node-link">@(l.Slug ?? l.NodeId)<span class="opacity-50"> · @l.Status</span></a>
+						}
+						else
+						{
+							<span class="font-mono opacity-50" data-testid="node-link">@(l.Slug ?? l.NodeId) · @l.Status</span>
+						}
+					}
+				</div>
+			}
+		}
+
+		<partial name="_CommentThread" model="Model.Thread" />
+	</div>
+</div>

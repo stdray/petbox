@@ -56,6 +56,11 @@ public static class Routes
 	// /{board|store} views one. Sessions have no catalog (one file per project).
 	public static string ProjectTasks(string ws, string key) => $"{Project(ws, key)}/tasks";
 	public static string ProjectTaskBoard(string ws, string key, string board) => $"{Project(ws, key)}/tasks/{board}";
+	// One node of a task board by its stable NodeId — lives under /tasks/. Board-independent
+	// (the trail to it is the part_of chain), so the URL survives a re-key or a move. Full body
+	// + discussion thread live here; the board shows an abbreviated row. Pairs with the
+	// TaskBoardNode page (named so it doesn't shadow the PlanNode data record).
+	public static string TaskBoardNode(string ws, string key, string nodeId) => $"{ProjectTasks(ws, key)}/node/{nodeId}";
 	public static string ProjectMemory(string ws, string key) => $"{Project(ws, key)}/memory";
 	public static string ProjectMemoryStore(string ws, string key, string store) => $"{Project(ws, key)}/memory/{store}";
 	public static string ProjectSessions(string ws, string key) => $"{Project(ws, key)}/sessions";

@@ -73,14 +73,14 @@ else
 						<div class="min-w-0 flex items-baseline gap-2 flex-wrap">
 							@if (!string.IsNullOrEmpty(n.Title))
 							{
-								<span class="font-semibold" data-testid="node-name">@n.Title</span>
+								<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, n.NodeId)" class="font-semibold link link-hover" data-testid="node-name">@n.Title</a>
 							}
 							<span class="font-mono text-xs opacity-50">
 								@if (parent is not null)
 								{
 									<span>@parent / </span>
 								}
-								<span data-testid="node-leaf">@leaf</span>
+								<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, n.NodeId)" class="link link-hover" data-testid="node-leaf">@leaf</a>
 							</span>
 						</div>
 						<div class="flex items-center gap-1 shrink-0">
@@ -108,24 +108,9 @@ else
 							}
 						</div>
 					}
-					@if (Model.CommentThreads.TryGetValue(n.NodeId, out var thread) && thread.Count > 0)
+					@if (Model.CommentThreads.TryGetValue(n.NodeId, out var thread))
 					{
-						<div class="mt-2 border-t border-base-300 pt-2 flex flex-col gap-1.5" data-testid="node-comments">
-							@foreach (var (c, cdepth) in thread)
-							{
-								<div class="text-sm" data-testid="comment" data-comment-id="@c.Id" style="margin-left:@(cdepth * 1.25)rem">
-									<div class="flex items-baseline gap-2 flex-wrap">
-										<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
-										@foreach (var tag in c.Tags)
-										{
-											var artifact = tag.StartsWith("artifact:", StringComparison.Ordinal);
-											<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
-										}
-									</div>
-									<p class="opacity-80 whitespace-pre-wrap" data-testid="comment-body">@c.Body</p>
-								</div>
-							}
-						</div>
+						<partial name="_CommentThread" model="thread" />
 					}
 				</div>
 			</li>
