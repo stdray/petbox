@@ -322,6 +322,11 @@ public partial class Program
 			options.Conventions.AddPageRoute("/Config/Editor", "/ui/{workspaceKey}/{projectKey}/config/editor/{bindingId:long?}");
 			options.Conventions.AddPageRoute("/Config/History", "/ui/{workspaceKey}/{projectKey}/config/history");
 			options.Conventions.AddPageRoute("/Config/Preview", "/ui/{workspaceKey}/{projectKey}/config/preview");
+			// Canonical human-readable node address /tasks/{board}/{slug} (node-slug-addressable).
+			// Same page as the opaque /tasks/node/{nodeId} alias (its own @page); the literal
+			// "node" segment outranks {board}, and `node` is a reserved board name, so they never
+			// collide. The page model binds either (board, slug) or nodeId.
+			options.Conventions.AddPageRoute("/ProjectHome/TaskBoardNode", "/ui/{workspaceKey}/{projectKey}/tasks/{board}/{slug}");
 		});
 	}
 

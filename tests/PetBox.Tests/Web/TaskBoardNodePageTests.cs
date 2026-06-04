@@ -158,7 +158,8 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		page.NodeId = id;
 		var result = await page.OnPostEditAsync("new title", "new **body**", version, default);
 
-		result.Should().BeOfType<RedirectToPageResult>();
+		// PRG to the CANONICAL slug-URL (node-slug-addressable), not the opaque alias.
+		result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be($"/ui/ws/{Proj}/tasks/plan/n");
 		var after = (await _tasks.GetNodeAsync(Proj, id))!.Node;
 		after.Title.Should().Be("new title");
 		after.Body.Should().Be("new **body**");
@@ -176,7 +177,7 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		page.NodeId = id;
 		var result = await page.OnPostStatusAsync("exploring", version, default);
 
-		result.Should().BeOfType<RedirectToPageResult>();
+		result.Should().BeOfType<RedirectResult>().Which.Url.Should().Be($"/ui/ws/{Proj}/tasks/ideas/i");
 		(await _tasks.GetNodeAsync(Proj, id))!.Node.Status.Should().Be("exploring");
 	}
 
@@ -235,5 +236,61 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		result.Should().BeOfType<PageResult>();
 		page.Error.Should().Contain("ideaRef");
 		(await _tasks.GetNodeAsync(Proj, id))!.Node.Title.Should().Be("S"); // unchanged
+	}
+
+	// node-slug-addressable: the canonical (board, slug) address resolves to the same enriched
+	// node view as the opaque NodeId, so the human-readable URL renders the detail page.
+	[Fact]
+	public async Task GetNodeBySlugAsync_ResolvesByBoardAndSlug()
+	{
+		await Upsert("alpha", new NodePatch { Key = "a", Title = "Node A", Body = "body-a" });
+		await Upsert("beta", new NodePatch { Key = "a", Title = "Other A", Body = "body-beta" }); // same slug, other board
+
+		var a = await _tasks.GetNodeBySlugAsync(Proj, "alpha", "a");
+
+		a!.Board.Should().Be("alpha");
+		a.Node.Key.Should().Be("a");
+		a.Node.Body.Should().Be("body-a"); // board segment disambiguates the cross-board slug
+	}
+
+	[Fact]
+	public async Task GetNodeBySlugAsync_UnknownSlug_ReturnsNull()
+	{
+		await Upsert("alpha", new NodePatch { Key = "a", Title = "A" });
+		(await _tasks.GetNodeBySlugAsync(Proj, "alpha", "nope")).Should().BeNull();
+		(await _tasks.GetNodeBySlugAsync(Proj, "nope", "a")).Should().BeNull();
+	}
+
+	[Fact]
+	public async Task OnGet_ResolvesByBoardSlug_RendersNode()
+	{
+		await Upsert("plan", new NodePatch { Key = "n", Title = "N", Body = "full body text" });
+
+		var page = Page();
+		page.Board = "plan";
+		page.Slug = "n"; // slug route, no NodeId
+		var result = await page.OnGetAsync(default);
+
+		result.Should().BeOfType<PageResult>();
+		page.Detail.Node.Key.Should().Be("n");
+		page.Detail.Node.Body.Should().Be("full body text");
+	}
+
+	[Fact]
+	public async Task OnGet_UnknownSlug_ReturnsNotFound()
+	{
+		var page = Page();
+		page.Board = "plan";
+		page.Slug = "missing";
+		(await page.OnGetAsync(default)).Should().BeOfType<NotFoundResult>();
+	}
+
+	// `node` is reserved as a board name so /tasks/node/{nodeId} can't collide with the slug
+	// route /tasks/{board}/{slug} (node-slug-addressable).
+	[Fact]
+	public async Task CreateBoard_NameNode_Rejected()
+	{
+		var act = () => _tasks.CreateBoardAsync(Proj, "node", null, null, null);
+		await act.Should().ThrowAsync<ArgumentException>().WithMessage("*reserved*");
 	}
 }

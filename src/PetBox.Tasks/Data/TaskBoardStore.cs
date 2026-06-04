@@ -31,6 +31,10 @@ public interface ITaskBoardStore
 	// row carries this NodeId. Lets callers resolve a node from its stable id alone, without
 	// knowing which board it lives on (boards share one plan file, partitioned by Board).
 	Task<string?> FindBoardByNodeIdAsync(string projectKey, string nodeId, CancellationToken ct = default);
+	// The stable NodeId of the active node addressed by (board, slug) — Key is unique within a
+	// board, so this resolves the human-readable slug-URL to a node. null if no active node on
+	// that board carries the slug.
+	Task<string?> FindNodeIdBySlugAsync(string projectKey, string board, string slug, CancellationToken ct = default);
 	// The workspace owning a project (Projects.WorkspaceKey), or null if the project is
 	// unknown — used to build per-node UI permalinks.
 	Task<string?> FindProjectWorkspaceAsync(string projectKey, CancellationToken ct = default);
@@ -94,6 +98,12 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 			.Select(n => n.Board)
 			.FirstOrDefaultAsync(ct)!;
 
+	public Task<string?> FindNodeIdBySlugAsync(string projectKey, string board, string slug, CancellationToken ct = default) =>
+		_factory.GetDb(projectKey).PlanNodes
+			.Where(n => n.Board == board && n.Key == slug && n.ActiveTo == null)
+			.Select(n => n.NodeId)
+			.FirstOrDefaultAsync(ct)!;
+
 	public async Task<bool> UpdateAsync(string projectKey, string board, Func<TaskBoardMeta, TaskBoardMeta> mutate, CancellationToken ct = default)
 	{
 		var meta = await FindAsync(projectKey, board, ct);
@@ -108,6 +118,10 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 			throw new ArgumentException("board name is required", nameof(board));
 		if (!NameRegex().IsMatch(board))
 			throw new ArgumentException("invalid name; must match ^[a-z][a-z0-9_-]{0,99}$", nameof(board));
+		// `node` is reserved: the node-by-id route /tasks/node/{nodeId} would collide with the
+		// slug route /tasks/{board}/{slug} if a board were named "node" (node-slug-addressable).
+		if (board == "node")
+			throw new ArgumentException("board name 'node' is reserved (collides with the /tasks/node/{id} route)", nameof(board));
 
 		var projectExists = await _db.Projects.AnyAsync(p => p.Key == projectKey, ct);
 		if (!projectExists)

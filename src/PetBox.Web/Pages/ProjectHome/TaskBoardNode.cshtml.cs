@@ -36,8 +36,17 @@ public sealed class TaskBoardNodeModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
+	// The page is reachable two ways: the canonical human-readable slug-URL
+	// /tasks/{board}/{slug} (board+slug bound) and the stable opaque alias /tasks/node/{nodeId}
+	// (nodeId bound). Exactly one set is present per request; ResolveAsync picks the resolver.
 	[BindProperty(SupportsGet = true, Name = "nodeId")]
 	public string NodeId { get; set; } = string.Empty;
+
+	[BindProperty(SupportsGet = true, Name = "board")]
+	public string Board { get; set; } = string.Empty;
+
+	[BindProperty(SupportsGet = true, Name = "slug")]
+	public string Slug { get; set; } = string.Empty;
 
 	// The resolved node (board + enriched view + breadcrumb ancestors). Set on a 200.
 	public NodeDetailView Detail { get; private set; } = default!;
@@ -71,13 +80,21 @@ public sealed class TaskBoardNodeModel : PageModel
 		return await ApplyAsync(p => p with { Title = title ?? string.Empty, Body = body ?? string.Empty }, version, ct);
 	}
 
-	// Resolve the node by its id (so the caller can't retarget the board/key), apply the patch
-	// through the service door, and PRG on success. A guard rejection (ArgumentException /
-	// InvalidOperationException) or an optimistic-concurrency conflict re-renders the page with
-	// the error surfaced inline — the edit is never silently bypassed (edit-respects-guards).
+	// Resolve the node by whichever address the request carried: the opaque nodeId alias, or
+	// the canonical (board, slug). Either way the caller can't retarget the board/key.
+	Task<NodeDetailView?> ResolveAsync(CancellationToken ct) =>
+		NodeId.Length > 0
+			? _tasks.GetNodeAsync(ProjectKey, NodeId, ct)
+			: _tasks.GetNodeBySlugAsync(ProjectKey, Board, Slug, ct);
+
+	// Resolve the node, apply the patch through the service door, and PRG on success. A guard
+	// rejection (ArgumentException / InvalidOperationException) or an optimistic-concurrency
+	// conflict re-renders the page with the error surfaced inline — the edit is never silently
+	// bypassed (edit-respects-guards). On success redirect to the CANONICAL slug-URL regardless
+	// of which form was used to reach the page (node-slug-addressable).
 	async Task<IActionResult> ApplyAsync(Func<NodePatch, NodePatch> mutate, long version, CancellationToken ct)
 	{
-		var detail = await _tasks.GetNodeAsync(ProjectKey, NodeId, ct);
+		var detail = await ResolveAsync(ct);
 		if (detail is null) return NotFound();
 
 		var patch = mutate(new NodePatch { Key = detail.Node.Key, Version = version });
@@ -92,14 +109,14 @@ public sealed class TaskBoardNodeModel : PageModel
 			return await LoadAsync(ct, ex.Message);
 		}
 
-		return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey, nodeId = NodeId });
+		return Redirect(Routes.TaskBoardNodeBySlug(WorkspaceKey, ProjectKey, detail.Board, detail.Node.Key));
 	}
 
 	// Shared load for the GET and the error re-render: resolve the node, compute the legal next
 	// statuses, and flatten its comment thread.
 	async Task<IActionResult> LoadAsync(CancellationToken ct, string? error = null)
 	{
-		var detail = await _tasks.GetNodeAsync(ProjectKey, NodeId, ct);
+		var detail = await ResolveAsync(ct);
 		if (detail is null) return NotFound();
 		Detail = detail;
 		Error = error;

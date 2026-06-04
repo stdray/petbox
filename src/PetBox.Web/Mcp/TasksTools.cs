@@ -268,7 +268,8 @@ public static class TasksTools
 
 	// Build the absolute permalink prefix for this project's nodes
 	// ("{scheme}://{host}/ui/{ws}/{project}/tasks/node/"), or null when include_url is off or
-	// the workspace can't be resolved. Per-node url = prefix + nodeId; scheme/host come from
+	// the workspace can't be resolved. Per-node url = prefix + "{board}/{slug}" (the canonical
+	// slug-URL, node-slug-addressable); the prefix ends with "/tasks/". scheme/host come from
 	// the request (honor forwarded headers behind a proxy).
 	static async Task<string?> UrlPrefixAsync(IHttpContextAccessor http, ITasksService tasks, string projectKey, bool includeUrl, CancellationToken ct)
 	{
@@ -277,7 +278,7 @@ public static class TasksTools
 		if (req is null) return null;
 		var ws = await tasks.ResolveWorkspaceAsync(projectKey, ct);
 		if (string.IsNullOrEmpty(ws)) return null;
-		return $"{req.Scheme}://{req.Host}{Routes.TaskBoardNode(ws, projectKey, string.Empty)}";
+		return $"{req.Scheme}://{req.Host}{Routes.ProjectTasks(ws, projectKey)}/";
 	}
 
 	static UpsertResultView Serialize(UpsertOutcome o, string? urlPrefix = null, int bodyLen = 0)
@@ -307,7 +308,7 @@ public static class TasksTools
 		CommitRef: n.CommitRef,
 		Priority: n.Priority,
 		Version: n.Version,
-		Url: urlPrefix is null ? null : urlPrefix + n.NodeId);
+		Url: urlPrefix is null ? null : urlPrefix + n.Board + "/" + n.Key);
 
 	// Parse the node array into typed patches. Read-merge (inheriting omitted fields from
 	// the prior row) happens in the service; here a field absent from the JSON maps to

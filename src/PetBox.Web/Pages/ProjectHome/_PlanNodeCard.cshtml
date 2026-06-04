@@ -3,7 +3,7 @@
 	var n = Model.Node;
 	var leaf = n.Key;
 	var parent = n.ParentSlug;
-	var nodeUrl = Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, n.NodeId);
+	var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
 	var search = $"{n.Title} {n.Key} {n.Body} {string.Join(' ', n.Tags)}".ToLowerInvariant();
 }
 

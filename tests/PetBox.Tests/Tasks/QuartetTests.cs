@@ -136,12 +136,11 @@ public sealed class QuartetTests : IDisposable
 			.GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "idea-u");
 		off.GetProperty("url").ValueKind.Should().Be(JsonValueKind.Null);
 
-		// includeUrl: absolute permalink = base + /ui/{ws}/{project}/tasks/node/{nodeId}.
+		// includeUrl: canonical slug permalink = base + /ui/{ws}/{project}/tasks/{board}/{slug}.
 		var on = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, includeUrl: true))
 			.GetProperty("boards").EnumerateArray().Single(b => b.GetProperty("kind").GetString() == "ideas")
 			.GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "idea-u");
-		var nodeId = on.GetProperty("nodeId").GetString();
-		on.GetProperty("url").GetString().Should().Be($"https://box.test/ui/ws/{Proj}/tasks/node/{nodeId}");
+		on.GetProperty("url").GetString().Should().Be($"https://box.test/ui/ws/{Proj}/tasks/ideas/idea-u");
 	}
 
 	[Fact]
@@ -151,8 +150,7 @@ public sealed class QuartetTests : IDisposable
 		var nodes = JsonSerializer.Deserialize<JsonElement>("""[{"key":"a","status":"Pending","title":"A"}]""");
 		var added = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "free1", nodes, includeUrl: true))
 			.GetProperty("added").EnumerateArray().Single();
-		var nodeId = added.GetProperty("nodeId").GetString();
-		added.GetProperty("url").GetString().Should().Be($"https://box.test/ui/ws/{Proj}/tasks/node/{nodeId}");
+		added.GetProperty("url").GetString().Should().Be($"https://box.test/ui/ws/{Proj}/tasks/free1/a");
 	}
 
 	[Fact]
