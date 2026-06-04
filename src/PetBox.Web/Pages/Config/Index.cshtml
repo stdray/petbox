@@ -6,6 +6,14 @@
 		? $"Config — {Model.ProjectKey}"
 		: $"Shared config — {Model.EffectiveWorkspaceKey}";
 	var tokens = antiforgery.GetAndStoreTokens(ViewContext.HttpContext);
+	// Build sibling-page URLs via Routes.* rather than asp-page tag helpers: asp-page link
+	// generation yields an EMPTY href for these custom-routed Config pages (see _Row / the
+	// delete-handler bug fixed in ConfigDeleteBindingTests).
+	var ws = Model.EffectiveWorkspaceKey;
+	var historyUrl = Model.IsProjectScoped ? PetBox.Web.Routes.ProjectConfigHistory(ws, Model.ProjectKey!) : PetBox.Web.Routes.SharedConfigHistory(ws);
+	var previewUrl = Model.IsProjectScoped ? PetBox.Web.Routes.ProjectConfigPreview(ws, Model.ProjectKey!) : PetBox.Web.Routes.SharedConfigPreview(ws);
+	var tagsUrl = PetBox.Web.Routes.SharedConfigTags(ws);
+	var clearUrl = Model.IsProjectScoped ? PetBox.Web.Routes.ProjectConfig(ws, Model.ProjectKey!) : PetBox.Web.Routes.SharedConfig(ws);
 }
 
 @if (Model.IsProjectScoped)
@@ -30,11 +38,11 @@
 	}
 
 	<div class="ml-auto flex items-center gap-2">
-		<a asp-page="/Config/History" class="btn btn-sm btn-ghost" data-testid="config-history-link">History</a>
-		<a asp-page="/Config/Preview" class="btn btn-sm btn-ghost" data-testid="config-preview-link">Preview</a>
+		<a href="@historyUrl" class="btn btn-sm btn-ghost" data-testid="config-history-link">History</a>
+		<a href="@previewUrl" class="btn btn-sm btn-ghost" data-testid="config-preview-link">Preview</a>
 		@if (!Model.IsProjectScoped)
 		{
-			<a asp-page="/Config/Tags" class="btn btn-sm btn-ghost" data-testid="config-tags-link">Tags</a>
+			<a href="@tagsUrl" class="btn btn-sm btn-ghost" data-testid="config-tags-link">Tags</a>
 		}
 		<a href="@(Model.IsProjectScoped ? PetBox.Web.Routes.ProjectConfigEditor(Model.EffectiveWorkspaceKey, Model.ProjectKey!) : PetBox.Web.Routes.SharedConfigEditor(Model.EffectiveWorkspaceKey))" class="btn btn-sm btn-primary" data-testid="config-new">+ New binding</a>
 	</div>
@@ -77,7 +85,7 @@
 	}
 
 	<button type="submit" class="btn btn-sm" data-testid="config-filter-apply">Apply</button>
-	<a asp-page="/Config/Index" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey" class="btn btn-sm btn-ghost" data-testid="config-filter-clear">Clear</a>
+	<a href="@clearUrl" class="btn btn-sm btn-ghost" data-testid="config-filter-clear">Clear</a>
 </form>
 
 @{
@@ -113,8 +121,8 @@
 						<span class="font-medium">@f.Name</span>
 						<span class="font-mono opacity-70 ml-1">@label</span>
 					</a>
-					<form method="post" asp-page-handler="DeleteFilter" class="join-item"
-						asp-route-workspaceKey="@Model.WorkspaceKey" asp-route-projectKey="@Model.ProjectKey">
+					<form method="post" action="@(clearUrl)?handler=DeleteFilter" class="join-item">
+						@Html.AntiForgeryToken()
 						<input type="hidden" name="id" value="@f.Id" />
 						<button type="submit" class="btn btn-xs btn-outline btn-error" title="Delete saved filter"
 							data-testid="config-saved-filter-delete">✕</button>
@@ -125,9 +133,9 @@
 
 		@if (Model.TagFilter.Count > 0)
 		{
-			<form method="post" asp-page-handler="SaveFilter" class="flex items-end gap-2 flex-wrap"
-				asp-route-workspaceKey="@Model.WorkspaceKey" asp-route-projectKey="@Model.ProjectKey"
+			<form method="post" action="@(clearUrl)?handler=SaveFilter" class="flex items-end gap-2 flex-wrap"
 				data-testid="config-save-filter-form">
+				@Html.AntiForgeryToken()
 				@foreach (var (k, v) in Model.TagFilter)
 				{
 					<input type="hidden" name="t.@k" value="@v" />
@@ -169,7 +177,7 @@ else
 			<tbody>
 				@foreach (var b in Model.Rows)
 				{
-					<partial name="_Row" model='new PetBox.Web.Pages.Config.RowViewModel(b, Model.EffectiveWorkspaceKey, Model.KeyQuery, Model.TagFilter)' />
+					<partial name="_Row" model='new PetBox.Web.Pages.Config.RowViewModel(b, Model.EffectiveWorkspaceKey, Model.ProjectKey, Model.KeyQuery, Model.TagFilter)' />
 				}
 			</tbody>
 		</table>

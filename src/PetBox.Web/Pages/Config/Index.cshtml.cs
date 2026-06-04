@@ -163,18 +163,10 @@ public sealed class IndexModel : PageModel
 				.Update();
 		}
 
-		var routeValues = new RouteValueDictionary { ["workspaceKey"] = EffectiveWorkspaceKey };
-		if (Request.Form.TryGetValue("q", out var qv) && !string.IsNullOrEmpty(qv))
-			routeValues["q"] = qv.ToString();
-		foreach (var k in Request.Form.Keys)
-		{
-			if (!k.StartsWith("t.", StringComparison.Ordinal)) continue;
-			var v = Request.Form[k].LastOrDefault();
-			if (v is not null)
-				routeValues[k] = v;
-		}
-		routeValues["deleteSuccess"] = "1";
-		return RedirectToPage("Index", routeValues);
+		// Build the redirect URL by hand (LocalRedirect) — RedirectToPage("Index") uses page-name
+		// link generation, which yields an empty URL for these custom-routed config pages and
+		// throws at execution (500). Mirrors RedirectBack; the page is also linked via Routes.*.
+		return RedirectBack("deleteSuccess=1");
 	}
 
 	public IActionResult OnPostSaveFilter(string name)
@@ -208,7 +200,7 @@ public sealed class IndexModel : PageModel
 		return RedirectBack();
 	}
 
-	LocalRedirectResult RedirectBack()
+	LocalRedirectResult RedirectBack(params string[] extraQuery)
 	{
 		var path = string.IsNullOrEmpty(ProjectKey)
 			? $"/ui/{EffectiveWorkspaceKey}/config"
@@ -223,6 +215,7 @@ public sealed class IndexModel : PageModel
 			if (!string.IsNullOrEmpty(v))
 				query.Add($"{Uri.EscapeDataString(k)}={Uri.EscapeDataString(v)}");
 		}
+		query.AddRange(extraQuery);
 		return LocalRedirect(query.Count > 0 ? $"{path}?{string.Join("&", query)}" : path);
 	}
 

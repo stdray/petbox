@@ -3,6 +3,17 @@
 	Layout = null;
 	var parsedTags = PetBox.Web.Pages.Config.IndexModel.ParseTagsDisplay(Model.Binding.Tags);
 	var isSecret = Model.Binding.Kind == PetBox.Core.Models.BindingKind.Secret;
+	// Build URLs via Routes.* (not asp-page tag helpers): asp-page link generation returns an
+	// EMPTY href/action for these custom-routed Config pages, so the Del/Edit buttons posted to
+	// the current URL with no handler — a 200 no-op. See ConfigDeleteBindingTests.
+	var isProjectScoped = !string.IsNullOrEmpty(Model.ProjectKey);
+	var editUrl = isProjectScoped
+		? PetBox.Web.Routes.ProjectConfigEditor(Model.WorkspaceKey, Model.ProjectKey!, Model.Binding.Id)
+		: PetBox.Web.Routes.SharedConfigEditor(Model.WorkspaceKey, Model.Binding.Id);
+	var configUrl = isProjectScoped
+		? PetBox.Web.Routes.ProjectConfig(Model.WorkspaceKey, Model.ProjectKey!)
+		: PetBox.Web.Routes.SharedConfig(Model.WorkspaceKey);
+	var deleteUrl = $"{configUrl}?handler=Delete&id={Model.Binding.Id}";
 }
 <tr data-testid="config-row" data-binding-id="@Model.Binding.Id">
 	<td class="text-xs" data-testid="config-tags">
@@ -37,8 +48,8 @@
 	<td class="text-xs opacity-60" data-testid="config-updated">@Model.Binding.UpdatedAt.ToString("yyyy-MM-dd HH:mm")</td>
 	<td class="text-right">
 		<div class="flex gap-1 justify-end">
-			<a asp-page="/Config/Editor" asp-route-workspaceKey="@Model.WorkspaceKey" asp-route-bindingId="@Model.Binding.Id" class="btn btn-xs btn-ghost" data-testid="config-edit-btn">Edit</a>
-			<form method="post" asp-page="/Config/Index" asp-route-workspaceKey="@Model.WorkspaceKey" asp-page-handler="Delete" asp-route-id="@Model.Binding.Id"
+			<a href="@editUrl" class="btn btn-xs btn-ghost" data-testid="config-edit-btn">Edit</a>
+			<form method="post" action="@deleteUrl"
 				onsubmit="return confirm('Delete binding @Model.Binding.Path?')" style="display:inline">
 				@Html.AntiForgeryToken()
 				@if (Model.KeyQuery is not null)

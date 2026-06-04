@@ -26,7 +26,8 @@ async function revealSecret(bindingId: string): Promise<void> {
 
 	try {
 		const ws = getWorkspaceKey();
-		const url = `/ui/config/${encodeURIComponent(ws)}?handler=Reveal&id=${encodeURIComponent(bindingId)}`;
+		// Path is /ui/{ws}/config — NOT /ui/config/{ws} (that hit the project route and 200'd, never revealing).
+		const url = `/ui/${encodeURIComponent(ws)}/config?handler=Reveal&id=${encodeURIComponent(bindingId)}`;
 		const resp = await fetch(url, {
 			method: "POST",
 			headers: {
