@@ -122,6 +122,12 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
 - **Process:** before editing the spec, write the **plan to update it** as the
   deliberation artifact — an `artifact:spec_plan`-tagged comment on the originating idea
   — then apply the change.
+- **Lifecycle & gate (enforced in code):** a spec node is born `defined` (a worked-out
+  requirement) and can only retire to `deprecated` — there is NO `draft`/in-flux status
+  (undefined thinking lives in an Idea, not the spec tree). Every spec create / change /
+  deprecate requires **`ideaRef` → an `accepted` idea** (which auto-creates the `idea_spec`
+  edge); a spec write with no accepted idea is rejected. You cannot touch the spec without
+  going idea → accept first.
 
 ## It rides on what PetBox already has
 - Spec = temporal tree ← `TemporalStore` (SCD-2).
