@@ -16,6 +16,8 @@ COPY src/PetBox.Dashboard/PetBox.Dashboard.csproj ./src/PetBox.Dashboard/
 COPY src/PetBox.Tasks/PetBox.Tasks.csproj ./src/PetBox.Tasks/
 COPY src/PetBox.Memory/PetBox.Memory.csproj ./src/PetBox.Memory/
 COPY src/PetBox.Sessions/PetBox.Sessions.csproj ./src/PetBox.Sessions/
+COPY src/PetBox.LlmRouter.Contract/PetBox.LlmRouter.Contract.csproj ./src/PetBox.LlmRouter.Contract/
+COPY src/PetBox.LlmRouter/PetBox.LlmRouter.csproj ./src/PetBox.LlmRouter/
 COPY src/PetBox.Web/PetBox.Web.csproj ./src/PetBox.Web/
 COPY src/PetBox.Web/package.json src/PetBox.Web/bun.lock ./src/PetBox.Web/
 RUN dotnet restore src/PetBox.Web/PetBox.Web.csproj -r linux-x64
@@ -28,6 +30,8 @@ COPY src/PetBox.Dashboard/ ./src/PetBox.Dashboard/
 COPY src/PetBox.Tasks/ ./src/PetBox.Tasks/
 COPY src/PetBox.Memory/ ./src/PetBox.Memory/
 COPY src/PetBox.Sessions/ ./src/PetBox.Sessions/
+COPY src/PetBox.LlmRouter.Contract/ ./src/PetBox.LlmRouter.Contract/
+COPY src/PetBox.LlmRouter/ ./src/PetBox.LlmRouter/
 COPY src/PetBox.Web/ ./src/PetBox.Web/
 RUN dotnet publish src/PetBox.Web/PetBox.Web.csproj \
 	-c Release \
