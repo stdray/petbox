@@ -38,6 +38,28 @@
 	}
 }
 
+/* Rendered markdown (plan-node bodies). Tailwind's base reset strips heading/list styling and
+   there is no typography plugin, so re-assert a compact, readable set scoped to .md-body. */
+.md-body > :first-child { margin-top: 0; }
+.md-body > :last-child { margin-bottom: 0; }
+.md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 600; line-height: 1.25; margin: 0.6em 0 0.3em; }
+.md-body h1 { font-size: 1.3em; }
+.md-body h2 { font-size: 1.18em; }
+.md-body h3 { font-size: 1.07em; }
+.md-body h4 { font-size: 1em; }
+.md-body p { margin: 0.4em 0; }
+.md-body ul { list-style: disc; padding-left: 1.4em; margin: 0.4em 0; }
+.md-body ol { list-style: decimal; padding-left: 1.4em; margin: 0.4em 0; }
+.md-body li { margin: 0.15em 0; }
+.md-body a { color: oklch(var(--p)); text-decoration: underline; }
+.md-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.85em; background-color: oklch(var(--p) / 0.1); border-radius: 0.25rem; padding: 0.05em 0.3em; }
+.md-body pre { background-color: oklch(var(--n) / 0.4); border-radius: 0.4rem; padding: 0.6em 0.8em; overflow-x: auto; margin: 0.5em 0; }
+.md-body pre code { background: none; padding: 0; font-size: 0.85em; }
+.md-body blockquote { border-left: 3px solid oklch(var(--bc) / 0.3); padding-left: 0.8em; opacity: 0.85; margin: 0.5em 0; }
+.md-body table { border-collapse: collapse; margin: 0.5em 0; }
+.md-body th, .md-body td { border: 1px solid oklch(var(--bc) / 0.2); padding: 0.25em 0.6em; }
+.md-body hr { border-color: oklch(var(--bc) / 0.2); margin: 0.8em 0; }
+
 .msg-sub {
 	text-wrap: nowrap;
 	max-width: 18ch;
