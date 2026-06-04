@@ -38,6 +38,18 @@ public partial class Program
 {
 	public static void ConfigureServices(WebApplicationBuilder builder)
 	{
+		// Honor X-Forwarded-Proto/Host/For from the reverse proxy (Caddy, TLS-terminating, in
+		// the Docker network). Clear the known-proxy/network allowlists: the app is only
+		// reachable via Caddy, whose source IP isn't loopback, so default trust would drop the
+		// headers and leave Request.Scheme as the internal http.
+		builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(o =>
+		{
+			o.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+				| Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
+			o.KnownIPNetworks.Clear();
+			o.KnownProxies.Clear();
+		});
+
 		// Resolve connection string LAZILY at instantiation time via DI — not capturing
 		// builder.Configuration here, because under WebApplicationFactory the test's
 		// ConfigureAppConfiguration callback runs DURING builder.Build(), which is
@@ -370,6 +382,12 @@ public partial class Program
 						.GetAwaiter().GetResult();
 			}
 		}
+
+		// First middleware: apply X-Forwarded-* from the reverse proxy (Caddy terminates TLS),
+		// so Request.Scheme/Host/RemoteIp reflect the public request. Without this, absolute
+		// URLs the app emits (e.g. node permalinks via tasks include_url) come out as the
+		// internal http hop. Options configured in ConfigureServices (trusts the proxy).
+		app.UseForwardedHeaders();
 
 		if (!app.Environment.IsDevelopment())
 		{
