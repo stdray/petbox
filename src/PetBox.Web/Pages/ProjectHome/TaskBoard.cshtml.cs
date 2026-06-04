@@ -49,6 +49,34 @@ public sealed class TaskBoardModel : PageModel
 	public IReadOnlyDictionary<string, IReadOnlyList<CommentLine>> CommentThreads { get; private set; }
 		= new Dictionary<string, IReadOnlyList<CommentLine>>(StringComparer.Ordinal);
 
+	// View mode: the default part_of TREE, or the tag-groups PROJECTION (board-tag-grouping).
+	// `?view=tags&by=area,concern` selects an ordered list of tag namespaces; the projection
+	// is a pure view over the same nodes and never touches part_of (tag-grouping-is-projection).
+	[BindProperty(SupportsGet = true, Name = "view")]
+	public string ViewMode { get; set; } = "tree";
+
+	[BindProperty(SupportsGet = true, Name = "by")]
+	public string? By { get; set; }
+
+	public bool IsTagView { get; private set; }
+	public IReadOnlyList<string> GroupDims { get; private set; } = []; // ordered namespaces actually applied
+	public IReadOnlyList<GroupRow> GroupRows { get; private set; } = []; // flattened tag-groups pane
+
+	// One flattened row of the tag-groups pane: a group HEADER (Node null) at nesting `Depth`,
+	// or a node CARD (Node set) sitting just under its deepest group. Flattening keeps the
+	// Razor a single loop — the same shape the part_of pane already renders.
+	public sealed record GroupRow(int Depth, string? GroupKey, string? Delivery, PlanNodeView? Node);
+
+	// Everything the shared _PlanNodeCard partial needs to render one node card in either
+	// pane. `Depth` drives the indent (part_of depth in the tree pane, 0 in the tag-groups
+	// pane — grouping is the structure there). `HasChildren` shows the collapse caret (tree
+	// only). The tree-interactivity data-* (parent/closed/keep-visible) are inert in the tag
+	// pane because ts/board.ts binds only to the tree's board-nodes list.
+	public sealed record PlanNodeCard(
+		string WorkspaceKey, string ProjectKey, PlanNodeView Node,
+		int Depth, bool Closed, bool KeepVisible, bool HasChildren,
+		IReadOnlyList<CommentLine>? Thread);
+
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
@@ -65,7 +93,43 @@ public sealed class TaskBoardModel : PageModel
 		var byNode = await _comments.ListForBoardAsync(ProjectKey, Board, ct);
 		CommentThreads = byNode
 			.ToDictionary(g => g.Key, g => CommentThread.Flatten(g), StringComparer.Ordinal);
+
+		// Tag-groups projection: only when explicitly requested with a valid dimension list.
+		// Bad/empty `by` silently falls back to the tree (the service would reject it) — the
+		// view stays explicit, no implicit redirects.
+		var dims = (By ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		if (string.Equals(ViewMode, "tags", StringComparison.OrdinalIgnoreCase) && dims.Length > 0)
+		{
+			try
+			{
+				var grouped = await _tasks.GetGroupedAsync(ProjectKey, Board, dims, ct);
+				var byKey = Nodes.ToDictionary(n => n.Key, StringComparer.Ordinal);
+				GroupDims = grouped.GroupBy;
+				GroupRows = FlattenGroups(grouped.Groups, 0, byKey);
+				IsTagView = true;
+			}
+			catch (ArgumentException) { /* invalid namespace → stay on the tree view */ }
+		}
 		return Page();
+	}
+
+	// Depth-first flatten of the nested tag groups into header/card rows. A leaf group emits a
+	// header then a card row per node (looked up by key); an inner group emits a header then
+	// recurses its sub-groups one level deeper.
+	static List<GroupRow> FlattenGroups(IReadOnlyList<TagGroup> groups, int depth, IReadOnlyDictionary<string, PlanNodeView> byKey)
+	{
+		var rows = new List<GroupRow>();
+		foreach (var g in groups)
+		{
+			rows.Add(new GroupRow(depth, g.Key, g.Delivery, null));
+			if (g.SubGroups.Count > 0)
+				rows.AddRange(FlattenGroups(g.SubGroups, depth + 1, byKey));
+			else
+				foreach (var k in g.NodeKeys)
+					if (byKey.TryGetValue(k, out var node))
+						rows.Add(new GroupRow(depth + 1, null, null, node));
+		}
+		return rows;
 	}
 
 	// Render order is the plan tree itself — DFS by part_of parent, siblings ordered by

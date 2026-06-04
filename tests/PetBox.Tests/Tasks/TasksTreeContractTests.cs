@@ -149,9 +149,9 @@ public sealed class TasksTreeContractTests : IDisposable
 				new { key = "c", status = "Pending", title = "C", body = "x", tags = new[] { "area:llm" } },
 			}));
 
-		// group-by area: ui {a,b}, llm {c}.
+		// group-by area: ui {a,b}, llm {c}. groupBy echoes the ordered dimension list.
 		var byArea = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "area"));
-		byArea.GetProperty("groupBy").GetString().Should().Be("area");
+		byArea.GetProperty("groupBy").EnumerateArray().Select(d => d.GetString()).Should().Equal("area");
 		var areaGroups = byArea.GetProperty("groups").EnumerateArray()
 			.ToDictionary(g => g.GetProperty("key").GetString()!, g => g.GetProperty("nodeKeys").EnumerateArray().Select(k => k.GetString()).ToList());
 		areaGroups["area:ui"].Should().BeEquivalentTo(["a", "b"]);
@@ -161,6 +161,43 @@ public sealed class TasksTreeContractTests : IDisposable
 		var byConcern = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "concern"));
 		var keys = byConcern.GetProperty("groups").EnumerateArray().Select(g => g.GetProperty("key").GetString()).ToList();
 		keys.Should().Equal("concern:security", "(none)"); // (none) last
+	}
+
+	[Fact]
+	public async Task GroupBy_OrderedMultiKey_NestsAndPreservesMultimembership()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "g", null);
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g",
+			JsonSerializer.SerializeToElement(new object[]
+			{
+				// a is in TWO areas → multimembership: it appears under both area:ui and area:llm.
+				new { key = "a", status = "Pending", title = "A", body = "x", tags = new[] { "area:ui", "area:llm", "concern:security" } },
+				new { key = "b", status = "Pending", title = "B", body = "x", tags = new[] { "area:ui" } }, // no concern → "(none)"
+			}));
+
+		// groupBy [area, concern]: top level = area buckets, each split by concern, leaves = nodeKeys.
+		var got = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "area, concern"));
+		got.GetProperty("groupBy").EnumerateArray().Select(d => d.GetString()).Should().Equal("area", "concern");
+
+		var areas = got.GetProperty("groups").EnumerateArray()
+			.ToDictionary(g => g.GetProperty("key").GetString()!, g => g);
+		areas.Keys.Should().BeEquivalentTo(["area:ui", "area:llm"]); // a multimember → both
+
+		// area:ui nests concern:security {a} then "(none)" {b} (none last); inner groups are leaves.
+		var uiSub = areas["area:ui"].GetProperty("subGroups").EnumerateArray()
+			.Select(g => (key: g.GetProperty("key").GetString()!, nodes: g.GetProperty("nodeKeys").EnumerateArray().Select(k => k.GetString()).ToList()))
+			.ToList();
+		uiSub.Select(s => s.key).Should().Equal("concern:security", "(none)");
+		uiSub.Single(s => s.key == "concern:security").nodes.Should().BeEquivalentTo(["a"]);
+		uiSub.Single(s => s.key == "(none)").nodes.Should().BeEquivalentTo(["b"]);
+
+		// area:llm holds only a, under concern:security.
+		var llmSub = areas["area:llm"].GetProperty("subGroups").EnumerateArray().Single();
+		llmSub.GetProperty("key").GetString().Should().Be("concern:security");
+		llmSub.GetProperty("nodeKeys").EnumerateArray().Select(k => k.GetString()).Should().BeEquivalentTo(["a"]);
+		// non-leaf (area) groups carry no nodeKeys — those live on the leaf level.
+		areas["area:ui"].GetProperty("nodeKeys").EnumerateArray().Should().BeEmpty();
 	}
 
 	[Fact]
