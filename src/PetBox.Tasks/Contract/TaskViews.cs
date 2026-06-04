@@ -33,9 +33,12 @@ public sealed record NodeDetailView(string Board, string Kind, PlanNodeView Node
 // A lightweight node pointer (no body/links) — used for breadcrumb ancestors.
 public sealed record NodeCrumb(string NodeId, string Slug, string Title);
 
-// Delta projection of a node (no links/delivery/tags — that's GetAsync).
+// Delta projection of a node (no links/delivery/tags — that's GetAsync). `Body` is the
+// compact-echo opt-in (spec echo-compact-by-default): null by default (the serializer
+// omits it) so a write-echo carries only key/status/title; a sliced body is filled only
+// when the caller passes bodyLen > 0.
 public sealed record PlanNodeDelta(
-	string Key, string NodeId, string Status, string Type, string Title, string Body,
+	string Key, string NodeId, string Status, string Type, string Title, string? Body,
 	string? CommitRef, long Priority, long Version, string? Url = null);
 
 // One row the caller could not apply (optimistic-concurrency miss), shaped for the wire.

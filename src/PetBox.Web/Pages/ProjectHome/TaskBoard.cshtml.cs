@@ -73,7 +73,7 @@ public sealed class TaskBoardModel : PageModel
 	// only). The tree-interactivity data-* (parent/closed/keep-visible) are inert in the tag
 	// pane because ts/board.ts binds only to the tree's board-nodes list.
 	public sealed record PlanNodeCard(
-		string WorkspaceKey, string ProjectKey, PlanNodeView Node,
+		string WorkspaceKey, string ProjectKey, string Board, PlanNodeView Node,
 		int Depth, bool Closed, bool KeepVisible, bool HasChildren,
 		IReadOnlyList<CommentLine>? Thread);
 

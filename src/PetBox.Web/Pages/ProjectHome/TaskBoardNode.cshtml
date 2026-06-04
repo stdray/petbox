@@ -33,7 +33,7 @@
 	@foreach (var a in Model.Detail.Ancestors)
 	{
 		<span class="opacity-40">/</span>
-		<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, a.NodeId)" class="link link-hover opacity-70 font-mono">@(string.IsNullOrEmpty(a.Title) ? a.Slug : a.Title)</a>
+		<a href="@Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Detail.Board, a.Slug)" class="link link-hover opacity-70 font-mono">@(string.IsNullOrEmpty(a.Title) ? a.Slug : a.Title)</a>
 	}
 	<span class="opacity-40">/</span>
 	<span class="font-mono opacity-90" data-testid="node-leaf">@node.Key</span>
@@ -145,7 +145,12 @@
 					{
 						@if (l.NodeId.Length > 0 && l.Status != "missing")
 						{
-							<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, l.NodeId)" class="link link-hover font-mono" data-testid="node-link">@(l.Slug ?? l.NodeId)<span class="opacity-50"> · @l.Status</span></a>
+							@* Canonical slug-URL when the target's board+slug are known (cross-board
+							   links carry both); fall back to the opaque nodeId alias otherwise. *@
+							var href = l is { Board: { Length: > 0 } b, Slug: { Length: > 0 } s }
+								? Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, b, s)
+								: Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, l.NodeId);
+							<a href="@href" class="link link-hover font-mono" data-testid="node-link">@(l.Slug ?? l.NodeId)<span class="opacity-50"> · @l.Status</span></a>
 						}
 						else
 						{

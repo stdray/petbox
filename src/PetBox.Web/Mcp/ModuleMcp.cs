@@ -88,4 +88,22 @@ static class ModuleMcp
 			&& e.ValueKind == JsonValueKind.Number && e.TryGetInt64(out var v)
 			? v
 			: dflt;
+
+	// WRITE-echo slice (spec echo-compact-by-default): bodyLen <= 0 -> null (no body, the
+	// serializer omits the field), so a cursor-advance echo is bodiless by default; otherwise
+	// the first N chars with "…" appended when cut. Mirrors TasksService.SliceBody.
+	public static string? SliceBody(string? body, int bodyLen)
+	{
+		if (bodyLen <= 0 || string.IsNullOrEmpty(body)) return null;
+		return body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
+	}
+
+	// READ snippet (spec read-snippet-on-demand): bodyLen <= 0 -> the FULL body (back-compat:
+	// existing read callers keep getting the whole thing), otherwise the first N chars with "…"
+	// when cut. The opposite default to SliceBody — a read returns content by default, a write
+	// echo does not.
+	public static string? SnippetBody(string? body, int bodyLen) =>
+		bodyLen <= 0 || string.IsNullOrEmpty(body) || body.Length <= bodyLen
+			? body
+			: string.Concat(body.AsSpan(0, bodyLen), "…");
 }

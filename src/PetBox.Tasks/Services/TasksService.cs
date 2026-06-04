@@ -245,7 +245,9 @@ public sealed partial class TasksService : ITasksService
 				Supersedes: supersedes.Count > 0 ? supersedes : null,
 				RenamedFrom: lineage.TryGetValue(n.Key, out var p) ? p : [],
 				Tags: tagsByNode[n.NodeId].OrderBy(t => t, StringComparer.Ordinal).ToList(),
-				Url: urlPrefix is null ? null : urlPrefix + n.NodeId));
+				// Canonical slug-URL: prefix ends with "/tasks/", append "{board}/{slug}"
+				// (node-slug-addressable). board/key are validated slugs → URL-safe.
+				Url: urlPrefix is null ? null : urlPrefix + board + "/" + n.Key));
 		}
 		return new PlanBoardView(current, kind.ToString().ToLowerInvariant(), meta.SpecBoard, nodes);
 	}
@@ -274,6 +276,14 @@ public sealed partial class TasksService : ITasksService
 		}
 		ancestors.Reverse();
 		return new NodeDetailView(board, view.Kind, node, ancestors);
+	}
+
+	public async Task<NodeDetailView?> GetNodeBySlugAsync(string projectKey, string board, string slug, CancellationToken ct = default)
+	{
+		if (string.IsNullOrWhiteSpace(board) || string.IsNullOrWhiteSpace(slug)) return null;
+		var nodeId = await _boards.FindNodeIdBySlugAsync(projectKey, board, slug, ct);
+		if (nodeId is null) return null;
+		return await GetNodeAsync(projectKey, nodeId, ct);
 	}
 
 	// nodeId -> its active part_of parent nodeId (single parent). One query, project-wide.

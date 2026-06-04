@@ -189,6 +189,28 @@ public sealed class McpModuleToolsTests : IDisposable
 		list.GetProperty("sessions").EnumerateArray().Should().ContainSingle();
 	}
 
+	// spec bounded-result-sets: session.get reads the blob incrementally — `length` is always
+	// reported; `tail` returns the last N chars; `offset`+`limit` a window.
+	[Fact]
+	public async Task Session_Get_ReadsIncrementally()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "s2", "claude-code", "0123456789");
+
+		// default: full blob + total length.
+		var full = Json(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2"));
+		full.GetProperty("content").GetString().Should().Be("0123456789");
+		full.GetProperty("length").GetInt32().Should().Be(10);
+
+		// tail: last N chars.
+		Json(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", tail: 4))
+			.GetProperty("content").GetString().Should().Be("6789");
+
+		// offset + limit: a window, clamped.
+		Json(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", offset: 3, limit: 4))
+			.GetProperty("content").GetString().Should().Be("3456");
+	}
+
 	[Fact]
 	public async Task Comments_Add_Reply_List_DeleteWithChildrenRejected()
 	{

@@ -40,16 +40,39 @@ public static class SessionTools
 	}
 
 	[McpServerTool(Name = "session.get", Title = "Get a session", ReadOnly = true)]
-	[Description("Get the active session blob by id, or null. Requires tasks:read.")]
+	[Description("""
+		Get the active session blob by id, or null. The blob can be read INCREMENTALLY
+		(spec bounded-result-sets): pass `tail` for the last N chars, or `offset`+`limit`
+		for a window; with none, the full blob is returned. `length` (total chars) is
+		ALWAYS returned so a caller can poll for growth and then read only the new tail.
+		Requires tasks:read.
+		""")]
 	public static async Task<object?> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
-		string projectKey, string sessionId, CancellationToken ct = default)
+		string projectKey, string sessionId,
+		[Description("Return only the last N chars of the blob (0 = off). Takes precedence over offset/limit.")] int tail = 0,
+		[Description("Start reading at this char offset (default 0).")] int offset = 0,
+		[Description("Max chars returned from offset (0 = to end).")] int limit = 0,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var s = await sessions.GetAsync(projectKey, sessionId, ct);
-		return s is null ? null : new { sessionId = s.Key, agent = s.Agent, content = s.Content, version = s.Version };
+		if (s is null) return null;
+		var full = s.Content ?? "";
+		return new { sessionId = s.Key, agent = s.Agent, content = Window(full, tail, offset, limit), length = full.Length, version = s.Version };
+	}
+
+	// Incremental read of a plan blob: `tail` (last N chars) wins; else the [offset, offset+limit)
+	// window (limit 0 = to end). All bounds are clamped so out-of-range args can't throw.
+	static string Window(string s, int tail, int offset, int limit)
+	{
+		if (tail > 0) return tail >= s.Length ? s : s[^tail..];
+		var start = Math.Clamp(offset, 0, s.Length);
+		var rest = s.Length - start;
+		var count = limit <= 0 ? rest : Math.Min(limit, rest);
+		return s.Substring(start, count);
 	}
 
 	[McpServerTool(Name = "session.list", Title = "List sessions", ReadOnly = true)]

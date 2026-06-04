@@ -48,6 +48,10 @@ public interface ITasksService
 	// board + part_of ancestor chain (root→parent). null when no active node carries the id.
 	// Powers the per-node detail page (addresses a node by id, not by board/slug).
 	Task<NodeDetailView?> GetNodeAsync(string projectKey, string nodeId, CancellationToken ct = default);
+	// One node by its human-readable (board, slug) address — the canonical slug-URL form
+	// (node-slug-addressable). Resolves the slug to its NodeId then reuses GetNodeAsync. null
+	// when no active node on that board carries the slug.
+	Task<NodeDetailView?> GetNodeBySlugAsync(string projectKey, string board, string slug, CancellationToken ct = default);
 	// Project a board by an ORDERED list of tag namespaces (e.g. [area, concern]): nodes
 	// bucketed by their tag value in each namespace ("(none)" for untagged), nested in
 	// dimension order, each group with a delivery roll-up. The projection is a view — it
