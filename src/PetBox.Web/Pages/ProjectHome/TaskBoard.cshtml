@@ -51,11 +51,20 @@
 }
 else
 {
-	<div x-data="{ activeOnly: JSON.parse(localStorage.getItem('tasksActiveOnly') ?? 'true') }" x-init="$watch('activeOnly', v => localStorage.setItem('tasksActiveOnly', v))">
-	<label class="label cursor-pointer justify-start gap-2 text-xs mb-2 w-fit">
-		<input type="checkbox" class="toggle toggle-sm" x-model="activeOnly" data-testid="active-only-toggle" />
-		<span>active only</span>
-	</label>
+	// A node has children when some other node's part_of parent is its NodeId — only those
+	// get a collapse caret. (Visibility/collapse/filter is applied client-side by ts/board.ts;
+	// active-only + collapse state persist in localStorage.)
+	var parentIds = Model.Nodes.Where(x => x.ParentNodeId is not null).Select(x => x.ParentNodeId!).ToHashSet(StringComparer.Ordinal);
+
+	<div class="mb-3 flex flex-wrap items-center gap-2" data-testid="board-filter">
+		<input type="search" class="input input-bordered input-xs w-48" placeholder="filter…" data-testid="board-filter-text" aria-label="Filter text" />
+		<select class="select select-bordered select-xs" data-testid="board-filter-status" aria-label="Filter by status"><option value="">status: any</option></select>
+		<select class="select select-bordered select-xs" data-testid="board-filter-type" aria-label="Filter by type"><option value="">type: any</option></select>
+		<label class="label cursor-pointer justify-start gap-2 text-xs">
+			<input type="checkbox" class="toggle toggle-xs" data-testid="active-only-toggle" />
+			<span>active only</span>
+		</label>
+	</div>
 	<ul class="flex flex-col gap-2" data-testid="board-nodes">
 		@foreach (var n in Model.Nodes)
 		{
@@ -66,21 +75,27 @@ else
 			// A closed node hides under "active only" — unless it still has open
 			// descendants, in which case it stays so its children aren't orphaned.
 			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);
-			var showExpr = keepVisible ? "true" : "!activeOnly";
-			<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@depth" data-closed="@closed.ToString().ToLowerInvariant()" style="margin-left:@(depth * 1.5)rem" x-show="@showExpr">
+			var hasChildren = parentIds.Contains(n.NodeId);
+			var search = $"{n.Title} {n.Key} {n.Body} {string.Join(' ', n.Tags)}".ToLowerInvariant();
+			var nodeUrl = Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, n.NodeId);
+			<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@depth" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="@keepVisible.ToString().ToLowerInvariant()" data-status="@n.Status" data-type="@n.Type" data-search="@search" style="margin-left:@(depth * 1.5)rem">
 				<div class="card-body p-3">
 					<div class="flex items-baseline justify-between gap-2">
 						<div class="min-w-0 flex items-baseline gap-2 flex-wrap">
+							@if (hasChildren)
+							{
+								<button type="button" data-collapse-toggle class="btn btn-ghost btn-xs px-1 leading-none font-mono shrink-0" title="collapse / expand subtree" aria-label="collapse or expand">▾</button>
+							}
 							@if (!string.IsNullOrEmpty(n.Title))
 							{
-								<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, n.NodeId)" class="font-semibold link link-hover" data-testid="node-name">@n.Title</a>
+								<a href="@nodeUrl" class="font-semibold link link-hover" data-testid="node-name">@n.Title</a>
 							}
 							<span class="font-mono text-xs opacity-50">
 								@if (parent is not null)
 								{
 									<span>@parent / </span>
 								}
-								<a href="@Routes.TaskBoardNode(Model.WorkspaceKey, Model.ProjectKey, n.NodeId)" class="link link-hover" data-testid="node-leaf">@leaf</a>
+								<a href="@nodeUrl" class="link link-hover" data-testid="node-leaf">@leaf</a>
 							</span>
 						</div>
 						<div class="flex items-center gap-1 shrink-0">
@@ -93,7 +108,12 @@ else
 					</div>
 					@if (!string.IsNullOrEmpty(n.Body))
 					{
-						<p class="text-base opacity-90 whitespace-pre-wrap mt-1">@n.Body</p>
+						// Body is markdown, hydrated client-side (ts/markdown.ts) and clipped on the
+						// board — the full text lives on the node detail page (board-body-truncate).
+						<div class="mt-1">
+							<div data-md class="md-body text-base opacity-90 max-h-24 overflow-hidden" data-testid="node-body">@n.Body</div>
+							<a href="@nodeUrl" class="text-xs link link-hover opacity-60" data-testid="node-body-more">full ↗</a>
+						</div>
 					}
 					@if (!string.IsNullOrEmpty(n.CommitRef))
 					{
@@ -116,5 +136,4 @@ else
 			</li>
 		}
 	</ul>
-	</div>
 }

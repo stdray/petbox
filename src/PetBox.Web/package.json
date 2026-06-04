@@ -22,7 +22,9 @@
 		"typescript": "5.7.3"
 	},
 	"dependencies": {
+		"alpinejs": "3.14.1",
+		"dompurify": "^3.4.8",
 		"htmx.org": "2.0.4",
-		"alpinejs": "3.14.1"
+		"marked": "^18.0.4"
 	}
 }

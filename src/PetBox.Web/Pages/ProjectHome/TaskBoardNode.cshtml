@@ -66,11 +66,11 @@
 			</div>
 		}
 
-		@* Full body, no truncation (node-page-full-body). Plain pre-wrap for now; markdown
-		   rendering is a separate idea (board-markdown-render). *@
+		@* Full body, no truncation (node-page-full-body). Rendered as markdown client-side
+		   (ts/markdown.ts hydrates [data-md]); storage/format unchanged (body is markdown). *@
 		@if (!string.IsNullOrEmpty(node.Body))
 		{
-			<p class="text-base opacity-90 whitespace-pre-wrap mt-3" data-testid="node-body">@node.Body</p>
+			<div data-md class="md-body text-base opacity-90 mt-3" data-testid="node-body">@node.Body</div>
 		}
 		else
 		{
