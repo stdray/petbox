@@ -8,11 +8,12 @@ using PetBox.LlmRouter.Contract;
 
 namespace PetBox.Web.Pages.Llm;
 
-// Workspace-scoped admin page for the LLM router registry (spec llm-admin-ui): manage
-// provider endpoints (baseUrl, cert-pin, timeouts) + their api keys over the neutral
-// ILlmRegistryAdmin contract. Keys are WRITE-ONLY — GetAsync never returns them, so the form
-// only offers set/replace (blank keeps the existing key). Routes are shown read-only in v1.
-// Mirrors the Config admin page. Depends only on PetBox.LlmRouter.Contract (boundary test).
+// Workspace-scoped admin page for the LLM router registry (spec llm-admin-ui + llm-routes-ui):
+// manage provider endpoints (baseUrl, cert-pin, timeouts) + their api keys AND the routes
+// (capability→endpoint→model chains) over the neutral ILlmRegistryAdmin contract. Keys are
+// WRITE-ONLY — GetAsync never returns them, so the form only offers set/replace (blank keeps the
+// existing key). Routes have no id of their own, so edit/delete address a route by its row index
+// in the stored list. Mirrors the Config admin page. Depends only on PetBox.LlmRouter.Contract.
 [Authorize]
 public sealed class IndexModel : PageModel
 {
@@ -82,8 +83,49 @@ public sealed class IndexModel : PageModel
 
 		var existing = await _registry.GetAsync(ProjectKey, ct);
 		var endpoints = existing.Endpoints.Where(e => !string.Equals(e.Name, name, StringComparison.Ordinal)).ToList();
-		return await SaveAsync(new LlmRegistry(endpoints, existing.Routes), new Dictionary<string, string>(StringComparer.Ordinal), ct);
+		return await SaveAsync(new LlmRegistry(endpoints, existing.Routes), NoKeys, ct);
 	}
+
+	// Add a route or, when `index` points at an existing row, replace it in place. The endpoint
+	// must already exist — validation rejects a route to an unknown endpoint. Keys untouched
+	// (empty apiKeys keeps every endpoint's existing secret).
+	public async Task<IActionResult> OnPostSaveRouteAsync(
+		LlmCapability capability, string endpoint, string model, int priority, string? tier,
+		int? index, CancellationToken ct = default)
+	{
+		if (!_features.IsEnabled(Feature.LlmRouter)) return NotFound();
+		if (!await ProjectExistsAsync(ct)) { ProjectNotFound = true; return Page(); }
+
+		if (string.IsNullOrWhiteSpace(endpoint)) return await FailAsync("route endpoint is required", ct);
+		if (string.IsNullOrWhiteSpace(model)) return await FailAsync("route model is required", ct);
+
+		var existing = await _registry.GetAsync(ProjectKey, ct);
+		var route = new LlmRoute(
+			capability, endpoint.Trim(), model.Trim(),
+			priority <= 0 ? 100 : priority,
+			string.IsNullOrWhiteSpace(tier) ? null : tier.Trim());
+
+		var routes = existing.Routes.ToList();
+		if (index is { } i && i >= 0 && i < routes.Count) routes[i] = route; // edit in place
+		else routes.Add(route);                                             // append
+
+		return await SaveAsync(new LlmRegistry(existing.Endpoints, routes), NoKeys, ct);
+	}
+
+	// Remove a route by its row index in the stored list. Out-of-range index is a no-op save.
+	public async Task<IActionResult> OnPostDeleteRouteAsync(int index, CancellationToken ct = default)
+	{
+		if (!_features.IsEnabled(Feature.LlmRouter)) return NotFound();
+		if (!await ProjectExistsAsync(ct)) { ProjectNotFound = true; return Page(); }
+
+		var existing = await _registry.GetAsync(ProjectKey, ct);
+		var routes = existing.Routes.ToList();
+		if (index >= 0 && index < routes.Count) routes.RemoveAt(index);
+		return await SaveAsync(new LlmRegistry(existing.Endpoints, routes), NoKeys, ct);
+	}
+
+	// No key changes — endpoints absent from the map keep their existing secret (contract).
+	static IReadOnlyDictionary<string, string> NoKeys => new Dictionary<string, string>(StringComparer.Ordinal);
 
 	async Task<IActionResult> SaveAsync(LlmRegistry registry, IReadOnlyDictionary<string, string> apiKeys, CancellationToken ct)
 	{

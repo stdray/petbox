@@ -13,8 +13,9 @@ using PetBox.Web.Pages.Llm;
 
 namespace PetBox.Tests.Llm;
 
-// The LLM-router admin page (spec llm-admin-ui): add/update/delete provider endpoints over
-// ILlmRegistryAdmin, surface validation errors, gate on Feature.LlmRouter. Keys are write-only.
+// The LLM-router admin page (spec llm-admin-ui + llm-routes-ui): add/update/delete provider
+// endpoints AND routes over ILlmRegistryAdmin, surface validation errors, gate on
+// Feature.LlmRouter. Keys are write-only; routes are addressed by row index for edit/delete.
 [Collection("DataModule")]
 public sealed class LlmAdminPageTests : IDisposable
 {
@@ -121,6 +122,80 @@ public sealed class LlmAdminPageTests : IDisposable
 		await page.OnPostDeleteAsync("home");
 
 		reg.Current.Endpoints.Should().ContainSingle(e => e.Name == "cloud");
+	}
+
+	[Fact]
+	public async Task SaveRoute_appends_route_then_redirects()
+	{
+		var reg = new FakeRegistry { Current = new LlmRegistry([new LlmEndpoint("deepseek", "https://d")], []) };
+		var page = Page(reg);
+
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "deepseek", "deepseek-chat", 50, tier: null, index: null);
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		reg.Current.Routes.Should().ContainSingle(r =>
+			r.Capability == LlmCapability.Chat && r.Endpoint == "deepseek" && r.Model == "deepseek-chat" && r.Priority == 50);
+	}
+
+	[Fact]
+	public async Task SaveRoute_with_index_replaces_in_place()
+	{
+		var reg = new FakeRegistry
+		{
+			Current = new LlmRegistry(
+				[new LlmEndpoint("home", "https://h"), new LlmEndpoint("cloud", "https://c")],
+				[new LlmRoute(LlmCapability.Chat, "home", "old-model", 100)]),
+		};
+		var page = Page(reg);
+
+		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "cloud", "new-model", 10, tier: "fast", index: 0);
+
+		reg.Current.Routes.Should().ContainSingle();
+		reg.Current.Routes[0].Endpoint.Should().Be("cloud");
+		reg.Current.Routes[0].Model.Should().Be("new-model");
+		reg.Current.Routes[0].Priority.Should().Be(10);
+		reg.Current.Routes[0].Tier.Should().Be("fast");
+	}
+
+	[Fact]
+	public async Task SaveRoute_blank_endpoint_shows_error_no_write()
+	{
+		var reg = new FakeRegistry();
+		var page = Page(reg);
+
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "  ", "m", 100, null, null);
+
+		result.Should().BeOfType<PageResult>();
+		page.Error.Should().NotBeNullOrEmpty();
+		reg.SetCalls.Should().Be(0);
+	}
+
+	[Fact]
+	public async Task SaveRoute_surfaces_validation_error_for_unknown_endpoint()
+	{
+		var reg = new FakeRegistry { ThrowOnSet = new ValidationException([new ValidationFailure("Routes", "unknown endpoint 'ghost'")]) };
+		var page = Page(reg);
+
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "ghost", "m", 100, null, null);
+
+		result.Should().BeOfType<PageResult>();
+		page.Error.Should().Contain("unknown endpoint");
+	}
+
+	[Fact]
+	public async Task DeleteRoute_removes_by_index()
+	{
+		var reg = new FakeRegistry
+		{
+			Current = new LlmRegistry(
+				[new LlmEndpoint("home", "https://h")],
+				[new LlmRoute(LlmCapability.Chat, "home", "a"), new LlmRoute(LlmCapability.Embed, "home", "b")]),
+		};
+		var page = Page(reg);
+
+		await page.OnPostDeleteRouteAsync(0);
+
+		reg.Current.Routes.Should().ContainSingle(r => r.Model == "b");
 	}
 
 	sealed class FakeRegistry : ILlmRegistryAdmin
