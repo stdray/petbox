@@ -148,14 +148,16 @@ public static class TasksTools
 		done_with_defects), rolled up over the part_of subtree. By default terminal/closed
 		nodes are HIDDEN — pass includeClosed=true; closed part_of ancestors of a visible node
 		are kept so the tree stays connected. `under` (a node slug) restricts to that part_of
-		subtree. Pass `groupBy` (area|concern) instead to get the tag PROJECTION: nodes
-		bucketed by their tag value in that namespace ("(none)" for untagged), each group
-		with a delivery roll-up — the cross-cutting view a single-parent tree can't give.
-		Requires tasks:read.
+		subtree. Pass `groupBy` instead to get the tag PROJECTION: an ORDERED, comma-separated
+		list of tag namespaces (e.g. "area" or "area,concern") buckets nodes by their value in
+		each namespace ("(none)" for untagged), nested in that order, each group with a delivery
+		roll-up — the cross-cutting view a single-parent tree can't give. The projection is a
+		view; part_of is untouched. Requires tasks:read.
 		""")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string board, bool includeClosed = false, string? under = null, string? groupBy = null,
+		string projectKey, string board, bool includeClosed = false, string? under = null,
+		[Description("Tag PROJECTION: an ordered, comma-separated list of tag namespaces (e.g. \"area\" or \"area,concern\"); order sets nesting.")] string? groupBy = null,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default; ignored with groupBy).")] bool includeUrl = false,
 		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
@@ -164,8 +166,13 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		return string.IsNullOrWhiteSpace(groupBy)
 			? (object)await tasks.GetAsync(projectKey, board, includeClosed, under, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct), ct)
-			: await tasks.GetGroupedAsync(projectKey, board, groupBy, ct);
+			: await tasks.GetGroupedAsync(projectKey, board, ParseGroupBy(groupBy), ct);
 	});
+
+	// Split a comma-separated groupBy ("area,concern") into the ordered dimension list the
+	// service expects; blanks dropped, order and dups preserved (service validates namespaces).
+	static string[] ParseGroupBy(string groupBy) =>
+		groupBy.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
 	[McpServerTool(Name = "tasks.upsert", Title = "Upsert plan nodes")]
 	[Description("""
