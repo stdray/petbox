@@ -289,6 +289,20 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		(await page.OnGetAsync(default)).Should().BeOfType<NotFoundResult>();
 	}
 
+	// A node filed via ReportIssueAsync writes straight to TemporalStore (skipping ApplyWorkflow,
+	// the usual NodeId-assignment point). It must still get a stable NodeId, else its canonical
+	// slug-URL 404s: FindNodeIdBySlug returns "" and GetNode short-circuits on the empty id.
+	[Fact]
+	public async Task ReportIssue_AssignsNodeId_AndResolvesBySlug()
+	{
+		var key = await _tasks.ReportIssueAsync(Proj, "client-issues", "Something is broken", "details");
+
+		NodeId("client-issues", key).Should().NotBeNullOrEmpty();
+		var detail = await _tasks.GetNodeBySlugAsync(Proj, "client-issues", key);
+		detail!.Node.Key.Should().Be(key);
+		detail.Node.Title.Should().Be("Something is broken");
+	}
+
 	// `node` is reserved as a board name so /tasks/node/{nodeId} can't collide with the slug
 	// route /tasks/{board}/{slug} (node-slug-addressable).
 	[Fact]
