@@ -29,3 +29,9 @@ public sealed record MemoryEntryView(string Key, string Type, string Description
 
 // The raw temporal upsert/delta result, ready for an adapter to serialize.
 public sealed record MemoryUpsertOutcome(TemporalUpsertResult<MemoryEntry> Result);
+
+// A hybrid search result: the fused hits plus provenance (which retrievers actually ran
+// and whether the answer is degraded, e.g. semantic was requested but embedding was
+// unavailable so only lexical ran). Adapters surface Retrievers so callers can tell a
+// lexical-only fallback from a true hybrid answer.
+public sealed record MemorySearchResult(IReadOnlyList<MemoryEntryView> Hits, PetBox.Core.Search.SearchRetrievers Retrievers);

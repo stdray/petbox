@@ -84,18 +84,25 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory.search", Title = "Search memory entries", ReadOnly = true)]
-	[Description("FTS5 full-text search over active entries' description/body/tags, ranked by relevance. Matches by token (prefix), so paraphrases hit. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). Requires memory:read.")]
+	[Description("Hybrid search over active entries' description/body/tags: lexical FTS5 (token/prefix, so paraphrases hit) fused with semantic vector similarity (RRF), ranked by relevance. `lexical`/`semantic` (default both on) toggle each retriever; semantic is silently off when no embedding capability is configured. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). Response includes `retrievers` { lexical, semantic, degraded }. Requires memory:read.")]
 	public static async Task<object> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string query, string? type = null,
 		[Description("Snippet length (chars) per entry body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Max entries returned (default 20; 0 = no limit).")] int limit = 20,
+		[Description("Run the lexical FTS retriever (default true).")] bool? lexical = null,
+		[Description("Run the semantic vector retriever (default true; no-op when embedding is unavailable).")] bool? semantic = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		return new { entries = Project(await memory.SearchAsync(projectKey, store, query, type, ct), bodyLen, limit) };
+		var res = await memory.SearchAsync(projectKey, store, query, type, lexical, semantic, ct);
+		return new
+		{
+			entries = Project(res.Hits, bodyLen, limit),
+			retrievers = new { lexical = res.Retrievers.Lexical, semantic = res.Retrievers.Semantic, degraded = res.Retrievers.Degraded },
+		};
 	}
 
 	[McpServerTool(Name = "memory.upsert", Title = "Upsert memory entries")]
@@ -212,16 +219,20 @@ public static class MemoryTools
 		omit it to CASCADE project ⊕ workspace (results labelled by scope, project
 		first); or pass project | workspace for one. `store` narrows to a single
 		store within each scope (default: search every store). Optional `type` filter
-		(User|Feedback|Project|Reference) and `limit` (default 20). Bodies are full by
+		(User|Feedback|Project|Reference) and `limit` (default 20). `lexical`/`semantic`
+		(default both on) toggle each retriever (hybrid FTS ⊕ vectors); semantic is silently
+		off when embedding is unavailable. Bodies are full by
 		default; pass `bodyLen` > 0 for a snippet (description + first N chars), then pull a
 		full body with memory.get. Requires memory:read.
-		Returns { results: [{ scope, store, key, type, description, body, tags }] }.
+		Returns { results: [{ scope, store, key, type, description, body, tags }], retrievers: { lexical, semantic, degraded } }.
 		""")]
 	public static async Task<object> RecallAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string query, string? scope = null, string? projectKey = null, string? store = null,
 		string? type = null, int limit = 20,
 		[Description("Snippet length (chars) per result body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Run the lexical FTS retriever (default true).")] bool? lexical = null,
+		[Description("Run the semantic vector retriever (default true; no-op when embedding is unavailable).")] bool? semantic = null,
 		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -229,6 +240,11 @@ public static class MemoryTools
 		if (string.IsNullOrWhiteSpace(query)) throw new ArgumentException("query is required");
 
 		var results = new List<object>();
+		// Aggregate provenance across every scope/store searched: lexical/semantic = OR of
+		// the legs that ran; degraded = OR (any leg that wanted semantic but couldn't).
+		var aggLexical = false;
+		var aggSemantic = false;
+		var aggDegraded = false;
 		foreach (var (scopeName, container) in RecallContainers(http, projectKey, scope))
 		{
 			// Which stores to search in this container: the named one, or all of them
@@ -239,14 +255,18 @@ public static class MemoryTools
 			foreach (var st in stores)
 			{
 				if (!await memory.StoreExistsAsync(container, st, ct)) continue;
-				foreach (var v in await memory.SearchAsync(container, st, query, type, ct))
+				var res = await memory.SearchAsync(container, st, query, type, lexical, semantic, ct);
+				aggLexical |= res.Retrievers.Lexical;
+				aggSemantic |= res.Retrievers.Semantic;
+				aggDegraded |= res.Retrievers.Degraded;
+				foreach (var v in res.Hits)
 				{
 					results.Add(new { scope = scopeName, store = st, key = v.Key, type = v.Type, description = v.Description, body = ModuleMcp.SnippetBody(v.Body, bodyLen), tags = v.Tags });
-					if (results.Count >= limit) return (object)new { results };
+					if (results.Count >= limit) return (object)new { results, retrievers = new { lexical = aggLexical, semantic = aggSemantic, degraded = aggDegraded } };
 				}
 			}
 		}
-		return (object)new { results };
+		return (object)new { results, retrievers = new { lexical = aggLexical, semantic = aggSemantic, degraded = aggDegraded } };
 	});
 
 	// Resolve a single explicit scope to its container projectKey (for remember).

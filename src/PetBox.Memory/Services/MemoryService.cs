@@ -3,6 +3,8 @@ using LinqToDB;
 using LinqToDB.DataProvider.SQLite;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
+using PetBox.Core.Search;
+using PetBox.LlmRouter.Contract;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
 
@@ -15,8 +17,15 @@ namespace PetBox.Memory.Services;
 public sealed partial class MemoryService : IMemoryService
 {
 	readonly IMemoryStore _stores;
+	// Optional embedding capability (DI auto-fills when an LLM router is registered).
+	// Null → semantic search disabled and embed-on-write skipped (lexical-only); never throws.
+	readonly ILlmClient? _llm;
 
-	public MemoryService(IMemoryStore stores) => _stores = stores;
+	public MemoryService(IMemoryStore stores, ILlmClient? llm = null)
+	{
+		_stores = stores;
+		_llm = llm;
+	}
 
 	// ---- store lifecycle ----
 
@@ -52,35 +61,85 @@ public sealed partial class MemoryService : IMemoryService
 		return e is null ? null : View(e);
 	}
 
-	public async Task<IReadOnlyList<MemoryEntryView>> SearchAsync(string projectKey, string store, string query, string? type, CancellationToken ct = default)
+	public async Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
 		var ctx = _stores.GetContext(projectKey, store);
 		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
 
-		var match = BuildMatch(query);
-		if (match is null)
+		// null = enabled; semantic also requires an embedding capability to be wired.
+		var lexicalEnabled = lexical != false;
+		var semanticEnabled = semantic != false && _llm is not null;
+
+		IReadOnlyList<string>? lexicalKeys = null;
+		var lexicalRan = false;
+		if (lexicalEnabled)
 		{
-			// No searchable tokens — degrade to a type-filtered listing.
-			var allQ = ctx.Entries.Where(e => e.ActiveTo == null);
-			if (typeFilter is not null) allQ = allQ.Where(e => e.Type == typeFilter.Value);
-			return allQ.OrderBy(e => e.Key).ToList().Select(View).ToList();
+			lexicalKeys = LexicalKeys(ctx, query, typeFilter);
+			lexicalRan = true;
 		}
 
-		// FTS5 MATCH + rank ordering via linq2db's SQLite extensions.
-		var ranked = ctx.MemoryFts
-			.Where(f => Sql.Ext.SQLite().Match(f, match))
-			.OrderBy(f => Sql.Ext.SQLite().Rank(f))
-			.Select(f => f.Key)
-			.ToList();
-		if (ranked.Count == 0)
-			return [];
+		IReadOnlyList<string>? semanticKeys = null;
+		var semanticRan = false;
+		var degraded = false;
+		if (semanticEnabled)
+		{
+			try
+			{
+				var qr = await _llm!.EmbedAsync(projectKey, new EmbedRequest(new[] { query }), ct);
+				var q = qr.Vectors[0];
+				var qmodel = qr.Model.Model;
+				var qdim = q.Length; // hoist: array-length isn't SQL-translatable inside Where
+				// Model/dim guard: only fuse candidates embedded by the same model at the same
+				// dim as the query, so we never cosine-compare incomparable vectors.
+				var rows = ctx.MemoryVec.Where(v => v.Model == qmodel && v.Dim == qdim).ToList();
+				var top = VectorMath.TopK(q, rows.Select(r => (r.Key, VectorCodec.Decode(r.Vec))), 50);
+				semanticKeys = top.Select(t => t.Key).ToList();
+				semanticRan = true;
+			}
+			catch
+			{
+				// Embedding unavailable at query time → degrade to whatever else ran.
+				semanticRan = false;
+				degraded = true;
+			}
+		}
 
-		var order = ranked.Select((k, i) => (k, i)).ToDictionary(x => x.k, x => x.i);
-		return ctx.Entries.Where(e => e.ActiveTo == null && ranked.Contains(e.Key)).ToList()
+		// RRF-fuse the retrievers that ran; one retriever passes through unchanged.
+		IReadOnlyList<string> fused =
+			lexicalRan && semanticRan ? HybridMerge.Rrf(lexicalKeys, semanticKeys)
+			: lexicalRan ? lexicalKeys ?? []
+			: semanticRan ? semanticKeys ?? []
+			: [];
+
+		var order = fused.Select((k, i) => (k, i)).ToDictionary(x => x.k, x => x.i);
+		var hits = ctx.Entries.Where(e => e.ActiveTo == null && fused.Contains(e.Key)).ToList()
 			.Where(e => typeFilter == null || e.Type == typeFilter)
 			.OrderBy(e => order[e.Key])
 			.Select(View)
+			.ToList();
+
+		return new MemorySearchResult(hits, new SearchRetrievers(lexicalRan, semanticRan, degraded));
+	}
+
+	// Lexical retriever as ordered keys (uniform shape for fusion). Preserves the
+	// "no searchable tokens → type-filtered listing" degrade so an empty/symbol query
+	// still returns a sensible set rather than nothing.
+	static List<string> LexicalKeys(MemoryDb ctx, string query, MemoryType? typeFilter)
+	{
+		var match = BuildMatch(query);
+		if (match is null)
+		{
+			var allQ = ctx.Entries.Where(e => e.ActiveTo == null);
+			if (typeFilter is not null) allQ = allQ.Where(e => e.Type == typeFilter.Value);
+			return allQ.OrderBy(e => e.Key).Select(e => e.Key).ToList();
+		}
+
+		// FTS5 MATCH + rank ordering via linq2db's SQLite extensions.
+		return ctx.MemoryFts
+			.Where(f => Sql.Ext.SQLite().Match(f, match))
+			.OrderBy(f => Sql.Ext.SQLite().Rank(f))
+			.Select(f => f.Key)
 			.ToList();
 	}
 
@@ -91,7 +150,12 @@ public sealed partial class MemoryService : IMemoryService
 		var dels = deletes.Select(d => (d.Key, d.Version)).ToArray();
 		var ctx = _stores.GetContext(projectKey, store);
 		var r = await TemporalStore.UpsertAsync(ctx, desired, dels, sinceVersion, ct: ct);
-		if (r.Applied) { RebuildFts(ctx); await _stores.TouchAsync(projectKey, store, ct); }
+		if (r.Applied)
+		{
+			RebuildFts(ctx);
+			await EmbedOnWriteAsync(ctx, projectKey, desired, deletes, ct);
+			await _stores.TouchAsync(projectKey, store, ct);
+		}
 		return new MemoryUpsertOutcome(r);
 	}
 
@@ -161,16 +225,55 @@ public sealed partial class MemoryService : IMemoryService
 			});
 	}
 
-	// Lenient FTS5 MATCH expression: alnum tokens, prefix-matched (tok*) and ANDed.
-	// Null when there's nothing to match (caller degrades to a plain listing).
+	// Embed-on-write: refresh the vector mirror for the just-applied set. Each upserted
+	// entry is (re)embedded from description+body; each deleted key's vector is dropped.
+	// Best-effort: when no LLM capability is wired this is skipped entirely, and an embed
+	// failure for one entry degrades that entry to lexical-only — it MUST NOT throw out of
+	// the write path (a memory upsert must never fail because embedding was unavailable).
+	async Task EmbedOnWriteAsync(MemoryDb ctx, string projectKey, IReadOnlyList<MemoryEntry> desired, IReadOnlyList<MemoryDelete> deletes, CancellationToken ct)
+	{
+		if (_llm is null) return;
+
+		foreach (var d in deletes)
+			ctx.MemoryVec.Delete(x => x.Key == d.Key);
+
+		foreach (var e in desired)
+		{
+			try
+			{
+				var text = e.Description + "\n" + e.Body;
+				var res = await _llm.EmbedAsync(projectKey, new EmbedRequest(new[] { text }), ct);
+				var vec = res.Vectors[0];
+				var row = new MemoryVec
+				{
+					Key = e.Key,
+					Model = res.Model.Model,
+					Dim = vec.Length,
+					Vec = VectorCodec.Encode(vec),
+				};
+				ctx.MemoryVec.Delete(x => x.Key == e.Key);
+				ctx.Insert(row);
+			}
+			catch
+			{
+				// Degrade: this entry stays lexical-only until a later upsert succeeds.
+			}
+		}
+	}
+
+	// Lenient FTS5 MATCH expression: Unicode word tokens (letters/digits — Latin,
+	// Cyrillic, …), prefix-matched (tok*) and ANDed. The store's FTS5 table is unicode61
+	// (case-folds + strips diacritics), so the query tokenizer must NOT drop non-ASCII:
+	// a `[a-z0-9]` class would silently discard a Russian query and return nothing.
+	// Prefix-* also softens the lack of stemming for ru/en. Null when nothing to match.
 	static string? BuildMatch(string? query)
 	{
 		if (string.IsNullOrWhiteSpace(query)) return null;
-		var tokens = NonAlnum().Matches(query.ToLowerInvariant()).Select(m => m.Value + "*");
+		var tokens = WordToken().Matches(query.ToLowerInvariant()).Select(m => m.Value + "*");
 		var joined = string.Join(' ', tokens);
 		return joined.Length == 0 ? null : joined;
 	}
 
-	[GeneratedRegex("[a-z0-9]+")]
-	private static partial Regex NonAlnum();
+	[GeneratedRegex(@"[\p{L}\p{Nd}]+")]
+	private static partial Regex WordToken();
 }

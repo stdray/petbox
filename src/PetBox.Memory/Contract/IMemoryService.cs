@@ -19,8 +19,11 @@ public interface IMemoryService
 	// Active entries ordered by key, optional taxonomy filter (User|Feedback|Project|Reference).
 	Task<IReadOnlyList<MemoryEntryView>> ListAsync(string projectKey, string store, string? type, CancellationToken ct = default);
 	Task<MemoryEntryView?> GetAsync(string projectKey, string store, string key, CancellationToken ct = default);
-	// FTS5 full-text search over active entries, ranked; optional taxonomy filter.
-	Task<IReadOnlyList<MemoryEntryView>> SearchAsync(string projectKey, string store, string query, string? type, CancellationToken ct = default);
+	// Hybrid search over active entries (lexical FTS5 ⊕ semantic vectors, RRF-fused),
+	// ranked; optional taxonomy filter. `lexical`/`semantic` (null = enabled) toggle each
+	// retriever; semantic is silently off when no embedding capability is available. The
+	// result carries which retrievers ran and whether it degraded.
+	Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default);
 	// Declarative temporal upsert (+ soft-deletes), then FTS rebuild.
 	Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, long sinceVersion = 0, CancellationToken ct = default);
 	Task<MemoryUpsertOutcome> DeltaAsync(string projectKey, string store, long sinceVersion, CancellationToken ct = default);
