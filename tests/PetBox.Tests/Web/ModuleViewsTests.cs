@@ -66,7 +66,7 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 	public async Task InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
-		PetBox.Core.Data.MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = _factory.Services.CreateScope();

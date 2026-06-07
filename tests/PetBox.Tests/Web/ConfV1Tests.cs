@@ -46,7 +46,7 @@ public sealed class ConfV1Tests : IAsyncLifetime
 	public async Task InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
-		MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = _factory.Services.CreateScope();

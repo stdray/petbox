@@ -41,7 +41,7 @@ public sealed class LoginAuthTests : IAsyncLifetime
 	public Task InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
-		MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 		// HandleCookies=false → stateless requests; we pass the antiforgery cookie manually and
 		// never leak an auth cookie between logins (each GET /Login re-issues the antiforgery cookie).
 		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });

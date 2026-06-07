@@ -76,7 +76,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	public async Task InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
-		MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 
 		using (var scope = _factory.Services.CreateScope())
 		{

@@ -114,8 +114,12 @@ Task("Test")
 		}
 	});
 
+// The image is built from the Dockerfile, which restores+publishes INSIDE the
+// container — it needs neither the host Build nor Test output, only the git version
+// for the tag/build-args. So it depends on Version, not Test: in CI the image build
+// runs as its own job in PARALLEL with the test job, and `deploy` gates on both.
 Task("Docker")
-	.IsDependentOn("Test")
+	.IsDependentOn("Version")
 	.Does(() =>
 	{
 		var gitVersionTag = gitVersion.FullSemVer.Replace('+', '-');
@@ -205,7 +209,6 @@ Task("DockerSmoke")
 	});
 
 Task("DockerPush")
-	.IsDependentOn("Test")
 	.IsDependentOn("DockerSmoke")
 	.WithCriteria(() => dockerPushEnabled)
 	.Does(() =>

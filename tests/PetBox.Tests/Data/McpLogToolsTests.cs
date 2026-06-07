@@ -70,7 +70,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		// Force MigrationRunner.Run on the test DB up front — WebApplicationFactory + static
 		// Configure(app) does not always trigger migrations for tests that only touch DI.
 		var __testCs = _factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
-		PetBox.Core.Data.MigrationRunner.Run(__testCs);
+		TestSchema.Core(__testCs);
 		_http = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using (var scope = _factory.Services.CreateScope())
