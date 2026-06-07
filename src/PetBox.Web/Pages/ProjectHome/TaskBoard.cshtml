@@ -34,18 +34,21 @@
 	<span class="badge badge-ghost">@Model.Nodes.Count node(s)</span>
 </div>
 
-<form method="post" asp-page-handler="Create" class="mb-4 flex flex-col gap-2" data-testid="task-create">
-	<input type="text" name="name" required maxlength="200" class="input input-bordered input-sm w-full" placeholder="New task title → incoming…" data-testid="task-create-name" aria-label="Title" />
-	<textarea name="body" maxlength="4000" rows="2" class="textarea textarea-bordered textarea-sm w-full" placeholder="Details (optional)" data-testid="task-create-body" aria-label="Body"></textarea>
-	<div class="flex items-center gap-2">
-		<select name="priority" class="select select-bordered select-sm" data-testid="task-create-priority" aria-label="Priority">
-			<option value="10">High</option>
-			<option value="50" selected>Normal</option>
-			<option value="90">Low</option>
-		</select>
-		<button type="submit" class="btn btn-sm btn-primary" data-testid="task-create-submit">Add</button>
-	</div>
-</form>
+@if (Model.ShowQuickAdd)
+{
+	<form method="post" asp-page-handler="Create" class="mb-4 flex flex-col gap-2" data-testid="task-create">
+		<input type="text" name="name" required maxlength="200" class="input input-bordered input-sm w-full" placeholder="New task title → incoming…" data-testid="task-create-name" aria-label="Title" />
+		<textarea name="body" maxlength="4000" rows="2" class="textarea textarea-bordered textarea-sm w-full" placeholder="Details (optional)" data-testid="task-create-body" aria-label="Body"></textarea>
+		<div class="flex items-center gap-2">
+			<select name="priority" class="select select-bordered select-sm" data-testid="task-create-priority" aria-label="Priority">
+				<option value="10">High</option>
+				<option value="50" selected>Normal</option>
+				<option value="90">Low</option>
+			</select>
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="task-create-submit">Add</button>
+		</div>
+	</form>
+}
 
 @* View switch: the stored part_of tree, or a tag-groups projection by an ordered namespace
    list. Explicit query-string links (no implicit persistence) — switching is reversible and

@@ -83,6 +83,10 @@ desktop.ini
 # Claude Code (personal)
 .claude/
 
+# opencode (personal)
+.opencode/
+.agents/
+
 # Playwright MCP artifacts
 .playwright-mcp/
 tmp/

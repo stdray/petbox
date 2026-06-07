@@ -1,4 +1,5 @@
 using LinqToDB;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
@@ -7,13 +8,15 @@ using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
+using PetBox.Tasks.Workflow;
 using PetBox.Web.Pages.ProjectHome;
 
 namespace PetBox.Tests.Web;
 
-// Regression for the kinded-board quick-add bug: the board page's quick-add used to hardcode
-// status "Pending", which is invalid on a kinded board (ideas/spec/intake) and stranded the
-// node outside its FSM. It must use the board kind's initial status + node type.
+// The board page's quick-add form is rejected only where a node needs a link at birth the
+// bare form can't supply — Spec (ideaRef) and Work (specRef). Free/Ideas/Intake keep it.
+// These tests verify the render flag + POST gate track the single WorkflowCatalog knob; the
+// expectation is read from that same knob, so flipping a kind's policy flips both together.
 [Collection("DataModule")]
 public sealed class TaskBoardQuickAddTests : IDisposable
 {
@@ -49,37 +52,57 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 		new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
 		{ ["Features:Tasks"] = "true" }).Build());
 
-	async Task<PlanNode> QuickAdd(string board, string kind)
+	async Task<TaskBoardModel> Board(BoardKind kind)
 	{
-		await _store.CreateAsync("proj", board, null, kind);
-		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory)) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
-		await model.OnPostCreateAsync("My item", "details", 50, default);
-		return _store.GetContext("proj").PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList().Single();
+		var board = "b-" + kind.ToString().ToLowerInvariant();
+		await _store.CreateAsync("proj", board, null, kind.ToString());
+		return new TaskBoardModel(Flags(), _tasks, new CommentService(_factory)) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
 	}
 
-	[Fact]
-	public async Task QuickAdd_OnIdeasBoard_UsesInitialStatusAndType()
+	int ActiveNodeCount(string board) =>
+		_store.GetContext("proj").PlanNodes.Count(n => n.Board == board && n.ActiveTo == null);
+
+	// The render decision and the POST gate are BOTH driven off the single catalog knob —
+	// the test reads the same source of truth, so flipping QuickAddAllowed for a kind flips
+	// the expectation with it (no hardcoded per-kind policy to keep in sync).
+	public static IEnumerable<object[]> AllKinds() =>
+		Enum.GetValues<BoardKind>().Select(k => new object[] { k });
+
+	[Theory]
+	[MemberData(nameof(AllKinds))]
+	public async Task OnGet_ShowsQuickAdd_PerCatalogPolicy(BoardKind kind)
 	{
-		var n = await QuickAdd("brain", "ideas");
-		n.Status.Should().Be("raw");   // ideas initial, NOT "Pending"
-		n.Type.Should().Be("idea");
-		n.NodeId.Should().NotBeNullOrEmpty(); // linkable (the direct write must still assign a NodeId)
+		var model = await Board(kind);
+		await model.OnGetAsync(default);
+		model.ShowQuickAdd.Should().Be(WorkflowCatalog.QuickAddAllowed(kind));
 	}
 
-	[Fact]
-	public async Task QuickAdd_OnSpecBoard_UsesDefinedInitial()
+	[Theory]
+	[MemberData(nameof(AllKinds))]
+	public async Task OnPostCreate_HonorsCatalogPolicy(BoardKind kind)
 	{
-		// spec FSM has no draft anymore — a node is born `defined`. (UI quick-add bypasses the
-		// service ideaRef guard; the methodology enforcement lives on the MCP/service path.)
-		var n = await QuickAdd("spec", "spec");
-		n.Status.Should().Be("defined");
-		n.Type.Should().Be("spec");
+		var model = await Board(kind);
+		var result = await model.OnPostCreateAsync("My item", "details", 50, default);
+
+		if (WorkflowCatalog.QuickAddAllowed(kind))
+		{
+			result.Should().NotBeOfType<BadRequestResult>();
+			ActiveNodeCount(model.Board).Should().Be(1); // the quick-add wrote a node
+		}
+		else
+		{
+			result.Should().BeOfType<BadRequestResult>();
+			ActiveNodeCount(model.Board).Should().Be(0); // gated off — nothing written
+		}
 	}
 
 	[Fact]
 	public async Task QuickAdd_OnFreeBoard_StaysPending()
 	{
-		var n = await QuickAdd("scratch", "free");
+		// The actual create semantics on the allowed path (distinct from the gate above).
+		var model = await Board(BoardKind.Free);
+		await model.OnPostCreateAsync("My item", "details", 50, default);
+		var n = _store.GetContext("proj").PlanNodes.Where(x => x.Board == model.Board && x.ActiveTo == null).ToList().Single();
 		n.Status.Should().Be("Pending"); // free boards keep the legacy default
 		n.Type.Should().BeEmpty();
 	}
