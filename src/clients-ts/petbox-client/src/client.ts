@@ -1,11 +1,11 @@
 import { ResolvedConfig } from "./config.js";
 import {
-	type TagVector,
-	type Template,
-	TypedEmitter,
 	type PetBoxConfigClientEvents,
 	type PetBoxConfigClientOptions,
 	PetBoxConfigError,
+	type TagVector,
+	type Template,
+	TypedEmitter,
 } from "./types.js";
 
 const DEFAULT_REFRESH_MS = 5 * 60 * 1000;

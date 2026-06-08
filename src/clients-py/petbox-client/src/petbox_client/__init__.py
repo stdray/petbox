@@ -1,7 +1,8 @@
 """PetBox config client — Python SDK.
 
-Sync, zero-dependency client for PetBox config with ETag-aware polling. Mirrors the
-TypeScript SDK (``@stdray-npm/petbox-client``). Config surface only.
+Sync, zero-dependency client for PetBox config (ETag-aware polling) plus a Data-module
+client (raw parameterized SQL pass-through). Mirrors the TypeScript SDK
+(``@stdray-npm/petbox-client``).
 """
 
 from importlib.metadata import PackageNotFoundError
@@ -9,6 +10,7 @@ from importlib.metadata import version as _pkg_version
 
 from .client import PetBoxConfigClient, fetch_config
 from .config import ResolvedConfig
+from .data import PetBoxDataClient, PetBoxDataError, PetBoxSqlParam
 from .types import (
     HttpResponse,
     PetBoxConfigClientOptions,
@@ -24,6 +26,9 @@ __all__ = [
     "ResolvedConfig",
     "PetBoxConfigClientOptions",
     "PetBoxConfigError",
+    "PetBoxDataClient",
+    "PetBoxDataError",
+    "PetBoxSqlParam",
     "HttpResponse",
     "Transport",
     "TagVector",

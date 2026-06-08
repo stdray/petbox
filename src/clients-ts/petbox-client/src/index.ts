@@ -8,3 +8,10 @@ export {
 	PetBoxConfigError,
 	TypedEmitter,
 } from "./types.js";
+export {
+	PetBoxDataClient,
+	PetBoxError,
+	type PetBoxDataClientOptions,
+	type PetBoxRequestOptions,
+	type PetBoxSqlParam,
+} from "./data.js";
