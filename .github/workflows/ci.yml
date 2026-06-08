@@ -46,11 +46,21 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
           restore-keys: nuget-${{ runner.os }}-
 
+      # Cache the chromium binary Playwright downloads for the E2E suite so it isn't
+      # re-fetched every run. The hosted runner already has Chrome's shared libs, so
+      # the build skips `--with-deps` (the slow apt-get) via --playwrightWithDeps=false.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: playwright-${{ runner.os }}-
+
       - name: Ensure build script is executable
         run: chmod +x ./build.sh
 
       - name: Cake Test target (build + unit + E2E)
-        run: ./build.sh --target=Test
+        run: ./build.sh --target=Test --playwrightWithDeps=false
 
   publish:
     if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/pypi'

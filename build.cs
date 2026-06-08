@@ -14,6 +14,9 @@ var ghcrRepositoryArgument = Argument("ghcrRepository", string.Empty);
 var dockerTagOutputArgument = Argument("dockerTagOutput", string.Empty);
 var dockerCacheFrom = Argument("dockerCacheFrom", string.Empty);
 var dockerCacheTo = Argument("dockerCacheTo", string.Empty);
+// Run `playwright install --with-deps` (apt-installs chromium's system libs). Default
+// true for bare dev boxes; CI sets false (hosted runners already have the libs).
+var playwrightWithDeps = Argument("playwrightWithDeps", true);
 
 var solution = "./PetBox.slnx";
 var dockerFile = "./Dockerfile";
@@ -87,8 +90,11 @@ Task("Test")
 	{
 		// Ensure Playwright browser binaries are installed for the E2E suite.
 		// Microsoft.Playwright drops `playwright.ps1` into the test bin dir;
-		// invoke it via pwsh. `--with-deps` pulls Linux libs the chromium
-		// headless shell needs. No-op fast if already installed.
+		// invoke it via pwsh. `--with-deps` pulls Linux libs the chromium headless
+		// shell needs via apt — slow (an apt-get update every run) and redundant on
+		// hosted GitHub runners, which already ship Chrome's shared libs. CI passes
+		// --playwrightWithDeps=false and caches the browser binaries instead; the
+		// default stays true so a bare Linux dev box still gets its libs.
 		var playwrightScript = GetFiles("./tests/PetBox.E2ETests/bin/" + configuration + "/**/playwright.ps1").FirstOrDefault();
 		if (playwrightScript != null)
 		{
@@ -96,7 +102,7 @@ Task("Test")
 				.Append(playwrightScript.FullPath)
 				.Append("install")
 				.Append("chromium");
-			if (!IsRunningOnWindows())
+			if (!IsRunningOnWindows() && playwrightWithDeps)
 				args.Append("--with-deps");
 			var exit = StartProcess("pwsh", new ProcessSettings { Arguments = args });
 			if (exit != 0)
