@@ -78,6 +78,13 @@ public static class ConfigApi
 		}
 
 		context.Response.Headers.ETag = etag;
+
+		// dotenv is a text/plain body (KEY=value lines), not a JSON shape — so consumers can use
+		// `docker --env-file`, compose `env_file:`, shell sourcing or a dotenv lib with no bespoke
+		// PetBox client. Every other template serializes to JSON via Shape.
+		if (string.Equals(template, "dotenv", StringComparison.OrdinalIgnoreCase))
+			return Results.Text(ConfigTemplates.Dotenv(values), "text/plain; charset=utf-8");
+
 		return Results.Ok(ConfigTemplates.Shape(values, template));
 	}
 

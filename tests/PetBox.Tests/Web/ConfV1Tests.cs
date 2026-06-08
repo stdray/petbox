@@ -117,6 +117,21 @@ public sealed class ConfV1Tests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task DotenvTemplate_ReturnsPlainTextKeyValueLines()
+	{
+		using var resp = await _client.SendAsync(Conf("?env=dev&template=dotenv"));
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		resp.Content.Headers.ContentType!.MediaType.Should().Be("text/plain");
+		var body = await resp.Content.ReadAsStringAsync();
+		// UPPER_SNAKE keys, raw values, one per line — consumable by docker --env-file / shell source.
+		body.Should().Contain("DB_HOST=h1\n");
+		body.Should().Contain("DB_PORT=5432\n");
+		body.Should().Contain("FEATURE_X=true\n");
+		// Not JSON.
+		body.Should().NotContain("{");
+	}
+
+	[Fact]
 	public async Task ETag_IfNoneMatch_Returns304()
 	{
 		using var first = await _client.SendAsync(Conf("?env=dev"));

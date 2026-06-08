@@ -52,4 +52,12 @@ public sealed class ConfigTemplatesTests
 		shaped["DB__HOST"].Should().Be("h1");
 		shaped["DB__PORT"].Should().Be("5432");
 	}
+
+	[Fact]
+	public void Dotenv_EmitsKeyValueLines_UpperSnake_Sorted_RawValues()
+	{
+		var body = ConfigTemplates.Dotenv(Sample);
+		// Sorted by original path (db.host, db.port, feature-x), UPPER_SNAKE keys, raw unquoted values.
+		body.Should().Be("DB_HOST=h1\nDB_PORT=5432\nFEATURE_X=true\n");
+	}
 }
