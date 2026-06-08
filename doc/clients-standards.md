@@ -106,6 +106,21 @@ template (`flat` / `dotnet`) and parse in-app. Implemented in `src/PetBox.Config
 
 Until one of those real needs lands, none of this is built — that is the point of having researched it.
 
+## Release conventions (client packages)
+
+Spec: `sdk-release-uniform`. The three client packages publish uniformly:
+
+| | .NET | TypeScript | Python |
+|---|---|---|---|
+| Package | `PetBox.Client.Config` | `@stdray-npm/petbox-client` | `petbox-client` |
+| Registry | **nuget.org** (public) | **npmjs.org** (public) | **PyPI** (public) |
+| Version | GitVersion (stamped at publish) | GitVersion (stamped at publish) | GitVersion → PEP 440 (stamped at publish) |
+| Publish trigger | push tag `nuget` | push tag `npm` | push tag `pypi` |
+
+- **Registry posture: canonical PUBLIC registry per ecosystem.** No private/preview tier — .NET moved off GitHub Packages to nuget.org to match ts/py (decided 2026-06-08).
+- **Version from a single source (GitVersion), stamped at publish** — never hand-edited per language. Repo manifests carry a `0.0.0` placeholder (`package.json`, `pyproject.toml`); `build.cs` overwrites it from GitVersion in `Pack` / `TsSdkPack` (`npm version`) / `PyPiPack` (`uv version` → `MajorMinorPatch[.devN]`). Python `__version__` reads back from installed dist metadata.
+- **Secrets** (CI, repo settings): `NUGET_API_KEY` (nuget.org), `NPM_TOKEN` (npmjs), `PYPI_TOKEN` (PyPI). A publish job fails-closed if its secret is absent.
+
 ## Related
 - Pre-methodology client roadmap in `doc/plan.md` Phase 26 is partly superseded: the "PetBox.Client +
   .Config + ts/py" multi-package vision and the bespoke config-runner are revised per this document.

@@ -194,7 +194,7 @@ jobs:
             fi
             docker system prune -a -f
 
-  # ─── NuGet publish to GitHub Packages on `nuget` tag push ───
+  # ─── NuGet publish to public nuget.org on `nuget` tag push ───
   nuget-publish:
     if: github.event_name == 'push' && github.ref == 'refs/tags/nuget'
     runs-on: ubuntu-latest
@@ -217,10 +217,9 @@ jobs:
       - name: Ensure build script is executable
         run: chmod +x ./build.sh
 
-      - name: Publish NuGet package to GitHub Packages
+      - name: Publish NuGet package to nuget.org
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: ./build.sh --target=NuGetPush --configuration=Release
 
       - name: Upload NuGet artifacts

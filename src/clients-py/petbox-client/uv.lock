@@ -249,7 +249,7 @@ wheels = [
 
 [[package]]
 name = "petbox-client"
-version = "0.1.0.dev215"
+version = "0.0.0"
 source = { editable = "." }
 
 [package.dev-dependencies]

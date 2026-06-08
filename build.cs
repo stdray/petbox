@@ -24,7 +24,7 @@ var dockerFile = "./Dockerfile";
 // .NET client packages — published to GitHub Packages NuGet feed via `nuget` tag push.
 var clientConfigProject = "./src/clients-net/PetBox.Client.Config/PetBox.Client.Config.csproj";
 
-// TS SDK — published to GitHub Packages npm registry via `npm` tag push.
+// TS SDK — published to the public npm registry (npmjs.org) via `npm` tag push.
 var tsSdkDir = "./src/clients-ts/petbox-client";
 
 // Python SDK — published to public PyPI via `pypi` tag push.
@@ -252,7 +252,7 @@ Task("DockerPush")
 		DockerPush(targetImage);
 	});
 
-// ─── NuGet packaging + publish (GitHub Packages) ───
+// ─── NuGet packaging + publish (public nuget.org) ───
 
 Task("Pack")
 	.IsDependentOn("Version")
@@ -288,22 +288,20 @@ Task("Pack")
 		DotNetPack(clientConfigProject, packSettings);
 	});
 
-// Publishes to GitHub Packages NuGet feed. Requires GITHUB_TOKEN with packages:write
-// and GITHUB_REPOSITORY_OWNER (both set by GitHub Actions automatically). Uses --skip-duplicate
-// because the same FullSemVer can land repeatedly on a single tag (re-runs).
+// Publishes to the PUBLIC nuget.org feed (canonical registry for the .NET ecosystem,
+// matching the ts→npmjs / py→PyPI posture). Requires NUGET_API_KEY — a nuget.org API key
+// with push rights for the PetBox.Client.* packages. --skip-duplicate because the same
+// FullSemVer can land repeatedly on a single tag (re-runs).
 Task("NuGetPush")
 	.IsDependentOn("Pack")
 	.Does(() =>
 	{
-		var apiKey = EnvironmentVariable("GITHUB_TOKEN");
-		var owner = EnvironmentVariable("GITHUB_REPOSITORY_OWNER");
+		var apiKey = EnvironmentVariable("NUGET_API_KEY");
 
 		if (string.IsNullOrWhiteSpace(apiKey))
-			throw new CakeException("GITHUB_TOKEN environment variable is not set. GitHub Packages publishing requires GITHUB_TOKEN with packages:write.");
-		if (string.IsNullOrWhiteSpace(owner))
-			throw new CakeException("GITHUB_REPOSITORY_OWNER environment variable is not set. Set it to your GitHub username/org.");
+			throw new CakeException("NUGET_API_KEY environment variable is not set. Public nuget.org publishing requires a nuget.org API key with push rights.");
 
-		var source = $"https://nuget.pkg.github.com/{owner}/index.json";
+		var source = "https://api.nuget.org/v3/index.json";
 		var packages = GetFiles("./artifacts/*.nupkg");
 
 		foreach (var package in packages)
@@ -317,7 +315,7 @@ Task("NuGetPush")
 		}
 	});
 
-// ─── TS SDK build + publish (GitHub Packages npm) ───
+// ─── TS SDK build + publish (public npmjs) ───
 
 Task("TsSdkInstall")
 	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "install --frozen-lockfile", WorkingDirectory = tsSdkDir }));
