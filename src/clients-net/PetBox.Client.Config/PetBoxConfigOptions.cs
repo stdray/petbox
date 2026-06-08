@@ -13,7 +13,8 @@ public sealed class PetBoxConfigOptions
 	// e.g. "https://petbox.3po.su". Trailing slash optional — normalised internally.
 	public string BaseUrl { get; set; } = string.Empty;
 
-	// Plaintext token. Sent as `X-YobaConf-ApiKey` header on every request.
+	// Plaintext token. Sent as the `X-Api-Key` header on every request (via the shared
+	// PetBox.Client transport).
 	public string ApiKey { get; set; } = string.Empty;
 
 	// Tag-vector components. Resolve finds every binding whose tag-set is a subset of

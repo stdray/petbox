@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Configuration;
+using PetBox.Client;
 
 namespace PetBox.Client.Config;
 
@@ -26,7 +27,7 @@ public sealed class PetBoxConfigProvider : ConfigurationProvider, IDisposable
 {
 	readonly PetBoxConfigOptions _options;
 	readonly HttpClient _http;
-	readonly Uri _endpoint;
+	readonly string _query;
 	Timer? _timer;
 	string? _lastEtag;
 	readonly Lock _pollGate = new();
@@ -41,12 +42,10 @@ public sealed class PetBoxConfigProvider : ConfigurationProvider, IDisposable
 			throw new ArgumentException("ApiKey is required.", nameof(options));
 
 		_options = options;
-		_http = options.Handler is null
-			? new HttpClient()
-			: new HttpClient(options.Handler, disposeHandler: false);
-
-		var baseUri = options.BaseUrl.EndsWith('/') ? options.BaseUrl : options.BaseUrl + "/";
-		_endpoint = new Uri(new Uri(baseUri), BuildQuery(options.Tags));
+		// Transport + auth (X-Api-Key, BaseAddress) come from the shared core SDK; this provider
+		// owns only the config-specific logic (tags → /v1/conf, ETag polling, JSON flatten).
+		_http = PetBoxTransport.CreateHttpClient(options.BaseUrl, options.ApiKey, options.Handler);
+		_query = BuildQuery(options.Tags);
 	}
 
 	public override void Load()
@@ -93,8 +92,7 @@ public sealed class PetBoxConfigProvider : ConfigurationProvider, IDisposable
 
 	async Task FetchAsync(CancellationToken cancellationToken)
 	{
-		using var request = new HttpRequestMessage(HttpMethod.Get, _endpoint);
-		request.Headers.TryAddWithoutValidation("X-YobaConf-ApiKey", _options.ApiKey);
+		using var request = new HttpRequestMessage(HttpMethod.Get, _query);
 		if (!string.IsNullOrEmpty(_lastEtag))
 			request.Headers.IfNoneMatch.Add(new EntityTagHeaderValue(_lastEtag));
 

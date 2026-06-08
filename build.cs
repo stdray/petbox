@@ -22,7 +22,11 @@ var solution = "./PetBox.slnx";
 var dockerFile = "./Dockerfile";
 
 // .NET client packages — published to GitHub Packages NuGet feed via `nuget` tag push.
+var clientCoreProject = "./src/clients-net/PetBox.Client/PetBox.Client.csproj";
 var clientConfigProject = "./src/clients-net/PetBox.Client.Config/PetBox.Client.Config.csproj";
+// .NET packages published to nuget.org via `nuget` tag push. Config depends on the core
+// (ProjectReference → package dependency), so both ship with the same GitVersion version.
+var nugetProjects = new[] { clientCoreProject, clientConfigProject };
 
 // TS SDK — published to the public npm registry (npmjs.org) via `npm` tag push.
 var tsSdkDir = "./src/clients-ts/petbox-client";
@@ -260,32 +264,34 @@ Task("Pack")
 	{
 		var buildVersion = gitVersion.FullSemVer;
 
-		DotNetBuild(clientConfigProject, new DotNetBuildSettings
+		foreach (var project in nugetProjects)
 		{
-			Configuration = configuration,
-			NoRestore = true,
-			MSBuildSettings = new DotNetMSBuildSettings()
-				.WithProperty("Version", buildVersion)
-				.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
-				.WithProperty("GitShortSha", gitVersion.ShortSha)
-				.WithProperty("GitCommitDate", gitVersion.CommitDate)
-		});
+			// Restore here (not NoRestore) — the `nuget` tag job has no separate restore step,
+			// and the core project may be cold on a clean CI checkout.
+			DotNetBuild(project, new DotNetBuildSettings
+			{
+				Configuration = configuration,
+				MSBuildSettings = new DotNetMSBuildSettings()
+					.WithProperty("Version", buildVersion)
+					.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
+					.WithProperty("GitShortSha", gitVersion.ShortSha)
+					.WithProperty("GitCommitDate", gitVersion.CommitDate)
+			});
 
-		var packSettings = new DotNetPackSettings
-		{
-			Configuration = configuration,
-			OutputDirectory = "./artifacts",
-			NoBuild = true,
-			NoRestore = true,
-			IncludeSource = false,
-			IncludeSymbols = true,
-			SymbolPackageFormat = "snupkg",
-			MSBuildSettings = new DotNetMSBuildSettings()
-				.WithProperty("Version", buildVersion)
-				.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
-		};
-
-		DotNetPack(clientConfigProject, packSettings);
+			DotNetPack(project, new DotNetPackSettings
+			{
+				Configuration = configuration,
+				OutputDirectory = "./artifacts",
+				NoBuild = true,
+				NoRestore = true,
+				IncludeSource = false,
+				IncludeSymbols = true,
+				SymbolPackageFormat = "snupkg",
+				MSBuildSettings = new DotNetMSBuildSettings()
+					.WithProperty("Version", buildVersion)
+					.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
+			});
+		}
 	});
 
 // Publishes to the PUBLIC nuget.org feed (canonical registry for the .NET ecosystem,
