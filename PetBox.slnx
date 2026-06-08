@@ -15,11 +15,13 @@
   <Folder Name="/src/clients-net/">
     <Project Path="src/clients-net/PetBox.Client/PetBox.Client.csproj" />
     <Project Path="src/clients-net/PetBox.Client.Config/PetBox.Client.Config.csproj" />
+    <Project Path="src/clients-net/PetBox.Client.Data.Linq2Db/PetBox.Client.Data.Linq2Db.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/PetBox.Tests/PetBox.Tests.csproj" />
     <Project Path="tests/PetBox.E2ETests/PetBox.E2ETests.csproj" />
     <Project Path="tests/PetBox.Client.Config.Tests/PetBox.Client.Config.Tests.csproj" />
     <Project Path="tests/PetBox.Client.Tests/PetBox.Client.Tests.csproj" />
+    <Project Path="tests/PetBox.Client.Data.Linq2Db.Tests/PetBox.Client.Data.Linq2Db.Tests.csproj" />
   </Folder>
 </Solution>

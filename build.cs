@@ -24,9 +24,10 @@ var dockerFile = "./Dockerfile";
 // .NET client packages — published to GitHub Packages NuGet feed via `nuget` tag push.
 var clientCoreProject = "./src/clients-net/PetBox.Client/PetBox.Client.csproj";
 var clientConfigProject = "./src/clients-net/PetBox.Client.Config/PetBox.Client.Config.csproj";
-// .NET packages published to nuget.org via `nuget` tag push. Config depends on the core
-// (ProjectReference → package dependency), so both ship with the same GitVersion version.
-var nugetProjects = new[] { clientCoreProject, clientConfigProject };
+var clientLinq2DbProject = "./src/clients-net/PetBox.Client.Data.Linq2Db/PetBox.Client.Data.Linq2Db.csproj";
+// .NET packages published to nuget.org via `nuget` tag push. Config and Linq2Db depend on the
+// core (ProjectReference → package dependency), so all ship at the same GitVersion version.
+var nugetProjects = new[] { clientCoreProject, clientConfigProject, clientLinq2DbProject };
 
 // TS SDK — published to the public npm registry (npmjs.org) via `npm` tag push.
 var tsSdkDir = "./src/clients-ts/petbox-client";

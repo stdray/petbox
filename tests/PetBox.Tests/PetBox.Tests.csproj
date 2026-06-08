@@ -31,6 +31,7 @@
 	<ItemGroup>
 		<ProjectReference Include="..\..\src\PetBox.Web\PetBox.Web.csproj" />
 		<ProjectReference Include="..\..\src\clients-net\PetBox.Client\PetBox.Client.csproj" />
+		<ProjectReference Include="..\..\src\clients-net\PetBox.Client.Data.Linq2Db\PetBox.Client.Data.Linq2Db.csproj" />
 		<ProjectReference Include="..\..\src\PetBox.Tasks\PetBox.Tasks.csproj" />
 		<ProjectReference Include="..\..\src\PetBox.Memory\PetBox.Memory.csproj" />
 		<ProjectReference Include="..\..\src\PetBox.Sessions\PetBox.Sessions.csproj" />

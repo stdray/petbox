@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>PetBox.Client.Data.Linq2Db</RootNamespace>
+		<AssemblyName>PetBox.Client.Data.Linq2Db</AssemblyName>
+		<Description>linq2db integration for the PetBox Data module — build queries with linq2db (IQueryable); the parameterized SQL is extracted client-side and executed via PetBox.Client against petbox (server stays a pass-through).</Description>
+		<PackageId>PetBox.Client.Data.Linq2Db</PackageId>
+		<Authors>stdray</Authors>
+		<Company>stdray</Company>
+		<PackageProjectUrl>https://github.com/stdray/petbox</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/stdray/petbox</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>petbox;data;linq2db;sqlite;client;sdk</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+
+		<!-- NU5127: package readme not needed for internal tool; description in .csproj metadata suffices -->
+		<NoWarn>$(NoWarn);NU5127</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<PackageReference Include="linq2db" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\PetBox.Client\PetBox.Client.csproj" />
+	</ItemGroup>
+
+</Project>
