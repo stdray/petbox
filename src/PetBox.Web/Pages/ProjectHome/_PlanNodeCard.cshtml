@@ -74,7 +74,7 @@
 			<div class="text-xs opacity-70 mt-1 flex flex-wrap gap-x-3 gap-y-1" data-testid="node-linked-tasks">
 				@foreach (var t in n.LinkedTasks)
 				{
-					<span class="font-mono" data-testid="linked-task">@t.Slug<span class="opacity-50"> · @t.Status</span></span>
+					<a href="@Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, t.Board!, t.Slug!)" class="font-mono link link-hover" data-testid="linked-task">@t.Slug<span class="opacity-50"> · @t.Status</span></a>
 				}
 			</div>
 		}

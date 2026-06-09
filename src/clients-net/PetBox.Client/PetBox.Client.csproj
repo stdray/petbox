@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<RootNamespace>PetBox.Client</RootNamespace>
+		<AssemblyName>PetBox.Client</AssemblyName>
+		<Description>PetBox core client SDK — authenticated HTTP transport and a typed client for the PetBox Data module (raw-SQL pass-through over HTTP).</Description>
+		<PackageId>PetBox.Client</PackageId>
+		<Authors>stdray</Authors>
+		<Company>stdray</Company>
+		<PackageProjectUrl>https://github.com/stdray/petbox</PackageProjectUrl>
+		<RepositoryUrl>https://github.com/stdray/petbox</RepositoryUrl>
+		<RepositoryType>git</RepositoryType>
+		<PackageTags>petbox;data;sqlite;client;sdk</PackageTags>
+		<PackageLicenseExpression>MIT</PackageLicenseExpression>
+
+		<!-- NU5127: package readme not needed for internal tool; description in .csproj metadata suffices -->
+		<NoWarn>$(NoWarn);NU5127</NoWarn>
+	</PropertyGroup>
+
+</Project>

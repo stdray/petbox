@@ -46,7 +46,7 @@ public sealed class ConfV1Tests : IAsyncLifetime
 	public async Task InitializeAsync()
 	{
 		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
-		MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = _factory.Services.CreateScope();
@@ -114,6 +114,21 @@ public sealed class ConfV1Tests : IAsyncLifetime
 		using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
 		doc.RootElement.GetProperty("DB_HOST").GetString().Should().Be("h1");
 		doc.RootElement.GetProperty("FEATURE_X").GetString().Should().Be("true");
+	}
+
+	[Fact]
+	public async Task DotenvTemplate_ReturnsPlainTextKeyValueLines()
+	{
+		using var resp = await _client.SendAsync(Conf("?env=dev&template=dotenv"));
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		resp.Content.Headers.ContentType!.MediaType.Should().Be("text/plain");
+		var body = await resp.Content.ReadAsStringAsync();
+		// UPPER_SNAKE keys, raw values, one per line — consumable by docker --env-file / shell source.
+		body.Should().Contain("DB_HOST=h1\n");
+		body.Should().Contain("DB_PORT=5432\n");
+		body.Should().Contain("FEATURE_X=true\n");
+		// Not JSON.
+		body.Should().NotContain("{");
 	}
 
 	[Fact]

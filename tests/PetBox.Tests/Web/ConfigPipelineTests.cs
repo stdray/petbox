@@ -44,7 +44,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 	public async Task InitializeAsync()
 	{
 		var __testCs = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>(_factory.Services).GetConnectionString("PetBox")!;
-		PetBox.Core.Data.MigrationRunner.Run(__testCs);
+		TestSchema.Core(__testCs);
 		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions
 		{
 			AllowAutoRedirect = false,

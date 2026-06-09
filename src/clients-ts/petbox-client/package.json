@@ -1,7 +1,7 @@
 {
 	"name": "@stdray-npm/petbox-client",
-	"version": "0.1.0",
-	"description": "TypeScript SDK for PetBox — config client with ETag-aware polling. Data + Log surfaces land in 26.3.",
+	"version": "0.0.0",
+	"description": "TypeScript SDK for PetBox — config client (ETag-aware polling) and a Data-module client (raw parameterized SQL pass-through).",
 	"type": "module",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",

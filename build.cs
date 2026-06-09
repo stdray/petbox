@@ -14,14 +14,22 @@ var ghcrRepositoryArgument = Argument("ghcrRepository", string.Empty);
 var dockerTagOutputArgument = Argument("dockerTagOutput", string.Empty);
 var dockerCacheFrom = Argument("dockerCacheFrom", string.Empty);
 var dockerCacheTo = Argument("dockerCacheTo", string.Empty);
+// Run `playwright install --with-deps` (apt-installs chromium's system libs). Default
+// true for bare dev boxes; CI sets false (hosted runners already have the libs).
+var playwrightWithDeps = Argument("playwrightWithDeps", true);
 
 var solution = "./PetBox.slnx";
 var dockerFile = "./Dockerfile";
 
 // .NET client packages — published to GitHub Packages NuGet feed via `nuget` tag push.
+var clientCoreProject = "./src/clients-net/PetBox.Client/PetBox.Client.csproj";
 var clientConfigProject = "./src/clients-net/PetBox.Client.Config/PetBox.Client.Config.csproj";
+var clientLinq2DbProject = "./src/clients-net/PetBox.Client.Data.Linq2Db/PetBox.Client.Data.Linq2Db.csproj";
+// .NET packages published to nuget.org via `nuget` tag push. Config and Linq2Db depend on the
+// core (ProjectReference → package dependency), so all ship at the same GitVersion version.
+var nugetProjects = new[] { clientCoreProject, clientConfigProject, clientLinq2DbProject };
 
-// TS SDK — published to GitHub Packages npm registry via `npm` tag push.
+// TS SDK — published to the public npm registry (npmjs.org) via `npm` tag push.
 var tsSdkDir = "./src/clients-ts/petbox-client";
 
 // Python SDK — published to public PyPI via `pypi` tag push.
@@ -87,8 +95,11 @@ Task("Test")
 	{
 		// Ensure Playwright browser binaries are installed for the E2E suite.
 		// Microsoft.Playwright drops `playwright.ps1` into the test bin dir;
-		// invoke it via pwsh. `--with-deps` pulls Linux libs the chromium
-		// headless shell needs. No-op fast if already installed.
+		// invoke it via pwsh. `--with-deps` pulls Linux libs the chromium headless
+		// shell needs via apt — slow (an apt-get update every run) and redundant on
+		// hosted GitHub runners, which already ship Chrome's shared libs. CI passes
+		// --playwrightWithDeps=false and caches the browser binaries instead; the
+		// default stays true so a bare Linux dev box still gets its libs.
 		var playwrightScript = GetFiles("./tests/PetBox.E2ETests/bin/" + configuration + "/**/playwright.ps1").FirstOrDefault();
 		if (playwrightScript != null)
 		{
@@ -96,7 +107,7 @@ Task("Test")
 				.Append(playwrightScript.FullPath)
 				.Append("install")
 				.Append("chromium");
-			if (!IsRunningOnWindows())
+			if (!IsRunningOnWindows() && playwrightWithDeps)
 				args.Append("--with-deps");
 			var exit = StartProcess("pwsh", new ProcessSettings { Arguments = args });
 			if (exit != 0)
@@ -114,8 +125,12 @@ Task("Test")
 		}
 	});
 
+// The image is built from the Dockerfile, which restores+publishes INSIDE the
+// container — it needs neither the host Build nor Test output, only the git version
+// for the tag/build-args. So it depends on Version, not Test: in CI the image build
+// runs as its own job in PARALLEL with the test job, and `deploy` gates on both.
 Task("Docker")
-	.IsDependentOn("Test")
+	.IsDependentOn("Version")
 	.Does(() =>
 	{
 		var gitVersionTag = gitVersion.FullSemVer.Replace('+', '-');
@@ -205,7 +220,6 @@ Task("DockerSmoke")
 	});
 
 Task("DockerPush")
-	.IsDependentOn("Test")
 	.IsDependentOn("DockerSmoke")
 	.WithCriteria(() => dockerPushEnabled)
 	.Does(() =>
@@ -243,7 +257,7 @@ Task("DockerPush")
 		DockerPush(targetImage);
 	});
 
-// ─── NuGet packaging + publish (GitHub Packages) ───
+// ─── NuGet packaging + publish (public nuget.org) ───
 
 Task("Pack")
 	.IsDependentOn("Version")
@@ -251,50 +265,50 @@ Task("Pack")
 	{
 		var buildVersion = gitVersion.FullSemVer;
 
-		DotNetBuild(clientConfigProject, new DotNetBuildSettings
+		foreach (var project in nugetProjects)
 		{
-			Configuration = configuration,
-			NoRestore = true,
-			MSBuildSettings = new DotNetMSBuildSettings()
-				.WithProperty("Version", buildVersion)
-				.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
-				.WithProperty("GitShortSha", gitVersion.ShortSha)
-				.WithProperty("GitCommitDate", gitVersion.CommitDate)
-		});
+			// Restore here (not NoRestore) — the `nuget` tag job has no separate restore step,
+			// and the core project may be cold on a clean CI checkout.
+			DotNetBuild(project, new DotNetBuildSettings
+			{
+				Configuration = configuration,
+				MSBuildSettings = new DotNetMSBuildSettings()
+					.WithProperty("Version", buildVersion)
+					.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
+					.WithProperty("GitShortSha", gitVersion.ShortSha)
+					.WithProperty("GitCommitDate", gitVersion.CommitDate)
+			});
 
-		var packSettings = new DotNetPackSettings
-		{
-			Configuration = configuration,
-			OutputDirectory = "./artifacts",
-			NoBuild = true,
-			NoRestore = true,
-			IncludeSource = false,
-			IncludeSymbols = true,
-			SymbolPackageFormat = "snupkg",
-			MSBuildSettings = new DotNetMSBuildSettings()
-				.WithProperty("Version", buildVersion)
-				.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
-		};
-
-		DotNetPack(clientConfigProject, packSettings);
+			DotNetPack(project, new DotNetPackSettings
+			{
+				Configuration = configuration,
+				OutputDirectory = "./artifacts",
+				NoBuild = true,
+				NoRestore = true,
+				IncludeSource = false,
+				IncludeSymbols = true,
+				SymbolPackageFormat = "snupkg",
+				MSBuildSettings = new DotNetMSBuildSettings()
+					.WithProperty("Version", buildVersion)
+					.WithProperty("InformationalVersion", $"{buildVersion} ({gitVersion.ShortSha}, {gitVersion.CommitDate})")
+			});
+		}
 	});
 
-// Publishes to GitHub Packages NuGet feed. Requires GITHUB_TOKEN with packages:write
-// and GITHUB_REPOSITORY_OWNER (both set by GitHub Actions automatically). Uses --skip-duplicate
-// because the same FullSemVer can land repeatedly on a single tag (re-runs).
+// Publishes to the PUBLIC nuget.org feed (canonical registry for the .NET ecosystem,
+// matching the ts→npmjs / py→PyPI posture). Requires NUGET_API_KEY — a nuget.org API key
+// with push rights for the PetBox.Client.* packages. --skip-duplicate because the same
+// FullSemVer can land repeatedly on a single tag (re-runs).
 Task("NuGetPush")
 	.IsDependentOn("Pack")
 	.Does(() =>
 	{
-		var apiKey = EnvironmentVariable("GITHUB_TOKEN");
-		var owner = EnvironmentVariable("GITHUB_REPOSITORY_OWNER");
+		var apiKey = EnvironmentVariable("NUGET_API_KEY");
 
 		if (string.IsNullOrWhiteSpace(apiKey))
-			throw new CakeException("GITHUB_TOKEN environment variable is not set. GitHub Packages publishing requires GITHUB_TOKEN with packages:write.");
-		if (string.IsNullOrWhiteSpace(owner))
-			throw new CakeException("GITHUB_REPOSITORY_OWNER environment variable is not set. Set it to your GitHub username/org.");
+			throw new CakeException("NUGET_API_KEY environment variable is not set. Public nuget.org publishing requires a nuget.org API key with push rights.");
 
-		var source = $"https://nuget.pkg.github.com/{owner}/index.json";
+		var source = "https://api.nuget.org/v3/index.json";
 		var packages = GetFiles("./artifacts/*.nupkg");
 
 		foreach (var package in packages)
@@ -308,7 +322,7 @@ Task("NuGetPush")
 		}
 	});
 
-// ─── TS SDK build + publish (GitHub Packages npm) ───
+// ─── TS SDK build + publish (public npmjs) ───
 
 Task("TsSdkInstall")
 	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "install --frozen-lockfile", WorkingDirectory = tsSdkDir }));

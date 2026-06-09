@@ -12,6 +12,12 @@ namespace PetBox.Config;
 //
 // The TS client traverses dotted paths for "flat" and does direct key lookups for the others;
 // the .NET provider re-flattens whatever JSON it receives via JsonFlattener.
+//
+// `dotenv` is the odd one out — NOT a JSON shape but a text/plain body of `KEY=value` lines
+// (see Dotenv below), served directly by the endpoint rather than through Shape. It exists so
+// the standard ecosystem can consume PetBox config with ZERO bespoke client — `docker run
+// --env-file`, compose `env_file:`, shell `set -a; . file`, or a dotenv library — instead of a
+// PetBox-specific config runner. See doc/clients-standards.md for the env-injection recipe.
 public static class ConfigTemplates
 {
 	public static object Shape(IReadOnlyDictionary<string, string> values, string? template)
@@ -23,6 +29,20 @@ public static class ConfigTemplates
 			"envvar-deep" => Flat(values, EnvVarDeepKey),
 			_ => Nested(values),
 		};
+	}
+
+	// dotenv body: one `KEY=value` line per resolved path, keys shaped as UPPER_SNAKE env names
+	// (same as the envvar template), sorted for stable output. Values are emitted RAW (no quoting):
+	// this is the lowest-common-denominator that `docker --env-file` reads literally AND a shell
+	// `set -a; . file` sources for ordinary scalar values. Values containing newlines, quotes, or
+	// leading/trailing spaces are NOT round-trip-safe in this format across all dotenv parsers —
+	// for those, use a JSON template (flat/dotnet). See doc/clients-standards.md.
+	public static string Dotenv(IReadOnlyDictionary<string, string> values)
+	{
+		var sb = new StringBuilder();
+		foreach (var (path, value) in values.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+			sb.Append(EnvVarKey(path)).Append('=').Append(value).Append('\n');
+		return sb.ToString();
 	}
 
 	static Dictionary<string, string> Flat(IReadOnlyDictionary<string, string> values, Func<string, string> keyShaper)

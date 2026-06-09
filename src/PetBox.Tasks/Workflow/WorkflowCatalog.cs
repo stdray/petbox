@@ -88,6 +88,15 @@ public static class WorkflowCatalog
 
 	static readonly string[] WorkTypes = ["feature", "bug"];
 
+	// Board kinds where the bare board quick-add form is valid. Quick-add writes a node
+	// straight in, so it's only rejected where a node needs a LINK at birth that the bare
+	// form can't supply: Spec (an accepted-idea ideaRef) and Work (a specRef). Free, Ideas
+	// (born `raw`) and Intake (born `reported`) carry no creation-time gate — their gates
+	// live on later transitions — so the form stays. Single declarative knob: the page hides
+	// the form and rejects the POST off this, and the tests read it (no per-kind
+	// duplication). Flip a kind in here to change where quick-add is offered.
+	public static bool QuickAddAllowed(BoardKind kind) => kind is not (BoardKind.Spec or BoardKind.Work);
+
 	// The workflow for a (kind, type). Null = no workflow (kind=Free, or an unknown
 	// work type) — Free means "no validation"; a null on Work is a "type required" error.
 	public static Workflow? For(BoardKind kind, string? type) => kind switch

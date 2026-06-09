@@ -4,7 +4,6 @@ on:
   push:
     branches: [main]
     tags: ['deploy', 'nuget', 'npm', 'pypi']
-  pull_request:
 
 permissions:
   contents: read
@@ -14,14 +13,18 @@ concurrency:
   # A push to main and the `deploy` tag move land the SAME commit, firing two
   # redundant CI runs. Group both by commit so the `deploy` run cancels the
   # `main` run (deploy runs everything main does, plus the deploy job). Other
-  # refs (PRs, nuget/npm tags) keep their per-ref+sha group and still cancel
+  # refs (nuget/npm/pypi tags) keep their per-ref+sha group and still cancel
   # their own stale runs.
   group: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/tags/deploy') && format('ci-commit-{0}', github.sha) || format('ci-{0}-{1}', github.ref_name, github.sha) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  ci:
-    if: github.event_name == 'pull_request'
+  # Correctness gate. Runs in PARALLEL with `publish` (image build) — `deploy` needs
+  # both — so tests and the image build no longer run back-to-back. The image build
+  # may still push even if tests fail (harmless: `deploy` is gated on this job).
+  # Skipped on the package-publish tags (nuget/npm/pypi), which carry no app change.
+  test:
+    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/pypi'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -36,8 +39,6 @@ jobs:
         with:
           bun-version: latest
 
-      - uses: astral-sh/setup-uv@v5
-
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
@@ -45,11 +46,21 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
           restore-keys: nuget-${{ runner.os }}-
 
+      # Cache the chromium binary Playwright downloads for the E2E suite so it isn't
+      # re-fetched every run. The hosted runner already has Chrome's shared libs, so
+      # the build skips `--with-deps` (the slow apt-get) via --playwrightWithDeps=false.
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
+          restore-keys: playwright-${{ runner.os }}-
+
       - name: Ensure build script is executable
         run: chmod +x ./build.sh
 
-      - name: Cake CI target (format + test)
-        run: ./build.sh --target=CI
+      - name: Cake Test target (build + unit + E2E)
+        run: ./build.sh --target=Test --playwrightWithDeps=false
 
   publish:
     if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/pypi'
@@ -102,7 +113,7 @@ jobs:
 
   deploy:
     if: github.event_name == 'push' && github.ref == 'refs/tags/deploy'
-    needs: publish
+    needs: [publish, test]
     runs-on: ubuntu-latest
     steps:
       # Secrets go through appleboy/ssh-action's `envs:` passthrough, not through
@@ -183,7 +194,7 @@ jobs:
             fi
             docker system prune -a -f
 
-  # ─── NuGet publish to GitHub Packages on `nuget` tag push ───
+  # ─── NuGet publish to public nuget.org on `nuget` tag push ───
   nuget-publish:
     if: github.event_name == 'push' && github.ref == 'refs/tags/nuget'
     runs-on: ubuntu-latest
@@ -206,10 +217,9 @@ jobs:
       - name: Ensure build script is executable
         run: chmod +x ./build.sh
 
-      - name: Publish NuGet package to GitHub Packages
+      - name: Publish NuGet package to nuget.org
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
         run: ./build.sh --target=NuGetPush --configuration=Release
 
       - name: Upload NuGet artifacts

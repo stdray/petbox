@@ -22,4 +22,9 @@
 		<PackageReference Include="Microsoft.Extensions.Configuration.Abstractions" />
 	</ItemGroup>
 
+	<ItemGroup>
+		<!-- Shared auth + HTTP transport lives in the core SDK; this is the MEC-provider layer on top. -->
+		<ProjectReference Include="..\PetBox.Client\PetBox.Client.csproj" />
+	</ItemGroup>
+
 </Project>

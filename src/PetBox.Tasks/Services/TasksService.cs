@@ -918,7 +918,10 @@ public sealed partial class TasksService : ITasksService
 		var ctx = _boards.GetContext(project);
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{
-			new PlanNode { Board = board, Key = key, Version = 0, Status = "reported", Type = "issue", Name = title.Trim(), Body = body, Priority = 50 },
+			// Assign a stable NodeId here: this path writes straight to TemporalStore and skips
+			// ApplyWorkflow (the usual NodeId-assignment point), so without this the row lands with
+			// an empty NodeId and the /tasks/{board}/{slug} permalink 404s (slug→NodeId→GetNode).
+			new PlanNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = "reported", Type = "issue", Name = title.Trim(), Body = body, Priority = 50 },
 		}, partition: n => n.Board == board, ct: ct);
 		if (r.Applied) await _boards.TouchAsync(project, board, ct);
 		return key;
