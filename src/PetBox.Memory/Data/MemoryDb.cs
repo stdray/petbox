@@ -11,6 +11,7 @@ public sealed class MemoryDb : DataConnection
 
 	public ITable<MemoryEntry> Entries => this.GetTable<MemoryEntry>();
 	public ITable<MemoryFts> MemoryFts => this.GetTable<MemoryFts>();
+	public ITable<MemoryVec> MemoryVec => this.GetTable<MemoryVec>();
 
 	public static DataOptions<MemoryDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString));
