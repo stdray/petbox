@@ -84,6 +84,17 @@ public sealed record PlanNodeHeader(
 	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<LinkDto>? Supersedes,
 	IReadOnlyList<string> Tags, string? Url = null);
 
+// One hybrid-search hit: the enriched node view plus its owning board (search spans
+// boards, and PlanNodeView itself doesn't carry the board).
+public sealed record TaskSearchHit(string Board, PlanNodeView Node);
+
+// A hybrid board-search result: the fused hits (board + enriched node view, ordered by
+// fused relevance) plus provenance (which retrievers actually ran and whether the answer
+// is degraded — e.g. semantic was requested but embedding was unavailable so only lexical
+// ran). Adapters surface Retrievers so a caller can tell a lexical-only fallback from a
+// true hybrid answer.
+public sealed record TaskSearchResult(IReadOnlyList<TaskSearchHit> Hits, PetBox.Core.Search.SearchRetrievers Retrievers);
+
 // One board of the methodology quartet as a compact INDEX: a status histogram (`Counts`,
 // status slug -> active-node count) plus the board's nodes as header rows (no bodies by
 // default). null Name = not provisioned.

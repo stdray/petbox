@@ -1,6 +1,10 @@
 using System.Text.RegularExpressions;
+using LinqToDB;
+using LinqToDB.DataProvider.SQLite;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
+using PetBox.Core.Search;
+using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Validation;
@@ -18,16 +22,20 @@ public sealed partial class TasksService : ITasksService
 	readonly IRelationStore _relations;
 	readonly ITagStore _tags;
 	readonly ICommentService _comments;
+	// Optional embedding capability (DI auto-fills when an LLM router is registered).
+	// Null → semantic search disabled and embed-on-write skipped (lexical-only); never throws.
+	readonly ILlmClient? _llm;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
 
-	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments)
+	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null)
 	{
 		_boards = boards;
 		_relations = relations;
 		_tags = tags;
 		_comments = comments;
+		_llm = llm;
 	}
 
 	// ---- board lifecycle ----
@@ -526,6 +534,14 @@ public sealed partial class TasksService : ITasksService
 			await SetPartOfAsync(projectKey, board, nodes, desired, ct);
 			await SetSupersedesAsync(projectKey, board, nodes, desired, ct);
 		}
+		// Search mirrors (FTS + vectors) reflect the active, non-terminal set of THIS board.
+		// Rebuilt/embedded after tags+part_of so the FTS Tags column and search are current.
+		// Best-effort: the embed leg degrades per-node and never throws out of the write path.
+		if (r.Applied)
+		{
+			await RebuildFtsAsync(ctx, projectKey, board, ct);
+			await EmbedOnWriteAsync(ctx, projectKey, board, ct);
+		}
 		return new UpsertOutcome(r, kind);
 	}
 
@@ -536,6 +552,96 @@ public sealed partial class TasksService : ITasksService
 		var ctx = _boards.GetContext(projectKey);
 		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion, partition: n => n.Board == board, ct: ct);
 		return new UpsertOutcome(r, WorkflowCatalog.ParseKind(meta.Kind));
+	}
+
+	// ---- read: hybrid search ----
+
+	public async Task<TaskSearchResult> SearchAsync(string projectKey, string query, string? board = null, bool? lexical = null, bool? semantic = null, string? urlPrefix = null, CancellationToken ct = default)
+	{
+		var boardFilter = string.IsNullOrWhiteSpace(board) ? null : board;
+		if (boardFilter is not null) await EnsureBoard(projectKey, boardFilter, ct);
+		var ctx = _boards.GetContext(projectKey);
+
+		// null = enabled; semantic also requires an embedding capability to be wired.
+		var lexicalEnabled = lexical != false;
+		var semanticEnabled = semantic != false && _llm is not null;
+
+		IReadOnlyList<string>? lexicalIds = null;
+		var lexicalRan = false;
+		if (lexicalEnabled)
+		{
+			lexicalIds = LexicalNodeIds(ctx, query, boardFilter);
+			lexicalRan = true;
+		}
+
+		IReadOnlyList<string>? semanticIds = null;
+		var semanticRan = false;
+		var degraded = false;
+		if (semanticEnabled)
+		{
+			try
+			{
+				var qr = await _llm!.EmbedAsync(projectKey, new EmbedRequest(new[] { query }), ct);
+				var q = qr.Vectors[0];
+				var qmodel = qr.Model.Model;
+				var qdim = q.Length; // hoist: array-length isn't SQL-translatable inside Where
+				// Model/dim guard (and optional board scope): only fuse candidates embedded by the
+				// same model at the same dim as the query, so we never cosine-compare incomparable
+				// vectors. Board filter keeps a one-board search from leaking other boards' nodes.
+				var rowsQ = ctx.PlanNodeVec.Where(v => v.Model == qmodel && v.Dim == qdim);
+				if (boardFilter is not null) rowsQ = rowsQ.Where(v => v.Board == boardFilter);
+				var rows = rowsQ.ToList();
+				var top = VectorMath.TopK(q, rows.Select(r => (r.NodeId, VectorCodec.Decode(r.Vec))), 50);
+				semanticIds = top.Select(t => t.Key).ToList();
+				semanticRan = true;
+			}
+			catch
+			{
+				// Embedding unavailable at query time → degrade to whatever else ran.
+				semanticRan = false;
+				degraded = true;
+			}
+		}
+
+		// RRF-fuse the retrievers that ran; one retriever passes through unchanged.
+		IReadOnlyList<string> fused =
+			lexicalRan && semanticRan ? HybridMerge.Rrf(lexicalIds, semanticIds)
+			: lexicalRan ? lexicalIds ?? []
+			: semanticRan ? semanticIds ?? []
+			: [];
+
+		var retrievers = new SearchRetrievers(lexicalRan, semanticRan, degraded);
+		if (fused.Count == 0) return new TaskSearchResult([], retrievers);
+
+		// Resolve the fused NodeIds to enriched views. Build each owning board's view once
+		// (GetAsync is per-board), then pick the matched nodes and order by fused relevance.
+		var order = fused.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i, StringComparer.Ordinal);
+		var fusedSet = new HashSet<string>(fused, StringComparer.Ordinal);
+		var idToBoard = ctx.PlanNodes.Where(n => n.ActiveTo == null && fusedSet.Contains(n.NodeId))
+			.Select(n => new { n.NodeId, n.Board }).ToList()
+			.GroupBy(x => x.Board, StringComparer.Ordinal);
+
+		var hits = new List<TaskSearchHit>();
+		foreach (var g in idToBoard)
+		{
+			var view = await GetAsync(projectKey, g.Key, includeClosed: false, urlPrefix: urlPrefix, ct: ct);
+			foreach (var n in view.Nodes.Where(n => fusedSet.Contains(n.NodeId)))
+				hits.Add(new TaskSearchHit(g.Key, n));
+		}
+		var ordered = hits.OrderBy(h => order.GetValueOrDefault(h.Node.NodeId, int.MaxValue)).ToList();
+		return new TaskSearchResult(ordered, retrievers);
+	}
+
+	// Lexical retriever as ordered NodeIds (uniform shape for fusion). Optional board scope.
+	// No "empty query → listing" degrade here (unlike memory): a no-token query yields no
+	// lexical hits, leaving the fused result to the semantic leg (or empty).
+	static List<string> LexicalNodeIds(TasksDb ctx, string query, string? board)
+	{
+		var match = BuildMatch(query);
+		if (match is null) return [];
+		var q = ctx.PlanNodesFts.Where(f => Sql.Ext.SQLite().Match(f, match));
+		if (board is not null) q = q.Where(f => f.Board == board);
+		return q.OrderBy(f => Sql.Ext.SQLite().Rank(f)).Select(f => f.NodeId).ToList();
 	}
 
 	// Read-merge a patch against the prior active row: a field omitted from the patch
@@ -926,6 +1032,90 @@ public sealed partial class TasksService : ITasksService
 		if (r.Applied) await _boards.TouchAsync(project, board, ct);
 		return key;
 	}
+
+	// ---- search mirrors: FTS rebuild + embed-on-write ----
+
+	// The FTS5 mirror only holds the current active, NON-TERMINAL set; rebuild this board's
+	// rows wholesale after a write (boards are small — avoids temporal-aware trigger plumbing).
+	// Tags (enforced area:*/concern:*) are flattened into the indexed Tags column so a search
+	// term can hit a node by its tag too. Terminal/closed nodes are excluded (search the open set).
+	async Task RebuildFtsAsync(TasksDb ctx, string projectKey, string board, CancellationToken ct)
+	{
+		await ctx.PlanNodesFts.Where(f => f.Board == board).DeleteAsync(ct);
+		var active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
+			.Where(n => n.NodeId.Length > 0 && !WorkflowCatalog.IsTerminalSlug(n.Status)).ToList();
+		if (active.Count == 0) return;
+		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
+		foreach (var n in active)
+			await ctx.InsertAsync(new PlanNodeFts
+			{
+				NodeId = n.NodeId,
+				Board = board,
+				Name = n.Name,
+				Body = n.Body,
+				Tags = string.Join(' ', tagsByNode[n.NodeId]),
+			}, token: ct);
+	}
+
+	// Embed-on-write: refresh the vector mirror for this board's active, non-terminal nodes.
+	// Each open node is (re)embedded from name+body; rows for nodes that became terminal/closed
+	// or were deleted are dropped (they leave the FTS set too). Best-effort: when no LLM
+	// capability is wired this is skipped entirely, and an embed failure for one node degrades
+	// that node to lexical-only — it MUST NOT throw out of the write path (an upsert must never
+	// fail because embedding was unavailable).
+	async Task EmbedOnWriteAsync(TasksDb ctx, string projectKey, string board, CancellationToken ct)
+	{
+		if (_llm is null) return;
+
+		var open = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
+			.Where(n => n.NodeId.Length > 0 && !WorkflowCatalog.IsTerminalSlug(n.Status)).ToList();
+		var keep = new HashSet<string>(open.Select(n => n.NodeId), StringComparer.Ordinal);
+
+		// Drop vectors for this board's nodes that are no longer open (terminal/closed/deleted).
+		foreach (var stale in ctx.PlanNodeVec.Where(v => v.Board == board).Select(v => v.NodeId).ToList())
+			if (!keep.Contains(stale))
+				await ctx.PlanNodeVec.Where(v => v.NodeId == stale).DeleteAsync(ct);
+
+		foreach (var n in open)
+		{
+			try
+			{
+				var text = n.Name + "\n" + n.Body;
+				var res = await _llm.EmbedAsync(projectKey, new EmbedRequest(new[] { text }), ct);
+				var vec = res.Vectors[0];
+				var row = new PlanNodeVec
+				{
+					NodeId = n.NodeId,
+					Board = board,
+					Model = res.Model.Model,
+					Dim = vec.Length,
+					Vec = VectorCodec.Encode(vec),
+				};
+				await ctx.PlanNodeVec.Where(v => v.NodeId == n.NodeId).DeleteAsync(ct);
+				await ctx.InsertAsync(row, token: ct);
+			}
+			catch
+			{
+				// Degrade: this node stays lexical-only until a later upsert succeeds.
+			}
+		}
+	}
+
+	// Lenient FTS5 MATCH expression: Unicode word tokens (letters/digits — Latin, Cyrillic,
+	// …), prefix-matched (tok*) and ANDed. The FTS5 table is unicode61 (case-folds + strips
+	// diacritics), so the query tokenizer must NOT drop non-ASCII: a `[a-z0-9]` class would
+	// silently discard a Russian query and return nothing. Prefix-* softens the lack of
+	// stemming for ru/en. Null when nothing to match.
+	static string? BuildMatch(string? query)
+	{
+		if (string.IsNullOrWhiteSpace(query)) return null;
+		var tokens = WordToken().Matches(query.ToLowerInvariant()).Select(m => m.Value + "*");
+		var joined = string.Join(' ', tokens);
+		return joined.Length == 0 ? null : joined;
+	}
+
+	[GeneratedRegex(@"[\p{L}\p{Nd}]+")]
+	private static partial Regex WordToken();
 
 	[GeneratedRegex("[^a-z0-9]+")]
 	private static partial Regex NonSlug();
