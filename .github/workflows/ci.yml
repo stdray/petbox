@@ -133,7 +133,7 @@ jobs:
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USERNAME }}
-          password: ${{ secrets.DEPLOY_PASSWORD }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
           envs: ADMIN_USER,ADMIN_PASS_HASH,MASTER_KEY,OTEL_ENABLED,OTEL_ENDPOINT
           script: |
             set -euo pipefail
