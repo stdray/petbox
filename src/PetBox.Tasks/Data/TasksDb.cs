@@ -13,6 +13,8 @@ public sealed class TasksDb : DataConnection
 	public ITable<PlanNode> PlanNodes => this.GetTable<PlanNode>();
 	public ITable<NodeTag> NodeTags => this.GetTable<NodeTag>();
 	public ITable<TagVocab> TagVocab => this.GetTable<TagVocab>();
+	public ITable<PlanNodeFts> PlanNodesFts => this.GetTable<PlanNodeFts>();
+	public ITable<PlanNodeVec> PlanNodeVec => this.GetTable<PlanNodeVec>();
 
 	// Foreign Keys=True turns on per-connection FK enforcement (SQLite defaults it OFF),
 	// so node_tag.Tag -> tag_vocab.Tag is actually enforced. plan_nodes has no FK.

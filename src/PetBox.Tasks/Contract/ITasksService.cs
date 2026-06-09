@@ -61,6 +61,12 @@ public interface ITasksService
 	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, CancellationToken ct = default);
 	// Nodes added/updated/removed since the cursor (no writes).
 	Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default);
+	// Hybrid search over the project's active, non-terminal nodes (name/body/tags): lexical
+	// FTS5 (token/prefix, so paraphrases hit) fused with semantic vector similarity (RRF),
+	// ranked by relevance. `board` scopes to one board (null = all boards). `lexical`/`semantic`
+	// (null = both on) toggle each retriever; semantic is silently off when no embedding
+	// capability is wired. Returns the fused hits plus retriever provenance.
+	Task<TaskSearchResult> SearchAsync(string projectKey, string query, string? board = null, bool? lexical = null, bool? semantic = null, string? urlPrefix = null, CancellationToken ct = default);
 	// Ensure the board exists and return its kind (used by the workflow discovery tool).
 	Task<BoardKind> ResolveKindAsync(string projectKey, string board, CancellationToken ct = default);
 

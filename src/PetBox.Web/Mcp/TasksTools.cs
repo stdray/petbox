@@ -177,6 +177,69 @@ public static class TasksTools
 			: view with { Nodes = view.Nodes.Select(n => n with { Body = ModuleMcp.SnippetBody(n.Body, bodyLen) ?? n.Body }).ToList() };
 	});
 
+	[McpServerTool(Name = "tasks.search", Title = "Search plan nodes", ReadOnly = true)]
+	[Description("""
+		Hybrid search over the project's active, non-terminal plan nodes (name/body/tags):
+		lexical FTS5 (token/prefix, so paraphrases hit) fused with semantic vector similarity
+		(RRF), ranked by relevance. `board` scopes to one board (omit = search every board).
+		`lexical`/`semantic` (default both on) toggle each retriever; semantic is silently off
+		when no embedding capability is configured. Each hit carries key, nodeId, board, status,
+		type, title, priority, tags, links (`spec`/`blockedBy`/`linkedTasks`/`supersedes`) and
+		(spec boards) the computed `delivery` — bodies are full unless `bodyLen` > 0 (snippet).
+		Bounded by `limit` (default 20; 0 = no limit). Response includes `retrievers`
+		{ lexical, semantic, degraded }. Requires tasks:read.
+		""")]
+	public static async Task<object> SearchAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, string query, string? board = null,
+		[Description("Snippet length (chars) per node body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Max nodes returned (default 20; 0 = no limit).")] int limit = 20,
+		[Description("Run the lexical FTS retriever (default true).")] bool? lexical = null,
+		[Description("Run the semantic vector retriever (default true; no-op when embedding is unavailable).")] bool? semantic = null,
+		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
+		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
+		var res = await tasks.SearchAsync(projectKey, query, board, lexical, semantic, urlPrefix, ct);
+		var capped = limit > 0 ? res.Hits.Take(limit) : res.Hits;
+		var nodes = capped.Select(h => SearchHit(h, bodyLen)).ToList();
+		return (object)new
+		{
+			nodes,
+			retrievers = new { lexical = res.Retrievers.Lexical, semantic = res.Retrievers.Semantic, degraded = res.Retrievers.Degraded },
+		};
+	});
+
+	// Wire shape for one search hit: a compact, board-aware projection of the enriched node
+	// view (board carried since search spans boards), body sliced to bodyLen (full when 0).
+	static object SearchHit(TaskSearchHit h, int bodyLen)
+	{
+		var n = h.Node;
+		return new
+		{
+			key = n.Key,
+			nodeId = n.NodeId,
+			board = h.Board,
+			parentSlug = n.ParentSlug,
+			depth = n.Depth,
+			status = n.Status,
+			type = n.Type,
+			title = n.Title,
+			body = ModuleMcp.SnippetBody(n.Body, bodyLen),
+			priority = n.Priority,
+			delivery = n.Delivery,
+			spec = n.Spec,
+			blockedBy = n.BlockedBy,
+			linkedTasks = n.LinkedTasks,
+			supersedes = n.Supersedes,
+			tags = n.Tags,
+			url = n.Url,
+		};
+	}
+
 	// Split a comma-separated groupBy ("area,concern") into the ordered dimension list the
 	// service expects; blanks dropped, order and dups preserved (service validates namespaces).
 	static string[] ParseGroupBy(string groupBy) =>
