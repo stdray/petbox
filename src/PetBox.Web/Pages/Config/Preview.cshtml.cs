@@ -38,7 +38,7 @@ public sealed class PreviewModel : PageModel
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
 
-		var tags = TagsInput
+		var tags = (TagsInput ?? string.Empty)
 			.Split([',', '\n', '\r', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 			.ToList();
 
@@ -46,7 +46,7 @@ public sealed class PreviewModel : PageModel
 		if (!tags.Any(t => string.Equals(t, wsTag, StringComparison.OrdinalIgnoreCase)))
 			tags.Add(wsTag);
 
-		var paths = PathsInput
+		var paths = (PathsInput ?? string.Empty)
 			.Split([',', '\n', '\r', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 			.ToList();
 
