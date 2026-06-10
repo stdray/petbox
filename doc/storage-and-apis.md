@@ -59,9 +59,9 @@ Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a sto
 
 ## 5. Sessions — REST + MCP
 
-Storage: `sessions/{projectKey}.db` — an **append-only raw archive** of agent sessions (not structurally searched; full-text is a future DuckDB idea). Keyed by `sessionId`.
+Storage: `sessions/{projectKey}.db` — a **flat latest-snapshot** per session (one row, no temporal history), content stored as a Brotli-compressed JSONL message blob. Keyed by `sessionId`; `version` == the last message's ordinal.
 
-- **REST:** `POST /api/sessions/{projectKey}/{sessionId}?agent=…` — append content. This is what the Claude Code **Stop hook** (`push-session.ps1`) calls every turn: it posts the latest `~/.claude/plans/*.md` (or the truncated last assistant message) into `$system`.
+- **REST:** `POST /api/sessions/{projectKey}/{sessionId}?agent=…` — body is `application/x-ndjson` (one `{role, content}` message per line). This is what the agent **Stop hook** (`agents/wiring/push-session.ts`, opencode `opencode-plugin.ts`) calls every turn: it re-sends the full ordered transcript (last-write-wins; the server numbers the messages).
 - **MCP:** `session.upsert|get|list`.
 - **UI:** `/ui/{ws}/{project}/sessions/{sessionId}` (read-only detail).
 

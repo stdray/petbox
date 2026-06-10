@@ -1,5 +1,5 @@
+using System.Linq;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using LinqToDB;
@@ -12,11 +12,12 @@ using PetBox.E2ETests.Infrastructure;
 namespace PetBox.E2ETests;
 
 // Pins the REST session-push contract that the agent Stop hooks (opencode / claude-code)
-// replay byte-for-byte: POST /api/sessions/{project}/{sessionId}?agent=... with a
-// text/plain markdown body and X-Api-Key. A shell hook can't speak MCP, so this endpoint
-// is the contract — assert the exact wire shape (property names/casing) so a rename can't
-// silently break the hook. Plain HttpClient against the Kestrel fixture (no browser);
-// keys are seeded straight into PetBoxDb via the fixture's service provider.
+// replay byte-for-byte: POST /api/sessions/{project}/{sessionId}?agent=... with an
+// application/x-ndjson body — one {role, content} message per line — and X-Api-Key. A shell
+// hook can't speak MCP, so this endpoint is the contract — assert the exact wire shape
+// (property names/casing) so a rename can't silently break the hook. Plain HttpClient against
+// the Kestrel fixture (no browser); keys are seeded straight into PetBoxDb via the fixture's
+// service provider.
 [Collection(nameof(UiCollection))]
 public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 {
@@ -55,40 +56,48 @@ public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 		return Task.CompletedTask;
 	}
 
-	// Replays exactly what the hook sends: text/plain; charset=utf-8 raw markdown body + X-Api-Key.
+	// Replays exactly what the hook sends: application/x-ndjson body + X-Api-Key.
 	static HttpRequestMessage PushRequest(string project, string sessionId, string apiKey, string body, string agent = "opencode")
 	{
 		var req = new HttpRequestMessage(HttpMethod.Post, $"/api/sessions/{project}/{sessionId}?agent={agent}");
 		req.Headers.Add("X-Api-Key", apiKey);
-		req.Content = new StringContent(body, Encoding.UTF8, "text/plain");
+		req.Content = new StringContent(body, Encoding.UTF8, "application/x-ndjson");
 		return req;
 	}
+
+	// An ndjson body of {role, content} messages — what the Stop hook now sends.
+	static string Ndjson(params (string Role, string Content)[] messages) =>
+		string.Join("\n", messages.Select(m => JsonSerializer.Serialize(new { role = m.Role, content = m.Content })));
 
 	[Fact]
 	public async Task Push_Then_RePush_AppliesAndAdvancesVersion()
 	{
 		var sessionId = "s-" + Guid.NewGuid().ToString("N")[..8];
 
-		// 1) First push: 200, applied == true (boolean), numeric currentVersion.
-		var r1 = await _http.SendAsync(PushRequest(ProjectKey, sessionId, WriteKey, "# plan\n\n- step one\n"));
+		// 1) First push: 200; echoes sessionId + numeric version (last message ordinal) + messageCount.
+		var r1 = await _http.SendAsync(PushRequest(ProjectKey, sessionId, WriteKey, Ndjson(("user", "# plan"))));
 		r1.StatusCode.Should().Be(HttpStatusCode.OK);
 		using var d1 = JsonDocument.Parse(await r1.Content.ReadAsStringAsync());
 		var root1 = d1.RootElement;
 
 		// Case-SENSITIVE property lookup pins the exact wire names/casing.
-		root1.TryGetProperty("applied", out var applied1).Should().BeTrue("the hook reads `applied`");
-		applied1.ValueKind.Should().Be(JsonValueKind.True);
-		root1.TryGetProperty("currentVersion", out var ver1).Should().BeTrue("the hook reads `currentVersion`");
+		root1.TryGetProperty("sessionId", out var sid1).Should().BeTrue("the wire carries `sessionId`");
+		sid1.GetString().Should().Be(sessionId);
+		root1.TryGetProperty("version", out var ver1).Should().BeTrue("the wire carries `version`");
 		ver1.ValueKind.Should().Be(JsonValueKind.Number);
 		var version1 = ver1.GetInt64();
+		version1.Should().Be(1);
+		root1.GetProperty("messageCount").GetInt64().Should().Be(1);
 
-		// 2) Second push (last-write-wins, no conflict): 200, applied true, strictly greater version.
-		var r2 = await _http.SendAsync(PushRequest(ProjectKey, sessionId, WriteKey, "# plan v2\n\n- step one done\n- step two\n"));
+		// 2) Re-push the grown transcript (more messages, last-write-wins) → version advances to the last ordinal.
+		var r2 = await _http.SendAsync(PushRequest(ProjectKey, sessionId, WriteKey,
+			Ndjson(("user", "# plan"), ("assistant", "step one done"), ("user", "step two"))));
 		r2.StatusCode.Should().Be(HttpStatusCode.OK);
 		using var d2 = JsonDocument.Parse(await r2.Content.ReadAsStringAsync());
 		var root2 = d2.RootElement;
-		root2.GetProperty("applied").GetBoolean().Should().BeTrue();
-		root2.GetProperty("currentVersion").GetInt64().Should().BeGreaterThan(version1);
+		root2.GetProperty("version").GetInt64().Should().BeGreaterThan(version1);
+		root2.GetProperty("version").GetInt64().Should().Be(3);
+		root2.GetProperty("messageCount").GetInt64().Should().Be(3);
 	}
 
 	[Fact]
@@ -106,7 +115,7 @@ public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 	public async Task Push_MissingTasksWriteScope_403()
 	{
 		var sessionId = "s-" + Guid.NewGuid().ToString("N")[..8];
-		var r = await _http.SendAsync(PushRequest(ProjectKey, sessionId, ReadOnlyKey, "# plan\n"));
+		var r = await _http.SendAsync(PushRequest(ProjectKey, sessionId, ReadOnlyKey, Ndjson(("user", "# plan"))));
 		r.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 	}
 }

@@ -158,7 +158,8 @@ public sealed record MemoryUpsertResultView(
 
 public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key);
 
-// One recall hit, labelled by scope (project|workspace) and store.
+// One recall hit, labelled by scope (project|workspace) and store. Carries Version so a
+// recall → upsert edit has its per-key CAS baseline without an extra get (or a guaranteed-Stale 0).
 public sealed record MemoryRecallHit(
 	string Scope,
 	string Store,
@@ -166,7 +167,8 @@ public sealed record MemoryRecallHit(
 	string Type,
 	string Description,
 	string? Body,
-	string Tags);
+	string Tags,
+	long Version);
 
 public sealed record MemoryRecallResult(IReadOnlyList<MemoryRecallHit> Results, RetrieverInfo Retrievers);
 
@@ -186,9 +188,7 @@ public sealed record ReportIssueResult(bool Reported, string Project, string Boa
 
 // ---- session.* -----------------------------------------------------------------------
 
-public sealed record SessionConflictView(string Key, string Kind);
-
-public sealed record SessionUpsertResult(bool Applied, long CurrentVersion, IReadOnlyList<SessionConflictView> Conflicts);
+public sealed record SessionUpsertResult(string SessionId, long Version, int MessageCount);
 
 public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version);
 
@@ -230,6 +230,7 @@ public sealed record TaskSearchNodeView(
 	IReadOnlyList<LinkDto>? LinkedTasks,
 	IReadOnlyList<LinkDto>? Supersedes,
 	IReadOnlyList<string> Tags,
+	long Version,
 	string? Url);
 
 public sealed record TaskSearchResultView(IReadOnlyList<TaskSearchNodeView> Nodes, RetrieverInfo Retrievers);

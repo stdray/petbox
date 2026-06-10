@@ -1,20 +1,23 @@
-using PetBox.Core.Data.Temporal;
-using PetBox.Sessions.Data;
-
 namespace PetBox.Sessions.Contract;
 
-// The single entry point to the Sessions module for every caller (MCP tools + the
-// REST Stop-hook endpoint). Both used to open the per-project sessions context
-// directly to write; routing them here keeps the one write path in one place.
-// A NetArchTest forbids Web from reaching ISessionStore / SessionsDb directly.
+// The single entry point to the Sessions module for every caller (the MCP tools + the REST
+// Stop-hook endpoint). Both used to open the per-project sessions context directly to write;
+// routing them here keeps the one write path in one place. NetArchTests forbid PetBox.Web.Mcp
+// and PetBox.Web.Sessions from reaching ISessionStore / SessionsDb directly.
 public interface ISessionService
 {
-	// Optimistic-concurrency temporal upsert of a session's plan blob: replace at the
-	// caller-supplied baseline version, conflict on a stale baseline.
-	Task<SessionUpsertOutcome> UpsertAsync(string projectKey, string sessionId, string agent, string content, long version = 0, CancellationToken ct = default);
-	Task<SessionRow?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
-	Task<IReadOnlyList<SessionRow>> ListAsync(string projectKey, CancellationToken ct = default);
+	// Latest-snapshot write, last-write-wins: replace the session's content with these messages.
+	// The server numbers them (ordinal 1..N); the returned Version is the last message's ordinal.
+	Task<SessionUpsertOutcome> UpsertAsync(string projectKey, string sessionId, string agent, IReadOnlyList<SessionMessageInput> messages, CancellationToken ct = default);
+
+	Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
+	Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default);
+
+	// Messages with Version greater than the cursor — the incremental delta a Class-B index
+	// consumes without the store retaining any history (the snapshot is cumulative). Empty if none.
+	Task<IReadOnlyList<SessionMessage>> DeltaAsync(string projectKey, string sessionId, long sinceVersion, CancellationToken ct = default);
 }
 
-// The raw temporal upsert result, ready for an adapter to serialize.
-public sealed record SessionUpsertOutcome(TemporalUpsertResult<SessionRow> Result);
+// The outcome of a session write: the id, its new version (last message ordinal), the message
+// count, and the write time. Compact form replacing the old temporal upsert result.
+public sealed record SessionUpsertOutcome(string SessionId, long Version, int MessageCount, DateTime Updated);

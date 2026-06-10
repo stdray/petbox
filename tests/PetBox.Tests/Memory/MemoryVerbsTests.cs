@@ -67,6 +67,31 @@ public sealed class MemoryVerbsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Recall_ReturnsVersion_ThatWorksAsUpsertBaseline()
+	{
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "the deploy tag drives prod releases");
+
+		var rec = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, "releases"));
+		var hit = rec.GetProperty("results").EnumerateArray().Single();
+		var key = hit.GetProperty("key").GetString()!;
+		var version = hit.GetProperty("version").GetInt64();
+		version.Should().BeGreaterThan(0);
+
+		// The recalled version is a valid per-key CAS baseline: the edit applies cleanly,
+		// no Stale round-trip (the bug recall→upsert used to be doomed to).
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key, type = "Project", description = "d", body = "edited body", version },
+		});
+		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries));
+		res.GetProperty("applied").GetBoolean().Should().BeTrue();
+		res.GetProperty("conflicts").EnumerateArray().Should().BeEmpty();
+		res.GetProperty("updated").EnumerateArray().Select(e => e.GetProperty("key").GetString())
+			.Should().Contain(key);
+	}
+
+	[Fact]
 	public async Task Remember_Workspace_IsCrossProject_NotVisibleToProjectScope()
 	{
 		var http = Http("memory:read,memory:write");

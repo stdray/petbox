@@ -222,7 +222,8 @@ public static class MemoryTools
 		off when embedding is unavailable. Bodies are full by
 		default; pass `bodyLen` > 0 for a snippet (description + first N chars), then pull a
 		full body with memory.get. Requires memory:read.
-		Returns { results: [{ scope, store, key, type, description, body, tags }], retrievers: { lexical, semantic, degraded } }.
+		Returns { results: [{ scope, store, key, type, description, body, tags, version }], retrievers: { lexical, semantic, degraded } };
+		`version` is the entry's CAS baseline for memory.upsert (pass it back to edit without a Stale round-trip).
 		""")]
 	public static async Task<object> RecallAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
@@ -259,7 +260,7 @@ public static class MemoryTools
 				aggDegraded |= res.Retrievers.Degraded;
 				foreach (var v in res.Hits)
 				{
-					results.Add(new MemoryRecallHit(scopeName, st, v.Key, v.Type, v.Description, ModuleMcp.SnippetBody(v.Body, bodyLen), v.Tags));
+					results.Add(new MemoryRecallHit(scopeName, st, v.Key, v.Type, v.Description, ModuleMcp.SnippetBody(v.Body, bodyLen), v.Tags, v.Version));
 					if (results.Count >= limit) return new MemoryRecallResult(results, new RetrieverInfo(aggLexical, aggSemantic, aggDegraded));
 				}
 			}

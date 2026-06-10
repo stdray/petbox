@@ -1,16 +1,15 @@
 using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Settings;
+using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
 using PetBox.Sessions.Services;
 
 namespace PetBox.Tests.Sessions;
 
-// Covers the converged session write path: the MCP session.upsert tool and the REST
-// Stop-hook endpoint both delegate to ISessionService, so testing the service exercises
-// the one path both surfaces share (the arch test proves neither bypasses it). Includes
-// the two calling styles — caller-supplied baseline (MCP) vs read-current-then-upsert
-// (REST last-write-wins).
+// Covers the converged session write path: the MCP session.upsert tool and the REST Stop-hook
+// endpoint both delegate to ISessionService, so testing the service exercises the one path both
+// surfaces share (the arch test proves neither bypasses it). Latest-snapshot, last-write-wins.
 [Collection("DataModule")]
 public sealed class SessionServiceTests : IDisposable
 {
@@ -34,29 +33,44 @@ public sealed class SessionServiceTests : IDisposable
 		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
 	}
 
+	static SessionMessageInput[] Msgs(params (string Role, string Content)[] m) =>
+		m.Select(x => new SessionMessageInput(x.Role, x.Content)).ToArray();
+
 	[Fact]
 	public async Task Upsert_Then_Get_And_List_ThroughService()
 	{
-		var r = await _svc.UpsertAsync("proj", "s1", "claude-code", "# plan v1");
-		r.Result.Applied.Should().BeTrue();
+		var o = await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("session", "# plan v1")));
+		o.Version.Should().Be(1);
+		o.MessageCount.Should().Be(1);
 
 		(await _svc.GetAsync("proj", "s1"))!.Content.Should().Be("# plan v1");
-		(await _svc.ListAsync("proj")).Select(s => s.Key).Should().Equal("s1");
+		(await _svc.ListAsync("proj")).Select(s => s.SessionId).Should().Equal("s1");
 	}
 
 	[Fact]
-	public async Task StaleBaseline_Conflicts_WhileReadCurrentThenUpsert_Wins()
+	public async Task Upsert_IsLatestSnapshot_AndNumbersMessages()
 	{
-		// MCP style: caller passes the baseline it last saw. A stale baseline conflicts.
-		(await _svc.UpsertAsync("proj", "s1", "agent", "v1")).Result.Applied.Should().BeTrue();
-		var stale = await _svc.UpsertAsync("proj", "s1", "agent", "v2", version: 0);
-		stale.Result.Applied.Should().BeFalse();
-		stale.Result.HasConflicts.Should().BeTrue();
+		var o = await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("user", "hello"), ("assistant", "hi")));
+		o.Version.Should().Be(2);   // version == last message ordinal
+		o.MessageCount.Should().Be(2);
 
-		// REST Stop-hook style: read the current version first → last-write-wins, no conflict.
-		var current = await _svc.GetAsync("proj", "s1");
-		var ok = await _svc.UpsertAsync("proj", "s1", "agent", "v2", version: current!.Version);
-		ok.Result.Applied.Should().BeTrue();
-		(await _svc.GetAsync("proj", "s1"))!.Content.Should().Be("v2");
+		// Re-push the grown transcript → latest snapshot replaces; version tracks the last ordinal.
+		var o2 = await _svc.UpsertAsync("proj", "s1", "claude-code",
+			Msgs(("user", "hello"), ("assistant", "hi"), ("user", "more")));
+		o2.Version.Should().Be(3);
+
+		var snap = await _svc.GetAsync("proj", "s1");
+		snap!.Messages.Should().HaveCount(3);
+		snap.Content.Should().Contain("### user").And.Contain("more"); // multi-message renders with headers
+	}
+
+	[Fact]
+	public async Task Delta_ReturnsOnlyMessagesAfterCursor()
+	{
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("user", "a"), ("assistant", "b"), ("user", "c")));
+
+		var delta = await _svc.DeltaAsync("proj", "s1", sinceVersion: 1);
+		delta.Select(m => m.Version).Should().Equal(2, 3);
+		delta.Select(m => m.Content).Should().Equal("b", "c");
 	}
 }

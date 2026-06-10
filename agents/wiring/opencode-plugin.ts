@@ -69,31 +69,29 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
     const messages = res.data;
     if (!Array.isArray(messages) || messages.length === 0) return;
 
-    // The whole conversation (user + assistant text turns) — the endpoint is
-    // last-write-wins, so each idle refreshes the full blob, not just the last turn.
-    let content = messages
+    // The whole conversation (user + assistant text turns) as ordered ndjson messages —
+    // the endpoint is last-write-wins and the server numbers the messages, so each idle
+    // re-sends the full transcript (not just the last turn) and it self-heals.
+    const msgs = messages
       .map((m: any) => {
         const text = m.parts
           .filter((p: any) => p.type === "text" && typeof p.text === "string")
           .map((p: any) => p.text)
           .join("\n")
           .trim();
-        return text ? `### ${m.info.role}\n\n${text}` : null;
+        return text ? { role: m.info.role, content: text } : null;
       })
-      .filter(Boolean)
-      .join("\n\n");
-    if (!content) return;
-    // Keep the tail (latest turns) if the conversation outgrows the cap.
-    const max = 786432;
-    if (content.length > max) content = content.slice(-max);
+      .filter(Boolean) as { role: string; content: string }[];
+    if (msgs.length === 0) return;
     const lastID = messages[messages.length - 1]?.info?.id ?? "";
     if (lastPushed.get(sessionID) === lastID) return;
 
+    const body = msgs.map((m) => JSON.stringify(m)).join("\n");
     const uri = `${resolved.baseUrl}/api/sessions/${resolved.project}/${encodeURIComponent(sessionID)}?agent=opencode`;
     const resp = await fetch(uri, {
       method: "POST",
-      headers: { "X-Api-Key": resolved.apiKey, "Content-Type": "text/plain; charset=utf-8" },
-      body: content,
+      headers: { "X-Api-Key": resolved.apiKey, "Content-Type": "application/x-ndjson; charset=utf-8" },
+      body,
       signal: AbortSignal.timeout(8000),
     });
     if (resp.ok) lastPushed.set(sessionID, lastID);

@@ -1,20 +1,18 @@
 using LinqToDB.Mapping;
-using PetBox.Core.Data.Temporal;
 
 namespace PetBox.Sessions.Data;
 
-// An agent working-session plan blob, stored as a temporal (SCD type-2) row.
-// Identity (Key) is the agent-supplied sessionId. Payload: Agent + Content
-// (markdown — what claude-code writes to ~/.claude/plans/*.md).
+// A session transcript stored as a single flat row — the latest snapshot, no history.
+// ContentZ is a Brotli-compressed JSONL message blob (see SessionContent). Version == the
+// last message's ordinal: a monotonic content cursor, NOT optimistic concurrency. A session
+// has one writer (the agent, re-pushing the full transcript), so the temporal SCD-2 machinery
+// that used to back this row was pure overhead + a bloat multiplier (one full snapshot per turn).
 [Table("sessions")]
-public sealed record SessionRow : TemporalRow
+public sealed record SessionRow
 {
+	[Column, PrimaryKey, NotNull] public string SessionId { get; init; } = string.Empty;
 	[Column, NotNull] public string Agent { get; init; } = string.Empty;
-	[Column, NotNull] public string Content { get; init; } = string.Empty;
-
-	public override bool SamePayload(TemporalRow other) =>
-		other is SessionRow s && s.Agent == Agent && s.Content == Content;
-
-	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
-		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };
+	[Column, NotNull] public byte[] ContentZ { get; init; } = Array.Empty<byte>();
+	[Column] public long Version { get; init; }
+	[Column, NotNull] public DateTime Updated { get; init; }
 }

@@ -130,6 +130,27 @@ public sealed class TasksTreeContractTests : IDisposable
 		res.GetProperty("error").GetProperty("message").GetString().Should().Contain("cycle");
 	}
 
+	[Fact]
+	public async Task Search_HitCarriesVersion_UsableAsUpsertBaseline()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "s", null);
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "s",
+			McpInputs.Nodes(new object[] { new { key = "alpha", status = "Pending", title = "alpha note", body = "alpha keyword" } }));
+
+		var res = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, "alpha"));
+		var hit = res.GetProperty("nodes").EnumerateArray()
+			.Single(n => n.GetProperty("key").GetString() == "alpha");
+		var version = hit.GetProperty("version").GetInt64();
+		version.Should().BeGreaterThan(0);
+
+		// The hit's version is a valid upsert baseline: the edit applies without a Stale conflict.
+		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "s",
+			McpInputs.Nodes(new object[] { new { key = "alpha", title = "alpha note v2", version } })));
+		up.GetProperty("applied").GetBoolean().Should().BeTrue();
+		up.GetProperty("conflicts").EnumerateArray().Should().BeEmpty();
+	}
+
 	// Find a node by flat key in a tasks.get result and read a string field.
 	static string FieldOf(JsonElement got, string key, string field) =>
 		got.GetProperty("nodes").EnumerateArray()
