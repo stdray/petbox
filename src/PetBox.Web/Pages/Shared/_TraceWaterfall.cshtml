@@ -1,7 +1,5 @@
+@using PetBox.Web.Pages.Logs
 @model IReadOnlyList<PetBox.Web.Pages.Logs.TraceModel.WaterfallRow>
-@{
-	var maxDepth = Model.Count == 0 ? 0 : Model.Max(r => r.Depth);
-}
 <div class="overflow-x-auto">
 	<table class="table table-xs" data-testid="trace-waterfall">
 		<thead>
@@ -11,7 +9,8 @@
 				<th>Timeline</th>
 			</tr>
 		</thead>
-		<tbody>
+		@* One expanded span at a time (accordion): a row click toggles its detail row. *@
+		<tbody x-data="{ open: null }">
 			@foreach (var row in Model)
 			{
 				var span = row.Span;
@@ -24,7 +23,10 @@
 					_ => "bg-base-content/30",
 				};
 				var indent = (row.Depth * 12).ToString(System.Globalization.CultureInfo.InvariantCulture);
-				<tr data-testid="trace-span-row" data-span-id="@span.SpanId" data-depth="@row.Depth">
+				var attrs = TraceModel.DisplayAttributes(span);
+				<tr data-testid="trace-span-row" data-span-id="@span.SpanId" data-depth="@row.Depth"
+					class="cursor-pointer hover:bg-base-200"
+					x-on:click="open = open === '@span.SpanId' ? null : '@span.SpanId'">
 					<td class="font-mono text-xs">
 						<span style="padding-left:@(indent)px" class="inline-block">↳</span>
 						<span>@span.Name</span>
@@ -35,6 +37,44 @@
 							<div class="absolute h-4 rounded @color"
 								style="left: @(row.StartPct.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture))%; width: @(row.WidthPct.ToString("0.##", System.Globalization.CultureInfo.InvariantCulture))%"
 								title="@span.Name · @($"{span.Duration.TotalMilliseconds:0.00} ms")"></div>
+						</div>
+					</td>
+				</tr>
+				<tr data-testid="trace-span-detail" data-span-id="@span.SpanId"
+					style="display:none" x-show="open === '@span.SpanId'">
+					<td colspan="3" class="bg-base-200/50">
+						<div class="px-2 py-1 text-xs space-y-1">
+							<div class="font-mono opacity-70">
+								<span>span @span.SpanId</span>
+								@if (!string.IsNullOrEmpty(span.ParentSpanId))
+								{
+									<span> · parent @span.ParentSpanId</span>
+								}
+								<span> · @TraceModel.KindName(span.Kind)</span>
+								<span> · @TraceModel.StatusName(span.StatusCode)</span>
+								@if (!string.IsNullOrEmpty(span.StatusDescription))
+								{
+									<span class="text-error"> — @span.StatusDescription</span>
+								}
+							</div>
+							@if (attrs.Count == 0)
+							{
+								<div class="opacity-50">no span attributes</div>
+							}
+							else
+							{
+								<table class="table table-xs w-auto">
+									<tbody>
+										@foreach (var a in attrs)
+										{
+											<tr>
+												<td class="font-mono opacity-60 pr-4">@a.Key</td>
+												<td class="font-mono break-all">@a.Value</td>
+											</tr>
+										}
+									</tbody>
+								</table>
+							}
 						</div>
 					</td>
 				</tr>

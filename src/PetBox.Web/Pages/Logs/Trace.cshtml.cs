@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -34,6 +35,46 @@ public sealed class TraceModel : PageModel
 		double StartPct,
 		double WidthPct,
 		int Depth);
+
+	// Resource/SDK attributes are merged into every span's AttributesJson at ingest and are
+	// constant across the whole trace — dropping them leaves what distinguishes THIS span.
+	static readonly string[] NoisePrefixes = ["telemetry.sdk.", "service."];
+
+	public static IReadOnlyList<KeyValuePair<string, string>> DisplayAttributes(SpanRecord span)
+	{
+		if (string.IsNullOrWhiteSpace(span.AttributesJson)) return [];
+		try
+		{
+			using var doc = JsonDocument.Parse(span.AttributesJson);
+			if (doc.RootElement.ValueKind != JsonValueKind.Object) return [];
+			return doc.RootElement.EnumerateObject()
+				.Where(p => !NoisePrefixes.Any(n => p.Name.StartsWith(n, StringComparison.Ordinal)))
+				.OrderBy(p => p.Name, StringComparer.Ordinal)
+				.Select(p => new KeyValuePair<string, string>(p.Name,
+					p.Value.ValueKind == JsonValueKind.String ? p.Value.GetString()! : p.Value.GetRawText()))
+				.ToList();
+		}
+		catch (JsonException)
+		{
+			return [];
+		}
+	}
+
+	public static string KindName(int kind) => kind switch
+	{
+		1 => "Server",
+		2 => "Client",
+		3 => "Producer",
+		4 => "Consumer",
+		_ => "Internal",
+	};
+
+	public static string StatusName(int statusCode) => statusCode switch
+	{
+		1 => "Ok",
+		2 => "Error",
+		_ => "Unset",
+	};
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
