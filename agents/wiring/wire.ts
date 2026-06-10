@@ -326,12 +326,12 @@ function cleanupLegacy(dir: string): void {
 
 async function selfSmoke(baseUrl: string, project: string, key: string): Promise<void> {
   const uri = `${baseUrl}/api/sessions/${project}/wire-smoke?agent=wire`;
-  const body = "### user\n\nwire.ts self-smoke — verifying the session push pipeline.\n";
+  const body = JSON.stringify({ role: "user", content: "wire.ts self-smoke — verifying the session push pipeline." });
   let resp: Response;
   try {
     resp = await fetch(uri, {
       method: "POST",
-      headers: { "X-Api-Key": key, "Content-Type": "text/plain; charset=utf-8" },
+      headers: { "X-Api-Key": key, "Content-Type": "application/x-ndjson; charset=utf-8" },
       body,
       signal: AbortSignal.timeout(12000),
     });
@@ -352,10 +352,10 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
   } catch {
     /* keep raw */
   }
-  if (parsed?.applied === true) {
-    log(`[9/9] self-smoke: OK — applied=true, currentVersion=${parsed.currentVersion}`);
+  if (typeof parsed?.version === "number") {
+    log(`[9/9] self-smoke: OK — sessionId=${parsed.sessionId}, version=${parsed.version}, messages=${parsed.messageCount}`);
   } else {
-    console.error(`[9/9] self-smoke: server did not confirm applied=true — ${text}`);
+    console.error(`[9/9] self-smoke: server did not return a numeric version — ${text}`);
     process.exitCode = 1;
   }
 }

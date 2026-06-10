@@ -54,7 +54,7 @@ Runtime: plain TypeScript executed by **node 24** native type-stripping. No buil
    - `~/.config/opencode/plugins/petbox.ts` — a thin shim that re-exports the kit plugin from
      its absolute `file:///` URL (single source of truth; overwritten if present).
 8. `--cleanup-legacy` (see §3).
-9. Self-smoke: `POST /api/sessions/<project>/wire-smoke?agent=wire` and assert `applied:true`.
+9. Self-smoke: `POST /api/sessions/<project>/wire-smoke?agent=wire` (application/x-ndjson) and assert a numeric `version` in the response.
 
 ## 3. Migrating a legacy (per-project copy) repo
 
