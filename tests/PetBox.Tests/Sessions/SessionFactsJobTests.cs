@@ -131,6 +131,7 @@ public sealed class SessionFactsJobTests : IDisposable
 		{
 			Key = "ac-seed", Version = 0, Type = "Project",
 			Description = "парсер падал на БУРУНДУК-42", Body = "первая версия",
+			Metadata = """{"sessionId":"s0"}""",
 		}], []);
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("новая деталь про БУРУНДУК-42: буфер 8 КБ"));
 		var chat = new ScriptedChat(
@@ -142,7 +143,8 @@ public sealed class SessionFactsJobTests : IDisposable
 		var entries = await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null);
 		entries.Should().HaveCount(1); // merged, not duplicated
 		entries[0].Body.Should().Contain("8 КБ");
-		entries[0].Metadata.Should().Contain("\"sessionId\":\"s1\""); // provenance moved to the newest source
+		entries[0].Metadata.Should().Contain("\"sessionId\":\"s1\""); // newest source up front…
+		entries[0].Metadata.Should().Contain("seenIn").And.Contain("s0"); // …prior provenance accumulated, not erased
 	}
 
 	[Fact]

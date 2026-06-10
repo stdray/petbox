@@ -27,9 +27,11 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 	const string CuratedStore = "notes";
 	const string CursorIndex = "behavior-mining";
 
-	// A pattern needs ≥2 independent sources by definition, so mining before two fresh
-	// observations exist would burn a chat call on a guaranteed [].
-	internal const int MinNewFeedback = 2;
+	// One fresh observation is enough to mine: the facts-judge MERGES repeats into an
+	// existing entry (an UPDATE, not a second row), so "two fresh entries" may never
+	// happen even though repetition did. The ≥2-distinct-sources rule still gates what
+	// gets written — an early pass just answers [].
+	internal const int MinNewFeedback = 1;
 	internal const int MaxInputEntries = 60;
 	internal const int MaxPatternsPerPass = 5;
 	internal const int BodyClip = 300;
@@ -120,7 +122,7 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 		var sb = new StringBuilder();
 		sb.AppendLine("FEEDBACK FACTS:");
 		foreach (var e in feedback.Where(e => SourcesOf(e).Count == 0))
-			sb.AppendLine(JsonSerializer.Serialize(new { e.Key, e.Description, Body = Clip(e.Body), sessionId = SessionIdOf(e) }));
+			sb.AppendLine(JsonSerializer.Serialize(new { e.Key, e.Description, Body = Clip(e.Body), sessionIds = ObservedIn(e) }));
 		sb.AppendLine();
 		sb.AppendLine("EXISTING PATTERNS:");
 		foreach (var e in existingPatterns)
@@ -173,15 +175,23 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 		return written;
 	}
 
-	static string SessionIdOf(MemoryEntryView e)
+	// Every sessionId an observation carries: its own plus the `seenIn` accumulation the
+	// facts-judge builds when it MERGES a repeat into an existing entry — a single entry
+	// can therefore prove repetition on its own.
+	static List<string> ObservedIn(MemoryEntryView e)
 	{
-		if (string.IsNullOrWhiteSpace(e.Metadata)) return "";
+		if (string.IsNullOrWhiteSpace(e.Metadata)) return [];
 		try
 		{
 			using var doc = JsonDocument.Parse(e.Metadata);
-			return doc.RootElement.TryGetProperty("sessionId", out var s) ? s.GetString() ?? "" : "";
+			var ids = new List<string>();
+			if (doc.RootElement.TryGetProperty("sessionId", out var s) && !string.IsNullOrWhiteSpace(s.GetString()))
+				ids.Add(s.GetString()!);
+			if (doc.RootElement.TryGetProperty("seenIn", out var seen) && seen.ValueKind == JsonValueKind.Array)
+				ids.AddRange(seen.EnumerateArray().Select(x => x.GetString()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!));
+			return ids.Distinct().ToList();
 		}
-		catch (JsonException) { return ""; }
+		catch (JsonException) { return []; }
 	}
 
 	static List<string> SourcesOf(MemoryEntryView e)

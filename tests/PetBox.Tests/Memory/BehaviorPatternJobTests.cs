@@ -93,18 +93,40 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	}
 
 	[Fact]
-	public async Task BelowThreshold_NoChat_CursorHolds_ThenFiresWhenEnough()
+	public async Task OneFreshObservation_Triggers_EmptyAnswerAdvancesCursor()
 	{
+		// One fresh entry MUST trigger: the facts-judge merges repeats into an existing
+		// entry, so repetition may never show up as a second fresh row.
 		await SeedFeedback("f1", "s1", "одинокое наблюдение");
-		var chat = new ScriptedChat("""[{"description":"когда X — делай Y","body":"b","sources":["s1","s2"]}]""");
+		var chat = new ScriptedChat("[]");
 		var job = Job(chat);
 
 		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
-		chat.Calls.Should().Be(0); // one fresh Feedback < MinNewFeedback
+		chat.Calls.Should().Be(1); // mined, honestly found nothing
 
-		await SeedFeedback("f2", "s2", "второе наблюдение");
-		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(1); // held cursor sees both
-		chat.Calls.Should().Be(1);
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+		chat.Calls.Should().Be(1); // cursor advanced — no re-burn on the same observation
+	}
+
+	[Fact]
+	public async Task SingleEntry_WithAccumulatedSeenIn_ProvesRepetitionByItself()
+	{
+		// The facts-judge merge accumulates seenIn — one entry can carry ≥2 sources.
+		await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
+		{
+			Key = "f-merged", Version = 0, Type = "Feedback",
+			Description = "когда миграция — сначала бэкап", Body = "повторено",
+			Tags = "autocaptured,behavior:pattern",
+			Metadata = """{"sessionId":"s2","seenIn":["s2","s1"]}""",
+		}], []);
+		var chat = new ScriptedChat(
+			"""[{"description":"когда миграция — сначала бэкап","body":"из двух сессий","sources":["s1","s2"]}]""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		chat.Prompts[^1].Should().Contain("s1").And.Contain("s2"); // both ids visible as one FACT's sessionIds
+		(await _memory.ListAsync(Proj, Store, "Feedback"))
+			.Count(e => e.Metadata.Contains("sources")).Should().Be(1);
 	}
 
 	[Fact]

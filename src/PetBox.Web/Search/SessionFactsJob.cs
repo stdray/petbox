@@ -194,7 +194,14 @@ public sealed class SessionFactsJob : IVectorizationJob
 					Description = verdict.Description ?? existing.Description,
 					Body = verdict.Body ?? existing.Body,
 					Tags = existing.Tags,
-					Metadata = metadata,
+					// A merge must ACCUMULATE provenance, not replace it: `seenIn` keeps
+					// every prior sessionId — the repetition evidence pattern mining feeds on.
+					Metadata = JsonSerializer.Serialize(new
+					{
+						sessionId,
+						messages = new[] { fromVersion, toVersion },
+						seenIn = SeenIn(existing.Metadata, sessionId),
+					}),
 				}], [], 0, ct);
 				return true;
 			}
@@ -321,6 +328,26 @@ public sealed class SessionFactsJob : IVectorizationJob
 	}
 
 	static string Clip(string s, int max) => s.Length > max ? s[..max] + "…" : s;
+
+	// The union of every sessionId this entry was observed in: the current one plus the
+	// prior sessionId and prior seenIn — a judge-merge accumulates provenance, never drops it.
+	static List<string> SeenIn(string priorMetadata, string sessionId)
+	{
+		var ids = new List<string> { sessionId };
+		if (!string.IsNullOrWhiteSpace(priorMetadata))
+		{
+			try
+			{
+				using var doc = JsonDocument.Parse(priorMetadata);
+				if (doc.RootElement.TryGetProperty("sessionId", out var s) && !string.IsNullOrWhiteSpace(s.GetString()))
+					ids.Add(s.GetString()!);
+				if (doc.RootElement.TryGetProperty("seenIn", out var seen) && seen.ValueKind == JsonValueKind.Array)
+					ids.AddRange(seen.EnumerateArray().Select(x => x.GetString()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!));
+			}
+			catch (JsonException) { /* prior metadata unparseable — start fresh */ }
+		}
+		return ids.Distinct().ToList();
+	}
 
 	static readonly JsonSerializerOptions JsonOpts = new() { PropertyNameCaseInsensitive = true };
 
