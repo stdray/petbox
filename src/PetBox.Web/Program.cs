@@ -148,7 +148,8 @@ public partial class Program
 		builder.Services.AddScoped(sp => new PetBox.Deploy.Data.DeployDb(
 			PetBox.Deploy.Data.DeployDb.CreateOptions($"Data Source={Path.Combine(ResolveDataDir(sp), "deploy.db")};Cache=Shared")));
 		builder.Services.AddScoped<PetBox.Deploy.Contract.IDeployService, PetBox.Deploy.Services.DeployService>();
-		builder.Services.AddHostedService<PetBox.Deploy.Services.DeployFailoverSweeper>();
+		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Deploy))
+			builder.Services.AddHostedService<PetBox.Deploy.Services.DeployFailoverSweeper>();
 		// Periodic VACUUM INTO snapshots of every internal db; unconditional (data
 		// safety is cross-cutting, not feature-gated).
 		builder.Services.AddHostedService(sp => new PetBox.Core.Data.BackupService(
@@ -567,8 +568,9 @@ public partial class Program
 		}
 
 		// Deploy control-plane: agent pull contract (/agent/*) + node onboarding
-		// (/api/deploy/nodes). Mapped unconditionally — the agent contract is always-on.
-		PetBox.Web.Deploy.DeployApi.MapDeployEndpoints(app);
+		// (/api/deploy/nodes). Gated by Feature.Deploy (default on) like the other modules.
+		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Deploy))
+			PetBox.Web.Deploy.DeployApi.MapDeployEndpoints(app);
 
 		// MCP HTTP endpoint. Tools auto-registered via reflection in builder.Services
 		// (see AddMcpServer above). The endpoint goes through the same ApiKey

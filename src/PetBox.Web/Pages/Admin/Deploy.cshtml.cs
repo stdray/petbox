@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Features;
 using PetBox.Deploy.Contract;
 using PetBox.Deploy.Data;
 
@@ -13,17 +14,24 @@ namespace PetBox.Web.Pages.Admin;
 public sealed class DeployModel : PageModel
 {
 	readonly IDeployService _svc;
+	readonly FeatureFlags _features;
 
-	public DeployModel(IDeployService svc) => _svc = svc;
+	public DeployModel(IDeployService svc, FeatureFlags features)
+	{
+		_svc = svc;
+		_features = features;
+	}
 
 	public IReadOnlyList<NodeView> Nodes { get; private set; } = [];
 	public IReadOnlyList<DeploymentView> Deployments { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
 
-	public async Task OnGetAsync()
+	public async Task<IActionResult> OnGetAsync()
 	{
+		if (!_features.IsEnabled(Feature.Deploy)) return NotFound();
 		Nodes = await _svc.ListNodesAsync();
 		Deployments = await _svc.ListDeploymentsAsync();
+		return Page();
 	}
 
 	public async Task<IActionResult> OnPostNewNodeAsync(string id, string? displayName, string? tags, bool ephemeral)
