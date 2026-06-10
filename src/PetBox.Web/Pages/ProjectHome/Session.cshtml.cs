@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Features;
+using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
 
 namespace PetBox.Web.Pages.ProjectHome;
@@ -29,7 +30,7 @@ public sealed class SessionModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "sessionId")]
 	public string SessionId { get; set; } = string.Empty;
 
-	public SessionRow? Session { get; private set; }
+	public SessionSnapshot? Session { get; private set; }
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{

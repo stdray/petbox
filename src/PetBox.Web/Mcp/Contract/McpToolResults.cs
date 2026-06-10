@@ -188,9 +188,7 @@ public sealed record ReportIssueResult(bool Reported, string Project, string Boa
 
 // ---- session.* -----------------------------------------------------------------------
 
-public sealed record SessionConflictView(string Key, string Kind);
-
-public sealed record SessionUpsertResult(bool Applied, long CurrentVersion, IReadOnlyList<SessionConflictView> Conflicts);
+public sealed record SessionUpsertResult(string SessionId, long Version, int MessageCount);
 
 public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version);
 

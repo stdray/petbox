@@ -30,12 +30,12 @@ else
 	<section class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="sessions-list">
 		@foreach (var s in Model.Sessions)
 		{
-			<a href="@Routes.ProjectSession(Model.WorkspaceKey, Model.ProjectKey, s.Key)"
+			<a href="@Routes.ProjectSession(Model.WorkspaceKey, Model.ProjectKey, s.SessionId)"
 				class="card bg-base-200 border border-base-300 hover:border-primary transition-colors"
-				data-testid="session-card" data-session-id="@s.Key">
+				data-testid="session-card" data-session-id="@s.SessionId">
 				<div class="card-body p-4">
 					<div class="flex items-baseline justify-between gap-2">
-						<span class="font-mono font-semibold truncate">@s.Key</span>
+						<span class="font-mono font-semibold truncate">@s.SessionId</span>
 						<span class="badge badge-ghost badge-sm">@s.Agent</span>
 					</div>
 					<div class="text-xs opacity-50 font-mono mt-2">updated @s.Updated.ToString("yyyy-MM-dd HH:mm")</div>

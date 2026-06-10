@@ -4,16 +4,16 @@
 // The project + API key are resolved from cwd via the shared registry; if the cwd is not a
 // registered project this exits immediately (first guard, before any work).
 //
-// Reads the full transcript JSONL and POSTs the user/assistant text turns (tool dumps and
-// system reminders excluded). The endpoint is last-write-wins, so each turn refreshes the
-// whole blob. Best-effort: every failure is swallowed and we ALWAYS exit 0 — never break the
-// user's session.
+// Reads the full transcript JSONL and POSTs the user/assistant text turns as ndjson — one
+// {role, content} message per line, in order (tool dumps and system reminders excluded). The
+// server numbers the messages (ordinal) and stores the latest snapshot; the endpoint is
+// last-write-wins, so each turn re-pushes the whole transcript and it self-heals. Best-effort:
+// every failure is swallowed and we ALWAYS exit 0 — never break the user's session.
 
 import { createReadStream } from "node:fs";
 import { createInterface } from "node:readline";
 import { resolveProject } from "./registry.ts";
 
-const MAX_BYTES = 786432; // 768 KiB cap, kept from the TAIL (trim oldest turns)
 const FETCH_TIMEOUT_MS = 12000;
 
 type HookInput = {
@@ -22,6 +22,8 @@ type HookInput = {
   cwd?: string;
   stop_hook_active?: boolean;
 };
+
+type Msg = { role: string; content: string };
 
 function readStdin(): Promise<string> {
   return new Promise((resolve) => {
@@ -54,12 +56,14 @@ function isExcluded(text: string): boolean {
   );
 }
 
-async function buildContent(transcriptPath: string): Promise<string> {
+// Collect the user/assistant text messages in transcript order. No rendering and no cap:
+// the server needs the full, ordered transcript to assign stable per-message ordinals.
+async function buildMessages(transcriptPath: string): Promise<Msg[]> {
   const rl = createInterface({
     input: createReadStream(transcriptPath, { encoding: "utf8" }),
     crlfDelay: Infinity,
   });
-  let out = "";
+  const msgs: Msg[] = [];
   for await (const line of rl) {
     if (!line || line.trim().length === 0) continue;
     let e: any;
@@ -73,17 +77,9 @@ async function buildContent(transcriptPath: string): Promise<string> {
     const text = extractText(e.message);
     if (text.length === 0) continue;
     if (isExcluded(text)) continue;
-    out += `### ${e.type}\n\n${text}\n\n`;
+    msgs.push({ role: e.type, content: text });
   }
-  return out;
-}
-
-// Cap from the tail by BYTES (the server cap is in bytes; UTF-8 multibyte-safe slice).
-function capTail(content: string): string {
-  const bytes = Buffer.from(content, "utf8");
-  if (bytes.length <= MAX_BYTES) return content;
-  // Decode the last MAX_BYTES bytes; a partial leading char is dropped by the decoder.
-  return bytes.subarray(bytes.length - MAX_BYTES).toString("utf8");
+  return msgs;
 }
 
 async function main(): Promise<void> {
@@ -105,15 +101,15 @@ async function main(): Promise<void> {
     const tp = (j.transcript_path ?? "").trim();
     if (!sid || !tp) return;
 
-    let content: string;
+    let msgs: Msg[];
     try {
-      content = await buildContent(tp);
+      msgs = await buildMessages(tp);
     } catch {
       return; // transcript missing/unreadable
     }
-    if (!content.trim()) return; // empty body → server returns 400, don't push
+    if (msgs.length === 0) return; // empty body → server returns 400, don't push
 
-    content = capTail(content);
+    const body = msgs.map((m) => JSON.stringify(m)).join("\n");
 
     const uri = `${resolved.baseUrl}/api/sessions/${resolved.project}/${encodeURIComponent(sid)}?agent=claude-code`;
     const ctrl = new AbortController();
@@ -121,8 +117,8 @@ async function main(): Promise<void> {
     try {
       await fetch(uri, {
         method: "POST",
-        headers: { "X-Api-Key": resolved.apiKey, "Content-Type": "text/plain; charset=utf-8" },
-        body: content,
+        headers: { "X-Api-Key": resolved.apiKey, "Content-Type": "application/x-ndjson; charset=utf-8" },
+        body,
         signal: ctrl.signal,
       });
     } finally {
