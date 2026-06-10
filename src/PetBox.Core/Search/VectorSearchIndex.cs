@@ -6,9 +6,15 @@ namespace PetBox.Core.Search;
 
 // The first real Class-B index: semantic search by embedding similarity. Eventual consistency —
 // it is materialized OFF the entity write path (by the async-vectorization worker, not the
-// facade), so a slow/down embedder never blocks or fails a write. Brute-force cosine + MRL
-// truncation to dim=256: at our scale an ANN index is slower and heavier than BLAS brute-force
-// (perf verdict m-5be78b78/zvec-rejected), and 256-dim MRL cuts RAM ×4 for a small recall cost.
+// facade), so a slow/down embedder never blocks or fails a write. Brute-force cosine: at our
+// scale an ANN index is slower and heavier than BLAS brute-force (perf verdict
+// m-5be78b78/zvec-rejected).
+//
+// `dim` is the MRL (Matryoshka) truncation target: a Matryoshka embedding's leading `dim`
+// components are themselves a valid lower-res embedding, so truncating trades recall for
+// RAM/storage WITHOUT a model swap. Default 1024 — the LoCoMo dim-sweep (m-981885fb) showed 256
+// over-truncates the 2560-dim qwen3-embed-4b (semantic recall@5 0.66→0.75 at 1024) while 2560
+// doesn't beat 1024; tune down only under RAM pressure, accepting the recall hit.
 //
 // Adding this index to a SearchService makes reads hybrid for free: the facade already RRF-fuses
 // every index's ranked list and lifts Vector capability to semantic=true provenance.
@@ -20,7 +26,7 @@ public sealed class VectorSearchIndex : ISearchIndex
 	readonly IEmbedder _embedder;
 	readonly int _dim; // MRL target dim; <= 0 or >= model dim keeps the full vector
 
-	public VectorSearchIndex(Func<DataConnection> connect, IEmbedder embedder, int dim = 256)
+	public VectorSearchIndex(Func<DataConnection> connect, IEmbedder embedder, int dim = 1024)
 	{
 		_connect = connect;
 		_embedder = embedder;
