@@ -60,10 +60,16 @@ public sealed record TemporalUpsertResult<TRow>(
 // Flow: read current state → classify each row → apply → compute the delta.
 public static class TemporalStore
 {
+	// onWithinTx (when set) fires INSIDE the apply transaction, after the new revisions are
+	// inserted and before commit, with the rows upserted this batch and the keys whose active
+	// row was closed without a replacement (soft-deletes + rename sources). It is the seam the
+	// Class-A search floor rides: writing the lexical index here commits/rolls back WITH the
+	// entity, so a committed entity is never lexically-stale and a throw rolls both back together.
 	public static Task<TemporalUpsertResult<TRow>> UpsertAsync<TRow>(
 		DataConnection db,
 		IReadOnlyList<TRow> desired,
 		long sinceVersion = 0,
+		Func<DataConnection, IReadOnlyList<TRow>, IReadOnlyList<string>, CancellationToken, Task>? onWithinTx = null,
 		TimeProvider? time = null,
 		// When set, scopes every read/close/delta to a partition within the table (e.g.
 		// one board's rows in a shared plan_nodes), so several scopes can share one file
@@ -71,7 +77,7 @@ public static class TemporalStore
 		Expression<Func<TRow, bool>>? partition = null,
 		CancellationToken ct = default)
 		where TRow : TemporalRow =>
-		UpsertAsync(db, desired, [], sinceVersion, time, onBeforeApply: null, partition, ct);
+		UpsertAsync(db, desired, [], sinceVersion, time, onBeforeApply: null, onWithinTx, partition, ct);
 
 	// Overload that also soft-deletes (closes the active row with no new revision) the
 	// given keys — used by memory.upsert's `deleted:true`. version 0 = delete the
@@ -82,11 +88,12 @@ public static class TemporalStore
 		IReadOnlyList<TRow> desired,
 		IReadOnlyList<(string Key, long Version)> delete,
 		long sinceVersion = 0,
+		Func<DataConnection, IReadOnlyList<TRow>, IReadOnlyList<string>, CancellationToken, Task>? onWithinTx = null,
 		TimeProvider? time = null,
 		Expression<Func<TRow, bool>>? partition = null,
 		CancellationToken ct = default)
 		where TRow : TemporalRow =>
-		UpsertAsync(db, desired, delete, sinceVersion, time, onBeforeApply: null, partition, ct);
+		UpsertAsync(db, desired, delete, sinceVersion, time, onBeforeApply: null, onWithinTx, partition, ct);
 
 	// onBeforeApply is a test-only seam: it fires after classification but before
 	// the close+insert transaction, to drive the CloseRace branch deterministically.
@@ -97,6 +104,7 @@ public static class TemporalStore
 		long sinceVersion,
 		TimeProvider? time,
 		Func<Task>? onBeforeApply,
+		Func<DataConnection, IReadOnlyList<TRow>, IReadOnlyList<string>, CancellationToken, Task>? onWithinTx,
 		Expression<Func<TRow, bool>>? partition,
 		CancellationToken ct)
 		where TRow : TemporalRow
@@ -133,7 +141,7 @@ public static class TemporalStore
 			if (onBeforeApply is not null)
 				await onBeforeApply();
 
-			var race = await ApplyAsync(db, table, batch, nextVersion, now, partition, ct);
+			var race = await ApplyAsync(db, table, batch, nextVersion, now, onWithinTx, partition, ct);
 			if (race is not null)
 			{
 				conflicts = [race];
@@ -150,6 +158,20 @@ public static class TemporalStore
 		var currentVersion = await MaxVersionAsync(table, partition, ct);
 
 		return new TemporalUpsertResult<TRow>(applied, currentVersion, inserted, closed, conflicts, added, updated, removed);
+	}
+
+	// Standalone delta read: the active rows that changed since `sinceVersion` (split into
+	// Added/Updated like an upsert result), the keys that died, and the current max version to
+	// advance a cursor to. The async-vectorization worker's source rides this to subscribe to a
+	// store's temporal log without performing a write — no separate outbox table needed.
+	public static async Task<(IReadOnlyList<TRow> Added, IReadOnlyList<TRow> Updated, IReadOnlyList<string> Removed, long CurrentVersion)> ChangesSinceAsync<TRow>(
+		DataConnection db, long sinceVersion, Expression<Func<TRow, bool>>? partition = null, CancellationToken ct = default)
+		where TRow : TemporalRow
+	{
+		var table = db.GetTable<TRow>();
+		var (added, updated, removed) = await DeltaAsync(table, sinceVersion, partition, ct);
+		var current = await MaxVersionAsync(table, partition, ct);
+		return (added, updated, removed, current);
 	}
 
 	// ── 1. read current state ────────────────────────────────────────────────
@@ -255,6 +277,7 @@ public static class TemporalStore
 	// longer active (a writer slipped into our read→close window).
 	static async Task<TemporalConflict?> ApplyAsync<TRow>(
 		DataConnection db, ITable<TRow> table, Batch<TRow> batch, long nextVersion, DateTime now,
+		Func<DataConnection, IReadOnlyList<TRow>, IReadOnlyList<string>, CancellationToken, Task>? onWithinTx,
 		Expression<Func<TRow, bool>>? partition, CancellationToken ct)
 		where TRow : TemporalRow
 	{
@@ -270,6 +293,16 @@ public static class TemporalStore
 
 			foreach (var row in batch.ToInsert)
 				await db.InsertAsync(row, token: ct);
+
+			if (onWithinTx is not null)
+			{
+				// Keys closed without a replacement revision = soft-deletes + rename sources;
+				// an edit closes AND re-inserts the same key, so it stays an upsert, not a delete.
+				var deletedKeys = batch.ToClose.Select(c => c.Key)
+					.Except(batch.ToInsert.Select(r => r.Key))
+					.ToList();
+				await onWithinTx(db, batch.ToInsert, deletedKeys, ct);
+			}
 
 			await tx.CommitAsync(ct);
 			return null;

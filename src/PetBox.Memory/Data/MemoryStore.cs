@@ -12,6 +12,10 @@ namespace PetBox.Memory.Data;
 public interface IMemoryStore
 {
 	MemoryDb GetContext(string projectKey, string store);
+	// A fresh, caller-owned connection to an existing store file (the caller disposes it).
+	// Used by the search read indexes (which dispose their read connection) and the
+	// vectorization worker (off the request-scoped cache). See IScopedDbFactory.NewConnection.
+	MemoryDb NewConnection(string projectKey, string store);
 	Task<bool> ExistsAsync(string projectKey, string store, CancellationToken ct = default);
 	// Create the store if it does not yet exist; no-op if it does. Used by the
 	// upsert write path to auto-vivify on first write (deliberate exception to the
@@ -41,6 +45,9 @@ public sealed partial class MemoryStore : IMemoryStore
 
 	public MemoryDb GetContext(string projectKey, string store) =>
 		_factory.GetDb(projectKey, store);
+
+	public MemoryDb NewConnection(string projectKey, string store) =>
+		_factory.NewConnection(projectKey, store);
 
 	public Task<bool> ExistsAsync(string projectKey, string store, CancellationToken ct = default) =>
 		_db.MemoryStores.AnyAsync(s => s.ProjectKey == projectKey && s.Name == store, ct);

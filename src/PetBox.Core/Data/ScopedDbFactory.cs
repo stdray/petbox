@@ -26,6 +26,15 @@ public interface IScopedDbFactory<TContext> : IAsyncDisposable
 	// the file and schema on first access, then caches the context.
 	TContext GetDb(string scopeKey, string? name = null);
 
+	// Opens a FRESH, caller-owned connection to an EXISTING scope file — the caller
+	// disposes it. Unlike GetDb this is never cached and does NOT re-run schema (the
+	// file must already exist, i.e. GetDb/CreateAsync ran for it before). Used by the
+	// search indexes, whose reads do `using var db = connect()` (they dispose the
+	// connection), and by the async-vectorization worker, which needs its own connection
+	// off the request-scoped cache. WAL is persisted in the file; SQLITE_BUSY is handled
+	// by Microsoft.Data.Sqlite's command timeout — same as the cached connection.
+	TContext NewConnection(string scopeKey, string? name = null);
+
 	// Disposes and removes the cached context for (scopeKey [, name]) so the
 	// underlying file is no longer held open. Required before deleting the file
 	// (a cached connection would keep it locked on Windows). No-op if not cached.
@@ -78,6 +87,12 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 			_cache[cacheKey] = db;
 			return db;
 		}
+	}
+
+	public TContext NewConnection(string scopeKey, string? name = null)
+	{
+		var dbPath = ScopedDbFiles.PathFor(_baseDir, scopeKey, name);
+		return _create($"Data Source={dbPath}");
 	}
 
 	public async ValueTask EvictAsync(string scopeKey, string? name = null)
