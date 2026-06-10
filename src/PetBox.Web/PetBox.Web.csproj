@@ -5,6 +5,14 @@
 		<!-- Generated *.pb.cs sprinkle `?` on reference types without #nullable enable. -->
 		<!-- CA1716: 'Me' folder name collides with VB.NET keyword. Folder maps to /ui/me/ URL. -->
 		<NoWarn>$(NoWarn);CS8632;CA1716</NoWarn>
+
+		<!-- Build-time OpenAPI document generation (Microsoft.Extensions.ApiDescription.Server).
+		     Emits doc/api/PetBox.Web.json (default = $(AssemblyName).json) on every build so the
+		     contract is committed and reviewable. The generator runs GetDocument.Insider, which
+		     loads this assembly and executes the entry-point up to WebApplication.Build() (never
+		     app.Run()), so only ConfigureServices-time side effects fire — guarded in Program.cs. -->
+		<OpenApiGenerateDocuments>true</OpenApiGenerateDocuments>
+		<OpenApiDocumentsDirectory>$(MSBuildProjectDirectory)/../../doc/api</OpenApiDocumentsDirectory>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -23,6 +31,9 @@
 	<ItemGroup>
 		<PackageReference Include="Seq.Extensions.Logging" />
 		<PackageReference Include="ModelContextProtocol.AspNetCore" />
+		<PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+		<!-- Build tooling (GetDocument.Insider) only — keep out of the runtime/publish output. -->
+		<PackageReference Include="Microsoft.Extensions.ApiDescription.Server" PrivateAssets="all" />
 	</ItemGroup>
 
 	<ItemGroup>

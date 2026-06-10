@@ -38,8 +38,32 @@ app.Run();
 
 public partial class Program
 {
+	// True when the build-time OpenAPI generator (Microsoft.Extensions.ApiDescription.Server)
+	// is driving startup. GetDocument.Insider loads this app's entry-point and runs the host
+	// (through StartAsync) to read endpoint metadata; it sets itself as the entry assembly.
+	// Used to redirect internal SQLite stores to a temp dir so document generation leaves no
+	// migrated db / backups / self-log in the working tree (see ConfigureServices).
+	static bool IsOpenApiDocumentGeneration =>
+		System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name == "GetDocument.Insider";
+
 	public static void ConfigureServices(WebApplicationBuilder builder)
 	{
+		// Build-time OpenAPI generation (GetDocument.Insider) hosts this entry-point all the way
+		// through app.Run() — it lets StartAsync run (migrations + hosted services fire) and only
+		// then aborts before serving requests. Left alone it would migrate ./data/petbox.db and
+		// drop backups/self-log files straight into the repo. Redirect every internal SQLite store
+		// to a throwaway temp dir so the host still starts cleanly (no "no such table" crashes from
+		// hosted services) but nothing touches the working tree. Highest-precedence in-memory
+		// provider, added before any config is read below.
+		if (IsOpenApiDocumentGeneration)
+		{
+			var docGenDataDir = Path.Combine(Path.GetTempPath(), "petbox-openapi-doc-" + Guid.NewGuid().ToString("N")[..8]);
+			builder.Configuration.AddInMemoryCollection(new Dictionary<string, string?>
+			{
+				["ConnectionStrings:PetBox"] = $"Data Source={docGenDataDir}/petbox.db;Cache=Shared",
+			});
+		}
+
 		// Honor X-Forwarded-Proto/Host/For from the reverse proxy (Caddy, TLS-terminating, in
 		// the Docker network). Clear the known-proxy/network allowlists: the app is only
 		// reachable via Caddy, whose source IP isn't loopback, so default trust would drop the
@@ -166,6 +190,12 @@ public partial class Program
 			.WithToolsFromAssembly(typeof(Program).Assembly, mcpJson)
 			.WithRequestFilters(PetBox.Web.Mcp.McpToolScopeFilter.Register); // A7b: scope-trim tools/list
 		builder.Services.AddSingleton<FeatureFlags>();
+
+		// Built-in .NET 10 OpenAPI document generation. The document is materialized at build
+		// time into doc/api/PetBox.Web.json (see OpenApiGenerateDocuments in the csproj) and
+		// served at runtime only in Development (MapOpenApi in Configure).
+		builder.Services.AddOpenApi();
+
 		builder.Services.Configure<AdminOptions>(builder.Configuration.GetSection("Admin"));
 		builder.Services.Configure<ConfigApiKeyOptions>(builder.Configuration.GetSection("Auth"));
 		builder.Services.AddSingleton<ConfigApiKeyLookup>();
@@ -441,6 +471,11 @@ public partial class Program
 			}
 			await next();
 		});
+
+		// Serve the OpenAPI document (/openapi/v1.json) only in Development. Production exposes
+		// no spec endpoint; the committed doc/api/PetBox.Web.json is the published contract.
+		if (app.Environment.IsDevelopment())
+			app.MapOpenApi();
 
 		app.MapMethods("/health", ["GET", "HEAD"], () => TypedResults.Ok(new HealthStatusResponse("healthy")))
 			.Produces<HealthStatusResponse>()
