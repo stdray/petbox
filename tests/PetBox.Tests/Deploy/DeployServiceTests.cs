@@ -141,6 +141,22 @@ public sealed class DeployServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Heartbeat_Is_Full_Snapshot_Resets_Absent_Service_To_Missing()
+	{
+		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
+		var d = await _svc.UpsertDeploymentAsync(new DeploymentInput(null, "bot", "proj", "n1", "img1", DesiredState.Running, false, "", ""));
+		await _svc.ApplyHeartbeatAsync("n1", new HeartbeatReport([new ActualReport("bot", "c1", ActualState.Running, "img1", Healthy: true)]));
+		(await _svc.GetDeploymentAsync(d.Id))!.ActualState.Should().Be(ActualState.Running);
+
+		// next heartbeat no longer reports "bot" (container removed) → must reset to Missing,
+		// not leave a stale Running (the deploy-stale-actualstate bug).
+		await _svc.ApplyHeartbeatAsync("n1", new HeartbeatReport([]));
+		var refreshed = (await _svc.GetDeploymentAsync(d.Id))!;
+		refreshed.ActualState.Should().Be(ActualState.Missing);
+		refreshed.Healthy.Should().BeFalse();
+	}
+
+	[Fact]
 	public async Task DeleteNode_Cascades_Deployments()
 	{
 		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));

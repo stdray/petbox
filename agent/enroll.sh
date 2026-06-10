@@ -14,6 +14,14 @@ set -euo pipefail
 : "${PETBOX_URL:?set PETBOX_URL}"
 : "${PETBOX_ADMIN_KEY:?set PETBOX_ADMIN_KEY (a deploy:write key)}"
 
+# Fail fast if we can't write /etc — otherwise the `sudo tee` below hangs forever on a
+# password prompt in a non-interactive run (no TTY). Need root or passwordless sudo.
+if [[ "$(id -u)" -ne 0 ]] && ! sudo -n true 2>/dev/null; then
+  echo "enroll.sh needs root or passwordless sudo (it writes /etc/petbox-deploy-agent.env)." >&2
+  echo "Re-run as root (sudo -i, or on WSL2: wsl -u root), or configure NOPASSWD sudo." >&2
+  exit 1
+fi
+
 NODE_ID="${1:?usage: enroll.sh <node-id> [tags-csv] [--ephemeral]}"
 TAGS="${2:-}"
 EPHEMERAL=false

@@ -157,10 +157,12 @@ public sealed class DeployService : IDeployService
 		nodeId = NormalizeId(nodeId);
 		await TouchNodeAsync(nodeId, ct);
 		var now = DateTime.UtcNow;
+		var reported = new HashSet<string>(StringComparer.Ordinal);
 		foreach (var a in report.Actual)
 		{
 			var service = NormalizeId(a.Service);
 			if (service.Length == 0) continue;
+			reported.Add(service);
 			await _db.InsertOrReplaceAsync(new DeploymentStatus
 			{
 				NodeId = nodeId,
@@ -172,6 +174,17 @@ public sealed class DeployService : IDeployService
 				ReportedAt = now,
 			}, token: ct);
 		}
+
+		// A heartbeat is a FULL snapshot of the node's managed containers. Any status row
+		// for this node that's NOT in the report = the container is gone → mark Missing.
+		// Without this a stopped/removed deployment shows stale Running/healthy forever in
+		// deploy.list and the UI.
+		await _db.Statuses
+			.Where(s => s.NodeId == nodeId && !reported.Contains(s.Service) && s.ActualState != ActualState.Missing)
+			.Set(s => s.ActualState, ActualState.Missing)
+			.Set(s => s.Healthy, false)
+			.Set(s => s.ReportedAt, now)
+			.UpdateAsync(ct);
 	}
 
 	// --- failover ---
