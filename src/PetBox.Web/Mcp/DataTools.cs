@@ -14,9 +14,10 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
-// MCP tools for the Data module's *operational* surface — the SQL/migration
-// ops that don't fit generic CRUD: data.schema_apply / data.query / data.exec.
-// DataDb lifecycle (list/create/delete/describe) lives on the generic entity.* tools.
+// MCP tools for the Data module's *operational* surface — the SQL/migration ops:
+// data.schema_apply / data.query / data.exec. The DataDb lifecycle (db.create/list/
+// delete/describe) lives in DataDbTools (kept separate so this type stays free of a
+// raw Microsoft.Data.Sqlite dependency — a NetArchTest enforces that).
 //
 // query/exec delegate to the shared IDataSqlService — the same execution path the
 // REST /api/data/* endpoints use — so the PRAGMA deny-list, parameter binding and

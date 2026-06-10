@@ -110,11 +110,12 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 		var tools = await _mcp.ListToolsAsync();
 		var names = tools.Select(t => t.Name).ToHashSet();
 
-		// DataDb lifecycle moved to the generic entity.* tools (type "db").
-		names.Should().Contain("entity.create");
-		names.Should().Contain("entity.list");
-		names.Should().Contain("entity.delete");
-		names.Should().Contain("entity.describe");
+		// DataDb lifecycle is typed per-type db.* tools (replaced the generic entity.* dispatch).
+		names.Should().Contain("db.create");
+		names.Should().Contain("db.list");
+		names.Should().Contain("db.delete");
+		names.Should().Contain("db.describe");
+		names.Should().NotContain("entity.create");
 		names.Should().NotContain("data.create_db");
 		names.Should().NotContain("data.list_dbs");
 		// Operational SQL/migration tools stay.
@@ -128,10 +129,9 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 	{
 		var tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
 
-		var create = await tools["entity.create"].CallAsync(new Dictionary<string, object?>
+		var create = await tools["db.create"].CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "db",
-			["props"] = JsonSerializer.SerializeToElement(new { projectKey = TestProjectKey, name = TestDbName }),
+			["projectKey"] = TestProjectKey, ["name"] = TestDbName,
 		});
 		create.IsError.Should().NotBe(true);
 
@@ -174,12 +174,11 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 	{
 		var tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
 
-		var result = await tools["entity.list"].CallAsync(new Dictionary<string, object?>
+		var result = await tools["db.list"].CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "db",
-			["filter"] = JsonSerializer.SerializeToElement(new { projectKey = "some-other-project" }),
+			["projectKey"] = "some-other-project",
 		});
-		// entity.* now surfaces the project-scope rejection as a structured {error} (GuardAsync).
+		// db.* surfaces the project-scope rejection as a structured {error} (GuardAsync).
 		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text.Should().Contain("error");
 	}
 
@@ -187,10 +186,9 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 	public async Task DeniedPragma_Blocked()
 	{
 		var tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
-		await tools["entity.create"].CallAsync(new Dictionary<string, object?>
+		await tools["db.create"].CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "db",
-			["props"] = JsonSerializer.SerializeToElement(new { projectKey = TestProjectKey, name = "tmp" }),
+			["projectKey"] = TestProjectKey, ["name"] = "tmp",
 		});
 
 		var result = await tools["data.exec"].CallAsync(new Dictionary<string, object?>

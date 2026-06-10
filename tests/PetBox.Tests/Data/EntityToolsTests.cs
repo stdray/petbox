@@ -14,9 +14,11 @@ using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Data;
 
-// Covers the generic entity.* MCP tools for the surfaces NOT exercised by the
-// updated Data/Provisioning tests: log CRUD (logs:admin/logs:query), db describe,
-// and the forbidden-op paths (describe on a non-db type, delete on project).
+// Covers the per-type lifecycle MCP tools that replaced the generic entity.* surface
+// (typed-surface Phase 4): log.create/list/delete, db.create/describe, and the
+// config.* binding tools. Each tool now takes flat, typed params (no JsonElement),
+// so a real MCP client gets a per-field input schema. Provisioning (project/apikey)
+// lives in ProvisioningToolsTests; SQL round-trips in McpDataToolsTests.
 [Collection("DataModule")]
 public sealed class EntityToolsTests : IAsyncLifetime
 {
@@ -109,44 +111,57 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		(await _mcp.ListToolsAsync()).First(t => t.Name == name);
 
 	[Fact]
+	public async Task PerTypeLifecycleTools_AreDiscoverable_GenericEntityToolsGone()
+	{
+		var names = (await _mcp.ListToolsAsync()).Select(t => t.Name).ToHashSet();
+		// The generic dispatch family is gone — no aliases (no-legacy-redirects).
+		names.Should().NotContain("entity.create");
+		names.Should().NotContain("entity.list");
+		names.Should().NotContain("entity.delete");
+		names.Should().NotContain("entity.describe");
+		// Typed per-type tools take its place.
+		names.Should().Contain("log.create");
+		names.Should().Contain("log.list");
+		names.Should().Contain("log.delete");
+		names.Should().Contain("db.create");
+		names.Should().Contain("db.list");
+		names.Should().Contain("db.delete");
+		names.Should().Contain("db.describe");
+		names.Should().Contain("project.create");
+		names.Should().Contain("apikey.create");
+	}
+
+	[Fact]
 	public async Task Log_Create_List_Delete_RoundTrips()
 	{
-		var create = await ToolAsync("entity.create");
+		var create = await ToolAsync("log.create");
 		var r1 = await create.CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "log",
-			["props"] = JsonSerializer.SerializeToElement(new { projectKey = ProjectKey, name = "audit", description = "audit trail" }),
+			["projectKey"] = ProjectKey, ["name"] = "audit", ["description"] = "audit trail",
 		});
-		r1.IsError.Should().NotBe(true);
+		Text(r1).Should().NotContain("\"error\"");
 
-		var list = await ToolAsync("entity.list");
-		var r2 = await list.CallAsync(new Dictionary<string, object?>
-		{
-			["type"] = "log",
-			["filter"] = JsonSerializer.SerializeToElement(new { projectKey = ProjectKey }),
-		});
-		r2.IsError.Should().NotBe(true);
-		var listText = r2.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
-		listText.Should().Contain("audit");
+		var list = await ToolAsync("log.list");
+		var r2 = await list.CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey });
+		Text(r2).Should().Contain("audit");
 
-		var del = await ToolAsync("entity.delete");
-		var r3 = await del.CallAsync(new Dictionary<string, object?>
-		{
-			["type"] = "log",
-			["key"] = JsonSerializer.SerializeToElement(new { projectKey = ProjectKey, name = "audit" }),
-		});
-		r3.IsError.Should().NotBe(true);
+		var del = await ToolAsync("log.delete");
+		var r3 = await del.CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey, ["name"] = "audit" });
+		Text(r3).Should().NotContain("\"error\"");
+
+		// Deleting a missing log surfaces a structured error (GuardAsync), not an opaque failure.
+		var r4 = await del.CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey, ["name"] = "nope" });
+		Text(r4).Should().Contain("not found");
 	}
 
 	[Fact]
 	public async Task Db_Create_Then_Describe()
 	{
-		var create = await ToolAsync("entity.create");
-		(await create.CallAsync(new Dictionary<string, object?>
+		var create = await ToolAsync("db.create");
+		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "db",
-			["props"] = JsonSerializer.SerializeToElement(new { projectKey = ProjectKey, name = "appdb" }),
-		})).IsError.Should().NotBe(true);
+			["projectKey"] = ProjectKey, ["name"] = "appdb",
+		})).Should().NotContain("\"error\"");
 
 		var apply = await ToolAsync("data.schema_apply");
 		(await apply.CallAsync(new Dictionary<string, object?>
@@ -157,110 +172,36 @@ public sealed class EntityToolsTests : IAsyncLifetime
 			["sql"] = "CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
 		})).IsError.Should().NotBe(true);
 
-		var describe = await ToolAsync("entity.describe");
+		var describe = await ToolAsync("db.describe");
 		var r = await describe.CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "db",
-			["key"] = JsonSerializer.SerializeToElement(new { projectKey = ProjectKey, dbName = "appdb" }),
+			["projectKey"] = ProjectKey, ["dbName"] = "appdb",
 		});
-		r.IsError.Should().NotBe(true);
-		var text = r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
+		var text = Text(r);
 		text.Should().Contain("widgets");
 		text.Should().Contain("name");
 	}
 
 	[Fact]
-	public async Task Describe_OnLog_IsForbidden()
+	public async Task Db_List_ReflectsCreate()
 	{
-		var describe = await ToolAsync("entity.describe");
-		var r = await describe.CallAsync(new Dictionary<string, object?>
+		Text(await (await ToolAsync("db.create")).CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "log",
-			["key"] = JsonSerializer.SerializeToElement(new { projectKey = ProjectKey, name = "default" }),
-		});
-		// GuardAsync turns the thrown NotSupportedException into a structured error
-		// payload (so the agent sees the cause) rather than an opaque tool failure.
-		Text(r).Should().Contain("does not support");
+			["projectKey"] = ProjectKey, ["name"] = "listdb",
+		})).Should().NotContain("\"error\"");
+
+		var listed = Text(await (await ToolAsync("db.list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey }));
+		listed.Should().Contain("listdb");
 	}
 
 	[Fact]
-	public async Task Unknown_Type_IsRejected()
+	public async Task Db_Describe_MissingDb_SurfacesError()
 	{
-		var create = await ToolAsync("entity.create");
-		var r = await create.CallAsync(new Dictionary<string, object?>
+		var r = await (await ToolAsync("db.describe")).CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "banana",
-			["props"] = JsonSerializer.SerializeToElement(new { name = "x" }),
+			["projectKey"] = ProjectKey, ["dbName"] = "ghost",
 		});
-		Text(r).Should().Contain("Unknown entity type");
-	}
-
-	[Fact]
-	public async Task ConfigBinding_Create_List_Delete_AndSecretIsEncrypted()
-	{
-		var create = await ToolAsync("entity.create");
-
-		var r1 = await create.CallAsync(new Dictionary<string, object?>
-		{
-			["type"] = "config_binding",
-			["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = "test", path = "app/name", value = "petbox", tags = "ws:test,env:prod" }),
-		});
-		Text(r1).Should().NotContain("\"error\"");
-
-		// Secret: PETBOX_MASTER_KEY is set in the ctor, so encryption is available.
-		var r2 = await create.CallAsync(new Dictionary<string, object?>
-		{
-			["type"] = "config_binding",
-			["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = "test", path = "app/token", value = "s3cr3t", tags = "ws:test", kind = "Secret" }),
-		});
-		Text(r2).Should().NotContain("\"error\"");
-
-		// List used to throw (Enum.ToString() not translatable by linq2db).
-		var list = await ToolAsync("entity.list");
-		var r3 = await list.CallAsync(new Dictionary<string, object?>
-		{
-			["type"] = "config_binding",
-			["filter"] = JsonSerializer.SerializeToElement(new { workspaceKey = "test" }),
-		});
-		var listText = Text(r3);
-		listText.Should().Contain("app/name");
-		listText.Should().Contain("app/token");
-		listText.Should().Contain("Secret");
-		listText.Should().NotContain("s3cr3t"); // plaintext secret never in the listing
-
-		// The secret is stored encrypted, not as plaintext in Value.
-		using (var scope = _factory.Services.CreateScope())
-		{
-			var cf = scope.ServiceProvider.GetRequiredService<PetBox.Config.Data.IConfigDbFactory>();
-			var cdb = cf.GetConfigDb("test");
-			var secret = cdb.Bindings.First(b => b.Path == "app/token" && !b.IsDeleted);
-			secret.Value.Should().BeEmpty();
-			secret.Ciphertext.Should().NotBeNullOrEmpty();
-		}
-	}
-
-	[Fact]
-	public async Task ConfigBinding_StringEncodedProps_Works()
-	{
-		// Real MCP clients serialize the untyped object param as a JSON *string*
-		// (the tool schema has no type:object). The object-shaped tests above masked
-		// this — send the string shape a real client actually sends.
-		var create = await ToolAsync("entity.create");
-		var r1 = await create.CallAsync(new Dictionary<string, object?>
-		{
-			["type"] = "config_binding",
-			["props"] = JsonSerializer.Serialize(new { workspaceKey = "test", path = "app/str", value = "v", tags = "ws:test" }),
-		});
-		Text(r1).Should().NotContain("required");
-		Text(r1).Should().NotContain("\"error\"");
-
-		var list = await ToolAsync("entity.list");
-		var r2 = await list.CallAsync(new Dictionary<string, object?>
-		{
-			["type"] = "config_binding",
-			["filter"] = JsonSerializer.Serialize(new { workspaceKey = "test" }),
-		});
-		Text(r2).Should().Contain("app/str");
+		Text(r).Should().Contain("not found");
 	}
 
 	[Fact]
@@ -285,6 +226,14 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		listed.Should().Contain("svc/key");
 		listed.Should().Contain("Secret");
 		listed.Should().NotContain("topsecret");
+
+		// The secret is stored encrypted, not as plaintext in Value.
+		using var scope = _factory.Services.CreateScope();
+		var cf = scope.ServiceProvider.GetRequiredService<PetBox.Config.Data.IConfigDbFactory>();
+		var cdb = cf.GetConfigDb("test");
+		var secret = cdb.Bindings.First(b => b.Path == "svc/key" && !b.IsDeleted);
+		secret.Value.Should().BeEmpty();
+		secret.Ciphertext.Should().NotBeNullOrEmpty();
 	}
 
 	[Fact]
@@ -317,6 +266,7 @@ public sealed class EntityToolsTests : IAsyncLifetime
 			names.Should().Contain(n => n.StartsWith("tasks.", StringComparison.Ordinal));
 			names.Should().NotContain(n => n.StartsWith("memory.", StringComparison.Ordinal));
 			names.Should().NotContain(n => n.StartsWith("data.", StringComparison.Ordinal));
+			names.Should().NotContain(n => n.StartsWith("db.", StringComparison.Ordinal));
 			names.Should().NotContain(n => n.StartsWith("log.", StringComparison.Ordinal));
 			names.Should().NotContain(n => n.StartsWith("config.", StringComparison.Ordinal));
 		}

@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Text.Json;
 using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
@@ -125,7 +124,7 @@ public static class MemoryTools
 	public static async Task<object> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store,
-		[Description("JSON array of entry objects")] JsonElement entries,
+		[Description("Array of entry objects: { key, type, description, body, tags?, metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every entry (bodiless).")] long sinceVersion = 0,
 		[Description("Slice length (chars) of each echoed entry body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
@@ -344,39 +343,36 @@ public static class MemoryTools
 			Metadata: e.Metadata)).ToList();
 	}
 
-	// Parse the entry array into typed inputs. Taxonomy/tag normalization happens in the
-	// service. MCP clients sometimes pass the array as a JSON *string*, so accept both.
-	static (List<MemoryEntryInput> Upserts, List<MemoryDelete> Deletes) ParseEntries(JsonElement entries)
+	// Map the typed entry inputs into service inputs + soft-deletes. Taxonomy/tag normalization
+	// happens in the service. `deleted:true` carries a soft-delete (only key + optional version);
+	// otherwise key and type are required (as the old JsonElement parser enforced).
+	static (List<MemoryEntryInput> Upserts, List<MemoryDelete> Deletes) ParseEntries(MemoryEntryInputDto[] entries)
 	{
-		using var doc = entries.ValueKind == JsonValueKind.String
-			? JsonDocument.Parse(entries.GetString() ?? "")
-			: (JsonDocument?)null;
-		var arr = doc?.RootElement ?? entries;
-		if (arr.ValueKind != JsonValueKind.Array)
-			throw new ArgumentException($"entries must be a JSON array (got {arr.ValueKind})");
 		var upserts = new List<MemoryEntryInput>();
 		var deletes = new List<MemoryDelete>();
-		foreach (var e in arr.EnumerateArray())
+		foreach (var e in entries)
 		{
 			// `deleted:true` soft-deletes the entry (only key + optional version needed).
-			if (e.ValueKind == JsonValueKind.Object
-				&& e.TryGetProperty("deleted", out var del) && del.ValueKind == JsonValueKind.True)
+			if (e.Deleted)
 			{
-				deletes.Add(new MemoryDelete(ModuleMcp.ReqStr(e, "key"), ModuleMcp.OptLong(e, "version", 0)));
+				deletes.Add(new MemoryDelete(Req(e.Key, "key"), e.Version));
 				continue;
 			}
 			upserts.Add(new MemoryEntryInput
 			{
-				Key = ModuleMcp.ReqStr(e, "key"),
-				Version = ModuleMcp.OptLong(e, "version", 0),
-				Type = ModuleMcp.ReqStr(e, "type"),
-				Description = ModuleMcp.OptStr(e, "description"),
-				Body = ModuleMcp.OptStr(e, "body"),
-				Tags = ModuleMcp.OptStr(e, "tags"),
-				Metadata = ModuleMcp.OptStr(e, "metadata"),
-				PrevKey = ModuleMcp.OptStr(e, "prevKey"),
+				Key = Req(e.Key, "key"),
+				Version = e.Version,
+				Type = Req(e.Type, "type"),
+				Description = e.Description,
+				Body = e.Body,
+				Tags = e.Tags,
+				Metadata = e.Metadata,
+				PrevKey = e.PrevKey,
 			});
 		}
 		return (upserts, deletes);
+
+		static string Req(string? v, string name) =>
+			!string.IsNullOrWhiteSpace(v) ? v! : throw new ArgumentException($"{name} is required");
 	}
 }

@@ -11,7 +11,8 @@ namespace PetBox.Web.Mcp;
 
 // Single MCP tool: KQL query against a project's named log. A thin adapter over
 // ILogQueryService (the shared execution path, also used by the REST log endpoint);
-// it must not open the log context directly (a NetArchTest enforces this). List of
+// it must not open the log context directly (a NetArchTest enforces this — the named-log
+// catalog lifecycle lives in LogCatalogTools, which owns the ILogStore dependency). List of
 // services is derivable via `events | summarize count() by ServiceKey`; ingest is for
 // pets via /api/ingest/clef, not agents.
 [McpServerToolType]

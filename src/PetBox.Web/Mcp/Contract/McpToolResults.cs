@@ -33,9 +33,43 @@ public sealed record ConfigBindingsListResult(IReadOnlyList<ConfigBindingRow> Bi
 
 public sealed record ConfigBindingDeletedResult(bool Deleted, long Id);
 
+// ---- project.* (provisioning; replaces entity.* type "project") ----------------------
+
+public sealed record ProjectCreatedResult(string Key, string WorkspaceKey, string? Name, string? Description);
+
+public sealed record ProjectRow(string Key, string WorkspaceKey, string Name, string Description);
+
+public sealed record ProjectListResult(IReadOnlyList<ProjectRow> Projects);
+
+// ---- apikey.* (provisioning; replaces entity.* type "apikey") -------------------------
+
+// apikey.create returns the raw key ONCE (it is never retrievable again) + its granted scopes.
+public sealed record ApiKeyCreatedResult(string Key, string ProjectKey, IReadOnlyList<string> Scopes, DateTime? ExpiresAt);
+
+public sealed record ApiKeyRow(string Key, string Name, string Scopes, DateTime CreatedAt, DateTime? ExpiresAt);
+
+public sealed record ApiKeyListResult(IReadOnlyList<ApiKeyRow> Keys);
+
+public sealed record ApiKeyDeletedResult(bool Deleted, string Key);
+
 // ---- data.* --------------------------------------------------------------------------
 
 public sealed record DataSchemaApplyResult(string Kind, string Hash, string? ExistingHash, string? Error);
+
+// db lifecycle (replaces entity.* type "db"): create/list/delete/describe.
+public sealed record DataDbCreatedResult(string Name, string? Description, long MaxPageCount, DateTime CreatedAt);
+
+public sealed record DataDbRow(string Name, string? Description, long MaxPageCount, DateTime CreatedAt, DateTime UpdatedAt);
+
+public sealed record DataDbListResult(IReadOnlyList<DataDbRow> Dbs);
+
+public sealed record DataDbDeletedResult(bool Deleted, string Name);
+
+public sealed record DataColumnView(string Name, string Type, bool NotNull, bool Pk);
+
+public sealed record DataTableView(string Name, IReadOnlyList<DataColumnView> Columns);
+
+public sealed record DataDbDescribeResult(IReadOnlyList<DataTableView> Tables);
 
 // data.query is intrinsically dynamic: rows are an open list of column->value maps.
 public sealed record DataQueryResult(IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows);
@@ -45,6 +79,16 @@ public sealed record DataExecResult(int Affected);
 // ---- llm.* ---------------------------------------------------------------------------
 
 public sealed record LlmConfigSetResult(bool Ok, int Endpoints, int Routes);
+
+// ---- log.* lifecycle (replaces entity.* type "log") ----------------------------------
+
+public sealed record LogCreatedResult(string Name, string? Description, DateTime CreatedAt);
+
+public sealed record LogRow(string Name, string? Description, DateTime CreatedAt, DateTime UpdatedAt);
+
+public sealed record LogListResult(IReadOnlyList<LogRow> Logs);
+
+public sealed record LogDeletedResult(bool Deleted, string Name);
 
 // ---- log.query -----------------------------------------------------------------------
 

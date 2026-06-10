@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Text.Json;
 using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
@@ -271,7 +270,7 @@ public static class TasksTools
 	public static async Task<object> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("JSON array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef`, `blockedBy`, status/type/title/body/priority/version.")] JsonElement nodes,
+		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef`, `ideaRef`, `blockedBy`, `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
 		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every node (bodiless).")] long sinceVersion = 0,
 		[Description("Slice length (chars) of each echoed node body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
@@ -366,90 +365,54 @@ public static class TasksTools
 		Version: n.Version,
 		Url: urlPrefix is null ? null : urlPrefix + n.Board + "/" + n.Key);
 
-	// Parse the node array into typed patches. Read-merge (inheriting omitted fields from
-	// the prior row) happens in the service; here a field absent from the JSON maps to
-	// null (inherit) and a present field to its value ("" = explicit clear). MCP clients
-	// sometimes pass the array as a JSON *string*, so accept both forms.
-	static List<NodePatch> ParseNodePatches(JsonElement nodes)
+	// Map the typed node inputs into service NodePatches. Read-merge (inheriting omitted fields
+	// from the prior row) happens in the service; here an omitted field deserializes to null
+	// (inherit) and a present field to its value ("" = explicit clear) — the null-vs-"" distinction
+	// is carried by the JSON value itself, so the old Has()-presence checks are no longer needed.
+	static List<NodePatch> ParseNodePatches(PlanNodeInput[] nodes)
 	{
-		using var doc = nodes.ValueKind == JsonValueKind.String
-			? JsonDocument.Parse(nodes.GetString() ?? "")
-			: (JsonDocument?)null;
-		var arr = doc?.RootElement ?? nodes;
-		if (arr.ValueKind != JsonValueKind.Array)
-			throw new ArgumentException($"nodes must be a JSON array (got {arr.ValueKind})");
-		var list = new List<NodePatch>();
-		foreach (var e in arr.EnumerateArray())
+		var list = new List<NodePatch>(nodes.Length);
+		foreach (var n in nodes)
 		{
 			list.Add(new NodePatch
 			{
-				Key = ResolveKey(e),
-				PrevKey = ResolvePrevKey(e),
-				Version = ModuleMcp.OptLong(e, "version", 0),
-				Status = Has(e, "status") ? ModuleMcp.OptStr(e, "status") ?? string.Empty : null,
-				Type = Has(e, "type") ? ModuleMcp.OptStr(e, "type") ?? string.Empty : null,
-				Title = Has(e, "title") ? ModuleMcp.OptStr(e, "title") ?? string.Empty : null,
-				Body = Has(e, "body") ? ModuleMcp.OptStr(e, "body") ?? string.Empty : null,
-				CommitRefSet = Has(e, "commitRef"),
-				CommitRef = Has(e, "commitRef") ? ModuleMcp.OptStr(e, "commitRef") : null,
-				Priority = Has(e, "priority") ? ModuleMcp.OptLong(e, "priority", 0) : null,
-				SpecRef = ModuleMcp.OptStr(e, "specRef"),
-				IdeaRef = ModuleMcp.OptStr(e, "ideaRef"),
-				BlockedBy = ModuleMcp.OptStr(e, "blockedBy"),
-				PartOf = Has(e, "partOf") ? ModuleMcp.OptStr(e, "partOf") ?? string.Empty : null,
-				Supersedes = ModuleMcp.OptStr(e, "supersedes"),
-				Tags = ParseTags(e),
+				Key = ResolveKey(n),
+				PrevKey = ResolvePrevKey(n),
+				Version = n.Version,
+				Status = n.Status,
+				Type = n.Type,
+				Title = n.Title,
+				Body = n.Body,
+				// CommitRef: null = omit (don't touch), any non-null (incl. "") = explicit set/clear.
+				// Carries the old CommitRefSet presence bit via null-ness of the typed field.
+				CommitRefSet = n.CommitRef is not null,
+				CommitRef = n.CommitRef,
+				Priority = n.Priority,
+				SpecRef = n.SpecRef,
+				IdeaRef = n.IdeaRef,
+				BlockedBy = n.BlockedBy,
+				PartOf = n.PartOf,
+				Supersedes = n.Supersedes,
+				// Enforced tags: null = omit (inherit); a non-null list (incl. empty) REPLACES the set.
+				Tags = n.Tags,
 			});
 		}
 		return list;
-
-		static bool Has(JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out _);
-	}
-
-	// Enforced tags. Absent → null (omit, inherit). Present → the full replacement set:
-	// a JSON array of strings, a double-encoded JSON-string array (some MCP clients), or a
-	// CSV string. JSON null or [] → empty set (clears the node's tags).
-	static IReadOnlyList<string>? ParseTags(JsonElement e)
-	{
-		if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty("tags", out var t)) return null;
-		switch (t.ValueKind)
-		{
-			case JsonValueKind.Null:
-				return [];
-			case JsonValueKind.Array:
-				return t.EnumerateArray()
-					.Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() ?? "" : x.GetRawText())
-					.Where(s => s.Length > 0).ToList();
-			case JsonValueKind.String:
-				var s = t.GetString() ?? "";
-				if (s.TrimStart().StartsWith('['))
-				{
-					try
-					{
-						using var d = JsonDocument.Parse(s);
-						return d.RootElement.EnumerateArray().Select(x => x.GetString() ?? "").Where(v => v.Length > 0).ToList();
-					}
-					catch { /* not JSON — fall through to CSV */ }
-				}
-				return s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-			default:
-				return null;
-		}
 	}
 
 	// A node's address is a flat board-unique slug in `key` (`l1` accepted as an alias).
 	// Nesting is the `partOf` parent, not the key. Validated/normalized via TaskSlug.
-	static string ResolveKey(JsonElement e)
+	static string ResolveKey(PlanNodeInput n)
 	{
-		var key = ModuleMcp.OptStr(e, "key") ?? ModuleMcp.OptStr(e, "l1");
-		if (key is not null)
+		var key = !string.IsNullOrEmpty(n.Key) ? n.Key : n.L1;
+		if (!string.IsNullOrEmpty(key))
 			return TaskSlug.Validate(key);
 		throw new ArgumentException("each node needs a 'key' (a flat slug)");
 	}
 
-	static string? ResolvePrevKey(JsonElement e)
+	static string? ResolvePrevKey(PlanNodeInput n)
 	{
-		var prevKey = ModuleMcp.OptStr(e, "prevKey") ?? ModuleMcp.OptStr(e, "prevL1");
-		return prevKey is not null ? TaskSlug.Validate(prevKey) : null;
+		var prevKey = !string.IsNullOrEmpty(n.PrevKey) ? n.PrevKey : n.PrevL1;
+		return !string.IsNullOrEmpty(prevKey) ? TaskSlug.Validate(prevKey) : null;
 	}
 }

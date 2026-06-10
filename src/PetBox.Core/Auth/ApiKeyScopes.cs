@@ -41,12 +41,12 @@ public static class ApiKeyScopes
 		new(DataWrite,   "Write DataDb rows",      "INSERT/UPDATE/DELETE via /api/data/{p}/{db}/exec.",                          "Data"),
 		new(DataSchema,  "Schema apply / lifecycle","CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs.",          "Data"),
 		new(TasksRead,   "Read tasks",             "List/read task boards and plan nodes (and sessions) via the MCP tasks.*/session.* tools.", "Tasks"),
-		new(TasksWrite,  "Write tasks",            "Create boards and upsert plan nodes / append sessions via the MCP tasks.*/session.* tools and entity.create taskboard.", "Tasks"),
+		new(TasksWrite,  "Write tasks",            "Create boards and upsert plan nodes / append sessions via the MCP tasks.*/session.* tools.", "Tasks"),
 		new(MemoryRead,  "Read memory",            "List/read memory stores and entries via the MCP memory.* tools.", "Memory"),
-		new(MemoryWrite, "Write memory",           "Create stores and upsert entries via the MCP memory.* tools and entity.create memorystore.", "Memory"),
+		new(MemoryWrite, "Write memory",           "Create stores and upsert entries via the MCP memory.* tools.", "Memory"),
 		new(LlmInvoke,   "Invoke LLM router",      "Call embed/rerank/chat through the router via the MCP llm.embed/rerank/chat tools.", "LlmRouter"),
 		new(LlmAdmin,    "Manage LLM router",      "Read/write the router registry (endpoints, routes, api keys, cert pin) via the MCP llm.config_* tools.", "LlmRouter"),
-		new(AdminProvision, "Provision projects & keys", "Agent onboarding: create projects, mint API keys, set config bindings via the entity.* MCP tools. Issue only on short-lived agent keys.", "Admin"),
+		new(AdminProvision, "Provision projects & keys", "Agent onboarding: create projects (project.*), mint API keys (apikey.*), set config bindings (config.*) via the MCP tools. Issue only on short-lived agent keys.", "Admin"),
 	];
 
 	static readonly HashSet<string> Allowed =

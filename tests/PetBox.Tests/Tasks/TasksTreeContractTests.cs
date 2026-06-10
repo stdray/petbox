@@ -51,13 +51,13 @@ public sealed class TasksTreeContractTests : IDisposable
 	{
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "ideas", "ideas");
 		var idea = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
-			JsonSerializer.SerializeToElement(new[] { new { key = "drv", type = "idea", status = "exploring", body = "x" } })));
+			McpInputs.Nodes(new[] { new { key = "drv", type = "idea", status = "exploring", body = "x" } })));
 		var ideaId = idea.GetProperty("added")[0].GetProperty("nodeId").GetString()!;
 		await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", ideaId, "t", "plan", parentId: null, tags: new[] { "artifact:spec_plan" });
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
-			JsonSerializer.SerializeToElement(new[] { new { key = "drv", type = "idea", status = "review", version = 1 } }));
+			McpInputs.Nodes(new[] { new { key = "drv", type = "idea", status = "review", version = 1 } }));
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
-			JsonSerializer.SerializeToElement(new[] { new { key = "drv", type = "idea", status = "accepted", version = 2 } }));
+			McpInputs.Nodes(new[] { new { key = "drv", type = "idea", status = "accepted", version = 2 } }));
 		return ideaId;
 	}
 
@@ -75,7 +75,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "roadmap", null);
 
-		var nodes = JsonSerializer.SerializeToElement(new object[]
+		var nodes = McpInputs.Nodes(new object[]
 		{
 			new { key = "logging", status = "InProgress", title = "Logging", body = "winston -> PetBox", priority = 0 },
 			new { key = "ingest", partOf = "logging", status = "Pending", title = "Ingest", body = "ship CLEF", priority = 1 },
@@ -105,7 +105,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "roadmap", null);
 		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
-			JsonSerializer.SerializeToElement(new object[]
+			McpInputs.Nodes(new object[]
 			{
 				new { key = "a", status = "InProgress", title = "A", body = "x" },
 				new { key = "b", partOf = "a", status = "InProgress", title = "B", body = "x" },
@@ -117,7 +117,7 @@ public sealed class TasksTreeContractTests : IDisposable
 
 		// Reparent b under c (single active parent — the a->b edge is closed).
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
-			JsonSerializer.SerializeToElement(new object[] { new { key = "b", partOf = "c", version = ver } }));
+			McpInputs.Nodes(new object[] { new { key = "b", partOf = "c", version = ver } }));
 		FieldOf(Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap")), "b", "parentSlug").Should().Be("c");
 
 		// Cycle: a part_of b, but b is already a descendant of c which... make a a child of b
@@ -125,7 +125,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		// make the direct 2-cycle: set a part_of b is fine (a root). Instead force a cycle:
 		// b under c; now set c part_of b → c->b->c? b's parent is c, so c part_of b loops.
 		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
-			JsonSerializer.SerializeToElement(new object[] { new { key = "c", partOf = "b", version = ver } })));
+			McpInputs.Nodes(new object[] { new { key = "c", partOf = "b", version = ver } })));
 		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
 		res.GetProperty("error").GetProperty("message").GetString().Should().Contain("cycle");
 	}
@@ -142,7 +142,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "g", null);
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g",
-			JsonSerializer.SerializeToElement(new object[]
+			McpInputs.Nodes(new object[]
 			{
 				new { key = "a", status = "Pending", title = "A", body = "x", tags = new[] { "area:ui", "concern:security" } },
 				new { key = "b", status = "Pending", title = "B", body = "x", tags = new[] { "area:ui" } },
@@ -169,7 +169,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "g", null);
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g",
-			JsonSerializer.SerializeToElement(new object[]
+			McpInputs.Nodes(new object[]
 			{
 				// a is in TWO areas → multimembership: it appears under both area:ui and area:llm.
 				new { key = "a", status = "Pending", title = "A", body = "x", tags = new[] { "area:ui", "area:llm", "concern:security" } },
@@ -208,7 +208,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		var ir = await AcceptedIdeaId(http);
 		// new supersedes old (both in one batch): old is moved to the spec terminal-cancel.
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "spec",
-			JsonSerializer.SerializeToElement(new object[]
+			McpInputs.Nodes(new object[]
 			{
 				new { key = "old", status = "defined", title = "Old req", body = "x", ideaRef = ir },
 				new { key = "new", status = "defined", title = "New req", body = "x", supersedes = "old", ideaRef = ir },
@@ -238,7 +238,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "roadmap", null);
 
-		var nodes = JsonSerializer.SerializeToElement(new object[]
+		var nodes = McpInputs.Nodes(new object[]
 		{
 			new { l1 = "Bad Phase", status = "Pending", body = "x" },
 		});
@@ -255,7 +255,7 @@ public sealed class TasksTreeContractTests : IDisposable
 
 		// No BoardCreate first — a cold upsert must auto-create the board (F2), so
 		// following the agent guide literally no longer throws.
-		var nodes = JsonSerializer.SerializeToElement(new object[]
+		var nodes = McpInputs.Nodes(new object[]
 		{
 			new { l1 = "alpha", status = "Pending", title = "Alpha", body = "do alpha", priority = 0 },
 		});
@@ -270,14 +270,15 @@ public sealed class TasksTreeContractTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Upsert_AcceptsNodesAsJsonString()
+	public async Task Upsert_AcceptsL1KeyAlias()
 	{
 		var http = Http("tasks:read,tasks:write");
-		// Real MCP clients pass the untyped `nodes` param as a JSON *string*, not an
-		// array element — the upsert must accept that (regression for D6).
-		var arrayJson = """[{"l1":"alpha","title":"Alpha","status":"Pending","body":"b","priority":0}]""";
-		var nodesAsString = JsonSerializer.SerializeToElement(arrayJson); // ValueKind == String
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "strboard", nodesAsString));
+		// typed-surface Phase 4: `nodes` is now a typed PlanNodeInput[] (the SDK emits a rich
+		// input schema), so the old JSON-*string* fallback for stale-schema clients is gone —
+		// a reconnect refreshes the cached schema (see McpToolInputs deviation note). The `l1`
+		// back-compat alias for the flat `key` still binds through the typed record.
+		var nodes = McpInputs.NodesJson("""[{"l1":"alpha","title":"Alpha","status":"Pending","body":"b","priority":0}]""");
+		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "strboard", nodes));
 		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
 			.Which.GetProperty("title").GetString().Should().Be("Alpha");
 	}
@@ -288,17 +289,17 @@ public sealed class TasksTreeContractTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b", null);
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			JsonSerializer.SerializeToElement(new[] { new { key = "n", type = "alpha", status = "todo", body = "x" } }), 0);
+			McpInputs.Nodes(new[] { new { key = "n", type = "alpha", status = "todo", body = "x" } }), 0);
 
 		// Editing the node to a different type must fail — type is immutable once set.
 		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			JsonSerializer.SerializeToElement(new[] { new { key = "n", type = "beta", version = 1, body = "x" } })));
+			McpInputs.Nodes(new[] { new { key = "n", type = "beta", version = 1, body = "x" } })));
 		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
 		res.GetProperty("error").GetProperty("message").GetString().Should().Contain("immutable");
 
 		// Editing other fields while keeping the type (or omitting it) still works.
 		var ok = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			JsonSerializer.SerializeToElement(new[] { new { key = "n", version = 1, body = "edited" } })));
+			McpInputs.Nodes(new[] { new { key = "n", version = 1, body = "edited" } })));
 		ok.GetProperty("applied").GetBoolean().Should().BeTrue();
 	}
 
