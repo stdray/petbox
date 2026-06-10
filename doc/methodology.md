@@ -103,6 +103,29 @@ it goes the long way (idea → spec) so the requirement *exists* before the fix 
 the common case where a spec node usually already exists (the behaviour was specified, it's
 just broken); a wish/new-capability usually doesn't, and becomes an idea.
 
+## Process order — the fix never precedes the requirement
+
+The chain above is **temporal, not just structural**. Implementation of new behaviour does
+not start until the chain exists: accepted idea → spec node → work task (`InProgress`). The
+work task is created **before** the code; `commitRef` lands when it reaches `Review`.
+
+Creating the chain retroactively — ship first, then backfill idea/spec/work — is a
+**violation even though the result looks identical**: the board's integrity checks are
+structural (edges), so back-dated edges are indistinguishable from honest ones, and nothing
+couples git/CI/deploy to board state. Holding the order is therefore on the agent and the
+maintainer, not on the engine. Two incidents (2026-06: entity-delete, and the pattern it
+exposed across earlier milestones) are why this section exists.
+
+Corollary for plan-mode (or any externally-approved plan): a plan's approval is NOT the
+idea-accept. If a plan introduces new behaviour, the idea's `review → accepted` gate is a
+**blocking step before implementation**, sequenced in the plan itself — not parallel
+bookkeeping.
+
+*(Altitude note: this section is an invariant of THIS project's methodology instance — the
+hardcoded preset we dogfood. It lives here, in the instance's canon, deliberately NOT in the
+PetBox product spec: the spec only promises that a project's methodology is the source of
+its process truth and births the agent artifacts — see `user-methodology` in the spec tree.)*
+
 ## Iterations
 
 An iteration = a **filtered backlog** (pull a batch by: no blockers, priority,
