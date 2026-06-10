@@ -20,6 +20,7 @@ public static class Routes
 	public static string SysWorkspace(string key) => $"{AdminPrefix}/sys/workspaces/{key}";
 	public static string SysUsers() => $"{AdminPrefix}/sys/users";
 	public static string SysAgentKeys() => $"{AdminPrefix}/sys/agent-keys";
+	public static string SysDeploy() => $"{AdminPrefix}/sys/deploy";
 	public static string SysDefaults() => $"{AdminPrefix}/sys/defaults";
 
 	// Workspace level

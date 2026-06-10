@@ -1,0 +1,264 @@
+using System.Security.Cryptography;
+using System.Text;
+using LinqToDB;
+using PetBox.Deploy.Contract;
+using PetBox.Deploy.Data;
+
+namespace PetBox.Deploy.Services;
+
+// The fleet-wide deploy service. Owns the node registry and per-(service,node) desired
+// state in the single DeployDb. Computes ConfigHash and the online/actual-state views.
+public sealed class DeployService : IDeployService
+{
+	// A node is "online" if its last heartbeat is within this window. The agent poll
+	// interval is well under this; failover (slice 4) uses a larger staleness threshold.
+	private static readonly TimeSpan OnlineWindow = TimeSpan.FromSeconds(120);
+
+	private readonly DeployDb _db;
+
+	public DeployService(DeployDb db) => _db = db;
+
+	// --- nodes ---
+
+	public async Task<NodeView> UpsertNodeAsync(NodeInput input, CancellationToken ct = default)
+	{
+		var id = NormalizeId(input.Id);
+		var existing = await _db.Nodes.FirstOrDefaultAsync(n => n.Id == id, ct);
+		var node = new Node
+		{
+			Id = id,
+			DisplayName = string.IsNullOrWhiteSpace(input.DisplayName) ? id : input.DisplayName.Trim(),
+			Tags = NormalizeCsv(input.Tags),
+			Ephemeral = input.Ephemeral,
+			KeyRef = string.IsNullOrWhiteSpace(input.KeyRef) ? existing?.KeyRef : input.KeyRef!.Trim(),
+			LastSeenAt = existing?.LastSeenAt,
+			CreatedAt = existing?.CreatedAt ?? DateTime.UtcNow,
+		};
+		await _db.InsertOrReplaceAsync(node, token: ct);
+		var count = await _db.Deployments.CountAsync(d => d.NodeId == id, ct);
+		return ToView(node, count);
+	}
+
+	public async Task<IReadOnlyList<NodeView>> ListNodesAsync(CancellationToken ct = default)
+	{
+		var nodes = await _db.Nodes.OrderBy(n => n.Id).ToListAsync(ct);
+		var counts = (await _db.Deployments.ToListAsync(ct))
+			.GroupBy(d => d.NodeId)
+			.ToDictionary(g => g.Key, g => g.Count());
+		return nodes.Select(n => ToView(n, counts.GetValueOrDefault(n.Id))).ToList();
+	}
+
+	public async Task<NodeView?> GetNodeAsync(string id, CancellationToken ct = default)
+	{
+		id = NormalizeId(id);
+		var node = await _db.Nodes.FirstOrDefaultAsync(n => n.Id == id, ct);
+		if (node is null) return null;
+		var count = await _db.Deployments.CountAsync(d => d.NodeId == id, ct);
+		return ToView(node, count);
+	}
+
+	public async Task<bool> DeleteNodeAsync(string id, CancellationToken ct = default)
+	{
+		id = NormalizeId(id);
+		// Cascade: a node's deployments and their reported status go with it.
+		await _db.Statuses.Where(s => s.NodeId == id).DeleteAsync(ct);
+		await _db.Deployments.Where(d => d.NodeId == id).DeleteAsync(ct);
+		var removed = await _db.Nodes.Where(n => n.Id == id).DeleteAsync(ct);
+		return removed > 0;
+	}
+
+	// --- deployments ---
+
+	public async Task<DeploymentView> UpsertDeploymentAsync(DeploymentInput input, CancellationToken ct = default)
+	{
+		var service = NormalizeId(input.Service);
+		var nodeId = NormalizeId(input.NodeId);
+		var project = (input.Project ?? string.Empty).Trim();   // project keys are case-sensitive
+		if (service.Length == 0 || nodeId.Length == 0 || project.Length == 0)
+			throw new ArgumentException("Service, Project and NodeId are required.");
+
+		// One deployment per (Service, NodeId). Reject a colliding row owned by another Id.
+		var collision = await _db.Deployments
+			.FirstOrDefaultAsync(d => d.Service == service && d.NodeId == nodeId, ct);
+		var id = NormalizeId(input.Id ?? string.Empty);
+		if (id.Length == 0) id = Guid.NewGuid().ToString("n");
+		if (collision is not null && collision.Id != id)
+			throw new InvalidOperationException(
+				$"Service '{service}' already has a deployment on node '{nodeId}' (id {collision.Id}). One copy per node.");
+
+		var imageDigest = input.ImageDigest.Trim();
+		var configTags = NormalizeCsv(input.ConfigTags);
+		var deployment = new Deployment
+		{
+			Id = id,
+			Service = service,
+			Project = project,
+			NodeId = nodeId,
+			ImageDigest = imageDigest,
+			DesiredState = input.DesiredState,
+			Relocatable = input.Relocatable,
+			RequiredTags = NormalizeCsv(input.RequiredTags),
+			ConfigTags = configTags,
+			ConfigHash = ComputeConfigHash(imageDigest, configTags, input.DesiredState, project),
+			UpdatedAt = DateTime.UtcNow,
+		};
+		await _db.InsertOrReplaceAsync(deployment, token: ct);
+		var status = await _db.Statuses.FirstOrDefaultAsync(s => s.NodeId == nodeId && s.Service == service, ct);
+		return ToView(deployment, status);
+	}
+
+	public async Task<IReadOnlyList<DeploymentView>> ListDeploymentsAsync(string? nodeId = null, string? service = null, CancellationToken ct = default)
+	{
+		var q = _db.Deployments.AsQueryable();
+		if (!string.IsNullOrWhiteSpace(nodeId)) { var n = NormalizeId(nodeId); q = q.Where(d => d.NodeId == n); }
+		if (!string.IsNullOrWhiteSpace(service)) { var s = NormalizeId(service); q = q.Where(d => d.Service == s); }
+		var deployments = await q.OrderBy(d => d.Service).ThenBy(d => d.NodeId).ToListAsync(ct);
+		var statuses = (await _db.Statuses.ToListAsync(ct))
+			.ToDictionary(s => (s.NodeId, s.Service));
+		return deployments
+			.Select(d => ToView(d, statuses.GetValueOrDefault((d.NodeId, d.Service))))
+			.ToList();
+	}
+
+	public async Task<DeploymentView?> GetDeploymentAsync(string id, CancellationToken ct = default)
+	{
+		id = NormalizeId(id);
+		var d = await _db.Deployments.FirstOrDefaultAsync(x => x.Id == id, ct);
+		if (d is null) return null;
+		var status = await _db.Statuses.FirstOrDefaultAsync(s => s.NodeId == d.NodeId && s.Service == d.Service, ct);
+		return ToView(d, status);
+	}
+
+	public async Task<bool> DeleteDeploymentAsync(string id, CancellationToken ct = default)
+	{
+		id = NormalizeId(id);
+		var d = await _db.Deployments.FirstOrDefaultAsync(x => x.Id == id, ct);
+		if (d is null) return false;
+		await _db.Statuses.Where(s => s.NodeId == d.NodeId && s.Service == d.Service).DeleteAsync(ct);
+		await _db.Deployments.Where(x => x.Id == id).DeleteAsync(ct);
+		return true;
+	}
+
+	// --- agent contract (pull) ---
+
+	public async Task<PollResponse> PollAsync(string nodeId, CancellationToken ct = default)
+	{
+		nodeId = NormalizeId(nodeId);
+		await TouchNodeAsync(nodeId, ct);
+		var deployments = await _db.Deployments.Where(d => d.NodeId == nodeId).OrderBy(d => d.Service).ToListAsync(ct);
+		var items = deployments
+			.Select(d => new PollItem(d.Service, d.Project, d.ImageDigest, d.DesiredState, d.ConfigTags, d.ConfigHash))
+			.ToList();
+		return new PollResponse(nodeId, items);
+	}
+
+	public async Task ApplyHeartbeatAsync(string nodeId, HeartbeatReport report, CancellationToken ct = default)
+	{
+		nodeId = NormalizeId(nodeId);
+		await TouchNodeAsync(nodeId, ct);
+		var now = DateTime.UtcNow;
+		foreach (var a in report.Actual)
+		{
+			var service = NormalizeId(a.Service);
+			if (service.Length == 0) continue;
+			await _db.InsertOrReplaceAsync(new DeploymentStatus
+			{
+				NodeId = nodeId,
+				Service = service,
+				ActualState = a.State,
+				ContainerId = a.ContainerId,
+				ImageDigest = a.ImageDigest,
+				Healthy = a.Healthy,
+				ReportedAt = now,
+			}, token: ct);
+		}
+	}
+
+	// --- failover ---
+
+	public async Task<IReadOnlyList<RescheduleAction>> RescheduleStaleAsync(TimeSpan staleness, CancellationToken ct = default)
+	{
+		var now = DateTime.UtcNow;
+		var nodes = await _db.Nodes.ToListAsync(ct);
+		var staleNodeIds = nodes.Where(n => n.LastSeenAt is { } s && now - s >= staleness).Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
+		if (staleNodeIds.Count == 0) return [];
+
+		var online = nodes.Where(n => n.LastSeenAt is { } s && now - s < OnlineWindow && !staleNodeIds.Contains(n.Id)).ToList();
+
+		// All current placements, so we preserve one-copy-per-node as we relocate.
+		var occupancy = (await _db.Deployments.ToListAsync(ct))
+			.Select(d => (d.Service, d.NodeId)).ToHashSet();
+
+		var candidates = (await _db.Deployments.Where(d => d.Relocatable).ToListAsync(ct))
+			.Where(d => staleNodeIds.Contains(d.NodeId))
+			.ToList();
+
+		var actions = new List<RescheduleAction>();
+		foreach (var d in candidates)
+		{
+			var required = ParseSet(d.RequiredTags);
+			var target = online.FirstOrDefault(n =>
+				n.Id != d.NodeId
+				&& required.IsSubsetOf(ParseSet(n.Tags))
+				&& !occupancy.Contains((d.Service, n.Id)));
+
+			if (target is null)
+			{
+				actions.Add(new RescheduleAction(d.Id, d.Service, d.NodeId, null, false, "no online node covers required tags"));
+				continue;
+			}
+
+			occupancy.Remove((d.Service, d.NodeId));
+			occupancy.Add((d.Service, target.Id));
+			await _db.Deployments.Where(x => x.Id == d.Id)
+				.Set(x => x.NodeId, target.Id).Set(x => x.UpdatedAt, now).UpdateAsync(ct);
+			actions.Add(new RescheduleAction(d.Id, d.Service, d.NodeId, target.Id, true, "relocated"));
+		}
+		return actions;
+	}
+
+	private static HashSet<string> ParseSet(string csv) =>
+		csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).ToHashSet(StringComparer.Ordinal);
+
+	// LastSeenAt is the liveness signal failover watches; both poll and heartbeat
+	// are outbound agent contacts, so both bump it.
+	private Task<int> TouchNodeAsync(string nodeId, CancellationToken ct) =>
+		_db.Nodes.Where(n => n.Id == nodeId).Set(n => n.LastSeenAt, (DateTime?)DateTime.UtcNow).UpdateAsync(ct);
+
+	// --- helpers ---
+
+	private static NodeView ToView(Node n, int deployments) => new(
+		n.Id, n.DisplayName, n.Tags, n.Ephemeral, n.KeyRef, n.LastSeenAt,
+		Online: n.LastSeenAt is { } seen && DateTime.UtcNow - seen < OnlineWindow,
+		Deployments: deployments,
+		CreatedAt: n.CreatedAt);
+
+	private static DeploymentView ToView(Deployment d, DeploymentStatus? s) => new(
+		d.Id, d.Service, d.Project, d.NodeId, d.ImageDigest, d.DesiredState, d.Relocatable,
+		d.RequiredTags, d.ConfigTags, d.ConfigHash, d.UpdatedAt,
+		ActualState: s?.ActualState, Healthy: s?.Healthy, ReportedAt: s?.ReportedAt);
+
+	public static string ComputeConfigHash(string imageDigest, string configTags, DesiredState desired, string project)
+	{
+		var payload = $"{imageDigest}\0{configTags}\0{(int)desired}\0{project}";
+		var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
+		return Convert.ToHexString(bytes).ToLowerInvariant();
+	}
+
+	// Lowercase-trim slug normalization (ids/services/tags are case-insensitive).
+	private static string NormalizeId(string? s) => (s ?? string.Empty).Trim().ToLowerInvariant();
+
+	// Trim + dedupe a CSV tag vector, preserving order, lowercased.
+	private static string NormalizeCsv(string? csv)
+	{
+		if (string.IsNullOrWhiteSpace(csv)) return string.Empty;
+		var seen = new HashSet<string>();
+		var parts = new List<string>();
+		foreach (var raw in csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+		{
+			var t = raw.ToLowerInvariant();
+			if (seen.Add(t)) parts.Add(t);
+		}
+		return string.Join(",", parts);
+	}
+}

@@ -1,0 +1,23 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+	<PropertyGroup>
+		<IsPackable>false</IsPackable>
+		<!-- FluentMigrator convention uses underscores in migration class names (M001_Deploy). -->
+		<NoWarn>$(NoWarn);CA1707;NU1510</NoWarn>
+	</PropertyGroup>
+
+	<ItemGroup>
+		<ProjectReference Include="..\PetBox.Core\PetBox.Core.csproj" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<PackageReference Include="linq2db" />
+		<PackageReference Include="Microsoft.Data.Sqlite" />
+		<PackageReference Include="FluentMigrator" />
+	</ItemGroup>
+
+	<ItemGroup>
+		<Using Include="LinqToDB.Async" />
+	</ItemGroup>
+
+</Project>

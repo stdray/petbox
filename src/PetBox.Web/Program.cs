@@ -111,6 +111,12 @@ public partial class Program
 				cs => new PetBox.Sessions.Data.SessionsDb(PetBox.Sessions.Data.SessionsDb.CreateOptions(cs)), PetBox.Sessions.Data.SessionsSchema.Ensure));
 		builder.Services.AddScoped<PetBox.Sessions.Data.ISessionStore, PetBox.Sessions.Data.SessionStore>();
 		builder.Services.AddScoped<PetBox.Sessions.Contract.ISessionService, PetBox.Sessions.Services.SessionService>();
+		// Deploy: single FLEET-WIDE mutable db (one node hosts containers from many
+		// projects, so NOT per-project scoped). Schema ensured once at startup in Configure().
+		builder.Services.AddScoped(sp => new PetBox.Deploy.Data.DeployDb(
+			PetBox.Deploy.Data.DeployDb.CreateOptions($"Data Source={Path.Combine(ResolveDataDir(sp), "deploy.db")};Cache=Shared")));
+		builder.Services.AddScoped<PetBox.Deploy.Contract.IDeployService, PetBox.Deploy.Services.DeployService>();
+		builder.Services.AddHostedService<PetBox.Deploy.Services.DeployFailoverSweeper>();
 		// Periodic VACUUM INTO snapshots of every internal db; unconditional (data
 		// safety is cross-cutting, not feature-gated).
 		builder.Services.AddHostedService(sp => new PetBox.Core.Data.BackupService(
@@ -357,6 +363,10 @@ public partial class Program
 
 		MigrationRunner.Run(connectionString);
 
+			// Deploy: single fleet-wide db (data/deploy.db). Ensure its schema once at
+			// startup (the per-project stores ensure lazily via their factories instead).
+			PetBox.Deploy.Data.DeploySchema.Ensure($"Data Source={Path.Combine(dataDir, "deploy.db")};Cache=Shared");
+
 			// One-time, idempotent: fold legacy per-board task files (tasks/<proj>/<board>.db)
 			// into the per-project file (tasks/<proj>.db). Keeps originals (renamed .migrated)
 			// and reconciles row counts; the pre-migration snapshot above is the safety net.
@@ -492,6 +502,10 @@ public partial class Program
 			app.MapSchemaEndpoints();
 			app.MapQueryExecEndpoints();
 		}
+
+		// Deploy control-plane: agent pull contract (/agent/*) + node onboarding
+		// (/api/deploy/nodes). Mapped unconditionally — the agent contract is always-on.
+		PetBox.Web.Deploy.DeployApi.MapDeployEndpoints(app);
 
 		// MCP HTTP endpoint. Tools auto-registered via reflection in builder.Services
 		// (see AddMcpServer above). The endpoint goes through the same ApiKey

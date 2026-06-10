@@ -1,0 +1,214 @@
+@page "/ui/admin/sys/deploy"
+@using PetBox.Deploy.Data
+@model PetBox.Web.Pages.Admin.DeployModel
+@{
+	ViewData["Title"] = "Deploy";
+	Layout = "_AdminLayout";
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="deploy-title">Deploy</h1>
+	<p class="text-sm opacity-60">The fleet's nodes and the desired-state grid. Node-agents poll and reconcile to whatever you set here.</p>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3 text-sm" data-testid="deploy-error">@Model.ErrorMessage</div>
+}
+
+<!-- ── Nodes ─────────────────────────────────────────────── -->
+<div class="card bg-base-200 mb-4">
+	<div class="card-body p-4">
+		<h2 class="text-base font-semibold mb-2">Register node</h2>
+		<form method="post" asp-page-handler="NewNode" class="flex flex-wrap items-end gap-2">
+			<div>
+				<label class="text-xs opacity-60 block" for="n-id">Id</label>
+				<input id="n-id" name="id" class="input input-bordered input-sm font-mono" placeholder="vdsina-1" data-testid="node-id" />
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="n-name">Display name</label>
+				<input id="n-name" name="displayName" class="input input-bordered input-sm" placeholder="VDSina" />
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="n-tags">Tags (csv)</label>
+				<input id="n-tags" name="tags" class="input input-bordered input-sm font-mono" placeholder="net.x,disk=nvme" data-testid="node-tags" />
+			</div>
+			<label class="label cursor-pointer gap-2 p-0 pb-1">
+				<input type="checkbox" name="ephemeral" value="true" class="checkbox checkbox-sm" />
+				<span class="text-xs">Ephemeral</span>
+			</label>
+			<button type="submit" class="btn btn-primary btn-sm" data-testid="node-add">Register</button>
+		</form>
+	</div>
+</div>
+
+<div class="flex items-center gap-3 mb-2">
+	<h2 class="text-lg font-semibold">Nodes</h2>
+	<span class="badge badge-ghost">@Model.Nodes.Count</span>
+</div>
+@if (Model.Nodes.Count == 0)
+{
+	<div class="text-xs opacity-60 italic mb-4" data-testid="deploy-nodes-empty">No nodes.</div>
+}
+else
+{
+	<div class="overflow-x-auto mb-6">
+		<table class="table table-sm" data-testid="deploy-nodes-table">
+			<thead><tr><th>Id</th><th>Name</th><th>Tags</th><th>Status</th><th>Last seen</th><th>Deploys</th><th></th></tr></thead>
+			<tbody>
+				@foreach (var n in Model.Nodes)
+				{
+					<tr data-testid="deploy-node-row">
+						<td class="font-mono text-xs">@n.Id @(n.Ephemeral ? Html.Raw("<span class=\"badge badge-ghost badge-xs\">ephemeral</span>") : null)</td>
+						<td>@n.DisplayName</td>
+						<td class="font-mono text-xs">@n.Tags</td>
+						<td>
+							@if (n.Online)
+							{
+								<span class="badge badge-success badge-sm" data-testid="node-online">online</span>
+							}
+							else
+							{
+								<span class="badge badge-ghost badge-sm" data-testid="node-offline">offline</span>
+							}
+						</td>
+						<td class="text-xs font-mono opacity-70">@(n.LastSeenAt?.ToString("MM-dd HH:mm:ss") ?? "—")</td>
+						<td>@n.Deployments</td>
+						<td>
+							<form method="post" asp-page-handler="DeleteNode" onsubmit="return confirm('Delete node and its deployments?');">
+								<input type="hidden" name="id" value="@n.Id" />
+								<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="node-delete">Delete</button>
+							</form>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
+
+<!-- ── Deployments ───────────────────────────────────────── -->
+<div class="card bg-base-200 mb-4">
+	<div class="card-body p-4">
+		<h2 class="text-base font-semibold mb-2">New deployment</h2>
+		<form method="post" asp-page-handler="NewDeployment" class="flex flex-wrap items-end gap-2">
+			<div>
+				<label class="text-xs opacity-60 block" for="d-service">Service</label>
+				<input id="d-service" name="service" class="input input-bordered input-sm font-mono" placeholder="bot" data-testid="dep-service" />
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-project">Project</label>
+				<input id="d-project" name="project" class="input input-bordered input-sm font-mono" placeholder="yobapub" data-testid="dep-project" />
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-node">Node</label>
+				<select id="d-node" name="nodeId" class="select select-bordered select-sm font-mono" data-testid="dep-node">
+					@foreach (var n in Model.Nodes)
+					{
+						<option value="@n.Id">@n.Id</option>
+					}
+				</select>
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-image">Image</label>
+				<input id="d-image" name="imageDigest" class="input input-bordered input-sm font-mono" placeholder="ghcr.io/...:tag" data-testid="dep-image" />
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-req">Required tags</label>
+				<input id="d-req" name="requiredTags" class="input input-bordered input-sm font-mono w-32" placeholder="net.x" />
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-cfg">Config tags</label>
+				<input id="d-cfg" name="configTags" class="input input-bordered input-sm font-mono w-32" placeholder="env:prod" />
+			</div>
+			<label class="label cursor-pointer gap-2 p-0 pb-1" title="May be auto-relocated to another matching node when this node goes stale.">
+				<input type="checkbox" name="relocatable" value="true" class="checkbox checkbox-sm" />
+				<span class="text-xs">Relocatable</span>
+			</label>
+			<button type="submit" class="btn btn-primary btn-sm" data-testid="dep-add">Create</button>
+		</form>
+	</div>
+</div>
+
+<div class="flex items-center gap-3 mb-2">
+	<h2 class="text-lg font-semibold">Deployments</h2>
+	<span class="badge badge-ghost">@Model.Deployments.Count</span>
+</div>
+@if (Model.Deployments.Count == 0)
+{
+	<div class="text-xs opacity-60 italic" data-testid="deploy-deployments-empty">No deployments.</div>
+}
+else
+{
+	<div class="overflow-x-auto">
+		<table class="table table-sm" data-testid="deploy-deployments-table">
+			<thead><tr><th>Service</th><th>Project</th><th>Node</th><th>Image</th><th>Desired</th><th>Actual</th><th>Reloc</th><th class="w-72">Actions</th></tr></thead>
+			<tbody>
+				@foreach (var d in Model.Deployments)
+				{
+					<tr data-testid="deploy-deployment-row">
+						<td class="font-mono text-xs font-semibold">@d.Service</td>
+						<td class="font-mono text-xs">@d.Project</td>
+						<td class="font-mono text-xs">@d.NodeId</td>
+						<td class="font-mono text-xs break-all">@d.ImageDigest</td>
+						<td>
+							@if (d.DesiredState == DesiredState.Running)
+							{
+								<span class="badge badge-success badge-sm">running</span>
+							}
+							else
+							{
+								<span class="badge badge-ghost badge-sm">stopped</span>
+							}
+						</td>
+						<td class="text-xs">
+							@if (d.ActualState is null)
+							{
+								<span class="opacity-50">—</span>
+							}
+							else
+							{
+								<span class="badge badge-sm @(d.ActualState == ActualState.Running && d.Healthy == true ? "badge-success" : "badge-warning")" data-testid="dep-actual">@d.ActualState</span>
+							}
+						</td>
+						<td>@(d.Relocatable ? "yes" : "")</td>
+						<td>
+							<div class="flex flex-wrap items-center gap-1">
+								@if (d.DesiredState == DesiredState.Running)
+								{
+									<form method="post" asp-page-handler="SetState">
+										<input type="hidden" name="id" value="@d.Id" />
+										<input type="hidden" name="desired" value="@((int)DesiredState.Stopped)" />
+										<button type="submit" class="btn btn-ghost btn-xs" data-testid="dep-stop">Stop</button>
+									</form>
+								}
+								else
+								{
+									<form method="post" asp-page-handler="SetState">
+										<input type="hidden" name="id" value="@d.Id" />
+										<input type="hidden" name="desired" value="@((int)DesiredState.Running)" />
+										<button type="submit" class="btn btn-ghost btn-xs text-success" data-testid="dep-start">Start</button>
+									</form>
+								}
+								<form method="post" asp-page-handler="Move" class="flex items-center gap-1">
+									<input type="hidden" name="id" value="@d.Id" />
+									<select name="toNodeId" class="select select-bordered select-xs font-mono">
+										@foreach (var n in Model.Nodes.Where(n => n.Id != d.NodeId))
+										{
+											<option value="@n.Id">@n.Id</option>
+										}
+									</select>
+									<button type="submit" class="btn btn-ghost btn-xs" data-testid="dep-move">Move</button>
+								</form>
+								<form method="post" asp-page-handler="DeleteDeployment" onsubmit="return confirm('Delete deployment?');">
+									<input type="hidden" name="id" value="@d.Id" />
+									<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="dep-delete">Delete</button>
+								</form>
+							</div>
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}

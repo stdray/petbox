@@ -27,6 +27,10 @@ public static class ApiKeyScopes
 	public const string MemoryWrite = "memory:write";
 	public const string LlmInvoke = "llm:invoke";
 	public const string LlmAdmin = "llm:admin";
+	public const string DeployRead = "deploy:read";
+	public const string DeployWrite = "deploy:write";
+	public const string AgentPoll = "agent:poll";
+	public const string AgentHeartbeat = "agent:heartbeat";
 	public const string AdminProvision = "admin:provision";
 
 	public static readonly IReadOnlyList<ApiKeyScope> All =
@@ -46,6 +50,10 @@ public static class ApiKeyScopes
 		new(MemoryWrite, "Write memory",           "Create stores and upsert entries via the MCP memory.* tools and entity.create memorystore.", "Memory"),
 		new(LlmInvoke,   "Invoke LLM router",      "Call embed/rerank/chat through the router via the MCP llm.embed/rerank/chat tools.", "LlmRouter"),
 		new(LlmAdmin,    "Manage LLM router",      "Read/write the router registry (endpoints, routes, api keys, cert pin) via the MCP llm.config_* tools.", "LlmRouter"),
+		new(DeployRead,  "Read deploy fleet",      "List nodes and deployments via the MCP deploy.* tools and the deploy UI.", "Deploy"),
+		new(DeployWrite, "Manage deploy fleet",    "Register nodes, mint node keys, create/move/start/stop deployments via the MCP deploy.* tools and the deploy UI.", "Deploy"),
+		new(AgentPoll,   "Agent: poll desired state", "GET /agent/poll — a node-agent reads its assigned deployments. Issue only on node-scoped keys.", "Deploy"),
+		new(AgentHeartbeat, "Agent: report state", "POST /agent/heartbeat — a node-agent reports actual container state. Issue only on node-scoped keys.", "Deploy"),
 		new(AdminProvision, "Provision projects & keys", "Agent onboarding: create projects, mint API keys, set config bindings via the entity.* MCP tools. Issue only on short-lived agent keys.", "Admin"),
 	];
 

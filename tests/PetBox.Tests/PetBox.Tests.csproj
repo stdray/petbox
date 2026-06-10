@@ -35,6 +35,7 @@
 		<ProjectReference Include="..\..\src\PetBox.Tasks\PetBox.Tasks.csproj" />
 		<ProjectReference Include="..\..\src\PetBox.Memory\PetBox.Memory.csproj" />
 		<ProjectReference Include="..\..\src\PetBox.Sessions\PetBox.Sessions.csproj" />
+		<ProjectReference Include="..\..\src\PetBox.Deploy\PetBox.Deploy.csproj" />
 	</ItemGroup>
 
 </Project>

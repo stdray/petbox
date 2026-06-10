@@ -1,0 +1,17 @@
+[Unit]
+Description=PetBox deploy node-agent
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/petbox-deploy-agent.env
+ExecStart=/usr/bin/python3 /opt/petbox-deploy-agent/petbox_deploy_agent.py
+Restart=always
+RestartSec=10
+# Hardening: the agent only needs to reach Docker + PetBox.
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

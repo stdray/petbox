@@ -9,6 +9,7 @@
     <Project Path="src/PetBox.Tasks/PetBox.Tasks.csproj" />
     <Project Path="src/PetBox.Memory/PetBox.Memory.csproj" />
     <Project Path="src/PetBox.Sessions/PetBox.Sessions.csproj" />
+    <Project Path="src/PetBox.Deploy/PetBox.Deploy.csproj" />
     <Project Path="src/PetBox.LlmRouter.Contract/PetBox.LlmRouter.Contract.csproj" />
     <Project Path="src/PetBox.LlmRouter/PetBox.LlmRouter.csproj" />
   </Folder>
