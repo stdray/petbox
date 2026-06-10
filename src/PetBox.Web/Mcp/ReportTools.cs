@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Features;
 using PetBox.Tasks.Contract;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
@@ -19,7 +20,7 @@ public static class ReportTools
 	const string IssuesProject = "$system";
 	const string IssuesBoard = "client-issues";
 
-	[McpServerTool(Name = "report.issue", Title = "Report a PetBox bug or issue")]
+	[McpServerTool(Name = "report.issue", Title = "Report a PetBox bug or issue", UseStructuredContent = true, OutputSchemaType = typeof(ReportIssueResult))]
 	[Description("""
 		File a bug / issue / feedback about PetBox ITSELF — use when a tool misbehaves,
 		a response is confusing/opaque, or something is broken. The report goes to the
@@ -40,6 +41,6 @@ public static class ReportTools
 		var body = $"{detail}\n\n— via report.issue, reporting project '{reporter ?? "(unknown)"}', {now:u}";
 
 		var key = await tasks.ReportIssueAsync(IssuesProject, IssuesBoard, title, body, ct);
-		return (object)new { reported = true, project = IssuesProject, board = IssuesBoard, key };
+		return new ReportIssueResult(true, IssuesProject, IssuesBoard, key);
 	});
 }

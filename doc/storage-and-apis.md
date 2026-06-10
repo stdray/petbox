@@ -62,7 +62,7 @@ Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a sto
 Storage: `sessions/{projectKey}.db` — an **append-only raw archive** of agent sessions (not structurally searched; full-text is a future DuckDB idea). Keyed by `sessionId`.
 
 - **REST:** `POST /api/sessions/{projectKey}/{sessionId}?agent=…` — append content. This is what the Claude Code **Stop hook** (`push-session.ps1`) calls every turn: it posts the latest `~/.claude/plans/*.md` (or the truncated last assistant message) into `$system`.
-- **MCP:** `session.append|get|list`.
+- **MCP:** `session.upsert|get|list`.
 - **UI:** `/ui/{ws}/{project}/sessions/{sessionId}` (read-only detail).
 
 ## 6. Tasks — MCP + Razor UI

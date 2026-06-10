@@ -6,7 +6,7 @@ namespace PetBox.Sessions.Data;
 
 // Thin accessor over a project's sessions file. No catalog/metadata and no
 // container create/delete: a session is created by an agent calling the MCP
-// session.append tool. The per-project file is materialized on first access
+// session.upsert tool. The per-project file is materialized on first access
 // (the only justified auto-vivify — there is no name to choose, and the file's
 // lifecycle == the project's). Read-mostly.
 public interface ISessionStore

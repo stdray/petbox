@@ -4,8 +4,10 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Data.Sqlite;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Data.Contract;
 using PetBox.Data.Schema;
 
 namespace PetBox.Data;
@@ -29,8 +31,16 @@ public static class SchemaApi
 	public static void MapSchemaEndpoints(this IEndpointRouteBuilder app)
 	{
 		app.MapPost("/api/data/{projectKey}/{dbName}/schema", ApplyAsync)
+			.Accepts<SchemaApplyRequest>("application/json")
+			.Produces<SchemaApplyResponse>()
+			.Produces<SchemaApplyResponse>(StatusCodes.Status409Conflict)
+			.Produces<SchemaFailedResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
 			.RequireAuthorization("DataSchema");
 		app.MapGet("/api/data/{projectKey}/{dbName}/migrations", ListMigrationsAsync)
+			.Produces<List<MigrationEntry>>()
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
 			.RequireAuthorization("DataRead");
 	}
 
@@ -50,13 +60,13 @@ public static class SchemaApi
 	{
 		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
 		if (req is null || string.IsNullOrWhiteSpace(req.Name))
-			return Results.BadRequest(new { error = "name is required" });
+			return Results.BadRequest(new ErrorResponse("name is required"));
 		if (req.Sql is null)
-			return Results.BadRequest(new { error = "sql is required" });
+			return Results.BadRequest(new ErrorResponse("sql is required"));
 
 		var row = await db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
-		if (row is null) return Results.NotFound(new { error = "DataDb not found" });
+		if (row is null) return Results.NotFound(new ErrorResponse("DataDb not found"));
 
 		var cs = factory.GetConnectionString(projectKey, dbName);
 		var result = runner.Apply(cs, req.Name, req.Sql);
@@ -67,7 +77,7 @@ public static class SchemaApi
 			SchemaApplyKind.Applied => Results.Ok(payload),
 			SchemaApplyKind.AlreadyApplied => Results.Ok(payload),
 			SchemaApplyKind.Conflict => Results.Conflict(payload),
-			SchemaApplyKind.Failed => Results.BadRequest(new { error = result.Error, hash = result.Hash }),
+			SchemaApplyKind.Failed => Results.BadRequest(new SchemaFailedResponse(result.Error, result.Hash)),
 			_ => Results.StatusCode(500),
 		};
 	}
@@ -84,7 +94,7 @@ public static class SchemaApi
 
 		var row = await db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
-		if (row is null) return Results.NotFound(new { error = "DataDb not found" });
+		if (row is null) return Results.NotFound(new ErrorResponse("DataDb not found"));
 
 		var cs = factory.GetConnectionString(projectKey, dbName);
 		await using var conn = new SqliteConnection(cs);

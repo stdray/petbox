@@ -50,9 +50,9 @@ static class McpToolScopeFilter
 		tool.StartsWith("tasks.", StringComparison.Ordinal) || tool.StartsWith("session.", StringComparison.Ordinal) ? "tasks"
 		: tool.StartsWith("memory.", StringComparison.Ordinal) ? "memory"
 		: tool.StartsWith("log.", StringComparison.Ordinal) ? "logs"
-		: tool.StartsWith("data.", StringComparison.Ordinal) ? "data"
+		: tool.StartsWith("data.", StringComparison.Ordinal) || tool.StartsWith("db.", StringComparison.Ordinal) ? "data"
 		: tool.StartsWith("config.", StringComparison.Ordinal) ? ApiKeyScopes.AdminProvision
-		: null; // entity.* / project.* / apikey.* — provisioning-mixed, leave shown for now
+		: null; // project.* / apikey.* — provisioning-mixed (admin:provision shows ALL anyway), leave shown
 
 	static bool Allowed(string tool, HashSet<string> granted)
 	{

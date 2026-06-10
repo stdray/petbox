@@ -4,6 +4,7 @@ using LinqToDB.Async;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 
@@ -37,9 +38,20 @@ public static partial class DataDbsApi
 
 	public static void MapDataDbsEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapPost("/api/data/{projectKey}/dbs", CreateAsync).RequireAuthorization("DataSchema");
-		app.MapGet("/api/data/{projectKey}/dbs", ListAsync).RequireAuthorization("DataRead");
-		app.MapDelete("/api/data/{projectKey}/dbs/{name}", DeleteAsync).RequireAuthorization("DataSchema");
+		app.MapPost("/api/data/{projectKey}/dbs", CreateAsync)
+			.Accepts<CreateDbRequest>("application/json")
+			.Produces<DbInfo>(StatusCodes.Status201Created)
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+			.RequireAuthorization("DataSchema");
+		app.MapGet("/api/data/{projectKey}/dbs", ListAsync)
+			.Produces<List<DbInfo>>()
+			.RequireAuthorization("DataRead");
+		app.MapDelete("/api/data/{projectKey}/dbs/{name}", DeleteAsync)
+			.Produces(StatusCodes.Status204NoContent)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization("DataSchema");
 	}
 
 	public sealed record CreateDbRequest(string Name, string? Description, long? MaxPageCount);
@@ -55,21 +67,21 @@ public static partial class DataDbsApi
 	{
 		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
 		if (req is null || string.IsNullOrWhiteSpace(req.Name))
-			return Results.BadRequest(new { error = "name is required" });
+			return Results.BadRequest(new ErrorResponse("name is required"));
 		if (!DbNameRegex().IsMatch(req.Name))
-			return Results.BadRequest(new { error = "invalid name; must match ^[a-z][a-z0-9_-]{0,99}$" });
+			return Results.BadRequest(new ErrorResponse("invalid name; must match ^[a-z][a-z0-9_-]{0,99}$"));
 		if (ReservedNames.Contains(req.Name))
-			return Results.BadRequest(new { error = $"'{req.Name}' is reserved" });
+			return Results.BadRequest(new ErrorResponse($"'{req.Name}' is reserved"));
 
 		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == projectKey, ct);
-		if (project is null) return Results.NotFound(new { error = "project not found" });
+		if (project is null) return Results.NotFound(new ErrorResponse("project not found"));
 
 		var exists = await db.DataDbs.AnyAsync((DataDb d) => d.ProjectKey == projectKey && d.Name == req.Name, ct);
-		if (exists) return Results.Conflict(new { error = $"DataDb '{req.Name}' already exists" });
+		if (exists) return Results.Conflict(new ErrorResponse($"DataDb '{req.Name}' already exists"));
 
 		var maxPageCount = req.MaxPageCount ?? DataDbFactory.DefaultMaxPageCount;
 		if (maxPageCount < 1024)
-			return Results.BadRequest(new { error = "maxPageCount must be >= 1024 (4 MB at 4KB pages)" });
+			return Results.BadRequest(new ErrorResponse("maxPageCount must be >= 1024 (4 MB at 4KB pages)"));
 
 		await factory.CreateAsync(projectKey, req.Name, maxPageCount, ct);
 
@@ -121,7 +133,7 @@ public static partial class DataDbsApi
 			.DeleteAsync(ct);
 
 		if (deleted == 0)
-			return Results.NotFound(new { error = "DataDb not found" });
+			return Results.NotFound(new ErrorResponse("DataDb not found"));
 
 		// Best-effort file removal. If locked (in-flight query), orphan cleanup
 		// service retries on its next tick — the metadata row is gone so the

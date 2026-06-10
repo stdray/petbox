@@ -7,6 +7,7 @@ using PetBox.Config;
 using PetBox.Config.Data;
 using PetBox.Core.Auth;
 using PetBox.Core.Models;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
@@ -18,7 +19,7 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class ConfigTools
 {
-	[McpServerTool(Name = "config.create_binding", Title = "Create a config binding")]
+	[McpServerTool(Name = "config.create_binding", Title = "Create a config binding", UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingCreatedResult))]
 	[Description("""
 		Creates a config binding in a workspace's config store. Requires admin:provision.
 		  • tags must include 'ws:{workspaceKey}'.
@@ -72,10 +73,10 @@ public static class ConfigTools
 			UpdatedAt = now,
 		}));
 #pragma warning restore CA2016
-		return (object)new { id, path, tags, kind = bindingKind.ToString() };
+		return new ConfigBindingCreatedResult(id, path, tags, bindingKind.ToString());
 	});
 
-	[McpServerTool(Name = "config.list_bindings", Title = "List config bindings", ReadOnly = true)]
+	[McpServerTool(Name = "config.list_bindings", Title = "List config bindings", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsListResult))]
 	[Description("Lists a workspace's active config bindings (id, path, tags, kind). Requires admin:provision. Secret values are never returned.")]
 	public static Task<object> ListBindingsAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
@@ -91,10 +92,10 @@ public static class ConfigTools
 			.OrderBy(b => b.Path)
 			.Select(b => new { b.Id, b.Path, b.Tags, b.Kind })
 			.ToListAsync(ct);
-		return (object)new { bindings = rows.Select(b => new { b.Id, b.Path, b.Tags, Kind = b.Kind.ToString() }) };
+		return new ConfigBindingsListResult(rows.Select(b => new ConfigBindingRow(b.Id, b.Path, b.Tags, b.Kind.ToString())).ToList());
 	});
 
-	[McpServerTool(Name = "config.delete_binding", Title = "Delete a config binding", Destructive = true)]
+	[McpServerTool(Name = "config.delete_binding", Title = "Delete a config binding", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingDeletedResult))]
 	[Description("Soft-deletes a config binding by id (the row is kept, marked deleted). Requires admin:provision.")]
 	public static Task<object> DeleteBindingAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
@@ -113,7 +114,7 @@ public static class ConfigTools
 			.Set(b => b.UpdatedAt, now)
 			.UpdateAsync(ct);
 		if (updated == 0) throw new InvalidOperationException("Binding not found");
-		return (object)new { deleted = true, id };
+		return new ConfigBindingDeletedResult(true, id);
 	});
 
 	static BindingKind ParseKind(string? raw)

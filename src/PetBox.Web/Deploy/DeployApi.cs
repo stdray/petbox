@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Routing;
 using PetBox.Config;
 using PetBox.Config.Data;
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Deploy.Contract;
@@ -23,16 +24,25 @@ public static class DeployApi
 
 	public static void MapDeployEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapGet("/agent/poll", PollAsync).RequireAuthorization("ApiKey");
-		app.MapPost("/agent/heartbeat", HeartbeatAsync).RequireAuthorization("ApiKey");
-		app.MapPost("/api/deploy/nodes", EnrollNodeAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/agent/poll", PollAsync)
+			.Produces<PollResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.RequireAuthorization("ApiKey");
+		app.MapPost("/agent/heartbeat", HeartbeatAsync)
+			.Produces<OkResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.RequireAuthorization("ApiKey");
+		app.MapPost("/api/deploy/nodes", EnrollNodeAsync)
+			.Produces<NodeEnrollResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.RequireAuthorization("ApiKey");
 	}
 
 	static async Task<IResult> PollAsync(HttpContext ctx, IDeployService svc, PetBoxDb db, IConfigDbFactory configFactory, ISecretEncryptor encryptor, CancellationToken ct)
 	{
 		if (!HasScope(ctx, ApiKeyScopes.AgentPoll)) return Results.Forbid();
 		var nodeId = Claim(ctx, "project");
-		if (string.IsNullOrWhiteSpace(nodeId)) return Results.BadRequest(new { error = "node key has no node claim" });
+		if (string.IsNullOrWhiteSpace(nodeId)) return TypedResults.BadRequest(new ErrorResponse("node key has no node claim"));
 
 		var poll = await svc.PollAsync(nodeId, ct);
 		// Resolve each deployment's env server-side (config-resolve over (Project, ConfigTags))
@@ -40,7 +50,7 @@ public static class DeployApi
 		var enriched = poll.Deployments
 			.Select(d => d with { Env = ResolveEnv(db, configFactory, encryptor, d.Project, d.ConfigTags) })
 			.ToList();
-		return Results.Ok(poll with { Deployments = enriched });
+		return TypedResults.Ok(poll with { Deployments = enriched });
 	}
 
 	// Reuses the config-resolve pipeline (same as GET /v1/conf) to produce the container env
@@ -80,9 +90,9 @@ public static class DeployApi
 	{
 		if (!HasScope(ctx, ApiKeyScopes.AgentHeartbeat)) return Results.Forbid();
 		var nodeId = Claim(ctx, "project");
-		if (string.IsNullOrWhiteSpace(nodeId)) return Results.BadRequest(new { error = "node key has no node claim" });
+		if (string.IsNullOrWhiteSpace(nodeId)) return TypedResults.BadRequest(new ErrorResponse("node key has no node claim"));
 		await svc.ApplyHeartbeatAsync(nodeId, req ?? new HeartbeatReport([]), ct);
-		return Results.Ok(new { ok = true });
+		return TypedResults.Ok(new OkResponse(true));
 	}
 
 	public sealed record NodeEnrollRequest(string Id, string? DisplayName, string? Tags, bool Ephemeral, bool MintKey);
@@ -92,7 +102,7 @@ public static class DeployApi
 	{
 		if (!HasScope(ctx, ApiKeyScopes.DeployWrite)) return Results.Forbid();
 		if (req is null || string.IsNullOrWhiteSpace(req.Id))
-			return Results.BadRequest(new { error = "id is required" });
+			return TypedResults.BadRequest(new ErrorResponse("id is required"));
 
 		var keyRef = $"node:{req.Id.Trim().ToLowerInvariant()}";
 		var node = await svc.UpsertNodeAsync(new NodeInput(
@@ -113,7 +123,7 @@ public static class DeployApi
 				CreatedAt = DateTime.UtcNow,
 			}, token: ct);
 		}
-		return Results.Ok(new NodeEnrollResponse(node, key));
+		return TypedResults.Ok(new NodeEnrollResponse(node, key));
 	}
 
 	static string? Claim(HttpContext ctx, string type) =>

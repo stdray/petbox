@@ -7,7 +7,7 @@ namespace PetBox.Tests.Architecture;
 // re-implement the raw-SQL loop (open a SqliteConnection, bind, read) — that
 // execution path lives once, in IDataSqlService, shared with the REST /api/data/*
 // endpoints. So DataTools must not depend on Microsoft.Data.Sqlite directly.
-// (entity.describe still introspects schema over its own connection, and the
+// (db.describe in DataDbTools still introspects schema over its own connection, and the
 // read-only Data browse pages open theirs — converging those is separate work.)
 public sealed class DataBoundaryTests
 {

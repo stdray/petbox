@@ -1,5 +1,4 @@
 using System.ComponentModel;
-using System.Text.Json;
 using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
@@ -7,6 +6,7 @@ using PetBox.Core.Features;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Workflow;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
@@ -18,9 +18,9 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class TasksTools
 {
-	[McpServerTool(Name = "tasks.board_create", Title = "Create a task board")]
+	[McpServerTool(Name = "tasks.board_create", Title = "Create a task board", UseStructuredContent = true)]
 	[Description("Create a named task board in a project. `kind` sets the board role (free|spec|ideas|intake|work; default free) which drives the workflow — see tasks.workflow. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
-	public static async Task<object> BoardCreateAsync(
+	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null, CancellationToken ct = default)
 	{
@@ -28,12 +28,12 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, specBoard, ct);
-		return new { meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.SpecBoard, meta.CreatedAt };
+		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.SpecBoard, meta.CreatedAt);
 	}
 
-	[McpServerTool(Name = "tasks.board_set_spec", Title = "Set a work board's spec board")]
+	[McpServerTool(Name = "tasks.board_set_spec", Title = "Set a work board's spec board", UseStructuredContent = true)]
 	[Description("Set (or clear, when specBoard is omitted) the spec board a work board's tasks link into. The target must be a spec board. Makes the work->spec link explicit. Requires tasks:write.")]
-	public static async Task<object> BoardSetSpecAsync(
+	public static async Task<BoardSetSpecResult> BoardSetSpecAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? specBoard = null, CancellationToken ct = default)
 	{
@@ -41,12 +41,12 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var (set, norm) = await tasks.SetSpecBoardAsync(projectKey, board, specBoard, ct);
-		return new { set, specBoard = norm };
+		return new BoardSetSpecResult(set, norm);
 	}
 
-	[McpServerTool(Name = "tasks.board_list", Title = "List task boards", ReadOnly = true)]
+	[McpServerTool(Name = "tasks.board_list", Title = "List task boards", ReadOnly = true, UseStructuredContent = true)]
 	[Description("List task boards in a project, each with its kind, specBoard (work->spec link, if set) and closed flag. Requires tasks:read.")]
-	public static async Task<object> BoardListAsync(
+	public static async Task<BoardListResult> BoardListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, CancellationToken ct = default)
 	{
@@ -54,46 +54,46 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await tasks.ListBoardsAsync(projectKey, ct);
-		return new { boards = list.Select(b => new { b.Name, b.Kind, b.Description, b.SpecBoard, b.CreatedAt, closed = b.ClosedAt != null }).ToList() };
+		return new BoardListResult(list.Select(b => new BoardRow(b.Name, b.Kind, b.Description, b.SpecBoard, b.CreatedAt, b.ClosedAt != null)).ToList());
 	}
 
-	[McpServerTool(Name = "tasks.board_delete", Title = "Delete a task board", Destructive = true)]
+	[McpServerTool(Name = "tasks.board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true)]
 	[Description("Delete a task board and its nodes. Requires tasks:write.")]
-	public static async Task<object> BoardDeleteAsync(
+	public static async Task<BoardDeletedResult> BoardDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return new { deleted = await tasks.DeleteBoardAsync(projectKey, board, ct) };
+		return new BoardDeletedResult(await tasks.DeleteBoardAsync(projectKey, board, ct));
 	}
 
-	[McpServerTool(Name = "tasks.board_close", Title = "Close (archive) a task board")]
+	[McpServerTool(Name = "tasks.board_close", Title = "Close (archive) a task board", UseStructuredContent = true)]
 	[Description("Close a board: it rejects further writes (so agents stop writing to it by inertia) but stays readable; history is kept. Reopen with tasks.board_reopen. Requires tasks:write.")]
-	public static async Task<object> BoardCloseAsync(
+	public static async Task<BoardClosedResult> BoardCloseAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return new { closed = await tasks.SetClosedAsync(projectKey, board, true, ct) };
+		return new BoardClosedResult(await tasks.SetClosedAsync(projectKey, board, true, ct));
 	}
 
-	[McpServerTool(Name = "tasks.board_reopen", Title = "Reopen a closed task board")]
+	[McpServerTool(Name = "tasks.board_reopen", Title = "Reopen a closed task board", UseStructuredContent = true)]
 	[Description("Reopen a closed board so it accepts writes again. Requires tasks:write.")]
-	public static async Task<object> BoardReopenAsync(
+	public static async Task<BoardReopenedResult> BoardReopenAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return new { reopened = await tasks.SetClosedAsync(projectKey, board, false, ct) };
+		return new BoardReopenedResult(await tasks.SetClosedAsync(projectKey, board, false, ct));
 	}
 
-	[McpServerTool(Name = "tasks.methodology_enable", Title = "Enable the methodology quartet")]
+	[McpServerTool(Name = "tasks.methodology_enable", Title = "Enable the methodology quartet", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
 	[Description("Provision the four singleton methodology boards (intake/ideas/spec/work) if missing and auto-wire work->spec. Idempotent — opt-in; a project's methodology lives on these, ad-hoc work stays on free boards. The four kinds are one-per-project. Requires tasks:write. Returns the quartet surface (intake→ideas→spec→work).")]
 	public static async Task<object> MethodologyEnableAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -102,10 +102,10 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return (object)await tasks.EnableMethodologyAsync(projectKey, ct);
+		return await tasks.EnableMethodologyAsync(projectKey, ct);
 	});
 
-	[McpServerTool(Name = "tasks.methodology_get", Title = "Get the methodology quartet", ReadOnly = true)]
+	[McpServerTool(Name = "tasks.methodology_get", Title = "Get the methodology quartet", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
 	[Description("""
 		Return the project's methodology quartet as ONE compact INDEX in pipeline order:
 		intake → ideas → spec → work. Each board carries a status histogram (`counts`: status
@@ -132,10 +132,10 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return (object)await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, urlPrefix, ct);
+		return await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, urlPrefix, ct);
 	});
 
-	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true)]
+	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(PlanBoardView))]
 	[Description("""
 		Return the active plan nodes of a board, ordered by priority then key. Nodes are FLAT
 		(a single slug `key`); hierarchy is the `part_of` edge, surfaced as parentNodeId,
@@ -177,7 +177,7 @@ public static class TasksTools
 			: view with { Nodes = view.Nodes.Select(n => n with { Body = ModuleMcp.SnippetBody(n.Body, bodyLen) ?? n.Body }).ToList() };
 	});
 
-	[McpServerTool(Name = "tasks.search", Title = "Search plan nodes", ReadOnly = true)]
+	[McpServerTool(Name = "tasks.search", Title = "Search plan nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
 	[Description("""
 		Hybrid search over the project's active, non-terminal plan nodes (name/body/tags):
 		lexical FTS5 (token/prefix, so paraphrases hit) fused with semantic vector similarity
@@ -206,38 +206,34 @@ public static class TasksTools
 		var res = await tasks.SearchAsync(projectKey, query, board, lexical, semantic, urlPrefix, ct);
 		var capped = limit > 0 ? res.Hits.Take(limit) : res.Hits;
 		var nodes = capped.Select(h => SearchHit(h, bodyLen)).ToList();
-		return (object)new
-		{
+		return new TaskSearchResultView(
 			nodes,
-			retrievers = new { lexical = res.Retrievers.Lexical, semantic = res.Retrievers.Semantic, degraded = res.Retrievers.Degraded },
-		};
+			new RetrieverInfo(res.Retrievers.Lexical, res.Retrievers.Semantic, res.Retrievers.Degraded));
 	});
 
 	// Wire shape for one search hit: a compact, board-aware projection of the enriched node
 	// view (board carried since search spans boards), body sliced to bodyLen (full when 0).
-	static object SearchHit(TaskSearchHit h, int bodyLen)
+	static TaskSearchNodeView SearchHit(TaskSearchHit h, int bodyLen)
 	{
 		var n = h.Node;
-		return new
-		{
-			key = n.Key,
-			nodeId = n.NodeId,
-			board = h.Board,
-			parentSlug = n.ParentSlug,
-			depth = n.Depth,
-			status = n.Status,
-			type = n.Type,
-			title = n.Title,
-			body = ModuleMcp.SnippetBody(n.Body, bodyLen),
-			priority = n.Priority,
-			delivery = n.Delivery,
-			spec = n.Spec,
-			blockedBy = n.BlockedBy,
-			linkedTasks = n.LinkedTasks,
-			supersedes = n.Supersedes,
-			tags = n.Tags,
-			url = n.Url,
-		};
+		return new TaskSearchNodeView(
+			Key: n.Key,
+			NodeId: n.NodeId,
+			Board: h.Board,
+			ParentSlug: n.ParentSlug,
+			Depth: n.Depth,
+			Status: n.Status,
+			Type: n.Type,
+			Title: n.Title,
+			Body: ModuleMcp.SnippetBody(n.Body, bodyLen),
+			Priority: n.Priority,
+			Delivery: n.Delivery,
+			Spec: n.Spec,
+			BlockedBy: n.BlockedBy,
+			LinkedTasks: n.LinkedTasks,
+			Supersedes: n.Supersedes,
+			Tags: n.Tags,
+			Url: n.Url);
 	}
 
 	// Split a comma-separated groupBy ("area,concern") into the ordered dimension list the
@@ -245,7 +241,7 @@ public static class TasksTools
 	static string[] ParseGroupBy(string groupBy) =>
 		groupBy.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-	[McpServerTool(Name = "tasks.upsert", Title = "Upsert plan nodes")]
+	[McpServerTool(Name = "tasks.upsert", Title = "Upsert plan nodes", UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("""
 		Declarative temporal upsert of plan nodes. Requires tasks:write.
 
@@ -274,7 +270,7 @@ public static class TasksTools
 	public static async Task<object> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("JSON array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef`, `blockedBy`, status/type/title/body/priority/version.")] JsonElement nodes,
+		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef`, `ideaRef`, `blockedBy`, `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
 		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every node (bodiless).")] long sinceVersion = 0,
 		[Description("Slice length (chars) of each echoed node body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
@@ -288,9 +284,9 @@ public static class TasksTools
 		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, ct), urlPrefix, bodyLen);
 	});
 
-	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true)]
+	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true)]
 	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes); bodies omitted unless bodyLen > 0 (compact by default). Requires tasks:read.")]
-	public static async Task<object> DeltaAsync(
+	public static async Task<UpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, long sinceVersion,
 		[Description("Slice length (chars) of each node body; 0 (default) = no body (compact). \"…\" appended when cut.")] int bodyLen = 0,
@@ -304,7 +300,7 @@ public static class TasksTools
 		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix, bodyLen);
 	}
 
-	[McpServerTool(Name = "tasks.workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true)]
+	[McpServerTool(Name = "tasks.workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(WorkflowView))]
 	[Description("Return the workflow for a board: its kind and the task types it hosts, each with statuses (slug, name, kind=open|terminalok|terminalcancel), the initial status, and transitions (from, to, requiresApproval, requiresReason). Use this to learn the legal statuses before tasks.upsert. Requires tasks:read.")]
 	public static async Task<object> WorkflowAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -314,17 +310,13 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var kind = await tasks.ResolveKindAsync(projectKey, board, ct);
-		return (object)new
-		{
-			kind = kind.ToString().ToLowerInvariant(),
-			types = WorkflowCatalog.Types(kind).Select(w => new
-			{
-				type = w.Type,
-				initial = w.Initial,
-				statuses = w.Statuses.Select(s => new { slug = s.Slug, name = s.Name, kind = s.Kind.ToString().ToLowerInvariant() }).ToList(),
-				transitions = w.Transitions.Select(t => new { from = t.From, to = t.To, requiresApproval = t.RequiresApproval, requiresReason = t.RequiresReason }).ToList(),
-			}).ToList(),
-		};
+		return new WorkflowView(
+			Kind: kind.ToString().ToLowerInvariant(),
+			Types: WorkflowCatalog.Types(kind).Select(w => new WorkflowTypeView(
+				Type: w.Type,
+				Initial: w.Initial,
+				Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
+				Transitions: w.Transitions.Select(t => new WorkflowTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason)).ToList())).ToList());
 	});
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
@@ -373,90 +365,54 @@ public static class TasksTools
 		Version: n.Version,
 		Url: urlPrefix is null ? null : urlPrefix + n.Board + "/" + n.Key);
 
-	// Parse the node array into typed patches. Read-merge (inheriting omitted fields from
-	// the prior row) happens in the service; here a field absent from the JSON maps to
-	// null (inherit) and a present field to its value ("" = explicit clear). MCP clients
-	// sometimes pass the array as a JSON *string*, so accept both forms.
-	static List<NodePatch> ParseNodePatches(JsonElement nodes)
+	// Map the typed node inputs into service NodePatches. Read-merge (inheriting omitted fields
+	// from the prior row) happens in the service; here an omitted field deserializes to null
+	// (inherit) and a present field to its value ("" = explicit clear) — the null-vs-"" distinction
+	// is carried by the JSON value itself, so the old Has()-presence checks are no longer needed.
+	static List<NodePatch> ParseNodePatches(PlanNodeInput[] nodes)
 	{
-		using var doc = nodes.ValueKind == JsonValueKind.String
-			? JsonDocument.Parse(nodes.GetString() ?? "")
-			: (JsonDocument?)null;
-		var arr = doc?.RootElement ?? nodes;
-		if (arr.ValueKind != JsonValueKind.Array)
-			throw new ArgumentException($"nodes must be a JSON array (got {arr.ValueKind})");
-		var list = new List<NodePatch>();
-		foreach (var e in arr.EnumerateArray())
+		var list = new List<NodePatch>(nodes.Length);
+		foreach (var n in nodes)
 		{
 			list.Add(new NodePatch
 			{
-				Key = ResolveKey(e),
-				PrevKey = ResolvePrevKey(e),
-				Version = ModuleMcp.OptLong(e, "version", 0),
-				Status = Has(e, "status") ? ModuleMcp.OptStr(e, "status") ?? string.Empty : null,
-				Type = Has(e, "type") ? ModuleMcp.OptStr(e, "type") ?? string.Empty : null,
-				Title = Has(e, "title") ? ModuleMcp.OptStr(e, "title") ?? string.Empty : null,
-				Body = Has(e, "body") ? ModuleMcp.OptStr(e, "body") ?? string.Empty : null,
-				CommitRefSet = Has(e, "commitRef"),
-				CommitRef = Has(e, "commitRef") ? ModuleMcp.OptStr(e, "commitRef") : null,
-				Priority = Has(e, "priority") ? ModuleMcp.OptLong(e, "priority", 0) : null,
-				SpecRef = ModuleMcp.OptStr(e, "specRef"),
-				IdeaRef = ModuleMcp.OptStr(e, "ideaRef"),
-				BlockedBy = ModuleMcp.OptStr(e, "blockedBy"),
-				PartOf = Has(e, "partOf") ? ModuleMcp.OptStr(e, "partOf") ?? string.Empty : null,
-				Supersedes = ModuleMcp.OptStr(e, "supersedes"),
-				Tags = ParseTags(e),
+				Key = ResolveKey(n),
+				PrevKey = ResolvePrevKey(n),
+				Version = n.Version,
+				Status = n.Status,
+				Type = n.Type,
+				Title = n.Title,
+				Body = n.Body,
+				// CommitRef: null = omit (don't touch), any non-null (incl. "") = explicit set/clear.
+				// Carries the old CommitRefSet presence bit via null-ness of the typed field.
+				CommitRefSet = n.CommitRef is not null,
+				CommitRef = n.CommitRef,
+				Priority = n.Priority,
+				SpecRef = n.SpecRef,
+				IdeaRef = n.IdeaRef,
+				BlockedBy = n.BlockedBy,
+				PartOf = n.PartOf,
+				Supersedes = n.Supersedes,
+				// Enforced tags: null = omit (inherit); a non-null list (incl. empty) REPLACES the set.
+				Tags = n.Tags,
 			});
 		}
 		return list;
-
-		static bool Has(JsonElement e, string name) => e.ValueKind == JsonValueKind.Object && e.TryGetProperty(name, out _);
-	}
-
-	// Enforced tags. Absent → null (omit, inherit). Present → the full replacement set:
-	// a JSON array of strings, a double-encoded JSON-string array (some MCP clients), or a
-	// CSV string. JSON null or [] → empty set (clears the node's tags).
-	static IReadOnlyList<string>? ParseTags(JsonElement e)
-	{
-		if (e.ValueKind != JsonValueKind.Object || !e.TryGetProperty("tags", out var t)) return null;
-		switch (t.ValueKind)
-		{
-			case JsonValueKind.Null:
-				return [];
-			case JsonValueKind.Array:
-				return t.EnumerateArray()
-					.Select(x => x.ValueKind == JsonValueKind.String ? x.GetString() ?? "" : x.GetRawText())
-					.Where(s => s.Length > 0).ToList();
-			case JsonValueKind.String:
-				var s = t.GetString() ?? "";
-				if (s.TrimStart().StartsWith('['))
-				{
-					try
-					{
-						using var d = JsonDocument.Parse(s);
-						return d.RootElement.EnumerateArray().Select(x => x.GetString() ?? "").Where(v => v.Length > 0).ToList();
-					}
-					catch { /* not JSON — fall through to CSV */ }
-				}
-				return s.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-			default:
-				return null;
-		}
 	}
 
 	// A node's address is a flat board-unique slug in `key` (`l1` accepted as an alias).
 	// Nesting is the `partOf` parent, not the key. Validated/normalized via TaskSlug.
-	static string ResolveKey(JsonElement e)
+	static string ResolveKey(PlanNodeInput n)
 	{
-		var key = ModuleMcp.OptStr(e, "key") ?? ModuleMcp.OptStr(e, "l1");
-		if (key is not null)
+		var key = !string.IsNullOrEmpty(n.Key) ? n.Key : n.L1;
+		if (!string.IsNullOrEmpty(key))
 			return TaskSlug.Validate(key);
 		throw new ArgumentException("each node needs a 'key' (a flat slug)");
 	}
 
-	static string? ResolvePrevKey(JsonElement e)
+	static string? ResolvePrevKey(PlanNodeInput n)
 	{
-		var prevKey = ModuleMcp.OptStr(e, "prevKey") ?? ModuleMcp.OptStr(e, "prevL1");
-		return prevKey is not null ? TaskSlug.Validate(prevKey) : null;
+		var prevKey = !string.IsNullOrEmpty(n.PrevKey) ? n.PrevKey : n.PrevL1;
+		return !string.IsNullOrEmpty(prevKey) ? TaskSlug.Validate(prevKey) : null;
 	}
 }

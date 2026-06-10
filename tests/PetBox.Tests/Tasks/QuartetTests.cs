@@ -94,7 +94,7 @@ public sealed class QuartetTests : IDisposable
 		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
 
 		var body = new string('x', 500);
-		var nodes = JsonSerializer.Deserialize<JsonElement>(
+		var nodes = McpInputs.NodesJson(
 			$$"""[{"key":"idea-a","status":"raw","type":"idea","title":"A","body":"{{body}}","tags":["area:tasks"]}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas", nodes);
 
@@ -127,7 +127,7 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
-		var nodes = JsonSerializer.Deserialize<JsonElement>("""[{"key":"idea-u","status":"raw","type":"idea","title":"U"}]""");
+		var nodes = McpInputs.NodesJson("""[{"key":"idea-u","status":"raw","type":"idea","title":"U"}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas", nodes);
 
 		// off by default: url is null.
@@ -147,7 +147,7 @@ public sealed class QuartetTests : IDisposable
 	public async Task Upsert_IncludeUrl_ReturnsPermalinkForCreatedNode()
 	{
 		var http = Http("tasks:read,tasks:write");
-		var nodes = JsonSerializer.Deserialize<JsonElement>("""[{"key":"a","status":"Pending","title":"A"}]""");
+		var nodes = McpInputs.NodesJson("""[{"key":"a","status":"Pending","title":"A"}]""");
 		var added = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "free1", nodes, includeUrl: true))
 			.GetProperty("added").EnumerateArray().Single();
 		added.GetProperty("url").GetString().Should().Be($"https://box.test/ui/ws/{Proj}/tasks/free1/a");
@@ -191,7 +191,7 @@ public sealed class QuartetTests : IDisposable
 		var big = new string('y', 500);
 
 		// Default echo: title present, body sliced to null (no re-dump of what I just sent).
-		var nodesA = JsonSerializer.Deserialize<JsonElement>(
+		var nodesA = McpInputs.NodesJson(
 			$$"""[{"key":"a","status":"Pending","title":"A","body":"{{big}}"}]""");
 		var resA = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesA));
 		var addedA = resA.GetProperty("added").EnumerateArray().Single();
@@ -200,7 +200,7 @@ public sealed class QuartetTests : IDisposable
 
 		// A second node with the DEFAULT stale cursor (sinceVersion = 0) echoes BOTH nodes
 		// (version > 0), but every echoed body is still null — the dump is bodiless.
-		var nodesB = JsonSerializer.Deserialize<JsonElement>(
+		var nodesB = McpInputs.NodesJson(
 			"""[{"key":"b","status":"Pending","title":"B","body":"zzz"}]""");
 		var resB = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesB));
 		var echoed = resB.GetProperty("added").EnumerateArray()
@@ -209,7 +209,7 @@ public sealed class QuartetTests : IDisposable
 		echoed.Should().OnlyContain(n => n.GetProperty("body").ValueKind == JsonValueKind.Null);
 
 		// bodyLen > 0: the opt-in sliced body — first N chars + "…" when cut.
-		var nodesC = JsonSerializer.Deserialize<JsonElement>(
+		var nodesC = McpInputs.NodesJson(
 			$$"""[{"key":"c","status":"Pending","title":"C","body":"{{big}}"}]""");
 		var sliced = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesC, bodyLen: 300))
 			.GetProperty("added").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "c")
@@ -225,7 +225,7 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		var big = new string('z', 500);
-		var nodes = JsonSerializer.Deserialize<JsonElement>(
+		var nodes = McpInputs.NodesJson(
 			$$"""[{"key":"n","status":"Pending","title":"N","body":"{{big}}"}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
 

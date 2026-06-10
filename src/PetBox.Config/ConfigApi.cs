@@ -4,7 +4,9 @@ using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using PetBox.Config.Contract;
 using PetBox.Config.Data;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 
@@ -16,13 +18,24 @@ public static class ConfigApi
 {
 	public static void MapConfigEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapPost("/api/config/{workspaceKey}/bindings", Create).RequireAuthorization("ConfigWrite");
-		app.MapDelete("/api/config/{workspaceKey}/bindings", Delete).RequireAuthorization("ConfigWrite");
+		app.MapPost("/api/config/{workspaceKey}/bindings", Create)
+			.Accepts<ConfigBindingDto>("application/json")
+			.Produces<ConfigBindingCreatedResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.RequireAuthorization("ConfigWrite");
+		app.MapDelete("/api/config/{workspaceKey}/bindings", Delete)
+			.Produces<DeletedResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization("ConfigWrite");
 
 		// Canonical read API (yobaconf-compatible bulk resolve). The published config clients
 		// (@stdray/petbox-client, PetBox.Client.Config) target this shape: GET /v1/conf?<tags>
 		// with optional ?template=, header X-YobaConf-ApiKey, ETag/If-None-Match.
-		app.MapGet("/v1/conf", Conf).RequireAuthorization("ConfigRead");
+		app.MapGet("/v1/conf", Conf)
+			.Produces<Dictionary<string, object>>()
+			.Produces<ConfigProjectNotFoundResponse>(StatusCodes.Status404NotFound)
+			.Produces<ConfigAmbiguousResponse>(StatusCodes.Status409Conflict)
+			.RequireAuthorization("ConfigRead");
 	}
 
 	// Resolves every config path visible to the calling API key's project, shaped by template.
@@ -36,7 +49,7 @@ public static class ConfigApi
 
 		var project = db.Projects.FirstOrDefault(p => p.Key == projectKey);
 		if (project is null)
-			return Results.NotFound(new { error = "project not found", project = projectKey });
+			return Results.NotFound(new ConfigProjectNotFoundResponse("project not found", projectKey));
 
 		var workspaceKey = project.WorkspaceKey;
 
@@ -62,7 +75,7 @@ public static class ConfigApi
 		}
 		catch (AmbiguousConfigException ex)
 		{
-			return Results.Conflict(new { error = "ambiguous", path = ex.Path, candidates = ex.CandidateBindingIds });
+			return Results.Conflict(new ConfigAmbiguousResponse("ambiguous", ex.Path, ex.CandidateBindingIds));
 		}
 
 		var values = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -113,9 +126,9 @@ public static class ConfigApi
 	static async Task<IResult> Create(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, ConfigBindingDto dto)
 	{
 		if (string.IsNullOrWhiteSpace(dto.Path))
-			return Results.BadRequest(new { error = "path is required" });
+			return Results.BadRequest(new ErrorResponse("path is required"));
 		if (!dto.Tags.Contains($"ws:{workspaceKey}", StringComparison.OrdinalIgnoreCase))
-			return Results.BadRequest(new { error = $"Tags must include 'ws:{workspaceKey}'" });
+			return Results.BadRequest(new ErrorResponse($"Tags must include 'ws:{workspaceKey}'"));
 
 		var now = DateTime.UtcNow;
 		var value = dto.Value ?? string.Empty;
@@ -135,7 +148,7 @@ public static class ConfigApi
 #pragma warning disable CA2016
 		var id = Convert.ToInt64(await configDb.InsertWithIdentityAsync(binding));
 #pragma warning restore CA2016
-		return Results.Ok(new { id, binding.Path, binding.Tags });
+		return Results.Ok(new ConfigBindingCreatedResponse(id, binding.Path, binding.Tags));
 	}
 
 	// Soft-delete: mark IsDeleted=1, keep the row. Resolve filters it out.
@@ -152,7 +165,7 @@ public static class ConfigApi
 			.UpdateAsync();
 
 		return deleted > 0
-			? Results.Ok(new { deleted = true })
-			: Results.NotFound(new { error = "binding not found" });
+			? Results.Ok(new DeletedResponse(true))
+			: Results.NotFound(new ErrorResponse("binding not found"));
 	}
 }

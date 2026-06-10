@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 
@@ -15,7 +16,10 @@ public static class HealthApi
 {
 	public static void MapHealthEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapPost("/api/health", PushAsync).RequireAuthorization("ApiKey");
+		app.MapPost("/api/health", PushAsync)
+			.Produces<OkResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.RequireAuthorization("ApiKey");
 	}
 
 	public sealed record HealthPushRequest(
@@ -35,11 +39,11 @@ public static class HealthApi
 			return Results.Forbid();
 
 		if (req is null || string.IsNullOrWhiteSpace(req.Svc) || string.IsNullOrWhiteSpace(req.Status))
-			return Results.BadRequest(new { error = "svc and status are required" });
+			return TypedResults.BadRequest(new ErrorResponse("svc and status are required"));
 
 		var tags = req.Tags ?? [];
 		if (!tags.TryGetValue("project", out var project) || string.IsNullOrWhiteSpace(project))
-			return Results.BadRequest(new { error = "tags.project is required" });
+			return TypedResults.BadRequest(new ErrorResponse("tags.project is required"));
 
 		// A project-scoped key may only report for its own project.
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
@@ -59,6 +63,6 @@ public static class HealthApi
 			Source = "push",
 		}, token: ct);
 
-		return Results.Ok(new { ok = true });
+		return TypedResults.Ok(new OkResponse(true));
 	}
 }

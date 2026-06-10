@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.LlmRouter.Contract;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
@@ -27,7 +28,7 @@ public static class LlmRouterTools
 		IReadOnlyList<LlmRoute> Routes,
 		Dictionary<string, string>? ApiKeys = null);
 
-	[McpServerTool(Name = "llm.config_get", Title = "Get LLM router registry", ReadOnly = true)]
+	[McpServerTool(Name = "llm.config_get", Title = "Get LLM router registry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LlmRegistry))]
 	[Description("Return the project's LLM router registry (endpoints + routes), WITHOUT secrets. Requires llm:admin.")]
 	public static async Task<object> ConfigGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryAdmin admin,
@@ -36,10 +37,10 @@ public static class LlmRouterTools
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
-		return (object)await admin.GetAsync(projectKey, ct);
+		return await admin.GetAsync(projectKey, ct);
 	});
 
-	[McpServerTool(Name = "llm.config_set", Title = "Set LLM router registry")]
+	[McpServerTool(Name = "llm.config_set", Title = "Set LLM router registry", UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigSetResult))]
 	[Description("""
 		Replace the project's LLM router registry. Requires llm:admin.
 		`config` is a JSON object:
@@ -62,10 +63,10 @@ public static class LlmRouterTools
 			?? throw new ArgumentException("config must be a JSON object with endpoints + routes");
 		var registry = new LlmRegistry(input.Endpoints ?? [], input.Routes ?? []);
 		await admin.SetAsync(projectKey, registry, input.ApiKeys ?? new Dictionary<string, string>(), ct);
-		return (object)new { ok = true, endpoints = registry.Endpoints.Count, routes = registry.Routes.Count };
+		return new LlmConfigSetResult(true, registry.Endpoints.Count, registry.Routes.Count);
 	});
 
-	[McpServerTool(Name = "llm.embed", Title = "Embed text via the router")]
+	[McpServerTool(Name = "llm.embed", Title = "Embed text via the router", UseStructuredContent = true, OutputSchemaType = typeof(EmbedResult))]
 	[Description("""
 		Embed inputs through the router's embed chain (primary -> fallback). `inputs` is a JSON
 		array of strings. Optional `tier`. Returns { vectors, model, servedBy }. Requires llm:invoke.
@@ -81,10 +82,10 @@ public static class LlmRouterTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var texts = Deserialize<List<string>>(inputs) ?? throw new ArgumentException("inputs must be a JSON array of strings");
-		return (object)await client.EmbedAsync(projectKey, new EmbedRequest(texts, tier), ct);
+		return await client.EmbedAsync(projectKey, new EmbedRequest(texts, tier), ct);
 	});
 
-	[McpServerTool(Name = "llm.rerank", Title = "Rerank documents via the router")]
+	[McpServerTool(Name = "llm.rerank", Title = "Rerank documents via the router", UseStructuredContent = true, OutputSchemaType = typeof(RerankResult))]
 	[Description("""
 		Rerank `documents` (JSON array of strings) against `query` through the rerank chain.
 		Optional `topN`, `tier`. Returns { hits:[{index,score}], model, servedBy }. Requires llm:invoke.
@@ -100,10 +101,10 @@ public static class LlmRouterTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var docs = Deserialize<List<string>>(documents) ?? throw new ArgumentException("documents must be a JSON array of strings");
-		return (object)await client.RerankAsync(projectKey, new RerankRequest(query, docs, topN, tier), ct);
+		return await client.RerankAsync(projectKey, new RerankRequest(query, docs, topN, tier), ct);
 	});
 
-	[McpServerTool(Name = "llm.chat", Title = "Chat / summarize via the router")]
+	[McpServerTool(Name = "llm.chat", Title = "Chat / summarize via the router", UseStructuredContent = true, OutputSchemaType = typeof(ChatResult))]
 	[Description("""
 		Run a chat/summary completion through the chat chain. `messages` is a JSON array of
 		{ role, content }. Optional `tier`, `temperature`, `maxTokens`. Returns { text, model,
@@ -122,7 +123,7 @@ public static class LlmRouterTools
 
 		var msgs = Deserialize<List<ChatMessage>>(messages);
 		if (msgs is null || msgs.Count == 0) throw new ArgumentException("messages must be a non-empty JSON array of { role, content }");
-		return (object)await client.ChatAsync(projectKey, new ChatRequest(msgs, tier, temperature, maxTokens), ct);
+		return await client.ChatAsync(projectKey, new ChatRequest(msgs, tier, temperature, maxTokens), ct);
 	});
 
 	// Deserialize a tool argument into T. Handles the case where an MCP client double-encodes
