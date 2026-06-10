@@ -7,6 +7,7 @@ using PetBox.Core.Data.Temporal;
 using PetBox.Core.Features;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
@@ -18,9 +19,9 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class MemoryTools
 {
-	[McpServerTool(Name = "memory.store_create", Title = "Create a memory store")]
+	[McpServerTool(Name = "memory.store_create", Title = "Create a memory store", UseStructuredContent = true)]
 	[Description("Create a named memory store in a project. Requires memory:write.")]
-	public static async Task<object> StoreCreateAsync(
+	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string? description = null, CancellationToken ct = default)
 	{
@@ -28,12 +29,12 @@ public static class MemoryTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var meta = await memory.CreateStoreAsync(projectKey, store, description, ct);
-		return new { meta.ProjectKey, meta.Name, meta.Description, meta.CreatedAt };
+		return new MemoryStoreCreatedResult(meta.ProjectKey, meta.Name, meta.Description, meta.CreatedAt);
 	}
 
-	[McpServerTool(Name = "memory.store_list", Title = "List memory stores", ReadOnly = true)]
+	[McpServerTool(Name = "memory.store_list", Title = "List memory stores", ReadOnly = true, UseStructuredContent = true)]
 	[Description("List memory stores in a project. Requires memory:read.")]
-	public static async Task<object> StoreListAsync(
+	public static async Task<MemoryStoreListResult> StoreListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, CancellationToken ct = default)
 	{
@@ -41,24 +42,24 @@ public static class MemoryTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var list = await memory.ListStoresAsync(projectKey, ct);
-		return new { stores = list.Select(s => new { s.Name, s.Description, s.CreatedAt }).ToList() };
+		return new MemoryStoreListResult(list.Select(s => new MemoryStoreRow(s.Name, s.Description, s.CreatedAt)).ToList());
 	}
 
-	[McpServerTool(Name = "memory.store_delete", Title = "Delete a memory store", Destructive = true)]
+	[McpServerTool(Name = "memory.store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true)]
 	[Description("Delete a memory store and its entries. Requires memory:write.")]
-	public static async Task<object> StoreDeleteAsync(
+	public static async Task<MemoryStoreDeletedResult> StoreDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
-		return new { deleted = await memory.DeleteStoreAsync(projectKey, store, ct) };
+		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
 	}
 
-	[McpServerTool(Name = "memory.list", Title = "List memory entries", ReadOnly = true)]
+	[McpServerTool(Name = "memory.list", Title = "List memory entries", ReadOnly = true, UseStructuredContent = true)]
 	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). Requires memory:read.")]
-	public static async Task<object> ListAsync(
+	public static async Task<MemoryListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string? type = null,
 		[Description("Snippet length (chars) per entry body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
@@ -68,12 +69,12 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		return new { entries = Project(await memory.ListAsync(projectKey, store, type, ct), bodyLen, limit) };
+		return new MemoryListResult(Project(await memory.ListAsync(projectKey, store, type, ct), bodyLen, limit));
 	}
 
-	[McpServerTool(Name = "memory.get", Title = "Get a memory entry", ReadOnly = true)]
+	[McpServerTool(Name = "memory.get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true)]
 	[Description("Get the active entry by key, or null. Requires memory:read.")]
-	public static async Task<object?> GetAsync(
+	public static async Task<MemoryEntryView?> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string key, CancellationToken ct = default)
 	{
@@ -83,9 +84,9 @@ public static class MemoryTools
 		return await memory.GetAsync(projectKey, store, key, ct);
 	}
 
-	[McpServerTool(Name = "memory.search", Title = "Search memory entries", ReadOnly = true)]
+	[McpServerTool(Name = "memory.search", Title = "Search memory entries", ReadOnly = true, UseStructuredContent = true)]
 	[Description("Hybrid search over active entries' description/body/tags: lexical FTS5 (token/prefix, so paraphrases hit) fused with semantic vector similarity (RRF), ranked by relevance. `lexical`/`semantic` (default both on) toggle each retriever; semantic is silently off when no embedding capability is configured. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). Response includes `retrievers` { lexical, semantic, degraded }. Requires memory:read.")]
-	public static async Task<object> SearchAsync(
+	public static async Task<MemorySearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string query, string? type = null,
 		[Description("Snippet length (chars) per entry body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
@@ -98,14 +99,12 @@ public static class MemoryTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var res = await memory.SearchAsync(projectKey, store, query, type, lexical, semantic, ct);
-		return new
-		{
-			entries = Project(res.Hits, bodyLen, limit),
-			retrievers = new { lexical = res.Retrievers.Lexical, semantic = res.Retrievers.Semantic, degraded = res.Retrievers.Degraded },
-		};
+		return new MemorySearchResultView(
+			Project(res.Hits, bodyLen, limit),
+			new RetrieverInfo(res.Retrievers.Lexical, res.Retrievers.Semantic, res.Retrievers.Degraded));
 	}
 
-	[McpServerTool(Name = "memory.upsert", Title = "Upsert memory entries")]
+	[McpServerTool(Name = "memory.upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("""
 		Declarative temporal upsert of entries into a store. Requires memory:write.
 		`entries` is a JSON array of { key, type, description, body, tags?, version?, prevKey? }.
@@ -138,9 +137,9 @@ public static class MemoryTools
 		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, sinceVersion, ct), bodyLen);
 	});
 
-	[McpServerTool(Name = "memory.delta", Title = "Memory delta since cursor", ReadOnly = true)]
+	[McpServerTool(Name = "memory.delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true)]
 	[Description("Return entries added/updated/removed since `sinceVersion` (no writes); bodies omitted unless bodyLen > 0 (compact by default). Requires memory:read.")]
-	public static async Task<object> DeltaAsync(
+	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
 		[Description("Slice length (chars) of each entry body; 0 (default) = no body (compact). \"…\" appended when cut.")] int bodyLen = 0,
@@ -175,7 +174,7 @@ public static class MemoryTools
 	// all-stores sweep excludes it.
 	static readonly HashSet<string> RecallExcludedStores = new(StringComparer.OrdinalIgnoreCase) { "ops" };
 
-	[McpServerTool(Name = "memory.remember", Title = "Remember a fact")]
+	[McpServerTool(Name = "memory.remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
 	[Description("""
 		Capture one durable fact, verbatim. The low-ceremony way to store a learning.
 		`text` (required) is the fact. `scope` picks the container: project (default —
@@ -208,10 +207,10 @@ public static class MemoryTools
 			Tags = tags,
 		};
 		await memory.UpsertAsync(container.Key, st, [input], [], 0, ct);
-		return (object)new { id = $"{container.Key}/{st}/{key}", scope = container.Scope, store = st, key };
+		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key);
 	});
 
-	[McpServerTool(Name = "memory.recall", Title = "Recall facts", ReadOnly = true)]
+	[McpServerTool(Name = "memory.recall", Title = "Recall facts", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryRecallResult))]
 	[Description("""
 		Full-text recall over your memory. The low-ceremony way to surface relevant facts.
 		`query` (required) is matched by token (prefix), so paraphrases hit; search a few
@@ -239,7 +238,7 @@ public static class MemoryTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		if (string.IsNullOrWhiteSpace(query)) throw new ArgumentException("query is required");
 
-		var results = new List<object>();
+		var results = new List<MemoryRecallHit>();
 		// Aggregate provenance across every scope/store searched: lexical/semantic = OR of
 		// the legs that ran; degraded = OR (any leg that wanted semantic but couldn't).
 		var aggLexical = false;
@@ -261,12 +260,12 @@ public static class MemoryTools
 				aggDegraded |= res.Retrievers.Degraded;
 				foreach (var v in res.Hits)
 				{
-					results.Add(new { scope = scopeName, store = st, key = v.Key, type = v.Type, description = v.Description, body = ModuleMcp.SnippetBody(v.Body, bodyLen), tags = v.Tags });
-					if (results.Count >= limit) return (object)new { results, retrievers = new { lexical = aggLexical, semantic = aggSemantic, degraded = aggDegraded } };
+					results.Add(new MemoryRecallHit(scopeName, st, v.Key, v.Type, v.Description, ModuleMcp.SnippetBody(v.Body, bodyLen), v.Tags));
+					if (results.Count >= limit) return new MemoryRecallResult(results, new RetrieverInfo(aggLexical, aggSemantic, aggDegraded));
 				}
 			}
 		}
-		return (object)new { results, retrievers = new { lexical = aggLexical, semantic = aggSemantic, degraded = aggDegraded } };
+		return new MemoryRecallResult(results, new RetrieverInfo(aggLexical, aggSemantic, aggDegraded));
 	});
 
 	// Resolve a single explicit scope to its container projectKey (for remember).
@@ -304,57 +303,45 @@ public static class MemoryTools
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 
-	static object Serialize(MemoryUpsertOutcome o, int bodyLen = 0)
+	static MemoryUpsertResultView Serialize(MemoryUpsertOutcome o, int bodyLen = 0)
 	{
 		var r = o.Result;
-		return new
-		{
-			applied = r.Applied,
-			currentVersion = r.CurrentVersion,
-			inserted = r.Inserted,
-			closed = r.Closed,
-			conflicts = r.Conflicts.Select(c => new
-			{
-				key = c.Key,
-				kind = c.Kind.ToString(),
-				baselineVersion = c.BaselineVersion,
-				activeVersion = c.ActiveVersion,
-			}).ToList(),
-			added = r.Added.Select(e => EntryDto(e, bodyLen)).ToList(),
-			updated = r.Updated.Select(e => EntryDto(e, bodyLen)).ToList(),
-			removed = r.Removed.ToList(),
-		};
+		return new MemoryUpsertResultView(
+			Applied: r.Applied,
+			CurrentVersion: r.CurrentVersion,
+			Inserted: r.Inserted,
+			Closed: r.Closed,
+			Conflicts: r.Conflicts.Select(c => new MemoryConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion)).ToList(),
+			Added: r.Added.Select(e => EntryDto(e, bodyLen)).ToList(),
+			Updated: r.Updated.Select(e => EntryDto(e, bodyLen)).ToList(),
+			Removed: r.Removed.ToList());
 	}
 
 	// `body` is sliced to bodyLen (null when 0 → omitted by the serializer) so the write-echo
 	// stays compact; `description` (a one-liner) is kept to orient the merge.
-	static object EntryDto(MemoryEntry e, int bodyLen = 0) => new
-	{
-		key = e.Key,
-		type = e.Type.ToString(),
-		description = e.Description,
-		body = ModuleMcp.SliceBody(e.Body, bodyLen),
-		tags = e.Tags,
-		version = e.Version,
-		metadata = e.Metadata,
-	};
+	static MemoryEntryRow EntryDto(MemoryEntry e, int bodyLen = 0) => new(
+		Key: e.Key,
+		Type: e.Type.ToString(),
+		Description: e.Description,
+		Body: ModuleMcp.SliceBody(e.Body, bodyLen),
+		Tags: e.Tags,
+		Version: e.Version,
+		Metadata: e.Metadata);
 
 	// Read-path projection (spec read-snippet-on-demand + bounded-result-sets): cap at `limit`
 	// (0 = no cap) and snippet each body to `bodyLen` (0 = full, back-compat). description/tags
 	// stay so a hit can be judged without the full body.
-	static List<object> Project(IEnumerable<MemoryEntryView> entries, int bodyLen, int limit)
+	static List<MemoryEntryRow> Project(IEnumerable<MemoryEntryView> entries, int bodyLen, int limit)
 	{
 		var capped = limit > 0 ? entries.Take(limit) : entries;
-		return capped.Select(e => (object)new
-		{
-			key = e.Key,
-			type = e.Type,
-			description = e.Description,
-			body = ModuleMcp.SnippetBody(e.Body, bodyLen),
-			tags = e.Tags,
-			version = e.Version,
-			metadata = e.Metadata,
-		}).ToList();
+		return capped.Select(e => new MemoryEntryRow(
+			Key: e.Key,
+			Type: e.Type,
+			Description: e.Description,
+			Body: ModuleMcp.SnippetBody(e.Body, bodyLen),
+			Tags: e.Tags,
+			Version: e.Version,
+			Metadata: e.Metadata)).ToList();
 	}
 
 	// Parse the entry array into typed inputs. Taxonomy/tag normalization happens in the

@@ -177,10 +177,10 @@ public sealed class McpModuleToolsTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Session_Append_Get_List()
+	public async Task Session_Upsert_Get_List()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "s1", "claude-code", "# plan");
+		await SessionTools.UpsertAsync(http, Flags(), _sessionSvc, Proj, "s1", "claude-code", "# plan");
 
 		var got = Json(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s1"));
 		got.GetProperty("content").GetString().Should().Be("# plan");
@@ -195,7 +195,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Session_Get_ReadsIncrementally()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "s2", "claude-code", "0123456789");
+		await SessionTools.UpsertAsync(http, Flags(), _sessionSvc, Proj, "s2", "claude-code", "0123456789");
 
 		// default: full blob + total length.
 		var full = Json(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2"));

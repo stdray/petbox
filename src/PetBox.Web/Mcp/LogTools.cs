@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Log.Core.Query;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
@@ -16,9 +17,9 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class LogTools
 {
-	[McpServerTool(Name = "log.query", Title = "Run KQL query against a named log", ReadOnly = true)]
+	[McpServerTool(Name = "log.query", Title = "Run KQL query against a named log", ReadOnly = true, UseStructuredContent = true)]
 	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Requires logs:query scope.")]
-	public static async Task<object> QueryAsync(
+	public static async Task<LogQueryResultView> QueryAsync(
 		IHttpContextAccessor http,
 		ILogQueryService logs,
 		[Description("Project key — must match the calling ApiKey's project claim.")] string projectKey,
@@ -42,24 +43,22 @@ public static class LogTools
 			if (result is LogQueryResult.Table table)
 			{
 				var columns = table.Result.Columns.Select(c => c.Name).ToList();
-				var rows = new List<List<object?>>();
+				var rows = new List<IReadOnlyList<object?>>();
 				await foreach (var row in table.Result.Rows.WithCancellation(ct))
 					rows.Add(row.Select(cell => (object?)cell).ToList());
-				return new { kind = "table", columns, rows };
+				return new LogQueryResultView("table", Columns: columns, Rows: rows);
 			}
 
-			var events = ((LogQueryResult.Events)result).Items.Select(e => new
-			{
-				id = e.Id,
-				serviceKey = e.ServiceKey,
-				timestamp = e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
-				level = e.Level.ToString(),
-				message = e.Message,
-				messageTemplate = e.MessageTemplate,
-				exception = e.Exception,
-				properties = e.GetProperties().ToDictionary(kv => kv.Key, kv => (object?)JsonSerializer.Serialize(kv.Value)),
-			}).ToList();
-			return new { kind = "events", count = events.Count, events };
+			var events = ((LogQueryResult.Events)result).Items.Select(e => new LogEventView(
+				Id: e.Id,
+				ServiceKey: e.ServiceKey,
+				Timestamp: e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+				Level: e.Level.ToString(),
+				Message: e.Message,
+				MessageTemplate: e.MessageTemplate,
+				Exception: e.Exception,
+				Properties: e.GetProperties().ToDictionary(kv => kv.Key, kv => (object?)JsonSerializer.Serialize(kv.Value)))).ToList();
+			return new LogQueryResultView("events", Count: events.Count, Events: events);
 		}
 		catch (UnsupportedKqlException ex)
 		{

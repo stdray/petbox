@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
@@ -12,14 +13,14 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class WhoAmITools
 {
-	[McpServerTool(Name = "whoami", Title = "Identify the calling ApiKey", ReadOnly = true)]
+	[McpServerTool(Name = "whoami", Title = "Identify the calling ApiKey", ReadOnly = true, UseStructuredContent = true)]
 	[Description("Returns the calling ApiKey's identity: { project, scopes }. `project` is the key's project claim — every other tool needs a projectKey that must match it. `scopes` is the list of granted scopes (e.g. 'data:read', 'logs:query', 'tasks:write') that gate what you may do. Call this first when you do not already know your own project key and scopes.")]
-	public static object WhoAmI(IHttpContextAccessor http)
+	public static WhoAmIResult WhoAmI(IHttpContextAccessor http)
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
 		var project = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
 		var scopes = (ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? string.Empty)
 			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		return new { project, scopes };
+		return new WhoAmIResult(project, scopes);
 	}
 }

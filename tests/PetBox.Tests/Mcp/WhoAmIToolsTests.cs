@@ -15,7 +15,10 @@ public sealed class WhoAmIToolsTests
 		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id) } };
 	}
 
-	static JsonElement Json(object o) => JsonSerializer.SerializeToElement(o);
+	// Serialize the way the MCP boundary does (camelCase policy), so a typed-record result
+	// reads the same as the live JSON: WhoAmIResult.Project -> "project", Scopes -> "scopes".
+	static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
+	static JsonElement Json(object o) => JsonSerializer.SerializeToElement(o, CamelCase);
 
 	[Fact]
 	public void WhoAmI_ReturnsProjectAndScopes()

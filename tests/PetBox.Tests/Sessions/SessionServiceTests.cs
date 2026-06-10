@@ -6,10 +6,10 @@ using PetBox.Sessions.Services;
 
 namespace PetBox.Tests.Sessions;
 
-// Covers the converged session write path: the MCP session.append tool and the REST
+// Covers the converged session write path: the MCP session.upsert tool and the REST
 // Stop-hook endpoint both delegate to ISessionService, so testing the service exercises
 // the one path both surfaces share (the arch test proves neither bypasses it). Includes
-// the two calling styles — caller-supplied baseline (MCP) vs read-current-then-append
+// the two calling styles — caller-supplied baseline (MCP) vs read-current-then-upsert
 // (REST last-write-wins).
 [Collection("DataModule")]
 public sealed class SessionServiceTests : IDisposable
@@ -35,9 +35,9 @@ public sealed class SessionServiceTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Append_Then_Get_And_List_ThroughService()
+	public async Task Upsert_Then_Get_And_List_ThroughService()
 	{
-		var r = await _svc.AppendAsync("proj", "s1", "claude-code", "# plan v1");
+		var r = await _svc.UpsertAsync("proj", "s1", "claude-code", "# plan v1");
 		r.Result.Applied.Should().BeTrue();
 
 		(await _svc.GetAsync("proj", "s1"))!.Content.Should().Be("# plan v1");
@@ -45,17 +45,17 @@ public sealed class SessionServiceTests : IDisposable
 	}
 
 	[Fact]
-	public async Task StaleBaseline_Conflicts_WhileReadCurrentThenAppend_Wins()
+	public async Task StaleBaseline_Conflicts_WhileReadCurrentThenUpsert_Wins()
 	{
 		// MCP style: caller passes the baseline it last saw. A stale baseline conflicts.
-		(await _svc.AppendAsync("proj", "s1", "agent", "v1")).Result.Applied.Should().BeTrue();
-		var stale = await _svc.AppendAsync("proj", "s1", "agent", "v2", version: 0);
+		(await _svc.UpsertAsync("proj", "s1", "agent", "v1")).Result.Applied.Should().BeTrue();
+		var stale = await _svc.UpsertAsync("proj", "s1", "agent", "v2", version: 0);
 		stale.Result.Applied.Should().BeFalse();
 		stale.Result.HasConflicts.Should().BeTrue();
 
 		// REST Stop-hook style: read the current version first → last-write-wins, no conflict.
 		var current = await _svc.GetAsync("proj", "s1");
-		var ok = await _svc.AppendAsync("proj", "s1", "agent", "v2", version: current!.Version);
+		var ok = await _svc.UpsertAsync("proj", "s1", "agent", "v2", version: current!.Version);
 		ok.Result.Applied.Should().BeTrue();
 		(await _svc.GetAsync("proj", "s1"))!.Content.Should().Be("v2");
 	}

@@ -59,11 +59,20 @@ static class ModuleMcp
 	// invoking 'X'". Surfaces the cause (scope/feature/project assert, or a deeper
 	// server-side failure with message + stack) to the caller. Request-level logging
 	// (incl. MCP, into the self-log) is handled centrally by RequestLoggingMiddleware.
-	public static async Task<object> GuardAsync(Func<Task<object>> body)
+	//
+	// Returns object because the result is a UNION: the tool's typed success record T on
+	// success, or the {error} envelope on failure — both are serialized inline as the tool
+	// payload (NOT as an IsError content block; agents parse `.error` from the body, and the
+	// MCP tests rely on that). The tool method still declares Task<object>; it advertises the
+	// success schema via [McpServerTool(UseStructuredContent = true, OutputSchemaType =
+	// typeof(T))] so clients get a real outputSchema for the happy path. The generic overload
+	// lets a body `return` its record directly (no `(object)` cast at every call site) while
+	// the box happens here.
+	public static async Task<object> GuardAsync<T>(Func<Task<T>> body)
 	{
 		try
 		{
-			return await body();
+			return (await body())!;
 		}
 		catch (Exception ex)
 		{

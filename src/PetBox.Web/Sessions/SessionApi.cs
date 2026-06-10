@@ -9,19 +9,19 @@ namespace PetBox.Web.Sessions;
 
 // Non-MCP session push, for the Claude Code Stop hook (a shell command can't easily
 // speak MCP). POST the plan/session blob; last-write-wins (reads the current version
-// as the baseline so repeated per-turn pushes never conflict). Mirrors session.append.
+// as the baseline so repeated per-turn pushes never conflict). Mirrors session.upsert.
 public static class SessionApi
 {
 	public static void MapSessionEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapPost("/api/sessions/{projectKey}/{sessionId}", AppendAsync)
+		app.MapPost("/api/sessions/{projectKey}/{sessionId}", UpsertAsync)
 			.Accepts<string>("text/plain")
 			.Produces<SessionUpsertResponse>()
 			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
 			.RequireAuthorization("ApiKey");
 	}
 
-	static async Task<IResult> AppendAsync(
+	static async Task<IResult> UpsertAsync(
 		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
 	{
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
@@ -40,7 +40,7 @@ public static class SessionApi
 		// Last-write-wins: read the current version as the baseline so repeated per-turn
 		// pushes never conflict.
 		var current = await sessions.GetAsync(projectKey, sessionId, ct);
-		var r = (await sessions.AppendAsync(projectKey, sessionId, agent, content, current?.Version ?? 0, ct)).Result;
+		var r = (await sessions.UpsertAsync(projectKey, sessionId, agent, content, current?.Version ?? 0, ct)).Result;
 		return TypedResults.Ok(new SessionUpsertResponse(r.Applied, r.CurrentVersion));
 	}
 }
