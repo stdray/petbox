@@ -904,7 +904,7 @@
         ],
         "requestBody": {
           "content": {
-            "text/plain": {
+            "application/x-ndjson": {
               "schema": {
                 "type": "string"
               }
@@ -2199,21 +2199,30 @@
       },
       "SessionUpsertResponse": {
         "required": [
-          "applied",
-          "currentVersion"
+          "sessionId",
+          "version",
+          "messageCount"
         ],
         "type": "object",
         "properties": {
-          "applied": {
-            "type": "boolean"
+          "sessionId": {
+            "type": "string"
           },
-          "currentVersion": {
+          "version": {
             "pattern": "^-?(?:0|[1-9]\\d*)$",
             "type": [
               "integer",
               "string"
             ],
             "format": "int64"
+          },
+          "messageCount": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           }
         }
       },

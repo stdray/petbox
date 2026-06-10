@@ -2,7 +2,7 @@ using Microsoft.Data.Sqlite;
 
 namespace PetBox.Tests.Data;
 
-// A1 invariants for the internal temporal tiers (Tasks/Memory/Sessions): the
+// A1 invariants for the internal temporal tiers (Tasks/Memory): the
 // FluentMigrator-backed *Schema.Ensure is idempotent, sets WAL, and installs the
 // partial unique index that allows at most one active revision (ActiveTo IS NULL)
 // per Key — turning the concurrent-insert race (critic C1) into a catchable error.
@@ -25,7 +25,6 @@ public sealed class TemporalSchemaInvariantsTests : IDisposable
 	[Theory]
 	[InlineData("tasks", "plan_nodes", "ux_plan_nodes_active_board_key")]
 	[InlineData("memory", "memory_entries", "ux_memory_entries_active_key")]
-	[InlineData("sessions", "sessions", "ux_sessions_active_key")]
 	public void Ensure_IsIdempotent_SetsWal_AndCreatesPartialUniqueIndex(string tier, string table, string index)
 	{
 		var cs = $"Data Source={Path.Combine(_dir, tier + ".db")}";
@@ -67,7 +66,6 @@ public sealed class TemporalSchemaInvariantsTests : IDisposable
 		{
 			case "tasks": PetBox.Tasks.Data.TasksSchema.Ensure(cs); break;
 			case "memory": PetBox.Memory.Data.MemorySchema.Ensure(cs); break;
-			case "sessions": PetBox.Sessions.Data.SessionsSchema.Ensure(cs); break;
 		}
 	}
 
@@ -77,7 +75,6 @@ public sealed class TemporalSchemaInvariantsTests : IDisposable
 	{
 		"plan_nodes" => "(Key, Version, Status, Body, ActiveFrom, Created, Updated)",
 		"memory_entries" => "(Key, Version, Description, Body, Tags, ActiveFrom, Created, Updated)",
-		"sessions" => "(Key, Version, Agent, Content, ActiveFrom, Created, Updated)",
 		_ => throw new ArgumentOutOfRangeException(nameof(table)),
 	};
 
@@ -85,7 +82,6 @@ public sealed class TemporalSchemaInvariantsTests : IDisposable
 	{
 		"plan_nodes" => $"('k', {version}, 0, 'b', {version}, 't', 't')",
 		"memory_entries" => $"('k', {version}, 'd', 'b', '', {version}, 't', 't')",
-		"sessions" => $"('k', {version}, 'claude', 'c', {version}, 't', 't')",
 		_ => throw new ArgumentOutOfRangeException(nameof(table)),
 	};
 

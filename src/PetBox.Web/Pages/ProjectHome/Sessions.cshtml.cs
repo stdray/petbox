@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
+using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
 
 namespace PetBox.Web.Pages.ProjectHome;
@@ -35,7 +36,7 @@ public sealed class SessionsModel : PageModel
 
 	public Project? Project { get; private set; }
 	public bool SessionsEnabled => _features.IsEnabled(Feature.Tasks);
-	public IReadOnlyList<SessionRow> Sessions { get; private set; } = [];
+	public IReadOnlyList<SessionHeader> Sessions { get; private set; } = [];
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{

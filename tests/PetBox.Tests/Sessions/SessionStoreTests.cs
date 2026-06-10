@@ -1,8 +1,8 @@
 using LinqToDB;
 using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
-using PetBox.Core.Data.Temporal;
 using PetBox.Core.Settings;
+using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
 
 namespace PetBox.Tests.Sessions;
@@ -30,6 +30,15 @@ public sealed class SessionStoreTests : IDisposable
 		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
 	}
 
+	static SessionRow Row(string id, string text) => new()
+	{
+		SessionId = id,
+		Agent = "claude-code",
+		ContentZ = SessionContent.Encode(new[] { new SessionMessage(1, "session", text) }),
+		Version = 1,
+		Updated = DateTime.UtcNow,
+	};
+
 	[Fact]
 	public void GetContext_AutoVivifies_ProjectFile()
 	{
@@ -38,16 +47,21 @@ public sealed class SessionStoreTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Append_Then_Get_And_List()
+	public async Task Upsert_Then_Get_And_List()
 	{
-		var ctx = _store.GetContext("proj");
-		var r = await TemporalStore.UpsertAsync(ctx, new[]
-		{
-			new SessionRow { Key = "s1", Version = 0, Agent = "claude-code", Content = "# plan v1" },
-		});
-		r.Applied.Should().BeTrue();
+		await _store.UpsertAsync("proj", Row("s1", "# plan v1"));
 
-		(await _store.GetAsync("proj", "s1"))!.Content.Should().Be("# plan v1");
-		(await _store.ListAsync("proj")).Select(s => s.Key).Should().Equal("s1");
+		(await _store.GetAsync("proj", "s1"))!.Content.Should().Be("# plan v1"); // single message → verbatim
+		(await _store.ListAsync("proj")).Select(s => s.SessionId).Should().Equal("s1");
+	}
+
+	[Fact]
+	public async Task Upsert_SameSession_DoesNotGrowRows()
+	{
+		await _store.UpsertAsync("proj", Row("s1", "v1"));
+		await _store.UpsertAsync("proj", Row("s1", "v2"));
+
+		_store.GetContext("proj").Sessions.Count().Should().Be(1); // latest-snapshot: no history
+		(await _store.GetAsync("proj", "s1"))!.Content.Should().Be("v2");
 	}
 }

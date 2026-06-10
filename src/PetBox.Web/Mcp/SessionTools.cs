@@ -15,28 +15,27 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class SessionTools
 {
-	[McpServerTool(Name = "session.upsert", Title = "Save a session plan blob", UseStructuredContent = true)]
+	[McpServerTool(Name = "session.upsert", Title = "Save a session blob", UseStructuredContent = true)]
 	[Description("""
-		Optimistic-concurrency temporal upsert of an agent session's plan blob: replace
-		the blob at the current version, conflict on a stale baseline. Requires tasks:write.
-		`version` is the baseline you last saw (0 = new session). Two writers on the
-		same sessionId with a stale baseline get a conflict. Result:
-		{ applied, currentVersion, conflicts[] }.
+		Save an agent session's content as the latest snapshot (last-write-wins, no history).
+		Requires tasks:write. The content is stored as a single message; the per-turn multi-message
+		transcript is pushed by the Stop-hook over REST. Result: { sessionId, version, messageCount }
+		where version is the last message's ordinal.
 		""")]
 	public static async Task<SessionUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey, string sessionId, string agent, string content,
-		long version = 0, CancellationToken ct = default)
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
-		var r = (await sessions.UpsertAsync(projectKey, sessionId, agent, content, version, ct)).Result;
-		return new SessionUpsertResult(
-			r.Applied,
-			r.CurrentVersion,
-			r.Conflicts.Select(c => new SessionConflictView(c.Key, c.Kind.ToString())).ToList());
+		// MCP is the degenerate single-blob writer; store it as one message. Latest-snapshot
+		// replaces any prior content for this sessionId.
+		var messages = new[] { new SessionMessageInput("session", content) };
+		var o = await sessions.UpsertAsync(projectKey, sessionId, agent, messages, ct);
+		return new SessionUpsertResult(o.SessionId, o.Version, o.MessageCount);
 	}
 
 	[McpServerTool(Name = "session.get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true)]
@@ -60,8 +59,8 @@ public static class SessionTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var s = await sessions.GetAsync(projectKey, sessionId, ct);
 		if (s is null) return null;
-		var full = s.Content ?? "";
-		return new SessionGetResult(s.Key, s.Agent, Window(full, tail, offset, limit), full.Length, s.Version);
+		var full = s.Content;
+		return new SessionGetResult(s.SessionId, s.Agent, Window(full, tail, offset, limit), full.Length, s.Version);
 	}
 
 	// Incremental read of a plan blob: `tail` (last N chars) wins; else the [offset, offset+limit)
@@ -85,6 +84,6 @@ public static class SessionTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await sessions.ListAsync(projectKey, ct);
-		return new SessionListResult(list.Select(s => new SessionRowView(s.Key, s.Agent, s.Version)).ToList());
+		return new SessionListResult(list.Select(s => new SessionRowView(s.SessionId, s.Agent, s.Version)).ToList());
 	}
 }
