@@ -1,0 +1,65 @@
+[
+ {
+  "method": "lexical",
+  "strategy": "full",
+  "recall5": 0.8888888888888888,
+  "mrr": 0.7395622895622892,
+  "gap_to_full": 0
+ },
+ {
+  "method": "lexical",
+  "strategy": "generic",
+  "recall5": 0.7878787878787878,
+  "mrr": 0.6066666666666664,
+  "gap_to_full": 0.101010101010101
+ },
+ {
+  "method": "lexical",
+  "strategy": "facts",
+  "recall5": 0.7797979797979798,
+  "mrr": 0.6227272727272726,
+  "gap_to_full": 0.10909090909090902
+ },
+ {
+  "method": "semantic",
+  "strategy": "full",
+  "recall5": 0.7656565656565657,
+  "mrr": 0.5313468013468015,
+  "gap_to_full": 0
+ },
+ {
+  "method": "semantic",
+  "strategy": "generic",
+  "recall5": 0.6606060606060606,
+  "mrr": 0.43343434343434345,
+  "gap_to_full": 0.10505050505050506
+ },
+ {
+  "method": "semantic",
+  "strategy": "facts",
+  "recall5": 0.6666666666666666,
+  "mrr": 0.4472727272727275,
+  "gap_to_full": 0.09898989898989907
+ },
+ {
+  "method": "hybrid",
+  "strategy": "full",
+  "recall5": 0.896969696969697,
+  "mrr": 0.7062289562289563,
+  "gap_to_full": 0
+ },
+ {
+  "method": "hybrid",
+  "strategy": "generic",
+  "recall5": 0.7919191919191919,
+  "mrr": 0.6047474747474747,
+  "gap_to_full": 0.10505050505050506
+ },
+ {
+  "method": "hybrid",
+  "strategy": "facts",
+  "recall5": 0.8242424242424242,
+  "mrr": 0.6141750841750837,
+  "gap_to_full": 0.07272727272727275
+ }
+]
