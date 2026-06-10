@@ -174,17 +174,25 @@ def _request(url: str, key: str, method: str, body: dict | None) -> dict:
         return json.loads(raw) if raw else {}
 
 
+def _log(msg: str) -> None:
+    # flush so lines reach journald immediately even without PYTHONUNBUFFERED
+    print(f"[agent] {msg}", flush=True)
+
+
 def reconcile_once(base_url: str, key: str) -> None:
     poll = _request(f"{base_url}/agent/poll", key, "GET", None)
     desired = poll.get("deployments", [])
     actual = list_managed()
     actions = plan_actions(desired, actual)
     if actions:
-        print(f"[agent] {len(actions)} action(s): "
-              + ", ".join(f"{a['action']}:{a['service']}" for a in actions))
+        _log(f"{len(actions)} action(s): "
+             + ", ".join(f"{a['action']}:{a['service']}" for a in actions))
         apply(actions)
         actual = list_managed()  # re-read after applying
     _request(f"{base_url}/agent/heartbeat", key, "POST", build_heartbeat(actual))
+    # one line per cycle so the agent is visibly alive in journald (not silent)
+    _log(f"reconciled: {len(desired)} desired, {len(actions)} action(s), "
+         f"{len(actual)} running; heartbeat ok")
 
 
 def main() -> int:
@@ -195,16 +203,16 @@ def main() -> int:
         print("PETBOX_URL and PETBOX_NODE_KEY are required", file=sys.stderr)
         return 2
 
-    print(f"[agent] starting; url={base_url} interval={interval}s")
+    _log(f"starting; url={base_url} interval={interval}s")
     while True:
         try:
             reconcile_once(base_url, key)
         except urllib.error.HTTPError as e:
-            print(f"[agent] poll/heartbeat HTTP {e.code}: {e.reason}", file=sys.stderr)
+            print(f"[agent] poll/heartbeat HTTP {e.code}: {e.reason}", file=sys.stderr, flush=True)
         except urllib.error.URLError as e:
-            print(f"[agent] connection error: {e.reason}", file=sys.stderr)
+            print(f"[agent] connection error: {e.reason}", file=sys.stderr, flush=True)
         except Exception as e:  # noqa: BLE001 — agent must never crash the loop
-            print(f"[agent] unexpected: {e}", file=sys.stderr)
+            print(f"[agent] unexpected: {e}", file=sys.stderr, flush=True)
         time.sleep(interval)
 
 

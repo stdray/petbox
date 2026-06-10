@@ -1,12 +1,17 @@
 [Unit]
 Description=PetBox deploy node-agent
 After=network-online.target docker.service
-Wants=network-online.target
-Requires=docker.service
+# Wants (not Requires): on WSL2 with Docker Desktop integration there is NO docker.service
+# unit, and Requires= would make `systemctl enable --now` fail with "Unit docker.service
+# not found". Wants is a soft dep — start after docker if present, don't hard-require it.
+Wants=network-online.target docker.service
 
 [Service]
 Type=simple
 EnvironmentFile=/etc/petbox-deploy-agent.env
+# Unbuffered so reconcile/poll log lines reach journald immediately (Python buffers stdout
+# when not a TTY, which otherwise hides all output until the process exits).
+Environment=PYTHONUNBUFFERED=1
 ExecStart=/usr/bin/python3 /opt/petbox-deploy-agent/petbox_deploy_agent.py
 Restart=always
 RestartSec=10
