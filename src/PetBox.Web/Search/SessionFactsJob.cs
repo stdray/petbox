@@ -41,7 +41,10 @@ public sealed class SessionFactsJob : IVectorizationJob
 		Output STRICT JSON only — an array (possibly empty) of objects:
 		  {"type":"User|Feedback|Project|Reference","description":"<one line>","body":"<2-5 lines of detail>","tags":"<csv, optional>"}
 		Qualifying facts ONLY: a decision plus its why; a fixed bug's root cause; a discovered
-		convention or gotcha; a stated user preference; a durable project fact or constraint.
+		convention or gotcha; a stated user preference; a durable project fact or constraint;
+		a recurring PROCEDURE — an action sequence the session repeats or prescribes ("before
+		merging, re-check git status"). For a procedure: type=Feedback, phrase the description
+		as «когда X — делай Y», and include "behavior:pattern" in tags.
 		Keep distinctive identifiers/slugs/error texts VERBATIM. Do NOT extract narration,
 		progress reports, or anything derivable from code or git history. When nothing
 		qualifies, output [].
@@ -308,7 +311,7 @@ public sealed class SessionFactsJob : IVectorizationJob
 		}
 	}
 
-	static string StripFences(string raw)
+	internal static string StripFences(string raw)
 	{
 		var s = raw.Trim();
 		if (!s.StartsWith("```", StringComparison.Ordinal)) return s;
