@@ -53,6 +53,10 @@ public sealed record PlanNodeInput
 	// Enforced tags ("namespace:value", namespaces area|concern). null = omit; a non-null list
 	// (incl. empty) REPLACES the node's full tag set. A CSV string is also tolerated on the wire.
 	public IReadOnlyList<string>? Tags { get; init; }
+
+	// Soft-delete marker: { key, deleted:true } temporal-closes the active node (optional
+	// version baseline). Mirrors memory.upsert's marker; other fields are ignored.
+	public bool Deleted { get; init; }
 }
 
 // An entry as submitted to memory.upsert. Mirrors EXACTLY the fields the old JsonElement parser

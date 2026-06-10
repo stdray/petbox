@@ -23,6 +23,11 @@ public static class SessionApi
 			.Produces<SessionUpsertResponse>()
 			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
 			.RequireAuthorization("ApiKey");
+
+		app.MapDelete("/api/sessions/{projectKey}/{sessionId}", DeleteAsync)
+			.Produces<DeletedResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization("ApiKey");
 	}
 
 	static async Task<IResult> UpsertAsync(
@@ -54,5 +59,21 @@ public static class SessionApi
 
 		var o = await sessions.UpsertAsync(projectKey, sessionId, agent, messages, ct);
 		return TypedResults.Ok(new SessionUpsertResponse(o.SessionId, o.Version, o.MessageCount));
+	}
+
+	// Soft delete; a later push of the same sessionId resurrects it. Mirrors session.delete.
+	static async Task<IResult> DeleteAsync(
+		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
+	{
+		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		if (!ProjectScope.Authorizes(claim, projectKey))
+			return TypedResults.Forbid();
+		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
+		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))
+			return TypedResults.Forbid();
+
+		return await sessions.DeleteAsync(projectKey, sessionId, ct)
+			? TypedResults.Ok(new DeletedResponse(true))
+			: TypedResults.NotFound(new ErrorResponse("session not found"));
 	}
 }

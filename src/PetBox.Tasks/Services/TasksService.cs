@@ -518,11 +518,28 @@ public sealed partial class TasksService : ITasksService
 		var ctx = _boards.GetContext(projectKey);
 		var prior = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
-		var desired = nodes.Select(p => ApplyWorkflow(kind, Merge(p, prior), prior) with { Board = board }).ToArray();
+
+		// Split the batch: a deleted patch carries only Key + Version (a temporal-close, no new
+		// revision), so everything downstream — workflow, guards, links, tags, partOf, supersedes —
+		// is built from the upsert patches only. That also means a spec-node delete needs no
+		// ideaRef: erasing junk is not a spec change (retiring a real requirement is `deprecated`).
+		var deletePatches = nodes.Where(p => p.Deleted).DistinctBy(p => p.Key, StringComparer.Ordinal).ToList();
+		var upsertPatches = nodes.Where(p => !p.Deleted).ToList();
+		if (deletePatches.Count > 0)
+		{
+			if (deletePatches.Any(p => p.PrevKey is not null))
+				throw new ArgumentException("a node cannot be renamed and deleted in the same patch");
+			var both = deletePatches.Select(p => p.Key)
+				.Intersect(upsertPatches.Select(p => p.Key), StringComparer.Ordinal).FirstOrDefault();
+			if (both is not null)
+				throw new ArgumentException($"node '{both}' is both deleted and upserted in one batch — pick one");
+		}
+
+		var desired = upsertPatches.Select(p => ApplyWorkflow(kind, Merge(p, prior), prior) with { Board = board }).ToArray();
 		ValidateChanges(desired, prior);
-		var specRefs = LinkFields(nodes, p => p.SpecRef);
-		var blockedBy = LinkFields(nodes, p => p.BlockedBy);
-		var ideaRefs = LinkFields(nodes, p => p.IdeaRef);
+		var specRefs = LinkFields(upsertPatches, p => p.SpecRef);
+		var blockedBy = LinkFields(upsertPatches, p => p.BlockedBy);
+		var ideaRefs = LinkFields(upsertPatches, p => p.IdeaRef);
 		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
 		{
 			RequireSpecLinks(kind, desired, prior, specRefs);
@@ -531,6 +548,37 @@ public sealed partial class TasksService : ITasksService
 			await RequireSpecPlanForReviewAsync(kind, projectKey, board, desired, prior, ct);
 			await RequireAcceptedIdeaForSpecAsync(kind, projectKey, desired, ideaRefs, ct);
 		}
+
+		// Children guard: a node with active part_of children is not deletable — unless its
+		// children die in the SAME batch (so a subtree can go in one call, bottom-up implied).
+		// Refusals ride the conflict shape (applied:false, nothing written), not an exception,
+		// so the caller gets the per-key reason plus the fresh delta to rebase on.
+		var dels = new List<(string Key, long Version)>();
+		if (deletePatches.Count > 0)
+		{
+			var guardConflicts = new List<TemporalConflict>();
+			var dyingIds = deletePatches
+				.Select(p => prior.GetValueOrDefault(p.Key)?.NodeId)
+				.Where(id => !string.IsNullOrEmpty(id)).Cast<string>()
+				.ToHashSet(StringComparer.Ordinal);
+			foreach (var p in deletePatches)
+			{
+				if (!prior.TryGetValue(p.Key, out var row))
+					continue; // idempotent: nothing active to delete
+				if ((await ActivePartOfChildrenAsync(projectKey, row.NodeId, ct)).Any(c => !dyingIds.Contains(c)))
+					guardConflicts.Add(new(p.Key, TemporalConflictKind.Rejected, p.Version, row.Version,
+						"node has active part_of children — delete them first (or in the same batch)"));
+				else
+					dels.Add((p.Key, p.Version));
+			}
+			if (guardConflicts.Count > 0)
+			{
+				// Not applied; still serve the cursor contract (the delta since sinceVersion).
+				var delta = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion,
+					partition: n => n.Board == board, ct: ct);
+				return new UpsertOutcome(delta with { Applied = false, Conflicts = guardConflicts }, kind);
+			}
+		}
 		// Class-A lexical floor written INSIDE the entity tx: open nodes (re)indexed, terminal/
 		// removed nodes dropped (search covers only the open set), committing/rolling back with the
 		// entity. Tags read in-tx are the pre-upsert set; SetTagsAsync (below) is reflected by the
@@ -538,7 +586,7 @@ public sealed partial class TasksService : ITasksService
 		var fts = new SqliteFtsIndex(() => ctx);
 		TemporalUpsertResult<PlanNode> r;
 		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.temporal"))
-			r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion,
+			r = await TemporalStore.UpsertAsync(ctx, desired, dels, sinceVersion,
 				onWithinTx: async (tx, upserted, deletedKeys, c) =>
 				{
 					var tags = await NodeTagsAsync(tx, board, upserted.Where(TasksSearchDocs.IsIndexable).Select(n => n.NodeId), c);
@@ -560,6 +608,7 @@ public sealed partial class TasksService : ITasksService
 				await LinkRefsAsync(projectKey, "idea_spec", desired, ideaRefs, blockerIsFrom: true, ct);
 				await CloseBlocksOnLeaveAsync(projectKey, desired, prior, ct);
 				await RunDoneEffectsAsync(projectKey, kind, desired, ct);
+				await RunDeleteEffectsAsync(projectKey, board, deletePatches, prior, ct);
 			}
 		// Tags + part_of are node metadata, not a content revision — apply whenever the
 		// upsert did not conflict (so a pure tag/parent change on an unchanged node still
@@ -567,9 +616,9 @@ public sealed partial class TasksService : ITasksService
 		if (r.Conflicts.Count == 0)
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.meta"))
 			{
-				await SetTagsAsync(projectKey, board, nodes, desired, ct);
-				await SetPartOfAsync(projectKey, board, nodes, desired, ct);
-				await SetSupersedesAsync(projectKey, board, nodes, desired, ct);
+				await SetTagsAsync(projectKey, board, upsertPatches, desired, ct);
+				await SetPartOfAsync(projectKey, board, upsertPatches, desired, ct);
+				await SetSupersedesAsync(projectKey, board, upsertPatches, desired, ct);
 			}
 		// Refresh the FTS Tags column now that SetTagsAsync (above) has run: the in-tx index wrote
 		// content + pre-upsert tags transactionally; re-index this batch's open nodes with the
@@ -780,6 +829,43 @@ public sealed partial class TasksService : ITasksService
 					await SetActiveNodeStatusAsync(projectKey, e.ToNodeId,
 						(_, node) => string.Equals(node.Status, "Blocked", StringComparison.OrdinalIgnoreCase) ? "InProgress" : null, ct);
 			}
+		}
+	}
+
+	// NodeIds of this node's part_of children whose own row is still active. Terminal-status
+	// children count too — they are active rows and would dangle just the same.
+	async Task<IReadOnlyList<string>> ActivePartOfChildrenAsync(string projectKey, string nodeId, CancellationToken ct)
+	{
+		if (nodeId.Length == 0) return [];
+		var childIds = (await _relations.ListAsync(projectKey, nodeId, "to", ct: ct))
+			.Where(e => e.Kind == "part_of").Select(e => e.FromNodeId).ToList();
+		if (childIds.Count == 0) return [];
+		var ctx = _boards.GetContext(projectKey);
+		return childIds.Where(id => ctx.PlanNodes.Any(n => n.ActiveTo == null && n.NodeId == id)).ToList();
+	}
+
+	// Delete effect: a temporal-closed node must not leave dangling structure behind — close
+	// every edge touching it (both directions, any kind) and its tags. Unblocking mirrors the
+	// Done effect: when the deleted node was a blocker, a target left with no blockers moves
+	// Blocked → InProgress. System action (no gate).
+	async Task RunDeleteEffectsAsync(string projectKey, string board, IReadOnlyList<NodePatch> deletePatches, Dictionary<string, PlanNode> prior, CancellationToken ct)
+	{
+		foreach (var p in deletePatches)
+		{
+			if (!prior.TryGetValue(p.Key, out var row) || row.NodeId.Length == 0) continue;
+			foreach (var e in await _relations.ListAsync(projectKey, row.NodeId, "both", ct: ct))
+			{
+				await _relations.DeleteAsync(projectKey, e.Id, ct);
+				if (e.Kind == "blocks" && e.FromNodeId == row.NodeId)
+				{
+					var stillBlocked = (await _relations.ListAsync(projectKey, e.ToNodeId, "to", ct: ct)).Any(x => x.Kind == "blocks");
+					if (!stillBlocked)
+						await SetActiveNodeStatusAsync(projectKey, e.ToNodeId,
+							(_, node) => string.Equals(node.Status, "Blocked", StringComparison.OrdinalIgnoreCase) ? "InProgress" : null, ct);
+				}
+			}
+			// An empty list REPLACES the node's full tag set — i.e. soft-closes every active tag.
+			await _tags.SetAsync(projectKey, board, row.NodeId, [], ct);
 		}
 	}
 

@@ -46,4 +46,7 @@ public sealed class SessionService : ISessionService
 		if (snap is null) return Array.Empty<SessionMessage>();
 		return snap.Messages.Where(m => m.Version > sinceVersion).ToList();
 	}
+
+	public Task<bool> DeleteAsync(string projectKey, string sessionId, CancellationToken ct = default) =>
+		_sessions.DeleteAsync(projectKey, sessionId, ct);
 }

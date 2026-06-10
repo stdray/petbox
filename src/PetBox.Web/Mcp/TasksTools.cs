@@ -260,6 +260,13 @@ public static class TasksTools
 		commitRef?, priority? (sparse int, lower first), version (baseline you last saw; 0 =
 		new). Rename via prevKey. A cold call auto-creates the board.
 
+		To DELETE a node, pass { key, deleted:true } (optional version baseline; 0 = delete
+		regardless) — the node is soft-closed (history kept), its edges and tags are closed, and
+		its key appears in `removed[]`. A node with active part_of children is refused (Rejected
+		conflict) — delete the children first, or the whole subtree in one call. deleted cannot
+		combine with prevKey. Spec-node deletes need no ideaRef (erasing junk is not a spec
+		change — retiring a real requirement stays `deprecated`).
+
 		Returns { applied, currentVersion, inserted, closed, conflicts[], added[], updated[],
 		removed[] }; added/updated carry the node (key, nodeId, status, type, title,
 		commitRef, priority, version) but NOT `body` by default — the echo is a compact
@@ -347,7 +354,7 @@ public static class TasksTools
 			Kind: o.Kind.ToString().ToLowerInvariant(),
 			Inserted: r.Inserted,
 			Closed: r.Closed,
-			Conflicts: r.Conflicts.Select(c => new UpsertConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion)).ToList(),
+			Conflicts: r.Conflicts.Select(c => new UpsertConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason)).ToList(),
 			Added: r.Added.Select(n => NodeDto(n, urlPrefix, bodyLen)).ToList(),
 			Updated: r.Updated.Select(n => NodeDto(n, urlPrefix, bodyLen)).ToList(),
 			Removed: r.Removed.ToList());
@@ -376,10 +383,13 @@ public static class TasksTools
 		var list = new List<NodePatch>(nodes.Length);
 		foreach (var n in nodes)
 		{
+			if (n.Deleted && ResolvePrevKey(n) is not null)
+				throw new ArgumentException("a node cannot be renamed and deleted in the same patch");
 			list.Add(new NodePatch
 			{
 				Key = ResolveKey(n),
 				PrevKey = ResolvePrevKey(n),
+				Deleted = n.Deleted,
 				Version = n.Version,
 				Status = n.Status,
 				Type = n.Type,

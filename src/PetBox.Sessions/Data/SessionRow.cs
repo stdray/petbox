@@ -15,4 +15,8 @@ public sealed record SessionRow
 	[Column, NotNull] public byte[] ContentZ { get; init; } = Array.Empty<byte>();
 	[Column] public long Version { get; init; }
 	[Column, NotNull] public DateTime Updated { get; init; }
+	// Soft delete: the row stays (DeletedAt for audit) but every read filters it out. A re-push
+	// of the same SessionId replaces the whole row with these defaults — i.e. resurrects it.
+	[Column] public bool IsDeleted { get; init; }
+	[Column] public DateTime? DeletedAt { get; init; }
 }

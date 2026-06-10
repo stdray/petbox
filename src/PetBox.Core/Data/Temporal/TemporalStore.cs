@@ -17,14 +17,21 @@ public enum TemporalConflictKind
 
 	// A concurrent writer closed the baseline row inside our read→close window.
 	CloseRace,
+
+	// A domain guard refused the row (see Reason). TemporalStore itself never produces
+	// this — services report guard rejections in the conflict shape so one batch outcome
+	// (applied:false + conflicts) covers both concurrency and domain refusals.
+	Rejected,
 }
 
-// One row the caller could not apply because the store moved under its baseline.
+// One row the caller could not apply because the store moved under its baseline
+// (or a domain guard refused it — then Reason says why).
 public sealed record TemporalConflict(
 	string Key,
 	TemporalConflictKind Kind,
 	long BaselineVersion,
-	long? ActiveVersion);
+	long? ActiveVersion,
+	string? Reason = null);
 
 // Result of an upsert. Besides what was applied, carries the delta the caller
 // asked for via `sinceVersion`: every active row that changed since that cursor
