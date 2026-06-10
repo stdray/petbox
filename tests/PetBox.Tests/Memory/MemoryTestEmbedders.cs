@@ -50,6 +50,14 @@ public sealed class FakeLlmClient : ILlmClient
 		Task.FromResult(true);
 }
 
+// Usage-telemetry sink for adapter-signature tests that don't assert counters.
+public sealed class NoopUsageRecorder : PetBox.Memory.Contract.IMemoryUsageRecorder
+{
+	public void Surfaced(string projectKey, string store, IReadOnlyList<string> keys) { }
+	public void Opened(string projectKey, string store, string key) { }
+	public Task FlushAsync(CancellationToken ct = default) => Task.CompletedTask;
+}
+
 // Embedder whose every call throws — exercises the degrade/dead-letter paths.
 public sealed class ThrowingLlmClient : ILlmClient
 {

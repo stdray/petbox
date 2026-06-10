@@ -150,6 +150,19 @@ public sealed class MemoryService : IMemoryService
 		return ctx.Entries.Where(e => e.ActiveTo == null).OrderBy(e => e.Key).ToList();
 	}
 
+	public async Task<IReadOnlyDictionary<string, MemoryUsageView>> GetUsageAsync(string projectKey, string store,
+		IReadOnlyCollection<string>? keys = null, CancellationToken ct = default)
+	{
+		await EnsureStore(projectKey, store, ct);
+		var ctx = _stores.GetContext(projectKey, store);
+		var q = ctx.Usage.AsQueryable();
+		if (keys is not null) q = q.Where(u => keys.Contains(u.Key));
+		return q.ToList().ToDictionary(
+			u => u.Key,
+			u => new MemoryUsageView(u.SurfacedCount, u.OpenedCount, u.LastHitAt),
+			StringComparer.Ordinal);
+	}
+
 	// ---- helpers ----
 
 	async Task EnsureStore(string projectKey, string store, CancellationToken ct)

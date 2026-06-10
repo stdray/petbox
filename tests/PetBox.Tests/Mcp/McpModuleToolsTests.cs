@@ -172,7 +172,7 @@ public sealed class McpModuleToolsTests : IDisposable
 				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = "go,style" },
 			}), 0);
 
-		var hits = Json(await MemoryTools.SearchAsync(http, Flags(), _memory, Proj, "notes", "tabs"));
+		var hits = Json(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "tabs"));
 		hits.GetProperty("entries").EnumerateArray().Should().ContainSingle();
 	}
 

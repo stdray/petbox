@@ -126,7 +126,8 @@ public sealed record MemoryStoreListResult(IReadOnlyList<MemoryStoreRow> Stores)
 public sealed record MemoryStoreDeletedResult(bool Deleted);
 
 // Read/echo projection of a memory entry for the list/upsert/delta MCP surface. `Body` is
-// snippet/slice-controlled (null -> omitted). Mirrors the old anonymous EntryDto/Project shapes.
+// snippet/slice-controlled (null -> omitted). Usage fields appear only under
+// `includeUsage:true` (null -> omitted) — spec: memory-usage-observability.
 public sealed record MemoryEntryRow(
 	string Key,
 	string Type,
@@ -134,7 +135,10 @@ public sealed record MemoryEntryRow(
 	string? Body,
 	string? Tags,
 	long Version,
-	string? Metadata);
+	string? Metadata,
+	long? Surfaced = null,
+	long? Opened = null,
+	DateTime? LastHitAt = null);
 
 public sealed record MemoryListResult(IReadOnlyList<MemoryEntryRow> Entries);
 
@@ -168,7 +172,10 @@ public sealed record MemoryRecallHit(
 	string Description,
 	string? Body,
 	string Tags,
-	long Version);
+	long Version,
+	long? Surfaced = null,
+	long? Opened = null,
+	DateTime? LastHitAt = null);
 
 public sealed record MemoryRecallResult(IReadOnlyList<MemoryRecallHit> Results, RetrieverInfo Retrievers);
 

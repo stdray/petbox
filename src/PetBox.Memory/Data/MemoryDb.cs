@@ -10,6 +10,8 @@ public sealed class MemoryDb : DataConnection
 	public MemoryDb(DataOptions<MemoryDb> options) : base(options.Options) { }
 
 	public ITable<MemoryEntry> Entries => this.GetTable<MemoryEntry>();
+
+	public ITable<EntryUsage> Usage => this.GetTable<EntryUsage>();
 	// Lexical (search_fts) + vector (search_vec) live behind PetBox.Core.Search indexes, which
 	// own their own row mappings — no table props here. See MemoryService search seam.
 

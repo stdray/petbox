@@ -33,12 +33,18 @@ public sealed class MemoryStoreModel : PageModel
 
 	public IReadOnlyList<MemoryEntry> Entries { get; private set; } = [];
 
+	// Usage counters per key (spec: memory-usage-observability). Viewing this page is
+	// curation, not usage — it reads the counters and never increments them.
+	public IReadOnlyDictionary<string, MemoryUsageView> Usage { get; private set; } =
+		new Dictionary<string, MemoryUsageView>();
+
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Memory)) return NotFound();
 		if (!await _memory.StoreExistsAsync(ProjectKey, Store, ct)) return NotFound();
 
 		Entries = await _memory.ListActiveEntriesAsync(ProjectKey, Store, ct);
+		Usage = await _memory.GetUsageAsync(ProjectKey, Store, ct: ct);
 		return Page();
 	}
 }

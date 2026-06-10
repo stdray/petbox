@@ -127,6 +127,9 @@ public partial class Program
 				cs => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(cs)), PetBox.Memory.Data.MemorySchema.Ensure));
 		builder.Services.AddScoped<PetBox.Memory.Data.IMemoryStore, PetBox.Memory.Data.MemoryStore>();
 		builder.Services.AddScoped<PetBox.Memory.Contract.IMemoryService, PetBox.Memory.Services.MemoryService>();
+		// Usage telemetry intake (spec: memory-usage-observability): singleton queue+drain;
+		// called ONLY by the MCP/UI adapters, so internal machine traffic never counts.
+		builder.Services.AddSingleton<PetBox.Memory.Contract.IMemoryUsageRecorder, PetBox.Memory.Services.MemoryUsageRecorder>();
 		// Background materialization of Class-B (vector) search indexes — the entity write path
 		// never blocks on embedding; this drains the temporal log into vectors out-of-band. Each
 		// module contributes an IVectorizationJob; memory's is registered here, tasks' in the

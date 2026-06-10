@@ -57,49 +57,63 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory.list", Title = "List memory entries", ReadOnly = true, UseStructuredContent = true)]
-	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). Requires memory:read.")]
+	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). `includeUsage` adds surfaced/opened/lastHitAt counters per entry (listing itself is NOT counted as usage). Requires memory:read.")]
 	public static async Task<MemoryListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string? type = null,
 		[Description("Snippet length (chars) per entry body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Max entries returned (default 20; 0 = no limit).")] int limit = 20,
+		[Description("Include usage counters (surfaced/opened/lastHitAt) per entry (default false).")] bool includeUsage = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		return new MemoryListResult(Project(await memory.ListAsync(projectKey, store, type, ct), bodyLen, limit));
+		// A bulk listing is curation, not usage — deliberately not recorded.
+		var rows = Project(await memory.ListAsync(projectKey, store, type, ct), bodyLen, limit);
+		if (includeUsage)
+			rows = await WithUsageAsync(memory, projectKey, store, rows, ct);
+		return new MemoryListResult(rows);
 	}
 
 	[McpServerTool(Name = "memory.get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true)]
 	[Description("Get the active entry by key, or null. Requires memory:read.")]
 	public static async Task<MemoryEntryView?> GetAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
 		string projectKey, string store, string key, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		return await memory.GetAsync(projectKey, store, key, ct);
+		var entry = await memory.GetAsync(projectKey, store, key, ct);
+		if (entry is not null)
+			usage.Opened(projectKey, store, key); // engagement: the entry was deliberately opened
+		return entry;
 	}
 
 	[McpServerTool(Name = "memory.search", Title = "Search memory entries", ReadOnly = true, UseStructuredContent = true)]
 	[Description("Hybrid search over active entries' description/body/tags: lexical FTS5 (token/prefix, so paraphrases hit) fused with semantic vector similarity (RRF), ranked by relevance. `lexical`/`semantic` (default both on) toggle each retriever; semantic is silently off when no embedding capability is configured. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). Response includes `retrievers` { lexical, semantic, degraded }. Requires memory:read.")]
 	public static async Task<MemorySearchResultView> SearchAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
 		string projectKey, string store, string query, string? type = null,
 		[Description("Snippet length (chars) per entry body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Max entries returned (default 20; 0 = no limit).")] int limit = 20,
 		[Description("Run the lexical FTS retriever (default true).")] bool? lexical = null,
 		[Description("Run the semantic vector retriever (default true; no-op when embedding is unavailable).")] bool? semantic = null,
+		[Description("Include usage counters (surfaced/opened/lastHitAt) per entry (default false).")] bool includeUsage = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var res = await memory.SearchAsync(projectKey, store, query, type, lexical, semantic, ct);
+		var rows = Project(res.Hits, bodyLen, limit);
+		// Impression = what this answer actually RETURNED (post-limit), not internal candidates.
+		usage.Surfaced(projectKey, store, rows.Select(r => r.Key).ToList());
+		if (includeUsage)
+			rows = await WithUsageAsync(memory, projectKey, store, rows, ct);
 		return new MemorySearchResultView(
-			Project(res.Hits, bodyLen, limit),
+			rows,
 			new RetrieverInfo(res.Retrievers.Lexical, res.Retrievers.Semantic, res.Retrievers.Degraded));
 	}
 
@@ -226,12 +240,13 @@ public static class MemoryTools
 		`version` is the entry's CAS baseline for memory.upsert (pass it back to edit without a Stale round-trip).
 		""")]
 	public static async Task<object> RecallAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
 		string query, string? scope = null, string? projectKey = null, string? store = null,
 		string? type = null, int limit = 20,
 		[Description("Snippet length (chars) per result body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Run the lexical FTS retriever (default true).")] bool? lexical = null,
 		[Description("Run the semantic vector retriever (default true; no-op when embedding is unavailable).")] bool? semantic = null,
+		[Description("Include usage counters (surfaced/opened/lastHitAt) per hit (default false).")] bool includeUsage = false,
 		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -258,15 +273,41 @@ public static class MemoryTools
 				aggLexical |= res.Retrievers.Lexical;
 				aggSemantic |= res.Retrievers.Semantic;
 				aggDegraded |= res.Retrievers.Degraded;
+				var added = new List<string>();
+				var full = false;
+				IReadOnlyDictionary<string, MemoryUsageView>? usageMap = includeUsage && res.Hits.Count > 0
+					? await memory.GetUsageAsync(container, st, res.Hits.Select(h => h.Key).ToList(), ct)
+					: null;
 				foreach (var v in res.Hits)
 				{
-					results.Add(new MemoryRecallHit(scopeName, st, v.Key, v.Type, v.Description, ModuleMcp.SnippetBody(v.Body, bodyLen), v.Tags, v.Version));
-					if (results.Count >= limit) return new MemoryRecallResult(results, new RetrieverInfo(aggLexical, aggSemantic, aggDegraded));
+					var u = usageMap is not null && usageMap.TryGetValue(v.Key, out var uv) ? uv : null;
+					results.Add(new MemoryRecallHit(scopeName, st, v.Key, v.Type, v.Description,
+						ModuleMcp.SnippetBody(v.Body, bodyLen), v.Tags, v.Version,
+						usageMap is null ? null : (u?.Surfaced ?? 0), usageMap is null ? null : (u?.Opened ?? 0), u?.LastHitAt));
+					added.Add(v.Key);
+					if (results.Count >= limit) { full = true; break; }
 				}
+				// Impression = the hits this answer RETURNED for this container/store.
+				usage.Surfaced(container, st, added);
+				if (full) return new MemoryRecallResult(results, new RetrieverInfo(aggLexical, aggSemantic, aggDegraded));
 			}
 		}
 		return new MemoryRecallResult(results, new RetrieverInfo(aggLexical, aggSemantic, aggDegraded));
 	});
+
+	// Decorate already-projected rows with their usage counters (entries that never
+	// surfaced have no row → zeros).
+	static async Task<List<MemoryEntryRow>> WithUsageAsync(IMemoryService memory, string projectKey, string store,
+		List<MemoryEntryRow> rows, CancellationToken ct)
+	{
+		if (rows.Count == 0) return rows;
+		var map = await memory.GetUsageAsync(projectKey, store, rows.Select(r => r.Key).ToList(), ct);
+		return rows.Select(r =>
+		{
+			var u = map.TryGetValue(r.Key, out var uv) ? uv : null;
+			return r with { Surfaced = u?.Surfaced ?? 0, Opened = u?.Opened ?? 0, LastHitAt = u?.LastHitAt };
+		}).ToList();
+	}
 
 	// Resolve a single explicit scope to its container projectKey (for remember).
 	// project → the key's project (authorized via the claim); workspace → the reserved

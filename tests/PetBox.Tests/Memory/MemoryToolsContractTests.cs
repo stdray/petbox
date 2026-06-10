@@ -99,7 +99,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		});
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 
-		var res = Json(await MemoryTools.SearchAsync(http, Flags(), _memory, Proj, "notes", "scope"));
+		var res = Json(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "scope"));
 		var keys = res.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("key").GetString()).ToList();
 		keys.Should().Contain("auth-scopes");      // "scope*" prefix-matches "scopes"
 		keys.Should().NotContain("go-style");
@@ -195,7 +195,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		aBody.Should().EndWith("…");
 
 		// search: the same limit bounds an FTS sweep ("alpha" hits all three).
-		Json(await MemoryTools.SearchAsync(http, Flags(), _memory, Proj, "notes", "alpha", limit: 2))
+		Json(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "alpha", limit: 2))
 			.GetProperty("entries").EnumerateArray().Count().Should().Be(2);
 	}
 

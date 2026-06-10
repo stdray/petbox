@@ -30,4 +30,9 @@ public interface IMemoryService
 
 	// --- UI helper (store page renders the raw active entries) ---
 	Task<IReadOnlyList<MemoryEntry>> ListActiveEntriesAsync(string projectKey, string store, CancellationToken ct = default);
+
+	// --- usage telemetry, read side (the writer is IMemoryUsageRecorder) ---
+	// Usage counters for the given keys (null = the whole store), keyed by entry key;
+	// entries that never surfaced have no row and are absent from the map.
+	Task<IReadOnlyDictionary<string, MemoryUsageView>> GetUsageAsync(string projectKey, string store, IReadOnlyCollection<string>? keys = null, CancellationToken ct = default);
 }
