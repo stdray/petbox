@@ -20,11 +20,14 @@ public sealed class TasksVectorizationJob : IVectorizationJob
 
 	readonly IScopedDbFactory<TasksDb> _factory;
 	readonly ILlmClient? _llm;
+	readonly ILogger<TasksVectorizationJob>? _logger;
 
-	public TasksVectorizationJob(IScopedDbFactory<TasksDb> factory, ILlmClient? llm = null)
+	public TasksVectorizationJob(IScopedDbFactory<TasksDb> factory, ILlmClient? llm = null,
+		ILogger<TasksVectorizationJob>? logger = null)
 	{
 		_factory = factory;
 		_llm = llm;
+		_logger = logger;
 	}
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
@@ -38,23 +41,37 @@ public sealed class TasksVectorizationJob : IVectorizationJob
 			if (string.IsNullOrEmpty(project)) continue;
 			ct.ThrowIfCancellationRequested();
 
-			DataConnection Connect() => _factory.NewConnection(project);
-
-			List<string> boards;
-			using (var probe = _factory.NewConnection(project))
-				boards = probe.GetTable<PlanNode>().Where(n => n.ActiveTo == null)
-					.Select(n => n.Board).Distinct().ToList();
-
-			foreach (var board in boards)
+			try
 			{
-				ct.ThrowIfCancellationRequested();
-				var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(_llm, project), VectorDim);
-				var source = new TasksSearchSource(Connect, project, board);
-				var cursor = new SqliteIndexCursorStore(Connect);
-				var worker = new AsyncVectorizationWorker(board, source, target, cursor); // per-board cursor
+				// The drain runs on raw NewConnection()s, which skip _ensureSchema — a project
+				// file last opened before the search-tables migration has no search_cursor.
+				// GetDb runs the migrations (cached per file), so the drain sees current schema.
+				_factory.GetDb(project);
 
-				var r = await worker.DrainAsync(ct);
-				indexed += r.Indexed;
+				DataConnection Connect() => _factory.NewConnection(project);
+
+				List<string> boards;
+				using (var probe = _factory.NewConnection(project))
+					boards = probe.GetTable<PlanNode>().Where(n => n.ActiveTo == null)
+						.Select(n => n.Board).Distinct().ToList();
+
+				foreach (var board in boards)
+				{
+					ct.ThrowIfCancellationRequested();
+					var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(_llm, project), VectorDim);
+					var source = new TasksSearchSource(Connect, project, board);
+					var cursor = new SqliteIndexCursorStore(Connect);
+					var worker = new AsyncVectorizationWorker(board, source, target, cursor); // per-board cursor
+
+					var r = await worker.DrainAsync(ct);
+					indexed += r.Indexed;
+				}
+			}
+			catch (Exception ex) when (ex is not OperationCanceledException)
+			{
+				// One broken project file must not block the backfill of every other project
+				// (spec: durable-backfill); it retries next tick.
+				_logger?.LogError(ex, "tasks vectorization drain failed for {Project}; skipped", project);
 			}
 		}
 		return indexed;
