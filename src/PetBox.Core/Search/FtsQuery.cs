@@ -20,8 +20,15 @@ public static partial class FtsQuery
 	public static string? BuildMatch(string? query)
 	{
 		if (string.IsNullOrWhiteSpace(query)) return null;
+		var tokens = Tokens(query).ToList();
+		// Single-letter tokens are almost always prepositions/conjunctions («в», «и», "a")
+		// that AND would make mandatory and sink the query («сессия в архиве» must not
+		// require a document containing «в»). Drop them while longer tokens remain; an
+		// all-short query (e.g. an initialism) keeps them.
+		if (tokens.Any(t => t.Length > 1))
+			tokens.RemoveAll(t => t.Length == 1);
 		var sb = new StringBuilder();
-		foreach (var token in Tokens(query))
+		foreach (var token in tokens)
 		{
 			// Explicit AND: fts5 allows implicit AND between bare terms but not after a
 			// parenthesized group, so the join must be spelled out once groups appear.
