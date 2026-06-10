@@ -104,13 +104,33 @@ public static class DeployTools
 		[Description("Auto-relocate on node failure.")] bool relocatable = false,
 		[Description("Tags a node must cover to host this (CSV).")] string? requiredTags = null,
 		[Description("Config tag-vector for env resolution (CSV).")] string? configTags = null,
+		[Description("Port publications, '[ip:]host:container[/tcp|udp]' entries, e.g. '127.0.0.1:8080:8080'.")] string[]? ports = null,
+		[Description("Bind mounts, '/host/path:/container/path[:ro|rw]' entries.")] string[]? volumes = null,
+		[Description("Restart policy: no|on-failure|unless-stopped|always (default unless-stopped at the agent).")] string? restart = null,
+		[Description("Container healthcheck command (docker --health-cmd).")] string? healthcheckCmd = null,
+		[Description("Healthcheck interval, docker duration like '30s'.")] string? healthcheckInterval = null,
+		[Description("Healthcheck timeout, docker duration like '5s'.")] string? healthcheckTimeout = null,
+		[Description("Healthcheck retries before unhealthy.")] int? healthcheckRetries = null,
+		[Description("Memory limit, docker byte syntax like '256m'.")] string? memory = null,
+		[Description("CPU limit, fractional CPUs (docker --cpus).")] double? cpus = null,
+		[Description("Container network: bridge|host|none|<name>.")] string? network = null,
+		[Description("CMD override, one entry per argument.")] string[]? command = null,
+		[Description("Extra container labels, 'key=value' entries ('petbox.*' is reserved).")] string[]? labels = null,
 		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
+		var runSpec = new RunSpec(
+			Ports: ports, Volumes: volumes, Restart: restart,
+			Healthcheck: string.IsNullOrWhiteSpace(healthcheckCmd)
+				? null
+				: new HealthcheckSpec(healthcheckCmd, healthcheckInterval, healthcheckTimeout, healthcheckRetries),
+			Resources: memory is null && cpus is null ? null : new ResourcesSpec(memory, cpus),
+			Network: network, Command: command, Labels: ParseLabels(labels));
 		var d = await svc.UpsertDeploymentAsync(new DeploymentInput(
 			id, service, project, nodeId, imageDigest,
-			running ? DesiredState.Running : DesiredState.Stopped, relocatable, requiredTags ?? "", configTags ?? ""), ct);
+			running ? DesiredState.Running : DesiredState.Stopped, relocatable, requiredTags ?? "", configTags ?? "",
+			runSpec), ct);
 		return new DeployDeploymentResult(d);
 	});
 
@@ -162,6 +182,22 @@ public static class DeployTools
 			return new DeployDeploymentResult(await svc.UpsertDeploymentAsync(ToInput(d) with { DesiredState = desired }, ct));
 		});
 
+	// Carries RunSpec through, so start/stop/move never wipe a deployment's run-spec.
 	static DeploymentInput ToInput(DeploymentView d) => new(
-		d.Id, d.Service, d.Project, d.NodeId, d.ImageDigest, d.DesiredState, d.Relocatable, d.RequiredTags, d.ConfigTags);
+		d.Id, d.Service, d.Project, d.NodeId, d.ImageDigest, d.DesiredState, d.Relocatable, d.RequiredTags, d.ConfigTags, d.RunSpec);
+
+	// "key=value" entries → label map; a value-less entry becomes an empty-value label.
+	static Dictionary<string, string>? ParseLabels(string[]? entries)
+	{
+		if (entries is null || entries.Length == 0) return null;
+		var labels = new Dictionary<string, string>(StringComparer.Ordinal);
+		foreach (var e in entries)
+		{
+			if (string.IsNullOrWhiteSpace(e)) continue;
+			var i = e.IndexOf('=');
+			if (i < 0) labels[e.Trim()] = string.Empty;
+			else labels[e[..i].Trim()] = e[(i + 1)..].Trim();
+		}
+		return labels.Count == 0 ? null : labels;
+	}
 }

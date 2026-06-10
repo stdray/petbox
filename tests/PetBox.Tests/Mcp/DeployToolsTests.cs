@@ -89,6 +89,47 @@ public sealed class DeployToolsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Upsert_With_RunSpec_Then_Stop_Preserves_It()
+	{
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db, "n1");
+
+		var created = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
+			"web", "proj", "n1", "img1",
+			ports: ["127.0.0.1:8080:8080"],
+			volumes: ["/opt/web/logs:/app/logs"],
+			restart: "always",
+			healthcheckCmd: "curl -f http://localhost:8080/health",
+			healthcheckInterval: "30s",
+			memory: "256m",
+			labels: ["team=infra"]));
+		var dep = created.GetProperty("deployment");
+		dep.GetProperty("runSpec").GetProperty("ports")[0].GetString().Should().Be("127.0.0.1:8080:8080");
+		dep.GetProperty("runSpec").GetProperty("restart").GetString().Should().Be("always");
+		var id = dep.GetProperty("id").GetString()!;
+		var hashBefore = dep.GetProperty("configHash").GetString();
+
+		// stop goes through ToInput — the run-spec must survive the round-trip
+		await DeployTools.StopAsync(Http("deploy:write"), Flags(), _svc, id);
+		var after = (await _svc.GetDeploymentAsync(id))!;
+		after.RunSpec.Ports.Should().Equal("127.0.0.1:8080:8080");
+		after.RunSpec.Volumes.Should().Equal("/opt/web/logs:/app/logs");
+		after.RunSpec.Healthcheck!.Interval.Should().Be("30s");
+		after.RunSpec.Resources!.Memory.Should().Be("256m");
+		after.RunSpec.Labels!["team"].Should().Be("infra");
+		after.ConfigHash.Should().NotBe(hashBefore);   // desired state changed → hash changed
+	}
+
+	[Fact]
+	public async Task Upsert_With_Bad_RunSpec_Returns_Error_Envelope()
+	{
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db, "n1");
+		var r = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
+			"web", "proj", "n1", "img1", ports: ["oops"]));
+		r.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
+		r.GetProperty("error").GetProperty("message").GetString().Should().Contain("port");
+	}
+
+	[Fact]
 	public async Task Write_Tool_With_Only_ReadScope_Returns_Error_Envelope()
 	{
 		// guarded tools convert the scope assertion into an {error} envelope, not a throw

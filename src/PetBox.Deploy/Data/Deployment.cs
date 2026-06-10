@@ -31,5 +31,8 @@ public sealed record Deployment
 	[Column, NotNull] public string RequiredTags { get; init; } = string.Empty;
 	[Column, NotNull] public string ConfigTags { get; init; } = string.Empty;
 	[Column, NotNull] public string ConfigHash { get; init; } = string.Empty;
+	// Canonical-JSON run-spec (ports/volumes/restart/healthcheck/resources/network/command/
+	// labels) the agent maps to docker run flags. "{}" = image+env only. Hashed into ConfigHash.
+	[Column, NotNull] public string RunSpec { get; init; } = "{}";
 	[Column, NotNull] public DateTime UpdatedAt { get; init; }
 }

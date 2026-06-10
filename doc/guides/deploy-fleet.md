@@ -90,6 +90,27 @@ deploy.upsert(service="bot", project="yobapub", nodeId="vdsina-1",
 
 Within a poll the container `petbox-<service>` is up. Check actual state: UI grid, or `deploy.list` (shows desired + last reported `actualState`/`healthy`).
 
+### 3b. Run-spec: ports, volumes and the rest of `docker run`
+
+A deployment can carry a declarative **run-spec** — the compose-subset the agent maps 1:1 to `docker run` flags (env is *not* part of it; env stays config-resolved). All fields are optional:
+
+```
+deploy.upsert(service="web", project="yobapub", nodeId="vdsina-1",
+              imageDigest="ghcr.io/you/web:sha-abc123",
+              ports=["127.0.0.1:8080:8080"],                 # [ip:]host:container[/tcp|udp]
+              volumes=["/opt/web/logs:/app/logs",            # /host:/container[:ro|rw] (bind mounts only)
+                       "/opt/web/keys:/app/keys"],
+              restart="unless-stopped",                      # no|on-failure|unless-stopped|always
+              healthcheckCmd="curl -f http://localhost:8080/health",
+              healthcheckInterval="30s", healthcheckTimeout="5s", healthcheckRetries=3,
+              memory="256m", cpus=0.5,                       # docker --memory / --cpus
+              network="bridge",                              # bridge|host|none|<name>
+              command=["python", "-m", "web"],               # CMD override
+              labels=["team=infra"])                         # extra labels; petbox.* is reserved
+```
+
+The UI's *New deployment* form covers ports/volumes/restart/memory/cpus/network; healthcheck, command and labels are MCP-only. The run-spec is part of the config-hash, so **changing any field recreates the container** on the next poll. Host directories for volumes must exist (create/chown them when onboarding the service); the spec is structurally allowlisted — there is no `--privileged`/`--cap-add`/raw-args escape.
+
 ## 3a. Migrating a service that bootstraps from PetBox
 
 Many PetBox services bootstrap from PetBox itself — they need `PETBOX_ENDPOINT` + `PETBOX_API_KEY` in their env to pull their own config/log/etc. Previously those lived only in the project's **CI secrets**, so the server-side env resolve had nothing to hand the container. Put them in config so the rails can deliver them:

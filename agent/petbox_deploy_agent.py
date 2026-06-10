@@ -112,11 +112,51 @@ def remove_container(service: str) -> None:
     _docker(["rm", "-f", name], check=False)
 
 
+def runspec_args(spec: dict | None) -> list[str]:
+    """Map a deployment's runSpec (compose-subset) to docker run flags. Pure.
+
+    Field order is fixed (ports, volumes, restart, healthcheck, resources, network,
+    labels) so the produced command line is deterministic and unit-testable.
+    """
+    spec = spec or {}
+    args: list[str] = []
+    for p in spec.get("ports") or []:
+        args += ["-p", p]
+    for v in spec.get("volumes") or []:
+        args += ["-v", v]
+    args += ["--restart", spec.get("restart") or "unless-stopped"]
+    hc = spec.get("healthcheck") or {}
+    if hc.get("cmd"):
+        args += ["--health-cmd", hc["cmd"]]
+        if hc.get("interval"):
+            args += ["--health-interval", hc["interval"]]
+        if hc.get("timeout"):
+            args += ["--health-timeout", hc["timeout"]]
+        if hc.get("retries") is not None:
+            args += ["--health-retries", str(hc["retries"])]
+    res = spec.get("resources") or {}
+    if res.get("memory"):
+        args += ["--memory", res["memory"]]
+    if res.get("cpus") is not None:
+        args += ["--cpus", str(res["cpus"])]
+    if spec.get("network"):
+        args += ["--network", spec["network"]]
+    for k, v in (spec.get("labels") or {}).items():
+        args += ["--label", f"{k}={v}"]
+    return args
+
+
+def runspec_command(spec: dict | None) -> list[str]:
+    """The CMD override appended after the image (empty = use the image's CMD). Pure."""
+    return list((spec or {}).get("command") or [])
+
+
 def run_container(item: dict) -> None:
     """(Re)create and start a container for a desired deployment."""
     service = item["service"]
     remove_container(service)  # idempotent recreate
     env = item.get("env") or {}
+    spec = item.get("runSpec") or {}
     fd, env_path = tempfile.mkstemp(prefix="petbox-env-")
     try:
         with os.fdopen(fd, "w") as f:
@@ -125,13 +165,15 @@ def run_container(item: dict) -> None:
         _docker([
             "run", "-d",
             "--name", f"petbox-{service}",
-            "--restart", "unless-stopped",
+            *runspec_args(spec),
             "--env-file", env_path,
+            # control labels go AFTER user labels — the last occurrence wins in docker
             "--label", f"{MANAGED_LABEL}=1",
             "--label", f"{SVC_LABEL}={service}",
             "--label", f"{HASH_LABEL}={item['configHash']}",
             "--label", f"{PROJECT_LABEL}={item.get('project', '')}",
             item["imageDigest"],
+            *runspec_command(spec),
         ])
     finally:
         os.unlink(env_path)
