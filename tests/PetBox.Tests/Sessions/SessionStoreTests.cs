@@ -64,4 +64,44 @@ public sealed class SessionStoreTests : IDisposable
 		_store.GetContext("proj").Sessions.Count().Should().Be(1); // latest-snapshot: no history
 		(await _store.GetAsync("proj", "s1"))!.Content.Should().Be("v2");
 	}
+
+	[Fact]
+	public async Task Delete_IsSoft_HiddenFromReads_RowKept()
+	{
+		await _store.UpsertAsync("proj", Row("s1", "v1"));
+		await _store.UpsertAsync("proj", Row("s2", "v1"));
+
+		(await _store.DeleteAsync("proj", "s1")).Should().BeTrue();
+
+		(await _store.GetAsync("proj", "s1")).Should().BeNull();
+		(await _store.ListAsync("proj")).Select(s => s.SessionId).Should().Equal("s2");
+		// Soft: the row survives with the marker + audit stamp.
+		var raw = _store.GetContext("proj").Sessions.Single(s => s.SessionId == "s1");
+		raw.IsDeleted.Should().BeTrue();
+		raw.DeletedAt.Should().NotBeNull();
+	}
+
+	[Fact]
+	public async Task Delete_Missing_Or_Repeated_ReturnsFalse()
+	{
+		(await _store.DeleteAsync("proj", "ghost")).Should().BeFalse();
+
+		await _store.UpsertAsync("proj", Row("s1", "v1"));
+		(await _store.DeleteAsync("proj", "s1")).Should().BeTrue();
+		(await _store.DeleteAsync("proj", "s1")).Should().BeFalse(); // idempotent
+	}
+
+	[Fact]
+	public async Task Upsert_AfterDelete_Resurrects()
+	{
+		await _store.UpsertAsync("proj", Row("s1", "v1"));
+		await _store.DeleteAsync("proj", "s1");
+
+		await _store.UpsertAsync("proj", Row("s1", "v2")); // the hook re-pushes → replace row
+
+		var snap = await _store.GetAsync("proj", "s1");
+		snap.Should().NotBeNull();
+		snap!.Content.Should().Be("v2");
+		_store.GetContext("proj").Sessions.Single(s => s.SessionId == "s1").IsDeleted.Should().BeFalse();
+	}
 }

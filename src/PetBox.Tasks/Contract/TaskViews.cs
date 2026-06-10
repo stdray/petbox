@@ -41,8 +41,9 @@ public sealed record PlanNodeDelta(
 	string Key, string NodeId, string Status, string Type, string Title, string? Body,
 	string? CommitRef, long Priority, long Version, string? Url = null);
 
-// One row the caller could not apply (optimistic-concurrency miss), shaped for the wire.
-public sealed record UpsertConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion);
+// One row the caller could not apply (optimistic-concurrency miss, or a domain-guard
+// refusal — then Reason says why), shaped for the wire.
+public sealed record UpsertConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null);
 
 // The tasks.upsert / tasks.delta response: what was applied (counts) plus the delta since the
 // caller's cursor (Added/Updated as node projections, Removed as keys) and any Conflicts. The

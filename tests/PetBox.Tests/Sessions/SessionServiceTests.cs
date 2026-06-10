@@ -73,4 +73,21 @@ public sealed class SessionServiceTests : IDisposable
 		delta.Select(m => m.Version).Should().Equal(2, 3);
 		delta.Select(m => m.Content).Should().Equal("b", "c");
 	}
+
+	[Fact]
+	public async Task Delete_ThroughService_HidesEverywhere_ThenUpsertResurrects()
+	{
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("user", "a")));
+
+		(await _svc.DeleteAsync("proj", "s1")).Should().BeTrue();
+		(await _svc.DeleteAsync("proj", "s1")).Should().BeFalse(); // idempotent
+
+		(await _svc.GetAsync("proj", "s1")).Should().BeNull();
+		(await _svc.ListAsync("proj")).Should().BeEmpty();
+		(await _svc.DeltaAsync("proj", "s1", 0)).Should().BeEmpty(); // delta rides Get
+
+		var o = await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("user", "a"), ("assistant", "b")));
+		o.Version.Should().Be(2);
+		(await _svc.GetAsync("proj", "s1")).Should().NotBeNull(); // resurrected
+	}
 }

@@ -74,6 +74,22 @@ public static class SessionTools
 		return s.Substring(start, count);
 	}
 
+	[McpServerTool(Name = "session.delete", Title = "Delete a session", Destructive = true, UseStructuredContent = true)]
+	[Description("""
+		Soft-delete a session: it disappears from session.list/session.get but the row is kept;
+		a later session.upsert (or REST push) of the same sessionId resurrects it. Idempotent —
+		deleting a missing or already-deleted session returns { deleted: false }. Requires tasks:write.
+		""")]
+	public static async Task<SessionDeletedResult> DeleteAsync(
+		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
+		string projectKey, string sessionId, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		return new SessionDeletedResult(await sessions.DeleteAsync(projectKey, sessionId, ct), sessionId);
+	}
+
 	[McpServerTool(Name = "session.list", Title = "List sessions", ReadOnly = true, UseStructuredContent = true)]
 	[Description("List active sessions in a project. Requires tasks:read.")]
 	public static async Task<SessionListResult> ListAsync(

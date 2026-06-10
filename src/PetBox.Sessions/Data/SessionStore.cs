@@ -15,6 +15,7 @@ public interface ISessionStore
 	Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default);
 	Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
 	Task UpsertAsync(string projectKey, SessionRow row, CancellationToken ct = default);
+	Task<bool> DeleteAsync(string projectKey, string sessionId, CancellationToken ct = default);
 }
 
 public sealed class SessionStore : ISessionStore
@@ -34,6 +35,7 @@ public sealed class SessionStore : ISessionStore
 		var db = _factory.GetDb(projectKey);
 		// Project only the header columns — never load ContentZ blobs just to list.
 		var rows = await db.Sessions
+			.Where(s => !s.IsDeleted)
 			.OrderBy(s => s.SessionId)
 			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated })
 			.ToListAsync(ct);
@@ -44,7 +46,7 @@ public sealed class SessionStore : ISessionStore
 	{
 		var db = _factory.GetDb(projectKey);
 		var row = await db.Sessions
-			.Where(s => s.SessionId == sessionId)
+			.Where(s => s.SessionId == sessionId && !s.IsDeleted)
 			.FirstOrDefaultAsync(ct);
 		return row is null
 			? null
@@ -55,5 +57,17 @@ public sealed class SessionStore : ISessionStore
 	{
 		var db = _factory.GetDb(projectKey);
 		await db.InsertOrReplaceAsync(row, token: ct);
+	}
+
+	public async Task<bool> DeleteAsync(string projectKey, string sessionId, CancellationToken ct = default)
+	{
+		var db = _factory.GetDb(projectKey);
+		// Idempotent: a second delete (or a miss) updates 0 rows and reports false.
+		var rows = await db.Sessions
+			.Where(s => s.SessionId == sessionId && !s.IsDeleted)
+			.Set(s => s.IsDeleted, true)
+			.Set(s => s.DeletedAt, _ => DateTime.UtcNow)
+			.UpdateAsync(ct);
+		return rows > 0;
 	}
 }

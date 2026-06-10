@@ -118,4 +118,48 @@ public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 		var r = await _http.SendAsync(PushRequest(ProjectKey, sessionId, ReadOnlyKey, Ndjson(("user", "# plan"))));
 		r.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 	}
+
+	static HttpRequestMessage DeleteRequest(string project, string sessionId, string apiKey)
+	{
+		var req = new HttpRequestMessage(HttpMethod.Delete, $"/api/sessions/{project}/{sessionId}");
+		req.Headers.Add("X-Api-Key", apiKey);
+		return req;
+	}
+
+	[Fact]
+	public async Task Delete_Then_404OnRepeat_Then_RePushResurrects()
+	{
+		var sessionId = "s-" + Guid.NewGuid().ToString("N")[..8];
+		await _http.SendAsync(PushRequest(ProjectKey, sessionId, WriteKey, Ndjson(("user", "# plan"))));
+
+		// 1) Delete: 200 with the exact wire shape { deleted: true }.
+		var r1 = await _http.SendAsync(DeleteRequest(ProjectKey, sessionId, WriteKey));
+		r1.StatusCode.Should().Be(HttpStatusCode.OK);
+		using var d1 = JsonDocument.Parse(await r1.Content.ReadAsStringAsync());
+		d1.RootElement.TryGetProperty("deleted", out var del).Should().BeTrue("the wire carries `deleted`");
+		del.GetBoolean().Should().BeTrue();
+
+		// 2) Repeat delete: idempotent miss → 404 with an error body.
+		var r2 = await _http.SendAsync(DeleteRequest(ProjectKey, sessionId, WriteKey));
+		r2.StatusCode.Should().Be(HttpStatusCode.NotFound);
+
+		// 3) Re-push the same sessionId: resurrects (the hook re-pushes a live session every turn).
+		var r3 = await _http.SendAsync(PushRequest(ProjectKey, sessionId, WriteKey, Ndjson(("user", "# plan"), ("assistant", "back"))));
+		r3.StatusCode.Should().Be(HttpStatusCode.OK);
+		using var d3 = JsonDocument.Parse(await r3.Content.ReadAsStringAsync());
+		d3.RootElement.GetProperty("version").GetInt64().Should().Be(2);
+
+		var r4 = await _http.SendAsync(DeleteRequest(ProjectKey, sessionId, WriteKey)); // visible again
+		r4.StatusCode.Should().Be(HttpStatusCode.OK);
+	}
+
+	[Fact]
+	public async Task Delete_MissingTasksWriteScope_403()
+	{
+		var sessionId = "s-" + Guid.NewGuid().ToString("N")[..8];
+		await _http.SendAsync(PushRequest(ProjectKey, sessionId, WriteKey, Ndjson(("user", "# plan"))));
+
+		var r = await _http.SendAsync(DeleteRequest(ProjectKey, sessionId, ReadOnlyKey));
+		r.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+	}
 }
