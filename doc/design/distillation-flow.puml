@@ -1,0 +1,53 @@
+@startuml distillation-flow
+title PetBox distillation — when / what / which entity  (digest slice BUILT: SessionDigestJob -> session-digests; typed-facts autocapture still an idea)
+skinparam shadowing false
+
+start
+:Trigger;
+note right
+  WHEN (any of):
+  - session append / close  (autocapture, idea)
+  - scheduled batch  (off-peak)
+  - on-demand  (operator / hook)
+end note
+
+:Select source episode;
+note right
+  WHICH ENTITY:
+  - episodic sessions (raw Claude transcripts)  [primary]
+  - (later) board comments / activity
+  only UN-distilled or changed episodes
+end note
+
+if (Chat LLM available?\nDeepSeek, infer=true) then (no)
+  :defer / requeue;
+  stop
+else (yes)
+  :LLM extract candidate facts;
+  note right
+    WHAT GOES IN (durable only):
+    - decision + WHY
+    - fixed-bug root cause
+    - convention / gotcha
+    - stated preference
+    typed: User | Feedback | Project | Reference
+    NOT raw narration / derivable-from-code
+  end note
+endif
+
+:Dedup vs existing memory.*;
+note right
+  semantic + lexical;
+  embedder down -> lexical-only dedup
+end note
+
+:Write fact to semantic tier (memory.*);
+:Attach PROVENANCE (sessionId + offset);
+note right
+  the "one mega-session" bridge:
+  found by meaning -> drill down to verbatim source
+end note
+
+:Mark episode distilled;
+stop
+@enduml

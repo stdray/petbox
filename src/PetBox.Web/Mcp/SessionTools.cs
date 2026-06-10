@@ -90,6 +90,41 @@ public static class SessionTools
 		return new SessionDeletedResult(await sessions.DeleteAsync(projectKey, sessionId, ct), sessionId);
 	}
 
+	[McpServerTool(Name = "session.search", Title = "Search the session archive", ReadOnly = true, UseStructuredContent = true)]
+	[Description("""
+		Two-stage search over the session archive. Stage 1 DISCOVERY: hybrid (lexical FTS ⊕ semantic
+		vectors, RRF-fused) over per-session facts digests — the `session-digests` memory store that
+		background distillation maintains. Stage 2 EPISODIC: the top `sessions` candidates are lazily
+		hydrated (transient in-memory index: russian-stem FTS + vectors) and searched INSIDE, up to
+		`hitsPerSession` messages each. Every hit carries the message ordinal — the provenance bridge:
+		jump to the verbatim source with session.get. Both stages report retrievers
+		{ lexical, semantic, degraded }. `distilled:false` means the project has no digest store yet
+		(distillation runs in the background, ~minutes after a session settles) — not "no matches".
+		Requires tasks:read + memory:read.
+		""")]
+	public static async Task<SessionSearchResultView> SearchAsync(
+		IHttpContextAccessor http, FeatureFlags features, PetBox.Web.Search.SessionSearchService search,
+		string projectKey, string query,
+		[Description("How many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
+		[Description("Max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertFeature(features, Feature.Memory);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
+
+		var o = await search.SearchAsync(projectKey, query, sessions, hitsPerSession, ct);
+		return new SessionSearchResultView(
+			o.Distilled,
+			o.Candidates.Select(c => new SessionSearchSessionView(
+				c.SessionId, c.Agent, c.Description,
+				c.Hits.Select(h => new SessionSearchHitView(h.Message, h.Role, h.Snippet, h.Score, h.Retriever)).ToList(),
+				new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded))).ToList(),
+			new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded));
+	}
+
 	[McpServerTool(Name = "session.list", Title = "List sessions", ReadOnly = true, UseStructuredContent = true)]
 	[Description("List active sessions in a project. Requires tasks:read.")]
 	public static async Task<SessionListResult> ListAsync(

@@ -198,6 +198,22 @@ public sealed record SessionListResult(IReadOnlyList<SessionRowView> Sessions);
 
 public sealed record SessionDeletedResult(bool Deleted, string SessionId);
 
+// session.search: two-stage (digest discovery → episodic hydration) with per-stage
+// retriever provenance; Message is the ordinal to feed back into session.get.
+public sealed record SessionSearchHitView(long Message, string Role, string Snippet, double Score, string? Retriever);
+
+public sealed record SessionSearchSessionView(
+	string SessionId,
+	string Agent,
+	string Description,
+	IReadOnlyList<SessionSearchHitView> Hits,
+	RetrieverInfo Retrievers);
+
+public sealed record SessionSearchResultView(
+	bool Distilled,
+	IReadOnlyList<SessionSearchSessionView> Sessions,
+	RetrieverInfo Discovery);
+
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 
 public sealed record BoardCreatedResult(string ProjectKey, string Name, string Kind, string? Description, string? SpecBoard, DateTime CreatedAt);

@@ -1,0 +1,69 @@
+@startuml session-search-architecture
+title PetBox search & memory — layered architecture (built, 2026-06-10)
+skinparam componentStyle rectangle
+skinparam shadowing false
+
+actor "Agent / UI\n(MCP, Razor)" as client
+
+package "Search facade" {
+  [Unified Search] as facade
+}
+
+package "Hot tier  (small, always indexed)  — SQLite" as hot {
+  [memory.* entries\nboard nodes] as mem
+  interface IFullTextIndex as fti
+  interface IVectorIndex as vi
+  [SQLite FTS5 (unicode61 + prefix)\nTODO: snowball stemmer] as fts_hot
+  [BLOB brute-force cosine\n(VectorCodec / VectorMath)] as vec_hot
+}
+
+package "Episodic tier  (large, lazy)  — transient DuckDB over the session store" as epi {
+  database "cold: petbox session store\nSQLite, Brotli-JSONL snapshot,\nmessage-addressable (__version)" as cold
+  [Digest index\n(always-on, small, HYBRID)\nmemory store `session-digests`\nSessionDigestJob: DeltaAsync -> llm.chat] as digest
+  [Lazy hydrator (DuckDbSessionEpisodicIndex)\nsession store -> in-memory DuckDB FTS(russian)\n+ brute vectors dim1024, cached, TTL aging] as hydr
+}
+
+package "Embedding subsystem  (ASYNC, OPTIONAL)" as emb {
+  queue "Vectorization queue\n(rows pending embedding)" as q
+  [Embed worker\n(deferred materialization)] as worker
+  [LlmClient: Embed\nhome/qwen3-embed-4b\n(cloud fallback: TBD)] as embcli
+}
+
+package "Distillation  (infer, async)" as dist {
+  [Distiller\nepisodic -> typed facts\nDeepSeek infer=true] as distiller
+}
+
+client --> facade
+facade --> fti
+facade --> vi
+facade --> digest : 1) discover (NO embeddings needed)
+digest ..> hydr  : 2) hydrate the pointed-to session ON-DEMAND
+facade --> hydr  : deep search within a session
+fti -- fts_hot
+vi -- vec_hot
+
+mem ..> q       : write ENQUEUES (never blocks / fails on embedder)
+cold ..> q      : new sessions to vectorize
+q --> worker
+worker --> embcli
+worker --> vec_hot : materialize hot vectors later
+worker --> cold    : write session vectors (deferred)
+
+cold --> distiller
+distiller --> mem  : extract durable facts + provenance(sessionId, offset)
+
+note right of facade
+  Discovery = AUTOMATIC over cheap always-on
+  digests (lexical, embedding-free).
+  Deep session search = ON-DEMAND
+  (lazy hydrate ~133ms / ~160MB on tun4).
+  Measurements killed a global always-on index
+  -> this two-tier (digest -> hydrate) split.
+end note
+
+note bottom of emb
+  Embeddings are an OPTIONAL accelerator, not a dependency.
+  Embedder down -> writes still succeed, rows wait in the
+  queue, search falls back to FTS. => FTS quality is load-bearing.
+end note
+@enduml

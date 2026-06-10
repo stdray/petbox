@@ -147,6 +147,15 @@ public partial class Program
 		// `session-digests` memory store off the write path — rides the same enrichment tick
 		// as the vector jobs. Registered after sessions/memory/llm, which it consumes.
 		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionDigestJob>();
+		// Two-stage session search: digest discovery (memory) → episodic hydration.
+		builder.Services.AddScoped<PetBox.Web.Search.SessionSearchService>();
+		// Episodic tier: transient per-session DuckDB index, hydrated on demand and aged
+		// out by idleness. Singleton — it IS the hydration cache.
+		builder.Services.AddSingleton<PetBox.Sessions.Contract.ISessionEpisodicIndex>(sp =>
+			new PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex(
+				sp.GetRequiredService<IScopedDbFactory<PetBox.Sessions.Data.SessionsDb>>(),
+				sp.GetService<PetBox.LlmRouter.Contract.ILlmClient>(),
+				sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex>>()));
 		// Deploy: single FLEET-WIDE mutable db (one node hosts containers from many
 		// projects, so NOT per-project scoped). Schema ensured once at startup in Configure().
 		builder.Services.AddScoped(sp => new PetBox.Deploy.Data.DeployDb(
