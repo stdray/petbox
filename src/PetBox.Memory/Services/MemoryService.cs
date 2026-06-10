@@ -2,6 +2,7 @@ using LinqToDB;
 using LinqToDB.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
+using PetBox.Core.Observability;
 using PetBox.Core.Search;
 using PetBox.LlmRouter.Contract;
 using PetBox.Memory.Contract;
@@ -105,6 +106,12 @@ public sealed class MemoryService : IMemoryService
 
 	public async Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, long sinceVersion = 0, CancellationToken ct = default)
 	{
+		using var op = PetBoxActivitySources.Memory.StartActivity("memory.upsert");
+		op?.SetTag("petbox.project", projectKey);
+		op?.SetTag("petbox.store", store);
+		op?.SetTag("petbox.upsert_count", upserts.Count);
+		op?.SetTag("petbox.delete_count", deletes.Count);
+
 		await _stores.EnsureAsync(projectKey, store, ct); // auto-vivify on first write
 		var desired = upserts.Select(ToEntry).ToArray();
 		var dels = deletes.Select(d => (d.Key, d.Version)).ToArray();

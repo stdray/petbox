@@ -201,7 +201,11 @@ public partial class Program
 		builder.Services.AddMcpServer()
 			.WithHttpTransport()
 			.WithToolsFromAssembly(typeof(Program).Assembly, mcpJson)
-			.WithRequestFilters(PetBox.Web.Mcp.McpToolScopeFilter.Register); // A7b: scope-trim tools/list
+			.WithRequestFilters(filters =>
+			{
+				PetBox.Web.Mcp.McpToolScopeFilter.Register(filters); // A7b: scope-trim tools/list
+				PetBox.Web.Mcp.McpTracingFilter.Register(filters);   // span per tool call (self-tracing)
+			});
 		builder.Services.AddSingleton<FeatureFlags>();
 
 		// Built-in .NET 10 OpenAPI document generation. The document is materialized at build
@@ -258,6 +262,21 @@ public partial class Program
 							&& !ctx.Request.Path.StartsWithSegments("/v1/logs")
 							&& !ctx.Request.Path.StartsWithSegments("/v1/traces");
 					})
+					// Outgoing HTTP as client spans (LLM providers, embedders) — except the
+					// telemetry self-export, which would recurse (spec: trace-outgoing-http).
+					.AddHttpClientInstrumentation(opts =>
+						opts.FilterHttpRequestMessage = req =>
+							PetBox.Web.Observability.SelfTelemetryFilter.ShouldTrace(req.RequestUri))
+					// Service-layer sources (self-tracing): without AddSource a source's spans
+					// are never sampled, so a request trace stays a single AspNetCore span.
+					.AddSource(
+						PetBox.Log.Core.Observability.ActivitySources.IngestionSourceName,
+						PetBox.Log.Core.Observability.ActivitySources.QuerySourceName,
+						PetBox.Log.Core.Observability.ActivitySources.RetentionSourceName,
+						PetBox.Core.Observability.PetBoxActivitySources.TasksSourceName,
+						PetBox.Core.Observability.PetBoxActivitySources.MemorySourceName,
+						PetBox.Core.Observability.PetBoxActivitySources.SearchSourceName,
+						PetBox.Core.Observability.PetBoxActivitySources.McpSourceName)
 					.AddOtlpExporter(o =>
 					{
 						o.Endpoint = new Uri(otlpEndpoint);

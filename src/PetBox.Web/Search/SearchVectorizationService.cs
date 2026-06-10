@@ -1,6 +1,8 @@
+using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using PetBox.Core.Observability;
 
 namespace PetBox.Web.Search;
 
@@ -46,7 +48,18 @@ public sealed partial class SearchVectorizationService : BackgroundService
 		foreach (var job in scope.ServiceProvider.GetServices<IVectorizationJob>())
 		{
 			if (ct.IsCancellationRequested) return;
+			// One span per job drain (a root trace — there is no inbound request); embed HTTP
+			// calls attach as client children. An idle pass is unrecorded — a span per empty
+			// tick would flood the trace store (spec: trace-operation-granularity).
+			using var span = PetBoxActivitySources.Search.StartActivity("search.vectorize");
+			span?.SetTag("petbox.job", job.GetType().Name);
 			var indexed = await job.DrainAllAsync(ct);
+			span?.SetTag("petbox.indexed", indexed);
+			if (indexed == 0 && span is not null)
+			{
+				span.IsAllDataRequested = false;
+				span.ActivityTraceFlags &= ~ActivityTraceFlags.Recorded;
+			}
 			if (indexed > 0)
 				LogVectorized(_logger, indexed, job.GetType().Name);
 		}

@@ -1,9 +1,11 @@
+using System.Diagnostics;
 using System.Text.RegularExpressions;
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
+using PetBox.Core.Observability;
 using PetBox.Core.Search;
 using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
@@ -502,6 +504,11 @@ public sealed partial class TasksService : ITasksService
 
 	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, CancellationToken ct = default)
 	{
+		using var op = PetBoxActivitySources.Tasks.StartActivity("tasks.upsert");
+		op?.SetTag("petbox.project", projectKey);
+		op?.SetTag("petbox.board", board);
+		op?.SetTag("petbox.node_count", nodes.Count);
+
 		await _boards.EnsureAsync(projectKey, board, ct); // auto-vivify on first write
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
 		if (meta.ClosedAt != null)
@@ -516,53 +523,61 @@ public sealed partial class TasksService : ITasksService
 		var specRefs = LinkFields(nodes, p => p.SpecRef);
 		var blockedBy = LinkFields(nodes, p => p.BlockedBy);
 		var ideaRefs = LinkFields(nodes, p => p.IdeaRef);
-		RequireSpecLinks(kind, desired, prior, specRefs);
-		await ValidateSpecRefsAsync(projectKey, meta, specRefs, ct);
-		await RequireBlockersAsync(kind, projectKey, desired, blockedBy, ct);
-		await RequireSpecPlanForReviewAsync(kind, projectKey, board, desired, prior, ct);
-		await RequireAcceptedIdeaForSpecAsync(kind, projectKey, desired, ideaRefs, ct);
+		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
+		{
+			RequireSpecLinks(kind, desired, prior, specRefs);
+			await ValidateSpecRefsAsync(projectKey, meta, specRefs, ct);
+			await RequireBlockersAsync(kind, projectKey, desired, blockedBy, ct);
+			await RequireSpecPlanForReviewAsync(kind, projectKey, board, desired, prior, ct);
+			await RequireAcceptedIdeaForSpecAsync(kind, projectKey, desired, ideaRefs, ct);
+		}
 		// Class-A lexical floor written INSIDE the entity tx: open nodes (re)indexed, terminal/
 		// removed nodes dropped (search covers only the open set), committing/rolling back with the
 		// entity. Tags read in-tx are the pre-upsert set; SetTagsAsync (below) is reflected by the
 		// post-commit RefreshFtsTagsAsync. Vectors are materialized by the worker, not here.
 		var fts = new SqliteFtsIndex(() => ctx);
-		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion,
-			onWithinTx: async (tx, upserted, deletedKeys, c) =>
-			{
-				var tags = await NodeTagsAsync(tx, board, upserted.Where(TasksSearchDocs.IsIndexable).Select(n => n.NodeId), c);
-				foreach (var n in upserted)
-					if (TasksSearchDocs.IsIndexable(n))
-						await fts.IndexAsync(tx, TasksSearchDocs.ToDoc(n, projectKey, tags.GetValueOrDefault(n.NodeId, [])), c);
-					else
-						await fts.DeleteAsync(tx, projectKey, board, n.Key, c); // left the open set
-				foreach (var key in deletedKeys)
-					await fts.DeleteAsync(tx, projectKey, board, key, c);
-			},
-			partition: n => n.Board == board, ct: ct);
+		TemporalUpsertResult<PlanNode> r;
+		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.temporal"))
+			r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion,
+				onWithinTx: async (tx, upserted, deletedKeys, c) =>
+				{
+					var tags = await NodeTagsAsync(tx, board, upserted.Where(TasksSearchDocs.IsIndexable).Select(n => n.NodeId), c);
+					foreach (var n in upserted)
+						if (TasksSearchDocs.IsIndexable(n))
+							await fts.IndexAsync(tx, TasksSearchDocs.ToDoc(n, projectKey, tags.GetValueOrDefault(n.NodeId, [])), c);
+						else
+							await fts.DeleteAsync(tx, projectKey, board, n.Key, c); // left the open set
+					foreach (var key in deletedKeys)
+						await fts.DeleteAsync(tx, projectKey, board, key, c);
+				},
+				partition: n => n.Board == board, ct: ct);
 		if (r.Applied)
-		{
-			await _boards.TouchAsync(projectKey, board, ct);
-			await LinkRefsAsync(projectKey, "task_spec", desired, specRefs, blockerIsFrom: false, ct);
-			await LinkRefsAsync(projectKey, "blocks", desired, blockedBy, blockerIsFrom: true, ct);
-			await LinkRefsAsync(projectKey, "idea_spec", desired, ideaRefs, blockerIsFrom: true, ct);
-			await CloseBlocksOnLeaveAsync(projectKey, desired, prior, ct);
-			await RunDoneEffectsAsync(projectKey, kind, desired, ct);
-		}
+			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.links"))
+			{
+				await _boards.TouchAsync(projectKey, board, ct);
+				await LinkRefsAsync(projectKey, "task_spec", desired, specRefs, blockerIsFrom: false, ct);
+				await LinkRefsAsync(projectKey, "blocks", desired, blockedBy, blockerIsFrom: true, ct);
+				await LinkRefsAsync(projectKey, "idea_spec", desired, ideaRefs, blockerIsFrom: true, ct);
+				await CloseBlocksOnLeaveAsync(projectKey, desired, prior, ct);
+				await RunDoneEffectsAsync(projectKey, kind, desired, ct);
+			}
 		// Tags + part_of are node metadata, not a content revision — apply whenever the
 		// upsert did not conflict (so a pure tag/parent change on an unchanged node still
 		// takes effect; on a no-op the NodeId in `desired` is the existing one).
 		if (r.Conflicts.Count == 0)
-		{
-			await SetTagsAsync(projectKey, board, nodes, desired, ct);
-			await SetPartOfAsync(projectKey, board, nodes, desired, ct);
-			await SetSupersedesAsync(projectKey, board, nodes, desired, ct);
-		}
+			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.meta"))
+			{
+				await SetTagsAsync(projectKey, board, nodes, desired, ct);
+				await SetPartOfAsync(projectKey, board, nodes, desired, ct);
+				await SetSupersedesAsync(projectKey, board, nodes, desired, ct);
+			}
 		// Refresh the FTS Tags column now that SetTagsAsync (above) has run: the in-tx index wrote
 		// content + pre-upsert tags transactionally; re-index this batch's open nodes with the
 		// now-current tags. Content/membership are already committed with the entity; vectors are
 		// materialized off the write path by the async-vectorization worker.
 		if (r.Applied)
-			await RefreshFtsTagsAsync(ctx, projectKey, board, desired, ct);
+			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.fts-tags"))
+				await RefreshFtsTagsAsync(ctx, projectKey, board, desired, ct);
 		return new UpsertOutcome(r, kind);
 	}
 
