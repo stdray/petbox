@@ -8,7 +8,7 @@ door enforced by a NetArchTest:
 |----------|--------------------------|-------|
 | Tasks    | `ITasksService`          | all domain logic out of `TasksTools`; UI + `ReportTools` thin |
 | Memory   | `IMemoryService`         | taxonomy/tags/FTS/temporal; 3 pages + `MemoryTools` thin |
-| Sessions | `ISessionService`        | MCP `session.append` + REST Stop-hook unified |
+| Sessions | `ISessionService`        | MCP `session.upsert` + REST Stop-hook unified |
 | Data     | `IDataSqlService`        | converged drifted raw-SQL query/exec (MCP vs REST) |
 | Log      | `ILogQueryService`       | converged KQL orchestration (MCP vs REST) around shared `KqlTransformer` |
 

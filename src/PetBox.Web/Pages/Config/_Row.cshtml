@@ -1,7 +1,10 @@
 @model PetBox.Web.Pages.Config.RowViewModel
 @{
 	Layout = null;
-	var parsedTags = PetBox.Web.Pages.Config.IndexModel.ParseTagsDisplay(Model.Binding.Tags);
+	// Binding tags are canonical colon-delimited tokens (e.g. "ws:stdray,project:animemov"),
+	// not the "key=value" saved-filter wire format — show each token verbatim.
+	var tagTokens = (Model.Binding.Tags ?? string.Empty)
+		.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 	var isSecret = Model.Binding.Kind == PetBox.Core.Models.BindingKind.Secret;
 	// Build URLs via Routes.* (not asp-page tag helpers): asp-page link generation returns an
 	// EMPTY href/action for these custom-routed Config pages, so the Del/Edit buttons posted to
@@ -17,15 +20,15 @@
 }
 <tr data-testid="config-row" data-binding-id="@Model.Binding.Id">
 	<td class="text-xs" data-testid="config-tags">
-		@if (parsedTags.Count == 0)
+		@if (tagTokens.Length == 0)
 		{
 			<span class="opacity-50">(root)</span>
 		}
 		else
 		{
-			@foreach (var (k, v) in parsedTags)
+			@foreach (var t in tagTokens)
 			{
-				<span class="badge badge-sm mr-1">@k=@v</span>
+				<span class="badge badge-sm mr-1">@t</span>
 			}
 		}
 	</td>

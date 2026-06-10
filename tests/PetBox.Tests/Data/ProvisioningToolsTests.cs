@@ -1,9 +1,7 @@
-using System.Text.Json;
 using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -12,8 +10,11 @@ using PetBox.Core.Models;
 
 namespace PetBox.Tests.Data;
 
-// WS6.2 — agent-provisioning MCP tools. An agent key with admin:provision can create a
-// project and mint a downstream key; a key without the scope is rejected.
+// WS6.2 — agent-provisioning MCP tools, now typed per-type (typed-surface Phase 4):
+// project.create/list, apikey.create/list/delete (replacing the generic entity.* dispatch).
+// An agent key with admin:provision can create a project and mint a downstream key; a key
+// without the scope is rejected. Every tool surfaces failures as a structured {error}
+// payload (GuardAsync), so we assert error CONTENT, not just IsError.
 [Collection("DataModule")]
 public sealed class ProvisioningToolsTests : IAsyncLifetime
 {
@@ -79,14 +80,24 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", null);
 	}
 
+	async Task<McpClientTool> ToolAsync(string name) =>
+		(await _mcp.ListToolsAsync()).First(t => t.Name == name);
+
+	static string Text(ModelContextProtocol.Protocol.CallToolResult r) =>
+		r.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
+
 	[Fact]
 	public async Task ProvisioningTools_AreDiscoverable()
 	{
-		// Provisioning verbs are now the generic entity.* tools; the old
-		// workspace.create_project / project.create_apikey names are gone.
+		// Provisioning verbs are now typed per-type tools; the generic entity.* family and
+		// the old workspace.create_project / project.create_apikey names are gone.
 		var names = (await _mcp.ListToolsAsync()).Select(t => t.Name).ToList();
-		names.Should().Contain("entity.create");
-		names.Should().Contain("entity.list");
+		names.Should().Contain("project.create");
+		names.Should().Contain("project.list");
+		names.Should().Contain("apikey.create");
+		names.Should().Contain("apikey.list");
+		names.Should().Contain("apikey.delete");
+		names.Should().NotContain("entity.create");
 		names.Should().NotContain("workspace.create_project");
 		names.Should().NotContain("project.create_apikey");
 	}
@@ -96,53 +107,72 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	{
 		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
 
-		var create = (await _mcp.ListToolsAsync()).First(t => t.Name == "entity.create");
-		var r1 = await create.CallAsync(new Dictionary<string, object?>
+		var create = await ToolAsync("project.create");
+		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "project",
-			["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = Workspace, key = projectKey, name = "Provisioned" }),
-		});
-		r1.IsError.Should().NotBe(true);
+			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "Provisioned",
+		})).Should().NotContain("\"error\"");
 
-		var r2 = await create.CallAsync(new Dictionary<string, object?>
+		var mint = await ToolAsync("apikey.create");
+		Text(await mint.CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "apikey",
-			["props"] = JsonSerializer.SerializeToElement(new { projectKey, name = "pet", scopes = "data:read,data:write", expiresInSeconds = 3600 }),
-		});
-		r2.IsError.Should().NotBe(true);
+			["projectKey"] = projectKey, ["name"] = "pet", ["scopes"] = "data:read,data:write", ["expiresInSeconds"] = 3600,
+		})).Should().NotContain("\"error\"");
 
 		using var scope = _factory.Services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 		(await db.Projects.AnyAsync(p => p.Key == projectKey)).Should().BeTrue();
 		(await db.ApiKeys.AnyAsync(k => k.ProjectKey == projectKey && k.ExpiresAt != null)).Should().BeTrue();
+
+		// apikey.list reflects the minted key.
+		var listed = Text(await (await ToolAsync("apikey.list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = projectKey }));
+		listed.Should().Contain("data:read");
+	}
+
+	[Fact]
+	public async Task ProjectList_ReflectsCreate()
+	{
+		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
+		await (await ToolAsync("project.create")).CallAsync(new Dictionary<string, object?>
+		{
+			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "Listed",
+		});
+		var listed = Text(await (await ToolAsync("project.list")).CallAsync(new Dictionary<string, object?> { ["workspaceKey"] = Workspace }));
+		listed.Should().Contain(projectKey);
 	}
 
 	[Fact]
 	public async Task CreateProject_InvalidKey_Rejected()
 	{
-		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "entity.create");
-		var result = await tool.CallAsync(new Dictionary<string, object?>
+		var result = await (await ToolAsync("project.create")).CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "project",
-			["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = Workspace, key = "Bad Key!", name = "x" }),
+			["workspaceKey"] = Workspace, ["key"] = "Bad Key!", ["name"] = "x",
 		});
-		// entity.* now surfaces failures as a structured {error} payload (GuardAsync).
-		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text.Should().Contain("error");
+		// Structured {error} payload (GuardAsync) — assert the cause is the key validation.
+		Text(result).Should().Contain("invalid");
 	}
 
 	[Fact]
-	public async Task CreateProject_DeleteIsForbidden()
+	public async Task MintKey_UnknownScope_Rejected()
 	{
-		// entity delete deliberately does not support 'project' (would orphan
-		// logs/dbs/keys) — the call must surface an error.
-		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "entity.delete");
-		var result = await tool.CallAsync(new Dictionary<string, object?>
+		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
+		await (await ToolAsync("project.create")).CallAsync(new Dictionary<string, object?>
 		{
-			["type"] = "project",
-			["key"] = JsonSerializer.SerializeToElement(new { key = "$system" }),
+			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "x",
 		});
-		// entity.* now surfaces failures as a structured {error} payload (GuardAsync).
-		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text.Should().Contain("error");
+		var result = await (await ToolAsync("apikey.create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = projectKey, ["name"] = "k", ["scopes"] = "data:read,bogus:scope",
+		});
+		Text(result).Should().Contain("Unknown scopes");
+	}
+
+	[Fact]
+	public async Task ProjectDelete_DoesNotExist_NoAlias()
+	{
+		// project has no delete (it would orphan logs/dbs/keys) — there is no project.delete tool.
+		var names = (await _mcp.ListToolsAsync()).Select(t => t.Name).ToList();
+		names.Should().NotContain("project.delete");
 	}
 
 	[Fact]
@@ -159,14 +189,13 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 		var mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
 		try
 		{
-			var tool = (await mcp.ListToolsAsync()).First(t => t.Name == "entity.create");
+			var tool = (await mcp.ListToolsAsync()).First(t => t.Name == "project.create");
 			var result = await tool.CallAsync(new Dictionary<string, object?>
 			{
-				["type"] = "project",
-				["props"] = JsonSerializer.SerializeToElement(new { workspaceKey = Workspace, key = "shouldfail", name = "x" }),
+				["workspaceKey"] = Workspace, ["key"] = "shouldfail", ["name"] = "x",
 			});
-			// entity.* now surfaces failures as a structured {error} payload (GuardAsync).
-		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text.Should().Contain("error");
+			// Structured {error} payload (GuardAsync) — the cause is the missing scope.
+			Text(result).Should().Contain("scope");
 		}
 		finally
 		{

@@ -5,7 +5,7 @@ using PetBox.Sessions.Data;
 namespace PetBox.Sessions.Services;
 
 // The one implementation of ISessionService: the single door to the sessions store.
-// The temporal append (the only write) lives here, so the MCP tool and the REST
+// The temporal upsert (the only write) lives here, so the MCP tool and the REST
 // Stop-hook endpoint share one code path instead of each opening the context.
 public sealed class SessionService : ISessionService
 {
@@ -13,7 +13,7 @@ public sealed class SessionService : ISessionService
 
 	public SessionService(ISessionStore sessions) => _sessions = sessions;
 
-	public async Task<SessionUpsertOutcome> AppendAsync(string projectKey, string sessionId, string agent, string content, long version = 0, CancellationToken ct = default)
+	public async Task<SessionUpsertOutcome> UpsertAsync(string projectKey, string sessionId, string agent, string content, long version = 0, CancellationToken ct = default)
 	{
 		var ctx = _sessions.GetContext(projectKey);
 		var r = await TemporalStore.UpsertAsync(ctx, new[]

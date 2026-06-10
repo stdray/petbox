@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Sessions.Contract;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
@@ -14,14 +15,15 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class SessionTools
 {
-	[McpServerTool(Name = "session.append", Title = "Save a session plan blob")]
+	[McpServerTool(Name = "session.upsert", Title = "Save a session plan blob", UseStructuredContent = true)]
 	[Description("""
-		Create or update an agent session's plan blob. Requires tasks:write.
+		Optimistic-concurrency temporal upsert of an agent session's plan blob: replace
+		the blob at the current version, conflict on a stale baseline. Requires tasks:write.
 		`version` is the baseline you last saw (0 = new session). Two writers on the
 		same sessionId with a stale baseline get a conflict. Result:
 		{ applied, currentVersion, conflicts[] }.
 		""")]
-	public static async Task<object> AppendAsync(
+	public static async Task<SessionUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey, string sessionId, string agent, string content,
 		long version = 0, CancellationToken ct = default)
@@ -30,16 +32,14 @@ public static class SessionTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
-		var r = (await sessions.AppendAsync(projectKey, sessionId, agent, content, version, ct)).Result;
-		return new
-		{
-			applied = r.Applied,
-			currentVersion = r.CurrentVersion,
-			conflicts = r.Conflicts.Select(c => new { key = c.Key, kind = c.Kind.ToString() }).ToList(),
-		};
+		var r = (await sessions.UpsertAsync(projectKey, sessionId, agent, content, version, ct)).Result;
+		return new SessionUpsertResult(
+			r.Applied,
+			r.CurrentVersion,
+			r.Conflicts.Select(c => new SessionConflictView(c.Key, c.Kind.ToString())).ToList());
 	}
 
-	[McpServerTool(Name = "session.get", Title = "Get a session", ReadOnly = true)]
+	[McpServerTool(Name = "session.get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true)]
 	[Description("""
 		Get the active session blob by id, or null. The blob can be read INCREMENTALLY
 		(spec bounded-result-sets): pass `tail` for the last N chars, or `offset`+`limit`
@@ -47,7 +47,7 @@ public static class SessionTools
 		ALWAYS returned so a caller can poll for growth and then read only the new tail.
 		Requires tasks:read.
 		""")]
-	public static async Task<object?> GetAsync(
+	public static async Task<SessionGetResult?> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey, string sessionId,
 		[Description("Return only the last N chars of the blob (0 = off). Takes precedence over offset/limit.")] int tail = 0,
@@ -61,7 +61,7 @@ public static class SessionTools
 		var s = await sessions.GetAsync(projectKey, sessionId, ct);
 		if (s is null) return null;
 		var full = s.Content ?? "";
-		return new { sessionId = s.Key, agent = s.Agent, content = Window(full, tail, offset, limit), length = full.Length, version = s.Version };
+		return new SessionGetResult(s.Key, s.Agent, Window(full, tail, offset, limit), full.Length, s.Version);
 	}
 
 	// Incremental read of a plan blob: `tail` (last N chars) wins; else the [offset, offset+limit)
@@ -75,9 +75,9 @@ public static class SessionTools
 		return s.Substring(start, count);
 	}
 
-	[McpServerTool(Name = "session.list", Title = "List sessions", ReadOnly = true)]
+	[McpServerTool(Name = "session.list", Title = "List sessions", ReadOnly = true, UseStructuredContent = true)]
 	[Description("List active sessions in a project. Requires tasks:read.")]
-	public static async Task<object> ListAsync(
+	public static async Task<SessionListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey, CancellationToken ct = default)
 	{
@@ -85,6 +85,6 @@ public static class SessionTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await sessions.ListAsync(projectKey, ct);
-		return new { sessions = list.Select(s => new { sessionId = s.Key, agent = s.Agent, version = s.Version }).ToList() };
+		return new SessionListResult(list.Select(s => new SessionRowView(s.Key, s.Agent, s.Version)).ToList());
 	}
 }

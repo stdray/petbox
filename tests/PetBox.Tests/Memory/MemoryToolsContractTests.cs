@@ -53,7 +53,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Upsert_WithoutType_IsRejected()
 	{
 		var http = Http("memory:read,memory:write");
-		var entries = JsonSerializer.SerializeToElement(new object[]
+		var entries = McpInputs.Entries(new object[]
 		{
 			new { key = "k", description = "d", body = "b" },
 		});
@@ -68,7 +68,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var http = Http("memory:read,memory:write");
 
 		// Cold upsert (no store_create) auto-creates the store; tags get normalised.
-		var entries = JsonSerializer.SerializeToElement(new object[]
+		var entries = McpInputs.Entries(new object[]
 		{
 			new { key = "go-style", type = "reference", description = "Go", body = "tabs", tags = "Go, STYLE ,go" },
 			new { key = "prefers-tabs", type = "feedback", description = "tabs", body = "user likes tabs" },
@@ -92,7 +92,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Search_Fts_FindsByToken_AndExcludesOthers()
 	{
 		var http = Http("memory:read,memory:write");
-		var entries = JsonSerializer.SerializeToElement(new object[]
+		var entries = McpInputs.Entries(new object[]
 		{
 			new { key = "auth-scopes", type = "project", description = "API key scopes", body = "scopes are enumerable, not wildcards" },
 			new { key = "go-style", type = "reference", description = "Go conventions", body = "use tabs not spaces" },
@@ -106,13 +106,14 @@ public sealed class MemoryToolsContractTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Upsert_AcceptsEntriesAsJsonString()
+	public async Task Upsert_AcceptsTypedEntries()
 	{
 		var http = Http("memory:read,memory:write");
-		// Real MCP clients pass the untyped `entries` param as a JSON *string* (D6).
-		var arrayJson = """[{"key":"k","type":"project","description":"d","body":"b"}]""";
-		var entriesAsString = JsonSerializer.SerializeToElement(arrayJson); // ValueKind == String
-		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "strstore", entriesAsString));
+		// typed-surface Phase 4: `entries` is now a typed MemoryEntryInputDto[] (the SDK emits a
+		// rich input schema), so the old JSON-*string* fallback for stale-schema clients is gone —
+		// a reconnect refreshes the cached schema (see McpToolInputs deviation note).
+		var entries = McpInputs.EntriesJson("""[{"key":"k","type":"project","description":"d","body":"b"}]""");
+		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "strstore", entries));
 		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
 			.Which.GetProperty("key").GetString().Should().Be("k");
 	}
@@ -121,13 +122,13 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Upsert_DeletedTrue_SoftRemovesEntry()
 	{
 		var http = Http("memory:read,memory:write");
-		var entries = JsonSerializer.SerializeToElement(new object[]
+		var entries = McpInputs.Entries(new object[]
 		{
 			new { key = "temp", type = "project", description = "temp", body = "to be removed" },
 		});
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 
-		var del = JsonSerializer.SerializeToElement(new object[] { new { key = "temp", deleted = true } });
+		var del = McpInputs.Entries(new object[] { new { key = "temp", deleted = true } });
 		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", del));
 		res.GetProperty("removed").EnumerateArray().Select(e => e.GetString()).Should().Contain("temp");
 
@@ -146,7 +147,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var big = new string('y', 500);
 
 		// Default echo: description present, body sliced to null.
-		var entries = JsonSerializer.SerializeToElement(new object[]
+		var entries = McpInputs.Entries(new object[]
 		{
 			new { key = "k", type = "project", description = "one-liner", body = big },
 		});
@@ -156,7 +157,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		added.GetProperty("body").ValueKind.Should().Be(JsonValueKind.Null);
 
 		// bodyLen > 0: opt-in sliced body — first N chars + "…" when cut.
-		var entries2 = JsonSerializer.SerializeToElement(new object[]
+		var entries2 = McpInputs.Entries(new object[]
 		{
 			new { key = "k2", type = "project", description = "d", body = big },
 		});
@@ -174,7 +175,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 	{
 		var http = Http("memory:read,memory:write");
 		var big = new string('x', 300);
-		var entries = JsonSerializer.SerializeToElement(new object[]
+		var entries = McpInputs.Entries(new object[]
 		{
 			new { key = "a", type = "project", description = "da", body = "alpha " + big },
 			new { key = "b", type = "project", description = "db", body = "alpha short" },

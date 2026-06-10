@@ -8,8 +8,10 @@ using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Models;
 using PetBox.Log.Core.Query;
@@ -29,7 +31,11 @@ public static class ShareApi
 {
 	public static void MapShareEndpoints(this IEndpointRouteBuilder app)
 	{
-		app.MapPost("/api/share", CreateShareAsync).RequireAuthorization();
+		app.MapPost("/api/share", CreateShareAsync)
+			.Accepts<ShareCreateRequest>("application/json")
+			.Produces<ShareCreatedResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.RequireAuthorization();
 		app.MapGet("/api/share/{token}/tsv", GetTsvAsync).AllowAnonymous();
 	}
 
@@ -40,7 +46,7 @@ public static class ShareApi
 		CancellationToken ct)
 	{
 		if (string.IsNullOrWhiteSpace(req.ProjectKey) || string.IsNullOrWhiteSpace(req.Kql))
-			return Results.BadRequest(new { error = "ProjectKey and Kql required" });
+			return Results.BadRequest(new ErrorResponse("ProjectKey and Kql required"));
 
 		var salt = RandomNumberGenerator.GetBytes(32);
 		var id = Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();
@@ -66,7 +72,7 @@ public static class ShareApi
 		};
 
 		await db.InsertAsync(entity, token: ct);
-		return Results.Ok(new { id, expiresAt = entity.ExpiresAt });
+		return Results.Ok(new ShareCreatedResponse(id, entity.ExpiresAt));
 	}
 
 	static async Task<IResult> GetTsvAsync(
@@ -78,11 +84,11 @@ public static class ShareApi
 	{
 		var share = await db.ShareLinks.FirstOrDefaultAsync((ShareLink s) => s.Id == token, ct);
 		if (share is null) return Results.NotFound();
-		if (share.ExpiresAt < DateTime.UtcNow) return Results.NotFound(new { error = "link expired" });
+		if (share.ExpiresAt < DateTime.UtcNow) return Results.NotFound(new ErrorResponse("link expired"));
 
 		KustoCode code;
 		try { code = KustoCode.Parse(share.Kql); }
-		catch { return Results.BadRequest(new { error = "invalid stored KQL" }); }
+		catch { return Results.BadRequest(new ErrorResponse("invalid stored KQL")); }
 
 		var columns = JsonSerializer.Deserialize<string[]>(share.ColumnsJson) ?? [];
 		var modesDict = JsonSerializer.Deserialize<Dictionary<string, MaskMode>>(share.ModesJson) ?? [];

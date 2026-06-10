@@ -6,8 +6,8 @@ namespace PetBox.Tests.Architecture;
 // Guard for the Log query convergence: the log.query MCP tool must reach a log only
 // through ILogQueryService (the shared KQL execution path, also used by the REST log
 // endpoint) — not by opening the log context itself. So LogTools must not depend on
-// ILogStore / LogDb. (EntityTools legitimately uses ILogStore for the log *catalog*
-// — create/list/delete — the same way RelationTools owns the relation store; and the
+// ILogStore / LogDb. (LogCatalogTools legitimately uses ILogStore for the log *catalog*
+// — log.create/list/delete — the same way RelationTools owns the relation store; and the
 // read-only Logs browse pages + OTLP ingestion still use the store directly. Those are
 // separate, lower-risk concerns, so this rule targets LogTools specifically.)
 public sealed class LogBoundaryTests

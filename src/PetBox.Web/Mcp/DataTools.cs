@@ -10,12 +10,14 @@ using PetBox.Core.Models;
 using PetBox.Data;
 using PetBox.Data.Contract;
 using PetBox.Data.Schema;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
-// MCP tools for the Data module's *operational* surface — the SQL/migration
-// ops that don't fit generic CRUD: data.schema_apply / data.query / data.exec.
-// DataDb lifecycle (list/create/delete/describe) lives on the generic entity.* tools.
+// MCP tools for the Data module's *operational* surface — the SQL/migration ops:
+// data.schema_apply / data.query / data.exec. The DataDb lifecycle (db.create/list/
+// delete/describe) lives in DataDbTools (kept separate so this type stays free of a
+// raw Microsoft.Data.Sqlite dependency — a NetArchTest enforces that).
 //
 // query/exec delegate to the shared IDataSqlService — the same execution path the
 // REST /api/data/* endpoints use — so the PRAGMA deny-list, parameter binding and
@@ -24,9 +26,9 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class DataTools
 {
-	[McpServerTool(Name = "data.schema_apply", Title = "Apply schema migration", Idempotent = true)]
+	[McpServerTool(Name = "data.schema_apply", Title = "Apply schema migration", Idempotent = true, UseStructuredContent = true)]
 	[Description("Applies a named SQL migration via DbUp + hash-based idempotency. Re-applying with same name+sql is a no-op; same name with different sql is a 409-style conflict. Requires data:schema scope.")]
-	public static async Task<object> SchemaApplyAsync(
+	public static async Task<DataSchemaApplyResult> SchemaApplyAsync(
 		IHttpContextAccessor http,
 		PetBoxDb db,
 		IDataDbFactory factory,
@@ -46,12 +48,12 @@ public static class DataTools
 
 		var cs = factory.GetConnectionString(projectKey, dbName);
 		var result = runner.Apply(cs, name, sql);
-		return new { kind = result.Kind.ToString(), hash = result.Hash, existingHash = result.ExistingHash, error = result.Error };
+		return new DataSchemaApplyResult(result.Kind.ToString(), result.Hash, result.ExistingHash, result.Error);
 	}
 
-	[McpServerTool(Name = "data.query", Title = "Run SQL query", ReadOnly = true)]
+	[McpServerTool(Name = "data.query", Title = "Run SQL query", ReadOnly = true, UseStructuredContent = true)]
 	[Description("Executes a parameterized SELECT and returns rows as a JSON array. Requires data:read scope.")]
-	public static async Task<object> QueryAsync(
+	public static async Task<DataQueryResult> QueryAsync(
 		IHttpContextAccessor http,
 		IDataSqlService dataSql,
 		string projectKey,
@@ -63,12 +65,12 @@ public static class DataTools
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.DataRead);
 		var rows = await dataSql.QueryAsync(projectKey, dbName, sql, ParseArgs(@params), TimeoutSeconds, ct);
-		return new { rows };
+		return new DataQueryResult(rows);
 	}
 
-	[McpServerTool(Name = "data.exec", Title = "Run SQL exec (INSERT/UPDATE/DELETE/DDL)")]
+	[McpServerTool(Name = "data.exec", Title = "Run SQL exec (INSERT/UPDATE/DELETE/DDL)", UseStructuredContent = true)]
 	[Description("Executes a non-query statement. Returns affected row count. PRAGMA writable_schema / temp_store_directory / data_store_directory / trusted_schema are denied. SQLITE_FULL surfaces as a quota error. Requires data:write scope.")]
-	public static async Task<object> ExecAsync(
+	public static async Task<DataExecResult> ExecAsync(
 		IHttpContextAccessor http,
 		IDataSqlService dataSql,
 		string projectKey,
@@ -80,7 +82,7 @@ public static class DataTools
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.DataWrite);
 		var affected = await dataSql.ExecAsync(projectKey, dbName, sql, ParseArgs(@params), TimeoutSeconds, ct);
-		return new { affected };
+		return new DataExecResult(affected);
 	}
 
 	// --- Helpers ---------------------------------------------------------

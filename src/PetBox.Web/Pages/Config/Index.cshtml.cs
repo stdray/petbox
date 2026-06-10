@@ -277,11 +277,14 @@ public sealed class IndexModel : PageModel
 		if (string.IsNullOrWhiteSpace(tags))
 			return result;
 
+		// Binding tags are canonical "namespace:value" tokens (ws:/project:/env:/area:/…),
+		// split on the first ':'. (The saved-filter wire format uses '=' and is parsed by
+		// ParseTagsDisplay instead.)
 		foreach (var part in tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
 		{
-			var eq = part.IndexOf('=');
-			if (eq > 0)
-				result[part[..eq].Trim()] = part[(eq + 1)..].Trim();
+			var sep = part.IndexOf(':');
+			if (sep > 0)
+				result[part[..sep].Trim()] = part[(sep + 1)..].Trim();
 		}
 		return result;
 	}

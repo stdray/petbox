@@ -87,4 +87,24 @@ public sealed class ConfigPageTests(WebAppFixture app, ITestOutputHelper output)
 		await Expect(_page.GetByTestId("config-table")).ToContainTextAsync("e2e.create.test");
 	}
 
+	// Regression: the Tags column rendered "(root)" for EVERY binding because _Row parsed the
+	// canonical colon-delimited tags ("ws:$system") with the saved-filter "key=value" splitter,
+	// which matched nothing. A freshly created binding carries ws:$system and must show it.
+	[Fact]
+	public async Task ConfigPage_Tags_Cell_Shows_Tags_Not_Root()
+	{
+		await _page!.GotoAsync("/ui/$system/config");
+
+		await _page.GetByTestId("config-new").ClickAsync();
+		await Expect(_page.GetByTestId("config-edit-form")).ToBeVisibleAsync();
+		await _page.GetByTestId("config-edit-path").FillAsync("e2e.tags.display");
+		await _page.GetByTestId("config-edit-value").FillAsync("v");
+		await _page.GetByTestId("config-save-btn").ClickAsync();
+
+		await Expect(_page.GetByTestId("config-table")).ToBeVisibleAsync();
+		var row = _page.Locator("[data-testid=config-row]").Filter(new() { HasText = "e2e.tags.display" });
+		await Expect(row.GetByTestId("config-tags")).ToContainTextAsync("ws:$system");
+		await Expect(row.GetByTestId("config-tags")).Not.ToContainTextAsync("(root)");
+	}
+
 }

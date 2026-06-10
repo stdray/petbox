@@ -109,7 +109,7 @@ setx PETBOX_&lt;PROJECT&gt;_API_KEY "&lt;your key&gt;"</code></pre>
 			<li><code>relations.create / list / delete</code> — typed temporal edges (task_spec|issue_task|idea_spec|blocks|nfr|dup). See the <a href="@Routes.DocMethodology()">cheatsheet</a>.</li>
 			<li><code>memory.store_list / store_create / store_delete</code> — named memory stores (a cold <code>memory.upsert</code> auto-creates the store).</li>
 			<li><code>memory.list / search / get / upsert / delta</code> — durable notes. Each entry needs a <code>type</code> (User|Feedback|Project|Reference) plus description, body, optional tags. <code>search</code> is FTS5-ranked; <code>list</code>/<code>search</code> accept an optional <code>type</code> filter.</li>
-			<li><code>session.append / get / list</code> — the working-session plan blob (one per project).</li>
+			<li><code>session.upsert / get / list</code> — the working-session plan blob (one per project).</li>
 		</ul>
 
 		<h2>6. Memory: tasks vs memory vs session</h2>
@@ -184,7 +184,7 @@ thinking -> session; a unit of work with a status -> task.
 Depth: /doc/methodology (contract) + /doc/overview (modules).
 Tools: tasks.board_create/board_list/board_delete/board_set_spec/board_close/board_reopen/
 get/upsert/delta/workflow, relations.create/list/delete,
-memory.store_*/list/search/get/upsert/delta, session.append/get/list.</code></pre>
+memory.store_*/list/search/get/upsert/delta, session.upsert/get/list.</code></pre>
 
 		<h2>8. Verify</h2>
 		<p>

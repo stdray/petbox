@@ -4,6 +4,7 @@ using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Core.Features;
 using PetBox.Tasks.Data;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
@@ -13,7 +14,7 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class RelationTools
 {
-	[McpServerTool(Name = "relations.create", Title = "Create a relation")]
+	[McpServerTool(Name = "relations.create", Title = "Create a relation", UseStructuredContent = true, OutputSchemaType = typeof(RelationCreatedResult))]
 	[Description("Create a typed directed edge between two node ids. kind ∈ task_spec|issue_task|idea_spec|blocks|part_of|supersedes. Idempotent (identical edge is returned, not duplicated). Node ids are stable PlanNode.NodeId values (from tasks.upsert/tasks.get). Requires tasks:write.")]
 	public static Task<object> CreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations,
@@ -24,10 +25,10 @@ public static class RelationTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var rel = await relations.CreateAsync(projectKey, kind, fromNodeId, toNodeId, ct);
-		return (object)new { rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId };
+		return new RelationCreatedResult(rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId);
 	});
 
-	[McpServerTool(Name = "relations.list", Title = "List relations", ReadOnly = true)]
+	[McpServerTool(Name = "relations.list", Title = "List relations", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationsListResult))]
 	[Description("List relations touching a node id. direction ∈ from|to|both (default both). Use direction=to to find edges pointing AT a node (reverse traversal, e.g. which tasks implement a spec node). includeHistory=true also returns soft-closed edges (with closedAt). Requires tasks:read.")]
 	public static Task<object> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations,
@@ -38,10 +39,10 @@ public static class RelationTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await relations.ListAsync(projectKey, nodeId, direction ?? "both", includeHistory, ct);
-		return (object)new { relations = list.Select(r => new { r.Id, r.Kind, r.FromNodeId, r.ToNodeId, r.CreatedAt, r.ClosedAt }).ToList() };
+		return new RelationsListResult(list.Select(r => new RelationRow(r.Id, r.Kind, r.FromNodeId, r.ToNodeId, r.CreatedAt, r.ClosedAt)).ToList());
 	});
 
-	[McpServerTool(Name = "relations.delete", Title = "Delete a relation", Destructive = true)]
+	[McpServerTool(Name = "relations.delete", Title = "Delete a relation", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationDeletedResult))]
 	[Description("Delete a relation by id. Requires tasks:write.")]
 	public static Task<object> DeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations,
@@ -50,6 +51,6 @@ public static class RelationTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return (object)new { deleted = await relations.DeleteAsync(projectKey, id, ct) };
+		return new RelationDeletedResult(await relations.DeleteAsync(projectKey, id, ct));
 	});
 }
