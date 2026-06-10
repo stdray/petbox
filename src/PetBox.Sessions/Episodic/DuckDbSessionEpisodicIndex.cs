@@ -1,4 +1,7 @@
+using System.Security.Cryptography;
+using System.Text;
 using DuckDB.NET.Data;
+using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
@@ -21,6 +24,12 @@ namespace PetBox.Sessions.Episodic;
 //   semantic — brute-force cosine over MRL-1024 message embeddings (no ANN at this
 //              scale), skipped silently when no embedder is available.
 // Either leg failing degrades the answer honestly instead of failing the search.
+//
+// Message embeddings are paid ONCE, not per hydration: they materialize lazily on the
+// first semantic query (whose embed call reveals the model identity) and persist in the
+// session store's message_vec cache keyed by (sessionId, ordinal) with a content hash —
+// re-hydrating a cold session reads vectors from disk; only changed/new ordinals (or a
+// swapped embedder model) re-embed.
 public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposable
 {
 	public static readonly TimeSpan DefaultTtl = TimeSpan.FromMinutes(10);
@@ -83,7 +92,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 				if (_cache.Remove(key, out var stale)) stale.Dispose();
 				var snap = await _store.GetAsync(projectKey, sessionId, ct);
 				if (snap is null) return null;
-				entry = await HydrateAsync(projectKey, snap, ct);
+				entry = Hydrate(projectKey, snap);
 				_cache[key] = entry;
 				// Honor the cap immediately — the fresh entry is the most recent, so the
 				// LRU trim hits an older hydration, never this one.
@@ -134,9 +143,11 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		return victims.Count;
 	}
 
-	async Task<Hydrated> HydrateAsync(string projectKey, SessionSnapshot snap, CancellationToken ct)
+	// Hydration is network-free: only the DuckDB FTS is built here. Vectors come from the
+	// persistent cache (or a lazy embed) on the first semantic query.
+	Hydrated Hydrate(string projectKey, SessionSnapshot snap)
 	{
-		var entry = new Hydrated(snap.Version, snap.Messages)
+		var entry = new Hydrated(snap.SessionId, snap.Version, snap.Messages)
 		{
 			LastAccess = _time.GetUtcNow().UtcDateTime,
 		};
@@ -151,20 +162,6 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 			// semantic leg and a degraded answer beat a failed search.
 			_logger?.LogWarning(ex, "episodic FTS hydration failed for {Project}/{Session}; lexical leg off",
 				projectKey, snap.SessionId);
-		}
-
-		if (_llm is not null && await _llm.IsAvailableAsync(projectKey, LlmCapability.Embed, ct))
-		{
-			try
-			{
-				entry.Vectors = await EmbedMessagesAsync(projectKey, snap.Messages, ct);
-			}
-			catch (Exception ex) when (ex is not OperationCanceledException)
-			{
-				entry.EmbedFailed = true;
-				_logger?.LogWarning(ex, "episodic embed hydration failed for {Project}/{Session}; semantic leg off",
-					projectKey, snap.SessionId);
-			}
 		}
 		return entry;
 	}
@@ -206,29 +203,13 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		}
 	}
 
-	async Task<float[][]> EmbedMessagesAsync(string projectKey, IReadOnlyList<SessionMessage> messages, CancellationToken ct)
-	{
-		var embedder = new LlmClientEmbedder(_llm!, projectKey);
-		var vectors = new float[messages.Count][];
-		for (var i = 0; i < messages.Count; i += EmbedBatchSize)
-		{
-			var batch = messages.Skip(i).Take(EmbedBatchSize)
-				.Select(m => m.Content.Length > EmbedCharCap ? m.Content[..EmbedCharCap] : m.Content)
-				.ToList();
-			var res = await embedder.EmbedAsync(batch, ct);
-			for (var j = 0; j < batch.Count; j++)
-				vectors[i + j] = Truncate(res.Vectors[j], VectorDim);
-		}
-		return vectors;
-	}
-
 	async Task<SessionEpisodicResult> QueryAsync(Hydrated entry, string projectKey, string query, int k, CancellationToken ct)
 	{
 		var indexes = new List<ISearchIndex>();
 		if (entry.Fts is not null)
 			indexes.Add(new FtsLeg(entry.Fts));
-		if (entry.Vectors is not null)
-			indexes.Add(new VectorLeg(entry, q => EmbedQueryAsync(projectKey, q, ct)));
+		if (_llm is not null && await _llm.IsAvailableAsync(projectKey, LlmCapability.Embed, ct))
+			indexes.Add(new VectorLeg(entry, q => EnsureVectorsAndEmbedQueryAsync(projectKey, entry, q, ct)));
 
 		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(null), k, ct);
 
@@ -242,15 +223,80 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 
 		// A leg that could not even hydrate never reached SearchService — fold it into the
 		// degraded flag so the caller can tell a full hybrid answer from a partial one.
-		var degraded = resp.Retrievers.Degraded || entry.Fts is null || entry.EmbedFailed;
+		var degraded = resp.Retrievers.Degraded || entry.Fts is null;
 		return new SessionEpisodicResult(hits, resp.Retrievers with { Degraded = degraded });
 	}
 
-	async Task<float[]> EmbedQueryAsync(string projectKey, string query, CancellationToken ct)
+	// The semantic leg's one network path: embed the query (which reveals the embedder's
+	// model identity), then make sure the entry's message vectors exist FOR THAT MODEL —
+	// from the persistent message_vec cache where the content hash still matches, embedding
+	// and persisting only the misses. A failure here surfaces to SearchService, which
+	// degrades the answer instead of failing the search.
+	async Task<float[]> EnsureVectorsAndEmbedQueryAsync(string projectKey, Hydrated entry, string query, CancellationToken ct)
 	{
-		var res = await new LlmClientEmbedder(_llm!, projectKey).EmbedAsync([query], ct);
-		return Truncate(res.Vectors[0], VectorDim);
+		var embedder = new LlmClientEmbedder(_llm!, projectKey);
+		var qb = await embedder.EmbedAsync([query], ct);
+		var queryVec = Truncate(qb.Vectors[0], VectorDim);
+		// Comparability guard = the query's (model, truncated dim) — message vectors must
+		// match BOTH, or cosine compares apples to oranges.
+		await EnsureMessageVectorsAsync(projectKey, entry, qb.Model, queryVec.Length, embedder, ct);
+		return queryVec;
 	}
+
+	async Task EnsureMessageVectorsAsync(string projectKey, Hydrated entry, string model, int dim,
+		LlmClientEmbedder embedder, CancellationToken ct)
+	{
+		if (entry.Vectors is not null && entry.VecModel == model) return;
+
+		var db = _factory.GetDb(projectKey);
+		var cached = db.MessageVectors
+			.Where(v => v.SessionId == entry.SessionId)
+			.ToDictionary(v => v.Version);
+
+		var vectors = new float[entry.Messages.Count][];
+		var missing = new List<int>();
+		for (var i = 0; i < entry.Messages.Count; i++)
+		{
+			var message = entry.Messages[i];
+			if (cached.TryGetValue(message.Version, out var row)
+				&& row.Model == model && row.Dim == dim && row.Hash == ContentHash(message.Content))
+				vectors[i] = VectorCodec.Decode(row.Vec);
+			else
+				missing.Add(i);
+		}
+
+		for (var at = 0; at < missing.Count; at += EmbedBatchSize)
+		{
+			var batch = missing.Skip(at).Take(EmbedBatchSize).ToList();
+			var texts = batch.Select(i =>
+			{
+				var content = entry.Messages[i].Content;
+				return content.Length > EmbedCharCap ? content[..EmbedCharCap] : content;
+			}).ToList();
+			var res = await embedder.EmbedAsync(texts, ct);
+			for (var j = 0; j < batch.Count; j++)
+			{
+				var i = batch[j];
+				var vec = Truncate(res.Vectors[j], VectorDim);
+				vectors[i] = vec;
+				await db.InsertOrReplaceAsync(new MessageVec
+				{
+					SessionId = entry.SessionId,
+					Version = entry.Messages[i].Version,
+					Hash = ContentHash(entry.Messages[i].Content),
+					Model = res.Model,
+					Dim = vec.Length,
+					Vec = VectorCodec.Encode(vec),
+				}, token: ct);
+			}
+		}
+
+		entry.Vectors = vectors;
+		entry.VecModel = model;
+	}
+
+	static string ContentHash(string content) =>
+		Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content)));
 
 	// MRL truncation, same rule as VectorSearchIndex: the leading components of a
 	// Matryoshka embedding are a valid lower-dim embedding; cosine renormalizes.
@@ -281,13 +327,16 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		cmd.ExecuteNonQuery();
 	}
 
-	sealed class Hydrated(long sessionVersion, IReadOnlyList<SessionMessage> messages) : IDisposable
+	sealed class Hydrated(string sessionId, long sessionVersion, IReadOnlyList<SessionMessage> messages) : IDisposable
 	{
+		public string SessionId { get; } = sessionId;
 		public long SessionVersion { get; } = sessionVersion;
 		public IReadOnlyList<SessionMessage> Messages { get; } = messages;
 		public DuckDBConnection? Fts { get; set; }
+		// Materialized lazily by the first semantic query (per embedder model); backed by
+		// the persistent message_vec cache, so a re-hydration rarely re-embeds.
 		public float[][]? Vectors { get; set; }
-		public bool EmbedFailed { get; set; }
+		public string? VecModel { get; set; }
 		public DateTime LastAccess { get; set; }
 
 		public void Dispose() => Fts?.Dispose();
@@ -324,8 +373,10 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		}
 	}
 
-	// The semantic leg: brute-force cosine over the hydrated message vectors.
-	sealed class VectorLeg(Hydrated entry, Func<string, Task<float[]>> embedQuery) : ISearchIndex
+	// The semantic leg: brute-force cosine over the (lazily materialized) message vectors.
+	// `ensureAndEmbedQuery` embeds the query AND guarantees entry.Vectors exist for the
+	// query's model before returning.
+	sealed class VectorLeg(Hydrated entry, Func<string, Task<float[]>> ensureAndEmbedQuery) : ISearchIndex
 	{
 		public SearchConsistency ConsistencyClass => SearchConsistency.Eventual;
 		public SearchCapability Capability => SearchCapability.Vector;
@@ -337,7 +388,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 
 		public async Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default)
 		{
-			var q = await embedQuery(query);
+			var q = await ensureAndEmbedQuery(query);
 			var candidates = entry.Messages.Select((m, i) => (Key: m.Version.ToString(), Vec: entry.Vectors![i]));
 			return VectorMath.TopK(q, candidates, k)
 				.Select(t => new Hit("message", t.Key, t.Score, "semantic"))

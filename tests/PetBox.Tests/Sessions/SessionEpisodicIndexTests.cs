@@ -143,6 +143,43 @@ public sealed class SessionEpisodicIndexTests : IDisposable
 		index.EvictIdle().Should().Be(0);
 	}
 
+	[Fact]
+	public async Task ReHydration_ReusesPersistedVectors_OnlyTheQueryIsReEmbedded()
+	{
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("первое сообщение", "второе сообщение"));
+		var fake = new EpisodicEmbedFake();
+		var time = new FakeTimeProvider();
+		using var index = new DuckDbSessionEpisodicIndex(_factory, fake, ttl: TimeSpan.FromMinutes(10), time: time);
+
+		await index.SearchAsync(Proj, "s1", "сообщение", k: 5); // embeds query + both messages
+		var inputsAfterFirst = fake.Inputs.Count;
+		inputsAfterFirst.Should().Be(3);
+
+		time.Advance(TimeSpan.FromMinutes(11));
+		index.EvictIdle().Should().Be(1);
+
+		var res = await index.SearchAsync(Proj, "s1", "сообщение", k: 5); // re-hydration
+		res!.Retrievers.Semantic.Should().BeTrue();
+		fake.Inputs.Count.Should().Be(inputsAfterFirst + 1);           // only the query went out
+		fake.Inputs[^1].Should().Be("сообщение");                       // message vectors came from disk
+	}
+
+	[Fact]
+	public async Task ChangedOrdinalContent_InvalidatesItsCachedVector()
+	{
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("старый текст"));
+		var fake = new EpisodicEmbedFake();
+		using var index = new DuckDbSessionEpisodicIndex(_factory, fake);
+		await index.SearchAsync(Proj, "s1", "текст", k: 5);
+
+		// The re-push rewrote ordinal 1's content (and grew the session → re-hydration).
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("совсем новый текст", "хвост"));
+		await index.SearchAsync(Proj, "s1", "текст", k: 5);
+
+		fake.Inputs.Should().Contain("совсем новый текст"); // hash mismatch → re-embedded
+		fake.Inputs.Should().Contain("хвост");              // new ordinal → embedded
+	}
+
 	// Embeds the marker (and any query) onto the same unit vector so a paraphrase with no
 	// shared tokens lands adjacent — the same trick as Memory's FakeLlmClient.
 	sealed class EpisodicEmbedFake : ILlmClient
@@ -150,8 +187,11 @@ public sealed class SessionEpisodicIndexTests : IDisposable
 		public const string NearQueryMarker = "__NEARQUERY__";
 		const int Dim = 8;
 
+		public List<string> Inputs { get; } = [];
+
 		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default)
 		{
+			Inputs.AddRange(request.Inputs);
 			var vectors = request.Inputs.Select(text =>
 			{
 				var v = new float[Dim];

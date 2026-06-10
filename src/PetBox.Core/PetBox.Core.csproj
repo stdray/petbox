@@ -19,6 +19,8 @@
 		<PackageReference Include="Microsoft.Extensions.Options" />
 		<PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
 		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+		<!-- SIMD cosine for the Class-B brute-force vector search (VectorMath). -->
+		<PackageReference Include="System.Numerics.Tensors" />
 	</ItemGroup>
 
 	<ItemGroup>

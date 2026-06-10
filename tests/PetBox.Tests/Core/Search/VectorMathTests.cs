@@ -8,7 +8,9 @@ public sealed class VectorMathTests
 	public void Cosine_IdenticalVectors_IsOne()
 	{
 		var v = new[] { 1f, 2f, 3f };
-		VectorMath.Cosine(v, v).Should().BeApproximately(1.0, 1e-9);
+		// Float32 (SIMD TensorPrimitives) precision: ~1e-7 is the honest tolerance —
+		// cosine feeds RANK fusion, where that error is far below any score gap.
+		VectorMath.Cosine(v, v).Should().BeApproximately(1.0, 1e-6);
 	}
 
 	[Fact]

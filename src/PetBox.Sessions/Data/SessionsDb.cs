@@ -13,6 +13,8 @@ public sealed class SessionsDb : DataConnection
 
 	public ITable<SessionRow> Sessions => this.GetTable<SessionRow>();
 
+	public ITable<MessageVec> MessageVectors => this.GetTable<MessageVec>();
+
 	public static DataOptions<SessionsDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString));
 }
