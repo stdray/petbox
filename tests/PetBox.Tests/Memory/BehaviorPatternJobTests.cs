@@ -143,6 +143,32 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	}
 
 	[Fact]
+	public async Task ExtractionTaggedSingleSourceEntries_AreObservations_AndConsolidate()
+	{
+		// Slice 1 already tags single-session procedures behavior:pattern at extraction —
+		// they must still count as observations (the prod gap: they were fed to the miner
+		// as "existing patterns" with no sources and could never consolidate).
+		foreach (var (key, sid) in new[] { ("f1", "s1"), ("f2", "s2") })
+			await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
+			{
+				Key = key, Version = 0, Type = "Feedback",
+				Description = "когда миграция — сначала бэкап и checksum", Body = "из " + sid,
+				Tags = "autocaptured,behavior:pattern",
+				Metadata = $"{{\"sessionId\":\"{sid}\"}}",
+			}], []);
+		var chat = new ScriptedChat(
+			"""[{"description":"когда миграция — сначала бэкап и checksum","body":"повторено в двух сессиях","sources":["s1","s2"]}]""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		chat.Prompts[^1].Should().Contain("\"s1\"").And.Contain("\"s2\""); // both visible as FACTS
+		var consolidated = (await _memory.ListAsync(Proj, Store, "Feedback"))
+			.Where(e => e.Metadata.Contains("sources")).ToList();
+		consolidated.Should().HaveCount(1);
+		consolidated[0].Metadata.Should().Contain("s1").And.Contain("s2");
+	}
+
+	[Fact]
 	public async Task MalformedMining_AdvancesCursor_NoCrash_NoBurnLoop()
 	{
 		await SeedFeedback("f1", "s1", "раз");
@@ -161,10 +187,12 @@ public sealed class BehaviorPatternJobTests : IDisposable
 		readonly Queue<string> _queue = new(responses);
 		string _last = responses[^1];
 		public int Calls { get; private set; }
+		public List<string> Prompts { get; } = [];
 
 		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
 		{
 			Calls++;
+			Prompts.Add(request.Messages[^1].Content);
 			if (_queue.Count > 0) _last = _queue.Dequeue();
 			return Task.FromResult(new ChatResult(_last, new ModelIdentity("fake-chat", 0),
 				new ServedBy("fake", "fake-chat", 1, Degraded: false)));

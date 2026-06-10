@@ -107,9 +107,11 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 			feedback.AddRange(await _memory.ListAsync(project, CuratedStore, "Feedback", ct));
 		feedback = feedback.Take(MaxInputEntries).ToList();
 
-		var existingPatterns = feedback
-			.Where(e => (e.Tags ?? "").Contains(PatternTag, StringComparison.OrdinalIgnoreCase))
-			.ToList();
+		// An entry is an EXISTING PATTERN only when it already carries merged sources
+		// (i.e. this miner consolidated it before). A single-source entry — even one the
+		// extraction slice already tagged behavior:pattern — is still an OBSERVATION:
+		// it must sit in the facts list so repetition across sessions can prove it.
+		var existingPatterns = feedback.Where(e => SourcesOf(e).Count > 0).ToList();
 
 		var digests = await _memory.StoreExistsAsync(project, SessionDigestJob.Store, ct)
 			? (await _memory.ListAsync(project, SessionDigestJob.Store, type: null, ct)).Take(30).ToList()
@@ -117,7 +119,7 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 
 		var sb = new StringBuilder();
 		sb.AppendLine("FEEDBACK FACTS:");
-		foreach (var e in feedback.Where(e => !(e.Tags ?? "").Contains(PatternTag, StringComparison.OrdinalIgnoreCase)))
+		foreach (var e in feedback.Where(e => SourcesOf(e).Count == 0))
 			sb.AppendLine(JsonSerializer.Serialize(new { e.Key, e.Description, Body = Clip(e.Body), sessionId = SessionIdOf(e) }));
 		sb.AppendLine();
 		sb.AppendLine("EXISTING PATTERNS:");
