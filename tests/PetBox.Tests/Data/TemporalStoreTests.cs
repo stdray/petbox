@@ -220,14 +220,14 @@ public sealed class TemporalStoreTests : IDisposable
 	async Task<TemporalUpsertResult<PlanRow>> Upsert(long since, TimeProvider time, params PlanRow[] rows)
 	{
 		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
-		return await TemporalStore.UpsertAsync(db, rows, since, time);
+		return await TemporalStore.UpsertAsync(db, rows, since, time: time);
 	}
 
 	// Drives the internal seam to reproduce CloseRace deterministically.
 	async Task<TemporalUpsertResult<PlanRow>> UpsertRacing(PlanRow row, Func<Task> onBeforeApply)
 	{
 		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
-		return await TemporalStore.UpsertAsync(db, new[] { row }, [], 0, time: null, onBeforeApply, partition: null, CancellationToken.None);
+		return await TemporalStore.UpsertAsync(db, new[] { row }, [], 0, time: null, onBeforeApply: onBeforeApply, onWithinTx: null, partition: null, ct: CancellationToken.None);
 	}
 
 	List<PlanRow> Active()

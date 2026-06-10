@@ -127,6 +127,12 @@ public partial class Program
 				cs => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(cs)), PetBox.Memory.Data.MemorySchema.Ensure));
 		builder.Services.AddScoped<PetBox.Memory.Data.IMemoryStore, PetBox.Memory.Data.MemoryStore>();
 		builder.Services.AddScoped<PetBox.Memory.Contract.IMemoryService, PetBox.Memory.Services.MemoryService>();
+		// Background materialization of Class-B (vector) search indexes — the entity write path
+		// never blocks on embedding; this drains the temporal log into vectors out-of-band. Each
+		// module contributes an IVectorizationJob; memory's is registered here, tasks' in the
+		// follow-up. Unconditional like the stores it serves.
+		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.MemoryVectorizationJob>();
+		builder.Services.AddHostedService<PetBox.Web.Search.SearchVectorizationService>();
 		// LLM router: neutral ILlmClient (embed/rerank/chat) + ILlmRegistryAdmin over a
 		// config-stored endpoint/route registry. Unconditional DI; Feature.LlmRouter gates
 		// the MCP surface, not registration.

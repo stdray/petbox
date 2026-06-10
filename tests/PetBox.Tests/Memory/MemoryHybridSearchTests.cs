@@ -1,7 +1,9 @@
 using LinqToDB;
+using LinqToDB.Data;
 using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Core.Search;
 using PetBox.Core.Settings;
 using PetBox.LlmRouter.Contract;
 using PetBox.Memory.Contract;
@@ -47,10 +49,24 @@ public sealed class MemoryHybridSearchTests : IDisposable
 	static MemoryEntryInput Entry(string key, string description, string body) =>
 		new() { Key = key, Version = 0, Type = "Project", Description = description, Body = body };
 
+	// Vectors are now materialized OFF the write path by the async-vectorization worker, so a test
+	// that needs the semantic leg must drain first (with the SAME embedder the query path uses, so
+	// the model/dim guard matches). Mirrors MemoryVectorizationJob for one store.
+	async Task<DrainResult> DrainVectors(ILlmClient llm, string store)
+	{
+		DataConnection Connect() => _factory.NewConnection(Proj, store);
+		var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(llm, Proj));
+		var source = new MemorySearchSource(Connect, Proj);
+		var cursor = new SqliteIndexCursorStore(Connect);
+		var worker = new AsyncVectorizationWorker(MemorySearchDocs.VectorIndex, source, target, cursor);
+		return await worker.DrainAsync();
+	}
+
 	[Fact]
 	public async Task Hybrid_FusesLexicalAndSemanticUnion_AndReportsBothRan()
 	{
-		var memory = new MemoryService(_store, new FakeLlmClient());
+		var llm = new FakeLlmClient();
+		var memory = new MemoryService(_store, llm);
 		await memory.CreateStoreAsync(Proj, "notes", null);
 		// "alpha" entry hits lexically on the query token; "beta" does NOT contain the token
 		// but its embedding is steered to sit near the query vector, so only semantic finds it.
@@ -59,6 +75,7 @@ public sealed class MemoryHybridSearchTests : IDisposable
 			Entry("alpha", "alpha note", "the alpha keyword appears here"),
 			Entry("beta", "beta note", FakeLlmClient.NearQueryMarker + " unrelated words"),
 		], []);
+		await DrainVectors(llm, "notes"); // materialize the Class-B vectors the semantic leg needs
 
 		var res = await memory.SearchAsync(Proj, "notes", "alpha", type: null);
 
@@ -89,8 +106,9 @@ public sealed class MemoryHybridSearchTests : IDisposable
 	[Fact]
 	public async Task ThrowingEmbedder_AtQueryTime_DegradesAndFlags()
 	{
-		// Embedder that throws: write still succeeds (embed-on-write swallows), and at query
-		// time the semantic leg fails → lexical-only result flagged degraded.
+		// Embedder that throws: the write never embeds (Class-B is off the write path), so the
+		// upsert succeeds regardless; at query time the semantic leg fails → lexical-only,
+		// flagged degraded.
 		var memory = new MemoryService(_store, new ThrowingLlmClient());
 		await memory.CreateStoreAsync(Proj, "notes", null);
 		await memory.UpsertAsync(Proj, "notes", [Entry("alpha", "alpha note", "alpha keyword")], []);
@@ -106,18 +124,20 @@ public sealed class MemoryHybridSearchTests : IDisposable
 	[Fact]
 	public async Task SemanticOnly_WithModelDimMismatchRow_IgnoresIncomparableVector()
 	{
-		var memory = new MemoryService(_store, new FakeLlmClient());
+		var llm = new FakeLlmClient();
+		var memory = new MemoryService(_store, llm);
 		await memory.CreateStoreAsync(Proj, "notes", null);
 		await memory.UpsertAsync(Proj, "notes",
 		[
 			Entry("good", "good note", FakeLlmClient.NearQueryMarker + " body"),
 			Entry("bad", "bad note", FakeLlmClient.NearQueryMarker + " body"),
 		], []);
+		await DrainVectors(llm, "notes");
 
-		// Corrupt "bad"'s stored vector to a different model/dim — the query embedding's
-		// (model,dim) guard must exclude it from the semantic candidate set.
+		// Corrupt "bad"'s stored vector to a different model — the query embedding's (model,dim)
+		// guard must exclude it from the semantic candidate set.
 		var ctx = _store.GetContext(Proj, "notes");
-		ctx.MemoryVec.Where(v => v.Key == "bad").Set(v => v.Model, "other-model").Update();
+		ctx.Execute("UPDATE search_vec SET Model = 'other-model' WHERE Id = 'bad'");
 
 		// Lexical off so only the semantic leg drives the result set.
 		var res = await memory.SearchAsync(Proj, "notes", "anything", type: null, lexical: false, semantic: true);
@@ -145,69 +165,5 @@ public sealed class MemoryHybridSearchTests : IDisposable
 
 		res.Retrievers.Lexical.Should().BeTrue();
 		res.Hits.Select(h => h.Key).Should().Equal("ru"); // only the Cyrillic doc matches "сервер*"
-	}
-
-	// ---- deterministic fakes ----
-
-	// Fixed-dim embedder: vector derived from a stable text hash, so the same text always
-	// embeds to the same point. A sentinel marker (NearQueryMarker) steers a document's
-	// embedding toward the query vector so semantic-only hits are reproducible.
-	sealed class FakeLlmClient : ILlmClient
-	{
-		public const int Dim = 8;
-		public const string Model = "fake-embed-v1";
-		public const string NearQueryMarker = "__NEARQUERY__";
-
-		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default)
-		{
-			var vectors = request.Inputs.Select(Vector).ToList();
-			return Task.FromResult(new EmbedResult(vectors, new ModelIdentity(Model, Dim),
-				new ServedBy("fake", Model, 1, Degraded: false)));
-		}
-
-		static float[] Vector(string text)
-		{
-			// Any text carrying the marker (and any query) collapses to the same unit vector,
-			// so marked documents sit adjacent to the query embedding.
-			if (text.Contains(NearQueryMarker) || !text.Contains(' ') || IsQueryLike(text))
-			{
-				var q = new float[Dim];
-				q[0] = 1f;
-				return q;
-			}
-			var v = new float[Dim];
-			var h = unchecked((uint)text.GetHashCode());
-			for (var i = 0; i < Dim; i++)
-			{
-				v[i] = ((h >> i) & 1) == 1 ? 1f : -1f;
-				h = h * 2654435761u + 1u;
-			}
-			return v;
-		}
-
-		// Heuristic: short, single-token inputs are treated as queries and map to the
-		// query vector — keeps the semantic leg deterministic for the test queries used.
-		static bool IsQueryLike(string text) => !text.Contains('\n') && text.Split(' ').Length <= 2;
-
-		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
-			throw new NotSupportedException();
-		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default) =>
-			throw new NotSupportedException();
-		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
-			Task.FromResult(true);
-	}
-
-	// Embedder whose every call throws — exercises the degrade paths (embed-on-write must
-	// swallow it; query-time semantic must catch and flag degraded).
-	sealed class ThrowingLlmClient : ILlmClient
-	{
-		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default) =>
-			throw new InvalidOperationException("embed down");
-		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
-			throw new NotSupportedException();
-		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default) =>
-			throw new NotSupportedException();
-		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
-			Task.FromResult(true);
 	}
 }
