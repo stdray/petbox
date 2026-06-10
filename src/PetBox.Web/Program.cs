@@ -147,6 +147,9 @@ public partial class Program
 		// `session-digests` memory store off the write path — rides the same enrichment tick
 		// as the vector jobs. Registered after sessions/memory/llm, which it consumes.
 		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionDigestJob>();
+		// Autocapture: distills durable typed facts from settled sessions into the
+		// quarantined `autocaptured` memory store (dedup via hybrid neighbors + LLM judge).
+		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionFactsJob>();
 		// Two-stage session search: digest discovery (memory) → episodic hydration.
 		builder.Services.AddScoped<PetBox.Web.Search.SessionSearchService>();
 		// Episodic tier: transient per-session DuckDB index, hydrated on demand and aged
