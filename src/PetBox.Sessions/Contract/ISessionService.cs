@@ -16,6 +16,10 @@ public interface ISessionService
 	// Messages with Version greater than the cursor — the incremental delta a Class-B index
 	// consumes without the store retaining any history (the snapshot is cumulative). Empty if none.
 	Task<IReadOnlyList<SessionMessage>> DeltaAsync(string projectKey, string sessionId, long sinceVersion, CancellationToken ct = default);
+
+	// Soft delete: the row stays but disappears from every read; a re-push of the same
+	// SessionId resurrects it. False when the session is missing or already deleted.
+	Task<bool> DeleteAsync(string projectKey, string sessionId, CancellationToken ct = default);
 }
 
 // The outcome of a session write: the id, its new version (last message ordinal), the message

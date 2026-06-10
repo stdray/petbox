@@ -46,4 +46,10 @@ public sealed record NodePatch
 	// Enforced tags ("namespace:value", namespaces area|concern). null = OMIT (leave the
 	// node's tags as-is); a non-null list (incl. empty) REPLACES the node's full tag set.
 	public IReadOnlyList<string>? Tags { get; init; }
+
+	// Soft-delete marker: only Key + Version are honored (Version 0 = delete the active row
+	// regardless; non-zero = optimistic baseline → Stale conflict on mismatch). The row is
+	// temporal-closed (history kept), its edges and tags are closed, and it leaves the search
+	// index. Cannot combine with PrevKey. A node with active part_of children is refused.
+	public bool Deleted { get; init; }
 }

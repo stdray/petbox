@@ -196,6 +196,8 @@ public sealed record SessionRowView(string SessionId, string Agent, long Version
 
 public sealed record SessionListResult(IReadOnlyList<SessionRowView> Sessions);
 
+public sealed record SessionDeletedResult(bool Deleted, string SessionId);
+
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 
 public sealed record BoardCreatedResult(string ProjectKey, string Name, string Kind, string? Description, string? SpecBoard, DateTime CreatedAt);
