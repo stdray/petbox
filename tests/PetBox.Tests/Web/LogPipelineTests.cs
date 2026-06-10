@@ -641,4 +641,148 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			JsonEnvelope("/api/ingest/$system/default/clef", ApiKey, "X-Api-Key", "env-bad", """{"not":"an envelope"}"""));
 		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 	}
+
+	// --- Compat ingest: stock Seq client into a NAMED log (…/compat/seq) ---
+
+	static HttpRequestMessage CompatSeqRequest(
+		string projectKey, string logName, string apiKey, string jsonl, string? serviceKey = null)
+	{
+		// A stock Seq client appends `api/events/raw` to its configured serverUrl
+		// (= …/compat/seq), posts CLEF NDJSON and authenticates with X-Seq-ApiKey only.
+		var req = new HttpRequestMessage(
+			HttpMethod.Post, $"/api/ingest/{projectKey}/{logName}/compat/seq/api/events/raw");
+		req.Headers.Add("X-Seq-ApiKey", apiKey);
+		if (serviceKey is not null) req.Headers.Add("X-Service-Key", serviceKey);
+		req.Content = new StringContent(jsonl, Encoding.UTF8, "application/vnd.serilog.clef");
+		return req;
+	}
+
+	async Task CreateNamedLogAsync(string projectKey, string logName)
+	{
+		using var scope = _factory.Services.CreateScope();
+		var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
+		if (!await store.ExistsAsync(projectKey, logName))
+			await store.CreateAsync(projectKey, logName, null);
+	}
+
+	string? ProjectLogServiceKey(string projectKey, string logName, string message)
+	{
+		using var scope = _factory.Services.CreateScope();
+		var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
+		var ctx = store.GetContext(projectKey, logName);
+		return ctx.LogEntries.Where(e => e.Message == message).Select(e => e.ServiceKey).FirstOrDefault();
+	}
+
+	[Fact]
+	public async Task CompatSeq_NamedLog_LandsWithSeqServiceKey()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: false);
+		await CreateNamedLogAsync(proj, "backend");
+
+		var msg = UniqueMsg("compat-seq");
+		using var resp = await _client.SendAsync(CompatSeqRequest(proj, "backend", key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		ProjectLogCount(proj, "backend", msg).Should().Be(1);
+		ProjectLogServiceKey(proj, "backend", msg).Should().Be("seq");
+	}
+
+	[Fact]
+	public async Task CompatSeq_ServiceKeyHeader_Respected()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: false);
+		await CreateNamedLogAsync(proj, "backend");
+
+		var msg = UniqueMsg("compat-svc");
+		using var resp = await _client.SendAsync(CompatSeqRequest(proj, "backend", key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}""" + "\n",
+			serviceKey: "yobapub"));
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		ProjectLogServiceKey(proj, "backend", msg).Should().Be("yobapub");
+	}
+
+	[Fact]
+	public async Task CompatSeq_ForeignProjectKey_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: false);
+
+		// proj's key must not be able to write into the foreign $system/default log.
+		using var resp = await _client.SendAsync(CompatSeqRequest("$system", "default", key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("compat-403")}}"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("not authorized for project");
+	}
+
+	[Fact]
+	public async Task CompatSeq_WithoutIngestScope_Returns403()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:query", createDefaultLog: false);
+		await CreateNamedLogAsync(proj, "backend");
+
+		using var resp = await _client.SendAsync(CompatSeqRequest(proj, "backend", key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("compat-noscope")}}"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("logs:ingest");
+	}
+
+	[Fact]
+	public async Task CompatSeq_BadKey_Returns401()
+	{
+		using var resp = await _client.SendAsync(CompatSeqRequest("$system", "default", "bad_key",
+			"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"test"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+	}
+
+	[Fact]
+	public async Task CompatSeq_NoKey_Returns401()
+	{
+		var req = new HttpRequestMessage(HttpMethod.Post, "/api/ingest/$system/default/compat/seq/api/events/raw");
+		req.Content = new StringContent(
+			"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"test"}""" + "\n",
+			Encoding.UTF8, "application/vnd.serilog.clef");
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+	}
+
+	[Fact]
+	public async Task CompatSeq_MissingLog_Returns404()
+	{
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: false);
+
+		using var resp = await _client.SendAsync(CompatSeqRequest(proj, "backend", key,
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("compat-404")}}"}""" + "\n"));
+		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+		(await resp.Content.ReadAsStringAsync()).Should().Contain("create it first");
+	}
+
+	[Fact]
+	public async Task CompatSeq_JsonEnvelope_RawSeqEvents_Lands()
+	{
+		// seq-logging / @datalust/winston-seq parity on the compat route: the same
+		// {"Events":[Raw]} envelope handling as the other ingest endpoints.
+		var proj = $"seqproj{Guid.NewGuid():N}"[..16];
+		var key = $"yb_key_{Guid.NewGuid():N}";
+		await SeedProjectKeyAsync(key, proj, "logs:ingest", createDefaultLog: false);
+		await CreateNamedLogAsync(proj, "backend");
+
+		var msg = UniqueMsg("compat-env");
+		var body = $$"""{"Events":[{"Timestamp":"2024-01-01T00:00:00.000Z","Level":"Error","MessageTemplate":"{{msg}}"}]}""";
+		using var resp = await _client.SendAsync(JsonEnvelope(
+			$"/api/ingest/{proj}/backend/compat/seq/api/events/raw", key, "X-Seq-ApiKey", null!, body));
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		ProjectLogCount(proj, "backend", msg).Should().Be(1);
+	}
 }

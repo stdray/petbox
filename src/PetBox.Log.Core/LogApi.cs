@@ -34,6 +34,17 @@ public static class LogApi
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
 			.RequireAuthorization("ApiKey");
 
+		// Compat ingest — stock foreign-protocol clients into a NAMED log. Every
+		// mimicked protocol lives under …/compat/{protocol} (one place to see who we
+		// impersonate); the stock client appends its own paths to that base. Seq
+		// clients append `api/events/raw` to serverUrl and send only X-Seq-ApiKey,
+		// so auth is in-handler (the "ApiKey" policy reads other headers) and
+		// X-Service-Key is optional, unlike the path-based CLEF route above.
+		app.MapPost("/api/ingest/{projectKey}/{logName}/compat/seq/api/events/raw", SeqIngestPathAsync)
+			.Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.AllowAnonymous();
+
 		// Lifecycle — create / list / delete named logs (mirrors /api/data/{p}/dbs).
 		app.MapPost("/api/logs/{projectKey}/logs", CreateLogAsync)
 			.Accepts<CreateLogRequest>("application/json")
@@ -376,6 +387,60 @@ public static class LogApi
 					$"log '{logName}' not found in project '{projectKey}'; create it first " +
 					$"(Seq/header-routed ingest targets the project's '{LogNames.Default}' log)"));
 		}
+
+		var results = await ParseIngestBodyAsync(ctx, parser, ct);
+
+		var candidates = results
+			.Where(r => r.IsSuccess)
+			.Select(r => r.Event!)
+			.Select(c => c with { ServiceKey = serviceKey })
+			.ToList();
+
+		if (candidates.Count > 0)
+			await pipeline.IngestAsync(projectKey, logName, candidates, ct);
+
+		return Results.Ok();
+	}
+
+	// Seq-protocol ingest into a NAMED log: serverUrl = …/api/ingest/{p}/{log}/compat/seq
+	// works with a stock Seq client (Serilog.Sinks.Seq / Seq.Extensions.Logging) and a
+	// regular project API key — zero client-side custom code. Mirrors SeqIngestAsync's
+	// project-key branch, with the destination taken from the route instead of falling
+	// back to the `default` log; no self-log special case here.
+	static async Task<IResult> SeqIngestPathAsync(
+		HttpContext ctx,
+		string projectKey,
+		string logName,
+		PetBoxDb yobaBoxDb,
+		ILogStore store,
+		CleFParser parser,
+		IIngestionPipeline pipeline,
+		CancellationToken ct)
+	{
+		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
+		if (string.IsNullOrWhiteSpace(apiKey))
+			return Results.Unauthorized();
+
+		var key = await yobaBoxDb.ApiKeys
+			.FirstOrDefaultAsync((ApiKey k) => k.Key == apiKey, CancellationToken.None);
+		if (key is null || (key.ExpiresAt is { } exp && exp <= DateTime.UtcNow))
+			return Results.Unauthorized();
+		// Explicit 403s (not Results.Forbid(), which on this AllowAnonymous endpoint
+		// would invoke the cookie scheme's challenge and 302-redirect to /Login).
+		if (!HasScope(key.Scopes, ApiKeyScopes.LogsIngest))
+			return Results.Json(
+				new ErrorResponse($"key lacks the '{ApiKeyScopes.LogsIngest}' scope"),
+				statusCode: StatusCodes.Status403Forbidden);
+		if (!ProjectScope.Authorizes(key.ProjectKey, projectKey))
+			return Results.Json(
+				new ErrorResponse($"key is not authorized for project '{projectKey}'"),
+				statusCode: StatusCodes.Status403Forbidden);
+
+		if (!await store.ExistsAsync(projectKey, logName, ct))
+			return Results.NotFound(new ErrorResponse(
+				$"log '{logName}' not found in project '{projectKey}'; create it first"));
+
+		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault() is { Length: > 0 } svc ? svc : "seq";
 
 		var results = await ParseIngestBodyAsync(ctx, parser, ct);
 
