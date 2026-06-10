@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 
 namespace PetBox.Web.Navigation;
@@ -16,6 +17,7 @@ public static class WorkspaceSwitchEndpoint
 	public static void MapWorkspaceSwitch(this IEndpointRouteBuilder app)
 	{
 		app.MapPost("/api/ui/workspace", Switch)
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
 			.RequireAuthorization()
 			.DisableAntiforgery();
 	}
@@ -30,7 +32,7 @@ public static class WorkspaceSwitchEndpoint
 		// trace into the error log. The sidebar's onchange-submit form is
 		// the main offender — Alpine fires it before a value is selected.
 		if (string.IsNullOrWhiteSpace(ws))
-			return Results.BadRequest(new { error = "ws is required" });
+			return Results.BadRequest(new ErrorResponse("ws is required"));
 
 		var isSysAdmin = ctx.User.HasClaim(PetBoxClaims.IsSysAdmin, "true");
 		var userIdRaw = ctx.User.FindFirst(PetBoxClaims.UserId)?.Value;

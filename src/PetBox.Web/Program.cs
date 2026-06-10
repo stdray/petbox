@@ -16,6 +16,7 @@ using PetBox.Log.Core;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Ingestion;
 using PetBox.Web;
+using PetBox.Web.Contract;
 using PetBox.Web.Health;
 using PetBox.Web.Ingestion;
 using PetBox.Web.Navigation;
@@ -441,15 +442,16 @@ public partial class Program
 			await next();
 		});
 
-		app.MapMethods("/health", ["GET", "HEAD"], () => Results.Ok(new { status = "healthy" }))
+		app.MapMethods("/health", ["GET", "HEAD"], () => TypedResults.Ok(new HealthStatusResponse("healthy")))
+			.Produces<HealthStatusResponse>()
 			.AllowAnonymous();
 
-		app.MapMethods("/version", ["GET", "HEAD"], () => Results.Ok(new
-		{
-			semVer = Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev",
-			shortSha = Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local",
-			commitDate = Environment.GetEnvironmentVariable("GIT_COMMIT_DATE") ?? string.Empty,
-		})).AllowAnonymous();
+		app.MapMethods("/version", ["GET", "HEAD"], () => TypedResults.Ok(new VersionResponse(
+			Environment.GetEnvironmentVariable("APP_VERSION") ?? "dev",
+			Environment.GetEnvironmentVariable("GIT_SHORT_SHA") ?? "local",
+			Environment.GetEnvironmentVariable("GIT_COMMIT_DATE") ?? string.Empty)))
+			.Produces<VersionResponse>()
+			.AllowAnonymous();
 
 		app.MapPost("/api/auth/logout", async (HttpContext ctx) =>
 		{

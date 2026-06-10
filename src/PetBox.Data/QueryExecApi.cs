@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Data.Sqlite;
+using PetBox.Core.Contract;
 using PetBox.Data.Contract;
 
 namespace PetBox.Data;
@@ -33,8 +34,22 @@ public static class QueryExecApi
 	public static void MapQueryExecEndpoints(this IEndpointRouteBuilder app)
 	{
 		app.MapPost("/api/data/{projectKey}/{dbName}/query", QueryAsync)
+			.Accepts<QueryRequest>("application/json")
+			.Produces<IReadOnlyList<IReadOnlyDictionary<string, object?>>>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.Produces<SqliteErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces(StatusCodes.Status413PayloadTooLarge)
+			.Produces(StatusCodes.Status507InsufficientStorage)
 			.RequireAuthorization("DataRead");
 		app.MapPost("/api/data/{projectKey}/{dbName}/exec", ExecAsync)
+			.Accepts<QueryRequest>("application/json")
+			.Produces<ExecResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.Produces<SqliteErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces(StatusCodes.Status413PayloadTooLarge)
+			.Produces(StatusCodes.Status507InsufficientStorage)
 			.RequireAuthorization("DataWrite");
 	}
 
@@ -57,14 +72,14 @@ public static class QueryExecApi
 		if (CheckBodySize(ctx, QueryBodyLimitBytes) is { } tooBig) return tooBig;
 		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
 		if (req is null || string.IsNullOrWhiteSpace(req.Sql))
-			return Results.BadRequest(new { error = "sql is required" });
+			return Results.BadRequest(new ErrorResponse("sql is required"));
 
 		try
 		{
 			var rows = await sql.QueryAsync(projectKey, dbName, req.Sql, ToArgs(req.Params), ResolveTimeoutSeconds(ctx), ct);
 			return Results.Ok(rows);
 		}
-		catch (DataDbNotFoundException) { return Results.NotFound(new { error = "DataDb not found" }); }
+		catch (DataDbNotFoundException) { return Results.NotFound(new ErrorResponse("DataDb not found")); }
 		catch (SqliteException ex) { return MapSqliteError(ex); }
 	}
 
@@ -75,15 +90,15 @@ public static class QueryExecApi
 		if (CheckBodySize(ctx, ExecBodyLimitBytes) is { } tooBig) return tooBig;
 		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
 		if (req is null || string.IsNullOrWhiteSpace(req.Sql))
-			return Results.BadRequest(new { error = "sql is required" });
+			return Results.BadRequest(new ErrorResponse("sql is required"));
 
 		try
 		{
 			var affected = await sql.ExecAsync(projectKey, dbName, req.Sql, ToArgs(req.Params), ResolveTimeoutSeconds(ctx), ct);
 			return Results.Ok(new ExecResponse(affected));
 		}
-		catch (DataDbNotFoundException) { return Results.NotFound(new { error = "DataDb not found" }); }
-		catch (DeniedPragmaException ex) { return Results.BadRequest(new { error = ex.Message }); }
+		catch (DataDbNotFoundException) { return Results.NotFound(new ErrorResponse("DataDb not found")); }
+		catch (DeniedPragmaException ex) { return Results.BadRequest(new ErrorResponse(ex.Message)); }
 		catch (SqliteException ex) { return MapSqliteError(ex); }
 	}
 
@@ -105,6 +120,6 @@ public static class QueryExecApi
 		// SQLITE_FULL = 13. See https://www.sqlite.org/rescode.html
 		if (ex.SqliteErrorCode == 13)
 			return Results.StatusCode(StatusCodes.Status507InsufficientStorage);
-		return Results.BadRequest(new { error = ex.Message, code = ex.SqliteErrorCode });
+		return Results.BadRequest(new SqliteErrorResponse(ex.Message, ex.SqliteErrorCode));
 	}
 }

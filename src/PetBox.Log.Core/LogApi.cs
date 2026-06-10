@@ -10,8 +10,10 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Ingestion;
 using PetBox.Log.Core.Query;
@@ -25,17 +27,43 @@ public static class LogApi
 		// Ingestion. Path-based carries the destination log explicitly so one
 		// project-scoped key can write to many named logs. X-Service-Key tags the
 		// emitter (a free string, no Service entity).
-		app.MapPost("/api/ingest/{projectKey}/{logName}/clef", IngestClefPathAsync).RequireAuthorization("ApiKey");
+		app.MapPost("/api/ingest/{projectKey}/{logName}/clef", IngestClefPathAsync)
+			.Produces<IngestResponse>()
+			.Produces<IngestRejectedResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization("ApiKey");
 
 		// Lifecycle — create / list / delete named logs (mirrors /api/data/{p}/dbs).
-		app.MapPost("/api/logs/{projectKey}/logs", CreateLogAsync).RequireAuthorization("ApiKey");
-		app.MapGet("/api/logs/{projectKey}/logs", ListLogsAsync).RequireAuthorization("ApiKey");
-		app.MapDelete("/api/logs/{projectKey}/logs/{name}", DeleteLogAsync).RequireAuthorization("ApiKey");
+		app.MapPost("/api/logs/{projectKey}/logs", CreateLogAsync)
+			.Accepts<CreateLogRequest>("application/json")
+			.Produces<LogInfo>(StatusCodes.Status201Created)
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.Produces<ErrorResponse>(StatusCodes.Status409Conflict)
+			.RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/{projectKey}/logs", ListLogsAsync)
+			.Produces<List<LogInfo>>()
+			.RequireAuthorization("ApiKey");
+		app.MapDelete("/api/logs/{projectKey}/logs/{name}", DeleteLogAsync)
+			.Produces(StatusCodes.Status204NoContent)
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization("ApiKey");
 
 		// Read — per named log. services = distinct emitter ServiceKey within the log.
-		app.MapGet("/api/logs/{projectKey}/{logName}/query", QueryLogsAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/{projectKey}/{logName}/query", QueryLogsAsync)
+			.Produces<LogEventsResponse>()
+			.Produces<KqlTableResponse>()
+			.Produces<KqlParseErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/{projectKey}/{logName}/live-tail", LiveTailAsync).RequireAuthorization("ApiKey");
-		app.MapGet("/api/logs/{projectKey}/{logName}/services", GetServicesAsync).RequireAuthorization("ApiKey");
+		app.MapGet("/api/logs/{projectKey}/{logName}/services", GetServicesAsync)
+			.Produces<List<string>>()
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization("ApiKey");
 	}
 
 	public sealed record CreateLogRequest(string Name, string? Description);
@@ -47,7 +75,7 @@ public static class LogApi
 		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsAdmin)) return Results.Forbid();
 		if (req is null || string.IsNullOrWhiteSpace(req.Name))
-			return Results.BadRequest(new { error = "name is required" });
+			return Results.BadRequest(new ErrorResponse("name is required"));
 
 		try
 		{
@@ -56,12 +84,12 @@ public static class LogApi
 				$"/api/logs/{projectKey}/logs/{meta.Name}",
 				new LogInfo(meta.Name, meta.Description, meta.CreatedAt, meta.UpdatedAt));
 		}
-		catch (ArgumentException ex) { return Results.BadRequest(new { error = ex.Message }); }
+		catch (ArgumentException ex) { return Results.BadRequest(new ErrorResponse(ex.Message)); }
 		catch (InvalidOperationException ex) when (ex.Message.Contains("already exists", StringComparison.Ordinal))
 		{
-			return Results.Conflict(new { error = ex.Message });
+			return Results.Conflict(new ErrorResponse(ex.Message));
 		}
-		catch (InvalidOperationException ex) { return Results.NotFound(new { error = ex.Message }); }
+		catch (InvalidOperationException ex) { return Results.NotFound(new ErrorResponse(ex.Message)); }
 	}
 
 	static async Task<IResult> ListLogsAsync(
@@ -82,10 +110,10 @@ public static class LogApi
 		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsAdmin)) return Results.Forbid();
 		if (projectKey == LogNames.SystemProject && name == LogNames.SelfLog)
-			return Results.BadRequest(new { error = "the petbox self-log cannot be deleted" });
+			return Results.BadRequest(new ErrorResponse("the petbox self-log cannot be deleted"));
 
 		var deleted = await store.DeleteAsync(projectKey, name, ct);
-		return deleted ? Results.NoContent() : Results.NotFound(new { error = "log not found" });
+		return deleted ? Results.NoContent() : Results.NotFound(new ErrorResponse("log not found"));
 	}
 
 	static bool AuthorizeProject(HttpContext ctx, string projectKey, out IResult forbid)
@@ -158,7 +186,10 @@ public static class LogApi
 
 	public static void MapSeqSelfLogEndpoint(this IEndpointRouteBuilder app)
 	{
-		app.MapPost("/api/events/raw", SeqIngestAsync).AllowAnonymous();
+		app.MapPost("/api/events/raw", SeqIngestAsync)
+			.Produces<ErrorResponse>(StatusCodes.Status403Forbidden)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.AllowAnonymous();
 	}
 
 	static async Task<IResult> IngestClefPathAsync(
@@ -172,20 +203,18 @@ public static class LogApi
 	{
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(serviceKey))
-			return Results.BadRequest("X-Service-Key header required");
+			return Results.BadRequest(new ErrorResponse("X-Service-Key header required"));
 
 		if (!await store.ExistsAsync(projectKey, logName, ct))
-			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'; create it first" });
+			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'; create it first"));
 
 		var results = await ParseIngestBodyAsync(ctx, parser, ct);
 
 		var errors = results.Where(r => !r.IsSuccess).ToList();
 		if (errors.Count > 0 && results.All(r => !r.IsSuccess))
-			return Results.BadRequest(new
-			{
-				error = "All lines failed validation",
-				details = errors.Select(e => new { line = e.LineNumber, message = e.Error?.Message }),
-			});
+			return Results.BadRequest(new IngestRejectedResponse(
+				"All lines failed validation",
+				errors.Select(e => new IngestLineError(e.LineNumber, e.Error?.Message)).ToList()));
 
 		var candidates = results
 			.Where(r => r.IsSuccess)
@@ -195,7 +224,7 @@ public static class LogApi
 
 		await pipeline.IngestAsync(projectKey, logName, candidates, ct);
 
-		return Results.Ok(new { ingested = candidates.Count, errors = errors.Count });
+		return Results.Ok(new IngestResponse(candidates.Count, errors.Count));
 	}
 
 	static async Task<IResult> QueryLogsAsync(
@@ -210,7 +239,7 @@ public static class LogApi
 
 		var kql = ctx.Request.Query["q"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(kql))
-			return Results.BadRequest("q parameter required");
+			return Results.BadRequest(new ErrorResponse("q parameter required"));
 
 		LogQueryResult queryResult;
 		try
@@ -219,11 +248,11 @@ public static class LogApi
 		}
 		catch (LogNotFoundException ex)
 		{
-			return Results.NotFound(new { error = ex.Message });
+			return Results.NotFound(new ErrorResponse(ex.Message));
 		}
 		catch (KqlParseException ex)
 		{
-			return Results.BadRequest(new { error = "KQL parse error", details = ex.Details });
+			return Results.BadRequest(new KqlParseErrorResponse("KQL parse error", ex.Details));
 		}
 
 		try
@@ -232,25 +261,20 @@ public static class LogApi
 				return await WriteShapeChangedResult(table.Result, ct);
 
 			var events = ((LogQueryResult.Events)queryResult).Items;
-			return Results.Json(new
-			{
-				count = events.Count,
-				events = events.Select(e => new
-				{
-					id = e.Id,
-					serviceKey = e.ServiceKey,
-					timestamp = e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
-					level = e.Level.ToString(),
-					message = e.Message,
-					messageTemplate = e.MessageTemplate,
-					exception = e.Exception,
-					properties = e.GetProperties().ToDictionary(kv => kv.Key, kv => JsonSerializer.Serialize(kv.Value)),
-				}),
-			});
+			var dtos = events.Select(e => new LogEventDto(
+				e.Id,
+				e.ServiceKey,
+				e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
+				e.Level.ToString(),
+				e.Message,
+				e.MessageTemplate,
+				e.Exception,
+				e.GetProperties().ToDictionary(kv => kv.Key, kv => JsonSerializer.Serialize(kv.Value)))).ToList();
+			return Results.Json(new LogEventsResponse(dtos.Count, dtos));
 		}
 		catch (UnsupportedKqlException ex)
 		{
-			return Results.BadRequest(new { error = ex.Message });
+			return Results.BadRequest(new ErrorResponse(ex.Message));
 		}
 	}
 
@@ -264,7 +288,7 @@ public static class LogApi
 				cell is null ? (JsonElement?)null : JsonSerializer.SerializeToElement(cell)));
 			rows.Add(arr);
 		}
-		return Results.Json(new { columns = (object)columns, rows });
+		return Results.Json(new KqlTableResponse(columns, rows));
 	}
 
 	static async Task<IResult> GetServicesAsync(
@@ -278,7 +302,7 @@ public static class LogApi
 		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
 
 		if (!await store.ExistsAsync(projectKey, logName, ct))
-			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'" });
+			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'"));
 
 		var logDb = store.GetContext(projectKey, logName);
 		var services = await logDb.LogEntries
@@ -332,7 +356,7 @@ public static class LogApi
 			// would invoke the cookie scheme's challenge and 302-redirect to /Login).
 			if (!HasScope(key.Scopes, ApiKeyScopes.LogsIngest))
 				return Results.Json(
-					new { error = $"key lacks the '{ApiKeyScopes.LogsIngest}' scope" },
+					new ErrorResponse($"key lacks the '{ApiKeyScopes.LogsIngest}' scope"),
 					statusCode: StatusCodes.Status403Forbidden);
 
 			projectKey = key.ProjectKey;
@@ -342,11 +366,9 @@ public static class LogApi
 			// Header-routed ingest has no auto-vivify (mirrors path-based): the
 			// project's `default` log must exist first.
 			if (!await store.ExistsAsync(projectKey, logName, ct))
-				return Results.NotFound(new
-				{
-					error = $"log '{logName}' not found in project '{projectKey}'; create it first " +
-						$"(Seq/header-routed ingest targets the project's '{LogNames.Default}' log)",
-				});
+				return Results.NotFound(new ErrorResponse(
+					$"log '{logName}' not found in project '{projectKey}'; create it first " +
+					$"(Seq/header-routed ingest targets the project's '{LogNames.Default}' log)"));
 		}
 
 		var results = await ParseIngestBodyAsync(ctx, parser, ct);

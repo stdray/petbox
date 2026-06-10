@@ -3,6 +3,8 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Contract;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Ingestion;
 
@@ -14,15 +16,29 @@ public static class OtlpEndpoints
 	{
 		// Path-based: the destination log is explicit in the URL. X-Service-Key tags
 		// the emitter (free string, no Service entity).
-		app.MapPost("/v1/logs/{projectKey}/{logName}", IngestLogs).RequireAuthorization("ApiKey");
-		app.MapPost("/v1/traces/{projectKey}/{logName}", IngestTraces).RequireAuthorization("ApiKey");
+		app.MapPost("/v1/logs/{projectKey}/{logName}", IngestLogs)
+			.Produces<IngestResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization("ApiKey");
+		app.MapPost("/v1/traces/{projectKey}/{logName}", IngestTraces)
+			.Produces<IngestResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization("ApiKey");
 
 		// Bare OTLP paths for PetBox's OWN self-export: the standard OTLP exporter posts
 		// to {endpoint}/v1/traces|/v1/logs and authenticates with X-Seq-ApiKey. Route to
 		// the $system self-log, validating the key against the configured Seq:SelfLog:ApiKey
 		// (mirrors the Seq self-log endpoint /api/events/raw).
-		app.MapPost("/v1/traces", SelfIngestTraces).AllowAnonymous();
-		app.MapPost("/v1/logs", SelfIngestLogs).AllowAnonymous();
+		app.MapPost("/v1/traces", SelfIngestTraces)
+			.Produces<IngestResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.AllowAnonymous();
+		app.MapPost("/v1/logs", SelfIngestLogs)
+			.Produces<IngestResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.AllowAnonymous();
 	}
 
 	static IResult? ValidateSelfKey(HttpContext ctx, IConfiguration config)
@@ -41,14 +57,14 @@ public static class OtlpEndpoints
 		var body = await ReadBodyAsync(ctx.Request.Body, ct);
 		var result = OtlpTracesParser.Parse(body);
 		if (result.IsMalformed)
-			return Results.BadRequest(new { error = "malformed protobuf body" });
+			return Results.BadRequest(new ErrorResponse("malformed protobuf body"));
 
 		if (result.Spans.Count > 0)
 		{
 			var logDb = store.GetContext(LogNames.SystemProject, LogNames.SelfLog);
 			await logDb.Spans.BulkCopyAsync(result.Spans, ct);
 		}
-		return Results.Ok(new { ingested = result.Spans.Count, errors = result.Errors });
+		return Results.Ok(new IngestResponse(result.Spans.Count, result.Errors));
 	}
 
 	static async Task<IResult> SelfIngestLogs(HttpContext ctx, IIngestionPipeline pipeline, IConfiguration config, CancellationToken ct)
@@ -59,11 +75,11 @@ public static class OtlpEndpoints
 		var body = await ReadBodyAsync(ctx.Request.Body, ct);
 		var result = OtlpLogsParser.Parse(body, serviceKey);
 		if (result.IsMalformed)
-			return Results.BadRequest(new { error = "malformed protobuf body" });
+			return Results.BadRequest(new ErrorResponse("malformed protobuf body"));
 
 		if (result.Candidates.Count > 0)
 			await pipeline.IngestAsync(LogNames.SystemProject, LogNames.SelfLog, result.Candidates, ct);
-		return Results.Ok(new { ingested = result.Candidates.Count, errors = result.Errors });
+		return Results.Ok(new IngestResponse(result.Candidates.Count, result.Errors));
 	}
 
 	static async Task<IResult> IngestLogs(
@@ -76,20 +92,20 @@ public static class OtlpEndpoints
 	{
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(serviceKey))
-			return Results.BadRequest("X-Service-Key header required");
+			return Results.BadRequest(new ErrorResponse("X-Service-Key header required"));
 
 		if (!await store.ExistsAsync(projectKey, logName, ct))
-			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'; create it first" });
+			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'; create it first"));
 
 		var body = await ReadBodyAsync(ctx.Request.Body, ct);
 		var result = OtlpLogsParser.Parse(body, serviceKey);
 		if (result.IsMalformed)
-			return Results.BadRequest(new { error = "malformed protobuf body" });
+			return Results.BadRequest(new ErrorResponse("malformed protobuf body"));
 
 		if (result.Candidates.Count > 0)
 			await pipeline.IngestAsync(projectKey, logName, result.Candidates, ct);
 
-		return Results.Ok(new { ingested = result.Candidates.Count, errors = result.Errors });
+		return Results.Ok(new IngestResponse(result.Candidates.Count, result.Errors));
 	}
 
 	static async Task<IResult> IngestTraces(
@@ -100,12 +116,12 @@ public static class OtlpEndpoints
 		CancellationToken ct)
 	{
 		if (!await store.ExistsAsync(projectKey, logName, ct))
-			return Results.NotFound(new { error = $"log '{logName}' not found in project '{projectKey}'; create it first" });
+			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'; create it first"));
 
 		var body = await ReadBodyAsync(ctx.Request.Body, ct);
 		var result = OtlpTracesParser.Parse(body);
 		if (result.IsMalformed)
-			return Results.BadRequest(new { error = "malformed protobuf body" });
+			return Results.BadRequest(new ErrorResponse("malformed protobuf body"));
 
 		if (result.Spans.Count > 0)
 		{
@@ -113,7 +129,7 @@ public static class OtlpEndpoints
 			await logDb.Spans.BulkCopyAsync(result.Spans, ct);
 		}
 
-		return Results.Ok(new { ingested = result.Spans.Count, errors = result.Errors });
+		return Results.Ok(new IngestResponse(result.Spans.Count, result.Errors));
 	}
 
 	static async Task<byte[]> ReadBodyAsync(Stream body, CancellationToken ct)
