@@ -158,7 +158,8 @@ public sealed record MemoryUpsertResultView(
 
 public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key);
 
-// One recall hit, labelled by scope (project|workspace) and store.
+// One recall hit, labelled by scope (project|workspace) and store. Carries Version so a
+// recall → upsert edit has its per-key CAS baseline without an extra get (or a guaranteed-Stale 0).
 public sealed record MemoryRecallHit(
 	string Scope,
 	string Store,
@@ -166,7 +167,8 @@ public sealed record MemoryRecallHit(
 	string Type,
 	string Description,
 	string? Body,
-	string Tags);
+	string Tags,
+	long Version);
 
 public sealed record MemoryRecallResult(IReadOnlyList<MemoryRecallHit> Results, RetrieverInfo Retrievers);
 
@@ -230,6 +232,7 @@ public sealed record TaskSearchNodeView(
 	IReadOnlyList<LinkDto>? LinkedTasks,
 	IReadOnlyList<LinkDto>? Supersedes,
 	IReadOnlyList<string> Tags,
+	long Version,
 	string? Url);
 
 public sealed record TaskSearchResultView(IReadOnlyList<TaskSearchNodeView> Nodes, RetrieverInfo Retrievers);
