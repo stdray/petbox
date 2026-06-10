@@ -184,7 +184,8 @@ public static class TasksTools
 		(RRF), ranked by relevance. `board` scopes to one board (omit = search every board).
 		`lexical`/`semantic` (default both on) toggle each retriever; semantic is silently off
 		when no embedding capability is configured. Each hit carries key, nodeId, board, status,
-		type, title, priority, tags, links (`spec`/`blockedBy`/`linkedTasks`/`supersedes`) and
+		type, title, priority, tags, version (the node's tasks.upsert baseline), links
+		(`spec`/`blockedBy`/`linkedTasks`/`supersedes`) and
 		(spec boards) the computed `delivery` — bodies are full unless `bodyLen` > 0 (snippet).
 		Bounded by `limit` (default 20; 0 = no limit). Response includes `retrievers`
 		{ lexical, semantic, degraded }. Requires tasks:read.
@@ -233,6 +234,7 @@ public static class TasksTools
 			LinkedTasks: n.LinkedTasks,
 			Supersedes: n.Supersedes,
 			Tags: n.Tags,
+			Version: n.Version,
 			Url: n.Url);
 	}
 
