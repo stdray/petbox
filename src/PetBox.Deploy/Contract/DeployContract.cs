@@ -24,7 +24,7 @@ public sealed record NodeView(
 
 // Operator input for a deployment (desired state of a service on a node). Id null/empty
 // = create (a new id is generated); set = update that deployment. ConfigHash is computed
-// by the service, never supplied.
+// by the service, never supplied. RunSpec null = empty spec (image+env only).
 public sealed record DeploymentInput(
 	string? Id,
 	string Service,
@@ -34,7 +34,8 @@ public sealed record DeploymentInput(
 	DesiredState DesiredState,
 	bool Relocatable,
 	string RequiredTags,
-	string ConfigTags);
+	string ConfigTags,
+	RunSpec? RunSpec = null);
 
 // --- agent contract (pull) ---
 
@@ -46,7 +47,8 @@ public sealed record PollItem(
 	string ImageDigest,
 	DesiredState Desired,
 	string ConfigTags,
-	string ConfigHash)
+	string ConfigHash,
+	RunSpec? RunSpec = null)
 {
 	// Resolved container env (config bundle for (Project, ConfigTags)). Populated by the
 	// poll endpoint server-side so the node key needs no config:read. Null until resolved.
@@ -95,4 +97,5 @@ public sealed record DeploymentView(
 	DateTime UpdatedAt,
 	ActualState? ActualState,
 	bool? Healthy,
-	DateTime? ReportedAt);
+	DateTime? ReportedAt,
+	RunSpec RunSpec);

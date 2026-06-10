@@ -28,6 +28,7 @@ Tools: `deploy.node_list`, `deploy.node_upsert`, `deploy.node_delete`, `deploy.l
    ```
    - `project` drives server-side env resolution from `(project, configTags)` — make sure that project's config bindings exist if the container needs env.
    - `requiredTags` ⊆ the node's tags (also the failover constraint). `relocatable=true` only for stateless/idempotent services.
+   - Needs ports/volumes/healthcheck/limits? Pass the **run-spec** fields on the same call: `ports=["127.0.0.1:8080:8080"]`, `volumes=["/host:/container[:ro]"]` (bind mounts; host dirs must exist), `restart=`, `healthcheckCmd/Interval/Timeout/Retries`, `memory=`, `cpus=`, `network=`, `command=[...]`, `labels=["k=v"]` (`petbox.*` reserved). Any run-spec change recreates the container (it's hashed). Details: `deploy-fleet.md §3b`.
 4. **Verify reconcile:** poll `deploy.list(service="<svc>")` until `actualState="Running"` and `healthy=true` (agent runs every ~30s). If it stays absent → check the node is online (`deploy.node_list`) and the image ref is valid (human checks `docker logs petbox-<svc>` on the node).
 
 ## Recipe — roll a new version

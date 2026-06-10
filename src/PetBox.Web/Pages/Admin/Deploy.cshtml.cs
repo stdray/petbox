@@ -49,14 +49,21 @@ public sealed class DeployModel : PageModel
 	}
 
 	public async Task<IActionResult> OnPostNewDeploymentAsync(
-		string service, string project, string nodeId, string imageDigest, bool relocatable, string? requiredTags, string? configTags)
+		string service, string project, string nodeId, string imageDigest, bool relocatable, string? requiredTags, string? configTags,
+		string? ports, string? volumes, string? restart, string? memory, double? cpus, string? network)
 	{
 		if (string.IsNullOrWhiteSpace(service) || string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(nodeId) || string.IsNullOrWhiteSpace(imageDigest))
 			return await Fail("Service, project, node and image are required.");
 		try
 		{
+			// Empty form fields bind to null (ConvertEmptyStringToNull) — coalesce everything.
+			var runSpec = new RunSpec(
+				Ports: SplitCsv(ports), Volumes: SplitCsv(volumes), Restart: restart,
+				Resources: string.IsNullOrWhiteSpace(memory) && cpus is null ? null : new ResourcesSpec(memory, cpus),
+				Network: network);
 			await _svc.UpsertDeploymentAsync(new DeploymentInput(
-				null, service, project, nodeId, imageDigest, DesiredState.Running, relocatable, requiredTags ?? "", configTags ?? ""));
+				null, service, project, nodeId, imageDigest, DesiredState.Running, relocatable, requiredTags ?? "", configTags ?? "",
+				runSpec));
 		}
 		catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
 		{
@@ -64,6 +71,9 @@ public sealed class DeployModel : PageModel
 		}
 		return RedirectToPage();
 	}
+
+	static string[]? SplitCsv(string? csv) =>
+		string.IsNullOrWhiteSpace(csv) ? null : csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
 	public async Task<IActionResult> OnPostSetStateAsync(string id, DesiredState desired)
 	{
@@ -89,8 +99,9 @@ public sealed class DeployModel : PageModel
 		return RedirectToPage();
 	}
 
+	// Carries RunSpec through, so start/stop/move never wipe a deployment's run-spec.
 	static DeploymentInput ToInput(DeploymentView d) => new(
-		d.Id, d.Service, d.Project, d.NodeId, d.ImageDigest, d.DesiredState, d.Relocatable, d.RequiredTags, d.ConfigTags);
+		d.Id, d.Service, d.Project, d.NodeId, d.ImageDigest, d.DesiredState, d.Relocatable, d.RequiredTags, d.ConfigTags, d.RunSpec);
 
 	async Task<IActionResult> Fail(string message)
 	{

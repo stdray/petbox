@@ -125,8 +125,40 @@ else
 				<input type="checkbox" name="relocatable" value="true" class="checkbox checkbox-sm" />
 				<span class="text-xs">Relocatable</span>
 			</label>
+			<div class="w-full"></div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-ports">Ports (csv)</label>
+				<input id="d-ports" name="ports" class="input input-bordered input-sm font-mono w-48" placeholder="127.0.0.1:8080:8080" data-testid="dep-ports" />
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-volumes">Volumes (csv)</label>
+				<input id="d-volumes" name="volumes" class="input input-bordered input-sm font-mono w-64" placeholder="/opt/app/logs:/app/logs" data-testid="dep-volumes" />
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-restart">Restart</label>
+				<select id="d-restart" name="restart" class="select select-bordered select-sm font-mono" data-testid="dep-restart">
+					<option value="">(default)</option>
+					<option value="unless-stopped">unless-stopped</option>
+					<option value="always">always</option>
+					<option value="on-failure">on-failure</option>
+					<option value="no">no</option>
+				</select>
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-memory">Memory</label>
+				<input id="d-memory" name="memory" class="input input-bordered input-sm font-mono w-20" placeholder="256m" data-testid="dep-memory" />
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-cpus">Cpus</label>
+				<input id="d-cpus" name="cpus" class="input input-bordered input-sm font-mono w-16" placeholder="0.5" />
+			</div>
+			<div>
+				<label class="text-xs opacity-60 block" for="d-network">Network</label>
+				<input id="d-network" name="network" class="input input-bordered input-sm font-mono w-24" placeholder="bridge" />
+			</div>
 			<button type="submit" class="btn btn-primary btn-sm" data-testid="dep-add">Create</button>
 		</form>
+		<p class="text-xs opacity-50 mt-1">Healthcheck, command override and labels are settable via MCP <code>deploy.upsert</code>.</p>
 	</div>
 </div>
 
@@ -142,7 +174,7 @@ else
 {
 	<div class="overflow-x-auto">
 		<table class="table table-sm" data-testid="deploy-deployments-table">
-			<thead><tr><th>Service</th><th>Project</th><th>Node</th><th>Image</th><th>Desired</th><th>Actual</th><th>Reloc</th><th class="w-72">Actions</th></tr></thead>
+			<thead><tr><th>Service</th><th>Project</th><th>Node</th><th>Image</th><th>Run spec</th><th>Desired</th><th>Actual</th><th>Reloc</th><th class="w-72">Actions</th></tr></thead>
 			<tbody>
 				@foreach (var d in Model.Deployments)
 				{
@@ -151,6 +183,17 @@ else
 						<td class="font-mono text-xs">@d.Project</td>
 						<td class="font-mono text-xs">@d.NodeId</td>
 						<td class="font-mono text-xs break-all">@d.ImageDigest</td>
+						<td class="text-xs font-mono" data-testid="dep-runspec">
+							@foreach (var p in d.RunSpec.Ports ?? Array.Empty<string>()) { <div>p&nbsp;@p</div> }
+							@foreach (var v in d.RunSpec.Volumes ?? Array.Empty<string>()) { <div>v&nbsp;@v</div> }
+							@if (d.RunSpec.Restart is not null) { <div>restart&nbsp;@d.RunSpec.Restart</div> }
+							@if (d.RunSpec.Healthcheck is not null) { <div title="@d.RunSpec.Healthcheck.Cmd">health&nbsp;✓</div> }
+							@if (d.RunSpec.Resources?.Memory is not null) { <div>mem&nbsp;@d.RunSpec.Resources.Memory</div> }
+							@if (d.RunSpec.Resources?.Cpus is not null) { <div>cpus&nbsp;@d.RunSpec.Resources.Cpus</div> }
+							@if (d.RunSpec.Network is not null) { <div>net&nbsp;@d.RunSpec.Network</div> }
+							@if (d.RunSpec.Command is not null) { <div title="@string.Join(" ", d.RunSpec.Command)">cmd&nbsp;✓</div> }
+							@if (d.RunSpec.Labels is not null) { <div>labels&nbsp;@d.RunSpec.Labels.Count</div> }
+						</td>
 						<td>
 							@if (d.DesiredState == DesiredState.Running)
 							{

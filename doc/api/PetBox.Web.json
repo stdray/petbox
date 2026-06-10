@@ -1887,6 +1887,38 @@
           }
         }
       },
+      "HealthcheckSpec": {
+        "required": [
+          "cmd"
+        ],
+        "type": "object",
+        "properties": {
+          "cmd": {
+            "type": "string"
+          },
+          "interval": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "timeout": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "retries": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
+          }
+        }
+      },
       "HeartbeatReport": {
         "required": [
           "actual"
@@ -2155,6 +2187,16 @@
           "configHash": {
             "type": "string"
           },
+          "runSpec": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/RunSpec"
+              }
+            ]
+          },
           "env": {
             "type": [
               "null",
@@ -2201,6 +2243,99 @@
             ],
             "items": {
               "$ref": "#/components/schemas/SqlParam"
+            }
+          }
+        }
+      },
+      "ResourcesSpec": {
+        "type": "object",
+        "properties": {
+          "memory": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "cpus": {
+            "pattern": "^-?(?:0|[1-9]\\d*)(?:\\.\\d+)?(?:[eE][+-]?\\d+)?$",
+            "type": [
+              "null",
+              "number",
+              "string"
+            ],
+            "format": "double"
+          }
+        }
+      },
+      "RunSpec": {
+        "type": "object",
+        "properties": {
+          "ports": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "volumes": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "restart": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "healthcheck": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HealthcheckSpec"
+              }
+            ]
+          },
+          "resources": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ResourcesSpec"
+              }
+            ]
+          },
+          "network": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "command": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "labels": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "additionalProperties": {
+              "type": "string"
             }
           }
         }

@@ -83,6 +83,84 @@ public sealed class DeployServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Upsert_Stores_RunSpec_And_Poll_Carries_It()
+	{
+		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
+		var spec = new RunSpec(
+			Ports: ["127.0.0.1:8080:8080"],
+			Volumes: ["/opt/app/logs:/app/logs", "/opt/app/keys:/app/keys:ro"],
+			Restart: "unless-stopped",
+			Healthcheck: new HealthcheckSpec("curl -f http://localhost:8080/health", "30s", "5s", 3),
+			Resources: new ResourcesSpec("256m", 0.5),
+			Network: "bridge",
+			Command: ["python", "-m", "bot"],
+			Labels: new Dictionary<string, string> { ["team"] = "infra" });
+		var d = await _svc.UpsertDeploymentAsync(new DeploymentInput(
+			null, "bot", "proj", "n1", "img1", DesiredState.Running, false, "", "", spec));
+
+		d.RunSpec.Ports.Should().Equal("127.0.0.1:8080:8080");
+		d.RunSpec.Volumes.Should().HaveCount(2);
+		d.RunSpec.Healthcheck!.Retries.Should().Be(3);
+		d.RunSpec.Resources!.Memory.Should().Be("256m");
+		d.RunSpec.Labels!["team"].Should().Be("infra");
+
+		var poll = await _svc.PollAsync("n1");
+		poll.Deployments[0].RunSpec!.Ports.Should().Equal("127.0.0.1:8080:8080");
+		poll.Deployments[0].RunSpec!.Command.Should().Equal("python", "-m", "bot");
+	}
+
+	[Fact]
+	public void ConfigHash_Is_Sensitive_To_Every_RunSpec_Field()
+	{
+		static string Hash(RunSpec? s) =>
+			DeployService.ComputeConfigHash("img", "env:prod", DesiredState.Running, "proj", RunSpecJson.ToCanonicalJson(s));
+
+		string[] variants =
+		[
+			Hash(null),
+			Hash(new RunSpec(Ports: ["8080:8080"])),
+			Hash(new RunSpec(Volumes: ["/a:/b"])),
+			Hash(new RunSpec(Restart: "always")),
+			Hash(new RunSpec(Healthcheck: new HealthcheckSpec("true"))),
+			Hash(new RunSpec(Resources: new ResourcesSpec("256m"))),
+			Hash(new RunSpec(Network: "host")),
+			Hash(new RunSpec(Command: ["run"])),
+			Hash(new RunSpec(Labels: new Dictionary<string, string> { ["k"] = "v" })),
+		];
+		variants.Should().OnlyHaveUniqueItems();
+		Hash(new RunSpec(Ports: ["8080:8080"])).Should().Be(variants[1]);   // and stable
+	}
+
+	[Fact]
+	public void Canonical_RunSpec_Json_Is_Stable_And_Empty_For_Empty_Spec()
+	{
+		RunSpecJson.ToCanonicalJson(null).Should().Be("{}");
+		// effectively-empty collapses to "{}" too
+		RunSpecJson.ToCanonicalJson(new RunSpec(Ports: [], Labels: new Dictionary<string, string>())).Should().Be("{}");
+		// label insertion order does not change the canonical form (sorted on write)
+		var a = RunSpecJson.ToCanonicalJson(new RunSpec(Labels: new Dictionary<string, string> { ["b"] = "2", ["a"] = "1" }));
+		var b = RunSpecJson.ToCanonicalJson(new RunSpec(Labels: new Dictionary<string, string> { ["a"] = "1", ["b"] = "2" }));
+		a.Should().Be(b);
+	}
+
+	[Fact]
+	public async Task Upsert_Rejects_Invalid_RunSpec_Fields()
+	{
+		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
+		Func<RunSpec, Func<Task>> act = s => () => _svc.UpsertDeploymentAsync(new DeploymentInput(
+			null, "bot", "proj", "n1", "img1", DesiredState.Running, false, "", "", s));
+
+		await act(new RunSpec(Ports: ["oops"])).Should().ThrowAsync<ArgumentException>();
+		await act(new RunSpec(Volumes: ["relative:/x"])).Should().ThrowAsync<ArgumentException>();
+		await act(new RunSpec(Restart: "sometimes")).Should().ThrowAsync<ArgumentException>();
+		await act(new RunSpec(Healthcheck: new HealthcheckSpec(" "))).Should().ThrowAsync<ArgumentException>();
+		await act(new RunSpec(Healthcheck: new HealthcheckSpec("true", Interval: "soon"))).Should().ThrowAsync<ArgumentException>();
+		await act(new RunSpec(Resources: new ResourcesSpec("lots"))).Should().ThrowAsync<ArgumentException>();
+		await act(new RunSpec(Resources: new ResourcesSpec(null, -1))).Should().ThrowAsync<ArgumentException>();
+		await act(new RunSpec(Labels: new Dictionary<string, string> { ["petbox.service"] = "x" })).Should().ThrowAsync<ArgumentException>();
+	}
+
+	[Fact]
 	public async Task One_Copy_Per_Node_Is_Enforced()
 	{
 		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));

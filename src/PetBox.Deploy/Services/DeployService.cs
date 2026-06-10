@@ -88,6 +88,7 @@ public sealed class DeployService : IDeployService
 
 		var imageDigest = input.ImageDigest.Trim();
 		var configTags = NormalizeCsv(input.ConfigTags);
+		var runSpecJson = RunSpecJson.ToCanonicalJson(input.RunSpec);   // validates; throws ArgumentException on bad fields
 		var deployment = new Deployment
 		{
 			Id = id,
@@ -99,7 +100,8 @@ public sealed class DeployService : IDeployService
 			Relocatable = input.Relocatable,
 			RequiredTags = NormalizeCsv(input.RequiredTags),
 			ConfigTags = configTags,
-			ConfigHash = ComputeConfigHash(imageDigest, configTags, input.DesiredState, project),
+			RunSpec = runSpecJson,
+			ConfigHash = ComputeConfigHash(imageDigest, configTags, input.DesiredState, project, runSpecJson),
 			UpdatedAt = DateTime.UtcNow,
 		};
 		await _db.InsertOrReplaceAsync(deployment, token: ct);
@@ -147,7 +149,8 @@ public sealed class DeployService : IDeployService
 		await TouchNodeAsync(nodeId, ct);
 		var deployments = await _db.Deployments.Where(d => d.NodeId == nodeId).OrderBy(d => d.Service).ToListAsync(ct);
 		var items = deployments
-			.Select(d => new PollItem(d.Service, d.Project, d.ImageDigest, d.DesiredState, d.ConfigTags, d.ConfigHash))
+			.Select(d => new PollItem(d.Service, d.Project, d.ImageDigest, d.DesiredState, d.ConfigTags, d.ConfigHash,
+				RunSpecJson.Parse(d.RunSpec)))
 			.ToList();
 		return new PollResponse(nodeId, items);
 	}
@@ -249,11 +252,12 @@ public sealed class DeployService : IDeployService
 	private static DeploymentView ToView(Deployment d, DeploymentStatus? s) => new(
 		d.Id, d.Service, d.Project, d.NodeId, d.ImageDigest, d.DesiredState, d.Relocatable,
 		d.RequiredTags, d.ConfigTags, d.ConfigHash, d.UpdatedAt,
-		ActualState: s?.ActualState, Healthy: s?.Healthy, ReportedAt: s?.ReportedAt);
+		ActualState: s?.ActualState, Healthy: s?.Healthy, ReportedAt: s?.ReportedAt,
+		RunSpec: RunSpecJson.Parse(d.RunSpec));
 
-	public static string ComputeConfigHash(string imageDigest, string configTags, DesiredState desired, string project)
+	public static string ComputeConfigHash(string imageDigest, string configTags, DesiredState desired, string project, string runSpecJson = RunSpecJson.Empty)
 	{
-		var payload = $"{imageDigest}\0{configTags}\0{(int)desired}\0{project}";
+		var payload = $"{imageDigest}\0{configTags}\0{(int)desired}\0{project}\0{runSpecJson}";
 		var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(payload));
 		return Convert.ToHexString(bytes).ToLowerInvariant();
 	}
