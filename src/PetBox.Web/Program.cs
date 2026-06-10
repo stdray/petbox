@@ -143,6 +143,10 @@ public partial class Program
 				cs => new PetBox.Sessions.Data.SessionsDb(PetBox.Sessions.Data.SessionsDb.CreateOptions(cs)), PetBox.Sessions.Data.SessionsSchema.Ensure));
 		builder.Services.AddScoped<PetBox.Sessions.Data.ISessionStore, PetBox.Sessions.Data.SessionStore>();
 		builder.Services.AddScoped<PetBox.Sessions.Contract.ISessionService, PetBox.Sessions.Services.SessionService>();
+		// Session discovery digests: distills each session's transcript into the project's
+		// `session-digests` memory store off the write path — rides the same enrichment tick
+		// as the vector jobs. Registered after sessions/memory/llm, which it consumes.
+		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionDigestJob>();
 		// Deploy: single FLEET-WIDE mutable db (one node hosts containers from many
 		// projects, so NOT per-project scoped). Schema ensured once at startup in Configure().
 		builder.Services.AddScoped(sp => new PetBox.Deploy.Data.DeployDb(
