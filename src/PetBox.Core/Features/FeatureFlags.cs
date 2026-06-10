@@ -11,6 +11,7 @@ public enum Feature
 	Tasks,
 	Memory,
 	LlmRouter,
+	Deploy,
 }
 
 public sealed class FeatureFlags

@@ -1,0 +1,130 @@
+# Deploy control-plane — operator guide
+
+How to run your Docker services on the PetBox **deploy control-plane**: PetBox holds the *desired state* (which service runs on which machine, from which image), and a thin **node-agent** on each machine reconciles Docker to match. The agent talks to PetBox **outbound-only** (HTTPS poll + heartbeat) — no inbound port, so it works behind NAT, firewalls, and on a laptop/WSL2.
+
+This guide takes you from zero to a running service: get a key → install the agent on a machine → put a service on the rails → operate it.
+
+## 0. Concepts (30 seconds)
+
+- **Node** — a machine in your fleet, identified by a slug (`vdsina-1`, `local-pc`) and capability **tags** (e.g. `net.x`, `disk=nvme`). Tags are how a deployment says "I need a machine that can reach X".
+- **Deployment** — the desired state of one service on one node: image, running/stopped, required tags. One copy per (service, node).
+- **node-agent** — the small Python reconciler on each machine. Polls `/agent/poll`, runs/stops/recreates containers to match, reports actual state via `/agent/heartbeat`.
+
+## 1. Get a deploy key (operator key)
+
+Managing the fleet needs an API key with scopes **`deploy:read,deploy:write`**.
+
+**Via MCP** (if your PetBox key has `admin:provision`):
+```
+apikey.create(projectKey="$system", name="fleet-ops", scopes="deploy:read,deploy:write")
+```
+The raw key is shown **once** — store it. (Add `admin:provision` too if the same key should also mint other keys.)
+
+**Via the UI:** Sysadmin → **Agent keys** (`/ui/admin/sys/agent-keys`) → issue a key with the `deploy:read` + `deploy:write` scopes checked. (UI keys carry a TTL; for a long-lived ops key prefer the MCP path above, which is non-expiring.)
+
+You do **not** create node keys by hand — they are minted automatically when you enroll a node (next step).
+
+## 2. Install the node-agent on a machine
+
+The agent files live in the repo under `agent/`: `petbox_deploy_agent.py`, `enroll.sh`, `petbox-deploy-agent.service`.
+
+### 2a. A real Ubuntu server (the normal case)
+
+```sh
+# 1. Docker (skip if already installed)
+curl -fsSL https://get.docker.com | sh
+
+# 2. drop the agent in place
+sudo mkdir -p /opt/petbox-deploy-agent
+sudo cp agent/petbox_deploy_agent.py /opt/petbox-deploy-agent/
+
+# 3. enroll: registers the node, mints its node key, writes /etc/petbox-deploy-agent.env
+PETBOX_URL=https://petbox.3po.su \
+PETBOX_ADMIN_KEY=<your deploy:write key from step 1> \
+  ./agent/enroll.sh <node-id> "<tags-csv>"
+# e.g. ./agent/enroll.sh vdsina-1 "net.x,disk=nvme"
+
+# 4. install + start the service
+sudo cp agent/petbox-deploy-agent.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now petbox-deploy-agent
+journalctl -u petbox-deploy-agent -f      # watch it poll
+```
+
+> **`sudo` note:** `enroll.sh` writes `/etc/petbox-deploy-agent.env` via `sudo tee`. Run it where `sudo` is passwordless, or as **root** (`sudo -i`, or on WSL2 `wsl -u root`). A non-interactive run with a password-prompting `sudo` will hang.
+
+The node now appears in the fleet (UI `/ui/admin/sys/deploy` or `deploy.node_list`) and goes **online** within a poll interval (~30s). `journalctl -u petbox-deploy-agent -f` shows one `reconciled: N desired, M action(s), …; heartbeat ok` line per cycle.
+
+### 2b. Local test in WSL2 (Windows + Docker Desktop)
+
+WSL2 distros don't have `docker` until you expose it. Two options:
+
+- **Easiest** — Docker Desktop → Settings → **Resources → WSL Integration** → enable for your distro (e.g. `Ubuntu-26.04`), Apply & Restart. Now `docker` works inside the distro.
+- **Or** install Docker Engine directly in the distro and enable systemd: add `[boot]\nsystemd=true` to `/etc/wsl.conf`, `wsl --shutdown`, reopen, then `curl -fsSL https://get.docker.com | sh`.
+
+Then run the same steps as 2a inside the distro, and tag the node `ephemeral` (a laptop comes and goes):
+```sh
+PETBOX_URL=https://petbox.3po.su PETBOX_ADMIN_KEY=<deploy key> \
+  ./agent/enroll.sh local-pc "net.x" --ephemeral
+```
+
+> No systemd in WSL2 and don't want to enable it? For a quick test just run the agent in the foreground:
+> `PETBOX_URL=https://petbox.3po.su PETBOX_NODE_KEY=<minted key> python3 agent/petbox_deploy_agent.py`
+> (the minted key is in `/etc/petbox-deploy-agent.env` after enroll, or from `deploy.node_upsert`).
+
+## 3. Put a service on the rails
+
+Create a deployment — the agent on that node will pull the image and run it.
+
+**Via the UI** `/ui/admin/sys/deploy`: fill the *New deployment* form (service, project, node, image, optional required/config tags) → Create.
+
+**Via MCP:**
+```
+deploy.upsert(service="bot", project="yobapub", nodeId="vdsina-1",
+              imageDigest="ghcr.io/you/bot:sha-abc123", running=true,
+              requiredTags="net.x", configTags="env:prod")
+```
+- `project` — the PetBox project whose **config** applies; the agent's container env is resolved **server-side** from `(project, configTags)` via the same `/v1/conf` resolver, so the node key needs no `config:read`.
+- `requiredTags` — the node's tags must cover these (also used when failover picks a new home).
+- `relocatable=true` — let failover move it to another matching node if this one goes silent.
+
+Within a poll the container `petbox-<service>` is up. Check actual state: UI grid, or `deploy.list` (shows desired + last reported `actualState`/`healthy`).
+
+## 3a. Migrating a service that bootstraps from PetBox
+
+Many PetBox services bootstrap from PetBox itself — they need `PETBOX_ENDPOINT` + `PETBOX_API_KEY` in their env to pull their own config/log/etc. Previously those lived only in the project's **CI secrets**, so the server-side env resolve had nothing to hand the container. Put them in config so the rails can deliver them:
+
+1. Create two **config bindings** in the service's workspace, tagged so they only resolve for this deployment (not the app's normal `/v1/conf`):
+   - `PETBOX_ENDPOINT` — **Plain**, tags `ws:<ws>,project:<proj>,deploy`
+   - `PETBOX_API_KEY` — **Secret** (AES-encrypted at rest), tags `ws:<ws>,project:<proj>,deploy`
+2. Give the deployment **`configTags="deploy"`** (`deploy.upsert(... configTags="deploy")`).
+
+Now the poll's server-side resolve over `(project, ["deploy"])` injects both into the container's `--env-file`. Because they're tagged `deploy`, they're scoped to the deploy path and don't leak into the application's own `/v1/conf` reads. (Worked example: `kpvotes` — bootstraps from PetBox, migrated exactly this way.)
+
+## 4. Updating the running version (deploys)
+
+To roll a new image, set the new digest on the deployment — `deploy.upsert` with the same `(service, node)` and the new `imageDigest` (or edit it in the UI). The agent notices the changed config-hash and recreates the container.
+
+> CI integration (auto-bump the digest from a GitHub Actions build) is **not yet turn-key** — there's no REST hook for it. Today the new digest is set via the UI, `deploy.upsert` (MCP), or an agent/script that calls the MCP tool after the image is pushed. A first-class CI hook is a planned follow-up.
+
+## 5. Day-2 operations
+
+- **Status / list** — UI grid or `deploy.list` (per node/service filter); `deploy.node_list` for the fleet.
+- **Stop / start** — `deploy.stop(id)` / `deploy.start(id)` or the UI buttons (sets desired state; the agent reconciles).
+- **Move** — `deploy.move(id, toNodeId)` (the source agent self-fences the old container, the target agent starts it).
+- **Copies** — create a deployment of the same service on another node (one per node).
+- **Remove** — `deploy.delete(id)` removes the deployment (the owning agent then removes the container); `deploy.node_delete(id)` removes a node and cascades its deployments.
+
+## 6. Failover (auto-move)
+
+If a node stops reporting for ~90s (3 missed polls), a background sweeper relocates its **`relocatable`** deployments to an online node whose tags cover the deployment's `requiredTags`. Failure mode is a brief **double-run** (not data loss): when the silent node returns, its agent sees it no longer owns the deployment and self-stops the container. Mark only stateless / idempotent services `relocatable`.
+
+## 7. Troubleshooting
+
+- **Node stays offline** — agent not running (`systemctl status petbox-deploy-agent`) or can't reach PetBox (outbound HTTPS to `petbox.3po.su` blocked). Check `journalctl -u petbox-deploy-agent`.
+- **403 on deploy tools** — your key lacks `deploy:read/write` (step 1). MCP caches scopes at connect — after changing a key, reconnect/restart the client.
+- **Container won't start** — check the image ref and that the env resolves (project + configTags); `docker logs petbox-<service>` on the node.
+- **"one copy per node"** — a service already has a deployment on that node; move or delete it first.
+- **Container logs in PetBox** — not shipped by the agent yet (heartbeat reports state only); use `docker logs` on the node for now.
+
+For an AI agent driving migrations, see `doc/guides/deploy-fleet-agent.md`.
