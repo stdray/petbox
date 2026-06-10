@@ -51,11 +51,18 @@ public sealed class IndexModel : PageModel
 		DbCount = await CountByProjectAsync(_db.DataDbs.Where(d => projectKeys.Contains(d.ProjectKey)).Select(d => d.ProjectKey), ct);
 		KeyCount = await CountByProjectAsync(_db.ApiKeys.Where(k => projectKeys.Contains(k.ProjectKey)).Select(k => k.ProjectKey), ct);
 
-		// Latest report per (Svc, Tags): Id is identity-ascending, so max Id = newest.
-		var maxIds = await _db.HealthReports
-			.GroupBy(r => new { r.Svc, r.Tags })
-			.Select(g => g.Max(x => x.Id))
+		// Latest report per service. Identity is (project tag, Svc) — the rest of the
+		// tags (host, elapsedMs, reason, …) are volatile payload of a single report, so
+		// grouping by the raw Tags string would resurface the whole history. The project
+		// tag lives inside Tags, hence the in-memory pass. Id is identity-ascending:
+		// max Id = newest.
+		var slim = await _db.HealthReports
+			.Select(r => new { r.Id, r.Svc, r.Tags })
 			.ToListAsync(ct);
+		var maxIds = slim
+			.GroupBy(r => (r.Svc, Project: HealthTags.Parse(r.Tags).GetValueOrDefault("project", "")))
+			.Select(g => g.Max(x => x.Id))
+			.ToList();
 		var latest = maxIds.Count == 0
 			? []
 			: await _db.HealthReports.Where(r => maxIds.Contains(r.Id)).ToListAsync(ct);

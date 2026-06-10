@@ -291,6 +291,18 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task Query_UnsupportedKql_Returns400()
+	{
+		// Parses fine but the transformer rejects it (only the 'events' table exists) —
+		// UnsupportedKqlException is a user error, not a 500.
+		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString("Level | take 1")}");
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+		var body = await resp.Content.ReadAsStringAsync();
+		body.Should().Contain("events");
+	}
+
+	[Fact]
 	public async Task Query_WithoutApiKey_Returns401()
 	{
 		using var resp = await _client.GetAsync("/api/logs/$system/default/query?q=events");

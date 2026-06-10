@@ -254,6 +254,12 @@ public static class LogApi
 		{
 			return Results.BadRequest(new KqlParseErrorResponse("KQL parse error", ex.Details));
 		}
+		// KqlTransformer.Apply throws synchronously inside QueryAsync (e.g. a query not
+		// rooted at 'events') — a user error, not a server fault.
+		catch (UnsupportedKqlException ex)
+		{
+			return Results.BadRequest(new ErrorResponse(ex.Message));
+		}
 
 		try
 		{

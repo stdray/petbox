@@ -78,7 +78,9 @@ public sealed record LogEntryViewModel
 			var key = match.Groups[1].Value;
 			if (props.TryGetValue(key, out var val) && val is not null)
 				return $"<mark class=\"msg-sub\">{HtmlEncoder.Default.Encode(FormatPropertyValue(val))}</mark>";
-			return HtmlEncoder.Default.Encode(match.Value);
+			// Null-valued properties are dropped from PropertiesJson at capture, so a missing
+			// key means a null argument — render it the way the stored Message does.
+			return "<mark class=\"msg-sub\">(null)</mark>";
 		});
 	}
 

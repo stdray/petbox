@@ -61,7 +61,10 @@ public static class OtlpEndpoints
 
 		if (result.Spans.Count > 0)
 		{
-			var logDb = store.GetContext(LogNames.SystemProject, LogNames.SelfLog);
+			// Request-owned connection: concurrent /v1/traces posts (and the self-log
+			// writer loop on the same file) racing one cached DataConnection is what
+			// produced ObjectDisposedException on sqlite3_stmt.
+			using var logDb = store.NewContext(LogNames.SystemProject, LogNames.SelfLog);
 			await logDb.Spans.BulkCopyAsync(result.Spans, ct);
 		}
 		return Results.Ok(new IngestResponse(result.Spans.Count, result.Errors));
@@ -125,7 +128,7 @@ public static class OtlpEndpoints
 
 		if (result.Spans.Count > 0)
 		{
-			var logDb = store.GetContext(projectKey, logName);
+			using var logDb = store.NewContext(projectKey, logName);
 			await logDb.Spans.BulkCopyAsync(result.Spans, ct);
 		}
 

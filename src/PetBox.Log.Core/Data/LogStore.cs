@@ -18,6 +18,12 @@ public interface ILogStore
 	// access. Does not check metadata — callers validate existence where it matters.
 	LogDb GetContext(string projectKey, string logName);
 
+	// Fresh caller-owned connection (caller disposes) to a named log, ensuring file +
+	// schema first. Use for writes that may run concurrently with other work — the
+	// GetContext result is a cached connection shared across threads, and
+	// DataConnection is not thread-safe.
+	LogDb NewContext(string projectKey, string logName);
+
 	Task<bool> ExistsAsync(string projectKey, string logName, CancellationToken ct = default);
 	Task<IReadOnlyList<LogMeta>> ListAsync(string projectKey, CancellationToken ct = default);
 	Task<LogMeta> CreateAsync(string projectKey, string logName, string? description, CancellationToken ct = default);
@@ -41,6 +47,12 @@ public sealed partial class LogStore : ILogStore
 
 	public LogDb GetContext(string projectKey, string logName) =>
 		_factory.GetDb(projectKey, logName);
+
+	public LogDb NewContext(string projectKey, string logName)
+	{
+		_factory.GetDb(projectKey, logName); // ensure file + schema (cached, cheap)
+		return _factory.NewConnection(projectKey, logName);
+	}
 
 	public Task<bool> ExistsAsync(string projectKey, string logName, CancellationToken ct = default) =>
 		_db.Logs.AnyAsync(l => l.ProjectKey == projectKey && l.Name == logName, ct);
