@@ -1,7 +1,9 @@
 using LinqToDB;
+using LinqToDB.Data;
 using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Core.Search;
 using PetBox.Core.Settings;
 using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
@@ -53,6 +55,19 @@ public sealed class TasksHybridSearchTests : IDisposable
 
 	TasksService Service(ILlmClient? llm) => new(_store, _relations, _tags, _commentSvc, llm);
 
+	// Vectors are materialized OFF the write path by the async-vectorization worker (per board), so
+	// a test needing the semantic leg drains first (same embedder the query path uses → model/dim
+	// guard matches). Mirrors TasksVectorizationJob for one board.
+	async Task<DrainResult> DrainVectors(ILlmClient llm, string board)
+	{
+		DataConnection Connect() => _factory.NewConnection(Proj);
+		var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(llm, Proj));
+		var source = new TasksSearchSource(Connect, Proj, board);
+		var cursor = new SqliteIndexCursorStore(Connect);
+		var worker = new AsyncVectorizationWorker(board, source, target, cursor);
+		return await worker.DrainAsync();
+	}
+
 	// A free board accepts a bare node with a generated status — no spec/idea gate.
 	static NodePatch Node(string key, string title, string body) =>
 		new() { Key = key, Version = 0, Title = title, Body = body };
@@ -69,6 +84,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 			Node("alpha", "alpha note", "the alpha keyword appears here"),
 			Node("beta", "beta note", FakeLlmClient.NearQueryMarker + " unrelated words"),
 		]);
+		await DrainVectors(new FakeLlmClient(), "b"); // materialize Class-B vectors for the semantic leg
 
 		var res = await tasks.SearchAsync(Proj, "alpha");
 
@@ -97,8 +113,8 @@ public sealed class TasksHybridSearchTests : IDisposable
 	[Fact]
 	public async Task ThrowingEmbedder_AtQueryTime_DegradesAndFlags()
 	{
-		// Embedder that throws: write still succeeds (embed-on-write swallows), and at query
-		// time the semantic leg fails → lexical-only result flagged degraded.
+		// Embedder that throws: the write never embeds (Class-B is off the write path), so the
+		// upsert succeeds regardless; at query time the semantic leg fails → lexical-only, degraded.
 		var tasks = Service(new ThrowingLlmClient());
 		await tasks.CreateBoardAsync(Proj, "b", "free", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("alpha", "alpha note", "alpha keyword")]);
@@ -121,12 +137,12 @@ public sealed class TasksHybridSearchTests : IDisposable
 			Node("good", "good note", FakeLlmClient.NearQueryMarker + " body"),
 			Node("bad", "bad note", FakeLlmClient.NearQueryMarker + " body"),
 		]);
+		await DrainVectors(new FakeLlmClient(), "b");
 
-		// Corrupt "bad"'s stored vector to a different model — the query embedding's
-		// (model,dim) guard must exclude it from the semantic candidate set.
+		// Corrupt "bad"'s stored vector to a different model — the query embedding's (model,dim)
+		// guard must exclude it from the semantic candidate set. (Id = slug, Type = board.)
 		var ctx = _store.GetContext(Proj);
-		var badId = ctx.PlanNodes.First(n => n.Board == "b" && n.Key == "bad" && n.ActiveTo == null).NodeId;
-		ctx.PlanNodeVec.Where(v => v.NodeId == badId).Set(v => v.Model, "other-model").Update();
+		ctx.Execute("UPDATE search_vec SET Model = 'other-model' WHERE Type = 'b' AND Id = 'bad'");
 
 		// Lexical off so only the semantic leg drives the result set.
 		var res = await tasks.SearchAsync(Proj, "anything", board: null, lexical: false, semantic: true);
@@ -165,6 +181,8 @@ public sealed class TasksHybridSearchTests : IDisposable
 		await tasks.CreateBoardAsync(Proj, "b", "free", null, null);
 		await tasks.UpsertAsync(Proj, "a", [Node("widget", "widget on a", "the gizmo keyword lives here")]);
 		await tasks.UpsertAsync(Proj, "b", [Node("gadget", "gadget on b", "another gizmo keyword here")]);
+		await DrainVectors(new FakeLlmClient(), "a");
+		await DrainVectors(new FakeLlmClient(), "b");
 
 		// Project-wide: both boards' "gizmo" nodes are found.
 		var all = await tasks.SearchAsync(Proj, "gizmo");
@@ -175,6 +193,24 @@ public sealed class TasksHybridSearchTests : IDisposable
 		scoped.Hits.Should().ContainSingle();
 		scoped.Hits[0].Node.Key.Should().Be("gadget");
 		scoped.Hits[0].Board.Should().Be("b");
+	}
+
+	[Fact]
+	public async Task TerminalNode_LeavesTheOpenSetIndex()
+	{
+		// Tasks search covers only the OPEN set. Moving a node to a terminal status must drop it
+		// from the index — and that drop rides the entity transaction (onWithinTx), not a separate
+		// post-commit rebuild.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "free", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("keepme", "alpha note", "alpha keyword")]);
+		(await tasks.SearchAsync(Proj, "alpha")).Hits.Select(h => h.Node.Key).Should().Equal("keepme");
+
+		var view = await tasks.GetAsync(Proj, "b", includeClosed: false);
+		var version = view.Nodes.First(n => n.Key == "keepme").Version;
+		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "keepme", Version = version, Status = "Done" }]);
+
+		(await tasks.SearchAsync(Proj, "alpha")).Hits.Should().BeEmpty();
 	}
 
 	// ---- deterministic fakes (same shape as the memory hybrid-search fakes) ----

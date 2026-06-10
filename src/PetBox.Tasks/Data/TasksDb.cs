@@ -13,8 +13,8 @@ public sealed class TasksDb : DataConnection
 	public ITable<PlanNode> PlanNodes => this.GetTable<PlanNode>();
 	public ITable<NodeTag> NodeTags => this.GetTable<NodeTag>();
 	public ITable<TagVocab> TagVocab => this.GetTable<TagVocab>();
-	public ITable<PlanNodeFts> PlanNodesFts => this.GetTable<PlanNodeFts>();
-	public ITable<PlanNodeVec> PlanNodeVec => this.GetTable<PlanNodeVec>();
+	// Lexical (search_fts) + vector (search_vec) live behind PetBox.Core.Search indexes, which
+	// own their own row mappings — no table props here. See the TasksService search seam.
 
 	// Foreign Keys=True turns on per-connection FK enforcement (SQLite defaults it OFF),
 	// so node_tag.Tag -> tag_vocab.Tag is actually enforced. plan_nodes has no FK.

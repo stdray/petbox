@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using LinqToDB;
+using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
@@ -28,6 +29,11 @@ public sealed partial class TasksService : ITasksService
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
+
+	// MRL truncation dim for the vector index (must match TasksVectorizationJob) and the fusion
+	// candidate depth; board/type filtering is applied by the index, so SearchK bounds the result.
+	const int VectorDim = 1024;
+	const int SearchK = 50;
 
 	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null)
 	{
@@ -515,7 +521,24 @@ public sealed partial class TasksService : ITasksService
 		await RequireBlockersAsync(kind, projectKey, desired, blockedBy, ct);
 		await RequireSpecPlanForReviewAsync(kind, projectKey, board, desired, prior, ct);
 		await RequireAcceptedIdeaForSpecAsync(kind, projectKey, desired, ideaRefs, ct);
-		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion, partition: n => n.Board == board, ct: ct);
+		// Class-A lexical floor written INSIDE the entity tx: open nodes (re)indexed, terminal/
+		// removed nodes dropped (search covers only the open set), committing/rolling back with the
+		// entity. Tags read in-tx are the pre-upsert set; SetTagsAsync (below) is reflected by the
+		// post-commit RefreshFtsTagsAsync. Vectors are materialized by the worker, not here.
+		var fts = new SqliteFtsIndex(() => ctx);
+		var r = await TemporalStore.UpsertAsync(ctx, desired, sinceVersion,
+			onWithinTx: async (tx, upserted, deletedKeys, c) =>
+			{
+				var tags = await NodeTagsAsync(tx, board, upserted.Where(TasksSearchDocs.IsIndexable).Select(n => n.NodeId), c);
+				foreach (var n in upserted)
+					if (TasksSearchDocs.IsIndexable(n))
+						await fts.IndexAsync(tx, TasksSearchDocs.ToDoc(n, projectKey, tags.GetValueOrDefault(n.NodeId, [])), c);
+					else
+						await fts.DeleteAsync(tx, projectKey, board, n.Key, c); // left the open set
+				foreach (var key in deletedKeys)
+					await fts.DeleteAsync(tx, projectKey, board, key, c);
+			},
+			partition: n => n.Board == board, ct: ct);
 		if (r.Applied)
 		{
 			await _boards.TouchAsync(projectKey, board, ct);
@@ -534,14 +557,12 @@ public sealed partial class TasksService : ITasksService
 			await SetPartOfAsync(projectKey, board, nodes, desired, ct);
 			await SetSupersedesAsync(projectKey, board, nodes, desired, ct);
 		}
-		// Search mirrors (FTS + vectors) reflect the active, non-terminal set of THIS board.
-		// Rebuilt/embedded after tags+part_of so the FTS Tags column and search are current.
-		// Best-effort: the embed leg degrades per-node and never throws out of the write path.
+		// Refresh the FTS Tags column now that SetTagsAsync (above) has run: the in-tx index wrote
+		// content + pre-upsert tags transactionally; re-index this batch's open nodes with the
+		// now-current tags. Content/membership are already committed with the entity; vectors are
+		// materialized off the write path by the async-vectorization worker.
 		if (r.Applied)
-		{
-			await RebuildFtsAsync(ctx, projectKey, board, ct);
-			await EmbedOnWriteAsync(ctx, projectKey, board, ct);
-		}
+			await RefreshFtsTagsAsync(ctx, projectKey, board, desired, ct);
 		return new UpsertOutcome(r, kind);
 	}
 
@@ -561,87 +582,40 @@ public sealed partial class TasksService : ITasksService
 		var boardFilter = string.IsNullOrWhiteSpace(board) ? null : board;
 		if (boardFilter is not null) await EnsureBoard(projectKey, boardFilter, ct);
 		var ctx = _boards.GetContext(projectKey);
+		await EnsureLexicalBackfillAsync(ctx, projectKey, ct);
 
-		// null = enabled; semantic also requires an embedding capability to be wired.
-		var lexicalEnabled = lexical != false;
-		var semanticEnabled = semantic != false && _llm is not null;
+		// Hybrid search behind the contract: Class-A lexical floor ⊕ Class-B vectors, RRF-fused with
+		// provenance by the facade. Entity address is (Scope=project, Type=board, Id=slug); the board
+		// filter is a SearchFilter(Type=board). Toggles preserved: no embedder / semantic:false omits
+		// the vector index (semantic=false, not degraded); a query-time embed failure is caught by
+		// the facade and flagged degraded.
+		Func<DataConnection> connect = () => _boards.NewConnection(projectKey);
+		var indexes = new List<ISearchIndex>();
+		if (lexical != false)
+			indexes.Add(new SqliteFtsIndex(connect));
+		if (semantic != false && _llm is not null)
+			indexes.Add(new VectorSearchIndex(connect, new LlmClientEmbedder(_llm, projectKey), VectorDim));
 
-		IReadOnlyList<string>? lexicalIds = null;
-		var lexicalRan = false;
-		if (lexicalEnabled)
-		{
-			lexicalIds = LexicalNodeIds(ctx, query, boardFilter);
-			lexicalRan = true;
-		}
+		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(boardFilter), SearchK, ct);
+		if (resp.Hits.Count == 0) return new TaskSearchResult([], resp.Retrievers);
 
-		IReadOnlyList<string>? semanticIds = null;
-		var semanticRan = false;
-		var degraded = false;
-		if (semanticEnabled)
-		{
-			try
-			{
-				var qr = await _llm!.EmbedAsync(projectKey, new EmbedRequest(new[] { query }), ct);
-				var q = qr.Vectors[0];
-				var qmodel = qr.Model.Model;
-				var qdim = q.Length; // hoist: array-length isn't SQL-translatable inside Where
-				// Model/dim guard (and optional board scope): only fuse candidates embedded by the
-				// same model at the same dim as the query, so we never cosine-compare incomparable
-				// vectors. Board filter keeps a one-board search from leaking other boards' nodes.
-				var rowsQ = ctx.PlanNodeVec.Where(v => v.Model == qmodel && v.Dim == qdim);
-				if (boardFilter is not null) rowsQ = rowsQ.Where(v => v.Board == boardFilter);
-				var rows = rowsQ.ToList();
-				var top = VectorMath.TopK(q, rows.Select(r => (r.NodeId, VectorCodec.Decode(r.Vec))), 50);
-				semanticIds = top.Select(t => t.Key).ToList();
-				semanticRan = true;
-			}
-			catch
-			{
-				// Embedding unavailable at query time → degrade to whatever else ran.
-				semanticRan = false;
-				degraded = true;
-			}
-		}
-
-		// RRF-fuse the retrievers that ran; one retriever passes through unchanged.
-		IReadOnlyList<string> fused =
-			lexicalRan && semanticRan ? HybridMerge.Rrf(lexicalIds, semanticIds)
-			: lexicalRan ? lexicalIds ?? []
-			: semanticRan ? semanticIds ?? []
-			: [];
-
-		var retrievers = new SearchRetrievers(lexicalRan, semanticRan, degraded);
-		if (fused.Count == 0) return new TaskSearchResult([], retrievers);
-
-		// Resolve the fused NodeIds to enriched views. Build each owning board's view once
-		// (GetAsync is per-board), then pick the matched nodes and order by fused relevance.
-		var order = fused.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i, StringComparer.Ordinal);
-		var fusedSet = new HashSet<string>(fused, StringComparer.Ordinal);
-		var idToBoard = ctx.PlanNodes.Where(n => n.ActiveTo == null && fusedSet.Contains(n.NodeId))
-			.Select(n => new { n.NodeId, n.Board }).ToList()
-			.GroupBy(x => x.Board, StringComparer.Ordinal);
+		// Hits carry Type=board, Id=slug — group by board (no need to look up each id's board),
+		// build each owning board's enriched view once, pick the matched nodes by slug, order by
+		// fused relevance.
+		var order = new Dictionary<(string Board, string Slug), int>();
+		for (var i = 0; i < resp.Hits.Count; i++)
+			order[(resp.Hits[i].Type, resp.Hits[i].Id)] = i;
 
 		var hits = new List<TaskSearchHit>();
-		foreach (var g in idToBoard)
+		foreach (var g in resp.Hits.GroupBy(h => h.Type, StringComparer.Ordinal))
 		{
 			var view = await GetAsync(projectKey, g.Key, includeClosed: false, urlPrefix: urlPrefix, ct: ct);
-			foreach (var n in view.Nodes.Where(n => fusedSet.Contains(n.NodeId)))
+			var slugs = g.Select(h => h.Id).ToHashSet(StringComparer.Ordinal);
+			foreach (var n in view.Nodes.Where(n => slugs.Contains(n.Key)))
 				hits.Add(new TaskSearchHit(g.Key, n));
 		}
-		var ordered = hits.OrderBy(h => order.GetValueOrDefault(h.Node.NodeId, int.MaxValue)).ToList();
-		return new TaskSearchResult(ordered, retrievers);
-	}
-
-	// Lexical retriever as ordered NodeIds (uniform shape for fusion). Optional board scope.
-	// No "empty query → listing" degrade here (unlike memory): a no-token query yields no
-	// lexical hits, leaving the fused result to the semantic leg (or empty).
-	static List<string> LexicalNodeIds(TasksDb ctx, string query, string? board)
-	{
-		var match = BuildMatch(query);
-		if (match is null) return [];
-		var q = ctx.PlanNodesFts.Where(f => Sql.Ext.SQLite().Match(f, match));
-		if (board is not null) q = q.Where(f => f.Board == board);
-		return q.OrderBy(f => Sql.Ext.SQLite().Rank(f)).Select(f => f.NodeId).ToList();
+		var ordered = hits.OrderBy(h => order.GetValueOrDefault((h.Board, h.Node.Key), int.MaxValue)).ToList();
+		return new TaskSearchResult(ordered, resp.Retrievers);
 	}
 
 	// Read-merge a patch against the prior active row: a field omitted from the patch
@@ -1033,89 +1007,71 @@ public sealed partial class TasksService : ITasksService
 		return key;
 	}
 
-	// ---- search mirrors: FTS rebuild + embed-on-write ----
+	// ---- search seam: Class-A FTS tag refresh + lexical backfill ----
 
-	// The FTS5 mirror only holds the current active, NON-TERMINAL set; rebuild this board's
-	// rows wholesale after a write (boards are small — avoids temporal-aware trigger plumbing).
-	// Tags (enforced area:*/concern:*) are flattened into the indexed Tags column so a search
-	// term can hit a node by its tag too. Terminal/closed nodes are excluded (search the open set).
-	async Task RebuildFtsAsync(TasksDb ctx, string projectKey, string board, CancellationToken ct)
+	// Re-index this batch's OPEN nodes with their now-current tags. The in-tx write (onWithinTx in
+	// UpsertAsync) already committed content + membership transactionally with pre-upsert tags; this
+	// post-commit pass reflects SetTagsAsync into the FTS Tags column. Targeted (not a wholesale
+	// board rebuild) so it only re-writes the changed nodes and never empties the board's index.
+	static async Task RefreshFtsTagsAsync(TasksDb ctx, string projectKey, string board, IReadOnlyList<PlanNode> desired, CancellationToken ct)
 	{
-		await ctx.PlanNodesFts.Where(f => f.Board == board).DeleteAsync(ct);
-		var active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
-			.Where(n => n.NodeId.Length > 0 && !WorkflowCatalog.IsTerminalSlug(n.Status)).ToList();
-		if (active.Count == 0) return;
-		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
-		foreach (var n in active)
-			await ctx.InsertAsync(new PlanNodeFts
-			{
-				NodeId = n.NodeId,
-				Board = board,
-				Name = n.Name,
-				Body = n.Body,
-				Tags = string.Join(' ', tagsByNode[n.NodeId]),
-			}, token: ct);
-	}
-
-	// Embed-on-write: refresh the vector mirror for this board's active, non-terminal nodes.
-	// Each open node is (re)embedded from name+body; rows for nodes that became terminal/closed
-	// or were deleted are dropped (they leave the FTS set too). Best-effort: when no LLM
-	// capability is wired this is skipped entirely, and an embed failure for one node degrades
-	// that node to lexical-only — it MUST NOT throw out of the write path (an upsert must never
-	// fail because embedding was unavailable).
-	async Task EmbedOnWriteAsync(TasksDb ctx, string projectKey, string board, CancellationToken ct)
-	{
-		if (_llm is null) return;
-
-		var open = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
-			.Where(n => n.NodeId.Length > 0 && !WorkflowCatalog.IsTerminalSlug(n.Status)).ToList();
-		var keep = new HashSet<string>(open.Select(n => n.NodeId), StringComparer.Ordinal);
-
-		// Drop vectors for this board's nodes that are no longer open (terminal/closed/deleted).
-		foreach (var stale in ctx.PlanNodeVec.Where(v => v.Board == board).Select(v => v.NodeId).ToList())
-			if (!keep.Contains(stale))
-				await ctx.PlanNodeVec.Where(v => v.NodeId == stale).DeleteAsync(ct);
-
-		foreach (var n in open)
+		var open = desired.Where(TasksSearchDocs.IsIndexable).ToList();
+		if (open.Count == 0) return;
+		var tags = await NodeTagsAsync(ctx, board, open.Select(n => n.NodeId), ct);
+		var fts = new SqliteFtsIndex(() => ctx);
+		using var tx = await ctx.BeginTransactionAsync(ct);
+		try
 		{
-			try
-			{
-				var text = n.Name + "\n" + n.Body;
-				var res = await _llm.EmbedAsync(projectKey, new EmbedRequest(new[] { text }), ct);
-				var vec = res.Vectors[0];
-				var row = new PlanNodeVec
-				{
-					NodeId = n.NodeId,
-					Board = board,
-					Model = res.Model.Model,
-					Dim = vec.Length,
-					Vec = VectorCodec.Encode(vec),
-				};
-				await ctx.PlanNodeVec.Where(v => v.NodeId == n.NodeId).DeleteAsync(ct);
-				await ctx.InsertAsync(row, token: ct);
-			}
-			catch
-			{
-				// Degrade: this node stays lexical-only until a later upsert succeeds.
-			}
+			foreach (var n in open)
+				await fts.IndexAsync(ctx, TasksSearchDocs.ToDoc(n, projectKey, tags.GetValueOrDefault(n.NodeId, [])), ct);
+			await tx.CommitAsync(ct);
+		}
+		catch
+		{
+			await tx.RollbackAsync(ct);
+			throw;
 		}
 	}
 
-	// Lenient FTS5 MATCH expression: Unicode word tokens (letters/digits — Latin, Cyrillic,
-	// …), prefix-matched (tok*) and ANDed. The FTS5 table is unicode61 (case-folds + strips
-	// diacritics), so the query tokenizer must NOT drop non-ASCII: a `[a-z0-9]` class would
-	// silently discard a Russian query and return nothing. Prefix-* softens the lack of
-	// stemming for ru/en. Null when nothing to match.
-	static string? BuildMatch(string? query)
+	// One-time lexical backfill: nodes written before the search retrofit have no search_fts rows.
+	// Cheap, count-guarded, runs at most once per project file — rebuilds the OPEN set across every
+	// board from the same projection the write seam uses.
+	static async Task EnsureLexicalBackfillAsync(TasksDb ctx, string scope, CancellationToken ct)
 	{
-		if (string.IsNullOrWhiteSpace(query)) return null;
-		var tokens = WordToken().Matches(query.ToLowerInvariant()).Select(m => m.Value + "*");
-		var joined = string.Join(' ', tokens);
-		return joined.Length == 0 ? null : joined;
+		if (ctx.Execute<long>("SELECT count(*) FROM search_fts") > 0) return;
+		var open = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
+			.Where(TasksSearchDocs.IsIndexable).ToList();
+		if (open.Count == 0) return;
+
+		var tagsByNode = (await ctx.GetTable<NodeTag>().Where(t => t.ValidTo == null)
+				.Select(t => new { t.NodeId, t.Tag }).ToListAsync(ct))
+			.GroupBy(r => r.NodeId).ToDictionary(g => g.Key, g => g.Select(x => x.Tag).ToList());
+
+		var fts = new SqliteFtsIndex(() => ctx);
+		using var tx = await ctx.BeginTransactionAsync(ct);
+		try
+		{
+			foreach (var n in open)
+				await fts.IndexAsync(ctx, TasksSearchDocs.ToDoc(n, scope, tagsByNode.GetValueOrDefault(n.NodeId, [])), ct);
+			await tx.CommitAsync(ct);
+		}
+		catch
+		{
+			await tx.RollbackAsync(ct);
+			throw;
+		}
 	}
 
-	[GeneratedRegex(@"[\p{L}\p{Nd}]+")]
-	private static partial Regex WordToken();
+	// Active (ValidTo == null) tags for the given nodes on a board, read on the supplied connection.
+	static async Task<Dictionary<string, List<string>>> NodeTagsAsync(DataConnection db, string board, IEnumerable<string> nodeIds, CancellationToken ct)
+	{
+		var ids = nodeIds.Distinct().ToList();
+		if (ids.Count == 0) return [];
+		var rows = await db.GetTable<NodeTag>()
+			.Where(t => t.Board == board && t.ValidTo == null && ids.Contains(t.NodeId))
+			.Select(t => new { t.NodeId, t.Tag }).ToListAsync(ct);
+		return rows.GroupBy(r => r.NodeId).ToDictionary(g => g.Key, g => g.Select(x => x.Tag).ToList());
+	}
 
 	[GeneratedRegex("[^a-z0-9]+")]
 	private static partial Regex NonSlug();

@@ -15,6 +15,10 @@ public interface ITaskBoardStore
 {
 	// The project's shared plan file (holds every board's nodes, partitioned by Board).
 	TasksDb GetContext(string projectKey);
+	// A fresh, caller-owned connection to an existing project plan file (the caller disposes it).
+	// Used by the search read indexes (which dispose their read connection) and the vectorization
+	// worker (off the request-scoped cache). See IScopedDbFactory.NewConnection.
+	TasksDb NewConnection(string projectKey);
 	Task<bool> ExistsAsync(string projectKey, string board, CancellationToken ct = default);
 	// Create the board if it does not yet exist; no-op if it does. Used by the
 	// upsert write path to auto-vivify on first write (deliberate exception to the
@@ -61,6 +65,9 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 
 	public TasksDb GetContext(string projectKey) =>
 		_factory.GetDb(projectKey);
+
+	public TasksDb NewConnection(string projectKey) =>
+		_factory.NewConnection(projectKey);
 
 	public Task<bool> ExistsAsync(string projectKey, string board, CancellationToken ct = default) =>
 		_db.TaskBoards.AnyAsync(b => b.ProjectKey == projectKey && b.Name == board, ct);

@@ -132,6 +132,7 @@ public partial class Program
 		// module contributes an IVectorizationJob; memory's is registered here, tasks' in the
 		// follow-up. Unconditional like the stores it serves.
 		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.MemoryVectorizationJob>();
+		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.TasksVectorizationJob>();
 		builder.Services.AddHostedService<PetBox.Web.Search.SearchVectorizationService>();
 		// LLM router: neutral ILlmClient (embed/rerank/chat) + ILlmRegistryAdmin over a
 		// config-stored endpoint/route registry. Unconditional DI; Feature.LlmRouter gates
