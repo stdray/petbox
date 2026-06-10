@@ -42,12 +42,17 @@ public sealed class SqliteFtsIndex : ISearchIndex
 		await db.GetTable<Row>()
 			.Where(r => r.Scope == doc.Scope && r.Type == doc.Type && r.Id == doc.Id)
 			.DeleteAsync(ct);
+		// The indexed text carries the tokens' snowball stems as shadow terms, so a
+		// stemmed query token lands on any wordform (spec: search-lexical-multilingual).
+		// Appending keeps the fts5 schema untouched; Text is never read back (hits carry
+		// only the entity address), so the shadow can't leak into display.
+		var shadow = TokenStemmer.ShadowTerms(doc.Text);
 		await db.InsertAsync(new Row
 		{
 			Scope = doc.Scope,
 			Type = doc.Type,
 			Id = doc.Id,
-			Text = doc.Text,
+			Text = shadow.Length == 0 ? doc.Text : doc.Text + "\n" + shadow,
 			Tags = doc.Tags ?? string.Empty,
 		}, token: ct);
 	}

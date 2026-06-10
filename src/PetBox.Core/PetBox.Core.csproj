@@ -21,6 +21,9 @@
 		<PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
 		<!-- SIMD cosine for the Class-B brute-force vector search (VectorMath). -->
 		<PackageReference Include="System.Numerics.Tensors" />
+		<!-- Official snowball stemmers (C# backend, 28+ languages, no model files) for the
+		     Class-A lexical floor's ru/en wordform matching (spec: search-lexical-multilingual). -->
+		<PackageReference Include="libstemmer.net" />
 	</ItemGroup>
 
 	<ItemGroup>
