@@ -10,9 +10,8 @@
 // last-write-wins, so each turn re-pushes the whole transcript and it self-heals. Best-effort:
 // every failure is swallowed and we ALWAYS exit 0 — never break the user's session.
 
-import { createReadStream } from "node:fs";
-import { createInterface } from "node:readline";
 import { resolveProject } from "./registry.ts";
+import { buildMessages, type Msg } from "./transcript.ts";
 
 const FETCH_TIMEOUT_MS = 12000;
 
@@ -23,8 +22,6 @@ type HookInput = {
   stop_hook_active?: boolean;
 };
 
-type Msg = { role: string; content: string };
-
 function readStdin(): Promise<string> {
   return new Promise((resolve) => {
     let buf = "";
@@ -33,53 +30,6 @@ function readStdin(): Promise<string> {
     process.stdin.on("end", () => resolve(buf));
     process.stdin.on("error", () => resolve(buf));
   });
-}
-
-function extractText(message: unknown): string {
-  const msg = message as { content?: unknown } | null;
-  if (!msg || msg.content == null) return "";
-  if (typeof msg.content === "string") return msg.content.trim();
-  if (Array.isArray(msg.content)) {
-    const parts = msg.content
-      .filter((p: any) => p && p.type === "text" && typeof p.text === "string")
-      .map((p: any) => p.text);
-    return parts.join("\n").trim();
-  }
-  return "";
-}
-
-function isExcluded(text: string): boolean {
-  return (
-    text.startsWith("<system-reminder") ||
-    text.startsWith("<command-name>") ||
-    text.startsWith("<local-command")
-  );
-}
-
-// Collect the user/assistant text messages in transcript order. No rendering and no cap:
-// the server needs the full, ordered transcript to assign stable per-message ordinals.
-async function buildMessages(transcriptPath: string): Promise<Msg[]> {
-  const rl = createInterface({
-    input: createReadStream(transcriptPath, { encoding: "utf8" }),
-    crlfDelay: Infinity,
-  });
-  const msgs: Msg[] = [];
-  for await (const line of rl) {
-    if (!line || line.trim().length === 0) continue;
-    let e: any;
-    try {
-      e = JSON.parse(line);
-    } catch {
-      continue;
-    }
-    if (e.type !== "user" && e.type !== "assistant") continue;
-    if (e.isMeta || e.isSidechain) continue;
-    const text = extractText(e.message);
-    if (text.length === 0) continue;
-    if (isExcluded(text)) continue;
-    msgs.push({ role: e.type, content: text });
-  }
-  return msgs;
 }
 
 async function main(): Promise<void> {

@@ -100,6 +100,27 @@ public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 		root2.GetProperty("messageCount").GetInt64().Should().Be(3);
 	}
 
+	// The history importer's upgrade-only guard reads this list and compares its local
+	// message count against `version` — pin the wire shape (camelCase names) it parses.
+	[Fact]
+	public async Task List_ReturnsPushedSessionHeader_WithVersion()
+	{
+		var sessionId = "s-" + Guid.NewGuid().ToString("N")[..8];
+		await _http.SendAsync(PushRequest(ProjectKey, sessionId, WriteKey, Ndjson(("user", "a"), ("assistant", "b"))));
+
+		var req = new HttpRequestMessage(HttpMethod.Get, $"/api/sessions/{ProjectKey}");
+		req.Headers.Add("X-Api-Key", ReadOnlyKey); // list needs only tasks:read
+		var res = await _http.SendAsync(req);
+
+		res.StatusCode.Should().Be(HttpStatusCode.OK);
+		using var doc = JsonDocument.Parse(await res.Content.ReadAsStringAsync());
+		var header = doc.RootElement.GetProperty("sessions").EnumerateArray()
+			.Single(s => s.GetProperty("sessionId").GetString() == sessionId);
+		header.GetProperty("version").GetInt64().Should().Be(2);
+		header.GetProperty("agent").GetString().Should().Be("opencode");
+		header.TryGetProperty("updated", out _).Should().BeTrue();
+	}
+
 	[Fact]
 	public async Task Push_EmptyBody_400WithErrorMessage()
 	{
