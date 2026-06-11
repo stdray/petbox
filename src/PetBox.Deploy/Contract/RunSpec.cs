@@ -12,6 +12,12 @@ public sealed record HealthcheckSpec(string Cmd, string? Interval = null, string
 // fractional CPU count (--cpus).
 public sealed record ResourcesSpec(string? Memory = null, double? Cpus = null);
 
+// Marks a deployment as a SITE: a web app served behind the node's reverse proxy.
+// Domain is the public hostname; Port is the loopback port the proxy forwards to
+// (defaulted at normalize time from the host port of the first ports entry). The node
+// agent keeps the host reverse-proxy (Caddy) config in line with this route.
+public sealed record SiteSpec(string Domain, int? Port = null);
+
 // Declarative run-spec of a container — the compose-subset a deployment carries beyond
 // image+env (env stays config-resolved). The agent maps it 1:1 to docker run flags.
 // Structurally allowlisted: there is deliberately NO privileged/cap-add/extra-args escape;
@@ -24,7 +30,8 @@ public sealed record RunSpec(
 	ResourcesSpec? Resources = null,
 	string? Network = null,                     // bridge|host|none|<network-name>
 	IReadOnlyList<string>? Command = null,      // CMD override, appended after the image
-	IReadOnlyDictionary<string, string>? Labels = null); // extra labels; "petbox.*" is reserved
+	IReadOnlyDictionary<string, string>? Labels = null, // extra labels; "petbox.*" is reserved
+	SiteSpec? Site = null);                     // present = this deployment is a site behind the host reverse-proxy
 
 // Normalization, validation and the canonical JSON form of a RunSpec. The canonical JSON
 // is what gets persisted in deploy_deployment.RunSpec and hashed into ConfigHash, so it
@@ -43,6 +50,7 @@ public static class RunSpecJson
 	static readonly Regex DurationRx = new(@"^\d+(ms|s|m|h)$", RegexOptions.Compiled);
 	static readonly Regex MemoryRx = new(@"^\d+[bkmg]?$", RegexOptions.Compiled);
 	static readonly Regex NetworkRx = new(@"^[a-z0-9][a-z0-9_.-]*$", RegexOptions.Compiled);
+	static readonly Regex DomainRx = new(@"^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$", RegexOptions.Compiled);
 
 	public static RunSpec Parse(string? json) =>
 		string.IsNullOrWhiteSpace(json) || json.Trim() == Empty
@@ -118,6 +126,22 @@ public static class RunSpecJson
 
 		var command = CleanList(spec.Command, lower: false);
 
+		SiteSpec? site = null;
+		if (spec.Site is { } s)
+		{
+			var domain = (s.Domain ?? string.Empty).Trim().ToLowerInvariant();
+			if (!DomainRx.IsMatch(domain))
+				throw new ArgumentException($"Bad site domain '{domain}' — expected a hostname like 'app.example.com'.");
+			// Port is resolved HERE (not at the agent) so the stored canonical spec — and the
+			// ConfigHash — always carry the effective route.
+			var port = s.Port ?? HostPortOf(ports?.FirstOrDefault());
+			if (port is null)
+				throw new ArgumentException("A site needs a port: set site port explicitly or publish at least one ports entry.");
+			if (port is < 1 or > 65535)
+				throw new ArgumentException($"Bad site port {port}.");
+			site = new SiteSpec(domain, port);
+		}
+
 		SortedDictionary<string, string>? labels = null;
 		if (spec.Labels is { Count: > 0 })
 		{
@@ -133,7 +157,15 @@ public static class RunSpecJson
 			if (labels.Count == 0) labels = null;
 		}
 
-		return new RunSpec(ports, volumes, restart, health, resources, network, command, labels);
+		return new RunSpec(ports, volumes, restart, health, resources, network, command, labels, site);
+	}
+
+	// The host port of a "[ip:]host:container[/tcp|udp]" mapping, or null.
+	static int? HostPortOf(string? portMapping)
+	{
+		if (portMapping is null) return null;
+		var parts = portMapping.Split('/')[0].Split(':');
+		return parts.Length >= 2 && int.TryParse(parts[^2], out var p) ? p : null;
 	}
 
 	static List<string>? CleanList(IReadOnlyList<string>? items, bool lower = true)

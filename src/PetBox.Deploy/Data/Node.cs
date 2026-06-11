@@ -13,6 +13,9 @@ public sealed record Node
 	[PrimaryKey, NotNull] public string Id { get; init; } = string.Empty;
 	[Column, NotNull] public string DisplayName { get; init; } = string.Empty;
 	[Column, NotNull] public string Tags { get; init; } = string.Empty;
+	// Agent-detected host capabilities (CSV, e.g. "docker,caddy"), refreshed by heartbeat —
+	// distinct from operator-set Tags. Empty until a capability-aware agent reports.
+	[Column, NotNull] public string Capabilities { get; init; } = string.Empty;
 	[Column, NotNull] public bool Ephemeral { get; init; }
 	[Column] public string? KeyRef { get; init; }
 	[Column] public DateTime? LastSeenAt { get; init; }

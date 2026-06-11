@@ -8,7 +8,8 @@ namespace PetBox.Deploy.Contract;
 public sealed record NodeInput(string Id, string DisplayName, string Tags, bool Ephemeral, string? KeyRef = null);
 
 // Read view of a node. Online is computed by the service from LastSeenAt + a staleness
-// window; Deployments is how many deployments target this node.
+// window; Deployments is how many deployments target this node. Capabilities is the
+// agent-detected host CSV ("docker,caddy"), empty until a capability-aware agent reports.
 public sealed record NodeView(
 	string Id,
 	string DisplayName,
@@ -18,7 +19,8 @@ public sealed record NodeView(
 	DateTime? LastSeenAt,
 	bool Online,
 	int Deployments,
-	DateTime CreatedAt);
+	DateTime CreatedAt,
+	string Capabilities = "");
 
 // --- deployments ---
 
@@ -59,16 +61,20 @@ public sealed record PollItem(
 // in this list (self-fencing — it no longer owns that deployment).
 public sealed record PollResponse(string NodeId, IReadOnlyList<PollItem> Deployments);
 
-// One actual container state the agent reports for a service it manages.
+// One actual container state the agent reports for a service it manages. Error carries
+// a reconcile failure for the service (run failed, site without caddy, ...); a service
+// that errored before its container exists is reported as Missing + Error.
 public sealed record ActualReport(
 	string Service,
 	string? ContainerId,
 	ActualState State,
 	string? ImageDigest,
-	bool Healthy);
+	bool Healthy,
+	string? Error = null);
 
-// A node-agent's heartbeat: the actual state of every container it manages.
-public sealed record HeartbeatReport(IReadOnlyList<ActualReport> Actual);
+// A node-agent's heartbeat: the actual state of every container it manages, plus the
+// host capabilities the agent detected (e.g. ["docker","caddy"]; null = legacy agent).
+public sealed record HeartbeatReport(IReadOnlyList<ActualReport> Actual, IReadOnlyList<string>? Capabilities = null);
 
 // --- failover ---
 
@@ -98,4 +104,5 @@ public sealed record DeploymentView(
 	ActualState? ActualState,
 	bool? Healthy,
 	DateTime? ReportedAt,
-	RunSpec RunSpec);
+	RunSpec RunSpec,
+	string? Error = null);

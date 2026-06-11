@@ -1622,6 +1622,12 @@
           },
           "healthy": {
             "type": "boolean"
+          },
+          "error": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },
@@ -1977,6 +1983,15 @@
             "items": {
               "$ref": "#/components/schemas/ActualReport"
             }
+          },
+          "capabilities": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
           }
         }
       },
@@ -2191,6 +2206,10 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "capabilities": {
+            "type": "string",
+            "default": ""
           }
         }
       },
@@ -2384,6 +2403,16 @@
             "additionalProperties": {
               "type": "string"
             }
+          },
+          "site": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SiteSpec"
+              }
+            ]
           }
         }
       },
@@ -2516,6 +2545,26 @@
           "expiresAt": {
             "type": "string",
             "format": "date-time"
+          }
+        }
+      },
+      "SiteSpec": {
+        "required": [
+          "domain"
+        ],
+        "type": "object",
+        "properties": {
+          "domain": {
+            "type": "string"
+          },
+          "port": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "null",
+              "integer",
+              "string"
+            ],
+            "format": "int32"
           }
         }
       },

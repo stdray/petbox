@@ -116,6 +116,8 @@ public static class DeployTools
 		[Description("Container network: bridge|host|none|<name>.")] string? network = null,
 		[Description("CMD override, one entry per argument.")] string[]? command = null,
 		[Description("Extra container labels, 'key=value' entries ('petbox.*' is reserved).")] string[]? labels = null,
+		[Description("Site domain (e.g. 'app.example.com') — makes this deployment a SITE: the node agent routes the domain to the loopback port via the host reverse-proxy (Caddy).")] string? domain = null,
+		[Description("Loopback port the reverse-proxy forwards to; default = host port of the first ports entry.")] int? sitePort = null,
 		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
@@ -126,7 +128,8 @@ public static class DeployTools
 				? null
 				: new HealthcheckSpec(healthcheckCmd, healthcheckInterval, healthcheckTimeout, healthcheckRetries),
 			Resources: memory is null && cpus is null ? null : new ResourcesSpec(memory, cpus),
-			Network: network, Command: command, Labels: ParseLabels(labels));
+			Network: network, Command: command, Labels: ParseLabels(labels),
+			Site: string.IsNullOrWhiteSpace(domain) ? null : new SiteSpec(domain, sitePort));
 		var d = await svc.UpsertDeploymentAsync(new DeploymentInput(
 			id, service, project, nodeId, imageDigest,
 			running ? DesiredState.Running : DesiredState.Stopped, relocatable, requiredTags ?? "", configTags ?? "",

@@ -109,7 +109,23 @@ deploy.upsert(service="web", project="yobapub", nodeId="vdsina-1",
               labels=["team=infra"])                         # extra labels; petbox.* is reserved
 ```
 
-The UI's *New deployment* form covers ports/volumes/restart/memory/cpus/network; healthcheck, command and labels are MCP-only. The run-spec is part of the config-hash, so **changing any field recreates the container** on the next poll. Host directories for volumes must exist (create/chown them when onboarding the service); the spec is structurally allowlisted — there is no `--privileged`/`--cap-add`/raw-args escape.
+The UI's *New deployment* form covers ports/volumes/restart/memory/cpus/network/site-domain; healthcheck, command and labels are MCP-only. The run-spec is part of the config-hash, so **changing any field recreates the container** on the next poll. Host directories for volumes must exist (create/chown them when onboarding the service); the spec is structurally allowlisted — there is no `--privileged`/`--cap-add`/raw-args escape.
+
+### 3c. Sites: a web app behind the node's reverse proxy (Caddy)
+
+A deployment with a **`domain`** is a *site*: besides the container, the node agent keeps a Caddy route (domain → loopback port) in line with it.
+
+```
+deploy.upsert(service="web", project="yobapub", nodeId="vdsina-1",
+              imageDigest="ghcr.io/you/web:sha-abc123",
+              ports=["127.0.0.1:8080:8080"],
+              domain="app.example.com")          # sitePort defaults to 8080 (ports[0] host port)
+```
+
+- The agent owns `/etc/caddy/petbox.d/<service>.caddy` (`domain { reverse_proxy 127.0.0.1:<port> }`) and runs `systemctl reload caddy` on any change. It never touches anything outside that include dir.
+- **One-time host prerequisite** (until self-setup automates it): caddy installed and the Caddyfile carrying `import /etc/caddy/petbox.d/*.caddy`.
+- Stopping/deleting the site removes its route (Caddy stops serving the domain instead of proxying into a dead container).
+- The agent reports host **capabilities** (`docker,caddy`) in its heartbeat — visible in the nodes table. A site assigned to a node **without caddy** surfaces as an explicit per-deployment error in the grid/`deploy.list` (`error: "site route not applied: caddy is not available on this node"`), not a silent failure. Reconcile errors in general (failed `docker run` included) now land in that same `error` field.
 
 ## 3a. Migrating a service that bootstraps from PetBox
 

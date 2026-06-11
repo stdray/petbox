@@ -144,6 +144,54 @@ public sealed class DeployServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Site_Spec_Derives_Port_From_First_Ports_Entry_And_Validates()
+	{
+		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
+
+		// port omitted → derived from the host port of the first ports entry
+		var derived = await _svc.UpsertDeploymentAsync(new DeploymentInput(
+			null, "web", "proj", "n1", "img1", DesiredState.Running, false, "", "",
+			new RunSpec(Ports: ["127.0.0.1:8080:80"], Site: new SiteSpec("App.Example.COM"))));
+		derived.RunSpec.Site!.Domain.Should().Be("app.example.com");   // lowercased
+		derived.RunSpec.Site!.Port.Should().Be(8080);
+
+		// explicit port wins
+		var explicitPort = await _svc.UpsertDeploymentAsync(new DeploymentInput(
+			derived.Id, "web", "proj", "n1", "img1", DesiredState.Running, false, "", "",
+			new RunSpec(Ports: ["127.0.0.1:8080:80"], Site: new SiteSpec("app.example.com", 9090))));
+		explicitPort.RunSpec.Site!.Port.Should().Be(9090);
+		explicitPort.ConfigHash.Should().NotBe(derived.ConfigHash);    // route is hashed
+
+		// no ports and no explicit port → rejected; bad domain → rejected
+		Func<RunSpec, Func<Task>> act = s => () => _svc.UpsertDeploymentAsync(new DeploymentInput(
+			null, "web2", "proj", "n1", "img1", DesiredState.Running, false, "", "", s));
+		await act(new RunSpec(Site: new SiteSpec("app.example.com"))).Should().ThrowAsync<ArgumentException>();
+		await act(new RunSpec(Ports: ["8080:80"], Site: new SiteSpec("not a domain"))).Should().ThrowAsync<ArgumentException>();
+	}
+
+	[Fact]
+	public async Task Heartbeat_Stores_Capabilities_And_PerService_Error()
+	{
+		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
+		var d = await _svc.UpsertDeploymentAsync(new DeploymentInput(null, "web", "proj", "n1", "img1", DesiredState.Running, false, "", ""));
+
+		await _svc.ApplyHeartbeatAsync("n1", new HeartbeatReport(
+			[new ActualReport("web", null, ActualState.Missing, null, Healthy: false, Error: "site route not applied: caddy is not available on this node")],
+			Capabilities: ["docker"]));
+
+		(await _svc.GetNodeAsync("n1"))!.Capabilities.Should().Be("docker");
+		var view = (await _svc.GetDeploymentAsync(d.Id))!;
+		view.Error.Should().Contain("caddy is not available");
+		view.ActualState.Should().Be(ActualState.Missing);
+
+		// error clears on a clean report; legacy heartbeat (null capabilities) keeps the last value
+		await _svc.ApplyHeartbeatAsync("n1", new HeartbeatReport(
+			[new ActualReport("web", "c1", ActualState.Running, "img1", Healthy: true)]));
+		(await _svc.GetDeploymentAsync(d.Id))!.Error.Should().BeNull();
+		(await _svc.GetNodeAsync("n1"))!.Capabilities.Should().Be("docker");
+	}
+
+	[Fact]
 	public async Task Upsert_Rejects_Invalid_RunSpec_Fields()
 	{
 		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));

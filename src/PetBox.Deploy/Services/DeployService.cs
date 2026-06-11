@@ -159,6 +159,12 @@ public sealed class DeployService : IDeployService
 	{
 		nodeId = NormalizeId(nodeId);
 		await TouchNodeAsync(nodeId, ct);
+		// Capabilities are agent-detected host facts; only a capability-aware agent (non-null)
+		// overwrites them, so a legacy agent's heartbeat doesn't erase what a newer one found.
+		if (report.Capabilities is not null)
+			await _db.Nodes.Where(n => n.Id == nodeId)
+				.Set(n => n.Capabilities, NormalizeCsv(string.Join(",", report.Capabilities)))
+				.UpdateAsync(ct);
 		var now = DateTime.UtcNow;
 		var reported = new HashSet<string>(StringComparer.Ordinal);
 		foreach (var a in report.Actual)
@@ -174,6 +180,7 @@ public sealed class DeployService : IDeployService
 				ContainerId = a.ContainerId,
 				ImageDigest = a.ImageDigest,
 				Healthy = a.Healthy,
+				Error = string.IsNullOrWhiteSpace(a.Error) ? null : a.Error.Trim(),
 				ReportedAt = now,
 			}, token: ct);
 		}
@@ -186,6 +193,7 @@ public sealed class DeployService : IDeployService
 			.Where(s => s.NodeId == nodeId && !reported.Contains(s.Service) && s.ActualState != ActualState.Missing)
 			.Set(s => s.ActualState, ActualState.Missing)
 			.Set(s => s.Healthy, false)
+			.Set(s => s.Error, (string?)null)
 			.Set(s => s.ReportedAt, now)
 			.UpdateAsync(ct);
 	}
@@ -247,13 +255,15 @@ public sealed class DeployService : IDeployService
 		n.Id, n.DisplayName, n.Tags, n.Ephemeral, n.KeyRef, n.LastSeenAt,
 		Online: n.LastSeenAt is { } seen && DateTime.UtcNow - seen < OnlineWindow,
 		Deployments: deployments,
-		CreatedAt: n.CreatedAt);
+		CreatedAt: n.CreatedAt,
+		Capabilities: n.Capabilities);
 
 	private static DeploymentView ToView(Deployment d, DeploymentStatus? s) => new(
 		d.Id, d.Service, d.Project, d.NodeId, d.ImageDigest, d.DesiredState, d.Relocatable,
 		d.RequiredTags, d.ConfigTags, d.ConfigHash, d.UpdatedAt,
 		ActualState: s?.ActualState, Healthy: s?.Healthy, ReportedAt: s?.ReportedAt,
-		RunSpec: RunSpecJson.Parse(d.RunSpec));
+		RunSpec: RunSpecJson.Parse(d.RunSpec),
+		Error: s?.Error);
 
 	public static string ComputeConfigHash(string imageDigest, string configTags, DesiredState desired, string project, string runSpecJson = RunSpecJson.Empty)
 	{

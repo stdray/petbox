@@ -22,5 +22,8 @@ public sealed record DeploymentStatus
 	[Column] public string? ContainerId { get; init; }
 	[Column] public string? ImageDigest { get; init; }
 	[Column, NotNull] public bool Healthy { get; init; }
+	// Agent-reported reconcile error for this service (e.g. "caddy is not available on this
+	// node" for a site, or a docker run failure). Null = no error.
+	[Column] public string? Error { get; init; }
 	[Column, NotNull] public DateTime ReportedAt { get; init; }
 }

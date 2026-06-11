@@ -50,7 +50,7 @@ public sealed class DeployModel : PageModel
 
 	public async Task<IActionResult> OnPostNewDeploymentAsync(
 		string service, string project, string nodeId, string imageDigest, bool relocatable, string? requiredTags, string? configTags,
-		string? ports, string? volumes, string? restart, string? memory, double? cpus, string? network)
+		string? ports, string? volumes, string? restart, string? memory, double? cpus, string? network, string? domain)
 	{
 		if (string.IsNullOrWhiteSpace(service) || string.IsNullOrWhiteSpace(project) || string.IsNullOrWhiteSpace(nodeId) || string.IsNullOrWhiteSpace(imageDigest))
 			return await Fail("Service, project, node and image are required.");
@@ -60,7 +60,8 @@ public sealed class DeployModel : PageModel
 			var runSpec = new RunSpec(
 				Ports: SplitCsv(ports), Volumes: SplitCsv(volumes), Restart: restart,
 				Resources: string.IsNullOrWhiteSpace(memory) && cpus is null ? null : new ResourcesSpec(memory, cpus),
-				Network: network);
+				Network: network,
+				Site: string.IsNullOrWhiteSpace(domain) ? null : new SiteSpec(domain));
 			await _svc.UpsertDeploymentAsync(new DeploymentInput(
 				null, service, project, nodeId, imageDigest, DesiredState.Running, relocatable, requiredTags ?? "", configTags ?? "",
 				runSpec));

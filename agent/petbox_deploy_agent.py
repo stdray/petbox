@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -41,6 +42,11 @@ MANAGED_LABEL = "petbox.managed"
 SVC_LABEL = "petbox.service"
 HASH_LABEL = "petbox.confighash"
 PROJECT_LABEL = "petbox.project"
+
+# The dedicated Caddy include dir this agent owns for SITE deployments. The host's
+# Caddyfile must `import /etc/caddy/petbox.d/*.caddy` once (enroll/self-setup does this;
+# see doc/guides/deploy-fleet.md). The agent never touches anything outside this dir.
+CADDY_DIR = "/etc/caddy/petbox.d"
 
 
 # --- pure reconcile decision (unit-tested) ----------------------------------
@@ -151,6 +157,63 @@ def runspec_command(spec: dict | None) -> list[str]:
     return list((spec or {}).get("command") or [])
 
 
+# --- site routes (reverse-proxy via Caddy) -----------------------------------
+
+def render_caddy_route(domain: str, port: int) -> str:
+    """One site's Caddy block: domain -> loopback port."""
+    return f"{domain} {{\n\treverse_proxy 127.0.0.1:{port}\n}}\n"
+
+
+def plan_caddy(desired: list[dict], current: dict[str, str]) -> tuple[dict[str, str], list[str]]:
+    """Decide the file writes/removes that make the Caddy include dir match the desired
+    site routes. Pure: current = {filename: content} of the dir's *.caddy files.
+
+    A route exists for every desired-RUNNING deployment whose runSpec carries site{};
+    stopped/removed sites lose their file (Caddy stops serving the domain instead of
+    proxying into a dead container).
+    """
+    want: dict[str, str] = {}
+    for d in desired:
+        if d.get("desired") != DESIRED_RUNNING:
+            continue
+        site = (d.get("runSpec") or {}).get("site") or {}
+        if site.get("domain") and site.get("port"):
+            want[f"{d['service']}.caddy"] = render_caddy_route(site["domain"], site["port"])
+    writes = {name: content for name, content in want.items() if current.get(name) != content}
+    removes = [name for name in current if name not in want]
+    return writes, removes
+
+
+def caddy_available() -> bool:
+    return shutil.which("caddy") is not None
+
+
+def read_caddy_dir() -> dict[str, str]:
+    if not os.path.isdir(CADDY_DIR):
+        return {}
+    result: dict[str, str] = {}
+    for name in os.listdir(CADDY_DIR):
+        if name.endswith(".caddy"):
+            with open(os.path.join(CADDY_DIR, name)) as f:
+                result[name] = f.read()
+    return result
+
+
+def sync_caddy(desired: list[dict]) -> None:
+    """Reconcile the Caddy include dir to the desired site routes; reload on change."""
+    writes, removes = plan_caddy(desired, read_caddy_dir())
+    if not writes and not removes:
+        return
+    os.makedirs(CADDY_DIR, exist_ok=True)
+    for name, content in writes.items():
+        with open(os.path.join(CADDY_DIR, name), "w") as f:
+            f.write(content)
+    for name in removes:
+        os.remove(os.path.join(CADDY_DIR, name))
+    _log(f"caddy: {len(writes)} route(s) written, {len(removes)} removed; reloading")
+    subprocess.run(["systemctl", "reload", "caddy"], check=False)
+
+
 def run_container(item: dict) -> None:
     """(Re)create and start a container for a desired deployment."""
     service = item["service"]
@@ -179,7 +242,21 @@ def run_container(item: dict) -> None:
         os.unlink(env_path)
 
 
-def apply(actions: list[dict]) -> None:
+def plan_site_errors(desired: list[dict], caddy_ok: bool) -> dict[str, str]:
+    """Sites assigned to a host without caddy = an explicit per-service error. Pure."""
+    if caddy_ok:
+        return {}
+    return {
+        d["service"]: "site route not applied: caddy is not available on this node"
+        for d in desired
+        if d.get("desired") == DESIRED_RUNNING
+        and ((d.get("runSpec") or {}).get("site") or {}).get("domain")
+    }
+
+
+def apply(actions: list[dict]) -> dict[str, str]:
+    """Execute the planned actions; returns {service: error} for the failed ones."""
+    errors: dict[str, str] = {}
     for a in actions:
         try:
             if a["action"] == "run":
@@ -187,20 +264,46 @@ def apply(actions: list[dict]) -> None:
             elif a["action"] == "remove":
                 remove_container(a["service"])
         except subprocess.CalledProcessError as e:
-            print(f"[agent] action {a['action']} {a['service']} failed: {e}", file=sys.stderr)
+            detail = (e.stderr or str(e)).strip().splitlines()[-1] if isinstance(e.stderr, str) and e.stderr.strip() else str(e)
+            errors[a["service"]] = f"{a['action']} failed: {detail}"
+            print(f"[agent] action {a['action']} {a['service']} failed: {detail}", file=sys.stderr)
+    return errors
 
 
-def build_heartbeat(actual: dict[str, dict]) -> dict:
-    return {"actual": [
+def detect_capabilities() -> list[str]:
+    caps = []
+    if shutil.which("docker"):
+        caps.append("docker")
+    if caddy_available():
+        caps.append("caddy")
+    return caps
+
+
+def build_heartbeat(actual: dict[str, dict], errors: dict[str, str] | None = None,
+                    capabilities: list[str] | None = None) -> dict:
+    errors = errors or {}
+    reports = [
         {
             "service": svc,
             "containerId": c["container_id"],
             "state": c["state"],
             "imageDigest": c.get("image"),
-            "healthy": c["state"] == ACTUAL_RUNNING,
+            # a reconcile error (e.g. site route not applied) makes the service unhealthy
+            # even if its container runs — the error must be visible, not averaged away
+            "healthy": c["state"] == ACTUAL_RUNNING and svc not in errors,
+            "error": errors.get(svc),
         }
         for svc, c in actual.items()
-    ]}
+    ]
+    # a service that errored before its container exists must still be visible upstream
+    for svc, msg in errors.items():
+        if svc not in actual:
+            reports.append({"service": svc, "containerId": None, "state": ACTUAL_MISSING,
+                            "imageDigest": None, "healthy": False, "error": msg})
+    hb: dict = {"actual": reports}
+    if capabilities is not None:
+        hb["capabilities"] = capabilities
+    return hb
 
 
 # --- transport --------------------------------------------------------------
@@ -226,15 +329,21 @@ def reconcile_once(base_url: str, key: str) -> None:
     desired = poll.get("deployments", [])
     actual = list_managed()
     actions = plan_actions(desired, actual)
+    errors: dict[str, str] = {}
     if actions:
         _log(f"{len(actions)} action(s): "
              + ", ".join(f"{a['action']}:{a['service']}" for a in actions))
-        apply(actions)
+        errors.update(apply(actions))
         actual = list_managed()  # re-read after applying
-    _request(f"{base_url}/agent/heartbeat", key, "POST", build_heartbeat(actual))
+    caddy_ok = caddy_available()
+    if caddy_ok:
+        sync_caddy(desired)
+    errors.update(plan_site_errors(desired, caddy_ok))
+    _request(f"{base_url}/agent/heartbeat", key, "POST",
+             build_heartbeat(actual, errors, detect_capabilities()))
     # one line per cycle so the agent is visibly alive in journald (not silent)
     _log(f"reconciled: {len(desired)} desired, {len(actions)} action(s), "
-         f"{len(actual)} running; heartbeat ok")
+         f"{len(actual)} running, {len(errors)} error(s); heartbeat ok")
 
 
 def main() -> int:

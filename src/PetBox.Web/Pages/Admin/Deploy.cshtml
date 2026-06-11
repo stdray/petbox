@@ -61,7 +61,7 @@ else
 					<tr data-testid="deploy-node-row">
 						<td class="font-mono text-xs">@n.Id @(n.Ephemeral ? Html.Raw("<span class=\"badge badge-ghost badge-xs\">ephemeral</span>") : null)</td>
 						<td>@n.DisplayName</td>
-						<td class="font-mono text-xs">@n.Tags</td>
+						<td class="font-mono text-xs">@n.Tags @(n.Capabilities.Length > 0 ? Html.Raw($"<span class=\"badge badge-ghost badge-xs\" title=\"agent-detected capabilities\">{n.Capabilities}</span>") : null)</td>
 						<td>
 							@if (n.Online)
 							{
@@ -156,6 +156,10 @@ else
 				<label class="text-xs opacity-60 block" for="d-network">Network</label>
 				<input id="d-network" name="network" class="input input-bordered input-sm font-mono w-24" placeholder="bridge" />
 			</div>
+			<div title="Makes this deployment a SITE: the node agent routes the domain to the loopback port (first ports entry) via the host reverse-proxy.">
+				<label class="text-xs opacity-60 block" for="d-domain">Site domain</label>
+				<input id="d-domain" name="domain" class="input input-bordered input-sm font-mono w-44" placeholder="app.example.com" data-testid="dep-domain" />
+			</div>
 			<button type="submit" class="btn btn-primary btn-sm" data-testid="dep-add">Create</button>
 		</form>
 		<p class="text-xs opacity-50 mt-1">Healthcheck, command override and labels are settable via MCP <code>deploy.upsert</code>.</p>
@@ -184,6 +188,7 @@ else
 						<td class="font-mono text-xs">@d.NodeId</td>
 						<td class="font-mono text-xs break-all">@d.ImageDigest</td>
 						<td class="text-xs font-mono" data-testid="dep-runspec">
+							@if (d.RunSpec.Site is not null) { <div class="font-semibold" data-testid="dep-site">site&nbsp;@d.RunSpec.Site.Domain&nbsp;→&nbsp;:@d.RunSpec.Site.Port</div> }
 							@foreach (var p in d.RunSpec.Ports ?? Array.Empty<string>()) { <div>p&nbsp;@p</div> }
 							@foreach (var v in d.RunSpec.Volumes ?? Array.Empty<string>()) { <div>v&nbsp;@v</div> }
 							@if (d.RunSpec.Restart is not null) { <div>restart&nbsp;@d.RunSpec.Restart</div> }
@@ -212,6 +217,10 @@ else
 							else
 							{
 								<span class="badge badge-sm @(d.ActualState == ActualState.Running && d.Healthy == true ? "badge-success" : "badge-warning")" data-testid="dep-actual">@d.ActualState</span>
+							}
+							@if (!string.IsNullOrEmpty(d.Error))
+							{
+								<div class="text-error text-xs mt-1" data-testid="dep-error">@d.Error</div>
 							}
 						</td>
 						<td>@(d.Relocatable ? "yes" : "")</td>

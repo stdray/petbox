@@ -120,6 +120,19 @@ public sealed class DeployToolsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Upsert_With_Domain_Creates_Site_RunSpec()
+	{
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db, "n1");
+		var created = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
+			"web", "proj", "n1", "img1",
+			ports: ["127.0.0.1:8080:8080"],
+			domain: "app.example.com"));
+		var site = created.GetProperty("deployment").GetProperty("runSpec").GetProperty("site");
+		site.GetProperty("domain").GetString().Should().Be("app.example.com");
+		site.GetProperty("port").GetInt32().Should().Be(8080);   // derived from ports[0]
+	}
+
+	[Fact]
 	public async Task Upsert_With_Bad_RunSpec_Returns_Error_Envelope()
 	{
 		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db, "n1");
