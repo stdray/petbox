@@ -53,6 +53,11 @@ public sealed class DeployService : IDeployService
 			Ephemeral = input.Ephemeral,
 			KeyRef = string.IsNullOrWhiteSpace(input.KeyRef) ? existing?.KeyRef : input.KeyRef!.Trim(),
 			LastSeenAt = existing?.LastSeenAt,
+			// agent-reported facts survive an operator re-upsert (re-enroll/edit) — wiping
+			// them here re-fires warning transitions and blanks capabilities until the next
+			// heartbeat
+			Capabilities = existing?.Capabilities ?? string.Empty,
+			HostReport = existing?.HostReport ?? "{}",
 			CreatedAt = existing?.CreatedAt ?? DateTime.UtcNow,
 		};
 		await _db.InsertOrReplaceAsync(node, token: ct);

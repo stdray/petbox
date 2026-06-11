@@ -199,6 +199,20 @@ public sealed class DeployServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Node_ReUpsert_Preserves_AgentReported_Capabilities_And_HostReport()
+	{
+		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
+		await _svc.ApplyHeartbeatAsync("n1", new HeartbeatReport([],
+			Capabilities: ["docker", "caddy"],
+			Host: new HostReport(Os: "Ubuntu 24.04")));
+
+		// operator re-enroll / edit must not wipe what the agent reported
+		var after = await _svc.UpsertNodeAsync(new NodeInput("n1", "Renamed", "net.x", false));
+		after.Capabilities.Should().Be("docker,caddy");
+		after.Host!.Os.Should().Be("Ubuntu 24.04");
+	}
+
+	[Fact]
 	public void ComputeWarnings_Thresholds()
 	{
 		DeployService.ComputeWarnings(null).Should().BeEmpty();
