@@ -91,7 +91,7 @@ public sealed class IndexModel : PageModel
 	// (empty apiKeys keeps every endpoint's existing secret).
 	public async Task<IActionResult> OnPostSaveRouteAsync(
 		LlmCapability capability, string endpoint, string model, int priority, string? tier,
-		int? index, CancellationToken ct = default)
+		string? thinking, int? index, CancellationToken ct = default)
 	{
 		if (!_features.IsEnabled(Feature.LlmRouter)) return NotFound();
 		if (!await ProjectExistsAsync(ct)) { ProjectNotFound = true; return Page(); }
@@ -103,7 +103,8 @@ public sealed class IndexModel : PageModel
 		var route = new LlmRoute(
 			capability, endpoint.Trim(), model.Trim(),
 			priority <= 0 ? 100 : priority,
-			string.IsNullOrWhiteSpace(tier) ? null : tier.Trim());
+			string.IsNullOrWhiteSpace(tier) ? null : tier.Trim(),
+			Enum.TryParse<LlmThinking>(thinking, ignoreCase: true, out var th) ? th : null);
 
 		var routes = existing.Routes.ToList();
 		if (index is { } i && i >= 0 && i < routes.Count) routes[i] = route; // edit in place

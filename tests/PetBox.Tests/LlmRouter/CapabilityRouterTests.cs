@@ -89,6 +89,39 @@ public sealed class CapabilityRouterTests
 	}
 
 	[Fact]
+	public async Task Chat_passes_route_thinking_to_upstream()
+	{
+		var reg = new ResolvedRegistry(
+			new LlmRegistry(
+				[new LlmEndpoint("ds", "https://d")],
+				[new LlmRoute(LlmCapability.Chat, "ds", "m", 10, Thinking: LlmThinking.Disabled)]),
+			new Dictionary<string, string>());
+		var upstream = new FakeUpstream { ChatReply = "ok" };
+		var router = Build(new FakeResolver(reg), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		var res = await router.ChatAsync("proj", new ChatRequest([new ChatMessage("user", "hi")]));
+
+		res.Text.Should().Be("ok");
+		upstream.ChatThinking.Should().Equal(LlmThinking.Disabled);
+	}
+
+	[Fact]
+	public async Task Chat_without_thinking_passes_null()
+	{
+		var reg = new ResolvedRegistry(
+			new LlmRegistry(
+				[new LlmEndpoint("ds", "https://d")],
+				[new LlmRoute(LlmCapability.Chat, "ds", "m", 10)]),
+			new Dictionary<string, string>());
+		var upstream = new FakeUpstream { ChatReply = "ok" };
+		var router = Build(new FakeResolver(reg), upstream, new EndpointBreaker(new FakeTimeProvider()));
+
+		await router.ChatAsync("proj", new ChatRequest([new ChatMessage("user", "hi")]));
+
+		upstream.ChatThinking.Should().Equal((LlmThinking?)null);
+	}
+
+	[Fact]
 	public async Task No_route_for_capability_throws_non_transient()
 	{
 		var router = Build(new FakeResolver(new ResolvedRegistry(LlmRegistry.Empty, new Dictionary<string, string>())),
@@ -110,6 +143,8 @@ public sealed class CapabilityRouterTests
 	{
 		public Dictionary<string, Func<IReadOnlyList<float[]>>> EmbedBehaviour { get; } = new(StringComparer.Ordinal);
 		public List<string> EmbedCalls { get; } = [];
+		public string ChatReply { get; init; } = "";
+		public List<LlmThinking?> ChatThinking { get; } = [];
 
 		public Task<IReadOnlyList<float[]>> EmbedAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<string> inputs, CancellationToken ct)
 		{
@@ -120,7 +155,10 @@ public sealed class CapabilityRouterTests
 		public Task<IReadOnlyList<RerankHit>> RerankAsync(HttpClient http, string baseUrl, string? apiKey, string model, string query, IReadOnlyList<string> documents, int? topN, CancellationToken ct) =>
 			throw new NotSupportedException();
 
-		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, CancellationToken ct) =>
-			throw new NotSupportedException();
+		public Task<string> ChatAsync(HttpClient http, string baseUrl, string? apiKey, string model, IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, LlmThinking? thinking, CancellationToken ct)
+		{
+			ChatThinking.Add(thinking);
+			return Task.FromResult(ChatReply);
+		}
 	}
 }

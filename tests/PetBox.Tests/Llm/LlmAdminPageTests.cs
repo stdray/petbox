@@ -130,7 +130,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		var reg = new FakeRegistry { Current = new LlmRegistry([new LlmEndpoint("deepseek", "https://d")], []) };
 		var page = Page(reg);
 
-		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "deepseek", "deepseek-chat", 50, tier: null, index: null);
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "deepseek", "deepseek-chat", 50, tier: null, thinking: null, index: null);
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		reg.Current.Routes.Should().ContainSingle(r =>
@@ -148,13 +148,14 @@ public sealed class LlmAdminPageTests : IDisposable
 		};
 		var page = Page(reg);
 
-		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "cloud", "new-model", 10, tier: "fast", index: 0);
+		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "cloud", "new-model", 10, tier: "fast", thinking: "disabled", index: 0);
 
 		reg.Current.Routes.Should().ContainSingle();
 		reg.Current.Routes[0].Endpoint.Should().Be("cloud");
 		reg.Current.Routes[0].Model.Should().Be("new-model");
 		reg.Current.Routes[0].Priority.Should().Be(10);
 		reg.Current.Routes[0].Tier.Should().Be("fast");
+		reg.Current.Routes[0].Thinking.Should().Be(LlmThinking.Disabled);
 	}
 
 	[Fact]
@@ -163,7 +164,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		var reg = new FakeRegistry();
 		var page = Page(reg);
 
-		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "  ", "m", 100, null, null);
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "  ", "m", 100, null, null, null);
 
 		result.Should().BeOfType<PageResult>();
 		page.Error.Should().NotBeNullOrEmpty();
@@ -176,7 +177,7 @@ public sealed class LlmAdminPageTests : IDisposable
 		var reg = new FakeRegistry { ThrowOnSet = new ValidationException([new ValidationFailure("Routes", "unknown endpoint 'ghost'")]) };
 		var page = Page(reg);
 
-		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "ghost", "m", 100, null, null);
+		var result = await page.OnPostSaveRouteAsync(LlmCapability.Chat, "ghost", "m", 100, null, null, null);
 
 		result.Should().BeOfType<PageResult>();
 		page.Error.Should().Contain("unknown endpoint");

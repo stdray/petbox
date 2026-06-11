@@ -45,7 +45,7 @@ public static class LlmRouterTools
 		Replace the project's LLM router registry. Requires llm:admin.
 		`config` is a JSON object:
 		  { "endpoints": [ { "name", "baseUrl", "certThumbprint"?, "connectTimeoutMs"?, "requestTimeoutMs"? } ],
-		    "routes":    [ { "capability": "embed|rerank|chat", "endpoint", "model", "priority"?, "tier"? } ],
+		    "routes":    [ { "capability": "embed|rerank|chat", "endpoint", "model", "priority"?, "tier"?, "thinking": "enabled|disabled"? } ],
 		    "apiKeys":   { "<endpointName>": "<apiKey>" }?  // write-only, stored encrypted; omit to keep existing }
 		Validated before save (unknown endpoint in a route, bad URL, etc. -> error).
 		""")]

@@ -63,7 +63,8 @@ public sealed class OpenAiCompatibleClient : IOpenAiCompatibleClient
 
 	public async Task<string> ChatAsync(
 		HttpClient http, string baseUrl, string? apiKey, string model,
-		IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, CancellationToken ct)
+		IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens,
+		LlmThinking? thinking, CancellationToken ct)
 	{
 		var payload = new Dictionary<string, object>
 		{
@@ -72,6 +73,9 @@ public sealed class OpenAiCompatibleClient : IOpenAiCompatibleClient
 		};
 		if (temperature is { } t) payload["temperature"] = t;
 		if (maxTokens is { } mt) payload["max_tokens"] = mt;
+		// DeepSeek-dialect reasoning switch; absent = provider default (llm-route-reasoning-mode).
+		if (thinking is { } th)
+			payload["thinking"] = new { type = th == LlmThinking.Enabled ? "enabled" : "disabled" };
 
 		using var doc = await PostAsync(http, Url(baseUrl, "/v1/chat/completions"), apiKey, payload, ct);
 		var choices = doc.RootElement.GetProperty("choices");

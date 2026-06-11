@@ -52,7 +52,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 	public async Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
 	{
 		var (text, served, model) = await RunChainAsync(projectKey, LlmCapability.Chat, request.Tier,
-			(http, ep, key, route) => _upstream.ChatAsync(http, ep.BaseUrl, key, route.Model, request.Messages, request.Temperature, request.MaxTokens, ct), ct);
+			(http, ep, key, route) => _upstream.ChatAsync(http, ep.BaseUrl, key, route.Model, request.Messages, request.Temperature, request.MaxTokens, route.Thinking, ct), ct);
 		return new ChatResult(text, new ModelIdentity(model), served);
 	}
 

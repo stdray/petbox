@@ -20,5 +20,6 @@ public interface IOpenAiCompatibleClient
 
 	Task<string> ChatAsync(
 		HttpClient http, string baseUrl, string? apiKey, string model,
-		IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens, CancellationToken ct);
+		IReadOnlyList<ChatMessage> messages, double? temperature, int? maxTokens,
+		LlmThinking? thinking, CancellationToken ct);
 }

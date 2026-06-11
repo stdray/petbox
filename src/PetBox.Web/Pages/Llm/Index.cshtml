@@ -115,6 +115,12 @@
 							<input class="input input-bordered input-sm" type="number" name="priority" value="@r.Priority" /></label>
 						<label class="form-control"><span class="label-text">Tier</span>
 							<input class="input input-bordered input-sm" name="tier" value="@r.Tier" placeholder="(default)" /></label>
+						<label class="form-control"><span class="label-text">Thinking</span>
+							<select class="select select-bordered select-sm" name="thinking">
+								<option value="" selected="@(r.Thinking is null)">(provider default)</option>
+								<option value="enabled" selected="@(r.Thinking == PetBox.LlmRouter.Contract.LlmThinking.Enabled)">enabled</option>
+								<option value="disabled" selected="@(r.Thinking == PetBox.LlmRouter.Contract.LlmThinking.Disabled)">disabled</option>
+							</select></label>
 						<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-route-save">Save</button></div>
 					</form>
 					<form method="post" asp-page-handler="DeleteRoute" onsubmit="return confirm('Delete this route?')">
@@ -156,6 +162,12 @@
 						<input class="input input-bordered input-sm" type="number" name="priority" value="100" /></label>
 					<label class="form-control"><span class="label-text">Tier</span>
 						<input class="input input-bordered input-sm" name="tier" placeholder="(default)" /></label>
+					<label class="form-control"><span class="label-text">Thinking</span>
+						<select class="select select-bordered select-sm" name="thinking">
+							<option value="">(provider default)</option>
+							<option value="enabled">enabled</option>
+							<option value="disabled">disabled</option>
+						</select></label>
 					<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-route-add-save">Add</button></div>
 				</form>
 			}
