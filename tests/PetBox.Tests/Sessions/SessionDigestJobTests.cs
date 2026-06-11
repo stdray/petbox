@@ -57,8 +57,8 @@ public sealed class SessionDigestJobTests : IDisposable
 		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
 	}
 
-	SessionDigestJob Job(ILlmClient? llm, TimeSpan? quiet = null) =>
-		new(_sessionsFactory, _sessions, _memory, llm, logger: null, quietPeriod: quiet ?? NoQuiet);
+	SessionDigestJob Job(ILlmClient? llm, TimeSpan? quiet = null, TimeSpan? budget = null) =>
+		new(_sessionsFactory, _sessions, _memory, llm, logger: null, quietPeriod: quiet ?? NoQuiet, budget: budget);
 
 	static SessionMessageInput[] Msgs(params string[] contents) =>
 		contents.Select(c => new SessionMessageInput("user", c)).ToArray();
@@ -165,6 +165,60 @@ public sealed class SessionDigestJobTests : IDisposable
 
 		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(0);
 		(await _memory.StoreExistsAsync(Proj, SessionDigestJob.Store)).Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task LargeBacklog_DrainsFullyInOnePass_NoBatchCap()
+	{
+		// Message content caps at 4k before batching → 12 messages per 48k batch;
+		// 96 messages = 8 batches — the old cap was 6/pass; a generous budget drains ALL.
+		var big = new string('ж', 4_000);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+			Msgs(Enumerable.Range(1, 96).Select(i => $"{i}: {big}").ToArray()));
+		var chat = new ChatFake { NextText = "дайджест\n- факт" };
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		chat.Prompts.Count.Should().Be(8); // every batch folded this pass
+		Cursor((await _memory.GetAsync(Proj, SessionDigestJob.Store, "s1"))!.Metadata).Should().Be(96);
+	}
+
+	[Fact]
+	public async Task ZeroBudget_ParksAfterOneBatch_ResumesNextPass()
+	{
+		// 25 capped messages → batches of 12/12/1.
+		var big = new string('ж', 4_000);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+			Msgs(Enumerable.Range(1, 25).Select(i => $"{i}: {big}").ToArray()));
+		var chat = new ChatFake { NextText = "дайджест\n- факт" };
+		var job = Job(chat, budget: TimeSpan.Zero);
+
+		await job.DrainAllAsync(CancellationToken.None);
+		chat.Prompts.Count.Should().Be(1); // progress guarantee: exactly one batch, then park
+		Cursor((await _memory.GetAsync(Proj, SessionDigestJob.Store, "s1"))!.Metadata).Should().Be(12);
+
+		await job.DrainAllAsync(CancellationToken.None); // resumes where it parked
+		chat.Prompts.Count.Should().Be(2);
+		Cursor((await _memory.GetAsync(Proj, SessionDigestJob.Store, "s1"))!.Metadata).Should().Be(24);
+	}
+
+	[Fact]
+	public async Task TwoProjects_ZeroBudget_RotationServesTheOtherNextPass()
+	{
+		_db.Insert(new Project { Key = "projb", WorkspaceKey = "ws", Name = "B", Description = "" });
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("сообщение А"));
+		await _sessions.UpsertAsync("projb", "s1", "claude-code", Msgs("сообщение Б"));
+		var chat = new ChatFake { NextText = "дайджест\n- факт" };
+		var job = Job(chat, budget: TimeSpan.Zero);
+
+		await job.DrainAllAsync(CancellationToken.None);
+		var afterFirst = new[] { Proj, "projb" }
+			.Count(p => _memory.StoreExistsAsync(p, SessionDigestJob.Store).GetAwaiter().GetResult());
+		afterFirst.Should().Be(1); // budget spent on exactly one project
+
+		await job.DrainAllAsync(CancellationToken.None); // round-robin starts at the other
+		foreach (var p in new[] { Proj, "projb" })
+			(await _memory.StoreExistsAsync(p, SessionDigestJob.Store)).Should().BeTrue();
 	}
 
 	[Fact]

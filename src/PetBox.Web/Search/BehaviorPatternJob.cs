@@ -53,14 +53,19 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 	readonly IMemoryService _memory;
 	readonly ILlmClient? _llm;
 	readonly ILogger<BehaviorPatternJob>? _logger;
+	readonly TimeSpan _budget;
+
+	// Round-robin start position across passes; passes run strictly sequentially.
+	static int _rotation;
 
 	public BehaviorPatternJob(IScopedDbFactory<MemoryDb> factory, IMemoryService memory,
-		ILlmClient? llm = null, ILogger<BehaviorPatternJob>? logger = null)
+		ILlmClient? llm = null, ILogger<BehaviorPatternJob>? logger = null, TimeSpan? budget = null)
 	{
 		_factory = factory;
 		_memory = memory;
 		_llm = llm;
 		_logger = logger;
+		_budget = budget ?? DrainPacing.DefaultBudget;
 	}
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
@@ -68,9 +73,11 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 		if (_llm is null) return 0;
 
 		var mined = 0;
-		foreach (var project in ScopedDbFiles.ListScopeKeys(_factory.BaseDir))
+		var clock = new DrainClock(_budget);
+		foreach (var project in DrainPacing.Rotate(ScopedDbFiles.ListScopeKeys(_factory.BaseDir), ref _rotation))
 		{
 			ct.ThrowIfCancellationRequested();
+			if (clock.Exhausted) break; // mining = one chat call per project; rotation serves the rest next pass
 			try
 			{
 				if (!await _memory.StoreExistsAsync(project, QuarantineStore, ct)) continue;
@@ -87,6 +94,7 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 				if (fresh < MinNewFeedback) continue; // cursor holds — wait for more observations
 
 				mined += await MineAsync(project, ct);
+				clock.Unit();
 
 				// Re-read the version AFTER our own writes so the patterns we just wrote
 				// don't count as fresh observations and self-trigger the next pass.

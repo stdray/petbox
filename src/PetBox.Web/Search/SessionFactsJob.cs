@@ -67,10 +67,14 @@ public sealed class SessionFactsJob : IVectorizationJob
 	readonly ILlmClient? _llm;
 	readonly ILogger<SessionFactsJob>? _logger;
 	readonly TimeSpan _quietPeriod;
+	readonly TimeSpan _budget;
+
+	// Round-robin start position across passes; passes run strictly sequentially.
+	static int _rotation;
 
 	public SessionFactsJob(IScopedDbFactory<SessionsDb> factory, ISessionService sessions,
 		IMemoryService memory, ILlmClient? llm = null, ILogger<SessionFactsJob>? logger = null,
-		TimeSpan? quietPeriod = null)
+		TimeSpan? quietPeriod = null, TimeSpan? budget = null)
 	{
 		_factory = factory;
 		_sessions = sessions;
@@ -78,6 +82,7 @@ public sealed class SessionFactsJob : IVectorizationJob
 		_llm = llm;
 		_logger = logger;
 		_quietPeriod = quietPeriod ?? DefaultQuietPeriod;
+		_budget = budget ?? DrainPacing.DefaultBudget;
 	}
 
 	static string CursorName(string sessionId) => "session-facts:" + sessionId;
@@ -87,9 +92,12 @@ public sealed class SessionFactsJob : IVectorizationJob
 		if (_llm is null) return 0;
 
 		var captured = 0;
-		foreach (var project in ScopedDbFiles.ListNames(_factory.BaseDir, string.Empty))
+		var clock = new DrainClock(_budget);
+		foreach (var project in DrainPacing.Rotate(ScopedDbFiles.ListNames(_factory.BaseDir, string.Empty), ref _rotation))
 		{
 			ct.ThrowIfCancellationRequested();
+			if (clock.Exhausted) break;
+			clock.StartProject();
 			try
 			{
 				if (!await _llm.IsAvailableAsync(project, LlmCapability.Chat, ct)) continue;
@@ -105,12 +113,13 @@ public sealed class SessionFactsJob : IVectorizationJob
 				foreach (var header in headers)
 				{
 					ct.ThrowIfCancellationRequested();
+					if (clock.ProjectExhausted) break;
 					if (header.Updated > cutoff) continue; // still hot — let the turn settle
 					var cursor = await cursors.GetCursorAsync(CursorName(header.SessionId), ct);
 					if (header.Version <= cursor) continue;
 					try
 					{
-						captured += await DistillAsync(project, header.SessionId, cursor, cursors, ct);
+						captured += await DistillAsync(project, header.SessionId, cursor, cursors, clock, ct);
 					}
 					catch (Exception ex) when (ex is not OperationCanceledException)
 					{
@@ -128,37 +137,40 @@ public sealed class SessionFactsJob : IVectorizationJob
 	}
 
 	async Task<int> DistillAsync(string project, string sessionId, long cursor,
-		SqliteIndexCursorStore cursors, CancellationToken ct)
+		SqliteIndexCursorStore cursors, DrainClock clock, CancellationToken ct)
 	{
-		var delta = await _sessions.DeltaAsync(project, sessionId, cursor, ct);
-		if (delta.Count == 0) return 0;
-
-		// One bounded batch per tick; the cursor parks at the last included ordinal, so an
-		// oversized backlog drains across ticks.
-		var (batch, lastVersion) = TakeBatch(delta);
-		var raw = await ChatAsync(project, ExtractPrompt, RenderTranscript(batch), ct);
-		var candidates = ParseCandidates(raw);
-		if (candidates is null)
-		{
-			// Unparseable output: advancing past the batch is deliberate — holding the
-			// cursor would re-spend a chat call on the same bad input every tick.
-			_logger?.LogWarning("facts extraction returned unparseable output for {Project}/{Session}; batch skipped",
-				project, sessionId);
-			await cursors.SetCursorAsync(CursorName(sessionId), lastVersion, ct);
-			return 0;
-		}
-
+		var remaining = await _sessions.DeltaAsync(project, sessionId, cursor, ct);
 		var captured = 0;
-		foreach (var candidate in candidates.Take(MaxCandidatesPerSession))
+		// Bounded batches until the delta is EMPTY or the pass budget runs out; the cursor
+		// advances per batch, so a partial drain resumes exactly where it parked.
+		while (remaining.Count > 0 && !clock.ProjectExhausted)
 		{
 			ct.ThrowIfCancellationRequested();
-			if (string.IsNullOrWhiteSpace(candidate.Description) && string.IsNullOrWhiteSpace(candidate.Body))
-				continue;
-			if (await ApplyAsync(project, sessionId, batch[0].Version, lastVersion, candidate, ct))
-				captured++;
+			var (batch, lastVersion) = TakeBatch(remaining);
+			var raw = await ChatAsync(project, ExtractPrompt, RenderTranscript(batch), ct);
+			var candidates = ParseCandidates(raw);
+			if (candidates is null)
+			{
+				// Unparseable output: advancing past the batch is deliberate — holding the
+				// cursor would re-spend a chat call on the same bad input every tick.
+				_logger?.LogWarning("facts extraction returned unparseable output for {Project}/{Session}; batch skipped",
+					project, sessionId);
+			}
+			else
+			{
+				foreach (var candidate in candidates.Take(MaxCandidatesPerSession))
+				{
+					ct.ThrowIfCancellationRequested();
+					if (string.IsNullOrWhiteSpace(candidate.Description) && string.IsNullOrWhiteSpace(candidate.Body))
+						continue;
+					if (await ApplyAsync(project, sessionId, batch[0].Version, lastVersion, candidate, ct))
+						captured++;
+				}
+			}
+			await cursors.SetCursorAsync(CursorName(sessionId), lastVersion, ct);
+			clock.Unit();
+			remaining = remaining.Where(m => m.Version > lastVersion).ToList();
 		}
-
-		await cursors.SetCursorAsync(CursorName(sessionId), lastVersion, ct);
 		return captured;
 	}
 

@@ -27,12 +27,11 @@ public sealed class SessionDigestJob : IVectorizationJob
 	public static readonly TimeSpan DefaultQuietPeriod = TimeSpan.FromMinutes(3);
 
 	// A transcript can be megabytes; the chat context is not. Each message is capped and
-	// the delta is distilled in sequential merge batches; a pass folds at most
-	// MaxBatchesPerSession batches into the digest and parks the cursor at the last
-	// distilled ordinal, so an oversized backlog drains across ticks instead of stalling.
+	// the delta is distilled in sequential merge batches until it is EMPTY or the pass
+	// budget runs out (DrainClock) — the cursor parks at the last distilled ordinal, so
+	// a partial drain resumes next pass.
 	internal const int MessageCharCap = 4000;
 	internal const int BatchCharCap = 48_000;
-	internal const int MaxBatchesPerSession = 6;
 
 	const string SystemPrompt =
 		"""
@@ -53,10 +52,14 @@ public sealed class SessionDigestJob : IVectorizationJob
 	readonly ILlmClient? _llm;
 	readonly ILogger<SessionDigestJob>? _logger;
 	readonly TimeSpan _quietPeriod;
+	readonly TimeSpan _budget;
+
+	// Round-robin start position across passes; passes run strictly sequentially.
+	static int _rotation;
 
 	public SessionDigestJob(IScopedDbFactory<SessionsDb> factory, ISessionService sessions,
 		IMemoryService memory, ILlmClient? llm = null, ILogger<SessionDigestJob>? logger = null,
-		TimeSpan? quietPeriod = null)
+		TimeSpan? quietPeriod = null, TimeSpan? budget = null)
 	{
 		_factory = factory;
 		_sessions = sessions;
@@ -64,6 +67,7 @@ public sealed class SessionDigestJob : IVectorizationJob
 		_llm = llm;
 		_logger = logger;
 		_quietPeriod = quietPeriod ?? DefaultQuietPeriod;
+		_budget = budget ?? DrainPacing.DefaultBudget;
 	}
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
@@ -71,11 +75,14 @@ public sealed class SessionDigestJob : IVectorizationJob
 		if (_llm is null) return 0;
 
 		var distilled = 0;
+		var clock = new DrainClock(_budget);
 		// Session DBs are flat {baseDir}/{project}.db files (Scope.Project, no sub-name),
 		// so the scope keys are the file names at the base dir itself.
-		foreach (var project in ScopedDbFiles.ListNames(_factory.BaseDir, string.Empty))
+		foreach (var project in DrainPacing.Rotate(ScopedDbFiles.ListNames(_factory.BaseDir, string.Empty), ref _rotation))
 		{
 			ct.ThrowIfCancellationRequested();
+			if (clock.Exhausted) break;
+			clock.StartProject();
 			try
 			{
 				if (!await _llm.IsAvailableAsync(project, LlmCapability.Chat, ct)) continue;
@@ -93,12 +100,13 @@ public sealed class SessionDigestJob : IVectorizationJob
 				foreach (var header in headers)
 				{
 					ct.ThrowIfCancellationRequested();
+					if (clock.ProjectExhausted) break;
 					states.TryGetValue(header.SessionId, out var state);
 					if (header.Version <= (state?.Cursor ?? 0)) continue;
 					if (header.Updated > cutoff) continue; // still hot — let the turn settle
 					try
 					{
-						if (await DistillAsync(project, header, state, ct))
+						if (await DistillAsync(project, header, state, clock, ct))
 							distilled++;
 					}
 					catch (Exception ex) when (ex is not OperationCanceledException)
@@ -147,7 +155,8 @@ public sealed class SessionDigestJob : IVectorizationJob
 		}
 	}
 
-	async Task<bool> DistillAsync(string project, SessionHeader header, DigestState? state, CancellationToken ct)
+	async Task<bool> DistillAsync(string project, SessionHeader header, DigestState? state,
+		DrainClock clock, CancellationToken ct)
 	{
 		var cursor = state?.Cursor ?? 0;
 		var delta = await _sessions.DeltaAsync(project, header.SessionId, cursor, ct);
@@ -155,13 +164,16 @@ public sealed class SessionDigestJob : IVectorizationJob
 
 		var digest = Compose(state?.Description, state?.Body);
 		var lastVersion = cursor;
-		foreach (var batch in Batches(delta).Take(MaxBatchesPerSession))
+		foreach (var batch in Batches(delta))
 		{
+			if (clock.ProjectExhausted) break; // park at lastVersion — resumes next pass
 			var updated = await ChatDistillAsync(project, digest, batch, ct);
 			if (string.IsNullOrWhiteSpace(updated)) return false; // hold the cursor, retry next tick
 			digest = updated.Trim();
 			lastVersion = batch[^1].Version;
+			clock.Unit();
 		}
+		if (lastVersion == cursor) return false; // budget hit before the first batch
 
 		var (description, body) = Split(digest);
 		var metadata = JsonSerializer.Serialize(new

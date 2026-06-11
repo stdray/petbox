@@ -57,8 +57,26 @@ public sealed class SessionFactsJobTests : IDisposable
 		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
 	}
 
-	SessionFactsJob Job(ILlmClient? llm) =>
-		new(_sessionsFactory, _sessions, _memory, llm, logger: null, quietPeriod: NoQuiet);
+	SessionFactsJob Job(ILlmClient? llm, TimeSpan? budget = null) =>
+		new(_sessionsFactory, _sessions, _memory, llm, logger: null, quietPeriod: NoQuiet, budget: budget);
+
+	[Fact]
+	public async Task MultiBatchBacklog_DrainsFullyInOnePass()
+	{
+		// Content caps at 4k before batching → 12 messages per batch; 13 messages =
+		// 2 extraction batches; previously hard-capped at one batch per pass.
+		var big = new string('ж', 4_000);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+			Msgs(Enumerable.Range(1, 13).Select(i => $"{i}: {big}").ToArray()));
+		var chat = new ScriptedChat("[]");
+		var job = Job(chat);
+
+		await job.DrainAllAsync(CancellationToken.None);
+		chat.Calls.Should().Be(2); // both batches extracted this pass
+
+		await job.DrainAllAsync(CancellationToken.None);
+		chat.Calls.Should().Be(2); // cursor at the end — nothing left
+	}
 
 	static SessionMessageInput[] Msgs(params string[] contents) =>
 		contents.Select(c => new SessionMessageInput("user", c)).ToArray();
