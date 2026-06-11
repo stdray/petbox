@@ -34,25 +34,31 @@ In your FIRST response this session, open with exactly this line (so it's visibl
 protocol is active):
 \`🧠 PetBox memory active\`
 
-Before substantive work, **recall**: call \`petbox_memory_recall\` with a \`query\` of a few
-words you are confident appear (tokens are ANDed, prefix-matched), and pass \`bodyLen\`
-(e.g. 240) so hits come back as a \`description\` + a short snippet rather than full bodies —
-that keeps session start cheap. With no \`scope\` it cascades project ⊕ workspace; hits come
-back labelled by scope (project = this project, workspace = cross-project shared). Skim them
-for relevant past decisions, conventions, gotchas; when a hit looks relevant, pull its full
-body with \`petbox_memory_get\`.
+PetBox remembers a LOT about this project — curated facts AND the full session history.
+Start reasoning about anything past from a SEARCH, not from assumption. Two legs:
+
+- **Facts — \`petbox_memory_recall\`**: a \`query\` of a few words you are confident appear
+  (tokens ANDed, prefix-matched; wordforms stem), pass \`bodyLen\` (e.g. 240) for cheap
+  snippets. With no \`scope\` it cascades project ⊕ workspace and EVERY store — curated
+  notes and the machine-distilled \`autocaptured\` quarantine alike (the store label in each
+  hit tells you which). Pull a full body with \`petbox_memory_get\`.
+- **Past conversations — \`petbox_session_search\`**: when you need HOW something was decided,
+  an error text, or any detail a fact wouldn't carry — two-stage search over the whole
+  session archive; every hit carries the message ordinal, so \`petbox_session_get\` jumps to
+  the verbatim source.
 
 As you work, **capture** incrementally (don't wait for session end): after a decision, a
 fixed bug, a discovered pattern, or a stated preference, store a concise fact via
 \`petbox_memory_remember\` (\`text\` = the learning; \`type\` = User|Feedback|Project|Reference;
 \`scope\` = workspace for facts that span projects or are about the user, else omit for this
-project). Aim for 1-3 memories per substantial interaction. Curated/temporal edits go through
-\`petbox_memory_upsert\`.
+project). Curated/temporal edits go through \`petbox_memory_upsert\`.
 
-**End-of-session sweep:** when the work concludes, do ONE final pass before you stop: name
-the 1-3 most durable learnings from this session that you have NOT already stored, and
-\`petbox_memory_remember\` each. Skip raw narration and anything derivable from code/git — only
-facts worth recalling next time. If nothing qualifies, capture nothing.`;
+**Background autocapture is LIVE:** after a session settles (~minutes), the server distills
+durable facts and recurring behavior patterns into the \`autocaptured\` store on its own. So:
+(1) don't re-store what recall already shows as autocaptured — promotion is the owner's
+call; (2) the **end-of-session sweep** is an INSURANCE pass, not the only capture: before
+you stop, store the 1-3 learnings that must not wait for background distillation — skip
+narration and anything derivable from code/git.`;
 }
 
 export const PetboxPlugin: Plugin = async ({ client, directory }) => {
