@@ -83,3 +83,27 @@ Re-running `wire.ts` for a project is only needed to change that project's confi
   cached per session; smoke them from a fresh session, not the one open during deploy.
 - **A folder outside the registry → hooks no-op.** This is normal and intended: the global hooks
   run in every project, resolve `null` for unregistered cwds, and silently do nothing.
+
+## 6. Importing local session history
+
+`import-sessions.ts` backfills the PetBox session archive from the agents'' LOCAL history —
+run it once after wiring a project (or any time) to make the whole past searchable:
+
+```bash
+node --experimental-strip-types agents/wiring/import-sessions.ts            # cwd project, all agents
+node --experimental-strip-types agents/wiring/import-sessions.ts --agent claude --project mykey
+# flags: --dry-run  --since YYYY-MM-DD  --limit N  --force
+```
+
+- Sources: Claude Code (`~/.claude/projects/*/*.jsonl`, attributed by the cwd recorded
+  inside each transcript) and opencode (`~/.local/share/opencode/storage`, attributed by
+  the session''s `directory`). Both resolve through the same registry matching the hooks use.
+- Sessions are pushed under their agents'' NATIVE ids (the same ids the live hook/plugin
+  uses), so re-imports replace, never duplicate; and the importer is **upgrade-only** — it
+  skips any session whose server version is already >= the local message count (`--force`
+  to override), so a stale file read can''t roll back a fresher snapshot.
+- Only dialogue turns are sent (the shared `transcript.ts` parsing the Stop hook uses);
+  raw tool outputs never leave the machine.
+- After a big import the server pipelines (digest -> facts -> patterns) backfill in the
+  background; with the budgeted drain expect tens of minutes for a multi-MB archive.
+  Search fills in as it warms — nothing blocks.

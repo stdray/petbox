@@ -1028,6 +1028,35 @@
         }
       }
     },
+    "/api/sessions/{projectKey}": {
+      "get": {
+        "tags": [
+          "SessionApi"
+        ],
+        "parameters": [
+          {
+            "name": "projectKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "post": {
         "tags": [
@@ -2421,6 +2450,49 @@
               "null",
               "string"
             ]
+          }
+        }
+      },
+      "SessionHeaderResponse": {
+        "required": [
+          "sessionId",
+          "agent",
+          "version",
+          "updated"
+        ],
+        "type": "object",
+        "properties": {
+          "sessionId": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "version": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          },
+          "updated": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "SessionListResponse": {
+        "required": [
+          "sessions"
+        ],
+        "type": "object",
+        "properties": {
+          "sessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SessionHeaderResponse"
+            }
           }
         }
       },

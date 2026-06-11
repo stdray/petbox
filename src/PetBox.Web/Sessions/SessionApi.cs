@@ -28,6 +28,28 @@ public static class SessionApi
 			.Produces<DeletedResponse>()
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
 			.RequireAuthorization("ApiKey");
+
+		// Headers only (id, agent, version, updated) — the upgrade-only guard of the
+		// history importer compares its local message count against `version` before
+		// pushing, so a stale file read can't roll back a fresher snapshot.
+		app.MapGet("/api/sessions/{projectKey}", ListAsync)
+			.Produces<SessionListResponse>()
+			.RequireAuthorization("ApiKey");
+	}
+
+	static async Task<IResult> ListAsync(
+		HttpContext ctx, string projectKey, ISessionService sessions, CancellationToken ct)
+	{
+		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		if (!ProjectScope.Authorizes(claim, projectKey))
+			return TypedResults.Forbid();
+		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
+		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:read"))
+			return TypedResults.Forbid();
+
+		var list = await sessions.ListAsync(projectKey, ct);
+		return TypedResults.Ok(new SessionListResponse(
+			list.Select(s => new SessionHeaderResponse(s.SessionId, s.Agent, s.Version, s.Updated)).ToList()));
 	}
 
 	static async Task<IResult> UpsertAsync(
