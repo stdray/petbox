@@ -1,0 +1,107 @@
+[
+ {
+  "method": "lexical",
+  "model": "full",
+  "recall5": 0.8888888888888888,
+  "mrr": 0.7395622895622892,
+  "gap_to_full": 0
+ },
+ {
+  "method": "lexical",
+  "model": "flash",
+  "recall5": 0.7838383838383839,
+  "mrr": 0.6090909090909089,
+  "gap_to_full": 0.10505050505050495
+ },
+ {
+  "method": "lexical",
+  "model": "pro",
+  "recall5": 0.8282828282828283,
+  "mrr": 0.6486195286195283,
+  "gap_to_full": 0.06060606060606055
+ },
+ {
+  "method": "lexical",
+  "model": "pro-think",
+  "recall5": 0.7777777777777778,
+  "mrr": 0.6253535353535352,
+  "gap_to_full": 0.11111111111111105
+ },
+ {
+  "method": "lexical",
+  "model": "qwen-local",
+  "recall5": 0.7797979797979798,
+  "mrr": 0.6153535353535354,
+  "gap_to_full": 0.10909090909090902
+ },
+ {
+  "method": "semantic",
+  "model": "full",
+  "recall5": 0.7656565656565657,
+  "mrr": 0.5299663299663301,
+  "gap_to_full": 0
+ },
+ {
+  "method": "semantic",
+  "model": "flash",
+  "recall5": 0.6848484848484848,
+  "mrr": 0.44821548821548823,
+  "gap_to_full": 0.08080808080808088
+ },
+ {
+  "method": "semantic",
+  "model": "pro",
+  "recall5": 0.694949494949495,
+  "mrr": 0.4216498316498318,
+  "gap_to_full": 0.07070707070707072
+ },
+ {
+  "method": "semantic",
+  "model": "pro-think",
+  "recall5": 0.6525252525252525,
+  "mrr": 0.3646464646464648,
+  "gap_to_full": 0.1131313131313132
+ },
+ {
+  "method": "semantic",
+  "model": "qwen-local",
+  "recall5": 0.6262626262626263,
+  "mrr": 0.3514141414141415,
+  "gap_to_full": 0.1393939393939394
+ },
+ {
+  "method": "hybrid",
+  "model": "full",
+  "recall5": 0.896969696969697,
+  "mrr": 0.708148148148148,
+  "gap_to_full": 0
+ },
+ {
+  "method": "hybrid",
+  "model": "flash",
+  "recall5": 0.8262626262626263,
+  "mrr": 0.6087205387205382,
+  "gap_to_full": 0.07070707070707072
+ },
+ {
+  "method": "hybrid",
+  "model": "pro",
+  "recall5": 0.8464646464646465,
+  "mrr": 0.6294949494949494,
+  "gap_to_full": 0.0505050505050505
+ },
+ {
+  "method": "hybrid",
+  "model": "pro-think",
+  "recall5": 0.804040404040404,
+  "mrr": 0.6070033670033665,
+  "gap_to_full": 0.09292929292929297
+ },
+ {
+  "method": "hybrid",
+  "model": "qwen-local",
+  "recall5": 0.8080808080808081,
+  "mrr": 0.5721212121212119,
+  "gap_to_full": 0.0888888888888889
+ }
+]

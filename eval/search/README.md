@@ -15,6 +15,7 @@ as `VectorSearchIndex` — so its numbers reflect the real system behaviour.
 | `eval_locomo_sem.py` | LoCoMo lazy-vs-full, **lexical / semantic / hybrid** + MRL **dim sweep** |
 | `mcp_embed.py` | minimal MCP Streamable-HTTP client to pull embeddings from petbox `llm.embed` (reads `PETBOX_API_KEY` from env); caches full vectors in `data/` |
 | `eval_transcripts.py` | lazy-vs-full lexical on local Claude transcripts (needs private transcript data — see note) |
+| `eval_digest_models.py` | which MODEL writes the facts digest: deepseek v4 flash / pro / pro+thinking / local Qwen3.6-35B (needs `DEEPSEEK_API_KEY`; qwen arm needs `LLAMA_API_KEY`) |
 
 ## Run
 
@@ -52,6 +53,27 @@ recall@5, `full / digest / relative gap`:
 
 Caveats: digest = LoCoMo's generic `session_summary` (not a retrieval-tuned digest);
 single vector per document (chunking untested). Full result JSONs in `results/`.
+
+## Findings (2026-06-11, digest-model comparison, 3 convs, n=495)
+
+Same facts-digest prompt, the MODEL varies; recall@5 hybrid (production default):
+
+| model | recall@5 | gap to full (0.897) |
+|---|---|---|
+| deepseek-v4-pro (no think) | **0.846** | +0.051 |
+| deepseek-v4-flash (no think) | 0.826 | +0.071 |
+| qwen3.6-35b-a3b local | 0.808 | +0.089 |
+| deepseek-v4-pro + thinking | 0.804 | +0.093 |
+
+1. **pro (non-thinking) wins consistently** — +2pp hybrid, +4.4pp lexical over flash;
+   the digest quality gap is real but modest.
+2. **Thinking HURTS digest retrieval** (pro-think < flash < pro): reasoning produces
+   more abstractive, less keyword-dense digests. Disable thinking for distillation.
+3. **Local qwen3.6-35b is a viable free fallback** (~2pp under flash on hybrid, weaker
+   semantic), at ~30–90 s/digest on the home GPU; needed 5/70 retries for
+   thinking-budget truncation (cured by max_tokens 5000).
+
+Caveat: LoCoMo is English-only; production sessions are RU/EN mixed.
 
 ## Notes on artifacts
 
