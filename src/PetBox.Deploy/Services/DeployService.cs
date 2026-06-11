@@ -1,6 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using LinqToDB;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using PetBox.Deploy.Contract;
 using PetBox.Deploy.Data;
 
@@ -14,9 +18,26 @@ public sealed class DeployService : IDeployService
 	// interval is well under this; failover (slice 4) uses a larger staleness threshold.
 	private static readonly TimeSpan OnlineWindow = TimeSpan.FromSeconds(120);
 
-	private readonly DeployDb _db;
+	// Resource warning thresholds (server-side so changing them needs no agent redeploy):
+	// warn when below the relative floor OR the absolute floor.
+	private const double LowMemoryFraction = 0.10;
+	private const long LowMemoryFloorMb = 150;
+	private const double LowDiskFraction = 0.10;
+	private const double LowDiskFloorGb = 2.0;
 
-	public DeployService(DeployDb db) => _db = db;
+	static readonly JsonSerializerOptions HostJson = new(JsonSerializerDefaults.Web)
+	{
+		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+	};
+
+	private readonly DeployDb _db;
+	private readonly ILogger _logger;
+
+	public DeployService(DeployDb db, ILogger<DeployService>? logger = null)
+	{
+		_db = db;
+		_logger = logger ?? NullLogger<DeployService>.Instance;
+	}
 
 	// --- nodes ---
 
@@ -165,6 +186,25 @@ public sealed class DeployService : IDeployService
 			await _db.Nodes.Where(n => n.Id == nodeId)
 				.Set(n => n.Capabilities, NormalizeCsv(string.Join(",", report.Capabilities)))
 				.UpdateAsync(ct);
+
+		// Host report: store the snapshot and log warning TRANSITIONS (appeared/cleared) —
+		// the server has the previous state + thresholds, the agent stays a dumb reporter.
+		// The log line is the history (self-log), the node row holds only the latest.
+		if (report.Host is not null)
+		{
+			var prevJson = await _db.Nodes.Where(n => n.Id == nodeId).Select(n => n.HostReport).FirstOrDefaultAsync(ct);
+			var prev = ComputeWarnings(ParseHostReport(prevJson));
+			var next = ComputeWarnings(report.Host);
+			if (_logger.IsEnabled(LogLevel.Warning))
+				foreach (var w in next.Except(prev, StringComparer.Ordinal))
+					_logger.LogWarning("deploy node {NodeId} host warning: {Warning}", nodeId, w);
+			if (_logger.IsEnabled(LogLevel.Information))
+				foreach (var w in prev.Except(next, StringComparer.Ordinal))
+					_logger.LogInformation("deploy node {NodeId} host warning cleared: {Warning}", nodeId, w);
+			await _db.Nodes.Where(n => n.Id == nodeId)
+				.Set(n => n.HostReport, JsonSerializer.Serialize(report.Host, HostJson))
+				.UpdateAsync(ct);
+		}
 		var now = DateTime.UtcNow;
 		var reported = new HashSet<string>(StringComparer.Ordinal);
 		foreach (var a in report.Actual)
@@ -251,12 +291,43 @@ public sealed class DeployService : IDeployService
 
 	// --- helpers ---
 
-	private static NodeView ToView(Node n, int deployments) => new(
-		n.Id, n.DisplayName, n.Tags, n.Ephemeral, n.KeyRef, n.LastSeenAt,
-		Online: n.LastSeenAt is { } seen && DateTime.UtcNow - seen < OnlineWindow,
-		Deployments: deployments,
-		CreatedAt: n.CreatedAt,
-		Capabilities: n.Capabilities);
+	private static NodeView ToView(Node n, int deployments)
+	{
+		var host = ParseHostReport(n.HostReport);
+		var warnings = ComputeWarnings(host);
+		return new(
+			n.Id, n.DisplayName, n.Tags, n.Ephemeral, n.KeyRef, n.LastSeenAt,
+			Online: n.LastSeenAt is { } seen && DateTime.UtcNow - seen < OnlineWindow,
+			Deployments: deployments,
+			CreatedAt: n.CreatedAt,
+			Capabilities: n.Capabilities,
+			Host: host,
+			Warnings: warnings.Count == 0 ? null : warnings);
+	}
+
+	private static HostReport? ParseHostReport(string? json) =>
+		string.IsNullOrWhiteSpace(json) || json.Trim() == "{}"
+			? null
+			: JsonSerializer.Deserialize<HostReport>(json, HostJson);
+
+	// The warning set a host snapshot implies. Deterministic strings: the transition log
+	// and the UI badges show the same text, and set-diffing detects appear/clear.
+	public static IReadOnlyList<string> ComputeWarnings(HostReport? host)
+	{
+		if (host is null) return [];
+		var warnings = new List<string>();
+		if (host.Security?.RootLoginEnabled == true)
+			warnings.Add("root SSH login is not disabled");
+		if (host.Security?.PasswordAuthEnabled == true)
+			warnings.Add("password SSH auth is allowed");
+		if (host.Memory is { TotalMb: > 0, AvailableMb: { } availMb }
+			&& (availMb < host.Memory.TotalMb * LowMemoryFraction || availMb < LowMemoryFloorMb))
+			warnings.Add($"low memory: {availMb} MB available of {host.Memory.TotalMb} MB");
+		if (host.Disk is { TotalGb: > 0, FreeGb: { } freeGb }
+			&& (freeGb < host.Disk.TotalGb * LowDiskFraction || freeGb < LowDiskFloorGb))
+			warnings.Add($"low disk: {freeGb} GB free of {host.Disk.TotalGb} GB");
+		return warnings;
+	}
 
 	private static DeploymentView ToView(Deployment d, DeploymentStatus? s) => new(
 		d.Id, d.Service, d.Project, d.NodeId, d.ImageDigest, d.DesiredState, d.Relocatable,

@@ -48,7 +48,7 @@ That's the whole flow: once the node connects, PetBox brings up whatever deploym
 
 > **`sudo` note:** `enroll.sh` installs packages and writes `/etc`. Run it as **root** or where `sudo` is passwordless (`sudo -E` keeps the PETBOX_* env vars). A non-interactive run with a password-prompting `sudo` will hang.
 
-> **Operator pre-checks** (before trusting a fresh box): you can SSH in, and the host's security posture is what you intend — the agent deliberately does NOT change sshd config (host security/resource reporting lands with the `node-host-report` slice).
+> **Operator pre-checks** (before trusting a fresh box): you can SSH in, and the host's security posture is what you intend. The agent **reports** the posture in its heartbeat — root SSH login not disabled / password auth allowed / low memory / low disk show up as ⚠ warnings on the node row (UI + `deploy.node_list`), and every warning appear/clear is logged to the `$system` self-log — but it deliberately does NOT change sshd config (report-only; fixing it is the operator's call).
 
 The node now appears in the fleet (UI `/ui/admin/sys/deploy` or `deploy.node_list`) and goes **online** within a poll interval (~30s). `journalctl -u petbox-deploy-agent -f` shows one `reconciled: N desired, M action(s), …; heartbeat ok` line per cycle.
 
@@ -143,7 +143,8 @@ To roll a new image, set the new digest on the deployment — `deploy.upsert` wi
 
 ## 5. Day-2 operations
 
-- **Status / list** — UI grid or `deploy.list` (per node/service filter); `deploy.node_list` for the fleet.
+- **Status / list** — UI grid or `deploy.list` (per node/service filter); `deploy.node_list` for the fleet (incl. agent-detected `capabilities`, the `host` snapshot — memory/disk/os/ssh-posture — and computed `warnings`).
+- **Host health** — the agent heartbeats a host report every cycle; thresholds live server-side (low memory: <10% or <150 MB; low disk: <10% or <2 GB). Warning transitions (appeared/cleared) are logged to the `$system` self-log, so history needs no separate monitoring stack.
 - **Stop / start** — `deploy.stop(id)` / `deploy.start(id)` or the UI buttons (sets desired state; the agent reconciles).
 - **Move** — `deploy.move(id, toNodeId)` (the source agent self-fences the old container, the target agent starts it).
 - **Copies** — create a deployment of the same service on another node (one per node).

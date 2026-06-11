@@ -170,6 +170,62 @@ public sealed class DeployServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Heartbeat_Stores_HostReport_And_View_Computes_Warnings()
+	{
+		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
+
+		await _svc.ApplyHeartbeatAsync("n1", new HeartbeatReport([], Host: new HostReport(
+			Security: new HostSecurity(RootLoginEnabled: true, PasswordAuthEnabled: false),
+			Memory: new HostMemory(TotalMb: 1000, AvailableMb: 50),
+			Disk: new HostDisk(TotalGb: 40, FreeGb: 25),
+			Os: "Ubuntu 24.04.1 LTS")));
+
+		var view = (await _svc.GetNodeAsync("n1"))!;
+		view.Host!.Os.Should().Be("Ubuntu 24.04.1 LTS");
+		view.Host.Memory!.AvailableMb.Should().Be(50);
+		view.Warnings.Should().BeEquivalentTo(
+			"root SSH login is not disabled",
+			"low memory: 50 MB available of 1000 MB");
+
+		// hardened + healthy snapshot clears the warnings; legacy heartbeat (null host) keeps the report
+		await _svc.ApplyHeartbeatAsync("n1", new HeartbeatReport([], Host: new HostReport(
+			Security: new HostSecurity(false, false),
+			Memory: new HostMemory(1000, 600),
+			Disk: new HostDisk(40, 25))));
+		(await _svc.GetNodeAsync("n1"))!.Warnings.Should().BeNull();
+
+		await _svc.ApplyHeartbeatAsync("n1", new HeartbeatReport([]));
+		(await _svc.GetNodeAsync("n1"))!.Host.Should().NotBeNull();
+	}
+
+	[Fact]
+	public void ComputeWarnings_Thresholds()
+	{
+		DeployService.ComputeWarnings(null).Should().BeEmpty();
+		DeployService.ComputeWarnings(new HostReport()).Should().BeEmpty();
+
+		// password auth allowed
+		DeployService.ComputeWarnings(new HostReport(Security: new HostSecurity(PasswordAuthEnabled: true)))
+			.Should().ContainSingle(w => w.Contains("password SSH auth"));
+
+		// relative floor: 9% of total
+		DeployService.ComputeWarnings(new HostReport(Memory: new HostMemory(10000, 900)))
+			.Should().ContainSingle(w => w.StartsWith("low memory"));
+		// absolute floor: < 150 MB even when total is small
+		DeployService.ComputeWarnings(new HostReport(Memory: new HostMemory(1000, 120)))
+			.Should().ContainSingle(w => w.StartsWith("low memory"));
+		// healthy: 50%
+		DeployService.ComputeWarnings(new HostReport(Memory: new HostMemory(1000, 500))).Should().BeEmpty();
+
+		// disk floors
+		DeployService.ComputeWarnings(new HostReport(Disk: new HostDisk(100, 5)))
+			.Should().ContainSingle(w => w.StartsWith("low disk"));
+		DeployService.ComputeWarnings(new HostReport(Disk: new HostDisk(10, 1.5)))
+			.Should().ContainSingle(w => w.StartsWith("low disk"));
+		DeployService.ComputeWarnings(new HostReport(Disk: new HostDisk(40, 25))).Should().BeEmpty();
+	}
+
+	[Fact]
 	public async Task Heartbeat_Stores_Capabilities_And_PerService_Error()
 	{
 		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));

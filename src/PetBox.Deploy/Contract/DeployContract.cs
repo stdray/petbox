@@ -10,6 +10,8 @@ public sealed record NodeInput(string Id, string DisplayName, string Tags, bool 
 // Read view of a node. Online is computed by the service from LastSeenAt + a staleness
 // window; Deployments is how many deployments target this node. Capabilities is the
 // agent-detected host CSV ("docker,caddy"), empty until a capability-aware agent reports.
+// Host is the last reported host snapshot (null = never reported); Warnings are computed
+// from it server-side (security flags + low memory/disk thresholds).
 public sealed record NodeView(
 	string Id,
 	string DisplayName,
@@ -20,7 +22,9 @@ public sealed record NodeView(
 	bool Online,
 	int Deployments,
 	DateTime CreatedAt,
-	string Capabilities = "");
+	string Capabilities = "",
+	HostReport? Host = null,
+	IReadOnlyList<string>? Warnings = null);
 
 // --- deployments ---
 
@@ -38,6 +42,26 @@ public sealed record DeploymentInput(
 	string RequiredTags,
 	string ConfigTags,
 	RunSpec? RunSpec = null);
+
+// --- host report (agent-observed host state, refreshed by heartbeat) ---
+
+// SSH security posture, read from the effective sshd config (`sshd -T`). True = the
+// insecure setting is ON (a warning). Null = the agent couldn't read it.
+public sealed record HostSecurity(bool? RootLoginEnabled = null, bool? PasswordAuthEnabled = null);
+
+public sealed record HostMemory(long? TotalMb = null, long? AvailableMb = null);
+
+public sealed record HostDisk(double? TotalGb = null, double? FreeGb = null);
+
+// The agent's periodic host snapshot: security posture + resource levels + OS. Report-
+// only — the agent never fixes what it reports (changing sshd config risks a lockout;
+// that's the operator's call). Field naming leans on otel semconv so a later migration
+// to real metrics is cheap.
+public sealed record HostReport(
+	HostSecurity? Security = null,
+	HostMemory? Memory = null,
+	HostDisk? Disk = null,
+	string? Os = null);
 
 // --- agent contract (pull) ---
 
@@ -73,8 +97,12 @@ public sealed record ActualReport(
 	string? Error = null);
 
 // A node-agent's heartbeat: the actual state of every container it manages, plus the
-// host capabilities the agent detected (e.g. ["docker","caddy"]; null = legacy agent).
-public sealed record HeartbeatReport(IReadOnlyList<ActualReport> Actual, IReadOnlyList<string>? Capabilities = null);
+// host capabilities the agent detected (e.g. ["docker","caddy"]; null = legacy agent)
+// and the host report (security/resources/os; null = legacy agent).
+public sealed record HeartbeatReport(
+	IReadOnlyList<ActualReport> Actual,
+	IReadOnlyList<string>? Capabilities = null,
+	HostReport? Host = null);
 
 // --- failover ---
 

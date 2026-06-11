@@ -54,7 +54,7 @@ else
 {
 	<div class="overflow-x-auto mb-6">
 		<table class="table table-sm" data-testid="deploy-nodes-table">
-			<thead><tr><th>Id</th><th>Name</th><th>Tags</th><th>Status</th><th>Last seen</th><th>Deploys</th><th></th></tr></thead>
+			<thead><tr><th>Id</th><th>Name</th><th>Tags</th><th>Status</th><th>Host</th><th>Last seen</th><th>Deploys</th><th></th></tr></thead>
 			<tbody>
 				@foreach (var n in Model.Nodes)
 				{
@@ -71,6 +71,15 @@ else
 							{
 								<span class="badge badge-ghost badge-sm" data-testid="node-offline">offline</span>
 							}
+							@foreach (var w in n.Warnings ?? Array.Empty<string>())
+							{
+								<div class="text-error text-xs mt-1" data-testid="node-warning">⚠ @w</div>
+							}
+						</td>
+						<td class="text-xs font-mono opacity-70" data-testid="node-host">
+							@if (n.Host?.Memory is { TotalMb: not null, AvailableMb: not null } m) { <div>mem @m.AvailableMb/@m.TotalMb MB</div> }
+							@if (n.Host?.Disk is { TotalGb: not null, FreeGb: not null } dsk) { <div>disk @dsk.FreeGb/@dsk.TotalGb GB</div> }
+							@if (n.Host?.Os is { } os) { <div title="@os">@(os.Length > 22 ? os[..22] + "…" : os)</div> }
 						</td>
 						<td class="text-xs font-mono opacity-70">@(n.LastSeenAt?.ToString("MM-dd HH:mm:ss") ?? "—")</td>
 						<td>@n.Deployments</td>

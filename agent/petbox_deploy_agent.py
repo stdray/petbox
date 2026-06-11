@@ -279,8 +279,83 @@ def detect_capabilities() -> list[str]:
     return caps
 
 
+# --- host report (security posture + resources; report-only) -----------------
+
+def parse_sshd_security(sshd_t_output: str) -> dict:
+    """Security posture from `sshd -T` effective-config output. Pure.
+
+    True = the INSECURE setting is on (the control plane turns it into a warning).
+    Report-only by design: the agent never edits sshd config (lockout risk).
+    """
+    cfg = {}
+    for line in sshd_t_output.splitlines():
+        parts = line.split(None, 1)
+        if len(parts) == 2:
+            cfg[parts[0].lower()] = parts[1].strip().lower()
+    result = {}
+    if "permitrootlogin" in cfg:
+        result["rootLoginEnabled"] = cfg["permitrootlogin"] != "no"
+    if "passwordauthentication" in cfg:
+        result["passwordAuthEnabled"] = cfg["passwordauthentication"] == "yes"
+    return result
+
+
+def parse_meminfo(meminfo_text: str) -> dict:
+    """{totalMb, availableMb} from /proc/meminfo (kB lines). Pure."""
+    kb = {}
+    for line in meminfo_text.splitlines():
+        parts = line.replace(":", " ").split()
+        if len(parts) >= 2 and parts[1].isdigit():
+            kb[parts[0]] = int(parts[1])
+    result = {}
+    if "MemTotal" in kb:
+        result["totalMb"] = kb["MemTotal"] // 1024
+    if "MemAvailable" in kb:
+        result["availableMb"] = kb["MemAvailable"] // 1024
+    return result
+
+
+def build_host_report() -> dict:
+    """The heartbeat's host{} snapshot; every section degrades to absent on error."""
+    report: dict = {}
+    try:
+        out = subprocess.run(["sshd", "-T"], capture_output=True, text=True, timeout=10)
+        if out.returncode == 0:
+            sec = parse_sshd_security(out.stdout)
+            if sec:
+                report["security"] = sec
+    except Exception:  # noqa: BLE001 — no sshd / no permission: just skip the section
+        pass
+    try:
+        with open("/proc/meminfo") as f:
+            mem = parse_meminfo(f.read())
+        if mem:
+            report["memory"] = mem
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        st = os.statvfs("/")
+        gb = 1024 ** 3
+        report["disk"] = {
+            "totalGb": round(st.f_blocks * st.f_frsize / gb, 1),
+            "freeGb": round(st.f_bavail * st.f_frsize / gb, 1),
+        }
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        with open("/etc/os-release") as f:
+            for line in f:
+                if line.startswith("PRETTY_NAME="):
+                    report["os"] = line.split("=", 1)[1].strip().strip('"')
+                    break
+    except Exception:  # noqa: BLE001
+        pass
+    return report
+
+
 def build_heartbeat(actual: dict[str, dict], errors: dict[str, str] | None = None,
-                    capabilities: list[str] | None = None) -> dict:
+                    capabilities: list[str] | None = None,
+                    host: dict | None = None) -> dict:
     errors = errors or {}
     reports = [
         {
@@ -303,6 +378,8 @@ def build_heartbeat(actual: dict[str, dict], errors: dict[str, str] | None = Non
     hb: dict = {"actual": reports}
     if capabilities is not None:
         hb["capabilities"] = capabilities
+    if host:
+        hb["host"] = host
     return hb
 
 
@@ -340,7 +417,7 @@ def reconcile_once(base_url: str, key: str) -> None:
         sync_caddy(desired)
     errors.update(plan_site_errors(desired, caddy_ok))
     _request(f"{base_url}/agent/heartbeat", key, "POST",
-             build_heartbeat(actual, errors, detect_capabilities()))
+             build_heartbeat(actual, errors, detect_capabilities(), build_host_report()))
     # one line per cycle so the agent is visibly alive in journald (not silent)
     _log(f"reconciled: {len(desired)} desired, {len(actions)} action(s), "
          f"{len(actual)} running, {len(errors)} error(s); heartbeat ok")
