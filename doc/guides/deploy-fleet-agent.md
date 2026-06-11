@@ -12,7 +12,7 @@ Tools: `deploy.node_list`, `deploy.node_upsert`, `deploy.node_delete`, `deploy.l
 
 ## What you CANNOT do (hand to a human)
 
-- **Install the node-agent on a remote machine.** "Rails" need the agent running on the target host (Docker reconciler). Unless you have SSH to that box, a human must do the one-time bootstrap from `doc/guides/deploy-fleet.md §2`. Until a node is **enrolled and online**, `deploy.upsert` only records desired state — nothing reconciles it.
+- **Install the node-agent on a remote machine.** "Rails" need the agent running on the target host (Docker reconciler). Unless you have SSH to that box, a human must run the one-command bootstrap (`enroll.sh` — installs docker+caddy itself on supported Ubuntu LTS, `deploy-fleet.md §2`). Until a node is **enrolled and online**, `deploy.upsert` only records desired state — nothing reconciles it.
 - **Auto-integrate CI.** There is no REST hook to bump the image digest from a build pipeline yet; you (or a human) set the new digest via `deploy.upsert` after the image is pushed.
 
 ## Recipe — migrate a service onto the rails
@@ -29,7 +29,7 @@ Tools: `deploy.node_list`, `deploy.node_upsert`, `deploy.node_delete`, `deploy.l
    - `project` drives server-side env resolution from `(project, configTags)` — make sure that project's config bindings exist if the container needs env.
    - `requiredTags` ⊆ the node's tags (also the failover constraint). `relocatable=true` only for stateless/idempotent services.
    - Needs ports/volumes/healthcheck/limits? Pass the **run-spec** fields on the same call: `ports=["127.0.0.1:8080:8080"]`, `volumes=["/host:/container[:ro]"]` (bind mounts; host dirs must exist), `restart=`, `healthcheckCmd/Interval/Timeout/Retries`, `memory=`, `cpus=`, `network=`, `command=[...]`, `labels=["k=v"]` (`petbox.*` reserved). Any run-spec change recreates the container (it's hashed). Details: `deploy-fleet.md §3b`.
-   - **A web app behind the proxy?** Add `domain="app.example.com"` (+ optional `sitePort=`, default = ports[0] host port) — the agent maintains the Caddy route itself. The target node must have caddy (check the node's `capabilities` in `deploy.node_list`); a site on a caddy-less node shows an explicit `error` on the deployment instead of running silently broken. One-time host prereq until self-setup ships: Caddyfile imports `/etc/caddy/petbox.d/*.caddy` (`deploy-fleet.md §3c`).
+   - **A web app behind the proxy?** Add `domain="app.example.com"` (+ optional `sitePort=`, default = ports[0] host port) — the agent maintains the Caddy route itself. The target node must have caddy (check the node's `capabilities` in `deploy.node_list`; enroll installs it on supported Ubuntu); a site on a caddy-less node shows an explicit `error` on the deployment instead of running silently broken (`deploy-fleet.md §3c`).
 4. **Verify reconcile:** poll `deploy.list(service="<svc>")` until `actualState="Running"` and `healthy=true` (agent runs every ~30s). If it stays absent → check the node is online (`deploy.node_list`) and the image ref is valid (human checks `docker logs petbox-<svc>` on the node).
 
 ## Recipe — roll a new version

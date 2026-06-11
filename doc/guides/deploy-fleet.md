@@ -28,30 +28,27 @@ You do **not** create node keys by hand — they are minted automatically when y
 
 The agent files live in the repo under `agent/`: `petbox_deploy_agent.py`, `enroll.sh`, `petbox-deploy-agent.service`.
 
-### 2a. A real Ubuntu server (the normal case)
+### 2a. A bare Ubuntu server (the normal case) — one command
+
+`enroll.sh` IS the bare-server setup: on a supported OS (**Ubuntu LTS 22.04 / 24.04 / 26.04** — a fixed short list; anything else is an explicit refusal, `PETBOX_SKIP_OS_CHECK=1` to override) it installs docker and caddy if missing, wires the Caddyfile to `/etc/caddy/petbox.d`, registers the node + mints its key, installs and starts the agent's systemd unit. Idempotent — re-running re-checks everything and rotates the node key.
 
 ```sh
-# 1. Docker (skip if already installed)
-curl -fsSL https://get.docker.com | sh
-
-# 2. drop the agent in place
-sudo mkdir -p /opt/petbox-deploy-agent
-sudo cp agent/petbox_deploy_agent.py /opt/petbox-deploy-agent/
-
-# 3. enroll: registers the node, mints its node key, writes /etc/petbox-deploy-agent.env
+# copy the agent dir to the box (or clone the repo), then:
+scp -r agent/ user@new-server:
+ssh user@new-server
 PETBOX_URL=https://petbox.3po.su \
 PETBOX_ADMIN_KEY=<your deploy:write key from step 1> \
-  ./agent/enroll.sh <node-id> "<tags-csv>"
-# e.g. ./agent/enroll.sh vdsina-1 "net.x,disk=nvme"
+  sudo -E ./agent/enroll.sh <node-id> "<tags-csv>"
+# e.g. sudo -E ./agent/enroll.sh vdsina-1 "net.x,disk=nvme"
 
-# 4. install + start the service
-sudo cp agent/petbox-deploy-agent.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now petbox-deploy-agent
 journalctl -u petbox-deploy-agent -f      # watch it poll
 ```
 
-> **`sudo` note:** `enroll.sh` writes `/etc/petbox-deploy-agent.env` via `sudo tee`. Run it where `sudo` is passwordless, or as **root** (`sudo -i`, or on WSL2 `wsl -u root`). A non-interactive run with a password-prompting `sudo` will hang.
+That's the whole flow: once the node connects, PetBox brings up whatever deployments are assigned to it — no per-deployment actions on the host.
+
+> **`sudo` note:** `enroll.sh` installs packages and writes `/etc`. Run it as **root** or where `sudo` is passwordless (`sudo -E` keeps the PETBOX_* env vars). A non-interactive run with a password-prompting `sudo` will hang.
+
+> **Operator pre-checks** (before trusting a fresh box): you can SSH in, and the host's security posture is what you intend — the agent deliberately does NOT change sshd config (host security/resource reporting lands with the `node-host-report` slice).
 
 The node now appears in the fleet (UI `/ui/admin/sys/deploy` or `deploy.node_list`) and goes **online** within a poll interval (~30s). `journalctl -u petbox-deploy-agent -f` shows one `reconciled: N desired, M action(s), …; heartbeat ok` line per cycle.
 
@@ -123,7 +120,7 @@ deploy.upsert(service="web", project="yobapub", nodeId="vdsina-1",
 ```
 
 - The agent owns `/etc/caddy/petbox.d/<service>.caddy` (`domain { reverse_proxy 127.0.0.1:<port> }`) and runs `systemctl reload caddy` on any change. It never touches anything outside that include dir.
-- **One-time host prerequisite** (until self-setup automates it): caddy installed and the Caddyfile carrying `import /etc/caddy/petbox.d/*.caddy`.
+- **Host prerequisite**: caddy installed and the Caddyfile carrying `import /etc/caddy/petbox.d/*.caddy` — `enroll.sh` sets both up on a supported OS (§2a); only hand-provisioned hosts need it done manually.
 - Stopping/deleting the site removes its route (Caddy stops serving the domain instead of proxying into a dead container).
 - The agent reports host **capabilities** (`docker,caddy`) in its heartbeat — visible in the nodes table. A site assigned to a node **without caddy** surfaces as an explicit per-deployment error in the grid/`deploy.list` (`error: "site route not applied: caddy is not available on this node"`), not a silent failure. Reconcile errors in general (failed `docker run` included) now land in that same `error` field.
 
