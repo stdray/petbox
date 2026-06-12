@@ -7,7 +7,7 @@
 
 <div class="mb-4">
 	<h1 class="text-2xl font-semibold" data-testid="sys-agent-keys-title">Agent Keys</h1>
-	<p class="text-sm opacity-60">Temporary, time-limited API keys for agent onboarding. Issue one with <code class="font-mono">admin:provision</code> so an agent can create a project, services, keys, and config via MCP. The key auto-expires.</p>
+	<p class="text-sm opacity-60">DB-minted API keys across all projects. Issue one with <code class="font-mono">admin:provision</code> (ROOT-equivalent: it can mint keys with any scopes for any project) so an agent can create a project, services, keys, and config via MCP. Leave TTL empty for a non-expiring key — the lifetime is your call.</p>
 </div>
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
@@ -37,7 +37,7 @@
 					<input id="ak-project" name="projectKey" class="input input-bordered input-sm font-mono" value="$system" data-testid="agent-key-project" :disabled="allProjects" :class="{ 'opacity-40': allProjects }" />
 				</div>
 				<div>
-					<label class="text-xs opacity-60 block" for="ak-ttl">TTL (hours)</label>
+					<label class="text-xs opacity-60 block" for="ak-ttl">TTL (hours, empty = never)</label>
 					<input id="ak-ttl" name="ttlHours" type="number" min="1" value="24" class="input input-bordered input-sm w-24" data-testid="agent-key-ttl" />
 				</div>
 				<label class="label cursor-pointer gap-2 p-0 pb-1" title="A cross-project key (project='*') reads AND writes across EVERY project — for monitoring / dev override. Powerful; keep the TTL short.">
@@ -105,6 +105,10 @@ else
 							@if (k.Expired)
 							{
 								<span class="badge badge-error badge-sm" data-testid="agent-key-expired">expired</span>
+							}
+							else if (k.ExpiresAt is null)
+							{
+								<span class="badge badge-ghost badge-sm" data-testid="agent-key-never-expires">never</span>
 							}
 							else
 							{

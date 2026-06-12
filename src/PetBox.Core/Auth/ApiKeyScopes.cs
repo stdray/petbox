@@ -54,7 +54,7 @@ public static class ApiKeyScopes
 		new(DeployWrite, "Manage deploy fleet",    "Register nodes, mint node keys, create/move/start/stop deployments via the deploy UI.", "Deploy"),
 		new(AgentPoll,   "Agent: poll desired state", "GET /agent/poll — a node-agent reads its assigned deployments. Issue only on node-scoped keys.", "Deploy"),
 		new(AgentHeartbeat, "Agent: report state", "POST /agent/heartbeat — a node-agent reports actual container state. Issue only on node-scoped keys.", "Deploy"),
-		new(AdminProvision, "Provision projects & keys", "Agent onboarding: create projects (project.*), mint API keys (apikey.*), set config bindings (config.*) via the MCP tools. Issue only on short-lived agent keys.", "Admin"),
+		new(AdminProvision, "Provision projects & keys", "ROOT-EQUIVALENT: mints API keys with ANY scopes for ANY project (including admin:provision itself), creates projects (project.*), sets config bindings (config.*). Issue deliberately; prefer short-lived keys for routine work.", "Admin"),
 	];
 
 	static readonly HashSet<string> Allowed =
