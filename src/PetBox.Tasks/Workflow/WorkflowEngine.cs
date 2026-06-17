@@ -18,8 +18,10 @@ public static class WorkflowEngine
 		BoardKind kind, string? type, string? fromSlug, string toSlug,
 		bool enforceApproval = false, bool actorCanApprove = false, bool hasReason = true)
 	{
-		if (kind == BoardKind.Free)
-			return WorkflowResult.Success; // free boards: any status, no flow
+		// Free boards now carry a real preset workflow (free transitions, fixed status vocab) —
+		// they flow through the generic path below like any kind. A legacy out-of-vocab status is
+		// tolerated on an unchanged-status edit (from==to) and on recovery (unknown from → fresh
+		// start), so pre-migration nodes still read/edit; only setting a NEW invalid status is rejected.
 
 		// Unchanged status: don't re-litigate it. Editing a node's other fields must not fail
 		// because its (carried-over) status isn't in this kind's workflow — e.g. a legacy/invalid

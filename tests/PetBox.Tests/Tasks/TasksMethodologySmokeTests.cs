@@ -366,17 +366,20 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		Text(r).Should().Contain("Pending"); // the error enumerates valid statuses for this kind/type
 	}
 
-	// 10. a free board (default kind) accepts any status string — backward compatibility.
+	// 10. a simple board (default kind) enforces its preset status vocab but allows free
+	// transitions (any valid status → any), and the error on an unknown status names the set.
 	[Fact]
-	public async Task FreeBoard_AcceptsArbitraryStatus()
+	public async Task SimpleBoard_EnforcesVocab_FreeTransitions()
 	{
 		(await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "scratch" })).IsError.Should().NotBe(true);
-		var r = await Agent("tasks.upsert", new
-		{
-			projectKey = ProjectKey, board = "scratch",
-			nodes = Nodes(new { key = "whatever", status = "Pending", title = "W", body = "x" }),
-		});
-		r.IsError.Should().NotBe(true);
+		// a valid preset status is accepted
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "scratch", nodes = Nodes(new { key = "ok", status = "Todo", title = "OK", body = "x" }) })).IsError.Should().NotBe(true);
+		// an out-of-vocab status is rejected, and the error enumerates the valid statuses
+		var bad = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "scratch", nodes = Nodes(new { key = "bad", status = "Frobnicate", title = "B", body = "x" }) });
+		IsErr(bad).Should().BeTrue();
+		Text(bad).Should().Contain("Todo");
+		// free transitions: Todo -> Done directly (no approve gate)
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "scratch", nodes = Nodes(new { key = "ok", version = 1, status = "Done" }) })).IsError.Should().NotBe(true);
 	}
 
 	// 11. a work task can't be Blocked without naming a blocker (blocked requires a `blocks` link).
@@ -477,15 +480,15 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	public async Task ClosedBoard_RejectsWrites_UntilReopened()
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "tmp" });
-		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "tmp", nodes = Nodes(new { key = "a", status = "Pending", title = "A", body = "x" }) })).IsError.Should().NotBe(true);
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "tmp", nodes = Nodes(new { key = "a", status = "Todo", title = "A", body = "x" }) })).IsError.Should().NotBe(true);
 
 		await Agent("tasks.board_close", new { projectKey = ProjectKey, board = "tmp" });
-		var blocked = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "tmp", nodes = Nodes(new { key = "b", status = "Pending", title = "B", body = "x" }) });
+		var blocked = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "tmp", nodes = Nodes(new { key = "b", status = "Todo", title = "B", body = "x" }) });
 		IsErr(blocked).Should().BeTrue();
 		Text(blocked).Should().Contain("closed");
 
 		await Agent("tasks.board_reopen", new { projectKey = ProjectKey, board = "tmp" });
-		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "tmp", nodes = Nodes(new { key = "b", status = "Pending", title = "B", body = "x" }) })).IsError.Should().NotBe(true);
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "tmp", nodes = Nodes(new { key = "b", status = "Todo", title = "B", body = "x" }) })).IsError.Should().NotBe(true);
 	}
 
 	// 15. partial update: a field omitted from upsert keeps its prior value — a status-only
@@ -494,7 +497,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	public async Task PartialUpdate_OmittedFieldsPreserved()
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "pu" });
-		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "pu", nodes = Nodes(new { key = "a", status = "Pending", title = "Alpha", body = "BODY", priority = 5 }) })).IsError.Should().NotBe(true);
+		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "pu", nodes = Nodes(new { key = "a", status = "Todo", title = "Alpha", body = "BODY", priority = 5 }) })).IsError.Should().NotBe(true);
 
 		// send ONLY path + version + status
 		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "pu", nodes = Nodes(new { key = "a", version = 1, status = "InProgress" }) })).IsError.Should().NotBe(true);
@@ -510,7 +513,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	public async Task SpecRef_NonSpecTarget_Rejected()
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "notspec" }); // free
-		var nf = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "notspec", nodes = Nodes(new { key = "x", status = "Pending", title = "X", body = "x" }) });
+		var nf = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "notspec", nodes = Nodes(new { key = "x", status = "Todo", title = "X", body = "x" }) });
 		var nonSpecId = NodeId(nf, "x");
 
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
@@ -528,7 +531,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
 		// A node on a NON-spec (free) board — not a valid spec target.
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "other" });
-		var other = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "other", nodes = Nodes(new { key = "r", status = "Pending", title = "R", body = "x" }) });
+		var other = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "other", nodes = Nodes(new { key = "r", status = "Todo", title = "R", body = "x" }) });
 		var otherId = NodeId(other, "r");
 
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" }); // auto-wires to spec
@@ -544,7 +547,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "hc" });
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "hc", nodes = Nodes(
-			new { key = "open1", status = "Pending", title = "Open", body = "x" },
+			new { key = "open1", status = "Todo", title = "Open", body = "x" },
 			new { key = "done1", status = "Done", title = "Done", body = "x" }) });
 
 		var def = await Agent("tasks.get", new { projectKey = ProjectKey, board = "hc" });
@@ -602,9 +605,9 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "a" });
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "b" });
 
-		var ia = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "a", nodes = Nodes(new { key = "phase-1", status = "Pending", title = "A node", body = "x" }) });
+		var ia = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "a", nodes = Nodes(new { key = "phase-1", status = "Todo", title = "A node", body = "x" }) });
 		IsErr(ia).Should().BeFalse(Text(ia));
-		var ib = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "b", nodes = Nodes(new { key = "phase-1", status = "Pending", title = "B node", body = "y" }) });
+		var ib = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "b", nodes = Nodes(new { key = "phase-1", status = "Todo", title = "B node", body = "y" }) });
 		IsErr(ib).Should().BeFalse(Text(ib));
 
 		// Same key, different boards → independent rows, no collision.
@@ -615,7 +618,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var edit = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "a", nodes = Nodes(new { key = "phase-1", version = 1, status = "InProgress", title = "A node", body = "x" }) });
 		IsErr(edit).Should().BeFalse(Text(edit));
 		StatusOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "a" }), "phase-1").Should().Be("InProgress");
-		StatusOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "b" }), "phase-1").Should().Be("Pending");
+		StatusOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "b" }), "phase-1").Should().Be("Todo");
 	}
 
 	// 22. spec-write-needs-accepted-idea: a spec node without ideaRef is rejected.

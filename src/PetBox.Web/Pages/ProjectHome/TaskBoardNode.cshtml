@@ -3,6 +3,15 @@
 @{
 	var node = Model.Detail.Node;
 	ViewData["Title"] = string.IsNullOrEmpty(node.Title) ? node.Key : node.Title;
+
+	var nodeKind = PetBox.Tasks.Workflow.WorkflowCatalog.ParseKind(Model.Detail.Kind);
+	var nodeKindName = nodeKind.ToString().ToLowerInvariant();
+	var nodeIsSimple = nodeKind == PetBox.Tasks.Workflow.BoardKind.Simple;
+	// Make the board kind explicit so its statuses read as a deliberate kind, not "broken".
+	var nodeKindBadgeClass = nodeIsSimple ? "badge-info badge-outline" : "badge-neutral";
+	var nodeKindTitle = nodeIsSimple
+		? "simple board — lightweight preset: statuses Todo|InProgress|Blocked|Done|Cancelled, free transitions, types task|bug|feature|chore|issue"
+		: $"{nodeKindName} board — statuses follow the {nodeKindName} workflow";
 }
 
 @functions {
@@ -30,6 +39,7 @@
 	<a href="@Routes.ProjectTasks(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70">tasks</a>
 	<span class="opacity-40">/</span>
 	<a href="@Routes.ProjectTaskBoard(Model.WorkspaceKey, Model.ProjectKey, Model.Detail.Board)" class="link link-hover opacity-70 font-mono">@Model.Detail.Board</a>
+	<span class="badge @nodeKindBadgeClass badge-xs" data-testid="node-board-kind" data-kind="@nodeKindName" title="@nodeKindTitle">@nodeKindName</span>
 	@foreach (var a in Model.Detail.Ancestors)
 	{
 		<span class="opacity-40">/</span>

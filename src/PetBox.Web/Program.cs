@@ -214,12 +214,7 @@ public partial class Program
 		// (not UnsafeRelaxed) so output is human-readable while HTML-sensitive chars stay escaped.
 		var mcpJson = new System.Text.Json.JsonSerializerOptions(ModelContextProtocol.McpJsonUtilities.DefaultOptions)
 		{
-			Encoder = System.Text.Encodings.Web.JavaScriptEncoder.Create(
-				System.Text.Unicode.UnicodeRanges.BasicLatin,
-				System.Text.Unicode.UnicodeRanges.Latin1Supplement,
-				System.Text.Unicode.UnicodeRanges.LatinExtendedA,
-				System.Text.Unicode.UnicodeRanges.GeneralPunctuation, // — … “” ‘’ etc.
-				System.Text.Unicode.UnicodeRanges.Cyrillic),
+			Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed,
 		};
 		builder.Services.AddMcpServer()
 			.WithHttpTransport()

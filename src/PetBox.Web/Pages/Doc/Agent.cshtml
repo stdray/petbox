@@ -95,7 +95,7 @@ setx PETBOX_&lt;PROJECT&gt;_API_KEY "&lt;your key&gt;"</code></pre>
 			<code>currentVersion</code>) — advance your cursor; don't re-read.
 		</p>
 		<div class="not-prose my-4 p-4 rounded border border-primary/40 bg-primary/5 text-sm">
-			A board has a <strong>kind</strong> (spec / work / ideas / intake / free) that drives its statuses,
+			A board has a <strong>kind</strong> (spec / work / ideas / intake / simple) that drives its statuses,
 			links and invariants. Before writing real plans, read the
 			<a class="link" href="@Routes.DocMethodology()">methodology cheatsheet</a> — it's the operational
 			contract (and call <code>tasks.workflow</code> for a board's live statuses).
@@ -103,7 +103,7 @@ setx PETBOX_&lt;PROJECT&gt;_API_KEY "&lt;your key&gt;"</code></pre>
 
 		<h2>5. Tools</h2>
 		<ul>
-			<li><code>tasks.board_create(kind?) / board_list / board_delete</code> — named boards; <code>kind</code> ∈ spec|work|ideas|intake|free. A cold <code>tasks.upsert</code> auto-creates a free board.</li>
+			<li><code>tasks.board_create(kind?) / board_list / board_delete</code> — named boards; <code>kind</code> ∈ spec|work|ideas|intake|simple. A cold <code>tasks.upsert</code> auto-creates a simple board.</li>
 			<li><code>tasks.get / upsert / delta</code> — the node tree (key, nodeId, l1, l2, l3, depth, parentKey, status, type, title, body, priority, version; on a spec board also computed <code>delivery</code>). Node fields incl. <code>specRef</code> / <code>blockedBy</code> create links.</li>
 			<li><code>tasks.workflow</code> — the live statuses/transitions for a board's kind.</li>
 			<li><code>relations.create / list / delete</code> — typed temporal edges (task_spec|issue_task|idea_spec|blocks|nfr|dup). See the <a href="@Routes.DocMethodology()">cheatsheet</a>.</li>
@@ -148,11 +148,13 @@ description: Shared task boards, memory and session plans for this project via t
 This project is connected to a PetBox instance over MCP (server `petbox`).
 Pass projectKey "&lt;proj&gt;" in every call.
 
-BOARDS have a kind, set at board_create and IMMUTABLE: free (no rules) | spec
-(requirements, computed delivery) | work (feature|bug, FSM) | ideas (fuzzy thinking) |
-intake (inbound issues). A cold upsert to a missing board auto-creates a FREE one —
-create boards explicitly with the right kind. Standard board names = their kind:
-ideas, spec, work, intake (+ free for scratch). Use those names.
+BOARDS have a kind, set at board_create and IMMUTABLE: simple (lightweight preset:
+task|bug|feature|chore|issue, Todo->InProgress->Done +Blocked|Cancelled, free
+transitions, free-form tags) | spec (requirements, computed delivery) | work
+(feature|bug, FSM) | ideas (fuzzy thinking) | intake (inbound issues). A cold upsert to
+a missing board auto-creates a SIMPLE one — create boards explicitly with the right
+kind. Standard board names = their kind: ideas, spec, work, intake (+ simple for
+scratch). Use those names.
 
 FLOW starts in `ideas`: a raw idea, deliberated (raw->exploring->accepted), is what
 PRODUCES the spec — the accepted idea's conclusions become spec nodes; work features
@@ -163,7 +165,7 @@ in key (lowercase [a-z][a-z0-9_-]). Short `title` + markdown `body`. Links bind 
 returned `nodeId`, not the path.
 
 RIGHT-SIZE the rails — scale how deep, not whether to start from an idea:
-  throwaway spike  -> one free board (no idea)
+  throwaway spike  -> one simple board (no idea)
   small build      -> short idea -> a few thin spec leaves -> work
   ongoing project  -> ideas -> spec -> work + intake (deeper)
 

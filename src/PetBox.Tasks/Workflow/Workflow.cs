@@ -1,8 +1,10 @@
 namespace PetBox.Tasks.Workflow;
 
 // Role of a board. Drives which task types/statuses/transitions apply and which
-// invariants/effects fire. `Free` (default) = today's behaviour: no validation.
-public enum BoardKind { Free, Spec, Ideas, Intake, Work }
+// invariants/effects fire. `Simple` (default, formerly `Free`) = a lightweight preset
+// with a fixed status/type vocab and free transitions; the methodology kinds add gates.
+// Simple is first so it stays the ParseKind fallback — a legacy "free" string maps to it.
+public enum BoardKind { Simple, Spec, Ideas, Intake, Work }
 
 // Terminal kind of a status — data that powers UI "closed" predicate + badge,
 // and the (capability-level) approve gate (only a maintainer reaches TerminalOk).

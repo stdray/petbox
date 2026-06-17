@@ -78,8 +78,8 @@ public sealed class TasksTreeContractTests : IDisposable
 		var nodes = McpInputs.Nodes(new object[]
 		{
 			new { key = "logging", status = "InProgress", title = "Logging", body = "winston -> PetBox", priority = 0 },
-			new { key = "ingest", partOf = "logging", status = "Pending", title = "Ingest", body = "ship CLEF", priority = 1 },
-			new { key = "endpoint", partOf = "ingest", status = "Pending", title = "Endpoint", body = "POST endpoint", priority = 2 },
+			new { key = "ingest", partOf = "logging", status = "Todo", title = "Ingest", body = "ship CLEF", priority = 1 },
+			new { key = "endpoint", partOf = "ingest", status = "Todo", title = "Endpoint", body = "POST endpoint", priority = 2 },
 		});
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes);
 
@@ -136,7 +136,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "s", null);
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "s",
-			McpInputs.Nodes(new object[] { new { key = "alpha", status = "Pending", title = "alpha note", body = "alpha keyword" } }));
+			McpInputs.Nodes(new object[] { new { key = "alpha", status = "Todo", title = "alpha note", body = "alpha keyword" } }));
 
 		var res = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, "alpha"));
 		var hit = res.GetProperty("nodes").EnumerateArray()
@@ -165,9 +165,9 @@ public sealed class TasksTreeContractTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g",
 			McpInputs.Nodes(new object[]
 			{
-				new { key = "a", status = "Pending", title = "A", body = "x", tags = new[] { "area:ui", "concern:security" } },
-				new { key = "b", status = "Pending", title = "B", body = "x", tags = new[] { "area:ui" } },
-				new { key = "c", status = "Pending", title = "C", body = "x", tags = new[] { "area:llm" } },
+				new { key = "a", status = "Todo", title = "A", body = "x", tags = new[] { "area:ui", "concern:security" } },
+				new { key = "b", status = "Todo", title = "B", body = "x", tags = new[] { "area:ui" } },
+				new { key = "c", status = "Todo", title = "C", body = "x", tags = new[] { "area:llm" } },
 			}));
 
 		// group-by area: ui {a,b}, llm {c}. groupBy echoes the ordered dimension list.
@@ -193,8 +193,8 @@ public sealed class TasksTreeContractTests : IDisposable
 			McpInputs.Nodes(new object[]
 			{
 				// a is in TWO areas → multimembership: it appears under both area:ui and area:llm.
-				new { key = "a", status = "Pending", title = "A", body = "x", tags = new[] { "area:ui", "area:llm", "concern:security" } },
-				new { key = "b", status = "Pending", title = "B", body = "x", tags = new[] { "area:ui" } }, // no concern → "(none)"
+				new { key = "a", status = "Todo", title = "A", body = "x", tags = new[] { "area:ui", "area:llm", "concern:security" } },
+				new { key = "b", status = "Todo", title = "B", body = "x", tags = new[] { "area:ui" } }, // no concern → "(none)"
 			}));
 
 		// groupBy [area, concern]: top level = area buckets, each split by concern, leaves = nodeKeys.
@@ -261,7 +261,7 @@ public sealed class TasksTreeContractTests : IDisposable
 
 		var nodes = McpInputs.Nodes(new object[]
 		{
-			new { l1 = "Bad Phase", status = "Pending", body = "x" },
+			new { l1 = "Bad Phase", status = "Todo", body = "x" },
 		});
 		// GuardAsync surfaces the validation failure as a structured error result
 		// (not a thrown, opaque MCP error).
@@ -278,7 +278,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		// following the agent guide literally no longer throws.
 		var nodes = McpInputs.Nodes(new object[]
 		{
-			new { l1 = "alpha", status = "Pending", title = "Alpha", body = "do alpha", priority = 0 },
+			new { l1 = "alpha", status = "Todo", title = "Alpha", body = "do alpha", priority = 0 },
 		});
 		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "fresh", nodes));
 
@@ -298,7 +298,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		// input schema), so the old JSON-*string* fallback for stale-schema clients is gone —
 		// a reconnect refreshes the cached schema (see McpToolInputs deviation note). The `l1`
 		// back-compat alias for the flat `key` still binds through the typed record.
-		var nodes = McpInputs.NodesJson("""[{"l1":"alpha","title":"Alpha","status":"Pending","body":"b","priority":0}]""");
+		var nodes = McpInputs.NodesJson("""[{"l1":"alpha","title":"Alpha","status":"Todo","body":"b","priority":0}]""");
 		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "strboard", nodes));
 		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
 			.Which.GetProperty("title").GetString().Should().Be("Alpha");
@@ -310,11 +310,11 @@ public sealed class TasksTreeContractTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b", null);
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			McpInputs.Nodes(new[] { new { key = "n", type = "alpha", status = "todo", body = "x" } }), 0);
+			McpInputs.Nodes(new[] { new { key = "n", type = "bug", status = "Todo", body = "x" } }), 0);
 
 		// Editing the node to a different type must fail — type is immutable once set.
 		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			McpInputs.Nodes(new[] { new { key = "n", type = "beta", version = 1, body = "x" } })));
+			McpInputs.Nodes(new[] { new { key = "n", type = "feature", version = 1, body = "x" } })));
 		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
 		res.GetProperty("error").GetProperty("message").GetString().Should().Contain("immutable");
 

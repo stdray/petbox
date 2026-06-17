@@ -97,13 +97,13 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 	}
 
 	[Fact]
-	public async Task QuickAdd_OnFreeBoard_StaysPending()
+	public async Task QuickAdd_OnFreeBoard_DefaultsTodoTask()
 	{
 		// The actual create semantics on the allowed path (distinct from the gate above).
-		var model = await Board(BoardKind.Free);
+		var model = await Board(BoardKind.Simple);
 		await model.OnPostCreateAsync("My item", "details", 50, default);
 		var n = _store.GetContext("proj").PlanNodes.Where(x => x.Board == model.Board && x.ActiveTo == null).ToList().Single();
-		n.Status.Should().Be("Pending"); // free boards keep the legacy default
-		n.Type.Should().BeEmpty();
+		n.Status.Should().Be("Todo");  // free preset initial
+		n.Type.Should().Be("task");    // free empty-type default
 	}
 }

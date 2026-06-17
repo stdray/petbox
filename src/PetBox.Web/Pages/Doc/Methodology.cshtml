@@ -26,18 +26,18 @@
 		<h2>Boards have a <code>kind</code></h2>
 		<p>
 			Set <code>kind</code> on <code>tasks.board_create</code> (it can't be changed later). The kind drives
-			which task types, statuses, transitions and invariants apply. Default is <code>free</code>.
+			which task types, statuses, transitions and invariants apply. Default is <code>simple</code>.
 		</p>
 		<ul>
 			<li><strong><code>spec</code></strong> — the requirement tree (only DEFINED requirements). Node status <code>draft|defined|deprecated</code>. Each node also carries a COMPUTED <code>delivery</code> (see below).</li>
 			<li><strong><code>work</code></strong> — technical tasks, type <code>feature|bug</code>. Status <code>Pending→InProgress→Review→Done</code> (+ <code>Blocked|Deferred|Cancelled</code>). A feature/bug MUST link a spec node (see spec-link).</li>
 			<li><strong><code>ideas</code></strong> — deliberation, type <code>idea</code>. Status <code>raw→exploring→{rejected|deferred|accepted}</code>.</li>
 			<li><strong><code>intake</code></strong> — raw issues, type <code>issue</code>. Status <code>reported→triage→{confirmed|duplicate|wontfix}→done</code>.</li>
-			<li><strong><code>free</code></strong> — no validation, any status string (legacy / scratch).</li>
+			<li><strong><code>simple</code></strong> — a lightweight preset for ad-hoc/scratch work: type <code>task|bug|feature|chore|issue</code>, status <code>Todo→InProgress→Done</code> (+ <code>Blocked|Cancelled</code>) with FREE transitions (any valid status → any, no gates), and free-form tags. No spec/idea governance.</li>
 		</ul>
 		<p>
 			<strong>Standard boards.</strong> A project uses one board of each kind, named for its kind:
-			<code>ideas</code>, <code>spec</code>, <code>work</code>, <code>intake</code> (+ <code>free</code>
+			<code>ideas</code>, <code>spec</code>, <code>work</code>, <code>intake</code> (+ <code>simple</code>
 			scratch). Use those names so every agent and session finds the same boards.
 		</p>
 		<p>
@@ -98,11 +98,11 @@
 		<h2>Right-size the rails</h2>
 		<p>Match the structure to the work — the full rails pay off on a long-lived, multi-agent project where the spec is the asset; don't over-ceremony a small one-off.</p>
 		<ul>
-			<li><strong>Scratch / spike / throwaway</strong> → one <code>free</code> board. No idea, no spec, any status. Use when the work is exploratory or won't be maintained.</li>
+			<li><strong>Scratch / spike / throwaway</strong> → one <code>simple</code> board. No idea, no spec, lightweight statuses. Use when the work is exploratory or won't be maintained.</li>
 			<li><strong>Small self-contained build</strong> (a small game, a script, a single feature) → start with a <em>short</em> idea on <code>ideas</code>, let it settle into a few <em>thin</em> <code>spec</code> leaves (acceptance criteria, one line each), then <code>work</code> features linked (<code>specBoard</code> set). Skip <code>intake</code> until reports actually arrive.</li>
 			<li><strong>Ongoing / multi-session / multi-agent project</strong> → the full rails: <code>ideas</code> → <code>spec</code> → <code>work</code> + <code>intake</code>, with deeper deliberation and a real requirement tree.</li>
 		</ul>
-		<p class="text-sm opacity-70">A tier scales <em>how deep</em> the idea and how thick the spec are — not whether you start from an idea. Only pure throwaway scratch skips the idea entirely (a <code>free</code> board). The spec-link invariant on <code>work</code> holds at every tier — it's the forcing function.</p>
+		<p class="text-sm opacity-70">A tier scales <em>how deep</em> the idea and how thick the spec are — not whether you start from an idea. Only pure throwaway scratch skips the idea entirely (a <code>simple</code> board). The spec-link invariant on <code>work</code> holds at every tier — it's the forcing function.</p>
 
 		<h2>Tools</h2>
 		<ul>

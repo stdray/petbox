@@ -118,7 +118,14 @@ public sealed record LogEntryViewModel
 	public static string IsoUtc(DateTime dt) =>
 		dt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture);
 
-	static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
+	static readonly JsonSerializerOptions JsonOptions = new()
+	{
+		WriteIndented = true,
+		// Default encoder escapes every non-ASCII char (Cyrillic -> \uXXXX), making the
+		// copied event JSON unreadable. Use the shared relaxed encoder so human text stays
+		// as-is while HTML-sensitive chars stay escaped (safe inside the data-copy attribute).
+		Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed,
+	};
 
 	public string ToJson()
 	{

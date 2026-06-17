@@ -18,10 +18,11 @@ public sealed record TaskBoardMeta
 	[Column, Nullable]
 	public string? Description { get; init; }
 
-	// Board role: free|spec|ideas|intake|work (default free). Drives the workflow
-	// (types/statuses/transitions) + invariants/effects via WorkflowCatalog.
+	// Board role: simple|spec|ideas|intake|work (default simple). Drives the workflow
+	// (types/statuses/transitions) + invariants/effects via WorkflowCatalog. Legacy rows
+	// may still carry "free" (M029 migrates them; ParseKind also maps "free" → Simple).
 	[Column, NotNull]
-	public string Kind { get; init; } = "free";
+	public string Kind { get; init; } = "simple";
 
 	[Column, NotNull]
 	public DateTime CreatedAt { get; init; }

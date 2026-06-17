@@ -6,7 +6,7 @@ namespace PetBox.Tests.Tasks;
 public sealed class WorkflowEngineTests
 {
 	public static IEnumerable<object[]> AllKinds =>
-		[[BoardKind.Spec], [BoardKind.Ideas], [BoardKind.Intake], [BoardKind.Work]];
+		[[BoardKind.Simple], [BoardKind.Spec], [BoardKind.Ideas], [BoardKind.Intake], [BoardKind.Work]];
 
 	[Theory]
 	[MemberData(nameof(AllKinds))]
@@ -28,10 +28,25 @@ public sealed class WorkflowEngineTests
 	}
 
 	[Fact]
-	public void Free_AcceptsAnything()
+	public void Free_HasPreset_FreeTransitions_RejectsUnknownStatus()
 	{
-		WorkflowCatalog.For(BoardKind.Free, null).Should().BeNull();
-		WorkflowEngine.Validate(BoardKind.Free, null, null, "literally-anything").Ok.Should().BeTrue();
+		// Free now carries a real preset workflow; type is a label, so For() ignores it (same instance).
+		WorkflowCatalog.For(BoardKind.Simple, null).Should().NotBeNull();
+		WorkflowCatalog.For(BoardKind.Simple, "anything").Should().BeSameAs(WorkflowCatalog.For(BoardKind.Simple, null));
+
+		// Initial + free transitions: any valid status → any valid status (even straight to terminal).
+		WorkflowEngine.Validate(BoardKind.Simple, null, null, "Todo").Ok.Should().BeTrue();
+		WorkflowEngine.Validate(BoardKind.Simple, null, "Todo", "Done").Ok.Should().BeTrue();
+		WorkflowEngine.Validate(BoardKind.Simple, null, "Done", "InProgress").Ok.Should().BeTrue();
+
+		// An out-of-vocab status is rejected, naming the valid set.
+		var bad = WorkflowEngine.Validate(BoardKind.Simple, null, null, "literally-anything");
+		bad.Ok.Should().BeFalse();
+		bad.Error.Should().Contain("Todo");
+
+		// Legacy tolerance: an unchanged (carried-over) out-of-vocab status still passes — only a
+		// CHANGE to an invalid status is rejected (lets pre-migration nodes be edited).
+		WorkflowEngine.Validate(BoardKind.Simple, null, "Pending", "Pending").Ok.Should().BeTrue();
 	}
 
 	[Fact]
@@ -109,8 +124,8 @@ public sealed class WorkflowEngineTests
 	[Fact]
 	public void ParseKind_DefaultsToFree()
 	{
-		WorkflowCatalog.ParseKind(null).Should().Be(BoardKind.Free);
-		WorkflowCatalog.ParseKind("garbage").Should().Be(BoardKind.Free);
+		WorkflowCatalog.ParseKind(null).Should().Be(BoardKind.Simple);
+		WorkflowCatalog.ParseKind("garbage").Should().Be(BoardKind.Simple);
 		WorkflowCatalog.ParseKind("WORK").Should().Be(BoardKind.Work);
 	}
 }

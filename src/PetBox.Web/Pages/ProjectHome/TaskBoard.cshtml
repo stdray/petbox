@@ -13,6 +13,16 @@
 		("concern,area", "concern → area"),
 	};
 	var curBy = string.Join(",", Model.GroupDims);
+
+	var kindName = Model.Kind.ToString().ToLowerInvariant();
+	var isSimple = Model.Kind == PetBox.Tasks.Workflow.BoardKind.Simple;
+	// Surface the board kind explicitly so its statuses read as "this is a simple/methodology
+	// board", not "the statuses are broken". Simple = a lightweight preset (fixed vocab, free
+	// transitions); methodology kinds add gates.
+	var kindBadgeClass = isSimple ? "badge-info badge-outline" : "badge-neutral";
+	var kindTitle = isSimple
+		? "simple board — lightweight preset: statuses Todo|InProgress|Blocked|Done|Cancelled, free transitions, types task|bug|feature|chore|issue"
+		: $"{kindName} board — statuses follow the {kindName} workflow";
 }
 
 @functions {
@@ -31,6 +41,7 @@
 	<a href="@Routes.ProjectTasks(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70" data-testid="board-breadcrumb">tasks</a>
 	<span class="opacity-40">/</span>
 	<h1 class="text-2xl font-semibold font-mono" data-testid="board-title">@Model.Board</h1>
+	<span class="badge @kindBadgeClass" data-testid="board-kind" data-kind="@kindName" title="@kindTitle">@kindName</span>
 	<span class="badge badge-ghost">@Model.Nodes.Count node(s)</span>
 </div>
 

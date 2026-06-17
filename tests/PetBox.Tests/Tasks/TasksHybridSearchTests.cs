@@ -76,7 +76,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 	public async Task Hybrid_FusesLexicalAndSemanticUnion_AndReportsBothRan()
 	{
 		var tasks = Service(new FakeLlmClient());
-		await tasks.CreateBoardAsync(Proj, "b", "free", null, null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		// "alpha" hits lexically on the query token; "beta" does NOT contain the token but its
 		// embedding is steered to sit near the query vector, so only semantic finds it.
 		await tasks.UpsertAsync(Proj, "b",
@@ -98,7 +98,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 	public async Task NoLlm_DegradesToLexicalOnly()
 	{
 		var tasks = Service(llm: null);
-		await tasks.CreateBoardAsync(Proj, "b", "free", null, null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("alpha", "alpha note", "alpha keyword")]);
 
 		var res = await tasks.SearchAsync(Proj, "alpha");
@@ -116,7 +116,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 		// Embedder that throws: the write never embeds (Class-B is off the write path), so the
 		// upsert succeeds regardless; at query time the semantic leg fails → lexical-only, degraded.
 		var tasks = Service(new ThrowingLlmClient());
-		await tasks.CreateBoardAsync(Proj, "b", "free", null, null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("alpha", "alpha note", "alpha keyword")]);
 
 		var res = await tasks.SearchAsync(Proj, "alpha");
@@ -131,7 +131,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 	public async Task SemanticOnly_WithModelDimMismatchRow_IgnoresIncomparableVector()
 	{
 		var tasks = Service(new FakeLlmClient());
-		await tasks.CreateBoardAsync(Proj, "b", "free", null, null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b",
 		[
 			Node("good", "good note", FakeLlmClient.NearQueryMarker + " body"),
@@ -159,7 +159,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 		// ASCII-only tokenizer would drop the Cyrillic query entirely; the Unicode-aware
 		// tokenizer + unicode61 FTS must hit.
 		var tasks = Service(llm: null);
-		await tasks.CreateBoardAsync(Proj, "b", "free", null, null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b",
 		[
 			Node("ru", "заметка про деплой", "разворачиваем сервер и настраиваем прокси"),
@@ -177,8 +177,8 @@ public sealed class TasksHybridSearchTests : IDisposable
 	{
 		// A node on board A must NOT be returned when searching board B.
 		var tasks = Service(new FakeLlmClient());
-		await tasks.CreateBoardAsync(Proj, "a", "free", null, null);
-		await tasks.CreateBoardAsync(Proj, "b", "free", null, null);
+		await tasks.CreateBoardAsync(Proj, "a", "simple", null, null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "a", [Node("widget", "widget on a", "the gizmo keyword lives here")]);
 		await tasks.UpsertAsync(Proj, "b", [Node("gadget", "gadget on b", "another gizmo keyword here")]);
 		await DrainVectors(new FakeLlmClient(), "a");
@@ -202,7 +202,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 		// from the index — and that drop rides the entity transaction (onWithinTx), not a separate
 		// post-commit rebuild.
 		var tasks = Service(llm: null);
-		await tasks.CreateBoardAsync(Proj, "b", "free", null, null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("keepme", "alpha note", "alpha keyword")]);
 		(await tasks.SearchAsync(Proj, "alpha")).Hits.Select(h => h.Node.Key).Should().Equal("keepme");
 
