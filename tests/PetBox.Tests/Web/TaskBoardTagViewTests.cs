@@ -56,7 +56,7 @@ public sealed class TaskBoardTagViewTests : IDisposable
 	// a is in two areas (multimembership) + a concern; b is one area, no concern → "(none)".
 	async Task Seed()
 	{
-		await _store.CreateAsync("proj", "g", null, "free");
+		await _store.CreateAsync("proj", "g", null, "simple");
 		await _tasks.UpsertAsync("proj", "g",
 		[
 			new NodePatch { Key = "a", Title = "A", Body = "x", Tags = ["area:ui", "area:llm", "concern:security"] },

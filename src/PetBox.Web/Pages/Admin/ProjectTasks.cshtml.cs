@@ -65,7 +65,7 @@ public sealed class ProjectTasksModel : PageModel
 
 		try
 		{
-			await _tasks.CreateBoardAsync(ProjectKey, name?.Trim() ?? string.Empty, "free", description, specBoard: null, ct);
+			await _tasks.CreateBoardAsync(ProjectKey, name?.Trim() ?? string.Empty, "simple", description, specBoard: null, ct);
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{

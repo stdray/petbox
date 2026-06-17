@@ -103,7 +103,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			McpInputs.Nodes(new[] { new { key = "n", status = "Pending", body = "v1" } }), 0);
+			McpInputs.Nodes(new[] { new { key = "n", status = "Todo", body = "v1" } }), 0);
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			McpInputs.Nodes(new[] { new { key = "n", status = "Done", body = "byB", version = 1 } }), 0);
 		var r = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
@@ -153,7 +153,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		var star = Http("tasks:read,tasks:write", project: "*");
 		await TasksTools.BoardCreateAsync(star, Flags(), _tasks, Proj, "x");
 		Json(await TasksTools.GetAsync(star, Flags(), _tasks, Proj, "x"))
-			.GetProperty("kind").GetString().Should().Be("free");
+			.GetProperty("kind").GetString().Should().Be("simple");
 
 		// ...while a key scoped to a different project is rejected for this one.
 		var other = Http("tasks:read,tasks:write", project: "other");

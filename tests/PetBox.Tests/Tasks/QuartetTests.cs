@@ -78,11 +78,11 @@ public sealed class QuartetTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Singleton_FreeBoards_Unlimited()
+	public async Task Singleton_SimpleBoards_Unlimited()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "f1", "free");
-		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "f2", "free");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "f1", "simple");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "f2", "simple");
 		Json(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).GetProperty("boards")
 			.EnumerateArray().Count().Should().Be(2);
 	}
@@ -147,7 +147,7 @@ public sealed class QuartetTests : IDisposable
 	public async Task Upsert_IncludeUrl_ReturnsPermalinkForCreatedNode()
 	{
 		var http = Http("tasks:read,tasks:write");
-		var nodes = McpInputs.NodesJson("""[{"key":"a","status":"Pending","title":"A"}]""");
+		var nodes = McpInputs.NodesJson("""[{"key":"a","status":"Todo","title":"A"}]""");
 		var added = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "free1", nodes, includeUrl: true))
 			.GetProperty("added").EnumerateArray().Single();
 		added.GetProperty("url").GetString().Should().Be($"https://box.test/ui/ws/{Proj}/tasks/free1/a");
@@ -192,7 +192,7 @@ public sealed class QuartetTests : IDisposable
 
 		// Default echo: title present, body sliced to null (no re-dump of what I just sent).
 		var nodesA = McpInputs.NodesJson(
-			$$"""[{"key":"a","status":"Pending","title":"A","body":"{{big}}"}]""");
+			$$"""[{"key":"a","status":"Todo","title":"A","body":"{{big}}"}]""");
 		var resA = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesA));
 		var addedA = resA.GetProperty("added").EnumerateArray().Single();
 		addedA.GetProperty("title").GetString().Should().Be("A");
@@ -201,7 +201,7 @@ public sealed class QuartetTests : IDisposable
 		// A second node with the DEFAULT stale cursor (sinceVersion = 0) echoes BOTH nodes
 		// (version > 0), but every echoed body is still null — the dump is bodiless.
 		var nodesB = McpInputs.NodesJson(
-			"""[{"key":"b","status":"Pending","title":"B","body":"zzz"}]""");
+			"""[{"key":"b","status":"Todo","title":"B","body":"zzz"}]""");
 		var resB = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesB));
 		var echoed = resB.GetProperty("added").EnumerateArray()
 			.Concat(resB.GetProperty("updated").EnumerateArray()).ToList();
@@ -210,7 +210,7 @@ public sealed class QuartetTests : IDisposable
 
 		// bodyLen > 0: the opt-in sliced body — first N chars + "…" when cut.
 		var nodesC = McpInputs.NodesJson(
-			$$"""[{"key":"c","status":"Pending","title":"C","body":"{{big}}"}]""");
+			$$"""[{"key":"c","status":"Todo","title":"C","body":"{{big}}"}]""");
 		var sliced = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesC, bodyLen: 300))
 			.GetProperty("added").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "c")
 			.GetProperty("body").GetString()!;
@@ -226,7 +226,7 @@ public sealed class QuartetTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		var big = new string('z', 500);
 		var nodes = McpInputs.NodesJson(
-			$$"""[{"key":"n","status":"Pending","title":"N","body":"{{big}}"}]""");
+			$$"""[{"key":"n","status":"Todo","title":"N","body":"{{big}}"}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
 
 		// Default: the full body.

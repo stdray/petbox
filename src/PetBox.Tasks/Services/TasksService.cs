@@ -48,15 +48,15 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- board lifecycle ----
 
-	// The methodology kinds are per-project singletons (the quartet); `free` is unlimited.
+	// The methodology kinds are per-project singletons (the quartet); `simple` is unlimited.
 	static readonly BoardKind[] Methodological = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
 
 	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, CancellationToken ct = default)
 	{
-		var k = WorkflowCatalog.ParseKind(kind ?? "free");
+		var k = WorkflowCatalog.ParseKind(kind ?? "simple");
 		await AssertSingletonAsync(projectKey, k, ct);
-		await ValidateSpecBoardAsync(projectKey, kind ?? "free", specBoard, ct);
-		var meta = await _boards.CreateAsync(projectKey, board, description, kind ?? "free", specBoard, ct);
+		await ValidateSpecBoardAsync(projectKey, kind ?? "simple", specBoard, ct);
+		var meta = await _boards.CreateAsync(projectKey, board, description, kind ?? "simple", specBoard, ct);
 		await AutoWireSpecAsync(projectKey, ct); // a fresh spec or work board may complete the link
 		return meta;
 	}
@@ -68,7 +68,7 @@ public sealed partial class TasksService : ITasksService
 		var existing = (await _boards.ListAsync(projectKey, ct))
 			.FirstOrDefault(b => b.ClosedAt == null && WorkflowCatalog.ParseKind(b.Kind) == kind);
 		if (existing is not null)
-			throw new ArgumentException($"project '{projectKey}' already has an active {kind.ToString().ToLowerInvariant()} board ('{existing.Name}') — the methodology quartet is one-per-project; close it (tasks.board_close) or use a free board");
+			throw new ArgumentException($"project '{projectKey}' already has an active {kind.ToString().ToLowerInvariant()} board ('{existing.Name}') — the methodology quartet is one-per-project; close it (tasks.board_close) or use a simple board");
 	}
 
 	// When exactly one active spec and one active work board exist and the work board has no
@@ -616,7 +616,7 @@ public sealed partial class TasksService : ITasksService
 		if (r.Conflicts.Count == 0)
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.meta"))
 			{
-				await SetTagsAsync(projectKey, board, upsertPatches, desired, ct);
+				await SetTagsAsync(projectKey, board, kind, upsertPatches, desired, ct);
 				await SetPartOfAsync(projectKey, board, upsertPatches, desired, ct);
 				await SetSupersedesAsync(projectKey, board, upsertPatches, desired, ct);
 			}
@@ -742,6 +742,16 @@ public sealed partial class TasksService : ITasksService
 	static PlanNode ApplyWorkflow(BoardKind kind, PlanNode node, Dictionary<string, PlanNode> prior)
 	{
 		var type = node.Type.Length == 0 ? null : node.Type;
+		// Simple boards: type is a label from a small fixed set; empty defaults to `task`, and an
+		// out-of-set type is rejected. (Work validates type via For(); Simple's For() ignores type,
+		// so the vocabulary is enforced here.)
+		if (kind == BoardKind.Simple)
+		{
+			type ??= "task";
+			if (!WorkflowCatalog.SimpleTypes.Contains(type))
+				throw new ArgumentException($"invalid type '{type}' for a simple board; valid: {WorkflowCatalog.ValidTypes(kind)}");
+			node = node with { Type = type };
+		}
 		var wf = WorkflowCatalog.For(kind, type);
 		var n = node.Status.Length > 0 ? node : node with { Status = wf?.Initial ?? "Pending" };
 
@@ -865,7 +875,7 @@ public sealed partial class TasksService : ITasksService
 				}
 			}
 			// An empty list REPLACES the node's full tag set — i.e. soft-closes every active tag.
-			await _tags.SetAsync(projectKey, board, row.NodeId, [], ct);
+			await _tags.SetAsync(projectKey, board, row.NodeId, [], ct: ct);
 		}
 	}
 
@@ -903,14 +913,17 @@ public sealed partial class TasksService : ITasksService
 	// Apply enforced tags after the upsert. A patch whose Tags is null OMITS tags (leave
 	// as-is); a non-null list (incl. empty) is the new full set for that node. Tags bind
 	// to the node's stable NodeId.
-	async Task SetTagsAsync(string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+	async Task SetTagsAsync(string projectKey, string board, BoardKind kind, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
 	{
+		// Simple boards take free-form tags (any namespace + bare words); methodology boards
+		// keep the enforced area:/concern: namespaces.
+		var enforceNs = kind != BoardKind.Simple;
 		var nodeIdOf = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
 		foreach (var p in patches)
 		{
 			if (p.Tags is null) continue;
 			if (nodeIdOf.TryGetValue(p.Key, out var nid) && nid.Length > 0)
-				await _tags.SetAsync(projectKey, board, nid, p.Tags, ct);
+				await _tags.SetAsync(projectKey, board, nid, p.Tags, enforceNs, ct);
 		}
 	}
 
@@ -1066,6 +1079,7 @@ public sealed partial class TasksService : ITasksService
 			BoardKind.Ideas => "idea",
 			BoardKind.Spec => "spec",
 			BoardKind.Intake => "issue",
+			BoardKind.Simple => "task", // simple empty-type default (mirrors ApplyWorkflow)
 			_ => "",
 		};
 		var status = WorkflowCatalog.For(kind, type.Length == 0 ? null : type)?.Initial ?? "Pending";
@@ -1102,7 +1116,9 @@ public sealed partial class TasksService : ITasksService
 			// Assign a stable NodeId here: this path writes straight to TemporalStore and skips
 			// ApplyWorkflow (the usual NodeId-assignment point), so without this the row lands with
 			// an empty NodeId and the /tasks/{board}/{slug} permalink 404s (slug→NodeId→GetNode).
-			new PlanNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = "reported", Type = "issue", Name = title.Trim(), Body = body, Priority = 50 },
+			// The issues board is a `simple` board → its preset vocab (Todo|InProgress|…), not the
+			// intake `reported`. Type `issue` is in the simple type set.
+			new PlanNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = "Todo", Type = "issue", Name = title.Trim(), Body = body, Priority = 50 },
 		}, partition: n => n.Board == board, ct: ct);
 		if (r.Applied) await _boards.TouchAsync(project, board, ct);
 		return key;

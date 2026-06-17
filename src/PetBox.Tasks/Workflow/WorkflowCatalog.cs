@@ -6,7 +6,33 @@ namespace PetBox.Tasks.Workflow;
 public static class WorkflowCatalog
 {
 	public static BoardKind ParseKind(string? kind) =>
-		Enum.TryParse<BoardKind>(kind, ignoreCase: true, out var k) ? k : BoardKind.Free;
+		Enum.TryParse<BoardKind>(kind, ignoreCase: true, out var k) ? k : BoardKind.Simple;
+
+	// SIMPLE preset (formerly `free`; interim dogfood, not a PetBox promise — the built-in
+	// WorkflowCatalog is a replaceable preset, see spec methodology-from-primitives / idea
+	// user-defined-methodology-engine). A minimal lifecycle with FREE transitions: Todo→InProgress→
+	// Done(+Cancelled), Blocked optional. Transitions are all-pairs (any valid status → any), so the
+	// generic engine yields free transitions while still rejecting an out-of-vocab status. Type is a
+	// label only (one workflow for all simple types) — see SimpleTypes.
+	static readonly WorkflowStatus[] SimpleStatuses =
+	[
+		new("Todo", "Todo", StatusKind.Open),
+		new("InProgress", "In progress", StatusKind.Open),
+		new("Blocked", "Blocked", StatusKind.Open),
+		new("Done", "Done", StatusKind.TerminalOk),
+		new("Cancelled", "Cancelled", StatusKind.TerminalCancel),
+	];
+
+	static readonly Workflow Simple = new("simple", SimpleStatuses, AllPairs(SimpleStatuses));
+
+	// Simple's fixed-but-small type vocabulary. Type does NOT branch the workflow (one lifecycle for
+	// all); it's a filter/badge label. Empty type defaults to `task` (see ApplyWorkflow).
+	public static readonly string[] SimpleTypes = ["task", "bug", "feature", "chore", "issue"];
+
+	// Every ordered (from→to) pair with from≠to — models "free transitions" for a kind.
+	static List<WorkflowTransition> AllPairs(IReadOnlyList<WorkflowStatus> statuses) =>
+		(from a in statuses from b in statuses where !string.Equals(a.Slug, b.Slug, StringComparison.OrdinalIgnoreCase)
+		 select new WorkflowTransition(a.Slug, b.Slug)).ToList();
 
 	// WORK reuses the EXISTING status vocabulary (Pending/InProgress/Done/Blocked/
 	// Deferred/Cancelled) + Review, so live boards and the MCP/UI contract don't break.
@@ -97,11 +123,11 @@ public static class WorkflowCatalog
 	// duplication). Flip a kind in here to change where quick-add is offered.
 	public static bool QuickAddAllowed(BoardKind kind) => kind is not (BoardKind.Spec or BoardKind.Work);
 
-	// The workflow for a (kind, type). Null = no workflow (kind=Free, or an unknown
-	// work type) — Free means "no validation"; a null on Work is a "type required" error.
+	// The workflow for a (kind, type). Null = no workflow only for an unknown Work type
+	// (a "type required" error). Simple now has a real preset workflow (free transitions).
 	public static Workflow? For(BoardKind kind, string? type) => kind switch
 	{
-		BoardKind.Free => null,
+		BoardKind.Simple => Simple, // one lifecycle for all simple types (type is a label, not a branch)
 		BoardKind.Spec => Spec,
 		BoardKind.Ideas => Idea,
 		BoardKind.Intake => Issue,
@@ -112,6 +138,7 @@ public static class WorkflowCatalog
 	// All workflows hosted by a board kind (for the tasks.workflow discovery tool).
 	public static IReadOnlyList<Workflow> Types(BoardKind kind) => kind switch
 	{
+		BoardKind.Simple => [Simple],
 		BoardKind.Spec => [Spec],
 		BoardKind.Ideas => [Idea],
 		BoardKind.Intake => [Issue],
@@ -119,10 +146,10 @@ public static class WorkflowCatalog
 		_ => [],
 	};
 
-	static readonly BoardKind[] AllKinds = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
+	static readonly BoardKind[] AllKinds = [BoardKind.Simple, BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
 
 	// StatusKind for a status slug across ALL presets (case-insensitive), or null if
-	// the slug isn't in any workflow (e.g. a free board's arbitrary status).
+	// the slug isn't in any workflow (e.g. a legacy free-board status pre-migration).
 	public static StatusKind? KindOfSlug(string slug)
 	{
 		foreach (var k in AllKinds)
@@ -140,6 +167,7 @@ public static class WorkflowCatalog
 	// Valid type slugs for a kind (for error messages).
 	public static string ValidTypes(BoardKind kind) => kind switch
 	{
+		BoardKind.Simple => string.Join("|", SimpleTypes),
 		BoardKind.Work => string.Join("|", WorkTypes),
 		BoardKind.Spec => "spec",
 		BoardKind.Ideas => "idea",

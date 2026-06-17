@@ -64,6 +64,11 @@ public sealed class TaskBoardModel : PageModel
 
 	public bool ShowQuickAdd { get; private set; }
 
+	// The board's kind (simple|spec|ideas|intake|work), surfaced so the UI can show it
+	// explicitly — a simple board's lightweight statuses otherwise look like "broken
+	// statuses" rather than a deliberate board kind.
+	public BoardKind Kind { get; private set; }
+
 	// One flattened row of the tag-groups pane: a group HEADER (Node null) at nesting `Depth`,
 	// or a node CARD (Node set) sitting just under its deepest group. Flattening keeps the
 	// Razor a single loop — the same shape the part_of pane already renders.
@@ -85,6 +90,7 @@ public sealed class TaskBoardModel : PageModel
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
 		var kind = await _tasks.ResolveKindAsync(ProjectKey, Board, ct);
+		Kind = kind;
 		ShowQuickAdd = WorkflowCatalog.QuickAddAllowed(kind);
 
 		// includeClosed: we render closed nodes too (the "active only" toggle hides them
