@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using System.Text.Json;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
@@ -76,14 +75,14 @@ public sealed class MemoryToolsContractTests : IDisposable
 		(await _store.ExistsAsync(Proj, "notes")).Should().BeTrue();
 
 		// Tags normalised: lowercased, trimmed, de-duped.
-		var all = Json(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes"));
-		var go = all.GetProperty("entries").EnumerateArray().Single(e => e.GetProperty("key").GetString() == "go-style");
-		go.GetProperty("tags").GetString().Should().Be("go,style");
-		go.GetProperty("type").GetString().Should().Be("Reference");
+		var all = await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes");
+		var go = all.Entries.Single(e => e.Key == "go-style");
+		go.Tags.Should().Be("go,style");
+		go.Type.Should().Be("Reference");
 
 		// Type filter narrows the listing.
-		var feedback = Json(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", "feedback"));
-		var keys = feedback.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("key").GetString()).ToList();
+		var feedback = await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", "feedback");
+		var keys = feedback.Entries.Select(e => e.Key).ToList();
 		keys.Should().BeEquivalentTo(["prefers-tabs"]);
 	}
 
@@ -98,8 +97,8 @@ public sealed class MemoryToolsContractTests : IDisposable
 		});
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 
-		var res = Json(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "scope"));
-		var keys = res.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("key").GetString()).ToList();
+		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "scope");
+		var keys = res.Entries.Select(e => e.Key).ToList();
 		keys.Should().Contain("auth-scopes");      // "scope*" prefix-matches "scopes"
 		keys.Should().NotContain("go-style");
 	}
@@ -112,9 +111,9 @@ public sealed class MemoryToolsContractTests : IDisposable
 		// rich input schema), so the old JSON-*string* fallback for stale-schema clients is gone —
 		// a reconnect refreshes the cached schema (see McpToolInputs deviation note).
 		var entries = McpInputs.EntriesJson("""[{"key":"k","type":"project","description":"d","body":"b"}]""");
-		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "strstore", entries));
-		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
-			.Which.GetProperty("key").GetString().Should().Be("k");
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "strstore", entries);
+		res.Added.Should().ContainSingle()
+			.Which.Key.Should().Be("k");
 	}
 
 	[Fact]
@@ -128,11 +127,11 @@ public sealed class MemoryToolsContractTests : IDisposable
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 
 		var del = McpInputs.Entries(new object[] { new { key = "temp", deleted = true } });
-		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", del));
-		res.GetProperty("removed").EnumerateArray().Select(e => e.GetString()).Should().Contain("temp");
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", del);
+		res.Removed.Should().Contain("temp");
 
-		var list = Json(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes"));
-		list.GetProperty("entries").EnumerateArray().Select(e => e.GetProperty("key").GetString())
+		var list = await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes");
+		list.Entries.Select(e => e.Key)
 			.Should().NotContain("temp");
 	}
 
@@ -150,19 +149,19 @@ public sealed class MemoryToolsContractTests : IDisposable
 		{
 			new { key = "k", type = "project", description = "one-liner", body = big },
 		});
-		var added = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries))
-			.GetProperty("added").EnumerateArray().Single();
-		added.GetProperty("description").GetString().Should().Be("one-liner");
-		added.GetProperty("body").ValueKind.Should().Be(JsonValueKind.Null);
+		var added = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries))
+			.Added.Single();
+		added.Description.Should().Be("one-liner");
+		added.Body.Should().BeNull();
 
 		// bodyLen > 0: opt-in sliced body — first N chars + "…" when cut.
 		var entries2 = McpInputs.Entries(new object[]
 		{
 			new { key = "k2", type = "project", description = "d", body = big },
 		});
-		var sliced = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries2, bodyLen: 300))
-			.GetProperty("added").EnumerateArray().Single(e => e.GetProperty("key").GetString() == "k2")
-			.GetProperty("body").GetString()!;
+		var sliced = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries2, bodyLen: 300))
+			.Added.Single(e => e.Key == "k2")
+			.Body!;
 		sliced.Length.Should().Be(301);
 		sliced.Should().EndWith("…");
 	}
@@ -183,19 +182,19 @@ public sealed class MemoryToolsContractTests : IDisposable
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 
 		// list: limit caps the count.
-		Json(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", limit: 2))
-			.GetProperty("entries").EnumerateArray().Count().Should().Be(2);
+		(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", limit: 2))
+			.Entries.Count.Should().Be(2);
 
 		// list: bodyLen snippets the body of entry 'a' (the long one).
-		var aBody = Json(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", bodyLen: 100))
-			.GetProperty("entries").EnumerateArray().Single(e => e.GetProperty("key").GetString() == "a")
-			.GetProperty("body").GetString()!;
+		var aBody = (await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", bodyLen: 100))
+			.Entries.Single(e => e.Key == "a")
+			.Body!;
 		aBody.Length.Should().Be(101);
 		aBody.Should().EndWith("…");
 
 		// search: the same limit bounds an FTS sweep ("alpha" hits all three).
-		Json(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "alpha", limit: 2))
-			.GetProperty("entries").EnumerateArray().Count().Should().Be(2);
+		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "alpha", limit: 2))
+			.Entries.Count.Should().Be(2);
 	}
 
 	static IHttpContextAccessor Http(string scopes)
@@ -213,8 +212,4 @@ public sealed class MemoryToolsContractTests : IDisposable
 		}).Build();
 		return new FeatureFlags(cfg);
 	}
-
-	// Mirror the MCP boundary (camelCase policy) so typed-record results read like live JSON.
-	static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-	static JsonElement Json(object? o) => JsonSerializer.SerializeToElement(o, CamelCase);
 }

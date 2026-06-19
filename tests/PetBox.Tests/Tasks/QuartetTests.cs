@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using System.Text.Json;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
@@ -8,6 +7,7 @@ using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
@@ -50,20 +50,20 @@ public sealed class QuartetTests : IDisposable
 	public async Task Enable_ProvisionsQuartet_AutoWires_AndIsIdempotent()
 	{
 		var http = Http("tasks:read,tasks:write");
-		var en = Json(await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj));
-		en.GetProperty("enabled").GetBoolean().Should().BeTrue();
-		en.GetProperty("boards").EnumerateArray().Select(b => b.GetProperty("kind").GetString())
+		var en = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+		en.Enabled.Should().BeTrue();
+		en.Boards.Select(b => b.Kind)
 			.Should().Equal("intake", "ideas", "spec", "work"); // pipeline order
 
 		// work board auto-wired to the spec board.
-		var boards = Json(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).GetProperty("boards");
-		var work = boards.EnumerateArray().Single(b => b.GetProperty("kind").GetString() == "work");
-		work.GetProperty("specBoard").GetString().Should().Be("spec");
+		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
+		var work = boards.Single(b => b.Kind == "work");
+		work.SpecBoard.Should().Be("spec");
 
 		// Idempotent: a rerun keeps exactly four methodology boards.
 		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
-		Json(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).GetProperty("boards")
-			.EnumerateArray().Count().Should().Be(4);
+		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards
+			.Count.Should().Be(4);
 	}
 
 	[Fact]
@@ -83,8 +83,8 @@ public sealed class QuartetTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "f1", "simple");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "f2", "simple");
-		Json(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).GetProperty("boards")
-			.EnumerateArray().Count().Should().Be(2);
+		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards
+			.Count.Should().Be(2);
 	}
 
 	[Fact]
@@ -100,25 +100,25 @@ public sealed class QuartetTests : IDisposable
 
 		// Default: an INDEX — the node carries tags/status/title but the body is sliced to null;
 		// the board exposes a status histogram.
-		var idx = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj));
-		var ideas = idx.GetProperty("boards").EnumerateArray().Single(b => b.GetProperty("kind").GetString() == "ideas");
-		ideas.GetProperty("counts").GetProperty("raw").GetInt32().Should().Be(1);
-		var nodeA = ideas.GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "idea-a");
-		nodeA.GetProperty("body").ValueKind.Should().Be(JsonValueKind.Null);        // no body by default
-		nodeA.GetProperty("title").GetString().Should().Be("A");
-		nodeA.GetProperty("tags").EnumerateArray().Select(t => t.GetString()).Should().Contain("area:tasks"); // tags ALWAYS
+		var idx = await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj);
+		var ideas = idx.Boards.Single(b => b.Kind == "ideas");
+		ideas.Counts["raw"].Should().Be(1);
+		var nodeA = ideas.Nodes.Single(n => n.Key == "idea-a");
+		nodeA.Body.Should().BeNull();        // no body by default
+		nodeA.Title.Should().Be("A");
+		nodeA.Tags.Should().Contain("area:tasks"); // tags ALWAYS
 
 		// bodyLen: the first N chars + "…" when cut.
-		var sliced = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, bodyLen: 300))
-			.GetProperty("boards").EnumerateArray().Single(b => b.GetProperty("kind").GetString() == "ideas")
-			.GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "idea-a")
-			.GetProperty("body").GetString()!;
+		var sliced = (await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, bodyLen: 300))
+			.Boards.Single(b => b.Kind == "ideas")
+			.Nodes.Single(n => n.Key == "idea-a")
+			.Body!;
 		sliced.Length.Should().Be(301);
 		sliced.Should().EndWith("…");
 
 		// includeBoards: only the requested quartet boards, in pipeline order.
-		var only = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, includeBoards: ["spec", "ideas"]));
-		only.GetProperty("boards").EnumerateArray().Select(b => b.GetProperty("kind").GetString())
+		var only = await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, includeBoards: ["spec", "ideas"]);
+		only.Boards.Select(b => b.Kind)
 			.Should().Equal("ideas", "spec");
 	}
 
@@ -131,16 +131,16 @@ public sealed class QuartetTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas", nodes);
 
 		// off by default: url is null.
-		var off = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj))
-			.GetProperty("boards").EnumerateArray().Single(b => b.GetProperty("kind").GetString() == "ideas")
-			.GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "idea-u");
-		off.GetProperty("url").ValueKind.Should().Be(JsonValueKind.Null);
+		var off = (await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj))
+			.Boards.Single(b => b.Kind == "ideas")
+			.Nodes.Single(n => n.Key == "idea-u");
+		off.Url.Should().BeNull();
 
 		// includeUrl: canonical slug permalink = base + /ui/{ws}/{project}/tasks/{board}/{slug}.
-		var on = Json(await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, includeUrl: true))
-			.GetProperty("boards").EnumerateArray().Single(b => b.GetProperty("kind").GetString() == "ideas")
-			.GetProperty("nodes").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "idea-u");
-		on.GetProperty("url").GetString().Should().Be($"https://box.test/ui/ws/{Proj}/tasks/ideas/idea-u");
+		var on = (await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, includeUrl: true))
+			.Boards.Single(b => b.Kind == "ideas")
+			.Nodes.Single(n => n.Key == "idea-u");
+		on.Url.Should().Be($"https://box.test/ui/ws/{Proj}/tasks/ideas/idea-u");
 	}
 
 	[Fact]
@@ -148,9 +148,9 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		var nodes = McpInputs.NodesJson("""[{"key":"a","status":"Todo","title":"A"}]""");
-		var added = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "free1", nodes, includeUrl: true))
-			.GetProperty("added").EnumerateArray().Single();
-		added.GetProperty("url").GetString().Should().Be($"https://box.test/ui/ws/{Proj}/tasks/free1/a");
+		var added = (await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "free1", nodes, includeUrl: true))
+			.Added.Single();
+		added.Url.Should().Be($"https://box.test/ui/ws/{Proj}/tasks/free1/a");
 	}
 
 	[Fact]
@@ -193,27 +193,26 @@ public sealed class QuartetTests : IDisposable
 		// Default echo: title present, body sliced to null (no re-dump of what I just sent).
 		var nodesA = McpInputs.NodesJson(
 			$$"""[{"key":"a","status":"Todo","title":"A","body":"{{big}}"}]""");
-		var resA = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesA));
-		var addedA = resA.GetProperty("added").EnumerateArray().Single();
-		addedA.GetProperty("title").GetString().Should().Be("A");
-		addedA.GetProperty("body").ValueKind.Should().Be(JsonValueKind.Null);
+		var resA = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesA);
+		var addedA = resA.Added.Single();
+		addedA.Title.Should().Be("A");
+		addedA.Body.Should().BeNull();
 
 		// A second node with the DEFAULT stale cursor (sinceVersion = 0) echoes BOTH nodes
 		// (version > 0), but every echoed body is still null — the dump is bodiless.
 		var nodesB = McpInputs.NodesJson(
 			"""[{"key":"b","status":"Todo","title":"B","body":"zzz"}]""");
-		var resB = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesB));
-		var echoed = resB.GetProperty("added").EnumerateArray()
-			.Concat(resB.GetProperty("updated").EnumerateArray()).ToList();
-		echoed.Select(n => n.GetProperty("key").GetString()).Should().Contain(["a", "b"]); // stale cursor re-echoes 'a'
-		echoed.Should().OnlyContain(n => n.GetProperty("body").ValueKind == JsonValueKind.Null);
+		var resB = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesB);
+		var echoed = resB.Added.Concat(resB.Updated).ToList();
+		echoed.Select(n => n.Key).Should().Contain(["a", "b"]); // stale cursor re-echoes 'a'
+		echoed.Should().OnlyContain(n => n.Body == null);
 
 		// bodyLen > 0: the opt-in sliced body — first N chars + "…" when cut.
 		var nodesC = McpInputs.NodesJson(
 			$$"""[{"key":"c","status":"Todo","title":"C","body":"{{big}}"}]""");
-		var sliced = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesC, bodyLen: 300))
-			.GetProperty("added").EnumerateArray().Single(n => n.GetProperty("key").GetString() == "c")
-			.GetProperty("body").GetString()!;
+		var sliced = (await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesC, bodyLen: 300))
+			.Added.Single(n => n.Key == "c")
+			.Body!;
 		sliced.Length.Should().Be(301);
 		sliced.Should().EndWith("…");
 	}
@@ -230,17 +229,14 @@ public sealed class QuartetTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
 
 		// Default: the full body.
-		var full = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g"))
-			.GetProperty("nodes").EnumerateArray().Single().GetProperty("body").GetString()!;
+		var full = ((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g"))
+			.Nodes.Single().Body;
 		full.Length.Should().Be(500);
 
 		// bodyLen > 0: first N chars + "…".
-		var snip = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", bodyLen: 100))
-			.GetProperty("nodes").EnumerateArray().Single().GetProperty("body").GetString()!;
+		var snip = ((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", bodyLen: 100))
+			.Nodes.Single().Body;
 		snip.Length.Should().Be(101);
 		snip.Should().EndWith("…");
 	}
-
-	static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-	static JsonElement Json(object? o) => JsonSerializer.SerializeToElement(o, CamelCase);
 }

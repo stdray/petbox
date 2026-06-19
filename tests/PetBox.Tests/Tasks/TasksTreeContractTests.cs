@@ -8,6 +8,7 @@ using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
@@ -50,9 +51,9 @@ public sealed class TasksTreeContractTests : IDisposable
 	async Task<string> AcceptedIdeaId(IHttpContextAccessor http)
 	{
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "ideas", "ideas");
-		var idea = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
-			McpInputs.Nodes(new[] { new { key = "drv", type = "idea", status = "exploring", body = "x" } })));
-		var ideaId = idea.GetProperty("added")[0].GetProperty("nodeId").GetString()!;
+		var idea = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			McpInputs.Nodes(new[] { new { key = "drv", type = "idea", status = "exploring", body = "x" } }));
+		var ideaId = idea.Added[0].NodeId;
 		await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", ideaId, "t", "plan", parentId: null, tags: new[] { "artifact:spec_plan" });
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "drv", type = "idea", status = "review", version = 1 } }));
@@ -83,20 +84,20 @@ public sealed class TasksTreeContractTests : IDisposable
 		});
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes);
 
-		var got = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap"));
-		var arr = got.GetProperty("nodes").EnumerateArray().ToList();
+		var got = (PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap");
+		var arr = got.Nodes.ToList();
 		arr.Should().HaveCount(3);
 
 		// Depth is computed from part_of (root = 0). The leaf is two edges down.
-		var leaf = arr.Single(n => n.GetProperty("depth").GetInt32() == 2);
-		leaf.GetProperty("key").GetString().Should().Be("endpoint");
-		leaf.GetProperty("parentSlug").GetString().Should().Be("ingest");
-		leaf.GetProperty("title").GetString().Should().Be("Endpoint");
-		leaf.GetProperty("body").GetString().Should().Be("POST endpoint");
+		var leaf = arr.Single(n => n.Depth == 2);
+		leaf.Key.Should().Be("endpoint");
+		leaf.ParentSlug.Should().Be("ingest");
+		leaf.Title.Should().Be("Endpoint");
+		leaf.Body.Should().Be("POST endpoint");
 
-		var root = arr.Single(n => n.GetProperty("depth").GetInt32() == 0);
-		root.GetProperty("key").GetString().Should().Be("logging");
-		root.GetProperty("parentNodeId").ValueKind.Should().Be(JsonValueKind.Null);
+		var root = arr.Single(n => n.Depth == 0);
+		root.Key.Should().Be("logging");
+		root.ParentNodeId.Should().BeNull();
 	}
 
 	[Fact]
@@ -104,21 +105,21 @@ public sealed class TasksTreeContractTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "roadmap", null);
-		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
+		var up = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
 			McpInputs.Nodes(new object[]
 			{
 				new { key = "a", status = "InProgress", title = "A", body = "x" },
 				new { key = "b", partOf = "a", status = "InProgress", title = "B", body = "x" },
 				new { key = "c", status = "InProgress", title = "C", body = "x" },
-			})));
-		var ver = up.GetProperty("currentVersion").GetInt64();
+			}));
+		var ver = up.CurrentVersion;
 
-		FieldOf(Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap")), "b", "parentSlug").Should().Be("a");
+		ParentSlugOf((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap"), "b").Should().Be("a");
 
 		// Reparent b under c (single active parent — the a->b edge is closed).
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
 			McpInputs.Nodes(new object[] { new { key = "b", partOf = "c", version = ver } }));
-		FieldOf(Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap")), "b", "parentSlug").Should().Be("c");
+		ParentSlugOf((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap"), "b").Should().Be("c");
 
 		// Cycle: a part_of b, but b is already a descendant of c which... make a a child of b
 		// while b is reachable — a->b->? a is root, b under c. Set c part_of b → c,b,? Let's
@@ -137,24 +138,21 @@ public sealed class TasksTreeContractTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "s",
 			McpInputs.Nodes(new object[] { new { key = "alpha", status = "Todo", title = "alpha note", body = "alpha keyword" } }));
 
-		var res = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, "alpha"));
-		var hit = res.GetProperty("nodes").EnumerateArray()
-			.Single(n => n.GetProperty("key").GetString() == "alpha");
-		var version = hit.GetProperty("version").GetInt64();
+		var res = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, "alpha");
+		var hit = res.Nodes.Single(n => n.Key == "alpha");
+		var version = hit.Version;
 		version.Should().BeGreaterThan(0);
 
 		// The hit's version is a valid upsert baseline: the edit applies without a Stale conflict.
-		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "s",
-			McpInputs.Nodes(new object[] { new { key = "alpha", title = "alpha note v2", version } })));
-		up.GetProperty("applied").GetBoolean().Should().BeTrue();
-		up.GetProperty("conflicts").EnumerateArray().Should().BeEmpty();
+		var up = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "s",
+			McpInputs.Nodes(new object[] { new { key = "alpha", title = "alpha note v2", version } }));
+		up.Applied.Should().BeTrue();
+		up.Conflicts.Should().BeEmpty();
 	}
 
-	// Find a node by flat key in a tasks.get result and read a string field.
-	static string FieldOf(JsonElement got, string key, string field) =>
-		got.GetProperty("nodes").EnumerateArray()
-			.Single(n => n.GetProperty("key").GetString() == key)
-			.GetProperty(field).GetString()!;
+	// Find a node by flat key in a tasks.get result and read its parent slug.
+	static string ParentSlugOf(PlanBoardView got, string key) =>
+		got.Nodes.Single(n => n.Key == key).ParentSlug!;
 
 	[Fact]
 	public async Task GroupBy_TagNamespace_BucketsNodes_NoneLast()
@@ -234,13 +232,13 @@ public sealed class TasksTreeContractTests : IDisposable
 				new { key = "new", status = "defined", title = "New req", body = "x", supersedes = "old", ideaRef = ir },
 			}));
 
-		var got = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "spec", includeClosed: true));
-		var nodes = got.GetProperty("nodes").EnumerateArray().ToList();
+		var got = (PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "spec", includeClosed: true);
+		var nodes = got.Nodes.ToList();
 		// old obsoleted → moved to the spec workflow's terminal-cancel (deprecated).
-		nodes.Single(n => n.GetProperty("key").GetString() == "old").GetProperty("status").GetString().Should().Be("deprecated");
+		nodes.Single(n => n.Key == "old").Status.Should().Be("deprecated");
 		// new carries a supersedes link to old.
-		var newNode = nodes.Single(n => n.GetProperty("key").GetString() == "new");
-		newNode.GetProperty("supersedes").EnumerateArray().Single().GetProperty("slug").GetString().Should().Be("old");
+		var newNode = nodes.Single(n => n.Key == "new");
+		newNode.Supersedes!.Single().Slug.Should().Be("old");
 	}
 
 	[Fact]
@@ -276,14 +274,14 @@ public sealed class TasksTreeContractTests : IDisposable
 		{
 			new { l1 = "alpha", status = "Todo", title = "Alpha", body = "do alpha", priority = 0 },
 		});
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "fresh", nodes));
+		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "fresh", nodes);
 
 		(await _store.ExistsAsync(Proj, "fresh")).Should().BeTrue();
 
 		// F4: the added node in the upsert delta carries `title` (matches the
 		// documented contract and tasks.get), so a client merge won't drop titles.
-		var added = res.GetProperty("added").EnumerateArray().Single();
-		added.GetProperty("title").GetString().Should().Be("Alpha");
+		var added = res.Added.Single();
+		added.Title.Should().Be("Alpha");
 	}
 
 	[Fact]
@@ -295,9 +293,9 @@ public sealed class TasksTreeContractTests : IDisposable
 		// a reconnect refreshes the cached schema (see McpToolInputs deviation note). The `l1`
 		// back-compat alias for the flat `key` still binds through the typed record.
 		var nodes = McpInputs.NodesJson("""[{"l1":"alpha","title":"Alpha","status":"Todo","body":"b","priority":0}]""");
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "strboard", nodes));
-		res.GetProperty("added").EnumerateArray().Should().ContainSingle()
-			.Which.GetProperty("title").GetString().Should().Be("Alpha");
+		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "strboard", nodes);
+		res.Added.Should().ContainSingle()
+			.Which.Title.Should().Be("Alpha");
 	}
 
 	[Fact]
@@ -314,9 +312,9 @@ public sealed class TasksTreeContractTests : IDisposable
 		res.Message.Should().Contain("immutable");
 
 		// Editing other fields while keeping the type (or omitting it) still works.
-		var ok = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			McpInputs.Nodes(new[] { new { key = "n", version = 1, body = "edited" } })));
-		ok.GetProperty("applied").GetBoolean().Should().BeTrue();
+		var ok = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+			McpInputs.Nodes(new[] { new { key = "n", version = 1, body = "edited" } }));
+		ok.Applied.Should().BeTrue();
 	}
 
 	static IHttpContextAccessor Http(string scopes)

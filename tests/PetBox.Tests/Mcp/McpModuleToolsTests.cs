@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using System.Text.Json;
 using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.AspNetCore.Http;
@@ -13,6 +12,7 @@ using PetBox.Memory.Data;
 using PetBox.Sessions.Data;
 using PetBox.Memory.Services;
 using PetBox.Sessions.Services;
+using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
@@ -88,12 +88,12 @@ public sealed class McpModuleToolsTests : IDisposable
 			new { key = "phase-16", status = "InProgress", body = "Data", priority = 100 },
 			new { key = "wave-1", partOf = "phase-16", status = "Done", body = "Foundation", priority = 200 },
 		});
-		var up = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes, 0));
-		up.GetProperty("applied").GetBoolean().Should().BeTrue();
-		up.GetProperty("inserted").GetInt32().Should().Be(2);
+		var up = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes, 0);
+		up.Applied.Should().BeTrue();
+		up.Inserted.Should().Be(2);
 
-		var get = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap", includeClosed: true));
-		var keys = get.GetProperty("nodes").EnumerateArray().Select(n => n.GetProperty("key").GetString()).ToList();
+		var get = (PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap", includeClosed: true);
+		var keys = get.Nodes.Select(n => n.Key).ToList();
 		keys.Should().Equal("phase-16", "wave-1"); // priority order
 	}
 
@@ -106,12 +106,12 @@ public sealed class McpModuleToolsTests : IDisposable
 			McpInputs.Nodes(new[] { new { key = "n", status = "Todo", body = "v1" } }), 0);
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			McpInputs.Nodes(new[] { new { key = "n", status = "Done", body = "byB", version = 1 } }), 0);
-		var r = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			McpInputs.Nodes(new[] { new { key = "n", status = "Done", body = "byA", version = 1 } }), 0));
+		var r = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+			McpInputs.Nodes(new[] { new { key = "n", status = "Done", body = "byA", version = 1 } }), 0);
 
-		r.GetProperty("applied").GetBoolean().Should().BeFalse();
-		r.GetProperty("conflicts").EnumerateArray().Should().ContainSingle();
-		r.GetProperty("conflicts")[0].GetProperty("kind").GetString().Should().Be("Stale");
+		r.Applied.Should().BeFalse();
+		r.Conflicts.Should().ContainSingle();
+		r.Conflicts[0].Kind.Should().Be("Stale");
 	}
 
 	[Fact]
@@ -124,10 +124,10 @@ public sealed class McpModuleToolsTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			McpInputs.Nodes(new[] { new { key = "new", status = "Done", body = "x", version = 1, prevKey = "old" } }), 0);
 
-		var get = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "b", includeClosed: true));
-		var node = get.GetProperty("nodes").EnumerateArray().Single();
-		node.GetProperty("key").GetString().Should().Be("new");
-		node.GetProperty("renamedFrom").EnumerateArray().Select(x => x.GetString()).Should().Equal("old");
+		var get = (PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "b", includeClosed: true);
+		var node = get.Nodes.Single();
+		node.Key.Should().Be("new");
+		node.RenamedFrom.Should().Equal("old");
 	}
 
 	[Fact]
@@ -154,8 +154,8 @@ public sealed class McpModuleToolsTests : IDisposable
 		// A cross-project key (project="*") may operate on any project...
 		var star = Http("tasks:read,tasks:write", project: "*");
 		await TasksTools.BoardCreateAsync(star, Flags(), _tasks, Proj, "x");
-		Json(await TasksTools.GetAsync(star, Flags(), _tasks, Proj, "x"))
-			.GetProperty("kind").GetString().Should().Be("simple");
+		((PlanBoardView)await TasksTools.GetAsync(star, Flags(), _tasks, Proj, "x"))
+			.Kind.Should().Be("simple");
 
 		// ...while a key scoped to a different project is rejected for this one (throws;
 		// the filter renders it as {error} on the wire).
@@ -175,8 +175,8 @@ public sealed class McpModuleToolsTests : IDisposable
 				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = "go,style" },
 			}), 0);
 
-		var hits = Json(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "tabs"));
-		hits.GetProperty("entries").EnumerateArray().Should().ContainSingle();
+		var hits = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "tabs");
+		hits.Entries.Should().ContainSingle();
 	}
 
 	[Fact]
@@ -185,11 +185,11 @@ public sealed class McpModuleToolsTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await SessionTools.UpsertAsync(http, Flags(), _sessionSvc, Proj, "s1", "claude-code", "# plan");
 
-		var got = Json(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s1"));
-		got.GetProperty("content").GetString().Should().Be("# plan");
+		var got = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s1"))!;
+		got.Content.Should().Be("# plan");
 
-		var list = Json(await SessionTools.ListAsync(http, Flags(), _sessionSvc, Proj));
-		list.GetProperty("sessions").EnumerateArray().Should().ContainSingle();
+		var list = await SessionTools.ListAsync(http, Flags(), _sessionSvc, Proj);
+		list.Sessions.Should().ContainSingle();
 	}
 
 	// spec bounded-result-sets: session.get reads the blob incrementally — `length` is always
@@ -201,17 +201,17 @@ public sealed class McpModuleToolsTests : IDisposable
 		await SessionTools.UpsertAsync(http, Flags(), _sessionSvc, Proj, "s2", "claude-code", "0123456789");
 
 		// default: full blob + total length.
-		var full = Json(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2"));
-		full.GetProperty("content").GetString().Should().Be("0123456789");
-		full.GetProperty("length").GetInt32().Should().Be(10);
+		var full = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2"))!;
+		full.Content.Should().Be("0123456789");
+		full.Length.Should().Be(10);
 
 		// tail: last N chars.
-		Json(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", tail: 4))
-			.GetProperty("content").GetString().Should().Be("6789");
+		(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", tail: 4))!
+			.Content.Should().Be("6789");
 
 		// offset + limit: a window, clamped.
-		Json(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", offset: 3, limit: 4))
-			.GetProperty("content").GetString().Should().Be("3456");
+		(await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s2", offset: 3, limit: 4))!
+			.Content.Should().Be("3456");
 	}
 
 	// session.search against a foreign project returns an explicit, structured Unauthorized
@@ -229,17 +229,16 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Comments_Add_Reply_List_DeleteWithChildrenRejected()
 	{
 		var http = Http("tasks:read,tasks:write");
-		var add = Json(await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", "node-1", "alice", "root body", parentId: null, tags: new[] { "artifact:plan" }));
-		add.GetProperty("applied").GetBoolean().Should().BeTrue();
-		var id = add.GetProperty("id").GetString()!;
+		var add = await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", "node-1", "alice", "root body", parentId: null, tags: new[] { "artifact:plan" });
+		add.Applied.Should().BeTrue();
+		var id = add.Id!;
 
 		await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", "node-1", "bob", "a reply", parentId: id, tags: null);
 
-		var list = Json(await CommentTools.ListAsync(http, Flags(), _commentSvc, Proj, "ideas", "node-1"));
-		var rows = list.GetProperty("comments").EnumerateArray().ToList();
+		var list = await CommentTools.ListAsync(http, Flags(), _commentSvc, Proj, "ideas", "node-1");
+		var rows = list.Comments.ToList();
 		rows.Should().HaveCount(2);
-		rows.Single(c => c.GetProperty("id").GetString() == id).GetProperty("tags").EnumerateArray()
-			.Select(t => t.GetString()).Should().Equal("artifact:plan");
+		rows.Single(c => c.Id == id).Tags.Should().Equal("artifact:plan");
 
 		// Deleting a parent with an active reply throws (the filter renders it as {error}).
 		await Assert.ThrowsAnyAsync<Exception>(() =>
@@ -262,10 +261,9 @@ public sealed class McpModuleToolsTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "exploring", body = "x" } }), 0);
 
-		var node = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
-			.GetProperty("nodes").EnumerateArray().Single();
-		var nodeId = node.GetProperty("nodeId").GetString()!;
-		var v = node.GetProperty("version").GetInt64();
+		var node = ((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas")).Nodes.Single();
+		var nodeId = node.NodeId;
+		var v = node.Version;
 
 		// exploring -> review WITHOUT a spec_plan artifact: rejected by the gate (throws;
 		// the filter renders it as {error} on the wire).
@@ -275,16 +273,16 @@ public sealed class McpModuleToolsTests : IDisposable
 
 		// Add the spec_plan artifact, then the same transition applies.
 		await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", nodeId, "claude", "the plan", parentId: null, tags: new[] { "artifact:spec_plan" });
-		var rev = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
-			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "review", version = v } }), 0));
-		rev.GetProperty("applied").GetBoolean().Should().BeTrue();
+		var rev = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "review", version = v } }), 0);
+		rev.Applied.Should().BeTrue();
 
 		// review -> accepted (the maintainer gate; enforceApproval is off so it applies).
-		var v2 = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
-			.GetProperty("nodes").EnumerateArray().Single().GetProperty("version").GetInt64();
-		var acc = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
-			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "accepted", version = v2 } }), 0));
-		acc.GetProperty("applied").GetBoolean().Should().BeTrue();
+		var v2 = ((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
+			.Nodes.Single().Version;
+		var acc = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "accepted", version = v2 } }), 0);
+		acc.Applied.Should().BeTrue();
 	}
 
 	[Fact]
@@ -294,8 +292,8 @@ public sealed class McpModuleToolsTests : IDisposable
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "ideas", "ideas");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-y", type = "idea", status = "exploring", body = "x" } }), 0);
-		var v = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
-			.GetProperty("nodes").EnumerateArray().Single().GetProperty("version").GetInt64();
+		var v = ((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
+			.Nodes.Single().Version;
 		// The direct exploring->accepted transition was removed; you must pass through review.
 		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-y", type = "idea", status = "accepted", version = v } }), 0));
@@ -316,9 +314,4 @@ public sealed class McpModuleToolsTests : IDisposable
 		}).Build();
 		return new FeatureFlags(cfg);
 	}
-
-	// Mirror the MCP boundary, which serialises tool results with the camelCase policy
-	// (so typed-record results read the same as the live JSON: NodeId -> "nodeId").
-	static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-	static JsonElement Json(object? o) => JsonSerializer.SerializeToElement(o, CamelCase);
 }

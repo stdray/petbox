@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using System.Text.Json;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Data.Sqlite;
@@ -54,16 +53,16 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Remember_DefaultsToProjectScope_TypeProject_AndRecallFindsIt()
 	{
 		var http = Http("memory:read,memory:write");
-		var rem = Json(await MemoryTools.RememberAsync(http, Flags(), _memory, "api keys carry enumerable scopes"));
-		rem.GetProperty("scope").GetString().Should().Be("project");
-		rem.GetProperty("store").GetString().Should().Be("notes");
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _memory, "api keys carry enumerable scopes");
+		rem.Scope.Should().Be("project");
+		rem.Store.Should().Be("notes");
 
-		var rec = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "scopes"));
-		var hits = rec.GetProperty("results").EnumerateArray().ToList();
+		var rec = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "scopes");
+		var hits = rec.Results.ToList();
 		hits.Should().ContainSingle();
-		hits[0].GetProperty("scope").GetString().Should().Be("project");
-		hits[0].GetProperty("type").GetString().Should().Be("Project");
-		hits[0].GetProperty("body").GetString().Should().Contain("enumerable");
+		hits[0].Scope.Should().Be("project");
+		hits[0].Type.Should().Be("Project");
+		hits[0].Body.Should().Contain("enumerable");
 	}
 
 	[Fact]
@@ -72,10 +71,10 @@ public sealed class MemoryVerbsTests : IDisposable
 		var http = Http("memory:read,memory:write");
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "the deploy tag drives prod releases");
 
-		var rec = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "releases"));
-		var hit = rec.GetProperty("results").EnumerateArray().Single();
-		var key = hit.GetProperty("key").GetString()!;
-		var version = hit.GetProperty("version").GetInt64();
+		var rec = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "releases");
+		var hit = rec.Results.Single();
+		var key = hit.Key;
+		var version = hit.Version;
 		version.Should().BeGreaterThan(0);
 
 		// The recalled version is a valid per-key CAS baseline: the edit applies cleanly,
@@ -84,10 +83,10 @@ public sealed class MemoryVerbsTests : IDisposable
 		{
 			new { key, type = "Project", description = "d", body = "edited body", version },
 		});
-		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries));
-		res.GetProperty("applied").GetBoolean().Should().BeTrue();
-		res.GetProperty("conflicts").EnumerateArray().Should().BeEmpty();
-		res.GetProperty("updated").EnumerateArray().Select(e => e.GetProperty("key").GetString())
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
+		res.Applied.Should().BeTrue();
+		res.Conflicts.Should().BeEmpty();
+		res.Updated.Select(e => e.Key)
 			.Should().Contain(key);
 	}
 
@@ -99,14 +98,13 @@ public sealed class MemoryVerbsTests : IDisposable
 			scope: "workspace", type: "User");
 
 		// Cascade recall surfaces it, labelled workspace.
-		var cascade = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs"));
-		var wsHit = cascade.GetProperty("results").EnumerateArray()
-			.Single(h => h.GetProperty("scope").GetString() == "workspace");
-		wsHit.GetProperty("type").GetString().Should().Be("User");
+		var cascade = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs");
+		var wsHit = cascade.Results.Single(h => h.Scope == "workspace");
+		wsHit.Type.Should().Be("User");
 
 		// Project-scoped recall must NOT see workspace memory.
-		var projOnly = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs", scope: "project"));
-		projOnly.GetProperty("results").EnumerateArray().Should().BeEmpty();
+		var projOnly = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs", scope: "project");
+		projOnly.Results.Should().BeEmpty();
 	}
 
 	[Fact]
@@ -116,9 +114,8 @@ public sealed class MemoryVerbsTests : IDisposable
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "deploy moves the deploy tag", scope: "project");
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "deploy needs CI health gate", scope: "workspace");
 
-		var rec = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy"));
-		var scopes = rec.GetProperty("results").EnumerateArray()
-			.Select(h => h.GetProperty("scope").GetString()).ToList();
+		var rec = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy");
+		var scopes = rec.Results.Select(h => h.Scope).ToList();
 		scopes.Should().Equal("project", "workspace"); // project leg first
 	}
 
@@ -129,14 +126,13 @@ public sealed class MemoryVerbsTests : IDisposable
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "alpha lives in notes", store: "notes");
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "alpha lives in journal", store: "journal");
 
-		var rec = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha"));
-		var stores = rec.GetProperty("results").EnumerateArray()
-			.Select(h => h.GetProperty("store").GetString()).ToList();
+		var rec = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha");
+		var stores = rec.Results.Select(h => h.Store).ToList();
 		stores.Should().BeEquivalentTo(["notes", "journal"]);
 
 		// store narrows to one.
-		var narrowed = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha", store: "journal"));
-		narrowed.GetProperty("results").EnumerateArray().Select(h => h.GetProperty("store").GetString())
+		var narrowed = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha", store: "journal");
+		narrowed.Results.Select(h => h.Store)
 			.Should().BeEquivalentTo(["journal"]);
 	}
 
@@ -148,13 +144,13 @@ public sealed class MemoryVerbsTests : IDisposable
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "public deploy note", store: "notes");
 
 		// Implicit all-stores sweep must NOT surface the ops store.
-		var sweep = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy"));
-		sweep.GetProperty("results").EnumerateArray().Select(h => h.GetProperty("store").GetString())
+		var sweep = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy");
+		sweep.Results.Select(h => h.Store)
 			.Should().NotContain("ops").And.Contain("notes");
 
 		// Explicit store:ops is a deliberate ask and still reaches it.
-		var explicitOps = Json(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy", store: "ops"));
-		explicitOps.GetProperty("results").EnumerateArray().Select(h => h.GetProperty("store").GetString())
+		var explicitOps = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy", store: "ops");
+		explicitOps.Results.Select(h => h.Store)
 			.Should().BeEquivalentTo(["ops"]);
 	}
 
@@ -186,7 +182,4 @@ public sealed class MemoryVerbsTests : IDisposable
 		}).Build();
 		return new FeatureFlags(cfg);
 	}
-
-	static readonly JsonSerializerOptions CamelCase = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
-	static JsonElement Json(object? o) => JsonSerializer.SerializeToElement(o, CamelCase);
 }
