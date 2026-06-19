@@ -16,6 +16,7 @@ namespace PetBox.Web.Mcp;
 // JSON schema (type per field), so the object can't be silently stringified the
 // way an untyped JsonElement param was. Provisioning ops — admin:provision scope,
 // no per-project claim. Secrets are stored encrypted, never as plaintext Value.
+// Tools throw on a failed Assert*/validation; McpErrorEnvelopeFilter renders the {error} body.
 [McpServerToolType]
 public static class ConfigTools
 {
@@ -26,14 +27,14 @@ public static class ConfigTools
 		  • kind: 'Plain' (default) or 'Secret' — a Secret stores `value` encrypted
 		    (needs PETBOX_MASTER_KEY); the plaintext never lands in the Value column.
 		""")]
-	public static Task<object> CreateBindingAsync(
+	public static async Task<ConfigBindingCreatedResult> CreateBindingAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory, ISecretEncryptor secrets,
 		[Description("Workspace key the binding belongs to.")] string workspaceKey,
 		[Description("Dotted config path, e.g. 'app/connectionString'.")] string path,
 		[Description("Comma-separated tags; must include 'ws:{workspaceKey}'.")] string tags,
 		[Description("The value. For kind=Secret it is stored encrypted.")] string? value = null,
 		[Description("'Plain' (default) or 'Secret'.")] string? kind = null,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
@@ -74,14 +75,14 @@ public static class ConfigTools
 		}));
 #pragma warning restore CA2016
 		return new ConfigBindingCreatedResult(id, path, tags, bindingKind.ToString());
-	});
+	}
 
 	[McpServerTool(Name = "config.list_bindings", Title = "List config bindings", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsListResult))]
 	[Description("Lists a workspace's active config bindings (id, path, tags, kind). Requires admin:provision. Secret values are never returned.")]
-	public static Task<object> ListBindingsAsync(
+	public static async Task<ConfigBindingsListResult> ListBindingsAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
 		[Description("Workspace key to list bindings for.")] string workspaceKey,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
@@ -93,15 +94,15 @@ public static class ConfigTools
 			.Select(b => new { b.Id, b.Path, b.Tags, b.Kind })
 			.ToListAsync(ct);
 		return new ConfigBindingsListResult(rows.Select(b => new ConfigBindingRow(b.Id, b.Path, b.Tags, b.Kind.ToString())).ToList());
-	});
+	}
 
 	[McpServerTool(Name = "config.delete_binding", Title = "Delete a config binding", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingDeletedResult))]
 	[Description("Soft-deletes a config binding by id (the row is kept, marked deleted). Requires admin:provision.")]
-	public static Task<object> DeleteBindingAsync(
+	public static async Task<ConfigBindingDeletedResult> DeleteBindingAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
 		[Description("Workspace key the binding belongs to.")] string workspaceKey,
 		[Description("Binding id (from config.list_bindings).")] long id,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
@@ -115,7 +116,7 @@ public static class ConfigTools
 			.UpdateAsync(ct);
 		if (updated == 0) throw new InvalidOperationException("Binding not found");
 		return new ConfigBindingDeletedResult(true, id);
-	});
+	}
 
 	static BindingKind ParseKind(string? raw)
 	{

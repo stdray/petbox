@@ -133,6 +133,8 @@ public sealed class McpModuleToolsTests : IDisposable
 	[Fact]
 	public async Task Tasks_MissingScope_Throws()
 	{
+		// Tools throw on a failed assert; McpErrorEnvelopeFilter renders {error} on the wire
+		// (covered by the transport tests). Direct unit calls observe the typed throw.
 		var http = Http("tasks:read");
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
 			TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b"));
@@ -155,7 +157,8 @@ public sealed class McpModuleToolsTests : IDisposable
 		Json(await TasksTools.GetAsync(star, Flags(), _tasks, Proj, "x"))
 			.GetProperty("kind").GetString().Should().Be("simple");
 
-		// ...while a key scoped to a different project is rejected for this one.
+		// ...while a key scoped to a different project is rejected for this one (throws;
+		// the filter renders it as {error} on the wire).
 		var other = Http("tasks:read,tasks:write", project: "other");
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
 			TasksTools.BoardListAsync(other, Flags(), _tasks, Proj));
@@ -211,6 +214,17 @@ public sealed class McpModuleToolsTests : IDisposable
 			.GetProperty("content").GetString().Should().Be("3456");
 	}
 
+	// session.search against a foreign project returns an explicit, structured Unauthorized
+	// (the filter renders the throw as {error} on the wire). The project guard fires before
+	// the search service is touched, so a null service is never dereferenced.
+	[Fact]
+	public async Task Session_Search_CrossProjectKey_Throws()
+	{
+		var other = Http("tasks:read,memory:read", project: "other");
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			SessionTools.SearchAsync(other, Flags(), null!, Proj, "q"));
+	}
+
 	[Fact]
 	public async Task Comments_Add_Reply_List_DeleteWithChildrenRejected()
 	{
@@ -227,17 +241,17 @@ public sealed class McpModuleToolsTests : IDisposable
 		rows.Single(c => c.GetProperty("id").GetString() == id).GetProperty("tags").EnumerateArray()
 			.Select(t => t.GetString()).Should().Equal("artifact:plan");
 
-		// Deleting a parent with an active reply → GuardAsync surfaces a structured error.
-		var del = Json(await CommentTools.DeleteAsync(http, Flags(), _commentSvc, Proj, "ideas", id));
-		del.TryGetProperty("error", out _).Should().BeTrue();
+		// Deleting a parent with an active reply throws (the filter renders it as {error}).
+		await Assert.ThrowsAnyAsync<Exception>(() =>
+			CommentTools.DeleteAsync(http, Flags(), _commentSvc, Proj, "ideas", id));
 	}
 
 	[Fact]
-	public async Task Comments_MissingWriteScope_SurfacesError()
+	public async Task Comments_MissingWriteScope_Throws()
 	{
 		var http = Http("tasks:read"); // no tasks:write
-		var r = Json(await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", "n", "a", "b", parentId: null, tags: null));
-		r.GetProperty("error").GetProperty("type").GetString().Should().Be("UnauthorizedAccessException");
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", "n", "a", "b", parentId: null, tags: null));
 	}
 
 	[Fact]
@@ -253,12 +267,11 @@ public sealed class McpModuleToolsTests : IDisposable
 		var nodeId = node.GetProperty("nodeId").GetString()!;
 		var v = node.GetProperty("version").GetInt64();
 
-		// exploring -> review WITHOUT a spec_plan artifact: rejected by the gate (tasks.upsert
-		// wraps the body in GuardAsync, so the failure surfaces as a structured error).
-		var blocked = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+		// exploring -> review WITHOUT a spec_plan artifact: rejected by the gate (throws;
+		// the filter renders it as {error} on the wire).
+		var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() => TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "review", version = v } }), 0));
-		blocked.GetProperty("error").GetProperty("type").GetString().Should().Be("InvalidOperationException");
-		blocked.GetProperty("error").GetProperty("message").GetString().Should().Contain("spec_plan");
+		blocked.Message.Should().Contain("spec_plan");
 
 		// Add the spec_plan artifact, then the same transition applies.
 		await CommentTools.AddAsync(http, Flags(), _commentSvc, Proj, "ideas", nodeId, "claude", "the plan", parentId: null, tags: new[] { "artifact:spec_plan" });
@@ -284,9 +297,8 @@ public sealed class McpModuleToolsTests : IDisposable
 		var v = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
 			.GetProperty("nodes").EnumerateArray().Single().GetProperty("version").GetInt64();
 		// The direct exploring->accepted transition was removed; you must pass through review.
-		var r = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
+		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-y", type = "idea", status = "accepted", version = v } }), 0));
-		r.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
 	}
 
 	static IHttpContextAccessor Http(string scopes, string? project = null)

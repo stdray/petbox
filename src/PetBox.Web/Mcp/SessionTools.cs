@@ -12,10 +12,14 @@ namespace PetBox.Web.Mcp;
 // by agent-supplied sessionId. A thin adapter over ISessionService (the single door);
 // it must not open the sessions context directly (a NetArchTest enforces this).
 // Read-mostly. Reuses the Tasks scopes/feature.
+//
+// Tools just THROW on a failed Assert* (or any deeper error); McpErrorEnvelopeFilter
+// converts the exception into the structured {error} body centrally. Return types stay
+// concrete; the success schema is advertised via [McpServerTool(OutputSchemaType)].
 [McpServerToolType]
 public static class SessionTools
 {
-	[McpServerTool(Name = "session.upsert", Title = "Save a session blob", UseStructuredContent = true)]
+	[McpServerTool(Name = "session.upsert", Title = "Save a session blob", UseStructuredContent = true, OutputSchemaType = typeof(SessionUpsertResult))]
 	[Description("""
 		Save an agent session's content as the latest snapshot (last-write-wins, no history).
 		Requires tasks:write. The content is stored as a single message; the per-turn multi-message
@@ -38,7 +42,7 @@ public static class SessionTools
 		return new SessionUpsertResult(o.SessionId, o.Version, o.MessageCount);
 	}
 
-	[McpServerTool(Name = "session.get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "session.get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionGetResult))]
 	[Description("""
 		Get the active session blob by id, or null. The blob can be read INCREMENTALLY
 		(spec bounded-result-sets): pass `tail` for the last N chars, or `offset`+`limit`
@@ -74,7 +78,7 @@ public static class SessionTools
 		return s.Substring(start, count);
 	}
 
-	[McpServerTool(Name = "session.delete", Title = "Delete a session", Destructive = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "session.delete", Title = "Delete a session", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionDeletedResult))]
 	[Description("""
 		Soft-delete a session: it disappears from session.list/session.get but the row is kept;
 		a later session.upsert (or REST push) of the same sessionId resurrects it. Idempotent —
@@ -90,7 +94,7 @@ public static class SessionTools
 		return new SessionDeletedResult(await sessions.DeleteAsync(projectKey, sessionId, ct), sessionId);
 	}
 
-	[McpServerTool(Name = "session.search", Title = "Search the session archive", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "session.search", Title = "Search the session archive", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionSearchResultView))]
 	[Description("""
 		Two-stage search over the session archive. Stage 1 DISCOVERY: hybrid (lexical FTS ⊕ semantic
 		vectors, RRF-fused) over per-session facts digests — the `session-digests` memory store that
@@ -99,7 +103,8 @@ public static class SessionTools
 		`hitsPerSession` messages each. Every hit carries the message ordinal — the provenance bridge:
 		jump to the verbatim source with session.get. Both stages report retrievers
 		{ lexical, semantic, degraded }. `distilled:false` means the project has no digest store yet
-		(distillation runs in the background, ~minutes after a session settles) — not "no matches".
+		(distillation runs in the background, ~minutes after a session settles) — not "no matches";
+		in that case `reason` carries a machine-readable code (currently "no-digest-store").
 		Requires tasks:read + memory:read.
 		""")]
 	public static async Task<SessionSearchResultView> SearchAsync(
@@ -118,6 +123,7 @@ public static class SessionTools
 		var o = await search.SearchAsync(projectKey, query, sessions, hitsPerSession, ct);
 		return new SessionSearchResultView(
 			o.Distilled,
+			o.Reason,
 			o.Candidates.Select(c => new SessionSearchSessionView(
 				c.SessionId, c.Agent, c.Description,
 				c.Hits.Select(h => new SessionSearchHitView(h.Message, h.Role, h.Snippet, h.Score, h.Retriever)).ToList(),
@@ -125,7 +131,7 @@ public static class SessionTools
 			new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded));
 	}
 
-	[McpServerTool(Name = "session.list", Title = "List sessions", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "session.list", Title = "List sessions", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionListResult))]
 	[Description("List active sessions in a project. Requires tasks:read.")]
 	public static async Task<SessionListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,

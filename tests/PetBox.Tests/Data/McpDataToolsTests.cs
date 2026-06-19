@@ -197,6 +197,9 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 			["dbName"] = "tmp",
 			["sql"] = "PRAGMA writable_schema = 1",
 		});
-		result.IsError.Should().Be(true);
+		// data.exec is now GuardAsync-wrapped: the PRAGMA denial surfaces as a structured
+		// {error} body rather than the framework's IsError flag.
+		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text
+			.Should().Contain("error");
 	}
 }

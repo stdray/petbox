@@ -14,11 +14,12 @@ namespace PetBox.Web.Mcp;
 // it must not open the log context directly (a NetArchTest enforces this — the named-log
 // catalog lifecycle lives in LogCatalogTools, which owns the ILogStore dependency). List of
 // services is derivable via `events | summarize count() by ServiceKey`; ingest is for
-// pets via /api/ingest/clef, not agents.
+// pets via /api/ingest/clef, not agents. Tool throws on a failed Assert* or a KQL
+// parse/not-found/unsupported error; McpErrorEnvelopeFilter renders the structured {error} body.
 [McpServerToolType]
 public static class LogTools
 {
-	[McpServerTool(Name = "log.query", Title = "Run KQL query against a named log", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "log.query", Title = "Run KQL query against a named log", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LogQueryResultView))]
 	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Requires logs:query scope.")]
 	public static async Task<LogQueryResultView> QueryAsync(
 		IHttpContextAccessor http,

@@ -39,9 +39,10 @@ public sealed class SessionSearchService
 		hitsPerSession = Math.Clamp(hitsPerSession <= 0 ? DefaultHitsPerSession : hitsPerSession, 1, MaxHitsPerSession);
 
 		// No digest store yet = distillation hasn't reached this project; say so instead
-		// of failing (the store auto-vivifies on the first distilled session).
+		// of failing (the store auto-vivifies on the first distilled session). `reason`
+		// gives callers a machine-readable code, not just a bare bool.
 		if (!await _memory.StoreExistsAsync(projectKey, SessionDigestJob.Store, ct))
-			return new SessionSearchOutcome(false, [], new SearchRetrievers(false, false, false));
+			return new SessionSearchOutcome(false, "no-digest-store", [], new SearchRetrievers(false, false, false));
 
 		var discovery = await _memory.SearchAsync(projectKey, SessionDigestJob.Store, query, type: null, ct: ct);
 
@@ -55,7 +56,7 @@ public sealed class SessionSearchService
 			candidates.Add(new SessionSearchCandidate(sessionId, agent, digest.Description, inner.Hits, inner.Retrievers));
 		}
 
-		return new SessionSearchOutcome(true, candidates, discovery.Retrievers);
+		return new SessionSearchOutcome(true, null, candidates, discovery.Retrievers);
 	}
 
 	// The digest entry's metadata carries the provenance (sessionId + agent) the
@@ -88,8 +89,10 @@ public sealed record SessionSearchCandidate(
 	SearchRetrievers Retrievers);
 
 // Distilled=false → the project has no digest store yet (background distillation
-// hasn't run); an honest "not indexed yet", distinct from "nothing matched".
+// hasn't run); an honest "not indexed yet", distinct from "nothing matched". `Reason`
+// is a machine-readable code for that state (e.g. "no-digest-store"), null when distilled.
 public sealed record SessionSearchOutcome(
 	bool Distilled,
+	string? Reason,
 	IReadOnlyList<SessionSearchCandidate> Candidates,
 	SearchRetrievers Discovery);

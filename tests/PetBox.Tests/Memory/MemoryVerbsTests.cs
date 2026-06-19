@@ -162,16 +162,14 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Remember_InvalidScope_IsRejected()
 	{
 		var http = Http("memory:read,memory:write");
-		var res = Json(await MemoryTools.RememberAsync(http, Flags(), _memory, "x", scope: "galaxy"));
-		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
+		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.RememberAsync(http, Flags(), _memory, "x", scope: "galaxy"));
 	}
 
 	[Fact]
 	public async Task Remember_RequiresWriteScope()
 	{
 		var http = Http("memory:read");
-		var res = Json(await MemoryTools.RememberAsync(http, Flags(), _memory, "x"));
-		res.GetProperty("error").GetProperty("type").GetString().Should().Be("UnauthorizedAccessException");
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => MemoryTools.RememberAsync(http, Flags(), _memory, "x"));
 	}
 
 	static IHttpContextAccessor Http(string scopes)

@@ -18,18 +18,19 @@ namespace PetBox.Web.Mcp;
 // Kept in its OWN type, separate from DataTools, so DataTools stays free of a raw
 // Microsoft.Data.Sqlite dependency (a NetArchTest guards that). db.describe legitimately
 // introspects the schema over its own connection — same as the old entity.describe did.
-// Scopes: data:schema (create/delete) / data:read (list/describe), project-scoped.
+// Scopes: data:schema (create/delete) / data:read (list/describe), project-scoped. Tools
+// throw on a failed Assert*; McpErrorEnvelopeFilter renders the structured {error} body.
 [McpServerToolType]
 public static class DataDbTools
 {
 	[McpServerTool(Name = "db.create", Title = "Create a DataDb", UseStructuredContent = true, OutputSchemaType = typeof(DataDbCreatedResult))]
 	[Description("Creates a named DataDb (user-data SQLite file) in a project. Requires data:schema scope. `maxPageCount` caps the file size (default ~1 GB at 4 KB pages).")]
-	public static Task<object> CreateAsync(
+	public static async Task<DataDbCreatedResult> CreateAsync(
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,
 		string projectKey, string name,
 		[Description("Optional description.")] string? description = null,
 		[Description("Page-count quota (default ~262144 = ~1 GB).")] long? maxPageCount = null,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.DataSchema);
@@ -50,13 +51,13 @@ public static class DataDbTools
 			UpdatedAt = now,
 		}, token: ct);
 		return new DataDbCreatedResult(name, description, quota, now);
-	});
+	}
 
 	[McpServerTool(Name = "db.list", Title = "List DataDbs", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbListResult))]
 	[Description("Lists a project's DataDbs (name, description, quota, timestamps). Requires data:read scope.")]
-	public static Task<object> ListAsync(
+	public static async Task<DataDbListResult> ListAsync(
 		IHttpContextAccessor http, PetBoxDb db,
-		string projectKey, CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		string projectKey, CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.DataRead);
@@ -66,13 +67,13 @@ public static class DataDbTools
 			.Select(d => new DataDbRow(d.Name, d.Description, d.MaxPageCount, d.CreatedAt, d.UpdatedAt))
 			.ToListAsync(ct);
 		return new DataDbListResult(rows);
-	});
+	}
 
 	[McpServerTool(Name = "db.delete", Title = "Delete a DataDb", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDeletedResult))]
 	[Description("Deletes a DataDb and its on-disk file. Requires data:schema scope.")]
-	public static Task<object> DeleteAsync(
+	public static async Task<DataDbDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,
-		string projectKey, string name, CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		string projectKey, string name, CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.DataSchema);
@@ -81,13 +82,13 @@ public static class DataDbTools
 		if (deleted == 0) throw new InvalidOperationException("DataDb not found");
 		factory.TryDelete(projectKey, name);
 		return new DataDbDeletedResult(true, name);
-	});
+	}
 
 	[McpServerTool(Name = "db.describe", Title = "Describe a DataDb", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDescribeResult))]
 	[Description("Returns a DataDb's tables and their columns (name, type, notNull, pk). Requires data:read scope.")]
-	public static Task<object> DescribeAsync(
+	public static async Task<DataDbDescribeResult> DescribeAsync(
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,
-		string projectKey, string dbName, CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		string projectKey, string dbName, CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.DataRead);
@@ -124,7 +125,7 @@ public static class DataDbTools
 			tables.Add(new DataTableView(tableName, cols));
 		}
 		return new DataDbDescribeResult(tables);
-	});
+	}
 
 	static void AssertProject(IHttpContextAccessor accessor, string projectKey)
 	{

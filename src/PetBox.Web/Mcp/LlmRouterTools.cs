@@ -30,15 +30,15 @@ public static class LlmRouterTools
 
 	[McpServerTool(Name = "llm.config_get", Title = "Get LLM router registry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LlmRegistry))]
 	[Description("Return the project's LLM router registry (endpoints + routes), WITHOUT secrets. Requires llm:admin.")]
-	public static async Task<object> ConfigGetAsync(
+	public static async Task<LlmRegistry> ConfigGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryAdmin admin,
-		string projectKey, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
 		return await admin.GetAsync(projectKey, ct);
-	});
+	}
 
 	[McpServerTool(Name = "llm.config_set", Title = "Set LLM router registry", UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigSetResult))]
 	[Description("""
@@ -49,11 +49,11 @@ public static class LlmRouterTools
 		    "apiKeys":   { "<endpointName>": "<apiKey>" }?  // write-only, stored encrypted; omit to keep existing }
 		Validated before save (unknown endpoint in a route, bad URL, etc. -> error).
 		""")]
-	public static async Task<object> ConfigSetAsync(
+	public static async Task<LlmConfigSetResult> ConfigSetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryAdmin admin,
 		string projectKey,
 		[Description("JSON object { endpoints[], routes[], apiKeys? }")] JsonElement config,
-		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -64,18 +64,18 @@ public static class LlmRouterTools
 		var registry = new LlmRegistry(input.Endpoints ?? [], input.Routes ?? []);
 		await admin.SetAsync(projectKey, registry, input.ApiKeys ?? new Dictionary<string, string>(), ct);
 		return new LlmConfigSetResult(true, registry.Endpoints.Count, registry.Routes.Count);
-	});
+	}
 
 	[McpServerTool(Name = "llm.embed", Title = "Embed text via the router", UseStructuredContent = true, OutputSchemaType = typeof(EmbedResult))]
 	[Description("""
 		Embed inputs through the router's embed chain (primary -> fallback). `inputs` is a JSON
 		array of strings. Optional `tier`. Returns { vectors, model, servedBy }. Requires llm:invoke.
 		""")]
-	public static async Task<object> EmbedAsync(
+	public static async Task<EmbedResult> EmbedAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
 		string projectKey,
 		[Description("JSON array of strings")] JsonElement inputs,
-		string? tier = null, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		string? tier = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -83,18 +83,18 @@ public static class LlmRouterTools
 
 		var texts = Deserialize<List<string>>(inputs) ?? throw new ArgumentException("inputs must be a JSON array of strings");
 		return await client.EmbedAsync(projectKey, new EmbedRequest(texts, tier), ct);
-	});
+	}
 
 	[McpServerTool(Name = "llm.rerank", Title = "Rerank documents via the router", UseStructuredContent = true, OutputSchemaType = typeof(RerankResult))]
 	[Description("""
 		Rerank `documents` (JSON array of strings) against `query` through the rerank chain.
 		Optional `topN`, `tier`. Returns { hits:[{index,score}], model, servedBy }. Requires llm:invoke.
 		""")]
-	public static async Task<object> RerankAsync(
+	public static async Task<RerankResult> RerankAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
 		string projectKey, string query,
 		[Description("JSON array of document strings")] JsonElement documents,
-		int? topN = null, string? tier = null, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		int? topN = null, string? tier = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -102,7 +102,7 @@ public static class LlmRouterTools
 
 		var docs = Deserialize<List<string>>(documents) ?? throw new ArgumentException("documents must be a JSON array of strings");
 		return await client.RerankAsync(projectKey, new RerankRequest(query, docs, topN, tier), ct);
-	});
+	}
 
 	[McpServerTool(Name = "llm.chat", Title = "Chat / summarize via the router", UseStructuredContent = true, OutputSchemaType = typeof(ChatResult))]
 	[Description("""
@@ -110,12 +110,12 @@ public static class LlmRouterTools
 		{ role, content }. Optional `tier`, `temperature`, `maxTokens`. Returns { text, model,
 		servedBy }. Requires llm:invoke.
 		""")]
-	public static async Task<object> ChatAsync(
+	public static async Task<ChatResult> ChatAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
 		string projectKey,
 		[Description("JSON array of { role, content } messages")] JsonElement messages,
 		string? tier = null, double? temperature = null, int? maxTokens = null,
-		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -124,7 +124,7 @@ public static class LlmRouterTools
 		var msgs = Deserialize<List<ChatMessage>>(messages);
 		if (msgs is null || msgs.Count == 0) throw new ArgumentException("messages must be a non-empty JSON array of { role, content }");
 		return await client.ChatAsync(projectKey, new ChatRequest(msgs, tier, temperature, maxTokens), ct);
-	});
+	}
 
 	// Deserialize a tool argument into T. Handles the case where an MCP client double-encodes
 	// the value as a JSON string (a stale-schema artifact) by parsing the string first.

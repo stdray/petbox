@@ -133,28 +133,27 @@ public sealed class DeployToolsTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Upsert_With_Bad_RunSpec_Returns_Error_Envelope()
+	public async Task Upsert_With_Bad_RunSpec_Throws()
 	{
 		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db, "n1");
-		var r = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
+		var ex = await Assert.ThrowsAsync<ArgumentException>(() => DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
 			"web", "proj", "n1", "img1", ports: ["oops"]));
-		r.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
-		r.GetProperty("error").GetProperty("message").GetString().Should().Contain("port");
+		ex.Message.Should().Contain("port");
 	}
 
 	[Fact]
-	public async Task Write_Tool_With_Only_ReadScope_Returns_Error_Envelope()
+	public async Task Write_Tool_With_Only_ReadScope_Throws()
 	{
-		// guarded tools convert the scope assertion into an {error} envelope, not a throw
-		var r = Json(await DeployTools.NodeUpsertAsync(Http("deploy:read"), Flags(), _svc, _db, "x"));
-		r.GetProperty("error").GetProperty("type").GetString().Should().Be("UnauthorizedAccessException");
+		// Tools throw on the scope assert; McpErrorEnvelopeFilter renders {error} on the wire.
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			DeployTools.NodeUpsertAsync(Http("deploy:read"), Flags(), _svc, _db, "x"));
 	}
 
 	[Fact]
-	public async Task List_Without_DeployScope_Returns_Error_Envelope()
+	public async Task List_Without_DeployScope_Throws()
 	{
-		var r = Json(await DeployTools.NodeListAsync(Http("tasks:read"), Flags(), _svc));
-		r.GetProperty("error").GetProperty("type").GetString().Should().Be("UnauthorizedAccessException");
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			DeployTools.NodeListAsync(Http("tasks:read"), Flags(), _svc));
 	}
 
 	static IHttpContextAccessor Http(string scopes) =>

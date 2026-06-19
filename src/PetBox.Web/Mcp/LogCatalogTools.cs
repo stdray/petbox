@@ -12,17 +12,18 @@ namespace PetBox.Web.Mcp;
 // Kept in its OWN type, separate from LogTools, so LogTools (log.query) stays free of an
 // ILogStore / LogDb dependency (a NetArchTest enforces that — log.query must go through
 // ILogQueryService). This type owns the catalog the same way RelationTools owns relations.
-// Scopes: logs:admin (create/delete) / logs:query (list), project-scoped.
+// Scopes: logs:admin (create/delete) / logs:query (list), project-scoped. Tools throw on a
+// failed Assert*; McpErrorEnvelopeFilter renders the exception as the structured {error} body.
 [McpServerToolType]
 public static class LogCatalogTools
 {
 	[McpServerTool(Name = "log.create", Title = "Create a named log", UseStructuredContent = true, OutputSchemaType = typeof(LogCreatedResult))]
 	[Description("Creates a named log (its SQLite file + metadata) in a project. Requires logs:admin scope.")]
-	public static Task<object> CreateAsync(
+	public static async Task<LogCreatedResult> CreateAsync(
 		IHttpContextAccessor http, ILogStore logStore,
 		string projectKey, string name,
 		[Description("Optional description.")] string? description = null,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
@@ -31,25 +32,25 @@ public static class LogCatalogTools
 			throw new InvalidOperationException($"Log '{name}' already exists");
 		var meta = await logStore.CreateAsync(projectKey, name, description, ct);
 		return new LogCreatedResult(meta.Name, meta.Description, meta.CreatedAt);
-	});
+	}
 
 	[McpServerTool(Name = "log.list", Title = "List named logs", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LogListResult))]
 	[Description("Lists a project's named logs (name, description, timestamps). Requires logs:query scope.")]
-	public static Task<object> ListAsync(
+	public static async Task<LogListResult> ListAsync(
 		IHttpContextAccessor http, ILogStore logStore,
-		string projectKey, CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		string projectKey, CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.LogsQuery);
 		var rows = await logStore.ListAsync(projectKey, ct);
 		return new LogListResult(rows.Select(l => new LogRow(l.Name, l.Description, l.CreatedAt, l.UpdatedAt)).ToList());
-	});
+	}
 
 	[McpServerTool(Name = "log.delete", Title = "Delete a named log", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(LogDeletedResult))]
 	[Description("Deletes a named log and its file. Requires logs:admin scope.")]
-	public static Task<object> DeleteAsync(
+	public static async Task<LogDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, ILogStore logStore,
-		string projectKey, string name, CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		string projectKey, string name, CancellationToken ct = default)
 	{
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
@@ -57,7 +58,7 @@ public static class LogCatalogTools
 		var deleted = await logStore.DeleteAsync(projectKey, name, ct);
 		if (!deleted) throw new InvalidOperationException("Log not found");
 		return new LogDeletedResult(true, name);
-	});
+	}
 
 	static void AssertProject(IHttpContextAccessor accessor, string projectKey)
 	{

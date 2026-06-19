@@ -18,7 +18,7 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class MemoryTools
 {
-	[McpServerTool(Name = "memory.store_create", Title = "Create a memory store", UseStructuredContent = true)]
+	[McpServerTool(Name = "memory.store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]
 	[Description("Create a named memory store in a project. Requires memory:write.")]
 	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
@@ -31,7 +31,7 @@ public static class MemoryTools
 		return new MemoryStoreCreatedResult(meta.ProjectKey, meta.Name, meta.Description, meta.CreatedAt);
 	}
 
-	[McpServerTool(Name = "memory.store_list", Title = "List memory stores", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "memory.store_list", Title = "List memory stores", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreListResult))]
 	[Description("List memory stores in a project. Requires memory:read.")]
 	public static async Task<MemoryStoreListResult> StoreListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
@@ -44,7 +44,7 @@ public static class MemoryTools
 		return new MemoryStoreListResult(list.Select(s => new MemoryStoreRow(s.Name, s.Description, s.CreatedAt)).ToList());
 	}
 
-	[McpServerTool(Name = "memory.store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "memory.store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreDeletedResult))]
 	[Description("Delete a memory store and its entries. Requires memory:write.")]
 	public static async Task<MemoryStoreDeletedResult> StoreDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
@@ -56,7 +56,7 @@ public static class MemoryTools
 		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
 	}
 
-	[McpServerTool(Name = "memory.list", Title = "List memory entries", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "memory.list", Title = "List memory entries", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryListResult))]
 	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). `includeUsage` adds surfaced/opened/lastHitAt counters per entry (listing itself is NOT counted as usage). Requires memory:read.")]
 	public static async Task<MemoryListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
@@ -76,7 +76,7 @@ public static class MemoryTools
 		return new MemoryListResult(rows);
 	}
 
-	[McpServerTool(Name = "memory.get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "memory.get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryEntryView))]
 	[Description("Get the active entry by key, or null. Requires memory:read.")]
 	public static async Task<MemoryEntryView?> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
@@ -91,7 +91,7 @@ public static class MemoryTools
 		return entry;
 	}
 
-	[McpServerTool(Name = "memory.search", Title = "Search memory entries", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "memory.search", Title = "Search memory entries", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemorySearchResultView))]
 	[Description("Hybrid search over active entries' description/body/tags: lexical FTS5 (token/prefix, so paraphrases hit) fused with semantic vector similarity (RRF), ranked by relevance. `lexical`/`semantic` (default both on) toggle each retriever; semantic is silently off when no embedding capability is configured. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). Response includes `retrievers` { lexical, semantic, degraded }. Requires memory:read.")]
 	public static async Task<MemorySearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
@@ -135,22 +135,22 @@ public static class MemoryTools
 		the prior response's `currentVersion` as the next `sinceVersion` (0 echoes every entry,
 		bodiless); a single entry's `version` is smaller and re-echoes the whole recent delta.
 		""")]
-	public static async Task<object> UpsertAsync(
+	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store,
 		[Description("Array of entry objects: { key, type, description, body, tags?, metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every entry (bodiless).")] long sinceVersion = 0,
 		[Description("Slice length (chars) of each echoed entry body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
-		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var (upserts, deletes) = ParseEntries(entries);
 		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, sinceVersion, ct), bodyLen);
-	});
+	}
 
-	[McpServerTool(Name = "memory.delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "memory.delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("Return entries added/updated/removed since `sinceVersion` (no writes); bodies omitted unless bodyLen > 0 (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
@@ -198,11 +198,11 @@ public static class MemoryTools
 		generated. Store durable facts not derivable from code/git/config; actionable work
 		goes to a task board. Requires memory:write. Returns { id, scope, store, key }.
 		""")]
-	public static async Task<object> RememberAsync(
+	public static async Task<MemoryRememberResult> RememberAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string text, string? scope = null, string? projectKey = null, string? store = null,
 		string? type = null, string? tags = null, string? description = null,
-		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
@@ -221,7 +221,7 @@ public static class MemoryTools
 		};
 		await memory.UpsertAsync(container.Key, st, [input], [], 0, ct);
 		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key);
-	});
+	}
 
 	[McpServerTool(Name = "memory.recall", Title = "Recall facts", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryRecallResult))]
 	[Description("""
@@ -239,7 +239,7 @@ public static class MemoryTools
 		Returns { results: [{ scope, store, key, type, description, body, tags, version }], retrievers: { lexical, semantic, degraded } };
 		`version` is the entry's CAS baseline for memory.upsert (pass it back to edit without a Stale round-trip).
 		""")]
-	public static async Task<object> RecallAsync(
+	public static async Task<MemoryRecallResult> RecallAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
 		string query, string? scope = null, string? projectKey = null, string? store = null,
 		string? type = null, int limit = 20,
@@ -247,7 +247,7 @@ public static class MemoryTools
 		[Description("Run the lexical FTS retriever (default true).")] bool? lexical = null,
 		[Description("Run the semantic vector retriever (default true; no-op when embedding is unavailable).")] bool? semantic = null,
 		[Description("Include usage counters (surfaced/opened/lastHitAt) per hit (default false).")] bool includeUsage = false,
-		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
@@ -293,7 +293,7 @@ public static class MemoryTools
 			}
 		}
 		return new MemoryRecallResult(results, new RetrieverInfo(aggLexical, aggSemantic, aggDegraded));
-	});
+	}
 
 	// Decorate already-projected rows with their usage counters (entries that never
 	// surfaced have no row → zeros).

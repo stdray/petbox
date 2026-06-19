@@ -18,7 +18,7 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class TasksTools
 {
-	[McpServerTool(Name = "tasks.board_create", Title = "Create a task board", UseStructuredContent = true)]
+	[McpServerTool(Name = "tasks.board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
 	[Description("Create a named task board in a project. `kind` sets the board role (simple|spec|ideas|intake|work; default simple) which drives the workflow — call tasks.workflow to see the valid types/statuses/transitions for a kind. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -31,7 +31,7 @@ public static class TasksTools
 		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.SpecBoard, meta.CreatedAt);
 	}
 
-	[McpServerTool(Name = "tasks.board_set_spec", Title = "Set a work board's spec board", UseStructuredContent = true)]
+	[McpServerTool(Name = "tasks.board_set_spec", Title = "Set a work board's spec board", UseStructuredContent = true, OutputSchemaType = typeof(BoardSetSpecResult))]
 	[Description("Set (or clear, when specBoard is omitted) the spec board a work board's tasks link into. The target must be a spec board. Makes the work->spec link explicit. Requires tasks:write.")]
 	public static async Task<BoardSetSpecResult> BoardSetSpecAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -44,7 +44,7 @@ public static class TasksTools
 		return new BoardSetSpecResult(set, norm);
 	}
 
-	[McpServerTool(Name = "tasks.board_list", Title = "List task boards", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "tasks.board_list", Title = "List task boards", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardListResult))]
 	[Description("List task boards in a project, each with its kind, specBoard (work->spec link, if set) and closed flag. Requires tasks:read.")]
 	public static async Task<BoardListResult> BoardListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -57,7 +57,7 @@ public static class TasksTools
 		return new BoardListResult(list.Select(b => new BoardRow(b.Name, b.Kind, b.Description, b.SpecBoard, b.CreatedAt, b.ClosedAt != null)).ToList());
 	}
 
-	[McpServerTool(Name = "tasks.board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "tasks.board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardDeletedResult))]
 	[Description("Delete a task board and its nodes. Requires tasks:write.")]
 	public static async Task<BoardDeletedResult> BoardDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -69,7 +69,7 @@ public static class TasksTools
 		return new BoardDeletedResult(await tasks.DeleteBoardAsync(projectKey, board, ct));
 	}
 
-	[McpServerTool(Name = "tasks.board_close", Title = "Close (archive) a task board", UseStructuredContent = true)]
+	[McpServerTool(Name = "tasks.board_close", Title = "Close (archive) a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardClosedResult))]
 	[Description("Close a board: it rejects further writes (so agents stop writing to it by inertia) but stays readable; history is kept. Reopen with tasks.board_reopen. Requires tasks:write.")]
 	public static async Task<BoardClosedResult> BoardCloseAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -81,7 +81,7 @@ public static class TasksTools
 		return new BoardClosedResult(await tasks.SetClosedAsync(projectKey, board, true, ct));
 	}
 
-	[McpServerTool(Name = "tasks.board_reopen", Title = "Reopen a closed task board", UseStructuredContent = true)]
+	[McpServerTool(Name = "tasks.board_reopen", Title = "Reopen a closed task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardReopenedResult))]
 	[Description("Reopen a closed board so it accepts writes again. Requires tasks:write.")]
 	public static async Task<BoardReopenedResult> BoardReopenAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -95,15 +95,15 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks.methodology_enable", Title = "Enable the methodology quartet", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
 	[Description("Provision the four singleton methodology boards (intake/ideas/spec/work) if missing and auto-wire work->spec. Idempotent — opt-in; a project's methodology lives on these, ad-hoc work stays on simple boards. The four kinds are one-per-project. Requires tasks:write. Returns the quartet surface (intake→ideas→spec→work).")]
-	public static async Task<object> MethodologyEnableAsync(
+	public static async Task<MethodologyView> MethodologyEnableAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return await tasks.EnableMethodologyAsync(projectKey, ct);
-	});
+	}
 
 	[McpServerTool(Name = "tasks.methodology_get", Title = "Get the methodology quartet", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
 	[Description("""
@@ -120,20 +120,20 @@ public static class TasksTools
 		subtree drill-down, use tasks.get (the single-board detail endpoint). `enabled` is
 		true when all four singleton boards exist. Requires tasks:read.
 		""")]
-	public static async Task<object> MethodologyGetAsync(
+	public static async Task<MethodologyView> MethodologyGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("Slice length (chars) of each node body to include; 0 = index only (no bodies). \"…\" is appended when a body is cut.")] int bodyLen = 0,
 		[Description("Restrict to these quartet boards by kind (intake|ideas|spec|work); empty/omitted = all four.")] string[]? includeBoards = null,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
-		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		return await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, urlPrefix, ct);
-	});
+	}
 
 	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(PlanBoardView))]
 	[Description("""
@@ -162,7 +162,7 @@ public static class TasksTools
 		[Description("Tag PROJECTION: an ordered, comma-separated list of tag namespaces (e.g. \"area\" or \"area,concern\"); order sets nesting.")] string? groupBy = null,
 		[Description("Snippet length (chars) per node body; 0 (default) = full body. \"…\" appended when cut. Ignored with groupBy (keys only).")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default; ignored with groupBy).")] bool includeUrl = false,
-		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -175,7 +175,7 @@ public static class TasksTools
 		return bodyLen <= 0
 			? (object)view
 			: view with { Nodes = view.Nodes.Select(n => n with { Body = ModuleMcp.SnippetBody(n.Body, bodyLen) ?? n.Body }).ToList() };
-	});
+	}
 
 	[McpServerTool(Name = "tasks.search", Title = "Search plan nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
 	[Description("""
@@ -190,7 +190,7 @@ public static class TasksTools
 		Bounded by `limit` (default 20; 0 = no limit). Response includes `retrievers`
 		{ lexical, semantic, degraded }. Requires tasks:read.
 		""")]
-	public static async Task<object> SearchAsync(
+	public static async Task<TaskSearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string query, string? board = null,
 		[Description("Snippet length (chars) per node body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
@@ -198,7 +198,7 @@ public static class TasksTools
 		[Description("Run the lexical FTS retriever (default true).")] bool? lexical = null,
 		[Description("Run the semantic vector retriever (default true; no-op when embedding is unavailable).")] bool? semantic = null,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
-		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -210,7 +210,7 @@ public static class TasksTools
 		return new TaskSearchResultView(
 			nodes,
 			new RetrieverInfo(res.Retrievers.Lexical, res.Retrievers.Semantic, res.Retrievers.Degraded));
-	});
+	}
 
 	// Wire shape for one search hit: a compact, board-aware projection of the enriched node
 	// view (board carried since search spans boards), body sliced to bodyLen (full when 0).
@@ -276,14 +276,14 @@ public static class TasksTools
 		`sinceVersion` (NOT a single node's `version`, which is smaller — that re-echoes the
 		whole recent delta; the default 0 echoes every node, bodiless).
 		""")]
-	public static async Task<object> UpsertAsync(
+	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
 		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef`, `ideaRef`, `blockedBy`, `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
 		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every node (bodiless).")] long sinceVersion = 0,
 		[Description("Slice length (chars) of each echoed node body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
-		CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -291,9 +291,9 @@ public static class TasksTools
 		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, ct), urlPrefix, bodyLen);
-	});
+	}
 
-	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes); bodies omitted unless bodyLen > 0 (compact by default). Requires tasks:read.")]
 	public static async Task<UpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -311,9 +311,9 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks.workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(WorkflowView))]
 	[Description("Return the workflow for a board: its kind and the task types it hosts, each with statuses (slug, name, kind=open|terminalok|terminalcancel), the initial status, and transitions (from, to, requiresApproval, requiresReason). Use this to learn the legal statuses before tasks.upsert. Requires tasks:read.")]
-	public static async Task<object> WorkflowAsync(
+	public static async Task<WorkflowView> WorkflowAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string board, CancellationToken ct = default) => await ModuleMcp.GuardAsync(async () =>
+		string projectKey, string board, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
@@ -326,7 +326,7 @@ public static class TasksTools
 				Initial: w.Initial,
 				Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
 				Transitions: w.Transitions.Select(t => new WorkflowTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason)).ToList())).ToList());
-	});
+	}
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 

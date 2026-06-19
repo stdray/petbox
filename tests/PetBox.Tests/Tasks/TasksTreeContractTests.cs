@@ -124,10 +124,9 @@ public sealed class TasksTreeContractTests : IDisposable
 		// while b is reachable — a->b->? a is root, b under c. Set c part_of b → c,b,? Let's
 		// make the direct 2-cycle: set a part_of b is fine (a root). Instead force a cycle:
 		// b under c; now set c part_of b → c->b->c? b's parent is c, so c part_of b loops.
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
+		var res = await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
 			McpInputs.Nodes(new object[] { new { key = "c", partOf = "b", version = ver } })));
-		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
-		res.GetProperty("error").GetProperty("message").GetString().Should().Contain("cycle");
+		res.Message.Should().Contain("cycle");
 	}
 
 	[Fact]
@@ -249,8 +248,7 @@ public sealed class TasksTreeContractTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "g", null);
-		var res = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "status"));
-		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
+		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "status"));
 	}
 
 	[Fact]
@@ -263,10 +261,8 @@ public sealed class TasksTreeContractTests : IDisposable
 		{
 			new { l1 = "Bad Phase", status = "Todo", body = "x" },
 		});
-		// GuardAsync surfaces the validation failure as a structured error result
-		// (not a thrown, opaque MCP error).
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes));
-		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
+		// Validation failure throws; McpErrorEnvelopeFilter renders it as {error} on the wire.
+		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes));
 	}
 
 	[Fact]
@@ -313,10 +309,9 @@ public sealed class TasksTreeContractTests : IDisposable
 			McpInputs.Nodes(new[] { new { key = "n", type = "bug", status = "Todo", body = "x" } }), 0);
 
 		// Editing the node to a different type must fail — type is immutable once set.
-		var res = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+		var res = await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
 			McpInputs.Nodes(new[] { new { key = "n", type = "feature", version = 1, body = "x" } })));
-		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
-		res.GetProperty("error").GetProperty("message").GetString().Should().Contain("immutable");
+		res.Message.Should().Contain("immutable");
 
 		// Editing other fields while keeping the type (or omitting it) still works.
 		var ok = Json(await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",

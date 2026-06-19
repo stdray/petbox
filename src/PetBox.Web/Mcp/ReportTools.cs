@@ -14,6 +14,7 @@ namespace PetBox.Web.Mcp;
 // not "a task on my board"), so it does not AssertProject/AssertScope; a valid key
 // (the /mcp endpoint already requires one) is enough. The write goes through the
 // single tasks door (ITasksService); this adapter only composes the report body.
+// Throws on a failed feature assert; McpErrorEnvelopeFilter renders the {error} body.
 [McpServerToolType]
 public static class ReportTools
 {
@@ -27,11 +28,11 @@ public static class ReportTools
 		PetBox maintainer's triage board, not your project. Any authenticated key may
 		call this; it is not scoped to your project or to a specific permission.
 		""")]
-	public static Task<object> IssueAsync(
+	public static async Task<ReportIssueResult> IssueAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		[Description("Short one-line title of the issue.")] string title,
 		[Description("Full detail: what you did, what happened, expected vs actual, the tool/endpoint involved.")] string detail,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("title is required");
@@ -42,5 +43,5 @@ public static class ReportTools
 
 		var key = await tasks.ReportIssueAsync(IssuesProject, IssuesBoard, title, body, ct);
 		return new ReportIssueResult(true, IssuesProject, IssuesBoard, key);
-	});
+	}
 }

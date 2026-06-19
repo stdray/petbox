@@ -54,31 +54,10 @@ static class ModuleMcp
 			throw new InvalidOperationException($"feature '{feature}' is disabled");
 	}
 
-	// Runs a tool body, converting any thrown exception into a structured, agent-
-	// readable error result instead of the MCP framework's opaque "An error occurred
-	// invoking 'X'". Surfaces the cause (scope/feature/project assert, or a deeper
-	// server-side failure with message + stack) to the caller. Request-level logging
-	// (incl. MCP, into the self-log) is handled centrally by RequestLoggingMiddleware.
-	//
-	// Returns object because the result is a UNION: the tool's typed success record T on
-	// success, or the {error} envelope on failure — both are serialized inline as the tool
-	// payload (NOT as an IsError content block; agents parse `.error` from the body, and the
-	// MCP tests rely on that). The tool method still declares Task<object>; it advertises the
-	// success schema via [McpServerTool(UseStructuredContent = true, OutputSchemaType =
-	// typeof(T))] so clients get a real outputSchema for the happy path. The generic overload
-	// lets a body `return` its record directly (no `(object)` cast at every call site) while
-	// the box happens here.
-	public static async Task<object> GuardAsync<T>(Func<Task<T>> body)
-	{
-		try
-		{
-			return (await body())!;
-		}
-		catch (Exception ex)
-		{
-			return new { error = new { type = ex.GetType().Name, message = ex.Message, detail = ex.ToString() } };
-		}
-	}
+	// NOTE: tool bodies no longer wrap themselves — they just throw on a failed Assert* (or
+	// any deeper error), and McpErrorEnvelopeFilter converts the exception into the structured
+	// { error: { type, message, detail } } result centrally for every tool. Tools keep concrete
+	// Task<T> return types; the success schema is advertised via [McpServerTool(OutputSchemaType)].
 
 	public static string? OptStr(JsonElement o, string name) =>
 		o.ValueKind == JsonValueKind.Object && o.TryGetProperty(name, out var e) && e.ValueKind == JsonValueKind.String

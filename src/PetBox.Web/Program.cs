@@ -221,8 +221,9 @@ public partial class Program
 			.WithToolsFromAssembly(typeof(Program).Assembly, mcpJson)
 			.WithRequestFilters(filters =>
 			{
-				PetBox.Web.Mcp.McpToolScopeFilter.Register(filters); // A7b: scope-trim tools/list
-				PetBox.Web.Mcp.McpTracingFilter.Register(filters);   // span per tool call (self-tracing)
+				PetBox.Web.Mcp.McpErrorEnvelopeFilter.Register(filters); // exceptions -> structured {error} body
+				PetBox.Web.Mcp.McpToolScopeFilter.Register(filters);     // A7b: scope-trim tools/list
+				PetBox.Web.Mcp.McpTracingFilter.Register(filters);       // span per tool call (self-tracing)
 			});
 		builder.Services.AddSingleton<FeatureFlags>();
 

@@ -80,6 +80,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 		var res = await _search.SearchAsync(Proj, "запустили векторизацию");
 
 		res.Distilled.Should().BeTrue();
+		res.Reason.Should().BeNull();                          // distilled → no reason code
 		res.Discovery.Lexical.Should().BeTrue();
 		res.Candidates.Should().NotBeEmpty();
 		var top = res.Candidates[0];
@@ -98,6 +99,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 		var res = await _search.SearchAsync(Proj, "что-то");
 
 		res.Distilled.Should().BeFalse();
+		res.Reason.Should().Be("no-digest-store");             // structural signal, not a bare bool
 		res.Candidates.Should().BeEmpty();
 	}
 

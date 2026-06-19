@@ -216,8 +216,10 @@ public sealed record SessionSearchSessionView(
 	IReadOnlyList<SessionSearchHitView> Hits,
 	RetrieverInfo Retrievers);
 
+// `Reason` is a machine-readable code present only when Distilled=false (e.g. "no-digest-store").
 public sealed record SessionSearchResultView(
 	bool Distilled,
+	string? Reason,
 	IReadOnlyList<SessionSearchSessionView> Sessions,
 	RetrieverInfo Discovery);
 

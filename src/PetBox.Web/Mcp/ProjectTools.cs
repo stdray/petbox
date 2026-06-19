@@ -15,6 +15,7 @@ namespace PetBox.Web.Mcp;
 // entity.* type "project"). Flat, typed params give the MCP client a real per-field schema.
 // Provisioning ops: admin:provision scope, NO per-project claim — these are cross-project
 // onboarding ops. project has no delete (entity.* refused it too: would orphan logs/dbs/keys).
+// Tools throw on a failed Assert*/validation; McpErrorEnvelopeFilter renders the {error} body.
 [McpServerToolType]
 public static partial class ProjectTools
 {
@@ -24,13 +25,13 @@ public static partial class ProjectTools
 
 	[McpServerTool(Name = "project.create", Title = "Create a project", UseStructuredContent = true, OutputSchemaType = typeof(ProjectCreatedResult))]
 	[Description("Creates a project in a workspace. Requires admin:provision. `key` must match ^[a-z][a-z0-9_-]{0,99}$; `name` defaults to the key.")]
-	public static Task<object> CreateAsync(
+	public static async Task<ProjectCreatedResult> CreateAsync(
 		IHttpContextAccessor http, PetBoxDb db,
 		[Description("Workspace the project belongs to.")] string workspaceKey,
 		[Description("Project key (^[a-z][a-z0-9_-]{0,99}$).")] string key,
 		[Description("Display name (defaults to the key).")] string? name = null,
 		[Description("Optional description.")] string? description = null,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
@@ -50,14 +51,14 @@ public static partial class ProjectTools
 			Description = description ?? string.Empty,
 		}, token: ct);
 		return new ProjectCreatedResult(key, workspaceKey, name, description);
-	});
+	}
 
 	[McpServerTool(Name = "project.list", Title = "List projects", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ProjectListResult))]
 	[Description("Lists projects, optionally scoped to one workspace. Requires admin:provision.")]
-	public static Task<object> ListAsync(
+	public static async Task<ProjectListResult> ListAsync(
 		IHttpContextAccessor http, PetBoxDb db,
 		[Description("Restrict to one workspace; omit for all projects.")] string? workspaceKey = null,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		var q = db.Projects.AsQueryable();
@@ -67,5 +68,5 @@ public static partial class ProjectTools
 			.Select(p => new ProjectRow(p.Key, p.WorkspaceKey, p.Name, p.Description))
 			.ToListAsync(ct);
 		return new ProjectListResult(rows);
-	});
+	}
 }

@@ -188,7 +188,10 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 			["logName"] = LogNames.Default,
 			["kql"] = "events",
 		});
-		result.IsError.Should().Be(true);
+		// log.query is GuardAsync-wrapped: a foreign project surfaces as a structured
+		// {error} body, not the framework's IsError flag (consistent with tasks.*).
+		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text
+			.Should().Contain("UnauthorizedAccessException");
 	}
 
 	[Fact]
@@ -212,6 +215,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 			["logName"] = LogNames.Default,
 			["kql"] = "events",
 		});
-		result.IsError.Should().Be(true);
+		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text
+			.Should().Contain("UnauthorizedAccessException");
 	}
 }

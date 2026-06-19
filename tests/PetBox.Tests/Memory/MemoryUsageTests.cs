@@ -128,6 +128,8 @@ public sealed class MemoryUsageTests : IDisposable
 		await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, Proj, "notes", "телеметрию");
 		await _recorder.FlushAsync();
 
+		// memory.search returns the typed record directly (errors throw → McpErrorEnvelopeFilter
+		// renders them on the wire; unit tests read the concrete success value).
 		var plain = await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, Proj, "notes", "телеметрию");
 		plain.Entries[0].Surfaced.Should().BeNull(); // default off — context economy
 
@@ -141,7 +143,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await Seed("u1");
 
-		var res = (MemoryRecallResult)await MemoryTools.RecallAsync(Http(), Flags(), _memory, _recorder, "телеметрию");
+		var res = await MemoryTools.RecallAsync(Http(), Flags(), _memory, _recorder, "телеметрию");
 		res.Results.Should().NotBeEmpty();
 		await _recorder.FlushAsync();
 

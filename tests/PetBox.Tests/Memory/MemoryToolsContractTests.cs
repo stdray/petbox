@@ -57,9 +57,8 @@ public sealed class MemoryToolsContractTests : IDisposable
 		{
 			new { key = "k", description = "d", body = "b" },
 		});
-		// GuardAsync surfaces the missing-type validation as a structured error result.
-		var res = Json(await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries));
-		res.GetProperty("error").GetProperty("type").GetString().Should().Be("ArgumentException");
+		// The missing-type validation throws; McpErrorEnvelopeFilter renders {error} on the wire.
+		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries));
 	}
 
 	[Fact]

@@ -22,11 +22,12 @@ namespace PetBox.Web.Mcp;
 // query/exec delegate to the shared IDataSqlService — the same execution path the
 // REST /api/data/* endpoints use — so the PRAGMA deny-list, parameter binding and
 // existence check live in one place (a NetArchTest keeps these tools off the raw
-// connection). schema_apply uses SchemaRunner (DbUp) directly.
+// connection). schema_apply uses SchemaRunner (DbUp) directly. Tools throw on a failed
+// Assert* (or a denied PRAGMA / SQL error); McpErrorEnvelopeFilter renders the {error} body.
 [McpServerToolType]
 public static class DataTools
 {
-	[McpServerTool(Name = "data.schema_apply", Title = "Apply schema migration", Idempotent = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "data.schema_apply", Title = "Apply schema migration", Idempotent = true, UseStructuredContent = true, OutputSchemaType = typeof(DataSchemaApplyResult))]
 	[Description("Applies a named SQL migration via DbUp + hash-based idempotency. Re-applying with same name+sql is a no-op; same name with different sql is a 409-style conflict. Requires data:schema scope.")]
 	public static async Task<DataSchemaApplyResult> SchemaApplyAsync(
 		IHttpContextAccessor http,
@@ -51,7 +52,7 @@ public static class DataTools
 		return new DataSchemaApplyResult(result.Kind.ToString(), result.Hash, result.ExistingHash, result.Error);
 	}
 
-	[McpServerTool(Name = "data.query", Title = "Run SQL query", ReadOnly = true, UseStructuredContent = true)]
+	[McpServerTool(Name = "data.query", Title = "Run SQL query", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataQueryResult))]
 	[Description("Executes a parameterized SELECT and returns rows as a JSON array. Requires data:read scope.")]
 	public static async Task<DataQueryResult> QueryAsync(
 		IHttpContextAccessor http,
@@ -68,7 +69,7 @@ public static class DataTools
 		return new DataQueryResult(rows);
 	}
 
-	[McpServerTool(Name = "data.exec", Title = "Run SQL exec (INSERT/UPDATE/DELETE/DDL)", UseStructuredContent = true)]
+	[McpServerTool(Name = "data.exec", Title = "Run SQL exec (INSERT/UPDATE/DELETE/DDL)", UseStructuredContent = true, OutputSchemaType = typeof(DataExecResult))]
 	[Description("Executes a non-query statement. Returns affected row count. PRAGMA writable_schema / temp_store_directory / data_store_directory / trusted_schema are denied. SQLITE_FULL surfaces as a quota error. Requires data:write scope.")]
 	public static async Task<DataExecResult> ExecAsync(
 		IHttpContextAccessor http,

@@ -16,7 +16,7 @@ namespace PetBox.Web.Mcp;
 // Typed MCP surface for the deploy control-plane. Gated by Feature.Deploy. Fleet-wide (no
 // per-project claim); reads need deploy:read, writes deploy:write. Mirrors the REST/UI
 // operations: node registry + the desired-state grid. Node-agents do NOT use these (they
-// use /agent/*).
+// use /agent/*). Tools throw on a failed Assert*; McpErrorEnvelopeFilter renders the {error} body.
 [McpServerToolType]
 public static class DeployTools
 {
@@ -26,24 +26,23 @@ public static class DeployTools
 
 	[McpServerTool(Name = "deploy.node_list", Title = "List fleet nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployNodesResult))]
 	[Description("Lists every node in the fleet (id, tags, online, last-seen, deployment count). Requires deploy:read.")]
-	public static Task<object> NodeListAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc, CancellationToken ct = default) =>
-		ModuleMcp.GuardAsync(async () =>
-		{
-			ModuleMcp.AssertFeature(features, Feature.Deploy);
-			ModuleMcp.AssertScope(http, ApiKeyScopes.DeployRead);
-			return new DeployNodesResult(await svc.ListNodesAsync(ct));
-		});
+	public static async Task<DeployNodesResult> NodeListAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Deploy);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployRead);
+		return new DeployNodesResult(await svc.ListNodesAsync(ct));
+	}
 
 	[McpServerTool(Name = "deploy.node_upsert", Title = "Register/update a node", UseStructuredContent = true, OutputSchemaType = typeof(DeployNodeResult))]
 	[Description("Registers or updates a node. With mintKey=true also mints (or rotates) the node-scoped agent key and returns it ONCE. Requires deploy:write.")]
-	public static Task<object> NodeUpsertAsync(
+	public static async Task<DeployNodeResult> NodeUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc, PetBoxDb db,
 		[Description("Node id (slug), e.g. 'vdsina-1'.")] string id,
 		[Description("Display name.")] string? displayName = null,
 		[Description("Capability tags CSV, e.g. 'net.x,disk=nvme'.")] string? tags = null,
 		[Description("Comes and goes (laptop/WSL2) — failover treats it as relocatable target carefully.")] bool ephemeral = false,
 		[Description("Mint (or rotate) the node agent key and return it once.")] bool mintKey = false,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
@@ -59,41 +58,45 @@ public static class DeployTools
 			key = $"yb_key_node_{Guid.NewGuid():N}";
 			await db.InsertAsync(new ApiKey
 			{
-				Key = key, ProjectKey = node.Id, Scopes = NodeKeyScopes, Name = keyRef, CreatedAt = DateTime.UtcNow,
+				Key = key,
+				ProjectKey = node.Id,
+				Scopes = NodeKeyScopes,
+				Name = keyRef,
+				CreatedAt = DateTime.UtcNow,
 			}, token: ct);
 		}
 		return new DeployNodeResult(node, key);
-	});
+	}
 
 	[McpServerTool(Name = "deploy.node_delete", Title = "Delete a node", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeletedResult))]
 	[Description("Deletes a node and cascades its deployments. Requires deploy:write.")]
-	public static Task<object> NodeDeleteAsync(
+	public static async Task<DeployDeletedResult> NodeDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Node id to delete.")] string id,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
 		if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("id is required");
 		return new DeployDeletedResult(await svc.DeleteNodeAsync(id, ct), id);
-	});
+	}
 
 	[McpServerTool(Name = "deploy.list", Title = "List deployments", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentsResult))]
 	[Description("Lists deployments (desired + last actual state), optionally filtered by node and/or service. Requires deploy:read.")]
-	public static Task<object> ListAsync(
+	public static async Task<DeployDeploymentsResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Filter by node id.")] string? nodeId = null,
 		[Description("Filter by service.")] string? service = null,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployRead);
 		return new DeployDeploymentsResult(await svc.ListDeploymentsAsync(nodeId, service, ct));
-	});
+	}
 
 	[McpServerTool(Name = "deploy.upsert", Title = "Create/update a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
 	[Description("Creates (omit id) or updates a deployment of a service on a node. One copy per (service, node). Requires deploy:write.")]
-	public static Task<object> UpsertAsync(
+	public static async Task<DeployDeploymentResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Service name (slug).")] string service,
 		[Description("Project the service belongs to (its config applies).")] string project,
@@ -118,7 +121,7 @@ public static class DeployTools
 		[Description("Extra container labels, 'key=value' entries ('petbox.*' is reserved).")] string[]? labels = null,
 		[Description("Site domain (e.g. 'app.example.com') — makes this deployment a SITE: the node agent routes the domain to the loopback port via the host reverse-proxy (Caddy).")] string? domain = null,
 		[Description("Loopback port the reverse-proxy forwards to; default = host port of the first ports entry.")] int? sitePort = null,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
@@ -135,55 +138,54 @@ public static class DeployTools
 			running ? DesiredState.Running : DesiredState.Stopped, relocatable, requiredTags ?? "", configTags ?? "",
 			runSpec), ct);
 		return new DeployDeploymentResult(d);
-	});
+	}
 
 	[McpServerTool(Name = "deploy.start", Title = "Start a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
 	[Description("Sets a deployment's desired state to running. Requires deploy:write.")]
-	public static Task<object> StartAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
+	public static Task<DeployDeploymentResult> StartAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id.")] string id, CancellationToken ct = default) =>
 		SetDesiredAsync(http, features, svc, id, DesiredState.Running, ct);
 
 	[McpServerTool(Name = "deploy.stop", Title = "Stop a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
 	[Description("Sets a deployment's desired state to stopped. Requires deploy:write.")]
-	public static Task<object> StopAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
+	public static Task<DeployDeploymentResult> StopAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id.")] string id, CancellationToken ct = default) =>
 		SetDesiredAsync(http, features, svc, id, DesiredState.Stopped, ct);
 
 	[McpServerTool(Name = "deploy.move", Title = "Move a deployment to another node", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
 	[Description("Moves a deployment to a different node (the agents reconcile the move). Requires deploy:write.")]
-	public static Task<object> MoveAsync(
+	public static async Task<DeployDeploymentResult> MoveAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id.")] string id,
 		[Description("Destination node id.")] string toNodeId,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
 		if (string.IsNullOrWhiteSpace(toNodeId)) throw new ArgumentException("toNodeId is required");
 		var d = await svc.GetDeploymentAsync(id, ct) ?? throw new InvalidOperationException("deployment not found");
 		return new DeployDeploymentResult(await svc.UpsertDeploymentAsync(ToInput(d) with { NodeId = toNodeId }, ct));
-	});
+	}
 
 	[McpServerTool(Name = "deploy.delete", Title = "Delete a deployment", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeletedResult))]
 	[Description("Deletes a deployment (the owning node's agent then removes the container). Requires deploy:write.")]
-	public static Task<object> DeleteAsync(
+	public static async Task<DeployDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id to delete.")] string id,
-		CancellationToken ct = default) => ModuleMcp.GuardAsync(async () =>
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
 		return new DeployDeletedResult(await svc.DeleteDeploymentAsync(id, ct), id);
-	});
+	}
 
-	static Task<object> SetDesiredAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc, string id, DesiredState desired, CancellationToken ct) =>
-		ModuleMcp.GuardAsync(async () =>
-		{
-			ModuleMcp.AssertFeature(features, Feature.Deploy);
-			ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
-			var d = await svc.GetDeploymentAsync(id, ct) ?? throw new InvalidOperationException("deployment not found");
-			return new DeployDeploymentResult(await svc.UpsertDeploymentAsync(ToInput(d) with { DesiredState = desired }, ct));
-		});
+	static async Task<DeployDeploymentResult> SetDesiredAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc, string id, DesiredState desired, CancellationToken ct)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Deploy);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
+		var d = await svc.GetDeploymentAsync(id, ct) ?? throw new InvalidOperationException("deployment not found");
+		return new DeployDeploymentResult(await svc.UpsertDeploymentAsync(ToInput(d) with { DesiredState = desired }, ct));
+	}
 
 	// Carries RunSpec through, so start/stop/move never wipe a deployment's run-spec.
 	static DeploymentInput ToInput(DeploymentView d) => new(
