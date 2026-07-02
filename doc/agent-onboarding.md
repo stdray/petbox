@@ -34,8 +34,8 @@ gone). The provisioning tools (`project.*`, `apikey.*`, `config.*`) require the
 |---|---|
 | `project.create({ workspaceKey, key, name, description? })` | Create the pet's project. |
 | `apikey.create({ name, scopes, projectKey?, expiresInSeconds?, allProjects? })` | Mint the pet's **production** key. Returns the raw key once — hand it to the pet. Omit `expiresInSeconds` for a non-expiring key. `allProjects:true` (omit `projectKey`) mints a cross-project `*` key. |
-| `config.create_binding({ workspaceKey, path, value, tags })` | Seed config. `tags` must include `ws:{workspaceKey}`. |
-| `project.list` / `apikey.list` / `apikey.delete` / `config.list_bindings` / `config.delete_binding` | List / remove. `project` has no delete. |
+| `config.binding_upsert({ workspaceKey, path, value, tags })` | Seed config (PUT by (path, tagset) — an identical twin is superseded). `tags` must include `ws:{workspaceKey}`. |
+| `project.list` / `apikey.list` / `apikey.delete` / `config.binding_list` / `config.binding_delete` | List / remove. `project` has no delete. |
 
 Project-scoped types `db` and `log` (created with the minted key, gated on
 `data:schema` / `logs:admin`) plus the operational tools `data.schema_apply`,
@@ -47,7 +47,7 @@ Project-scoped types `db` and `log` (created with the minted key, gated on
 2. `apikey.create({ projectKey: "kpvotes", name: "kpvotes-ts prod", scopes: "config:read,data:read,data:write,data:schema" })` → **save the returned key**
 3. `db.create({ projectKey: "kpvotes", name: "kpvotes-cache" })` (using the minted key)
 4. `data.schema_apply({ projectKey: "kpvotes", dbName: "kpvotes-cache", name: "M001_votes", sql: "CREATE TABLE votes (...)" })`
-5. `config.create_binding({ workspaceKey: "myws", path: "kpvotes.kp-uri", value: "...", tags: "ws:myws,project:kpvotes" })`
+5. `config.binding_upsert({ workspaceKey: "myws", path: "kpvotes.kp-uri", value: "...", tags: "ws:myws,project:kpvotes" })`
 6. Give the pet its production key + endpoint; the agent key expires on its own.
 
 ## Errors
