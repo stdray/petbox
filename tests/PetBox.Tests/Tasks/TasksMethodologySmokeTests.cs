@@ -657,4 +657,67 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		IsErr(r).Should().BeTrue();
 		Text(r).Should().Contain("draft"); // error enumerates valid statuses (defined|deprecated)
 	}
+
+	// 25. work `chore` — engineering hygiene below the spec: no specRef required at birth,
+	// but it rides the SAME FSM as feature/bug (no shortcut straight to Done).
+	[Fact]
+	public async Task Work_ChoreWithoutSpecRef_Allowed_RidesWorkFsm()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var r = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work",
+			nodes = Nodes(new { key = "fix-flaky-test", type = "chore", status = "Pending", title = "Fix flaky test", body = "x" }) });
+		IsErr(r).Should().BeFalse(Text(r));
+
+		// the chore lives on the work FSM: Pending → InProgress is legal…
+		var move = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work",
+			nodes = Nodes(new { key = "fix-flaky-test", version = 1, status = "InProgress" }) });
+		IsErr(move).Should().BeFalse(Text(move));
+
+		// …but InProgress → Done is not an edge (must go through Review) — same gate shape as feature/bug.
+		var bad = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work",
+			nodes = Nodes(new { key = "fix-flaky-test", version = 2, status = "Done" }) });
+		IsErr(bad).Should().BeTrue();
+		Text(bad).Should().Contain("Review"); // error names the valid next statuses
+	}
+
+	// 26. the spec-link guard still bites bug AND feature (chore is the only exemption) —
+	// assert the exact per-type error text, not just IsError.
+	[Fact]
+	public async Task Work_BugAndFeatureWithoutSpecRef_RejectedWithExactError()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+
+		var bug = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work",
+			nodes = Nodes(new { key = "b", type = "bug", status = "Pending", title = "B", body = "x" }) });
+		// (the envelope '-escapes quotes, so assert around the quoted node key)
+		IsErr(bug).Should().BeTrue();
+		Text(bug).Should().Contain("a work bug must link a spec node — provide specRef (node");
+		Text(bug).Should().Contain("b\\u0027)");
+
+		var feature = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work",
+			nodes = Nodes(new { key = "f", type = "feature", status = "Pending", title = "F", body = "x" }) });
+		IsErr(feature).Should().BeTrue();
+		Text(feature).Should().Contain("a work feature must link a spec node — provide specRef (node");
+		Text(feature).Should().Contain("f\\u0027)");
+	}
+
+	// 27. tasks.workflow on a work board surfaces `chore` with the FULL feature/bug FSM
+	// (all seven statuses, Pending initial, Review→Done gated by requiresApproval).
+	[Fact]
+	public async Task Workflow_WorkBoard_SurfacesChoreFsm()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var wf = await Agent("tasks.workflow", new { projectKey = ProjectKey, board = "work" });
+		wf.IsError.Should().NotBe(true);
+
+		using var doc = JsonDocument.Parse(Text(wf));
+		var chore = doc.RootElement.GetProperty("types").EnumerateArray()
+			.Single(t => t.GetProperty("type").GetString() == "chore");
+		chore.GetProperty("initial").GetString().Should().Be("Pending");
+		chore.GetProperty("statuses").EnumerateArray().Select(s => s.GetProperty("slug").GetString())
+			.Should().BeEquivalentTo(new[] { "Pending", "InProgress", "Review", "Done", "Blocked", "Deferred", "Cancelled" });
+		var reviewDone = chore.GetProperty("transitions").EnumerateArray()
+			.Single(t => t.GetProperty("from").GetString() == "Review" && t.GetProperty("to").GetString() == "Done");
+		reviewDone.GetProperty("requiresApproval").GetBoolean().Should().BeTrue();
+	}
 }

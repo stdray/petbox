@@ -69,6 +69,24 @@ public sealed class WorkflowEngineTests
 	}
 
 	[Fact]
+	public void Work_Chore_SharesFeatureBugFsm()
+	{
+		// chore is a first-class work type whose FSM is IDENTICAL to feature/bug —
+		// same status vocabulary, same edges, same Review→Done approve gate.
+		var chore = WorkflowCatalog.For(BoardKind.Work, "chore");
+		chore.Should().NotBeNull();
+		var feature = WorkflowCatalog.For(BoardKind.Work, "feature")!;
+		chore!.Statuses.Should().Equal(feature.Statuses);
+		chore.Transitions.Should().Equal(feature.Transitions);
+		chore.Transitions.Should().Contain(new WorkflowTransition("Review", "Done", RequiresApproval: true));
+
+		WorkflowEngine.Validate(BoardKind.Work, "chore", null, "Pending").Ok.Should().BeTrue();
+		WorkflowEngine.Validate(BoardKind.Work, "chore", "Pending", "InProgress").Ok.Should().BeTrue();
+		WorkflowEngine.Validate(BoardKind.Work, "chore", "InProgress", "Review").Ok.Should().BeTrue();
+		WorkflowEngine.Validate(BoardKind.Work, "chore", "Pending", "Done").Ok.Should().BeFalse("no Pending→Done shortcut for chores either");
+	}
+
+	[Fact]
 	public void Work_MissingType_IsRejectedWithValidTypes()
 	{
 		var r = WorkflowEngine.Validate(BoardKind.Work, null, null, "Pending");

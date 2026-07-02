@@ -252,8 +252,9 @@ public static class TasksTools
 		or a NodeId — null omits it, "" detaches to a root. A node may carry multiple parents'
 		worth of grouping via `tags` (an array of "namespace:value", namespaces area|concern;
 		[] clears, omit leaves as-is). Give each node a `title` and `body` (markdown). Other
-		fields: status (slug — see tasks.workflow), type (feature|bug on work boards), specRef
-		(a spec NodeId the work task implements), ideaRef (ON A SPEC BOARD: the NodeId of the
+		fields: status (slug — see tasks.workflow), type (feature|bug|chore on work boards;
+		chore = spec-less engineering hygiene), specRef (a spec NodeId the work task
+		implements — REQUIRED for a new feature/bug), ideaRef (ON A SPEC BOARD: the NodeId of the
 		`accepted` idea this create/change is made under — REQUIRED for every spec node; becomes
 		the idea_spec edge), blockedBy (a NodeId blocking it), supersedes
 		(a slug|NodeId this node replaces — the old one is moved to its terminal-cancel),

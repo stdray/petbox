@@ -1024,7 +1024,8 @@ public sealed partial class TasksService : ITasksService
 		}
 	}
 
-	// Invariant: a NEW work feature/bug must link a spec node (specRef). Edits don't re-require it.
+	// Invariant: a NEW work feature/bug must link a spec node (specRef). Edits don't re-require
+	// it, and `chore` (engineering hygiene below the spec) is exempt by design.
 	static void RequireSpecLinks(BoardKind kind, PlanNode[] desired, Dictionary<string, PlanNode> prior, Dictionary<string, string> specRefs)
 	{
 		if (kind != BoardKind.Work) return;

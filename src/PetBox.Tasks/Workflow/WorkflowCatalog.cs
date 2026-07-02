@@ -112,7 +112,10 @@ public static class WorkflowCatalog
 			new("confirmed", "done", RequiresApproval: true),
 		]);
 
-	static readonly string[] WorkTypes = ["feature", "bug"];
+	// `chore` shares the exact feature/bug FSM but is exempt from the spec-link guard
+	// (RequireSpecLinks) — the home for below-spec engineering hygiene (test fixes,
+	// flakes, refactorings) that has no requirement to link.
+	static readonly string[] WorkTypes = ["feature", "bug", "chore"];
 
 	// Board kinds where the bare board quick-add form is valid. Quick-add writes a node
 	// straight in, so it's only rejected where a node needs a LINK at birth that the bare
@@ -142,7 +145,7 @@ public static class WorkflowCatalog
 		BoardKind.Spec => [Spec],
 		BoardKind.Ideas => [Idea],
 		BoardKind.Intake => [Issue],
-		BoardKind.Work => [Work("feature"), Work("bug")],
+		BoardKind.Work => [Work("feature"), Work("bug"), Work("chore")],
 		_ => [],
 	};
 
