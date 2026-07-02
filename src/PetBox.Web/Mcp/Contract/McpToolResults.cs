@@ -213,30 +213,39 @@ public sealed record SessionAppendResult(string SessionId, bool Applied, long La
 
 public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version);
 
-public sealed record SessionRowView(string SessionId, string Agent, long Version);
-
-public sealed record SessionListResult(IReadOnlyList<SessionRowView> Sessions,
-	bool? Truncated = null, int? Omitted = null, string? Hint = null);
-
 public sealed record SessionDeletedResult(bool Deleted, string SessionId);
 
-// session.search: two-stage (digest discovery → episodic hydration) with per-stage
-// retriever provenance; Message is the ordinal to feed back into session.get.
+// One episodic hit inside a discovered session; Message is the ordinal to feed back
+// into session.get (the provenance bridge).
 public sealed record SessionSearchHitView(long Message, string Role, string Snippet, double Score, string? Retriever);
 
-public sealed record SessionSearchSessionView(
+// One session.search item — the union of the verb's two modes (list = search without q):
+//   listing row → SessionId/Agent/Version (the former session.list row; query fields null);
+//   query row   → SessionId/Agent + Description (the digest), episodic `Hits` and the
+//                 per-session `Retrievers` (Version null — a discovery is digest-based).
+// Null fields are omitted on the wire, so each mode serializes without the other's arm.
+public sealed record SessionSearchItemView(
 	string SessionId,
 	string Agent,
-	string Description,
-	IReadOnlyList<SessionSearchHitView> Hits,
-	RetrieverInfo Retrievers);
+	long? Version = null,
+	string? Description = null,
+	IReadOnlyList<SessionSearchHitView>? Hits = null,
+	RetrieverInfo? Retrievers = null);
 
-// `Reason` is a machine-readable code present only when Distilled=false (e.g. "no-digest-store").
+// The session.search result — ONE shape for both modes (SearchEnvelope form): `Items` in
+// final order plus the response-budget markers (null = complete). With a query it also
+// carries `Retrievers` (the STAGE-1 discovery provenance; per-session provenance rides
+// each item) and `Distilled`/`Reason` — false + a machine-readable code (e.g.
+// "no-digest-store") when the project has no digest store yet (not "no matches"); all
+// three are null/omitted in listing mode.
 public sealed record SessionSearchResultView(
-	bool Distilled,
-	string? Reason,
-	IReadOnlyList<SessionSearchSessionView> Sessions,
-	RetrieverInfo Discovery);
+	IReadOnlyList<SessionSearchItemView> Items,
+	bool? Distilled = null,
+	string? Reason = null,
+	RetrieverInfo? Retrievers = null,
+	bool? Truncated = null,
+	int? Omitted = null,
+	string? Hint = null);
 
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 

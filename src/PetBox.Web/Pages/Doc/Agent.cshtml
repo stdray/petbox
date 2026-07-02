@@ -109,7 +109,7 @@ setx PETBOX_&lt;PROJECT&gt;_API_KEY "&lt;your key&gt;"</code></pre>
 			<li><code>relations.create / list / delete</code> — typed temporal edges (task_spec|issue_task|idea_spec|blocks|nfr|dup). See the <a href="@Routes.DocMethodology()">cheatsheet</a>.</li>
 			<li><code>memory.store_list / store_create / store_delete</code> — named memory stores (a cold <code>memory.upsert</code> auto-creates the store).</li>
 			<li><code>memory.search / get / upsert / delta / remember</code> — durable notes. Each entry needs a <code>type</code> (User|Feedback|Project|Reference) plus description, body, optional <code>tags</code> (an array of strings). <code>upsert</code> is a PATCH on edits: an omitted field stays unchanged, an explicit <code>""</code> (or <code>[]</code> for tags) clears it. <code>search</code> is the one read verb: without <code>q</code> a deterministic listing (updated desc), with <code>q</code> hybrid relevance search (FTS ⊕ vectors); no <code>scope</code> cascades project ⊕ workspace over every store; optional <code>type</code> filter and <code>sort</code> work in both modes.</li>
-			<li><code>session.upsert / get / list</code> — the working-session plan blob (one per project).</li>
+			<li><code>session.search / get / upsert / append / delete</code> — the session archive. <code>search</code> is the one read verb: without <code>q</code> a listing of compact rows, with <code>q</code> a two-stage search (digest discovery → episodic hits with message ordinals for <code>session.get</code>).</li>
 		</ul>
 
 		<h2>6. Memory: tasks vs memory vs session</h2>
@@ -193,7 +193,7 @@ over every store. One full entry: memory.get.
 Depth: /doc/methodology (contract) + /doc/overview (modules).
 Tools: tasks.board_create/board_list/board_delete/board_set_spec/board_close/board_reopen/
 search/node_get/upsert/delta/workflow, relations.create/list/delete,
-memory.store_*/search/remember/get/upsert/delta, session.upsert/get/list.</code></pre>
+memory.store_*/search/remember/get/upsert/delta, session.search/get/upsert/append/delete.</code></pre>
 
 		<h2>8. Verify</h2>
 		<p>

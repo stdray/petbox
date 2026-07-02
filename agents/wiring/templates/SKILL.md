@@ -40,7 +40,7 @@ desc); no `scope` cascades project ⊕ workspace over every store (use `bodyLen`
 **Tools:**
 - `tasks.board_list / board_create / board_delete / search / node_get / upsert / delta / workflow`
 - `memory.store_list / store_create / store_delete / search / remember / get / upsert / delta`
-- `session.upsert / get / list` (upsert = optimistic-concurrency replace; pass the current version)
+- `session.search / get / upsert / append / delete` (`search` without `q` = the session listing; with `q` = two-stage archive search whose hits carry message ordinals for `session.get`)
 - Logs: `log.query` (KQL), `log.create / list / delete`
 - Admin (per-type, flat params): `project.create / list`, `apikey.create / list / delete`,
   `db.create / list / delete / describe`

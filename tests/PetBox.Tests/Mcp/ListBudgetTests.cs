@@ -22,7 +22,7 @@ using PetBox.Web.Mcp;
 namespace PetBox.Tests.Mcp;
 
 // The response budget on the remaining list-shaped reads (spec bounded-result-sets, the
-// shared ResponseBudget helper): memory.search / session.list / comments.list are prefix-cut
+// shared ResponseBudget helper): memory.search / session.search / comments.list are prefix-cut
 // on the wire form of their rows when they outgrow the output budget and marked structurally
 // (truncated:true + omitted + a narrowing hint) — never silently; an in-budget list
 // serializes byte-identical to the old shape (the marker fields are null and omitted).
@@ -159,18 +159,18 @@ public sealed class ListBudgetTests : IDisposable
 		snipped.Truncated.Should().BeNull();
 	}
 
-	// ---- session.list ----
+	// ---- session.search (listing mode — the former session.list) ----
 
 	[Fact]
 	public async Task SessionList_Small_NoMarkers()
 	{
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", [new SessionMessageInput("session", "x")]);
 
-		var res = await SessionTools.ListAsync(Http(), Flags(), _sessions, Proj);
+		var res = await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, Proj);
 
-		res.Sessions.Should().ContainSingle();
+		res.Items.Should().ContainSingle();
 		res.Truncated.Should().BeNull();
-		JsonSerializer.Serialize(res, Wire).Should().NotContainAny("truncated", "omitted", "hint");
+		JsonSerializer.Serialize(res, Wire).Should().NotContainAny("truncated", "omitted", "hint", "distilled");
 	}
 
 	[Fact]
@@ -182,12 +182,12 @@ public sealed class ListBudgetTests : IDisposable
 		for (var i = 0; i < total; i++)
 			await _sessions.UpsertAsync(Proj, $"{i:d2}-{pad}", "claude-code", [new SessionMessageInput("session", "x")]);
 
-		var res = await SessionTools.ListAsync(Http(), Flags(), _sessions, Proj);
+		var res = await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, Proj);
 
-		res.Sessions.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
+		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
 		res.Truncated.Should().BeTrue();
-		res.Omitted.Should().Be(total - res.Sessions.Count);
-		res.Hint.Should().ContainAll("session.search", "session.get");
+		res.Omitted.Should().Be(total - res.Items.Count);
+		res.Hint.Should().ContainAll("q", "session.get");
 	}
 
 	// ---- comments.list ----
