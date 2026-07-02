@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Features;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
@@ -153,17 +154,25 @@ public static class TasksTools
 		done_with_defects), rolled up over the part_of subtree. By default terminal/closed
 		nodes are HIDDEN — pass includeClosed=true; closed part_of ancestors of a visible node
 		are kept so the tree stays connected. `under` (a node slug) restricts to that part_of
-		subtree. Pass `groupBy` instead to get the tag PROJECTION: an ORDERED, comma-separated
+		subtree. `status` (an array of status slugs, case-insensitive) keeps only those
+		statuses — naming a TERMINAL status returns its nodes even without includeClosed (an
+		explicit ask); an unknown slug is rejected. Pass `groupBy` instead to get the tag
+		PROJECTION: an ORDERED, comma-separated
 		list of tag namespaces (e.g. "area" or "area,concern") buckets nodes by their value in
 		each namespace ("(none)" for untagged), nested in that order, each group with a delivery
 		roll-up — the cross-cutting view a single-parent tree can't give. The projection is a
 		view; part_of is untouched. Bodies are returned in FULL by default; pass `bodyLen` > 0
-		for a per-node snippet (first N chars + "…"), then fetch a full body from the node's
-		detail page or a narrower `under`. Requires tasks:read.
+		for a per-node snippet (first N chars + "…"), then fetch a full body via tasks.node_get
+		or a narrower `under`. The response has a HARD OUTPUT BUDGET (~30k serialized chars):
+		when the node rows no longer fit they are prefix-cut in board order and flagged with
+		`truncated:true` + `omitted` (rows dropped) plus a top-level `hint` on how to narrow
+		(`under`, `status`, `bodyLen`, `groupBy`, or tasks.node_get for one full node). No
+		markers = the complete board. Requires tasks:read.
 		""")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, bool includeClosed = false, string? under = null,
+		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false. Ignored with groupBy.")] string[]? status = null,
 		[Description("Tag PROJECTION: an ordered, comma-separated list of tag namespaces (e.g. \"area\" or \"area,concern\"); order sets nesting.")] string? groupBy = null,
 		[Description("Snippet length (chars) per node body; 0 (default) = full body. \"…\" appended when cut. Ignored with groupBy (keys only).")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default; ignored with groupBy).")] bool includeUrl = false,
@@ -174,12 +183,51 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		if (!string.IsNullOrWhiteSpace(groupBy))
 			return await tasks.GetGroupedAsync(projectKey, board, ParseGroupBy(groupBy), ct);
-		var view = await tasks.GetAsync(projectKey, board, includeClosed, under, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct), ct);
+		var view = await tasks.GetAsync(projectKey, board, includeClosed, under, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct), status, ct);
 		// Snippet slicing is MCP-adapter-only: the service GetAsync still returns full bodies,
 		// which the Razor board renders — so this never starves the UI (spec read-snippet-on-demand).
-		return bodyLen <= 0
-			? (object)view
-			: view with { Nodes = view.Nodes.Select(n => n with { Body = ModuleMcp.SnippetBody(n.Body, bodyLen) ?? n.Body }).ToList() };
+		if (bodyLen > 0)
+			view = view with { Nodes = view.Nodes.Select(n => n with { Body = ModuleMcp.SnippetBody(n.Body, bodyLen) ?? n.Body }).ToList() };
+		// Response budget (MCP-adapter-only, like the snippet): measured on the wire form of
+		// the rows as they will be sent (post-slicing), prefix-cut, marked — never silent.
+		var (rows, omitted) = new ResponseBudget().Take(view.Nodes);
+		return omitted == 0
+			? view
+			: view with { Nodes = rows, Truncated = true, Omitted = omitted, Hint = GetBudgetHint };
+	}
+
+	// Surfaced on PlanBoardView.Hint when the rows were cut by the response budget.
+	const string GetBudgetHint =
+		"Output budget exceeded: node rows were truncated (see truncated/omitted). Narrow the " +
+		"query: `under` (one part_of subtree), `status` (only the statuses you need), " +
+		"`bodyLen` (snippet bodies), `groupBy` (keys-only tag projection), or tasks.node_get " +
+		"for one node's full body.";
+
+	[McpServerTool(Name = "tasks.node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
+	[Description("""
+		Return ONE node of a board in FULL, addressed by `node` = its slug key OR its 32-hex
+		NodeId (the same slug-or-NodeId convention as specRef/partOf). The answer carries the
+		owning `board`, its `kind`, the part_of `ancestors` chain (root→parent), and the
+		fully-enriched node: key, nodeId, parentNodeId/parentSlug/depth, status, type, title,
+		the COMPLETE `body` (never truncated), priority, version, tags, links (`spec`,
+		`blockedBy`; on a spec node `linkedTasks` + the computed `delivery`), plus `url` when
+		includeUrl. An addressed read ignores terminality: a Done/Cancelled/deprecated node is
+		returned like any other (no includeClosed needed). A node that doesn't exist on the
+		board is a clear error, not an empty result. Use this instead of re-fetching a whole
+		board when you need one node's full body. Requires tasks:read.
+		""")]
+	public static async Task<NodeDetailView> NodeGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, string board,
+		[Description("The node's slug key on the board, or its 32-hex NodeId.")] string node,
+		[Description("Include an absolute `url` permalink to the node's detail page (off by default).")] bool includeUrl = false,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
+		return await tasks.GetNodeOnBoardAsync(projectKey, board, node, urlPrefix, ct);
 	}
 
 	[McpServerTool(Name = "tasks.search", Title = "Search plan nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
@@ -275,19 +323,22 @@ public static class TasksTools
 		change — retiring a real requirement stays `deprecated`).
 
 		Returns { applied, currentVersion, inserted, closed, conflicts[], added[], updated[],
-		removed[] }; added/updated carry the node (key, nodeId, status, type, title,
-		commitRef, priority, version) but NOT `body` by default — the echo is a compact
-		cursor-advance, not a re-dump (pass bodyLen > 0 for a sliced body, "…" when cut).
-		The delta IS the fresh state since `sinceVersion` — advance your cursor and merge.
-		CURSOR CONTRACT: pass the PREVIOUS response's `currentVersion` as the next
-		`sinceVersion` (NOT a single node's `version`, which is smaller — that re-echoes the
-		whole recent delta; the default 0 echoes every node, bodiless).
+		removed[] }. The echo covers ONLY this call: added/updated/removed carry the call's
+		own nodes plus nodes its cascade effects touched (a `supersedes` target obsoleted, a
+		deleted subtree, an unblocked task) — never other writers' history. Pass
+		includeDelta:true for the FULL board delta since `sinceVersion` (everything changed
+		by anyone) to rebase/merge. added/updated carry the node (key, nodeId, status, type,
+		title, commitRef, priority, version) but NOT `body` by default — the echo is a
+		compact cursor-advance, not a re-dump (pass bodyLen > 0 for a sliced body, "…" when
+		cut). CURSOR CONTRACT: `currentVersion` is ALWAYS the board-wide cursor — pass it as
+		the next `sinceVersion` / tasks.delta cursor (NOT a single node's `version`).
 		""")]
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
 		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy`, `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
-		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every node (bodiless).")] long sinceVersion = 0,
+		[Description("Cursor: the prior response's `currentVersion`. Bounds the full delta when includeDelta:true; with the default echo it only scopes conflict rebases.")] long sinceVersion = 0,
+		[Description("Echo the FULL board delta since sinceVersion (anyone's edits) instead of just this call's nodes (default false).")] bool includeDelta = false,
 		[Description("Slice length (chars) of each echoed node body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
@@ -297,7 +348,7 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, ct), urlPrefix, bodyLen);
+		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, includeDelta, ct), urlPrefix, bodyLen);
 	}
 
 	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]

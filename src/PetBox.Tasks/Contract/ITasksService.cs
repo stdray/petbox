@@ -45,7 +45,10 @@ public interface ITasksService
 	// --- nodes ---
 
 	// The active plan nodes as a 1-to-3 level tree with links and (spec boards) delivery.
-	Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, string? urlPrefix = null, CancellationToken ct = default);
+	// `status` (slugs, case-insensitive) filters on top of the selection; a terminal status
+	// named in the filter returns its nodes even when includeClosed is false (an explicit
+	// ask overrides the default hiding); an unknown slug for the board's kind is rejected.
+	Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default);
 	// One node by its stable NodeId alone (cross-board): the enriched node view + its owning
 	// board + part_of ancestor chain (root→parent). null when no active node carries the id.
 	// Powers the per-node detail page (addresses a node by id, not by board/slug).
@@ -54,13 +57,24 @@ public interface ITasksService
 	// (node-slug-addressable). Resolves the slug to its NodeId then reuses GetNodeAsync. null
 	// when no active node on that board carries the slug.
 	Task<NodeDetailView?> GetNodeBySlugAsync(string projectKey, string board, string slug, CancellationToken ct = default);
+	// One node of a named board addressed by slug OR NodeId (32-hex = NodeId, mirroring
+	// specRef/partOf resolution), returned in FULL — an addressed read, so terminal-status
+	// nodes come back too (no includeClosed here). Throws a clear error naming the board
+	// when the node doesn't exist (never an empty answer). Composes GetNodeAsync /
+	// GetNodeBySlugAsync (the node-detail-page precedent).
+	Task<NodeDetailView> GetNodeOnBoardAsync(string projectKey, string board, string node, string? urlPrefix = null, CancellationToken ct = default);
 	// Project a board by an ORDERED list of tag namespaces (e.g. [area, concern]): nodes
 	// bucketed by their tag value in each namespace ("(none)" for untagged), nested in
 	// dimension order, each group with a delivery roll-up. The projection is a view — it
 	// never touches part_of (tag-grouping-is-projection).
 	Task<GroupedBoardView> GetGroupedAsync(string projectKey, string board, IReadOnlyList<string> groupBy, CancellationToken ct = default);
 	// Declarative temporal upsert of plan nodes (workflow + spec/blocker rules + effects).
-	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, CancellationToken ct = default);
+	// The echoed Added/Updated/Removed cover ONLY this call by default: the patched nodes
+	// plus rows revised/closed by the call's own cascade effects (a superseded node
+	// obsoleted, an unblocked task, a deleted subtree). `includeDelta` opts back into the
+	// FULL board delta since `sinceVersion` (anyone's edits). CurrentVersion is always the
+	// board-wide cursor for DeltaAsync, independent of the echo scope.
+	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, bool includeDelta = false, CancellationToken ct = default);
 	// Nodes added/updated/removed since the cursor (no writes).
 	Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default);
 	// Hybrid search over the project's active, non-terminal nodes (name/body/tags): lexical

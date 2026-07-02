@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
+using PetBox.Core.Contract;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Core.Observability;
@@ -132,20 +133,6 @@ public sealed partial class TasksService : ITasksService
 
 	static readonly IReadOnlyDictionary<string, int> EmptyCounts = new Dictionary<string, int>();
 
-	// Hard response-wide output budget for the index rows (spec surface-economy /
-	// bounded-result-sets): the quartet index must stay readable inside an agent's context
-	// window no matter how large the boards grow. Costs are measured as serialized JSON
-	// chars per header row (camelCase, nulls omitted — mirrors the MCP wire shape). The
-	// status histograms are always complete; only rows are subject to the budget.
-	const int IndexCharBudget = 30_000;
-
-	// Approximates the MCP tool-result serialization (McpJsonUtilities defaults:
-	// camelCase + null-ignore) so the budget tracks what the caller actually receives.
-	static readonly System.Text.Json.JsonSerializerOptions RowCostJson = new(System.Text.Json.JsonSerializerDefaults.Web)
-	{
-		DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-	};
-
 	// Surfaced on MethodologyView.Hint when any board's rows were cut by the budget.
 	const string TruncationHint =
 		"Output budget exceeded: node rows were truncated (see truncated/omitted per board); " +
@@ -165,7 +152,9 @@ public sealed partial class TasksService : ITasksService
 		var boards = await _boards.ListAsync(projectKey, ct);
 		var result = new List<MethodologyBoard>(Quartet.Length);
 		var all = true;
-		var spent = 0;
+		// One response-wide budget across the four boards, spent in pipeline order; only the
+		// node rows are subject to it (the status histograms are always complete).
+		var budget = new ResponseBudget();
 		var anyTruncated = false;
 		foreach (var kind in Quartet)
 		{
@@ -180,16 +169,7 @@ public sealed partial class TasksService : ITasksService
 				.ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
 			// Prefix cut: rows keep the board's order (priority then key); the first row that
 			// blows the budget stops the board and everything after it counts as omitted.
-			var headers = new List<PlanNodeHeader>(view.Nodes.Count);
-			var omitted = 0;
-			for (var i = 0; i < view.Nodes.Count; i++)
-			{
-				var h = ToHeader(view.Nodes[i], bodyLen);
-				var cost = System.Text.Json.JsonSerializer.Serialize(h, RowCostJson).Length;
-				if (spent + cost > IndexCharBudget) { omitted = view.Nodes.Count - i; break; }
-				spent += cost;
-				headers.Add(h);
-			}
+			var (headers, omitted) = budget.Take(view.Nodes.Select(n => ToHeader(n, bodyLen)).ToList());
 			anyTruncated |= omitted > 0;
 			result.Add(omitted > 0
 				? new MethodologyBoard(kindName, b.Name, counts, headers, Truncated: true, Omitted: omitted)
@@ -250,7 +230,7 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- read: tree view ----
 
-	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, string? urlPrefix = null, CancellationToken ct = default)
+	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default)
 	{
 		await EnsureBoard(projectKey, board, ct);
 
@@ -268,7 +248,13 @@ public sealed partial class TasksService : ITasksService
 		var index = await BuildNodeIndexAsync(projectKey, ct);
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		var underId = ResolveUnderNodeId(under, active);
-		var visible = FilterVisible(active, includeClosed, underId, parentOf);
+		// A status filter is an EXPLICIT ask: naming a terminal status returns its nodes even
+		// with includeClosed=false (widen the pool first, then keep only the named slugs).
+		var statusFilter = ResolveStatusFilter(status, kind);
+		var visible = statusFilter is null
+			? FilterVisible(active, includeClosed, underId, parentOf)
+			: FilterVisible(active, includeClosed: true, underId, parentOf)
+				.Where(n => statusFilter.Contains(n.Status)).ToList();
 
 		var nodes = new List<PlanNodeView>();
 		foreach (var n in visible)
@@ -339,6 +325,48 @@ public sealed partial class TasksService : ITasksService
 		var nodeId = await _boards.FindNodeIdBySlugAsync(projectKey, board, slug, ct);
 		if (nodeId is null) return null;
 		return await GetNodeAsync(projectKey, nodeId, ct);
+	}
+
+	// Addressed single-node read for the MCP surface: `node` is a slug on this board or a
+	// 32-hex NodeId (the specRef/partOf convention). Rides the enriched GetNodeAsync path
+	// (includeClosed inside), so a TERMINAL node is returned like any other — an addressed
+	// ask never gets an empty answer, only the node or a board-naming error.
+	public async Task<NodeDetailView> GetNodeOnBoardAsync(string projectKey, string board, string node, string? urlPrefix = null, CancellationToken ct = default)
+	{
+		await EnsureBoard(projectKey, board, ct);
+		var v = (node ?? "").Trim();
+		if (v.Length == 0)
+			throw new ArgumentException("node is required — a slug key on the board, or a 32-hex NodeId");
+		var detail = LooksLikeNodeId(v)
+			? await GetNodeAsync(projectKey, v, ct)
+			: await GetNodeBySlugAsync(projectKey, board, v.ToLowerInvariant(), ct);
+		if (detail is null)
+			throw new ArgumentException($"node '{node}' not found on board '{board}' in project '{projectKey}'");
+		if (!string.Equals(detail.Board, board, StringComparison.Ordinal))
+			throw new ArgumentException($"node '{node}' is on board '{detail.Board}', not '{board}'");
+		if (urlPrefix is not null)
+			detail = detail with { Node = detail.Node with { Url = urlPrefix + detail.Board + "/" + detail.Node.Key } };
+		return detail;
+	}
+
+	// Normalize/validate a status filter against the board kind's known slugs (across its
+	// hosted types), case-insensitive; null/empty = no filter. An unknown slug is rejected —
+	// it would otherwise silently return nothing (mirrors ResolveBoardFilter).
+	static HashSet<string>? ResolveStatusFilter(string[]? status, BoardKind kind)
+	{
+		if (status is null || status.Length == 0) return null;
+		var known = WorkflowCatalog.Types(kind).SelectMany(w => w.Statuses).Select(s => s.Slug)
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var raw in status)
+		{
+			var s = (raw ?? "").Trim();
+			if (s.Length == 0) continue;
+			if (!known.Contains(s))
+				throw new ArgumentException($"status '{raw}' is not a status of this board's kind (valid: {string.Join("|", known.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))})");
+			set.Add(s);
+		}
+		return set.Count == 0 ? null : set;
 	}
 
 	// nodeId -> its active part_of parent nodeId (single parent). One query, project-wide.
@@ -541,7 +569,7 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- write: upsert ----
 
-	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, CancellationToken ct = default)
+	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, bool includeDelta = false, CancellationToken ct = default)
 	{
 		using var op = PetBoxActivitySources.Tasks.StartActivity("tasks.upsert");
 		op?.SetTag("petbox.project", projectKey);
@@ -617,7 +645,8 @@ public sealed partial class TasksService : ITasksService
 				// Not applied; still serve the cursor contract (the delta since sinceVersion).
 				var delta = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion,
 					partition: n => n.Board == board, ct: ct);
-				return new UpsertOutcome(delta with { Applied = false, Conflicts = guardConflicts }, kind);
+				delta = delta with { Applied = false, Conflicts = guardConflicts };
+				return new UpsertOutcome(includeDelta ? delta : ScopeEchoToCall(delta, nodes, delta.CurrentVersion), kind);
 			}
 		}
 		// Class-A lexical floor written INSIDE the entity tx: open nodes (re)indexed, terminal/
@@ -640,6 +669,9 @@ public sealed partial class TasksService : ITasksService
 						await fts.DeleteAsync(tx, projectKey, board, key, c);
 				},
 				partition: n => n.Board == board, ct: ct);
+		// The main write's cursor: any row revision beyond it was written by THIS call's
+		// cascade effects below (supersedes obsoletion, unblocking) — the echo scoping keys on it.
+		var mainCursor = r.CurrentVersion;
 		if (r.Applied)
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.links"))
 			{
@@ -668,7 +700,36 @@ public sealed partial class TasksService : ITasksService
 		if (r.Applied)
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.fts-tags"))
 				await RefreshFtsTagsAsync(ctx, projectKey, board, desired, ct);
-		return new UpsertOutcome(r, kind);
+		if (r.Applied)
+		{
+			// Post-effects re-read: cascade revisions (a superseded node moved to terminal-cancel,
+			// a Blocked task unblocked) land AFTER the main temporal write, so refresh the delta
+			// and cursor once the effects have run — the echo then reflects what this call actually
+			// did, and CurrentVersion is a cursor an immediate DeltaAsync returns nothing for.
+			var (added, updated, removed, current) = await TemporalStore.ChangesSinceAsync<PlanNode>(
+				ctx, sinceVersion, partition: n => n.Board == board, ct: ct);
+			r = r with { CurrentVersion = current, Added = added, Updated = updated, Removed = removed };
+		}
+		return new UpsertOutcome(includeDelta ? r : ScopeEchoToCall(r, nodes, mainCursor), kind);
+	}
+
+	// Scope a write echo to THIS call (default): keep only rows whose key the call mentioned
+	// (patch keys + rename sources) plus rows revised by the call's own cascade effects
+	// (Version > the main write's cursor — e.g. a `supersedes` target obsoleted, an unblocked
+	// task). A stale sinceVersion no longer re-dumps other writers' history — the full board
+	// delta is the includeDelta:true opt-in; CurrentVersion (the cursor) is untouched.
+	static TemporalUpsertResult<PlanNode> ScopeEchoToCall(TemporalUpsertResult<PlanNode> r, IReadOnlyList<NodePatch> patches, long mainCursor)
+	{
+		var mentioned = patches.Select(p => p.Key)
+			.Concat(patches.Where(p => p.PrevKey is not null).Select(p => p.PrevKey!))
+			.ToHashSet(StringComparer.Ordinal);
+		bool Own(PlanNode n) => mentioned.Contains(n.Key) || n.Version > mainCursor;
+		return r with
+		{
+			Added = r.Added.Where(Own).ToList(),
+			Updated = r.Updated.Where(Own).ToList(),
+			Removed = r.Removed.Where(k => mentioned.Contains(k)).ToList(),
+		};
 	}
 
 	public async Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default)

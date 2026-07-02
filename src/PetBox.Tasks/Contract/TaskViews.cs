@@ -23,7 +23,13 @@ public sealed record PlanNodeView(
 
 // A board's active plan nodes (flat list; the tree is the part_of projection via
 // ParentNodeId/Depth), plus the board's kind and (work boards) its spec board.
-public sealed record PlanBoardView(long CurrentVersion, string Kind, string? SpecBoard, IReadOnlyList<PlanNodeView> Nodes);
+// Truncated/Omitted/Hint are the response-budget markers (spec bounded-result-sets),
+// filled only by the MCP adapter when the node rows exceeded the output budget and were
+// prefix-cut — all three default to null, so an in-budget board (and every non-MCP
+// caller, e.g. the Razor board) serializes exactly as before.
+public sealed record PlanBoardView(
+	long CurrentVersion, string Kind, string? SpecBoard, IReadOnlyList<PlanNodeView> Nodes,
+	bool? Truncated = null, int? Omitted = null, string? Hint = null);
 
 // One node resolved by its stable NodeId alone (cross-board): its owning board + kind,
 // the fully-enriched node view, and its part_of ancestor chain ordered root→parent (for
