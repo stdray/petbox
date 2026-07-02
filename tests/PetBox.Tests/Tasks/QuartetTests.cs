@@ -108,6 +108,11 @@ public sealed class QuartetTests : IDisposable
 		nodeA.Title.Should().Be("A");
 		nodeA.Tags.Should().Contain("area:tasks"); // tags ALWAYS
 
+		// Small boards fit the output budget: no truncation markers, no hint — as before.
+		idx.Hint.Should().BeNull();
+		ideas.Truncated.Should().BeNull();
+		ideas.Omitted.Should().BeNull();
+
 		// bodyLen: the first N chars + "…" when cut.
 		var sliced = (await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, bodyLen: 300))
 			.Boards.Single(b => b.Kind == "ideas")
@@ -120,6 +125,46 @@ public sealed class QuartetTests : IDisposable
 		var only = await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, includeBoards: ["spec", "ideas"]);
 		only.Boards.Select(b => b.Kind)
 			.Should().Equal("ideas", "spec");
+	}
+
+	// spec bounded-result-sets / surface-economy: a board too large for the index budget is
+	// prefix-cut with STRUCTURAL markers (truncated/omitted per board + a narrowing hint on
+	// the view); the status histogram stays complete — the overview never lies about totals.
+	[Fact]
+	public async Task MethodologyGet_LargeBoard_CutsRowsWithMarkers_CountsStayComplete()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+
+		const int total = 150;
+		var title = new string('t', 200);
+		var body = new string('b', 100);
+		var rows = string.Join(",", Enumerable.Range(0, total).Select(i =>
+			$$"""{"key":"idea-{{i}}","status":"raw","type":"idea","title":"{{title}}","body":"{{body}}"}"""));
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas", McpInputs.NodesJson($"[{rows}]"));
+
+		var idx = await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj);
+		var ideas = idx.Boards.Single(b => b.Kind == "ideas");
+
+		// Histogram is ALWAYS complete — the cheap essence of the overview.
+		ideas.Counts["raw"].Should().Be(total);
+
+		// Rows are prefix-cut, and the cut is explicit: truncated + omitted add back up.
+		ideas.Nodes.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
+		ideas.Truncated.Should().BeTrue();
+		ideas.Omitted.Should().Be(total - ideas.Nodes.Count);
+
+		// The response tells the caller how to narrow.
+		idx.Hint.Should().NotBeNull();
+		idx.Hint.Should().Contain("includeBoards").And.Contain("tasks.get");
+
+		// bodyLen keeps working under the budget: every INCLUDED row carries its slice
+		// ("…"-terminated), and fatter rows just mean fewer of them fit.
+		var sliced = (await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, bodyLen: 50))
+			.Boards.Single(b => b.Kind == "ideas");
+		sliced.Truncated.Should().BeTrue();
+		sliced.Nodes.Should().OnlyContain(n => n.Body != null && n.Body.Length == 51 && n.Body.EndsWith('…'));
+		sliced.Nodes.Count.Should().BeLessThanOrEqualTo(ideas.Nodes.Count);
 	}
 
 	[Fact]
