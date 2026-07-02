@@ -275,19 +275,22 @@ public static class TasksTools
 		change — retiring a real requirement stays `deprecated`).
 
 		Returns { applied, currentVersion, inserted, closed, conflicts[], added[], updated[],
-		removed[] }; added/updated carry the node (key, nodeId, status, type, title,
-		commitRef, priority, version) but NOT `body` by default — the echo is a compact
-		cursor-advance, not a re-dump (pass bodyLen > 0 for a sliced body, "…" when cut).
-		The delta IS the fresh state since `sinceVersion` — advance your cursor and merge.
-		CURSOR CONTRACT: pass the PREVIOUS response's `currentVersion` as the next
-		`sinceVersion` (NOT a single node's `version`, which is smaller — that re-echoes the
-		whole recent delta; the default 0 echoes every node, bodiless).
+		removed[] }. The echo covers ONLY this call: added/updated/removed carry the call's
+		own nodes plus nodes its cascade effects touched (a `supersedes` target obsoleted, a
+		deleted subtree, an unblocked task) — never other writers' history. Pass
+		includeDelta:true for the FULL board delta since `sinceVersion` (everything changed
+		by anyone) to rebase/merge. added/updated carry the node (key, nodeId, status, type,
+		title, commitRef, priority, version) but NOT `body` by default — the echo is a
+		compact cursor-advance, not a re-dump (pass bodyLen > 0 for a sliced body, "…" when
+		cut). CURSOR CONTRACT: `currentVersion` is ALWAYS the board-wide cursor — pass it as
+		the next `sinceVersion` / tasks.delta cursor (NOT a single node's `version`).
 		""")]
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
 		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy`, `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
-		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every node (bodiless).")] long sinceVersion = 0,
+		[Description("Cursor: the prior response's `currentVersion`. Bounds the full delta when includeDelta:true; with the default echo it only scopes conflict rebases.")] long sinceVersion = 0,
+		[Description("Echo the FULL board delta since sinceVersion (anyone's edits) instead of just this call's nodes (default false).")] bool includeDelta = false,
 		[Description("Slice length (chars) of each echoed node body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
@@ -297,7 +300,7 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, ct), urlPrefix, bodyLen);
+		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, includeDelta, ct), urlPrefix, bodyLen);
 	}
 
 	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]

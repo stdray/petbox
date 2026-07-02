@@ -541,7 +541,7 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- write: upsert ----
 
-	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, CancellationToken ct = default)
+	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, bool includeDelta = false, CancellationToken ct = default)
 	{
 		using var op = PetBoxActivitySources.Tasks.StartActivity("tasks.upsert");
 		op?.SetTag("petbox.project", projectKey);
@@ -617,7 +617,8 @@ public sealed partial class TasksService : ITasksService
 				// Not applied; still serve the cursor contract (the delta since sinceVersion).
 				var delta = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion,
 					partition: n => n.Board == board, ct: ct);
-				return new UpsertOutcome(delta with { Applied = false, Conflicts = guardConflicts }, kind);
+				delta = delta with { Applied = false, Conflicts = guardConflicts };
+				return new UpsertOutcome(includeDelta ? delta : ScopeEchoToCall(delta, nodes, delta.CurrentVersion), kind);
 			}
 		}
 		// Class-A lexical floor written INSIDE the entity tx: open nodes (re)indexed, terminal/
@@ -640,6 +641,9 @@ public sealed partial class TasksService : ITasksService
 						await fts.DeleteAsync(tx, projectKey, board, key, c);
 				},
 				partition: n => n.Board == board, ct: ct);
+		// The main write's cursor: any row revision beyond it was written by THIS call's
+		// cascade effects below (supersedes obsoletion, unblocking) — the echo scoping keys on it.
+		var mainCursor = r.CurrentVersion;
 		if (r.Applied)
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.links"))
 			{
@@ -668,7 +672,36 @@ public sealed partial class TasksService : ITasksService
 		if (r.Applied)
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.fts-tags"))
 				await RefreshFtsTagsAsync(ctx, projectKey, board, desired, ct);
-		return new UpsertOutcome(r, kind);
+		if (r.Applied)
+		{
+			// Post-effects re-read: cascade revisions (a superseded node moved to terminal-cancel,
+			// a Blocked task unblocked) land AFTER the main temporal write, so refresh the delta
+			// and cursor once the effects have run — the echo then reflects what this call actually
+			// did, and CurrentVersion is a cursor an immediate DeltaAsync returns nothing for.
+			var (added, updated, removed, current) = await TemporalStore.ChangesSinceAsync<PlanNode>(
+				ctx, sinceVersion, partition: n => n.Board == board, ct: ct);
+			r = r with { CurrentVersion = current, Added = added, Updated = updated, Removed = removed };
+		}
+		return new UpsertOutcome(includeDelta ? r : ScopeEchoToCall(r, nodes, mainCursor), kind);
+	}
+
+	// Scope a write echo to THIS call (default): keep only rows whose key the call mentioned
+	// (patch keys + rename sources) plus rows revised by the call's own cascade effects
+	// (Version > the main write's cursor — e.g. a `supersedes` target obsoleted, an unblocked
+	// task). A stale sinceVersion no longer re-dumps other writers' history — the full board
+	// delta is the includeDelta:true opt-in; CurrentVersion (the cursor) is untouched.
+	static TemporalUpsertResult<PlanNode> ScopeEchoToCall(TemporalUpsertResult<PlanNode> r, IReadOnlyList<NodePatch> patches, long mainCursor)
+	{
+		var mentioned = patches.Select(p => p.Key)
+			.Concat(patches.Where(p => p.PrevKey is not null).Select(p => p.PrevKey!))
+			.ToHashSet(StringComparer.Ordinal);
+		bool Own(PlanNode n) => mentioned.Contains(n.Key) || n.Version > mainCursor;
+		return r with
+		{
+			Added = r.Added.Where(Own).ToList(),
+			Updated = r.Updated.Where(Own).ToList(),
+			Removed = r.Removed.Where(k => mentioned.Contains(k)).ToList(),
+		};
 	}
 
 	public async Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default)

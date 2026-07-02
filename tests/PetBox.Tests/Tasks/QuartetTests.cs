@@ -243,13 +243,19 @@ public sealed class QuartetTests : IDisposable
 		addedA.Title.Should().Be("A");
 		addedA.Body.Should().BeNull();
 
-		// A second node with the DEFAULT stale cursor (sinceVersion = 0) echoes BOTH nodes
-		// (version > 0), but every echoed body is still null — the dump is bodiless.
+		// A second node with the DEFAULT stale cursor (sinceVersion = 0) echoes only ITSELF
+		// (echo-covers-the-call); the full board delta is the includeDelta:true opt-in — and
+		// even that dump stays bodiless.
 		var nodesB = McpInputs.NodesJson(
 			"""[{"key":"b","status":"Todo","title":"B","body":"zzz"}]""");
 		var resB = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesB);
-		var echoed = resB.Added.Concat(resB.Updated).ToList();
-		echoed.Select(n => n.Key).Should().Contain(["a", "b"]); // stale cursor re-echoes 'a'
+		resB.Added.Concat(resB.Updated).Select(n => n.Key).Should().Equal("b");
+
+		var nodesB2 = McpInputs.NodesJson(
+			"""[{"key":"b","status":"Todo","title":"B2","body":"zzz","version":2}]""");
+		var resFull = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesB2, includeDelta: true);
+		var echoed = resFull.Added.Concat(resFull.Updated).ToList();
+		echoed.Select(n => n.Key).Should().Contain(["a", "b"]); // full delta re-echoes 'a'
 		echoed.Should().OnlyContain(n => n.Body == null);
 
 		// bodyLen > 0: the opt-in sliced body — first N chars + "…" when cut.
