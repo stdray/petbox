@@ -28,12 +28,14 @@ public sealed class MethodologyRuntime
 	public static readonly string[] NeutralRelationKinds = ["relates_to", "depends_on", "mirrors"];
 
 	readonly Dictionary<string, MethodologyKindDef> _kinds;
+	readonly IReadOnlyList<MethodologyKindDef> _declared;
 	readonly IReadOnlyList<MethodologyLinkKindDef> _linkKinds;
 	readonly IReadOnlyList<MethodologyTagAxisDef> _tagAxes;
 
 	public MethodologyRuntime(MethodologyDefinition? definition)
 	{
-		_kinds = (definition?.Kinds ?? [])
+		_declared = definition?.Kinds ?? [];
+		_kinds = _declared
 			.ToDictionary(k => k.Kind, k => k, StringComparer.OrdinalIgnoreCase);
 		// `?? []` also covers a hand-written stored document with an explicit JSON null.
 		_linkKinds = definition?.LinkKinds ?? [];
@@ -78,6 +80,24 @@ public sealed class MethodologyRuntime
 	// exactly like ParseKind always did).
 	public string KindName(string? kindSlug) =>
 		IsDefinedKind(kindSlug) ? kindSlug! : MethodologyPresets.ParseKind(kindSlug).ToString().ToLowerInvariant();
+
+	// The preset kinds in guide order: the quartet pipeline first, `simple` last.
+	static readonly BoardKind[] PipelineOrder = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work, BoardKind.Simple];
+
+	// The project's EFFECTIVE kind set — what the process guide renders: every definition-
+	// declared kind (declaration order) followed by every preset kind the definition does
+	// NOT override (pipeline order intake→ideas→spec→work, then simple). This is the same
+	// per-kind merge every resolver here applies, materialized as one list of definitions.
+	public IReadOnlyList<MethodologyKindDef> EffectiveKinds() =>
+		_declared
+			.Concat(PipelineOrder
+				.Where(k => !_kinds.ContainsKey(k.ToString().ToLowerInvariant()))
+				.Select(MethodologyPresets.KindDef))
+			.ToList();
+
+	// Project-declared relation kinds with their descriptions (the guide's dictionary
+	// section; KnownRelationKinds flattens these to slugs).
+	public IReadOnlyList<MethodologyLinkKindDef> DeclaredLinkKinds => _linkKinds;
 
 	// Builtin + defined kind slugs (for board-create error messages).
 	public IEnumerable<string> KnownKinds() =>

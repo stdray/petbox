@@ -480,6 +480,18 @@ public sealed partial class TasksService : ITasksService
 		return new MethodologyDefView(def, row.Version, row.Created, row.Updated);
 	}
 
+	public async Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, CancellationToken ct = default)
+	{
+		var view = await GetMethodologyDefinitionAsync(projectKey, ct);
+		var runtime = view is null ? MethodologyRuntime.PresetsOnly : new MethodologyRuntime(view.Definition);
+		// "definition" only when the definition overrides EVERY preset kind (no preset
+		// fallback remains); a definition that adds/overrides some kinds is "mixed".
+		var source = view is null
+			? "presets"
+			: Enum.GetValues<BoardKind>().All(k => runtime.IsDefinedKind(k.ToString().ToLowerInvariant())) ? "definition" : "mixed";
+		return MethodologyGuide.Render(view?.Definition.Name ?? MethodologyPresets.Name, runtime, source, view?.Version);
+	}
+
 	// A specBoard link only makes sense on a work board and must point at an existing spec board.
 	async Task ValidateSpecBoardAsync(string projectKey, string kind, string? specBoard, CancellationToken ct)
 	{

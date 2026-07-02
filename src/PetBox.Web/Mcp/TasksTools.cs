@@ -248,6 +248,35 @@ public static class TasksTools
 				: null);
 	}
 
+	[McpServerTool(Name = "tasks.methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
+	[Description("""
+		Return the AGENT ONBOARDING GUIDE for this project's process — how to work its
+		boards — DERIVED AT RUNTIME from the project's methodology data: its own definition
+		where one declares a kind (tasks.methodology_def_upsert), the built-in presets
+		everywhere else. Call it when you start working a project's tasks and need the
+		process rules; it is the runtime-derived replacement for hardcoded process docs, so
+		it stays correct for user-defined kinds the docs never heard of. `markdown` covers,
+		per effective kind: types (quick-add default marked), statuses grouped
+		open/terminal, initial status, the transition map (collapsed to "free" when a block
+		allows every move), the GATES as behavioral invariants (owner-only transitions the
+		agent NEVER performs, reason-required moves, artifact:<slug> comment preconditions),
+		creation link requirements (specRef/blockedBy/ideaRef), tag axes (or free-form),
+		and the relation-kind dictionary (process vs neutral vs project-declared).
+		`invariants` is the same derivation machine-readable: [{ kind, rule:
+		approval_gate|reason_required|precondition_artifact|link_constraint|tag_axes,
+		detail }]. `source` = presets|definition|mixed; `definitionVersion` when a
+		definition exists. Bounded (a handful of kinds) — no truncation. Requires tasks:read.
+		""")]
+	public static async Task<MethodologyGuideView> MethodologyGuideAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		return await tasks.GetMethodologyGuideAsync(projectKey, ct);
+	}
+
 	// The `preset` a definition-less project runs on: the built-in preset definitions
 	// (simple + the methodology quartet kinds — MethodologyPresets).
 	const string BuiltinPreset = MethodologyPresets.Name;

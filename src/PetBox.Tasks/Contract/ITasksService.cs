@@ -63,6 +63,11 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// The project's active methodology definition + its revision metadata, or null when
 	// the project has none (it is then on the built-in MethodologyPresets).
 	Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default);
+	// The agent-facing PROCESS GUIDE derived at runtime from the project's EFFECTIVE
+	// methodology (definition-declared kinds + preset kinds not overridden): markdown
+	// prose + the structured invariants behind it (spec artifacts-from-definition).
+	// Deterministic and bounded — a handful of kinds, no truncation machinery.
+	Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, CancellationToken ct = default);
 
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);

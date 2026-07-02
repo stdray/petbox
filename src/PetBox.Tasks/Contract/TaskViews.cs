@@ -168,3 +168,15 @@ public sealed record MethodologyDefAck(long Version, bool Changed, int Migrated 
 // (from GetMethodologyDefinitionAsync) means the project has no definition and is on the
 // built-in MethodologyPresets.
 public sealed record MethodologyDefView(MethodologyDefinition Definition, long Version, DateTime Created, DateTime Updated);
+
+// The runtime-derived agent guide to a project's process (tasks.methodology_guide, spec
+// artifacts-from-definition): markdown prose + the structured invariants it was derived
+// from (the machine-readable form — no markdown re-parsing downstream). `Source` says
+// where the effective kinds came from: "presets" (no definition), "definition" (the
+// definition overrides every preset kind) or "mixed" (definition kinds + preset fallback).
+// DefinitionVersion is the definition's revision when one exists (null on pure presets).
+public sealed record MethodologyGuideView(
+	string Markdown,
+	IReadOnlyList<MethodologyInvariant> Invariants,
+	string Source,
+	long? DefinitionVersion = null);
