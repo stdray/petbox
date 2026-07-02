@@ -349,7 +349,7 @@ public sealed partial class TasksService : ITasksService
 	}
 
 	// Uniform slug-or-NodeId resolution for bare node refs (relations.create/list,
-	// comments.add/list) — uniform-node-refs. 32-hex = NodeId, passed through untouched
+	// comments.create/list) — uniform-node-refs. 32-hex = NodeId, passed through untouched
 	// (existing NodeId behavior preserved). A slug resolves over the ACTIVE nodes: scoped to
 	// `board` when given (slugs are board-unique, so at most one hit), else across EVERY
 	// board — the project file holds all boards' nodes. Ambiguity (same slug on 2+ boards)

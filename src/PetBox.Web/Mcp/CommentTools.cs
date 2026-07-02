@@ -11,7 +11,7 @@ namespace PetBox.Web.Mcp;
 
 // MCP surface for node comments: a generic, editable, tree-structured discussion thread
 // under any plan node (idea/task/spec/…). Comments are NOT plan nodes — they never appear
-// in tasks.get / the workflow / delivery. Tree via parentId; tags are OPEN (e.g.
+// in tasks.search / the workflow / delivery. Tree via parentId; tags are OPEN (e.g.
 // `artifact:<slug>` marks a key deliberation artifact). Scopes: tasks:read / tasks:write.
 // Feature: Tasks. Reaches the module only through the boundary doors: ICommentService for
 // the thread itself, ITasksService to resolve the uniform slug-or-NodeId node ref (a slug
