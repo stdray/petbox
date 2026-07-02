@@ -537,7 +537,9 @@ public sealed partial class TasksService : ITasksService
 
 		var desired = upsertPatches.Select(p => ApplyWorkflow(kind, Merge(p, prior), prior) with { Board = board }).ToArray();
 		ValidateChanges(desired, prior);
-		var specRefs = LinkFields(upsertPatches, p => p.SpecRef);
+		// Resolve slug specRefs to NodeIds ONCE, up front — both the validation below and the
+		// task_spec edge write (LinkRefsAsync) read this map, so it must never carry a raw slug.
+		var specRefs = ResolveSpecRefs(projectKey, meta, LinkFields(upsertPatches, p => p.SpecRef));
 		var blockedBy = LinkFields(upsertPatches, p => p.BlockedBy);
 		var ideaRefs = LinkFields(upsertPatches, p => p.IdeaRef);
 		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
@@ -781,6 +783,32 @@ public sealed partial class TasksService : ITasksService
 				throw new ArgumentException(result.Errors[0].ErrorMessage);
 		}
 	}
+
+	// specRef accepts the spec node's slug OR its NodeId, mirroring part_of (ResolveParentId).
+	// A slug resolves against the board's linked spec board (SpecBoard); the returned map holds
+	// NodeIds only. NodeId-shaped values pass through untouched (existing behavior).
+	Dictionary<string, string> ResolveSpecRefs(string projectKey, TaskBoardMeta board, Dictionary<string, string> specRefs)
+	{
+		if (specRefs.Count == 0) return specRefs;
+		var ctx = _boards.GetContext(projectKey);
+		foreach (var (key, raw) in specRefs.ToList())
+		{
+			var v = raw.Trim();
+			if (LooksLikeNodeId(v)) { specRefs[key] = v; continue; }
+			if (board.SpecBoard is not { Length: > 0 } sb)
+				throw new ArgumentException($"specRef '{raw}' (node '{key}') is a slug, but this board has no linked spec board — provide the spec node's NodeId");
+			var slug = v.ToLowerInvariant();
+			var target = ctx.PlanNodes.Where(n => n.Board == sb && n.ActiveTo == null && n.Key == slug).ToList().FirstOrDefault();
+			if (target is null || target.NodeId.Length == 0)
+				throw new ArgumentException($"specRef '{raw}' (node '{key}') does not match any node on spec board '{sb}'");
+			specRefs[key] = target.NodeId;
+		}
+		return specRefs;
+	}
+
+	// A NodeId is a 32-hex Guid ("N"); a slug starts [a-z] and can't be 32 hex chars in
+	// practice — the two are trivially distinguishable.
+	static bool LooksLikeNodeId(string v) => v.Length == 32 && v.All(Uri.IsHexDigit);
 
 	// Validate each specRef target: it must resolve to a node on a spec board, and (if
 	// this work board has a SpecBoard set) on that specific board.

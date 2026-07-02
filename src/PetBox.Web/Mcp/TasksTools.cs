@@ -253,8 +253,9 @@ public static class TasksTools
 		worth of grouping via `tags` (an array of "namespace:value", namespaces area|concern;
 		[] clears, omit leaves as-is). Give each node a `title` and `body` (markdown). Other
 		fields: status (slug — see tasks.workflow), type (feature|bug|chore on work boards;
-		chore = spec-less engineering hygiene), specRef (a spec NodeId the work task
-		implements — REQUIRED for a new feature/bug), ideaRef (ON A SPEC BOARD: the NodeId of the
+		chore = spec-less engineering hygiene), specRef (the spec node the work task
+		implements, as its slug on the linked spec board or a NodeId — REQUIRED for a new
+		feature/bug), ideaRef (ON A SPEC BOARD: the NodeId of the
 		`accepted` idea this create/change is made under — REQUIRED for every spec node; becomes
 		the idea_spec edge), blockedBy (a NodeId blocking it), supersedes
 		(a slug|NodeId this node replaces — the old one is moved to its terminal-cancel),
@@ -280,7 +281,7 @@ public static class TasksTools
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef`, `ideaRef`, `blockedBy`, `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
+		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy`, `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
 		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every node (bodiless).")] long sinceVersion = 0,
 		[Description("Slice length (chars) of each echoed node body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,

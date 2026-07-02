@@ -31,7 +31,9 @@ public static class WorkflowCatalog
 
 	// Every ordered (from→to) pair with from≠to — models "free transitions" for a kind.
 	static List<WorkflowTransition> AllPairs(IReadOnlyList<WorkflowStatus> statuses) =>
-		(from a in statuses from b in statuses where !string.Equals(a.Slug, b.Slug, StringComparison.OrdinalIgnoreCase)
+		(from a in statuses
+		 from b in statuses
+		 where !string.Equals(a.Slug, b.Slug, StringComparison.OrdinalIgnoreCase)
 		 select new WorkflowTransition(a.Slug, b.Slug)).ToList();
 
 	// WORK reuses the EXISTING status vocabulary (Pending/InProgress/Done/Blocked/
