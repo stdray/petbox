@@ -168,6 +168,47 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task MintKey_AllProjects_MintsWildcardClaim()
+	{
+		// allProjects mints the cross-project key: claim "*" (not a project row), so the
+		// project-existence check must be skipped and projectKey omitted.
+		var result = Text(await (await ToolAsync("apikey.create")).CallAsync(new Dictionary<string, object?>
+		{
+			["name"] = "maintenance", ["scopes"] = "tasks:read,tasks:write", ["allProjects"] = true,
+		}));
+		result.Should().NotContain("\"error\"");
+		result.Should().Contain("\"*\"");
+
+		using var scope = _factory.Services.CreateScope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		(await db.ApiKeys.AnyAsync(k => k.ProjectKey == "*" && k.Name == "maintenance")).Should().BeTrue();
+
+		// apikey.list addresses wildcard keys by the literal "*" project.
+		var listed = Text(await (await ToolAsync("apikey.list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = "*" }));
+		listed.Should().Contain("maintenance");
+	}
+
+	[Fact]
+	public async Task MintKey_AllProjects_WithProjectKey_Rejected()
+	{
+		var result = Text(await (await ToolAsync("apikey.create")).CallAsync(new Dictionary<string, object?>
+		{
+			["name"] = "k", ["scopes"] = "tasks:read", ["projectKey"] = "$system", ["allProjects"] = true,
+		}));
+		result.Should().Contain("mutually exclusive");
+	}
+
+	[Fact]
+	public async Task MintKey_NoProjectKey_Rejected()
+	{
+		var result = Text(await (await ToolAsync("apikey.create")).CallAsync(new Dictionary<string, object?>
+		{
+			["name"] = "k", ["scopes"] = "tasks:read",
+		}));
+		result.Should().Contain("projectKey is required");
+	}
+
+	[Fact]
 	public async Task ProjectDelete_DoesNotExist_NoAlias()
 	{
 		// project has no delete (it would orphan logs/dbs/keys) — there is no project.delete tool.

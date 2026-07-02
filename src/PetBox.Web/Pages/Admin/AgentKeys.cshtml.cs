@@ -29,15 +29,16 @@ public sealed class AgentKeysModel : PageModel
 
 	void Load()
 	{
+		// All DB-minted keys, expiring and permanent — the sysadmin overview. Config-declared
+		// keys (appsettings/env) are not rows and don't appear here.
 		var now = DateTime.UtcNow;
 		Keys = [.. _db.ApiKeys
-			.Where(k => k.ExpiresAt != null)
 			.OrderByDescending(k => k.CreatedAt)
 			.ToList()
-			.Select(k => new KeyRow(k.Key, k.Name, k.ProjectKey, k.Scopes, k.CreatedAt, k.ExpiresAt, k.ExpiresAt <= now))];
+			.Select(k => new KeyRow(k.Key, k.Name, k.ProjectKey, k.Scopes, k.CreatedAt, k.ExpiresAt, k.ExpiresAt != null && k.ExpiresAt <= now))];
 	}
 
-	public async Task<IActionResult> OnPostIssueAsync(string? name, string? projectKey, string[]? scopes, int ttlHours, bool allProjects = false)
+	public async Task<IActionResult> OnPostIssueAsync(string? name, string? projectKey, string[]? scopes, int? ttlHours, bool allProjects = false)
 	{
 		var (valid, invalid) = ApiKeyScopes.Validate(scopes is null ? null : string.Join(',', scopes));
 		if (invalid.Count > 0)
@@ -52,9 +53,9 @@ public sealed class AgentKeysModel : PageModel
 			Load();
 			return Page();
 		}
-		if (ttlHours <= 0)
+		if (ttlHours is <= 0)
 		{
-			ErrorMessage = "TTL must be a positive number of hours.";
+			ErrorMessage = "TTL must be a positive number of hours (or empty for a non-expiring key).";
 			Load();
 			return Page();
 		}
@@ -70,7 +71,9 @@ public sealed class AgentKeysModel : PageModel
 			Scopes = string.Join(',', valid),
 			Name = string.IsNullOrWhiteSpace(name) ? "agent-key" : name.Trim(),
 			CreatedAt = DateTime.UtcNow,
-			ExpiresAt = DateTime.UtcNow.AddHours(ttlHours),
+			// Empty TTL = non-expiring: the key's lifetime is the issuer's deliberate choice,
+			// not a constraint of this channel (spec access-cross-project-key).
+			ExpiresAt = ttlHours is { } h ? DateTime.UtcNow.AddHours(h) : null,
 		});
 
 		IssuedKey = keyValue;
