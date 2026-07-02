@@ -17,7 +17,7 @@ namespace PetBox.Tests.Tasks;
 // tasks.node_get — the addressed single-node read (token economy: one full node instead of
 // re-fetching a whole board): `node` is a slug or a 32-hex NodeId, terminal statuses are
 // returned like any other (an addressed ask has no includeClosed), and a miss is a clear
-// board-naming error. Plus the tasks.get `status` filter: only the named slugs, with a
+// board-naming error. Plus the tasks.search `status` filter: only the named slugs, with a
 // terminal slug honored even when includeClosed=false.
 [Collection("DataModule")]
 public sealed class NodeGetTests : IDisposable
@@ -107,7 +107,7 @@ public sealed class NodeGetTests : IDisposable
 			McpInputs.NodesJson("""[{"key":"done-one","status":"Done","version":1}]"""));
 
 		// The default board read hides the terminal node…
-		((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "b"))
+		(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b"))
 			.Nodes.Should().BeEmpty();
 
 		// …but the ADDRESSED read returns it regardless of terminality.
@@ -147,11 +147,11 @@ public sealed class NodeGetTests : IDisposable
 			 {"key":"w1","status":"InProgress","title":"W1"}]
 			"""));
 
-		var only = (PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "b", status: ["InProgress"]);
+		var only = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b", status: ["InProgress"]);
 		only.Nodes.Select(n => n.Key).Should().Equal("w1");
 
 		// Case-insensitive, multiple slugs.
-		var both = (PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "b", status: ["todo", "inprogress"]);
+		var both = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b", status: ["todo", "inprogress"]);
 		both.Nodes.Select(n => n.Key).Should().BeEquivalentTo("t1", "t2", "w1");
 	}
 
@@ -165,7 +165,7 @@ public sealed class NodeGetTests : IDisposable
 			McpInputs.NodesJson("""[{"key":"closed-one","status":"Done","version":1}]"""));
 
 		// Naming the terminal status is the explicit ask — no includeClosed needed.
-		var done = (PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "b", status: ["Done"]);
+		var done = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "b", status: ["Done"]);
 		done.Nodes.Select(n => n.Key).Should().Equal("closed-one");
 		done.Nodes.Single().Status.Should().Be("Done");
 	}

@@ -9,14 +9,14 @@ using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
-using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Tasks;
 
-// tasks.get response budget (spec bounded-result-sets, generalizing the methodology_get
+// tasks.search response budget (spec bounded-result-sets, generalizing the methodology_get
 // pattern via the shared ResponseBudget helper): a board too large for one response is
 // prefix-cut on the wire form of its rows and marked structurally (truncated/omitted +
 // a narrowing hint) — never silently; a board that fits serializes exactly as before
@@ -89,7 +89,7 @@ public sealed class TasksGetBudgetTests : IDisposable
 	{
 		await SeedAsync("small", 3, 200);
 
-		var view = (PlanBoardView)await TasksTools.GetAsync(Http(), Flags(), _tasks, Proj, "small");
+		var view = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "small");
 
 		view.Nodes.Count.Should().Be(3);
 		view.Truncated.Should().BeNull();
@@ -98,8 +98,8 @@ public sealed class TasksGetBudgetTests : IDisposable
 		// Byte-for-byte: the marker fields are null → the wire serializer omits them entirely.
 		var json = JsonSerializer.Serialize(view, Wire);
 		json.Should().NotContainAny("truncated", "omitted", "hint");
-		json.Should().Be(JsonSerializer.Serialize(
-			new PlanBoardView(view.CurrentVersion, view.Kind, view.SpecBoard, view.Nodes), Wire));
+		json.Should().Be(JsonSerializer.Serialize(new TaskSearchResultView(
+			view.Nodes, view.Board, view.Kind, view.SpecBoard, view.CurrentVersion), Wire));
 	}
 
 	[Fact]
@@ -108,7 +108,7 @@ public sealed class TasksGetBudgetTests : IDisposable
 		const int total = 60;
 		await SeedAsync("big", total, 1000); // ~60k chars of bodies alone > the 30k budget
 
-		var view = (PlanBoardView)await TasksTools.GetAsync(Http(), Flags(), _tasks, Proj, "big");
+		var view = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big");
 
 		// Prefix-cut in board order (priority then key), the cut is explicit and adds up.
 		view.Nodes.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
@@ -128,8 +128,8 @@ public sealed class TasksGetBudgetTests : IDisposable
 		const int total = 60;
 		await SeedAsync("big", total, 1000);
 
-		var full = (PlanBoardView)await TasksTools.GetAsync(Http(), Flags(), _tasks, Proj, "big");
-		var snipped = (PlanBoardView)await TasksTools.GetAsync(Http(), Flags(), _tasks, Proj, "big", bodyLen: 20);
+		var full = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big");
+		var snipped = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", bodyLen: 20);
 
 		// The budget measures the POST-slicing wire rows: snippets are cheap, so the whole
 		// board fits and the markers disappear.
@@ -152,15 +152,16 @@ public sealed class TasksGetBudgetTests : IDisposable
 			"""));
 
 		// `under` narrows below the budget → complete answer, no markers.
-		var under = (PlanBoardView)await TasksTools.GetAsync(Http(), Flags(), _tasks, Proj, "big", under: "apex");
+		var under = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", under: "apex");
 		under.Nodes.Select(n => n.Key).Should().BeEquivalentTo("apex", "apex-leaf");
 		under.Truncated.Should().BeNull();
 		under.Hint.Should().BeNull();
 
 		// `groupBy` is the keys-only projection — a different (cheap) shape, no budget markers.
-		var grouped = (GroupedBoardView)await TasksTools.GetAsync(Http(), Flags(), _tasks, Proj, "big", groupBy: "area");
+		var grouped = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", groupBy: "area");
 		grouped.Groups.Should().NotBeEmpty();
-		grouped.Groups.SelectMany(g => g.NodeKeys).Should().Contain("apex");
+		grouped.Groups!.SelectMany(g => g.NodeKeys).Should().Contain("apex");
+		grouped.Truncated.Should().BeNull();
 	}
 
 	// The shared helper itself: wire-form cost, prefix-cut, response-wide accumulation.

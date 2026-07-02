@@ -1,3 +1,4 @@
+using PetBox.Core.Contract;
 using PetBox.Core.Models;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Workflow;
@@ -11,7 +12,11 @@ namespace PetBox.Tasks.Contract;
 // surface. Adapters stay thin: parse input, call the service, shape the response.
 // A NetArchTest forbids Web tools/pages from reaching ITaskBoardStore / IRelationStore
 // / TasksDb directly, so this interface is the only door.
-public interface ITasksService
+// It also implements the generic uniform-read contract (ISearchService — spec
+// uniform-entity-verbs v2): list = search without a query, relevance = a sort option
+// available only with a query. SearchNodesAsync is the richer per-family overload (board
+// context + URL prefix); the generic SearchAsync is its plain-envelope projection.
+public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, TaskSortBy>
 {
 	// --- board lifecycle ---
 
@@ -44,7 +49,9 @@ public interface ITasksService
 
 	// --- nodes ---
 
-	// The active plan nodes as a 1-to-3 level tree with links and (spec boards) delivery.
+	// The active plan nodes of one board (flat slugs + part_of projection) with links and
+	// (spec boards) delivery. Kept for the Razor board UI and as the enrichment core the
+	// unified SearchNodesAsync composes; the MCP read verb is tasks.search.
 	// `status` (slugs, case-insensitive) filters on top of the selection; a terminal status
 	// named in the filter returns its nodes even when includeClosed is false (an explicit
 	// ask overrides the default hiding); an unknown slug for the board's kind is rejected.
@@ -85,12 +92,22 @@ public interface ITasksService
 	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, CancellationToken ct = default);
 	// Nodes added/updated/removed since the cursor (no writes).
 	Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default);
-	// Hybrid search over the project's active, non-terminal nodes (name/body/tags): lexical
-	// FTS5 (token/prefix, so paraphrases hit) fused with semantic vector similarity (RRF),
-	// ranked by relevance. `board` scopes to one board (null = all boards). `lexical`/`semantic`
-	// (null = both on) toggle each retriever; semantic is silently off when no embedding
-	// capability is wired. Returns the fused hits plus retriever provenance.
-	Task<TaskSearchResult> SearchAsync(string projectKey, string query, string? board = null, bool? lexical = null, bool? semantic = null, string? urlPrefix = null, CancellationToken ct = default);
+	// The unified tasks read (spec uniform-entity-verbs v2) behind tasks.search — the one
+	// read verb where list = search without a query.
+	//   No Query  → deterministic LISTING: the filter's board (or every board — rows then
+	//     carry their board), default order priority-then-key, overridable by Sort
+	//     (created/updated/title/priority; Relevance is rejected without a query).
+	//   With Query → relevance SELECTION over the hybrid machinery (lexical FTS ⊕ semantic
+	//     vectors, RRF-fused; open set only): the lexical/filter side is a PREDICATE, the
+	//     fused ranking supplies a bounded CANDIDATE POOL of max(3×limit, 50); default
+	//     order = fused relevance, an explicit Sort reorders WITHIN the selected set.
+	//     Retrievers provenance is filled.
+	// Filter fields (board/under/status/keys/includeClosed) narrow the pool in both modes;
+	// a terminal status named in Status — and any node addressed via Keys — returns without
+	// IncludeClosed (an explicit ask). BodyLen slices row bodies (0 = full); Limit caps rows
+	// (0 = unbounded listing / the adapter's query default). Board context (kind/specBoard/
+	// currentVersion) is filled when the read is board-scoped.
+	Task<TaskSearchResult> SearchNodesAsync(string projectKey, SearchRequest<TaskNodeFilter, TaskSortBy> request, string? urlPrefix = null, CancellationToken ct = default);
 	// Ensure the board exists and return its kind (used by the workflow discovery tool).
 	Task<BoardKind> ResolveKindAsync(string projectKey, string board, CancellationToken ct = default);
 

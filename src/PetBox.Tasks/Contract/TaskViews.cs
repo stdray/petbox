@@ -22,14 +22,12 @@ public sealed record PlanNodeView(
 	string? Url = null);
 
 // A board's active plan nodes (flat list; the tree is the part_of projection via
-// ParentNodeId/Depth), plus the board's kind and (work boards) its spec board.
-// Truncated/Omitted/Hint are the response-budget markers (spec bounded-result-sets),
-// filled only by the MCP adapter when the node rows exceeded the output budget and were
-// prefix-cut — all three default to null, so an in-budget board (and every non-MCP
-// caller, e.g. the Razor board) serializes exactly as before.
+// ParentNodeId/Depth), plus the board's kind and (work boards) its spec board. This is
+// the enrichment core: the Razor board renders it directly and the unified tasks read
+// (SearchNodesAsync → tasks.search) composes per-board views from it; the wire budget
+// markers live on the unified result, not here.
 public sealed record PlanBoardView(
-	long CurrentVersion, string Kind, string? SpecBoard, IReadOnlyList<PlanNodeView> Nodes,
-	bool? Truncated = null, int? Omitted = null, string? Hint = null);
+	long CurrentVersion, string Kind, string? SpecBoard, IReadOnlyList<PlanNodeView> Nodes);
 
 // One node resolved by its stable NodeId alone (cross-board): its owning board + kind,
 // the fully-enriched node view, and its part_of ancestor chain ordered root→parent (for
@@ -92,16 +90,49 @@ public sealed record PlanNodeHeader(
 	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<LinkDto>? Supersedes,
 	IReadOnlyList<string> Tags, string? Url = null);
 
-// One hybrid-search hit: the enriched node view plus its owning board (search spans
+// One unified-read hit: the enriched node view plus its owning board (a read may span
 // boards, and PlanNodeView itself doesn't carry the board).
 public sealed record TaskSearchHit(string Board, PlanNodeView Node);
 
-// A hybrid board-search result: the fused hits (board + enriched node view, ordered by
-// fused relevance) plus provenance (which retrievers actually ran and whether the answer
-// is degraded — e.g. semantic was requested but embedding was unavailable so only lexical
-// ran). Adapters surface Retrievers so a caller can tell a lexical-only fallback from a
-// true hybrid answer.
-public sealed record TaskSearchResult(IReadOnlyList<TaskSearchHit> Hits, PetBox.Core.Search.SearchRetrievers Retrievers);
+// The sort axis of the unified tasks read. Priority = the deterministic listing default
+// (priority then key); Relevance = the fused hybrid order, valid ONLY with a query (it is
+// the query mode's default); Created/Updated/Title reorder the selected set by node fields.
+public enum TaskSortBy
+{
+	Priority,
+	Created,
+	Updated,
+	Title,
+	Relevance,
+}
+
+// The filter axis of the unified tasks read — every field is a PREDICATE that narrows the
+// pool in both modes (listing and query). `Board` scopes to one board (null = the whole
+// project, each row then carries its board). `Under` restricts to a part_of subtree (a
+// slug or NodeId; resolved cross-board when Board is null). `Status` keeps only the named
+// slugs — naming a TERMINAL slug is an explicit ask and returns those nodes without
+// IncludeClosed. `Keys` addresses specific nodes (slug|NodeId mixed, resolved like
+// tasks.node_get; terminal nodes included — explicit addressing). `IncludeClosed` widens
+// a listing to terminal nodes (query mode searches the open set only).
+public sealed record TaskNodeFilter(
+	string? Board = null,
+	string? Under = null,
+	IReadOnlyList<string>? Status = null,
+	IReadOnlyList<string>? Keys = null,
+	bool IncludeClosed = false);
+
+// The unified tasks read result (list = search without query): the selected hits in their
+// final order, the board context when the read was board-scoped (Kind/SpecBoard/
+// CurrentVersion — null on a project-wide read), and retriever provenance (null in listing
+// mode; filled in query mode — which retrievers ran and whether the answer is degraded,
+// e.g. embedding unavailable so only lexical ran).
+public sealed record TaskSearchResult(
+	IReadOnlyList<TaskSearchHit> Hits,
+	string? Board = null,
+	string? Kind = null,
+	string? SpecBoard = null,
+	long? CurrentVersion = null,
+	PetBox.Core.Search.SearchRetrievers? Retrievers = null);
 
 // One board of the methodology quartet as a compact INDEX: a status histogram (`Counts`,
 // status slug -> active-node count) plus the board's nodes as header rows (no bodies by
