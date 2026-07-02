@@ -20,7 +20,7 @@
  * Both hooks are best-effort and must never break a turn (every failure is swallowed).
  *
  * MCP note: opencode exposes MCP tools as `<server>_<tool>`, so the petbox memory verbs are
- * `petbox_memory_recall` / `petbox_memory_remember` / `petbox_memory_get` /
+ * `petbox_memory_search` / `petbox_memory_remember` / `petbox_memory_get` /
  * `petbox_memory_upsert` (the Claude `mcp__petbox__*` names do not apply here).
  */
 import type { Plugin } from "@opencode-ai/plugin";
@@ -31,7 +31,7 @@ function memoryProtocol(project: string): string {
   return `## PetBox memory
 
 This project is wired to a PetBox instance over the \`petbox\` MCP server (project
-\`${project}\`). Its memory verbs are exposed as \`petbox_memory_recall\` /
+\`${project}\`). Its memory verbs are exposed as \`petbox_memory_search\` /
 \`petbox_memory_remember\` / \`petbox_memory_get\` / \`petbox_memory_upsert\`.
 
 In your FIRST response this session, open with exactly this line (so it's visible the
@@ -41,11 +41,12 @@ protocol is active):
 PetBox remembers a LOT about this project — curated facts AND the full session history.
 Start reasoning about anything past from a SEARCH, not from assumption. Two legs:
 
-- **Facts — \`petbox_memory_recall\`**: a \`query\` of a few words you are confident appear
+- **Facts — \`petbox_memory_search\`**: a \`q\` of a few words you are confident appear
   (tokens ANDed, prefix-matched; wordforms stem), pass \`bodyLen\` (e.g. 240) for cheap
   snippets. With no \`scope\` it cascades project ⊕ workspace and EVERY store — curated
   notes and the machine-distilled \`autocaptured\` quarantine alike (the store label in each
-  hit tells you which). Pull a full body with \`petbox_memory_get\`.
+  hit tells you which). Without \`q\` it's a plain listing (freshest first). Pull a full
+  body with \`petbox_memory_get\`.
 - **Past conversations — \`petbox_session_search\`**: when you need HOW something was decided,
   an error text, or any detail a fact wouldn't carry — two-stage search over the whole
   session archive; every hit carries the message ordinal, so \`petbox_session_get\` jumps to
@@ -59,7 +60,7 @@ project). Curated/temporal edits go through \`petbox_memory_upsert\`.
 
 **Background autocapture is LIVE:** after a session settles (~minutes), the server distills
 durable facts and recurring behavior patterns into the \`autocaptured\` store on its own. So:
-(1) don't re-store what recall already shows as autocaptured — promotion is the owner's
+(1) don't re-store what memory_search already shows as autocaptured — promotion is the owner's
 call; (2) the **end-of-session sweep** is an INSURANCE pass, not the only capture: before
 you stop, store the 1-3 learnings that must not wait for background distillation — skip
 narration and anything derivable from code/git.`;

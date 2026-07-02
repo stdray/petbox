@@ -52,10 +52,11 @@ Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a sto
 - `workspace` → the shared cross-project container (`$system`). When the key's project IS `$system`, project and workspace collapse and a cascade recall searches it once.
 
 **MCP tools** (server `petbox`):
-- Ergonomic: `memory.remember{text,scope?,store?,type?,tags?,description?}` (verbatim capture, auto-key), `memory.recall{query,scope?,store?,type?,limit?}` (FTS; no scope ⇒ **cascade** project ⊕ workspace, searches every store **except `ops`**, hits labelled by scope, project first).
-- Structural/curated: `memory.store_create|store_list|store_delete`, `memory.list|get|search|upsert|delta`.
+- Read: `memory.search{q?,scope?,store?,type?,sort?,limit?,bodyLen?}` — THE read verb (uniform-entity-verbs v2; replaced `memory.list`+`memory.recall`). Without `q` a deterministic listing (updated desc); with `q` hybrid FTS ⊕ vectors. No scope ⇒ **cascade** project ⊕ workspace, sweeps every store **except `ops`**, rows labelled by scope, project first. One entry: `memory.get`.
+- Capture: `memory.remember{text,scope?,store?,type?,tags?,description?}` (verbatim, auto-key).
+- Structural/curated: `memory.store_create|store_list|store_delete`, `memory.upsert|delta`.
 
-**Capture flow:** the SessionStart hook (`pull-memory.ps1`) injects an instruction; the agent itself calls `memory_recall` at start and `memory_remember` as it learns (instruct-the-agent — there is no memory READ REST). There is **no automatic** writer into memory today; raw capture goes to Sessions (below).
+**Capture flow:** the SessionStart hook (`pull-memory.ts`) injects an instruction; the agent itself calls `memory_search` at start and `memory_remember` as it learns (instruct-the-agent — there is no memory READ REST). Background distillation (SessionFactsJob/BehaviorPatternJob) also writes into the `autocaptured` store; raw capture goes to Sessions (below).
 
 ## 5. Sessions — REST + MCP
 

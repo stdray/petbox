@@ -35,3 +35,30 @@ public sealed record MemoryUpsertOutcome(TemporalUpsertResult<MemoryEntry> Resul
 // unavailable so only lexical ran). Adapters surface Retrievers so callers can tell a
 // lexical-only fallback from a true hybrid answer.
 public sealed record MemorySearchResult(IReadOnlyList<MemoryEntryView> Hits, PetBox.Core.Search.SearchRetrievers Retrievers);
+
+// ---- unified read (spec uniform-entity-verbs v2): list = search without a query ----
+
+// Filter axes of the unified memory read. `Store` narrows to one store within the container
+// (null = sweep every store except the sensitive ones — see MemoryService.SweepExcludedStores);
+// `Type` is the taxonomy predicate (User|Feedback|Project|Reference). Both are predicates in
+// BOTH modes (a filter never ranks).
+public sealed record MemoryEntryFilter(string? Store = null, string? Type = null);
+
+// Sort axes of the unified memory read. Relevance exists only WITH a query (the fused order);
+// Created/Updated read the active revision's temporal columns. The no-query default is
+// Updated desc (the freshest fact first — memory keys are opaque generated ids, so key order
+// carries no meaning, and a PATCHed entry should resurface).
+public enum MemorySortBy
+{
+	Relevance,
+	Created,
+	Updated,
+}
+
+// One selected entry labelled by its owning store (a container read sweeps stores, so rows
+// may span them — the label keeps provenance visible, mirroring TaskSearchHit.Board).
+public sealed record MemoryEntryHit(string Store, MemoryEntryView Entry);
+
+// The rich per-family result of the unified read: the selected hits plus retriever
+// provenance (null in listing mode, where no retriever runs).
+public sealed record MemoryEntrySearchResult(IReadOnlyList<MemoryEntryHit> Hits, PetBox.Core.Search.SearchRetrievers? Retrievers);

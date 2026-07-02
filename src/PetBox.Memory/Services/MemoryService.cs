@@ -1,5 +1,6 @@
 using LinqToDB;
 using LinqToDB.Data;
+using PetBox.Core.Contract;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Core.Observability;
@@ -69,16 +70,122 @@ public sealed class MemoryService : IMemoryService
 	public async Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
-		var ctx = _stores.GetContext(projectKey, store);
 		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
+		var (hits, retrievers) = await SearchStoreAsync(projectKey, store, query, typeFilter, SearchK, lexical, semantic, ct);
+		return new MemorySearchResult(hits.Select(View).ToList(), retrievers);
+	}
+
+	// ---- unified read (list = search without a query; uniform-entity-verbs v2) ----
+
+	// Stores skipped by the implicit "every store" sweep of the unified read: sensitive
+	// operational stores that must never be auto-pulled into an agent's context (e.g. "ops"
+	// has held secrets). An explicit Filter.Store still reaches them — only the implicit
+	// sweep excludes.
+	static readonly HashSet<string> SweepExcludedStores = new(StringComparer.OrdinalIgnoreCase) { "ops" };
+
+	// The generic uniform-read seam (implemented EXPLICITLY — the contract is a shared shape,
+	// not a DI dispatch point): the plain envelope of the rich SearchEntriesAsync. Budget
+	// markers stay null here — the response budget is measured on the WIRE rows, so it
+	// belongs to the adapter that shapes them.
+	async Task<SearchEnvelope<MemoryEntryHit>> ISearchService<MemoryEntryHit, MemoryEntryFilter, MemorySortBy>.SearchAsync(
+		string projectKey, SearchRequest<MemoryEntryFilter, MemorySortBy> request, CancellationToken ct)
+	{
+		var r = await SearchEntriesAsync(projectKey, request, ct);
+		return new SearchEnvelope<MemoryEntryHit>(r.Hits, Retrievers: r.Retrievers);
+	}
+
+	public async Task<MemoryEntrySearchResult> SearchEntriesAsync(string projectKey, SearchRequest<MemoryEntryFilter, MemorySortBy> request, CancellationToken ct = default)
+	{
+		var f = request.Filter ?? new MemoryEntryFilter();
+		var query = string.IsNullOrWhiteSpace(request.Query) ? null : request.Query.Trim();
+		if (query is null && request.Sort is { By: MemorySortBy.Relevance })
+			throw new ArgumentException("sort by relevance needs a query (q) — without one the read is a deterministic listing (default order: updated desc)");
+		var typeFilter = string.IsNullOrWhiteSpace(f.Type) ? (MemoryType?)null : ParseType(f.Type!);
+
+		// Stores in scope: the named one, or the implicit sweep (skips sensitive stores).
+		// A named store missing from THIS container yields no hits, not an error — the
+		// adapter's scope cascade reads several containers and the store may live in one.
+		IReadOnlyList<string> stores = string.IsNullOrWhiteSpace(f.Store)
+			? (await _stores.ListAsync(projectKey, ct)).Select(s => s.Name).Where(n => !SweepExcludedStores.Contains(n)).ToList()
+			: [f.Store!.Trim()];
+
+		var selected = new List<(string Store, MemoryEntry Entry)>();
+		SearchRetrievers? retrievers = null;
+		foreach (var store in stores)
+		{
+			ct.ThrowIfCancellationRequested();
+			if (!await _stores.ExistsAsync(projectKey, store, ct)) continue;
+			if (query is null)
+			{
+				// LISTING: the active entries of the store (deterministic; ordered below).
+				selected.AddRange(ListActive(_stores.GetContext(projectKey, store), typeFilter).Select(e => (store, e)));
+			}
+			else
+			{
+				// QUERY: hybrid selection per store; the fused ranking supplies a bounded
+				// CANDIDATE POOL of max(3×limit, 50) — the same formula as tasks.search (3×
+				// leaves the post-fusion type predicate room to drop candidates and still
+				// fill the limit; the 50 floor keeps recall sane for small/unbounded asks).
+				var (hits, r) = await SearchStoreAsync(projectKey, store, query, typeFilter,
+					Math.Max(request.Limit * 3, 50), lexical: null, semantic: null, ct);
+				retrievers = retrievers is { } agg
+					? new SearchRetrievers(agg.Lexical | r.Lexical, agg.Semantic | r.Semantic, agg.Degraded | r.Degraded)
+					: r;
+				selected.AddRange(hits.Select(e => (store, e)));
+			}
+		}
+		if (query is not null) retrievers ??= new SearchRetrievers(false, false, false);
+
+		selected = SortSelected(selected, request.Sort, hasQuery: query is not null);
+		if (request.Limit > 0 && selected.Count > request.Limit) selected = selected.Take(request.Limit).ToList();
+
+		var hits2 = selected.Select(x => new MemoryEntryHit(x.Store,
+			request.BodyLen > 0 ? View(x.Entry) with { Body = SnippetBody(x.Entry.Body, request.BodyLen) } : View(x.Entry))).ToList();
+		return new MemoryEntrySearchResult(hits2, retrievers);
+	}
+
+	// Final ordering of the selected set. No sort: query mode keeps the per-store fused
+	// order (stores in list order — the old recall semantics), a listing defaults to
+	// Updated desc (the freshest fact first — keys are opaque generated ids, so key order
+	// carries no meaning). An explicit created/updated sort reorders WITHIN the selected
+	// set; Relevance = keep the fused order (guarded to query mode; `desc` is meaningless
+	// there and ignored). Ties break on key then store for determinism.
+	static List<(string Store, MemoryEntry Entry)> SortSelected(
+		List<(string Store, MemoryEntry Entry)> hits, (MemorySortBy By, bool Desc)? sort, bool hasQuery)
+	{
+		if (sort is null)
+			return hasQuery ? hits : Ordered(hits, x => x.Entry.Updated, desc: true);
+		return sort.Value.By switch
+		{
+			MemorySortBy.Relevance => hits, // guarded to query mode; the fused order IS relevance
+			MemorySortBy.Created => Ordered(hits, x => x.Entry.Created, sort.Value.Desc),
+			MemorySortBy.Updated => Ordered(hits, x => x.Entry.Updated, sort.Value.Desc),
+			_ => throw new ArgumentException($"unknown sort '{sort.Value.By}'"),
+		};
+	}
+
+	static List<(string Store, MemoryEntry Entry)> Ordered<TKey>(
+		List<(string Store, MemoryEntry Entry)> hits, Func<(string Store, MemoryEntry Entry), TKey> key, bool desc) =>
+		(desc ? hits.OrderByDescending(key) : hits.OrderBy(key))
+			.ThenBy(x => x.Entry.Key, StringComparer.Ordinal)
+			.ThenBy(x => x.Store, StringComparer.Ordinal)
+			.ToList();
+
+	// Hybrid selection over ONE store's open entries (lexical FTS5 ⊕ semantic vectors,
+	// RRF-fused), entities returned in fused order with retriever provenance. `k` bounds
+	// the candidate pool. The type filter applies post-resolution (Type is constant in
+	// the index, as before).
+	async Task<(List<MemoryEntry> Hits, SearchRetrievers Retrievers)> SearchStoreAsync(
+		string projectKey, string store, string query, MemoryType? typeFilter, int k,
+		bool? lexical, bool? semantic, CancellationToken ct)
+	{
+		var ctx = _stores.GetContext(projectKey, store);
 
 		// No searchable tokens (empty/punctuation query): degrade to a type-filtered listing —
 		// a filter-only query still returns a sensible set rather than nothing (preserved from
 		// the pre-contract behaviour; FtsQuery returns no match for such queries).
 		if (FtsQuery.BuildMatch(query) is null)
-			return new MemorySearchResult(
-				ListActive(ctx, typeFilter).Select(View).ToList(),
-				new SearchRetrievers(true, false, false));
+			return (ListActive(ctx, typeFilter), new SearchRetrievers(true, false, false));
 
 		await EnsureLexicalBackfillAsync(ctx, projectKey, ct);
 
@@ -89,20 +196,23 @@ public sealed class MemoryService : IMemoryService
 		if (semantic != false && _llm is not null)
 			indexes.Add(new VectorSearchIndex(connect, new LlmClientEmbedder(_llm, projectKey), VectorDim));
 
-		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(null), SearchK, ct);
+		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(null), k, ct);
 
-		// Resolve hits to entries (preserving fused order) and apply the MemoryType filter here —
-		// Type is constant in the index, so filtering is post-resolution, as before.
+		// Resolve hits to entries (preserving fused order) and apply the MemoryType filter here.
 		var ids = resp.Hits.Select(h => h.Id).ToList();
 		var order = ids.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i);
 		var hits = ctx.Entries.Where(e => e.ActiveTo == null && ids.Contains(e.Key)).ToList()
 			.Where(e => typeFilter == null || e.Type == typeFilter)
 			.OrderBy(e => order[e.Key])
-			.Select(View)
 			.ToList();
 
-		return new MemorySearchResult(hits, resp.Retrievers);
+		return (hits, resp.Retrievers);
 	}
+
+	// READ snippet: bodyLen <= 0 -> the full body; otherwise the first N chars with "…"
+	// appended when cut (mirrors ModuleMcp.SnippetBody — read returns content by default).
+	static string SnippetBody(string body, int bodyLen) =>
+		bodyLen <= 0 || body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
 
 	public async Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, CancellationToken ct = default)
 	{

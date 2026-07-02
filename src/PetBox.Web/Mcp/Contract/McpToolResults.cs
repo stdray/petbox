@@ -132,9 +132,8 @@ public sealed record MemoryStoreListResult(IReadOnlyList<MemoryStoreRow> Stores)
 
 public sealed record MemoryStoreDeletedResult(bool Deleted);
 
-// Read/echo projection of a memory entry for the list/upsert/delta MCP surface. `Body` is
-// snippet/slice-controlled (null -> omitted). Usage fields appear only under
-// `includeUsage:true` (null -> omitted) — spec: memory-usage-observability.
+// Echo projection of a memory entry for the upsert/delta MCP surface. `Body` is
+// slice-controlled (null -> omitted).
 public sealed record MemoryEntryRow(
 	string Key,
 	string Type,
@@ -142,13 +141,7 @@ public sealed record MemoryEntryRow(
 	string? Body,
 	string? Tags,
 	long Version,
-	string? Metadata,
-	long? Surfaced = null,
-	long? Opened = null,
-	DateTime? LastHitAt = null);
-
-public sealed record MemoryListResult(IReadOnlyList<MemoryEntryRow> Entries,
-	bool? Truncated = null, int? Omitted = null, string? Hint = null);
+	string? Metadata);
 
 // Provenance of a hybrid search/recall: which retrievers ran and whether the answer is degraded.
 public sealed record RetrieverInfo(bool Lexical, bool Semantic, bool Degraded);
@@ -168,9 +161,11 @@ public sealed record MemoryUpsertResultView(
 
 public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key);
 
-// One recall hit, labelled by scope (project|workspace) and store. Carries Version so a
-// recall → upsert edit has its per-key CAS baseline without an extra get (or a guaranteed-Stale 0).
-public sealed record MemoryRecallHit(
+// One memory.search row, labelled by scope (project|workspace) and store. Carries Version so
+// a search → upsert edit has its per-key CAS baseline without an extra get (or a
+// guaranteed-Stale 0). Usage fields appear only under `includeUsage:true` (null -> omitted)
+// — spec: memory-usage-observability.
+public sealed record MemorySearchHitView(
 	string Scope,
 	string Store,
 	string Key,
@@ -183,7 +178,15 @@ public sealed record MemoryRecallHit(
 	long? Opened = null,
 	DateTime? LastHitAt = null);
 
-public sealed record MemoryRecallResult(IReadOnlyList<MemoryRecallHit> Results, RetrieverInfo Retrievers);
+// The memory.search result — ONE shape for both modes (SearchEnvelope form): `Items` in
+// final order, `Retrievers` provenance with a query (null in listing mode), and the
+// response-budget markers Truncated/Omitted/Hint (null = complete).
+public sealed record MemorySearchResultView(
+	IReadOnlyList<MemorySearchHitView> Items,
+	RetrieverInfo? Retrievers = null,
+	bool? Truncated = null,
+	int? Omitted = null,
+	string? Hint = null);
 
 // ---- relations.* ---------------------------------------------------------------------
 

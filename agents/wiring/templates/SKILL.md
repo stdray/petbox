@@ -8,8 +8,8 @@ Pass projectKey "{{PROJECT}}" in every call (the key is scoped to the {{PROJECT}
 boards/memory/sessions live at https://petbox.3po.su/ui/{{WORKSPACE}}/{{PROJECT}}).
 
 **Tool naming:** in opencode the MCP tools are `petbox_<verb>` (e.g. `petbox_tasks_upsert`,
-`petbox_memory_recall`); in Claude Code they are `mcp__petbox__<verb>`. The dotted verbs below
-(`tasks.upsert`, `memory.recall`, …) are logical names — replace the dot with `_` and prefix
+`petbox_memory_search`); in Claude Code they are `mcp__petbox__<verb>`. The dotted verbs below
+(`tasks.upsert`, `memory.search`, …) are logical names — replace the dot with `_` and prefix
 per runtime.
 
 **Plan nodes are FLAT slugs** (`key` = [a-z][a-z0-9_-]*); hierarchy is the `partOf` edge,
@@ -26,8 +26,9 @@ with `q` it's hybrid relevance search (FTS ⊕ vectors). Filters work in both mo
 reorders; `bodyLen` snippets bodies. One node in full: `tasks.node_get`.
 
 **Memory entries are typed** (`user` | `feedback` | `project` | `reference`) — `type` is
-required on `memory.upsert`; `tags` is free CSV. `memory.recall` is THE search verb
-(hybrid FTS ⊕ vectors; use `bodyLen` for snippets).
+required on `memory.upsert`; `tags` is free CSV. `memory.search` is THE read verb: with `q`
+a hybrid relevance search (FTS ⊕ vectors), without `q` a deterministic listing (updated
+desc); no `scope` cascades project ⊕ workspace over every store (use `bodyLen` for snippets).
 
 **What goes where:**
 - Session (`session.*`) — the current working plan/thinking. "Stale next week?" → session.
@@ -37,7 +38,7 @@ required on `memory.upsert`; `tags` is free CSV. `memory.recall` is THE search v
 
 **Tools:**
 - `tasks.board_list / board_create / board_delete / search / node_get / upsert / delta / workflow`
-- `memory.store_list / store_create / store_delete / list / recall / remember / get / upsert / delta`
+- `memory.store_list / store_create / store_delete / search / remember / get / upsert / delta`
 - `session.upsert / get / list` (upsert = optimistic-concurrency replace; pass the current version)
 - Logs: `log.query` (KQL), `log.create / list / delete`
 - Admin (per-type, flat params): `project.create / list`, `apikey.create / list / delete`,
