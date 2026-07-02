@@ -13,10 +13,11 @@ using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Memory;
 
-// The ergonomic verbs memory.remember / memory.recall: verbatim capture with a `scope`
-// dimension (project default, workspace reserved), and recall that cascades project ⊕
-// workspace, searches every store by default, and labels hits by scope. The "$workspace"
-// container project is seeded by M028, so MigrationRunner makes it available here.
+// The verbs memory.remember / memory.search: verbatim capture with a `scope` dimension
+// (project default, workspace reserved), and the unified read (list = search without q)
+// that cascades project ⊕ workspace, sweeps every store by default, and labels rows by
+// scope. The "$workspace" container project is seeded by M028, so MigrationRunner makes
+// it available here.
 [Collection("DataModule")]
 public sealed class MemoryVerbsTests : IDisposable
 {
@@ -50,15 +51,15 @@ public sealed class MemoryVerbsTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Remember_DefaultsToProjectScope_TypeProject_AndRecallFindsIt()
+	public async Task Remember_DefaultsToProjectScope_TypeProject_AndSearchFindsIt()
 	{
 		var http = Http("memory:read,memory:write");
 		var rem = await MemoryTools.RememberAsync(http, Flags(), _memory, "api keys carry enumerable scopes");
 		rem.Scope.Should().Be("project");
 		rem.Store.Should().Be("notes");
 
-		var rec = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "scopes");
-		var hits = rec.Results.ToList();
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "scopes");
+		var hits = rec.Items.ToList();
 		hits.Should().ContainSingle();
 		hits[0].Scope.Should().Be("project");
 		hits[0].Type.Should().Be("Project");
@@ -66,13 +67,13 @@ public sealed class MemoryVerbsTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Recall_ReturnsVersion_ThatWorksAsUpsertBaseline()
+	public async Task Search_ReturnsVersion_ThatWorksAsUpsertBaseline()
 	{
 		var http = Http("memory:read,memory:write");
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "the deploy tag drives prod releases");
 
-		var rec = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "releases");
-		var hit = rec.Results.Single();
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "releases");
+		var hit = rec.Items.Single();
 		var key = hit.Key;
 		var version = hit.Version;
 		version.Should().BeGreaterThan(0);
@@ -98,60 +99,107 @@ public sealed class MemoryVerbsTests : IDisposable
 			scope: "workspace", type: "User");
 
 		// Cascade recall surfaces it, labelled workspace.
-		var cascade = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs");
-		var wsHit = cascade.Results.Single(h => h.Scope == "workspace");
+		var cascade = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs");
+		var wsHit = cascade.Items.Single(h => h.Scope == "workspace");
 		wsHit.Type.Should().Be("User");
 
 		// Project-scoped recall must NOT see workspace memory.
-		var projOnly = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs", scope: "project");
-		projOnly.Results.Should().BeEmpty();
+		var projOnly = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs", scope: "project");
+		projOnly.Items.Should().BeEmpty();
 	}
 
 	[Fact]
-	public async Task Recall_Cascade_ListsProjectBeforeWorkspace()
+	public async Task Search_Cascade_ListsProjectBeforeWorkspace()
 	{
 		var http = Http("memory:read,memory:write");
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "deploy moves the deploy tag", scope: "project");
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "deploy needs CI health gate", scope: "workspace");
 
-		var rec = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy");
-		var scopes = rec.Results.Select(h => h.Scope).ToList();
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy");
+		var scopes = rec.Items.Select(h => h.Scope).ToList();
 		scopes.Should().Equal("project", "workspace"); // project leg first
 	}
 
 	[Fact]
-	public async Task Recall_SearchesEveryStoreByDefault()
+	public async Task Search_SearchesEveryStoreByDefault()
 	{
 		var http = Http("memory:read,memory:write");
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "alpha lives in notes", store: "notes");
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "alpha lives in journal", store: "journal");
 
-		var rec = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha");
-		var stores = rec.Results.Select(h => h.Store).ToList();
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha");
+		var stores = rec.Items.Select(h => h.Store).ToList();
 		stores.Should().BeEquivalentTo(["notes", "journal"]);
 
 		// store narrows to one.
-		var narrowed = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha", store: "journal");
-		narrowed.Results.Select(h => h.Store)
+		var narrowed = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha", store: "journal");
+		narrowed.Items.Select(h => h.Store)
 			.Should().BeEquivalentTo(["journal"]);
 	}
 
 	[Fact]
-	public async Task Recall_AllStores_SkipsSensitiveOps_ButExplicitStoreReaches()
+	public async Task Search_AllStores_SkipsSensitiveOps_ButExplicitStoreReaches()
 	{
 		var http = Http("memory:read,memory:write");
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "secret deploy token xyz", store: "ops");
 		await MemoryTools.RememberAsync(http, Flags(), _memory, "public deploy note", store: "notes");
 
 		// Implicit all-stores sweep must NOT surface the ops store.
-		var sweep = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy");
-		sweep.Results.Select(h => h.Store)
+		var sweep = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy");
+		sweep.Items.Select(h => h.Store)
 			.Should().NotContain("ops").And.Contain("notes");
 
 		// Explicit store:ops is a deliberate ask and still reaches it.
-		var explicitOps = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy", store: "ops");
-		explicitOps.Results.Select(h => h.Store)
+		var explicitOps = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy", store: "ops");
+		explicitOps.Items.Select(h => h.Store)
 			.Should().BeEquivalentTo(["ops"]);
+	}
+
+	// list = search without q (uniform-entity-verbs v2): the listing cascades the same
+	// containers as a query, labels rows by scope, and defaults to updated desc.
+	[Fact]
+	public async Task Search_WithoutQ_ListsCascade_UpdatedDescDefault()
+	{
+		var http = Http("memory:read,memory:write");
+		var first = await MemoryTools.RememberAsync(http, Flags(), _memory, "older fact");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "workspace fact", scope: "workspace");
+		await Task.Delay(30); // distinct Updated timestamps — the listing orders by them
+		var second = await MemoryTools.RememberAsync(http, Flags(), _memory, "newer fact");
+
+		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder());
+		res.Retrievers.Should().BeNull(); // no retriever runs in listing mode
+		res.Items.Select(h => h.Scope).Distinct().Should().BeEquivalentTo(["project", "workspace"]);
+
+		// Project leg first; within it the freshest write leads (updated desc).
+		var proj = res.Items.Where(h => h.Scope == "project").Select(h => h.Key).ToList();
+		proj.IndexOf(second.Key).Should().BeLessThan(proj.IndexOf(first.Key));
+	}
+
+	[Fact]
+	public async Task Search_SortRelevanceWithoutQ_IsRejected()
+	{
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "any fact");
+		var act = () => MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			sort: new PetBox.Web.Mcp.Contract.SortInput { By = "relevance" });
+		(await act.Should().ThrowAsync<ArgumentException>()).Which.Message.Should().Contain("relevance");
+	}
+
+	// With q an explicit created/updated sort reorders WITHIN the relevance-selected set.
+	[Fact]
+	public async Task Search_WithQ_ExplicitSort_ReordersSelected()
+	{
+		var http = Http("memory:read,memory:write");
+		var a = await MemoryTools.RememberAsync(http, Flags(), _memory, "gamma fact one");
+		await Task.Delay(30); // distinct Created timestamps — the sort reads them
+		var b = await MemoryTools.RememberAsync(http, Flags(), _memory, "gamma fact two");
+
+		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			"gamma", scope: "project", sort: new PetBox.Web.Mcp.Contract.SortInput { By = "created", Desc = true });
+		res.Retrievers.Should().NotBeNull();
+		var keys = res.Items.Select(h => h.Key).ToList();
+		keys.Should().BeEquivalentTo([a.Key, b.Key]);
+		keys.IndexOf(b.Key).Should().BeLessThan(keys.IndexOf(a.Key)); // created desc — newest first
 	}
 
 	[Fact]

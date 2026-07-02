@@ -68,28 +68,30 @@ public sealed class MemoryToolsContractTests : IDisposable
 		// Cold upsert (no store_create) auto-creates the store; tags get normalised.
 		var entries = McpInputs.Entries(new object[]
 		{
-			new { key = "go-style", type = "reference", description = "Go", body = "tabs", tags = "Go, STYLE ,go" },
+			new { key = "go-style", type = "reference", description = "Go", body = "tabs", tags = new[] { "Go", " STYLE ", "go" } },
 			new { key = "prefers-tabs", type = "feedback", description = "tabs", body = "user likes tabs" },
 		});
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 		(await _store.ExistsAsync(Proj, "notes")).Should().BeTrue();
 
 		// Tags normalised: lowercased, trimmed, de-duped.
-		var all = await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes");
-		var go = all.Entries.Single(e => e.Key == "go-style");
-		go.Tags.Should().Be("go,style");
+		var all = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes");
+		var go = all.Items.Single(e => e.Key == "go-style");
+		go.Tags.Should().Equal("go", "style");
 		go.Type.Should().Be("Reference");
 
 		// Type filter narrows the listing.
-		var feedback = await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", "feedback");
-		var keys = feedback.Entries.Select(e => e.Key).ToList();
+		var feedback = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes", type: "feedback");
+		var keys = feedback.Items.Select(e => e.Key).ToList();
 		keys.Should().BeEquivalentTo(["prefers-tabs"]);
 	}
 
-	// memory.search is gone (verb dedup): recall with scope:"project" + store covers the
-	// single-store FTS scenario — same hybrid retriever underneath.
+	// memory.search with q: the single-store FTS scenario (scope:"project" + store) —
+	// hybrid retriever underneath, lexical tokens prefix-matched.
 	[Fact]
-	public async Task Recall_Fts_FindsByToken_AndExcludesOthers()
+	public async Task Search_Fts_FindsByToken_AndExcludesOthers()
 	{
 		var http = Http("memory:read,memory:write");
 		var entries = McpInputs.Entries(new object[]
@@ -99,9 +101,9 @@ public sealed class MemoryToolsContractTests : IDisposable
 		});
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 
-		var res = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"scope", scope: "project", store: "notes");
-		var keys = res.Results.Select(e => e.Key).ToList();
+		var keys = res.Items.Select(e => e.Key).ToList();
 		keys.Should().Contain("auth-scopes");      // "scope*" prefix-matches "scopes"
 		keys.Should().NotContain("go-style");
 	}
@@ -133,8 +135,9 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", del);
 		res.Removed.Should().Contain("temp");
 
-		var list = await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes");
-		list.Entries.Select(e => e.Key)
+		var list = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes");
+		list.Items.Select(e => e.Key)
 			.Should().NotContain("temp");
 	}
 
@@ -147,20 +150,20 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var http = Http("memory:read,memory:write");
 		var created = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
-			new { key = "k", type = "project", description = "keep-d", body = "keep-b", tags = "t1,t2" },
+			new { key = "k", type = "project", description = "keep-d", body = "keep-b", tags = new[] { "t1", "t2" } },
 		}))).Added.Single();
 
 		// The incident payload: only key/type/tags/version — description and body omitted.
 		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
-			new { key = "k", type = "project", tags = "t3", version = created.Version },
+			new { key = "k", type = "project", tags = new[] { "t3" }, version = created.Version },
 		}));
 		res.Applied.Should().BeTrue();
 
 		var after = (await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(), Proj, "notes", "k"))!;
 		after.Description.Should().Be("keep-d");
 		after.Body.Should().Be("keep-b");
-		after.Tags.Should().Be("t3");
+		after.Tags.Should().Equal("t3");
 	}
 
 	// spec explicit-write-semantics: an explicitly EMPTY field ("") is a deliberate clear —
@@ -171,7 +174,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var http = Http("memory:read,memory:write");
 		var created = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
-			new { key = "c", type = "project", description = "d", body = "b", tags = "t" },
+			new { key = "c", type = "project", description = "d", body = "b", tags = new[] { "t" } },
 		}))).Added.Single();
 
 		// body:"" clears the body; omitted description/tags stay.
@@ -184,7 +187,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var after = (await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(), Proj, "notes", "c"))!;
 		after.Body.Should().BeEmpty();
 		after.Description.Should().Be("d");
-		after.Tags.Should().Be("t");
+		after.Tags.Should().Equal("t");
 	}
 
 	// CREATE path unchanged: a new entry (version 0) with partial fields starts the omitted
@@ -236,10 +239,10 @@ public sealed class MemoryToolsContractTests : IDisposable
 		sliced.Should().EndWith("…");
 	}
 
-	// spec read-snippet-on-demand + bounded-result-sets: list/recall cap at `limit` and snippet
+	// spec read-snippet-on-demand + bounded-result-sets: both modes cap at `limit` and snippet
 	// bodies at `bodyLen` (full by default), so a read can't dump an unbounded wall of bodies.
 	[Fact]
-	public async Task ListAndRecall_RespectLimit_AndBodyLen()
+	public async Task Search_BothModes_RespectLimit_AndBodyLen()
 	{
 		var http = Http("memory:read,memory:write");
 		var big = new string('x', 300);
@@ -251,21 +254,23 @@ public sealed class MemoryToolsContractTests : IDisposable
 		});
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 
-		// list: limit caps the count.
-		(await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", limit: 2))
-			.Entries.Count.Should().Be(2);
+		// listing: limit caps the count.
+		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes", limit: 2))
+			.Items.Count.Should().Be(2);
 
-		// list: bodyLen snippets the body of entry 'a' (the long one).
-		var aBody = (await MemoryTools.ListAsync(http, Flags(), _memory, Proj, "notes", bodyLen: 100))
-			.Entries.Single(e => e.Key == "a")
+		// listing: bodyLen snippets the body of entry 'a' (the long one).
+		var aBody = (await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes", bodyLen: 100))
+			.Items.Single(e => e.Key == "a")
 			.Body!;
 		aBody.Length.Should().Be(101);
 		aBody.Should().EndWith("…");
 
-		// recall: the same limit bounds an FTS sweep ("alpha" hits all three).
-		(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		// with q: the same limit bounds an FTS sweep ("alpha" hits all three).
+		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"alpha", scope: "project", store: "notes", limit: 2))
-			.Results.Count.Should().Be(2);
+			.Items.Count.Should().Be(2);
 	}
 
 	static IHttpContextAccessor Http(string scopes)

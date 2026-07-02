@@ -189,7 +189,7 @@ public sealed class SessionDigestJob : IVectorizationJob
 			Type = "Reference",
 			Description = description,
 			Body = body,
-			Tags = Tag,
+			Tags = [Tag],
 			Metadata = metadata,
 		}], [], ct);
 		if (outcome.Result.Conflicts.Count > 0)

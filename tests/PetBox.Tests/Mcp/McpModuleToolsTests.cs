@@ -165,20 +165,20 @@ public sealed class McpModuleToolsTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Memory_Upsert_Recall_Roundtrip()
+	public async Task Memory_Upsert_Search_Roundtrip()
 	{
 		var http = Http("memory:read,memory:write");
 		await MemoryTools.StoreCreateAsync(http, Flags(), _memory, Proj, "notes");
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes",
 			McpInputs.Entries(new[]
 			{
-				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = "go,style" },
+				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = new[] { "go", "style" } },
 			}));
 
-		// memory.search is gone (verb dedup) — recall is THE memory search verb.
-		var hits = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		// memory.search is THE read verb (list = search without q; replaced list+recall).
+		var hits = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"tabs", scope: "project", store: "notes");
-		hits.Results.Should().ContainSingle();
+		hits.Items.Should().ContainSingle();
 	}
 
 	[Fact]
@@ -190,8 +190,11 @@ public sealed class McpModuleToolsTests : IDisposable
 		var got = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s1"))!;
 		got.Content.Should().Be("# plan");
 
-		var list = await SessionTools.ListAsync(http, Flags(), _sessionSvc, Proj);
-		list.Sessions.Should().ContainSingle();
+		// list = session.search without q (the former session.list); rows carry version.
+		var list = await SessionTools.SearchAsync(http, Flags(), _sessionSvc, null!, Proj);
+		list.Items.Should().ContainSingle();
+		list.Items[0].Version.Should().Be(1);
+		list.Items[0].Hits.Should().BeNull(); // no query — no episodic arm
 	}
 
 	// spec bounded-result-sets: session.get reads the blob incrementally — `length` is always
@@ -268,7 +271,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	{
 		var other = Http("tasks:read,memory:read", project: "other");
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			SessionTools.SearchAsync(other, Flags(), null!, Proj, "q"));
+			SessionTools.SearchAsync(other, Flags(), null!, null!, Proj, "q"));
 	}
 
 	[Fact]

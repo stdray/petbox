@@ -132,23 +132,17 @@ public sealed record MemoryStoreListResult(IReadOnlyList<MemoryStoreRow> Stores)
 
 public sealed record MemoryStoreDeletedResult(bool Deleted);
 
-// Read/echo projection of a memory entry for the list/upsert/delta MCP surface. `Body` is
-// snippet/slice-controlled (null -> omitted). Usage fields appear only under
-// `includeUsage:true` (null -> omitted) — spec: memory-usage-observability.
+// Echo projection of a memory entry for the upsert/delta MCP surface. `Body` is
+// slice-controlled (null -> omitted). `Tags` is an array (the memory surface speaks
+// tag arrays; storage stays CSV).
 public sealed record MemoryEntryRow(
 	string Key,
 	string Type,
 	string? Description,
 	string? Body,
-	string? Tags,
+	IReadOnlyList<string> Tags,
 	long Version,
-	string? Metadata,
-	long? Surfaced = null,
-	long? Opened = null,
-	DateTime? LastHitAt = null);
-
-public sealed record MemoryListResult(IReadOnlyList<MemoryEntryRow> Entries,
-	bool? Truncated = null, int? Omitted = null, string? Hint = null);
+	string? Metadata);
 
 // Provenance of a hybrid search/recall: which retrievers ran and whether the answer is degraded.
 public sealed record RetrieverInfo(bool Lexical, bool Semantic, bool Degraded);
@@ -168,22 +162,32 @@ public sealed record MemoryUpsertResultView(
 
 public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key);
 
-// One recall hit, labelled by scope (project|workspace) and store. Carries Version so a
-// recall → upsert edit has its per-key CAS baseline without an extra get (or a guaranteed-Stale 0).
-public sealed record MemoryRecallHit(
+// One memory.search row, labelled by scope (project|workspace) and store. Carries Version so
+// a search → upsert edit has its per-key CAS baseline without an extra get (or a
+// guaranteed-Stale 0). Usage fields appear only under `includeUsage:true` (null -> omitted)
+// — spec: memory-usage-observability.
+public sealed record MemorySearchHitView(
 	string Scope,
 	string Store,
 	string Key,
 	string Type,
 	string Description,
 	string? Body,
-	string Tags,
+	IReadOnlyList<string> Tags,
 	long Version,
 	long? Surfaced = null,
 	long? Opened = null,
 	DateTime? LastHitAt = null);
 
-public sealed record MemoryRecallResult(IReadOnlyList<MemoryRecallHit> Results, RetrieverInfo Retrievers);
+// The memory.search result — ONE shape for both modes (SearchEnvelope form): `Items` in
+// final order, `Retrievers` provenance with a query (null in listing mode), and the
+// response-budget markers Truncated/Omitted/Hint (null = complete).
+public sealed record MemorySearchResultView(
+	IReadOnlyList<MemorySearchHitView> Items,
+	RetrieverInfo? Retrievers = null,
+	bool? Truncated = null,
+	int? Omitted = null,
+	string? Hint = null);
 
 // ---- relations.* ---------------------------------------------------------------------
 
@@ -209,30 +213,39 @@ public sealed record SessionAppendResult(string SessionId, bool Applied, long La
 
 public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version);
 
-public sealed record SessionRowView(string SessionId, string Agent, long Version);
-
-public sealed record SessionListResult(IReadOnlyList<SessionRowView> Sessions,
-	bool? Truncated = null, int? Omitted = null, string? Hint = null);
-
 public sealed record SessionDeletedResult(bool Deleted, string SessionId);
 
-// session.search: two-stage (digest discovery → episodic hydration) with per-stage
-// retriever provenance; Message is the ordinal to feed back into session.get.
+// One episodic hit inside a discovered session; Message is the ordinal to feed back
+// into session.get (the provenance bridge).
 public sealed record SessionSearchHitView(long Message, string Role, string Snippet, double Score, string? Retriever);
 
-public sealed record SessionSearchSessionView(
+// One session.search item — the union of the verb's two modes (list = search without q):
+//   listing row → SessionId/Agent/Version (the former session.list row; query fields null);
+//   query row   → SessionId/Agent + Description (the digest), episodic `Hits` and the
+//                 per-session `Retrievers` (Version null — a discovery is digest-based).
+// Null fields are omitted on the wire, so each mode serializes without the other's arm.
+public sealed record SessionSearchItemView(
 	string SessionId,
 	string Agent,
-	string Description,
-	IReadOnlyList<SessionSearchHitView> Hits,
-	RetrieverInfo Retrievers);
+	long? Version = null,
+	string? Description = null,
+	IReadOnlyList<SessionSearchHitView>? Hits = null,
+	RetrieverInfo? Retrievers = null);
 
-// `Reason` is a machine-readable code present only when Distilled=false (e.g. "no-digest-store").
+// The session.search result — ONE shape for both modes (SearchEnvelope form): `Items` in
+// final order plus the response-budget markers (null = complete). With a query it also
+// carries `Retrievers` (the STAGE-1 discovery provenance; per-session provenance rides
+// each item) and `Distilled`/`Reason` — false + a machine-readable code (e.g.
+// "no-digest-store") when the project has no digest store yet (not "no matches"); all
+// three are null/omitted in listing mode.
 public sealed record SessionSearchResultView(
-	bool Distilled,
-	string? Reason,
-	IReadOnlyList<SessionSearchSessionView> Sessions,
-	RetrieverInfo Discovery);
+	IReadOnlyList<SessionSearchItemView> Items,
+	bool? Distilled = null,
+	string? Reason = null,
+	RetrieverInfo? Retrievers = null,
+	bool? Truncated = null,
+	int? Omitted = null,
+	string? Hint = null);
 
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 

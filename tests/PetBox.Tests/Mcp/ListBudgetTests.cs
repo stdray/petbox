@@ -21,9 +21,9 @@ using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Mcp;
 
-// The response budget on the remaining list verbs (spec bounded-result-sets, the shared
-// ResponseBudget helper): memory.list / session.list / comments.list are prefix-cut on the
-// wire form of their rows when they outgrow the output budget and marked structurally
+// The response budget on the remaining list-shaped reads (spec bounded-result-sets, the
+// shared ResponseBudget helper): memory.search / session.search / comments.list are prefix-cut
+// on the wire form of their rows when they outgrow the output budget and marked structurally
 // (truncated:true + omitted + a narrowing hint) — never silently; an in-budget list
 // serializes byte-identical to the old shape (the marker fields are null and omitted).
 [Collection("DataModule")]
@@ -96,7 +96,7 @@ public sealed class ListBudgetTests : IDisposable
 		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
 	};
 
-	// ---- memory.list ----
+	// ---- memory.search (listing mode) ----
 
 	async Task SeedMemoryAsync(int count, int bodyChars)
 	{
@@ -117,9 +117,10 @@ public sealed class ListBudgetTests : IDisposable
 	{
 		await SeedMemoryAsync(3, 200);
 
-		var res = await MemoryTools.ListAsync(Http(), Flags(), _memory, Proj, "notes");
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes");
 
-		res.Entries.Count.Should().Be(3);
+		res.Items.Count.Should().Be(3);
 		res.Truncated.Should().BeNull();
 		res.Omitted.Should().BeNull();
 		res.Hint.Should().BeNull();
@@ -132,14 +133,16 @@ public sealed class ListBudgetTests : IDisposable
 		const int total = 40;
 		await SeedMemoryAsync(total, 2000); // ~80k chars of bodies > the 30k budget
 
-		var res = await MemoryTools.ListAsync(Http(), Flags(), _memory, Proj, "notes", limit: 0);
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes", limit: 0);
 
-		res.Entries.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
-		// Prefix-cut in key order — the head of the list, no holes.
-		res.Entries.Select(e => e.Key).Should().Equal(
-			Enumerable.Range(0, res.Entries.Count).Select(i => $"entry-{i:d3}"));
+		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
+		// Prefix-cut in listing order (one seed batch → equal Updated, ties on key) —
+		// the head of the list, no holes.
+		res.Items.Select(e => e.Key).Should().Equal(
+			Enumerable.Range(0, res.Items.Count).Select(i => $"entry-{i:d3}"));
 		res.Truncated.Should().BeTrue();
-		res.Omitted.Should().Be(total - res.Entries.Count);
+		res.Omitted.Should().Be(total - res.Items.Count);
 		res.Hint.Should().ContainAll("type", "limit", "bodyLen", "memory.get");
 	}
 
@@ -149,24 +152,25 @@ public sealed class ListBudgetTests : IDisposable
 		const int total = 40;
 		await SeedMemoryAsync(total, 2000);
 
-		var snipped = await MemoryTools.ListAsync(Http(), Flags(), _memory, Proj, "notes", bodyLen: 20, limit: 0);
+		var snipped = await MemoryTools.SearchAsync(Http(), Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes", bodyLen: 20, limit: 0);
 
-		snipped.Entries.Count.Should().Be(total);
+		snipped.Items.Count.Should().Be(total);
 		snipped.Truncated.Should().BeNull();
 	}
 
-	// ---- session.list ----
+	// ---- session.search (listing mode — the former session.list) ----
 
 	[Fact]
 	public async Task SessionList_Small_NoMarkers()
 	{
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", [new SessionMessageInput("session", "x")]);
 
-		var res = await SessionTools.ListAsync(Http(), Flags(), _sessions, Proj);
+		var res = await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, Proj);
 
-		res.Sessions.Should().ContainSingle();
+		res.Items.Should().ContainSingle();
 		res.Truncated.Should().BeNull();
-		JsonSerializer.Serialize(res, Wire).Should().NotContainAny("truncated", "omitted", "hint");
+		JsonSerializer.Serialize(res, Wire).Should().NotContainAny("truncated", "omitted", "hint", "distilled");
 	}
 
 	[Fact]
@@ -178,12 +182,12 @@ public sealed class ListBudgetTests : IDisposable
 		for (var i = 0; i < total; i++)
 			await _sessions.UpsertAsync(Proj, $"{i:d2}-{pad}", "claude-code", [new SessionMessageInput("session", "x")]);
 
-		var res = await SessionTools.ListAsync(Http(), Flags(), _sessions, Proj);
+		var res = await SessionTools.SearchAsync(Http(), Flags(), _sessions, null!, Proj);
 
-		res.Sessions.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
+		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
 		res.Truncated.Should().BeTrue();
-		res.Omitted.Should().Be(total - res.Sessions.Count);
-		res.Hint.Should().ContainAll("session.search", "session.get");
+		res.Omitted.Should().Be(total - res.Items.Count);
+		res.Hint.Should().ContainAll("q", "session.get");
 	}
 
 	// ---- comments.list ----

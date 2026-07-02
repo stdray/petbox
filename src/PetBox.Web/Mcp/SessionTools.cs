@@ -14,6 +14,13 @@ namespace PetBox.Web.Mcp;
 // it must not open the sessions context directly (a NetArchTest enforces this).
 // Read-mostly. Reuses the Tasks scopes/feature.
 //
+// session.search is the ONE read verb (spec uniform-entity-verbs v2: list = search
+// without q). Unlike tasks/memory, no ISearchService seam is implemented here — the
+// query mode is a Web-composed two-stage pipeline (SessionSearchService: memory digests
+// → episodic hydration) whose knobs (sessions/hitsPerSession) and nested hit rows don't
+// map onto SearchRequest's axes; the envelope FORM is shared, the seam is the family's
+// documented exception.
+//
 // Tools just THROW on a failed Assert* (or any deeper error); McpErrorEnvelopeFilter
 // converts the exception into the structured {error} body centrally. Return types stay
 // concrete; the success schema is advertised via [McpServerTool(OutputSchemaType)].
@@ -117,7 +124,7 @@ public static class SessionTools
 
 	[McpServerTool(Name = "session.delete", Title = "Delete a session", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionDeletedResult))]
 	[Description("""
-		Soft-delete a session: it disappears from session.list/session.get but the row is kept;
+		Soft-delete a session: it disappears from session.search/session.get but the row is kept;
 		a later session.upsert (or REST push) of the same sessionId resurrects it. Idempotent —
 		deleting a missing or already-deleted session returns { deleted: false }. Requires tasks:write.
 		""")]
@@ -131,64 +138,83 @@ public static class SessionTools
 		return new SessionDeletedResult(await sessions.DeleteAsync(projectKey, sessionId, ct), sessionId);
 	}
 
-	[McpServerTool(Name = "session.search", Title = "Search the session archive", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionSearchResultView))]
+	[McpServerTool(Name = "session.search", Title = "Read the session archive (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionSearchResultView))]
 	[Description("""
-		Two-stage search over the session archive. Stage 1 DISCOVERY: hybrid (lexical FTS ⊕ semantic
-		vectors, RRF-fused) over per-session facts digests — the `session-digests` memory store that
-		background distillation maintains. Stage 2 EPISODIC: the top `sessions` candidates are lazily
-		hydrated (transient in-memory index: russian-stem FTS + vectors) and searched INSIDE, up to
-		`hitsPerSession` messages each. Every hit carries the message ordinal — the provenance bridge:
-		jump to the verbatim source with session.get. Both stages report retrievers
-		{ lexical, semantic, degraded }. `distilled:false` means the project has no digest store yet
-		(distillation runs in the background, ~minutes after a session settles) — not "no matches";
-		in that case `reason` carries a machine-readable code (currently "no-digest-store").
-		Requires tasks:read + memory:read.
+		THE session read verb — one tool for both LISTING and SEARCH (list = search without
+		`q`; replaces the former session.list).
+
+		Without `q`: a deterministic LISTING of the project's active sessions — compact rows
+		{ sessionId, agent, version }. Requires tasks:read.
+
+		With `q`: a two-stage search over the session archive. Stage 1 DISCOVERY: hybrid
+		(lexical FTS ⊕ semantic vectors, RRF-fused) over per-session facts digests — the
+		`session-digests` memory store that background distillation maintains. Stage 2
+		EPISODIC: the top `sessions` candidates are lazily hydrated (transient in-memory
+		index: russian-stem FTS + vectors) and searched INSIDE, up to `hitsPerSession`
+		messages each. Every hit carries the message ordinal — the provenance bridge: jump
+		to the verbatim source with session.get. Items then carry { sessionId, agent,
+		description, hits[], retrievers } and the response the stage-1 `retrievers`;
+		`distilled:false` means the project has no digest store yet (distillation runs in
+		the background, ~minutes after a session settles) — not "no matches"; `reason`
+		then carries a machine-readable code (currently "no-digest-store"). The two-stage
+		pipeline needs memory too: requires tasks:read + memory:read.
+
+		Both modes share one envelope: `items` plus the HARD OUTPUT BUDGET markers (~30k
+		serialized chars; overflowing items are prefix-cut and flagged `truncated:true` +
+		`omitted` + a narrowing `hint`; no markers = the complete answer).
 		""")]
 	public static async Task<SessionSearchResultView> SearchAsync(
-		IHttpContextAccessor http, FeatureFlags features, PetBox.Web.Search.SessionSearchService search,
-		string projectKey, string query,
-		[Description("How many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
-		[Description("Max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
+		IHttpContextAccessor http, FeatureFlags features, ISessionService sessionSvc, PetBox.Web.Search.SessionSearchService search,
+		string projectKey,
+		[Description("Search query. Omit for a deterministic listing of the project's sessions (list = search without q).")] string? q = null,
+		[Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
+		[Description("With q: max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+
+		if (string.IsNullOrWhiteSpace(q))
+		{
+			// LISTING (the former session.list): compact rows, budget-enveloped.
+			var list = await sessionSvc.ListAsync(projectKey, ct);
+			var rows = list.Select(s => new SessionSearchItemView(s.SessionId, s.Agent, s.Version)).ToList();
+			var (keptRows, omittedRows) = new ResponseBudget().Take(rows);
+			return omittedRows == 0
+				? new SessionSearchResultView(rows)
+				: new SessionSearchResultView(keptRows, Truncated: true, Omitted: omittedRows, Hint: ListBudgetHint);
+		}
+
+		// QUERY: the two-stage pipeline (digest discovery → episodic hydration) leans on
+		// the Memory module, so the extra feature/scope guards apply only here.
+		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
-		var o = await search.SearchAsync(projectKey, query, sessions, hitsPerSession, ct);
+		var o = await search.SearchAsync(projectKey, q, sessions, hitsPerSession, ct);
+		var items = o.Candidates.Select(c => new SessionSearchItemView(
+			c.SessionId, c.Agent,
+			Description: c.Description,
+			Hits: c.Hits.Select(h => new SessionSearchHitView(h.Message, h.Role, h.Snippet, h.Score, h.Retriever)).ToList(),
+			Retrievers: new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded))).ToList();
+		var (kept, omitted) = new ResponseBudget().Take(items);
 		return new SessionSearchResultView(
-			o.Distilled,
-			o.Reason,
-			o.Candidates.Select(c => new SessionSearchSessionView(
-				c.SessionId, c.Agent, c.Description,
-				c.Hits.Select(h => new SessionSearchHitView(h.Message, h.Role, h.Snippet, h.Score, h.Retriever)).ToList(),
-				new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded))).ToList(),
-			new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded));
+			kept,
+			Distilled: o.Distilled,
+			Reason: o.Reason,
+			Retrievers: new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded),
+			Truncated: omitted > 0 ? true : null,
+			Omitted: omitted > 0 ? omitted : null,
+			Hint: omitted > 0 ? SearchBudgetHint : null);
 	}
 
-	[McpServerTool(Name = "session.list", Title = "List sessions", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionListResult))]
-	[Description("List active sessions in a project (compact rows: sessionId, agent, version). The response has a HARD OUTPUT BUDGET (~30k serialized chars): when the rows no longer fit they are prefix-cut and flagged with `truncated:true` + `omitted` (rows dropped) plus a `hint` (use session.search to find a session by content, session.get to read one); no markers = the complete list. Requires tasks:read.")]
-	public static async Task<SessionListResult> ListAsync(
-		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
-		string projectKey, CancellationToken ct = default)
-	{
-		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		var list = await sessions.ListAsync(projectKey, ct);
-		var rows = list.Select(s => new SessionRowView(s.SessionId, s.Agent, s.Version)).ToList();
-		// Response budget (spec bounded-result-sets): prefix-cut, marked structurally — never
-		// silent. An in-budget list serializes byte-identical to the unbudgeted shape.
-		var (kept, omitted) = new ResponseBudget().Take(rows);
-		return omitted == 0
-			? new SessionListResult(rows)
-			: new SessionListResult(kept, Truncated: true, Omitted: omitted, Hint: ListBudgetHint);
-	}
-
-	// Surfaced on SessionListResult.Hint when the rows were cut by the response budget.
+	// Surfaced on SessionSearchResultView.Hint when listing rows were cut by the budget.
 	const string ListBudgetHint =
 		"Output budget exceeded: session rows were truncated (see truncated/omitted). Find a " +
-		"session by content with session.search, or read one directly with session.get.";
+		"session by content by passing `q` (session.search), or read one directly with session.get.";
+
+	// Surfaced when a query answer was cut by the budget.
+	const string SearchBudgetHint =
+		"Output budget exceeded: session items were truncated (see truncated/omitted). Narrow " +
+		"the read: fewer `sessions`, a lower `hitsPerSession`, or jump to one source with session.get.";
 }

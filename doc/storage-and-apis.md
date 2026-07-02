@@ -45,24 +45,25 @@ logs/, db/, keys/, backups/   ← logs, infra, secrets, pre-migration snapshots
 
 ## 4. Memory — **MCP only** (no REST)
 
-Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a store holds temporal (SCD-2) entries with a taxonomy `type ∈ User|Feedback|Project|Reference`, CSV tags, FTS5 search, free-form `Metadata`.
+Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a store holds temporal (SCD-2) entries with a taxonomy `type ∈ User|Feedback|Project|Reference`, tags (surface = string ARRAY; stored as a CSV column), FTS5 search, free-form `Metadata`.
 
 **Scope dimension** (over the per-project store files):
 - `project` (default) → the key's own project.
 - `workspace` → the shared cross-project container (`$system`). When the key's project IS `$system`, project and workspace collapse and a cascade recall searches it once.
 
 **MCP tools** (server `petbox`):
-- Ergonomic: `memory.remember{text,scope?,store?,type?,tags?,description?}` (verbatim capture, auto-key), `memory.recall{query,scope?,store?,type?,limit?}` (FTS; no scope ⇒ **cascade** project ⊕ workspace, searches every store **except `ops`**, hits labelled by scope, project first).
-- Structural/curated: `memory.store_create|store_list|store_delete`, `memory.list|get|search|upsert|delta`.
+- Read: `memory.search{q?,scope?,store?,type?,sort?,limit?,bodyLen?}` — THE read verb (uniform-entity-verbs v2; replaced `memory.list`+`memory.recall`). Without `q` a deterministic listing (updated desc); with `q` hybrid FTS ⊕ vectors. No scope ⇒ **cascade** project ⊕ workspace, sweeps every store **except `ops`**, rows labelled by scope, project first. One entry: `memory.get`.
+- Capture: `memory.remember{text,scope?,store?,type?,tags?,description?}` (verbatim, auto-key).
+- Structural/curated: `memory.store_create|store_list|store_delete`, `memory.upsert|delta`.
 
-**Capture flow:** the SessionStart hook (`pull-memory.ps1`) injects an instruction; the agent itself calls `memory_recall` at start and `memory_remember` as it learns (instruct-the-agent — there is no memory READ REST). There is **no automatic** writer into memory today; raw capture goes to Sessions (below).
+**Capture flow:** the SessionStart hook (`pull-memory.ts`) injects an instruction; the agent itself calls `memory_search` at start and `memory_remember` as it learns (instruct-the-agent — there is no memory READ REST). Background distillation (SessionFactsJob/BehaviorPatternJob) also writes into the `autocaptured` store; raw capture goes to Sessions (below).
 
 ## 5. Sessions — REST + MCP
 
 Storage: `sessions/{projectKey}.db` — a **flat latest-snapshot** per session (one row, no temporal history), content stored as a Brotli-compressed JSONL message blob. Keyed by `sessionId`; `version` == the last message's ordinal.
 
 - **REST:** `POST /api/sessions/{projectKey}/{sessionId}?agent=…` — body is `application/x-ndjson` (one `{role, content}` message per line). This is what the agent **Stop hook** (`agents/wiring/push-session.ts`, opencode `opencode-plugin.ts`) calls every turn: it re-sends the full ordered transcript (last-write-wins; the server numbers the messages).
-- **MCP:** `session.upsert|get|list`.
+- **MCP:** `session.search|get|upsert|append|delete` — `session.search` is THE read verb (uniform-entity-verbs v2; replaced `session.list`): without `q` a listing of compact rows, with `q` the two-stage archive search (digest discovery → episodic hydration; hits carry message ordinals for `session.get`).
 - **UI:** `/ui/{ws}/{project}/sessions/{sessionId}` (read-only detail).
 
 ## 6. Tasks — MCP + Razor UI

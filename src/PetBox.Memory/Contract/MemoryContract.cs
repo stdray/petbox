@@ -7,8 +7,11 @@ namespace PetBox.Memory.Contract;
 // input into these and serialize the results; the service owns taxonomy parsing,
 // tag normalization, FTS search and the temporal write path.
 
-// One entry as submitted to UpsertAsync. Type/Tags are raw strings — the service
-// validates the taxonomy and normalizes the CSV tags (domain rules, one place).
+// One entry as submitted to UpsertAsync. Type is a raw string — the service validates
+// the taxonomy. Tags is an ARRAY of tag strings (the memory surface speaks arrays, like
+// tasks): null = omit (PATCH: keep the current set), [] = explicit clear, a non-empty
+// list REPLACES the set. The service normalizes (trim/lowercase/dedup) and joins to the
+// CSV storage form at the boundary (domain rules, one place).
 public sealed record MemoryEntryInput
 {
 	public required string Key { get; init; }
@@ -16,7 +19,7 @@ public sealed record MemoryEntryInput
 	public required string Type { get; init; }
 	public string? Description { get; init; }
 	public string? Body { get; init; }
-	public string? Tags { get; init; }
+	public IReadOnlyList<string>? Tags { get; init; }
 	public string? Metadata { get; init; }
 	public string? PrevKey { get; init; }
 }
@@ -24,8 +27,9 @@ public sealed record MemoryEntryInput
 // A soft-delete request: close the active entry at Key (Version 0 = regardless).
 public sealed record MemoryDelete(string Key, long Version);
 
-// An active entry projected for read surfaces (Type stringified).
-public sealed record MemoryEntryView(string Key, string Type, string Description, string Body, string Tags, long Version, string Metadata);
+// An active entry projected for read surfaces (Type stringified; Tags split from the CSV
+// storage form into the array the surface speaks).
+public sealed record MemoryEntryView(string Key, string Type, string Description, string Body, IReadOnlyList<string> Tags, long Version, string Metadata);
 
 // The raw temporal upsert/delta result, ready for an adapter to serialize.
 public sealed record MemoryUpsertOutcome(TemporalUpsertResult<MemoryEntry> Result);
@@ -35,3 +39,30 @@ public sealed record MemoryUpsertOutcome(TemporalUpsertResult<MemoryEntry> Resul
 // unavailable so only lexical ran). Adapters surface Retrievers so callers can tell a
 // lexical-only fallback from a true hybrid answer.
 public sealed record MemorySearchResult(IReadOnlyList<MemoryEntryView> Hits, PetBox.Core.Search.SearchRetrievers Retrievers);
+
+// ---- unified read (spec uniform-entity-verbs v2): list = search without a query ----
+
+// Filter axes of the unified memory read. `Store` narrows to one store within the container
+// (null = sweep every store except the sensitive ones — see MemoryService.SweepExcludedStores);
+// `Type` is the taxonomy predicate (User|Feedback|Project|Reference). Both are predicates in
+// BOTH modes (a filter never ranks).
+public sealed record MemoryEntryFilter(string? Store = null, string? Type = null);
+
+// Sort axes of the unified memory read. Relevance exists only WITH a query (the fused order);
+// Created/Updated read the active revision's temporal columns. The no-query default is
+// Updated desc (the freshest fact first — memory keys are opaque generated ids, so key order
+// carries no meaning, and a PATCHed entry should resurface).
+public enum MemorySortBy
+{
+	Relevance,
+	Created,
+	Updated,
+}
+
+// One selected entry labelled by its owning store (a container read sweeps stores, so rows
+// may span them — the label keeps provenance visible, mirroring TaskSearchHit.Board).
+public sealed record MemoryEntryHit(string Store, MemoryEntryView Entry);
+
+// The rich per-family result of the unified read: the selected hits plus retriever
+// provenance (null in listing mode, where no retriever runs).
+public sealed record MemoryEntrySearchResult(IReadOnlyList<MemoryEntryHit> Hits, PetBox.Core.Search.SearchRetrievers? Retrievers);

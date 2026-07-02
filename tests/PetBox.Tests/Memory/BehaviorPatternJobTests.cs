@@ -55,7 +55,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 		{
 			Key = key, Version = 0, Type = "Feedback",
 			Description = description, Body = "наблюдение из " + sessionId,
-			Tags = "autocaptured",
+			Tags = ["autocaptured"],
 			Metadata = $"{{\"sessionId\":\"{sessionId}\"}}",
 		}], []);
 
@@ -116,7 +116,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 		{
 			Key = "f-merged", Version = 0, Type = "Feedback",
 			Description = "когда миграция — сначала бэкап", Body = "повторено",
-			Tags = "autocaptured,behavior:pattern",
+			Tags = ["autocaptured", "behavior:pattern"],
 			Metadata = """{"sessionId":"s2","seenIn":["s2","s1"]}""",
 		}], []);
 		var chat = new ScriptedChat(
@@ -147,7 +147,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 		{
 			Key = "bp-seed", Version = 0, Type = "Feedback",
 			Description = "когда деплой — жди CI и смокай", Body = "из s1+s2",
-			Tags = "autocaptured,behavior:pattern",
+			Tags = ["autocaptured", "behavior:pattern"],
 			Metadata = """{"sources":["s1","s2"]}""",
 		}], []);
 		await SeedFeedback("f3", "s3", "после деплоя дождался CI и прогнал смоук");
@@ -175,7 +175,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 			{
 				Key = key, Version = 0, Type = "Feedback",
 				Description = "когда миграция — сначала бэкап и checksum", Body = "из " + sid,
-				Tags = "autocaptured,behavior:pattern",
+				Tags = ["autocaptured", "behavior:pattern"],
 				Metadata = $"{{\"sessionId\":\"{sid}\"}}",
 			}], []);
 		var chat = new ScriptedChat(

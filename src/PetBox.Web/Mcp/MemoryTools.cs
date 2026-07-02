@@ -5,6 +5,7 @@ using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Features;
+using PetBox.Core.Search;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
 using PetBox.Web.Mcp.Contract;
@@ -57,38 +58,6 @@ public static class MemoryTools
 		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
 	}
 
-	[McpServerTool(Name = "memory.list", Title = "List memory entries", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryListResult))]
-	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). `includeUsage` adds surfaced/opened/lastHitAt counters per entry (listing itself is NOT counted as usage). The response has a HARD OUTPUT BUDGET (~30k serialized chars): when the rows no longer fit they are prefix-cut in key order and flagged with `truncated:true` + `omitted` (rows dropped) plus a `hint` on how to narrow (`type`, `limit`, `bodyLen`, or memory.get for one entry); no markers = the complete list. Requires memory:read.")]
-	public static async Task<MemoryListResult> ListAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
-		string projectKey, string store, string? type = null,
-		[Description("Snippet length (chars) per entry body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
-		[Description("Max entries returned (default 20; 0 = no limit).")] int limit = 20,
-		[Description("Include usage counters (surfaced/opened/lastHitAt) per entry (default false).")] bool includeUsage = false,
-		CancellationToken ct = default)
-	{
-		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		// A bulk listing is curation, not usage — deliberately not recorded.
-		var rows = Project(await memory.ListAsync(projectKey, store, type, ct), bodyLen, limit);
-		if (includeUsage)
-			rows = await WithUsageAsync(memory, projectKey, store, rows, ct);
-		// Response budget (spec bounded-result-sets): measured on the wire form of the rows,
-		// prefix-cut in key order, marked structurally — never silent. An in-budget list
-		// serializes byte-identical to the unbudgeted shape (the markers stay null).
-		var (kept, omitted) = new ResponseBudget().Take(rows);
-		return omitted == 0
-			? new MemoryListResult(rows)
-			: new MemoryListResult(kept, Truncated: true, Omitted: omitted, Hint: ListBudgetHint);
-	}
-
-	// Surfaced on MemoryListResult.Hint when the rows were cut by the response budget.
-	const string ListBudgetHint =
-		"Output budget exceeded: entries were truncated (see truncated/omitted). Narrow the " +
-		"query: `type` (one taxonomy), a lower `limit`, `bodyLen` (snippet bodies), or " +
-		"memory.get for one entry's full body.";
-
 	[McpServerTool(Name = "memory.get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryEntryView))]
 	[Description("Get the active entry by key, or null. Requires memory:read.")]
 	public static async Task<MemoryEntryView?> GetAsync(
@@ -104,22 +73,17 @@ public static class MemoryTools
 		return entry;
 	}
 
-	// memory.search is GONE (verb dedup, spec surface-economy): it was a strict subset of
-	// memory.recall — the same IMemoryService.SearchAsync hybrid underneath, minus recall's
-	// scope cascade, all-store sweep and per-hit CAS version. Every search parameter
-	// (type/bodyLen/limit/lexical/semantic/includeUsage) exists on recall; the single-store
-	// scenario is recall with scope:"project" + store:"<name>".
-
 	[McpServerTool(Name = "memory.upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("""
 		PATCH per entry (declarative temporal upsert into a store). Requires memory:write.
 		On an EDIT (version > 0) an omitted field stays UNCHANGED — send only what you change;
-		to clear a field pass it explicitly empty (description/body/metadata: "", tags: "").
+		to clear a field pass it explicitly empty (description/body/metadata: "", tags: []).
 		On a NEW entry (version 0) omitted fields start empty.
 		`entries` is a JSON array of { key, type, description, body, tags?, version?, prevKey? }.
 		`type` (required) is the taxonomy: User (about the user) | Feedback (a correction/
 		preference on how to work) | Project (durable project fact/constraint) | Reference
-		(pointer to an external resource). Pick one. `tags` is free CSV, normalised on write.
+		(pointer to an external resource). Pick one. `tags` is an ARRAY of free-form tag
+		strings, normalised on write ([] clears, omit leaves as-is).
 		`version` is the baseline you last saw (0 = new). Set `prevKey` to rename.
 		To delete an entry, pass { key, deleted:true } (optional version baseline) — it is
 		soft-closed (history kept) and appears in the result's `removed`.
@@ -135,7 +99,7 @@ public static class MemoryTools
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store,
-		[Description("Array of entry objects: { key, type, description, body, tags?, metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
+		[Description("Array of entry objects: { key, type, description, body, tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Slice length (chars) of each echoed entry body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		CancellationToken ct = default)
 	{
@@ -160,16 +124,16 @@ public static class MemoryTools
 		return Serialize(await memory.DeltaAsync(projectKey, store, sinceVersion, ct), bodyLen);
 	}
 
-	// ---- ergonomic verbs: remember / recall (thin over the structural tools) ----
+	// ---- read + capture verbs: search / remember ----
 	//
-	// Two low-ceremony verbs for the agent's own working memory, layered on top of the
-	// structural store/upsert tools (recall IS the search verb — the old memory.search
-	// was a strict subset and is gone). They add ONE thing the structural surface
-	// lacks: a `scope` dimension over the per-project store files —
+	// memory.search is THE read verb (spec uniform-entity-verbs v2: list = search without
+	// a query; it replaced the former memory.list + memory.recall pair) and memory.remember
+	// the low-ceremony capture verb. Both carry the `scope` dimension over the per-project
+	// store files —
 	//   project   → the key's own project  (default; the usual case)
 	//   workspace → the shared cross-project container ("$system") — facts that span
 	//               projects or are about the user live here, one place for everyone.
-	// `recall` with no scope CASCADES both (project ⊕ workspace) and returns hits labelled
+	// `search` with no scope CASCADES both (project ⊕ workspace) and returns rows labelled
 	// by scope so precedence is visible (project first); when the key's project IS the
 	// shared container the two collapse and it's searched once. Any memory-scoped key may
 	// reach the shared container (that's the point). Personal facts are carried by
@@ -177,12 +141,6 @@ public static class MemoryTools
 
 	const string WorkspaceContainer = "$system";
 	const string DefaultStore = "notes";
-
-	// Stores skipped by the default "search every store" recall: sensitive operational
-	// stores that must never be auto-pulled into an agent's context (e.g. "ops" has held
-	// secrets). An explicit `store:"ops"` recall still reaches it — only the implicit
-	// all-stores sweep excludes it.
-	static readonly HashSet<string> RecallExcludedStores = new(StringComparer.OrdinalIgnoreCase) { "ops" };
 
 	[McpServerTool(Name = "memory.remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
 	[Description("""
@@ -192,14 +150,15 @@ public static class MemoryTools
 		the key's project) | workspace (cross-project shared). `store` groups entries
 		within a scope (default "notes"). `type` is the taxonomy
 		(User|Feedback|Project|Reference; default Project) — pick explicitly, no inference.
-		`tags` is free CSV; `description` an optional one-line summary. A unique key is
-		generated. Store durable facts not derivable from code/git/config; actionable work
-		goes to a task board. Requires memory:write. Returns { id, scope, store, key }.
+		`tags` is an array of free-form tag strings; `description` an optional one-line
+		summary. A unique key is generated. Store durable facts not derivable from
+		code/git/config; actionable work goes to a task board. Requires memory:write.
+		Returns { id, scope, store, key }.
 		""")]
 	public static async Task<MemoryRememberResult> RememberAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string text, string? scope = null, string? projectKey = null, string? store = null,
-		string? type = null, string? tags = null, string? description = null,
+		string? type = null, string[]? tags = null, string? description = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -221,93 +180,129 @@ public static class MemoryTools
 		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key);
 	}
 
-	[McpServerTool(Name = "memory.recall", Title = "Recall facts", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryRecallResult))]
+	[McpServerTool(Name = "memory.search", Title = "Read memory entries (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemorySearchResultView))]
 	[Description("""
-		THE memory search verb: hybrid recall (lexical FTS5 token/prefix ⊕ semantic vectors,
-		RRF-fused) over your memory, ranked by relevance.
-		`query` (required) — search a few words you are confident appear (lexical tokens are
-		ANDed; the semantic leg catches paraphrases). `scope` narrows the search:
-		omit it to CASCADE project ⊕ workspace (results labelled by scope, project
-		first); or pass project | workspace for one. `store` narrows to a single
-		store within each scope (default: search every store). Optional `type` filter
-		(User|Feedback|Project|Reference) and `limit` (default 20; the answer is always
-		bounded). `lexical`/`semantic`
-		(default both on) toggle each retriever; semantic is silently
-		off when embedding is unavailable. Bodies are full by
-		default; pass `bodyLen` > 0 for a snippet (description + first N chars), then pull a
-		full body with memory.get. Requires memory:read.
-		Returns { results: [{ scope, store, key, type, description, body, tags, version }], retrievers: { lexical, semantic, degraded } };
+		THE memory read verb — one tool for both LISTING and SEARCH (list = search without
+		`q`; replaces the former memory.list + memory.recall).
+
+		MODES. Without `q`: a DETERMINISTIC listing of the active entries in scope; default
+		order `updated` desc (the freshest fact first — keys are opaque generated ids).
+		With `q`: a RELEVANCE selection (hybrid lexical FTS5 token/prefix ⊕ semantic
+		vectors, RRF-fused; search a few words you are confident appear — lexical tokens
+		are ANDed, the semantic leg catches paraphrases; semantic is silently absent when
+		no embedding is configured); default order relevance, and the response carries
+		`retrievers` { lexical, semantic, degraded }.
+
+		SCOPE (both modes): omit `scope` to CASCADE project ⊕ workspace (rows labelled by
+		scope, project first); or pass project | workspace for one. `store` narrows to a
+		single store within each scope; by default EVERY store is swept except the
+		sensitive ones (e.g. "ops" — an explicit store:"ops" still reaches it). Optional
+		`type` filter (User|Feedback|Project|Reference) — a predicate in both modes.
+
+		SORT: `sort` = {by: relevance|created|updated, desc?}. Without `q` the default is
+		updated desc (asking for relevance is an error); with `q` the default is relevance,
+		and an explicit created/updated sort reorders WITHIN the relevance-selected set
+		(`desc` is ignored for relevance). `limit` caps the rows (default 20 in both modes;
+		0 = no cap — a listing is then bounded only by the output budget, a query by its
+		candidate pool). Bodies are full by default; pass `bodyLen` > 0 for a snippet
+		(description + first N chars), then pull a full body with memory.get.
+
+		`includeUsage` adds surfaced/opened/lastHitAt counters per row. A search answer
+		counts an impression for the returned rows; a listing (no `q`) is curation and
+		counts nothing. The response has a HARD OUTPUT BUDGET (~30k serialized chars):
+		overflowing rows are prefix-cut in result order and flagged `truncated:true` +
+		`omitted` + a narrowing `hint`; no markers = the complete answer. Requires
+		memory:read.
+
+		Returns { items: [{ scope, store, key, type, description, body, tags, version }], retrievers? };
 		`version` is the entry's CAS baseline for memory.upsert (pass it back to edit without a Stale round-trip).
 		""")]
-	public static async Task<MemoryRecallResult> RecallAsync(
+	public static async Task<MemorySearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
-		string query, string? scope = null, string? projectKey = null, string? store = null,
-		string? type = null, int limit = 20,
-		[Description("Snippet length (chars) per result body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
-		[Description("Run the lexical FTS retriever (default true).")] bool? lexical = null,
-		[Description("Run the semantic vector retriever (default true; no-op when embedding is unavailable).")] bool? semantic = null,
-		[Description("Include usage counters (surfaced/opened/lastHitAt) per hit (default false).")] bool includeUsage = false,
+		[Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
+		[Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
+		string? projectKey = null,
+		[Description("Narrow to one store within each scope (default: sweep every store except the sensitive ones).")] string? store = null,
+		[Description("Taxonomy filter: User|Feedback|Project|Reference.")] string? type = null,
+		[Description("Sort order: {by: relevance|created|updated, desc?}. Default: updated desc (listing) / relevance (with q).")] SortInput? sort = null,
+		[Description("Max rows returned (default 20; 0 = no cap — the output budget still applies).")] int? limit = null,
+		[Description("Snippet length (chars) per row body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Include usage counters (surfaced/opened/lastHitAt) per row (default false).")] bool includeUsage = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		if (string.IsNullOrWhiteSpace(query)) throw new ArgumentException("query is required");
-		if (limit <= 0) limit = 20; // a recall answer is always bounded (spec bounded-result-sets)
+		var hasQuery = !string.IsNullOrWhiteSpace(q);
+		var cap = limit ?? DefaultLimit;
 
-		var results = new List<MemoryRecallHit>();
-		// Aggregate provenance across every scope/store searched: lexical/semantic = OR of
-		// the legs that ran; degraded = OR (any leg that wanted semantic but couldn't).
-		var aggLexical = false;
-		var aggSemantic = false;
-		var aggDegraded = false;
-		foreach (var (scopeName, container) in RecallContainers(http, projectKey, scope))
+		var rows = new List<MemorySearchHitView>();
+		// Aggregate provenance across every scope searched: lexical/semantic = OR of the
+		// legs that ran; degraded = OR (any leg that wanted semantic but couldn't).
+		SearchRetrievers? retrievers = null;
+		foreach (var (scopeName, container) in SearchContainers(http, projectKey, scope))
 		{
-			// Which stores to search in this container: the named one, or all of them
-			// except the sensitive ones (the implicit sweep must not leak ops/secrets).
-			IReadOnlyList<string> stores = string.IsNullOrWhiteSpace(store)
-				? (await memory.ListStoresAsync(container, ct)).Select(s => s.Name).Where(n => !RecallExcludedStores.Contains(n)).ToList()
-				: [store!.Trim()];
-			foreach (var st in stores)
+			ct.ThrowIfCancellationRequested();
+			var remaining = cap == 0 ? 0 : cap - rows.Count;
+			if (cap > 0 && remaining <= 0) break;
+			var res = await memory.SearchEntriesAsync(container, new SearchRequest<MemoryEntryFilter, MemorySortBy>
 			{
-				if (!await memory.StoreExistsAsync(container, st, ct)) continue;
-				var res = await memory.SearchAsync(container, st, query, type, lexical, semantic, ct);
-				aggLexical |= res.Retrievers.Lexical;
-				aggSemantic |= res.Retrievers.Semantic;
-				aggDegraded |= res.Retrievers.Degraded;
-				var added = new List<string>();
-				var full = false;
-				IReadOnlyDictionary<string, MemoryUsageView>? usageMap = includeUsage && res.Hits.Count > 0
-					? await memory.GetUsageAsync(container, st, res.Hits.Select(h => h.Key).ToList(), ct)
-					: null;
-				foreach (var v in res.Hits)
-				{
-					var u = usageMap is not null && usageMap.TryGetValue(v.Key, out var uv) ? uv : null;
-					results.Add(new MemoryRecallHit(scopeName, st, v.Key, v.Type, v.Description,
-						ModuleMcp.SnippetBody(v.Body, bodyLen), v.Tags, v.Version,
-						usageMap is null ? null : (u?.Surfaced ?? 0), usageMap is null ? null : (u?.Opened ?? 0), u?.LastHitAt));
-					added.Add(v.Key);
-					if (results.Count >= limit) { full = true; break; }
-				}
-				// Impression = the hits this answer RETURNED for this container/store.
-				usage.Surfaced(container, st, added);
-				if (full) return new MemoryRecallResult(results, new RetrieverInfo(aggLexical, aggSemantic, aggDegraded));
+				Query = hasQuery ? q : null,
+				Filter = new MemoryEntryFilter(store, type),
+				Sort = ParseSort(sort),
+				Limit = remaining,
+				BodyLen = bodyLen,
+			}, ct);
+			if (res.Retrievers is { } r)
+				retrievers = retrievers is { } agg
+					? new SearchRetrievers(agg.Lexical | r.Lexical, agg.Semantic | r.Semantic, agg.Degraded | r.Degraded)
+					: r;
+
+			// Usage counters are keyed per (store, key) — rows may span stores in one container.
+			var usageMap = new Dictionary<string, MemoryUsageView>(StringComparer.Ordinal);
+			if (includeUsage && res.Hits.Count > 0)
+				foreach (var g in res.Hits.GroupBy(h => h.Store, StringComparer.OrdinalIgnoreCase))
+					foreach (var kv in await memory.GetUsageAsync(container, g.Key, g.Select(h => h.Entry.Key).ToList(), ct))
+						usageMap[g.Key + "\x1f" + kv.Key] = kv.Value;
+			foreach (var h in res.Hits)
+			{
+				var u = includeUsage && usageMap.TryGetValue(h.Store + "\x1f" + h.Entry.Key, out var uv) ? uv : null;
+				rows.Add(new MemorySearchHitView(scopeName, h.Store, h.Entry.Key, h.Entry.Type, h.Entry.Description,
+					h.Entry.Body, h.Entry.Tags, h.Entry.Version,
+					includeUsage ? (u?.Surfaced ?? 0) : null, includeUsage ? (u?.Opened ?? 0) : null, u?.LastHitAt));
 			}
+			// Impression = the rows a SEARCH answer returned (a listing is curation — not counted).
+			if (hasQuery)
+				foreach (var g in res.Hits.GroupBy(h => h.Store, StringComparer.OrdinalIgnoreCase))
+					usage.Surfaced(container, g.Key, g.Select(h => h.Entry.Key).ToList());
 		}
-		return new MemoryRecallResult(results, new RetrieverInfo(aggLexical, aggSemantic, aggDegraded));
+
+		// Response budget (MCP-adapter-only): measured on the wire form of the rows as they
+		// will be sent (bodies already sliced by the service), prefix-cut, marked — never silent.
+		var (kept, omitted) = new ResponseBudget().Take(rows);
+		return new MemorySearchResultView(
+			kept,
+			Retrievers: retrievers is { } fin ? new RetrieverInfo(fin.Lexical, fin.Semantic, fin.Degraded) : null,
+			Truncated: omitted > 0 ? true : null,
+			Omitted: omitted > 0 ? omitted : null,
+			Hint: omitted > 0 ? SearchBudgetHint : null);
 	}
 
-	// Decorate already-projected rows with their usage counters (entries that never
-	// surfaced have no row → zeros).
-	static async Task<List<MemoryEntryRow>> WithUsageAsync(IMemoryService memory, string projectKey, string store,
-		List<MemoryEntryRow> rows, CancellationToken ct)
+	// The bounded default of memory.search (both modes; spec bounded-result-sets).
+	const int DefaultLimit = 20;
+
+	// Surfaced on MemorySearchResultView.Hint when the rows were cut by the response budget.
+	const string SearchBudgetHint =
+		"Output budget exceeded: entries were truncated (see truncated/omitted). Narrow the " +
+		"read: `scope`/`store` (one container/store), `type` (one taxonomy), a lower `limit`, " +
+		"`bodyLen` (snippet bodies), or memory.get for one entry's full body.";
+
+	// Map the wire `sort` argument onto the service sort axis; an unknown axis is a clear error.
+	static (MemorySortBy By, bool Desc)? ParseSort(SortInput? sort)
 	{
-		if (rows.Count == 0) return rows;
-		var map = await memory.GetUsageAsync(projectKey, store, rows.Select(r => r.Key).ToList(), ct);
-		return rows.Select(r =>
-		{
-			var u = map.TryGetValue(r.Key, out var uv) ? uv : null;
-			return r with { Surfaced = u?.Surfaced ?? 0, Opened = u?.Opened ?? 0, LastHitAt = u?.LastHitAt };
-		}).ToList();
+		if (sort is null || string.IsNullOrWhiteSpace(sort.By)) return null;
+		if (!Enum.TryParse<MemorySortBy>(sort.By.Trim(), ignoreCase: true, out var by))
+			throw new ArgumentException($"sort.by '{sort.By}' is not a sort axis (valid: relevance|created|updated)");
+		return (by, sort.Desc);
 	}
 
 	// Resolve a single explicit scope to its container projectKey (for remember).
@@ -321,11 +316,11 @@ public static class MemoryTools
 			var s => throw new ArgumentException($"invalid scope '{s}' (project|workspace)"),
 		};
 
-	// The ordered list of (scope, container) to search for recall. A single scope → that
+	// The ordered list of (scope, container) memory.search reads. A single scope → that
 	// container; no scope → the full cascade, project first (most specific). The project
 	// container is best-effort: a cross-project ("*") key with no projectKey can't resolve
-	// a single project, so that leg is skipped rather than failing the whole recall.
-	static List<(string Scope, string Key)> RecallContainers(IHttpContextAccessor http, string? projectKey, string? scope)
+	// a single project, so that leg is skipped rather than failing the whole read.
+	static List<(string Scope, string Key)> SearchContainers(IHttpContextAccessor http, string? projectKey, string? scope)
 	{
 		var s = scope?.Trim().ToLowerInvariant();
 		if (!string.IsNullOrEmpty(s) && s != "all" && s != "cascade")
@@ -360,31 +355,18 @@ public static class MemoryTools
 	}
 
 	// `body` is sliced to bodyLen (null when 0 → omitted by the serializer) so the write-echo
-	// stays compact; `description` (a one-liner) is kept to orient the merge.
+	// stays compact; `description` (a one-liner) is kept to orient the merge. Tags leave the
+	// CSV storage form here — the surface speaks arrays.
 	static MemoryEntryRow EntryDto(MemoryEntry e, int bodyLen = 0) => new(
 		Key: e.Key,
 		Type: e.Type.ToString(),
 		Description: e.Description,
 		Body: ModuleMcp.SliceBody(e.Body, bodyLen),
-		Tags: e.Tags,
+		Tags: string.IsNullOrWhiteSpace(e.Tags)
+			? []
+			: e.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
 		Version: e.Version,
 		Metadata: e.Metadata);
-
-	// Read-path projection (spec read-snippet-on-demand + bounded-result-sets): cap at `limit`
-	// (0 = no cap) and snippet each body to `bodyLen` (0 = full, back-compat). description/tags
-	// stay so a hit can be judged without the full body.
-	static List<MemoryEntryRow> Project(IEnumerable<MemoryEntryView> entries, int bodyLen, int limit)
-	{
-		var capped = limit > 0 ? entries.Take(limit) : entries;
-		return capped.Select(e => new MemoryEntryRow(
-			Key: e.Key,
-			Type: e.Type,
-			Description: e.Description,
-			Body: ModuleMcp.SnippetBody(e.Body, bodyLen),
-			Tags: e.Tags,
-			Version: e.Version,
-			Metadata: e.Metadata)).ToList();
-	}
 
 	// Map the typed entry inputs into service inputs + soft-deletes. Taxonomy/tag normalization
 	// happens in the service. `deleted:true` carries a soft-delete (only key + optional version);
