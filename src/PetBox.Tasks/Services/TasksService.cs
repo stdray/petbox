@@ -349,6 +349,34 @@ public sealed partial class TasksService : ITasksService
 		return detail;
 	}
 
+	// Uniform slug-or-NodeId resolution for bare node refs (relations.create/list,
+	// comments.add/list) — uniform-node-refs. 32-hex = NodeId, passed through untouched
+	// (existing NodeId behavior preserved). A slug resolves over the ACTIVE nodes: scoped to
+	// `board` when given (slugs are board-unique, so at most one hit), else across EVERY
+	// board — the project file holds all boards' nodes. Ambiguity (same slug on 2+ boards)
+	// and a miss are clear errors, never a silent pass-through of a non-NodeId value.
+	public Task<string> ResolveNodeRefAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default)
+	{
+		var v = (nodeRef ?? "").Trim();
+		if (v.Length == 0)
+			throw new ArgumentException("node reference is required — a node slug or a 32-hex NodeId");
+		if (LooksLikeNodeId(v)) return Task.FromResult(v);
+		var slug = v.ToLowerInvariant();
+		var ctx = _boards.GetContext(projectKey);
+		var q = ctx.PlanNodes.Where(n => n.ActiveTo == null && n.Key == slug);
+		if (board is not null) q = q.Where(n => n.Board == board);
+		var matches = q.ToList().Where(n => n.NodeId.Length > 0).ToList();
+		return matches.Count switch
+		{
+			1 => Task.FromResult(matches[0].NodeId),
+			0 => throw new ArgumentException(board is null
+				? $"node '{nodeRef}' does not match any active node in project '{projectKey}' — pass a node slug or a 32-hex NodeId"
+				: $"node '{nodeRef}' does not match any active node on board '{board}' in project '{projectKey}' — pass a slug on this board or a 32-hex NodeId"),
+			_ => throw new ArgumentException(
+				$"ambiguous slug '{nodeRef}' — found on boards: [{string.Join(", ", matches.Select(m => m.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the node's NodeId instead"),
+		};
+	}
+
 	// Normalize/validate a status filter against the board kind's known slugs (across its
 	// hosted types), case-insensitive; null/empty = no filter. An unknown slug is rejected —
 	// it would otherwise silently return nothing (mirrors ResolveBoardFilter).
@@ -607,7 +635,8 @@ public sealed partial class TasksService : ITasksService
 		// Resolve slug specRefs to NodeIds ONCE, up front — both the validation below and the
 		// task_spec edge write (LinkRefsAsync) read this map, so it must never carry a raw slug.
 		var specRefs = ResolveSpecRefs(projectKey, meta, LinkFields(upsertPatches, p => p.SpecRef));
-		var blockedBy = LinkFields(upsertPatches, p => p.BlockedBy);
+		// blockedBy resolves ONCE up front too, so the `blocks` edge always carries a NodeId.
+		var blockedBy = ResolveBlockedBy(board, desired, prior, LinkFields(upsertPatches, p => p.BlockedBy));
 		var ideaRefs = LinkFields(upsertPatches, p => p.IdeaRef);
 		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
 		{
@@ -904,6 +933,29 @@ public sealed partial class TasksService : ITasksService
 			specRefs[key] = target.NodeId;
 		}
 		return specRefs;
+	}
+
+	// blockedBy accepts the blocker's slug OR its NodeId, mirroring specRef (ResolveSpecRefs).
+	// A slug resolves on THIS board (blockers are usually siblings) over the active rows
+	// overlaid with this batch, so a blocker created in the same call resolves too. The
+	// returned map holds NodeIds only; NodeId-shaped values pass through untouched.
+	static Dictionary<string, string> ResolveBlockedBy(
+		string board, PlanNode[] desired, IReadOnlyDictionary<string, PlanNode> prior, Dictionary<string, string> blockedBy)
+	{
+		if (blockedBy.Count == 0) return blockedBy;
+		var slugToId = prior.Values.Where(n => n.NodeId.Length > 0)
+			.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
+		foreach (var n in desired.Where(n => n.NodeId.Length > 0))
+			slugToId[n.Key] = n.NodeId;
+		foreach (var (key, raw) in blockedBy.ToList())
+		{
+			var v = raw.Trim();
+			if (LooksLikeNodeId(v)) { blockedBy[key] = v; continue; }
+			if (!slugToId.TryGetValue(v.ToLowerInvariant(), out var id))
+				throw new ArgumentException($"blockedBy '{raw}' (node '{key}') does not match any node on board '{board}' — a blocker's slug resolves on the same board; pass a NodeId to reference a node on another board");
+			blockedBy[key] = id;
+		}
+		return blockedBy;
 	}
 
 	// A NodeId is a 32-hex Guid ("N"); a slug starts [a-z] and can't be 32 hex chars in

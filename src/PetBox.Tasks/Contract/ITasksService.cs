@@ -63,6 +63,13 @@ public interface ITasksService
 	// when the node doesn't exist (never an empty answer). Composes GetNodeAsync /
 	// GetNodeBySlugAsync (the node-detail-page precedent).
 	Task<NodeDetailView> GetNodeOnBoardAsync(string projectKey, string board, string node, string? urlPrefix = null, CancellationToken ct = default);
+	// Resolve a node reference (slug or 32-hex NodeId) to its stable NodeId — the uniform
+	// slug-or-NodeId convention (uniform-node-refs) for surfaces that take a bare node ref
+	// (relations, comments). A NodeId-shaped value passes through untouched. A slug resolves
+	// over the ACTIVE nodes: on `board` when given (board-unique, so never ambiguous), else
+	// across EVERY board in the project — unambiguous resolves; the same slug on 2+ boards
+	// is an error naming the boards (pass the NodeId); a miss is a clear error, never null.
+	Task<string> ResolveNodeRefAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default);
 	// Project a board by an ORDERED list of tag namespaces (e.g. [area, concern]): nodes
 	// bucketed by their tag value in each namespace ("(none)" for untagged), nested in
 	// dimension order, each group with a delivery roll-up. The projection is a view — it

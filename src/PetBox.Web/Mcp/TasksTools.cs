@@ -310,7 +310,8 @@ public static class TasksTools
 		implements, as its slug on the linked spec board or a NodeId — REQUIRED for a new
 		feature/bug), ideaRef (ON A SPEC BOARD: the NodeId of the
 		`accepted` idea this create/change is made under — REQUIRED for every spec node; becomes
-		the idea_spec edge), blockedBy (a NodeId blocking it), supersedes
+		the idea_spec edge), blockedBy (the blocking node as its slug on THIS board or a
+		NodeId — the same slug-or-NodeId convention as specRef/partOf), supersedes
 		(a slug|NodeId this node replaces — the old one is moved to its terminal-cancel),
 		commitRef?, priority? (sparse int, lower first), version (baseline you last saw; 0 =
 		new). Rename via prevKey. A cold call auto-creates the board.
@@ -336,7 +337,7 @@ public static class TasksTools
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy`, `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
+		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
 		[Description("Cursor: the prior response's `currentVersion`. Bounds the full delta when includeDelta:true; with the default echo it only scopes conflict rebases.")] long sinceVersion = 0,
 		[Description("Echo the FULL board delta since sinceVersion (anyone's edits) instead of just this call's nodes (default false).")] bool includeDelta = false,
 		[Description("Slice length (chars) of each echoed node body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
