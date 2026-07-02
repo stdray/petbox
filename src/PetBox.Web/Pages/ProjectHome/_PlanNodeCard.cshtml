@@ -9,7 +9,7 @@
 
 @functions {
 	// Same presentation mapping as TaskBoard / the node detail page (domain owns StatusKind).
-	static string StatusBadge(string slug) => PetBox.Tasks.Workflow.WorkflowCatalog.KindOfSlug(slug) switch
+	static string StatusBadge(string slug) => PetBox.Tasks.Workflow.MethodologyPresets.KindOfSlug(slug) switch
 	{
 		PetBox.Tasks.Workflow.StatusKind.TerminalOk => "badge-success",
 		PetBox.Tasks.Workflow.StatusKind.TerminalCancel => "badge-ghost",

@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks.board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE a named task board in a project. `kind` sets the board role (simple|spec|ideas|intake|work; default simple) which drives the workflow — call tasks.workflow to see the valid types/statuses/transitions for a kind. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
+	[Description("CREATE a named task board in a project. `kind` sets the board role (simple|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition declares via tasks.methodology_def_upsert) which drives the workflow — call tasks.workflow to see the valid types/statuses/transitions for a kind; an unknown kind is rejected naming the valid ones. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null, CancellationToken ct = default)
@@ -139,6 +139,188 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		return await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, urlPrefix, ct);
+	}
+
+	[McpServerTool(Name = "tasks.methodology_def_upsert", Title = "Define the project's methodology (user-defined kinds/FSMs)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefUpsertResult))]
+	[Description("""
+		Store the project's USER-DEFINED METHODOLOGY DEFINITION — the document that describes
+		the project's own board kinds, task types, statuses and transitions as data (NOT the
+		quartet index: tasks.methodology_get reads the intake/ideas/spec/work BOARDS; this
+		verb writes the process DEFINITION). One definition per project, versioned: `version`
+		is the baseline you last saw (0 = the project has none yet); a moved baseline is a
+		clear conflict error naming the current version — re-read with
+		tasks.methodology_def_get and resubmit. The definition is validated as a whole before
+		it is stored (name/kind/type slugs, ≥1 kind, ≥1 workflow block per kind, type unique
+		within its kind, statuses non-empty and unique per block, every transition between
+		statuses of ITS block, no duplicate edges). `definition` shape: { name, kinds:[{
+		kind, quickAddAllowed?, workflows:[{ types:[...], statuses:[{ slug, name?,
+		kind?: open|terminalok|terminalcancel }], transitions:[{ from, to,
+		requiresApproval?, requiresReason?, preconditionArtifact? }] }],
+		linkConstraints?:[{ type, link }] }], linkKinds?:[{ slug, description? }],
+		tagAxes?:[{ namespace, description? }] }; statuses[0] is
+		the initial status; `preconditionArtifact` names a comment-artifact tag (e.g.
+		"spec_plan") the node must carry before the transition (enforced: the upsert refuses
+		the transition until an `artifact:<slug>` comment exists on the node).
+		`linkConstraints` (per kind): "a NEW node of `type` must carry a `link` at creation"
+		— link ∈ task_spec|blocks|idea_spec (the kinds expressible in the upsert call as
+		specRef/blockedBy/ideaRef); edits don't re-require it. `linkKinds` (project-wide):
+		additional relation kinds for relations.create (free semantic edges, no FSM effects;
+		must not collide with builtin kinds). `tagAxes` (project-wide): declared tag
+		namespaces — when present, tags on definition-resolved boards must be
+		`<namespace>:value` from this list (empty/omitted = free-form tags). The definition
+		is LIVE: a declared kind can be given to tasks.board_create, its boards resolve
+		types/statuses/transitions from this document (tasks.workflow shows them), and any
+		other kind keeps the built-in preset. A definition CHANGE is validated against LIVE
+		NODES: every active node on a board whose kind the old or new definition declares
+		must fit the new resolution (type resolves, status known to its type's workflow). An
+		incompatible node that no mapping covers REJECTS the whole call, naming the board,
+		node key(s) and offending type/status — nothing is written. `migration` declares the
+		repairs: [{ kind, types?:[{from,to}], statuses?:[{from,to}] }] — applied ONLY where a
+		node's current value is invalid under the new resolution (a valid value is never
+		rewritten); `to` must be valid under the new definition. When everything is mapped,
+		the definition commits first and the repaired nodes are then rewritten as new
+		temporal revisions per board, without FSM guards (the mapping is the sanctioned
+		transition) — not one transaction with the definition, so re-check the named board if
+		a concurrent-write error is thrown mid-rewrite. Returns { version (the new baseline),
+		changed (false = identical resubmit, no new revision — skips the live-node check),
+		migrated (nodes rewritten; 0 = none needed) }. Requires tasks:write.
+		""")]
+	public static async Task<MethodologyDefUpsertResult> MethodologyDefUpsertAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("The whole methodology definition (structured document; see the tool description for the shape).")] MethodologyDefInput definition,
+		[Description("Baseline version you last saw; 0 = the project has no definition yet.")] long version = 0,
+		[Description("Per-kind {from,to} type/status repairs for live nodes the change would strand; applied only where the current value is invalid under the new resolution.")] MethodologyMigrationInput[]? migration = null,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var ack = await tasks.DefineMethodologyAsync(projectKey, ParseDefinition(definition), version, ParseMigration(migration), ct);
+		return new MethodologyDefUpsertResult(ack.Version, ack.Changed, ack.Migrated);
+	}
+
+	[McpServerTool(Name = "tasks.methodology_def_get", Title = "Get the project's methodology definition", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefGetResult))]
+	[Description("""
+		Return the project's USER-DEFINED METHODOLOGY DEFINITION — the stored process
+		document (kinds/types/statuses/transitions as data), NOT the quartet board index
+		(that is tasks.methodology_get). Defined=true → { name, kinds:[{ kind,
+		quickAddAllowed, workflows:[{ types, initial, statuses:[{ slug, name, kind }],
+		transitions:[{ from, to, requiresApproval, requiresReason, preconditionArtifact? }]
+		}], linkConstraints?:[{ type, link }] }], version (the baseline for
+		tasks.methodology_def_upsert), created, updated, linkKinds?:[{ slug, description? }],
+		tagAxes?:[{ namespace, description? }] } (the ?-marked lists are omitted when the
+		definition declares none). Defined=false → the project has no definition of its own
+		and runs on the built-in preset (`preset` names it) — an honest state, not an error.
+		Requires tasks:read.
+		""")]
+	public static async Task<MethodologyDefGetResult> MethodologyDefGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
+		if (view is null)
+			return new MethodologyDefGetResult(Defined: false, Preset: BuiltinPreset);
+		return new MethodologyDefGetResult(
+			Defined: true,
+			Name: view.Definition.Name,
+			Kinds: view.Definition.Kinds.Select(k => new MethodologyKindView(
+				k.Kind, k.QuickAddAllowed,
+				k.Workflows.Select(w => new MethodologyWorkflowBlockView(
+					Types: w.Types,
+					Initial: w.Initial,
+					Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
+					Transitions: w.Transitions.Select(t => new MethodologyTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList(),
+				LinkConstraints: k.LinkConstraints is { Count: > 0 }
+					? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(c.Type, c.Link)).ToList()
+					: null)).ToList(),
+			Version: view.Version,
+			Created: view.Created,
+			Updated: view.Updated,
+			LinkKinds: view.Definition.LinkKinds is { Count: > 0 }
+				? view.Definition.LinkKinds.Select(lk => new MethodologyLinkKindView(lk.Slug, lk.Description)).ToList()
+				: null,
+			TagAxes: view.Definition.TagAxes is { Count: > 0 }
+				? view.Definition.TagAxes.Select(a => new MethodologyTagAxisView(a.Namespace, a.Description)).ToList()
+				: null);
+	}
+
+	[McpServerTool(Name = "tasks.methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
+	[Description("""
+		Return the AGENT ONBOARDING GUIDE for this project's process — how to work its
+		boards — DERIVED AT RUNTIME from the project's methodology data: its own definition
+		where one declares a kind (tasks.methodology_def_upsert), the built-in presets
+		everywhere else. Call it when you start working a project's tasks and need the
+		process rules; it is the runtime-derived replacement for hardcoded process docs, so
+		it stays correct for user-defined kinds the docs never heard of. `markdown` covers,
+		per effective kind: types (quick-add default marked), statuses grouped
+		open/terminal, initial status, the transition map (collapsed to "free" when a block
+		allows every move), the GATES as behavioral invariants (owner-only transitions the
+		agent NEVER performs, reason-required moves, artifact:<slug> comment preconditions),
+		creation link requirements (specRef/blockedBy/ideaRef), tag axes (or free-form),
+		and the relation-kind dictionary (process vs neutral vs project-declared).
+		`invariants` is the same derivation machine-readable: [{ kind, rule:
+		approval_gate|reason_required|precondition_artifact|link_constraint|tag_axes,
+		detail }]. `source` = presets|definition|mixed; `definitionVersion` when a
+		definition exists. Bounded (a handful of kinds) — no truncation. Requires tasks:read.
+		""")]
+	public static async Task<MethodologyGuideView> MethodologyGuideAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		return await tasks.GetMethodologyGuideAsync(projectKey, ct);
+	}
+
+	// The `preset` a definition-less project runs on: the built-in preset definitions
+	// (simple + the methodology quartet kinds — MethodologyPresets).
+	const string BuiltinPreset = MethodologyPresets.Name;
+
+	// Map the typed wire document onto the domain definition 1:1 (nulls → empty lists —
+	// the validator then reports "needs at least one ..." instead of an opaque NRE).
+	// Only the status-kind STRING needs parsing here; integrity stays in the service.
+	static MethodologyDefinition ParseDefinition(MethodologyDefInput d) => new(
+		d.Name ?? string.Empty,
+		(d.Kinds ?? []).Select(k => new MethodologyKindDef(
+			k.Kind ?? string.Empty,
+			k.QuickAddAllowed,
+			(k.Workflows ?? []).Select(w => new MethodologyWorkflowDef(
+				w.Types ?? [],
+				(w.Statuses ?? []).Select(ParseStatus).ToList(),
+				(w.Transitions ?? []).Select(t => new MethodologyTransitionDef(
+					t.From ?? string.Empty, t.To ?? string.Empty,
+					t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList())
+		{
+			LinkConstraints = (k.LinkConstraints ?? [])
+				.Select(c => new MethodologyLinkConstraintDef(c.Type ?? string.Empty, c.Link ?? string.Empty)).ToList(),
+		}).ToList())
+	{
+		LinkKinds = (d.LinkKinds ?? [])
+			.Select(lk => new MethodologyLinkKindDef(lk.Slug ?? string.Empty, lk.Description)).ToList(),
+		TagAxes = (d.TagAxes ?? [])
+			.Select(a => new MethodologyTagAxisDef(a.Namespace ?? string.Empty, a.Description)).ToList(),
+	};
+
+	// Map the typed migration document 1:1 (nulls → empty, so the service validator reports
+	// clear messages); null in = null out (no migration declared).
+	static List<MethodologyMigration>? ParseMigration(MethodologyMigrationInput[]? migration) =>
+		migration?.Select(m => new MethodologyMigration(
+			m.Kind ?? string.Empty,
+			(m.Types ?? []).Select(v => new MethodologyValueMap(v.From ?? string.Empty, v.To ?? string.Empty)).ToList(),
+			(m.Statuses ?? []).Select(v => new MethodologyValueMap(v.From ?? string.Empty, v.To ?? string.Empty)).ToList())).ToList();
+
+	static WorkflowStatus ParseStatus(MethodologyStatusInput s)
+	{
+		var slug = s.Slug ?? string.Empty;
+		var kind = StatusKind.Open;
+		if (!string.IsNullOrWhiteSpace(s.Kind) && !Enum.TryParse(s.Kind.Trim(), ignoreCase: true, out kind))
+			throw new ArgumentException($"status '{slug}': kind '{s.Kind}' is not a status kind (valid: open|terminalok|terminalcancel)");
+		return new WorkflowStatus(slug, string.IsNullOrWhiteSpace(s.Name) ? slug : s.Name, kind);
 	}
 
 	[McpServerTool(Name = "tasks.node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
@@ -402,7 +584,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks.workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(WorkflowView))]
-	[Description("Return the workflow for a board: its kind plus `workflows` — one block per DISTINCT state machine, each carrying `types` (every type slug sharing that FSM; e.g. feature|bug|chore on a work board are one block), the initial status, statuses (slug, name, kind=open|terminalok|terminalcancel) and transitions (from, to, requiresApproval, requiresReason). Use this to learn the legal types/statuses before tasks.upsert. Requires tasks:read.")]
+	[Description("Return the workflow for a board: its kind plus `workflows` — one block per DISTINCT state machine, each carrying `types` (every type slug sharing that FSM; e.g. feature|bug|chore on a work board are one block), the initial status, statuses (slug, name, kind=open|terminalok|terminalcancel) and transitions (from, to, requiresApproval, requiresReason, preconditionArtifact? — a comment-artifact tag the node must carry before the transition). A kind the project's methodology definition declares (tasks.methodology_def_upsert) resolves from the definition; other kinds report the built-in preset. Use this to learn the legal types/statuses before tasks.upsert. Requires tasks:read.")]
 	public static async Task<WorkflowView> WorkflowAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
@@ -410,36 +592,17 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		var kind = await tasks.ResolveKindAsync(projectKey, board, ct);
+		// Grouping (identical FSMs into one block) and catalog-vs-definition resolution
+		// happen in the service; this adapter only shapes the wire.
+		var view = await tasks.GetBoardWorkflowAsync(projectKey, board, ct);
 		return new WorkflowView(
-			Kind: kind.ToString().ToLowerInvariant(),
-			Workflows: GroupByFsm(kind).Select(g => new WorkflowGroupView(
-				Types: g.Types,
-				Initial: g.Wf.Initial,
-				Statuses: g.Wf.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
-				Transitions: g.Wf.Transitions.Select(t => new WorkflowTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason)).ToList())).ToList());
+			Kind: view.Kind,
+			Workflows: view.Workflows.Select(g => new WorkflowGroupView(
+				Types: g.Types.ToList(),
+				Initial: g.Workflow.Initial,
+				Statuses: g.Workflow.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
+				Transitions: g.Workflow.Transitions.Select(t => new WorkflowTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList());
 	}
-
-	// Collapse a kind's workflows into blocks of types sharing one identical FSM (statuses +
-	// transitions, record equality — Initial is Statuses[0], so it's covered). The work board's
-	// feature/bug/chore trio collapses to one block; a Simple board reports its whole type
-	// vocabulary (type is a label there, not a workflow branch — the catalog's single entry
-	// carries the placeholder type "simple", not what tasks.upsert accepts).
-	static List<(List<string> Types, Workflow Wf)> GroupByFsm(BoardKind kind)
-	{
-		var groups = new List<(List<string> Types, Workflow Wf)>();
-		foreach (var w in WorkflowCatalog.Types(kind))
-		{
-			var types = kind == BoardKind.Simple ? WorkflowCatalog.SimpleTypes.ToList() : [w.Type];
-			var match = groups.FindIndex(g => SameFsm(g.Wf, w));
-			if (match < 0) groups.Add((types, w));
-			else groups[match].Types.AddRange(types.Where(t => !groups[match].Types.Contains(t, StringComparer.OrdinalIgnoreCase)));
-		}
-		return groups;
-	}
-
-	static bool SameFsm(Workflow a, Workflow b) =>
-		a.Statuses.SequenceEqual(b.Statuses) && a.Transitions.SequenceEqual(b.Transitions);
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 
@@ -464,7 +627,7 @@ public static class TasksTools
 		return new UpsertResultView(
 			Applied: r.Applied,
 			CurrentVersion: r.CurrentVersion,
-			Kind: o.Kind.ToString().ToLowerInvariant(),
+			Kind: o.Kind,
 			Inserted: r.Inserted,
 			Closed: r.Closed,
 			Conflicts: r.Conflicts.Select(c => new UpsertConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason)).ToList(),

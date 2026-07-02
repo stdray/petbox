@@ -143,7 +143,13 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 			ProjectKey = projectKey,
 			Name = board,
 			Description = description,
-			Kind = WorkflowCatalog.ParseKind(kind).ToString().ToLowerInvariant(),
+			// Builtin kinds normalize to their canonical enum name; anything else is stored
+			// VERBATIM (lowercased) — a definition-declared kind. Validation (unknown-kind
+			// rejection) lives in TasksService.CreateBoardAsync, the single door: the store
+			// is core-db land and must not async-reach into the tasks db for the definition.
+			Kind = Enum.TryParse<BoardKind>(kind, ignoreCase: true, out var bk)
+				? bk.ToString().ToLowerInvariant()
+				: kind.Trim().ToLowerInvariant(),
 			SpecBoard = string.IsNullOrWhiteSpace(specBoard) ? null : specBoard,
 			CreatedAt = now,
 			UpdatedAt = now,

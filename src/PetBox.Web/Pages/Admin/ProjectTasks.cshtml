@@ -41,7 +41,7 @@
 					<div class="flex gap-1 mt-1">
 						@{
 							// Legacy rows may store "free"; show it as "simple" (ParseKind maps it, M029 migrates it).
-							var listKind = PetBox.Tasks.Workflow.WorkflowCatalog.ParseKind(b.Kind).ToString().ToLowerInvariant();
+							var listKind = PetBox.Tasks.Workflow.MethodologyPresets.ParseKind(b.Kind).ToString().ToLowerInvariant();
 							var listIsSimple = listKind == "simple";
 							var listKindClass = listIsSimple ? "badge-info badge-outline" : "badge-neutral";
 							var listKindTitle = listIsSimple

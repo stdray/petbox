@@ -311,7 +311,10 @@ public sealed record TaskSearchResultView(
 // tasks.workflow wire shape (board kind + statuses/transitions catalog, grouped by FSM).
 public sealed record WorkflowStatusView(string Slug, string Name, string Kind);
 
-public sealed record WorkflowTransitionView(string From, string To, bool RequiresApproval, bool RequiresReason);
+// `PreconditionArtifact` names a comment-artifact tag the node must carry before the
+// transition fires — filled for definition-resolved kinds, null (omitted by the
+// serializer) for the catalog presets.
+public sealed record WorkflowTransitionView(string From, string To, bool RequiresApproval, bool RequiresReason, string? PreconditionArtifact = null);
 
 // One state machine shared by every type slug in `Types` — types with an identical FSM are
 // grouped into a single block (feature=bug=chore on a work board is ONE block, not three
@@ -323,3 +326,55 @@ public sealed record WorkflowGroupView(
 	IReadOnlyList<WorkflowTransitionView> Transitions);
 
 public sealed record WorkflowView(string Kind, IReadOnlyList<WorkflowGroupView> Workflows);
+
+// tasks.methodology_def_upsert ack: the definition's current revision number (the baseline
+// for the next edit), whether this call created a new revision (false = an identical
+// resubmit collapsed to a no-op), and how many live nodes the declared `migration` rewrote
+// onto the new resolution (0 = nothing needed repair). A version conflict throws (the error
+// envelope names the current version), so this shape never carries conflicts.
+public sealed record MethodologyDefUpsertResult(long Version, bool Changed, int Migrated = 0);
+
+// tasks.methodology_def_get answer. Defined=true → the stored definition (name/kinds) plus
+// its revision metadata. Defined=false → the project has no definition and runs on the
+// built-in preset named in `Preset` (the structured "not defined" shape, mirroring
+// session.search's distilled:false + reason — an honest state, not an error or a miss).
+public sealed record MethodologyDefGetResult(
+	bool Defined,
+	string? Preset = null,
+	string? Name = null,
+	IReadOnlyList<MethodologyKindView>? Kinds = null,
+	long? Version = null,
+	DateTime? Created = null,
+	DateTime? Updated = null,
+	// Definition-level primitives (null = none declared, omitted by the serializer):
+	// project-declared relation kinds and tag axes.
+	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
+	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
+
+// One kind of a stored methodology definition; workflow blocks reuse the tasks.workflow
+// status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the
+// kind's per-type creation link requirements (null = none declared).
+public sealed record MethodologyKindView(
+	string Kind, bool QuickAddAllowed, IReadOnlyList<MethodologyWorkflowBlockView> Workflows,
+	IReadOnlyList<MethodologyLinkConstraintView>? LinkConstraints = null);
+
+// "A new <type> on this kind's boards must carry a <link> at creation" (link =
+// task_spec|blocks|idea_spec — the upsert-expressible kinds).
+public sealed record MethodologyLinkConstraintView(string Type, string Link);
+
+// A project-declared relation kind (free semantic edge, no FSM effects).
+public sealed record MethodologyLinkKindView(string Slug, string? Description = null);
+
+// A declared tag namespace for definition-resolved boards.
+public sealed record MethodologyTagAxisView(string Namespace, string? Description = null);
+
+public sealed record MethodologyWorkflowBlockView(
+	IReadOnlyList<string> Types,
+	string Initial,
+	IReadOnlyList<WorkflowStatusView> Statuses,
+	IReadOnlyList<MethodologyTransitionView> Transitions);
+
+// WorkflowTransitionView plus the definition-only `preconditionArtifact` (a comment-artifact
+// tag required before the transition; null = omitted by the serializer).
+public sealed record MethodologyTransitionView(
+	string From, string To, bool RequiresApproval, bool RequiresReason, string? PreconditionArtifact = null);

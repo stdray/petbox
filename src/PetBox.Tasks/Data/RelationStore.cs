@@ -26,12 +26,14 @@ public interface IRelationStore
 
 public sealed class RelationStore : IRelationStore
 {
-	// task_spec: task→spec. issue_task: intake issue→task. idea_spec: idea→spec.
-	// blocks: blocker→blocked. part_of: child→parent (vertical decomposition; the old
-	// l1/l2/l3 tree is now this edge). supersedes: new→obsoleted (a changed requirement's
-	// new spec version replaces the old; a fresh idea replaces a rejected one). nfr/dup
-	// were never implemented and are dropped — concerns are concern:* tags now.
-	static readonly string[] Kinds = ["task_spec", "issue_task", "idea_spec", "blocks", "part_of", "supersedes"];
+	// The kind VOCABULARY is validated in the service layer (ITasksService.
+	// ValidateRelationKindAsync), because it is project-aware since primitives-link-kinds:
+	// builtin process kinds (task_spec: task→spec. issue_task: intake issue→task.
+	// idea_spec: idea→spec. blocks: blocker→blocked. part_of: child→parent. supersedes:
+	// new→obsoleted) + builtin neutral kinds (relates_to/depends_on/mirrors) + the
+	// project's definition-declared kinds — see MethodologyRuntime.KnownRelationKinds().
+	// The store only normalizes and checks structure; internal service callers pass
+	// literal builtin kinds.
 
 	readonly PetBoxDb _db;
 	public RelationStore(PetBoxDb db) => _db = db;
@@ -39,8 +41,8 @@ public sealed class RelationStore : IRelationStore
 	public async Task<Relation> CreateAsync(string projectKey, string kind, string fromNodeId, string toNodeId, CancellationToken ct = default)
 	{
 		kind = (kind ?? "").ToLowerInvariant();
-		if (!Kinds.Contains(kind))
-			throw new ArgumentException($"invalid relation kind '{kind}'; valid: {string.Join("|", Kinds)}");
+		if (kind.Length == 0)
+			throw new ArgumentException("relation kind is required");
 		if (string.IsNullOrWhiteSpace(fromNodeId) || string.IsNullOrWhiteSpace(toNodeId))
 			throw new ArgumentException("fromNodeId and toNodeId are required");
 

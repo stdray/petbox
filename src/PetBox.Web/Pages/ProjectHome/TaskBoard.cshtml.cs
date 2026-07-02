@@ -91,7 +91,7 @@ public sealed class TaskBoardModel : PageModel
 
 		var kind = await _tasks.ResolveKindAsync(ProjectKey, Board, ct);
 		Kind = kind;
-		ShowQuickAdd = WorkflowCatalog.QuickAddAllowed(kind);
+		ShowQuickAdd = MethodologyPresets.QuickAddAllowed(kind);
 
 		// includeClosed: we render closed nodes too (the "active only" toggle hides them
 		// client-side); GetAsync supplies each node's part_of parent + depth.
@@ -182,7 +182,7 @@ public sealed class TaskBoardModel : PageModel
 		{
 			if (!visited.Add(node.NodeId)) return false;
 			ordered.Add(node);
-			var closed = WorkflowCatalog.IsTerminalSlug(node.Status);
+			var closed = MethodologyPresets.IsTerminalSlug(node.Status);
 			var hasActiveDescendant = false;
 			if (childMap.TryGetValue(node.NodeId, out var kids))
 				foreach (var kid in kids)
@@ -205,7 +205,7 @@ public sealed class TaskBoardModel : PageModel
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
 		var kind = await _tasks.ResolveKindAsync(ProjectKey, Board, ct);
-		if (!WorkflowCatalog.QuickAddAllowed(kind)) return BadRequest();
+		if (!MethodologyPresets.QuickAddAllowed(kind)) return BadRequest();
 
 		await _tasks.QuickAddAsync(ProjectKey, Board, name, body, priority, ct);
 

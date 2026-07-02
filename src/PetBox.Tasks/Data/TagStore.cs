@@ -1,6 +1,7 @@
 using LinqToDB;
 using LinqToDB.Async;
 using PetBox.Core.Data;
+using PetBox.Tasks.Workflow;
 
 namespace PetBox.Tasks.Data;
 
@@ -11,10 +12,12 @@ namespace PetBox.Tasks.Data;
 public interface ITagStore
 {
 	// Replace a node's active tag set with `tags` (normalized "ns:value"): soft-close
-	// removed, vocab-ensure + insert added. With enforceNamespaces (default, methodology
-	// boards) an unknown namespace throws; with it false (simple boards) any namespace is
-	// allowed and a bare word is filed under the default `tag:` namespace.
-	Task SetAsync(string projectKey, string board, string nodeId, IReadOnlyList<string> tags, bool enforceNamespaces = true, CancellationToken ct = default);
+	// removed, vocab-ensure + insert added. With enforceNamespaces an unknown namespace
+	// throws; with it false any namespace is allowed and a bare word is filed under the
+	// default `tag:` namespace. The service resolves BOTH knobs from the board kind's tag
+	// axes (MethodologyRuntime.TagAxes — no axes = free-form) and passes `namespaces`
+	// explicitly; null falls back to the builtin preset axes (direct store callers).
+	Task SetAsync(string projectKey, string board, string nodeId, IReadOnlyList<string> tags, bool enforceNamespaces = true, IReadOnlyList<string>? namespaces = null, CancellationToken ct = default);
 	// Active tags for one node, sorted.
 	Task<IReadOnlyList<string>> ActiveTagsAsync(string projectKey, string nodeId, CancellationToken ct = default);
 	// Active (nodeId -> tag) for a whole board, for group-by projections.
@@ -23,17 +26,19 @@ public interface ITagStore
 
 public sealed class TagStore : ITagStore
 {
-	// Controlled namespaces. A tag's prefix before ':' must be one of these; the value
-	// after ':' is free. Keep small and orthogonal (idea spec-flat-tags).
-	public static readonly string[] Namespaces = ["area", "concern"];
+	// The default allowlist mirrors the preset quartet axes (MethodologyPresets.BuiltinAxes
+	// — the pair is DATA there now); the service passes the resolved axes explicitly, so
+	// this default only serves direct store callers.
+	static readonly string[] DefaultNamespaces =
+		MethodologyPresets.BuiltinAxes.Select(a => a.Namespace).ToArray();
 
 	readonly IScopedDbFactory<TasksDb> _factory;
 	public TagStore(IScopedDbFactory<TasksDb> factory) => _factory = factory;
 
-	public async Task SetAsync(string projectKey, string board, string nodeId, IReadOnlyList<string> tags, bool enforceNamespaces = true, CancellationToken ct = default)
+	public async Task SetAsync(string projectKey, string board, string nodeId, IReadOnlyList<string> tags, bool enforceNamespaces = true, IReadOnlyList<string>? namespaces = null, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(nodeId)) throw new ArgumentException("nodeId is required");
-		var desired = Normalize(tags, enforceNamespaces);
+		var desired = Normalize(tags, enforceNamespaces, namespaces);
 		var ctx = _factory.GetDb(projectKey);
 
 		var active = ctx.GetTable<NodeTag>().Where(t => t.NodeId == nodeId && t.ValidTo == null).ToList();
@@ -77,11 +82,13 @@ public sealed class TagStore : ITagStore
 	}
 
 	// Lowercase, trim, de-dup. With enforceNamespaces: require "ns:value" with ns in the
-	// allowlist (methodology boards). Without it (simple boards): any namespace is allowed and
-	// a bare word is filed under the default `tag:` namespace (free-form, low ceremony). Empty
-	// in → empty set.
-	public static IReadOnlySet<string> Normalize(IReadOnlyList<string>? tags, bool enforceNamespaces = true)
+	// allowlist — `namespaces` when given (the kind's tag axes), else the builtin preset
+	// pair. Without it (axis-less kinds — simple boards and axis-less definitions): any
+	// namespace is allowed and a bare word is filed under the default `tag:` namespace
+	// (free-form, low ceremony). Empty in → empty set.
+	public static IReadOnlySet<string> Normalize(IReadOnlyList<string>? tags, bool enforceNamespaces = true, IReadOnlyList<string>? namespaces = null)
 	{
+		var allowed = namespaces ?? DefaultNamespaces;
 		var set = new HashSet<string>(StringComparer.Ordinal);
 		if (tags is null) return set;
 		foreach (var raw in tags)
@@ -93,14 +100,14 @@ public sealed class TagStore : ITagStore
 			{
 				// No usable "ns:value" shape.
 				if (enforceNamespaces)
-					throw new ArgumentException($"tag '{raw}' must be 'namespace:value' (namespaces: {string.Join("|", Namespaces)})");
+					throw new ArgumentException($"tag '{raw}' must be 'namespace:value' (namespaces: {string.Join("|", allowed)})");
 				var word = tag.Trim(':');
 				if (word.Length > 0) set.Add("tag:" + word); // bare word → default namespace
 				continue;
 			}
 			var ns = tag[..colon];
-			if (enforceNamespaces && !Namespaces.Contains(ns))
-				throw new ArgumentException($"unknown tag namespace '{ns}' (allowed: {string.Join("|", Namespaces)})");
+			if (enforceNamespaces && !allowed.Contains(ns))
+				throw new ArgumentException($"unknown tag namespace '{ns}' (allowed: {string.Join("|", allowed)})");
 			set.Add(tag);
 		}
 		return set;

@@ -58,9 +58,16 @@ public sealed record UpsertResultView(
 	IReadOnlyList<UpsertConflictView> Conflicts,
 	IReadOnlyList<PlanNodeDelta> Added, IReadOnlyList<PlanNodeDelta> Updated, IReadOnlyList<string> Removed);
 
-// The raw temporal upsert/delta result plus the board kind, ready for an adapter to
-// serialize. The service owns the logic; the adapter owns the wire shape.
-public sealed record UpsertOutcome(TemporalUpsertResult<PlanNode> Result, BoardKind Kind);
+// The raw temporal upsert/delta result plus the board's resolved kind name (a defined
+// kind's slug verbatim, else the preset name — lowercase either way), ready for an
+// adapter to serialize. The service owns the logic; the adapter owns the wire shape.
+public sealed record UpsertOutcome(TemporalUpsertResult<PlanNode> Result, string Kind);
+
+// The workflow surface of one board (tasks.workflow): the resolved kind name plus one
+// block per DISTINCT state machine — preset kinds group identical FSMs (feature=bug=
+// chore on a work board is one block), definition kinds group by declaration. Transitions
+// carry PreconditionArtifact when the definition gates them on a comment artifact.
+public sealed record BoardWorkflowView(string Kind, IReadOnlyList<WorkflowBlock> Workflows);
 
 // A tag-projection group: nodes sharing one tag value in a grouped namespace (or the
 // "(none)" bucket). `Delivery` is the combined roll-up over every node in the group (spec
@@ -149,3 +156,27 @@ public sealed record MethodologyBoard(
 // `Hint` is non-null only when some board's rows were cut by the output budget: a
 // human/agent-readable pointer on how to narrow the query (null = complete answer).
 public sealed record MethodologyView(bool Enabled, IReadOnlyList<MethodologyBoard> Boards, string? Hint = null);
+
+// Ack of a methodology-definition write: the definition's current revision number (the
+// baseline for the next edit), whether this call created a new revision (false = an
+// identical resubmit collapsed to a no-op), and how many live nodes the declared
+// `migration` rewrote onto the new resolution (0 = nothing needed repair). Conflicts
+// throw instead — a singleton document has no partial-batch outcome to report.
+public sealed record MethodologyDefAck(long Version, bool Changed, int Migrated = 0);
+
+// The project's active methodology definition plus its revision metadata. A null view
+// (from GetMethodologyDefinitionAsync) means the project has no definition and is on the
+// built-in MethodologyPresets.
+public sealed record MethodologyDefView(MethodologyDefinition Definition, long Version, DateTime Created, DateTime Updated);
+
+// The runtime-derived agent guide to a project's process (tasks.methodology_guide, spec
+// artifacts-from-definition): markdown prose + the structured invariants it was derived
+// from (the machine-readable form — no markdown re-parsing downstream). `Source` says
+// where the effective kinds came from: "presets" (no definition), "definition" (the
+// definition overrides every preset kind) or "mixed" (definition kinds + preset fallback).
+// DefinitionVersion is the definition's revision when one exists (null on pure presets).
+public sealed record MethodologyGuideView(
+	string Markdown,
+	IReadOnlyList<MethodologyInvariant> Invariants,
+	string Source,
+	long? DefinitionVersion = null);

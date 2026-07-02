@@ -4,7 +4,7 @@
 	var node = Model.Detail.Node;
 	ViewData["Title"] = string.IsNullOrEmpty(node.Title) ? node.Key : node.Title;
 
-	var nodeKind = PetBox.Tasks.Workflow.WorkflowCatalog.ParseKind(Model.Detail.Kind);
+	var nodeKind = PetBox.Tasks.Workflow.MethodologyPresets.ParseKind(Model.Detail.Kind);
 	var nodeKindName = nodeKind.ToString().ToLowerInvariant();
 	var nodeIsSimple = nodeKind == PetBox.Tasks.Workflow.BoardKind.Simple;
 	// Make the board kind explicit so its statuses read as a deliberate kind, not "broken".
@@ -16,7 +16,7 @@
 
 @functions {
 	// Status slug -> daisyUI badge (presentation; domain owns the StatusKind). Mirrors TaskBoard.
-	static string StatusBadge(string slug) => PetBox.Tasks.Workflow.WorkflowCatalog.KindOfSlug(slug) switch
+	static string StatusBadge(string slug) => PetBox.Tasks.Workflow.MethodologyPresets.KindOfSlug(slug) switch
 	{
 		PetBox.Tasks.Workflow.StatusKind.TerminalOk => "badge-success",
 		PetBox.Tasks.Workflow.StatusKind.TerminalCancel => "badge-ghost",

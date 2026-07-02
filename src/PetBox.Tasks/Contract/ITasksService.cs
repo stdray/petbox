@@ -43,6 +43,32 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// The workspace owning a project, or null if unknown. Adapters use it to assemble per-node
 	// UI permalinks (the URL is workspace-scoped but the MCP surface carries only projectKey).
 	Task<string?> ResolveWorkspaceAsync(string projectKey, CancellationToken ct = default);
+	// --- user-defined methodology definition (LIVE since wave 1.2: a kind the definition
+	//     declares resolves types/statuses/transitions from data; any other kind — or a
+	//     project without a definition — falls back to the built-in presets) ---
+
+	// Validate and store the project's methodology definition as a new temporal revision.
+	// `version` is the baseline the author last saw (0 = "I believe none exists yet");
+	// optimistic concurrency: a moved baseline throws, naming the current version so the
+	// caller re-reads and rebases. An identical resubmit is a no-op (Changed=false).
+	// A CHANGE is checked against live data first (spec primitives-schema-migration):
+	// every active node on a board whose kind the old or new definition declares must fit
+	// the NEW resolution; `migration` declares per-kind {from,to} type/status repairs for
+	// values that don't (applied only where invalid). Any node still incompatible rejects
+	// the whole call naming the offenders — nothing is written. When everything is mapped,
+	// the definition commits first and the repaired nodes are rewritten as new temporal
+	// revisions (a system write — no FSM guards; the mapping IS the sanctioned transition);
+	// Migrated counts them.
+	Task<MethodologyDefAck> DefineMethodologyAsync(string projectKey, MethodologyDefinition def, long version, IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default);
+	// The project's active methodology definition + its revision metadata, or null when
+	// the project has none (it is then on the built-in MethodologyPresets).
+	Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default);
+	// The agent-facing PROCESS GUIDE derived at runtime from the project's EFFECTIVE
+	// methodology (definition-declared kinds + preset kinds not overridden): markdown
+	// prose + the structured invariants behind it (spec artifacts-from-definition).
+	// Deterministic and bounded — a handful of kinds, no truncation machinery.
+	Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, CancellationToken ct = default);
+
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);
 	Task<bool> BoardExistsAsync(string projectKey, string board, CancellationToken ct = default);
@@ -77,6 +103,14 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// across EVERY board in the project — unambiguous resolves; the same slug on 2+ boards
 	// is an error naming the boards (pass the NodeId); a miss is a clear error, never null.
 	Task<string> ResolveNodeRefAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default);
+	// Validate a relation kind against the PROJECT's vocabulary — builtin process kinds
+	// (task_spec|issue_task|idea_spec|blocks|part_of|supersedes), builtin neutral kinds
+	// (relates_to|depends_on|mirrors — free semantic edges, no FSM effects), and the kinds
+	// the project's methodology definition declares (linkKinds). Returns the normalized
+	// (lowercased) kind; an unknown kind throws, listing every valid kind for the project.
+	// RelationTools calls this before touching the store (the store itself is not
+	// project-definition-aware).
+	Task<string> ValidateRelationKindAsync(string projectKey, string kind, CancellationToken ct = default);
 	// Project a board by an ORDERED list of tag namespaces (e.g. [area, concern]): nodes
 	// bucketed by their tag value in each namespace ("(none)" for untagged), nested in
 	// dimension order, each group with a delivery roll-up. The projection is a view — it
@@ -108,8 +142,15 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// (0 = unbounded listing / the adapter's query default). Board context (kind/specBoard/
 	// currentVersion) is filled when the read is board-scoped.
 	Task<TaskSearchResult> SearchNodesAsync(string projectKey, SearchRequest<TaskNodeFilter, TaskSortBy> request, string? urlPrefix = null, CancellationToken ct = default);
-	// Ensure the board exists and return its kind (used by the workflow discovery tool).
+	// Ensure the board exists and return its PRESET kind (a definition-declared kind reads
+	// as Simple here, like any unknown slug always did). UI pages keep rendering off this;
+	// the FSM-aware surface is GetBoardWorkflowAsync.
 	Task<BoardKind> ResolveKindAsync(string projectKey, string board, CancellationToken ct = default);
+	// The board's workflow surface, DATA-DRIVEN: a kind the project's methodology definition
+	// declares resolves from the definition (blocks as declared, transitions carrying
+	// preconditionArtifact); any other kind falls back to the built-in presets exactly as
+	// before (identical FSMs collapsed into one block). Powers tasks.workflow.
+	Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default);
 
 	// --- UI helpers (board page renders the raw active nodes in its own tree order) ---
 

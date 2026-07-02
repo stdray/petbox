@@ -15,7 +15,7 @@ namespace PetBox.Tests.Web;
 
 // The board page's quick-add form is rejected only where a node needs a link at birth the
 // bare form can't supply — Spec (ideaRef) and Work (specRef). Free/Ideas/Intake keep it.
-// These tests verify the render flag + POST gate track the single WorkflowCatalog knob; the
+// These tests verify the render flag + POST gate track the single preset knob (MethodologyPresets.QuickAddAllowed); the
 // expectation is read from that same knob, so flipping a kind's policy flips both together.
 [Collection("DataModule")]
 public sealed class TaskBoardQuickAddTests : IDisposable
@@ -74,7 +74,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 	{
 		var model = await Board(kind);
 		await model.OnGetAsync(default);
-		model.ShowQuickAdd.Should().Be(WorkflowCatalog.QuickAddAllowed(kind));
+		model.ShowQuickAdd.Should().Be(MethodologyPresets.QuickAddAllowed(kind));
 	}
 
 	[Theory]
@@ -84,7 +84,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 		var model = await Board(kind);
 		var result = await model.OnPostCreateAsync("My item", "details", 50, default);
 
-		if (WorkflowCatalog.QuickAddAllowed(kind))
+		if (MethodologyPresets.QuickAddAllowed(kind))
 		{
 			result.Should().NotBeOfType<BadRequestResult>();
 			ActiveNodeCount(model.Board).Should().Be(1); // the quick-add wrote a node
