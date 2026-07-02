@@ -15,10 +15,10 @@ using PetBox.Web.Mcp;
 namespace PetBox.Tests.Tasks;
 
 // uniform-node-refs: every surface that takes a node reference accepts the SAME slug-or-NodeId
-// format. blockedBy (tasks.upsert) resolves a slug on the same board and the `blocks` edge
-// always carries a NodeId; relations.create/list resolve slugs across ALL boards (no board
+// format. blockedBy (tasks_upsert) resolves a slug on the same board and the `blocks` edge
+// always carries a NodeId; relations_create/list resolve slugs across ALL boards (no board
 // param) with an "ambiguous slug … boards: […]" error when a slug lives on 2+ boards;
-// comments.create/list resolve a slug on their `board` param. 32-hex values are always NodeIds
+// comments_create/list resolve a slug on their `board` param. 32-hex values are always NodeIds
 // (passthrough — the pre-existing NodeId paths are the regression baseline).
 [Collection("DataModule")]
 public sealed class UniformNodeRefTests : IDisposable
@@ -77,7 +77,7 @@ public sealed class UniformNodeRefTests : IDisposable
 		return r.Added.Concat(r.Updated).ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
 	}
 
-	// ---- blockedBy (tasks.upsert): slug resolves on the SAME board, edge carries a NodeId ----
+	// ---- blockedBy (tasks_upsert): slug resolves on the SAME board, edge carries a NodeId ----
 
 	[Fact]
 	public async Task BlockedBy_Slug_ResolvesOnBoard_EdgeCarriesNodeId()
@@ -133,7 +133,7 @@ public sealed class UniformNodeRefTests : IDisposable
 		view.Nodes.Single(n => n.Key == "task-y").BlockedBy!.Single().NodeId.Should().Be(ids["blocker"]);
 	}
 
-	// ---- relations.create/list: slug resolves across ALL boards, ambiguity is an error ----
+	// ---- relations_create/list: slug resolves across ALL boards, ambiguity is an error ----
 
 	[Fact]
 	public async Task RelationsCreate_SlugsBothSides_ResolveToNodeIds()
@@ -201,7 +201,7 @@ public sealed class UniformNodeRefTests : IDisposable
 		bySlug.Relations.Single().FromNodeId.Should().Be(ids["one"]);
 	}
 
-	// ---- comments.create/list: slug resolves on the `board` param ----
+	// ---- comments_create/list: slug resolves on the `board` param ----
 
 	[Fact]
 	public async Task CommentsCreate_And_List_BySlug()
@@ -238,7 +238,7 @@ public sealed class UniformNodeRefTests : IDisposable
 
 	// ---- WATERMARK over the MCP surface: an echoed currentVersion is the next call's baseline ----
 
-	// tasks.upsert: the board `currentVersion` from one call's echo is a valid baseline for the
+	// tasks_upsert: the board `currentVersion` from one call's echo is a valid baseline for the
 	// next — even above the edited node's own version (a sibling advanced the cursor). A baseline
 	// above the board cursor is a FutureBaseline conflict (a cursor from another board/scope).
 	[Fact]
@@ -263,7 +263,7 @@ public sealed class UniformNodeRefTests : IDisposable
 		future.Conflicts.Should().ContainSingle(c => c.Kind == "FutureBaseline");
 	}
 
-	// comments.edit: same watermark over the thread cursor.
+	// comments_edit: same watermark over the thread cursor.
 	[Fact]
 	public async Task CommentEdit_ThreadCurrentVersion_IsValidNextBaseline_FutureRejected()
 	{

@@ -14,7 +14,7 @@ using PetBox.Tasks.Data;
 
 namespace PetBox.Tests.Tasks;
 
-// Engine wave 4 (spec artifacts-from-definition) — tasks.methodology_guide: the agent
+// Engine wave 4 (spec artifacts-from-definition) — tasks_methodology_guide: the agent
 // process guide (markdown + structured invariants) DERIVED AT RUNTIME from the project's
 // effective methodology. Exercised end-to-end over MCP:
 //   (a) a definition-less project renders the preset quartet + simple — the hardcoded
@@ -109,7 +109,7 @@ public sealed class MethodologyGuideTests : IAsyncLifetime
 	static string Text(CallToolResult r) =>
 		r.Content.OfType<TextContentBlock>().First().Text;
 
-	// Errors arrive as the central envelope {"error":{...}} (IsError stays false).
+	// Errors arrive as the central envelope {"error":{...}} on the isError channel (IsError=true).
 	static bool IsErr(CallToolResult r) =>
 		r.IsError == true ||
 		(r.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text?.Contains("\"error\"") ?? false);
@@ -119,7 +119,7 @@ public sealed class MethodologyGuideTests : IAsyncLifetime
 
 	async Task<JsonElement> Guide()
 	{
-		var r = await Call("tasks.methodology_guide", new { projectKey = ProjectKey });
+		var r = await Call("tasks_methodology_guide", new { projectKey = ProjectKey });
 		IsErr(r).Should().BeFalse(Text(r));
 		return Parse(r);
 	}
@@ -216,7 +216,7 @@ public sealed class MethodologyGuideTests : IAsyncLifetime
 	[Fact]
 	public async Task Definition_CustomKindRendersFromData_SourceReflectsIt()
 	{
-		var up = await Call("tasks.methodology_def_upsert", new { projectKey = ProjectKey, definition = SupportDefinition(), version = 0 });
+		var up = await Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition = SupportDefinition(), version = 0 });
 		IsErr(up).Should().BeFalse(Text(up));
 		var version = Parse(up).GetProperty("version").GetInt64();
 
@@ -249,7 +249,7 @@ public sealed class MethodologyGuideTests : IAsyncLifetime
 	[Fact]
 	public async Task Guide_IsDeterministic()
 	{
-		var up = await Call("tasks.methodology_def_upsert", new { projectKey = ProjectKey, definition = SupportDefinition(), version = 0 });
+		var up = await Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition = SupportDefinition(), version = 0 });
 		IsErr(up).Should().BeFalse(Text(up));
 
 		var first = await Guide();

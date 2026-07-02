@@ -111,17 +111,17 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 		var names = tools.Select(t => t.Name).ToHashSet();
 
 		// DataDb lifecycle is typed per-type db.* tools (replaced the generic entity.* dispatch).
-		names.Should().Contain("db.create");
-		names.Should().Contain("db.list");
-		names.Should().Contain("db.delete");
-		names.Should().Contain("db.describe");
+		names.Should().Contain("db_create");
+		names.Should().Contain("db_list");
+		names.Should().Contain("db_delete");
+		names.Should().Contain("db_describe");
 		names.Should().NotContain("entity.create");
 		names.Should().NotContain("data.create_db");
 		names.Should().NotContain("data.list_dbs");
 		// Operational SQL/migration tools stay.
-		names.Should().Contain("data.schema_apply");
-		names.Should().Contain("data.query");
-		names.Should().Contain("data.exec");
+		names.Should().Contain("data_schema_apply");
+		names.Should().Contain("data_query");
+		names.Should().Contain("data_exec");
 	}
 
 	[Fact]
@@ -129,13 +129,13 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 	{
 		var tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
 
-		var create = await tools["db.create"].CallAsync(new Dictionary<string, object?>
+		var create = await tools["db_create"].CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey, ["name"] = TestDbName,
 		});
 		create.IsError.Should().NotBe(true);
 
-		var migrate = await tools["data.schema_apply"].CallAsync(new Dictionary<string, object?>
+		var migrate = await tools["data_schema_apply"].CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,
 			["dbName"] = TestDbName,
@@ -144,7 +144,7 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 		});
 		migrate.IsError.Should().NotBe(true);
 
-		var insert = await tools["data.exec"].CallAsync(new Dictionary<string, object?>
+		var insert = await tools["data_exec"].CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,
 			["dbName"] = TestDbName,
@@ -157,7 +157,7 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 		});
 		insert.IsError.Should().NotBe(true);
 
-		var query = await tools["data.query"].CallAsync(new Dictionary<string, object?>
+		var query = await tools["data_query"].CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,
 			["dbName"] = TestDbName,
@@ -174,7 +174,7 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 	{
 		var tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
 
-		var result = await tools["db.list"].CallAsync(new Dictionary<string, object?>
+		var result = await tools["db_list"].CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = "some-other-project",
 		});
@@ -186,19 +186,19 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 	public async Task DeniedPragma_Blocked()
 	{
 		var tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
-		await tools["db.create"].CallAsync(new Dictionary<string, object?>
+		await tools["db_create"].CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey, ["name"] = "tmp",
 		});
 
-		var result = await tools["data.exec"].CallAsync(new Dictionary<string, object?>
+		var result = await tools["data_exec"].CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,
 			["dbName"] = "tmp",
 			["sql"] = "PRAGMA writable_schema = 1",
 		});
-		// data.exec is now GuardAsync-wrapped: the PRAGMA denial surfaces as a structured
-		// {error} body rather than the framework's IsError flag.
+		// The PRAGMA denial surfaces via McpErrorEnvelopeFilter: the structured {error}
+		// body on the text content, with IsError=true.
 		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text
 			.Should().Contain("error");
 	}

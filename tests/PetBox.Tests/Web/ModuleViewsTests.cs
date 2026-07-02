@@ -240,7 +240,7 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		html.Should().Contain("doc-agent");
 		html.Should().Contain("/mcp");
 		html.Should().Contain("flat slug"); // node model documented (flat key + partOf)
-		html.Should().Contain("tasks.search"); // the unified read verb documented
+		html.Should().Contain("tasks_search"); // the unified read verb documented
 	}
 
 	[Fact]

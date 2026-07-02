@@ -19,7 +19,7 @@ public interface ISessionEpisodicIndex
 }
 
 // One match inside a session: the message ordinal (the provenance bridge — feed it to
-// session.get to reach the verbatim source), its role, a display snippet, the per-index
+// session_get to reach the verbatim source), its role, a display snippet, the per-index
 // score and which retriever surfaced it.
 public sealed record SessionEpisodicHit(long Message, string Role, string Snippet, double Score, string? Retriever);
 

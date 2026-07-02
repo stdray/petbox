@@ -73,7 +73,7 @@ public sealed partial class TasksService : ITasksService
 		{
 			throw new ArgumentException(
 				$"unknown board kind '{kind}' — valid kinds: {string.Join("|", runtime.KnownKinds())}" +
-				" (a custom kind must first be declared via tasks.methodology_def_upsert)");
+				" (a custom kind must first be declared via tasks_methodology_def_upsert)");
 		}
 		await ValidateSpecBoardAsync(projectKey, canonical, specBoard, ct);
 		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, specBoard, ct);
@@ -98,7 +98,7 @@ public sealed partial class TasksService : ITasksService
 		var existing = (await _boards.ListAsync(projectKey, ct))
 			.FirstOrDefault(b => b.ClosedAt == null && MethodologyPresets.ParseKind(b.Kind) == kind);
 		if (existing is not null)
-			throw new ArgumentException($"project '{projectKey}' already has an active {kind.ToString().ToLowerInvariant()} board ('{existing.Name}') — the methodology quartet is one-per-project; close it (tasks.board_close) or use a simple board");
+			throw new ArgumentException($"project '{projectKey}' already has an active {kind.ToString().ToLowerInvariant()} board ('{existing.Name}') — the methodology quartet is one-per-project; close it (tasks_board_close) or use a simple board");
 	}
 
 	// When exactly one active spec and one active work board exist and the work board has no
@@ -174,7 +174,7 @@ public sealed partial class TasksService : ITasksService
 	const string TruncationHint =
 		"Output budget exceeded: node rows were truncated (see truncated/omitted per board); " +
 		"the status histograms (counts) are complete. Narrow the query with includeBoards " +
-		"(one board at a time), keep bodyLen:0, or drill into a subtree with tasks.search " +
+		"(one board at a time), keep bodyLen:0, or drill into a subtree with tasks_search " +
 		"(board + under) for details.";
 
 	// The quartet as one COMPACT INDEX. By default each node is a header row (no body);
@@ -299,15 +299,15 @@ public sealed partial class TasksService : ITasksService
 		if (!r.Applied)
 		{
 			// Singleton document: exactly one conflict possible. Name the current version so
-			// the caller re-reads (tasks.methodology_def_get) and rebases — same optimistic-
+			// the caller re-reads (tasks_methodology_def_get) and rebases — same optimistic-
 			// concurrency spirit as the node upsert, but a throw (there is no batch to ack).
 			// Thrown BEFORE any node rewrite, so a conflicting call writes nothing at all.
 			var c = r.Conflicts[0];
 			throw new InvalidOperationException(c.Kind switch
 			{
-				TemporalConflictKind.FutureBaseline => $"methodology definition conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — that version was never reached here (a baseline from another project/scope?); re-read with tasks.methodology_def_get and resubmit against the current version",
-				TemporalConflictKind.Vanished => $"methodology definition conflict: your baseline version {version} no longer exists (the definition was removed); re-read with tasks.methodology_def_get and resubmit with version 0",
-				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; pass the currentVersion from your last tasks.methodology_def_get (0 = no definition yet)",
+				TemporalConflictKind.FutureBaseline => $"methodology definition conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — that version was never reached here (a baseline from another project/scope?); re-read with tasks_methodology_def_get and resubmit against the current version",
+				TemporalConflictKind.Vanished => $"methodology definition conflict: your baseline version {version} no longer exists (the definition was removed); re-read with tasks_methodology_def_get and resubmit with version 0",
+				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; pass the currentVersion from your last tasks_methodology_def_get (0 = no definition yet)",
 			});
 		}
 
@@ -469,7 +469,7 @@ public sealed partial class TasksService : ITasksService
 			// honestly instead of pretending atomicity the storage doesn't give us.
 			var c = r.Conflicts[0];
 			throw new InvalidOperationException(
-				$"methodology migration: the definition was applied, but board '{board}' changed concurrently ({c.Kind} on '{c.Key}') and its nodes were NOT rewritten — re-read the board and repair the remaining nodes via tasks.upsert");
+				$"methodology migration: the definition was applied, but board '{board}' changed concurrently ({c.Kind} on '{c.Key}') and its nodes were NOT rewritten — re-read the board and repair the remaining nodes via tasks_upsert");
 		}
 		await _boards.TouchAsync(projectKey, board, ct);
 		return r.Inserted;
@@ -638,8 +638,8 @@ public sealed partial class TasksService : ITasksService
 		return detail;
 	}
 
-	// Uniform slug-or-NodeId resolution for bare node refs (relations.create/list,
-	// comments.create/list) — uniform-node-refs. 32-hex = NodeId, passed through untouched
+	// Uniform slug-or-NodeId resolution for bare node refs (relations_create/list,
+	// comments_create/list) — uniform-node-refs. 32-hex = NodeId, passed through untouched
 	// (existing NodeId behavior preserved). A slug resolves over the ACTIVE nodes: scoped to
 	// `board` when given (slugs are board-unique, so at most one hit), else across EVERY
 	// board — the project file holds all boards' nodes. Ambiguity (same slug on 2+ boards)
@@ -676,7 +676,7 @@ public sealed partial class TasksService : ITasksService
 		if (!runtime.IsValidRelationKind(k))
 			throw new ArgumentException(
 				$"invalid relation kind '{kind}'; valid for this project: {string.Join("|", runtime.KnownRelationKinds())}" +
-				" (declare additional kinds via tasks.methodology_def_upsert linkKinds)");
+				" (declare additional kinds via tasks_methodology_def_upsert linkKinds)");
 		return k;
 	}
 
@@ -919,7 +919,7 @@ public sealed partial class TasksService : ITasksService
 		await _boards.EnsureAsync(projectKey, board, ct); // auto-vivify on first write
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
 		if (meta.ClosedAt != null)
-			throw new InvalidOperationException($"board '{board}' is closed — reopen it (tasks.board_reopen) before writing");
+			throw new InvalidOperationException($"board '{board}' is closed — reopen it (tasks_board_reopen) before writing");
 
 		var runtime = await RuntimeAsync(projectKey, ct);
 		var kindSlug = meta.Kind;
@@ -1064,6 +1064,14 @@ public sealed partial class TasksService : ITasksService
 	// untouched.
 	static TemporalUpsertResult<PlanNode> ScopeEchoToCall(TemporalUpsertResult<PlanNode> r, IReadOnlyList<NodePatch> patches, long mainCursor)
 	{
+		// A write that did NOT apply changed nothing — the echo must be empty so the ack reads
+		// unambiguously as "not applied" (spec upsert-ack-echo-clean). The whole story is in
+		// Conflicts (each with its baseline/active version); a caller rebases via tasks_delta.
+		// Without this, Added/Updated carry the mentioned nodes' CURRENT state and read as if
+		// the write landed.
+		if (!r.Applied)
+			return r with { Added = [], Updated = [], Removed = [] };
+
 		var mentioned = patches.Select(p => p.Key)
 			.Concat(patches.Where(p => p.PrevKey is not null).Select(p => p.PrevKey!))
 			.ToHashSet(StringComparer.Ordinal);
@@ -1116,7 +1124,7 @@ public sealed partial class TasksService : ITasksService
 			boardsMeta = boardsMeta.Where(b => string.Equals(b.Name, boardFilter, StringComparison.Ordinal)).ToList();
 
 		// Predicates shared by both modes. keys = explicit addressing (slug|NodeId mixed,
-		// resolved like tasks.node_get — a miss/ambiguity is a clear error, never an empty
+		// resolved like tasks_node_get — a miss/ambiguity is a clear error, never an empty
 		// answer); under = a part_of subtree root (slug resolves cross-board when no board).
 		HashSet<string>? keyIds = null;
 		if (f.Keys is { Count: > 0 })
@@ -1817,7 +1825,7 @@ public sealed partial class TasksService : ITasksService
 		return $"{ascii}-{Guid.NewGuid():N}"[..(Math.Min(ascii.Length, 32) + 7)];
 	}
 
-	// ---- system: report.issue ----
+	// ---- system: report_issue ----
 
 	public async Task<string> ReportIssueAsync(string project, string board, string title, string body, CancellationToken ct = default)
 	{

@@ -10,11 +10,11 @@ using PetBox.Tasks.Services;
 
 namespace PetBox.Tests.Tasks;
 
-// Echo-covers-the-call (spec sinceversion-contract): a tasks.upsert is a pure write-ack —
+// Echo-covers-the-call (spec sinceversion-contract): a tasks_upsert is a pure write-ack —
 // it echoes ONLY the nodes of THIS call (its patches + its own cascade closures), never
 // other writers' history — an insert of 3 nodes on a live board must not return 78 foreign
 // nodes. The write carries NO cursor parameter; the full board delta since a cursor lives
-// exclusively on tasks.delta, and `currentVersion` stays the board-wide cursor for it.
+// exclusively on tasks_delta, and `currentVersion` stays the board-wide cursor for it.
 [Collection("DataModule")]
 public sealed class UpsertEchoScopeTests : IDisposable
 {
@@ -86,7 +86,7 @@ public sealed class UpsertEchoScopeTests : IDisposable
 	}
 
 	// The write-ack no longer carries a full-delta mode (includeDelta is gone): the delta
-	// since a cursor is tasks.delta's job, and it returns the exact equivalent.
+	// since a cursor is tasks_delta's job, and it returns the exact equivalent.
 	[Fact]
 	public async Task FullBoardDelta_LivesOnTasksDelta_NotOnTheWriteAck()
 	{

@@ -2,7 +2,7 @@ namespace PetBox.Core.Auth;
 
 // Canonical catalog of ApiKey scopes. Used by the create-key UI to render
 // a checkbox group (so users don't have to type colon-separated strings
-// and end up with typos like "log.query" or "onfig:read") and by the
+// and end up with typos like "log_query" or "onfig:read") and by the
 // server to validate submitted scope sets — anything not in this list is
 // rejected with a clear error.
 public sealed record ApiKeyScope(string Value, string Title, string Description, string Module);
@@ -18,6 +18,7 @@ public static class ApiKeyScopes
 	public const string LogsQuery = "logs:query";
 	public const string LogsAdmin = "logs:admin";
 	public const string HealthWrite = "health:write";
+	public const string HealthRead = "health:read";
 	public const string DataRead = "data:read";
 	public const string DataWrite = "data:write";
 	public const string DataSchema = "data:schema";
@@ -38,9 +39,10 @@ public static class ApiKeyScopes
 		new(ConfigRead,  "Read shared config",     "GET /v1/conf (resolved config bundle).",                                       "Config"),
 		new(ConfigWrite, "Write shared config",    "POST/PATCH bindings; create new bindings; edit secrets.",                     "Config"),
 		new(LogsIngest,  "Ingest log events",      "POST /api/ingest/{p}/{log}/clef (CLEF JSON lines). Used by pets to ship log lines.", "Logs"),
-		new(LogsQuery,   "Query logs (KQL)",       "KQL search via /api/logs/{p}/{log}/query and the MCP `log.query` tool; list logs.", "Logs"),
+		new(LogsQuery,   "Query logs (KQL)",       "KQL search via /api/logs/{p}/{log}/query and the MCP `log_query` tool; list logs.", "Logs"),
 		new(LogsAdmin,   "Manage logs",            "Create and delete named logs via /api/logs/{p}/logs.",                        "Logs"),
 		new(HealthWrite, "Push health/status",     "POST /api/health — push a service status report (svc + tags + version/status).", "Health"),
+		new(HealthRead,  "Read health/status",      "Read the latest health report per service (+ optional history) via the MCP health_search tool.", "Health"),
 		new(DataRead,    "Read DataDbs",           "List DataDbs, SELECT via /api/data/{p}/{db}/query, describe schemas.",       "Data"),
 		new(DataWrite,   "Write DataDb rows",      "INSERT/UPDATE/DELETE via /api/data/{p}/{db}/exec.",                          "Data"),
 		new(DataSchema,  "Schema apply / lifecycle","CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs.",          "Data"),
@@ -48,7 +50,7 @@ public static class ApiKeyScopes
 		new(TasksWrite,  "Write tasks",            "Create boards and upsert plan nodes / append sessions via the MCP tasks.*/session.* tools.", "Tasks"),
 		new(MemoryRead,  "Read memory",            "List/read memory stores and entries via the MCP memory.* tools.", "Memory"),
 		new(MemoryWrite, "Write memory",           "Create stores and upsert entries via the MCP memory.* tools.", "Memory"),
-		new(LlmInvoke,   "Invoke LLM router",      "Call embed/rerank/chat through the router via the MCP llm.embed/rerank/chat tools.", "LlmRouter"),
+		new(LlmInvoke,   "Invoke LLM router",      "Call embed/rerank/chat through the router via the MCP llm_embed/rerank/chat tools.", "LlmRouter"),
 		new(LlmAdmin,    "Manage LLM router",      "Read/write the router registry (endpoints, routes, api keys, cert pin) via the MCP llm.config_* tools.", "LlmRouter"),
 		new(DeployRead,  "Read deploy fleet",      "List nodes and deployments via the deploy UI.", "Deploy"),
 		new(DeployWrite, "Manage deploy fleet",    "Register nodes, mint node keys, create/move/start/stop deployments via the deploy UI.", "Deploy"),
@@ -61,7 +63,7 @@ public static class ApiKeyScopes
 		new(All.Select(s => s.Value), StringComparer.Ordinal);
 
 	// Returns (valid, invalid) splits of a comma/space-separated scope string.
-	// Used by the create-key handler to reject typos like "log.query".
+	// Used by the create-key handler to reject typos like "log_query".
 	public static (List<string> Valid, List<string> Invalid) Validate(string? input)
 	{
 		var valid = new List<string>();

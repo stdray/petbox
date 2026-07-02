@@ -35,13 +35,13 @@ else (yes)
   end note
 endif
 
-:Dedup vs existing memory.*;
+:Dedup vs existing memory_*;
 note right
   semantic + lexical;
   embedder down -> lexical-only dedup
 end note
 
-:Write fact to semantic tier (memory.*);
+:Write fact to semantic tier (memory_*);
 :Attach PROVENANCE (sessionId + offset);
 note right
   the "one mega-session" bridge:

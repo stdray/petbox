@@ -4,7 +4,7 @@ namespace PetBox.Sessions.Contract;
 
 // The latest snapshot of a session: every message, newest state (no per-revision history).
 // Version == the last message's Version. Content renders the conversation as readable text
-// (what the UI shows and session.get returns) — a single-message snapshot renders verbatim,
+// (what the UI shows and session_get returns) — a single-message snapshot renders verbatim,
 // multi-message renders with `### role` headers (mirrors the old hook output).
 public sealed record SessionSnapshot(
 	string SessionId, string Agent, IReadOnlyList<SessionMessage> Messages, long Version, DateTime Updated)

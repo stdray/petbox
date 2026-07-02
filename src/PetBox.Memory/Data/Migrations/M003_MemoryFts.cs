@@ -3,7 +3,7 @@ using FluentMigrator;
 namespace PetBox.Memory.Data.Migrations;
 
 // FTS5 search index over active memory entries (Description/Body/Tags), keyed by
-// Key. Tokenised + ranked — replaces the substring scan in memory.search, so an
+// Key. Tokenised + ranked — replaces the substring scan in memory_search, so an
 // agent can find a note by paraphrase/word rather than exact substring (a recall
 // gap that would otherwise bias the dogfooding compliance signal).
 //

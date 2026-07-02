@@ -10,7 +10,7 @@ package "Search facade" {
 }
 
 package "Hot tier  (small, always indexed)  — SQLite" as hot {
-  [memory.* entries\nboard nodes] as mem
+  [memory_* entries\nboard nodes] as mem
   interface IFullTextIndex as fti
   interface IVectorIndex as vi
   [SQLite FTS5 (unicode61 + prefix)\nTODO: snowball stemmer] as fts_hot
@@ -19,7 +19,7 @@ package "Hot tier  (small, always indexed)  — SQLite" as hot {
 
 package "Episodic tier  (large, lazy)  — transient DuckDB over the session store" as epi {
   database "cold: petbox session store\nSQLite, Brotli-JSONL snapshot,\nmessage-addressable (__version)" as cold
-  [Digest index\n(always-on, small, HYBRID)\nmemory store `session-digests`\nSessionDigestJob: DeltaAsync -> llm.chat] as digest
+  [Digest index\n(always-on, small, HYBRID)\nmemory store `session-digests`\nSessionDigestJob: DeltaAsync -> llm_chat] as digest
   [Lazy hydrator (DuckDbSessionEpisodicIndex)\nsession store -> in-memory DuckDB FTS(russian)\n+ brute vectors dim1024, cached, TTL aging] as hydr
 }
 

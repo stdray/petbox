@@ -1,6 +1,6 @@
 @model IReadOnlyList<PetBox.Web.Pages.Shared.CommentLine>
 @* Read-only discussion thread under one plan node, DFS-flattened with an indent. Shared by
-   the board page and the node detail page. Writes still go through the comments.* MCP tools
+   the board page and the node detail page. Writes still go through the comments_* MCP tools
    (interactive UI is a separate task). Renders nothing when the thread is empty. *@
 @if (Model.Count > 0)
 {

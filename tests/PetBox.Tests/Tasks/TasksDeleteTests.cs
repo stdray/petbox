@@ -10,7 +10,7 @@ using PetBox.Tasks.Services;
 
 namespace PetBox.Tests.Tasks;
 
-// The `deleted:true` patch in tasks.upsert: a temporal-close of the active node (history
+// The `deleted:true` patch in tasks_upsert: a temporal-close of the active node (history
 // kept) that also closes everything hanging off it — edges (both directions), tags, the
 // FTS row — and rides the normal upsert result (removed[] + closed). Guards: a node with
 // active part_of children is refused via a Rejected conflict; delete cannot combine with

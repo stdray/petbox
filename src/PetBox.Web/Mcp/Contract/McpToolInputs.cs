@@ -1,7 +1,7 @@
 namespace PetBox.Web.Mcp.Contract;
 
 // Typed MCP tool-INPUT records (typed-surface Phase 4 — typed inputs). The structural
-// array params of tasks.upsert (`nodes`) and memory.upsert (`entries`) used to arrive as a
+// array params of tasks_upsert (`nodes`) and memory_upsert (`entries`) used to arrive as a
 // raw JsonElement, so the SDK-generated inputSchema was an opaque blob and the per-field
 // types were invisible to the client (the class of bug that produced the config_binding
 // stringified-object trap). Making the param a typed array (PlanNodeInput[] / MemoryEntryInputDto[])
@@ -16,7 +16,7 @@ namespace PetBox.Web.Mcp.Contract;
 // goal, and the stale-string risk is bounded to within a single MCP session (a reconnect
 // refreshes the cached schema and fixes it). See the report.
 
-// A node as submitted to tasks.upsert. Mirrors EXACTLY the fields the old JsonElement parser
+// A node as submitted to tasks_upsert. Mirrors EXACTLY the fields the old JsonElement parser
 // (TasksTools.ParseNodePatches/ParseTags/ResolveKey/ResolvePrevKey) accepted. Field semantics
 // (null = omit/inherit, "" = explicit clear) are unchanged — they are now carried by the JSON
 // value itself (an omitted property deserializes to null = inherit; an explicit "" stays "").
@@ -55,11 +55,11 @@ public sealed record PlanNodeInput
 	public IReadOnlyList<string>? Tags { get; init; }
 
 	// Soft-delete marker: { key, deleted:true } temporal-closes the active node (optional
-	// version baseline). Mirrors memory.upsert's marker; other fields are ignored.
+	// version baseline). Mirrors memory_upsert's marker; other fields are ignored.
 	public bool Deleted { get; init; }
 }
 
-// The `definition` argument of tasks.methodology_def_upsert — the whole user-defined
+// The `definition` argument of tasks_methodology_def_upsert — the whole user-defined
 // methodology as a structured document (typed records, not a JSON string/blob, per the
 // typed-surface convention). Mirrors MethodologyDefinition; the adapter maps it 1:1 and
 // the service validates integrity (slugs, per-block references, uniqueness).
@@ -68,7 +68,7 @@ public sealed record MethodologyDefInput
 	// Methodology name, a slug ([a-z][a-z0-9_-]{0,99}).
 	public string? Name { get; init; }
 	public MethodologyKindInput[]? Kinds { get; init; }
-	// Project-declared relation kinds (effect-free), usable in relations.create alongside
+	// Project-declared relation kinds (effect-free), usable in relations_create alongside
 	// the builtin process + neutral kinds.
 	public MethodologyLinkKindInput[]? LinkKinds { get; init; }
 	// Declared tag namespaces: when present, tags on definition-resolved boards must be
@@ -113,7 +113,7 @@ public sealed record MethodologyTagAxisInput
 	public string? Description { get; init; }
 }
 
-// One state machine shared by every type slug in `types` (the tasks.workflow block
+// One state machine shared by every type slug in `types` (the tasks_workflow block
 // shape). Convention: statuses[0] is the initial status.
 public sealed record MethodologyWorkflowInput
 {
@@ -123,7 +123,7 @@ public sealed record MethodologyWorkflowInput
 }
 
 // A workflow status: `kind` is open|terminalok|terminalcancel (default open), the same
-// string vocabulary tasks.workflow answers with; `name` defaults to the slug.
+// string vocabulary tasks_workflow answers with; `name` defaults to the slug.
 public sealed record MethodologyStatusInput
 {
 	public string? Slug { get; init; }
@@ -143,7 +143,7 @@ public sealed record MethodologyTransitionInput
 	public string? PreconditionArtifact { get; init; }
 }
 
-// One entry of the `migration` argument of tasks.methodology_def_upsert: declared value
+// One entry of the `migration` argument of tasks_methodology_def_upsert: declared value
 // repairs for live nodes on boards of `kind` that a definition change would otherwise
 // strand. A mapping applies ONLY where a node's current value is invalid under the NEW
 // resolution — a valid value is never rewritten (declarative repair, not bulk rename).
@@ -163,7 +163,7 @@ public sealed record MethodologyValueMapInput
 	public string? To { get; init; }
 }
 
-// The `sort` argument of tasks.search: `by` names the axis (priority|created|updated|title|
+// The `sort` argument of tasks_search: `by` names the axis (priority|created|updated|title|
 // relevance — relevance only with a query), `desc` flips the direction (ignored for
 // relevance, whose fused order is already most-relevant-first).
 public sealed record SortInput
@@ -172,7 +172,7 @@ public sealed record SortInput
 	public bool Desc { get; init; }
 }
 
-// One transcript message as submitted to session.append — the same {role, content} shape the
+// One transcript message as submitted to session_append — the same {role, content} shape the
 // snapshot stores and the REST ndjson push sends; the server assigns the ordinal.
 public sealed record SessionMessageDto
 {
@@ -180,7 +180,7 @@ public sealed record SessionMessageDto
 	public string? Content { get; init; }
 }
 
-// An entry as submitted to memory.upsert. Mirrors EXACTLY the fields the old JsonElement parser
+// An entry as submitted to memory_upsert. Mirrors EXACTLY the fields the old JsonElement parser
 // (MemoryTools.ParseEntries) accepted, including the `deleted:true` soft-delete marker.
 public sealed record MemoryEntryInputDto
 {

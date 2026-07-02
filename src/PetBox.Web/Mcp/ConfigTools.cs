@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class ConfigTools
 {
-	[McpServerTool(Name = "config.binding_upsert", Title = "Upsert a config binding", UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingUpsertResult))]
+	[McpServerTool(Name = "config_binding_upsert", Title = "Upsert a config binding", UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingUpsertResult))]
 	[Description("""
 		PUT by (path, tagset): upserts a config binding in a workspace's config store; if an
 		ACTIVE binding with the same path and the same normalized tag SET (order/case/whitespace
@@ -115,7 +115,7 @@ public static class ConfigTools
 		new(raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
 			StringComparer.OrdinalIgnoreCase);
 
-	[McpServerTool(Name = "config.binding_list", Title = "List config bindings", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsListResult))]
+	[McpServerTool(Name = "config_binding_list", Title = "List config bindings", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsListResult))]
 	[Description("Lists a workspace's active config bindings (id, path, tags, kind). Requires admin:provision. Secret values are never returned.")]
 	public static async Task<ConfigBindingsListResult> BindingListAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
@@ -134,12 +134,12 @@ public static class ConfigTools
 		return new ConfigBindingsListResult(rows.Select(b => new ConfigBindingRow(b.Id, b.Path, b.Tags, b.Kind.ToString())).ToList());
 	}
 
-	[McpServerTool(Name = "config.binding_delete", Title = "Delete a config binding", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingDeletedResult))]
+	[McpServerTool(Name = "config_binding_delete", Title = "Delete a config binding", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingDeletedResult))]
 	[Description("Soft-deletes a config binding by id (the row is kept, marked deleted). Requires admin:provision.")]
 	public static async Task<ConfigBindingDeletedResult> BindingDeleteAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
 		[Description("Workspace key the binding belongs to.")] string workspaceKey,
-		[Description("Binding id (from config.binding_list).")] long id,
+		[Description("Binding id (from config_binding_list).")] long id,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);

@@ -6,7 +6,7 @@ using PetBox.Log.Core.Models;
 
 namespace PetBox.Log.Core.Query;
 
-// The shared KQL execution path for a named log. The MCP log.query tool and the REST
+// The shared KQL execution path for a named log. The MCP log_query tool and the REST
 // /api/logs/{p}/{log} endpoint used to re-implement the same orchestration (exists-check,
 // KQL parse + diagnostics, shape-changing branch, transform) around the already-shared
 // KqlTransformer. This collapses that orchestration into one place; each adapter keeps

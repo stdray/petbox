@@ -114,7 +114,7 @@ public sealed class MethodologyPrimitivesTests : IAsyncLifetime
 	static string Text(CallToolResult r) =>
 		r.Content.OfType<TextContentBlock>().First().Text;
 
-	// Errors arrive as the central envelope {"error":{...}} (IsError stays false).
+	// Errors arrive as the central envelope {"error":{...}} on the isError channel (IsError=true).
 	static bool IsErr(CallToolResult r) =>
 		r.IsError == true ||
 		(r.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text?.Contains("\"error\"") ?? false);
@@ -174,19 +174,19 @@ public sealed class MethodologyPrimitivesTests : IAsyncLifetime
 
 	async Task Define(object definition)
 	{
-		var r = await Call("tasks.methodology_def_upsert", new { projectKey = ProjectKey, definition, version = 0 });
+		var r = await Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition, version = 0 });
 		IsErr(r).Should().BeFalse(Text(r));
 	}
 
 	Task<CallToolResult> DefUpsert(object definition) =>
-		Call("tasks.methodology_def_upsert", new { projectKey = ProjectKey, definition, version = 0 });
+		Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition, version = 0 });
 
 	Task<CallToolResult> Upsert(string board, params object[] nodes) =>
-		Call("tasks.upsert", new { projectKey = ProjectKey, board, nodes = Nodes(nodes) });
+		Call("tasks_upsert", new { projectKey = ProjectKey, board, nodes = Nodes(nodes) });
 
 	async Task CreateBoard(string board, string? kind = "support")
 	{
-		var r = await Call("tasks.board_create", new { projectKey = ProjectKey, board, kind });
+		var r = await Call("tasks_board_create", new { projectKey = ProjectKey, board, kind });
 		IsErr(r).Should().BeFalse(Text(r));
 	}
 
@@ -307,7 +307,7 @@ public sealed class MethodologyPrimitivesTests : IAsyncLifetime
 	// ── Part B: link kinds ───────────────────────────────────────────────────
 
 	// 3. neutral builtin kinds and definition-declared kinds are accepted by
-	// relations.create and round-trip via relations.list; an undeclared kind is rejected
+	// relations_create and round-trip via relations_list; an undeclared kind is rejected
 	// listing the project's whole vocabulary.
 	[Fact]
 	public async Task Relations_NeutralAndDeclaredKindsAccepted_UnknownListsVocabulary()
@@ -318,19 +318,19 @@ public sealed class MethodologyPrimitivesTests : IAsyncLifetime
 			new { key = "printer", type = "ticket", title = "Printer", body = "x" },
 			new { key = "toner", type = "ticket", title = "Toner", body = "x" })).Should().BeFalse();
 
-		var neutral = await Call("relations.create", new { projectKey = ProjectKey, kind = "relates_to", fromNodeId = "printer", toNodeId = "toner" });
+		var neutral = await Call("relations_create", new { projectKey = ProjectKey, kind = "relates_to", fromNodeId = "printer", toNodeId = "toner" });
 		IsErr(neutral).Should().BeFalse(Text(neutral));
 
-		var declared = await Call("relations.create", new { projectKey = ProjectKey, kind = "escalates", fromNodeId = "printer", toNodeId = "toner" });
+		var declared = await Call("relations_create", new { projectKey = ProjectKey, kind = "escalates", fromNodeId = "printer", toNodeId = "toner" });
 		IsErr(declared).Should().BeFalse(Text(declared));
 
-		var list = await Call("relations.list", new { projectKey = ProjectKey, nodeId = "printer" });
+		var list = await Call("relations_list", new { projectKey = ProjectKey, nodeId = "printer" });
 		IsErr(list).Should().BeFalse(Text(list));
 		Text(list).Should().Contain("relates_to");
 		Text(list).Should().Contain("escalates");
 
 		// NB: the envelope JSON-escapes apostrophes ('), so assertions avoid quoted spans.
-		var unknown = await Call("relations.create", new { projectKey = ProjectKey, kind = "banana", fromNodeId = "printer", toNodeId = "toner" });
+		var unknown = await Call("relations_create", new { projectKey = ProjectKey, kind = "banana", fromNodeId = "printer", toNodeId = "toner" });
 		IsErr(unknown).Should().BeTrue(Text(unknown));
 		Text(unknown).Should().Contain("invalid relation kind");
 		Text(unknown).Should().Contain("banana");
@@ -345,20 +345,20 @@ public sealed class MethodologyPrimitivesTests : IAsyncLifetime
 	[Fact]
 	public async Task Relations_NeutralKind_TriggersNoProcessEffects()
 	{
-		await Call("tasks.board_create", new { projectKey = ProjectKey, board = "scratch" }); // simple
+		await Call("tasks_board_create", new { projectKey = ProjectKey, board = "scratch" }); // simple
 		IsErr(await Upsert("scratch",
 			new { key = "a", status = "Todo", title = "A", body = "x" },
 			new { key = "b", status = "Todo", title = "B", body = "x" })).Should().BeFalse();
-		IsErr(await Call("relations.create", new { projectKey = ProjectKey, kind = "relates_to", fromNodeId = "a", toNodeId = "b" }))
+		IsErr(await Call("relations_create", new { projectKey = ProjectKey, kind = "relates_to", fromNodeId = "a", toNodeId = "b" }))
 			.Should().BeFalse();
 
 		IsErr(await Upsert("scratch", new { key = "a", version = 1, status = "Done" })).Should().BeFalse();
 
-		var board = await Call("tasks.search", new { projectKey = ProjectKey, board = "scratch" });
+		var board = await Call("tasks_search", new { projectKey = ProjectKey, board = "scratch" });
 		Text(board).Should().Contain("\"key\":\"b\"");
 		Text(board).Should().Contain("\"status\":\"Todo\"", "the related node is untouched by a's Done");
 
-		var list = await Call("relations.list", new { projectKey = ProjectKey, nodeId = "b" });
+		var list = await Call("relations_list", new { projectKey = ProjectKey, nodeId = "b" });
 		Text(list).Should().Contain("relates_to");
 		Text(list).Should().NotContain("closedAt", "the neutral edge stays active — no Done effect closes it");
 	}
@@ -383,7 +383,7 @@ public sealed class MethodologyPrimitivesTests : IAsyncLifetime
 			tags = new[] { "severity:high", "channel:email" },
 		});
 		IsErr(ok).Should().BeFalse(Text(ok));
-		Text(await Call("tasks.search", new { projectKey = ProjectKey, board = "helpdesk" }))
+		Text(await Call("tasks_search", new { projectKey = ProjectKey, board = "helpdesk" }))
 			.Should().Contain("severity:high");
 
 		var badNs = await Upsert("helpdesk", new
@@ -431,7 +431,7 @@ public sealed class MethodologyPrimitivesTests : IAsyncLifetime
 		});
 		IsErr(ok).Should().BeFalse(Text(ok));
 
-		var board = Text(await Call("tasks.search", new { projectKey = ProjectKey, board = "helpdesk" }));
+		var board = Text(await Call("tasks_search", new { projectKey = ProjectKey, board = "helpdesk" }));
 		board.Should().Contain("anyns:val");
 		board.Should().Contain("tag:urgent", "a bare word files under the default namespace");
 	}
@@ -446,7 +446,7 @@ public sealed class MethodologyPrimitivesTests : IAsyncLifetime
 	{
 		await Define(FullDefinition());
 
-		var got = Parse(await Call("tasks.methodology_def_get", new { projectKey = ProjectKey }));
+		var got = Parse(await Call("tasks_methodology_def_get", new { projectKey = ProjectKey }));
 		got.GetProperty("defined").GetBoolean().Should().BeTrue();
 
 		var kind = got.GetProperty("kinds").EnumerateArray().Single();

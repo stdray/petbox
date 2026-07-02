@@ -52,9 +52,9 @@ Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a sto
 - `workspace` → the shared cross-project container (`$system`). When the key's project IS `$system`, project and workspace collapse and a cascade recall searches it once.
 
 **MCP tools** (server `petbox`):
-- Read: `memory.search{q?,scope?,store?,type?,sort?,limit?,bodyLen?}` — THE read verb (uniform-entity-verbs v2; replaced `memory.list`+`memory.recall`). Without `q` a deterministic listing (updated desc); with `q` hybrid FTS ⊕ vectors. No scope ⇒ **cascade** project ⊕ workspace, sweeps every store **except `ops`**, rows labelled by scope, project first. One entry: `memory.get`.
-- Capture: `memory.remember{text,scope?,store?,type?,tags?,description?}` (verbatim, auto-key).
-- Structural/curated: `memory.store_create|store_list|store_delete`, `memory.upsert|delta`.
+- Read: `memory_search{q?,scope?,store?,type?,sort?,limit?,bodyLen?}` — THE read verb (uniform-entity-verbs v2; replaced `memory.list`+`memory.recall`). Without `q` a deterministic listing (updated desc); with `q` hybrid FTS ⊕ vectors. No scope ⇒ **cascade** project ⊕ workspace, sweeps every store **except `ops`**, rows labelled by scope, project first. One entry: `memory_get`.
+- Capture: `memory_remember{text,scope?,store?,type?,tags?,description?}` (verbatim, auto-key).
+- Structural/curated: `memory_store_create|store_list|store_delete`, `memory_upsert|delta`.
 
 **Capture flow:** the SessionStart hook (`pull-memory.ts`) injects an instruction; the agent itself calls `memory_search` at start and `memory_remember` as it learns (instruct-the-agent — there is no memory READ REST). Background distillation (SessionFactsJob/BehaviorPatternJob) also writes into the `autocaptured` store; raw capture goes to Sessions (below).
 
@@ -63,16 +63,16 @@ Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a sto
 Storage: `sessions/{projectKey}.db` — a **flat latest-snapshot** per session (one row, no temporal history), content stored as a Brotli-compressed JSONL message blob. Keyed by `sessionId`; `version` == the last message's ordinal.
 
 - **REST:** `POST /api/sessions/{projectKey}/{sessionId}?agent=…` — body is `application/x-ndjson` (one `{role, content}` message per line). This is what the agent **Stop hook** (`agents/wiring/push-session.ts`, opencode `opencode-plugin.ts`) calls every turn: it re-sends the full ordered transcript (last-write-wins; the server numbers the messages).
-- **MCP:** `session.search|get|upsert|append|delete` — `session.search` is THE read verb (uniform-entity-verbs v2; replaced `session.list`): without `q` a listing of compact rows, with `q` the two-stage archive search (digest discovery → episodic hydration; hits carry message ordinals for `session.get`).
+- **MCP:** `session_search|get|upsert|append|delete` — `session_search` is THE read verb (uniform-entity-verbs v2; replaced `session.list`): without `q` a listing of compact rows, with `q` the two-stage archive search (digest discovery → episodic hydration; hits carry message ordinals for `session_get`).
 - **UI:** `/ui/{ws}/{project}/sessions/{sessionId}` (read-only detail).
 
 ## 6. Tasks — MCP + Razor UI
 
 Storage: `tasks/{projectKey}.db` (`plan_nodes` partitioned by `Board`; `node_tag`/`tag_vocab`) + `TaskBoards` meta and `Relation` edges in `petbox.db`.
 
-- **Model (spec-flat-tags):** nodes are FLAT slugs; hierarchy is the `part_of` edge; grouping is enforced tags (`area:*`/`concern:*`); the "tree" is a projection (`tasks.search` returns `parentSlug`/`depth`, or pass `groupBy=area|concern`).
-- **Methodology quartet:** the kinds `spec|ideas|intake|work` are **per-project singletons** (≤1 each; `free` unlimited). `tasks.methodology_enable(project)` idempotently provisions the missing ones and auto-wires `work→spec`; `tasks.methodology_get(project)` returns the quartet as one **compact index** (per-board status `counts` + header rows, no node bodies by default; pass `bodyLen` for a body snippet, `includeBoards` to pick boards; full bodies via `tasks.search` / `tasks.node_get`). The admin board page (`/ui/.../tasks`) offers EITHER **Enable methodology** (provisions the quartet as one unit) OR a **Free board** form — never per-kind creation by hand.
-- **MCP tools:** `tasks.board_create|list|delete|close|reopen|set_spec`, `tasks.search|node_get|upsert|delta|workflow`, `tasks.methodology_enable|get`, `relations.create|list|delete` (kinds `task_spec|issue_task|idea_spec|blocks|part_of|supersedes`). `tasks.search|node_get|methodology_get|upsert|delta` accept `include_url=true` to add an absolute `url` permalink (the `/ui/{ws}/{project}/tasks/node/{nodeId}` detail page) to each returned node — off by default.
+- **Model (spec-flat-tags):** nodes are FLAT slugs; hierarchy is the `part_of` edge; grouping is enforced tags (`area:*`/`concern:*`); the "tree" is a projection (`tasks_search` returns `parentSlug`/`depth`, or pass `groupBy=area|concern`).
+- **Methodology quartet:** the kinds `spec|ideas|intake|work` are **per-project singletons** (≤1 each; `free` unlimited). `tasks_methodology_enable(project)` idempotently provisions the missing ones and auto-wires `work→spec`; `tasks_methodology_get(project)` returns the quartet as one **compact index** (per-board status `counts` + header rows, no node bodies by default; pass `bodyLen` for a body snippet, `includeBoards` to pick boards; full bodies via `tasks_search` / `tasks_node_get`). The admin board page (`/ui/.../tasks`) offers EITHER **Enable methodology** (provisions the quartet as one unit) OR a **Free board** form — never per-kind creation by hand.
+- **MCP tools:** `tasks_board_create|list|delete|close|reopen|set_spec`, `tasks_search|node_get|upsert|delta|workflow`, `tasks_methodology_enable|get`, `relations_create|list|delete` (kinds `task_spec|issue_task|idea_spec|blocks|part_of|supersedes`). `tasks_search|node_get|methodology_get|upsert|delta` accept `include_url=true` to add an absolute `url` permalink (the `/ui/{ws}/{project}/tasks/node/{nodeId}` detail page) to each returned node — off by default.
 - **UI:** `/ui/{ws}/{project}/tasks` (board list, admin) and `/ui/{ws}/{project}/tasks/{board}` (board detail, part_of tree).
 
 ## 7. One shared container (`$system`)

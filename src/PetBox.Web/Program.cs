@@ -17,6 +17,7 @@ using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Ingestion;
 using PetBox.Web;
 using PetBox.Web.Contract;
+using PetBox.Web.Mcp;
 using PetBox.Web.Health;
 using PetBox.Web.Ingestion;
 using PetBox.Web.Navigation;
@@ -218,7 +219,11 @@ public partial class Program
 		};
 		builder.Services.AddMcpServer()
 			.WithHttpTransport()
-			.WithToolsFromAssembly(typeof(Program).Assembly, mcpJson)
+			// Schema-honest registration: nullable record properties are NOT marked
+			// `required` in the generated in/out schemas, so our null-omitting serializer
+			// (WhenWritingNull, incl. the bodyLen contract) stays conformant for strict
+			// clients. Replaces WithToolsFromAssembly (which has no schema-options seam).
+			.WithSchemaHonestToolsFromAssembly(typeof(Program).Assembly, mcpJson, PetBox.Web.Mcp.McpOutputSchema.NullableAware)
 			.WithRequestFilters(filters =>
 			{
 				PetBox.Web.Mcp.McpErrorEnvelopeFilter.Register(filters); // exceptions -> structured {error} body

@@ -7,7 +7,7 @@ namespace PetBox.Tasks.Data;
 // degenerate spec node: a tree (via ParentId) with tags, but NO status/type/priority.
 // Identity (Key) is a stable GUID; the active revision is the one whose ActiveTo is null.
 // Lives in the per-project tasks file next to plan_nodes (same IScopedDbFactory<TasksDb>),
-// owned by a node via the stable NodeId. NOT a PlanNode, so it never enters tasks.search /
+// owned by a node via the stable NodeId. NOT a PlanNode, so it never enters tasks_search /
 // the workflow FSM / delivery roll-ups.
 [Table("comments")]
 public sealed record CommentRow : TemporalRow

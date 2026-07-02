@@ -19,8 +19,8 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class RelationTools
 {
-	[McpServerTool(Name = "relations.create", Title = "Create a relation", UseStructuredContent = true, OutputSchemaType = typeof(RelationCreatedResult))]
-	[Description("CREATE (idempotent) a typed directed edge between two nodes — an identical existing edge is returned, not duplicated. kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the project's methodology definition declares (tasks.methodology_def_upsert linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for the project. fromNodeId/toNodeId each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks.upsert/tasks.search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). Requires tasks:write.")]
+	[McpServerTool(Name = "relations_create", Title = "Create a relation", UseStructuredContent = true, OutputSchemaType = typeof(RelationCreatedResult))]
+	[Description("CREATE (idempotent) a typed directed edge between two nodes — an identical existing edge is returned, not duplicated. kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the project's methodology definition declares (tasks_methodology_def_upsert linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for the project. fromNodeId/toNodeId each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). Requires tasks:write.")]
 	public static async Task<RelationCreatedResult> CreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
 		string projectKey, string kind,
@@ -40,7 +40,7 @@ public static class RelationTools
 		return new RelationCreatedResult(rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId);
 	}
 
-	[McpServerTool(Name = "relations.list", Title = "List relations", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationsListResult))]
+	[McpServerTool(Name = "relations_list", Title = "List relations", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationsListResult))]
 	[Description("List relations touching a node. nodeId takes a slug or NodeId (32-hex = the stable PlanNode.NodeId; a slug resolves across ALL the project's boards and must be unambiguous — else pass the NodeId). direction ∈ from|to|both (default both). Use direction=to to find edges pointing AT a node (reverse traversal, e.g. which tasks implement a spec node). includeHistory=true also returns soft-closed edges (with closedAt). Requires tasks:read.")]
 	public static async Task<RelationsListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
@@ -57,8 +57,8 @@ public static class RelationTools
 		return new RelationsListResult(list.Select(r => new RelationRow(r.Id, r.Kind, r.FromNodeId, r.ToNodeId, r.CreatedAt, r.ClosedAt)).ToList());
 	}
 
-	[McpServerTool(Name = "relations.delete", Title = "Delete a relation", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationDeletedResult))]
-	[Description("Delete a relation by its edge id (from relations.create/relations.list — not a node ref). Requires tasks:write.")]
+	[McpServerTool(Name = "relations_delete", Title = "Delete a relation", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationDeletedResult))]
+	[Description("Delete a relation by its edge id (from relations_create/relations_list — not a node ref). Requires tasks:write.")]
 	public static async Task<RelationDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations,
 		string projectKey, string id, CancellationToken ct = default)

@@ -13,7 +13,7 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Memory;
 
-// The usage-telemetry promises (spec: memory-usage-observability): a memory.search (with q)
+// The usage-telemetry promises (spec: memory-usage-observability): a memory_search (with q)
 // answer counts an impression for the RETURNED entries, a direct get counts an
 // engagement, listing counts nothing, internal IMemoryService traffic counts nothing,
 // counters surface only under includeUsage, and the read path never waits on the write
@@ -115,7 +115,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await Seed("u1");
 
-		// Bulk listing (memory.search without q = curation) + internal machine path (the
+		// Bulk listing (memory_search without q = curation) + internal machine path (the
 		// distiller's neighbor probe).
 		await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, scope: "project", store: "notes");
 		await _memory.SearchAsync(Proj, "notes", "телеметрию", type: null);
@@ -132,7 +132,7 @@ public sealed class MemoryUsageTests : IDisposable
 		await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
 		await _recorder.FlushAsync();
 
-		// memory.search returns the typed record directly (errors throw → McpErrorEnvelopeFilter
+		// memory_search returns the typed record directly (errors throw → McpErrorEnvelopeFilter
 		// renders them on the wire; unit tests read the concrete success value).
 		var plain = await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
 		plain.Items[0].Surfaced.Should().BeNull(); // default off — context economy
@@ -152,6 +152,75 @@ public sealed class MemoryUsageTests : IDisposable
 		await _recorder.FlushAsync();
 
 		(await _memory.GetUsageAsync(Proj, "notes"))["u1"].Surfaced.Should().Be(1);
+	}
+
+	[Fact]
+	public async Task Aggregate_OverMixOfUsedAndDeadEntries()
+	{
+		await Seed("u1", "u2", "u3", "u4", "u5");
+		// u1,u2 surfaced (impressions); u2 also opened; u3,u4,u5 never touched → the dead tail.
+		_recorder.Surfaced(Proj, "notes", ["u1", "u2"]);
+		_recorder.Opened(Proj, "notes", "u2");
+		await _recorder.FlushAsync();
+
+		var agg = await _memory.GetUsageAggregateAsync(Proj, "notes");
+
+		agg.TotalEntries.Should().Be(5);
+		agg.SurfacedAtLeastOnce.Should().Be(2);
+		agg.OpenedAtLeastOnce.Should().Be(1);
+		agg.SurfacedFraction.Should().BeApproximately(0.4, 1e-9);
+		agg.OpenedFraction.Should().BeApproximately(0.2, 1e-9);
+		agg.MedianLastHitAt.Should().NotBeNull();
+		agg.DeadTail.Count.Should().Be(3);
+		agg.DeadTail.TopKeys.Should().BeEquivalentTo(new[] { "u3", "u4", "u5" });
+	}
+
+	[Fact]
+	public async Task Aggregate_DeadTail_CapsAtLimit_OldestFirst()
+	{
+		await Seed("d1", "d2", "d3", "d4"); // none surfaced → all dead
+
+		var agg = await _memory.GetUsageAggregateAsync(Proj, "notes", deadTailLimit: 2);
+
+		agg.DeadTail.Count.Should().Be(4);          // the full count is not capped
+		agg.DeadTail.TopKeys.Should().HaveCount(2);  // the sample is
+	}
+
+	[Fact]
+	public async Task Aggregate_EmptyStore_IsAllZeroNoMedian()
+	{
+		await _memory.CreateStoreAsync(Proj, "notes", null);
+
+		var agg = await _memory.GetUsageAggregateAsync(Proj, "notes");
+
+		agg.TotalEntries.Should().Be(0);
+		agg.SurfacedAtLeastOnce.Should().Be(0);
+		agg.OpenedAtLeastOnce.Should().Be(0);
+		agg.SurfacedFraction.Should().Be(0);
+		agg.OpenedFraction.Should().Be(0);
+		agg.MedianLastHitAt.Should().BeNull();
+		agg.DeadTail.Count.Should().Be(0);
+		agg.DeadTail.TopKeys.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task StoreList_IncludeUsage_AttachesAggregate_DefaultOmitsIt()
+	{
+		await Seed("u1", "u2");
+		_recorder.Surfaced(Proj, "notes", ["u1"]);
+		await _recorder.FlushAsync();
+
+		var plain = await MemoryTools.StoreListAsync(Http(), Flags(), _memory, Proj);
+		plain.Stores.Should().ContainSingle();
+		plain.Stores[0].Usage.Should().BeNull(); // default off
+
+		var with = await MemoryTools.StoreListAsync(Http(), Flags(), _memory, Proj, includeUsage: true);
+		var row = with.Stores.Single(s => s.Name == "notes");
+		row.Usage.Should().NotBeNull();
+		row.Usage!.TotalEntries.Should().Be(2);
+		row.Usage.SurfacedAtLeastOnce.Should().Be(1);
+		row.Usage.DeadCount.Should().Be(1);
+		row.Usage.DeadTailKeys.Should().Contain("u2");
 	}
 
 	[Fact]

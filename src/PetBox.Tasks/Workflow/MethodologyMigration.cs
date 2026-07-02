@@ -1,6 +1,6 @@
 namespace PetBox.Tasks.Workflow;
 
-// The `migration` document of tasks.methodology_def_upsert (spec primitives-schema-
+// The `migration` document of tasks_methodology_def_upsert (spec primitives-schema-
 // migration): per board-kind slug, DECLARED value mappings that repair live nodes a
 // definition change would otherwise strand. A mapping applies ONLY where a node's current
 // value is INVALID under the new resolution — a valid value is never rewritten, so this is

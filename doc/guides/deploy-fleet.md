@@ -16,7 +16,7 @@ Managing the fleet needs an API key with scopes **`deploy:read,deploy:write`**.
 
 **Via MCP** (if your PetBox key has `admin:provision`):
 ```
-apikey.create(projectKey="$system", name="fleet-ops", scopes="deploy:read,deploy:write")
+apikey_create(projectKey="$system", name="fleet-ops", scopes="deploy:read,deploy:write")
 ```
 The raw key is shown **once** — store it. (Add `admin:provision` too if the same key should also mint other keys.)
 
@@ -48,9 +48,9 @@ That's the whole flow: once the node connects, PetBox brings up whatever deploym
 
 > **`sudo` note:** `enroll.sh` installs packages and writes `/etc`. Run it as **root** or where `sudo` is passwordless (`sudo -E` keeps the PETBOX_* env vars). A non-interactive run with a password-prompting `sudo` will hang.
 
-> **Operator pre-checks** (before trusting a fresh box): you can SSH in, and the host's security posture is what you intend. The agent **reports** the posture in its heartbeat — root SSH login not disabled / password auth allowed / low memory / low disk show up as ⚠ warnings on the node row (UI + `deploy.node_list`), and every warning appear/clear is logged to the `$system` self-log — but it deliberately does NOT change sshd config (report-only; fixing it is the operator's call).
+> **Operator pre-checks** (before trusting a fresh box): you can SSH in, and the host's security posture is what you intend. The agent **reports** the posture in its heartbeat — root SSH login not disabled / password auth allowed / low memory / low disk show up as ⚠ warnings on the node row (UI + `deploy_node_list`), and every warning appear/clear is logged to the `$system` self-log — but it deliberately does NOT change sshd config (report-only; fixing it is the operator's call).
 
-The node now appears in the fleet (UI `/ui/admin/sys/deploy` or `deploy.node_list`) and goes **online** within a poll interval (~30s). `journalctl -u petbox-deploy-agent -f` shows one `reconciled: N desired, M action(s), …; heartbeat ok` line per cycle.
+The node now appears in the fleet (UI `/ui/admin/sys/deploy` or `deploy_node_list`) and goes **online** within a poll interval (~30s). `journalctl -u petbox-deploy-agent -f` shows one `reconciled: N desired, M action(s), …; heartbeat ok` line per cycle.
 
 ### 2b. Local test in WSL2 (Windows + Docker Desktop)
 
@@ -67,7 +67,7 @@ PETBOX_URL=https://petbox.3po.su PETBOX_ADMIN_KEY=<deploy key> \
 
 > No systemd in WSL2 and don't want to enable it? For a quick test just run the agent in the foreground:
 > `PETBOX_URL=https://petbox.3po.su PETBOX_NODE_KEY=<minted key> python3 agent/petbox_deploy_agent.py`
-> (the minted key is in `/etc/petbox-deploy-agent.env` after enroll, or from `deploy.node_upsert`).
+> (the minted key is in `/etc/petbox-deploy-agent.env` after enroll, or from `deploy_node_upsert`).
 
 ## 3. Put a service on the rails
 
@@ -77,7 +77,7 @@ Create a deployment — the agent on that node will pull the image and run it.
 
 **Via MCP:**
 ```
-deploy.upsert(service="bot", project="yobapub", nodeId="vdsina-1",
+deploy_upsert(service="bot", project="yobapub", nodeId="vdsina-1",
               imageDigest="ghcr.io/you/bot:sha-abc123", running=true,
               requiredTags="net.x", configTags="env:prod")
 ```
@@ -85,14 +85,14 @@ deploy.upsert(service="bot", project="yobapub", nodeId="vdsina-1",
 - `requiredTags` — the node's tags must cover these (also used when failover picks a new home).
 - `relocatable=true` — let failover move it to another matching node if this one goes silent.
 
-Within a poll the container `petbox-<service>` is up. Check actual state: UI grid, or `deploy.list` (shows desired + last reported `actualState`/`healthy`).
+Within a poll the container `petbox-<service>` is up. Check actual state: UI grid, or `deploy_list` (shows desired + last reported `actualState`/`healthy`).
 
 ### 3b. Run-spec: ports, volumes and the rest of `docker run`
 
 A deployment can carry a declarative **run-spec** — the compose-subset the agent maps 1:1 to `docker run` flags (env is *not* part of it; env stays config-resolved). All fields are optional:
 
 ```
-deploy.upsert(service="web", project="yobapub", nodeId="vdsina-1",
+deploy_upsert(service="web", project="yobapub", nodeId="vdsina-1",
               imageDigest="ghcr.io/you/web:sha-abc123",
               ports=["127.0.0.1:8080:8080"],                 # [ip:]host:container[/tcp|udp]
               volumes=["/opt/web/logs:/app/logs",            # /host:/container[:ro|rw] (bind mounts only)
@@ -113,7 +113,7 @@ The UI's *New deployment* form covers ports/volumes/restart/memory/cpus/network/
 A deployment with a **`domain`** is a *site*: besides the container, the node agent keeps a Caddy route (domain → loopback port) in line with it.
 
 ```
-deploy.upsert(service="web", project="yobapub", nodeId="vdsina-1",
+deploy_upsert(service="web", project="yobapub", nodeId="vdsina-1",
               imageDigest="ghcr.io/you/web:sha-abc123",
               ports=["127.0.0.1:8080:8080"],
               domain="app.example.com")          # sitePort defaults to 8080 (ports[0] host port)
@@ -122,7 +122,7 @@ deploy.upsert(service="web", project="yobapub", nodeId="vdsina-1",
 - The agent owns `/etc/caddy/petbox.d/<service>.caddy` (`domain { reverse_proxy 127.0.0.1:<port> }`) and runs `systemctl reload caddy` on any change. It never touches anything outside that include dir.
 - **Host prerequisite**: caddy installed and the Caddyfile carrying `import /etc/caddy/petbox.d/*.caddy` — `enroll.sh` sets both up on a supported OS (§2a); only hand-provisioned hosts need it done manually.
 - Stopping/deleting the site removes its route (Caddy stops serving the domain instead of proxying into a dead container).
-- The agent reports host **capabilities** (`docker,caddy`) in its heartbeat — visible in the nodes table. A site assigned to a node **without caddy** surfaces as an explicit per-deployment error in the grid/`deploy.list` (`error: "site route not applied: caddy is not available on this node"`), not a silent failure. Reconcile errors in general (failed `docker run` included) now land in that same `error` field.
+- The agent reports host **capabilities** (`docker,caddy`) in its heartbeat — visible in the nodes table. A site assigned to a node **without caddy** surfaces as an explicit per-deployment error in the grid/`deploy_list` (`error: "site route not applied: caddy is not available on this node"`), not a silent failure. Reconcile errors in general (failed `docker run` included) now land in that same `error` field.
 
 ## 3a. Migrating a service that bootstraps from PetBox
 
@@ -131,24 +131,24 @@ Many PetBox services bootstrap from PetBox itself — they need `PETBOX_ENDPOINT
 1. Create two **config bindings** in the service's workspace, tagged so they only resolve for this deployment (not the app's normal `/v1/conf`):
    - `PETBOX_ENDPOINT` — **Plain**, tags `ws:<ws>,project:<proj>,deploy`
    - `PETBOX_API_KEY` — **Secret** (AES-encrypted at rest), tags `ws:<ws>,project:<proj>,deploy`
-2. Give the deployment **`configTags="deploy"`** (`deploy.upsert(... configTags="deploy")`).
+2. Give the deployment **`configTags="deploy"`** (`deploy_upsert(... configTags="deploy")`).
 
 Now the poll's server-side resolve over `(project, ["deploy"])` injects both into the container's `--env-file`. Because they're tagged `deploy`, they're scoped to the deploy path and don't leak into the application's own `/v1/conf` reads. (Worked example: `kpvotes` — bootstraps from PetBox, migrated exactly this way.)
 
 ## 4. Updating the running version (deploys)
 
-To roll a new image, set the new digest on the deployment — `deploy.upsert` with the same `(service, node)` and the new `imageDigest` (or edit it in the UI). The agent notices the changed config-hash and recreates the container.
+To roll a new image, set the new digest on the deployment — `deploy_upsert` with the same `(service, node)` and the new `imageDigest` (or edit it in the UI). The agent notices the changed config-hash and recreates the container.
 
-> CI integration (auto-bump the digest from a GitHub Actions build) is **not yet turn-key** — there's no REST hook for it. Today the new digest is set via the UI, `deploy.upsert` (MCP), or an agent/script that calls the MCP tool after the image is pushed. A first-class CI hook is a planned follow-up.
+> CI integration (auto-bump the digest from a GitHub Actions build) is **not yet turn-key** — there's no REST hook for it. Today the new digest is set via the UI, `deploy_upsert` (MCP), or an agent/script that calls the MCP tool after the image is pushed. A first-class CI hook is a planned follow-up.
 
 ## 5. Day-2 operations
 
-- **Status / list** — UI grid or `deploy.list` (per node/service filter); `deploy.node_list` for the fleet (incl. agent-detected `capabilities`, the `host` snapshot — memory/disk/os/ssh-posture — and computed `warnings`).
+- **Status / list** — UI grid or `deploy_list` (per node/service filter); `deploy_node_list` for the fleet (incl. agent-detected `capabilities`, the `host` snapshot — memory/disk/os/ssh-posture — and computed `warnings`).
 - **Host health** — the agent heartbeats a host report every cycle; thresholds live server-side (low memory: <10% or <150 MB; low disk: <10% or <2 GB). Warning transitions (appeared/cleared) are logged to the `$system` self-log, so history needs no separate monitoring stack.
-- **Stop / start** — `deploy.stop(id)` / `deploy.start(id)` or the UI buttons (sets desired state; the agent reconciles).
-- **Move** — `deploy.move(id, toNodeId)` (the source agent self-fences the old container, the target agent starts it).
+- **Stop / start** — `deploy_stop(id)` / `deploy_start(id)` or the UI buttons (sets desired state; the agent reconciles).
+- **Move** — `deploy_move(id, toNodeId)` (the source agent self-fences the old container, the target agent starts it).
 - **Copies** — create a deployment of the same service on another node (one per node).
-- **Remove** — `deploy.delete(id)` removes the deployment (the owning agent then removes the container); `deploy.node_delete(id)` removes a node and cascades its deployments.
+- **Remove** — `deploy_delete(id)` removes the deployment (the owning agent then removes the container); `deploy_node_delete(id)` removes a node and cascades its deployments.
 
 ## 6. Failover (auto-move)
 

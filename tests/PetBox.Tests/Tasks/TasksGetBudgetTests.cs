@@ -16,7 +16,7 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Tasks;
 
-// tasks.search response budget (spec bounded-result-sets, generalizing the methodology_get
+// tasks_search response budget (spec bounded-result-sets, generalizing the methodology_get
 // pattern via the shared ResponseBudget helper): a board too large for one response is
 // prefix-cut on the wire form of its rows and marked structurally (truncated/omitted +
 // a narrowing hint) — never silently; a board that fits serializes exactly as before
@@ -108,7 +108,8 @@ public sealed class TasksGetBudgetTests : IDisposable
 		const int total = 60;
 		await SeedAsync("big", total, 1000); // ~60k chars of bodies alone > the 30k budget
 
-		var view = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big");
+		// bodyLen:-1 = the full body (the default is now a compact snippet); full bodies overflow.
+		var view = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", bodyLen: -1);
 
 		// Prefix-cut in board order (priority then key), the cut is explicit and adds up.
 		view.Nodes.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
@@ -117,9 +118,9 @@ public sealed class TasksGetBudgetTests : IDisposable
 		view.Truncated.Should().BeTrue();
 		view.Omitted.Should().Be(total - view.Nodes.Count);
 		view.Hint.Should().NotBeNull();
-		view.Hint.Should().ContainAll("under", "status", "bodyLen", "groupBy", "tasks.node_get");
+		view.Hint.Should().ContainAll("under", "status", "bodyLen", "groupBy", "tasks_node_get");
 		// The kept rows still carry their FULL bodies — the budget cuts rows, not content.
-		view.Nodes.Should().OnlyContain(n => n.Body.Length == 1000);
+		view.Nodes.Should().OnlyContain(n => n.Body!.Length == 1000);
 	}
 
 	[Fact]
@@ -128,14 +129,14 @@ public sealed class TasksGetBudgetTests : IDisposable
 		const int total = 60;
 		await SeedAsync("big", total, 1000);
 
-		var full = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big");
+		var full = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", bodyLen: -1);
 		var snipped = await TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, board: "big", bodyLen: 20);
 
 		// The budget measures the POST-slicing wire rows: snippets are cheap, so the whole
 		// board fits and the markers disappear.
 		snipped.Nodes.Count.Should().Be(total);
 		snipped.Truncated.Should().BeNull();
-		snipped.Nodes.Should().OnlyContain(n => n.Body.Length == 21 && n.Body.EndsWith('…'));
+		snipped.Nodes.Should().OnlyContain(n => n.Body!.Length == 21 && n.Body.EndsWith('…'));
 		full.Nodes.Count.Should().BeLessThan(snipped.Nodes.Count);
 	}
 

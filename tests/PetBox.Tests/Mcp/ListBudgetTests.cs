@@ -22,7 +22,7 @@ using PetBox.Web.Mcp;
 namespace PetBox.Tests.Mcp;
 
 // The response budget on the remaining list-shaped reads (spec bounded-result-sets, the
-// shared ResponseBudget helper): memory.search / session.search / comments.list are prefix-cut
+// shared ResponseBudget helper): memory_search / session_search / comments_list are prefix-cut
 // on the wire form of their rows when they outgrow the output budget and marked structurally
 // (truncated:true + omitted + a narrowing hint) — never silently; an in-budget list
 // serializes byte-identical to the old shape (the marker fields are null and omitted).
@@ -96,7 +96,7 @@ public sealed class ListBudgetTests : IDisposable
 		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
 	};
 
-	// ---- memory.search (listing mode) ----
+	// ---- memory_search (listing mode) ----
 
 	async Task SeedMemoryAsync(int count, int bodyChars)
 	{
@@ -133,8 +133,9 @@ public sealed class ListBudgetTests : IDisposable
 		const int total = 40;
 		await SeedMemoryAsync(total, 2000); // ~80k chars of bodies > the 30k budget
 
+		// bodyLen:-1 = the full body (the default is now a compact snippet); full bodies overflow.
 		var res = await MemoryTools.SearchAsync(Http(), Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
-			scope: "project", store: "notes", limit: 0);
+			scope: "project", store: "notes", bodyLen: -1, limit: 0);
 
 		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
 		// Prefix-cut in listing order (one seed batch → equal Updated, ties on key) —
@@ -143,7 +144,7 @@ public sealed class ListBudgetTests : IDisposable
 			Enumerable.Range(0, res.Items.Count).Select(i => $"entry-{i:d3}"));
 		res.Truncated.Should().BeTrue();
 		res.Omitted.Should().Be(total - res.Items.Count);
-		res.Hint.Should().ContainAll("type", "limit", "bodyLen", "memory.get");
+		res.Hint.Should().ContainAll("type", "limit", "bodyLen", "memory_get");
 	}
 
 	[Fact]
@@ -159,7 +160,7 @@ public sealed class ListBudgetTests : IDisposable
 		snipped.Truncated.Should().BeNull();
 	}
 
-	// ---- session.search (listing mode — the former session.list) ----
+	// ---- session_search (listing mode — the former session.list) ----
 
 	[Fact]
 	public async Task SessionList_Small_NoMarkers()
@@ -187,10 +188,10 @@ public sealed class ListBudgetTests : IDisposable
 		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
 		res.Truncated.Should().BeTrue();
 		res.Omitted.Should().Be(total - res.Items.Count);
-		res.Hint.Should().ContainAll("q", "session.get");
+		res.Hint.Should().ContainAll("q", "session_get");
 	}
 
-	// ---- comments.list ----
+	// ---- comments_list ----
 
 	[Fact]
 	public async Task CommentsList_Small_NoMarkers()

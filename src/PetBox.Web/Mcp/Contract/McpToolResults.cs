@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using PetBox.Tasks.Contract;
 
 namespace PetBox.Web.Mcp.Contract;
@@ -50,7 +51,7 @@ public sealed record ProjectListResult(IReadOnlyList<ProjectRow> Projects);
 
 // ---- apikey.* (provisioning; replaces entity.* type "apikey") -------------------------
 
-// apikey.create returns the raw key ONCE (it is never retrievable again) + its granted scopes.
+// apikey_create returns the raw key ONCE (it is never retrievable again) + its granted scopes.
 public sealed record ApiKeyCreatedResult(string Key, string ProjectKey, IReadOnlyList<string> Scopes, DateTime? ExpiresAt);
 
 public sealed record ApiKeyRow(string Key, string Name, string Scopes, DateTime CreatedAt, DateTime? ExpiresAt);
@@ -78,7 +79,7 @@ public sealed record DataTableView(string Name, IReadOnlyList<DataColumnView> Co
 
 public sealed record DataDbDescribeResult(IReadOnlyList<DataTableView> Tables);
 
-// data.query is intrinsically dynamic: rows are an open list of column->value maps.
+// data_query is intrinsically dynamic: rows are an open list of column->value maps.
 public sealed record DataQueryResult(IReadOnlyList<IReadOnlyDictionary<string, object?>> Rows);
 
 public sealed record DataExecResult(int Affected);
@@ -97,21 +98,28 @@ public sealed record LogListResult(IReadOnlyList<LogRow> Logs);
 
 public sealed record LogDeletedResult(bool Deleted, string Name);
 
-// ---- log.query -----------------------------------------------------------------------
+// ---- log_query -----------------------------------------------------------------------
 
 // A single log event as projected onto the MCP wire (timestamp pre-formatted, level
 // stringified, properties JSON-stringified per-value). Null fields are omitted.
+//
+// Field names are pinned to the PascalCase KQL schema (Id, ServiceKey, Timestamp, Level…),
+// mirroring LogEventDto on the REST side. McpJsonUtilities.DefaultOptions camelCases by
+// default, but the table arm (LogQueryResultView.Columns) carries the schema names verbatim
+// as data — so without these pins the two log_query shapes disagree on casing (event.timestamp
+// vs column "Timestamp") and an agent parser written for the table shape breaks on the events
+// shape. Kept identical to the KQL schema and the REST DTO so every shape uses one casing.
 public sealed record LogEventView(
-	long Id,
-	string ServiceKey,
-	string Timestamp,
-	string Level,
-	string? Message,
-	string? MessageTemplate,
-	string? Exception,
-	IReadOnlyDictionary<string, object?> Properties);
+	[property: JsonPropertyName("Id")] long Id,
+	[property: JsonPropertyName("ServiceKey")] string ServiceKey,
+	[property: JsonPropertyName("Timestamp")] string Timestamp,
+	[property: JsonPropertyName("Level")] string Level,
+	[property: JsonPropertyName("Message")] string? Message,
+	[property: JsonPropertyName("MessageTemplate")] string? MessageTemplate,
+	[property: JsonPropertyName("Exception")] string? Exception,
+	[property: JsonPropertyName("Properties")] IReadOnlyDictionary<string, object?> Properties);
 
-// log.query is a discriminated union over `Kind`: "events" (Count + Events set; the table
+// log_query is a discriminated union over `Kind`: "events" (Count + Events set; the table
 // fields null/omitted) or "table" (Columns + Rows set; the events fields null/omitted). One
 // record carries both arms; null-omission keeps each arm's wire identical to the old anonymous
 // objects. Rows are an open table (cells are arbitrary scalars).
@@ -126,7 +134,20 @@ public sealed record LogQueryResultView(
 
 public sealed record MemoryStoreCreatedResult(string ProjectKey, string Name, string? Description, DateTime CreatedAt);
 
-public sealed record MemoryStoreRow(string Name, string? Description, DateTime CreatedAt);
+public sealed record MemoryStoreRow(string Name, string? Description, DateTime CreatedAt, MemoryStoreUsageRow? Usage = null);
+
+// Per-store usage aggregate on the wire (memory_store_list includeUsage:true; null when
+// the flag is off). Flattens MemoryUsageAggregate.DeadTail into DeadCount + DeadTailKeys —
+// spec: memory-usage-aggregate.
+public sealed record MemoryStoreUsageRow(
+	int TotalEntries,
+	int SurfacedAtLeastOnce,
+	int OpenedAtLeastOnce,
+	double SurfacedFraction,
+	double OpenedFraction,
+	DateTime? MedianLastHitAt,
+	int DeadCount,
+	IReadOnlyList<string> DeadTailKeys);
 
 public sealed record MemoryStoreListResult(IReadOnlyList<MemoryStoreRow> Stores);
 
@@ -147,7 +168,7 @@ public sealed record MemoryEntryRow(
 // Provenance of a hybrid search/recall: which retrievers ran and whether the answer is degraded.
 public sealed record RetrieverInfo(bool Lexical, bool Semantic, bool Degraded);
 
-// memory.upsert / memory.delta echo (mirrors the old anonymous Serialize shape).
+// memory_upsert / memory_delta echo (mirrors the old anonymous Serialize shape).
 public sealed record MemoryConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null);
 
 public sealed record MemoryUpsertResultView(
@@ -162,7 +183,7 @@ public sealed record MemoryUpsertResultView(
 
 public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key);
 
-// One memory.search row, labelled by scope (project|workspace) and store. Carries Version so
+// One memory_search row, labelled by scope (project|workspace) and store. Carries Version so
 // a search → upsert edit has its per-key CAS baseline without an extra get (or a
 // guaranteed-Stale 0). Usage fields appear only under `includeUsage:true` (null -> omitted)
 // — spec: memory-usage-observability.
@@ -179,7 +200,7 @@ public sealed record MemorySearchHitView(
 	long? Opened = null,
 	DateTime? LastHitAt = null);
 
-// The memory.search result — ONE shape for both modes (SearchEnvelope form): `Items` in
+// The memory_search result — ONE shape for both modes (SearchEnvelope form): `Items` in
 // final order, `Retrievers` provenance with a query (null in listing mode), and the
 // response-budget markers Truncated/Omitted/Hint (null = complete).
 public sealed record MemorySearchResultView(
@@ -199,7 +220,7 @@ public sealed record RelationsListResult(IReadOnlyList<RelationRow> Relations);
 
 public sealed record RelationDeletedResult(bool Deleted);
 
-// ---- report.issue --------------------------------------------------------------------
+// ---- report_issue --------------------------------------------------------------------
 
 public sealed record ReportIssueResult(bool Reported, string Project, string Board, string Key);
 
@@ -207,7 +228,7 @@ public sealed record ReportIssueResult(bool Reported, string Project, string Boa
 
 public sealed record SessionUpsertResult(string SessionId, long Version, int MessageCount);
 
-// session.append: Applied=false + Reason="gap" is the STRUCTURED contiguity reject —
+// session_append: Applied=false + Reason="gap" is the STRUCTURED contiguity reject —
 // LastOrdinal is the server's cursor, the client resends the tail from LastOrdinal+1.
 public sealed record SessionAppendResult(string SessionId, bool Applied, long LastOrdinal, int Appended, string? Reason);
 
@@ -216,10 +237,10 @@ public sealed record SessionGetResult(string SessionId, string Agent, string Con
 public sealed record SessionDeletedResult(bool Deleted, string SessionId);
 
 // One episodic hit inside a discovered session; Message is the ordinal to feed back
-// into session.get (the provenance bridge).
+// into session_get (the provenance bridge).
 public sealed record SessionSearchHitView(long Message, string Role, string Snippet, double Score, string? Retriever);
 
-// One session.search item — the union of the verb's two modes (list = search without q):
+// One session_search item — the union of the verb's two modes (list = search without q):
 //   listing row → SessionId/Agent/Version (the former session.list row; query fields null);
 //   query row   → SessionId/Agent + Description (the digest), episodic `Hits` and the
 //                 per-session `Retrievers` (Version null — a discovery is digest-based).
@@ -232,7 +253,7 @@ public sealed record SessionSearchItemView(
 	IReadOnlyList<SessionSearchHitView>? Hits = null,
 	RetrieverInfo? Retrievers = null);
 
-// The session.search result — ONE shape for both modes (SearchEnvelope form): `Items` in
+// The session_search result — ONE shape for both modes (SearchEnvelope form): `Items` in
 // final order plus the response-budget markers (null = complete). With a query it also
 // carries `Retrievers` (the STAGE-1 discovery provenance; per-session provenance rides
 // each item) and `Distilled`/`Reason` — false + a machine-readable code (e.g.
@@ -263,7 +284,7 @@ public sealed record BoardClosedResult(bool Closed);
 
 public sealed record BoardReopenedResult(bool Reopened);
 
-// tasks.search wire row: a board-aware projection of an enriched node (rows may span
+// tasks_search wire row: a board-aware projection of an enriched node (rows may span
 // boards, so each carries `Board`). Tree navigation rides ParentNodeId/ParentSlug/Depth
 // (the part_of projection); null fields are omitted on the wire.
 public sealed record TaskSearchNodeView(
@@ -276,7 +297,7 @@ public sealed record TaskSearchNodeView(
 	string Status,
 	string Type,
 	string Title,
-	string Body,
+	string? Body, // uniform bodyLen contract: ~240 snippet default, full at -1, omitted (null) at 0
 	string? CommitRef,
 	long Priority,
 	string? Delivery,
@@ -289,7 +310,7 @@ public sealed record TaskSearchNodeView(
 	long Version,
 	string? Url);
 
-// The tasks.search result — ONE shape for every mode (a single OutputSchemaType):
+// The tasks_search result — ONE shape for every mode (a single OutputSchemaType):
 //   listing/query  → `Nodes` (final order), plus board context (Board/Kind/SpecBoard/
 //                    CurrentVersion) when the read was board-scoped;
 //   query          → `Retrievers` provenance (null in listing mode);
@@ -308,7 +329,7 @@ public sealed record TaskSearchResultView(
 	int? Omitted = null,
 	string? Hint = null);
 
-// tasks.workflow wire shape (board kind + statuses/transitions catalog, grouped by FSM).
+// tasks_workflow wire shape (board kind + statuses/transitions catalog, grouped by FSM).
 public sealed record WorkflowStatusView(string Slug, string Name, string Kind);
 
 // `PreconditionArtifact` names a comment-artifact tag the node must carry before the
@@ -327,17 +348,17 @@ public sealed record WorkflowGroupView(
 
 public sealed record WorkflowView(string Kind, IReadOnlyList<WorkflowGroupView> Workflows);
 
-// tasks.methodology_def_upsert ack: the definition's current revision number (the baseline
+// tasks_methodology_def_upsert ack: the definition's current revision number (the baseline
 // for the next edit), whether this call created a new revision (false = an identical
 // resubmit collapsed to a no-op), and how many live nodes the declared `migration` rewrote
 // onto the new resolution (0 = nothing needed repair). A version conflict throws (the error
 // envelope names the current version), so this shape never carries conflicts.
 public sealed record MethodologyDefUpsertResult(long Version, bool Changed, int Migrated = 0);
 
-// tasks.methodology_def_get answer. Defined=true → the stored definition (name/kinds) plus
+// tasks_methodology_def_get answer. Defined=true → the stored definition (name/kinds) plus
 // its revision metadata. Defined=false → the project has no definition and runs on the
 // built-in preset named in `Preset` (the structured "not defined" shape, mirroring
-// session.search's distilled:false + reason — an honest state, not an error or a miss).
+// session_search's distilled:false + reason — an honest state, not an error or a miss).
 public sealed record MethodologyDefGetResult(
 	bool Defined,
 	string? Preset = null,
@@ -351,7 +372,7 @@ public sealed record MethodologyDefGetResult(
 	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
 	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
 
-// One kind of a stored methodology definition; workflow blocks reuse the tasks.workflow
+// One kind of a stored methodology definition; workflow blocks reuse the tasks_workflow
 // status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the
 // kind's per-type creation link requirements (null = none declared).
 public sealed record MethodologyKindView(

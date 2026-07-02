@@ -5,7 +5,7 @@ namespace PetBox.Web.Logging;
 // App-wide request logging: every API/UI/MCP request lands in the self-log (category
 // PetBox.* is what SystemLogger captures) with method, path, status, elapsed and the
 // authenticated project — and any unhandled exception at Error. This is the single
-// place activity/errors become visible via log.query, instead of scattering logging
+// place activity/errors become visible via log_query, instead of scattering logging
 // through controllers/tools. Health/version probes are skipped as noise.
 public sealed partial class RequestLoggingMiddleware(RequestDelegate next, ILogger<RequestLoggingMiddleware> log)
 {

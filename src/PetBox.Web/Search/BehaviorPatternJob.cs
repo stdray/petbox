@@ -26,6 +26,9 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 	const string QuarantineStore = SessionFactsJob.Store;
 	const string CuratedStore = "notes";
 	const string CursorIndex = "behavior-mining";
+	// One-shot durable marker: the pre-existing-duplicate collapse runs once per project and
+	// survives restart (co-located with the store, like every other cursor). 0 = not yet swept.
+	const string DedupSweepIndex = "autocapture-dedup-sweep";
 
 	// One fresh observation is enough to mine: the facts-judge MERGES repeats into an
 	// existing entry (an UPDATE, not a second row), so "two fresh entries" may never
@@ -87,6 +90,16 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 				// (reference: NewConnection ≠ migrations).
 				_factory.GetDb(project, QuarantineStore);
 				var cursors = new SqliteIndexCursorStore(() => _factory.NewConnection(project, QuarantineStore));
+
+				// One-shot cleanup of twins already on disk (spec: autocapture-dedup). Runs
+				// before the fresh-observation gate so a store with duplicates but no new
+				// feedback is still healed; the durable marker keeps it to once per project.
+				if (await cursors.GetCursorAsync(DedupSweepIndex, ct) == 0)
+				{
+					await AutocaptureDedup.CollapseAsync(_memory, project, QuarantineStore, _llm, _logger, ct);
+					await cursors.SetCursorAsync(DedupSweepIndex, 1, ct);
+				}
+
 				var cursor = await cursors.GetCursorAsync(CursorIndex, ct);
 
 				var delta = (await _memory.DeltaAsync(project, QuarantineStore, cursor, ct)).Result;
@@ -163,6 +176,18 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 			var existing = candidate.Key is not null
 				? existingPatterns.FirstOrDefault(p => p.Key == candidate.Key)
 				: null;
+			// Structural dedup guard (spec: autocapture-dedup): the miner may re-derive a
+			// pattern it already consolidated and emit it as NEW (key omitted, or a paraphrase)
+			// — this is exactly what minted the bp-… twins. Match the candidate to an existing
+			// pattern by text/semantics before minting a second row; a hit becomes an UPDATE
+			// (sources merged below) instead.
+			if (existing is null)
+			{
+				var dupKey = await AutocaptureDedup.FindDuplicateKeyAsync(project,
+					candidate.Description,
+					existingPatterns.Select(p => (p.Key, p.Description)).ToList(), _llm, ct);
+				if (dupKey is not null) existing = existingPatterns.First(p => p.Key == dupKey);
+			}
 			var metadata = JsonSerializer.Serialize(new
 			{
 				sources = existing is null ? sources : sources.Concat(SourcesOf(existing)).Distinct().ToList(),

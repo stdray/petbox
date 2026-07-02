@@ -13,7 +13,7 @@ as `VectorSearchIndex` — so its numbers reflect the real system behaviour.
 | `fetch_locomo.py` | download the LoCoMo benchmark into `data/` (not vendored) |
 | `eval_locomo.py` | LoCoMo lazy-vs-full, **lexical** (SQLite FTS5) |
 | `eval_locomo_sem.py` | LoCoMo lazy-vs-full, **lexical / semantic / hybrid** + MRL **dim sweep** |
-| `mcp_embed.py` | minimal MCP Streamable-HTTP client to pull embeddings from petbox `llm.embed` (reads `PETBOX_API_KEY` from env); caches full vectors in `data/` |
+| `mcp_embed.py` | minimal MCP Streamable-HTTP client to pull embeddings from petbox `llm_embed` (reads `PETBOX_API_KEY` from env); caches full vectors in `data/` |
 | `eval_transcripts.py` | lazy-vs-full lexical on local Claude transcripts (needs private transcript data — see note) |
 | `eval_digest_models.py` | which MODEL writes the facts digest: deepseek v4 flash / pro / pro+thinking / local Qwen3.6-35B (needs `DEEPSEEK_API_KEY`; qwen arm needs `LLAMA_API_KEY`) |
 

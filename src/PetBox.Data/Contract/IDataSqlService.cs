@@ -3,7 +3,7 @@ using System.Text.Json;
 namespace PetBox.Data.Contract;
 
 // The single execution path for raw user SQL against a project's DataDb. Both the
-// MCP data.query/data.exec tools and the REST /api/data/{p}/{db}/query|exec endpoints
+// MCP data_query/data_exec tools and the REST /api/data/{p}/{db}/query|exec endpoints
 // used to re-implement this loop (open connection, bind params, read/exec) and had
 // drifted (the REST path gained a PRAGMA deny-list, a configurable timeout and a
 // SQLITE_FULL mapping the MCP path lacked). Routing both here keeps the security rules

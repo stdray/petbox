@@ -1,7 +1,7 @@
 namespace PetBox.Tasks.Workflow;
 
 // One workflow block of a board's FSM surface: every type slug sharing one state machine
-// (the tasks.workflow shape — feature=bug=chore on a work board is ONE block).
+// (the tasks_workflow shape — feature=bug=chore on a work board is ONE block).
 public sealed record WorkflowBlock(IReadOnlyList<string> Types, Workflow Workflow);
 
 // The data-driven FSM resolution seam (engine wave 1.2): given a project's optional
@@ -165,7 +165,7 @@ public sealed class MethodologyRuntime
 		return IsTerminalSlug(statusSlug);
 	}
 
-	// All workflow BLOCKS of a kind (the tasks.workflow discovery shape). One block per
+	// All workflow BLOCKS of a kind (the tasks_workflow discovery shape). One block per
 	// workflow declaration, for defined and preset kinds alike — the preset data is
 	// already grouped by shared FSM (feature=bug=chore is one block, and Simple's block
 	// carries its whole type vocabulary).

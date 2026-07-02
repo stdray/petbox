@@ -6,7 +6,7 @@ each pet needs to add to its own repo.
 
 **Strategic note**: once Wave 4 (MCP server) is up, an agentic session can do
 this setup for a pet using petbox MCP tools — `entity.create({ type: "db" })`,
-`data.schema_apply`, plus the file edits to the pet's source. This doc is the
+`data_schema_apply`, plus the file edits to the pet's source. This doc is the
 reference for *what* the agent needs to produce; if you're a human doing
 manual integration, follow it directly.
 

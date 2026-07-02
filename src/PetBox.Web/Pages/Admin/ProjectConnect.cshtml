@@ -33,7 +33,7 @@
 		This wires a coding agent to PetBox over <strong>MCP</strong> (Model Context Protocol).
 		Once connected, the agent can read and write this project's <strong>task boards</strong>,
 		<strong>memory stores</strong> and <strong>session plans</strong> using the
-		<code>tasks.*</code>, <code>memory.*</code> and <code>session.*</code> tools — a shared,
+		<code>tasks_*</code>, <code>memory_*</code> and <code>session_*</code> tools — a shared,
 		durable plan/notes store that survives across sessions and agents.
 	</p>
 	<p class="text-sm opacity-70">
@@ -131,7 +131,7 @@ stage with a validation gate. Do the stages in order and do not skip a gate:
    Confirm it is non-empty.
 2. Add a PROJECT-level MCP server named "petbox" (HTTP/streamable, the endpoint above,
    header  X-Api-Key: ${@envvar} ), then RESTART your MCP connection. Verify with
-   tasks.board_list projectKey "@proj" — an empty list (not an auth error) means it works.
+   tasks_board_list projectKey "@proj" — an empty list (not an auth error) means it works.
 3. Read the overview + methodology, then report back, in your own words: the board kinds,
    how nodes are addressed (l1/l2/l3 + title), the spec-link invariant, and the approve
    gate (your ceiling is Review — never set Done). Wait for the maintainer to confirm.

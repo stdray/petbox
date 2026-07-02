@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class MemoryTools
 {
-	[McpServerTool(Name = "memory.store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]
+	[McpServerTool(Name = "memory_store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]
 	[Description("CREATE a named memory store in a project (fails if it already exists). Requires memory:write.")]
 	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
@@ -33,20 +33,41 @@ public static class MemoryTools
 		return new MemoryStoreCreatedResult(meta.ProjectKey, meta.Name, meta.Description, meta.CreatedAt);
 	}
 
-	[McpServerTool(Name = "memory.store_list", Title = "List memory stores", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreListResult))]
-	[Description("List memory stores in a project. Requires memory:read.")]
+	[McpServerTool(Name = "memory_store_list", Title = "List memory stores", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreListResult))]
+	[Description("""
+		List memory stores in a project. Requires memory:read.
+		`includeUsage` (default false) attaches a per-store usage aggregate: totalEntries,
+		surfacedAtLeastOnce/openedAtLeastOnce (+ fractions over the active set), medianLastHitAt
+		(the median last-hit of the surfaced entries — "recency"), and the dead tail
+		(deadCount never-surfaced entries + the oldest-first sample deadTailKeys, prime pruning
+		candidates). Reading this does NOT count as usage (curation, not an impression).
+		""")]
 	public static async Task<MemoryStoreListResult> StoreListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
-		string projectKey, CancellationToken ct = default)
+		string projectKey,
+		[Description("Attach a per-store usage aggregate (coverage, median recency, dead tail) (default false).")] bool includeUsage = false,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var list = await memory.ListStoresAsync(projectKey, ct);
-		return new MemoryStoreListResult(list.Select(s => new MemoryStoreRow(s.Name, s.Description, s.CreatedAt)).ToList());
+		var rows = new List<MemoryStoreRow>(list.Count);
+		foreach (var s in list)
+		{
+			MemoryStoreUsageRow? usage = null;
+			if (includeUsage)
+			{
+				var a = await memory.GetUsageAggregateAsync(projectKey, s.Name, ct: ct);
+				usage = new MemoryStoreUsageRow(a.TotalEntries, a.SurfacedAtLeastOnce, a.OpenedAtLeastOnce,
+					a.SurfacedFraction, a.OpenedFraction, a.MedianLastHitAt, a.DeadTail.Count, a.DeadTail.TopKeys);
+			}
+			rows.Add(new MemoryStoreRow(s.Name, s.Description, s.CreatedAt, usage));
+		}
+		return new MemoryStoreListResult(rows);
 	}
 
-	[McpServerTool(Name = "memory.store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreDeletedResult))]
+	[McpServerTool(Name = "memory_store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreDeletedResult))]
 	[Description("Delete a memory store and its entries. Requires memory:write.")]
 	public static async Task<MemoryStoreDeletedResult> StoreDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
@@ -58,7 +79,7 @@ public static class MemoryTools
 		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
 	}
 
-	[McpServerTool(Name = "memory.get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryEntryView))]
+	[McpServerTool(Name = "memory_get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryEntryView))]
 	[Description("Get the active entry by key, or null. Requires memory:read.")]
 	public static async Task<MemoryEntryView?> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
@@ -73,7 +94,7 @@ public static class MemoryTools
 		return entry;
 	}
 
-	[McpServerTool(Name = "memory.upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
+	[McpServerTool(Name = "memory_upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("""
 		PATCH per entry (declarative temporal upsert into a store). Requires memory:write.
 		On an EDIT (version > 0) an omitted field stays UNCHANGED — send only what you change;
@@ -92,17 +113,21 @@ public static class MemoryTools
 		Store durable facts not derivable from code/git/config; actionable work goes to a
 		task board, not here.
 		Returns the pure write-ack { applied, currentVersion, inserted, closed, conflicts[],
-		added[], updated[], removed[] }: added/updated/removed cover ONLY this call's entries
+		added[], updated[], removed[] }. `applied` is the SINGLE source of truth: FALSE = nothing
+			written (conflicts[] carry each rejected key's baseline vs active version;
+			added/updated/removed EMPTY; re-read via memory_delta to rebase). When TRUE,
+			added/updated/removed cover ONLY this call's entries
 		(never other writers' history — there is no cursor parameter on a write) and carry
-		key/type/description/version but NOT `body` by default (pass bodyLen > 0 for a sliced
-		body). `currentVersion` is the store-wide cursor: for a full delta since a cursor,
-		call memory.delta with it as `sinceVersion`.
+		key/type/description/version; `body` follows the uniform bodyLen knob (omitted here = NO
+		body, a compact ack; 0 = no body; N>0 = the first N chars, "…" when cut; -1 = full body).
+			`currentVersion` is the store-wide cursor: for a full delta since a cursor,
+		call memory_delta with it as `sinceVersion`.
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store,
 		[Description("Array of entry objects: { key, type, description, body, tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
-		[Description("Slice length (chars) of each echoed entry body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -112,12 +137,12 @@ public static class MemoryTools
 		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, ct), bodyLen);
 	}
 
-	[McpServerTool(Name = "memory.delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
-	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface (a memory.upsert ack echoes only its own call; pass its `currentVersion` here for the full store delta). Bodies omitted unless bodyLen > 0 (compact by default). Requires memory:read.")]
+	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
+	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface (a memory_upsert ack echoes only its own call; pass its `currentVersion` here for the full store delta). Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
-		[Description("Slice length (chars) of each entry body; 0 (default) = no body (compact). \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -128,8 +153,8 @@ public static class MemoryTools
 
 	// ---- read + capture verbs: search / remember ----
 	//
-	// memory.search is THE read verb (spec uniform-entity-verbs v2: list = search without
-	// a query; it replaced the former memory.list + memory.recall pair) and memory.remember
+	// memory_search is THE read verb (spec uniform-entity-verbs v2: list = search without
+	// a query; it replaced the former memory.list + memory.recall pair) and memory_remember
 	// the low-ceremony capture verb. Both carry the `scope` dimension over the per-project
 	// store files —
 	//   project   → the key's own project  (default; the usual case)
@@ -139,14 +164,14 @@ public static class MemoryTools
 	// by scope so precedence is visible (project first); when the key's project IS the
 	// shared container the two collapse and it's searched once. Any memory-scoped key may
 	// reach the shared container (that's the point). Personal facts are carried by
-	// type=User, not a separate container. Curated/temporal writes go through memory.upsert.
+	// type=User, not a separate container. Curated/temporal writes go through memory_upsert.
 
 	const string WorkspaceContainer = "$system";
 	const string DefaultStore = "notes";
 
-	[McpServerTool(Name = "memory.remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
+	[McpServerTool(Name = "memory_remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
 	[Description("""
-		CREATE one durable fact, verbatim (always a new entry; edits go via memory.upsert).
+		CREATE one durable fact, verbatim (always a new entry; edits go via memory_upsert).
 		The low-ceremony way to store a learning.
 		`text` (required) is the fact. `scope` picks the container: project (default —
 		the key's project) | workspace (cross-project shared). `store` groups entries
@@ -182,7 +207,7 @@ public static class MemoryTools
 		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key);
 	}
 
-	[McpServerTool(Name = "memory.search", Title = "Read memory entries (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemorySearchResultView))]
+	[McpServerTool(Name = "memory_search", Title = "Read memory entries (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemorySearchResultView))]
 	[Description("""
 		THE memory read verb — one tool for both LISTING and SEARCH (list = search without
 		`q`; replaces the former memory.list + memory.recall).
@@ -206,8 +231,9 @@ public static class MemoryTools
 		and an explicit created/updated sort reorders WITHIN the relevance-selected set
 		(`desc` is ignored for relevance). `limit` caps the rows (default 20 in both modes;
 		0 = no cap — a listing is then bounded only by the output budget, a query by its
-		candidate pool). Bodies are full by default; pass `bodyLen` > 0 for a snippet
-		(description + first N chars), then pull a full body with memory.get.
+		candidate pool). Bodies follow the uniform `bodyLen` knob: omitted = a ~240-char snippet
+		(the compact listing default), 0 = no body, N>0 = the first N chars ("…" when cut),
+			-1 = the full body — or pull a full body with memory_get.
 
 		`includeUsage` adds surfaced/opened/lastHitAt counters per row. A search answer
 		counts an impression for the returned rows; a listing (no `q`) is curation and
@@ -217,7 +243,7 @@ public static class MemoryTools
 		memory:read.
 
 		Returns { items: [{ scope, store, key, type, description, body, tags, version }], retrievers? };
-		`version` is the entry's CAS baseline for memory.upsert (pass it back to edit without a Stale round-trip).
+		`version` is the entry's CAS baseline for memory_upsert (pass it back to edit without a Stale round-trip).
 		""")]
 	public static async Task<MemorySearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
@@ -228,7 +254,7 @@ public static class MemoryTools
 		[Description("Taxonomy filter: User|Feedback|Project|Reference.")] string? type = null,
 		[Description("Sort order: {by: relevance|created|updated, desc?}. Default: updated desc (listing) / relevance (with q).")] SortInput? sort = null,
 		[Description("Max rows returned (default 20; 0 = no cap — the output budget still applies).")] int? limit = null,
-		[Description("Snippet length (chars) per row body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include usage counters (surfaced/opened/lastHitAt) per row (default false).")] bool includeUsage = false,
 		CancellationToken ct = default)
 	{
@@ -252,7 +278,7 @@ public static class MemoryTools
 				Filter = new MemoryEntryFilter(store, type),
 				Sort = ParseSort(sort),
 				Limit = remaining,
-				BodyLen = bodyLen,
+				BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
 			}, ct);
 			if (res.Retrievers is { } r)
 				retrievers = retrievers is { } agg
@@ -269,7 +295,8 @@ public static class MemoryTools
 			{
 				var u = includeUsage && usageMap.TryGetValue(h.Store + "\x1f" + h.Entry.Key, out var uv) ? uv : null;
 				rows.Add(new MemorySearchHitView(scopeName, h.Store, h.Entry.Key, h.Entry.Type, h.Entry.Description,
-					h.Entry.Body, h.Entry.Tags, h.Entry.Version,
+					// Uniform bodyLen contract, default a ~240-char snippet (compact listing).
+					ModuleMcp.Body(h.Entry.Body, bodyLen, ModuleMcp.DefaultSnippet), h.Entry.Tags, h.Entry.Version,
 					includeUsage ? (u?.Surfaced ?? 0) : null, includeUsage ? (u?.Opened ?? 0) : null, u?.LastHitAt));
 			}
 			// Impression = the rows a SEARCH answer returned (a listing is curation — not counted).
@@ -289,14 +316,14 @@ public static class MemoryTools
 			Hint: omitted > 0 ? SearchBudgetHint : null);
 	}
 
-	// The bounded default of memory.search (both modes; spec bounded-result-sets).
+	// The bounded default of memory_search (both modes; spec bounded-result-sets).
 	const int DefaultLimit = 20;
 
 	// Surfaced on MemorySearchResultView.Hint when the rows were cut by the response budget.
 	const string SearchBudgetHint =
 		"Output budget exceeded: entries were truncated (see truncated/omitted). Narrow the " +
 		"read: `scope`/`store` (one container/store), `type` (one taxonomy), a lower `limit`, " +
-		"`bodyLen` (snippet bodies), or memory.get for one entry's full body.";
+		"`bodyLen` (snippet bodies), or memory_get for one entry's full body.";
 
 	// Map the wire `sort` argument onto the service sort axis; an unknown axis is a clear error.
 	static (MemorySortBy By, bool Desc)? ParseSort(SortInput? sort)
@@ -318,7 +345,7 @@ public static class MemoryTools
 			var s => throw new ArgumentException($"invalid scope '{s}' (project|workspace)"),
 		};
 
-	// The ordered list of (scope, container) memory.search reads. A single scope → that
+	// The ordered list of (scope, container) memory_search reads. A single scope → that
 	// container; no scope → the full cascade, project first (most specific). The project
 	// container is best-effort: a cross-project ("*") key with no projectKey can't resolve
 	// a single project, so that leg is skipped rather than failing the whole read.
@@ -342,7 +369,7 @@ public static class MemoryTools
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 
-	static MemoryUpsertResultView Serialize(MemoryUpsertOutcome o, int bodyLen = 0)
+	static MemoryUpsertResultView Serialize(MemoryUpsertOutcome o, int? bodyLen = null)
 	{
 		var r = o.Result;
 		return new MemoryUpsertResultView(
@@ -359,11 +386,11 @@ public static class MemoryTools
 	// `body` is sliced to bodyLen (null when 0 → omitted by the serializer) so the write-echo
 	// stays compact; `description` (a one-liner) is kept to orient the merge. Tags leave the
 	// CSV storage form here — the surface speaks arrays.
-	static MemoryEntryRow EntryDto(MemoryEntry e, int bodyLen = 0) => new(
+	static MemoryEntryRow EntryDto(MemoryEntry e, int? bodyLen = null) => new(
 		Key: e.Key,
 		Type: e.Type.ToString(),
 		Description: e.Description,
-		Body: ModuleMcp.SliceBody(e.Body, bodyLen),
+		Body: ModuleMcp.Body(e.Body, bodyLen, ModuleMcp.NoBody),
 		Tags: string.IsNullOrWhiteSpace(e.Tags)
 			? []
 			: e.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),

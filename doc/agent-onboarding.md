@@ -27,27 +27,27 @@ Point the agent's MCP client at `https://<petbox-host>/mcp` with header
 ## 3. Provisioning tools
 
 Provisioning is done through the typed per-type tools (the generic `entity.*` family is
-gone). The provisioning tools (`project.*`, `apikey.*`, `config.*`) require the
+gone). The provisioning tools (`project_*`, `apikey_*`, `config_*`) require the
 `admin:provision` scope.
 
 | Call | Purpose |
 |---|---|
-| `project.create({ workspaceKey, key, name, description? })` | Create the pet's project. |
-| `apikey.create({ name, scopes, projectKey?, expiresInSeconds?, allProjects? })` | Mint the pet's **production** key. Returns the raw key once — hand it to the pet. Omit `expiresInSeconds` for a non-expiring key. `allProjects:true` (omit `projectKey`) mints a cross-project `*` key. |
-| `config.binding_upsert({ workspaceKey, path, value, tags })` | Seed config (PUT by (path, tagset) — an identical twin is superseded). `tags` must include `ws:{workspaceKey}`. |
-| `project.list` / `apikey.list` / `apikey.delete` / `config.binding_list` / `config.binding_delete` | List / remove. `project` has no delete. |
+| `project_create({ workspaceKey, key, name, description? })` | Create the pet's project. |
+| `apikey_create({ name, scopes, projectKey?, expiresInSeconds?, allProjects? })` | Mint the pet's **production** key. Returns the raw key once — hand it to the pet. Omit `expiresInSeconds` for a non-expiring key. `allProjects:true` (omit `projectKey`) mints a cross-project `*` key. |
+| `config_binding_upsert({ workspaceKey, path, value, tags })` | Seed config (PUT by (path, tagset) — an identical twin is superseded). `tags` must include `ws:{workspaceKey}`. |
+| `project_list` / `apikey_list` / `apikey_delete` / `config_binding_list` / `config_binding_delete` | List / remove. `project` has no delete. |
 
 Project-scoped types `db` and `log` (created with the minted key, gated on
-`data:schema` / `logs:admin`) plus the operational tools `data.schema_apply`,
-`data.query`, `data.exec`, `log.query`, and `db.describe` round out the surface.
+`data:schema` / `logs:admin`) plus the operational tools `data_schema_apply`,
+`data_query`, `data_exec`, `log_query`, and `db_describe` round out the surface.
 
 ## 4. Typical flow
 
-1. `project.create({ workspaceKey: "myws", key: "kpvotes", name: "KpVotes" })`
-2. `apikey.create({ projectKey: "kpvotes", name: "kpvotes-ts prod", scopes: "config:read,data:read,data:write,data:schema" })` → **save the returned key**
-3. `db.create({ projectKey: "kpvotes", name: "kpvotes-cache" })` (using the minted key)
-4. `data.schema_apply({ projectKey: "kpvotes", dbName: "kpvotes-cache", name: "M001_votes", sql: "CREATE TABLE votes (...)" })`
-5. `config.binding_upsert({ workspaceKey: "myws", path: "kpvotes.kp-uri", value: "...", tags: "ws:myws,project:kpvotes" })`
+1. `project_create({ workspaceKey: "myws", key: "kpvotes", name: "KpVotes" })`
+2. `apikey_create({ projectKey: "kpvotes", name: "kpvotes-ts prod", scopes: "config:read,data:read,data:write,data:schema" })` → **save the returned key**
+3. `db_create({ projectKey: "kpvotes", name: "kpvotes-cache" })` (using the minted key)
+4. `data_schema_apply({ projectKey: "kpvotes", dbName: "kpvotes-cache", name: "M001_votes", sql: "CREATE TABLE votes (...)" })`
+5. `config_binding_upsert({ workspaceKey: "myws", path: "kpvotes.kp-uri", value: "...", tags: "ws:myws,project:kpvotes" })`
 6. Give the pet its production key + endpoint; the agent key expires on its own.
 
 ## Errors

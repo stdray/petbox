@@ -19,11 +19,11 @@ namespace PetBox.Web.Mcp;
 // Execution faults (engine/translation) arrive as KqlExecutionException — from QueryAsync
 // for events, or from the await-foreach over streamed Table rows — and deliberately flow
 // to the same envelope, so the agent sees { error: { type, message, detail } } with the
-// failure class instead of the framework's opaque "An error occurred invoking 'log.query'.".
+// failure class instead of the framework's opaque "An error occurred invoking 'log_query'.".
 [McpServerToolType]
 public static class LogTools
 {
-	[McpServerTool(Name = "log.query", Title = "Run KQL query against a named log", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LogQueryResultView))]
+	[McpServerTool(Name = "log_query", Title = "Run KQL query against a named log", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LogQueryResultView))]
 	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Requires logs:query scope.")]
 	public static async Task<LogQueryResultView> QueryAsync(
 		IHttpContextAccessor http,

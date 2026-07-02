@@ -6,7 +6,7 @@ namespace PetBox.Tasks.Workflow;
 // MethodologyRuntime: a kind the definition declares OVERRIDES the presets; every other
 // kind (and a project with no definition) keeps the built-in preset.
 //
-// The shape mirrors what tasks.workflow answers per board: a kind hosts one or more
+// The shape mirrors what tasks_workflow answers per board: a kind hosts one or more
 // workflow blocks, each block is one state machine shared by every type slug in it.
 public sealed record MethodologyDefinition(
 	string Name,
@@ -15,7 +15,7 @@ public sealed record MethodologyDefinition(
 	// Definition-level (project-wide) primitives — additive: a stored wave-1 document
 	// (no fields in its JSON) deserializes to the empty defaults.
 	//
-	// Additional relation kinds the project declares, usable in relations.create alongside
+	// Additional relation kinds the project declares, usable in relations_create alongside
 	// the builtin process + neutral kinds (spec primitives-link-kinds).
 	public IReadOnlyList<MethodologyLinkKindDef> LinkKinds { get; init; } = [];
 	// Declared tag namespaces (spec primitives-tag-axes). Empty = free-form tags on
@@ -56,7 +56,7 @@ public sealed record MethodologyLinkKindDef(string Slug, string? Description = n
 // must be `<Namespace>:value` with the namespace from this list.
 public sealed record MethodologyTagAxisDef(string Namespace, string? Description = null);
 
-// One state machine shared by every type slug in `Types` (the tasks.workflow block shape).
+// One state machine shared by every type slug in `Types` (the tasks_workflow block shape).
 // Convention: Statuses[0] is the initial status (same as Workflow.Initial); slug matching
 // is case-insensitive.
 public sealed record MethodologyWorkflowDef(

@@ -187,6 +187,69 @@ public sealed class SessionFactsJobTests : IDisposable
 	}
 
 	[Fact]
+	public async Task ExactRepeat_JudgeSaysAdd_StructuralGuardSkips_NoDuplicate()
+	{
+		// The judge is a SOFT filter: even when it hallucinates "add" (or the neighbor search
+		// never surfaced the twin), the deterministic guard behind it must catch an exact
+		// repeat and write nothing.
+		await _memory.CreateStoreAsync(Proj, SessionFactsJob.Store, null);
+		await _memory.UpsertAsync(Proj, SessionFactsJob.Store, [new MemoryEntryInput
+		{
+			Key = "ac-known", Version = 0, Type = "Feedback",
+			Description = "issue_task auto-close закрывает интейк issue на переходе work Done",
+			Body = "уже знаем", Metadata = """{"sessionId":"s0"}""",
+		}], []);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("опять про issue_task auto-close"));
+		var chat = new ScriptedChat(
+			"""[{"type":"Feedback","description":"issue_task auto-close закрывает интейк issue на переходе work Done","body":"дубль"}]""",
+			"""{"action":"add"}"""); // judge lets it through
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		(await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null)).Should().HaveCount(1); // guard held
+	}
+
+	[Fact]
+	public async Task RephrasedRepeat_JudgeSaysAdd_SemanticGuardSkips_NoDuplicate()
+	{
+		await _memory.CreateStoreAsync(Proj, SessionFactsJob.Store, null);
+		await _memory.UpsertAsync(Proj, SessionFactsJob.Store, [new MemoryEntryInput
+		{
+			Key = "ac-known", Version = 0, Type = "Feedback",
+			Description = "issue_task auto-close закрывает интейк issue на переходе work Done",
+			Body = "уже знаем", Metadata = """{"sessionId":"s0"}""",
+		}], []);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("снова issue_task auto-close, чуть иначе"));
+		var chat = new EmbeddingChat(
+			"""[{"type":"Feedback","description":"issue_task auto-close автоматически закрывает интейк issue на переходе work Done","body":"дубль иначе"}]""",
+			"""{"action":"add"}"""); // judge misses the rephrase, guard's semantic leg catches it
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		(await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null)).Should().HaveCount(1);
+	}
+
+	[Fact]
+	public async Task GenuinelyNewFact_IsWritten_GuardDoesNotOverSkip()
+	{
+		await _memory.CreateStoreAsync(Proj, SessionFactsJob.Store, null);
+		await _memory.UpsertAsync(Proj, SessionFactsJob.Store, [new MemoryEntryInput
+		{
+			Key = "ac-known", Version = 0, Type = "Feedback",
+			Description = "issue_task auto-close закрывает интейк issue на переходе work Done",
+			Body = "уже знаем", Metadata = """{"sessionId":"s0"}""",
+		}], []);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("новое про gitversion и деплой"));
+		var chat = new EmbeddingChat(
+			"""[{"type":"Feedback","description":"gitversion падает на tag-only коммите нужен push main до move deploy","body":"новый факт"}]""",
+			"""{"action":"add"}""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		(await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null)).Should().HaveCount(2); // distinct fact kept
+	}
+
+	[Fact]
 	public async Task MalformedExtraction_AdvancesCursor_NoCrash_NoRetryLoop()
 	{
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a"));
@@ -235,5 +298,49 @@ public sealed class SessionFactsJobTests : IDisposable
 			throw new NotSupportedException();
 		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
 			throw new NotSupportedException();
+	}
+
+	// Scripted chat that ALSO embeds (deterministic bag-of-words → exact BoW cosine), so the
+	// dedup guard's semantic leg is exercised: a rephrasing that shares (nearly) all tokens
+	// clears the threshold, a distinct fact stays well below it.
+	sealed class EmbeddingChat(params string[] responses) : ILlmClient
+	{
+		readonly Queue<string> _queue = new(responses);
+		string _last = responses[^1];
+
+		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
+		{
+			if (_queue.Count > 0) _last = _queue.Dequeue();
+			return Task.FromResult(new ChatResult(_last, new ModelIdentity("fake-chat", 0),
+				new ServedBy("fake", "fake-chat", 1, Degraded: false)));
+		}
+
+		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
+			Task.FromResult(true);
+
+		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default)
+		{
+			var vocab = new Dictionary<string, int>();
+			foreach (var input in request.Inputs)
+				foreach (var tok in Tokenize(input))
+					if (!vocab.ContainsKey(tok)) vocab[tok] = vocab.Count;
+			var dim = Math.Max(vocab.Count, 1);
+			var vectors = request.Inputs.Select(input =>
+			{
+				var v = new float[dim];
+				foreach (var tok in Tokenize(input)) v[vocab[tok]] += 1f;
+				return v;
+			}).ToList();
+			return Task.FromResult(new EmbedResult(vectors, new ModelIdentity("fake-embed", 0),
+				new ServedBy("fake", "fake-embed", 1, Degraded: false)));
+		}
+
+		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+
+		static IEnumerable<string> Tokenize(string? s) =>
+			(s ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+				.Select(t => new string(t.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray()))
+				.Where(t => t.Length > 0);
 	}
 }

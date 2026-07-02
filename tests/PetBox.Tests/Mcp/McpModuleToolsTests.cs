@@ -175,7 +175,7 @@ public sealed class McpModuleToolsTests : IDisposable
 				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = new[] { "go", "style" } },
 			}));
 
-		// memory.search is THE read verb (list = search without q; replaced list+recall).
+		// memory_search is THE read verb (list = search without q; replaced list+recall).
 		var hits = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"tabs", scope: "project", store: "notes");
 		hits.Items.Should().ContainSingle();
@@ -190,14 +190,14 @@ public sealed class McpModuleToolsTests : IDisposable
 		var got = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "s1"))!;
 		got.Content.Should().Be("# plan");
 
-		// list = session.search without q (the former session.list); rows carry version.
+		// list = session_search without q (the former session.list); rows carry version.
 		var list = await SessionTools.SearchAsync(http, Flags(), _sessionSvc, null!, Proj);
 		list.Items.Should().ContainSingle();
 		list.Items[0].Version.Should().Be(1);
 		list.Items[0].Hits.Should().BeNull(); // no query — no episodic arm
 	}
 
-	// spec bounded-result-sets: session.get reads the blob incrementally — `length` is always
+	// spec bounded-result-sets: session_get reads the blob incrementally — `length` is always
 	// reported; `tail` returns the last N chars; `offset`+`limit` a window.
 	[Fact]
 	public async Task Session_Get_ReadsIncrementally()
@@ -219,7 +219,7 @@ public sealed class McpModuleToolsTests : IDisposable
 			.Content.Should().Be("3456");
 	}
 
-	// session.append: the incremental writer against the server-authoritative cursor.
+	// session_append: the incremental writer against the server-authoritative cursor.
 	// The gap reject is a STRUCTURED result (applied:false + reason:"gap" + lastOrdinal),
 	// not an opaque throw — the client parses lastOrdinal and resends the tail.
 	[Fact]
@@ -248,7 +248,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		gap.Reason.Should().Be("gap");
 		gap.LastOrdinal.Should().Be(3);
 
-		// session.get sees the assembled dialogue.
+		// session_get sees the assembled dialogue.
 		var got = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sa"))!;
 		got.Version.Should().Be(3);
 		got.Content.Should().Contain("q2");
@@ -263,7 +263,7 @@ public sealed class McpModuleToolsTests : IDisposable
 				new[] { new PetBox.Web.Mcp.Contract.SessionMessageDto { Role = "user", Content = "x" } }));
 	}
 
-	// session.search against a foreign project returns an explicit, structured Unauthorized
+	// session_search against a foreign project returns an explicit, structured Unauthorized
 	// (the filter renders the throw as {error} on the wire). The project guard fires before
 	// the search service is touched, so a null service is never dereferenced.
 	[Fact]

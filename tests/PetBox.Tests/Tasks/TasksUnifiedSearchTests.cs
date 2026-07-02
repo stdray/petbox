@@ -15,7 +15,7 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Tasks;
 
-// The unified tasks.search verb (spec uniform-entity-verbs v2): ONE read tool where
+// The unified tasks_search verb (spec uniform-entity-verbs v2): ONE read tool where
 // list = search without `q` and relevance is a sort option only with `q`. Covers both
 // modes (board-scoped and project-wide listing, hybrid query with retriever provenance),
 // the shared predicates (status, keys slug|NodeId mixed, terminal addressing), the
@@ -75,7 +75,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 	Task<TaskSearchResultView> Search(
 		string? q = null, string? board = null, string? under = null, string[]? status = null,
 		string[]? keys = null, bool includeClosed = false, SortInput? sort = null,
-		string? groupBy = null, int bodyLen = 0, int? limit = null, bool includeUrl = false) =>
+		string? groupBy = null, int? bodyLen = null, int? limit = null, bool includeUrl = false) =>
 		TasksTools.SearchAsync(Http(), Flags(), _tasks, Proj, q, board, under, status, keys,
 			includeClosed, sort, groupBy, bodyLen, limit, includeUrl);
 
@@ -105,7 +105,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		leaf.Board.Should().Be("b");
 		leaf.ParentSlug.Should().Be("root");
 		leaf.Depth.Should().Be(1);
-		leaf.Body.Should().Be("l"); // full body by default
+		leaf.Body.Should().Be("l"); // short body returned whole under the default snippet
 	}
 
 	[Fact]

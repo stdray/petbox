@@ -14,7 +14,7 @@ namespace PetBox.Web.Mcp;
 // it must not open the sessions context directly (a NetArchTest enforces this).
 // Read-mostly. Reuses the Tasks scopes/feature.
 //
-// session.search is the ONE read verb (spec uniform-entity-verbs v2: list = search
+// session_search is the ONE read verb (spec uniform-entity-verbs v2: list = search
 // without q). Unlike tasks/memory, no ISearchService seam is implemented here — the
 // query mode is a Web-composed two-stage pipeline (SessionSearchService: memory digests
 // → episodic hydration) whose knobs (sessions/hitsPerSession) and nested hit rows don't
@@ -27,12 +27,12 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class SessionTools
 {
-	[McpServerTool(Name = "session.upsert", Title = "Save a session blob", UseStructuredContent = true, OutputSchemaType = typeof(SessionUpsertResult))]
+	[McpServerTool(Name = "session_upsert", Title = "Save a session blob", UseStructuredContent = true, OutputSchemaType = typeof(SessionUpsertResult))]
 	[Description("""
 		PUT (full snapshot replace): save an agent session's content as the latest snapshot —
 		last-write-wins, no history, no field merge; always send the complete blob (it REPLACES
-		whatever is stored, including a session built up by session.append). Kept for repair/import;
-		incremental pushes should use session.append instead. Requires tasks:write.
+		whatever is stored, including a session built up by session_append). Kept for repair/import;
+		incremental pushes should use session_append instead. Requires tasks:write.
 		The content is stored as a single message; the per-turn multi-message transcript is pushed
 		by the Stop-hook over REST. Result: { sessionId, version, messageCount } where version is
 		the last message's ordinal.
@@ -53,7 +53,7 @@ public static class SessionTools
 		return new SessionUpsertResult(o.SessionId, o.Version, o.MessageCount);
 	}
 
-	[McpServerTool(Name = "session.append", Title = "Append messages to a session", UseStructuredContent = true, OutputSchemaType = typeof(SessionAppendResult))]
+	[McpServerTool(Name = "session_append", Title = "Append messages to a session", UseStructuredContent = true, OutputSchemaType = typeof(SessionAppendResult))]
 	[Description("""
 		Incrementally append transcript messages against the SERVER-authoritative cursor
 		(spec session-append-wire) — the client keeps no durable state and sends only the
@@ -70,7 +70,7 @@ public static class SessionTools
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey, string sessionId, string agent,
 		[Description("Ordinal (1-based) of the first message in this batch.")] long fromOrdinal,
-		[Description("Array of {role, content} messages, in transcript order — the same shape session.get returns.")] SessionMessageDto[] messages,
+		[Description("Array of {role, content} messages, in transcript order — the same shape session_get returns.")] SessionMessageDto[] messages,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -86,7 +86,7 @@ public static class SessionTools
 		return new SessionAppendResult(o.SessionId, o.Applied, o.LastOrdinal, o.Appended, o.Applied ? null : "gap");
 	}
 
-	[McpServerTool(Name = "session.get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionGetResult))]
+	[McpServerTool(Name = "session_get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionGetResult))]
 	[Description("""
 		Get the active session blob by id, or null. The blob can be read INCREMENTALLY
 		(spec bounded-result-sets): pass `tail` for the last N chars, or `offset`+`limit`
@@ -122,10 +122,10 @@ public static class SessionTools
 		return s.Substring(start, count);
 	}
 
-	[McpServerTool(Name = "session.delete", Title = "Delete a session", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionDeletedResult))]
+	[McpServerTool(Name = "session_delete", Title = "Delete a session", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionDeletedResult))]
 	[Description("""
-		Soft-delete a session: it disappears from session.search/session.get but the row is kept;
-		a later session.upsert (or REST push) of the same sessionId resurrects it. Idempotent —
+		Soft-delete a session: it disappears from session_search/session_get but the row is kept;
+		a later session_upsert (or REST push) of the same sessionId resurrects it. Idempotent —
 		deleting a missing or already-deleted session returns { deleted: false }. Requires tasks:write.
 		""")]
 	public static async Task<SessionDeletedResult> DeleteAsync(
@@ -138,7 +138,7 @@ public static class SessionTools
 		return new SessionDeletedResult(await sessions.DeleteAsync(projectKey, sessionId, ct), sessionId);
 	}
 
-	[McpServerTool(Name = "session.search", Title = "Read the session archive (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionSearchResultView))]
+	[McpServerTool(Name = "session_search", Title = "Read the session archive (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionSearchResultView))]
 	[Description("""
 		THE session read verb — one tool for both LISTING and SEARCH (list = search without
 		`q`; replaces the former session.list).
@@ -152,7 +152,7 @@ public static class SessionTools
 		EPISODIC: the top `sessions` candidates are lazily hydrated (transient in-memory
 		index: russian-stem FTS + vectors) and searched INSIDE, up to `hitsPerSession`
 		messages each. Every hit carries the message ordinal — the provenance bridge: jump
-		to the verbatim source with session.get. Items then carry { sessionId, agent,
+		to the verbatim source with session_get. Items then carry { sessionId, agent,
 		description, hits[], retrievers } and the response the stage-1 `retrievers`;
 		`distilled:false` means the project has no digest store yet (distillation runs in
 		the background, ~minutes after a session settles) — not "no matches"; `reason`
@@ -211,10 +211,10 @@ public static class SessionTools
 	// Surfaced on SessionSearchResultView.Hint when listing rows were cut by the budget.
 	const string ListBudgetHint =
 		"Output budget exceeded: session rows were truncated (see truncated/omitted). Find a " +
-		"session by content by passing `q` (session.search), or read one directly with session.get.";
+		"session by content by passing `q` (session_search), or read one directly with session_get.";
 
 	// Surfaced when a query answer was cut by the budget.
 	const string SearchBudgetHint =
 		"Output budget exceeded: session items were truncated (see truncated/omitted). Narrow " +
-		"the read: fewer `sessions`, a lower `hitsPerSession`, or jump to one source with session.get.";
+		"the read: fewer `sessions`, a lower `hitsPerSession`, or jump to one source with session_get.";
 }

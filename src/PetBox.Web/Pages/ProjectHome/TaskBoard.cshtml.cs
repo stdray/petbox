@@ -44,7 +44,7 @@ public sealed class TaskBoardModel : PageModel
 
 	// Per-node discussion thread, DFS-flattened to (comment, depth) so the view renders it
 	// flat with an indent — the same shape as the plan-node list. Empty for nodes with no
-	// comments. Read-only in v1 (writes go through the comments.* MCP tools). Rendered via
+	// comments. Read-only in v1 (writes go through the comments_* MCP tools). Rendered via
 	// the shared _CommentThread partial (same flattener as the node detail page).
 	public IReadOnlyDictionary<string, IReadOnlyList<CommentLine>> CommentThreads { get; private set; }
 		= new Dictionary<string, IReadOnlyList<CommentLine>>(StringComparer.Ordinal);

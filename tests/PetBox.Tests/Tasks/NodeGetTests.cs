@@ -14,10 +14,10 @@ using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Tasks;
 
-// tasks.node_get — the addressed single-node read (token economy: one full node instead of
+// tasks_node_get — the addressed single-node read (token economy: one full node instead of
 // re-fetching a whole board): `node` is a slug or a 32-hex NodeId, terminal statuses are
 // returned like any other (an addressed ask has no includeClosed), and a miss is a clear
-// board-naming error. Plus the tasks.search `status` filter: only the named slugs, with a
+// board-naming error. Plus the tasks_search `status` filter: only the named slugs, with a
 // terminal slug honored even when includeClosed=false.
 [Collection("DataModule")]
 public sealed class NodeGetTests : IDisposable

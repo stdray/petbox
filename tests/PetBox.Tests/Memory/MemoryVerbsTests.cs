@@ -13,7 +13,7 @@ using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Memory;
 
-// The verbs memory.remember / memory.search: verbatim capture with a `scope` dimension
+// The verbs memory_remember / memory_search: verbatim capture with a `scope` dimension
 // (project default, workspace reserved), and the unified read (list = search without q)
 // that cascades project ⊕ workspace, sweeps every store by default, and labels rows by
 // scope. The "$workspace" container project is seeded by M028, so MigrationRunner makes

@@ -1,7 +1,7 @@
 namespace PetBox.Sessions.Contract;
 
 // REST echo of a session push: the session id, its new version (last message ordinal), and
-// how many messages the snapshot now holds. Mirrored by the MCP session.upsert structured output.
+// how many messages the snapshot now holds. Mirrored by the MCP session_upsert structured output.
 public sealed record SessionUpsertResponse(string SessionId, long Version, int MessageCount);
 
 // REST echo of an incremental append (200): the server-authoritative cursor after the write

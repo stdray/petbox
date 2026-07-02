@@ -15,7 +15,7 @@ namespace PetBox.Tasks.Workflow;
 // declare, so preset boards behave exactly as before while a definition overrides per kind.
 public static class MethodologyPresets
 {
-	// The `preset` name a definition-less project reports (tasks.methodology_def_get).
+	// The `preset` name a definition-less project reports (tasks_methodology_def_get).
 	public const string Name = "builtin-presets";
 
 	// Kind slug → process-role enum. The enum is the key for semantics that are NOT yet
@@ -220,7 +220,7 @@ public static class MethodologyPresets
 	public static IReadOnlyList<Workflow> Types(BoardKind kind) =>
 		KindDef(kind).Workflows.SelectMany(b => b.Types.Select(b.ToWorkflow)).ToList();
 
-	// All workflow BLOCKS of a kind (the tasks.workflow discovery shape): the preset data
+	// All workflow BLOCKS of a kind (the tasks_workflow discovery shape): the preset data
 	// is already grouped by shared FSM (feature=bug=chore is ONE block; simple's block
 	// carries its whole type vocabulary).
 	public static IReadOnlyList<WorkflowBlock> Blocks(BoardKind kind) =>

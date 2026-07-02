@@ -30,7 +30,7 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	// retriever; semantic is silently off when no embedding capability is available. The
 	// result carries which retrievers ran and whether it degraded.
 	Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default);
-	// The unified read of ONE container (spec uniform-entity-verbs v2) behind memory.search.
+	// The unified read of ONE container (spec uniform-entity-verbs v2) behind memory_search.
 	//   No Query  → deterministic LISTING over the stores in scope (Filter.Store or the
 	//     implicit sweep, which skips sensitive stores); default order Updated desc (then
 	//     key, then store), overridable by Sort (created/updated; Relevance is rejected
@@ -59,4 +59,9 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	// Usage counters for the given keys (null = the whole store), keyed by entry key;
 	// entries that never surfaced have no row and are absent from the map.
 	Task<IReadOnlyDictionary<string, MemoryUsageView>> GetUsageAsync(string projectKey, string store, IReadOnlyCollection<string>? keys = null, CancellationToken ct = default);
+
+	// Store-wide usage aggregate over the ACTIVE entry set (coverage, median recency of the
+	// surfaced entries, and the never-surfaced dead tail). `deadTailLimit` caps the sampled
+	// dead-tail keys (oldest-created first). Sibling to GetUsageAsync — same entry_usage source.
+	Task<MemoryUsageAggregate> GetUsageAggregateAsync(string projectKey, string store, int deadTailLimit = 10, CancellationToken ct = default);
 }

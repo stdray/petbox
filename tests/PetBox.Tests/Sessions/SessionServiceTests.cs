@@ -7,7 +7,7 @@ using PetBox.Sessions.Services;
 
 namespace PetBox.Tests.Sessions;
 
-// Covers the converged session write path: the MCP session.upsert tool and the REST Stop-hook
+// Covers the converged session write path: the MCP session_upsert tool and the REST Stop-hook
 // endpoint both delegate to ISessionService, so testing the service exercises the one path both
 // surfaces share (the arch test proves neither bypasses it). Latest-snapshot, last-write-wins.
 [Collection("DataModule")]
@@ -64,7 +64,7 @@ public sealed class SessionServiceTests : IDisposable
 		snap.Content.Should().Contain("### user").And.Contain("more"); // multi-message renders with headers
 	}
 
-	// ---- session.append: server-authoritative cursor (spec session-append-wire) ----------
+	// ---- session_append: server-authoritative cursor (spec session-append-wire) ----------
 
 	[Fact]
 	public async Task Append_NewSession_StartsAtOrdinalOne()

@@ -8,7 +8,7 @@ door enforced by a NetArchTest:
 |----------|--------------------------|-------|
 | Tasks    | `ITasksService`          | all domain logic out of `TasksTools`; UI + `ReportTools` thin |
 | Memory   | `IMemoryService`         | taxonomy/tags/FTS/temporal; 3 pages + `MemoryTools` thin |
-| Sessions | `ISessionService`        | MCP `session.upsert` + REST Stop-hook unified |
+| Sessions | `ISessionService`        | MCP `session_upsert` + REST Stop-hook unified |
 | Data     | `IDataSqlService`        | converged drifted raw-SQL query/exec (MCP vs REST) |
 | Log      | `ILogQueryService`       | converged KQL orchestration (MCP vs REST) around shared `KqlTransformer` |
 
@@ -63,7 +63,7 @@ re-expression must keep the suite green and preserve error messages.
   loses per-file isolation + quotas (the user-facing Data tier must stay per-file regardless),
   and (ii) requires a large temporal-data migration on prod.
 - The only concrete wins of a physical merge are atomic cross-module writes (today a
-  `tasks.upsert` writes the node to its shard and the `Relation` edge to `petbox.db` in two
+  `tasks_upsert` writes the node to its shard and the `Relation` edge to `petbox.db` in two
   files, non-atomic) and one-file backup. For a single-user system the atomicity gap is
   low-stakes and idempotently self-heals on re-upsert; if it ever bites, fix it narrowly
   (move `Relations` into the board shard, or wrap the two writers in one transaction where it

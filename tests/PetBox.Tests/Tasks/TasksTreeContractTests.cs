@@ -16,7 +16,7 @@ using PetBox.Web.Mcp;
 namespace PetBox.Tests.Tasks;
 
 // Verifies the flat-node + part_of tree contract surfaced by the Tasks MCP tools:
-// nodes are flat slugs, vertical structure is the part_of edge, and tasks.search returns
+// nodes are flat slugs, vertical structure is the part_of edge, and tasks_search returns
 // parentNodeId/parentSlug + a computed depth (the projection that replaced l1/l2/l3).
 [Collection("DataModule")]
 public sealed class TasksTreeContractTests : IDisposable
@@ -150,7 +150,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		up.Conflicts.Should().BeEmpty();
 	}
 
-	// Find a node by flat key in a tasks.search result and read its parent slug.
+	// Find a node by flat key in a tasks_search result and read its parent slug.
 	static string ParentSlugOf(PetBox.Web.Mcp.Contract.TaskSearchResultView got, string key) =>
 		got.Nodes.Single(n => n.Key == key).ParentSlug!;
 
