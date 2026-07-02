@@ -16,6 +16,10 @@ namespace PetBox.Web.Mcp;
 // services is derivable via `events | summarize count() by ServiceKey`; ingest is for
 // pets via /api/ingest/clef, not agents. Tool throws on a failed Assert* or a KQL
 // parse/not-found/unsupported error; McpErrorEnvelopeFilter renders the structured {error} body.
+// Execution faults (engine/translation) arrive as KqlExecutionException — from QueryAsync
+// for events, or from the await-foreach over streamed Table rows — and deliberately flow
+// to the same envelope, so the agent sees { error: { type, message, detail } } with the
+// failure class instead of the framework's opaque "An error occurred invoking 'log.query'.".
 [McpServerToolType]
 public static class LogTools
 {

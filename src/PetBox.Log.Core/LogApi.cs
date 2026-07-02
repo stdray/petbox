@@ -69,6 +69,7 @@ public static class LogApi
 			.Produces<KqlParseErrorResponse>(StatusCodes.Status400BadRequest)
 			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.Produces<KqlExecutionErrorResponse>(StatusCodes.Status500InternalServerError)
 			.RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/{projectKey}/{logName}/live-tail", LiveTailAsync).RequireAuthorization("ApiKey");
 		app.MapGet("/api/logs/{projectKey}/{logName}/services", GetServicesAsync)
@@ -271,6 +272,14 @@ public static class LogApi
 		{
 			return Results.BadRequest(new ErrorResponse(ex.Message));
 		}
+		// Engine faults (linq2db translation, SQLite) during events materialization —
+		// and anything else unexpected — must reach an API caller as structured JSON,
+		// never as the HTML /Error page.
+		catch (OperationCanceledException) { throw; }
+		catch (Exception ex)
+		{
+			return ExecutionError(ex);
+		}
 
 		try
 		{
@@ -293,7 +302,25 @@ public static class LogApi
 		{
 			return Results.BadRequest(new ErrorResponse(ex.Message));
 		}
+		// A shape-changing result streams — engine faults surface HERE, in the
+		// await-foreach over Rows (buffered before the response starts, so a JSON
+		// error result is still writable).
+		catch (OperationCanceledException) { throw; }
+		catch (Exception ex)
+		{
+			return ExecutionError(ex);
+		}
 	}
+
+	// Structured 500 for a query that parsed fine but failed to EXECUTE. User errors
+	// stay 400 above; Type carries the ORIGINATING exception (the engine fault inside
+	// KqlExecutionException, or the exception itself) for machine-readable branching.
+	static IResult ExecutionError(Exception ex) =>
+		Results.Json(
+			new KqlExecutionErrorResponse(
+				ex.Message,
+				(ex is KqlExecutionException ? ex.InnerException?.GetType() : null)?.Name ?? ex.GetType().Name),
+			statusCode: StatusCodes.Status500InternalServerError);
 
 	static async Task<IResult> WriteShapeChangedResult(KqlResult result, CancellationToken ct)
 	{

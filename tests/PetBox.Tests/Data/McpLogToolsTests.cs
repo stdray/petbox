@@ -179,6 +179,50 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task LogQuery_ExecutionError_ReturnsStructuredError()
+	{
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
+
+		// Valid syntax, but the built expression fails linq2db SQL translation at
+		// EXECUTION time (LevelName is CLR-computed). The raw engine exception used to
+		// surface as the framework's opaque "An error occurred invoking 'log.query'.";
+		// via McpErrorEnvelopeFilter it must be a structured {error} with the failure
+		// class (KqlExecutionException) and the reason.
+		var result = await tool.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = TestProjectKey,
+			["logName"] = LogNames.Default,
+			["kql"] = "events | where LevelName == \"Error\"",
+		});
+
+		var text = result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
+		text.Should().Contain("\"error\"");
+		text.Should().Contain("KqlExecutionException");
+		text.Should().Contain("KQL execution failed").And.Contain("LevelName");
+	}
+
+	[Fact]
+	public async Task LogQuery_ExecutionError_TablePath_ReturnsStructuredError()
+	{
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
+
+		// Same engine fault, but on the shape-changing path: rows stream lazily and the
+		// exception surfaces in the tool's await-foreach — still inside the tool body,
+		// still caught by the central envelope.
+		var result = await tool.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = TestProjectKey,
+			["logName"] = LogNames.Default,
+			["kql"] = "events | where LevelName == \"Error\" | summarize count() by Level",
+		});
+
+		var text = result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
+		text.Should().Contain("\"error\"");
+		text.Should().Contain("KqlExecutionException");
+		text.Should().Contain("KQL execution failed");
+	}
+
+	[Fact]
 	public async Task LogQuery_CrossProject_Rejected()
 	{
 		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");

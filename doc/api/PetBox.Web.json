@@ -609,6 +609,16 @@
                 }
               }
             }
+          },
+          "500": {
+            "description": "Internal Server Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KqlExecutionErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -2164,6 +2174,21 @@
         }
       },
       "JsonElement": { },
+      "KqlExecutionErrorResponse": {
+        "required": [
+          "error",
+          "type"
+        ],
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
       "KqlTableResponse": {
         "required": [
           "columns",
