@@ -4,12 +4,15 @@
 // The project + API key are resolved from cwd via the shared registry; if the cwd is not a
 // registered project this exits immediately (first guard, before any work).
 //
-// Reads the full transcript JSONL and POSTs the user/assistant text turns as ndjson — one
-// {role, content} message per line, in order (tool dumps and system reminders excluded). The
-// server numbers the messages (ordinal) and stores the latest snapshot; the endpoint is
-// last-write-wins, so each turn re-pushes the whole transcript and it self-heals. Best-effort:
-// every failure is swallowed and we ALWAYS exit 0 — never break the user's session.
+// Reads the full transcript JSONL, extracts the user/assistant text turns (tool dumps and
+// system reminders excluded), and pushes only the INCREMENT via the server-authoritative
+// append cursor (see append.ts): this process is fresh each turn, so it optimistically
+// resends a small idempotent overlap window; a contiguity gap comes back as a structured
+// 409 with the server's lastOrdinal and the tail is resent from there. Old servers without
+// the append route fall back to the legacy full-snapshot push. Best-effort: every failure
+// is swallowed and we ALWAYS exit 0 — never break the user's session.
 
+import { pushTranscript } from "./append.ts";
 import { resolveProject } from "./registry.ts";
 import { buildMessages, type Msg } from "./transcript.ts";
 
@@ -59,21 +62,20 @@ async function main(): Promise<void> {
     }
     if (msgs.length === 0) return; // empty body → server returns 400, don't push
 
-    const body = msgs.map((m) => JSON.stringify(m)).join("\n");
-
-    const uri = `${resolved.baseUrl}/api/sessions/${resolved.project}/${encodeURIComponent(sid)}?agent=claude-code`;
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-    try {
-      await fetch(uri, {
-        method: "POST",
-        headers: { "X-Api-Key": resolved.apiKey, "Content-Type": "application/x-ndjson; charset=utf-8" },
-        body,
-        signal: ctrl.signal,
-      });
-    } finally {
-      clearTimeout(timer);
-    }
+    // Fresh process each turn → no remembered cursor (null): pushTranscript guesses an
+    // idempotent overlap window and self-heals off the server's structured gap reject.
+    await pushTranscript(
+      {
+        baseUrl: resolved.baseUrl,
+        project: resolved.project,
+        sessionId: sid,
+        apiKey: resolved.apiKey,
+        agent: "claude-code",
+        timeoutMs: FETCH_TIMEOUT_MS,
+      },
+      msgs,
+      null,
+    );
   } catch {
     // best-effort: never break the user's session
   }
