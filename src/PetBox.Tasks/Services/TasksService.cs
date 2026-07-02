@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using LinqToDB;
 using LinqToDB.Data;
@@ -207,6 +209,58 @@ public sealed partial class TasksService : ITasksService
 			set.Add(match.Value);
 		}
 		return set;
+	}
+
+	// ---- user-defined methodology definition (wave 1.1: storage + validation only) ----
+
+	// Whole-document integrity rules (slugs, per-block references, uniqueness). Static — no state.
+	static readonly MethodologyDefinitionValidator DefinitionValidator = new();
+
+	// Storage form of the definition document: camelCase + enums as strings, so the stored
+	// JSON reads like the wire (and survives enum reordering).
+	static readonly JsonSerializerOptions DefinitionJson = new(JsonSerializerDefaults.Web)
+	{
+		Converters = { new JsonStringEnumConverter() },
+	};
+
+	public async Task<MethodologyDefAck> DefineMethodologyAsync(string projectKey, MethodologyDefinition def, long version, CancellationToken ct = default)
+	{
+		var result = DefinitionValidator.Validate(def);
+		if (!result.IsValid)
+			throw new ArgumentException(result.Errors[0].ErrorMessage);
+
+		var ctx = _boards.GetContext(projectKey);
+		var row = new MethodologyDefRow
+		{
+			Key = MethodologyDefRow.SingletonKey,
+			Version = version,
+			Json = JsonSerializer.Serialize(def, DefinitionJson),
+		};
+		var r = await TemporalStore.UpsertAsync(ctx, new[] { row }, ct: ct);
+		if (!r.Applied)
+		{
+			// Singleton document: exactly one conflict possible. Name the current version so
+			// the caller re-reads (tasks.methodology_def_get) and rebases — same optimistic-
+			// concurrency spirit as the node upsert, but a throw (there is no batch to ack).
+			var c = r.Conflicts[0];
+			throw new InvalidOperationException(c.Kind switch
+			{
+				TemporalConflictKind.Vanished => $"methodology definition conflict: your baseline version {version} no longer exists (the definition was removed); re-read with tasks.methodology_def_get and resubmit with version 0",
+				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks.methodology_def_get and resubmit against it",
+			});
+		}
+		return new MethodologyDefAck(r.CurrentVersion, Changed: r.Inserted > 0);
+	}
+
+	public async Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default)
+	{
+		var ctx = _boards.GetContext(projectKey);
+		var row = await ctx.GetTable<MethodologyDefRow>()
+			.FirstOrDefaultAsync(m => m.Key == MethodologyDefRow.SingletonKey && m.ActiveTo == null, ct);
+		if (row is null) return null;
+		var def = JsonSerializer.Deserialize<MethodologyDefinition>(row.Json, DefinitionJson)
+			?? throw new InvalidOperationException($"project '{projectKey}': stored methodology definition failed to deserialize");
+		return new MethodologyDefView(def, row.Version, row.Created, row.Updated);
 	}
 
 	// A specBoard link only makes sense on a work board and must point at an existing spec board.

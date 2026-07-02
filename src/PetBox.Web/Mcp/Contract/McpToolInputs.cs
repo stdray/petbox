@@ -59,6 +59,58 @@ public sealed record PlanNodeInput
 	public bool Deleted { get; init; }
 }
 
+// The `definition` argument of tasks.methodology_def_upsert — the whole user-defined
+// methodology as a structured document (typed records, not a JSON string/blob, per the
+// typed-surface convention). Mirrors MethodologyDefinition; the adapter maps it 1:1 and
+// the service validates integrity (slugs, per-block references, uniqueness).
+public sealed record MethodologyDefInput
+{
+	// Methodology name, a slug ([a-z][a-z0-9_-]{0,99}).
+	public string? Name { get; init; }
+	public MethodologyKindInput[]? Kinds { get; init; }
+}
+
+// One board kind of the methodology. `kind` is a FREE-FORM slug (user-defined kinds are
+// the point — not limited to the built-in simple|spec|ideas|intake|work).
+public sealed record MethodologyKindInput
+{
+	public string? Kind { get; init; }
+	// Whether the bare board quick-add form may create nodes of this kind (default true;
+	// the built-in preset turns it off where a node needs a link at birth: spec/work).
+	public bool QuickAddAllowed { get; init; } = true;
+	public MethodologyWorkflowInput[]? Workflows { get; init; }
+}
+
+// One state machine shared by every type slug in `types` (the tasks.workflow block
+// shape). Convention: statuses[0] is the initial status.
+public sealed record MethodologyWorkflowInput
+{
+	public string[]? Types { get; init; }
+	public MethodologyStatusInput[]? Statuses { get; init; }
+	public MethodologyTransitionInput[]? Transitions { get; init; }
+}
+
+// A workflow status: `kind` is open|terminalok|terminalcancel (default open), the same
+// string vocabulary tasks.workflow answers with; `name` defaults to the slug.
+public sealed record MethodologyStatusInput
+{
+	public string? Slug { get; init; }
+	public string? Name { get; init; }
+	public string? Kind { get; init; }
+}
+
+// A directed FSM edge. `preconditionArtifact` names a comment-artifact tag (e.g.
+// "spec_plan") that must exist on the node before the transition — modeled here,
+// enforced by the engine task.
+public sealed record MethodologyTransitionInput
+{
+	public string? From { get; init; }
+	public string? To { get; init; }
+	public bool RequiresApproval { get; init; }
+	public bool RequiresReason { get; init; }
+	public string? PreconditionArtifact { get; init; }
+}
+
 // The `sort` argument of tasks.search: `by` names the axis (priority|created|updated|title|
 // relevance — relevance only with a query), `desc` flips the direction (ignored for
 // relevance, whose fused order is already most-relevant-first).

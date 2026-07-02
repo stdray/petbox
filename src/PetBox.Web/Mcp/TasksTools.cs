@@ -141,6 +141,106 @@ public static class TasksTools
 		return await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, urlPrefix, ct);
 	}
 
+	[McpServerTool(Name = "tasks.methodology_def_upsert", Title = "Define the project's methodology (user-defined kinds/FSMs)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefUpsertResult))]
+	[Description("""
+		Store the project's USER-DEFINED METHODOLOGY DEFINITION — the document that describes
+		the project's own board kinds, task types, statuses and transitions as data (NOT the
+		quartet index: tasks.methodology_get reads the intake/ideas/spec/work BOARDS; this
+		verb writes the process DEFINITION). One definition per project, versioned: `version`
+		is the baseline you last saw (0 = the project has none yet); a moved baseline is a
+		clear conflict error naming the current version — re-read with
+		tasks.methodology_def_get and resubmit. The definition is validated as a whole before
+		it is stored (name/kind/type slugs, ≥1 kind, ≥1 workflow block per kind, type unique
+		within its kind, statuses non-empty and unique per block, every transition between
+		statuses of ITS block, no duplicate edges). `definition` shape: { name, kinds:[{
+		kind, quickAddAllowed?, workflows:[{ types:[...], statuses:[{ slug, name?,
+		kind?: open|terminalok|terminalcancel }], transitions:[{ from, to,
+		requiresApproval?, requiresReason?, preconditionArtifact? }] }] }] }; statuses[0] is
+		the initial status; `preconditionArtifact` names a comment-artifact tag (e.g.
+		"spec_plan") the node must carry before the transition. NOTE (wave 1.1): storage +
+		validation only — live boards still run the built-in preset until the engine ships;
+		enforcement of preconditionArtifact also lands with the engine. Returns { version
+		(the new baseline), changed (false = identical resubmit, no new revision) }.
+		Requires tasks:write.
+		""")]
+	public static async Task<MethodologyDefUpsertResult> MethodologyDefUpsertAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("The whole methodology definition (structured document; see the tool description for the shape).")] MethodologyDefInput definition,
+		[Description("Baseline version you last saw; 0 = the project has no definition yet.")] long version = 0,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var ack = await tasks.DefineMethodologyAsync(projectKey, ParseDefinition(definition), version, ct);
+		return new MethodologyDefUpsertResult(ack.Version, ack.Changed);
+	}
+
+	[McpServerTool(Name = "tasks.methodology_def_get", Title = "Get the project's methodology definition", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefGetResult))]
+	[Description("""
+		Return the project's USER-DEFINED METHODOLOGY DEFINITION — the stored process
+		document (kinds/types/statuses/transitions as data), NOT the quartet board index
+		(that is tasks.methodology_get). Defined=true → { name, kinds:[{ kind,
+		quickAddAllowed, workflows:[{ types, initial, statuses:[{ slug, name, kind }],
+		transitions:[{ from, to, requiresApproval, requiresReason, preconditionArtifact? }]
+		}] }], version (the baseline for tasks.methodology_def_upsert), created, updated }.
+		Defined=false → the project has no definition of its own and runs on the built-in
+		preset (`preset` names it) — an honest state, not an error. Requires tasks:read.
+		""")]
+	public static async Task<MethodologyDefGetResult> MethodologyDefGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
+		if (view is null)
+			return new MethodologyDefGetResult(Defined: false, Preset: BuiltinPreset);
+		return new MethodologyDefGetResult(
+			Defined: true,
+			Name: view.Definition.Name,
+			Kinds: view.Definition.Kinds.Select(k => new MethodologyKindView(
+				k.Kind, k.QuickAddAllowed,
+				k.Workflows.Select(w => new MethodologyWorkflowBlockView(
+					Types: w.Types,
+					Initial: w.Initial,
+					Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
+					Transitions: w.Transitions.Select(t => new MethodologyTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList())).ToList(),
+			Version: view.Version,
+			Created: view.Created,
+			Updated: view.Updated);
+	}
+
+	// The `preset` a definition-less project runs on: the hardcoded WorkflowCatalog
+	// (simple + the methodology quartet kinds).
+	const string BuiltinPreset = "builtin-workflow-catalog";
+
+	// Map the typed wire document onto the domain definition 1:1 (nulls → empty lists —
+	// the validator then reports "needs at least one ..." instead of an opaque NRE).
+	// Only the status-kind STRING needs parsing here; integrity stays in the service.
+	static MethodologyDefinition ParseDefinition(MethodologyDefInput d) => new(
+		d.Name ?? string.Empty,
+		(d.Kinds ?? []).Select(k => new MethodologyKindDef(
+			k.Kind ?? string.Empty,
+			k.QuickAddAllowed,
+			(k.Workflows ?? []).Select(w => new MethodologyWorkflowDef(
+				w.Types ?? [],
+				(w.Statuses ?? []).Select(ParseStatus).ToList(),
+				(w.Transitions ?? []).Select(t => new MethodologyTransitionDef(
+					t.From ?? string.Empty, t.To ?? string.Empty,
+					t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList())).ToList());
+
+	static WorkflowStatus ParseStatus(MethodologyStatusInput s)
+	{
+		var slug = s.Slug ?? string.Empty;
+		var kind = StatusKind.Open;
+		if (!string.IsNullOrWhiteSpace(s.Kind) && !Enum.TryParse(s.Kind.Trim(), ignoreCase: true, out kind))
+			throw new ArgumentException($"status '{slug}': kind '{s.Kind}' is not a status kind (valid: open|terminalok|terminalcancel)");
+		return new WorkflowStatus(slug, string.IsNullOrWhiteSpace(s.Name) ? slug : s.Name, kind);
+	}
+
 	[McpServerTool(Name = "tasks.node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
 	[Description("""
 		Return ONE node of a board in FULL, addressed by `node` = its slug key OR its 32-hex

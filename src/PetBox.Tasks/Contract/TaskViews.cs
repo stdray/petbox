@@ -149,3 +149,14 @@ public sealed record MethodologyBoard(
 // `Hint` is non-null only when some board's rows were cut by the output budget: a
 // human/agent-readable pointer on how to narrow the query (null = complete answer).
 public sealed record MethodologyView(bool Enabled, IReadOnlyList<MethodologyBoard> Boards, string? Hint = null);
+
+// Ack of a methodology-definition write: the definition's current revision number (the
+// baseline for the next edit) and whether this call created a new revision (false = an
+// identical resubmit collapsed to a no-op). Conflicts throw instead — a singleton
+// document has no partial-batch outcome to report.
+public sealed record MethodologyDefAck(long Version, bool Changed);
+
+// The project's active methodology definition plus its revision metadata. A null view
+// (from GetMethodologyDefinitionAsync) means the project has no definition and is on the
+// built-in WorkflowCatalog preset.
+public sealed record MethodologyDefView(MethodologyDefinition Definition, long Version, DateTime Created, DateTime Updated);

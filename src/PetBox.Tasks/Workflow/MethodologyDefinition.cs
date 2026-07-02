@@ -1,0 +1,45 @@
+namespace PetBox.Tasks.Workflow;
+
+// A project's methodology as DATA — the user-defined counterpart of the hardcoded
+// WorkflowCatalog preset (spec methodology-from-primitives). One definition per project,
+// stored as a temporal JSON document (MethodologyDefRow); this slice only STORES and
+// VALIDATES it — wiring it into board-kind/FSM resolution is the next task, so the
+// hardcoded catalog keeps serving live boards untouched.
+//
+// The shape mirrors what tasks.workflow answers per board: a kind hosts one or more
+// workflow blocks, each block is one state machine shared by every type slug in it.
+public sealed record MethodologyDefinition(
+	string Name,
+	IReadOnlyList<MethodologyKindDef> Kinds);
+
+// One board kind of the methodology. `Kind` is a FREE-FORM slug ([a-z][a-z0-9_-]*), NOT
+// the BoardKind enum — user-defined kinds are the point; bridging them onto the enum seam
+// is the engine task. `QuickAddAllowed` mirrors WorkflowCatalog.QuickAddAllowed: whether
+// the bare board quick-add form may create nodes of this kind.
+public sealed record MethodologyKindDef(
+	string Kind,
+	bool QuickAddAllowed,
+	IReadOnlyList<MethodologyWorkflowDef> Workflows);
+
+// One state machine shared by every type slug in `Types` (the tasks.workflow block shape).
+// Convention: Statuses[0] is the initial status (same as Workflow.Initial); slug matching
+// is case-insensitive.
+public sealed record MethodologyWorkflowDef(
+	IReadOnlyList<string> Types,
+	IReadOnlyList<WorkflowStatus> Statuses,
+	IReadOnlyList<MethodologyTransitionDef> Transitions)
+{
+	public string Initial => Statuses[0].Slug;
+}
+
+// A directed FSM edge — WorkflowTransition plus `PreconditionArtifact`, which is NEW vs
+// the hardcoded catalog: it names a comment-artifact tag (e.g. "spec_plan") that must
+// exist on the node before the transition fires (the exploring→review gate the catalog
+// enforces imperatively in the service, expressed as data). This slice only MODELS the
+// field; enforcement lands with the engine.
+public sealed record MethodologyTransitionDef(
+	string From,
+	string To,
+	bool RequiresApproval = false,
+	bool RequiresReason = false,
+	string? PreconditionArtifact = null);

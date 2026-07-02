@@ -323,3 +323,38 @@ public sealed record WorkflowGroupView(
 	IReadOnlyList<WorkflowTransitionView> Transitions);
 
 public sealed record WorkflowView(string Kind, IReadOnlyList<WorkflowGroupView> Workflows);
+
+// tasks.methodology_def_upsert ack: the definition's current revision number (the baseline
+// for the next edit) and whether this call created a new revision (false = an identical
+// resubmit collapsed to a no-op). A version conflict throws (the error envelope names the
+// current version), so this shape never carries conflicts.
+public sealed record MethodologyDefUpsertResult(long Version, bool Changed);
+
+// tasks.methodology_def_get answer. Defined=true → the stored definition (name/kinds) plus
+// its revision metadata. Defined=false → the project has no definition and runs on the
+// built-in preset named in `Preset` (the structured "not defined" shape, mirroring
+// session.search's distilled:false + reason — an honest state, not an error or a miss).
+public sealed record MethodologyDefGetResult(
+	bool Defined,
+	string? Preset = null,
+	string? Name = null,
+	IReadOnlyList<MethodologyKindView>? Kinds = null,
+	long? Version = null,
+	DateTime? Created = null,
+	DateTime? Updated = null);
+
+// One kind of a stored methodology definition; workflow blocks reuse the tasks.workflow
+// status vocabulary (kind = open|terminalok|terminalcancel).
+public sealed record MethodologyKindView(
+	string Kind, bool QuickAddAllowed, IReadOnlyList<MethodologyWorkflowBlockView> Workflows);
+
+public sealed record MethodologyWorkflowBlockView(
+	IReadOnlyList<string> Types,
+	string Initial,
+	IReadOnlyList<WorkflowStatusView> Statuses,
+	IReadOnlyList<MethodologyTransitionView> Transitions);
+
+// WorkflowTransitionView plus the definition-only `preconditionArtifact` (a comment-artifact
+// tag required before the transition; null = omitted by the serializer).
+public sealed record MethodologyTransitionView(
+	string From, string To, bool RequiresApproval, bool RequiresReason, string? PreconditionArtifact = null);

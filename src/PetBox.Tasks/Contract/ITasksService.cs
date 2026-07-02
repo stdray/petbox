@@ -43,6 +43,18 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// The workspace owning a project, or null if unknown. Adapters use it to assemble per-node
 	// UI permalinks (the URL is workspace-scoped but the MCP surface carries only projectKey).
 	Task<string?> ResolveWorkspaceAsync(string projectKey, CancellationToken ct = default);
+	// --- user-defined methodology definition (wave 1.1: storage + validation only;
+	//     the hardcoded WorkflowCatalog still serves live boards until the engine task) ---
+
+	// Validate and store the project's methodology definition as a new temporal revision.
+	// `version` is the baseline the author last saw (0 = "I believe none exists yet");
+	// optimistic concurrency: a moved baseline throws, naming the current version so the
+	// caller re-reads and rebases. An identical resubmit is a no-op (Changed=false).
+	Task<MethodologyDefAck> DefineMethodologyAsync(string projectKey, MethodologyDefinition def, long version, CancellationToken ct = default);
+	// The project's active methodology definition + its revision metadata, or null when
+	// the project has none (it is then on the built-in WorkflowCatalog preset).
+	Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default);
+
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);
 	Task<bool> BoardExistsAsync(string projectKey, string board, CancellationToken ct = default);
