@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace PetBox.Log.Core.Contract;
 
@@ -23,15 +24,23 @@ public sealed record KqlExecutionErrorResponse(string Error, string Type);
 
 // One log event in the events-shaped query response. Timestamp is pre-formatted
 // (yyyy-MM-ddTHH:mm:ss.fffZ); level is the enum name; properties are stringified.
+//
+// Field names are pinned to the PascalCase KQL schema (KqlSchema.Events / the KQL
+// identifiers a query references: Timestamp, Level, ServiceKey…). The minimal-API JSON
+// default is camelCase, but the table-shaped result (KqlTableResponse.Columns) carries
+// the schema names verbatim as data, so without these pins the two query shapes disagree
+// on casing (event.timestamp vs column "Timestamp") and an agent parser written for one
+// shape silently breaks on the other. Kept identical to the KQL schema so both shapes,
+// and the query language itself, use one casing.
 public sealed record LogEventDto(
-	long Id,
-	string ServiceKey,
-	string Timestamp,
-	string Level,
-	string Message,
-	string MessageTemplate,
-	string? Exception,
-	Dictionary<string, string> Properties);
+	[property: JsonPropertyName("Id")] long Id,
+	[property: JsonPropertyName("ServiceKey")] string ServiceKey,
+	[property: JsonPropertyName("Timestamp")] string Timestamp,
+	[property: JsonPropertyName("Level")] string Level,
+	[property: JsonPropertyName("Message")] string Message,
+	[property: JsonPropertyName("MessageTemplate")] string MessageTemplate,
+	[property: JsonPropertyName("Exception")] string? Exception,
+	[property: JsonPropertyName("Properties")] Dictionary<string, string> Properties);
 
 // Events-shaped query result: a count and the projected events.
 public sealed record LogEventsResponse(int Count, IReadOnlyList<LogEventDto> Events);

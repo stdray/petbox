@@ -77,7 +77,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 
 	// The active plan nodes of one board (flat slugs + part_of projection) with links and
 	// (spec boards) delivery. Kept for the Razor board UI and as the enrichment core the
-	// unified SearchNodesAsync composes; the MCP read verb is tasks.search.
+	// unified SearchNodesAsync composes; the MCP read verb is tasks_search.
 	// `status` (slugs, case-insensitive) filters on top of the selection; a terminal status
 	// named in the filter returns its nodes even when includeClosed is false (an explicit
 	// ask overrides the default hiding); an unknown slug for the board's kind is rejected.
@@ -126,7 +126,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, CancellationToken ct = default);
 	// Nodes added/updated/removed since the cursor (no writes).
 	Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default);
-	// The unified tasks read (spec uniform-entity-verbs v2) behind tasks.search — the one
+	// The unified tasks read (spec uniform-entity-verbs v2) behind tasks_search — the one
 	// read verb where list = search without a query.
 	//   No Query  → deterministic LISTING: the filter's board (or every board — rows then
 	//     carry their board), default order priority-then-key, overridable by Sort
@@ -149,7 +149,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// The board's workflow surface, DATA-DRIVEN: a kind the project's methodology definition
 	// declares resolves from the definition (blocks as declared, transitions carrying
 	// preconditionArtifact); any other kind falls back to the built-in presets exactly as
-	// before (identical FSMs collapsed into one block). Powers tasks.workflow.
+	// before (identical FSMs collapsed into one block). Powers tasks_workflow.
 	Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default);
 
 	// --- UI helpers (board page renders the raw active nodes in its own tree order) ---
@@ -159,7 +159,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// generated key, the kind's initial status/type, and a stable NodeId.
 	Task QuickAddAsync(string projectKey, string board, string name, string? body, long priority, CancellationToken ct = default);
 
-	// --- system surface (report.issue: report-to-maintainer, not project-scoped) ---
+	// --- system surface (report_issue: report-to-maintainer, not project-scoped) ---
 
 	// File an issue node onto a triage board (auto-created), returning its key.
 	Task<string> ReportIssueAsync(string project, string board, string title, string body, CancellationToken ct = default);

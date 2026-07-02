@@ -114,7 +114,7 @@ participant "Work" as W
 database "Relations" as R
 control "FSM effects" as FX
 
-Agent -> I : report.issue -> Issue (reported)
+Agent -> I : report_issue -> Issue (reported)
 M -> I : triage -> confirmed
 M -> W : создать bug (new)
 W -> R : ребро issue->task

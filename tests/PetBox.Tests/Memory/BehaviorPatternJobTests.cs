@@ -191,6 +191,87 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	}
 
 	[Fact]
+	public async Task RephrasedNewPattern_DedupsIntoExistingPattern_NoDuplicateRow()
+	{
+		// The prod bug: the miner re-derives a pattern it already consolidated and emits it as
+		// NEW (key omitted, wording drifted) → a second bp-… row. The structural guard must
+		// match it to the existing pattern by semantics and turn it into an UPDATE.
+		await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
+		{
+			Key = "bp-seed", Version = 0, Type = "Feedback",
+			Description = "когда деплой жди CI и прогоняй смоук на проде", Body = "из s1+s2",
+			Tags = ["autocaptured", "behavior:pattern"],
+			Metadata = """{"sources":["s1","s2"]}""",
+		}], []);
+		await SeedFeedback("f3", "s3", "наблюдение три про откат миграции");
+		await SeedFeedback("f4", "s4", "наблюдение четыре про журнал импорта");
+		// Candidate: NO key, description is a rephrase (superset) of bp-seed.
+		var chat = new EmbeddingChat(
+			"""[{"description":"когда деплой обязательно жди CI и прогоняй смоук на проде","body":"снова подтверждено","sources":["s3","s4"]}]""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		var patterns = Patterns(await _memory.ListAsync(Proj, Store, "Feedback"));
+		patterns.Should().HaveCount(1); // deduped into bp-seed, not a second row
+		patterns[0].Key.Should().Be("bp-seed");
+		foreach (var s in new[] { "s1", "s2", "s3", "s4" })
+			patterns[0].Metadata.Should().Contain(s); // sources merged, provenance kept
+	}
+
+	[Fact]
+	public async Task DistinctPattern_StillCreated_GuardDoesNotOverMerge()
+	{
+		// The guard must not eat a genuinely different pattern.
+		await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
+		{
+			Key = "bp-seed", Version = 0, Type = "Feedback",
+			Description = "когда деплой жди CI и прогоняй смоук на проде", Body = "из s1+s2",
+			Tags = ["autocaptured", "behavior:pattern"],
+			Metadata = """{"sources":["s1","s2"]}""",
+		}], []);
+		await SeedFeedback("f3", "s3", "линки узлов показывай кликабельным permalink");
+		await SeedFeedback("f4", "s4", "снова кликабельный permalink на узел через include_url");
+		var chat = new EmbeddingChat(
+			"""[{"description":"когда создаёшь узел показывай кликабельный permalink через include_url","body":"иначе владелец не откроет","sources":["s3","s4"]}]""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		Patterns(await _memory.ListAsync(Proj, Store, "Feedback")).Should().HaveCount(2); // new, distinct pattern
+	}
+
+	[Fact]
+	public async Task DedupSweep_FoldsPreExistingTwins_Once_SurvivesRestart()
+	{
+		// Two near-identical patterns already on disk under different keys (the observed prod
+		// state). The one-shot sweep must collapse them into one, merging provenance; a second
+		// pass (a restart re-run) must not re-sweep.
+		await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
+		{
+			Key = "bp-a", Version = 0, Type = "Feedback",
+			Description = "petbox переехал на сервер tun4 apps1 узел", Body = "из s1",
+			Tags = ["autocaptured", "behavior:pattern"], Metadata = """{"sources":["s1","s2"]}""",
+		}], []);
+		await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
+		{
+			Key = "bp-b", Version = 0, Type = "Feedback",
+			Description = "petbox теперь переехал на сервер tun4 apps1 узел", Body = "из s3",
+			Tags = ["autocaptured", "behavior:pattern"], Metadata = """{"sources":["s2","s3"]}""",
+		}], []);
+		var chat = new EmbeddingChat("[]"); // mining finds nothing new to consolidate
+
+		await Job(chat).DrainAllAsync(CancellationToken.None);
+
+		var patterns = Patterns(await _memory.ListAsync(Proj, Store, "Feedback"));
+		patterns.Should().HaveCount(1); // twins folded
+		foreach (var s in new[] { "s1", "s2", "s3" })
+			patterns[0].Metadata.Should().Contain(s); // union of both sources
+
+		// Restart re-run: sweep cursor is set, no second collapse, store stable.
+		await Job(new EmbeddingChat("[]")).DrainAllAsync(CancellationToken.None);
+		Patterns(await _memory.ListAsync(Proj, Store, "Feedback")).Should().HaveCount(1);
+	}
+
+	[Fact]
 	public async Task MalformedMining_AdvancesCursor_NoCrash_NoBurnLoop()
 	{
 		await SeedFeedback("f1", "s1", "раз");
@@ -227,4 +308,58 @@ public sealed class BehaviorPatternJobTests : IDisposable
 		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
 			throw new NotSupportedException();
 	}
+
+	// Scripted chat that also embeds: deterministic bag-of-words (distinct normalized tokens
+	// across the batch = the basis, each input → token-count vector) so cosine is exact BoW
+	// similarity — rephrasings that share (nearly) all tokens clear the dedup threshold, a
+	// distinct fact stays well below it.
+	sealed class EmbeddingChat(params string[] responses) : ILlmClient
+	{
+		readonly Queue<string> _queue = new(responses);
+		string _last = responses[^1];
+		public List<string> Prompts { get; } = [];
+
+		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
+		{
+			Prompts.Add(request.Messages[^1].Content);
+			if (_queue.Count > 0) _last = _queue.Dequeue();
+			return Task.FromResult(new ChatResult(_last, new ModelIdentity("fake-chat", 0),
+				new ServedBy("fake", "fake-chat", 1, Degraded: false)));
+		}
+
+		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
+			Task.FromResult(true);
+
+		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default) =>
+			Task.FromResult(BagOfWords.Embed(request.Inputs));
+
+		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+	}
+}
+
+// Deterministic bag-of-words embedder shared by the dedup tests (exact BoW cosine).
+static class BagOfWords
+{
+	public static EmbedResult Embed(IReadOnlyList<string> inputs)
+	{
+		var vocab = new Dictionary<string, int>();
+		foreach (var input in inputs)
+			foreach (var tok in Tokenize(input))
+				if (!vocab.ContainsKey(tok)) vocab[tok] = vocab.Count;
+		var dim = Math.Max(vocab.Count, 1);
+		var vectors = inputs.Select(input =>
+		{
+			var v = new float[dim];
+			foreach (var tok in Tokenize(input)) v[vocab[tok]] += 1f;
+			return v;
+		}).ToList();
+		return new EmbedResult(vectors, new ModelIdentity("fake-embed", 0),
+			new ServedBy("fake", "fake-embed", 1, Degraded: false));
+	}
+
+	static IEnumerable<string> Tokenize(string? s) =>
+		(s ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+			.Select(t => new string(t.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray()))
+			.Where(t => t.Length > 0);
 }

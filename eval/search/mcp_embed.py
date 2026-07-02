@@ -4,7 +4,7 @@ DATA = _os.environ.get("EVAL_DATA", _os.path.join(_os.path.dirname(_os.path.absp
 _os.makedirs(DATA, exist_ok=True)
 
 #!/usr/bin/env python3
-"""Minimal MCP Streamable-HTTP client to pull embeddings from petbox (llm.embed).
+"""Minimal MCP Streamable-HTTP client to pull embeddings from petbox (llm_embed).
 
 petbox /mcp is the ModelContextProtocol SDK Streamable-HTTP transport: initialize ->
 notifications/initialized -> tools/call, with an Mcp-Session-Id header and SSE responses.
@@ -45,7 +45,7 @@ def _init():
 
 def _call(h, inputs):
     body = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
-        "name": "llm.embed", "arguments": {"projectKey": "$system", "inputs": inputs}}}
+        "name": "llm_embed", "arguments": {"projectKey": "$system", "inputs": inputs}}}
     r = requests.post(URL, headers=h, json=body, timeout=300)
     r.raise_for_status()
     msg = _parse(r)

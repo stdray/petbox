@@ -207,7 +207,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 		var doc = await QueryAsync($"events | where Message == \"{msg}\" | take 1");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
-		doc.RootElement.GetProperty("events")[0].GetProperty("level").GetString().Should().Be("Information");
+		doc.RootElement.GetProperty("events")[0].GetProperty("Level").GetString().Should().Be("Information");
 	}
 
 	[Fact]
@@ -225,10 +225,10 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 		var doc = await QueryAsync($"events | where Message == \"{msgError}\" | take 1");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
-		doc.RootElement.GetProperty("events")[0].GetProperty("level").GetString().Should().Be("Error");
+		doc.RootElement.GetProperty("events")[0].GetProperty("Level").GetString().Should().Be("Error");
 
 		var doc2 = await QueryAsync($"events | where Message == \"{msgWarn}\" | take 1");
-		doc2.RootElement.GetProperty("events")[0].GetProperty("level").GetString().Should().Be("Warning");
+		doc2.RootElement.GetProperty("events")[0].GetProperty("Level").GetString().Should().Be("Warning");
 	}
 
 	[Fact]
@@ -446,8 +446,8 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		var doc = await QueryAsync($"events | where Message == \"{msg}\" | take 1", "$system", "petbox");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
 		var evt = doc.RootElement.GetProperty("events")[0];
-		evt.GetProperty("level").GetString().Should().Be("Error");
-		evt.GetProperty("serviceKey").GetString().Should().Be("petbox-web");
+		evt.GetProperty("Level").GetString().Should().Be("Error");
+		evt.GetProperty("ServiceKey").GetString().Should().Be("petbox-web");
 	}
 
 	[Fact]
@@ -465,7 +465,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 		var doc = await QueryAsync($"events | where ServiceKey == \"{svcA}\" | take 10");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
-		doc.RootElement.GetProperty("events")[0].GetProperty("message").GetString().Should().Contain(msgA);
+		doc.RootElement.GetProperty("events")[0].GetProperty("Message").GetString().Should().Contain(msgA);
 	}
 
 	// --- Seq header-routed ingest by project key (no log in URL) ---
@@ -648,8 +648,8 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		var doc = await QueryAsync($"events | where Message == \"{msg}\" | take 1");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
 		var evt = doc.RootElement.GetProperty("events")[0];
-		evt.GetProperty("level").GetString().Should().Be("Warning");
-		evt.GetProperty("properties").GetProperty("Sha").GetString().Should().Contain("abc123");
+		evt.GetProperty("Level").GetString().Should().Be("Warning");
+		evt.GetProperty("Properties").GetProperty("Sha").GetString().Should().Contain("abc123");
 	}
 
 	[Fact]

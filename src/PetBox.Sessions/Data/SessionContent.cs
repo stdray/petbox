@@ -8,7 +8,7 @@ namespace PetBox.Sessions.Data;
 // Codec for a session's content: messages <-> a Brotli-compressed JSONL blob (one JSON
 // object per line, the whole thing Brotli-compressed). Transcripts are highly repetitive,
 // so compression keeps the verbatim copy cheap to store alongside the (future) FTS index.
-// The blob is the cold payload — only decoded on a read (session.get) or a delta query.
+// The blob is the cold payload — only decoded on a read (session_get) or a delta query.
 public static class SessionContent
 {
 	static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);

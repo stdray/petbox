@@ -7,8 +7,8 @@ the mechanism for that).
 
 ## BLOCKER (2026-05-31): per-file temporal writes fail on the live instance
 
-- Meta layer works: `tasks.board_list`/`memory.store_list` succeed; a cold
-  `tasks.upsert`/`memory.upsert` **creates the board/store meta** (in the main
+- Meta layer works: `tasks_board_list`/`memory_store_list` succeed; a cold
+  `tasks_upsert`/`memory_upsert` **creates the board/store meta** (in the main
   `petbox.db`) — so feature flags are on and the key has read+write scopes.
 - Per-file layer fails: writing the actual node/entry into
   `data/{tasks,memory}/petbox/<name>.db` returns the opaque `"An error occurred

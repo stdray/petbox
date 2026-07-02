@@ -19,8 +19,8 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class TasksTools
 {
-	[McpServerTool(Name = "tasks.board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE a named task board in a project. `kind` sets the board role (simple|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition declares via tasks.methodology_def_upsert) which drives the workflow — call tasks.workflow to see the valid types/statuses/transitions for a kind; an unknown kind is rejected naming the valid ones. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
+	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
+	[Description("CREATE a named task board in a project. `kind` sets the board role (simple|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition declares via tasks_methodology_def_upsert) which drives the workflow — call tasks_workflow to see the valid types/statuses/transitions for a kind; an unknown kind is rejected naming the valid ones. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null, CancellationToken ct = default)
@@ -32,7 +32,7 @@ public static class TasksTools
 		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.SpecBoard, meta.CreatedAt);
 	}
 
-	[McpServerTool(Name = "tasks.board_set_spec", Title = "Set a work board's spec board", UseStructuredContent = true, OutputSchemaType = typeof(BoardSetSpecResult))]
+	[McpServerTool(Name = "tasks_board_set_spec", Title = "Set a work board's spec board", UseStructuredContent = true, OutputSchemaType = typeof(BoardSetSpecResult))]
 	[Description("Set (or clear, when specBoard is omitted) the spec board a work board's tasks link into. The target must be a spec board. Makes the work->spec link explicit. Requires tasks:write.")]
 	public static async Task<BoardSetSpecResult> BoardSetSpecAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -45,7 +45,7 @@ public static class TasksTools
 		return new BoardSetSpecResult(set, norm);
 	}
 
-	[McpServerTool(Name = "tasks.board_list", Title = "List task boards", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardListResult))]
+	[McpServerTool(Name = "tasks_board_list", Title = "List task boards", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardListResult))]
 	[Description("List task boards in a project, each with its kind, specBoard (work->spec link, if set) and closed flag. Requires tasks:read.")]
 	public static async Task<BoardListResult> BoardListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -58,7 +58,7 @@ public static class TasksTools
 		return new BoardListResult(list.Select(b => new BoardRow(b.Name, b.Kind, b.Description, b.SpecBoard, b.CreatedAt, b.ClosedAt != null)).ToList());
 	}
 
-	[McpServerTool(Name = "tasks.board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardDeletedResult))]
+	[McpServerTool(Name = "tasks_board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardDeletedResult))]
 	[Description("Delete a task board and its nodes. Requires tasks:write.")]
 	public static async Task<BoardDeletedResult> BoardDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -70,8 +70,8 @@ public static class TasksTools
 		return new BoardDeletedResult(await tasks.DeleteBoardAsync(projectKey, board, ct));
 	}
 
-	[McpServerTool(Name = "tasks.board_close", Title = "Close (archive) a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardClosedResult))]
-	[Description("Close a board: it rejects further writes (so agents stop writing to it by inertia) but stays readable; history is kept. Reopen with tasks.board_reopen. Requires tasks:write.")]
+	[McpServerTool(Name = "tasks_board_close", Title = "Close (archive) a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardClosedResult))]
+	[Description("Close a board: it rejects further writes (so agents stop writing to it by inertia) but stays readable; history is kept. Reopen with tasks_board_reopen. Requires tasks:write.")]
 	public static async Task<BoardClosedResult> BoardCloseAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
@@ -82,7 +82,7 @@ public static class TasksTools
 		return new BoardClosedResult(await tasks.SetClosedAsync(projectKey, board, true, ct));
 	}
 
-	[McpServerTool(Name = "tasks.board_reopen", Title = "Reopen a closed task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardReopenedResult))]
+	[McpServerTool(Name = "tasks_board_reopen", Title = "Reopen a closed task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardReopenedResult))]
 	[Description("Reopen a closed board so it accepts writes again. Requires tasks:write.")]
 	public static async Task<BoardReopenedResult> BoardReopenAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -94,7 +94,7 @@ public static class TasksTools
 		return new BoardReopenedResult(await tasks.SetClosedAsync(projectKey, board, false, ct));
 	}
 
-	[McpServerTool(Name = "tasks.methodology_enable", Title = "Enable the methodology quartet", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
+	[McpServerTool(Name = "tasks_methodology_enable", Title = "Enable the methodology quartet", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
 	[Description("Provision the four singleton methodology boards (intake/ideas/spec/work) if missing and auto-wire work->spec. Idempotent — opt-in; a project's methodology lives on these, ad-hoc work stays on simple boards. The four kinds are one-per-project. Requires tasks:write. Returns the quartet surface (intake→ideas→spec→work).")]
 	public static async Task<MethodologyView> MethodologyEnableAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -106,7 +106,7 @@ public static class TasksTools
 		return await tasks.EnableMethodologyAsync(projectKey, ct);
 	}
 
-	[McpServerTool(Name = "tasks.methodology_get", Title = "Get the methodology quartet", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
+	[McpServerTool(Name = "tasks_methodology_get", Title = "Get the methodology quartet", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
 	[Description("""
 		Return the project's methodology quartet as ONE compact INDEX in pipeline order:
 		intake → ideas → spec → work. Each board carries a status histogram (`counts`: status
@@ -121,9 +121,9 @@ public static class TasksTools
 		`counts` per board is always complete, but node rows share a response-wide char budget
 		spent in pipeline order — when a board's rows no longer fit it is cut and flagged with
 		`truncated:true` + `omitted` (rows dropped), and the response carries a top-level
-		`hint` on how to narrow (includeBoards one board at a time, bodyLen:0, or tasks.search
+		`hint` on how to narrow (includeBoards one board at a time, bodyLen:0, or tasks_search
 		with board + `under` for subtree detail). No markers = the complete index. For full
-		untruncated bodies or subtree drill-down, use tasks.search (the listing/detail
+		untruncated bodies or subtree drill-down, use tasks_search (the listing/detail
 		read verb). `enabled` is true when all four singleton boards exist. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyView> MethodologyGetAsync(
@@ -141,16 +141,16 @@ public static class TasksTools
 		return await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, urlPrefix, ct);
 	}
 
-	[McpServerTool(Name = "tasks.methodology_def_upsert", Title = "Define the project's methodology (user-defined kinds/FSMs)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefUpsertResult))]
+	[McpServerTool(Name = "tasks_methodology_def_upsert", Title = "Define the project's methodology (user-defined kinds/FSMs)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefUpsertResult))]
 	[Description("""
 		Store the project's USER-DEFINED METHODOLOGY DEFINITION — the document that describes
 		the project's own board kinds, task types, statuses and transitions as data (NOT the
-		quartet index: tasks.methodology_get reads the intake/ideas/spec/work BOARDS; this
+		quartet index: tasks_methodology_get reads the intake/ideas/spec/work BOARDS; this
 		verb writes the process DEFINITION). One definition per project, versioned: `version`
-		is the WATERMARK baseline — pass the `version` from your last tasks.methodology_def_get
+		is the WATERMARK baseline — pass the `version` from your last tasks_methodology_def_get
 		(0 = the project has none yet); a stale baseline (someone redefined since) or one ahead of
 		the project's cursor is a clear conflict error naming the current version — re-read with
-		tasks.methodology_def_get and resubmit. The definition is validated as a whole before
+		tasks_methodology_def_get and resubmit. The definition is validated as a whole before
 		it is stored (name/kind/type slugs, ≥1 kind, ≥1 workflow block per kind, type unique
 		within its kind, statuses non-empty and unique per block, every transition between
 		statuses of ITS block, no duplicate edges). `definition` shape: { name, kinds:[{
@@ -165,12 +165,12 @@ public static class TasksTools
 		`linkConstraints` (per kind): "a NEW node of `type` must carry a `link` at creation"
 		— link ∈ task_spec|blocks|idea_spec (the kinds expressible in the upsert call as
 		specRef/blockedBy/ideaRef); edits don't re-require it. `linkKinds` (project-wide):
-		additional relation kinds for relations.create (free semantic edges, no FSM effects;
+		additional relation kinds for relations_create (free semantic edges, no FSM effects;
 		must not collide with builtin kinds). `tagAxes` (project-wide): declared tag
 		namespaces — when present, tags on definition-resolved boards must be
 		`<namespace>:value` from this list (empty/omitted = free-form tags). The definition
-		is LIVE: a declared kind can be given to tasks.board_create, its boards resolve
-		types/statuses/transitions from this document (tasks.workflow shows them), and any
+		is LIVE: a declared kind can be given to tasks_board_create, its boards resolve
+		types/statuses/transitions from this document (tasks_workflow shows them), and any
 		other kind keeps the built-in preset. A definition CHANGE is validated against LIVE
 		NODES: every active node on a board whose kind the old or new definition declares
 		must fit the new resolution (type resolves, status known to its type's workflow). An
@@ -190,7 +190,7 @@ public static class TasksTools
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("The whole methodology definition (structured document; see the tool description for the shape).")] MethodologyDefInput definition,
-		[Description("Watermark baseline: the `version` from your last tasks.methodology_def_get; 0 = the project has no definition yet.")] long version = 0,
+		[Description("Watermark baseline: the `version` from your last tasks_methodology_def_get; 0 = the project has no definition yet.")] long version = 0,
 		[Description("Per-kind {from,to} type/status repairs for live nodes the change would strand; applied only where the current value is invalid under the new resolution.")] MethodologyMigrationInput[]? migration = null,
 		CancellationToken ct = default)
 	{
@@ -201,15 +201,15 @@ public static class TasksTools
 		return new MethodologyDefUpsertResult(ack.Version, ack.Changed, ack.Migrated);
 	}
 
-	[McpServerTool(Name = "tasks.methodology_def_get", Title = "Get the project's methodology definition", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefGetResult))]
+	[McpServerTool(Name = "tasks_methodology_def_get", Title = "Get the project's methodology definition", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefGetResult))]
 	[Description("""
 		Return the project's USER-DEFINED METHODOLOGY DEFINITION — the stored process
 		document (kinds/types/statuses/transitions as data), NOT the quartet board index
-		(that is tasks.methodology_get). Defined=true → { name, kinds:[{ kind,
+		(that is tasks_methodology_get). Defined=true → { name, kinds:[{ kind,
 		quickAddAllowed, workflows:[{ types, initial, statuses:[{ slug, name, kind }],
 		transitions:[{ from, to, requiresApproval, requiresReason, preconditionArtifact? }]
 		}], linkConstraints?:[{ type, link }] }], version (the baseline for
-		tasks.methodology_def_upsert), created, updated, linkKinds?:[{ slug, description? }],
+		tasks_methodology_def_upsert), created, updated, linkKinds?:[{ slug, description? }],
 		tagAxes?:[{ namespace, description? }] } (the ?-marked lists are omitted when the
 		definition declares none). Defined=false → the project has no definition of its own
 		and runs on the built-in preset (`preset` names it) — an honest state, not an error.
@@ -249,11 +249,11 @@ public static class TasksTools
 				: null);
 	}
 
-	[McpServerTool(Name = "tasks.methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
+	[McpServerTool(Name = "tasks_methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
 	[Description("""
 		Return the AGENT ONBOARDING GUIDE for this project's process — how to work its
 		boards — DERIVED AT RUNTIME from the project's methodology data: its own definition
-		where one declares a kind (tasks.methodology_def_upsert), the built-in presets
+		where one declares a kind (tasks_methodology_def_upsert), the built-in presets
 		everywhere else. Call it when you start working a project's tasks and need the
 		process rules; it is the runtime-derived replacement for hardcoded process docs, so
 		it stays correct for user-defined kinds the docs never heard of. `markdown` covers,
@@ -324,13 +324,13 @@ public static class TasksTools
 		return new WorkflowStatus(slug, string.IsNullOrWhiteSpace(s.Name) ? slug : s.Name, kind);
 	}
 
-	[McpServerTool(Name = "tasks.node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
+	[McpServerTool(Name = "tasks_node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
 	[Description("""
 		Return ONE node of a board in FULL, addressed by `node` = its slug key OR its 32-hex
 		NodeId (the same slug-or-NodeId convention as specRef/partOf). The answer carries the
 		owning `board`, its `kind`, the part_of `ancestors` chain (root→parent), and the
 		fully-enriched node: key, nodeId, parentNodeId/parentSlug/depth, status, type, title,
-		the COMPLETE `body` (never truncated), priority, version, tags, links (`spec`,
+		the `body` (COMPLETE by default — this is the pointed full read; the uniform bodyLen knob still applies: 0 = no body, N>0 = the first N chars, -1 = full), priority, version, tags, links (`spec`,
 		`blockedBy`; on a spec node `linkedTasks` + the computed `delivery`), plus `url` when
 		includeUrl. An addressed read ignores terminality: a Done/Cancelled/deprecated node is
 		returned like any other (no includeClosed needed). A node that doesn't exist on the
@@ -341,6 +341,7 @@ public static class TasksTools
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
 		[Description("The node's slug key on the board, or its 32-hex NodeId.")] string node,
+		[Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to the node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
 	{
@@ -348,10 +349,12 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return await tasks.GetNodeOnBoardAsync(projectKey, board, node, urlPrefix, ct);
+		var detail = await tasks.GetNodeOnBoardAsync(projectKey, board, node, urlPrefix, ct);
+		// Uniform bodyLen contract, default FULL (the pointed read); shape the wire body only.
+		return detail with { Node = detail.Node with { Body = ModuleMcp.Body(detail.Node.Body, bodyLen, ModuleMcp.FullBody) ?? "" } };
 	}
 
-	[McpServerTool(Name = "tasks.search", Title = "Read plan nodes (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
+	[McpServerTool(Name = "tasks_search", Title = "Read plan nodes (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
 	[Description("""
 		THE read verb for plan nodes — one tool for both LISTING and SEARCH (list = search
 		without `q`; replaces the former tasks.get). Nodes are FLAT (a single slug `key`);
@@ -378,7 +381,7 @@ public static class TasksTools
 		`status` = keep only these slugs (case-insensitive; naming a TERMINAL status
 		returns its nodes even without includeClosed — an explicit ask; an unknown slug is
 		rejected); `keys` = address specific nodes (slug|NodeId mixed, resolved like
-		tasks.node_get — a miss or an ambiguous cross-board slug is a clear error, and an
+		tasks_node_get — a miss or an ambiguous cross-board slug is a clear error, and an
 		addressed terminal node is returned without includeClosed).
 
 		SORT: `sort` = {by: priority|created|updated|title|relevance, desc?}. Without `q`
@@ -392,8 +395,9 @@ public static class TasksTools
 		nested in that order, "(none)" for untagged, each with a delivery roll-up); needs
 		`board` and does NOT combine with `q` (a projection is a view, not a ranking).
 
-		Bodies are FULL by default; `bodyLen` > 0 snippets each body (first N chars + "…")
-		— fetch one full body via tasks.node_get. The response has a HARD OUTPUT BUDGET
+		Bodies follow the uniform `bodyLen` knob: omitted = a ~240-char snippet (the compact
+		listing default), 0 = no body, N>0 = the first N chars ("…" when cut), -1 = full body — or fetch one full body via
+			tasks_node_get. The response has a HARD OUTPUT BUDGET
 		(~30k serialized chars): overflowing rows are prefix-cut in result order and
 		flagged `truncated:true` + `omitted` + a narrowing `hint`; no markers = the
 		complete answer.
@@ -411,11 +415,11 @@ public static class TasksTools
 		[Description("Scope to one board (listing then carries kind/specBoard/currentVersion). Omit = the whole project; each row names its board.")] string? board = null,
 		[Description("Restrict to the part_of subtree under this node (slug or 32-hex NodeId).")] string? under = null,
 		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false.")] string[]? status = null,
-		[Description("Address specific nodes: slugs and/or 32-hex NodeIds, mixed (resolved like tasks.node_get; terminal nodes included).")] string[]? keys = null,
+		[Description("Address specific nodes: slugs and/or 32-hex NodeIds, mixed (resolved like tasks_node_get; terminal nodes included).")] string[]? keys = null,
 		[Description("Include terminal/closed nodes in a listing (search covers the open set only).")] bool includeClosed = false,
 		[Description("Sort order: {by: priority|created|updated|title|relevance, desc?}. Default: priority (listing) / relevance (with q).")] SortInput? sort = null,
 		[Description("Tag PROJECTION instead of rows: an ordered, comma-separated list of tag namespaces (e.g. \"area,concern\"). Needs board; not with q.")] string? groupBy = null,
-		[Description("Snippet length (chars) per node body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with tasks_node_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
@@ -444,12 +448,12 @@ public static class TasksTools
 			Filter = new TaskNodeFilter(board, under, status, keys, includeClosed),
 			Sort = ParseSort(sort),
 			Limit = limit ?? (hasQuery ? DefaultSearchLimit : 0),
-			BodyLen = bodyLen,
+			BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
 		}, urlPrefix, ct);
 
-		// Response budget (MCP-adapter-only): measured on the wire form of the rows as they
-		// will be sent (bodies already sliced by the service), prefix-cut, marked — never silent.
-		var rows = res.Hits.Select(SearchRow).ToList();
+		// Response budget (MCP-adapter-only): the adapter shapes each body per the uniform bodyLen
+		// knob (default a ~240-char snippet) THEN measures the wire form, prefix-cuts, marks — never silent.
+		var rows = res.Hits.Select(h => SearchRow(h, bodyLen)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(rows);
 		return new TaskSearchResultView(
 			kept, res.Board, res.Kind, res.SpecBoard, res.CurrentVersion,
@@ -468,7 +472,7 @@ public static class TasksTools
 		"Output budget exceeded: node rows were truncated (see truncated/omitted). Narrow the " +
 		"read: `board` (one board), `under` (one part_of subtree), `status` (only the statuses " +
 		"you need), `keys` (address specific nodes), `bodyLen` (snippet bodies), a smaller " +
-		"`limit`, `groupBy` (keys-only tag projection), or tasks.node_get for one full node.";
+		"`limit`, `groupBy` (keys-only tag projection), or tasks_node_get for one full node.";
 
 	// Map the wire `sort` argument onto the service sort axis; an unknown axis is a clear error.
 	static (TaskSortBy By, bool Desc)? ParseSort(SortInput? sort)
@@ -481,7 +485,7 @@ public static class TasksTools
 
 	// Wire shape for one row: the enriched node view flattened with its owning board (rows
 	// may span boards). RenamedFrom is omitted when empty (null → dropped by the serializer).
-	static TaskSearchNodeView SearchRow(TaskSearchHit h)
+	static TaskSearchNodeView SearchRow(TaskSearchHit h, int? bodyLen)
 	{
 		var n = h.Node;
 		return new TaskSearchNodeView(
@@ -494,7 +498,9 @@ public static class TasksTools
 			Status: n.Status,
 			Type: n.Type,
 			Title: n.Title,
-			Body: n.Body,
+			// Uniform bodyLen contract, default a ~240-char snippet (compact listing); null
+			// (bodyLen:0) is omitted by the serializer.
+			Body: ModuleMcp.Body(n.Body, bodyLen, ModuleMcp.DefaultSnippet),
 			CommitRef: n.CommitRef,
 			Priority: n.Priority,
 			Delivery: n.Delivery,
@@ -513,7 +519,7 @@ public static class TasksTools
 	static string[] ParseGroupBy(string groupBy) =>
 		groupBy.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
-	[McpServerTool(Name = "tasks.upsert", Title = "Upsert plan nodes", UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
+	[McpServerTool(Name = "tasks_upsert", Title = "Upsert plan nodes", UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("""
 		Declarative PATCH per node (omitted field = unchanged; tags: [] clears, omit leaves
 		as-is) — a temporal upsert of plan nodes. Requires tasks:write.
@@ -523,7 +529,7 @@ public static class TasksTools
 		or a NodeId — null omits it, "" detaches to a root. A node may carry multiple parents'
 		worth of grouping via `tags` (an array of "namespace:value", namespaces area|concern;
 		[] clears, omit leaves as-is). Give each node a `title` and `body` (markdown). Other
-		fields: status (slug — see tasks.workflow), type (feature|bug|chore on work boards;
+		fields: status (slug — see tasks_workflow), type (feature|bug|chore on work boards;
 		chore = spec-less engineering hygiene), specRef (the spec node the work task
 		implements, as its slug on the linked spec board or a NodeId — REQUIRED for a new
 		feature/bug), ideaRef (ON A SPEC BOARD: the NodeId of the
@@ -544,21 +550,25 @@ public static class TasksTools
 		change — retiring a real requirement stays `deprecated`).
 
 		Returns the pure write-ack { applied, currentVersion, inserted, closed, conflicts[],
-		added[], updated[], removed[] }. The echo covers ONLY this call: added/updated/removed
+		added[], updated[], removed[] }. `applied` is the SINGLE source of truth: when it is FALSE
+			nothing was written — `conflicts[]` explains every rejected key (its baseline vs the
+			active version, plus a reason for a guard refusal) and added/updated/removed are EMPTY;
+			re-read via tasks_delta (or tasks_search) to rebase, then resubmit. When `applied` is
+			TRUE the echo covers ONLY this call: added/updated/removed
 		carry the call's own nodes plus nodes its cascade effects touched (a `supersedes`
 		target obsoleted, a deleted subtree, an unblocked task) — never other writers'
 		history, and there is no cursor parameter on a write. added/updated carry the node
-		(key, nodeId, status, type, title, commitRef, priority, version) but NOT `body` by
-		default — the echo is a compact ack, not a re-dump (pass bodyLen > 0 for a sliced
-		body, "…" when cut). `currentVersion` is the board-wide cursor: for a full delta
+		(key, nodeId, status, type, title, commitRef, priority, version); `body` follows the
+		uniform bodyLen knob (omitted here = NO body, a compact ack; 0 = no body; N>0 = the first
+		N chars, "…" when cut; -1 = full body). `currentVersion` is the board-wide cursor: for a full delta
 		since a cursor (everything changed by anyone — rebase/merge/catch-up), call
-		tasks.delta with it as `sinceVersion`.
+		tasks_delta with it as `sinceVersion`.
 		""")]
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
 		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
-		[Description("Slice length (chars) of each echoed node body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
 	{
@@ -570,12 +580,12 @@ public static class TasksTools
 		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, ct), urlPrefix, bodyLen);
 	}
 
-	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
-	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface (a tasks.upsert ack echoes only its own call; pass its `currentVersion` here for the full board delta). Bodies omitted unless bodyLen > 0 (compact by default). Requires tasks:read.")]
+	[McpServerTool(Name = "tasks_delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
+	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface (a tasks_upsert ack echoes only its own call; pass its `currentVersion` here for the full board delta). Bodies follow the uniform bodyLen knob (compact by default). Requires tasks:read.")]
 	public static async Task<UpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, long sinceVersion,
-		[Description("Slice length (chars) of each node body; 0 (default) = no body (compact). \"…\" appended when cut.")] int bodyLen = 0,
+		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
 	{
@@ -586,8 +596,8 @@ public static class TasksTools
 		return Serialize(await tasks.DeltaAsync(projectKey, board, sinceVersion, ct), urlPrefix, bodyLen);
 	}
 
-	[McpServerTool(Name = "tasks.workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(WorkflowView))]
-	[Description("Return the workflow for a board: its kind plus `workflows` — one block per DISTINCT state machine, each carrying `types` (every type slug sharing that FSM; e.g. feature|bug|chore on a work board are one block), the initial status, statuses (slug, name, kind=open|terminalok|terminalcancel) and transitions (from, to, requiresApproval, requiresReason, preconditionArtifact? — a comment-artifact tag the node must carry before the transition). A kind the project's methodology definition declares (tasks.methodology_def_upsert) resolves from the definition; other kinds report the built-in preset. Use this to learn the legal types/statuses before tasks.upsert. Requires tasks:read.")]
+	[McpServerTool(Name = "tasks_workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(WorkflowView))]
+	[Description("Return the workflow for a board: its kind plus `workflows` — one block per DISTINCT state machine, each carrying `types` (every type slug sharing that FSM; e.g. feature|bug|chore on a work board are one block), the initial status, statuses (slug, name, kind=open|terminalok|terminalcancel) and transitions (from, to, requiresApproval, requiresReason, preconditionArtifact? — a comment-artifact tag the node must carry before the transition). A kind the project's methodology definition declares (tasks_methodology_def_upsert) resolves from the definition; other kinds report the built-in preset. Use this to learn the legal types/statuses before tasks_upsert. Requires tasks:read.")]
 	public static async Task<WorkflowView> WorkflowAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
@@ -624,7 +634,7 @@ public static class TasksTools
 		return $"{req.Scheme}://{req.Host}{Routes.ProjectTasks(ws, projectKey)}/";
 	}
 
-	static UpsertResultView Serialize(UpsertOutcome o, string? urlPrefix = null, int bodyLen = 0)
+	static UpsertResultView Serialize(UpsertOutcome o, string? urlPrefix = null, int? bodyLen = null)
 	{
 		var r = o.Result;
 		return new UpsertResultView(
@@ -639,15 +649,15 @@ public static class TasksTools
 			Removed: r.Removed.ToList());
 	}
 
-	// Delta projection of a node (no links/delivery/tags — that's tasks.search). camelCased by the
-	// serializer; `body` is sliced to bodyLen (null when 0 → omitted) for the compact echo.
-	static PlanNodeDelta NodeDto(PlanNode n, string? urlPrefix = null, int bodyLen = 0) => new(
+	// Delta projection of a node (no links/delivery/tags — that's tasks_search). camelCased by the
+	// serializer; `body` follows the uniform bodyLen contract with a NoBody default (a compact echo).
+	static PlanNodeDelta NodeDto(PlanNode n, string? urlPrefix = null, int? bodyLen = null) => new(
 		Key: n.Key,
 		NodeId: n.NodeId,
 		Status: n.Status,
 		Type: n.Type,
 		Title: n.Name,
-		Body: ModuleMcp.SliceBody(n.Body, bodyLen),
+		Body: ModuleMcp.Body(n.Body, bodyLen, ModuleMcp.NoBody),
 		CommitRef: n.CommitRef,
 		Priority: n.Priority,
 		Version: n.Version,

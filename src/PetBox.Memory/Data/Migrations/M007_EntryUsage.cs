@@ -3,7 +3,7 @@ using FluentMigrator;
 namespace PetBox.Memory.Data.Migrations;
 
 // Usage telemetry per entry (spec: memory-usage-observability): how often an entry
-// SURFACED in a recall/search answer vs was OPENED directly (memory.get) — the two
+// SURFACED in a recall/search answer vs was OPENED directly (memory_get) — the two
 // signals behind procedural-lift graduation/cleanup decisions. Counters are telemetry,
 // not state: losing rows only loses statistics.
 [Migration(7, "Per-entry usage counters (entry_usage)")]

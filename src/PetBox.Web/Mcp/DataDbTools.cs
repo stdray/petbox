@@ -13,17 +13,17 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
-// DataDb lifecycle MCP tools (db.create / db.list / db.delete / db.describe) — de-collapsed
+// DataDb lifecycle MCP tools (db_create / db_list / db_delete / db_describe) — de-collapsed
 // from the old generic entity.* tools into typed per-type tools (typed-surface Phase 4).
 // Kept in its OWN type, separate from DataTools, so DataTools stays free of a raw
-// Microsoft.Data.Sqlite dependency (a NetArchTest guards that). db.describe legitimately
+// Microsoft.Data.Sqlite dependency (a NetArchTest guards that). db_describe legitimately
 // introspects the schema over its own connection — same as the old entity.describe did.
 // Scopes: data:schema (create/delete) / data:read (list/describe), project-scoped. Tools
 // throw on a failed Assert*; McpErrorEnvelopeFilter renders the structured {error} body.
 [McpServerToolType]
 public static class DataDbTools
 {
-	[McpServerTool(Name = "db.create", Title = "Create a DataDb", UseStructuredContent = true, OutputSchemaType = typeof(DataDbCreatedResult))]
+	[McpServerTool(Name = "db_create", Title = "Create a DataDb", UseStructuredContent = true, OutputSchemaType = typeof(DataDbCreatedResult))]
 	[Description("Creates a named DataDb (user-data SQLite file) in a project. Requires data:schema scope. `maxPageCount` caps the file size (default ~1 GB at 4 KB pages).")]
 	public static async Task<DataDbCreatedResult> CreateAsync(
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,
@@ -53,7 +53,7 @@ public static class DataDbTools
 		return new DataDbCreatedResult(name, description, quota, now);
 	}
 
-	[McpServerTool(Name = "db.list", Title = "List DataDbs", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbListResult))]
+	[McpServerTool(Name = "db_list", Title = "List DataDbs", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbListResult))]
 	[Description("Lists a project's DataDbs (name, description, quota, timestamps). Requires data:read scope.")]
 	public static async Task<DataDbListResult> ListAsync(
 		IHttpContextAccessor http, PetBoxDb db,
@@ -69,7 +69,7 @@ public static class DataDbTools
 		return new DataDbListResult(rows);
 	}
 
-	[McpServerTool(Name = "db.delete", Title = "Delete a DataDb", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDeletedResult))]
+	[McpServerTool(Name = "db_delete", Title = "Delete a DataDb", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDeletedResult))]
 	[Description("Deletes a DataDb and its on-disk file. Requires data:schema scope.")]
 	public static async Task<DataDbDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,
@@ -84,7 +84,7 @@ public static class DataDbTools
 		return new DataDbDeletedResult(true, name);
 	}
 
-	[McpServerTool(Name = "db.describe", Title = "Describe a DataDb", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDescribeResult))]
+	[McpServerTool(Name = "db_describe", Title = "Describe a DataDb", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDescribeResult))]
 	[Description("Returns a DataDb's tables and their columns (name, type, notNull, pk). Requires data:read scope.")]
 	public static async Task<DataDbDescribeResult> DescribeAsync(
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,

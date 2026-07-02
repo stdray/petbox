@@ -18,7 +18,7 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class ApiKeyTools
 {
-	[McpServerTool(Name = "apikey.create", Title = "Mint an API key", UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyCreatedResult))]
+	[McpServerTool(Name = "apikey_create", Title = "Mint an API key", UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyCreatedResult))]
 	[Description("Mints a project-scoped API key. Requires admin:provision. `scopes` is a comma-separated list; unknown scopes are rejected. `expiresInSeconds` (optional) sets a TTL. `allProjects:true` mints a CROSS-PROJECT key (project claim '*', reads+writes every project) — `projectKey` must be omitted then. The raw key is returned ONCE — store it now.")]
 	public static async Task<ApiKeyCreatedResult> CreateAsync(
 		IHttpContextAccessor http, PetBoxDb db,
@@ -69,7 +69,7 @@ public static class ApiKeyTools
 		return new ApiKeyCreatedResult(keyValue, effectiveProject, valid, expiresAt);
 	}
 
-	[McpServerTool(Name = "apikey.list", Title = "List API keys", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyListResult))]
+	[McpServerTool(Name = "apikey_list", Title = "List API keys", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyListResult))]
 	[Description("Lists a project's API keys (key, name, scopes, created/expiry). Requires admin:provision.")]
 	public static async Task<ApiKeyListResult> ListAsync(
 		IHttpContextAccessor http, PetBoxDb db,
@@ -86,7 +86,7 @@ public static class ApiKeyTools
 		return new ApiKeyListResult(rows);
 	}
 
-	[McpServerTool(Name = "apikey.delete", Title = "Delete an API key", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyDeletedResult))]
+	[McpServerTool(Name = "apikey_delete", Title = "Delete an API key", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyDeletedResult))]
 	[Description("Deletes (revokes) an API key by its raw key value. Requires admin:provision.")]
 	public static async Task<ApiKeyDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, PetBoxDb db,

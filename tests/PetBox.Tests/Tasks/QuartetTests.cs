@@ -156,7 +156,7 @@ public sealed class QuartetTests : IDisposable
 
 		// The response tells the caller how to narrow.
 		idx.Hint.Should().NotBeNull();
-		idx.Hint.Should().Contain("includeBoards").And.Contain("tasks.search");
+		idx.Hint.Should().Contain("includeBoards").And.Contain("tasks_search");
 
 		// bodyLen keeps working under the budget: every INCLUDED row carries its slice
 		// ("…"-terminated), and fatter rows just mean fewer of them fit.
@@ -244,7 +244,7 @@ public sealed class QuartetTests : IDisposable
 		addedA.Body.Should().BeNull();
 
 		// A second node echoes only ITSELF (echo-covers-the-call, no cursor parameter on a
-		// write); the full board delta is tasks.delta's job — and even that dump stays bodiless.
+		// write); the full board delta is tasks_delta's job — and even that dump stays bodiless.
 		var nodesB = McpInputs.NodesJson(
 			"""[{"key":"b","status":"Todo","title":"B","body":"zzz"}]""");
 		var resB = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesB);
@@ -265,11 +265,11 @@ public sealed class QuartetTests : IDisposable
 		sliced.Should().EndWith("…");
 	}
 
-	// spec read-snippet-on-demand: tasks.search returns full bodies by default (the Razor
-	// board reads the service GetAsync, always full) but snippets each row body when
-	// bodyLen > 0.
+	// spec bodylen-uniform-contract: tasks_search follows the uniform bodyLen knob — omitted =
+	// a ~240-char snippet (compact listing default), -1 = the full body, 0 = no body, N>0 = an
+	// N-char snippet. The SAME knob values mean the same thing on every body-carrying surface.
 	[Fact]
-	public async Task TasksSearch_FullBodyByDefault_SnippetsWithBodyLen()
+	public async Task TasksSearch_UniformBodyLenContract()
 	{
 		var http = Http("tasks:read,tasks:write");
 		var big = new string('z', 500);
@@ -277,15 +277,70 @@ public sealed class QuartetTests : IDisposable
 			$$"""[{"key":"n","status":"Todo","title":"N","body":"{{big}}"}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
 
-		// Default: the full body.
-		var full = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g"))
-			.Nodes.Single().Body;
+		// Default (omitted): a ~240-char snippet + "…".
+		var dflt = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g"))
+			.Nodes.Single().Body!;
+		dflt.Length.Should().Be(241);
+		dflt.Should().EndWith("…");
+
+		// -1: the full body.
+		var full = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", bodyLen: -1))
+			.Nodes.Single().Body!;
 		full.Length.Should().Be(500);
 
-		// bodyLen > 0: first N chars + "…".
-		var snip = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", bodyLen: 100))
+		// 0: no body (null → omitted by the serializer).
+		var none = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", bodyLen: 0))
 			.Nodes.Single().Body;
+		none.Should().BeNull();
+
+		// N>0: first N chars + "…".
+		var snip = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", bodyLen: 100))
+			.Nodes.Single().Body!;
 		snip.Length.Should().Be(101);
 		snip.Should().EndWith("…");
+	}
+
+	// spec node_get bodylen-uniform-contract: tasks_node_get is the pointed full read — omitted
+	// = the full body, but the same 0/N/-1 knob still applies.
+	[Fact]
+	public async Task NodeGet_UniformBodyLenContract()
+	{
+		var http = Http("tasks:read,tasks:write");
+		var big = new string('q', 400);
+		var nodes = McpInputs.NodesJson(
+			$$"""[{"key":"n","status":"Todo","title":"N","body":"{{big}}"}]""");
+		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
+
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n")).Node.Body.Length.Should().Be(400); // default = full
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n", bodyLen: 50)).Node.Body.Length.Should().Be(51); // snippet
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "g", "n", bodyLen: 0)).Node.Body.Should().BeEmpty(); // none
+	}
+
+	// spec upsert-ack-echo-clean: a write that did NOT apply echoes NOTHING. A FutureBaseline
+	// conflict (a baseline above the board cursor) must leave added/updated/removed empty — the
+	// old contract echoed the mentioned node's CURRENT state, reading as if the write landed.
+	[Fact]
+	public async Task Upsert_NotApplied_EchoIsEmpty_ConflictCarriesTheStory()
+	{
+		var http = Http("tasks:read,tasks:write");
+
+		// Land a node so the board has a cursor and "a" has current state to (wrongly) echo.
+		var seed = McpInputs.NodesJson("""[{"key":"a","status":"Todo","title":"A","body":"x"}]""");
+		var applied = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "conf", seed);
+		applied.Applied.Should().BeTrue();
+
+		// Re-upsert "a" with a baseline ABOVE the board cursor → FutureBaseline conflict.
+		var stale = McpInputs.NodesJson(
+			"""[{"key":"a","status":"Todo","title":"A2","body":"y","version":9}]""");
+		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "conf", stale, bodyLen: -1);
+
+		res.Applied.Should().BeFalse();
+		res.Conflicts.Should().NotBeEmpty();
+		res.Added.Should().BeEmpty();
+		res.Updated.Should().BeEmpty();
+		res.Removed.Should().BeEmpty();
+
+		// The node was NOT mutated by the rejected write.
+		(await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, "conf", "a")).Node.Title.Should().Be("A");
 	}
 }

@@ -674,8 +674,8 @@ Subsumes 22.8 Agent surface. Design-решения зафиксированы 20
 |---|---|---|
 | Transport | **HTTP** (через `ModelContextProtocol.AspNetCore` 1.3.0 SDK) | petbox = remote service. stdio не подходит, агент не запускает petbox локально |
 | Auth | **X-Api-Key** (re-use existing middleware) | Те же scopes (data:*, config:*, logs:*) что REST API. Ноль новой auth infra |
-| Tools (MVP) | **Все enabled-feature tools** через один `/mcp` endpoint | Скоупов и feature toggle'ов достаточно для разграничения. Tools namespaced (`data.query`, `config.get`). Агент сам решает что вызывать через client-side skills/profiles |
-| Discovery | **C# attributes + reflection** | `[McpTool(name = "data.query")]` на методах + auto-register на boot. Идиоматично для .NET |
+| Tools (MVP) | **Все enabled-feature tools** через один `/mcp` endpoint | Скоупов и feature toggle'ов достаточно для разграничения. Tools namespaced (`data_query`, `config.get`). Агент сам решает что вызывать через client-side skills/profiles |
+| Discovery | **C# attributes + reflection** | `[McpTool(name = "data_query")]` на методах + auto-register на boot. Идиоматично для .NET |
 
 - [x] `ModelContextProtocol.AspNetCore` 1.3.0 + `Directory.Packages.props`
 - [x] `src/PetBox.Web/Mcp/DataTools.cs` — 7 Data tools (list_dbs/create_db/delete_db/describe_db/schema_apply/query/exec)
@@ -1104,7 +1104,7 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 
 - [ ] Replace `@stdray-npm/yobaconf-client` → `@stdray-npm/petbox-client` (config module). API совместим где возможно.
 - [ ] **НЕ трогать** `@datalust/winston-seq` — yobalog Seq protocol работает, pet просто меняет URL+key в config'е winston'а. Никакой migration на свой transport.
-- [ ] Replace local JSON cache → `@stdray-npm/petbox-client` data API (`client.data.query/exec`) или `@stdray-npm/petbox-client-drizzle` если используем Drizzle ORM
+- [ ] Replace local JSON cache → `@stdray-npm/petbox-client` data API (`client.data_query/exec`) или `@stdray-npm/petbox-client-drizzle` если используем Drizzle ORM
 - [ ] См. Phase 27 для полного onboarding scenario
 
 #### 26.7 — Publish to npmjs.org / nuget.org (stable)
@@ -1179,7 +1179,7 @@ Goal: pet developer даёт агенту onboarding URL + agent-key. Агент
 `type ∈ {project, apikey, config_binding, db, log}` (тип `service` отпал вместе с удалением сущности
 `Service`). Auth — per-handler: provisioning-типы на `admin:provision`, project-scoped (`db`/`log`) —
 project-claim + module scope. Запрещённые `(type, op)` → ошибка (`project` без delete; describe только
-для `db`). Операционные tools (`data.query/exec/schema_apply`, `log.query`) остались отдельными.
+для `db`). Операционные tools (`data_query/exec/schema_apply`, `log_query`) остались отдельными.
 
 - [x] `entity.create({type: "project", props: {workspaceKey, key, name, description?}})`
 - [x] `entity.create({type: "apikey", props: {projectKey, name, scopes, expiresInSeconds?}})` — возвращает raw key (показывается один раз)
@@ -1199,8 +1199,8 @@ project-claim + module scope. Запрещённые `(type, op)` → ошибк
 - [ ] Создать agent-key с TTL=24h через sysadmin UI
 - [ ] Дать агенту `doc/agent-onboarding.md` URL + key
 - [ ] Агент: создаёт project `kpvotes`, service `kpvotes-ts`, DB `kpvotes-cache`
-- [ ] Агент: applies migration `M001_create_votes_cache` через `data.schema_apply`
-- [ ] Агент: batch-INSERT'ит `votes.json` content (~1000 rows) через `data.exec`
+- [ ] Агент: applies migration `M001_create_votes_cache` через `data_schema_apply`
+- [ ] Агент: batch-INSERT'ит `votes.json` content (~1000 rows) через `data_exec`
 - [ ] Агент: выпускает production ApiKey без TTL со scopes `data:read+write`, `config:read`, `logs:ingest`
 - [ ] Агент: набирает config bindings через `set_config_binding` для kpvotes (kpUri, votesUri, twitterKeys и т.д.)
 - [ ] Pet тулится на petbox URL + production key. Запускается, читает votes из БД, парсит kinopoisk, постит твиты
@@ -1217,7 +1217,7 @@ project-claim + module scope. Запрещённые `(type, op)` → ошибк
 
 Сохранены как design choices, требуют отдельного решения когда дойдём до Phase 27:
 
-1. **MCP tool granularity**: declarative `agent.onboard_pet` (одна tool с whole payload) vs набор раздельных (`project.create`, `service.create` и т.д.). Recommend declarative для simpler agent flow.
+1. **MCP tool granularity**: declarative `agent.onboard_pet` (одна tool с whole payload) vs набор раздельных (`project_create`, `service.create` и т.д.). Recommend declarative для simpler agent flow.
 2. **Agent-key scope model**: новый scope `agent` или просто TTL + существующий `admin`. Recommend TTL + `admin` scope. TTL — отличающий признак.
 3. **Onboarding doc location**: static (`doc/agent-onboarding.md`) или dynamic (`/agent/onboarding/{token}`). Recommend static, проще.
 4. **Сервисы в проекте**: kpvotes-net + kpvotes-ts оба в `kpvotes` project (per spec — services внутри project'а). → одна `kpvotes` project, два services.

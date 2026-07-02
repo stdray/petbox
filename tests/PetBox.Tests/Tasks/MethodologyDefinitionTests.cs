@@ -103,15 +103,15 @@ public sealed class MethodologyDefinitionTests : IAsyncLifetime
 				.ToDictionary(kv => kv.Key, kv => (object?)((JsonElement)kv.Value!)));
 
 	Task<CallToolResult> Upsert(object definition, long version = 0) =>
-		Call("tasks.methodology_def_upsert", new { projectKey = ProjectKey, definition, version });
+		Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition, version });
 
 	Task<CallToolResult> Get() =>
-		Call("tasks.methodology_def_get", new { projectKey = ProjectKey });
+		Call("tasks_methodology_def_get", new { projectKey = ProjectKey });
 
 	static string Text(CallToolResult r) =>
 		r.Content.OfType<TextContentBlock>().First().Text;
 
-	// Errors arrive as the central envelope {"error":{...}} (IsError stays false).
+	// Errors arrive as the central envelope {"error":{...}} on the isError channel (IsError=true).
 	static bool IsErr(CallToolResult r) =>
 		r.IsError == true ||
 		(r.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text?.Contains("\"error\"") ?? false);

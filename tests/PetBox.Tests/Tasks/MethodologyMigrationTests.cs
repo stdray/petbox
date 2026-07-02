@@ -112,7 +112,7 @@ public sealed class MethodologyMigrationTests : IAsyncLifetime
 	static string Text(CallToolResult r) =>
 		r.Content.OfType<TextContentBlock>().First().Text;
 
-	// Errors arrive as the central envelope {"error":{...}} (IsError stays false).
+	// Errors arrive as the central envelope {"error":{...}} on the isError channel (IsError=true).
 	static bool IsErr(CallToolResult r) =>
 		r.IsError == true ||
 		(r.Content.OfType<TextContentBlock>().FirstOrDefault()?.Text?.Contains("\"error\"") ?? false);
@@ -121,26 +121,26 @@ public sealed class MethodologyMigrationTests : IAsyncLifetime
 		JsonDocument.Parse(Text(r)).RootElement.Clone();
 
 	Task<CallToolResult> DefUpsert(object definition, long version = 0, object? migration = null) =>
-		Call("tasks.methodology_def_upsert", migration is null
+		Call("tasks_methodology_def_upsert", migration is null
 			? new { projectKey = ProjectKey, definition, version }
 			: new { projectKey = ProjectKey, definition, version, migration });
 
 	Task<CallToolResult> DefGet() =>
-		Call("tasks.methodology_def_get", new { projectKey = ProjectKey });
+		Call("tasks_methodology_def_get", new { projectKey = ProjectKey });
 
 	Task<CallToolResult> Upsert(string board, params object[] nodes) =>
-		Call("tasks.upsert", new { projectKey = ProjectKey, board, nodes = Nodes(nodes) });
+		Call("tasks_upsert", new { projectKey = ProjectKey, board, nodes = Nodes(nodes) });
 
 	async Task CreateBoard(string board, string? kind = "support")
 	{
-		var r = await Call("tasks.board_create", new { projectKey = ProjectKey, board, kind });
+		var r = await Call("tasks_board_create", new { projectKey = ProjectKey, board, kind });
 		IsErr(r).Should().BeFalse(Text(r));
 	}
 
-	// The full node view of tasks.node_get (status/type/version assertions).
+	// The full node view of tasks_node_get (status/type/version assertions).
 	async Task<JsonElement> NodeGet(string board, string node)
 	{
-		var r = await Call("tasks.node_get", new { projectKey = ProjectKey, board, node });
+		var r = await Call("tasks_node_get", new { projectKey = ProjectKey, board, node });
 		IsErr(r).Should().BeFalse(Text(r));
 		return Parse(r).GetProperty("node");
 	}

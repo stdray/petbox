@@ -39,7 +39,15 @@ protocol is active):
 \`🧠 PetBox memory active\`
 
 PetBox remembers a LOT about this project — curated facts AND the full session history.
-Start reasoning about anything past from a SEARCH, not from assumption. Two legs:
+Start reasoning about anything past from a SEARCH, not from assumption.
+
+**Rule — search before you (re)work:** before re-deriving, re-investigating, or re-deciding
+ANYTHING about this project's past, run \`petbox_memory_search\` FIRST — redoing work the
+project already remembers is the failure mode this protocol exists to prevent. And before you
+store a new fact, \`petbox_memory_search\` for an existing one and edit that instead
+(duplicates poison recall).
+
+Two legs:
 
 - **Facts — \`petbox_memory_search\`**: a \`q\` of a few words you are confident appear
   (tokens ANDed, prefix-matched; wordforms stem), pass \`bodyLen\` (e.g. 240) for cheap

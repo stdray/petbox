@@ -24,7 +24,7 @@ public static class DeployTools
 	// + ship container logs. No config:read — env is resolved server-side at poll.
 	const string NodeKeyScopes = ApiKeyScopes.AgentPoll + "," + ApiKeyScopes.AgentHeartbeat + "," + ApiKeyScopes.LogsIngest;
 
-	[McpServerTool(Name = "deploy.node_list", Title = "List fleet nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployNodesResult))]
+	[McpServerTool(Name = "deploy_node_list", Title = "List fleet nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployNodesResult))]
 	[Description("Lists every node in the fleet (id, tags, online, last-seen, deployment count). Requires deploy:read.")]
 	public static async Task<DeployNodesResult> NodeListAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc, CancellationToken ct = default)
 	{
@@ -33,7 +33,7 @@ public static class DeployTools
 		return new DeployNodesResult(await svc.ListNodesAsync(ct));
 	}
 
-	[McpServerTool(Name = "deploy.node_upsert", Title = "Register/update a node", UseStructuredContent = true, OutputSchemaType = typeof(DeployNodeResult))]
+	[McpServerTool(Name = "deploy_node_upsert", Title = "Register/update a node", UseStructuredContent = true, OutputSchemaType = typeof(DeployNodeResult))]
 	[Description("Registers or updates a node. With mintKey=true also mints (or rotates) the node-scoped agent key and returns it ONCE. Requires deploy:write.")]
 	public static async Task<DeployNodeResult> NodeUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc, PetBoxDb db,
@@ -68,7 +68,7 @@ public static class DeployTools
 		return new DeployNodeResult(node, key);
 	}
 
-	[McpServerTool(Name = "deploy.node_delete", Title = "Delete a node", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeletedResult))]
+	[McpServerTool(Name = "deploy_node_delete", Title = "Delete a node", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeletedResult))]
 	[Description("Deletes a node and cascades its deployments. Requires deploy:write.")]
 	public static async Task<DeployDeletedResult> NodeDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
@@ -81,7 +81,7 @@ public static class DeployTools
 		return new DeployDeletedResult(await svc.DeleteNodeAsync(id, ct), id);
 	}
 
-	[McpServerTool(Name = "deploy.list", Title = "List deployments", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentsResult))]
+	[McpServerTool(Name = "deploy_list", Title = "List deployments", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentsResult))]
 	[Description("Lists deployments (desired + last actual state), optionally filtered by node and/or service. Requires deploy:read.")]
 	public static async Task<DeployDeploymentsResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
@@ -94,7 +94,7 @@ public static class DeployTools
 		return new DeployDeploymentsResult(await svc.ListDeploymentsAsync(nodeId, service, ct));
 	}
 
-	[McpServerTool(Name = "deploy.upsert", Title = "Create/update a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
+	[McpServerTool(Name = "deploy_upsert", Title = "Create/update a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
 	[Description("Creates (omit id) or updates a deployment of a service on a node. One copy per (service, node). Requires deploy:write.")]
 	public static async Task<DeployDeploymentResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
@@ -140,19 +140,19 @@ public static class DeployTools
 		return new DeployDeploymentResult(d);
 	}
 
-	[McpServerTool(Name = "deploy.start", Title = "Start a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
+	[McpServerTool(Name = "deploy_start", Title = "Start a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
 	[Description("Sets a deployment's desired state to running. Requires deploy:write.")]
 	public static Task<DeployDeploymentResult> StartAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id.")] string id, CancellationToken ct = default) =>
 		SetDesiredAsync(http, features, svc, id, DesiredState.Running, ct);
 
-	[McpServerTool(Name = "deploy.stop", Title = "Stop a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
+	[McpServerTool(Name = "deploy_stop", Title = "Stop a deployment", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
 	[Description("Sets a deployment's desired state to stopped. Requires deploy:write.")]
 	public static Task<DeployDeploymentResult> StopAsync(IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Deployment id.")] string id, CancellationToken ct = default) =>
 		SetDesiredAsync(http, features, svc, id, DesiredState.Stopped, ct);
 
-	[McpServerTool(Name = "deploy.move", Title = "Move a deployment to another node", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
+	[McpServerTool(Name = "deploy_move", Title = "Move a deployment to another node", UseStructuredContent = true, OutputSchemaType = typeof(DeployDeploymentResult))]
 	[Description("Moves a deployment to a different node (the agents reconcile the move). Requires deploy:write.")]
 	public static async Task<DeployDeploymentResult> MoveAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
@@ -167,7 +167,7 @@ public static class DeployTools
 		return new DeployDeploymentResult(await svc.UpsertDeploymentAsync(ToInput(d) with { NodeId = toNodeId }, ct));
 	}
 
-	[McpServerTool(Name = "deploy.delete", Title = "Delete a deployment", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeletedResult))]
+	[McpServerTool(Name = "deploy_delete", Title = "Delete a deployment", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DeployDeletedResult))]
 	[Description("Deletes a deployment (the owning node's agent then removes the container). Requires deploy:write.")]
 	public static async Task<DeployDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,

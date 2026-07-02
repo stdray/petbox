@@ -29,7 +29,11 @@ This project is wired to PetBox (project \`${project}\`) over the connected \`pe
 In your FIRST response this session, open with exactly this line (so it's visible the protocol is active):
 \`🧠 PetBox memory active\`
 
-PetBox remembers a LOT about this project — the curated facts AND the full session history (imported + auto-pushed). Start reasoning about anything past from a SEARCH, not from assumption. The entry point has two legs:
+PetBox remembers a LOT about this project — the curated facts AND the full session history (imported + auto-pushed). Start reasoning about anything past from a SEARCH, not from assumption.
+
+**Rule — search before you (re)work:** before re-deriving, re-investigating, or re-deciding ANYTHING about this project's past, run \`mcp__petbox__memory_search\` FIRST — redoing work the project already remembers is the failure mode this protocol exists to prevent. And before you store a new fact, \`mcp__petbox__memory_search\` for an existing one and edit that instead (duplicates poison recall).
+
+The entry point has two legs:
 
 - **Facts — \`mcp__petbox__memory_search\`**: a \`q\` of a few words you are confident appear (tokens are ANDed, prefix-matched; wordforms stem), pass \`bodyLen\` (e.g. 240) for cheap snippets. With no \`scope\` it cascades project ⊕ workspace and EVERY store — curated notes and the machine-distilled \`autocaptured\` quarantine alike (the store label in each hit tells you which). Without \`q\` it's a plain listing (freshest first). Pull a full body with \`mcp__petbox__memory_get\`.
 - **Past conversations — \`mcp__petbox__session_search\`**: when you need HOW something was decided, an error text, or any detail a fact wouldn't carry — two-stage search over the whole session archive; every hit carries the message ordinal, so \`mcp__petbox__session_get\` jumps to the verbatim source.

@@ -21,7 +21,7 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 
 	// Link kinds a creation constraint may name: the ones expressible IN the upsert call
 	// (task_spec = specRef, blocks = blockedBy, idea_spec = ideaRef). Any other kind is
-	// wired post-hoc via relations.create and therefore can't gate creation.
+	// wired post-hoc via relations_create and therefore can't gate creation.
 	static readonly string[] UpsertExpressibleLinks = ["task_spec", "blocks", "idea_spec"];
 
 	public MethodologyDefinitionValidator()

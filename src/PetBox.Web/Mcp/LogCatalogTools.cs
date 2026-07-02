@@ -7,17 +7,17 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
-// Named-log catalog lifecycle MCP tools (log.create / log.list / log.delete) — de-collapsed
+// Named-log catalog lifecycle MCP tools (log_create / log_list / log_delete) — de-collapsed
 // from the old generic entity.* tools into typed per-type tools (typed-surface Phase 4).
-// Kept in its OWN type, separate from LogTools, so LogTools (log.query) stays free of an
-// ILogStore / LogDb dependency (a NetArchTest enforces that — log.query must go through
+// Kept in its OWN type, separate from LogTools, so LogTools (log_query) stays free of an
+// ILogStore / LogDb dependency (a NetArchTest enforces that — log_query must go through
 // ILogQueryService). This type owns the catalog the same way RelationTools owns relations.
 // Scopes: logs:admin (create/delete) / logs:query (list), project-scoped. Tools throw on a
 // failed Assert*; McpErrorEnvelopeFilter renders the exception as the structured {error} body.
 [McpServerToolType]
 public static class LogCatalogTools
 {
-	[McpServerTool(Name = "log.create", Title = "Create a named log", UseStructuredContent = true, OutputSchemaType = typeof(LogCreatedResult))]
+	[McpServerTool(Name = "log_create", Title = "Create a named log", UseStructuredContent = true, OutputSchemaType = typeof(LogCreatedResult))]
 	[Description("Creates a named log (its SQLite file + metadata) in a project. Requires logs:admin scope.")]
 	public static async Task<LogCreatedResult> CreateAsync(
 		IHttpContextAccessor http, ILogStore logStore,
@@ -34,7 +34,7 @@ public static class LogCatalogTools
 		return new LogCreatedResult(meta.Name, meta.Description, meta.CreatedAt);
 	}
 
-	[McpServerTool(Name = "log.list", Title = "List named logs", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LogListResult))]
+	[McpServerTool(Name = "log_list", Title = "List named logs", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LogListResult))]
 	[Description("Lists a project's named logs (name, description, timestamps). Requires logs:query scope.")]
 	public static async Task<LogListResult> ListAsync(
 		IHttpContextAccessor http, ILogStore logStore,
@@ -46,7 +46,7 @@ public static class LogCatalogTools
 		return new LogListResult(rows.Select(l => new LogRow(l.Name, l.Description, l.CreatedAt, l.UpdatedAt)).ToList());
 	}
 
-	[McpServerTool(Name = "log.delete", Title = "Delete a named log", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(LogDeletedResult))]
+	[McpServerTool(Name = "log_delete", Title = "Delete a named log", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(LogDeletedResult))]
 	[Description("Deletes a named log and its file. Requires logs:admin scope.")]
 	public static async Task<LogDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, ILogStore logStore,

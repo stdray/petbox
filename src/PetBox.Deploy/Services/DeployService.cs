@@ -233,7 +233,7 @@ public sealed class DeployService : IDeployService
 		// A heartbeat is a FULL snapshot of the node's managed containers. Any status row
 		// for this node that's NOT in the report = the container is gone → mark Missing.
 		// Without this a stopped/removed deployment shows stale Running/healthy forever in
-		// deploy.list and the UI.
+		// deploy_list and the UI.
 		await _db.Statuses
 			.Where(s => s.NodeId == nodeId && !reported.Contains(s.Service) && s.ActualState != ActualState.Missing)
 			.Set(s => s.ActualState, ActualState.Missing)

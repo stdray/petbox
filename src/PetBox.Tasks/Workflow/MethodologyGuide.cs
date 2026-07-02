@@ -52,7 +52,7 @@ public static class MethodologyGuide
 		md.AppendLine($"- Types: {string.Join(", ", types)}");
 		md.AppendLine(kind.QuickAddAllowed
 			? $"- Quick-add: allowed — an untyped quick-add creates a `{defaultType}`."
-			: "- Quick-add: rejected — create nodes via tasks.upsert with the required fields.");
+			: "- Quick-add: rejected — create nodes via tasks_upsert with the required fields.");
 
 		var axes = runtime.TagAxes(kind.Kind);
 		if (axes.Count > 0)

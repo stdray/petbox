@@ -28,7 +28,7 @@ public static class LlmRouterTools
 		IReadOnlyList<LlmRoute> Routes,
 		Dictionary<string, string>? ApiKeys = null);
 
-	[McpServerTool(Name = "llm.config_get", Title = "Get LLM router registry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LlmRegistry))]
+	[McpServerTool(Name = "llm_config_get", Title = "Get LLM router registry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LlmRegistry))]
 	[Description("Return the project's LLM router registry (endpoints + routes), WITHOUT secrets. Requires llm:admin.")]
 	public static async Task<LlmRegistry> ConfigGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryAdmin admin,
@@ -40,7 +40,7 @@ public static class LlmRouterTools
 		return await admin.GetAsync(projectKey, ct);
 	}
 
-	[McpServerTool(Name = "llm.config_set", Title = "Set LLM router registry", UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigSetResult))]
+	[McpServerTool(Name = "llm_config_set", Title = "Set LLM router registry", UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigSetResult))]
 	[Description("""
 		Replace the project's LLM router registry. Requires llm:admin.
 		`config` is a JSON object:
@@ -66,7 +66,7 @@ public static class LlmRouterTools
 		return new LlmConfigSetResult(true, registry.Endpoints.Count, registry.Routes.Count);
 	}
 
-	[McpServerTool(Name = "llm.embed", Title = "Embed text via the router", UseStructuredContent = true, OutputSchemaType = typeof(EmbedResult))]
+	[McpServerTool(Name = "llm_embed", Title = "Embed text via the router", UseStructuredContent = true, OutputSchemaType = typeof(EmbedResult))]
 	[Description("""
 		Embed inputs through the router's embed chain (primary -> fallback). `inputs` is a JSON
 		array of strings. Optional `tier`. Returns { vectors, model, servedBy }. Requires llm:invoke.
@@ -85,7 +85,7 @@ public static class LlmRouterTools
 		return await client.EmbedAsync(projectKey, new EmbedRequest(texts, tier), ct);
 	}
 
-	[McpServerTool(Name = "llm.rerank", Title = "Rerank documents via the router", UseStructuredContent = true, OutputSchemaType = typeof(RerankResult))]
+	[McpServerTool(Name = "llm_rerank", Title = "Rerank documents via the router", UseStructuredContent = true, OutputSchemaType = typeof(RerankResult))]
 	[Description("""
 		Rerank `documents` (JSON array of strings) against `query` through the rerank chain.
 		Optional `topN`, `tier`. Returns { hits:[{index,score}], model, servedBy }. Requires llm:invoke.
@@ -104,7 +104,7 @@ public static class LlmRouterTools
 		return await client.RerankAsync(projectKey, new RerankRequest(query, docs, topN, tier), ct);
 	}
 
-	[McpServerTool(Name = "llm.chat", Title = "Chat / summarize via the router", UseStructuredContent = true, OutputSchemaType = typeof(ChatResult))]
+	[McpServerTool(Name = "llm_chat", Title = "Chat / summarize via the router", UseStructuredContent = true, OutputSchemaType = typeof(ChatResult))]
 	[Description("""
 		Run a chat/summary completion through the chat chain. `messages` is a JSON array of
 		{ role, content }. Optional `tier`, `temperature`, `maxTokens`. Returns { text, model,

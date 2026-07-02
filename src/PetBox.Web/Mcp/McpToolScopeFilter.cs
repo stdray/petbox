@@ -47,13 +47,13 @@ static class McpToolScopeFilter
 	// of ("tasks" → any tasks:* scope), or the literal "admin:provision" for tools
 	// gated on that single scope, or null for tools we don't classify (→ fail open).
 	static string? ModuleOf(string tool) =>
-		tool.StartsWith("tasks.", StringComparison.Ordinal) || tool.StartsWith("session.", StringComparison.Ordinal) ? "tasks"
-		: tool.StartsWith("memory.", StringComparison.Ordinal) ? "memory"
-		: tool.StartsWith("log.", StringComparison.Ordinal) ? "logs"
-		: tool.StartsWith("data.", StringComparison.Ordinal) || tool.StartsWith("db.", StringComparison.Ordinal) ? "data"
-		: tool.StartsWith("deploy.", StringComparison.Ordinal) ? "deploy"
-		: tool.StartsWith("config.", StringComparison.Ordinal) ? ApiKeyScopes.AdminProvision
-		: null; // project.* / apikey.* — provisioning-mixed (admin:provision shows ALL anyway), leave shown
+		tool.StartsWith("tasks_", StringComparison.Ordinal) || tool.StartsWith("session_", StringComparison.Ordinal) ? "tasks"
+		: tool.StartsWith("memory_", StringComparison.Ordinal) ? "memory"
+		: tool.StartsWith("log_", StringComparison.Ordinal) ? "logs"
+		: tool.StartsWith("data_", StringComparison.Ordinal) || tool.StartsWith("db_", StringComparison.Ordinal) ? "data"
+		: tool.StartsWith("deploy_", StringComparison.Ordinal) ? "deploy"
+		: tool.StartsWith("config_", StringComparison.Ordinal) ? ApiKeyScopes.AdminProvision
+		: null; // project_* / apikey_* — provisioning-mixed (admin:provision shows ALL anyway), leave shown
 
 	static bool Allowed(string tool, HashSet<string> granted)
 	{

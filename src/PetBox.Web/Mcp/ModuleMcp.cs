@@ -77,21 +77,34 @@ static class ModuleMcp
 			? v
 			: dflt;
 
-	// WRITE-echo slice (spec echo-compact-by-default): bodyLen <= 0 -> null (no body, the
-	// serializer omits the field), so a cursor-advance echo is bodiless by default; otherwise
-	// the first N chars with "…" appended when cut. Mirrors TasksService.SliceBody.
-	public static string? SliceBody(string? body, int bodyLen)
-	{
-		if (bodyLen <= 0 || string.IsNullOrEmpty(body)) return null;
-		return body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
-	}
+	// ── uniform body-length contract (spec bodylen-uniform-contract) ──────────────────
+	// ONE meaning for `bodyLen` on every body-carrying MCP surface (search, echoes, node_get,
+	// comments). A caller passes a nullable int and the four cases are identical everywhere:
+	//   * omitted / null → the surface's DEFAULT (varies by surface, documented per tool:
+	//                      DefaultSnippet for listings/search, FullBody for pointed reads,
+	//                      NoBody for compact write-echoes);
+	//   * FullBody (-1)  → the whole body;
+	//   * NoBody  (0)    → no body (null → the serializer omits the field);
+	//   * N > 0          → the first N chars, "…" appended when the body was cut.
+	// Only the DEFAULT differs between surfaces; the explicit values (-1/0/N) mean the same
+	// thing on every tool, so `bodyLen:0` can never read as "applied a full body" the way the
+	// old split SliceBody(0=none)/SnippetBody(0=full) pair let it.
+	public const int FullBody = -1;
+	public const int NoBody = 0;
 
-	// READ snippet (spec read-snippet-on-demand): bodyLen <= 0 -> the FULL body (back-compat:
-	// existing read callers keep getting the whole thing), otherwise the first N chars with "…"
-	// when cut. The opposite default to SliceBody — a read returns content by default, a write
-	// echo does not.
-	public static string? SnippetBody(string? body, int bodyLen) =>
-		bodyLen <= 0 || string.IsNullOrEmpty(body) || body.Length <= bodyLen
-			? body
-			: string.Concat(body.AsSpan(0, bodyLen), "…");
+	// The default snippet length for listing/search surfaces when bodyLen is omitted — enough
+	// to identify a row without dumping a wall of full bodies (fetch a full body with a pointed
+	// read: tasks_node_get / memory_get, or pass bodyLen:-1).
+	public const int DefaultSnippet = 240;
+
+	// Resolve the uniform contract: `bodyLen` (the caller's nullable knob) against `dflt` (the
+	// surface's documented default). Returns the body shaped for the wire (null = omit the field).
+	public static string? Body(string? body, int? bodyLen, int dflt)
+	{
+		var len = bodyLen ?? dflt;              // omitted → the surface default
+		if (string.IsNullOrEmpty(body)) return null;
+		if (len < 0) return body;               // FullBody
+		if (len == 0) return null;              // NoBody
+		return body.Length <= len ? body : string.Concat(body.AsSpan(0, len), "…");
+	}
 }

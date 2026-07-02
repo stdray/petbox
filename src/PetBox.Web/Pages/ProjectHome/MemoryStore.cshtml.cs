@@ -38,6 +38,10 @@ public sealed class MemoryStoreModel : PageModel
 	public IReadOnlyDictionary<string, MemoryUsageView> Usage { get; private set; } =
 		new Dictionary<string, MemoryUsageView>();
 
+	// Store-wide usage aggregate (spec: memory-usage-aggregate) — rendered as a summary
+	// band above the entries. Reading this page is curation, never an impression.
+	public MemoryUsageAggregate? Aggregate { get; private set; }
+
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Memory)) return NotFound();
@@ -45,6 +49,7 @@ public sealed class MemoryStoreModel : PageModel
 
 		Entries = await _memory.ListActiveEntriesAsync(ProjectKey, Store, ct);
 		Usage = await _memory.GetUsageAsync(ProjectKey, Store, ct: ct);
+		Aggregate = await _memory.GetUsageAggregateAsync(ProjectKey, Store, ct: ct);
 		return Page();
 	}
 }

@@ -11,7 +11,7 @@ namespace PetBox.Core.Contract;
 // caller marks the cut structurally (truncated:true + omitted:<n> + a narrowing hint).
 // One instance = one response: spending accumulates across Take calls, so several lists
 // (e.g. the four methodology boards) share a single budget in emission order. Shared by
-// tasks.search / tasks.methodology_get / memory.search / session.search / comments.list.
+// tasks_search / tasks_methodology_get / memory_search / session_search / comments_list.
 public sealed class ResponseBudget
 {
 	// Default budget: ~30k serialized chars keeps a tool result well inside an agent's

@@ -18,9 +18,9 @@ Empty repository. Template files copied from `wiki/cross-project/templates/dotne
 ## MCP access during development
 
 `.mcp.json` at repo root registers the running petbox dev server as an MCP
-target named `petbox`. Tools exposed: `data.*` (7 tools) + `log.query`.
+target named `petbox`. Tools exposed: `data.*` (7 tools) + `log_query`.
 Useful during dev for inspecting logs without leaving the editor:
-`log.query` with KQL like `events | where Level >= 4` shows what errored.
+`log_query` with KQL like `events | where Level >= 4` shows what errored.
 
 Setup (one-time, per machine):
 1. Set env var `PETBOX_DEV_APIKEY` to a `$system`-scoped ApiKey with
@@ -60,7 +60,7 @@ When recording state via the MCP tools, pick by lifetime:
 - **Tasks** (`tasks.*`) — a *unit of work with a status* tracked to Done. "Has a status that changes (Pending→Done)?" → task.
 - **Memory** (`memory.*`) — a *durable fact* that should outlive the work. "Will a future agent need this to avoid re-learning it?" → memory.
 
-Memory entries are typed (`user` | `feedback` | `project` | `reference`) — `type` is required on `memory.upsert`. Store durable facts not derivable from code/git/config; do **not** store what the repo/git already records, transient state, secrets, or actionable work (that's a task). `feedback`/`project` entries should include the *why* and *how to apply*. Search before writing, update over duplicating, delete when wrong (temporal history makes deletes safe). A cold `tasks.upsert` / `memory.upsert` auto-creates the board/store.
+Memory entries are typed (`user` | `feedback` | `project` | `reference`) — `type` is required on `memory_upsert`. Store durable facts not derivable from code/git/config; do **not** store what the repo/git already records, transient state, secrets, or actionable work (that's a task). `feedback`/`project` entries should include the *why* and *how to apply*. Search before writing, update over duplicating, delete when wrong (temporal history makes deletes safe). A cold `tasks_upsert` / `memory_upsert` auto-creates the board/store.
 
 ## Live plan board (petbox `$system`/roadmap)
 

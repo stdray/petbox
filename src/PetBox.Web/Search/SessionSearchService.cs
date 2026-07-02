@@ -11,7 +11,7 @@ namespace PetBox.Web.Search;
 //      hydration, sublinear to archive size — the K it returns is constant.
 //   2. EPISODIC — the top-K candidate sessions are lazily hydrated and searched INSIDE
 //      (ISessionEpisodicIndex), each hit carrying the message ordinal: the provenance
-//      bridge from found-by-meaning to the verbatim source (session.get).
+//      bridge from found-by-meaning to the verbatim source (session_get).
 // Candidates keep their discovery order; a session that vanished under a stale digest
 // is skipped, not an error.
 public sealed class SessionSearchService
@@ -79,7 +79,7 @@ public sealed class SessionSearchService
 }
 
 // One discovered session: its digest description (what the session is about), the
-// episodic hits inside it (message ordinal = the session.get bridge) and the inner
+// episodic hits inside it (message ordinal = the session_get bridge) and the inner
 // retriever provenance.
 public sealed record SessionSearchCandidate(
 	string SessionId,

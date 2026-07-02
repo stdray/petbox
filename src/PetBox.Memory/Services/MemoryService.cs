@@ -123,7 +123,7 @@ public sealed class MemoryService : IMemoryService
 			else
 			{
 				// QUERY: hybrid selection per store; the fused ranking supplies a bounded
-				// CANDIDATE POOL of max(3×limit, 50) — the same formula as tasks.search (3×
+				// CANDIDATE POOL of max(3×limit, 50) — the same formula as tasks_search (3×
 				// leaves the post-fusion type predicate room to drop candidates and still
 				// fill the limit; the 50 floor keeps recall sane for small/unbounded asks).
 				var (hits, r) = await SearchStoreAsync(projectKey, store, query, typeFilter,
@@ -254,6 +254,12 @@ public sealed class MemoryService : IMemoryService
 	static TemporalUpsertResult<MemoryEntry> ScopeEchoToCall(TemporalUpsertResult<MemoryEntry> r,
 		IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes)
 	{
+		// A write that did NOT apply changed nothing — the echo must be empty so the ack reads
+		// unambiguously as "not applied" (spec upsert-ack-echo-clean); the conflict (with its
+		// baseline/active version) is the whole story, and a caller rebases via memory_delta.
+		if (!r.Applied)
+			return r with { Added = [], Updated = [], Removed = [] };
+
 		var mentioned = upserts.Select(u => u.Key)
 			.Concat(upserts.Where(u => u.PrevKey is not null).Select(u => u.PrevKey!))
 			.ToHashSet(StringComparer.Ordinal);
@@ -291,6 +297,64 @@ public sealed class MemoryService : IMemoryService
 			u => u.Key,
 			u => new MemoryUsageView(u.SurfacedCount, u.OpenedCount, u.LastHitAt),
 			StringComparer.Ordinal);
+	}
+
+	public async Task<MemoryUsageAggregate> GetUsageAggregateAsync(string projectKey, string store,
+		int deadTailLimit = 10, CancellationToken ct = default)
+	{
+		await EnsureStore(projectKey, store, ct);
+		var ctx = _stores.GetContext(projectKey, store);
+
+		// Active entries are the denominator (usage rows can outlive a soft-deleted key, so we
+		// join FROM the active set, not the counter table). Key + Created is all the aggregate needs.
+		var entries = ctx.Entries.Where(e => e.ActiveTo == null).Select(e => new { e.Key, e.Created }).ToList();
+		var usage = ctx.Usage.ToList().ToDictionary(u => u.Key, StringComparer.Ordinal);
+
+		var surfacedCount = 0;
+		var openedCount = 0;
+		var surfacedHits = new List<DateTime>();
+		var dead = new List<(string Key, DateTime Created)>();
+		foreach (var e in entries)
+		{
+			usage.TryGetValue(e.Key, out var u);
+			if (u is { SurfacedCount: > 0 })
+			{
+				surfacedCount++;
+				if (u.LastHitAt is { } hit) surfacedHits.Add(hit);
+			}
+			else
+			{
+				dead.Add((e.Key, e.Created)); // never surfaced — a dead-tail candidate
+			}
+			if (u is { OpenedCount: > 0 }) openedCount++;
+		}
+
+		var total = entries.Count;
+		var deadTail = new MemoryDeadTail(
+			dead.Count,
+			dead.OrderBy(d => d.Created).ThenBy(d => d.Key, StringComparer.Ordinal)
+				.Take(Math.Max(0, deadTailLimit)).Select(d => d.Key).ToList());
+		return new MemoryUsageAggregate(
+			TotalEntries: total,
+			SurfacedAtLeastOnce: surfacedCount,
+			OpenedAtLeastOnce: openedCount,
+			SurfacedFraction: total == 0 ? 0 : (double)surfacedCount / total,
+			OpenedFraction: total == 0 ? 0 : (double)openedCount / total,
+			MedianLastHitAt: Median(surfacedHits),
+			DeadTail: deadTail);
+	}
+
+	// Median of an unordered timestamp list: null when empty, the middle element for an odd
+	// count, the tick-average of the two middles for an even one (the textbook median; a
+	// midpoint timestamp still reads as a sensible "typical last hit").
+	static DateTime? Median(List<DateTime> hits)
+	{
+		if (hits.Count == 0) return null;
+		hits.Sort();
+		var mid = hits.Count / 2;
+		return hits.Count % 2 == 1
+			? hits[mid]
+			: new DateTime((hits[mid - 1].Ticks + hits[mid].Ticks) / 2);
 	}
 
 	// ---- helpers ----

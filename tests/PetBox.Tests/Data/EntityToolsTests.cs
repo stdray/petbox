@@ -15,7 +15,7 @@ using PetBox.Log.Core.Data;
 namespace PetBox.Tests.Data;
 
 // Covers the per-type lifecycle MCP tools that replaced the generic entity.* surface
-// (typed-surface Phase 4): log.create/list/delete, db.create/describe, and the
+// (typed-surface Phase 4): log_create/list/delete, db_create/describe, and the
 // config.* binding tools. Each tool now takes flat, typed params (no JsonElement),
 // so a real MCP client gets a per-field input schema. Provisioning (project/apikey)
 // lives in ProvisioningToolsTests; SQL round-trips in McpDataToolsTests.
@@ -120,21 +120,21 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		names.Should().NotContain("entity.delete");
 		names.Should().NotContain("entity.describe");
 		// Typed per-type tools take its place.
-		names.Should().Contain("log.create");
-		names.Should().Contain("log.list");
-		names.Should().Contain("log.delete");
-		names.Should().Contain("db.create");
-		names.Should().Contain("db.list");
-		names.Should().Contain("db.delete");
-		names.Should().Contain("db.describe");
-		names.Should().Contain("project.create");
-		names.Should().Contain("apikey.create");
+		names.Should().Contain("log_create");
+		names.Should().Contain("log_list");
+		names.Should().Contain("log_delete");
+		names.Should().Contain("db_create");
+		names.Should().Contain("db_list");
+		names.Should().Contain("db_delete");
+		names.Should().Contain("db_describe");
+		names.Should().Contain("project_create");
+		names.Should().Contain("apikey_create");
 	}
 
 	[Fact]
 	public async Task Log_Create_List_Delete_RoundTrips()
 	{
-		var create = await ToolAsync("log.create");
+		var create = await ToolAsync("log_create");
 		var r1 = await create.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = ProjectKey,
@@ -143,11 +143,11 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		});
 		Text(r1).Should().NotContain("\"error\"");
 
-		var list = await ToolAsync("log.list");
+		var list = await ToolAsync("log_list");
 		var r2 = await list.CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey });
 		Text(r2).Should().Contain("audit");
 
-		var del = await ToolAsync("log.delete");
+		var del = await ToolAsync("log_delete");
 		var r3 = await del.CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey, ["name"] = "audit" });
 		Text(r3).Should().NotContain("\"error\"");
 
@@ -159,14 +159,14 @@ public sealed class EntityToolsTests : IAsyncLifetime
 	[Fact]
 	public async Task Db_Create_Then_Describe()
 	{
-		var create = await ToolAsync("db.create");
+		var create = await ToolAsync("db_create");
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = ProjectKey,
 			["name"] = "appdb",
 		})).Should().NotContain("\"error\"");
 
-		var apply = await ToolAsync("data.schema_apply");
+		var apply = await ToolAsync("data_schema_apply");
 		(await apply.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = ProjectKey,
@@ -175,7 +175,7 @@ public sealed class EntityToolsTests : IAsyncLifetime
 			["sql"] = "CREATE TABLE widgets (id INTEGER PRIMARY KEY, name TEXT NOT NULL)",
 		})).IsError.Should().NotBe(true);
 
-		var describe = await ToolAsync("db.describe");
+		var describe = await ToolAsync("db_describe");
 		var r = await describe.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = ProjectKey,
@@ -189,20 +189,20 @@ public sealed class EntityToolsTests : IAsyncLifetime
 	[Fact]
 	public async Task Db_List_ReflectsCreate()
 	{
-		Text(await (await ToolAsync("db.create")).CallAsync(new Dictionary<string, object?>
+		Text(await (await ToolAsync("db_create")).CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = ProjectKey,
 			["name"] = "listdb",
 		})).Should().NotContain("\"error\"");
 
-		var listed = Text(await (await ToolAsync("db.list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey }));
+		var listed = Text(await (await ToolAsync("db_list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey }));
 		listed.Should().Contain("listdb");
 	}
 
 	[Fact]
 	public async Task Db_Describe_MissingDb_SurfacesError()
 	{
-		var r = await (await ToolAsync("db.describe")).CallAsync(new Dictionary<string, object?>
+		var r = await (await ToolAsync("db_describe")).CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = ProjectKey,
 			["dbName"] = "ghost",
@@ -215,7 +215,7 @@ public sealed class EntityToolsTests : IAsyncLifetime
 	{
 		// The typed per-type tool (mcp-typing) — flat scalar params, so the client
 		// sends a real schema, no stringified-object trap.
-		var create = await ToolAsync("config.binding_upsert");
+		var create = await ToolAsync("config_binding_upsert");
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = "test",
@@ -233,7 +233,7 @@ public sealed class EntityToolsTests : IAsyncLifetime
 			["kind"] = "Secret",
 		})).Should().NotContain("\"error\"");
 
-		var list = await ToolAsync("config.binding_list");
+		var list = await ToolAsync("config_binding_list");
 		var listed = Text(await list.CallAsync(new Dictionary<string, object?> { ["workspaceKey"] = "test" }));
 		listed.Should().Contain("svc/url");
 		listed.Should().Contain("svc/key");
@@ -249,7 +249,7 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		secret.Ciphertext.Should().NotBeNullOrEmpty();
 	}
 
-	// spec explicit-write-semantics: config.binding_upsert is PUT by (path, tagset) — a repeat
+	// spec explicit-write-semantics: config_binding_upsert is PUT by (path, tagset) — a repeat
 	// upsert with the same path and the same normalized tag SET supersedes (soft-closes) the
 	// old binding instead of leaving two active ambiguous twins; a different tagset at the
 	// same path is a specificity variant and coexists.
@@ -259,7 +259,7 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		// Unique path per run: the workspace config DB outlives this fixture, so a fixed
 		// path would collide with rows left by previous runs.
 		var path = "dup/" + Guid.NewGuid().ToString("N")[..12];
-		var create = await ToolAsync("config.binding_upsert");
+		var create = await ToolAsync("config_binding_upsert");
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = "test",
@@ -337,12 +337,12 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		try
 		{
 			var names = (await mcp.ListToolsAsync()).Select(t => t.Name).ToList();
-			names.Should().Contain(n => n.StartsWith("tasks.", StringComparison.Ordinal));
-			names.Should().NotContain(n => n.StartsWith("memory.", StringComparison.Ordinal));
-			names.Should().NotContain(n => n.StartsWith("data.", StringComparison.Ordinal));
-			names.Should().NotContain(n => n.StartsWith("db.", StringComparison.Ordinal));
-			names.Should().NotContain(n => n.StartsWith("log.", StringComparison.Ordinal));
-			names.Should().NotContain(n => n.StartsWith("config.", StringComparison.Ordinal));
+			names.Should().Contain(n => n.StartsWith("tasks_", StringComparison.Ordinal));
+			names.Should().NotContain(n => n.StartsWith("memory_", StringComparison.Ordinal));
+			names.Should().NotContain(n => n.StartsWith("data_", StringComparison.Ordinal));
+			names.Should().NotContain(n => n.StartsWith("db_", StringComparison.Ordinal));
+			names.Should().NotContain(n => n.StartsWith("log_", StringComparison.Ordinal));
+			names.Should().NotContain(n => n.StartsWith("config_", StringComparison.Ordinal));
 		}
 		finally
 		{

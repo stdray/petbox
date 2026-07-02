@@ -14,7 +14,7 @@ namespace PetBox.Web.Sessions;
 //   POST /{sessionId}/append  — incremental against the server-authoritative cursor
 //                               (?fromOrdinal=N; the hook's steady-state path).
 // The server numbers the messages (ordinal) and stores the latest snapshot either way.
-// Mirrors session.upsert / session.append.
+// Mirrors session_upsert / session_append.
 public static class SessionApi
 {
 	static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -136,7 +136,7 @@ public static class SessionApi
 		return (messages, null);
 	}
 
-	// Soft delete; a later push of the same sessionId resurrects it. Mirrors session.delete.
+	// Soft delete; a later push of the same sessionId resurrects it. Mirrors session_delete.
 	static async Task<IResult> DeleteAsync(
 		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
 	{

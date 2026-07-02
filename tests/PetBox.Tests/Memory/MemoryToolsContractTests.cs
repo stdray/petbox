@@ -88,7 +88,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		keys.Should().BeEquivalentTo(["prefers-tabs"]);
 	}
 
-	// memory.search with q: the single-store FTS scenario (scope:"project" + store) —
+	// memory_search with q: the single-store FTS scenario (scope:"project" + store) —
 	// hybrid retriever underneath, lexical tokens prefix-matched.
 	[Fact]
 	public async Task Search_Fts_FindsByToken_AndExcludesOthers()
@@ -141,7 +141,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 			.Should().NotContain("temp");
 	}
 
-	// spec explicit-write-semantics: memory.upsert is a PATCH on edits (version > 0) — an
+	// spec explicit-write-semantics: memory_upsert is a PATCH on edits (version > 0) — an
 	// omitted field keeps its current value. Incident repro (yobapub, store=notes): a
 	// tags-only edit used to wipe description AND body to empty; it must not.
 	[Fact]
@@ -208,7 +208,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		after.Tags.Should().BeEmpty();
 	}
 
-	// spec echo-compact-by-default (mirror of the tasks side): memory.upsert echoes
+	// spec echo-compact-by-default (mirror of the tasks side): memory_upsert echoes
 	// key/type/description/version but NOT the body unless bodyLen > 0. description (a one-liner)
 	// stays to orient the merge; the heavy body is opt-in.
 	[Fact]
@@ -239,8 +239,9 @@ public sealed class MemoryToolsContractTests : IDisposable
 		sliced.Should().EndWith("…");
 	}
 
-	// spec read-snippet-on-demand + bounded-result-sets: both modes cap at `limit` and snippet
-	// bodies at `bodyLen` (full by default), so a read can't dump an unbounded wall of bodies.
+	// spec bodylen-uniform-contract + bounded-result-sets: both modes cap at `limit` and follow
+	// the uniform bodyLen knob (omitted = a ~240-char snippet — the compact listing default;
+	// -1 = full; 0 = none; N>0 = an N-char snippet), so a read can't dump an unbounded wall.
 	[Fact]
 	public async Task Search_BothModes_RespectLimit_AndBodyLen()
 	{
@@ -259,13 +260,25 @@ public sealed class MemoryToolsContractTests : IDisposable
 			scope: "project", store: "notes", limit: 2))
 			.Items.Count.Should().Be(2);
 
-		// listing: bodyLen snippets the body of entry 'a' (the long one).
+		// listing: bodyLen:100 snippets the body of entry 'a' (the long one, 306 chars).
 		var aBody = (await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", bodyLen: 100))
 			.Items.Single(e => e.Key == "a")
 			.Body!;
 		aBody.Length.Should().Be(101);
 		aBody.Should().EndWith("…");
+
+		// listing default (omitted): a ~240-char snippet of the long body.
+		var aDefault = (await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes")).Items.Single(e => e.Key == "a").Body!;
+		aDefault.Length.Should().Be(241);
+		aDefault.Should().EndWith("…");
+
+		// -1: the full body; 0: no body (omitted → null).
+		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes", bodyLen: -1)).Items.Single(e => e.Key == "a").Body!.Length.Should().Be(306);
+		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			scope: "project", store: "notes", bodyLen: 0)).Items.Single(e => e.Key == "a").Body.Should().BeNull();
 
 		// with q: the same limit bounds an FTS sweep ("alpha" hits all three).
 		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
@@ -307,6 +320,13 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var conflict = future.Conflicts.Single();
 		conflict.Kind.Should().Be("FutureBaseline");
 		conflict.Reason.Should().Contain("another board/scope");
+
+		// spec upsert-ack-echo-clean: a write that did NOT apply echoes NOTHING — the conflict is
+		// the whole story, and added/updated/removed stay empty (they used to carry 'a's current
+		// state and read as if the write landed).
+		future.Added.Should().BeEmpty();
+		future.Updated.Should().BeEmpty();
+		future.Removed.Should().BeEmpty();
 	}
 
 	static IHttpContextAccessor Http(string scopes)

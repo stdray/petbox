@@ -18,7 +18,7 @@ namespace PetBox.Web.Search;
 //   quarantine — machine writes land ONLY in `autocaptured` (cascading recall still
 //                surfaces them); curated stores are never modified;
 //   provenance — every fact carries {sessionId, message range}: the bridge back to the
-//                verbatim source via session.get.
+//                verbatim source via session_get.
 // Same enrichment-tick worker pattern as SessionDigestJob: per-session cursor (in the
 // session store's cursor table), quiet period, chat-down → no-op pass that backfills on
 // recovery (spec: write-never-blocks-on-enrich / durable-backfill).
@@ -220,6 +220,21 @@ public sealed class SessionFactsJob : IVectorizationJob
 				}], [], ct);
 				return true;
 			}
+		}
+
+		// Deterministic dedup safety net BEHIND the judge (spec: autocapture-dedup): a
+		// hallucinated "add" or a repeat the neighbor search never surfaced (lexical AND-
+		// narrowing, a paraphrase ranked below K) still lands here. Compare the candidate to
+		// the WHOLE quarantined store by text/semantics before minting a new row — a match =
+		// skip, so repetition can't pile up even when the judge lets it through.
+		if (await _memory.StoreExistsAsync(project, Store, ct))
+		{
+			var existing = await _memory.ListAsync(project, Store, type: null, ct);
+			var dupKey = await AutocaptureDedup.FindDuplicateKeyAsync(project,
+				string.IsNullOrWhiteSpace(candidate.Description) ? candidate.Body ?? "" : candidate.Description,
+				existing.Select(e => (e.Key, Text: string.IsNullOrWhiteSpace(e.Description) ? e.Body : e.Description)).ToList(),
+				_llm, ct);
+			if (dupKey is not null) return false;
 		}
 
 		await _memory.UpsertAsync(project, Store, [new MemoryEntryInput

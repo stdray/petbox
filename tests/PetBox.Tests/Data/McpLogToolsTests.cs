@@ -13,7 +13,7 @@ using PetBox.Log.Core.Ingestion;
 
 namespace PetBox.Tests.Data;
 
-// Sanity tests for the single Log MCP tool (log.query). Deep KQL behavior is
+// Sanity tests for the single Log MCP tool (log_query). Deep KQL behavior is
 // covered by the LogPipeline + KqlTransformer tests; this just verifies the
 // MCP surface routes correctly and respects auth.
 [Collection("DataModule")]
@@ -88,7 +88,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 			await store.CreateAsync(TestProjectKey, LogNames.Default, null);
 		}
 
-		// Seed two log entries so log.query has something to return.
+		// Seed two log entries so log_query has something to return.
 		using (var scope = _factory.Services.CreateScope())
 		{
 			var pipeline = scope.ServiceProvider.GetRequiredService<IIngestionPipeline>();
@@ -140,13 +140,13 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 	public async Task LogQuery_Tool_IsDiscoverable()
 	{
 		var tools = await _mcp.ListToolsAsync();
-		tools.Select(t => t.Name).Should().Contain("log.query");
+		tools.Select(t => t.Name).Should().Contain("log_query");
 	}
 
 	[Fact]
 	public async Task LogQuery_Events_ReturnsSeededRows()
 	{
-		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log_query");
 
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
@@ -159,12 +159,20 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		var text = result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
 		text.Should().Contain("\"kind\":\"events\"");
 		text.Should().Contain("Boom");
+
+		// Event field names are pinned to the PascalCase KQL schema (mirroring the table-shape
+		// columns and the REST LogEventDto), NOT the MCP default camelCase — so an agent parser
+		// reads one casing across both log_query shapes.
+		text.Should().Contain("\"Timestamp\":").And.Contain("\"Level\":")
+			.And.Contain("\"ServiceKey\":").And.Contain("\"MessageTemplate\":");
+		text.Should().NotContain("\"timestamp\":").And.NotContain("\"serviceKey\":")
+			.And.NotContain("\"messageTemplate\":");
 	}
 
 	[Fact]
 	public async Task LogQuery_ShapeChanging_ReturnsTable()
 	{
-		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log_query");
 
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
@@ -181,11 +189,11 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 	[Fact]
 	public async Task LogQuery_ExecutionError_ReturnsStructuredError()
 	{
-		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log_query");
 
 		// Valid syntax, but the built expression fails linq2db SQL translation at
 		// EXECUTION time (LevelName is CLR-computed). The raw engine exception used to
-		// surface as the framework's opaque "An error occurred invoking 'log.query'.";
+		// surface as the framework's opaque "An error occurred invoking 'log_query'.";
 		// via McpErrorEnvelopeFilter it must be a structured {error} with the failure
 		// class (KqlExecutionException) and the reason.
 		var result = await tool.CallAsync(new Dictionary<string, object?>
@@ -204,7 +212,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 	[Fact]
 	public async Task LogQuery_ExecutionError_TablePath_ReturnsStructuredError()
 	{
-		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log_query");
 
 		// Same engine fault, but on the shape-changing path: rows stream lazily and the
 		// exception surfaces in the tool's await-foreach — still inside the tool body,
@@ -225,15 +233,15 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 	[Fact]
 	public async Task LogQuery_CrossProject_Rejected()
 	{
-		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log_query");
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = "some-other-project",
 			["logName"] = LogNames.Default,
 			["kql"] = "events",
 		});
-		// log.query is GuardAsync-wrapped: a foreign project surfaces as a structured
-		// {error} body, not the framework's IsError flag (consistent with tasks.*).
+		// A foreign project surfaces via McpErrorEnvelopeFilter: the structured {error}
+		// body on the text content, with IsError=true (consistent with tasks.*).
 		result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text
 			.Should().Contain("UnauthorizedAccessException");
 	}
@@ -243,7 +251,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 	{
 		// Grab the tool while the key still lists it (A7b hides log.* once the logs
 		// scope is gone); call-time AssertScope is the actual boundary under test.
-		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log.query");
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log_query");
 
 		// Re-key without logs:query.
 		using (var scope = _factory.Services.CreateScope())

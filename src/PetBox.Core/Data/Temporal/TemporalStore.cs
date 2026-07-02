@@ -109,7 +109,7 @@ public static class TemporalStore
 		UpsertAsync(db, desired, [], sinceVersion, time, onBeforeApply: null, onWithinTx, partition, ct);
 
 	// Overload that also soft-deletes (closes the active row with no new revision) the
-	// given keys — used by memory.upsert's `deleted:true`. version 0 = delete the
+	// given keys — used by memory_upsert's `deleted:true`. version 0 = delete the
 	// current active row regardless; a non-zero version that no longer matches yields a
 	// Stale conflict; deleting a key with no active row is a no-op (idempotent).
 	public static Task<TemporalUpsertResult<TRow>> UpsertAsync<TRow>(

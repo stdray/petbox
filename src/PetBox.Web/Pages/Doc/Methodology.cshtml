@@ -19,13 +19,13 @@
 		<p>
 			How to drive the spec / work / idea rails. This is the <strong>operational contract</strong>;
 			the reasoning behind it is on the <a href="@Routes.DocPhilosophy()">philosophy page</a>.
-			Call <code>tasks.workflow(projectKey, board)</code> any time to get the live statuses/transitions
+			Call <code>tasks_workflow(projectKey, board)</code> any time to get the live statuses/transitions
 			for a board.
 		</p>
 
 		<h2>Boards have a <code>kind</code></h2>
 		<p>
-			Set <code>kind</code> on <code>tasks.board_create</code> (it can't be changed later). The kind drives
+			Set <code>kind</code> on <code>tasks_board_create</code> (it can't be changed later). The kind drives
 			which task types, statuses, transitions and invariants apply. Default is <code>simple</code>.
 		</p>
 		<ul>
@@ -57,14 +57,14 @@
 			you cite (it survives content edits; rename via <code>prevKey</code>). Give each node a short
 			<code>title</code> and a markdown <code>body</code>.
 		</p>
-		<pre><code>tasks.upsert board="spec" projectKey="&lt;proj&gt;" nodes=[
+		<pre><code>tasks_upsert board="spec" projectKey="&lt;proj&gt;" nodes=[
   { "key":"auth", "status":"defined", "title":"Auth" },
   { "key":"login", "partOf":"auth", "status":"defined", "title":"Login flow" }
 ]</code></pre>
 
 		<h2>Links (relations)</h2>
-		<p>Edges bind to the stable <code>nodeId</code> (in every upsert/read response), so they survive renames. They are temporal — soft-closed, not deleted (history kept; <code>relations.list ... includeHistory=true</code>). <code>tasks.search</code> surfaces them inline per node: <code>spec</code> (what a task implements), <code>blockedBy</code>, and on spec nodes <code>linkedTasks</code> — each resolved to its board + slug + title.</p>
-		<p><strong>Finding the spec board:</strong> set it once per work board with <code>tasks.board_set_spec</code> (or <code>specBoard</code> on <code>board_create</code>); then <code>tasks.search</code>/<code>board_list</code> report it as <code>specBoard</code> and <code>specRef</code> is validated to point at that board. No mapping = the agent picks any <code>kind=spec</code> board and links by nodeId.</p>
+		<p>Edges bind to the stable <code>nodeId</code> (in every upsert/read response), so they survive renames. They are temporal — soft-closed, not deleted (history kept; <code>relations_list ... includeHistory=true</code>). <code>tasks_search</code> surfaces them inline per node: <code>spec</code> (what a task implements), <code>blockedBy</code>, and on spec nodes <code>linkedTasks</code> — each resolved to its board + slug + title.</p>
+		<p><strong>Finding the spec board:</strong> set it once per work board with <code>tasks_board_set_spec</code> (or <code>specBoard</code> on <code>board_create</code>); then <code>tasks_search</code>/<code>board_list</code> report it as <code>specBoard</code> and <code>specRef</code> is validated to point at that board. No mapping = the agent picks any <code>kind=spec</code> board and links by nodeId.</p>
 		<ul>
 			<li><strong><code>task_spec</code></strong> — set <code>specRef</code> (a spec node slug or nodeId) on a work feature/bug: links it to the spec node it implements. <strong>Required</strong> for a new work feature/bug (spec-link invariant — no work without a spec node); <code>chore</code> is exempt. The target is validated: it must be an existing node on a spec board (and on the board's <code>specBoard</code> if set).</li>
 			<li><strong><code>blocks</code></strong> — set <code>blockedBy</code> (a nodeId) on a work task you move to <code>Blocked</code>. A Blocked task MUST name a blocker.</li>
@@ -106,11 +106,11 @@
 
 		<h2>Tools</h2>
 		<ul>
-			<li><code>tasks.board_create(kind?, specBoard?) / board_list / board_delete / board_set_spec / board_close / board_reopen</code> — boards (all report kind, specBoard, closed).</li>
-			<li><code>tasks.search / node_get / upsert / delta</code> — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; plus surfaced links and on spec boards <code>delivery</code>). <code>search</code> is the one read verb: without <code>q</code> a deterministic listing (board-scoped responses carry the board <code>kind</code>), with <code>q</code> a hybrid relevance search; both modes take <code>status</code>/<code>keys</code>/<code>under</code> filters and <code>sort</code>. It hides terminal nodes by default — pass <code>includeClosed=true</code>. <strong>Partial update:</strong> a field omitted from <code>upsert</code> keeps its prior value, so a status change needs only the key + <code>version</code> + <code>status</code>.</li>
-			<li><code>tasks.workflow</code> — the live statuses/transitions for a board's kind.</li>
-			<li><code>relations.create / list / delete</code> — typed edges (task_spec|issue_task|idea_spec|blocks|nfr|dup).</li>
-			<li><code>report.issue</code> — file a PetBox bug/issue to the maintainer's intake.</li>
+			<li><code>tasks_board_create(kind?, specBoard?) / board_list / board_delete / board_set_spec / board_close / board_reopen</code> — boards (all report kind, specBoard, closed).</li>
+			<li><code>tasks_search / node_get / upsert / delta</code> — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; plus surfaced links and on spec boards <code>delivery</code>). <code>search</code> is the one read verb: without <code>q</code> a deterministic listing (board-scoped responses carry the board <code>kind</code>), with <code>q</code> a hybrid relevance search; both modes take <code>status</code>/<code>keys</code>/<code>under</code> filters and <code>sort</code>. It hides terminal nodes by default — pass <code>includeClosed=true</code>. <strong>Partial update:</strong> a field omitted from <code>upsert</code> keeps its prior value, so a status change needs only the key + <code>version</code> + <code>status</code>.</li>
+			<li><code>tasks_workflow</code> — the live statuses/transitions for a board's kind.</li>
+			<li><code>relations_create / list / delete</code> — typed edges (task_spec|issue_task|idea_spec|blocks|nfr|dup).</li>
+			<li><code>report_issue</code> — file a PetBox bug/issue to the maintainer's intake.</li>
 		</ul>
 	</main>
 </body>

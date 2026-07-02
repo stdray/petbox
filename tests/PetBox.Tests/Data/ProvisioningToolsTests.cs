@@ -11,7 +11,7 @@ using PetBox.Core.Models;
 namespace PetBox.Tests.Data;
 
 // WS6.2 — agent-provisioning MCP tools, now typed per-type (typed-surface Phase 4):
-// project.create/list, apikey.create/list/delete (replacing the generic entity.* dispatch).
+// project_create/list, apikey_create/list/delete (replacing the generic entity.* dispatch).
 // An agent key with admin:provision can create a project and mint a downstream key; a key
 // without the scope is rejected. Every tool surfaces failures as a structured {error}
 // payload (GuardAsync), so we assert error CONTENT, not just IsError.
@@ -90,16 +90,16 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	public async Task ProvisioningTools_AreDiscoverable()
 	{
 		// Provisioning verbs are now typed per-type tools; the generic entity.* family and
-		// the old workspace.create_project / project.create_apikey names are gone.
+		// the old workspace.create_project / project_create_apikey names are gone.
 		var names = (await _mcp.ListToolsAsync()).Select(t => t.Name).ToList();
-		names.Should().Contain("project.create");
-		names.Should().Contain("project.list");
-		names.Should().Contain("apikey.create");
-		names.Should().Contain("apikey.list");
-		names.Should().Contain("apikey.delete");
+		names.Should().Contain("project_create");
+		names.Should().Contain("project_list");
+		names.Should().Contain("apikey_create");
+		names.Should().Contain("apikey_list");
+		names.Should().Contain("apikey_delete");
 		names.Should().NotContain("entity.create");
 		names.Should().NotContain("workspace.create_project");
-		names.Should().NotContain("project.create_apikey");
+		names.Should().NotContain("project_create_apikey");
 	}
 
 	[Fact]
@@ -107,13 +107,13 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	{
 		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
 
-		var create = await ToolAsync("project.create");
+		var create = await ToolAsync("project_create");
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "Provisioned",
 		})).Should().NotContain("\"error\"");
 
-		var mint = await ToolAsync("apikey.create");
+		var mint = await ToolAsync("apikey_create");
 		Text(await mint.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = projectKey, ["name"] = "pet", ["scopes"] = "data:read,data:write", ["expiresInSeconds"] = 3600,
@@ -124,8 +124,8 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 		(await db.Projects.AnyAsync(p => p.Key == projectKey)).Should().BeTrue();
 		(await db.ApiKeys.AnyAsync(k => k.ProjectKey == projectKey && k.ExpiresAt != null)).Should().BeTrue();
 
-		// apikey.list reflects the minted key.
-		var listed = Text(await (await ToolAsync("apikey.list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = projectKey }));
+		// apikey_list reflects the minted key.
+		var listed = Text(await (await ToolAsync("apikey_list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = projectKey }));
 		listed.Should().Contain("data:read");
 	}
 
@@ -133,18 +133,18 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	public async Task ProjectList_ReflectsCreate()
 	{
 		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
-		await (await ToolAsync("project.create")).CallAsync(new Dictionary<string, object?>
+		await (await ToolAsync("project_create")).CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "Listed",
 		});
-		var listed = Text(await (await ToolAsync("project.list")).CallAsync(new Dictionary<string, object?> { ["workspaceKey"] = Workspace }));
+		var listed = Text(await (await ToolAsync("project_list")).CallAsync(new Dictionary<string, object?> { ["workspaceKey"] = Workspace }));
 		listed.Should().Contain(projectKey);
 	}
 
 	[Fact]
 	public async Task CreateProject_InvalidKey_Rejected()
 	{
-		var result = await (await ToolAsync("project.create")).CallAsync(new Dictionary<string, object?>
+		var result = await (await ToolAsync("project_create")).CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = Workspace, ["key"] = "Bad Key!", ["name"] = "x",
 		});
@@ -156,11 +156,11 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	public async Task MintKey_UnknownScope_Rejected()
 	{
 		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
-		await (await ToolAsync("project.create")).CallAsync(new Dictionary<string, object?>
+		await (await ToolAsync("project_create")).CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "x",
 		});
-		var result = await (await ToolAsync("apikey.create")).CallAsync(new Dictionary<string, object?>
+		var result = await (await ToolAsync("apikey_create")).CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = projectKey, ["name"] = "k", ["scopes"] = "data:read,bogus:scope",
 		});
@@ -172,7 +172,7 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	{
 		// allProjects mints the cross-project key: claim "*" (not a project row), so the
 		// project-existence check must be skipped and projectKey omitted.
-		var result = Text(await (await ToolAsync("apikey.create")).CallAsync(new Dictionary<string, object?>
+		var result = Text(await (await ToolAsync("apikey_create")).CallAsync(new Dictionary<string, object?>
 		{
 			["name"] = "maintenance", ["scopes"] = "tasks:read,tasks:write", ["allProjects"] = true,
 		}));
@@ -183,15 +183,15 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 		(await db.ApiKeys.AnyAsync(k => k.ProjectKey == "*" && k.Name == "maintenance")).Should().BeTrue();
 
-		// apikey.list addresses wildcard keys by the literal "*" project.
-		var listed = Text(await (await ToolAsync("apikey.list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = "*" }));
+		// apikey_list addresses wildcard keys by the literal "*" project.
+		var listed = Text(await (await ToolAsync("apikey_list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = "*" }));
 		listed.Should().Contain("maintenance");
 	}
 
 	[Fact]
 	public async Task MintKey_AllProjects_WithProjectKey_Rejected()
 	{
-		var result = Text(await (await ToolAsync("apikey.create")).CallAsync(new Dictionary<string, object?>
+		var result = Text(await (await ToolAsync("apikey_create")).CallAsync(new Dictionary<string, object?>
 		{
 			["name"] = "k", ["scopes"] = "tasks:read", ["projectKey"] = "$system", ["allProjects"] = true,
 		}));
@@ -201,7 +201,7 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 	[Fact]
 	public async Task MintKey_NoProjectKey_Rejected()
 	{
-		var result = Text(await (await ToolAsync("apikey.create")).CallAsync(new Dictionary<string, object?>
+		var result = Text(await (await ToolAsync("apikey_create")).CallAsync(new Dictionary<string, object?>
 		{
 			["name"] = "k", ["scopes"] = "tasks:read",
 		}));
@@ -230,7 +230,7 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 		var mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
 		try
 		{
-			var tool = (await mcp.ListToolsAsync()).First(t => t.Name == "project.create");
+			var tool = (await mcp.ListToolsAsync()).First(t => t.Name == "project_create");
 			var result = await tool.CallAsync(new Dictionary<string, object?>
 			{
 				["workspaceKey"] = Workspace, ["key"] = "shouldfail", ["name"] = "x",

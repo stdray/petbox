@@ -21,7 +21,7 @@ public static class ReportTools
 	const string IssuesProject = "$system";
 	const string IssuesBoard = "client-issues";
 
-	[McpServerTool(Name = "report.issue", Title = "Report a PetBox bug or issue", UseStructuredContent = true, OutputSchemaType = typeof(ReportIssueResult))]
+	[McpServerTool(Name = "report_issue", Title = "Report a PetBox bug or issue", UseStructuredContent = true, OutputSchemaType = typeof(ReportIssueResult))]
 	[Description("""
 		File a bug / issue / feedback about PetBox ITSELF — use when a tool misbehaves,
 		a response is confusing/opaque, or something is broken. The report goes to the
@@ -39,7 +39,7 @@ public static class ReportTools
 
 		var reporter = http.HttpContext?.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
 		var now = DateTime.UtcNow;
-		var body = $"{detail}\n\n— via report.issue, reporting project '{reporter ?? "(unknown)"}', {now:u}";
+		var body = $"{detail}\n\n— via report_issue, reporting project '{reporter ?? "(unknown)"}', {now:u}";
 
 		var key = await tasks.ReportIssueAsync(IssuesProject, IssuesBoard, title, body, ct);
 		return new ReportIssueResult(true, IssuesProject, IssuesBoard, key);

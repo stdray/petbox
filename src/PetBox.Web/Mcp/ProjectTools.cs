@@ -23,7 +23,7 @@ public static partial class ProjectTools
 	[GeneratedRegex("^[a-z][a-z0-9_-]{0,99}$")]
 	private static partial Regex KeyRegex();
 
-	[McpServerTool(Name = "project.create", Title = "Create a project", UseStructuredContent = true, OutputSchemaType = typeof(ProjectCreatedResult))]
+	[McpServerTool(Name = "project_create", Title = "Create a project", UseStructuredContent = true, OutputSchemaType = typeof(ProjectCreatedResult))]
 	[Description("Creates a project in a workspace. Requires admin:provision. `key` must match ^[a-z][a-z0-9_-]{0,99}$; `name` defaults to the key.")]
 	public static async Task<ProjectCreatedResult> CreateAsync(
 		IHttpContextAccessor http, PetBoxDb db,
@@ -53,7 +53,7 @@ public static partial class ProjectTools
 		return new ProjectCreatedResult(key, workspaceKey, name, description);
 	}
 
-	[McpServerTool(Name = "project.list", Title = "List projects", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ProjectListResult))]
+	[McpServerTool(Name = "project_list", Title = "List projects", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ProjectListResult))]
 	[Description("Lists projects, optionally scoped to one workspace. Requires admin:provision.")]
 	public static async Task<ProjectListResult> ListAsync(
 		IHttpContextAccessor http, PetBoxDb db,

@@ -24,7 +24,7 @@ public sealed record PlanNodeView(
 // A board's active plan nodes (flat list; the tree is the part_of projection via
 // ParentNodeId/Depth), plus the board's kind and (work boards) its spec board. This is
 // the enrichment core: the Razor board renders it directly and the unified tasks read
-// (SearchNodesAsync → tasks.search) composes per-board views from it; the wire budget
+// (SearchNodesAsync → tasks_search) composes per-board views from it; the wire budget
 // markers live on the unified result, not here.
 public sealed record PlanBoardView(
 	long CurrentVersion, string Kind, string? SpecBoard, IReadOnlyList<PlanNodeView> Nodes);
@@ -49,9 +49,9 @@ public sealed record PlanNodeDelta(
 // refusal — then Reason says why), shaped for the wire.
 public sealed record UpsertConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null);
 
-// The tasks.upsert / tasks.delta response. For an upsert it is a pure write-ack: what was
+// The tasks_upsert / tasks_delta response. For an upsert it is a pure write-ack: what was
 // applied (counts), any Conflicts, and Added/Updated/Removed scoped to THIS call only —
-// CurrentVersion is the board-wide cursor for tasks.delta. For a delta it carries the full
+// CurrentVersion is the board-wide cursor for tasks_delta. For a delta it carries the full
 // board changes since the caller's cursor (Added/Updated as node projections, Removed keys).
 public sealed record UpsertResultView(
 	bool Applied, long CurrentVersion, string Kind, int Inserted, int Closed,
@@ -63,7 +63,7 @@ public sealed record UpsertResultView(
 // adapter to serialize. The service owns the logic; the adapter owns the wire shape.
 public sealed record UpsertOutcome(TemporalUpsertResult<PlanNode> Result, string Kind);
 
-// The workflow surface of one board (tasks.workflow): the resolved kind name plus one
+// The workflow surface of one board (tasks_workflow): the resolved kind name plus one
 // block per DISTINCT state machine — preset kinds group identical FSMs (feature=bug=
 // chore on a work board is one block), definition kinds group by declaration. Transitions
 // carry PreconditionArtifact when the definition gates them on a comment artifact.
@@ -119,7 +119,7 @@ public enum TaskSortBy
 // slug or NodeId; resolved cross-board when Board is null). `Status` keeps only the named
 // slugs — naming a TERMINAL slug is an explicit ask and returns those nodes without
 // IncludeClosed. `Keys` addresses specific nodes (slug|NodeId mixed, resolved like
-// tasks.node_get; terminal nodes included — explicit addressing). `IncludeClosed` widens
+// tasks_node_get; terminal nodes included — explicit addressing). `IncludeClosed` widens
 // a listing to terminal nodes (query mode searches the open set only).
 public sealed record TaskNodeFilter(
 	string? Board = null,
@@ -169,7 +169,7 @@ public sealed record MethodologyDefAck(long Version, bool Changed, int Migrated 
 // built-in MethodologyPresets.
 public sealed record MethodologyDefView(MethodologyDefinition Definition, long Version, DateTime Created, DateTime Updated);
 
-// The runtime-derived agent guide to a project's process (tasks.methodology_guide, spec
+// The runtime-derived agent guide to a project's process (tasks_methodology_guide, spec
 // artifacts-from-definition): markdown prose + the structured invariants it was derived
 // from (the machine-readable form — no markdown re-parsing downstream). `Source` says
 // where the effective kinds came from: "presets" (no definition), "definition" (the
