@@ -11,8 +11,10 @@ public static class PetBoxTransport
 
 	// Builds an HttpClient with BaseAddress set to `endpoint` (trailing slash normalised) and
 	// the X-Api-Key header applied to every request. `handler` is an escape hatch for tests;
-	// when supplied it is NOT disposed by the returned client (the caller owns it).
-	public static HttpClient CreateHttpClient(string endpoint, string apiKey, HttpMessageHandler? handler = null)
+	// when supplied it is NOT disposed by the returned client (the caller owns it). `timeout`,
+	// when supplied, overrides HttpClient's 100s default — callers that must not block host
+	// startup for long (e.g. the config provider) pass a short value.
+	public static HttpClient CreateHttpClient(string endpoint, string apiKey, HttpMessageHandler? handler = null, TimeSpan? timeout = null)
 	{
 		if (string.IsNullOrWhiteSpace(endpoint))
 			throw new ArgumentException("endpoint is required.", nameof(endpoint));
@@ -23,6 +25,8 @@ public static class PetBoxTransport
 		var baseUrl = endpoint.EndsWith('/') ? endpoint : endpoint + "/";
 		http.BaseAddress = new Uri(baseUrl);
 		http.DefaultRequestHeaders.TryAddWithoutValidation(ApiKeyHeader, apiKey);
+		if (timeout is { } t && t > TimeSpan.Zero)
+			http.Timeout = t;
 		return http;
 	}
 }

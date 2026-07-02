@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Literal
 
 # Response-shape templates (spec §9.1).
@@ -59,6 +60,15 @@ class PetBoxConfigClientOptions:
     optional: bool = False
     # Custom transport (for testing / proxy injection). Default: urllib over HTTPS.
     transport: Transport | None = field(default=None)
+    # Opt-in disk cache for last-known-good config. When set, every successful 200 is
+    # written atomically to this JSON file ({etag, config, savedAt}); on startup the file
+    # is read so the client survives a process restart even if the server is unreachable
+    # (the cached config becomes a valid initial value, and its ETag seeds If-None-Match).
+    # A missing or corrupt file is treated as absent. Default: None (no disk cache).
+    cache_path: str | Path | None = None
+    # Per-request timeout in SECONDS for the default urllib transport. Ignored when a
+    # custom transport is supplied. Default: 10 seconds.
+    timeout: float = 10.0
 
 
 class PetBoxConfigError(Exception):

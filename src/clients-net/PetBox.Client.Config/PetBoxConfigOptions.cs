@@ -25,6 +25,19 @@ public sealed class PetBoxConfigOptions
 	// are cheap. Set to TimeSpan.Zero to disable polling (one-shot load at startup only).
 	public TimeSpan RefreshInterval { get; set; } = TimeSpan.FromMinutes(5);
 
+	// Directory for the last-known-good (LKG) disk cache. When set, every successful 200
+	// is persisted (etag + flattened data) to a deterministic file under this directory,
+	// and startup preloads that file before the first network call. This lets a host boot
+	// on its last good config after a container restart even while petbox is unreachable —
+	// the key DC-outage survival property. Null (default) disables the disk cache entirely.
+	// Mount a persistent volume here in containers so the file survives restarts.
+	public string? CacheDirectory { get; set; }
+
+	// HTTP timeout for the config provider's own HttpClient. Kept short (10s default, vs the
+	// framework's 100s) so a slow/unreachable petbox never blocks host startup for long —
+	// the initial fetch fails fast and, if a disk cache exists, boot continues on LKG data.
+	public TimeSpan Timeout { get; set; } = TimeSpan.FromSeconds(10);
+
 	// When true, initial load failures (409, auth errors, network errors) don't throw —
 	// the provider starts with empty data and retries on the next poll tick. Matches the
 	// ConfigurationBuilder `optional: true` convention. Default false: missing config at

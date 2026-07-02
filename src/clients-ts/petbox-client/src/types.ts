@@ -22,8 +22,27 @@ export interface PetBoxConfigClientOptions {
 	/**
 	 * When true, initial fetch failures (network, auth, 409) don't throw — the client
 	 * starts with null config and retries on the next poll. Default: false.
+	 *
+	 * Note: a readable disk cache (see {@link cacheDir}) takes precedence over this — if
+	 * the initial fetch fails but a cached config exists, the cached config is returned
+	 * even when `optional` is false.
 	 */
 	readonly optional?: boolean;
+	/**
+	 * Opt-in last-known-good disk cache directory (Node only; ignored silently in browsers).
+	 *
+	 * When set, every successful 200 is written atomically to a file inside this directory
+	 * (name = a deterministic hash of endpoint + template + tags, so one directory can serve
+	 * many clients). On startup the cached ETag seeds the first If-None-Match request, and if
+	 * that request fails while a cache exists, the cached config is returned — letting a process
+	 * survive a restart while the PetBox server is unreachable.
+	 */
+	readonly cacheDir?: string;
+	/**
+	 * Per-request timeout in ms, applied via `AbortSignal.timeout`. Keeps a slow/hung server
+	 * from stalling startup so the client can fall back to the disk cache. Default: 10000.
+	 */
+	readonly timeoutMs?: number;
 	/** Custom fetch implementation (for testing / proxy injection). */
 	readonly fetchImpl?: typeof fetch;
 }

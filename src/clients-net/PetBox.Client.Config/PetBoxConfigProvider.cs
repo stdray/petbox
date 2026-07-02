@@ -28,6 +28,7 @@ public sealed class PetBoxConfigProvider : ConfigurationProvider, IDisposable
 	readonly PetBoxConfigOptions _options;
 	readonly HttpClient _http;
 	readonly string _query;
+	readonly string? _cachePath;
 	Timer? _timer;
 	string? _lastEtag;
 	readonly Lock _pollGate = new();
@@ -44,17 +45,44 @@ public sealed class PetBoxConfigProvider : ConfigurationProvider, IDisposable
 		_options = options;
 		// Transport + auth (X-Api-Key, BaseAddress) come from the shared core SDK; this provider
 		// owns only the config-specific logic (tags → /v1/conf, ETag polling, JSON flatten).
-		_http = PetBoxTransport.CreateHttpClient(options.BaseUrl, options.ApiKey, options.Handler);
+		// Short timeout so an unreachable petbox fails the startup fetch fast instead of
+		// blocking host boot for the framework's 100s default.
+		_http = PetBoxTransport.CreateHttpClient(options.BaseUrl, options.ApiKey, options.Handler, options.Timeout);
 		_query = BuildQuery(options.Tags);
+		// Deterministic per-(BaseUrl, tags) cache file. Null when caching is disabled.
+		_cachePath = string.IsNullOrWhiteSpace(options.CacheDirectory)
+			? null
+			: LkgCache.PathFor(options.CacheDirectory, options.BaseUrl, _query);
 	}
 
 	public override void Load()
 	{
+		// Preload last-known-good from disk before the first network call. Data + ETag come up
+		// warm, so the startup fetch becomes a conditional GET (304 = the cache is confirmed).
+		var haveCache = false;
+		if (_cachePath is not null)
+		{
+			var cached = LkgCache.TryRead(_cachePath);
+			if (cached is not null)
+			{
+				Data = cached.Data;
+				_lastEtag = cached.Etag;
+				haveCache = true;
+			}
+		}
+
 		// Sync-over-async: ConfigurationBuilder.Build() is synchronous, same constraint as
 		// file-based providers. One-time at startup, not a hot path.
 		try
 		{
 			FetchAsync(CancellationToken.None).GetAwaiter().GetResult();
+		}
+		catch (Exception) when (haveCache)
+		{
+			// A disk cache is a valid start: keep the LKG config and boot, even when
+			// !Optional. This is the DC-outage survival path — a failed startup fetch must
+			// not take the host down when we already have working config on disk.
+			System.Diagnostics.Debug.WriteLine("PetBoxConfig initial fetch failed; booting on disk cache (LKG).");
 		}
 		catch (Exception) when (_options.Optional)
 		{
@@ -110,6 +138,9 @@ public sealed class PetBoxConfigProvider : ConfigurationProvider, IDisposable
 
 		Data = next;
 		_lastEtag = etag;
+		// Persist the fresh 200 as last-known-good (best-effort; never throws).
+		if (_cachePath is not null)
+			LkgCache.TryWrite(_cachePath, new LkgCache.Envelope(etag, next, DateTimeOffset.UtcNow));
 		OnReload();
 	}
 

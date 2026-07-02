@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable, Mapping
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
@@ -23,12 +27,17 @@ _API_KEY_HEADER = "X-YobaConf-ApiKey"
 EventListener = Callable[..., None]
 
 
-def _default_transport(url: str, headers: Mapping[str, str]) -> HttpResponse:
+def _default_transport(
+    url: str, headers: Mapping[str, str], timeout: float = 10.0
+) -> HttpResponse:
     """Perform a GET via urllib. Raises urllib errors only for unreachable hosts;
-    HTTP 3xx/4xx/5xx are returned as HttpResponse (4xx/5xx via HTTPError handler)."""
+    HTTP 3xx/4xx/5xx are returned as HttpResponse (4xx/5xx via HTTPError handler).
+
+    ``timeout`` caps each request (seconds) so a hung server can't block the caller
+    forever — important for the disk-cache fallback after a data-centre outage."""
     request = urllib.request.Request(url, headers=dict(headers), method="GET")  # noqa: S310 - https URL from configured endpoint
     try:
-        with urllib.request.urlopen(request) as response:  # noqa: S310 - https URL from configured endpoint
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - https URL from configured endpoint
             body = response.read().decode("utf-8")
             return HttpResponse(response.status, dict(response.headers.items()), body)
     except urllib.error.HTTPError as http_error:
@@ -71,7 +80,15 @@ class PetBoxConfigClient:
             raise ValueError("at least one tag is required")
 
         self._options = options
-        self._transport: Transport = options.transport or _default_transport
+        if options.transport is not None:
+            self._transport: Transport = options.transport
+        else:
+            timeout = options.timeout
+
+            def _transport(url: str, headers: Mapping[str, str]) -> HttpResponse:
+                return _default_transport(url, headers, timeout)
+
+            self._transport = _transport
         self._current: ResolvedConfig | None = None
         self._etag: str | None = None
         self._listeners: dict[str, list[EventListener]] = {"change": [], "error": []}
@@ -79,6 +96,16 @@ class PetBoxConfigClient:
         self._stop_event = threading.Event()
         self._thread: threading.Thread | None = None
         self._disposed = False
+
+        # Opt-in disk cache. A cached last-known-good config seeds the current value and
+        # its ETag primes the first If-None-Match, so a restart survives a dead server.
+        self._cache_path: Path | None = (
+            Path(options.cache_path) if options.cache_path is not None else None
+        )
+        self._cached: ResolvedConfig | None = self._load_cache()
+        if self._cached is not None:
+            self._current = self._cached
+            self._etag = self._cached.etag
 
     @property
     def current(self) -> ResolvedConfig | None:
@@ -108,14 +135,22 @@ class PetBoxConfigClient:
         """
         self._ensure_not_disposed()
         try:
-            cfg = self._fetch_once()
-            self._current = cfg
-            self._etag = cfg.etag
-            return cfg
+            cfg, fresh = self._fetch_once()
         except Exception:
+            # Server unreachable / errored. A cached last-known-good config is a valid
+            # start even when optional=False — the whole point of the disk cache.
+            if self._cached is not None:
+                self._current = self._cached
+                self._etag = self._cached.etag
+                return self._cached
             if self._options.optional:
                 return ResolvedConfig({}, None)
             raise
+        self._current = cfg
+        self._etag = cfg.etag
+        if fresh:
+            self._write_cache(cfg)
+        return cfg
 
     def start(self) -> ResolvedConfig:
         """Initial fetch + start background ETag polling. Returns the first resolved config.
@@ -153,6 +188,55 @@ class PetBoxConfigClient:
         if self._disposed:
             raise RuntimeError("PetBoxConfigClient is disposed")
 
+    def _load_cache(self) -> ResolvedConfig | None:
+        """Read the last-known-good config from disk. A missing, unreadable, or corrupt
+        file is treated as absent (returns None) — never raises."""
+        if self._cache_path is None:
+            return None
+        try:
+            raw = self._cache_path.read_text(encoding="utf-8")
+            obj = json.loads(raw)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(obj, dict) or "config" not in obj:
+            return None
+        etag = obj.get("etag")
+        if etag is not None and not isinstance(etag, str):
+            return None
+        return ResolvedConfig(obj["config"], etag)
+
+    def _write_cache(self, cfg: ResolvedConfig) -> None:
+        """Persist the config as JSON ({etag, config, savedAt}), written atomically via a
+        temp file + os.replace in the same directory. Write failures never break the
+        client — the cache is best-effort."""
+        if self._cache_path is None:
+            return
+        try:
+            payload = json.dumps(
+                {
+                    "etag": cfg.etag,
+                    "config": cfg.data,
+                    "savedAt": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+            directory = self._cache_path.parent
+            directory.mkdir(parents=True, exist_ok=True)
+            fd, tmp = tempfile.mkstemp(
+                dir=str(directory), prefix=f"{self._cache_path.name}.", suffix=".tmp"
+            )
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    handle.write(payload)
+                os.replace(tmp, self._cache_path)
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+        except Exception:  # noqa: BLE001, S110 - cache persistence must never break the client
+            pass
+
     def _build_url(self) -> str:
         base = self._options.endpoint
         if not base.endswith("/"):
@@ -165,7 +249,9 @@ class PetBoxConfigClient:
             params.append(("template", self._options.template))
         return f"{base}v1/conf?{urlencode(params)}"
 
-    def _fetch_once(self) -> ResolvedConfig:
+    def _fetch_once(self) -> tuple[ResolvedConfig, bool]:
+        """Fetch once. Returns ``(config, fresh)`` where ``fresh`` is True only for a
+        real 200 body (worth writing to the disk cache) and False for a 304."""
         url = self._build_url()
         headers: dict[str, str] = {_API_KEY_HEADER: self._options.api_key}
         if self._etag is not None:
@@ -176,11 +262,12 @@ class PetBoxConfigClient:
         except Exception as cause:
             raise PetBoxConfigError(f"Failed to reach PetBox at {url}: {cause}", 0, None) from cause
 
-        # 304 — unchanged. Return last-known-good config.
+        # 304 — unchanged. Return last-known-good config (current or, at startup, cache).
         if response.status == 304:
             new_etag = self._strip_etag(response.header("ETag"))
-            data = self._current.data if self._current is not None else {}
-            return ResolvedConfig(data, new_etag or self._etag)
+            source = self._current if self._current is not None else self._cached
+            data = source.data if source is not None else {}
+            return ResolvedConfig(data, new_etag or self._etag), False
 
         if response.status < 200 or response.status >= 300:
             parsed: Any = None
@@ -194,7 +281,7 @@ class PetBoxConfigClient:
 
         etag = self._strip_etag(response.header("ETag"))
         data = json.loads(response.body) if response.body else {}
-        return ResolvedConfig(data, etag)
+        return ResolvedConfig(data, etag), True
 
     def _start_polling(self) -> None:
         if self._options.refresh_interval <= 0:
@@ -211,7 +298,9 @@ class PetBoxConfigClient:
         interval = self._options.refresh_interval
         while not self._stop_event.wait(interval):
             try:
-                cfg = self._fetch_once()
+                cfg, fresh = self._fetch_once()
+                if fresh:
+                    self._write_cache(cfg)
                 if cfg.etag != self._etag:
                     self._current = cfg
                     self._etag = cfg.etag
