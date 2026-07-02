@@ -34,6 +34,47 @@ public sealed class SessionService : ISessionService
 		return new SessionUpsertOutcome(sessionId, row.Version, numbered.Count, updated);
 	}
 
+	public async Task<SessionAppendOutcome> AppendAsync(string projectKey, string sessionId, string agent, long fromOrdinal, IReadOnlyList<SessionMessageInput> messages, CancellationToken ct = default)
+	{
+		if (fromOrdinal < 1)
+			throw new ArgumentOutOfRangeException(nameof(fromOrdinal), fromOrdinal, "fromOrdinal must be >= 1");
+
+		// The server-authoritative cursor is the snapshot's message count (ordinals are dense
+		// 1..N by construction; a missing/soft-deleted session reads as 0 — an append with
+		// fromOrdinal=1 creates/resurrects it, mirroring the upsert semantics).
+		var snap = await _sessions.GetAsync(projectKey, sessionId, ct);
+		var existing = snap?.Messages ?? Array.Empty<SessionMessage>();
+		long lastOrdinal = existing.Count;
+
+		// Gap: the batch does not connect to the snapshot. Nothing is written; the outcome
+		// carries the cursor so the client can resend the missing tail from lastOrdinal+1.
+		if (fromOrdinal > lastOrdinal + 1)
+			return new SessionAppendOutcome(sessionId, Applied: false, lastOrdinal, Appended: 0);
+
+		// Overlap: ordinals the server already holds are skipped idempotently — the stored
+		// message wins, a re-send can never duplicate or rewrite history.
+		var skip = (int)(lastOrdinal - fromOrdinal + 1);
+		if (skip >= messages.Count)
+			return new SessionAppendOutcome(sessionId, Applied: true, lastOrdinal, Appended: 0);
+
+		var combined = new List<SessionMessage>(existing.Count + messages.Count - skip);
+		combined.AddRange(existing);
+		var ordinal = lastOrdinal;
+		for (var i = skip; i < messages.Count; i++)
+			combined.Add(new SessionMessage(++ordinal, messages[i].Role, messages[i].Content));
+
+		var row = new SessionRow
+		{
+			SessionId = sessionId,
+			Agent = agent,
+			ContentZ = SessionContent.Encode(combined),
+			Version = ordinal,
+			Updated = DateTime.UtcNow,
+		};
+		await _sessions.UpsertAsync(projectKey, row, ct);
+		return new SessionAppendOutcome(sessionId, Applied: true, ordinal, Appended: messages.Count - skip);
+	}
+
 	public Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default) =>
 		_sessions.GetAsync(projectKey, sessionId, ct);
 

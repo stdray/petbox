@@ -22,9 +22,11 @@ public static class SessionTools
 	[McpServerTool(Name = "session.upsert", Title = "Save a session blob", UseStructuredContent = true, OutputSchemaType = typeof(SessionUpsertResult))]
 	[Description("""
 		Save an agent session's content as the latest snapshot (last-write-wins, no history).
-		Requires tasks:write. The content is stored as a single message; the per-turn multi-message
-		transcript is pushed by the Stop-hook over REST. Result: { sessionId, version, messageCount }
-		where version is the last message's ordinal.
+		This is the full-snapshot PUT — kept for repair/import (it REPLACES whatever is stored,
+		including a session built up by session.append); incremental pushes should use
+		session.append instead. Requires tasks:write. The content is stored as a single message;
+		the per-turn multi-message transcript is pushed by the Stop-hook over REST.
+		Result: { sessionId, version, messageCount } where version is the last message's ordinal.
 		""")]
 	public static async Task<SessionUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
@@ -40,6 +42,39 @@ public static class SessionTools
 		var messages = new[] { new SessionMessageInput("session", content) };
 		var o = await sessions.UpsertAsync(projectKey, sessionId, agent, messages, ct);
 		return new SessionUpsertResult(o.SessionId, o.Version, o.MessageCount);
+	}
+
+	[McpServerTool(Name = "session.append", Title = "Append messages to a session", UseStructuredContent = true, OutputSchemaType = typeof(SessionAppendResult))]
+	[Description("""
+		Incrementally append transcript messages against the SERVER-authoritative cursor
+		(spec session-append-wire) — the client keeps no durable state and sends only the
+		increment. `fromOrdinal` is the ordinal of the FIRST message in the batch; the server's
+		cursor (lastOrdinal) is the current message count (0 for a new session, so a new session
+		starts with fromOrdinal=1). Contiguous batches (fromOrdinal == lastOrdinal+1) append;
+		OVERLAPPING batches apply idempotently (ordinals the server already holds are ignored,
+		the new tail appends); a GAP (fromOrdinal > lastOrdinal+1) writes nothing and returns the
+		structured reject { applied:false, reason:"gap", lastOrdinal } — resend from
+		lastOrdinal+1. Requires tasks:write.
+		Result: { sessionId, applied, lastOrdinal, appended, reason }.
+		""")]
+	public static async Task<SessionAppendResult> AppendAsync(
+		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
+		string projectKey, string sessionId, string agent,
+		[Description("Ordinal (1-based) of the first message in this batch.")] long fromOrdinal,
+		[Description("Array of {role, content} messages, in transcript order — the same shape session.get returns.")] SessionMessageDto[] messages,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+
+		var inputs = messages
+			.Where(m => !string.IsNullOrEmpty(m.Content))
+			.Select(m => new SessionMessageInput(m.Role ?? "", m.Content!))
+			.ToList();
+
+		var o = await sessions.AppendAsync(projectKey, sessionId, agent, fromOrdinal, inputs, ct);
+		return new SessionAppendResult(o.SessionId, o.Applied, o.LastOrdinal, o.Appended, o.Applied ? null : "gap");
 	}
 
 	[McpServerTool(Name = "session.get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionGetResult))]

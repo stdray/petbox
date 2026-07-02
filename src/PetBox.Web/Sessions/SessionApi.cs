@@ -9,9 +9,12 @@ using PetBox.Sessions.Contract;
 namespace PetBox.Web.Sessions;
 
 // Non-MCP session push, for the Claude Code Stop hook (a shell command can't easily speak MCP).
-// The body is ndjson — one JSON message {role, content} per line, in order. The server numbers
-// the messages (ordinal) and stores the latest snapshot; last-write-wins (the hook re-pushes the
-// full transcript each turn, so the snapshot is always a superset). Mirrors session.upsert.
+// The body is ndjson — one JSON message {role, content} per line, in order. Two write shapes:
+//   POST /{sessionId}         — full-snapshot upsert, last-write-wins (repair/import path);
+//   POST /{sessionId}/append  — incremental against the server-authoritative cursor
+//                               (?fromOrdinal=N; the hook's steady-state path).
+// The server numbers the messages (ordinal) and stores the latest snapshot either way.
+// Mirrors session.upsert / session.append.
 public static class SessionApi
 {
 	static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -22,6 +25,17 @@ public static class SessionApi
 			.Accepts<string>("application/x-ndjson")
 			.Produces<SessionUpsertResponse>()
 			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.RequireAuthorization("ApiKey");
+
+		// Incremental push against the server-authoritative cursor (spec session-append-wire):
+		// same ndjson body, plus ?fromOrdinal=N (the ordinal of the FIRST message in the body).
+		// Contiguous/overlapping batches apply idempotently (200); a contiguity gap is rejected
+		// with a STRUCTURED 409 carrying the server's lastOrdinal so the hook resends the tail.
+		app.MapPost("/api/sessions/{projectKey}/{sessionId}/append", AppendAsync)
+			.Accepts<string>("application/x-ndjson")
+			.Produces<SessionAppendResponse>()
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<SessionAppendGapResponse>(StatusCodes.Status409Conflict)
 			.RequireAuthorization("ApiKey");
 
 		app.MapDelete("/api/sessions/{projectKey}/{sessionId}", DeleteAsync)
@@ -64,6 +78,49 @@ public static class SessionApi
 
 		var agent = ctx.Request.Query["agent"].FirstOrDefault() ?? "claude-code";
 
+		var (messages, parseError) = await ReadNdjsonAsync(ctx, ct);
+		if (parseError is not null)
+			return TypedResults.BadRequest(new ErrorResponse(parseError));
+		if (messages.Count == 0)
+			return TypedResults.BadRequest(new ErrorResponse("empty body"));
+
+		var o = await sessions.UpsertAsync(projectKey, sessionId, agent, messages, ct);
+		return TypedResults.Ok(new SessionUpsertResponse(o.SessionId, o.Version, o.MessageCount));
+	}
+
+	// Incremental push: the body is the same ndjson message stream, `fromOrdinal` (query) is the
+	// ordinal the batch starts at. Overlap applies idempotently; a gap 409s with the server cursor.
+	static async Task<IResult> AppendAsync(
+		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
+	{
+		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		if (!ProjectScope.Authorizes(claim, projectKey))
+			return TypedResults.Forbid();
+		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
+		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))
+			return TypedResults.Forbid();
+
+		var agent = ctx.Request.Query["agent"].FirstOrDefault() ?? "claude-code";
+		if (!long.TryParse(ctx.Request.Query["fromOrdinal"].FirstOrDefault(), out var fromOrdinal) || fromOrdinal < 1)
+			return TypedResults.BadRequest(new ErrorResponse("fromOrdinal (>= 1) query parameter required"));
+
+		var (messages, parseError) = await ReadNdjsonAsync(ctx, ct);
+		if (parseError is not null)
+			return TypedResults.BadRequest(new ErrorResponse(parseError));
+		if (messages.Count == 0)
+			return TypedResults.BadRequest(new ErrorResponse("empty body"));
+
+		var o = await sessions.AppendAsync(projectKey, sessionId, agent, fromOrdinal, messages, ct);
+		return o.Applied
+			? TypedResults.Ok(new SessionAppendResponse(o.SessionId, o.LastOrdinal, o.Appended))
+			: TypedResults.Conflict(new SessionAppendGapResponse("gap", o.LastOrdinal));
+	}
+
+	// The shared ndjson body reader: one {role, content} JSON object per line, blank lines and
+	// content-less messages skipped. Returns (messages, null) or ([], error) on a malformed line.
+	static async Task<(List<SessionMessageInput> Messages, string? Error)> ReadNdjsonAsync(
+		HttpContext ctx, CancellationToken ct)
+	{
 		var messages = new List<SessionMessageInput>();
 		using var reader = new StreamReader(ctx.Request.Body);
 		string? line;
@@ -72,15 +129,11 @@ public static class SessionApi
 			if (string.IsNullOrWhiteSpace(line)) continue;
 			SessionMessageInput? m;
 			try { m = JsonSerializer.Deserialize<SessionMessageInput>(line, Json); }
-			catch (JsonException) { return TypedResults.BadRequest(new ErrorResponse("invalid ndjson line")); }
+			catch (JsonException) { return ([], "invalid ndjson line"); }
 			if (m is null || string.IsNullOrEmpty(m.Content)) continue;
 			messages.Add(m.Role is null ? m with { Role = "" } : m);
 		}
-		if (messages.Count == 0)
-			return TypedResults.BadRequest(new ErrorResponse("empty body"));
-
-		var o = await sessions.UpsertAsync(projectKey, sessionId, agent, messages, ct);
-		return TypedResults.Ok(new SessionUpsertResponse(o.SessionId, o.Version, o.MessageCount));
+		return (messages, null);
 	}
 
 	// Soft delete; a later push of the same sessionId resurrects it. Mirrors session.delete.

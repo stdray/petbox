@@ -214,6 +214,50 @@ public sealed class McpModuleToolsTests : IDisposable
 			.Content.Should().Be("3456");
 	}
 
+	// session.append: the incremental writer against the server-authoritative cursor.
+	// The gap reject is a STRUCTURED result (applied:false + reason:"gap" + lastOrdinal),
+	// not an opaque throw — the client parses lastOrdinal and resends the tail.
+	[Fact]
+	public async Task Session_Append_Contiguous_Overlap_Gap()
+	{
+		var http = Http("tasks:read,tasks:write");
+
+		static PetBox.Web.Mcp.Contract.SessionMessageDto[] Batch(params (string Role, string Content)[] m) =>
+			m.Select(x => new PetBox.Web.Mcp.Contract.SessionMessageDto { Role = x.Role, Content = x.Content }).ToArray();
+
+		// New session: cursor 0 → fromOrdinal 1.
+		var first = await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "sa", "claude-code", 1, Batch(("user", "q"), ("assistant", "a")));
+		first.Applied.Should().BeTrue();
+		first.LastOrdinal.Should().Be(2);
+		first.Reason.Should().BeNull();
+
+		// Overlapping re-send + tail: idempotent, no duplicates.
+		var overlap = await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "sa", "claude-code", 1, Batch(("user", "q"), ("assistant", "a"), ("user", "q2")));
+		overlap.Applied.Should().BeTrue();
+		overlap.LastOrdinal.Should().Be(3);
+		overlap.Appended.Should().Be(1);
+
+		// Gap: structured reject with the server cursor inside.
+		var gap = await SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "sa", "claude-code", 9, Batch(("user", "late")));
+		gap.Applied.Should().BeFalse();
+		gap.Reason.Should().Be("gap");
+		gap.LastOrdinal.Should().Be(3);
+
+		// session.get sees the assembled dialogue.
+		var got = (await SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "sa"))!;
+		got.Version.Should().Be(3);
+		got.Content.Should().Contain("q2");
+	}
+
+	[Fact]
+	public async Task Session_Append_MissingWriteScope_Throws()
+	{
+		var http = Http("tasks:read"); // no tasks:write
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			SessionTools.AppendAsync(http, Flags(), _sessionSvc, Proj, "sa", "claude-code", 1,
+				new[] { new PetBox.Web.Mcp.Contract.SessionMessageDto { Role = "user", Content = "x" } }));
+	}
+
 	// session.search against a foreign project returns an explicit, structured Unauthorized
 	// (the filter renders the throw as {error} on the wire). The project guard fires before
 	// the search service is touched, so a null service is never dereferenced.
