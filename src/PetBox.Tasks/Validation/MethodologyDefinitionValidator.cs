@@ -19,6 +19,11 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 
 	static bool IsSlug(string? s) => s is not null && SlugRegex().IsMatch(s);
 
+	// Link kinds a creation constraint may name: the ones expressible IN the upsert call
+	// (task_spec = specRef, blocks = blockedBy, idea_spec = ideaRef). Any other kind is
+	// wired post-hoc via relations.create and therefore can't gate creation.
+	static readonly string[] UpsertExpressibleLinks = ["task_spec", "blocks", "idea_spec"];
+
 	public MethodologyDefinitionValidator()
 	{
 		RuleFor(d => d.Name)
@@ -46,6 +51,35 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 						continue;
 					}
 					ValidateKind(kind, ctx);
+				}
+			});
+
+		RuleFor(d => d.LinkKinds)
+			.Custom((linkKinds, ctx) =>
+			{
+				var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				foreach (var lk in linkKinds ?? [])
+				{
+					if (!IsSlug(lk.Slug))
+						ctx.AddFailure($"link kind '{lk.Slug}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
+					else if (MethodologyRuntime.ProcessRelationKinds.Contains(lk.Slug, StringComparer.OrdinalIgnoreCase)
+						|| MethodologyRuntime.NeutralRelationKinds.Contains(lk.Slug, StringComparer.OrdinalIgnoreCase))
+						ctx.AddFailure($"link kind '{lk.Slug}' collides with a builtin relation kind ({string.Join("|", MethodologyRuntime.ProcessRelationKinds.Concat(MethodologyRuntime.NeutralRelationKinds))})");
+					else if (!seen.Add(lk.Slug))
+						ctx.AddFailure($"link kind '{lk.Slug}' is declared more than once");
+				}
+			});
+
+		RuleFor(d => d.TagAxes)
+			.Custom((axes, ctx) =>
+			{
+				var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+				foreach (var axis in axes ?? [])
+				{
+					if (!IsSlug(axis.Namespace))
+						ctx.AddFailure($"tag axis '{axis.Namespace}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
+					else if (!seen.Add(axis.Namespace))
+						ctx.AddFailure($"tag axis '{axis.Namespace}' is declared more than once");
 				}
 			});
 	}
@@ -76,6 +110,19 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 					ctx.AddFailure($"kind '{kind.Kind}': type '{type}' appears in more than one workflow block — a type maps to exactly one state machine");
 			}
 			ValidateBlock(kind.Kind, block, ctx);
+		}
+
+		// Creation link constraints: each names a type the kind's workflow blocks declare
+		// and an upsert-expressible link kind; a (type, link) pair is stated at most once.
+		var seenConstraints = new HashSet<(string, string)>();
+		foreach (var c in kind.LinkConstraints ?? [])
+		{
+			if (!UpsertExpressibleLinks.Contains(c.Link, StringComparer.OrdinalIgnoreCase))
+				ctx.AddFailure($"kind '{kind.Kind}': link constraint ({c.Type}, {c.Link}): only upsert-expressible link kinds can be creation constraints ({string.Join("|", UpsertExpressibleLinks)}) — a post-hoc relation kind can't gate creation");
+			else if (!seenTypes.Contains(c.Type))
+				ctx.AddFailure($"kind '{kind.Kind}': link constraint ({c.Type}, {c.Link}): type '{c.Type}' is not declared by this kind's workflow blocks (types: {string.Join("|", seenTypes)})");
+			else if (!seenConstraints.Add((c.Type.ToLowerInvariant(), c.Link.ToLowerInvariant())))
+				ctx.AddFailure($"kind '{kind.Kind}': duplicate link constraint ({c.Type}, {c.Link})");
 		}
 	}
 

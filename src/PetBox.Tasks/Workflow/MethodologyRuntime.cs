@@ -17,13 +17,48 @@ public sealed class MethodologyRuntime
 	// The no-definition runtime: every answer falls through to the catalog.
 	public static readonly MethodologyRuntime CatalogOnly = new(null);
 
+	// Builtin relation kinds with PROCESS meaning (FSM effects / guards key on these):
+	// task_spec (specRef), issue_task (intake auto-close), idea_spec (ideaRef), blocks
+	// (gating + unblock effect), part_of (decomposition), supersedes (obsoletion).
+	public static readonly string[] ProcessRelationKinds = ["task_spec", "issue_task", "idea_spec", "blocks", "part_of", "supersedes"];
+
+	// Builtin NEUTRAL kinds, available to EVERY project: free semantic edges between any
+	// nodes — no FSM effects, no process meaning (spec primitives-link-kinds).
+	public static readonly string[] NeutralRelationKinds = ["relates_to", "depends_on", "mirrors"];
+
 	readonly Dictionary<string, MethodologyKindDef> _kinds;
+	readonly IReadOnlyList<MethodologyLinkKindDef> _linkKinds;
+	readonly IReadOnlyList<MethodologyTagAxisDef> _tagAxes;
 
 	public MethodologyRuntime(MethodologyDefinition? definition)
 	{
 		_kinds = (definition?.Kinds ?? [])
 			.ToDictionary(k => k.Kind, k => k, StringComparer.OrdinalIgnoreCase);
+		// `?? []` also covers a hand-written stored document with an explicit JSON null.
+		_linkKinds = definition?.LinkKinds ?? [];
+		_tagAxes = definition?.TagAxes ?? [];
 	}
+
+	// Creation link constraints of a kind — definition kinds only; a catalog kind keeps
+	// its hardcoded rule (RequireSpecLinks) until the preset becomes data in wave 3.
+	public IReadOnlyList<MethodologyLinkConstraintDef> LinkConstraints(string? kindSlug) =>
+		kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind)
+			? kind.LinkConstraints ?? []
+			: [];
+
+	// Declared tag namespaces (definition-level, project-wide). Empty = free-form tags on
+	// definition-resolved boards.
+	public IReadOnlyList<MethodologyTagAxisDef> TagAxes => _tagAxes;
+
+	// Every relation kind this project accepts: builtin process + neutral kinds plus the
+	// definition-declared ones (order = error-message order).
+	public IEnumerable<string> KnownRelationKinds() =>
+		ProcessRelationKinds
+			.Concat(NeutralRelationKinds)
+			.Concat(_linkKinds.Select(k => k.Slug));
+
+	public bool IsValidRelationKind(string kind) =>
+		KnownRelationKinds().Contains(kind, StringComparer.OrdinalIgnoreCase);
 
 	public bool IsDefinedKind(string? kindSlug) =>
 		kindSlug is not null && _kinds.ContainsKey(kindSlug);

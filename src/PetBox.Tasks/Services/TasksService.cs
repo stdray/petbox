@@ -467,6 +467,20 @@ public sealed partial class TasksService : ITasksService
 		};
 	}
 
+	// The project-aware relation-kind vocabulary check (primitives-link-kinds): builtin
+	// process + neutral kinds plus the definition-declared linkKinds. The store no longer
+	// validates the vocabulary itself — this is the one door for user-supplied kinds.
+	public async Task<string> ValidateRelationKindAsync(string projectKey, string kind, CancellationToken ct = default)
+	{
+		var k = (kind ?? "").Trim().ToLowerInvariant();
+		var runtime = await RuntimeAsync(projectKey, ct);
+		if (!runtime.IsValidRelationKind(k))
+			throw new ArgumentException(
+				$"invalid relation kind '{kind}'; valid for this project: {string.Join("|", runtime.KnownRelationKinds())}" +
+				" (declare additional kinds via tasks.methodology_def_upsert linkKinds)");
+		return k;
+	}
+
 	// Normalize/validate a status filter against the board kind's known slugs (across its
 	// hosted types, catalog- or definition-resolved), case-insensitive; null/empty = no
 	// filter. An unknown slug is rejected — it would otherwise silently return nothing
@@ -735,6 +749,7 @@ public sealed partial class TasksService : ITasksService
 		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
 		{
 			RequireSpecLinks(catalogKind, desired, prior, specRefs);
+			RequireDefinitionLinks(runtime, kindSlug, desired, prior, specRefs, blockedBy, ideaRefs);
 			await ValidateSpecRefsAsync(projectKey, meta, specRefs, runtime, ct);
 			await RequireBlockersAsync(catalogKind, projectKey, desired, blockedBy, ct);
 			await RequireSpecPlanForReviewAsync(catalogKind, projectKey, board, desired, prior, ct);
@@ -813,7 +828,7 @@ public sealed partial class TasksService : ITasksService
 		if (r.Conflicts.Count == 0)
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.meta"))
 			{
-				await SetTagsAsync(projectKey, board, catalogKind, upsertPatches, desired, ct);
+				await SetTagsAsync(projectKey, board, runtime, kindSlug, upsertPatches, desired, ct);
 				await SetPartOfAsync(projectKey, board, upsertPatches, desired, ct);
 				await SetSupersedesAsync(projectKey, board, upsertPatches, desired, runtime, ct);
 			}
@@ -1404,18 +1419,29 @@ public sealed partial class TasksService : ITasksService
 	// Apply enforced tags after the upsert. A patch whose Tags is null OMITS tags (leave
 	// as-is); a non-null list (incl. empty) is the new full set for that node. Tags bind
 	// to the node's stable NodeId.
-	async Task SetTagsAsync(string projectKey, string board, BoardKind? kind, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+	async Task SetTagsAsync(string projectKey, string board, MethodologyRuntime runtime, string? kindSlug, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
 	{
-		// Simple boards take free-form tags (any namespace + bare words); methodology boards
-		// keep the enforced area:/concern: namespaces. Definition-resolved kinds (kind ==
-		// null) are free-form too — the definition has no tag vocabulary yet (wave 2).
-		var enforceNs = kind is not (null or BoardKind.Simple);
+		// Simple boards take free-form tags (any namespace + bare words); catalog methodology
+		// boards keep the enforced builtin area:/concern: namespaces (until wave 3). A
+		// definition-resolved kind follows the definition's TAG AXES (primitives-tag-axes):
+		// none declared = free-form (the wave-1.2 posture, unchanged); declared = enforced
+		// with the axes as the namespace allowlist (bare tags rejected, one rule).
+		var catalogKind = runtime.CatalogKind(kindSlug);
+		bool enforceNs;
+		IReadOnlyList<string>? namespaces = null;
+		if (catalogKind is null)
+		{
+			enforceNs = runtime.TagAxes.Count > 0;
+			if (enforceNs) namespaces = runtime.TagAxes.Select(a => a.Namespace).ToList();
+		}
+		else
+			enforceNs = catalogKind is not BoardKind.Simple;
 		var nodeIdOf = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
 		foreach (var p in patches)
 		{
 			if (p.Tags is null) continue;
 			if (nodeIdOf.TryGetValue(p.Key, out var nid) && nid.Length > 0)
-				await _tags.SetAsync(projectKey, board, nid, p.Tags, enforceNs, ct);
+				await _tags.SetAsync(projectKey, board, nid, p.Tags, enforceNs, namespaces, ct);
 		}
 	}
 
@@ -1527,6 +1553,38 @@ public sealed partial class TasksService : ITasksService
 			var isNew = !prior.ContainsKey(n.Key) && (n.PrevKey is null || !prior.ContainsKey(n.PrevKey));
 			if (isNew && !specRefs.ContainsKey(n.Key))
 				throw new ArgumentException($"a work {n.Type} must link a spec node — provide specRef (node '{n.Key}')");
+		}
+	}
+
+	// DATA-DRIVEN creation link constraints (primitives-link-constraints) — the generalized
+	// form of RequireSpecLinks above: on a definition-resolved board, a NEW node of a
+	// constrained type must carry the constrained link in THIS call (task_spec = specRef,
+	// blocks = blockedBy, idea_spec = ideaRef — the validator admits only these). Edits
+	// don't re-require the link. Catalog boards have no constraints here (LinkConstraints
+	// is empty for them) and keep the hardcoded rule until wave 3.
+	static void RequireDefinitionLinks(
+		MethodologyRuntime runtime, string? kindSlug, PlanNode[] desired,
+		Dictionary<string, PlanNode> prior,
+		Dictionary<string, string> specRefs, Dictionary<string, string> blockedBy, Dictionary<string, string> ideaRefs)
+	{
+		var constraints = runtime.LinkConstraints(kindSlug);
+		if (constraints.Count == 0) return;
+		foreach (var n in desired)
+		{
+			var isNew = !prior.ContainsKey(n.Key) && (n.PrevKey is null || !prior.ContainsKey(n.PrevKey));
+			if (!isNew) continue;
+			foreach (var c in constraints)
+			{
+				if (!string.Equals(c.Type, n.Type, StringComparison.OrdinalIgnoreCase)) continue;
+				var (refs, field) = c.Link.ToLowerInvariant() switch
+				{
+					"task_spec" => (specRefs, "specRef"),
+					"blocks" => (blockedBy, "blockedBy"),
+					_ => (ideaRefs, "ideaRef"), // idea_spec — the validator admits no other kind
+				};
+				if (!refs.ContainsKey(n.Key))
+					throw new ArgumentException($"a {runtime.KindName(kindSlug)} {n.Type} must carry a {c.Link} link at creation — provide {field} (node '{n.Key}')");
+			}
 		}
 	}
 

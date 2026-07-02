@@ -13,8 +13,10 @@ public interface ITagStore
 	// Replace a node's active tag set with `tags` (normalized "ns:value"): soft-close
 	// removed, vocab-ensure + insert added. With enforceNamespaces (default, methodology
 	// boards) an unknown namespace throws; with it false (simple boards) any namespace is
-	// allowed and a bare word is filed under the default `tag:` namespace.
-	Task SetAsync(string projectKey, string board, string nodeId, IReadOnlyList<string> tags, bool enforceNamespaces = true, CancellationToken ct = default);
+	// allowed and a bare word is filed under the default `tag:` namespace. `namespaces`
+	// overrides the enforced allowlist (definition-declared tag axes); null = the builtin
+	// area/concern pair.
+	Task SetAsync(string projectKey, string board, string nodeId, IReadOnlyList<string> tags, bool enforceNamespaces = true, IReadOnlyList<string>? namespaces = null, CancellationToken ct = default);
 	// Active tags for one node, sorted.
 	Task<IReadOnlyList<string>> ActiveTagsAsync(string projectKey, string nodeId, CancellationToken ct = default);
 	// Active (nodeId -> tag) for a whole board, for group-by projections.
@@ -30,10 +32,10 @@ public sealed class TagStore : ITagStore
 	readonly IScopedDbFactory<TasksDb> _factory;
 	public TagStore(IScopedDbFactory<TasksDb> factory) => _factory = factory;
 
-	public async Task SetAsync(string projectKey, string board, string nodeId, IReadOnlyList<string> tags, bool enforceNamespaces = true, CancellationToken ct = default)
+	public async Task SetAsync(string projectKey, string board, string nodeId, IReadOnlyList<string> tags, bool enforceNamespaces = true, IReadOnlyList<string>? namespaces = null, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(nodeId)) throw new ArgumentException("nodeId is required");
-		var desired = Normalize(tags, enforceNamespaces);
+		var desired = Normalize(tags, enforceNamespaces, namespaces);
 		var ctx = _factory.GetDb(projectKey);
 
 		var active = ctx.GetTable<NodeTag>().Where(t => t.NodeId == nodeId && t.ValidTo == null).ToList();
@@ -77,11 +79,13 @@ public sealed class TagStore : ITagStore
 	}
 
 	// Lowercase, trim, de-dup. With enforceNamespaces: require "ns:value" with ns in the
-	// allowlist (methodology boards). Without it (simple boards): any namespace is allowed and
-	// a bare word is filed under the default `tag:` namespace (free-form, low ceremony). Empty
-	// in → empty set.
-	public static IReadOnlySet<string> Normalize(IReadOnlyList<string>? tags, bool enforceNamespaces = true)
+	// allowlist — `namespaces` when given (definition-declared tag axes), else the builtin
+	// pair (catalog methodology boards). Without it (simple boards / axis-less definition
+	// kinds): any namespace is allowed and a bare word is filed under the default `tag:`
+	// namespace (free-form, low ceremony). Empty in → empty set.
+	public static IReadOnlySet<string> Normalize(IReadOnlyList<string>? tags, bool enforceNamespaces = true, IReadOnlyList<string>? namespaces = null)
 	{
+		var allowed = namespaces ?? Namespaces;
 		var set = new HashSet<string>(StringComparer.Ordinal);
 		if (tags is null) return set;
 		foreach (var raw in tags)
@@ -93,14 +97,14 @@ public sealed class TagStore : ITagStore
 			{
 				// No usable "ns:value" shape.
 				if (enforceNamespaces)
-					throw new ArgumentException($"tag '{raw}' must be 'namespace:value' (namespaces: {string.Join("|", Namespaces)})");
+					throw new ArgumentException($"tag '{raw}' must be 'namespace:value' (namespaces: {string.Join("|", allowed)})");
 				var word = tag.Trim(':');
 				if (word.Length > 0) set.Add("tag:" + word); // bare word → default namespace
 				continue;
 			}
 			var ns = tag[..colon];
-			if (enforceNamespaces && !Namespaces.Contains(ns))
-				throw new ArgumentException($"unknown tag namespace '{ns}' (allowed: {string.Join("|", Namespaces)})");
+			if (enforceNamespaces && !allowed.Contains(ns))
+				throw new ArgumentException($"unknown tag namespace '{ns}' (allowed: {string.Join("|", allowed)})");
 			set.Add(tag);
 		}
 		return set;

@@ -90,6 +90,14 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// across EVERY board in the project — unambiguous resolves; the same slug on 2+ boards
 	// is an error naming the boards (pass the NodeId); a miss is a clear error, never null.
 	Task<string> ResolveNodeRefAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default);
+	// Validate a relation kind against the PROJECT's vocabulary — builtin process kinds
+	// (task_spec|issue_task|idea_spec|blocks|part_of|supersedes), builtin neutral kinds
+	// (relates_to|depends_on|mirrors — free semantic edges, no FSM effects), and the kinds
+	// the project's methodology definition declares (linkKinds). Returns the normalized
+	// (lowercased) kind; an unknown kind throws, listing every valid kind for the project.
+	// RelationTools calls this before touching the store (the store itself is not
+	// project-definition-aware).
+	Task<string> ValidateRelationKindAsync(string projectKey, string kind, CancellationToken ct = default);
 	// Project a board by an ORDERED list of tag namespaces (e.g. [area, concern]): nodes
 	// bucketed by their tag value in each namespace ("(none)" for untagged), nested in
 	// dimension order, each group with a delivery roll-up. The projection is a view — it

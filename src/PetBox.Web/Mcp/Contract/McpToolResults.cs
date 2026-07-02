@@ -344,12 +344,28 @@ public sealed record MethodologyDefGetResult(
 	IReadOnlyList<MethodologyKindView>? Kinds = null,
 	long? Version = null,
 	DateTime? Created = null,
-	DateTime? Updated = null);
+	DateTime? Updated = null,
+	// Definition-level primitives (null = none declared, omitted by the serializer):
+	// project-declared relation kinds and tag axes.
+	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
+	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
 
 // One kind of a stored methodology definition; workflow blocks reuse the tasks.workflow
-// status vocabulary (kind = open|terminalok|terminalcancel).
+// status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the
+// kind's per-type creation link requirements (null = none declared).
 public sealed record MethodologyKindView(
-	string Kind, bool QuickAddAllowed, IReadOnlyList<MethodologyWorkflowBlockView> Workflows);
+	string Kind, bool QuickAddAllowed, IReadOnlyList<MethodologyWorkflowBlockView> Workflows,
+	IReadOnlyList<MethodologyLinkConstraintView>? LinkConstraints = null);
+
+// "A new <type> on this kind's boards must carry a <link> at creation" (link =
+// task_spec|blocks|idea_spec — the upsert-expressible kinds).
+public sealed record MethodologyLinkConstraintView(string Type, string Link);
+
+// A project-declared relation kind (free semantic edge, no FSM effects).
+public sealed record MethodologyLinkKindView(string Slug, string? Description = null);
+
+// A declared tag namespace for definition-resolved boards.
+public sealed record MethodologyTagAxisView(string Namespace, string? Description = null);
 
 public sealed record MethodologyWorkflowBlockView(
 	IReadOnlyList<string> Types,

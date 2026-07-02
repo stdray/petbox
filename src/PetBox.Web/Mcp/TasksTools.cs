@@ -155,10 +155,19 @@ public static class TasksTools
 		statuses of ITS block, no duplicate edges). `definition` shape: { name, kinds:[{
 		kind, quickAddAllowed?, workflows:[{ types:[...], statuses:[{ slug, name?,
 		kind?: open|terminalok|terminalcancel }], transitions:[{ from, to,
-		requiresApproval?, requiresReason?, preconditionArtifact? }] }] }] }; statuses[0] is
+		requiresApproval?, requiresReason?, preconditionArtifact? }] }],
+		linkConstraints?:[{ type, link }] }], linkKinds?:[{ slug, description? }],
+		tagAxes?:[{ namespace, description? }] }; statuses[0] is
 		the initial status; `preconditionArtifact` names a comment-artifact tag (e.g.
 		"spec_plan") the node must carry before the transition (enforced: the upsert refuses
-		the transition until an `artifact:<slug>` comment exists on the node). The definition
+		the transition until an `artifact:<slug>` comment exists on the node).
+		`linkConstraints` (per kind): "a NEW node of `type` must carry a `link` at creation"
+		— link ∈ task_spec|blocks|idea_spec (the kinds expressible in the upsert call as
+		specRef/blockedBy/ideaRef); edits don't re-require it. `linkKinds` (project-wide):
+		additional relation kinds for relations.create (free semantic edges, no FSM effects;
+		must not collide with builtin kinds). `tagAxes` (project-wide): declared tag
+		namespaces — when present, tags on definition-resolved boards must be
+		`<namespace>:value` from this list (empty/omitted = free-form tags). The definition
 		is LIVE: a declared kind can be given to tasks.board_create, its boards resolve
 		types/statuses/transitions from this document (tasks.workflow shows them), and any
 		other kind keeps the built-in preset. Returns { version (the new baseline), changed
@@ -185,9 +194,12 @@ public static class TasksTools
 		(that is tasks.methodology_get). Defined=true → { name, kinds:[{ kind,
 		quickAddAllowed, workflows:[{ types, initial, statuses:[{ slug, name, kind }],
 		transitions:[{ from, to, requiresApproval, requiresReason, preconditionArtifact? }]
-		}] }], version (the baseline for tasks.methodology_def_upsert), created, updated }.
-		Defined=false → the project has no definition of its own and runs on the built-in
-		preset (`preset` names it) — an honest state, not an error. Requires tasks:read.
+		}], linkConstraints?:[{ type, link }] }], version (the baseline for
+		tasks.methodology_def_upsert), created, updated, linkKinds?:[{ slug, description? }],
+		tagAxes?:[{ namespace, description? }] } (the ?-marked lists are omitted when the
+		definition declares none). Defined=false → the project has no definition of its own
+		and runs on the built-in preset (`preset` names it) — an honest state, not an error.
+		Requires tasks:read.
 		""")]
 	public static async Task<MethodologyDefGetResult> MethodologyDefGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -208,10 +220,19 @@ public static class TasksTools
 					Types: w.Types,
 					Initial: w.Initial,
 					Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
-					Transitions: w.Transitions.Select(t => new MethodologyTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList())).ToList(),
+					Transitions: w.Transitions.Select(t => new MethodologyTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList(),
+				LinkConstraints: k.LinkConstraints is { Count: > 0 }
+					? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(c.Type, c.Link)).ToList()
+					: null)).ToList(),
 			Version: view.Version,
 			Created: view.Created,
-			Updated: view.Updated);
+			Updated: view.Updated,
+			LinkKinds: view.Definition.LinkKinds is { Count: > 0 }
+				? view.Definition.LinkKinds.Select(lk => new MethodologyLinkKindView(lk.Slug, lk.Description)).ToList()
+				: null,
+			TagAxes: view.Definition.TagAxes is { Count: > 0 }
+				? view.Definition.TagAxes.Select(a => new MethodologyTagAxisView(a.Namespace, a.Description)).ToList()
+				: null);
 	}
 
 	// The `preset` a definition-less project runs on: the hardcoded WorkflowCatalog
@@ -231,7 +252,17 @@ public static class TasksTools
 				(w.Statuses ?? []).Select(ParseStatus).ToList(),
 				(w.Transitions ?? []).Select(t => new MethodologyTransitionDef(
 					t.From ?? string.Empty, t.To ?? string.Empty,
-					t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList())).ToList());
+					t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList())
+		{
+			LinkConstraints = (k.LinkConstraints ?? [])
+				.Select(c => new MethodologyLinkConstraintDef(c.Type ?? string.Empty, c.Link ?? string.Empty)).ToList(),
+		}).ToList())
+	{
+		LinkKinds = (d.LinkKinds ?? [])
+			.Select(lk => new MethodologyLinkKindDef(lk.Slug ?? string.Empty, lk.Description)).ToList(),
+		TagAxes = (d.TagAxes ?? [])
+			.Select(a => new MethodologyTagAxisDef(a.Namespace ?? string.Empty, a.Description)).ToList(),
+	};
 
 	static WorkflowStatus ParseStatus(MethodologyStatusInput s)
 	{

@@ -68,6 +68,12 @@ public sealed record MethodologyDefInput
 	// Methodology name, a slug ([a-z][a-z0-9_-]{0,99}).
 	public string? Name { get; init; }
 	public MethodologyKindInput[]? Kinds { get; init; }
+	// Project-declared relation kinds (effect-free), usable in relations.create alongside
+	// the builtin process + neutral kinds.
+	public MethodologyLinkKindInput[]? LinkKinds { get; init; }
+	// Declared tag namespaces: when present, tags on definition-resolved boards must be
+	// `<namespace>:value` with the namespace from this list; empty/omitted = free-form.
+	public MethodologyTagAxisInput[]? TagAxes { get; init; }
 }
 
 // One board kind of the methodology. `kind` is a FREE-FORM slug (user-defined kinds are
@@ -79,6 +85,32 @@ public sealed record MethodologyKindInput
 	// the built-in preset turns it off where a node needs a link at birth: spec/work).
 	public bool QuickAddAllowed { get; init; } = true;
 	public MethodologyWorkflowInput[]? Workflows { get; init; }
+	// Per-type creation link requirements ("a new <type> must carry a <link>"); omitted =
+	// no requirement (constraints are opt-in per type).
+	public MethodologyLinkConstraintInput[]? LinkConstraints { get; init; }
+}
+
+// "A NEW node of type `type` must carry a link of kind `link` at creation." `link` must
+// be upsert-expressible: task_spec (specRef) | blocks (blockedBy) | idea_spec (ideaRef).
+public sealed record MethodologyLinkConstraintInput
+{
+	public string? Type { get; init; }
+	public string? Link { get; init; }
+}
+
+// A project-declared relation kind: a free semantic edge, no FSM effects. `slug` must not
+// collide with a builtin process/neutral kind.
+public sealed record MethodologyLinkKindInput
+{
+	public string? Slug { get; init; }
+	public string? Description { get; init; }
+}
+
+// A declared tag namespace (axis) for the project's definition-resolved boards.
+public sealed record MethodologyTagAxisInput
+{
+	public string? Namespace { get; init; }
+	public string? Description { get; init; }
 }
 
 // One state machine shared by every type slug in `types` (the tasks.workflow block
