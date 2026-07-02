@@ -14,6 +14,7 @@
 	<ItemGroup>
 		<PackageReference Include="linq2db" />
 		<PackageReference Include="Microsoft.Data.Sqlite" />
+		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
 		<PackageReference Include="FluentMigrator" />
 		<!-- Episodic lazy-hydration index: transient in-memory DuckDB (russian-stem FTS + BM25). -->
 		<PackageReference Include="DuckDB.NET.Data.Full" />

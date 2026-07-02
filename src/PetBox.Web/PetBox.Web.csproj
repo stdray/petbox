@@ -33,6 +33,8 @@
 		<PackageReference Include="Seq.Extensions.Logging" />
 		<PackageReference Include="ModelContextProtocol.AspNetCore" />
 		<PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+		<!-- Direct reference lifts the transitive above the vulnerable 2.0.0 (GHSA-v5pm-xwqc-g5wc). -->
+		<PackageReference Include="Microsoft.OpenApi" />
 		<!-- Build tooling (GetDocument.Insider) only — keep out of the runtime/publish output. -->
 		<PackageReference Include="Microsoft.Extensions.ApiDescription.Server" PrivateAssets="all" />
 	</ItemGroup>
