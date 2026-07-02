@@ -53,4 +53,4 @@ public sealed record CommentUpsertResult(
 	string? Id,
 	IReadOnlyList<CommentConflict> Conflicts);
 
-public sealed record CommentConflict(string Id, string Kind, long BaselineVersion, long? ActiveVersion);
+public sealed record CommentConflict(string Id, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null);

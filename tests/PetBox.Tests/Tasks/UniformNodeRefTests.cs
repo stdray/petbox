@@ -235,4 +235,54 @@ public sealed class UniformNodeRefTests : IDisposable
 		(await wrongBoard.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*node 'elsewhere' does not match any active node on board 'b'*");
 	}
+
+	// ---- WATERMARK over the MCP surface: an echoed currentVersion is the next call's baseline ----
+
+	// tasks.upsert: the board `currentVersion` from one call's echo is a valid baseline for the
+	// next — even above the edited node's own version (a sibling advanced the cursor). A baseline
+	// above the board cursor is a FutureBaseline conflict (a cursor from another board/scope).
+	[Fact]
+	public async Task Upsert_EchoCurrentVersion_IsValidNextBaseline_FutureRejected()
+	{
+		var http = Http();
+		await Seed(http, "b", """[{"key":"a","status":"Todo","title":"A"}]"""); // v1
+		var second = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+			McpInputs.NodesJson("""[{"key":"z","status":"Todo","title":"Z"}]""")); // v2 -> board cursor
+		var cursor = second.CurrentVersion;
+
+		// Edit 'a' (own version 1) with the board cursor as baseline — the watermark accepts it.
+		var edit = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+			McpInputs.NodesJson($$"""[{"key":"a","status":"Todo","title":"A-edited","version":{{cursor}}}]"""));
+		edit.Applied.Should().BeTrue();
+		edit.Conflicts.Should().BeEmpty();
+
+		// A baseline above the board cursor is a wrong-scope quote -> FutureBaseline.
+		var future = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
+			McpInputs.NodesJson($$"""[{"key":"a","status":"Todo","title":"A3","version":{{cursor + 500}}}]"""));
+		future.Applied.Should().BeFalse();
+		future.Conflicts.Should().ContainSingle(c => c.Kind == "FutureBaseline");
+	}
+
+	// comments.edit: same watermark over the thread cursor.
+	[Fact]
+	public async Task CommentEdit_ThreadCurrentVersion_IsValidNextBaseline_FutureRejected()
+	{
+		var http = Http();
+		await Seed(http, "b", """[{"key":"talky","status":"Todo","title":"T"}]""");
+		var c1 = await CommentTools.CreateAsync(http, Flags(), _comments, _tasks, Proj, "b", "talky", "alice", "first");  // v1
+		var c2 = await CommentTools.CreateAsync(http, Flags(), _comments, _tasks, Proj, "b", "talky", "bob", "second");   // v2 -> thread cursor
+		var cursor = c2.CurrentVersion;
+
+		// Edit c1 (own version 1) with the thread cursor as baseline — accepted.
+		var edit = await CommentTools.EditAsync(http, Flags(), _comments, Proj, "b", c1.Id!, "first-edited", cursor);
+		edit.Applied.Should().BeTrue();
+		edit.Conflicts.Should().BeEmpty();
+
+		// Above the thread cursor -> FutureBaseline, teaching Reason surfaced.
+		var future = await CommentTools.EditAsync(http, Flags(), _comments, Proj, "b", c1.Id!, "x", cursor + 500);
+		future.Applied.Should().BeFalse();
+		var conflict = future.Conflicts.Single();
+		conflict.Kind.Should().Be("FutureBaseline");
+		conflict.Reason.Should().Contain("another board/scope");
+	}
 }

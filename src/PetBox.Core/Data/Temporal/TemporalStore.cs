@@ -6,10 +6,15 @@ namespace PetBox.Core.Data.Temporal;
 
 public enum TemporalConflictKind
 {
-	// The active revision moved past the author's baseline before they submitted.
+	// The active revision moved PAST the author's baseline before they submitted — a
+	// concurrent edit landed in think-time. Baseline is a watermark: this fires only when
+	// the entity's current version is strictly newer than the baseline the author read.
 	Stale,
 
-	// The author edited a node (baseline > 0) that no longer exists.
+	// A rename whose source (PrevKey) has no active row — the identity to retire is gone.
+	// (A plain edit of a vanished key is no longer Vanished: with a baseline ≤ the scope
+	// cursor there is nothing to clobber, so it re-creates; a baseline above the cursor is
+	// FutureBaseline.)
 	Vanished,
 
 	// A rename targets a Key that is already occupied by an active node.
@@ -17,6 +22,11 @@ public enum TemporalConflictKind
 
 	// A concurrent writer closed the baseline row inside our read→close window.
 	CloseRace,
+
+	// The baseline quotes a version this scope never reached (> the scope cursor) — almost
+	// always a currentVersion carried over from a DIFFERENT board/store. Reason spells out
+	// the two version spaces. Caught before any other classification.
+	FutureBaseline,
 
 	// A domain guard refused the row (see Reason). TemporalStore itself never produces
 	// this — services report guard rejections in the conflict shape so one batch outcome
@@ -53,10 +63,22 @@ public sealed record TemporalUpsertResult<TRow>(
 
 // Declarative, append-only upsert for a batch of keyed rows.
 //
-// Each desired row carries the version its author last saw (Version == 0 = "new").
-// Optimistic concurrency keys on the AUTHOR's baseline, not a freshly re-read
-// version, so a change that landed during the author's think-time is caught. Any
-// conflict aborts the whole batch; conflicts are returned so the caller rebases.
+// Each desired row carries a WATERMARK baseline in Version: the version the author
+// last saw for THIS entity, OR the scope cursor (currentVersion) from their last read
+// of the whole scope — either is a valid baseline (Version == 0 = "new, read nothing").
+// Optimistic concurrency is a watermark, not an exact match:
+//   * an EDIT applies when its baseline is AT OR AFTER the entity's current revision
+//     (the entity was unchanged since the author's read) and is Stale only when the
+//     entity moved PAST the baseline (a concurrent edit in think-time);
+//   * a CREATE (no active row) applies for ANY baseline ≤ the scope cursor, 0 included —
+//     there is nothing to clobber;
+//   * a baseline ABOVE the scope cursor is a FutureBaseline conflict — the author is
+//     quoting a version this scope never reached, usually a cursor from another
+//     board/store.
+// So a caller may stamp every row in a batch with the single scope currentVersion it
+// last read: the touched entity applies, untouched entities collapse to no-ops, and only
+// a genuine concurrent change to a specific entity rejects. Any conflict aborts the whole
+// batch; conflicts are returned so the caller rebases.
 //
 // A desired row may also carry PrevKey to express a rename/re-key: retire the
 // active row at PrevKey and create a new identity at Key (linked via PrevKey).
@@ -123,16 +145,20 @@ public static class TemporalStore
 		var nextVersion = fromVersion + 1;
 		var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
 
-		var batch = Classify(desired, active, nextVersion, now);
+		var batch = Classify(desired, active, fromVersion, nextVersion, now);
 
 		// Soft-delete: close the active row, no replacement revision -> shows up in
-		// the delta's `removed`.
+		// the delta's `removed`. Same watermark rules as an edit: a baseline above the
+		// scope cursor is FutureBaseline; a baseline that predates the entity's current
+		// revision is Stale; anything ≥ the current revision (0 = delete regardless) closes.
 		foreach (var (key, version) in delete)
 		{
 			active.TryGetValue(key, out var current);
 			if (current is null)
 				continue; // idempotent: already gone
-			if (version != 0 && current.Version != version)
+			if (version > fromVersion)
+				batch.Conflicts.Add(new(key, TemporalConflictKind.FutureBaseline, version, fromVersion, FutureBaselineReason(version, fromVersion)));
+			else if (version != 0 && version < current.Version)
 				batch.Conflicts.Add(new(key, TemporalConflictKind.Stale, version, current.Version));
 			else
 				batch.ToClose.Add((key, current.Version));
@@ -220,13 +246,22 @@ public static class TemporalStore
 	}
 
 	static Batch<TRow> Classify<TRow>(
-		IReadOnlyList<TRow> desired, Dictionary<string, TRow> active, long nextVersion, DateTime now)
+		IReadOnlyList<TRow> desired, Dictionary<string, TRow> active, long fromVersion, long nextVersion, DateTime now)
 		where TRow : TemporalRow
 	{
 		var batch = new Batch<TRow>([], [], []);
 
 		foreach (var d in desired)
 		{
+			// A baseline above the scope cursor is a wrong-scope quote — reject before any
+			// other classification (and before SamePayload: an identical payload with a
+			// future baseline is a conflict, not a silent no-op).
+			if (d.Version > fromVersion)
+			{
+				batch.Conflicts.Add(new(d.Key, TemporalConflictKind.FutureBaseline, d.Version, fromVersion, FutureBaselineReason(d.Version, fromVersion)));
+				continue;
+			}
+
 			if (d.PrevKey is not null)
 			{
 				// rename / re-key: retire PrevKey, create Key as a new linked identity
@@ -237,11 +272,11 @@ public static class TemporalStore
 					batch.Conflicts.Add(new(d.Key, TemporalConflictKind.TargetOccupied, d.Version, occupied.Version));
 				else if (source is null)
 					batch.Conflicts.Add(new(d.PrevKey, TemporalConflictKind.Vanished, d.Version, null));
-				else if (source.Version != d.Version)
+				else if (d.Version < source.Version) // source moved past the author's baseline
 					batch.Conflicts.Add(new(d.PrevKey, TemporalConflictKind.Stale, d.Version, source.Version));
 				else
 				{
-					batch.ToClose.Add((d.PrevKey, d.Version));
+					batch.ToClose.Add((d.PrevKey, source.Version)); // close the real active revision, not the (possibly higher) baseline
 					batch.ToInsert.Add(Revision(d, nextVersion, created: now, now)); // new identity -> Added in delta
 				}
 				continue;
@@ -251,28 +286,36 @@ public static class TemporalStore
 
 			if (current is null)
 			{
-				if (d.Version == 0)
-					batch.ToInsert.Add(Revision(d, nextVersion, created: now, now));
-				else
-					batch.Conflicts.Add(new(d.Key, TemporalConflictKind.Vanished, d.Version, null));
+				// No active row + baseline ≤ the scope cursor: a create. Nothing to clobber, so
+				// ANY such baseline (0 or a real cursor) is valid. NOTE: a key whose row was
+				// closed AFTER the author's read re-creates the identity rather than raising a
+				// "deleted after baseline" conflict — detecting it would need an extra closed-row
+				// query the classifier deliberately avoids.
+				batch.ToInsert.Add(Revision(d, nextVersion, created: now, now));
+			}
+			else if (d.Version < current.Version) // entity moved past the author's baseline
+			{
+				batch.Conflicts.Add(new(d.Key, TemporalConflictKind.Stale, d.Version, current.Version));
 			}
 			else if (current.SamePayload(d))
 			{
-				// no-op: identical payload (a resubmit, or an identical concurrent edit)
-			}
-			else if (current.Version == d.Version)
-			{
-				batch.ToClose.Add((d.Key, d.Version));
-				batch.ToInsert.Add(Revision(d, nextVersion, created: current.Created, now));
+				// no-op: identical payload on a valid watermark baseline (a resubmit, or an
+				// identical concurrent edit)
 			}
 			else
 			{
-				batch.Conflicts.Add(new(d.Key, TemporalConflictKind.Stale, d.Version, current.Version));
+				batch.ToClose.Add((d.Key, current.Version)); // close the real active revision, not the (possibly higher) baseline
+				batch.ToInsert.Add(Revision(d, nextVersion, created: current.Created, now));
 			}
 		}
 
 		return batch;
 	}
+
+	// The FutureBaseline message: teach the two version spaces and the fix.
+	static string FutureBaselineReason(long baseline, long cursor) =>
+		$"your baseline {baseline} is ahead of this scope's cursor {cursor} — a version from another board/scope? " +
+		"pass the currentVersion from your last read of THIS scope (or the entity's own version); 0 = new entity.";
 
 	static TRow Revision<TRow>(TRow desired, long version, DateTime created, DateTime updated)
 		where TRow : TemporalRow =>

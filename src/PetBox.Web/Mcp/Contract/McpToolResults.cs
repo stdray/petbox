@@ -148,7 +148,7 @@ public sealed record MemoryEntryRow(
 public sealed record RetrieverInfo(bool Lexical, bool Semantic, bool Degraded);
 
 // memory.upsert / memory.delta echo (mirrors the old anonymous Serialize shape).
-public sealed record MemoryConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion);
+public sealed record MemoryConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null);
 
 public sealed record MemoryUpsertResultView(
 	bool Applied,

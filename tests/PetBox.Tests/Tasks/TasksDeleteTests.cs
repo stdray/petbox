@@ -131,9 +131,12 @@ public sealed class TasksDeleteTests : IDisposable
 	[Fact]
 	public async Task Delete_StaleBaseline_Conflicts_VersionZero_Unconditional()
 	{
-		await _tasks.UpsertAsync(Proj, "b", new[] { Node("n") });
+		await _tasks.UpsertAsync(Proj, "b", new[] { Node("n") });                              // v1
+		await _tasks.UpsertAsync(Proj, "b", new[] { Node("n", title: "N-mid", version: 1) });  // -> v2 (concurrent edit)
 
-		var stale = await _tasks.UpsertAsync(Proj, "b", new[] { Delete("n", version: 999) });
+		// A genuine stale baseline: delete quoting v1 after the node moved to v2. (Was
+		// version:999 under exact-match — that is now a FutureBaseline, not Stale.)
+		var stale = await _tasks.UpsertAsync(Proj, "b", new[] { Delete("n", version: 1) });
 		stale.Result.Applied.Should().BeFalse();
 		stale.Result.Conflicts.Should().ContainSingle().Which.Kind.Should().Be(TemporalConflictKind.Stale);
 

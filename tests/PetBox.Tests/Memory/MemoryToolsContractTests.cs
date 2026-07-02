@@ -273,6 +273,42 @@ public sealed class MemoryToolsContractTests : IDisposable
 			.Items.Count.Should().Be(2);
 	}
 
+	// WATERMARK over the MCP surface: the store `currentVersion` echoed by one upsert is a valid
+	// baseline for the next — even above the edited entry's own version (a second entry advanced
+	// the cursor). A baseline above the store cursor is a FutureBaseline conflict carrying Reason.
+	[Fact]
+	public async Task Upsert_EchoCurrentVersion_IsValidNextBaseline_FutureRejected()
+	{
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "a", type = "project", description = "d", body = "b" },
+		}));                                                                            // v1
+		var second = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "c", type = "project", description = "d", body = "b" },
+		}));                                                                            // v2 -> store cursor
+		var cursor = second.CurrentVersion;
+
+		// Edit 'a' (own version 1) at the store cursor baseline — accepted.
+		var edit = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "a", type = "project", body = "edited", version = cursor },
+		}));
+		edit.Applied.Should().BeTrue();
+		edit.Conflicts.Should().BeEmpty();
+
+		// A baseline above the store cursor is a FutureBaseline conflict, Reason surfaced.
+		var future = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "a", type = "project", body = "x", version = cursor + 500 },
+		}));
+		future.Applied.Should().BeFalse();
+		var conflict = future.Conflicts.Single();
+		conflict.Kind.Should().Be("FutureBaseline");
+		conflict.Reason.Should().Contain("another board/scope");
+	}
+
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");

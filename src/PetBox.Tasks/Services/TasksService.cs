@@ -281,9 +281,14 @@ public sealed partial class TasksService : ITasksService
 		// whole call before a single write.
 		var newRuntime = new MethodologyRuntime(def);
 		var current = await GetMethodologyDefinitionAsync(projectKey, ct);
-		var noOp = current is not null && JsonSerializer.Serialize(current.Definition, DefinitionJson) == row.Json;
+		// An identical definition can't change any node's resolution, so we skip the migration
+		// planning below. It does NOT skip the store: TemporalStore is the baseline arbiter — an
+		// identical resubmit on a VALID watermark baseline no-ops there (Changed:false), while an
+		// identical resubmit on a stale/future baseline raises the same conflict a real change
+		// would (SamePayload now runs after baseline validation). So the baseline is never ignored.
+		var sameDefinition = current is not null && JsonSerializer.Serialize(current.Definition, DefinitionJson) == row.Json;
 		var rewrites = new List<(string Board, List<PlanNode> Nodes)>();
-		if (!noOp)
+		if (!sameDefinition)
 		{
 			var boards = (await _boards.ListAsync(projectKey, ct)).Where(b => b.ClosedAt == null).ToList();
 			ValidateMigration(migration ?? [], newRuntime, boards);
@@ -300,8 +305,9 @@ public sealed partial class TasksService : ITasksService
 			var c = r.Conflicts[0];
 			throw new InvalidOperationException(c.Kind switch
 			{
+				TemporalConflictKind.FutureBaseline => $"methodology definition conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — that version was never reached here (a baseline from another project/scope?); re-read with tasks.methodology_def_get and resubmit against the current version",
 				TemporalConflictKind.Vanished => $"methodology definition conflict: your baseline version {version} no longer exists (the definition was removed); re-read with tasks.methodology_def_get and resubmit with version 0",
-				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks.methodology_def_get and resubmit against it",
+				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; pass the currentVersion from your last tasks.methodology_def_get (0 = no definition yet)",
 			});
 		}
 
