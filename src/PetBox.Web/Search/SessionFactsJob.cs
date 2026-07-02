@@ -189,7 +189,10 @@ public sealed class SessionFactsJob : IVectorizationJob
 			messages = new[] { fromVersion, toVersion },
 		});
 		var type = candidate.Type is "User" or "Feedback" or "Project" or "Reference" ? candidate.Type : "Project";
-		var tags = string.IsNullOrWhiteSpace(candidate.Tags) ? Tag : Tag + "," + candidate.Tags;
+		// The LLM contract emits tags as CSV; the memory surface speaks arrays — split here.
+		string[] tags = string.IsNullOrWhiteSpace(candidate.Tags)
+			? [Tag]
+			: [Tag, .. candidate.Tags!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
 
 		if (verdict.Action == "update" && verdict.Key is not null)
 		{

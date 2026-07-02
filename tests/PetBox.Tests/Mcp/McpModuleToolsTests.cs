@@ -172,7 +172,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes",
 			McpInputs.Entries(new[]
 			{
-				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = "go,style" },
+				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = new[] { "go", "style" } },
 			}));
 
 		// memory.search is THE read verb (list = search without q; replaced list+recall).

@@ -68,7 +68,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		// Cold upsert (no store_create) auto-creates the store; tags get normalised.
 		var entries = McpInputs.Entries(new object[]
 		{
-			new { key = "go-style", type = "reference", description = "Go", body = "tabs", tags = "Go, STYLE ,go" },
+			new { key = "go-style", type = "reference", description = "Go", body = "tabs", tags = new[] { "Go", " STYLE ", "go" } },
 			new { key = "prefers-tabs", type = "feedback", description = "tabs", body = "user likes tabs" },
 		});
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
@@ -78,7 +78,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var all = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes");
 		var go = all.Items.Single(e => e.Key == "go-style");
-		go.Tags.Should().Be("go,style");
+		go.Tags.Should().Equal("go", "style");
 		go.Type.Should().Be("Reference");
 
 		// Type filter narrows the listing.
@@ -150,20 +150,20 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var http = Http("memory:read,memory:write");
 		var created = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
-			new { key = "k", type = "project", description = "keep-d", body = "keep-b", tags = "t1,t2" },
+			new { key = "k", type = "project", description = "keep-d", body = "keep-b", tags = new[] { "t1", "t2" } },
 		}))).Added.Single();
 
 		// The incident payload: only key/type/tags/version — description and body omitted.
 		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
-			new { key = "k", type = "project", tags = "t3", version = created.Version },
+			new { key = "k", type = "project", tags = new[] { "t3" }, version = created.Version },
 		}));
 		res.Applied.Should().BeTrue();
 
 		var after = (await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(), Proj, "notes", "k"))!;
 		after.Description.Should().Be("keep-d");
 		after.Body.Should().Be("keep-b");
-		after.Tags.Should().Be("t3");
+		after.Tags.Should().Equal("t3");
 	}
 
 	// spec explicit-write-semantics: an explicitly EMPTY field ("") is a deliberate clear —
@@ -174,7 +174,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var http = Http("memory:read,memory:write");
 		var created = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
-			new { key = "c", type = "project", description = "d", body = "b", tags = "t" },
+			new { key = "c", type = "project", description = "d", body = "b", tags = new[] { "t" } },
 		}))).Added.Single();
 
 		// body:"" clears the body; omitted description/tags stay.
@@ -187,7 +187,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var after = (await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(), Proj, "notes", "c"))!;
 		after.Body.Should().BeEmpty();
 		after.Description.Should().Be("d");
-		after.Tags.Should().Be("t");
+		after.Tags.Should().Equal("t");
 	}
 
 	// CREATE path unchanged: a new entry (version 0) with partial fields starts the omitted

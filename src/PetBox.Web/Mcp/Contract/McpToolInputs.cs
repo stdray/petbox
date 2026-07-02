@@ -85,7 +85,11 @@ public sealed record MemoryEntryInputDto
 	public string? Type { get; init; }
 	public string? Description { get; init; }
 	public string? Body { get; init; }
-	public string? Tags { get; init; }
+
+	// Tags as an ARRAY of tag strings (like tasks): null = omit (PATCH: keep the current
+	// set), [] = explicit clear, a non-empty list REPLACES the set.
+	public IReadOnlyList<string>? Tags { get; init; }
+
 	public string? Metadata { get; init; }
 	public string? PrevKey { get; init; }
 

@@ -358,25 +358,31 @@ public sealed class MemoryService : IMemoryService
 		Type = ParseType(i.Type),
 		Description = i.Description ?? current?.Description ?? string.Empty,
 		Body = i.Body ?? current?.Body ?? string.Empty,
+		// PATCH: null = keep the current set; a non-null list (incl. []) REPLACES it.
 		Tags = i.Tags is null ? current?.Tags ?? string.Empty : NormalizeTags(i.Tags),
 		Metadata = i.Metadata ?? current?.Metadata ?? string.Empty,
 		PrevKey = i.PrevKey,
 	};
 
 	static MemoryEntryView View(MemoryEntry e) =>
-		new(e.Key, e.Type.ToString(), e.Description, e.Body, e.Tags, e.Version, e.Metadata);
+		new(e.Key, e.Type.ToString(), e.Description, e.Body, SplitTags(e.Tags), e.Version, e.Metadata);
 
 	static MemoryType ParseType(string s) =>
 		Enum.TryParse<MemoryType>(s, ignoreCase: true, out var v)
 			? v
 			: throw new ArgumentException($"invalid type '{s}' (User|Feedback|Project|Reference)");
 
-	// Free CSV tags, normalised on write: split on comma, trim, lowercase, drop blanks,
-	// de-dup, re-join. Keeps the column queryable and stops case/whitespace duplicates.
-	static string NormalizeTags(string? raw) =>
-		string.IsNullOrWhiteSpace(raw)
-			? string.Empty
-			: string.Join(',', raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-				.Select(t => t.ToLowerInvariant())
-				.Distinct());
+	// The surface speaks tag ARRAYS; storage stays a CSV column (queryable, FTS-fed as-is).
+	// Normalised at this boundary on write: trim, lowercase, drop blanks, de-dup, join.
+	static string NormalizeTags(IReadOnlyList<string> tags) =>
+		string.Join(',', tags
+			.Where(t => !string.IsNullOrWhiteSpace(t))
+			.Select(t => t.Trim().ToLowerInvariant())
+			.Distinct());
+
+	// Storage CSV -> the surface array (empty column = empty array).
+	static string[] SplitTags(string csv) =>
+		string.IsNullOrWhiteSpace(csv)
+			? []
+			: csv.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 }

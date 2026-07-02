@@ -45,7 +45,7 @@ logs/, db/, keys/, backups/   ← logs, infra, secrets, pre-migration snapshots
 
 ## 4. Memory — **MCP only** (no REST)
 
-Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a store holds temporal (SCD-2) entries with a taxonomy `type ∈ User|Feedback|Project|Reference`, CSV tags, FTS5 search, free-form `Metadata`.
+Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a store holds temporal (SCD-2) entries with a taxonomy `type ∈ User|Feedback|Project|Reference`, tags (surface = string ARRAY; stored as a CSV column), FTS5 search, free-form `Metadata`.
 
 **Scope dimension** (over the per-project store files):
 - `project` (default) → the key's own project.

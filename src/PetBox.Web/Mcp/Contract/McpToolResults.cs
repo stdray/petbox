@@ -133,13 +133,14 @@ public sealed record MemoryStoreListResult(IReadOnlyList<MemoryStoreRow> Stores)
 public sealed record MemoryStoreDeletedResult(bool Deleted);
 
 // Echo projection of a memory entry for the upsert/delta MCP surface. `Body` is
-// slice-controlled (null -> omitted).
+// slice-controlled (null -> omitted). `Tags` is an array (the memory surface speaks
+// tag arrays; storage stays CSV).
 public sealed record MemoryEntryRow(
 	string Key,
 	string Type,
 	string? Description,
 	string? Body,
-	string? Tags,
+	IReadOnlyList<string> Tags,
 	long Version,
 	string? Metadata);
 
@@ -172,7 +173,7 @@ public sealed record MemorySearchHitView(
 	string Type,
 	string Description,
 	string? Body,
-	string Tags,
+	IReadOnlyList<string> Tags,
 	long Version,
 	long? Surfaced = null,
 	long? Opened = null,

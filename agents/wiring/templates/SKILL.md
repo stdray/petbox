@@ -26,7 +26,8 @@ with `q` it's hybrid relevance search (FTS ⊕ vectors). Filters work in both mo
 reorders; `bodyLen` snippets bodies. One node in full: `tasks.node_get`.
 
 **Memory entries are typed** (`user` | `feedback` | `project` | `reference`) — `type` is
-required on `memory.upsert`; `tags` is free CSV. `memory.search` is THE read verb: with `q`
+required on `memory.upsert`; `tags` is an ARRAY of strings ([] clears, omit keeps).
+`memory.search` is THE read verb: with `q`
 a hybrid relevance search (FTS ⊕ vectors), without `q` a deterministic listing (updated
 desc); no `scope` cascades project ⊕ workspace over every store (use `bodyLen` for snippets).
 

@@ -77,12 +77,13 @@ public static class MemoryTools
 	[Description("""
 		PATCH per entry (declarative temporal upsert into a store). Requires memory:write.
 		On an EDIT (version > 0) an omitted field stays UNCHANGED — send only what you change;
-		to clear a field pass it explicitly empty (description/body/metadata: "", tags: "").
+		to clear a field pass it explicitly empty (description/body/metadata: "", tags: []).
 		On a NEW entry (version 0) omitted fields start empty.
 		`entries` is a JSON array of { key, type, description, body, tags?, version?, prevKey? }.
 		`type` (required) is the taxonomy: User (about the user) | Feedback (a correction/
 		preference on how to work) | Project (durable project fact/constraint) | Reference
-		(pointer to an external resource). Pick one. `tags` is free CSV, normalised on write.
+		(pointer to an external resource). Pick one. `tags` is an ARRAY of free-form tag
+		strings, normalised on write ([] clears, omit leaves as-is).
 		`version` is the baseline you last saw (0 = new). Set `prevKey` to rename.
 		To delete an entry, pass { key, deleted:true } (optional version baseline) — it is
 		soft-closed (history kept) and appears in the result's `removed`.
@@ -98,7 +99,7 @@ public static class MemoryTools
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store,
-		[Description("Array of entry objects: { key, type, description, body, tags?, metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
+		[Description("Array of entry objects: { key, type, description, body, tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Slice length (chars) of each echoed entry body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		CancellationToken ct = default)
 	{
@@ -149,14 +150,15 @@ public static class MemoryTools
 		the key's project) | workspace (cross-project shared). `store` groups entries
 		within a scope (default "notes"). `type` is the taxonomy
 		(User|Feedback|Project|Reference; default Project) — pick explicitly, no inference.
-		`tags` is free CSV; `description` an optional one-line summary. A unique key is
-		generated. Store durable facts not derivable from code/git/config; actionable work
-		goes to a task board. Requires memory:write. Returns { id, scope, store, key }.
+		`tags` is an array of free-form tag strings; `description` an optional one-line
+		summary. A unique key is generated. Store durable facts not derivable from
+		code/git/config; actionable work goes to a task board. Requires memory:write.
+		Returns { id, scope, store, key }.
 		""")]
 	public static async Task<MemoryRememberResult> RememberAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string text, string? scope = null, string? projectKey = null, string? store = null,
-		string? type = null, string? tags = null, string? description = null,
+		string? type = null, string[]? tags = null, string? description = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
@@ -353,13 +355,16 @@ public static class MemoryTools
 	}
 
 	// `body` is sliced to bodyLen (null when 0 → omitted by the serializer) so the write-echo
-	// stays compact; `description` (a one-liner) is kept to orient the merge.
+	// stays compact; `description` (a one-liner) is kept to orient the merge. Tags leave the
+	// CSV storage form here — the surface speaks arrays.
 	static MemoryEntryRow EntryDto(MemoryEntry e, int bodyLen = 0) => new(
 		Key: e.Key,
 		Type: e.Type.ToString(),
 		Description: e.Description,
 		Body: ModuleMcp.SliceBody(e.Body, bodyLen),
-		Tags: e.Tags,
+		Tags: string.IsNullOrWhiteSpace(e.Tags)
+			? []
+			: e.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
 		Version: e.Version,
 		Metadata: e.Metadata);
 
