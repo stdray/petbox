@@ -137,7 +137,9 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		var create = await ToolAsync("log.create");
 		var r1 = await create.CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = ProjectKey, ["name"] = "audit", ["description"] = "audit trail",
+			["projectKey"] = ProjectKey,
+			["name"] = "audit",
+			["description"] = "audit trail",
 		});
 		Text(r1).Should().NotContain("\"error\"");
 
@@ -160,7 +162,8 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		var create = await ToolAsync("db.create");
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = ProjectKey, ["name"] = "appdb",
+			["projectKey"] = ProjectKey,
+			["name"] = "appdb",
 		})).Should().NotContain("\"error\"");
 
 		var apply = await ToolAsync("data.schema_apply");
@@ -175,7 +178,8 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		var describe = await ToolAsync("db.describe");
 		var r = await describe.CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = ProjectKey, ["dbName"] = "appdb",
+			["projectKey"] = ProjectKey,
+			["dbName"] = "appdb",
 		});
 		var text = Text(r);
 		text.Should().Contain("widgets");
@@ -187,7 +191,8 @@ public sealed class EntityToolsTests : IAsyncLifetime
 	{
 		Text(await (await ToolAsync("db.create")).CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = ProjectKey, ["name"] = "listdb",
+			["projectKey"] = ProjectKey,
+			["name"] = "listdb",
 		})).Should().NotContain("\"error\"");
 
 		var listed = Text(await (await ToolAsync("db.list")).CallAsync(new Dictionary<string, object?> { ["projectKey"] = ProjectKey }));
@@ -199,7 +204,8 @@ public sealed class EntityToolsTests : IAsyncLifetime
 	{
 		var r = await (await ToolAsync("db.describe")).CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = ProjectKey, ["dbName"] = "ghost",
+			["projectKey"] = ProjectKey,
+			["dbName"] = "ghost",
 		});
 		Text(r).Should().Contain("not found");
 	}
@@ -212,12 +218,19 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		var create = await ToolAsync("config.create_binding");
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
-			["workspaceKey"] = "test", ["path"] = "svc/url", ["value"] = "https://x", ["tags"] = "ws:test",
+			["workspaceKey"] = "test",
+			["path"] = "svc/url",
+			["value"] = "https://x",
+			["tags"] = "ws:test",
 		})).Should().NotContain("\"error\"");
 
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
-			["workspaceKey"] = "test", ["path"] = "svc/key", ["value"] = "topsecret", ["tags"] = "ws:test", ["kind"] = "Secret",
+			["workspaceKey"] = "test",
+			["path"] = "svc/key",
+			["value"] = "topsecret",
+			["tags"] = "ws:test",
+			["kind"] = "Secret",
 		})).Should().NotContain("\"error\"");
 
 		var list = await ToolAsync("config.list_bindings");
@@ -236,6 +249,64 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		secret.Ciphertext.Should().NotBeNullOrEmpty();
 	}
 
+	// spec explicit-write-semantics: config.create_binding is PUT by (path, tagset) — a repeat
+	// create with the same path and the same normalized tag SET supersedes (soft-closes) the
+	// old binding instead of leaving two active ambiguous twins; a different tagset at the
+	// same path is a specificity variant and coexists.
+	[Fact]
+	public async Task ConfigTools_CreateBinding_SupersedesSameTagset_KeepsDifferentTagset()
+	{
+		// Unique path per run: the workspace config DB outlives this fixture, so a fixed
+		// path would collide with rows left by previous runs.
+		var path = "dup/" + Guid.NewGuid().ToString("N")[..12];
+		var create = await ToolAsync("config.create_binding");
+		Text(await create.CallAsync(new Dictionary<string, object?>
+		{
+			["workspaceKey"] = "test",
+			["path"] = path,
+			["value"] = "v1",
+			["tags"] = "ws:test,svc:a",
+		})).Should().NotContain("\"error\"");
+
+		// Same path + same tagset (different order/case/whitespace) -> supersedes, reported in the result.
+		var second = Text(await create.CallAsync(new Dictionary<string, object?>
+		{
+			["workspaceKey"] = "test",
+			["path"] = path,
+			["value"] = "v2",
+			["tags"] = " SVC:A , ws:test ",
+		}));
+		second.Should().NotContain("\"error\"");
+		second.Should().Contain("superseded");
+
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var cf = scope.ServiceProvider.GetRequiredService<PetBox.Config.Data.IConfigDbFactory>();
+			var cdb = cf.GetConfigDb("test");
+			var active = cdb.Bindings.Where(b => b.Path == path && !b.IsDeleted).ToList();
+			active.Should().ContainSingle("the twin must be soft-closed, not left as a silent duplicate");
+			active[0].Value.Should().Be("v2");
+			// History kept: the superseded row is soft-deleted, not erased.
+			cdb.Bindings.Count(b => b.Path == path && b.IsDeleted).Should().Be(1);
+		}
+
+		// Different tagset at the same path is NOT superseded — both stay active.
+		Text(await create.CallAsync(new Dictionary<string, object?>
+		{
+			["workspaceKey"] = "test",
+			["path"] = path,
+			["value"] = "v3",
+			["tags"] = "ws:test,svc:a,env:prod",
+		})).Should().NotContain("\"error\"");
+
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var cf = scope.ServiceProvider.GetRequiredService<PetBox.Config.Data.IConfigDbFactory>();
+			var cdb = cf.GetConfigDb("test");
+			cdb.Bindings.Count(b => b.Path == path && !b.IsDeleted).Should().Be(2);
+		}
+	}
+
 	[Fact]
 	public async Task ToolsList_FilteredByKeyScope()
 	{
@@ -248,7 +319,10 @@ public sealed class EntityToolsTests : IAsyncLifetime
 			await db.ApiKeys.Where(k => k.Key == narrowKey).DeleteAsync();
 			await db.InsertAsync(new ApiKey
 			{
-				Key = narrowKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write", CreatedAt = DateTime.UtcNow,
+				Key = narrowKey,
+				ProjectKey = ProjectKey,
+				Scopes = "tasks:read,tasks:write",
+				CreatedAt = DateTime.UtcNow,
 			});
 		}
 

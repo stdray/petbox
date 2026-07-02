@@ -22,7 +22,12 @@ public static class ConfigTools
 {
 	[McpServerTool(Name = "config.create_binding", Title = "Create a config binding", UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingCreatedResult))]
 	[Description("""
-		Creates a config binding in a workspace's config store. Requires admin:provision.
+		PUT by (path, tagset): creates a config binding in a workspace's config store; if an
+		ACTIVE binding with the same path and the same normalized tag SET (order/case/whitespace
+		of the CSV don't matter) already exists, it is superseded — soft-closed in the same
+		transaction and reported in the result's `superseded` ids. No silent duplicates: the
+		same (path, tagset) can never be active twice. A different tagset at the same path is a
+		normal specificity variant and coexists. Requires admin:provision.
 		  • tags must include 'ws:{workspaceKey}'.
 		  • kind: 'Plain' (default) or 'Secret' — a Secret stores `value` encrypted
 		    (needs PETBOX_MASTER_KEY); the plaintext never lands in the Value column.
@@ -58,24 +63,57 @@ public static class ConfigTools
 
 		var now = DateTime.UtcNow;
 		var configDb = configFactory.GetConfigDb(workspaceKey);
-#pragma warning disable CA2016
-		var id = Convert.ToInt64(await configDb.InsertWithIdentityAsync(new ConfigBinding
+
+		// PUT by (path, tagset): an active twin — same path (resolver equality: ignore-case) and
+		// same normalized tag SET — would be a silent duplicate that the resolve pipeline later
+		// rejects as ambiguous. Supersede it instead: soft-close every twin in the SAME
+		// transaction that inserts the replacement, and report the closed ids. A different
+		// tagset at the same path is a specificity variant and is left alone.
+		var newTagset = Tagset(tags);
+		var superseded = (await configDb.Bindings
+				.Where(b => !b.IsDeleted)
+				.Select(b => new { b.Id, b.Path, b.Tags })
+				.ToListAsync(ct))
+			.Where(b => string.Equals(b.Path, path, StringComparison.OrdinalIgnoreCase) && Tagset(b.Tags).SetEquals(newTagset))
+			.Select(b => b.Id)
+			.ToList();
+
+		long id;
+		using (var tx = await configDb.BeginTransactionAsync(ct))
 		{
-			Path = path,
-			Value = storedValue,
-			Tags = tags,
-			Kind = bindingKind,
-			Ciphertext = cipher,
-			Iv = iv,
-			AuthTag = authTag,
-			Version = 1,
-			ContentHash = BindingContentHash.Compute(path, tags, bindingKind, storedValue, cipher),
-			CreatedAt = now,
-			UpdatedAt = now,
-		}));
+			if (superseded.Count > 0)
+				await configDb.Bindings
+					.Where(b => superseded.Contains(b.Id) && !b.IsDeleted)
+					.Set(b => b.IsDeleted, true)
+					.Set(b => b.DeletedAt, (DateTime?)now)
+					.Set(b => b.UpdatedAt, now)
+					.UpdateAsync(ct);
+#pragma warning disable CA2016
+			id = Convert.ToInt64(await configDb.InsertWithIdentityAsync(new ConfigBinding
+			{
+				Path = path,
+				Value = storedValue,
+				Tags = tags,
+				Kind = bindingKind,
+				Ciphertext = cipher,
+				Iv = iv,
+				AuthTag = authTag,
+				Version = 1,
+				ContentHash = BindingContentHash.Compute(path, tags, bindingKind, storedValue, cipher),
+				CreatedAt = now,
+				UpdatedAt = now,
+			}));
 #pragma warning restore CA2016
-		return new ConfigBindingCreatedResult(id, path, tags, bindingKind.ToString());
+			await tx.CommitAsync(ct);
+		}
+		return new ConfigBindingCreatedResult(id, path, tags, bindingKind.ToString(), superseded);
 	}
+
+	// The binding-identity tag SET: CSV split, trimmed, blanks dropped, ignore-case — the same
+	// equality the resolve pipeline applies when it declares two bindings ambiguous.
+	static HashSet<string> Tagset(string raw) =>
+		new(raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+			StringComparer.OrdinalIgnoreCase);
 
 	[McpServerTool(Name = "config.list_bindings", Title = "List config bindings", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsListResult))]
 	[Description("Lists a workspace's active config bindings (id, path, tags, kind). Requires admin:provision. Secret values are never returned.")]
