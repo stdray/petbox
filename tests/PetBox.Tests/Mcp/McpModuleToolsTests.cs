@@ -165,7 +165,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Memory_Upsert_Search_Roundtrip()
+	public async Task Memory_Upsert_Recall_Roundtrip()
 	{
 		var http = Http("memory:read,memory:write");
 		await MemoryTools.StoreCreateAsync(http, Flags(), _memory, Proj, "notes");
@@ -173,10 +173,12 @@ public sealed class McpModuleToolsTests : IDisposable
 			McpInputs.Entries(new[]
 			{
 				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = "go,style" },
-			}), 0);
+			}));
 
-		var hits = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "tabs");
-		hits.Entries.Should().ContainSingle();
+		// memory.search is gone (verb dedup) — recall is THE memory search verb.
+		var hits = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			"tabs", scope: "project", store: "notes");
+		hits.Results.Should().ContainSingle();
 	}
 
 	[Fact]

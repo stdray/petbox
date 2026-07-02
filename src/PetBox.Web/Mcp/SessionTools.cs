@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Features;
 using PetBox.Sessions.Contract;
 using PetBox.Web.Mcp.Contract;
@@ -168,7 +169,7 @@ public static class SessionTools
 	}
 
 	[McpServerTool(Name = "session.list", Title = "List sessions", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionListResult))]
-	[Description("List active sessions in a project. Requires tasks:read.")]
+	[Description("List active sessions in a project (compact rows: sessionId, agent, version). The response has a HARD OUTPUT BUDGET (~30k serialized chars): when the rows no longer fit they are prefix-cut and flagged with `truncated:true` + `omitted` (rows dropped) plus a `hint` (use session.search to find a session by content, session.get to read one); no markers = the complete list. Requires tasks:read.")]
 	public static async Task<SessionListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey, CancellationToken ct = default)
@@ -177,6 +178,17 @@ public static class SessionTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await sessions.ListAsync(projectKey, ct);
-		return new SessionListResult(list.Select(s => new SessionRowView(s.SessionId, s.Agent, s.Version)).ToList());
+		var rows = list.Select(s => new SessionRowView(s.SessionId, s.Agent, s.Version)).ToList();
+		// Response budget (spec bounded-result-sets): prefix-cut, marked structurally — never
+		// silent. An in-budget list serializes byte-identical to the unbudgeted shape.
+		var (kept, omitted) = new ResponseBudget().Take(rows);
+		return omitted == 0
+			? new SessionListResult(rows)
+			: new SessionListResult(kept, Truncated: true, Omitted: omitted, Hint: ListBudgetHint);
 	}
+
+	// Surfaced on SessionListResult.Hint when the rows were cut by the response budget.
+	const string ListBudgetHint =
+		"Output budget exceeded: session rows were truncated (see truncated/omitted). Find a " +
+		"session by content with session.search, or read one directly with session.get.";
 }

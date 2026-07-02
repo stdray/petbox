@@ -86,8 +86,10 @@ public sealed class MemoryToolsContractTests : IDisposable
 		keys.Should().BeEquivalentTo(["prefers-tabs"]);
 	}
 
+	// memory.search is gone (verb dedup): recall with scope:"project" + store covers the
+	// single-store FTS scenario — same hybrid retriever underneath.
 	[Fact]
-	public async Task Search_Fts_FindsByToken_AndExcludesOthers()
+	public async Task Recall_Fts_FindsByToken_AndExcludesOthers()
 	{
 		var http = Http("memory:read,memory:write");
 		var entries = McpInputs.Entries(new object[]
@@ -97,8 +99,9 @@ public sealed class MemoryToolsContractTests : IDisposable
 		});
 		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
 
-		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "scope");
-		var keys = res.Entries.Select(e => e.Key).ToList();
+		var res = await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			"scope", scope: "project", store: "notes");
+		var keys = res.Results.Select(e => e.Key).ToList();
 		keys.Should().Contain("auth-scopes");      // "scope*" prefix-matches "scopes"
 		keys.Should().NotContain("go-style");
 	}
@@ -233,10 +236,10 @@ public sealed class MemoryToolsContractTests : IDisposable
 		sliced.Should().EndWith("…");
 	}
 
-	// spec read-snippet-on-demand + bounded-result-sets: list/search cap at `limit` and snippet
+	// spec read-snippet-on-demand + bounded-result-sets: list/recall cap at `limit` and snippet
 	// bodies at `bodyLen` (full by default), so a read can't dump an unbounded wall of bodies.
 	[Fact]
-	public async Task ListAndSearch_RespectLimit_AndBodyLen()
+	public async Task ListAndRecall_RespectLimit_AndBodyLen()
 	{
 		var http = Http("memory:read,memory:write");
 		var big = new string('x', 300);
@@ -259,9 +262,10 @@ public sealed class MemoryToolsContractTests : IDisposable
 		aBody.Length.Should().Be(101);
 		aBody.Should().EndWith("…");
 
-		// search: the same limit bounds an FTS sweep ("alpha" hits all three).
-		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), Proj, "notes", "alpha", limit: 2))
-			.Entries.Count.Should().Be(2);
+		// recall: the same limit bounds an FTS sweep ("alpha" hits all three).
+		(await MemoryTools.RecallAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+			"alpha", scope: "project", store: "notes", limit: 2))
+			.Results.Count.Should().Be(2);
 	}
 
 	static IHttpContextAccessor Http(string scopes)

@@ -19,7 +19,12 @@ public sealed record WhoAmIResult(string? Project, IReadOnlyList<string> Scopes)
 
 // ---- comments.* ----------------------------------------------------------------------
 
-public sealed record CommentsListResult(IReadOnlyList<CommentView> Comments);
+// Truncated/Omitted/Hint are the response-budget markers (spec bounded-result-sets): filled
+// only when the rows were prefix-cut against the output budget — an in-budget answer
+// serializes byte-identical to the old shape (nulls are omitted). Same pattern on every
+// list result below.
+public sealed record CommentsListResult(IReadOnlyList<CommentView> Comments,
+	bool? Truncated = null, int? Omitted = null, string? Hint = null);
 
 public sealed record CommentDeleteResult(bool Deleted);
 
@@ -142,12 +147,11 @@ public sealed record MemoryEntryRow(
 	long? Opened = null,
 	DateTime? LastHitAt = null);
 
-public sealed record MemoryListResult(IReadOnlyList<MemoryEntryRow> Entries);
+public sealed record MemoryListResult(IReadOnlyList<MemoryEntryRow> Entries,
+	bool? Truncated = null, int? Omitted = null, string? Hint = null);
 
 // Provenance of a hybrid search/recall: which retrievers ran and whether the answer is degraded.
 public sealed record RetrieverInfo(bool Lexical, bool Semantic, bool Degraded);
-
-public sealed record MemorySearchResultView(IReadOnlyList<MemoryEntryRow> Entries, RetrieverInfo Retrievers);
 
 // memory.upsert / memory.delta echo (mirrors the old anonymous Serialize shape).
 public sealed record MemoryConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion);
@@ -207,7 +211,8 @@ public sealed record SessionGetResult(string SessionId, string Agent, string Con
 
 public sealed record SessionRowView(string SessionId, string Agent, long Version);
 
-public sealed record SessionListResult(IReadOnlyList<SessionRowView> Sessions);
+public sealed record SessionListResult(IReadOnlyList<SessionRowView> Sessions,
+	bool? Truncated = null, int? Omitted = null, string? Hint = null);
 
 public sealed record SessionDeletedResult(bool Deleted, string SessionId);
 
@@ -268,15 +273,18 @@ public sealed record TaskSearchNodeView(
 
 public sealed record TaskSearchResultView(IReadOnlyList<TaskSearchNodeView> Nodes, RetrieverInfo Retrievers);
 
-// tasks.workflow wire shape (board kind + per-type statuses/transitions catalog).
+// tasks.workflow wire shape (board kind + statuses/transitions catalog, grouped by FSM).
 public sealed record WorkflowStatusView(string Slug, string Name, string Kind);
 
 public sealed record WorkflowTransitionView(string From, string To, bool RequiresApproval, bool RequiresReason);
 
-public sealed record WorkflowTypeView(
-	string Type,
+// One state machine shared by every type slug in `Types` — types with an identical FSM are
+// grouped into a single block (feature=bug=chore on a work board is ONE block, not three
+// copies of the same statuses/transitions).
+public sealed record WorkflowGroupView(
+	IReadOnlyList<string> Types,
 	string Initial,
 	IReadOnlyList<WorkflowStatusView> Statuses,
 	IReadOnlyList<WorkflowTransitionView> Transitions);
 
-public sealed record WorkflowView(string Kind, IReadOnlyList<WorkflowTypeView> Types);
+public sealed record WorkflowView(string Kind, IReadOnlyList<WorkflowGroupView> Workflows);

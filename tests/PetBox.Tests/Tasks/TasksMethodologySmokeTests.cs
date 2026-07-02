@@ -25,7 +25,7 @@ namespace PetBox.Tests.Tasks;
 //     - on a `work` board a feature/bug WITHOUT specRef is rejected (spec-link invariant)
 //     - specRef on upsert creates the node + a `task_spec` relation atomically
 //     - setting a terminal status (done) requires the `tasks:approve` scope (approve-gate)
-//   tasks.workflow(projectKey, board) → { kind, types:[{ type, statuses, transitions, initial }] }
+//   tasks.workflow(projectKey, board) → { kind, workflows:[{ types:[...], initial, statuses, transitions }] }
 //   relations.create(projectKey, kind, fromNodeId, toNodeId)   kind ∈ task_spec|issue_task|idea_spec|blocks|nfr|dup
 //   relations.list(projectKey, nodeId, direction?)             direction ∈ from|to|both (default both)
 //   report.issue(title, detail) → lands on an intake-kind board, status `reported`
@@ -761,24 +761,45 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		Text(feature).Should().Contain("f\\u0027)");
 	}
 
-	// 27. tasks.workflow on a work board surfaces `chore` with the FULL feature/bug FSM
-	// (all seven statuses, Pending initial, Review→Done gated by requiresApproval).
+	// 27. tasks.workflow groups types by identical FSM: on a work board feature/bug/chore
+	// share one state machine, so the answer is ONE `workflows` block with types:[feature,
+	// bug,chore] (no triplicated FSM blob) — all seven statuses, Pending initial, Review→Done
+	// gated by requiresApproval.
 	[Fact]
-	public async Task Workflow_WorkBoard_SurfacesChoreFsm()
+	public async Task Workflow_WorkBoard_OneGroupedFsmBlock_ForFeatureBugChore()
 	{
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 		var wf = await Agent("tasks.workflow", new { projectKey = ProjectKey, board = "work" });
 		wf.IsError.Should().NotBe(true);
 
 		using var doc = JsonDocument.Parse(Text(wf));
-		var chore = doc.RootElement.GetProperty("types").EnumerateArray()
-			.Single(t => t.GetProperty("type").GetString() == "chore");
-		chore.GetProperty("initial").GetString().Should().Be("Pending");
-		chore.GetProperty("statuses").EnumerateArray().Select(s => s.GetProperty("slug").GetString())
+		var group = doc.RootElement.GetProperty("workflows").EnumerateArray()
+			.Should().ContainSingle("identical FSMs collapse to one block").Subject;
+		group.GetProperty("types").EnumerateArray().Select(t => t.GetString())
+			.Should().BeEquivalentTo(new[] { "feature", "bug", "chore" });
+		group.GetProperty("initial").GetString().Should().Be("Pending");
+		group.GetProperty("statuses").EnumerateArray().Select(s => s.GetProperty("slug").GetString())
 			.Should().BeEquivalentTo(new[] { "Pending", "InProgress", "Review", "Done", "Blocked", "Deferred", "Cancelled" });
-		var reviewDone = chore.GetProperty("transitions").EnumerateArray()
+		var reviewDone = group.GetProperty("transitions").EnumerateArray()
 			.Single(t => t.GetProperty("from").GetString() == "Review" && t.GetProperty("to").GetString() == "Done");
 		reviewDone.GetProperty("requiresApproval").GetBoolean().Should().BeTrue();
+	}
+
+	// 27b. a Simple board reports its real type vocabulary in the single grouped block —
+	// `simple` is the catalog placeholder, not a type tasks.upsert accepts.
+	[Fact]
+	public async Task Workflow_SimpleBoard_GroupCarriesTypeVocabulary()
+	{
+		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "adhoc" });
+		var wf = await Agent("tasks.workflow", new { projectKey = ProjectKey, board = "adhoc" });
+		wf.IsError.Should().NotBe(true);
+
+		using var doc = JsonDocument.Parse(Text(wf));
+		var group = doc.RootElement.GetProperty("workflows").EnumerateArray()
+			.Should().ContainSingle().Subject;
+		group.GetProperty("types").EnumerateArray().Select(t => t.GetString())
+			.Should().BeEquivalentTo(new[] { "task", "bug", "feature", "chore", "issue" });
+		group.GetProperty("initial").GetString().Should().Be("Todo");
 	}
 
 	// 28. specRef accepts the spec node's SLUG (resolved on the board's linked spec board,

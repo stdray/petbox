@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks.board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("Create a named task board in a project. `kind` sets the board role (simple|spec|ideas|intake|work; default simple) which drives the workflow — call tasks.workflow to see the valid types/statuses/transitions for a kind. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
+	[Description("CREATE a named task board in a project. `kind` sets the board role (simple|spec|ideas|intake|work; default simple) which drives the workflow — call tasks.workflow to see the valid types/statuses/transitions for a kind. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null, CancellationToken ct = default)
@@ -298,7 +298,8 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks.upsert", Title = "Upsert plan nodes", UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("""
-		Declarative temporal upsert of plan nodes. Requires tasks:write.
+		Declarative PATCH per node (omitted field = unchanged; tags: [] clears, omit leaves
+		as-is) — a temporal upsert of plan nodes. Requires tasks:write.
 
 		Each node has a FLAT `key` — a single slug [a-z][a-z0-9_-]{0,99} (no '/'; the old
 		l1/l2/l3 path is gone). Nesting is the `partOf` field: a parent slug (on this board)
@@ -369,7 +370,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks.workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(WorkflowView))]
-	[Description("Return the workflow for a board: its kind and the task types it hosts, each with statuses (slug, name, kind=open|terminalok|terminalcancel), the initial status, and transitions (from, to, requiresApproval, requiresReason). Use this to learn the legal statuses before tasks.upsert. Requires tasks:read.")]
+	[Description("Return the workflow for a board: its kind plus `workflows` — one block per DISTINCT state machine, each carrying `types` (every type slug sharing that FSM; e.g. feature|bug|chore on a work board are one block), the initial status, statuses (slug, name, kind=open|terminalok|terminalcancel) and transitions (from, to, requiresApproval, requiresReason). Use this to learn the legal types/statuses before tasks.upsert. Requires tasks:read.")]
 	public static async Task<WorkflowView> WorkflowAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)
@@ -380,12 +381,33 @@ public static class TasksTools
 		var kind = await tasks.ResolveKindAsync(projectKey, board, ct);
 		return new WorkflowView(
 			Kind: kind.ToString().ToLowerInvariant(),
-			Types: WorkflowCatalog.Types(kind).Select(w => new WorkflowTypeView(
-				Type: w.Type,
-				Initial: w.Initial,
-				Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
-				Transitions: w.Transitions.Select(t => new WorkflowTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason)).ToList())).ToList());
+			Workflows: GroupByFsm(kind).Select(g => new WorkflowGroupView(
+				Types: g.Types,
+				Initial: g.Wf.Initial,
+				Statuses: g.Wf.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
+				Transitions: g.Wf.Transitions.Select(t => new WorkflowTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason)).ToList())).ToList());
 	}
+
+	// Collapse a kind's workflows into blocks of types sharing one identical FSM (statuses +
+	// transitions, record equality — Initial is Statuses[0], so it's covered). The work board's
+	// feature/bug/chore trio collapses to one block; a Simple board reports its whole type
+	// vocabulary (type is a label there, not a workflow branch — the catalog's single entry
+	// carries the placeholder type "simple", not what tasks.upsert accepts).
+	static List<(List<string> Types, Workflow Wf)> GroupByFsm(BoardKind kind)
+	{
+		var groups = new List<(List<string> Types, Workflow Wf)>();
+		foreach (var w in WorkflowCatalog.Types(kind))
+		{
+			var types = kind == BoardKind.Simple ? WorkflowCatalog.SimpleTypes.ToList() : [w.Type];
+			var match = groups.FindIndex(g => SameFsm(g.Wf, w));
+			if (match < 0) groups.Add((types, w));
+			else groups[match].Types.AddRange(types.Where(t => !groups[match].Types.Contains(t, StringComparer.OrdinalIgnoreCase)));
+		}
+		return groups;
+	}
+
+	static bool SameFsm(Workflow a, Workflow b) =>
+		a.Statuses.SequenceEqual(b.Statuses) && a.Transitions.SequenceEqual(b.Transitions);
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 
