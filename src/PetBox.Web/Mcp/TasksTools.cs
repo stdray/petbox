@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Features;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
@@ -162,7 +163,11 @@ public static class TasksTools
 		roll-up — the cross-cutting view a single-parent tree can't give. The projection is a
 		view; part_of is untouched. Bodies are returned in FULL by default; pass `bodyLen` > 0
 		for a per-node snippet (first N chars + "…"), then fetch a full body via tasks.node_get
-		or a narrower `under`. Requires tasks:read.
+		or a narrower `under`. The response has a HARD OUTPUT BUDGET (~30k serialized chars):
+		when the node rows no longer fit they are prefix-cut in board order and flagged with
+		`truncated:true` + `omitted` (rows dropped) plus a top-level `hint` on how to narrow
+		(`under`, `status`, `bodyLen`, `groupBy`, or tasks.node_get for one full node). No
+		markers = the complete board. Requires tasks:read.
 		""")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -181,10 +186,22 @@ public static class TasksTools
 		var view = await tasks.GetAsync(projectKey, board, includeClosed, under, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct), status, ct);
 		// Snippet slicing is MCP-adapter-only: the service GetAsync still returns full bodies,
 		// which the Razor board renders — so this never starves the UI (spec read-snippet-on-demand).
-		return bodyLen <= 0
-			? (object)view
-			: view with { Nodes = view.Nodes.Select(n => n with { Body = ModuleMcp.SnippetBody(n.Body, bodyLen) ?? n.Body }).ToList() };
+		if (bodyLen > 0)
+			view = view with { Nodes = view.Nodes.Select(n => n with { Body = ModuleMcp.SnippetBody(n.Body, bodyLen) ?? n.Body }).ToList() };
+		// Response budget (MCP-adapter-only, like the snippet): measured on the wire form of
+		// the rows as they will be sent (post-slicing), prefix-cut, marked — never silent.
+		var (rows, omitted) = new ResponseBudget().Take(view.Nodes);
+		return omitted == 0
+			? view
+			: view with { Nodes = rows, Truncated = true, Omitted = omitted, Hint = GetBudgetHint };
 	}
+
+	// Surfaced on PlanBoardView.Hint when the rows were cut by the response budget.
+	const string GetBudgetHint =
+		"Output budget exceeded: node rows were truncated (see truncated/omitted). Narrow the " +
+		"query: `under` (one part_of subtree), `status` (only the statuses you need), " +
+		"`bodyLen` (snippet bodies), `groupBy` (keys-only tag projection), or tasks.node_get " +
+		"for one node's full body.";
 
 	[McpServerTool(Name = "tasks.node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
 	[Description("""

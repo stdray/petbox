@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
+using PetBox.Core.Contract;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Core.Observability;
@@ -132,20 +133,6 @@ public sealed partial class TasksService : ITasksService
 
 	static readonly IReadOnlyDictionary<string, int> EmptyCounts = new Dictionary<string, int>();
 
-	// Hard response-wide output budget for the index rows (spec surface-economy /
-	// bounded-result-sets): the quartet index must stay readable inside an agent's context
-	// window no matter how large the boards grow. Costs are measured as serialized JSON
-	// chars per header row (camelCase, nulls omitted — mirrors the MCP wire shape). The
-	// status histograms are always complete; only rows are subject to the budget.
-	const int IndexCharBudget = 30_000;
-
-	// Approximates the MCP tool-result serialization (McpJsonUtilities defaults:
-	// camelCase + null-ignore) so the budget tracks what the caller actually receives.
-	static readonly System.Text.Json.JsonSerializerOptions RowCostJson = new(System.Text.Json.JsonSerializerDefaults.Web)
-	{
-		DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
-	};
-
 	// Surfaced on MethodologyView.Hint when any board's rows were cut by the budget.
 	const string TruncationHint =
 		"Output budget exceeded: node rows were truncated (see truncated/omitted per board); " +
@@ -165,7 +152,9 @@ public sealed partial class TasksService : ITasksService
 		var boards = await _boards.ListAsync(projectKey, ct);
 		var result = new List<MethodologyBoard>(Quartet.Length);
 		var all = true;
-		var spent = 0;
+		// One response-wide budget across the four boards, spent in pipeline order; only the
+		// node rows are subject to it (the status histograms are always complete).
+		var budget = new ResponseBudget();
 		var anyTruncated = false;
 		foreach (var kind in Quartet)
 		{
@@ -180,16 +169,7 @@ public sealed partial class TasksService : ITasksService
 				.ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
 			// Prefix cut: rows keep the board's order (priority then key); the first row that
 			// blows the budget stops the board and everything after it counts as omitted.
-			var headers = new List<PlanNodeHeader>(view.Nodes.Count);
-			var omitted = 0;
-			for (var i = 0; i < view.Nodes.Count; i++)
-			{
-				var h = ToHeader(view.Nodes[i], bodyLen);
-				var cost = System.Text.Json.JsonSerializer.Serialize(h, RowCostJson).Length;
-				if (spent + cost > IndexCharBudget) { omitted = view.Nodes.Count - i; break; }
-				spent += cost;
-				headers.Add(h);
-			}
+			var (headers, omitted) = budget.Take(view.Nodes.Select(n => ToHeader(n, bodyLen)).ToList());
 			anyTruncated |= omitted > 0;
 			result.Add(omitted > 0
 				? new MethodologyBoard(kindName, b.Name, counts, headers, Truncated: true, Omitted: omitted)
