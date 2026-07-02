@@ -200,7 +200,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 				new { key = "mfa", partOf = "login", status = "defined", title = "MFA", body = "second factor", ideaRef = ir }),
 		})).IsError.Should().NotBe(true);
 
-		var tree = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
+		var tree = await Agent("tasks.search", new { projectKey = ProjectKey, board = "spec" });
 		tree.IsError.Should().NotBe(true);
 		// mfa is two part_of edges below auth — its parent is login.
 		Text(tree).Should().Contain("mfa");
@@ -335,7 +335,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		});
 		IsErr(done).Should().BeFalse();
 
-		var intake = await Agent("tasks.get", new { projectKey = ProjectKey, board = "intake", includeClosed = true });
+		var intake = await Agent("tasks.search", new { projectKey = ProjectKey, board = "intake", includeClosed = true });
 		Text(intake).Should().Contain("done");
 	}
 
@@ -434,7 +434,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		var done = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "a", type = "feature", status = "Done", version = 1, title = "A", body = "x", specRef = specId }) });
 		IsErr(done).Should().BeFalse();
 
-		var get = await Agent("tasks.get", new { projectKey = ProjectKey, board = "work" });
+		var get = await Agent("tasks.search", new { projectKey = ProjectKey, board = "work" });
 		StatusOf(get, "b").Should().Be("InProgress", "the blocked task auto-unblocks when its only blocker is Done");
 	}
 
@@ -474,22 +474,22 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 			new { key = "auth", status = "defined", title = "Auth", body = "x", ideaRef = ir },
 			new { key = "login", partOf = "auth", status = "defined", title = "Login", body = "x", ideaRef = ir })
 		});
-		var loginId = NodeId(await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" }), "login");
+		var loginId = NodeId(await Agent("tasks.search", new { projectKey = ProjectKey, board = "spec" }), "login");
 
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", specRef = loginId }) });
 
-		var s1 = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
+		var s1 = await Agent("tasks.search", new { projectKey = ProjectKey, board = "spec" });
 		FieldOf(s1, "login", "delivery").Should().Be("in_progress");
 		FieldOf(s1, "auth", "delivery").Should().Be("in_progress", "parent aggregates the part_of subtree");
 
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Done", version = 1, title = "F", body = "x", specRef = loginId }) });
-		var s2 = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
+		var s2 = await Agent("tasks.search", new { projectKey = ProjectKey, board = "spec" });
 		FieldOf(s2, "login", "delivery").Should().Be("done");
 		FieldOf(s2, "auth", "delivery").Should().Be("done");
 
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "bug1", type = "bug", status = "Pending", title = "Bug", body = "x", specRef = loginId }) });
-		var s3 = await Agent("tasks.get", new { projectKey = ProjectKey, board = "spec" });
+		var s3 = await Agent("tasks.search", new { projectKey = ProjectKey, board = "spec" });
 		FieldOf(s3, "login", "delivery").Should().Be("done_with_defects", "all features Done but an open bug remains");
 		FieldOf(s3, "auth", "delivery").Should().Be("done_with_defects");
 	}
@@ -521,7 +521,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		// send ONLY path + version + status
 		(await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "pu", nodes = Nodes(new { key = "a", version = 1, status = "InProgress" }) })).IsError.Should().NotBe(true);
 
-		var get = await Agent("tasks.get", new { projectKey = ProjectKey, board = "pu" });
+		var get = await Agent("tasks.search", new { projectKey = ProjectKey, board = "pu" });
 		StatusOf(get, "a").Should().Be("InProgress");
 		FieldOf(get, "a", "title").Should().Be("Alpha", "omitted title inherits the prior value");
 		FieldOf(get, "a", "body").Should().Be("BODY", "omitted body inherits the prior value");
@@ -560,7 +560,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		Text(r).Should().Contain("not a spec board");
 	}
 
-	// 18. tasks.get hides terminal nodes by default; includeClosed=true returns them.
+	// 18. tasks.search hides terminal nodes by default; includeClosed=true returns them.
 	[Fact]
 	public async Task Get_HidesClosedByDefault_IncludeClosedReturns()
 	{
@@ -574,15 +574,15 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 			new { key = "done1", status = "Done", title = "Done", body = "x" })
 		});
 
-		var def = await Agent("tasks.get", new { projectKey = ProjectKey, board = "hc" });
+		var def = await Agent("tasks.search", new { projectKey = ProjectKey, board = "hc" });
 		Text(def).Should().Contain("open1");
 		Text(def).Should().NotContain("done1");
 
-		var all = await Agent("tasks.get", new { projectKey = ProjectKey, board = "hc", includeClosed = true });
+		var all = await Agent("tasks.search", new { projectKey = ProjectKey, board = "hc", includeClosed = true });
 		Text(all).Should().Contain("done1");
 	}
 
-	// 19. tasks.get surfaces the board kind and the task->spec link inline (resolved to the spec node).
+	// 19. tasks.search surfaces the board kind and the task->spec link inline (resolved to the spec node).
 	[Fact]
 	public async Task Get_SurfacesKindAndSpecLink()
 	{
@@ -594,7 +594,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		await Agent("tasks.board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "do-login", type = "feature", status = "Review", title = "Build login", body = "x", specRef = specId }) });
 
-		var get = await Agent("tasks.get", new { projectKey = ProjectKey, board = "work" });
+		var get = await Agent("tasks.search", new { projectKey = ProjectKey, board = "work" });
 		Text(get).Should().Contain("\"kind\":\"work\"");
 		Text(get).Should().Contain(specId);             // the linked spec node id is surfaced
 		Text(get).Should().Contain("\"board\":\"spec\""); // resolved to the spec board it lives on
@@ -635,14 +635,14 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		IsErr(ib).Should().BeFalse(Text(ib));
 
 		// Same key, different boards → independent rows, no collision.
-		FieldOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "a" }), "phase-1", "title").Should().Be("A node");
-		FieldOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "b" }), "phase-1", "title").Should().Be("B node");
+		FieldOf(await Agent("tasks.search", new { projectKey = ProjectKey, board = "a" }), "phase-1", "title").Should().Be("A node");
+		FieldOf(await Agent("tasks.search", new { projectKey = ProjectKey, board = "b" }), "phase-1", "title").Should().Be("B node");
 
 		// Editing A's node (baseline version 1 within board a's cursor) leaves B untouched.
 		var edit = await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "a", nodes = Nodes(new { key = "phase-1", version = 1, status = "InProgress", title = "A node", body = "x" }) });
 		IsErr(edit).Should().BeFalse(Text(edit));
-		StatusOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "a" }), "phase-1").Should().Be("InProgress");
-		StatusOf(await Agent("tasks.get", new { projectKey = ProjectKey, board = "b" }), "phase-1").Should().Be("Todo");
+		StatusOf(await Agent("tasks.search", new { projectKey = ProjectKey, board = "a" }), "phase-1").Should().Be("InProgress");
+		StatusOf(await Agent("tasks.search", new { projectKey = ProjectKey, board = "b" }), "phase-1").Should().Be("Todo");
 	}
 
 	// 22. spec-write-needs-accepted-idea: a spec node without ideaRef is rejected.
@@ -836,7 +836,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		Text(rels).Should().Contain(taskId);
 
 		// and the work board surfaces the link resolved to the spec node (same as the NodeId form)
-		var get = await Agent("tasks.get", new { projectKey = ProjectKey, board = "work" });
+		var get = await Agent("tasks.search", new { projectKey = ProjectKey, board = "work" });
 		Text(get).Should().Contain(specId);
 	}
 

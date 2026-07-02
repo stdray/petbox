@@ -250,28 +250,50 @@ public sealed record BoardClosedResult(bool Closed);
 
 public sealed record BoardReopenedResult(bool Reopened);
 
-// tasks.search wire: a board-aware compact projection of an enriched node + retriever provenance.
+// tasks.search wire row: a board-aware projection of an enriched node (rows may span
+// boards, so each carries `Board`). Tree navigation rides ParentNodeId/ParentSlug/Depth
+// (the part_of projection); null fields are omitted on the wire.
 public sealed record TaskSearchNodeView(
 	string Key,
 	string NodeId,
 	string Board,
+	string? ParentNodeId,
 	string? ParentSlug,
 	int Depth,
 	string Status,
 	string Type,
 	string Title,
-	string? Body,
+	string Body,
+	string? CommitRef,
 	long Priority,
 	string? Delivery,
 	IReadOnlyList<LinkDto>? Spec,
 	IReadOnlyList<LinkDto>? BlockedBy,
 	IReadOnlyList<LinkDto>? LinkedTasks,
 	IReadOnlyList<LinkDto>? Supersedes,
+	IReadOnlyList<string>? RenamedFrom,
 	IReadOnlyList<string> Tags,
 	long Version,
 	string? Url);
 
-public sealed record TaskSearchResultView(IReadOnlyList<TaskSearchNodeView> Nodes, RetrieverInfo Retrievers);
+// The tasks.search result — ONE shape for every mode (a single OutputSchemaType):
+//   listing/query  → `Nodes` (final order), plus board context (Board/Kind/SpecBoard/
+//                    CurrentVersion) when the read was board-scoped;
+//   query          → `Retrievers` provenance (null in listing mode);
+//   groupBy        → `GroupBy`+`Groups` (the tag projection; `Nodes` empty);
+//   any            → the response-budget markers Truncated/Omitted/Hint (null = complete).
+public sealed record TaskSearchResultView(
+	IReadOnlyList<TaskSearchNodeView> Nodes,
+	string? Board = null,
+	string? Kind = null,
+	string? SpecBoard = null,
+	long? CurrentVersion = null,
+	IReadOnlyList<string>? GroupBy = null,
+	IReadOnlyList<TagGroup>? Groups = null,
+	RetrieverInfo? Retrievers = null,
+	bool? Truncated = null,
+	int? Omitted = null,
+	string? Hint = null);
 
 // tasks.workflow wire shape (board kind + statuses/transitions catalog, grouped by FSM).
 public sealed record WorkflowStatusView(string Slug, string Name, string Kind);

@@ -59,6 +59,15 @@ public sealed record PlanNodeInput
 	public bool Deleted { get; init; }
 }
 
+// The `sort` argument of tasks.search: `by` names the axis (priority|created|updated|title|
+// relevance — relevance only with a query), `desc` flips the direction (ignored for
+// relevance, whose fused order is already most-relevant-first).
+public sealed record SortInput
+{
+	public string? By { get; init; }
+	public bool Desc { get; init; }
+}
+
 // One transcript message as submitted to session.append — the same {role, content} shape the
 // snapshot stores and the REST ndjson push sends; the server assigns the ordinal.
 public sealed record SessionMessageDto

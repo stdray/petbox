@@ -19,6 +19,12 @@ YOUR call (added/updated/removed cover only your nodes); to catch up on everyone
 call `tasks.delta` with `sinceVersion` = a previous `currentVersion`. `nodes`/`entries` are
 TYPED arrays — pass real JSON arrays, not stringified JSON.
 
+**`tasks.search` is THE read verb** — two modes: without `q` it's a deterministic LISTING
+(pass `board` for one board, omit for the whole project; default order priority-then-key),
+with `q` it's hybrid relevance search (FTS ⊕ vectors). Filters work in both modes:
+`status[]`, `keys[]` (slug|NodeId), `under` (subtree), `includeClosed`; `sort{by,desc}`
+reorders; `bodyLen` snippets bodies. One node in full: `tasks.node_get`.
+
 **Memory entries are typed** (`user` | `feedback` | `project` | `reference`) — `type` is
 required on `memory.upsert`; `tags` is free CSV. `memory.recall` is THE search verb
 (hybrid FTS ⊕ vectors; use `bodyLen` for snippets).
@@ -30,7 +36,7 @@ required on `memory.upsert`; `tags` is free CSV. `memory.recall` is THE search v
   code/git already records, transient state, secrets, or actionable work (that's a task).
 
 **Tools:**
-- `tasks.board_list / board_create / board_delete / get / upsert / delta / search / workflow`
+- `tasks.board_list / board_create / board_delete / search / node_get / upsert / delta / workflow`
 - `memory.store_list / store_create / store_delete / list / recall / remember / get / upsert / delta`
 - `session.upsert / get / list` (upsert = optimistic-concurrency replace; pass the current version)
 - Logs: `log.query` (KQL), `log.create / list / delete`

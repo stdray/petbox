@@ -33,10 +33,9 @@ public sealed partial class TasksService : ITasksService
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
 
-	// MRL truncation dim for the vector index (must match TasksVectorizationJob) and the fusion
-	// candidate depth; board/type filtering is applied by the index, so SearchK bounds the result.
+	// MRL truncation dim for the vector index (must match TasksVectorizationJob). The fusion
+	// candidate depth is per-request: max(3×limit, 50) — see SearchNodesAsync.
 	const int VectorDim = 1024;
-	const int SearchK = 50;
 
 	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null)
 	{
@@ -137,7 +136,7 @@ public sealed partial class TasksService : ITasksService
 	const string TruncationHint =
 		"Output budget exceeded: node rows were truncated (see truncated/omitted per board); " +
 		"the status histograms (counts) are complete. Narrow the query with includeBoards " +
-		"(one board at a time), keep bodyLen:0, or drill into a subtree with tasks.get " +
+		"(one board at a time), keep bodyLen:0, or drill into a subtree with tasks.search " +
 		"(board + under) for details.";
 
 	// The quartet as one COMPACT INDEX. By default each node is a header row (no body);
@@ -771,33 +770,118 @@ public sealed partial class TasksService : ITasksService
 		return new UpsertOutcome(r, WorkflowCatalog.ParseKind(meta.Kind));
 	}
 
-	// ---- read: hybrid search ----
+	// ---- read: unified search (list = search without a query; uniform-entity-verbs v2) ----
 
-	public async Task<TaskSearchResult> SearchAsync(string projectKey, string query, string? board = null, bool? lexical = null, bool? semantic = null, string? urlPrefix = null, CancellationToken ct = default)
+	// The generic uniform-read seam (implemented EXPLICITLY — the contract is a shared shape,
+	// not a DI dispatch point): the plain envelope of the rich SearchNodesAsync. Budget
+	// markers stay null here — the response budget is measured on the WIRE rows, so it
+	// belongs to the adapter that shapes them.
+	async Task<SearchEnvelope<TaskSearchHit>> ISearchService<TaskSearchHit, TaskNodeFilter, TaskSortBy>.SearchAsync(
+		string projectKey, SearchRequest<TaskNodeFilter, TaskSortBy> request, CancellationToken ct)
 	{
-		var boardFilter = string.IsNullOrWhiteSpace(board) ? null : board;
+		var r = await SearchNodesAsync(projectKey, request, urlPrefix: null, ct: ct);
+		return new SearchEnvelope<TaskSearchHit>(r.Hits, Retrievers: r.Retrievers);
+	}
+
+	public async Task<TaskSearchResult> SearchNodesAsync(string projectKey, SearchRequest<TaskNodeFilter, TaskSortBy> request, string? urlPrefix = null, CancellationToken ct = default)
+	{
+		var req = request;
+		var f = req.Filter ?? new TaskNodeFilter();
+		var query = string.IsNullOrWhiteSpace(req.Query) ? null : req.Query.Trim();
+		if (query is null && req.Sort is { By: TaskSortBy.Relevance })
+			throw new ArgumentException("sort by relevance needs a query (q) — without one the read is a deterministic listing (default order: priority then key)");
+
+		var boardFilter = string.IsNullOrWhiteSpace(f.Board) ? null : f.Board;
 		if (boardFilter is not null) await EnsureBoard(projectKey, boardFilter, ct);
+
+		// The boards in scope (one, or the whole project) — kinds drive status validation,
+		// metas carry the board context of a board-scoped read.
+		var boardsMeta = await _boards.ListAsync(projectKey, ct);
+		if (boardFilter is not null)
+			boardsMeta = boardsMeta.Where(b => string.Equals(b.Name, boardFilter, StringComparison.Ordinal)).ToList();
+
+		// Predicates shared by both modes. keys = explicit addressing (slug|NodeId mixed,
+		// resolved like tasks.node_get — a miss/ambiguity is a clear error, never an empty
+		// answer); under = a part_of subtree root (slug resolves cross-board when no board).
+		HashSet<string>? keyIds = null;
+		if (f.Keys is { Count: > 0 })
+		{
+			keyIds = new HashSet<string>(StringComparer.Ordinal);
+			foreach (var k in f.Keys)
+				keyIds.Add(await ResolveNodeRefAsync(projectKey, k, boardFilter, ct));
+		}
+		var underId = string.IsNullOrWhiteSpace(f.Under) ? null : await ResolveNodeRefAsync(projectKey, f.Under, boardFilter, ct);
+		var parentOf = underId is null ? null : await ParentMapAsync(projectKey, ct);
+		var statusFilter = ResolveStatusFilterAcross(f.Status, boardsMeta.Select(b => WorkflowCatalog.ParseKind(b.Kind)));
+
+		List<TaskSearchHit> hits;
+		SearchRetrievers? retrievers = null;
+		long? currentVersion = null;
+		if (query is null)
+		{
+			// LISTING: per-board enriched views. A status filter or explicit keys are an
+			// EXPLICIT ask — widen the pool to terminal nodes first (mirrors GetAsync's own
+			// status handling), then the predicates below keep only what was asked for.
+			var widen = f.IncludeClosed || statusFilter is not null || keyIds is not null;
+			hits = new List<TaskSearchHit>();
+			foreach (var b in boardsMeta)
+			{
+				var view = await GetAsync(projectKey, b.Name, includeClosed: widen, urlPrefix: urlPrefix, ct: ct);
+				if (boardFilter is not null) currentVersion = view.CurrentVersion;
+				hits.AddRange(view.Nodes.Select(n => new TaskSearchHit(b.Name, n)));
+			}
+		}
+		else
+		{
+			// QUERY: hybrid selection over the OPEN set (terminal nodes are not indexed).
+			// The fused ranking supplies a bounded CANDIDATE POOL of max(3×limit, 50) — 3×
+			// leaves the post-fusion predicates (board is index-level; under/status/keys are
+			// not) room to drop candidates and still fill `limit`, and the 50 floor keeps
+			// recall sane for small limits; an unbounded ask (limit 0) gets the floor.
+			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
+				Math.Max(req.Limit * 3, 50), urlPrefix, ct);
+		}
+
+		if (underId is not null) hits = hits.Where(h => InSubtree(h.Node.NodeId, underId, parentOf!)).ToList();
+		if (statusFilter is not null) hits = hits.Where(h => statusFilter.Contains(h.Node.Status)).ToList();
+		if (keyIds is not null) hits = hits.Where(h => keyIds.Contains(h.Node.NodeId)).ToList();
+
+		hits = SortHits(projectKey, hits, req.Sort, hasQuery: query is not null);
+		if (req.Limit > 0 && hits.Count > req.Limit) hits = hits.Take(req.Limit).ToList();
+		if (req.BodyLen > 0)
+			hits = hits.Select(h => h with { Node = h.Node with { Body = SnippetBody(h.Node.Body, req.BodyLen) } }).ToList();
+
+		var meta = boardFilter is null || boardsMeta.Count == 0 ? null : boardsMeta[0];
+		return new TaskSearchResult(
+			hits,
+			Board: meta?.Name,
+			Kind: meta is null ? null : WorkflowCatalog.ParseKind(meta.Kind).ToString().ToLowerInvariant(),
+			SpecBoard: meta?.SpecBoard,
+			CurrentVersion: currentVersion,
+			Retrievers: retrievers);
+	}
+
+	// Hybrid candidate pool: Class-A lexical floor ⊕ Class-B vectors, RRF-fused with
+	// provenance by the facade. Entity address is (Scope=project, Type=board, Id=slug); the
+	// board filter is applied at the index level (SearchFilter(Type=board)). No embedder →
+	// the vector index is simply absent (semantic=false, not degraded); a query-time embed
+	// failure is caught by the facade and flagged degraded.
+	async Task<(List<TaskSearchHit> Hits, SearchRetrievers Retrievers)> HybridCandidatesAsync(
+		string projectKey, string query, string? boardFilter, int k, string? urlPrefix, CancellationToken ct)
+	{
 		var ctx = _boards.GetContext(projectKey);
 		await EnsureLexicalBackfillAsync(ctx, projectKey, ct);
 
-		// Hybrid search behind the contract: Class-A lexical floor ⊕ Class-B vectors, RRF-fused with
-		// provenance by the facade. Entity address is (Scope=project, Type=board, Id=slug); the board
-		// filter is a SearchFilter(Type=board). Toggles preserved: no embedder / semantic:false omits
-		// the vector index (semantic=false, not degraded); a query-time embed failure is caught by
-		// the facade and flagged degraded.
 		Func<DataConnection> connect = () => _boards.NewConnection(projectKey);
-		var indexes = new List<ISearchIndex>();
-		if (lexical != false)
-			indexes.Add(new SqliteFtsIndex(connect));
-		if (semantic != false && _llm is not null)
+		var indexes = new List<ISearchIndex> { new SqliteFtsIndex(connect) };
+		if (_llm is not null)
 			indexes.Add(new VectorSearchIndex(connect, new LlmClientEmbedder(_llm, projectKey), VectorDim));
 
-		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(boardFilter), SearchK, ct);
-		if (resp.Hits.Count == 0) return new TaskSearchResult([], resp.Retrievers);
+		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(boardFilter), k, ct);
+		if (resp.Hits.Count == 0) return ([], resp.Retrievers);
 
-		// Hits carry Type=board, Id=slug — group by board (no need to look up each id's board),
-		// build each owning board's enriched view once, pick the matched nodes by slug, order by
-		// fused relevance.
+		// Hits carry Type=board, Id=slug — group by board, build each owning board's enriched
+		// view once, pick the matched nodes by slug, order by fused relevance.
 		var order = new Dictionary<(string Board, string Slug), int>();
 		for (var i = 0; i < resp.Hits.Count; i++)
 			order[(resp.Hits[i].Type, resp.Hits[i].Id)] = i;
@@ -810,9 +894,81 @@ public sealed partial class TasksService : ITasksService
 			foreach (var n in view.Nodes.Where(n => slugs.Contains(n.Key)))
 				hits.Add(new TaskSearchHit(g.Key, n));
 		}
-		var ordered = hits.OrderBy(h => order.GetValueOrDefault((h.Board, h.Node.Key), int.MaxValue)).ToList();
-		return new TaskSearchResult(ordered, resp.Retrievers);
+		return (hits.OrderBy(h => order.GetValueOrDefault((h.Board, h.Node.Key), int.MaxValue)).ToList(), resp.Retrievers);
 	}
+
+	// Final ordering of the selected set. No sort: query mode keeps the fused relevance
+	// order, a listing defaults to priority-then-key (the board's canonical order). An
+	// explicit sort reorders WITHIN the selected set (with a query the selection stays
+	// relevance-driven — only the presentation order changes); Relevance = keep the fused
+	// order (`desc` is meaningless there and ignored). Created/Updated read the active
+	// revision's temporal columns; ties break on key then board for determinism.
+	List<TaskSearchHit> SortHits(string projectKey, List<TaskSearchHit> hits, (TaskSortBy By, bool Desc)? sort, bool hasQuery)
+	{
+		if (sort is null)
+			return hasQuery ? hits : Ordered(hits, h => h.Node.Priority, desc: false);
+		var (by, desc) = sort.Value;
+		switch (by)
+		{
+			case TaskSortBy.Relevance:
+				return hits; // guarded to query mode; the fused order IS relevance
+			case TaskSortBy.Priority:
+				return Ordered(hits, h => h.Node.Priority, desc);
+			case TaskSortBy.Title:
+				return Ordered(hits, h => h.Node.Title, desc, StringComparer.OrdinalIgnoreCase);
+			case TaskSortBy.Created:
+			case TaskSortBy.Updated:
+				var times = NodeTimes(projectKey);
+				return by == TaskSortBy.Created
+					? Ordered(hits, h => times.GetValueOrDefault(h.Node.NodeId).Created, desc)
+					: Ordered(hits, h => times.GetValueOrDefault(h.Node.NodeId).Updated, desc);
+			default:
+				throw new ArgumentException($"unknown sort '{by}'");
+		}
+	}
+
+	static List<TaskSearchHit> Ordered<TKey>(List<TaskSearchHit> hits, Func<TaskSearchHit, TKey> key, bool desc, IComparer<TKey>? cmp = null) =>
+		(desc ? hits.OrderByDescending(key, cmp) : hits.OrderBy(key, cmp))
+			.ThenBy(h => h.Node.Key, StringComparer.Ordinal)
+			.ThenBy(h => h.Board, StringComparer.Ordinal)
+			.ToList();
+
+	// NodeId -> (Created, Updated) of the ACTIVE revisions, project-wide — the sort axes
+	// the view rows don't carry (loaded only when a created/updated sort asks for it).
+	Dictionary<string, (DateTime Created, DateTime Updated)> NodeTimes(string projectKey)
+	{
+		var ctx = _boards.GetContext(projectKey);
+		return ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
+			.Where(n => n.NodeId.Length > 0)
+			.ToDictionary(n => n.NodeId, n => (n.Created, n.Updated), StringComparer.Ordinal);
+	}
+
+	// Status-filter validation for a read that may span boards of several kinds: a slug is
+	// valid if ANY board kind in scope knows it (a single-board read therefore validates
+	// against exactly that kind, like GetAsync). Unknown slugs are rejected — they would
+	// otherwise silently return nothing.
+	static HashSet<string>? ResolveStatusFilterAcross(IReadOnlyList<string>? status, IEnumerable<BoardKind> kinds)
+	{
+		if (status is null || status.Count == 0) return null;
+		var known = kinds.Distinct()
+			.SelectMany(WorkflowCatalog.Types).SelectMany(w => w.Statuses).Select(s => s.Slug)
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var raw in status)
+		{
+			var s = (raw ?? "").Trim();
+			if (s.Length == 0) continue;
+			if (!known.Contains(s))
+				throw new ArgumentException($"status '{raw}' is not a status of any board in scope (valid: {string.Join("|", known.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))})");
+			set.Add(s);
+		}
+		return set.Count == 0 ? null : set;
+	}
+
+	// READ snippet: bodyLen <= 0 -> the full body; otherwise the first N chars with "…"
+	// appended when cut (mirrors ModuleMcp.SnippetBody — read returns content by default).
+	static string SnippetBody(string body, int bodyLen) =>
+		bodyLen <= 0 || body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
 
 	// Read-merge a patch against the prior active row: a field omitted from the patch
 	// (null) inherits the prior value; a non-null value sets it ("" clears it).

@@ -156,7 +156,7 @@ public sealed class QuartetTests : IDisposable
 
 		// The response tells the caller how to narrow.
 		idx.Hint.Should().NotBeNull();
-		idx.Hint.Should().Contain("includeBoards").And.Contain("tasks.get");
+		idx.Hint.Should().Contain("includeBoards").And.Contain("tasks.search");
 
 		// bodyLen keeps working under the budget: every INCLUDED row carries its slice
 		// ("…"-terminated), and fatter rows just mean fewer of them fit.
@@ -265,10 +265,11 @@ public sealed class QuartetTests : IDisposable
 		sliced.Should().EndWith("…");
 	}
 
-	// spec read-snippet-on-demand: tasks.get returns full bodies by default (the Razor board
-	// needs them) but snippets each node body when bodyLen > 0 — the slice is MCP-adapter-only.
+	// spec read-snippet-on-demand: tasks.search returns full bodies by default (the Razor
+	// board reads the service GetAsync, always full) but snippets each row body when
+	// bodyLen > 0.
 	[Fact]
-	public async Task TasksGet_FullBodyByDefault_SnippetsWithBodyLen()
+	public async Task TasksSearch_FullBodyByDefault_SnippetsWithBodyLen()
 	{
 		var http = Http("tasks:read,tasks:write");
 		var big = new string('z', 500);
@@ -277,12 +278,12 @@ public sealed class QuartetTests : IDisposable
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "g", nodes);
 
 		// Default: the full body.
-		var full = ((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g"))
+		var full = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g"))
 			.Nodes.Single().Body;
 		full.Length.Should().Be(500);
 
 		// bodyLen > 0: first N chars + "…".
-		var snip = ((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", bodyLen: 100))
+		var snip = (await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", bodyLen: 100))
 			.Nodes.Single().Body;
 		snip.Length.Should().Be(101);
 		snip.Should().EndWith("…");

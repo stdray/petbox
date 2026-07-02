@@ -11,7 +11,7 @@ namespace PetBox.Tasks.Services;
 // validation lives here): reads via ctx.GetTable<T>() and writes the comment via
 // TemporalStore.UpsertAsync — the same per-project file (IScopedDbFactory<TasksDb>) as
 // plan_nodes, partitioned by Board. Tags are managed like TagStore.SetAsync, but OPEN
-// (no vocabulary). Comments never touch ITasksService, so they stay out of tasks.get.
+// (no vocabulary). Comments never touch ITasksService, so they stay out of tasks.search.
 public sealed class CommentService : ICommentService
 {
 	readonly IScopedDbFactory<TasksDb> _factory;

@@ -72,6 +72,10 @@ public sealed class TasksHybridSearchTests : IDisposable
 	static NodePatch Node(string key, string title, string body) =>
 		new() { Key = key, Version = 0, Title = title, Body = body };
 
+	// Query-mode request for the unified read verb (list = search without a query).
+	static PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy> Query(string q, string? board = null) =>
+		new() { Query = q, Filter = new TaskNodeFilter(board) };
+
 	[Fact]
 	public async Task Hybrid_FusesLexicalAndSemanticUnion_AndReportsBothRan()
 	{
@@ -86,11 +90,11 @@ public sealed class TasksHybridSearchTests : IDisposable
 		]);
 		await DrainVectors(new FakeLlmClient(), "b"); // materialize Class-B vectors for the semantic leg
 
-		var res = await tasks.SearchAsync(Proj, "alpha");
+		var res = await tasks.SearchNodesAsync(Proj, Query("alpha"));
 
-		res.Retrievers.Lexical.Should().BeTrue();
-		res.Retrievers.Semantic.Should().BeTrue();
-		res.Retrievers.Degraded.Should().BeFalse();
+		res.Retrievers!.Value.Lexical.Should().BeTrue();
+		res.Retrievers!.Value.Semantic.Should().BeTrue();
+		res.Retrievers!.Value.Degraded.Should().BeFalse();
 		res.Hits.Select(h => h.Node.Key).Should().BeEquivalentTo(["alpha", "beta"]);
 	}
 
@@ -101,12 +105,12 @@ public sealed class TasksHybridSearchTests : IDisposable
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("alpha", "alpha note", "alpha keyword")]);
 
-		var res = await tasks.SearchAsync(Proj, "alpha");
+		var res = await tasks.SearchNodesAsync(Proj, Query("alpha"));
 
-		res.Retrievers.Lexical.Should().BeTrue();
-		res.Retrievers.Semantic.Should().BeFalse();
+		res.Retrievers!.Value.Lexical.Should().BeTrue();
+		res.Retrievers!.Value.Semantic.Should().BeFalse();
 		// _llm is null → semantic was never attempted, so this is not "degraded".
-		res.Retrievers.Degraded.Should().BeFalse();
+		res.Retrievers!.Value.Degraded.Should().BeFalse();
 		res.Hits.Select(h => h.Node.Key).Should().Equal("alpha");
 	}
 
@@ -119,11 +123,11 @@ public sealed class TasksHybridSearchTests : IDisposable
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("alpha", "alpha note", "alpha keyword")]);
 
-		var res = await tasks.SearchAsync(Proj, "alpha");
+		var res = await tasks.SearchNodesAsync(Proj, Query("alpha"));
 
-		res.Retrievers.Lexical.Should().BeTrue();
-		res.Retrievers.Semantic.Should().BeFalse();
-		res.Retrievers.Degraded.Should().BeTrue();
+		res.Retrievers!.Value.Lexical.Should().BeTrue();
+		res.Retrievers!.Value.Semantic.Should().BeFalse();
+		res.Retrievers!.Value.Degraded.Should().BeTrue();
 		res.Hits.Select(h => h.Node.Key).Should().Equal("alpha");
 	}
 
@@ -144,11 +148,11 @@ public sealed class TasksHybridSearchTests : IDisposable
 		var ctx = _store.GetContext(Proj);
 		ctx.Execute("UPDATE search_vec SET Model = 'other-model' WHERE Type = 'b' AND Id = 'bad'");
 
-		// Lexical off so only the semantic leg drives the result set.
-		var res = await tasks.SearchAsync(Proj, "anything", board: null, lexical: false, semantic: true);
+		// The query token matches nothing lexically, so only the semantic leg contributes hits
+		// (the per-retriever toggles are gone from the unified verb — both always run).
+		var res = await tasks.SearchNodesAsync(Proj, Query("anything"));
 
-		res.Retrievers.Lexical.Should().BeFalse();
-		res.Retrievers.Semantic.Should().BeTrue();
+		res.Retrievers!.Value.Semantic.Should().BeTrue();
 		res.Hits.Select(h => h.Node.Key).Should().Equal("good"); // "bad" guarded out
 	}
 
@@ -166,9 +170,9 @@ public sealed class TasksHybridSearchTests : IDisposable
 			Node("en", "english note", "deploy the server"),
 		]);
 
-		var res = await tasks.SearchAsync(Proj, "сервер");
+		var res = await tasks.SearchNodesAsync(Proj, Query("сервер"));
 
-		res.Retrievers.Lexical.Should().BeTrue();
+		res.Retrievers!.Value.Lexical.Should().BeTrue();
 		res.Hits.Select(h => h.Node.Key).Should().Equal("ru"); // only the Cyrillic doc matches "сервер*"
 	}
 
@@ -185,14 +189,16 @@ public sealed class TasksHybridSearchTests : IDisposable
 		await DrainVectors(new FakeLlmClient(), "b");
 
 		// Project-wide: both boards' "gizmo" nodes are found.
-		var all = await tasks.SearchAsync(Proj, "gizmo");
+		var all = await tasks.SearchNodesAsync(Proj, Query("gizmo"));
 		all.Hits.Select(h => h.Node.Key).Should().BeEquivalentTo(["widget", "gadget"]);
 
 		// Scoped to board "b": only that board's node, and it carries board="b".
-		var scoped = await tasks.SearchAsync(Proj, "gizmo", board: "b");
+		var scoped = await tasks.SearchNodesAsync(Proj, Query("gizmo", board: "b"));
 		scoped.Hits.Should().ContainSingle();
 		scoped.Hits[0].Node.Key.Should().Be("gadget");
 		scoped.Hits[0].Board.Should().Be("b");
+		scoped.Board.Should().Be("b"); // board-scoped read carries the board context
+		scoped.Kind.Should().Be("simple");
 	}
 
 	[Fact]
@@ -204,13 +210,13 @@ public sealed class TasksHybridSearchTests : IDisposable
 		var tasks = Service(llm: null);
 		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 		await tasks.UpsertAsync(Proj, "b", [Node("keepme", "alpha note", "alpha keyword")]);
-		(await tasks.SearchAsync(Proj, "alpha")).Hits.Select(h => h.Node.Key).Should().Equal("keepme");
+		(await tasks.SearchNodesAsync(Proj, Query("alpha"))).Hits.Select(h => h.Node.Key).Should().Equal("keepme");
 
 		var view = await tasks.GetAsync(Proj, "b", includeClosed: false);
 		var version = view.Nodes.First(n => n.Key == "keepme").Version;
 		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "keepme", Version = version, Status = "Done" }]);
 
-		(await tasks.SearchAsync(Proj, "alpha")).Hits.Should().BeEmpty();
+		(await tasks.SearchNodesAsync(Proj, Query("alpha"))).Hits.Should().BeEmpty();
 	}
 
 	// ---- deterministic fakes (same shape as the memory hybrid-search fakes) ----

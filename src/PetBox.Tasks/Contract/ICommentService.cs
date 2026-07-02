@@ -3,7 +3,7 @@ namespace PetBox.Tasks.Contract;
 // The single door to node comments — a generic, editable, tree-structured comment thread
 // under any plan node, on any board. Deliberately SEPARATE from ITasksService: comments
 // are not PlanNodes, so keeping them off the tasks door guarantees they never leak into
-// tasks.get / the workflow FSM / delivery roll-ups. The Web layer (MCP tools + the board
+// tasks.search / the workflow FSM / delivery roll-ups. The Web layer (MCP tools + the board
 // page) depends only on this interface (TasksBoundaryTests forbids touching the store/db).
 public interface ICommentService
 {

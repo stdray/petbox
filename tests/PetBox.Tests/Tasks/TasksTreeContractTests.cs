@@ -16,7 +16,7 @@ using PetBox.Web.Mcp;
 namespace PetBox.Tests.Tasks;
 
 // Verifies the flat-node + part_of tree contract surfaced by the Tasks MCP tools:
-// nodes are flat slugs, vertical structure is the part_of edge, and tasks.get returns
+// nodes are flat slugs, vertical structure is the part_of edge, and tasks.search returns
 // parentNodeId/parentSlug + a computed depth (the projection that replaced l1/l2/l3).
 [Collection("DataModule")]
 public sealed class TasksTreeContractTests : IDisposable
@@ -84,7 +84,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		});
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes);
 
-		var got = (PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap");
+		var got = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "roadmap");
 		var arr = got.Nodes.ToList();
 		arr.Should().HaveCount(3);
 
@@ -114,12 +114,12 @@ public sealed class TasksTreeContractTests : IDisposable
 			}));
 		var ver = up.CurrentVersion;
 
-		ParentSlugOf((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap"), "b").Should().Be("a");
+		ParentSlugOf(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "roadmap"), "b").Should().Be("a");
 
 		// Reparent b under c (single active parent — the a->b edge is closed).
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap",
 			McpInputs.Nodes(new object[] { new { key = "b", partOf = "c", version = ver } }));
-		ParentSlugOf((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "roadmap"), "b").Should().Be("c");
+		ParentSlugOf(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "roadmap"), "b").Should().Be("c");
 
 		// Cycle: a part_of b, but b is already a descendant of c which... make a a child of b
 		// while b is reachable — a->b->? a is root, b under c. Set c part_of b → c,b,? Let's
@@ -150,8 +150,8 @@ public sealed class TasksTreeContractTests : IDisposable
 		up.Conflicts.Should().BeEmpty();
 	}
 
-	// Find a node by flat key in a tasks.get result and read its parent slug.
-	static string ParentSlugOf(PlanBoardView got, string key) =>
+	// Find a node by flat key in a tasks.search result and read its parent slug.
+	static string ParentSlugOf(PetBox.Web.Mcp.Contract.TaskSearchResultView got, string key) =>
 		got.Nodes.Single(n => n.Key == key).ParentSlug!;
 
 	[Fact]
@@ -168,7 +168,7 @@ public sealed class TasksTreeContractTests : IDisposable
 			}));
 
 		// group-by area: ui {a,b}, llm {c}. groupBy echoes the ordered dimension list.
-		var byArea = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "area"));
+		var byArea = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", groupBy: "area"));
 		byArea.GetProperty("groupBy").EnumerateArray().Select(d => d.GetString()).Should().Equal("area");
 		var areaGroups = byArea.GetProperty("groups").EnumerateArray()
 			.ToDictionary(g => g.GetProperty("key").GetString()!, g => g.GetProperty("nodeKeys").EnumerateArray().Select(k => k.GetString()).ToList());
@@ -176,7 +176,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		areaGroups["area:llm"].Should().BeEquivalentTo(["c"]);
 
 		// group-by concern: security {a}, and the untagged b,c fall into "(none)" — listed last.
-		var byConcern = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "concern"));
+		var byConcern = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", groupBy: "concern"));
 		var keys = byConcern.GetProperty("groups").EnumerateArray().Select(g => g.GetProperty("key").GetString()).ToList();
 		keys.Should().Equal("concern:security", "(none)"); // (none) last
 	}
@@ -195,7 +195,7 @@ public sealed class TasksTreeContractTests : IDisposable
 			}));
 
 		// groupBy [area, concern]: top level = area buckets, each split by concern, leaves = nodeKeys.
-		var got = Json(await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "area, concern"));
+		var got = Json(await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", groupBy: "area, concern"));
 		got.GetProperty("groupBy").EnumerateArray().Select(d => d.GetString()).Should().Equal("area", "concern");
 
 		var areas = got.GetProperty("groups").EnumerateArray()
@@ -232,7 +232,7 @@ public sealed class TasksTreeContractTests : IDisposable
 				new { key = "new", status = "defined", title = "New req", body = "x", supersedes = "old", ideaRef = ir },
 			}));
 
-		var got = (PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "spec", includeClosed: true);
+		var got = await TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "spec", includeClosed: true);
 		var nodes = got.Nodes.ToList();
 		// old obsoleted → moved to the spec workflow's terminal-cancel (deprecated).
 		nodes.Single(n => n.Key == "old").Status.Should().Be("deprecated");
@@ -246,7 +246,7 @@ public sealed class TasksTreeContractTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "g", null);
-		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.GetAsync(http, Flags(), _tasks, Proj, "g", groupBy: "status"));
+		await Assert.ThrowsAsync<ArgumentException>(() => TasksTools.SearchAsync(http, Flags(), _tasks, Proj, board: "g", groupBy: "status"));
 	}
 
 	[Fact]

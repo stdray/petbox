@@ -63,6 +63,11 @@ public sealed class TasksDeleteTests : IDisposable
 
 	static NodePatch Delete(string key, long version = 0) => new() { Key = key, Deleted = true, Version = version };
 
+	// Query-mode read through the unified verb (these fixtures run without an embedder,
+	// so the search is lexical-only by construction).
+	Task<TaskSearchResult> Search(string q) =>
+		_tasks.SearchNodesAsync(Proj, new PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy> { Query = q });
+
 	async Task<(string NodeId, long Version)> NodeInfo(string board, string key)
 	{
 		var view = await _tasks.GetAsync(Proj, board);
@@ -79,7 +84,7 @@ public sealed class TasksDeleteTests : IDisposable
 			Node("leafy", partOf: "parent", title: "Unmistakable leafword", tags: ["area:tasks"]),
 		});
 		var (leafId, leafVer) = await NodeInfo("b", "leafy");
-		(await _tasks.SearchAsync(Proj, "leafword", semantic: false)).Hits.Should().NotBeEmpty();
+		(await Search("leafword")).Hits.Should().NotBeEmpty();
 
 		var r = await _tasks.UpsertAsync(Proj, "b", new[] { Delete("leafy", leafVer) });
 
@@ -92,7 +97,7 @@ public sealed class TasksDeleteTests : IDisposable
 		ctx.PlanNodes.Any(n => n.Key == "leafy" && n.ActiveTo != null).Should().BeTrue();  // history kept
 		(await _relations.ListAsync(Proj, leafId, "both")).Should().BeEmpty();             // part_of closed
 		ctx.NodeTags.Any(t => t.NodeId == leafId && t.ValidTo == null).Should().BeFalse(); // tags closed
-		(await _tasks.SearchAsync(Proj, "leafword", semantic: false)).Hits.Should().BeEmpty(); // FTS row gone
+		(await Search("leafword")).Hits.Should().BeEmpty(); // FTS row gone
 	}
 
 	[Fact]

@@ -121,10 +121,10 @@ public static class TasksTools
 		`counts` per board is always complete, but node rows share a response-wide char budget
 		spent in pipeline order — when a board's rows no longer fit it is cut and flagged with
 		`truncated:true` + `omitted` (rows dropped), and the response carries a top-level
-		`hint` on how to narrow (includeBoards one board at a time, bodyLen:0, or tasks.get
-		with `under` for subtree detail). No markers = the complete index. For full
-		untruncated bodies or subtree drill-down, use tasks.get (the single-board detail
-		endpoint). `enabled` is true when all four singleton boards exist. Requires tasks:read.
+		`hint` on how to narrow (includeBoards one board at a time, bodyLen:0, or tasks.search
+		with board + `under` for subtree detail). No markers = the complete index. For full
+		untruncated bodies or subtree drill-down, use tasks.search (the listing/detail
+		read verb). `enabled` is true when all four singleton boards exist. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyView> MethodologyGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -140,68 +140,6 @@ public static class TasksTools
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
 		return await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, urlPrefix, ct);
 	}
-
-	[McpServerTool(Name = "tasks.get", Title = "Get a board's nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(PlanBoardView))]
-	[Description("""
-		Return the active plan nodes of a board, ordered by priority then key. Nodes are FLAT
-		(a single slug `key`); hierarchy is the `part_of` edge, surfaced as parentNodeId,
-		parentSlug and a computed `depth` (0 = root) — build the tree from those. Top level
-		carries `kind` (the board role) and `specBoard`. Each node carries key, nodeId,
-		parentNodeId, parentSlug, depth, status, type, title, body, priority, version,
-		renamedFrom, `tags` (enforced area:*/concern:* tags), plus links: `spec` (spec nodes
-		this task implements — task_spec), `blockedBy` (nodes blocking it), and on a spec board
-		`linkedTasks` plus the COMPUTED `delivery` roll-up (not_started|in_progress|done|
-		done_with_defects), rolled up over the part_of subtree. By default terminal/closed
-		nodes are HIDDEN — pass includeClosed=true; closed part_of ancestors of a visible node
-		are kept so the tree stays connected. `under` (a node slug) restricts to that part_of
-		subtree. `status` (an array of status slugs, case-insensitive) keeps only those
-		statuses — naming a TERMINAL status returns its nodes even without includeClosed (an
-		explicit ask); an unknown slug is rejected. Pass `groupBy` instead to get the tag
-		PROJECTION: an ORDERED, comma-separated
-		list of tag namespaces (e.g. "area" or "area,concern") buckets nodes by their value in
-		each namespace ("(none)" for untagged), nested in that order, each group with a delivery
-		roll-up — the cross-cutting view a single-parent tree can't give. The projection is a
-		view; part_of is untouched. Bodies are returned in FULL by default; pass `bodyLen` > 0
-		for a per-node snippet (first N chars + "…"), then fetch a full body via tasks.node_get
-		or a narrower `under`. The response has a HARD OUTPUT BUDGET (~30k serialized chars):
-		when the node rows no longer fit they are prefix-cut in board order and flagged with
-		`truncated:true` + `omitted` (rows dropped) plus a top-level `hint` on how to narrow
-		(`under`, `status`, `bodyLen`, `groupBy`, or tasks.node_get for one full node). No
-		markers = the complete board. Requires tasks:read.
-		""")]
-	public static async Task<object> GetAsync(
-		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string board, bool includeClosed = false, string? under = null,
-		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false. Ignored with groupBy.")] string[]? status = null,
-		[Description("Tag PROJECTION: an ordered, comma-separated list of tag namespaces (e.g. \"area\" or \"area,concern\"); order sets nesting.")] string? groupBy = null,
-		[Description("Snippet length (chars) per node body; 0 (default) = full body. \"…\" appended when cut. Ignored with groupBy (keys only).")] int bodyLen = 0,
-		[Description("Include an absolute `url` permalink to each node's detail page (off by default; ignored with groupBy).")] bool includeUrl = false,
-		CancellationToken ct = default)
-	{
-		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		if (!string.IsNullOrWhiteSpace(groupBy))
-			return await tasks.GetGroupedAsync(projectKey, board, ParseGroupBy(groupBy), ct);
-		var view = await tasks.GetAsync(projectKey, board, includeClosed, under, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct), status, ct);
-		// Snippet slicing is MCP-adapter-only: the service GetAsync still returns full bodies,
-		// which the Razor board renders — so this never starves the UI (spec read-snippet-on-demand).
-		if (bodyLen > 0)
-			view = view with { Nodes = view.Nodes.Select(n => n with { Body = ModuleMcp.SnippetBody(n.Body, bodyLen) ?? n.Body }).ToList() };
-		// Response budget (MCP-adapter-only, like the snippet): measured on the wire form of
-		// the rows as they will be sent (post-slicing), prefix-cut, marked — never silent.
-		var (rows, omitted) = new ResponseBudget().Take(view.Nodes);
-		return omitted == 0
-			? view
-			: view with { Nodes = rows, Truncated = true, Omitted = omitted, Hint = GetBudgetHint };
-	}
-
-	// Surfaced on PlanBoardView.Hint when the rows were cut by the response budget.
-	const string GetBudgetHint =
-		"Output budget exceeded: node rows were truncated (see truncated/omitted). Narrow the " +
-		"query: `under` (one part_of subtree), `status` (only the statuses you need), " +
-		"`bodyLen` (snippet bodies), `groupBy` (keys-only tag projection), or tasks.node_get " +
-		"for one node's full body.";
 
 	[McpServerTool(Name = "tasks.node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
 	[Description("""
@@ -230,62 +168,158 @@ public static class TasksTools
 		return await tasks.GetNodeOnBoardAsync(projectKey, board, node, urlPrefix, ct);
 	}
 
-	[McpServerTool(Name = "tasks.search", Title = "Search plan nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
+	[McpServerTool(Name = "tasks.search", Title = "Read plan nodes (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
 	[Description("""
-		Hybrid search over the project's active, non-terminal plan nodes (name/body/tags):
-		lexical FTS5 (token/prefix, so paraphrases hit) fused with semantic vector similarity
-		(RRF), ranked by relevance. `board` scopes to one board (omit = search every board).
-		`lexical`/`semantic` (default both on) toggle each retriever; semantic is silently off
-		when no embedding capability is configured. Each hit carries key, nodeId, board, status,
-		type, title, priority, tags, version (the node's tasks.upsert baseline), links
-		(`spec`/`blockedBy`/`linkedTasks`/`supersedes`) and
-		(spec boards) the computed `delivery` — bodies are full unless `bodyLen` > 0 (snippet).
-		Bounded by `limit` (default 20; 0 = no limit). Response includes `retrievers`
-		{ lexical, semantic, degraded }. Requires tasks:read.
+		THE read verb for plan nodes — one tool for both LISTING and SEARCH (list = search
+		without `q`; replaces the former tasks.get). Nodes are FLAT (a single slug `key`);
+		hierarchy is the part_of edge, surfaced as parentNodeId/parentSlug and a computed
+		`depth` (0 = root) — build the tree from those. Every row carries its `board` plus
+		key, nodeId, status, type, title, body, priority, version, renamedFrom, `tags`, and
+		links: `spec` (spec nodes a task implements), `blockedBy`, and on a spec board
+		`linkedTasks` + the COMPUTED `delivery` roll-up (not_started|in_progress|done|
+		done_with_defects).
+
+		MODES. Without `q`: a DETERMINISTIC listing — `board` scopes to one board (the
+		response then carries the board context: `kind`, `specBoard`, `currentVersion`);
+		omit `board` for a project-wide list. Default order: priority then key. Terminal/
+		closed nodes are HIDDEN unless includeClosed=true (closed part_of ancestors of a
+		visible node are kept so the tree stays connected). With `q`: a RELEVANCE selection
+		via hybrid search over name/body/tags (lexical FTS5 ⊕ semantic vectors, RRF-fused;
+		semantic is silently absent when no embedding is configured) over the OPEN
+		(non-terminal) set; the fused ranking supplies a bounded candidate pool of
+		max(3×limit, 50). Default order: relevance; the response carries `retrievers`
+		{lexical, semantic, degraded}.
+
+		FILTERS (predicates in BOTH modes): `under` = a part_of subtree root (slug or
+		NodeId; a slug resolves on `board`, or project-wide when board is omitted);
+		`status` = keep only these slugs (case-insensitive; naming a TERMINAL status
+		returns its nodes even without includeClosed — an explicit ask; an unknown slug is
+		rejected); `keys` = address specific nodes (slug|NodeId mixed, resolved like
+		tasks.node_get — a miss or an ambiguous cross-board slug is a clear error, and an
+		addressed terminal node is returned without includeClosed).
+
+		SORT: `sort` = {by: priority|created|updated|title|relevance, desc?}. Without `q`
+		the default is priority (asking for relevance is an error); with `q` the default is
+		relevance, and an explicit sort reorders WITHIN the relevance-selected set (`desc`
+		is ignored for relevance). `limit` caps the rows (with `q` it defaults to 20, 0 =
+		no cap; a listing is unbounded by default — the output budget still applies).
+
+		PROJECTION: `groupBy` = an ORDERED, comma-separated list of tag namespaces (e.g.
+		"area" or "area,concern") returns the tag-bucket view instead of rows (`groups`
+		nested in that order, "(none)" for untagged, each with a delivery roll-up); needs
+		`board` and does NOT combine with `q` (a projection is a view, not a ranking).
+
+		Bodies are FULL by default; `bodyLen` > 0 snippets each body (first N chars + "…")
+		— fetch one full body via tasks.node_get. The response has a HARD OUTPUT BUDGET
+		(~30k serialized chars): overflowing rows are prefix-cut in result order and
+		flagged `truncated:true` + `omitted` + a narrowing `hint`; no markers = the
+		complete answer.
+
+		Examples: {board:"work"} → the work board; {board:"work", status:["Review"]} →
+		what awaits review; {q:"vector index cursor"} → related nodes anywhere;
+		{q:"flaky tests", board:"work", sort:{by:"updated", desc:true}, bodyLen:200} →
+		recent matches, snippeted; {keys:["node-comments-v1"]} → one addressed row (any
+		status). Requires tasks:read.
 		""")]
 	public static async Task<TaskSearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string query, string? board = null,
+		string projectKey,
+		[Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
+		[Description("Scope to one board (listing then carries kind/specBoard/currentVersion). Omit = the whole project; each row names its board.")] string? board = null,
+		[Description("Restrict to the part_of subtree under this node (slug or 32-hex NodeId).")] string? under = null,
+		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false.")] string[]? status = null,
+		[Description("Address specific nodes: slugs and/or 32-hex NodeIds, mixed (resolved like tasks.node_get; terminal nodes included).")] string[]? keys = null,
+		[Description("Include terminal/closed nodes in a listing (search covers the open set only).")] bool includeClosed = false,
+		[Description("Sort order: {by: priority|created|updated|title|relevance, desc?}. Default: priority (listing) / relevance (with q).")] SortInput? sort = null,
+		[Description("Tag PROJECTION instead of rows: an ordered, comma-separated list of tag namespaces (e.g. \"area,concern\"). Needs board; not with q.")] string? groupBy = null,
 		[Description("Snippet length (chars) per node body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
-		[Description("Max nodes returned (default 20; 0 = no limit).")] int limit = 20,
-		[Description("Run the lexical FTS retriever (default true).")] bool? lexical = null,
-		[Description("Run the semantic vector retriever (default true; no-op when embedding is unavailable).")] bool? semantic = null,
+		[Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+
+		var hasQuery = !string.IsNullOrWhiteSpace(q);
+		if (!string.IsNullOrWhiteSpace(groupBy))
+		{
+			// The tag projection is a deterministic single-board VIEW — routing it against a
+			// relevance selection would silently change what the buckets mean, so q is refused.
+			if (hasQuery)
+				throw new ArgumentException("groupBy and q don't combine — the tag projection is a deterministic view, a query is a relevance selection; drop one of them");
+			if (string.IsNullOrWhiteSpace(board))
+				throw new ArgumentException("groupBy needs a board — the tag projection is a single-board view");
+			var g = await tasks.GetGroupedAsync(projectKey, board, ParseGroupBy(groupBy), ct);
+			return new TaskSearchResultView([], Board: board, Kind: g.Kind, GroupBy: g.GroupBy, Groups: g.Groups);
+		}
+
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		var res = await tasks.SearchAsync(projectKey, query, board, lexical, semantic, urlPrefix, ct);
-		var capped = limit > 0 ? res.Hits.Take(limit) : res.Hits;
-		var nodes = capped.Select(h => SearchHit(h, bodyLen)).ToList();
+		var res = await tasks.SearchNodesAsync(projectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
+		{
+			Query = hasQuery ? q : null,
+			Filter = new TaskNodeFilter(board, under, status, keys, includeClosed),
+			Sort = ParseSort(sort),
+			Limit = limit ?? (hasQuery ? DefaultSearchLimit : 0),
+			BodyLen = bodyLen,
+		}, urlPrefix, ct);
+
+		// Response budget (MCP-adapter-only): measured on the wire form of the rows as they
+		// will be sent (bodies already sliced by the service), prefix-cut, marked — never silent.
+		var rows = res.Hits.Select(SearchRow).ToList();
+		var (kept, omitted) = new ResponseBudget().Take(rows);
 		return new TaskSearchResultView(
-			nodes,
-			new RetrieverInfo(res.Retrievers.Lexical, res.Retrievers.Semantic, res.Retrievers.Degraded));
+			kept, res.Board, res.Kind, res.SpecBoard, res.CurrentVersion,
+			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded) : null,
+			Truncated: omitted > 0 ? true : null,
+			Omitted: omitted > 0 ? omitted : null,
+			Hint: omitted > 0 ? SearchBudgetHint : null);
 	}
 
-	// Wire shape for one search hit: a compact, board-aware projection of the enriched node
-	// view (board carried since search spans boards), body sliced to bodyLen (full when 0).
-	static TaskSearchNodeView SearchHit(TaskSearchHit h, int bodyLen)
+	// With a query the result is capped even when the caller asks for nothing specific —
+	// the candidate pool (max(3×limit, 50)) and this default keep the answer bounded.
+	const int DefaultSearchLimit = 20;
+
+	// Surfaced on TaskSearchResultView.Hint when the rows were cut by the response budget.
+	const string SearchBudgetHint =
+		"Output budget exceeded: node rows were truncated (see truncated/omitted). Narrow the " +
+		"read: `board` (one board), `under` (one part_of subtree), `status` (only the statuses " +
+		"you need), `keys` (address specific nodes), `bodyLen` (snippet bodies), a smaller " +
+		"`limit`, `groupBy` (keys-only tag projection), or tasks.node_get for one full node.";
+
+	// Map the wire `sort` argument onto the service sort axis; an unknown axis is a clear error.
+	static (TaskSortBy By, bool Desc)? ParseSort(SortInput? sort)
+	{
+		if (sort is null || string.IsNullOrWhiteSpace(sort.By)) return null;
+		if (!Enum.TryParse<TaskSortBy>(sort.By.Trim(), ignoreCase: true, out var by))
+			throw new ArgumentException($"sort.by '{sort.By}' is not a sort axis (valid: priority|created|updated|title|relevance)");
+		return (by, sort.Desc);
+	}
+
+	// Wire shape for one row: the enriched node view flattened with its owning board (rows
+	// may span boards). RenamedFrom is omitted when empty (null → dropped by the serializer).
+	static TaskSearchNodeView SearchRow(TaskSearchHit h)
 	{
 		var n = h.Node;
 		return new TaskSearchNodeView(
 			Key: n.Key,
 			NodeId: n.NodeId,
 			Board: h.Board,
+			ParentNodeId: n.ParentNodeId,
 			ParentSlug: n.ParentSlug,
 			Depth: n.Depth,
 			Status: n.Status,
 			Type: n.Type,
 			Title: n.Title,
-			Body: ModuleMcp.SnippetBody(n.Body, bodyLen),
+			Body: n.Body,
+			CommitRef: n.CommitRef,
 			Priority: n.Priority,
 			Delivery: n.Delivery,
 			Spec: n.Spec,
 			BlockedBy: n.BlockedBy,
 			LinkedTasks: n.LinkedTasks,
 			Supersedes: n.Supersedes,
+			RenamedFrom: n.RenamedFrom is { Count: > 0 } rf ? rf : null,
 			Tags: n.Tags,
 			Version: n.Version,
 			Url: n.Url);
@@ -439,7 +473,7 @@ public static class TasksTools
 			Removed: r.Removed.ToList());
 	}
 
-	// Delta projection of a node (no links/delivery/tags — that's tasks.get). camelCased by the
+	// Delta projection of a node (no links/delivery/tags — that's tasks.search). camelCased by the
 	// serializer; `body` is sliced to bodyLen (null when 0 → omitted) for the compact echo.
 	static PlanNodeDelta NodeDto(PlanNode n, string? urlPrefix = null, int bodyLen = 0) => new(
 		Key: n.Key,
