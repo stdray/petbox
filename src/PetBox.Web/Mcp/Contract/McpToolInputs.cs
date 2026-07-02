@@ -59,6 +59,14 @@ public sealed record PlanNodeInput
 	public bool Deleted { get; init; }
 }
 
+// One transcript message as submitted to session.append — the same {role, content} shape the
+// snapshot stores and the REST ndjson push sends; the server assigns the ordinal.
+public sealed record SessionMessageDto
+{
+	public string? Role { get; init; }
+	public string? Content { get; init; }
+}
+
 // An entry as submitted to memory.upsert. Mirrors EXACTLY the fields the old JsonElement parser
 // (MemoryTools.ParseEntries) accepted, including the `deleted:true` soft-delete marker.
 public sealed record MemoryEntryInputDto

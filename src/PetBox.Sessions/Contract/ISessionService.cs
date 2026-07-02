@@ -8,7 +8,19 @@ public interface ISessionService
 {
 	// Latest-snapshot write, last-write-wins: replace the session's content with these messages.
 	// The server numbers them (ordinal 1..N); the returned Version is the last message's ordinal.
+	// Kept as the full-snapshot PUT for repair/import; the incremental path is AppendAsync.
 	Task<SessionUpsertOutcome> UpsertAsync(string projectKey, string sessionId, string agent, IReadOnlyList<SessionMessageInput> messages, CancellationToken ct = default);
+
+	// Server-authoritative incremental write (spec session-append-wire). The client claims its
+	// batch starts at ordinal `fromOrdinal`; the server compares against the snapshot's message
+	// count (`lastOrdinal`, 0 for a missing session):
+	//   - fromOrdinal == lastOrdinal+1 → contiguous: every message is appended;
+	//   - fromOrdinal <= lastOrdinal   → overlap: ordinals the server already holds are ignored
+	//     IDEMPOTENTLY (existing messages win, nothing is rewritten), the tail is appended;
+	//   - fromOrdinal >  lastOrdinal+1 → gap: nothing is written, Applied=false, and LastOrdinal
+	//     tells the client where to resend from (LastOrdinal+1).
+	// Storage stays latest-snapshot (the blob is re-encoded); a full-overlap call writes nothing.
+	Task<SessionAppendOutcome> AppendAsync(string projectKey, string sessionId, string agent, long fromOrdinal, IReadOnlyList<SessionMessageInput> messages, CancellationToken ct = default);
 
 	Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
 	Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default);
@@ -25,3 +37,9 @@ public interface ISessionService
 // The outcome of a session write: the id, its new version (last message ordinal), the message
 // count, and the write time. Compact form replacing the old temporal upsert result.
 public sealed record SessionUpsertOutcome(string SessionId, long Version, int MessageCount, DateTime Updated);
+
+// The outcome of an incremental append. Applied=false means a contiguity gap — nothing was
+// written and LastOrdinal is the server's cursor (resend from LastOrdinal+1). Applied=true
+// carries the new cursor; Appended counts the messages actually written (0 = full overlap,
+// the idempotent no-op).
+public sealed record SessionAppendOutcome(string SessionId, bool Applied, long LastOrdinal, int Appended);

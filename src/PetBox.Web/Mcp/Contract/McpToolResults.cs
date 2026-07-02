@@ -197,6 +197,10 @@ public sealed record ReportIssueResult(bool Reported, string Project, string Boa
 
 public sealed record SessionUpsertResult(string SessionId, long Version, int MessageCount);
 
+// session.append: Applied=false + Reason="gap" is the STRUCTURED contiguity reject —
+// LastOrdinal is the server's cursor, the client resends the tail from LastOrdinal+1.
+public sealed record SessionAppendResult(string SessionId, bool Applied, long LastOrdinal, int Appended, string? Reason);
+
 public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version);
 
 public sealed record SessionRowView(string SessionId, string Agent, long Version);

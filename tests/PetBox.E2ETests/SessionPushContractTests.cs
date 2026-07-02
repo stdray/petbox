@@ -42,11 +42,17 @@ public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 		await db.InsertAsync(new Project { Key = ProjectKey, WorkspaceKey = Workspace, Name = "SessCtr" });
 		await db.InsertAsync(new ApiKey
 		{
-			Key = WriteKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write", CreatedAt = DateTime.UtcNow,
+			Key = WriteKey,
+			ProjectKey = ProjectKey,
+			Scopes = "tasks:read,tasks:write",
+			CreatedAt = DateTime.UtcNow,
 		});
 		await db.InsertAsync(new ApiKey
 		{
-			Key = ReadOnlyKey, ProjectKey = ProjectKey, Scopes = "tasks:read", CreatedAt = DateTime.UtcNow,
+			Key = ReadOnlyKey,
+			ProjectKey = ProjectKey,
+			Scopes = "tasks:read",
+			CreatedAt = DateTime.UtcNow,
 		});
 	}
 
@@ -137,6 +143,67 @@ public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 	{
 		var sessionId = "s-" + Guid.NewGuid().ToString("N")[..8];
 		var r = await _http.SendAsync(PushRequest(ProjectKey, sessionId, ReadOnlyKey, Ndjson(("user", "# plan"))));
+		r.StatusCode.Should().Be(HttpStatusCode.Forbidden);
+	}
+
+	// Replays what the append-flow hook sends: the ndjson tail + ?fromOrdinal=N.
+	static HttpRequestMessage AppendRequest(string project, string sessionId, string apiKey, long fromOrdinal, string body, string agent = "claude-code")
+	{
+		var req = new HttpRequestMessage(HttpMethod.Post,
+			$"/api/sessions/{project}/{sessionId}/append?agent={agent}&fromOrdinal={fromOrdinal}");
+		req.Headers.Add("X-Api-Key", apiKey);
+		req.Content = new StringContent(body, Encoding.UTF8, "application/x-ndjson");
+		return req;
+	}
+
+	// Pins the append wire contract the hooks parse (append.ts): 200 carries `lastOrdinal` +
+	// `appended`; overlap is idempotent; a gap is a STRUCTURED 409 with `lastOrdinal` inside.
+	[Fact]
+	public async Task Append_Contiguous_Overlap_Gap_WireContract()
+	{
+		var sessionId = "s-" + Guid.NewGuid().ToString("N")[..8];
+
+		// 1) New session, fromOrdinal=1 → 200 { sessionId, lastOrdinal, appended }.
+		var r1 = await _http.SendAsync(AppendRequest(ProjectKey, sessionId, WriteKey, 1, Ndjson(("user", "q"), ("assistant", "a"))));
+		r1.StatusCode.Should().Be(HttpStatusCode.OK);
+		using var d1 = JsonDocument.Parse(await r1.Content.ReadAsStringAsync());
+		d1.RootElement.GetProperty("sessionId").GetString().Should().Be(sessionId);
+		d1.RootElement.TryGetProperty("lastOrdinal", out var lo1).Should().BeTrue("the wire carries `lastOrdinal`");
+		lo1.GetInt64().Should().Be(2);
+		d1.RootElement.GetProperty("appended").GetInt64().Should().Be(2);
+
+		// 2) Overlapping re-send of the same ordinals + a new tail → idempotent, only the tail lands.
+		var r2 = await _http.SendAsync(AppendRequest(ProjectKey, sessionId, WriteKey, 1, Ndjson(("user", "q"), ("assistant", "a"), ("user", "q2"))));
+		r2.StatusCode.Should().Be(HttpStatusCode.OK);
+		using var d2 = JsonDocument.Parse(await r2.Content.ReadAsStringAsync());
+		d2.RootElement.GetProperty("lastOrdinal").GetInt64().Should().Be(3);
+		d2.RootElement.GetProperty("appended").GetInt64().Should().Be(1);
+
+		// 3) Gap → 409 with the structured body the hook self-heals from.
+		var r3 = await _http.SendAsync(AppendRequest(ProjectKey, sessionId, WriteKey, 9, Ndjson(("user", "late"))));
+		r3.StatusCode.Should().Be(HttpStatusCode.Conflict);
+		using var d3 = JsonDocument.Parse(await r3.Content.ReadAsStringAsync());
+		d3.RootElement.GetProperty("error").GetString().Should().Be("gap");
+		d3.RootElement.TryGetProperty("lastOrdinal", out var lo3).Should().BeTrue("the 409 body carries the server cursor");
+		lo3.GetInt64().Should().Be(3);
+	}
+
+	[Fact]
+	public async Task Append_MissingFromOrdinal_400()
+	{
+		var sessionId = "s-" + Guid.NewGuid().ToString("N")[..8];
+		var req = new HttpRequestMessage(HttpMethod.Post, $"/api/sessions/{ProjectKey}/{sessionId}/append?agent=claude-code");
+		req.Headers.Add("X-Api-Key", WriteKey);
+		req.Content = new StringContent(Ndjson(("user", "q")), Encoding.UTF8, "application/x-ndjson");
+		var r = await _http.SendAsync(req);
+		r.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+	}
+
+	[Fact]
+	public async Task Append_MissingTasksWriteScope_403()
+	{
+		var sessionId = "s-" + Guid.NewGuid().ToString("N")[..8];
+		var r = await _http.SendAsync(AppendRequest(ProjectKey, sessionId, ReadOnlyKey, 1, Ndjson(("user", "q"))));
 		r.StatusCode.Should().Be(HttpStatusCode.Forbidden);
 	}
 

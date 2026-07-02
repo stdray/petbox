@@ -6,8 +6,11 @@
  *      system prompt via `experimental.chat.system.transform`.
  *
  *   2. push-session (Stop) → mirror the session conversation into PetBox's Session module so it
- *      auto-populates. Fires on `session.idle` (opencode's "the turn finished") and POSTs the
- *      full user/assistant text history to the PetBox REST API (last-write-wins replace).
+ *      auto-populates. Fires on `session.idle` (opencode's "the turn finished") and pushes the
+ *      INCREMENT via the server-authoritative append cursor (see append.ts) — the plugin is
+ *      long-lived, so it remembers each session's lastOrdinal from the previous response in
+ *      process memory (no durable state); a restart self-heals off the structured 409 gap
+ *      reject, and old servers without the append route fall back to the full-snapshot push.
  *
  * Unlike the per-project copy this is installed once at user scope. The active project + API
  * key + base URL are resolved from `directory` (PluginInput) via the shared registry. If the
@@ -21,6 +24,7 @@
  * `petbox_memory_upsert` (the Claude `mcp__petbox__*` names do not apply here).
  */
 import type { Plugin } from "@opencode-ai/plugin";
+import { pushTranscript } from "./append.ts";
 import { resolveProject } from "./registry.ts";
 
 function memoryProtocol(project: string): string {
@@ -67,6 +71,9 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
 
   // Avoid re-POSTing the same state when session.idle fires repeatedly.
   const lastPushed = new Map<string, string>();
+  // Per-session server cursor (lastOrdinal from the previous response). Process memory only —
+  // a plugin restart just means the first push self-heals via the structured gap reject.
+  const cursors = new Map<string, number>();
 
   async function pushSession(sessionID: string): Promise<void> {
     if (!resolved || !sessionID) return;
@@ -75,9 +82,8 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
     const messages = res.data;
     if (!Array.isArray(messages) || messages.length === 0) return;
 
-    // The whole conversation (user + assistant text turns) as ordered ndjson messages —
-    // the endpoint is last-write-wins and the server numbers the messages, so each idle
-    // re-sends the full transcript (not just the last turn) and it self-heals.
+    // The whole conversation (user + assistant text turns), ordered — pushTranscript sends
+    // only the tail past the remembered server cursor (the increment), not the full history.
     const msgs = messages
       .map((m: any) => {
         const text = m.parts
@@ -92,15 +98,22 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
     const lastID = messages[messages.length - 1]?.info?.id ?? "";
     if (lastPushed.get(sessionID) === lastID) return;
 
-    const body = msgs.map((m) => JSON.stringify(m)).join("\n");
-    const uri = `${resolved.baseUrl}/api/sessions/${resolved.project}/${encodeURIComponent(sessionID)}?agent=opencode`;
-    const resp = await fetch(uri, {
-      method: "POST",
-      headers: { "X-Api-Key": resolved.apiKey, "Content-Type": "application/x-ndjson; charset=utf-8" },
-      body,
-      signal: AbortSignal.timeout(8000),
-    });
-    if (resp.ok) lastPushed.set(sessionID, lastID);
+    const lastOrdinal = await pushTranscript(
+      {
+        baseUrl: resolved.baseUrl,
+        project: resolved.project,
+        sessionId: sessionID,
+        apiKey: resolved.apiKey,
+        agent: "opencode",
+        timeoutMs: 8000,
+      },
+      msgs,
+      cursors.get(sessionID) ?? null,
+    );
+    if (lastOrdinal !== null) {
+      cursors.set(sessionID, lastOrdinal);
+      lastPushed.set(sessionID, lastID);
+    }
   }
 
   return {
