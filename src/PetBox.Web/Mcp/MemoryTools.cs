@@ -19,7 +19,7 @@ namespace PetBox.Web.Mcp;
 public static class MemoryTools
 {
 	[McpServerTool(Name = "memory.store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]
-	[Description("Create a named memory store in a project. Requires memory:write.")]
+	[Description("CREATE a named memory store in a project (fails if it already exists). Requires memory:write.")]
 	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string? description = null, CancellationToken ct = default)
@@ -119,7 +119,10 @@ public static class MemoryTools
 
 	[McpServerTool(Name = "memory.upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("""
-		Declarative temporal upsert of entries into a store. Requires memory:write.
+		PATCH per entry (declarative temporal upsert into a store). Requires memory:write.
+		On an EDIT (version > 0) an omitted field stays UNCHANGED — send only what you change;
+		to clear a field pass it explicitly empty (description/body/metadata: "", tags: "").
+		On a NEW entry (version 0) omitted fields start empty.
 		`entries` is a JSON array of { key, type, description, body, tags?, version?, prevKey? }.
 		`type` (required) is the taxonomy: User (about the user) | Feedback (a correction/
 		preference on how to work) | Project (durable project fact/constraint) | Reference
@@ -189,7 +192,8 @@ public static class MemoryTools
 
 	[McpServerTool(Name = "memory.remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
 	[Description("""
-		Capture one durable fact, verbatim. The low-ceremony way to store a learning.
+		CREATE one durable fact, verbatim (always a new entry; edits go via memory.upsert).
+		The low-ceremony way to store a learning.
 		`text` (required) is the fact. `scope` picks the container: project (default —
 		the key's project) | workspace (cross-project shared). `store` groups entries
 		within a scope (default "notes"). `type` is the taxonomy

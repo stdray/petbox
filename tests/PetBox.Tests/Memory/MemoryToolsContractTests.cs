@@ -135,6 +135,73 @@ public sealed class MemoryToolsContractTests : IDisposable
 			.Should().NotContain("temp");
 	}
 
+	// spec explicit-write-semantics: memory.upsert is a PATCH on edits (version > 0) — an
+	// omitted field keeps its current value. Incident repro (yobapub, store=notes): a
+	// tags-only edit used to wipe description AND body to empty; it must not.
+	[Fact]
+	public async Task Upsert_Patch_TagsOnlyEdit_KeepsDescriptionAndBody()
+	{
+		var http = Http("memory:read,memory:write");
+		var created = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", description = "keep-d", body = "keep-b", tags = "t1,t2" },
+		}))).Added.Single();
+
+		// The incident payload: only key/type/tags/version — description and body omitted.
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "k", type = "project", tags = "t3", version = created.Version },
+		}));
+		res.Applied.Should().BeTrue();
+
+		var after = (await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(), Proj, "notes", "k"))!;
+		after.Description.Should().Be("keep-d");
+		after.Body.Should().Be("keep-b");
+		after.Tags.Should().Be("t3");
+	}
+
+	// spec explicit-write-semantics: an explicitly EMPTY field ("") is a deliberate clear —
+	// distinct from an omitted (null) one, which stays unchanged.
+	[Fact]
+	public async Task Upsert_Patch_ExplicitEmptyClears_OmittedStays()
+	{
+		var http = Http("memory:read,memory:write");
+		var created = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "c", type = "project", description = "d", body = "b", tags = "t" },
+		}))).Added.Single();
+
+		// body:"" clears the body; omitted description/tags stay.
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "c", type = "project", body = "", version = created.Version },
+		}));
+		res.Applied.Should().BeTrue();
+
+		var after = (await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(), Proj, "notes", "c"))!;
+		after.Body.Should().BeEmpty();
+		after.Description.Should().Be("d");
+		after.Tags.Should().Be("t");
+	}
+
+	// CREATE path unchanged: a new entry (version 0) with partial fields starts the omitted
+	// ones empty — PATCH merging only applies to edits.
+	[Fact]
+	public async Task Upsert_NewEntry_PartialFields_OmittedStartEmpty()
+	{
+		var http = Http("memory:read,memory:write");
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "fresh", type = "project", body = "only-body" },
+		}));
+		res.Applied.Should().BeTrue();
+
+		var after = (await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(), Proj, "notes", "fresh"))!;
+		after.Body.Should().Be("only-body");
+		after.Description.Should().BeEmpty();
+		after.Tags.Should().BeEmpty();
+	}
+
 	// spec echo-compact-by-default (mirror of the tasks side): memory.upsert echoes
 	// key/type/description/version but NOT the body unless bodyLen > 0. description (a one-liner)
 	// stays to orient the merge; the heavy body is opt-in.

@@ -21,12 +21,13 @@ public static class SessionTools
 {
 	[McpServerTool(Name = "session.upsert", Title = "Save a session blob", UseStructuredContent = true, OutputSchemaType = typeof(SessionUpsertResult))]
 	[Description("""
-		Save an agent session's content as the latest snapshot (last-write-wins, no history).
-		This is the full-snapshot PUT — kept for repair/import (it REPLACES whatever is stored,
-		including a session built up by session.append); incremental pushes should use
-		session.append instead. Requires tasks:write. The content is stored as a single message;
-		the per-turn multi-message transcript is pushed by the Stop-hook over REST.
-		Result: { sessionId, version, messageCount } where version is the last message's ordinal.
+		PUT (full snapshot replace): save an agent session's content as the latest snapshot —
+		last-write-wins, no history, no field merge; always send the complete blob (it REPLACES
+		whatever is stored, including a session built up by session.append). Kept for repair/import;
+		incremental pushes should use session.append instead. Requires tasks:write.
+		The content is stored as a single message; the per-turn multi-message transcript is pushed
+		by the Stop-hook over REST. Result: { sessionId, version, messageCount } where version is
+		the last message's ordinal.
 		""")]
 	public static async Task<SessionUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
