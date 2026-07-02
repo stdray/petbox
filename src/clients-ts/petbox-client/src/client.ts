@@ -1,3 +1,4 @@
+import { ConfigCache, type ConfigCacheEntry } from "./cache.js";
 import { ResolvedConfig } from "./config.js";
 import {
 	type PetBoxConfigClientEvents,
@@ -9,6 +10,7 @@ import {
 } from "./types.js";
 
 const DEFAULT_REFRESH_MS = 5 * 60 * 1000;
+const DEFAULT_TIMEOUT_MS = 10 * 1000;
 
 /**
  * TypeScript SDK client for PetBox config.
@@ -38,9 +40,14 @@ export class PetBoxConfigClient extends TypedEmitter<PetBoxConfigClientEvents> {
 		readonly template: Template;
 		readonly refreshIntervalMs: number;
 		readonly optional: boolean;
+		readonly timeoutMs: number;
+		readonly cacheDir: string | undefined;
 		readonly fetchImpl: typeof fetch | undefined;
 	};
 	private readonly fetchImpl: typeof fetch;
+	private readonly cache: ConfigCache | null;
+	private cacheLoaded = false;
+	private cachedEntry: ConfigCacheEntry | null = null;
 	private currentConfig: ResolvedConfig | null = null;
 	private etag: string | null = null;
 	private timer: ReturnType<typeof setInterval> | null = null;
@@ -59,9 +66,12 @@ export class PetBoxConfigClient extends TypedEmitter<PetBoxConfigClientEvents> {
 			template: options.template ?? "flat",
 			refreshIntervalMs: options.refreshIntervalMs ?? DEFAULT_REFRESH_MS,
 			optional: options.optional ?? false,
+			timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+			cacheDir: options.cacheDir,
 			fetchImpl: options.fetchImpl,
 		};
 		this.fetchImpl = options.fetchImpl ?? ((...args: Parameters<typeof fetch>) => globalThis.fetch(...args));
+		this.cache = options.cacheDir ? new ConfigCache(options.cacheDir, this.cacheIdentity()) : null;
 	}
 
 	/** The most recently fetched config, or null if never fetched. */
@@ -75,12 +85,21 @@ export class PetBoxConfigClient extends TypedEmitter<PetBoxConfigClientEvents> {
 	 */
 	async fetch(): Promise<ResolvedConfig> {
 		this.ensureNotDisposed();
+		await this.ensureCacheLoaded();
 		try {
 			const cfg = await this.fetchOnce();
 			this.currentConfig = cfg;
 			this.etag = cfg.etag;
 			return cfg;
 		} catch (err) {
+			// A readable disk cache is a valid cold start — return last-known-good even when
+			// optional=false, so a process can boot while the PetBox server is unreachable.
+			const cached = this.configFromCache();
+			if (cached !== null) {
+				this.currentConfig = cached;
+				this.etag = cached.etag;
+				return cached;
+			}
 			if (this.options.optional) return new ResolvedConfig({}, null);
 			throw err;
 		}
@@ -116,6 +135,42 @@ export class PetBoxConfigClient extends TypedEmitter<PetBoxConfigClientEvents> {
 		if (this.disposed) throw new Error("PetBoxConfigClient is disposed");
 	}
 
+	/** Stable identity for the cache file name: endpoint + template + sorted tags. */
+	private cacheIdentity(): string {
+		const tags = Object.keys(this.options.tags)
+			.sort()
+			.map((k) => `${k}=${this.options.tags[k] ?? ""}`)
+			.join("&");
+		return `${this.options.endpoint}\n${this.options.template}\n${tags}`;
+	}
+
+	/** Load the disk cache once, seeding the ETag (for If-None-Match) and last-known-good config. */
+	private async ensureCacheLoaded(): Promise<void> {
+		if (this.cacheLoaded) return;
+		this.cacheLoaded = true;
+		if (this.cache === null) return;
+		const entry = await this.cache.read();
+		if (entry === null) return;
+		this.cachedEntry = entry;
+		// Only seed from the cache if the live fetch hasn't already produced a config.
+		if (this.etag === null) this.etag = entry.etag;
+		if (this.currentConfig === null) this.currentConfig = new ResolvedConfig(entry.config, entry.etag);
+	}
+
+	/** Build a ResolvedConfig from the loaded cache entry, or null if there is none. */
+	private configFromCache(): ResolvedConfig | null {
+		if (this.cachedEntry === null) return null;
+		return new ResolvedConfig(this.cachedEntry.config, this.cachedEntry.etag);
+	}
+
+	/** Atomically persist a fresh 200 response to disk (no-op when caching is off). Never throws. */
+	private async persistCache(config: unknown, etag: string | null): Promise<void> {
+		if (this.cache === null) return;
+		const entry: ConfigCacheEntry = { etag, config, savedAt: new Date().toISOString() };
+		this.cachedEntry = entry;
+		await this.cache.write(entry);
+	}
+
 	private buildUrl(): string {
 		const base = this.options.endpoint.endsWith("/") ? this.options.endpoint : `${this.options.endpoint}/`;
 		const params = new URLSearchParams();
@@ -135,15 +190,16 @@ export class PetBoxConfigClient extends TypedEmitter<PetBoxConfigClientEvents> {
 
 		let response: Response;
 		try {
-			response = await this.fetchImpl(url, { headers });
+			response = await this.fetchImpl(url, { headers, signal: AbortSignal.timeout(this.options.timeoutMs) });
 		} catch (cause) {
 			throw new PetBoxConfigError(`Failed to reach PetBox at ${url}: ${String(cause)}`, 0, null);
 		}
 
-		// 304 — unchanged. Return last-known-good config.
+		// 304 — unchanged. Return last-known-good config (in-memory, else the disk cache).
 		if (response.status === 304) {
 			const newEtag = this.stripEtag(response.headers.get("ETag"));
-			return new ResolvedConfig(this.currentConfig?.data ?? {}, newEtag ?? this.etag);
+			const data = this.currentConfig?.data ?? this.cachedEntry?.config ?? {};
+			return new ResolvedConfig(data, newEtag ?? this.etag);
 		}
 
 		const body = await response.text();
@@ -160,6 +216,7 @@ export class PetBoxConfigClient extends TypedEmitter<PetBoxConfigClientEvents> {
 
 		const etag = this.stripEtag(response.headers.get("ETag"));
 		const data: unknown = JSON.parse(body);
+		await this.persistCache(data, etag);
 		return new ResolvedConfig(data, etag);
 	}
 

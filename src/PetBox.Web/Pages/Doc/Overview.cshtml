@@ -60,8 +60,10 @@ cfg.on("change", next => { /* hot-reload */ });
     o.BaseUrl = "@origin";
     o.ApiKey  = builder.Configuration["PETBOX_API_KEY"]!;
     o.Tags    = new() { ["project"] = "kpvotes", ["service"] = "bot" };
+    o.CacheDirectory = "/var/cache/petbox"; // last-known-good on disk (mount a volume)
 });
-// resolved config flows into IConfiguration; ETag polling hot-reloads it.</code></pre>
+// resolved config flows into IConfiguration; ETag polling hot-reloads it.
+// CacheDirectory: boots on the last good config after a restart even if petbox is down.</code></pre>
 		<h3>Python — <code>petbox-client</code> (PyPI)</h3>
 		<pre><code>pip install petbox-client</code></pre>
 		<pre><code>import os
