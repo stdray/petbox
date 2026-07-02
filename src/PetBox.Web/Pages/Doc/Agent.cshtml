@@ -108,7 +108,7 @@ setx PETBOX_&lt;PROJECT&gt;_API_KEY "&lt;your key&gt;"</code></pre>
 			<li><code>tasks.workflow</code> — the live statuses/transitions for a board's kind.</li>
 			<li><code>relations.create / list / delete</code> — typed temporal edges (task_spec|issue_task|idea_spec|blocks|nfr|dup). See the <a href="@Routes.DocMethodology()">cheatsheet</a>.</li>
 			<li><code>memory.store_list / store_create / store_delete</code> — named memory stores (a cold <code>memory.upsert</code> auto-creates the store).</li>
-			<li><code>memory.list / search / get / upsert / delta</code> — durable notes. Each entry needs a <code>type</code> (User|Feedback|Project|Reference) plus description, body, optional tags. <code>search</code> is FTS5-ranked; <code>list</code>/<code>search</code> accept an optional <code>type</code> filter.</li>
+			<li><code>memory.list / search / get / upsert / delta</code> — durable notes. Each entry needs a <code>type</code> (User|Feedback|Project|Reference) plus description, body, optional tags. <code>upsert</code> is a PATCH on edits: an omitted field stays unchanged, an explicit <code>""</code> clears it. <code>search</code> is FTS5-ranked; <code>list</code>/<code>search</code> accept an optional <code>type</code> filter.</li>
 			<li><code>session.upsert / get / list</code> — the working-session plan blob (one per project).</li>
 		</ul>
 

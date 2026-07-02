@@ -113,9 +113,9 @@ public sealed class MemoryService : IMemoryService
 		op?.SetTag("petbox.delete_count", deletes.Count);
 
 		await _stores.EnsureAsync(projectKey, store, ct); // auto-vivify on first write
-		var desired = upserts.Select(ToEntry).ToArray();
-		var dels = deletes.Select(d => (d.Key, d.Version)).ToArray();
 		var ctx = _stores.GetContext(projectKey, store);
+		var desired = MergePatches(ctx, upserts);
+		var dels = deletes.Select(d => (d.Key, d.Version)).ToArray();
 		var fts = new SqliteFtsIndex(() => ctx); // writes ride the tx below; connect unused
 
 		// Class-A lexical floor is updated INSIDE the entity transaction: the just-inserted
@@ -202,15 +202,34 @@ public sealed class MemoryService : IMemoryService
 		}
 	}
 
-	MemoryEntry ToEntry(MemoryEntryInput i) => new()
+	// PATCH semantics (spec explicit-write-semantics): an EDIT (version > 0) merges against the
+	// active entry it targets — an omitted (null) field keeps its current value; an explicitly
+	// empty one ("" — for tags a blank CSV) clears it. A NEW entry (version 0) maps null to empty,
+	// as before. This kills the silent-wipe class of bugs: a tags-only edit no longer empties
+	// description/body. The merge base is read at the author's baseline; if the entry moves
+	// before the write lands, TemporalStore's CAS yields a Stale conflict, so a merge against a
+	// stale base can never be committed.
+	static MemoryEntry[] MergePatches(MemoryDb ctx, IReadOnlyList<MemoryEntryInput> upserts)
+	{
+		var editKeys = upserts.Where(u => u.Version != 0).Select(u => u.PrevKey ?? u.Key).Distinct().ToList();
+		var active = editKeys.Count == 0
+			? new Dictionary<string, MemoryEntry>(StringComparer.Ordinal)
+			: ctx.Entries.Where(e => e.ActiveTo == null && editKeys.Contains(e.Key)).ToList()
+				.ToDictionary(e => e.Key, StringComparer.Ordinal);
+		return upserts
+			.Select(u => ToEntry(u, u.Version != 0 && active.TryGetValue(u.PrevKey ?? u.Key, out var c) ? c : null))
+			.ToArray();
+	}
+
+	static MemoryEntry ToEntry(MemoryEntryInput i, MemoryEntry? current) => new()
 	{
 		Key = string.IsNullOrWhiteSpace(i.Key) ? throw new ArgumentException("key is required") : i.Key,
 		Version = i.Version,
 		Type = ParseType(i.Type),
-		Description = i.Description ?? string.Empty,
-		Body = i.Body ?? string.Empty,
-		Tags = NormalizeTags(i.Tags),
-		Metadata = i.Metadata ?? string.Empty,
+		Description = i.Description ?? current?.Description ?? string.Empty,
+		Body = i.Body ?? current?.Body ?? string.Empty,
+		Tags = i.Tags is null ? current?.Tags ?? string.Empty : NormalizeTags(i.Tags),
+		Metadata = i.Metadata ?? current?.Metadata ?? string.Empty,
 		PrevKey = i.PrevKey,
 	};
 

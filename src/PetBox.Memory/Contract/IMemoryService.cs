@@ -24,7 +24,9 @@ public interface IMemoryService
 	// retriever; semantic is silently off when no embedding capability is available. The
 	// result carries which retrievers ran and whether it degraded.
 	Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default);
-	// Declarative temporal upsert (+ soft-deletes), then FTS rebuild.
+	// Declarative temporal upsert (+ soft-deletes), then FTS rebuild. PATCH semantics on
+	// edits (version > 0): a null field keeps the active entry's current value, an explicit
+	// empty ("") clears it; a new entry (version 0) maps null to empty.
 	Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, long sinceVersion = 0, CancellationToken ct = default);
 	Task<MemoryUpsertOutcome> DeltaAsync(string projectKey, string store, long sinceVersion, CancellationToken ct = default);
 
