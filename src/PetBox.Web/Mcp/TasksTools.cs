@@ -147,8 +147,9 @@ public static class TasksTools
 		the project's own board kinds, task types, statuses and transitions as data (NOT the
 		quartet index: tasks.methodology_get reads the intake/ideas/spec/work BOARDS; this
 		verb writes the process DEFINITION). One definition per project, versioned: `version`
-		is the baseline you last saw (0 = the project has none yet); a moved baseline is a
-		clear conflict error naming the current version — re-read with
+		is the WATERMARK baseline — pass the `version` from your last tasks.methodology_def_get
+		(0 = the project has none yet); a stale baseline (someone redefined since) or one ahead of
+		the project's cursor is a clear conflict error naming the current version — re-read with
 		tasks.methodology_def_get and resubmit. The definition is validated as a whole before
 		it is stored (name/kind/type slugs, ≥1 kind, ≥1 workflow block per kind, type unique
 		within its kind, statuses non-empty and unique per block, every transition between
@@ -189,7 +190,7 @@ public static class TasksTools
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("The whole methodology definition (structured document; see the tool description for the shape).")] MethodologyDefInput definition,
-		[Description("Baseline version you last saw; 0 = the project has no definition yet.")] long version = 0,
+		[Description("Watermark baseline: the `version` from your last tasks.methodology_def_get; 0 = the project has no definition yet.")] long version = 0,
 		[Description("Per-kind {from,to} type/status repairs for live nodes the change would strand; applied only where the current value is invalid under the new resolution.")] MethodologyMigrationInput[]? migration = null,
 		CancellationToken ct = default)
 	{
@@ -530,8 +531,10 @@ public static class TasksTools
 		the idea_spec edge), blockedBy (the blocking node as its slug on THIS board or a
 		NodeId — the same slug-or-NodeId convention as specRef/partOf), supersedes
 		(a slug|NodeId this node replaces — the old one is moved to its terminal-cancel),
-		commitRef?, priority? (sparse int, lower first), version (baseline you last saw; 0 =
-		new). Rename via prevKey. A cold call auto-creates the board.
+		commitRef?, priority? (sparse int, lower first), version (WATERMARK baseline: pass the
+		board `currentVersion` from your last read OR the node's own version — both are valid; 0 =
+		new; a version above this board's cursor is rejected as a wrong-scope baseline). Rename via
+		prevKey. A cold call auto-creates the board.
 
 		To DELETE a node, pass { key, deleted:true } (optional version baseline; 0 = delete
 		regardless) — the node is soft-closed (history kept), its edges and tags are closed, and

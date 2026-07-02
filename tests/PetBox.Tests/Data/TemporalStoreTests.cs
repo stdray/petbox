@@ -93,13 +93,20 @@ public sealed class TemporalStoreTests : IDisposable
 		(ActiveOf("p30"))!.Body.Should().Be("Phase 30"); // untouched, survives
 	}
 
+	// WATERMARK: a baseline above the scope cursor (here 5 vs an empty store's 0) is quoting a
+	// version this scope never reached — a wrong-scope cursor, not an edit of a vanished node.
+	// (Replaces the old "edit a vanished node -> Vanished": with a baseline <= the cursor there is
+	// nothing to clobber, so a missing key re-creates; only a rename keeps a Vanished path.)
 	[Fact]
-	public async Task EditingVanishedNode_Conflicts()
+	public async Task BaselineAboveScopeCursor_IsFutureBaseline()
 	{
 		var r = await Upsert(Node("ghost", PlanStatus.Done, "was here", baseline: 5));
 
 		r.Applied.Should().BeFalse();
-		r.Conflicts.Should().ContainSingle(c => c.Kind == TemporalConflictKind.Vanished);
+		var c = r.Conflicts.Should().ContainSingle(c => c.Key == "ghost").Subject;
+		c.Kind.Should().Be(TemporalConflictKind.FutureBaseline);
+		c.ActiveVersion.Should().Be(0);                     // the scope cursor it's ahead of
+		c.Reason.Should().Contain("another board/scope");   // the two-version-space teaching message
 	}
 
 	[Fact]
@@ -198,6 +205,170 @@ public sealed class TemporalStoreTests : IDisposable
 		r.Removed.Should().BeEquivalentTo(["b"]);                     // renamed away, no active row
 	}
 
+	// ── WATERMARK baseline semantics ─────────────────────────────────────────
+	// The baseline in Version is a watermark: the scope cursor the author read (or the
+	// entity's own version). An edit is valid when baseline >= the entity's current version.
+
+	[Fact]
+	public async Task Edit_BaselineIsScopeCursor_AboveEntityVersion_Applies()
+	{
+		await Upsert(Node("a", PlanStatus.Done, "A"));   // v1
+		await Upsert(Node("b", PlanStatus.Done, "B"));   // v2 -> cursor 2; a is still at v1
+
+		// The author read the scope at cursor 2 and edits a with baseline 2 (> a's own v1).
+		var r = await Upsert(Node("a", PlanStatus.InProgress, "A2", baseline: 2));
+
+		r.Applied.Should().BeTrue();
+		r.Inserted.Should().Be(1);
+		r.Closed.Should().Be(1);
+		ActiveOf("a")!.Status.Should().Be(PlanStatus.InProgress);
+		All().Count(x => x.Key == "a").Should().Be(2); // history preserved (closed v1 + new v3)
+	}
+
+	// THE trap this fixes: a batch stamped with a single scope cursor as every row's baseline —
+	// under the old exact-match rule the untouched rows (whose own version < cursor) were Stale
+	// and aborted the whole batch; the watermark lets them collapse to no-ops while the edit lands.
+	[Fact]
+	public async Task Batch_EditPlusUntouched_AllAtScopeCursorBaseline_Applies()
+	{
+		await Upsert(Node("a", PlanStatus.Done, "A"), Node("b", PlanStatus.Done, "B"), Node("c", PlanStatus.Done, "C")); // all v1
+		await Upsert(Node("a", PlanStatus.InProgress, "A2", baseline: 1)); // v2 -> cursor 2; b,c still v1
+
+		// Author read at cursor 2, resubmits all three at baseline 2, changing only b.
+		var r = await Upsert(
+			Node("a", PlanStatus.InProgress, "A2", baseline: 2), // identical to current -> no-op
+			Node("b", PlanStatus.Done, "B-edited", baseline: 2), // real edit (b is v1 < 2) -> applies
+			Node("c", PlanStatus.Done, "C", baseline: 2));       // identical to current -> no-op
+
+		r.Applied.Should().BeTrue();
+		r.Inserted.Should().Be(1); // only b
+		r.Closed.Should().Be(1);
+		ActiveOf("b")!.Body.Should().Be("B-edited");
+		ActiveOf("a")!.Body.Should().Be("A2"); // untouched, survives
+		ActiveOf("c")!.Body.Should().Be("C");
+	}
+
+	[Fact]
+	public async Task NewEntity_BaselineIsScopeCursor_OrZero_Creates()
+	{
+		await Upsert(Node("a", PlanStatus.Done, "A")); // v1 -> cursor 1
+
+		// A brand-new key stamped with the scope cursor (author read, then added) creates.
+		var withCursor = await Upsert(Node("fresh", PlanStatus.Pending, "F", baseline: 1));
+		withCursor.Applied.Should().BeTrue();
+		withCursor.Inserted.Should().Be(1);
+		ActiveOf("fresh")!.Version.Should().Be(2);
+
+		// baseline 0 still creates (unchanged classic path).
+		var withZero = await Upsert(Node("fresh0", PlanStatus.Done, "F0"));
+		withZero.Applied.Should().BeTrue();
+		ActiveOf("fresh0").Should().NotBeNull();
+	}
+
+	// A payload identical to the CURRENT revision but on a STALE baseline is a conflict now —
+	// SamePayload no longer short-circuits before the baseline is validated.
+	[Fact]
+	public async Task IdenticalPayload_StaleBaseline_Conflicts_NotSilentNoOp()
+	{
+		await Upsert(Node("wal", PlanStatus.Pending, "v1"));                 // v1
+		await Upsert(Node("wal", PlanStatus.Done, "final", baseline: 1));    // B -> v2 (current = Done/final)
+
+		// A resubmits the SAME payload as the current revision, but still believes baseline is v1.
+		var r = await Upsert(Node("wal", PlanStatus.Done, "final", baseline: 1));
+
+		r.Applied.Should().BeFalse();
+		r.Conflicts.Should().ContainSingle(c => c.Key == "wal" && c.Kind == TemporalConflictKind.Stale);
+	}
+
+	// Identical payload on a VALID watermark baseline (cursor above the entity's own version) is
+	// still a clean no-op — no new revision.
+	[Fact]
+	public async Task IdenticalPayload_WatermarkBaseline_IsNoOp()
+	{
+		await Upsert(Node("wal", PlanStatus.Done, "WAL")); // v1
+		await Upsert(Node("other", PlanStatus.Done, "O")); // v2 -> cursor 2
+
+		var r = await Upsert(Node("wal", PlanStatus.Done, "WAL", baseline: 2)); // identical, baseline = cursor 2 > wal's v1
+
+		r.Applied.Should().BeTrue();
+		r.Inserted.Should().Be(0);
+		All().Count(x => x.Key == "wal").Should().Be(1);
+	}
+
+	[Fact]
+	public async Task Rename_BaselineIsScopeCursor_AboveSourceVersion_Applies()
+	{
+		await Upsert(Node("old", PlanStatus.Done, "body")); // v1
+		await Upsert(Node("x", PlanStatus.Done, "X"));       // v2 -> cursor 2; old still v1
+
+		var r = await Upsert(Node("new", PlanStatus.Done, "body", baseline: 2, prevKey: "old"));
+
+		r.Applied.Should().BeTrue();
+		ActiveOf("old").Should().BeNull();
+		ActiveOf("new")!.PrevKey.Should().Be("old");
+	}
+
+	[Fact]
+	public async Task Rename_SourceMovedPastBaseline_Conflicts()
+	{
+		await Upsert(Node("old", PlanStatus.Pending, "b1"));            // v1
+		await Upsert(Node("old", PlanStatus.Done, "b2", baseline: 1));  // v2: source edited past baseline 1
+
+		var r = await Upsert(Node("new", PlanStatus.Done, "b2", baseline: 1, prevKey: "old"));
+
+		r.Applied.Should().BeFalse();
+		r.Conflicts.Should().ContainSingle(c => c.Key == "old" && c.Kind == TemporalConflictKind.Stale);
+		ActiveOf("old").Should().NotBeNull(); // untouched
+	}
+
+	// The one surviving Vanished path: a rename whose source key has no active row.
+	[Fact]
+	public async Task Rename_MissingSource_IsVanished()
+	{
+		var r = await Upsert(Node("new", PlanStatus.Done, "b", prevKey: "ghost"));
+
+		r.Applied.Should().BeFalse();
+		r.Conflicts.Should().ContainSingle(c => c.Key == "ghost" && c.Kind == TemporalConflictKind.Vanished);
+	}
+
+	[Fact]
+	public async Task Delete_BaselineIsScopeCursor_AboveEntityVersion_Closes()
+	{
+		await Upsert(Node("a", PlanStatus.Done, "A")); // v1
+		await Upsert(Node("b", PlanStatus.Done, "B")); // v2 -> cursor 2; a still v1
+
+		var r = await Delete(("a", 2)); // baseline 2 (cursor) > a's own v1
+
+		r.Applied.Should().BeTrue();
+		r.Closed.Should().Be(1);
+		ActiveOf("a").Should().BeNull();
+	}
+
+	[Fact]
+	public async Task Delete_StaleBaseline_Conflicts()
+	{
+		await Upsert(Node("a", PlanStatus.Pending, "v1"));           // v1
+		await Upsert(Node("a", PlanStatus.Done, "v2", baseline: 1)); // v2
+
+		var r = await Delete(("a", 1)); // baseline 1 < current v2
+
+		r.Applied.Should().BeFalse();
+		r.Conflicts.Should().ContainSingle(c => c.Key == "a" && c.Kind == TemporalConflictKind.Stale);
+		ActiveOf("a").Should().NotBeNull();
+	}
+
+	[Fact]
+	public async Task Delete_BaselineAboveCursor_IsFutureBaseline()
+	{
+		await Upsert(Node("a", PlanStatus.Done, "A")); // v1 -> cursor 1
+
+		var r = await Delete(("a", 9)); // 9 > cursor 1
+
+		r.Applied.Should().BeFalse();
+		r.Conflicts.Should().ContainSingle(c => c.Key == "a" && c.Kind == TemporalConflictKind.FutureBaseline);
+		ActiveOf("a").Should().NotBeNull();
+	}
+
 	// ---- helpers ----
 	static PlanRow Node(string key, PlanStatus status, string body,
 		long baseline = 0, string? commit = null, long priority = 0, string? prevKey = null) =>
@@ -221,6 +392,13 @@ public sealed class TemporalStoreTests : IDisposable
 	{
 		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
 		return await TemporalStore.UpsertAsync(db, rows, since, time: time);
+	}
+
+	// Soft-delete keys via the delete-list overload (no desired rows).
+	async Task<TemporalUpsertResult<PlanRow>> Delete(params (string Key, long Version)[] dels)
+	{
+		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
+		return await TemporalStore.UpsertAsync(db, Array.Empty<PlanRow>(), dels);
 	}
 
 	// Drives the internal seam to reproduce CloseRace deterministically.

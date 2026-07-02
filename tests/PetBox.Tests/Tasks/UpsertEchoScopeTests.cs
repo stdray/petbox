@@ -104,9 +104,12 @@ public sealed class UpsertEchoScopeTests : IDisposable
 	[Fact]
 	public async Task Conflicts_ReportedOnTheAck()
 	{
-		await _tasks.UpsertAsync(Proj, "b", new[] { Node("n") });
+		await _tasks.UpsertAsync(Proj, "b", new[] { Node("n") });                              // v1
+		await _tasks.UpsertAsync(Proj, "b", new[] { Node("n", title: "N-mid", version: 1) });  // -> v2 (concurrent edit)
 
-		var stale = await _tasks.UpsertAsync(Proj, "b", new[] { Node("n", title: "N2", version: 999) });
+		// A genuine stale baseline: the node moved to v2 while this author still holds v1.
+		// (Was version:999 under exact-match — that is now a FutureBaseline, not Stale.)
+		var stale = await _tasks.UpsertAsync(Proj, "b", new[] { Node("n", title: "N2", version: 1) });
 		stale.Result.Applied.Should().BeFalse();
 		stale.Result.Conflicts.Should().ContainSingle().Which.Kind.Should().Be(TemporalConflictKind.Stale);
 	}

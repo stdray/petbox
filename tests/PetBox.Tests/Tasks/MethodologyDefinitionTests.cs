@@ -260,6 +260,35 @@ public sealed class MethodologyDefinitionTests : IAsyncLifetime
 		resubmit.GetProperty("version").GetInt64().Should().Be(2);
 	}
 
+	// 3b. WATERMARK: test 3 already shows the `version` from methodology_def_get is the valid next
+	// baseline. A baseline ABOVE the project's cursor is a FutureBaseline conflict whose message
+	// names BOTH version spaces — the classic symptom of a cursor carried from another project.
+	[Fact]
+	public async Task Define_FutureBaseline_NamesBothVersionSpaces()
+	{
+		IsErr(await Upsert(ValidDefinition())).Should().BeFalse(); // -> version 1, cursor 1
+
+		var future = await Upsert(ValidDefinition(epicDoneName: "Delivered"), version: 99);
+		IsErr(future).Should().BeTrue(Text(future));
+		// The wire JSON escapes the apostrophe in "project's" as ' — assert around it.
+		Text(future).Should().Contain("ahead of this project").And.Contain("cursor 1");
+	}
+
+	// 3c. rule-6 alignment: an IDENTICAL definition on a STALE baseline is the same conflict a real
+	// change would raise — the service no longer treats byte-equality as an unconditional no-op; the
+	// store validates the baseline first (SamePayload runs AFTER baseline validation).
+	[Fact]
+	public async Task Define_IdenticalDefinition_StaleBaseline_Conflicts()
+	{
+		IsErr(await Upsert(ValidDefinition())).Should().BeFalse();                                       // -> version 1
+		IsErr(await Upsert(ValidDefinition(epicDoneName: "Delivered"), version: 1)).Should().BeFalse();  // -> version 2
+
+		// Resubmit the CURRENT definition byte-for-byte, but with the superseded baseline 1.
+		var stale = await Upsert(ValidDefinition(epicDoneName: "Delivered"), version: 1);
+		IsErr(stale).Should().BeTrue(Text(stale));
+		Text(stale).Should().Contain("is stale");
+	}
+
 	// 4a. a transition referencing a status outside its block is rejected, naming the edge.
 	[Fact]
 	public async Task Define_TransitionToUnknownStatus_Rejected()

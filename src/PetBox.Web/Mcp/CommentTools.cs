@@ -67,7 +67,7 @@ public static class CommentTools
 		"chronological head is kept). Read the full thread on the node's detail page in the UI.";
 
 	[McpServerTool(Name = "comments.edit", Title = "Edit a node comment", UseStructuredContent = true, OutputSchemaType = typeof(CommentUpsertResult))]
-	[Description("PATCH a comment (body; tags replace-if-provided — omitted `tags` stays as-is). `version` is the revision you last saw — a stale baseline returns a conflict instead of clobbering. Body/tags only; you cannot re-parent a comment in v1. Returns {applied, currentVersion, id, conflicts}. Requires tasks:write.")]
+	[Description("PATCH a comment (body; tags replace-if-provided — omitted `tags` stays as-is). `version` is the WATERMARK baseline: pass the thread `currentVersion` from your last read OR the comment's own version — both valid; an older baseline (the comment moved on) returns a conflict instead of clobbering. Body/tags only; you cannot re-parent a comment in v1. Returns {applied, currentVersion, id, conflicts}. Requires tasks:write.")]
 	public static async Task<CommentUpsertResult> EditAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments,
 		string projectKey, string board, string id, string body, long version,

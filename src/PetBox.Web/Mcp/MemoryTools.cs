@@ -84,7 +84,9 @@ public static class MemoryTools
 		preference on how to work) | Project (durable project fact/constraint) | Reference
 		(pointer to an external resource). Pick one. `tags` is an ARRAY of free-form tag
 		strings, normalised on write ([] clears, omit leaves as-is).
-		`version` is the baseline you last saw (0 = new). Set `prevKey` to rename.
+		`version` is the WATERMARK baseline: pass the store `currentVersion` from your last read OR
+		the entry's own version — both valid; 0 = new; a version above the store cursor is rejected
+		as a wrong-scope baseline. Set `prevKey` to rename.
 		To delete an entry, pass { key, deleted:true } (optional version baseline) — it is
 		soft-closed (history kept) and appears in the result's `removed`.
 		Store durable facts not derivable from code/git/config; actionable work goes to a
@@ -348,7 +350,7 @@ public static class MemoryTools
 			CurrentVersion: r.CurrentVersion,
 			Inserted: r.Inserted,
 			Closed: r.Closed,
-			Conflicts: r.Conflicts.Select(c => new MemoryConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion)).ToList(),
+			Conflicts: r.Conflicts.Select(c => new MemoryConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason)).ToList(),
 			Added: r.Added.Select(e => EntryDto(e, bodyLen)).ToList(),
 			Updated: r.Updated.Select(e => EntryDto(e, bodyLen)).ToList(),
 			Removed: r.Removed.ToList());
