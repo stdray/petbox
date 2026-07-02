@@ -250,7 +250,7 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- read: tree view ----
 
-	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, string? urlPrefix = null, CancellationToken ct = default)
+	public async Task<PlanBoardView> GetAsync(string projectKey, string board, bool includeClosed = false, string? under = null, string? urlPrefix = null, string[]? status = null, CancellationToken ct = default)
 	{
 		await EnsureBoard(projectKey, board, ct);
 
@@ -268,7 +268,13 @@ public sealed partial class TasksService : ITasksService
 		var index = await BuildNodeIndexAsync(projectKey, ct);
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		var underId = ResolveUnderNodeId(under, active);
-		var visible = FilterVisible(active, includeClosed, underId, parentOf);
+		// A status filter is an EXPLICIT ask: naming a terminal status returns its nodes even
+		// with includeClosed=false (widen the pool first, then keep only the named slugs).
+		var statusFilter = ResolveStatusFilter(status, kind);
+		var visible = statusFilter is null
+			? FilterVisible(active, includeClosed, underId, parentOf)
+			: FilterVisible(active, includeClosed: true, underId, parentOf)
+				.Where(n => statusFilter.Contains(n.Status)).ToList();
 
 		var nodes = new List<PlanNodeView>();
 		foreach (var n in visible)
@@ -339,6 +345,48 @@ public sealed partial class TasksService : ITasksService
 		var nodeId = await _boards.FindNodeIdBySlugAsync(projectKey, board, slug, ct);
 		if (nodeId is null) return null;
 		return await GetNodeAsync(projectKey, nodeId, ct);
+	}
+
+	// Addressed single-node read for the MCP surface: `node` is a slug on this board or a
+	// 32-hex NodeId (the specRef/partOf convention). Rides the enriched GetNodeAsync path
+	// (includeClosed inside), so a TERMINAL node is returned like any other — an addressed
+	// ask never gets an empty answer, only the node or a board-naming error.
+	public async Task<NodeDetailView> GetNodeOnBoardAsync(string projectKey, string board, string node, string? urlPrefix = null, CancellationToken ct = default)
+	{
+		await EnsureBoard(projectKey, board, ct);
+		var v = (node ?? "").Trim();
+		if (v.Length == 0)
+			throw new ArgumentException("node is required — a slug key on the board, or a 32-hex NodeId");
+		var detail = LooksLikeNodeId(v)
+			? await GetNodeAsync(projectKey, v, ct)
+			: await GetNodeBySlugAsync(projectKey, board, v.ToLowerInvariant(), ct);
+		if (detail is null)
+			throw new ArgumentException($"node '{node}' not found on board '{board}' in project '{projectKey}'");
+		if (!string.Equals(detail.Board, board, StringComparison.Ordinal))
+			throw new ArgumentException($"node '{node}' is on board '{detail.Board}', not '{board}'");
+		if (urlPrefix is not null)
+			detail = detail with { Node = detail.Node with { Url = urlPrefix + detail.Board + "/" + detail.Node.Key } };
+		return detail;
+	}
+
+	// Normalize/validate a status filter against the board kind's known slugs (across its
+	// hosted types), case-insensitive; null/empty = no filter. An unknown slug is rejected —
+	// it would otherwise silently return nothing (mirrors ResolveBoardFilter).
+	static HashSet<string>? ResolveStatusFilter(string[]? status, BoardKind kind)
+	{
+		if (status is null || status.Length == 0) return null;
+		var known = WorkflowCatalog.Types(kind).SelectMany(w => w.Statuses).Select(s => s.Slug)
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var raw in status)
+		{
+			var s = (raw ?? "").Trim();
+			if (s.Length == 0) continue;
+			if (!known.Contains(s))
+				throw new ArgumentException($"status '{raw}' is not a status of this board's kind (valid: {string.Join("|", known.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))})");
+			set.Add(s);
+		}
+		return set.Count == 0 ? null : set;
 	}
 
 	// nodeId -> its active part_of parent nodeId (single parent). One query, project-wide.

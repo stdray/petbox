@@ -153,17 +153,21 @@ public static class TasksTools
 		done_with_defects), rolled up over the part_of subtree. By default terminal/closed
 		nodes are HIDDEN — pass includeClosed=true; closed part_of ancestors of a visible node
 		are kept so the tree stays connected. `under` (a node slug) restricts to that part_of
-		subtree. Pass `groupBy` instead to get the tag PROJECTION: an ORDERED, comma-separated
+		subtree. `status` (an array of status slugs, case-insensitive) keeps only those
+		statuses — naming a TERMINAL status returns its nodes even without includeClosed (an
+		explicit ask); an unknown slug is rejected. Pass `groupBy` instead to get the tag
+		PROJECTION: an ORDERED, comma-separated
 		list of tag namespaces (e.g. "area" or "area,concern") buckets nodes by their value in
 		each namespace ("(none)" for untagged), nested in that order, each group with a delivery
 		roll-up — the cross-cutting view a single-parent tree can't give. The projection is a
 		view; part_of is untouched. Bodies are returned in FULL by default; pass `bodyLen` > 0
-		for a per-node snippet (first N chars + "…"), then fetch a full body from the node's
-		detail page or a narrower `under`. Requires tasks:read.
+		for a per-node snippet (first N chars + "…"), then fetch a full body via tasks.node_get
+		or a narrower `under`. Requires tasks:read.
 		""")]
 	public static async Task<object> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, bool includeClosed = false, string? under = null,
+		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false. Ignored with groupBy.")] string[]? status = null,
 		[Description("Tag PROJECTION: an ordered, comma-separated list of tag namespaces (e.g. \"area\" or \"area,concern\"); order sets nesting.")] string? groupBy = null,
 		[Description("Snippet length (chars) per node body; 0 (default) = full body. \"…\" appended when cut. Ignored with groupBy (keys only).")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default; ignored with groupBy).")] bool includeUrl = false,
@@ -174,12 +178,39 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		if (!string.IsNullOrWhiteSpace(groupBy))
 			return await tasks.GetGroupedAsync(projectKey, board, ParseGroupBy(groupBy), ct);
-		var view = await tasks.GetAsync(projectKey, board, includeClosed, under, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct), ct);
+		var view = await tasks.GetAsync(projectKey, board, includeClosed, under, await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct), status, ct);
 		// Snippet slicing is MCP-adapter-only: the service GetAsync still returns full bodies,
 		// which the Razor board renders — so this never starves the UI (spec read-snippet-on-demand).
 		return bodyLen <= 0
 			? (object)view
 			: view with { Nodes = view.Nodes.Select(n => n with { Body = ModuleMcp.SnippetBody(n.Body, bodyLen) ?? n.Body }).ToList() };
+	}
+
+	[McpServerTool(Name = "tasks.node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
+	[Description("""
+		Return ONE node of a board in FULL, addressed by `node` = its slug key OR its 32-hex
+		NodeId (the same slug-or-NodeId convention as specRef/partOf). The answer carries the
+		owning `board`, its `kind`, the part_of `ancestors` chain (root→parent), and the
+		fully-enriched node: key, nodeId, parentNodeId/parentSlug/depth, status, type, title,
+		the COMPLETE `body` (never truncated), priority, version, tags, links (`spec`,
+		`blockedBy`; on a spec node `linkedTasks` + the computed `delivery`), plus `url` when
+		includeUrl. An addressed read ignores terminality: a Done/Cancelled/deprecated node is
+		returned like any other (no includeClosed needed). A node that doesn't exist on the
+		board is a clear error, not an empty result. Use this instead of re-fetching a whole
+		board when you need one node's full body. Requires tasks:read.
+		""")]
+	public static async Task<NodeDetailView> NodeGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, string board,
+		[Description("The node's slug key on the board, or its 32-hex NodeId.")] string node,
+		[Description("Include an absolute `url` permalink to the node's detail page (off by default).")] bool includeUrl = false,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
+		return await tasks.GetNodeOnBoardAsync(projectKey, board, node, urlPrefix, ct);
 	}
 
 	[McpServerTool(Name = "tasks.search", Title = "Search plan nodes", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
