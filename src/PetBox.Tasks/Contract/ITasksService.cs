@@ -31,7 +31,9 @@ public interface ITasksService
 	// The quartet as one compact INDEX (intake→ideas→spec→work): header rows (no body by
 	// default) + a status histogram per board. `bodyLen`>0 slices the first N body chars into
 	// each row; `includeBoards` (kind names) restricts which quartet boards return. Enabled =
-	// all four exist (independent of the filter).
+	// all four exist (independent of the filter). Node rows share one response-wide output
+	// budget (status histograms are always complete); an over-budget board is prefix-cut and
+	// flagged Truncated/Omitted, with a narrowing Hint on the view — never silently.
 	Task<MethodologyView> GetMethodologyAsync(string projectKey, int bodyLen = 0, string[]? includeBoards = null, string? urlPrefix = null, CancellationToken ct = default);
 	// The workspace owning a project, or null if unknown. Adapters use it to assemble per-node
 	// UI permalinks (the URL is workspace-scoped but the MCP surface carries only projectKey).

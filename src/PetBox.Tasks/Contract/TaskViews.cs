@@ -98,9 +98,16 @@ public sealed record TaskSearchResult(IReadOnlyList<TaskSearchHit> Hits, PetBox.
 
 // One board of the methodology quartet as a compact INDEX: a status histogram (`Counts`,
 // status slug -> active-node count) plus the board's nodes as header rows (no bodies by
-// default). null Name = not provisioned.
-public sealed record MethodologyBoard(string Kind, string? Name, IReadOnlyDictionary<string, int> Counts, IReadOnlyList<PlanNodeHeader> Nodes);
+// default). null Name = not provisioned. `Counts` is ALWAYS complete; the node rows are
+// subject to the response-wide output budget (spec bounded-result-sets) — when rows were
+// cut, `Truncated` is true and `Omitted` says how many rows fell off (null = nothing cut,
+// so a board that fits serializes exactly as before).
+public sealed record MethodologyBoard(
+	string Kind, string? Name, IReadOnlyDictionary<string, int> Counts, IReadOnlyList<PlanNodeHeader> Nodes,
+	bool? Truncated = null, int? Omitted = null);
 
 // The methodology quartet as one surface: intake → ideas → spec → work (the pipeline
 // order). `Enabled` = all four singleton boards exist. Composes GetAsync per board.
-public sealed record MethodologyView(bool Enabled, IReadOnlyList<MethodologyBoard> Boards);
+// `Hint` is non-null only when some board's rows were cut by the output budget: a
+// human/agent-readable pointer on how to narrow the query (null = complete answer).
+public sealed record MethodologyView(bool Enabled, IReadOnlyList<MethodologyBoard> Boards, string? Hint = null);

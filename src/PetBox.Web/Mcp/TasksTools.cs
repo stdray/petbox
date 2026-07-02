@@ -116,9 +116,14 @@ public static class TasksTools
 		dump; null fields are omitted). Pass `bodyLen` > 0 to include the first N chars of
 		each body (a snippet — the key line(s) without detail; "…" appended when cut; a large
 		N ≈ the full body). Pass `includeBoards` (e.g. ["spec","ideas"]) to return only those
-		quartet boards (kinds: intake|ideas|spec|work). For full untruncated bodies or
-		subtree drill-down, use tasks.get (the single-board detail endpoint). `enabled` is
-		true when all four singleton boards exist. Requires tasks:read.
+		quartet boards (kinds: intake|ideas|spec|work). The index has a HARD OUTPUT BUDGET:
+		`counts` per board is always complete, but node rows share a response-wide char budget
+		spent in pipeline order — when a board's rows no longer fit it is cut and flagged with
+		`truncated:true` + `omitted` (rows dropped), and the response carries a top-level
+		`hint` on how to narrow (includeBoards one board at a time, bodyLen:0, or tasks.get
+		with `under` for subtree detail). No markers = the complete index. For full
+		untruncated bodies or subtree drill-down, use tasks.get (the single-board detail
+		endpoint). `enabled` is true when all four singleton boards exist. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyView> MethodologyGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,

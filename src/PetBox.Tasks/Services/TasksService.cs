@@ -132,16 +132,41 @@ public sealed partial class TasksService : ITasksService
 
 	static readonly IReadOnlyDictionary<string, int> EmptyCounts = new Dictionary<string, int>();
 
+	// Hard response-wide output budget for the index rows (spec surface-economy /
+	// bounded-result-sets): the quartet index must stay readable inside an agent's context
+	// window no matter how large the boards grow. Costs are measured as serialized JSON
+	// chars per header row (camelCase, nulls omitted — mirrors the MCP wire shape). The
+	// status histograms are always complete; only rows are subject to the budget.
+	const int IndexCharBudget = 30_000;
+
+	// Approximates the MCP tool-result serialization (McpJsonUtilities defaults:
+	// camelCase + null-ignore) so the budget tracks what the caller actually receives.
+	static readonly System.Text.Json.JsonSerializerOptions RowCostJson = new(System.Text.Json.JsonSerializerDefaults.Web)
+	{
+		DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull,
+	};
+
+	// Surfaced on MethodologyView.Hint when any board's rows were cut by the budget.
+	const string TruncationHint =
+		"Output budget exceeded: node rows were truncated (see truncated/omitted per board); " +
+		"the status histograms (counts) are complete. Narrow the query with includeBoards " +
+		"(one board at a time), keep bodyLen:0, or drill into a subtree with tasks.get " +
+		"(board + under) for details.";
+
 	// The quartet as one COMPACT INDEX. By default each node is a header row (no body);
 	// `bodyLen > 0` slices the first N chars of each body into the row, `includeBoards` (kind
 	// names) restricts which quartet boards are returned. `Enabled` reflects true provisioning
-	// (all four exist) regardless of the filter.
+	// (all four exist) regardless of the filter. Node rows share one response-wide char
+	// budget spent in pipeline order; a board whose rows no longer fit is cut at the first
+	// over-budget row and marked Truncated/Omitted — never silently (spec bounded-result-sets).
 	public async Task<MethodologyView> GetMethodologyAsync(string projectKey, int bodyLen = 0, string[]? includeBoards = null, string? urlPrefix = null, CancellationToken ct = default)
 	{
 		var want = ResolveBoardFilter(includeBoards); // null = all quartet boards
 		var boards = await _boards.ListAsync(projectKey, ct);
 		var result = new List<MethodologyBoard>(Quartet.Length);
 		var all = true;
+		var spent = 0;
+		var anyTruncated = false;
 		foreach (var kind in Quartet)
 		{
 			var b = boards.FirstOrDefault(x => x.ClosedAt == null && WorkflowCatalog.ParseKind(x.Kind) == kind);
@@ -150,13 +175,27 @@ public sealed partial class TasksService : ITasksService
 			var kindName = kind.ToString().ToLowerInvariant();
 			if (b is null) { result.Add(new MethodologyBoard(kindName, null, EmptyCounts, [])); continue; }
 			var view = await GetAsync(projectKey, b.Name, includeClosed: false, urlPrefix: urlPrefix, ct: ct);
-			var headers = view.Nodes.Select(n => ToHeader(n, bodyLen)).ToList();
 			var counts = view.Nodes
 				.GroupBy(n => n.Status, StringComparer.Ordinal)
 				.ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
-			result.Add(new MethodologyBoard(kindName, b.Name, counts, headers));
+			// Prefix cut: rows keep the board's order (priority then key); the first row that
+			// blows the budget stops the board and everything after it counts as omitted.
+			var headers = new List<PlanNodeHeader>(view.Nodes.Count);
+			var omitted = 0;
+			for (var i = 0; i < view.Nodes.Count; i++)
+			{
+				var h = ToHeader(view.Nodes[i], bodyLen);
+				var cost = System.Text.Json.JsonSerializer.Serialize(h, RowCostJson).Length;
+				if (spent + cost > IndexCharBudget) { omitted = view.Nodes.Count - i; break; }
+				spent += cost;
+				headers.Add(h);
+			}
+			anyTruncated |= omitted > 0;
+			result.Add(omitted > 0
+				? new MethodologyBoard(kindName, b.Name, counts, headers, Truncated: true, Omitted: omitted)
+				: new MethodologyBoard(kindName, b.Name, counts, headers));
 		}
-		return new MethodologyView(all, result);
+		return new MethodologyView(all, result, anyTruncated ? TruncationHint : null);
 	}
 
 	// Project the full node view down to an index header, slicing the body to `bodyLen`.
