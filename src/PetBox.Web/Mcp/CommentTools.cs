@@ -22,9 +22,9 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class CommentTools
 {
-	[McpServerTool(Name = "comments.add", Title = "Add a node comment", UseStructuredContent = true, OutputSchemaType = typeof(CommentUpsertResult))]
+	[McpServerTool(Name = "comments.create", Title = "Create a node comment", UseStructuredContent = true, OutputSchemaType = typeof(CommentUpsertResult))]
 	[Description("CREATE a comment under a plan node (a discussion thread separate from the plan). nodeId takes a slug or NodeId (32-hex = the stable PlanNode.NodeId; a slug is the node's key on `board`). parentId (a comment id, NOT a node ref) makes it a REPLY — it must be an active comment under the same node, else rejected. tags are OPEN strings (convention `artifact:<slug>` flags a key artifact like a spec-update plan). author is caller-supplied. Returns {applied, currentVersion, id, conflicts}. Requires tasks:write.")]
-	public static async Task<CommentUpsertResult> AddAsync(
+	public static async Task<CommentUpsertResult> CreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey, string board,
 		[Description("The node to comment on: its slug key on `board`, or its 32-hex NodeId.")] string nodeId,

@@ -215,7 +215,7 @@ public sealed class EntityToolsTests : IAsyncLifetime
 	{
 		// The typed per-type tool (mcp-typing) — flat scalar params, so the client
 		// sends a real schema, no stringified-object trap.
-		var create = await ToolAsync("config.create_binding");
+		var create = await ToolAsync("config.binding_upsert");
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = "test",
@@ -233,7 +233,7 @@ public sealed class EntityToolsTests : IAsyncLifetime
 			["kind"] = "Secret",
 		})).Should().NotContain("\"error\"");
 
-		var list = await ToolAsync("config.list_bindings");
+		var list = await ToolAsync("config.binding_list");
 		var listed = Text(await list.CallAsync(new Dictionary<string, object?> { ["workspaceKey"] = "test" }));
 		listed.Should().Contain("svc/url");
 		listed.Should().Contain("svc/key");
@@ -249,17 +249,17 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		secret.Ciphertext.Should().NotBeNullOrEmpty();
 	}
 
-	// spec explicit-write-semantics: config.create_binding is PUT by (path, tagset) — a repeat
-	// create with the same path and the same normalized tag SET supersedes (soft-closes) the
+	// spec explicit-write-semantics: config.binding_upsert is PUT by (path, tagset) — a repeat
+	// upsert with the same path and the same normalized tag SET supersedes (soft-closes) the
 	// old binding instead of leaving two active ambiguous twins; a different tagset at the
 	// same path is a specificity variant and coexists.
 	[Fact]
-	public async Task ConfigTools_CreateBinding_SupersedesSameTagset_KeepsDifferentTagset()
+	public async Task ConfigTools_BindingUpsert_SupersedesSameTagset_KeepsDifferentTagset()
 	{
 		// Unique path per run: the workspace config DB outlives this fixture, so a fixed
 		// path would collide with rows left by previous runs.
 		var path = "dup/" + Guid.NewGuid().ToString("N")[..12];
-		var create = await ToolAsync("config.create_binding");
+		var create = await ToolAsync("config.binding_upsert");
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = "test",

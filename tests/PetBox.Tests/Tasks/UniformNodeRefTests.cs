@@ -18,7 +18,7 @@ namespace PetBox.Tests.Tasks;
 // format. blockedBy (tasks.upsert) resolves a slug on the same board and the `blocks` edge
 // always carries a NodeId; relations.create/list resolve slugs across ALL boards (no board
 // param) with an "ambiguous slug … boards: […]" error when a slug lives on 2+ boards;
-// comments.add/list resolve a slug on their `board` param. 32-hex values are always NodeIds
+// comments.create/list resolve a slug on their `board` param. 32-hex values are always NodeIds
 // (passthrough — the pre-existing NodeId paths are the regression baseline).
 [Collection("DataModule")]
 public sealed class UniformNodeRefTests : IDisposable
@@ -201,15 +201,15 @@ public sealed class UniformNodeRefTests : IDisposable
 		bySlug.Relations.Single().FromNodeId.Should().Be(ids["one"]);
 	}
 
-	// ---- comments.add/list: slug resolves on the `board` param ----
+	// ---- comments.create/list: slug resolves on the `board` param ----
 
 	[Fact]
-	public async Task CommentsAdd_And_List_BySlug()
+	public async Task CommentsCreate_And_List_BySlug()
 	{
 		var http = Http();
 		var ids = await Seed(http, "b", """[{"key":"talky","status":"Todo","title":"T"}]""");
 
-		var add = await CommentTools.AddAsync(http, Flags(), _comments, _tasks, Proj, "b", "talky", "alice", "hello");
+		var add = await CommentTools.CreateAsync(http, Flags(), _comments, _tasks, Proj, "b", "talky", "alice", "hello");
 		add.Applied.Should().BeTrue();
 
 		// The thread binds the node's stable NodeId; slug and NodeId list the same thread.
@@ -225,7 +225,7 @@ public sealed class UniformNodeRefTests : IDisposable
 		var http = Http();
 		await Seed(http, "b", """[{"key":"real","status":"Todo","title":"R"}]""");
 
-		var act = () => CommentTools.AddAsync(http, Flags(), _comments, _tasks, Proj, "b", "ghost", "alice", "hi");
+		var act = () => CommentTools.CreateAsync(http, Flags(), _comments, _tasks, Proj, "b", "ghost", "alice", "hi");
 		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*node 'ghost' does not match any active node on board 'b'*");
 

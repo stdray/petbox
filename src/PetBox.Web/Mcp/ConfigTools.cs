@@ -20,9 +20,9 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class ConfigTools
 {
-	[McpServerTool(Name = "config.create_binding", Title = "Create a config binding", UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingCreatedResult))]
+	[McpServerTool(Name = "config.binding_upsert", Title = "Upsert a config binding", UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingUpsertResult))]
 	[Description("""
-		PUT by (path, tagset): creates a config binding in a workspace's config store; if an
+		PUT by (path, tagset): upserts a config binding in a workspace's config store; if an
 		ACTIVE binding with the same path and the same normalized tag SET (order/case/whitespace
 		of the CSV don't matter) already exists, it is superseded — soft-closed in the same
 		transaction and reported in the result's `superseded` ids. No silent duplicates: the
@@ -32,7 +32,7 @@ public static class ConfigTools
 		  • kind: 'Plain' (default) or 'Secret' — a Secret stores `value` encrypted
 		    (needs PETBOX_MASTER_KEY); the plaintext never lands in the Value column.
 		""")]
-	public static async Task<ConfigBindingCreatedResult> CreateBindingAsync(
+	public static async Task<ConfigBindingUpsertResult> BindingUpsertAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory, ISecretEncryptor secrets,
 		[Description("Workspace key the binding belongs to.")] string workspaceKey,
 		[Description("Dotted config path, e.g. 'app/connectionString'.")] string path,
@@ -106,7 +106,7 @@ public static class ConfigTools
 #pragma warning restore CA2016
 			await tx.CommitAsync(ct);
 		}
-		return new ConfigBindingCreatedResult(id, path, tags, bindingKind.ToString(), superseded);
+		return new ConfigBindingUpsertResult(id, path, tags, bindingKind.ToString(), superseded);
 	}
 
 	// The binding-identity tag SET: CSV split, trimmed, blanks dropped, ignore-case — the same
@@ -115,9 +115,9 @@ public static class ConfigTools
 		new(raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
 			StringComparer.OrdinalIgnoreCase);
 
-	[McpServerTool(Name = "config.list_bindings", Title = "List config bindings", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsListResult))]
+	[McpServerTool(Name = "config.binding_list", Title = "List config bindings", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsListResult))]
 	[Description("Lists a workspace's active config bindings (id, path, tags, kind). Requires admin:provision. Secret values are never returned.")]
-	public static async Task<ConfigBindingsListResult> ListBindingsAsync(
+	public static async Task<ConfigBindingsListResult> BindingListAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
 		[Description("Workspace key to list bindings for.")] string workspaceKey,
 		CancellationToken ct = default)
@@ -134,12 +134,12 @@ public static class ConfigTools
 		return new ConfigBindingsListResult(rows.Select(b => new ConfigBindingRow(b.Id, b.Path, b.Tags, b.Kind.ToString())).ToList());
 	}
 
-	[McpServerTool(Name = "config.delete_binding", Title = "Delete a config binding", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingDeletedResult))]
+	[McpServerTool(Name = "config.binding_delete", Title = "Delete a config binding", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingDeletedResult))]
 	[Description("Soft-deletes a config binding by id (the row is kept, marked deleted). Requires admin:provision.")]
-	public static async Task<ConfigBindingDeletedResult> DeleteBindingAsync(
+	public static async Task<ConfigBindingDeletedResult> BindingDeleteAsync(
 		IHttpContextAccessor http, IConfigDbFactory configFactory,
 		[Description("Workspace key the binding belongs to.")] string workspaceKey,
-		[Description("Binding id (from config.list_bindings).")] long id,
+		[Description("Binding id (from config.binding_list).")] long id,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);

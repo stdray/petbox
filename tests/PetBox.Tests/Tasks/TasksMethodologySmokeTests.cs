@@ -176,7 +176,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 			board = "ideas",
 			nodes = Nodes(new { key, type = "idea", status = "exploring", title = key, body = "x" })
 		}), key);
-		await Agent("comments.add", new { projectKey = ProjectKey, board = "ideas", nodeId = ideaId, author = "t", body = "plan", tags = new[] { "artifact:spec_plan" } });
+		await Agent("comments.create", new { projectKey = ProjectKey, board = "ideas", nodeId = ideaId, author = "t", body = "plan", tags = new[] { "artifact:spec_plan" } });
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "ideas", nodes = Nodes(new { key, type = "idea", status = "review", version = 1 }) });
 		await Agent("tasks.upsert", new { projectKey = ProjectKey, board = "ideas", nodes = Nodes(new { key, type = "idea", status = "accepted", version = 2 }) });
 		return ideaId;
