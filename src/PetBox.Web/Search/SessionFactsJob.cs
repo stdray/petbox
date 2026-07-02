@@ -214,7 +214,7 @@ public sealed class SessionFactsJob : IVectorizationJob
 						messages = new[] { fromVersion, toVersion },
 						seenIn = SeenIn(existing.Metadata, sessionId),
 					}),
-				}], [], 0, ct);
+				}], [], ct);
 				return true;
 			}
 		}
@@ -228,7 +228,7 @@ public sealed class SessionFactsJob : IVectorizationJob
 			Body = candidate.Body ?? "",
 			Tags = tags,
 			Metadata = metadata,
-		}], [], 0, ct);
+		}], [], ct);
 		return true;
 	}
 

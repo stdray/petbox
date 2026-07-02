@@ -2,6 +2,7 @@ using System.ComponentModel;
 using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
+using PetBox.Core.Contract;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Features;
 using PetBox.Memory.Contract;
@@ -57,7 +58,7 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory.list", Title = "List memory entries", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryListResult))]
-	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). `includeUsage` adds surfaced/opened/lastHitAt counters per entry (listing itself is NOT counted as usage). Requires memory:read.")]
+	[Description("List active entries of a memory store, ordered by key. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). `includeUsage` adds surfaced/opened/lastHitAt counters per entry (listing itself is NOT counted as usage). The response has a HARD OUTPUT BUDGET (~30k serialized chars): when the rows no longer fit they are prefix-cut in key order and flagged with `truncated:true` + `omitted` (rows dropped) plus a `hint` on how to narrow (`type`, `limit`, `bodyLen`, or memory.get for one entry); no markers = the complete list. Requires memory:read.")]
 	public static async Task<MemoryListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, string? type = null,
@@ -73,8 +74,20 @@ public static class MemoryTools
 		var rows = Project(await memory.ListAsync(projectKey, store, type, ct), bodyLen, limit);
 		if (includeUsage)
 			rows = await WithUsageAsync(memory, projectKey, store, rows, ct);
-		return new MemoryListResult(rows);
+		// Response budget (spec bounded-result-sets): measured on the wire form of the rows,
+		// prefix-cut in key order, marked structurally — never silent. An in-budget list
+		// serializes byte-identical to the unbudgeted shape (the markers stay null).
+		var (kept, omitted) = new ResponseBudget().Take(rows);
+		return omitted == 0
+			? new MemoryListResult(rows)
+			: new MemoryListResult(kept, Truncated: true, Omitted: omitted, Hint: ListBudgetHint);
 	}
+
+	// Surfaced on MemoryListResult.Hint when the rows were cut by the response budget.
+	const string ListBudgetHint =
+		"Output budget exceeded: entries were truncated (see truncated/omitted). Narrow the " +
+		"query: `type` (one taxonomy), a lower `limit`, `bodyLen` (snippet bodies), or " +
+		"memory.get for one entry's full body.";
 
 	[McpServerTool(Name = "memory.get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryEntryView))]
 	[Description("Get the active entry by key, or null. Requires memory:read.")]
@@ -91,31 +104,11 @@ public static class MemoryTools
 		return entry;
 	}
 
-	[McpServerTool(Name = "memory.search", Title = "Search memory entries", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemorySearchResultView))]
-	[Description("Hybrid search over active entries' description/body/tags: lexical FTS5 (token/prefix, so paraphrases hit) fused with semantic vector similarity (RRF), ranked by relevance. `lexical`/`semantic` (default both on) toggle each retriever; semantic is silently off when no embedding capability is configured. Optional `type` filter (User|Feedback|Project|Reference). Bounded by `limit` (default 20; 0 = no limit) and bodies are full unless `bodyLen` > 0 (snippet). Response includes `retrievers` { lexical, semantic, degraded }. Requires memory:read.")]
-	public static async Task<MemorySearchResultView> SearchAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
-		string projectKey, string store, string query, string? type = null,
-		[Description("Snippet length (chars) per entry body; 0 (default) = full body. \"…\" appended when cut.")] int bodyLen = 0,
-		[Description("Max entries returned (default 20; 0 = no limit).")] int limit = 20,
-		[Description("Run the lexical FTS retriever (default true).")] bool? lexical = null,
-		[Description("Run the semantic vector retriever (default true; no-op when embedding is unavailable).")] bool? semantic = null,
-		[Description("Include usage counters (surfaced/opened/lastHitAt) per entry (default false).")] bool includeUsage = false,
-		CancellationToken ct = default)
-	{
-		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		var res = await memory.SearchAsync(projectKey, store, query, type, lexical, semantic, ct);
-		var rows = Project(res.Hits, bodyLen, limit);
-		// Impression = what this answer actually RETURNED (post-limit), not internal candidates.
-		usage.Surfaced(projectKey, store, rows.Select(r => r.Key).ToList());
-		if (includeUsage)
-			rows = await WithUsageAsync(memory, projectKey, store, rows, ct);
-		return new MemorySearchResultView(
-			rows,
-			new RetrieverInfo(res.Retrievers.Lexical, res.Retrievers.Semantic, res.Retrievers.Degraded));
-	}
+	// memory.search is GONE (verb dedup, spec surface-economy): it was a strict subset of
+	// memory.recall — the same IMemoryService.SearchAsync hybrid underneath, minus recall's
+	// scope cascade, all-store sweep and per-hit CAS version. Every search parameter
+	// (type/bodyLen/limit/lexical/semantic/includeUsage) exists on recall; the single-store
+	// scenario is recall with scope:"project" + store:"<name>".
 
 	[McpServerTool(Name = "memory.upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("""
@@ -132,17 +125,17 @@ public static class MemoryTools
 		soft-closed (history kept) and appears in the result's `removed`.
 		Store durable facts not derivable from code/git/config; actionable work goes to a
 		task board, not here.
-		Result: { applied, currentVersion, inserted, closed, conflicts[], added[], updated[], removed[] };
-		added/updated carry key/type/description/version but NOT `body` by default — the echo
-		is a compact cursor-advance (pass bodyLen > 0 for a sliced body). CURSOR CONTRACT: pass
-		the prior response's `currentVersion` as the next `sinceVersion` (0 echoes every entry,
-		bodiless); a single entry's `version` is smaller and re-echoes the whole recent delta.
+		Returns the pure write-ack { applied, currentVersion, inserted, closed, conflicts[],
+		added[], updated[], removed[] }: added/updated/removed cover ONLY this call's entries
+		(never other writers' history — there is no cursor parameter on a write) and carry
+		key/type/description/version but NOT `body` by default (pass bodyLen > 0 for a sliced
+		body). `currentVersion` is the store-wide cursor: for a full delta since a cursor,
+		call memory.delta with it as `sinceVersion`.
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store,
 		[Description("Array of entry objects: { key, type, description, body, tags?, metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
-		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every entry (bodiless).")] long sinceVersion = 0,
 		[Description("Slice length (chars) of each echoed entry body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		CancellationToken ct = default)
 	{
@@ -150,11 +143,11 @@ public static class MemoryTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var (upserts, deletes) = ParseEntries(entries);
-		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, sinceVersion, ct), bodyLen);
+		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, ct), bodyLen);
 	}
 
 	[McpServerTool(Name = "memory.delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
-	[Description("Return entries added/updated/removed since `sinceVersion` (no writes); bodies omitted unless bodyLen > 0 (compact by default). Requires memory:read.")]
+	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface (a memory.upsert ack echoes only its own call; pass its `currentVersion` here for the full store delta). Bodies omitted unless bodyLen > 0 (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
@@ -170,7 +163,8 @@ public static class MemoryTools
 	// ---- ergonomic verbs: remember / recall (thin over the structural tools) ----
 	//
 	// Two low-ceremony verbs for the agent's own working memory, layered on top of the
-	// structural store/upsert/search tools. They add ONE thing the structural surface
+	// structural store/upsert tools (recall IS the search verb — the old memory.search
+	// was a strict subset and is gone). They add ONE thing the structural surface
 	// lacks: a `scope` dimension over the per-project store files —
 	//   project   → the key's own project  (default; the usual case)
 	//   workspace → the shared cross-project container ("$system") — facts that span
@@ -223,20 +217,22 @@ public static class MemoryTools
 			Body = text,
 			Tags = tags,
 		};
-		await memory.UpsertAsync(container.Key, st, [input], [], 0, ct);
+		await memory.UpsertAsync(container.Key, st, [input], [], ct);
 		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key);
 	}
 
 	[McpServerTool(Name = "memory.recall", Title = "Recall facts", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryRecallResult))]
 	[Description("""
-		Full-text recall over your memory. The low-ceremony way to surface relevant facts.
-		`query` (required) is matched by token (prefix), so paraphrases hit; search a few
-		words you are confident appear (tokens are ANDed). `scope` narrows the search:
+		THE memory search verb: hybrid recall (lexical FTS5 token/prefix ⊕ semantic vectors,
+		RRF-fused) over your memory, ranked by relevance.
+		`query` (required) — search a few words you are confident appear (lexical tokens are
+		ANDed; the semantic leg catches paraphrases). `scope` narrows the search:
 		omit it to CASCADE project ⊕ workspace (results labelled by scope, project
 		first); or pass project | workspace for one. `store` narrows to a single
 		store within each scope (default: search every store). Optional `type` filter
-		(User|Feedback|Project|Reference) and `limit` (default 20). `lexical`/`semantic`
-		(default both on) toggle each retriever (hybrid FTS ⊕ vectors); semantic is silently
+		(User|Feedback|Project|Reference) and `limit` (default 20; the answer is always
+		bounded). `lexical`/`semantic`
+		(default both on) toggle each retriever; semantic is silently
 		off when embedding is unavailable. Bodies are full by
 		default; pass `bodyLen` > 0 for a snippet (description + first N chars), then pull a
 		full body with memory.get. Requires memory:read.
@@ -256,6 +252,7 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		if (string.IsNullOrWhiteSpace(query)) throw new ArgumentException("query is required");
+		if (limit <= 0) limit = 20; // a recall answer is always bounded (spec bounded-result-sets)
 
 		var results = new List<MemoryRecallHit>();
 		// Aggregate provenance across every scope/store searched: lexical/semantic = OR of

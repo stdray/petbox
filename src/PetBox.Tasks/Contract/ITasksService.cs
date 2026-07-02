@@ -76,12 +76,13 @@ public interface ITasksService
 	// never touches part_of (tag-grouping-is-projection).
 	Task<GroupedBoardView> GetGroupedAsync(string projectKey, string board, IReadOnlyList<string> groupBy, CancellationToken ct = default);
 	// Declarative temporal upsert of plan nodes (workflow + spec/blocker rules + effects).
-	// The echoed Added/Updated/Removed cover ONLY this call by default: the patched nodes
-	// plus rows revised/closed by the call's own cascade effects (a superseded node
-	// obsoleted, an unblocked task, a deleted subtree). `includeDelta` opts back into the
-	// FULL board delta since `sinceVersion` (anyone's edits). CurrentVersion is always the
-	// board-wide cursor for DeltaAsync, independent of the echo scope.
-	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, bool includeDelta = false, CancellationToken ct = default);
+	// The result is a pure write-ack (spec sinceversion-contract): the echoed Added/Updated/
+	// Removed cover ONLY this call — the patched nodes plus rows revised/closed by the call's
+	// own cascade effects (a superseded node obsoleted, an unblocked task, a deleted
+	// subtree). The write carries NO cursor parameter and never returns other writers'
+	// history; CurrentVersion is the board-wide cursor to feed DeltaAsync (the only
+	// delta/catch-up surface).
+	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, CancellationToken ct = default);
 	// Nodes added/updated/removed since the cursor (no writes).
 	Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default);
 	// Hybrid search over the project's active, non-terminal nodes (name/body/tags): lexical

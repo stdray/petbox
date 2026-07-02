@@ -191,7 +191,7 @@ public sealed class SessionDigestJob : IVectorizationJob
 			Body = body,
 			Tags = Tag,
 			Metadata = metadata,
-		}], [], 0, ct);
+		}], [], ct);
 		if (outcome.Result.Conflicts.Count > 0)
 		{
 			// Someone edited the digest entry concurrently; the held cursor re-distills

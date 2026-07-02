@@ -226,11 +226,11 @@ public sealed class QuartetTests : IDisposable
 		return new FeatureFlags(cfg);
 	}
 
-	// spec echo-compact-by-default: the write-echo is a compact cursor advance — it carries
-	// key/status/title/version but NOT the body unless bodyLen > 0. Defuses the footgun where a
-	// stale sinceVersion re-dumps every recently-changed node's full body (the main context sink).
+	// spec echo-compact-by-default: the write-echo is a compact ack — it carries
+	// key/status/title/version but NOT the body unless bodyLen > 0. Defuses the footgun where
+	// a write re-dumps every recently-changed node's full body (the main context sink).
 	[Fact]
-	public async Task Upsert_EchoOmitsBodyByDefault_SlicesWithBodyLen_AndStaleCursorStaysBodiless()
+	public async Task Upsert_EchoOmitsBodyByDefault_SlicesWithBodyLen_AndDeltaStaysBodiless()
 	{
 		var http = Http("tasks:read,tasks:write");
 		var big = new string('y', 500);
@@ -243,19 +243,16 @@ public sealed class QuartetTests : IDisposable
 		addedA.Title.Should().Be("A");
 		addedA.Body.Should().BeNull();
 
-		// A second node with the DEFAULT stale cursor (sinceVersion = 0) echoes only ITSELF
-		// (echo-covers-the-call); the full board delta is the includeDelta:true opt-in — and
-		// even that dump stays bodiless.
+		// A second node echoes only ITSELF (echo-covers-the-call, no cursor parameter on a
+		// write); the full board delta is tasks.delta's job — and even that dump stays bodiless.
 		var nodesB = McpInputs.NodesJson(
 			"""[{"key":"b","status":"Todo","title":"B","body":"zzz"}]""");
 		var resB = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesB);
 		resB.Added.Concat(resB.Updated).Select(n => n.Key).Should().Equal("b");
 
-		var nodesB2 = McpInputs.NodesJson(
-			"""[{"key":"b","status":"Todo","title":"B2","body":"zzz","version":2}]""");
-		var resFull = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ce", nodesB2, includeDelta: true);
+		var resFull = await TasksTools.DeltaAsync(http, Flags(), _tasks, Proj, "ce", 0);
 		var echoed = resFull.Added.Concat(resFull.Updated).ToList();
-		echoed.Select(n => n.Key).Should().Contain(["a", "b"]); // full delta re-echoes 'a'
+		echoed.Select(n => n.Key).Should().Contain(["a", "b"]); // the delta covers everyone
 		echoed.Should().OnlyContain(n => n.Body == null);
 
 		// bodyLen > 0: the opt-in sliced body — first N chars + "…" when cut.

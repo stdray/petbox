@@ -10,11 +10,11 @@ using PetBox.Tasks.Services;
 
 namespace PetBox.Tests.Tasks;
 
-// Echo-covers-the-call (token economy): by default a tasks.upsert echoes ONLY the nodes of
-// THIS call (its patches + its own cascade closures), never other writers' history — an
-// insert of 3 nodes on a live board must not return 78 foreign nodes. The full board delta
-// since `sinceVersion` is the includeDelta:true opt-in; `currentVersion` stays the
-// board-wide cursor and conflicts are reported in both modes.
+// Echo-covers-the-call (spec sinceversion-contract): a tasks.upsert is a pure write-ack —
+// it echoes ONLY the nodes of THIS call (its patches + its own cascade closures), never
+// other writers' history — an insert of 3 nodes on a live board must not return 78 foreign
+// nodes. The write carries NO cursor parameter; the full board delta since a cursor lives
+// exclusively on tasks.delta, and `currentVersion` stays the board-wide cursor for it.
 [Collection("DataModule")]
 public sealed class UpsertEchoScopeTests : IDisposable
 {
@@ -69,12 +69,12 @@ public sealed class UpsertEchoScopeTests : IDisposable
 	}
 
 	[Fact]
-	public async Task DefaultEcho_ContainsOnlyThisCallsNodes_DespiteForeignHistory()
+	public async Task Echo_ContainsOnlyThisCallsNodes_DespiteForeignHistory()
 	{
 		await SeedForeignAsync("b", 10);
 
-		// A stale cursor (sinceVersion 0) used to re-dump the whole board; now the echo is
-		// scoped to the call.
+		// The write used to re-dump the whole board on a stale cursor; the ack is scoped
+		// to the call, always.
 		var r = await _tasks.UpsertAsync(Proj, "b", new[] { Node("mine-1"), Node("mine-2") });
 
 		r.Result.Applied.Should().BeTrue();
@@ -85,30 +85,30 @@ public sealed class UpsertEchoScopeTests : IDisposable
 		(await _tasks.DeltaAsync(Proj, "b", r.Result.CurrentVersion)).Result.Added.Should().BeEmpty();
 	}
 
+	// The write-ack no longer carries a full-delta mode (includeDelta is gone): the delta
+	// since a cursor is tasks.delta's job, and it returns the exact equivalent.
 	[Fact]
-	public async Task IncludeDelta_ReturnsFullBoardDelta_AsBefore()
+	public async Task FullBoardDelta_LivesOnTasksDelta_NotOnTheWriteAck()
 	{
 		await SeedForeignAsync("b", 5);
 
-		var r = await _tasks.UpsertAsync(Proj, "b", new[] { Node("mine") }, sinceVersion: 0, includeDelta: true);
+		var r = await _tasks.UpsertAsync(Proj, "b", new[] { Node("mine") });
+		r.Result.Added.Concat(r.Result.Updated).Select(n => n.Key).Should().Equal("mine"); // pure ack
 
-		var echoed = r.Result.Added.Concat(r.Result.Updated).Select(n => n.Key).ToList();
+		var delta = await _tasks.DeltaAsync(Proj, "b", 0);
+		var echoed = delta.Result.Added.Concat(delta.Result.Updated).Select(n => n.Key).ToList();
 		echoed.Should().Contain("mine");
 		echoed.Should().Contain(Enumerable.Range(0, 5).Select(i => $"foreign-{i}")); // full delta
 	}
 
 	[Fact]
-	public async Task Conflicts_ReportedInBothEchoModes()
+	public async Task Conflicts_ReportedOnTheAck()
 	{
 		await _tasks.UpsertAsync(Proj, "b", new[] { Node("n") });
 
-		var scoped = await _tasks.UpsertAsync(Proj, "b", new[] { Node("n", title: "N2", version: 999) });
-		scoped.Result.Applied.Should().BeFalse();
-		scoped.Result.Conflicts.Should().ContainSingle().Which.Kind.Should().Be(TemporalConflictKind.Stale);
-
-		var full = await _tasks.UpsertAsync(Proj, "b", new[] { Node("n", title: "N2", version: 999) }, includeDelta: true);
-		full.Result.Applied.Should().BeFalse();
-		full.Result.Conflicts.Should().ContainSingle().Which.Kind.Should().Be(TemporalConflictKind.Stale);
+		var stale = await _tasks.UpsertAsync(Proj, "b", new[] { Node("n", title: "N2", version: 999) });
+		stale.Result.Applied.Should().BeFalse();
+		stale.Result.Conflicts.Should().ContainSingle().Which.Kind.Should().Be(TemporalConflictKind.Stale);
 	}
 
 	[Fact]

@@ -26,8 +26,11 @@ public interface IMemoryService
 	Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default);
 	// Declarative temporal upsert (+ soft-deletes), then FTS rebuild. PATCH semantics on
 	// edits (version > 0): a null field keeps the active entry's current value, an explicit
-	// empty ("") clears it; a new entry (version 0) maps null to empty.
-	Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, long sinceVersion = 0, CancellationToken ct = default);
+	// empty ("") clears it; a new entry (version 0) maps null to empty. The result is a pure
+	// write-ack (spec sinceversion-contract): Added/Updated/Removed cover ONLY this call's
+	// entries — no cursor parameter on a write; CurrentVersion is the store-wide cursor to
+	// feed DeltaAsync (the only delta/catch-up surface).
+	Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, CancellationToken ct = default);
 	Task<MemoryUpsertOutcome> DeltaAsync(string projectKey, string store, long sinceVersion, CancellationToken ct = default);
 
 	// --- UI helper (store page renders the raw active entries) ---

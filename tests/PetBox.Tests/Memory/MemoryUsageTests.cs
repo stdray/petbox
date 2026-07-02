@@ -74,17 +74,20 @@ public sealed class MemoryUsageTests : IDisposable
 		await _memory.UpsertAsync(Proj, "notes",
 			keys.Select(k => new MemoryEntryInput
 			{
-				Key = k, Version = 0, Type = "Project",
-				Description = $"запись {k} про телеметрию", Body = $"тело {k}",
+				Key = k,
+				Version = 0,
+				Type = "Project",
+				Description = $"запись {k} про телеметрию",
+				Body = $"тело {k}",
 			}).ToList(), []);
 	}
 
 	[Fact]
-	public async Task SearchAnswer_CountsImpression_ForReturnedEntries()
+	public async Task RecallAnswer_CountsImpression_ForReturnedEntries()
 	{
 		await Seed("u1", "u2");
 
-		await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, Proj, "notes", "телеметрию");
+		await MemoryTools.RecallAsync(Http(), Flags(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
 		await _recorder.FlushAsync();
 
 		var usage = await _memory.GetUsageAsync(Proj, "notes");
@@ -125,17 +128,17 @@ public sealed class MemoryUsageTests : IDisposable
 	public async Task IncludeUsage_SurfacesCounters_DefaultOmitsThem()
 	{
 		await Seed("u1");
-		await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, Proj, "notes", "телеметрию");
+		await MemoryTools.RecallAsync(Http(), Flags(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
 		await _recorder.FlushAsync();
 
-		// memory.search returns the typed record directly (errors throw → McpErrorEnvelopeFilter
+		// memory.recall returns the typed record directly (errors throw → McpErrorEnvelopeFilter
 		// renders them on the wire; unit tests read the concrete success value).
-		var plain = await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, Proj, "notes", "телеметрию");
-		plain.Entries[0].Surfaced.Should().BeNull(); // default off — context economy
+		var plain = await MemoryTools.RecallAsync(Http(), Flags(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
+		plain.Results[0].Surfaced.Should().BeNull(); // default off — context economy
 
-		var with = await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, Proj, "notes", "телеметрию", includeUsage: true);
-		with.Entries[0].Surfaced.Should().BeGreaterThanOrEqualTo(1);
-		with.Entries[0].Opened.Should().Be(0);
+		var with = await MemoryTools.RecallAsync(Http(), Flags(), _memory, _recorder, "телеметрию", scope: "project", store: "notes", includeUsage: true);
+		with.Results[0].Surfaced.Should().BeGreaterThanOrEqualTo(1);
+		with.Results[0].Opened.Should().Be(0);
 	}
 
 	[Fact]

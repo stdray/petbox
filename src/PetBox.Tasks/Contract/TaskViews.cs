@@ -51,9 +51,10 @@ public sealed record PlanNodeDelta(
 // refusal — then Reason says why), shaped for the wire.
 public sealed record UpsertConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null);
 
-// The tasks.upsert / tasks.delta response: what was applied (counts) plus the delta since the
-// caller's cursor (Added/Updated as node projections, Removed as keys) and any Conflicts. The
-// delta IS the fresh state since `sinceVersion` — the caller advances its cursor and merges.
+// The tasks.upsert / tasks.delta response. For an upsert it is a pure write-ack: what was
+// applied (counts), any Conflicts, and Added/Updated/Removed scoped to THIS call only —
+// CurrentVersion is the board-wide cursor for tasks.delta. For a delta it carries the full
+// board changes since the caller's cursor (Added/Updated as node projections, Removed keys).
 public sealed record UpsertResultView(
 	bool Applied, long CurrentVersion, string Kind, int Inserted, int Closed,
 	IReadOnlyList<UpsertConflictView> Conflicts,
