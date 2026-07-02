@@ -303,6 +303,43 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task Query_ExecutionError_ReturnsStructuredJson500()
+	{
+		// Valid syntax, passes the transformer (LevelName is a known column), but the
+		// built expression calls a CLR method linq2db cannot translate to SQL — the
+		// query fails at EXECUTION (materialization), not at parse. That used to escape
+		// as the HTML /Error page; an API caller must get structured JSON with the
+		// failure type and message.
+		var kql = "events | where LevelName == \"Error\"";
+		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString(kql)}");
+		using var resp = await _client.SendAsync(req);
+
+		resp.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+		resp.Content.Headers.ContentType!.MediaType.Should().Be("application/json");
+		var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+		doc.RootElement.GetProperty("error").GetString().Should()
+			.Contain("KQL execution failed").And.Contain("LevelName");
+		doc.RootElement.GetProperty("type").GetString().Should().NotBeNullOrEmpty();
+	}
+
+	[Fact]
+	public async Task Query_ExecutionError_TablePath_ReturnsStructuredJson500()
+	{
+		// Shape-changing pipeline whose pre-filter fails during row STREAMING — the
+		// engine fault surfaces in the endpoint's await-foreach over Rows, a different
+		// code path than events materialization. Must still be structured JSON.
+		var kql = "events | where LevelName == \"Error\" | summarize count() by Level";
+		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString(kql)}");
+		using var resp = await _client.SendAsync(req);
+
+		resp.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
+		resp.Content.Headers.ContentType!.MediaType.Should().Be("application/json");
+		var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+		doc.RootElement.GetProperty("error").GetString().Should().Contain("KQL execution failed");
+		doc.RootElement.GetProperty("type").GetString().Should().NotBeNullOrEmpty();
+	}
+
+	[Fact]
 	public async Task Query_WithoutApiKey_Returns401()
 	{
 		using var resp = await _client.GetAsync("/api/logs/$system/default/query?q=events");

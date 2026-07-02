@@ -16,6 +16,11 @@ public sealed record IngestRejectedResponse(string Error, IReadOnlyList<IngestLi
 // 400 when the KQL query string fails to parse. Details carries per-diagnostic messages.
 public sealed record KqlParseErrorResponse(string Error, IReadOnlyList<string> Details);
 
+// 500 when a syntactically valid query fails during EXECUTION (linq2db SQL translation,
+// SQLite, row streaming). Always JSON — never the HTML error page. Type is the
+// originating exception type name so callers can branch on the failure class.
+public sealed record KqlExecutionErrorResponse(string Error, string Type);
+
 // One log event in the events-shaped query response. Timestamp is pre-formatted
 // (yyyy-MM-ddTHH:mm:ss.fffZ); level is the enum name; properties are stringified.
 public sealed record LogEventDto(
