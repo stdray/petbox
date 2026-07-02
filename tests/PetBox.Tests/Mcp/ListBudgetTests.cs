@@ -192,7 +192,7 @@ public sealed class ListBudgetTests : IDisposable
 	public async Task CommentsList_Small_NoMarkers()
 	{
 		var node = Guid.NewGuid().ToString("N");
-		await CommentTools.AddAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node, "alice", "short body");
+		await CommentTools.CreateAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node, "alice", "short body");
 
 		var res = await CommentTools.ListAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node);
 
@@ -207,9 +207,9 @@ public sealed class ListBudgetTests : IDisposable
 		var node = Guid.NewGuid().ToString("N");
 		const int total = 20;
 		var body = new string('c', 2500); // ~50k chars of bodies > the 30k budget
-		var firstId = (await CommentTools.AddAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node, "alice", body)).Id!;
+		var firstId = (await CommentTools.CreateAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node, "alice", body)).Id!;
 		for (var i = 1; i < total; i++)
-			await CommentTools.AddAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node, "alice", body);
+			await CommentTools.CreateAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node, "alice", body);
 
 		var res = await CommentTools.ListAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node);
 

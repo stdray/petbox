@@ -31,8 +31,8 @@ public sealed record CommentDeleteResult(bool Deleted);
 // ---- config.* ------------------------------------------------------------------------
 
 // `Superseded` = ids of previously-active bindings with the identical (path, normalized
-// tagset) that this create soft-closed (PUT-by-(path,tagset) semantics; empty = plain create).
-public sealed record ConfigBindingCreatedResult(long Id, string Path, string Tags, string Kind, IReadOnlyList<long> Superseded);
+// tagset) that this upsert soft-closed (PUT-by-(path,tagset) semantics; empty = plain create).
+public sealed record ConfigBindingUpsertResult(long Id, string Path, string Tags, string Kind, IReadOnlyList<long> Superseded);
 
 public sealed record ConfigBindingRow(long Id, string Path, string Tags, string Kind);
 

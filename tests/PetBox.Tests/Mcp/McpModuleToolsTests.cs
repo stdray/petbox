@@ -272,17 +272,17 @@ public sealed class McpModuleToolsTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Comments_Add_Reply_List_DeleteWithChildrenRejected()
+	public async Task Comments_Create_Reply_List_DeleteWithChildrenRejected()
 	{
 		var http = Http("tasks:read,tasks:write");
 		// A 32-hex value is a NodeId and passes through unresolved (a non-hex value would be
 		// treated as a slug on the board and required to resolve — uniform-node-refs).
 		var node1 = Guid.NewGuid().ToString("N");
-		var add = await CommentTools.AddAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas", node1, "alice", "root body", parentId: null, tags: new[] { "artifact:plan" });
+		var add = await CommentTools.CreateAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas", node1, "alice", "root body", parentId: null, tags: new[] { "artifact:plan" });
 		add.Applied.Should().BeTrue();
 		var id = add.Id!;
 
-		await CommentTools.AddAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas", node1, "bob", "a reply", parentId: id, tags: null);
+		await CommentTools.CreateAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas", node1, "bob", "a reply", parentId: id, tags: null);
 
 		var list = await CommentTools.ListAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas", node1);
 		var rows = list.Comments.ToList();
@@ -299,7 +299,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	{
 		var http = Http("tasks:read"); // no tasks:write
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			CommentTools.AddAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas", "n", "a", "b", parentId: null, tags: null));
+			CommentTools.CreateAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas", "n", "a", "b", parentId: null, tags: null));
 	}
 
 	[Fact]
@@ -321,7 +321,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		blocked.Message.Should().Contain("spec_plan");
 
 		// Add the spec_plan artifact, then the same transition applies.
-		await CommentTools.AddAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas", nodeId, "claude", "the plan", parentId: null, tags: new[] { "artifact:spec_plan" });
+		await CommentTools.CreateAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas", nodeId, "claude", "the plan", parentId: null, tags: new[] { "artifact:spec_plan" });
 		var rev = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
 			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "review", version = v } }));
 		rev.Applied.Should().BeTrue();
