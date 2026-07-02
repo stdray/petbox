@@ -177,7 +177,7 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 				Body = candidate.Body ?? existing?.Body ?? "",
 				Tags = existing?.Tags ?? (SessionFactsJob.Tag + "," + PatternTag),
 				Metadata = metadata,
-			}], [], 0, ct);
+			}], [], ct);
 			written++;
 		}
 		return written;

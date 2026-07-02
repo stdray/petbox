@@ -88,7 +88,7 @@ public sealed class McpModuleToolsTests : IDisposable
 			new { key = "phase-16", status = "InProgress", body = "Data", priority = 100 },
 			new { key = "wave-1", partOf = "phase-16", status = "Done", body = "Foundation", priority = 200 },
 		});
-		var up = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes, 0);
+		var up = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "roadmap", nodes);
 		up.Applied.Should().BeTrue();
 		up.Inserted.Should().Be(2);
 
@@ -103,11 +103,11 @@ public sealed class McpModuleToolsTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			McpInputs.Nodes(new[] { new { key = "n", status = "Todo", body = "v1" } }), 0);
+			McpInputs.Nodes(new[] { new { key = "n", status = "Todo", body = "v1" } }));
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			McpInputs.Nodes(new[] { new { key = "n", status = "Done", body = "byB", version = 1 } }), 0);
+			McpInputs.Nodes(new[] { new { key = "n", status = "Done", body = "byB", version = 1 } }));
 		var r = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			McpInputs.Nodes(new[] { new { key = "n", status = "Done", body = "byA", version = 1 } }), 0);
+			McpInputs.Nodes(new[] { new { key = "n", status = "Done", body = "byA", version = 1 } }));
 
 		r.Applied.Should().BeFalse();
 		r.Conflicts.Should().ContainSingle();
@@ -120,9 +120,9 @@ public sealed class McpModuleToolsTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "b");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			McpInputs.Nodes(new[] { new { key = "old", status = "Done", body = "x" } }), 0);
+			McpInputs.Nodes(new[] { new { key = "old", status = "Done", body = "x" } }));
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "b",
-			McpInputs.Nodes(new[] { new { key = "new", status = "Done", body = "x", version = 1, prevKey = "old" } }), 0);
+			McpInputs.Nodes(new[] { new { key = "new", status = "Done", body = "x", version = 1, prevKey = "old" } }));
 
 		var get = (PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "b", includeClosed: true);
 		var node = get.Nodes.Single();
@@ -308,7 +308,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "ideas", "ideas");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
-			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "exploring", body = "x" } }), 0);
+			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "exploring", body = "x" } }));
 
 		var node = ((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas")).Nodes.Single();
 		var nodeId = node.NodeId;
@@ -323,14 +323,14 @@ public sealed class McpModuleToolsTests : IDisposable
 		// Add the spec_plan artifact, then the same transition applies.
 		await CommentTools.AddAsync(http, Flags(), _commentSvc, _tasks, Proj, "ideas", nodeId, "claude", "the plan", parentId: null, tags: new[] { "artifact:spec_plan" });
 		var rev = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
-			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "review", version = v } }), 0);
+			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "review", version = v } }));
 		rev.Applied.Should().BeTrue();
 
 		// review -> accepted (the maintainer gate; enforceApproval is off so it applies).
 		var v2 = ((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
 			.Nodes.Single().Version;
 		var acc = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
-			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "accepted", version = v2 } }), 0);
+			McpInputs.Nodes(new[] { new { key = "idea-x", type = "idea", status = "accepted", version = v2 } }));
 		acc.Applied.Should().BeTrue();
 	}
 
@@ -340,7 +340,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "ideas", "ideas");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas",
-			McpInputs.Nodes(new[] { new { key = "idea-y", type = "idea", status = "exploring", body = "x" } }), 0);
+			McpInputs.Nodes(new[] { new { key = "idea-y", type = "idea", status = "exploring", body = "x" } }));
 		var v = ((PlanBoardView)await TasksTools.GetAsync(http, Flags(), _tasks, Proj, "ideas"))
 			.Nodes.Single().Version;
 		// The direct exploring->accepted transition was removed; you must pass through review.

@@ -597,7 +597,7 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- write: upsert ----
 
-	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, long sinceVersion = 0, bool includeDelta = false, CancellationToken ct = default)
+	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, CancellationToken ct = default)
 	{
 		using var op = PetBoxActivitySources.Tasks.StartActivity("tasks.upsert");
 		op?.SetTag("petbox.project", projectKey);
@@ -671,11 +671,11 @@ public sealed partial class TasksService : ITasksService
 			}
 			if (guardConflicts.Count > 0)
 			{
-				// Not applied; still serve the cursor contract (the delta since sinceVersion).
-				var delta = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion,
+				// Not applied; the ack still carries the fresh cursor + the caller's own rows.
+				var delta = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), 0,
 					partition: n => n.Board == board, ct: ct);
 				delta = delta with { Applied = false, Conflicts = guardConflicts };
-				return new UpsertOutcome(includeDelta ? delta : ScopeEchoToCall(delta, nodes, delta.CurrentVersion), kind);
+				return new UpsertOutcome(ScopeEchoToCall(delta, nodes, delta.CurrentVersion), kind);
 			}
 		}
 		// Class-A lexical floor written INSIDE the entity tx: open nodes (re)indexed, terminal/
@@ -685,7 +685,7 @@ public sealed partial class TasksService : ITasksService
 		var fts = new SqliteFtsIndex(() => ctx);
 		TemporalUpsertResult<PlanNode> r;
 		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.temporal"))
-			r = await TemporalStore.UpsertAsync(ctx, desired, dels, sinceVersion,
+			r = await TemporalStore.UpsertAsync(ctx, desired, dels, 0,
 				onWithinTx: async (tx, upserted, deletedKeys, c) =>
 				{
 					var tags = await NodeTagsAsync(tx, board, upserted.Where(TasksSearchDocs.IsIndexable).Select(n => n.NodeId), c);
@@ -736,17 +736,18 @@ public sealed partial class TasksService : ITasksService
 			// and cursor once the effects have run — the echo then reflects what this call actually
 			// did, and CurrentVersion is a cursor an immediate DeltaAsync returns nothing for.
 			var (added, updated, removed, current) = await TemporalStore.ChangesSinceAsync<PlanNode>(
-				ctx, sinceVersion, partition: n => n.Board == board, ct: ct);
+				ctx, 0, partition: n => n.Board == board, ct: ct);
 			r = r with { CurrentVersion = current, Added = added, Updated = updated, Removed = removed };
 		}
-		return new UpsertOutcome(includeDelta ? r : ScopeEchoToCall(r, nodes, mainCursor), kind);
+		return new UpsertOutcome(ScopeEchoToCall(r, nodes, mainCursor), kind);
 	}
 
-	// Scope a write echo to THIS call (default): keep only rows whose key the call mentioned
-	// (patch keys + rename sources) plus rows revised by the call's own cascade effects
-	// (Version > the main write's cursor — e.g. a `supersedes` target obsoleted, an unblocked
-	// task). A stale sinceVersion no longer re-dumps other writers' history — the full board
-	// delta is the includeDelta:true opt-in; CurrentVersion (the cursor) is untouched.
+	// Scope a write echo to THIS call (spec sinceversion-contract — the write-ack carries no
+	// delta): keep only rows whose key the call mentioned (patch keys + rename sources) plus
+	// rows revised by the call's own cascade effects (Version > the main write's cursor —
+	// e.g. a `supersedes` target obsoleted, an unblocked task). Other writers' history is
+	// never echoed — a full board delta is DeltaAsync's job; CurrentVersion (the cursor) is
+	// untouched.
 	static TemporalUpsertResult<PlanNode> ScopeEchoToCall(TemporalUpsertResult<PlanNode> r, IReadOnlyList<NodePatch> patches, long mainCursor)
 	{
 		var mentioned = patches.Select(p => p.Key)

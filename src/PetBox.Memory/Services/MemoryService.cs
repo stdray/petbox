@@ -104,7 +104,7 @@ public sealed class MemoryService : IMemoryService
 		return new MemorySearchResult(hits, resp.Retrievers);
 	}
 
-	public async Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, long sinceVersion = 0, CancellationToken ct = default)
+	public async Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, CancellationToken ct = default)
 	{
 		using var op = PetBoxActivitySources.Memory.StartActivity("memory.upsert");
 		op?.SetTag("petbox.project", projectKey);
@@ -121,7 +121,7 @@ public sealed class MemoryService : IMemoryService
 		// Class-A lexical floor is updated INSIDE the entity transaction: the just-inserted
 		// revisions are (re)indexed and soft-deleted keys dropped, all committing/rolling back
 		// with the entity. Class-B vectors are NOT touched here — the worker materializes them.
-		var r = await TemporalStore.UpsertAsync(ctx, desired, dels, sinceVersion,
+		var r = await TemporalStore.UpsertAsync(ctx, desired, dels, 0,
 			onWithinTx: async (tx, upserted, deletedKeys, c) =>
 			{
 				foreach (var e in upserted)
@@ -133,7 +133,27 @@ public sealed class MemoryService : IMemoryService
 
 		if (r.Applied)
 			await _stores.TouchAsync(projectKey, store, ct);
-		return new MemoryUpsertOutcome(r);
+		return new MemoryUpsertOutcome(ScopeEchoToCall(r, upserts, deletes));
+	}
+
+	// Scope a write echo to THIS call (spec sinceversion-contract — the write-ack carries no
+	// delta and no cursor parameter): keep only entries whose key the call mentioned (upsert
+	// keys + rename sources) and only the deletes it sent. Memory has no cascade effects, so
+	// key scoping is complete. CurrentVersion (the store-wide cursor for DeltaAsync) is
+	// untouched.
+	static TemporalUpsertResult<MemoryEntry> ScopeEchoToCall(TemporalUpsertResult<MemoryEntry> r,
+		IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes)
+	{
+		var mentioned = upserts.Select(u => u.Key)
+			.Concat(upserts.Where(u => u.PrevKey is not null).Select(u => u.PrevKey!))
+			.ToHashSet(StringComparer.Ordinal);
+		var deleted = deletes.Select(d => d.Key).ToHashSet(StringComparer.Ordinal);
+		return r with
+		{
+			Added = r.Added.Where(e => mentioned.Contains(e.Key)).ToList(),
+			Updated = r.Updated.Where(e => mentioned.Contains(e.Key)).ToList(),
+			Removed = r.Removed.Where(k => deleted.Contains(k)).ToList(),
+		};
 	}
 
 	public async Task<MemoryUpsertOutcome> DeltaAsync(string projectKey, string store, long sinceVersion, CancellationToken ct = default)

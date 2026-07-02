@@ -103,8 +103,11 @@ public sealed class ListBudgetTests : IDisposable
 		var body = new string('m', bodyChars);
 		var entries = Enumerable.Range(0, count).Select(i => new MemoryEntryInput
 		{
-			Key = $"entry-{i:d3}", Version = 0, Type = "Project",
-			Description = $"entry {i}", Body = body,
+			Key = $"entry-{i:d3}",
+			Version = 0,
+			Type = "Project",
+			Description = $"entry {i}",
+			Body = body,
 		}).ToList();
 		await _memory.UpsertAsync(Proj, "notes", entries, []);
 	}

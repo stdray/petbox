@@ -324,23 +324,21 @@ public static class TasksTools
 		combine with prevKey. Spec-node deletes need no ideaRef (erasing junk is not a spec
 		change — retiring a real requirement stays `deprecated`).
 
-		Returns { applied, currentVersion, inserted, closed, conflicts[], added[], updated[],
-		removed[] }. The echo covers ONLY this call: added/updated/removed carry the call's
-		own nodes plus nodes its cascade effects touched (a `supersedes` target obsoleted, a
-		deleted subtree, an unblocked task) — never other writers' history. Pass
-		includeDelta:true for the FULL board delta since `sinceVersion` (everything changed
-		by anyone) to rebase/merge. added/updated carry the node (key, nodeId, status, type,
-		title, commitRef, priority, version) but NOT `body` by default — the echo is a
-		compact cursor-advance, not a re-dump (pass bodyLen > 0 for a sliced body, "…" when
-		cut). CURSOR CONTRACT: `currentVersion` is ALWAYS the board-wide cursor — pass it as
-		the next `sinceVersion` / tasks.delta cursor (NOT a single node's `version`).
+		Returns the pure write-ack { applied, currentVersion, inserted, closed, conflicts[],
+		added[], updated[], removed[] }. The echo covers ONLY this call: added/updated/removed
+		carry the call's own nodes plus nodes its cascade effects touched (a `supersedes`
+		target obsoleted, a deleted subtree, an unblocked task) — never other writers'
+		history, and there is no cursor parameter on a write. added/updated carry the node
+		(key, nodeId, status, type, title, commitRef, priority, version) but NOT `body` by
+		default — the echo is a compact ack, not a re-dump (pass bodyLen > 0 for a sliced
+		body, "…" when cut). `currentVersion` is the board-wide cursor: for a full delta
+		since a cursor (everything changed by anyone — rebase/merge/catch-up), call
+		tasks.delta with it as `sinceVersion`.
 		""")]
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
 		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
-		[Description("Cursor: the prior response's `currentVersion`. Bounds the full delta when includeDelta:true; with the default echo it only scopes conflict rebases.")] long sinceVersion = 0,
-		[Description("Echo the FULL board delta since sinceVersion (anyone's edits) instead of just this call's nodes (default false).")] bool includeDelta = false,
 		[Description("Slice length (chars) of each echoed node body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
@@ -350,11 +348,11 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, sinceVersion, includeDelta, ct), urlPrefix, bodyLen);
+		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, ct), urlPrefix, bodyLen);
 	}
 
 	[McpServerTool(Name = "tasks.delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
-	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes); bodies omitted unless bodyLen > 0 (compact by default). Requires tasks:read.")]
+	[Description("Return nodes added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface (a tasks.upsert ack echoes only its own call; pass its `currentVersion` here for the full board delta). Bodies omitted unless bodyLen > 0 (compact by default). Requires tasks:read.")]
 	public static async Task<UpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, long sinceVersion,

@@ -14,10 +14,10 @@ per runtime.
 
 **Plan nodes are FLAT slugs** (`key` = [a-z][a-z0-9_-]*); hierarchy is the `partOf` edge,
 grouping is `tags` (`area:*` / `concern:*`). Give each node a short `title` and a markdown
-`body`. A cold `tasks.upsert` auto-creates the board. The upsert response is the fresh
-state — advance your cursor (`sinceVersion` = previous `currentVersion`) and merge
-added/updated/removed instead of re-reading. `nodes`/`entries` are TYPED arrays — pass real
-JSON arrays, not stringified JSON.
+`body`. A cold `tasks.upsert` auto-creates the board. The upsert response is a pure ack for
+YOUR call (added/updated/removed cover only your nodes); to catch up on everyone's changes
+call `tasks.delta` with `sinceVersion` = a previous `currentVersion`. `nodes`/`entries` are
+TYPED arrays — pass real JSON arrays, not stringified JSON.
 
 **Memory entries are typed** (`user` | `feedback` | `project` | `reference`) — `type` is
 required on `memory.upsert`; `tags` is free CSV. `memory.recall` is THE search verb

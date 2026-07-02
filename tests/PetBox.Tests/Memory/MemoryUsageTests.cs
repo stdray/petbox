@@ -74,8 +74,11 @@ public sealed class MemoryUsageTests : IDisposable
 		await _memory.UpsertAsync(Proj, "notes",
 			keys.Select(k => new MemoryEntryInput
 			{
-				Key = k, Version = 0, Type = "Project",
-				Description = $"запись {k} про телеметрию", Body = $"тело {k}",
+				Key = k,
+				Version = 0,
+				Type = "Project",
+				Description = $"запись {k} про телеметрию",
+				Body = $"тело {k}",
 			}).ToList(), []);
 	}
 

@@ -125,17 +125,17 @@ public static class MemoryTools
 		soft-closed (history kept) and appears in the result's `removed`.
 		Store durable facts not derivable from code/git/config; actionable work goes to a
 		task board, not here.
-		Result: { applied, currentVersion, inserted, closed, conflicts[], added[], updated[], removed[] };
-		added/updated carry key/type/description/version but NOT `body` by default — the echo
-		is a compact cursor-advance (pass bodyLen > 0 for a sliced body). CURSOR CONTRACT: pass
-		the prior response's `currentVersion` as the next `sinceVersion` (0 echoes every entry,
-		bodiless); a single entry's `version` is smaller and re-echoes the whole recent delta.
+		Returns the pure write-ack { applied, currentVersion, inserted, closed, conflicts[],
+		added[], updated[], removed[] }: added/updated/removed cover ONLY this call's entries
+		(never other writers' history — there is no cursor parameter on a write) and carry
+		key/type/description/version but NOT `body` by default (pass bodyLen > 0 for a sliced
+		body). `currentVersion` is the store-wide cursor: for a full delta since a cursor,
+		call memory.delta with it as `sinceVersion`.
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store,
 		[Description("Array of entry objects: { key, type, description, body, tags?, metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
-		[Description("Cursor: pass the prior response's `currentVersion` so the echo is just your delta. 0 (default) echoes every entry (bodiless).")] long sinceVersion = 0,
 		[Description("Slice length (chars) of each echoed entry body; 0 (default) = no body (compact echo). \"…\" appended when cut.")] int bodyLen = 0,
 		CancellationToken ct = default)
 	{
@@ -143,11 +143,11 @@ public static class MemoryTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var (upserts, deletes) = ParseEntries(entries);
-		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, sinceVersion, ct), bodyLen);
+		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, ct), bodyLen);
 	}
 
 	[McpServerTool(Name = "memory.delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
-	[Description("Return entries added/updated/removed since `sinceVersion` (no writes); bodies omitted unless bodyLen > 0 (compact by default). Requires memory:read.")]
+	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface (a memory.upsert ack echoes only its own call; pass its `currentVersion` here for the full store delta). Bodies omitted unless bodyLen > 0 (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
@@ -217,7 +217,7 @@ public static class MemoryTools
 			Body = text,
 			Tags = tags,
 		};
-		await memory.UpsertAsync(container.Key, st, [input], [], 0, ct);
+		await memory.UpsertAsync(container.Key, st, [input], [], ct);
 		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key);
 	}
 
