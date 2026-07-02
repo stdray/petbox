@@ -45,7 +45,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	Task<string?> ResolveWorkspaceAsync(string projectKey, CancellationToken ct = default);
 	// --- user-defined methodology definition (LIVE since wave 1.2: a kind the definition
 	//     declares resolves types/statuses/transitions from data; any other kind — or a
-	//     project without a definition — falls back to the built-in WorkflowCatalog) ---
+	//     project without a definition — falls back to the built-in presets) ---
 
 	// Validate and store the project's methodology definition as a new temporal revision.
 	// `version` is the baseline the author last saw (0 = "I believe none exists yet");
@@ -53,7 +53,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// caller re-reads and rebases. An identical resubmit is a no-op (Changed=false).
 	Task<MethodologyDefAck> DefineMethodologyAsync(string projectKey, MethodologyDefinition def, long version, CancellationToken ct = default);
 	// The project's active methodology definition + its revision metadata, or null when
-	// the project has none (it is then on the built-in WorkflowCatalog preset).
+	// the project has none (it is then on the built-in MethodologyPresets).
 	Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default);
 
 	// Close (closed=true) or reopen (closed=false) a board.
@@ -129,13 +129,13 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// (0 = unbounded listing / the adapter's query default). Board context (kind/specBoard/
 	// currentVersion) is filled when the read is board-scoped.
 	Task<TaskSearchResult> SearchNodesAsync(string projectKey, SearchRequest<TaskNodeFilter, TaskSortBy> request, string? urlPrefix = null, CancellationToken ct = default);
-	// Ensure the board exists and return its CATALOG kind (a definition-declared kind reads
+	// Ensure the board exists and return its PRESET kind (a definition-declared kind reads
 	// as Simple here, like any unknown slug always did). UI pages keep rendering off this;
 	// the FSM-aware surface is GetBoardWorkflowAsync.
 	Task<BoardKind> ResolveKindAsync(string projectKey, string board, CancellationToken ct = default);
 	// The board's workflow surface, DATA-DRIVEN: a kind the project's methodology definition
 	// declares resolves from the definition (blocks as declared, transitions carrying
-	// preconditionArtifact); any other kind falls back to the built-in catalog exactly as
+	// preconditionArtifact); any other kind falls back to the built-in presets exactly as
 	// before (identical FSMs collapsed into one block). Powers tasks.workflow.
 	Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default);
 

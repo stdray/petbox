@@ -14,18 +14,9 @@ public sealed record WorkflowResult(bool Ok, string? Error)
 // flip it on at the call site once constraints are clear from practice.
 public static class WorkflowEngine
 {
-	// Catalog-resolved convenience (the historical signature): resolve the workflow from
-	// the static preset catalog, then validate. Data-resolved callers use the overload
-	// below with a runtime-resolved Workflow.
-	public static WorkflowResult Validate(
-		BoardKind kind, string? type, string? fromSlug, string toSlug,
-		bool enforceApproval = false, bool actorCanApprove = false, bool hasReason = true) =>
-		Validate(WorkflowCatalog.For(kind, type), kind.ToString().ToLowerInvariant(), WorkflowCatalog.ValidTypes(kind),
-			type, fromSlug, toSlug, enforceApproval, actorCanApprove, hasReason);
-
-	// The resolution-agnostic core: `wf` is the already-resolved state machine (catalog or
-	// definition — null = the kind needs a known type), `kindName`/`validTypes` only feed
-	// the error messages.
+	// The resolution-agnostic core: `wf` is the already-resolved state machine (preset or
+	// definition, via MethodologyRuntime — null = the kind needs a known type),
+	// `kindName`/`validTypes` only feed the error messages.
 	public static WorkflowResult Validate(
 		Workflow? wf, string kindName, string validTypes, string? type, string? fromSlug, string toSlug,
 		bool enforceApproval = false, bool actorCanApprove = false, bool hasReason = true)

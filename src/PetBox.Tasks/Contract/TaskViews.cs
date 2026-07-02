@@ -59,12 +59,12 @@ public sealed record UpsertResultView(
 	IReadOnlyList<PlanNodeDelta> Added, IReadOnlyList<PlanNodeDelta> Updated, IReadOnlyList<string> Removed);
 
 // The raw temporal upsert/delta result plus the board's resolved kind name (a defined
-// kind's slug verbatim, else the catalog preset — lowercase either way), ready for an
+// kind's slug verbatim, else the preset name — lowercase either way), ready for an
 // adapter to serialize. The service owns the logic; the adapter owns the wire shape.
 public sealed record UpsertOutcome(TemporalUpsertResult<PlanNode> Result, string Kind);
 
 // The workflow surface of one board (tasks.workflow): the resolved kind name plus one
-// block per DISTINCT state machine — catalog kinds collapse identical FSMs (feature=bug=
+// block per DISTINCT state machine — preset kinds group identical FSMs (feature=bug=
 // chore on a work board is one block), definition kinds group by declaration. Transitions
 // carry PreconditionArtifact when the definition gates them on a comment artifact.
 public sealed record BoardWorkflowView(string Kind, IReadOnlyList<WorkflowBlock> Workflows);
@@ -165,5 +165,5 @@ public sealed record MethodologyDefAck(long Version, bool Changed);
 
 // The project's active methodology definition plus its revision metadata. A null view
 // (from GetMethodologyDefinitionAsync) means the project has no definition and is on the
-// built-in WorkflowCatalog preset.
+// built-in MethodologyPresets.
 public sealed record MethodologyDefView(MethodologyDefinition Definition, long Version, DateTime Created, DateTime Updated);

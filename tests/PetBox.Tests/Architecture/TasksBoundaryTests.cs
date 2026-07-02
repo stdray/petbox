@@ -31,7 +31,7 @@ public sealed class TasksBoundaryTests
 		"PetBox.Tasks.Data.RelationStore",
 	];
 
-	// Domain types (PlanNode, TaskNodeId, the Contract DTOs, WorkflowCatalog) are
+	// Domain types (PlanNode, TaskNodeId, the Contract DTOs, MethodologyPresets) are
 	// deliberately absent from both lists — they flow freely to adapters.
 
 	[Fact]

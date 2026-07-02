@@ -121,9 +121,9 @@ public sealed class TaskBoardNodeModel : PageModel
 		Detail = detail;
 		Error = error;
 
-		var kind = WorkflowCatalog.ParseKind(detail.Kind);
+		var kind = MethodologyPresets.ParseKind(detail.Kind);
 		var type = detail.Node.Type.Length == 0 ? null : detail.Node.Type;
-		NextStatuses = WorkflowCatalog.For(kind, type)?.NextFrom(detail.Node.Status) ?? [];
+		NextStatuses = MethodologyPresets.For(kind, type)?.NextFrom(detail.Node.Status) ?? [];
 
 		// Use the RESOLVED node id, not the bound NodeId property: on the canonical slug-URL
 		// (/tasks/{board}/{slug}) only Board+Slug are bound and NodeId is empty, which would

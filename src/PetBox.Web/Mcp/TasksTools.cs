@@ -235,9 +235,9 @@ public static class TasksTools
 				: null);
 	}
 
-	// The `preset` a definition-less project runs on: the hardcoded WorkflowCatalog
-	// (simple + the methodology quartet kinds).
-	const string BuiltinPreset = "builtin-workflow-catalog";
+	// The `preset` a definition-less project runs on: the built-in preset definitions
+	// (simple + the methodology quartet kinds — MethodologyPresets).
+	const string BuiltinPreset = MethodologyPresets.Name;
 
 	// Map the typed wire document onto the domain definition 1:1 (nulls → empty lists —
 	// the validator then reports "needs at least one ..." instead of an opaque NRE).

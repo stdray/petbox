@@ -16,7 +16,7 @@ namespace PetBox.Tests.Tasks;
 
 // The user-defined methodology DEFINITION surface (engine wave 1.1: storage + validation
 // + the tasks.methodology_def_* verbs), exercised end-to-end over MCP. The definition is
-// pure data in this slice — live boards still run the built-in WorkflowCatalog preset —
+// pure data in this slice — live boards still run the built-in presets —
 // so these tests cover the document round-trip, the optimistic-concurrency contract and
 // the whole-document integrity validation, not FSM behavior.
 [Collection("DataModule")]
@@ -369,6 +369,6 @@ public sealed class MethodologyDefinitionTests : IAsyncLifetime
 		IsErr(r).Should().BeFalse(Text(r));
 		var got = Parse(r);
 		got.GetProperty("defined").GetBoolean().Should().BeFalse();
-		got.GetProperty("preset").GetString().Should().Be("builtin-workflow-catalog");
+		got.GetProperty("preset").GetString().Should().Be("builtin-presets");
 	}
 }

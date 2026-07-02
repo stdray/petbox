@@ -18,7 +18,7 @@ namespace PetBox.Tests.Tasks;
 // The DATA-DRIVEN FSM engine (wave 1.2): a kind declared in the project's methodology
 // definition resolves board creation, types, statuses, transitions, gates and terminal
 // semantics from the DEFINITION, while every other kind — in the same project — keeps the
-// built-in WorkflowCatalog preset exactly as before. Exercised end-to-end over MCP.
+// built-in preset definitions exactly as before. Exercised end-to-end over MCP.
 //
 // The custom kind under test: `support`, one workflow block shared by ticket|incident —
 //   New(open) → Open(open) → Resolved(terminalok) [preconditionArtifact resolution_note]

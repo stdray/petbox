@@ -14,8 +14,8 @@ public static class TasksSearchDocs
 {
 	// Indexed iff the node has a stable identity and is not in a terminal workflow state.
 	// The runtime overload also recognizes a project definition's terminal statuses; the
-	// bare form is the catalog-only view (background board walkers without a runtime).
-	public static bool IsIndexable(PlanNode n) => IsIndexable(n, MethodologyRuntime.CatalogOnly);
+	// bare form is the presets-only view (background board walkers without a runtime).
+	public static bool IsIndexable(PlanNode n) => IsIndexable(n, MethodologyRuntime.PresetsOnly);
 
 	public static bool IsIndexable(PlanNode n, MethodologyRuntime runtime) =>
 		n.NodeId.Length > 0 && !runtime.IsTerminalSlug(n.Status);

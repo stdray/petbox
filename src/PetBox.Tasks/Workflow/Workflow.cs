@@ -17,8 +17,8 @@ public sealed record WorkflowStatus(string Slug, string Name, StatusKind Kind);
 // enforcement is opt-in at the call site). `RequiresReason` demands a non-empty
 // body (e.g. triage → wontfix). `PreconditionArtifact` names a comment-artifact tag
 // (e.g. "spec_plan" → an `artifact:spec_plan` comment) the node must carry before the
-// transition fires — gates are transition data; the catalog presets leave it null (the
-// idea-review gate stays hardcoded in the service until the presets move to data).
+// transition fires — gates are transition data, enforced by
+// RequirePreconditionArtifactsAsync (the ideas preset gates exploring→review this way).
 public sealed record WorkflowTransition(string From, string To, bool RequiresApproval = false, bool RequiresReason = false, string? PreconditionArtifact = null);
 
 // A state machine for one task type on a board kind. Convention: Statuses[0] is

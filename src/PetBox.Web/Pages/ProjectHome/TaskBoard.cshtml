@@ -100,7 +100,7 @@
 				}
 				else
 				{
-					var closed = PetBox.Tasks.Workflow.WorkflowCatalog.IsTerminalSlug(row.Node.Status);
+					var closed = PetBox.Tasks.Workflow.MethodologyPresets.IsTerminalSlug(row.Node.Status);
 					Model.CommentThreads.TryGetValue(row.Node.NodeId, out var thread);
 					<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, row.Node, row.Depth, closed, true, false, thread)" />
 				}
@@ -131,7 +131,7 @@ else
 	<ul class="flex flex-col gap-2" data-testid="board-nodes">
 		@foreach (var n in Model.Nodes)
 		{
-			var closed = PetBox.Tasks.Workflow.WorkflowCatalog.IsTerminalSlug(n.Status);
+			var closed = PetBox.Tasks.Workflow.MethodologyPresets.IsTerminalSlug(n.Status);
 			// A closed node hides under "active only" — unless it still has open
 			// descendants, in which case it stays so its children aren't orphaned.
 			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);

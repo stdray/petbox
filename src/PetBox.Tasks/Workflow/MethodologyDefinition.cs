@@ -1,9 +1,9 @@
 namespace PetBox.Tasks.Workflow;
 
-// A project's methodology as DATA — the user-defined counterpart of the hardcoded
-// WorkflowCatalog preset (spec methodology-from-primitives). One definition per project,
+// A project's methodology as DATA — the user-defined counterpart of the built-in
+// MethodologyPresets (spec methodology-from-primitives). One definition per project,
 // stored as a temporal JSON document (MethodologyDefRow) and resolved at runtime through
-// MethodologyRuntime: a kind the definition declares OVERRIDES the catalog; every other
+// MethodologyRuntime: a kind the definition declares OVERRIDES the presets; every other
 // kind (and a project with no definition) keeps the built-in preset.
 //
 // The shape mirrors what tasks.workflow answers per board: a kind hosts one or more
@@ -20,14 +20,14 @@ public sealed record MethodologyDefinition(
 	public IReadOnlyList<MethodologyLinkKindDef> LinkKinds { get; init; } = [];
 	// Declared tag namespaces (spec primitives-tag-axes). Empty = free-form tags on
 	// definition-resolved boards (the wave-1.2 posture); declared = a namespaced tag must
-	// use one of these axes (bare tags are rejected, same as the enforced catalog mode).
+	// use one of these axes (bare tags are rejected, same as the enforced quartet presets).
 	public IReadOnlyList<MethodologyTagAxisDef> TagAxes { get; init; } = [];
 }
 
 // One board kind of the methodology. `Kind` is a FREE-FORM slug ([a-z][a-z0-9_-]*), NOT
 // the BoardKind enum — user-defined kinds are the point; bridging them onto the enum seam
-// is the engine task. `QuickAddAllowed` mirrors WorkflowCatalog.QuickAddAllowed: whether
-// the bare board quick-add form may create nodes of this kind.
+// is the engine task. `QuickAddAllowed` mirrors the preset knob: whether the bare board
+// quick-add form may create nodes of this kind.
 public sealed record MethodologyKindDef(
 	string Kind,
 	bool QuickAddAllowed,
@@ -40,8 +40,8 @@ public sealed record MethodologyKindDef(
 }
 
 // "A NEW node of type `Type` on a board of this kind must carry a link of kind `Link` at
-// creation" — the data-driven generalization of the hardcoded work-board RequireSpecLinks
-// (work feature/bug must have specRef; chore exempt because no constraint names it).
+// creation" — the work preset states it as data (feature/bug must have specRef; chore
+// exempt because no constraint names it), and a definition kind declares its own.
 // `Link` is limited to the kinds expressible IN the upsert call: task_spec (specRef),
 // blocks (blockedBy), idea_spec (ideaRef) — post-hoc relation kinds can't gate creation.
 // Edits don't re-require the link.
@@ -65,6 +65,12 @@ public sealed record MethodologyWorkflowDef(
 	IReadOnlyList<MethodologyTransitionDef> Transitions)
 {
 	public string Initial => Statuses[0].Slug;
+
+	// Map this block onto the shared FSM vocabulary as one type's workflow, carrying the
+	// transition gates (approval/reason/precondition artifact).
+	public Workflow ToWorkflow(string type) =>
+		new(type, Statuses,
+			Transitions.Select(t => new WorkflowTransition(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList());
 }
 
 // A directed FSM edge. `PreconditionArtifact` names a comment-artifact tag (e.g.
