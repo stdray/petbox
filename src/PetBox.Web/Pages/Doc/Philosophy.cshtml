@@ -31,14 +31,14 @@
 
 		<h2>Two interacting but separate processes</h2>
 		<p><strong>P1 — requirements evolution.</strong> Artifact: the <strong>spec tree</strong>. Unit of work = an <strong>idea</strong>: <code>raw → refined statement → plan to update the spec → new spec version</code>. A rejected idea never enters the tree — it stays a record "considered, rejected: why". Invariant: <strong>only DEFINED requirements live in the tree</strong>; changing a requirement = a new idea (same cycle).</p>
-		<p><strong>P2 — technical.</strong> Artifact: <strong>tasks</strong>. Bridge from P1: a spec leaf with no linked tasks → create tasks → work board. Each task carries a type (feature|bug), links its spec node (M:N), and a provenance (originating issue + spec item).</p>
+		<p><strong>P2 — technical.</strong> Artifact: <strong>tasks</strong>. Bridge from P1: a spec leaf with no linked tasks → create tasks → work board. Each task carries a type (feature|bug|chore), links its spec node (M:N; chore — internal hygiene — is exempt), and a provenance (originating issue + spec item).</p>
 
 		<h2>Entities</h2>
 		<ol>
 			<li><strong>Session</strong> — raw transcript of one episode; source material.</li>
 			<li><strong>Idea / deliberation</strong> — a thread of thinking distilled from sessions, with an outcome (open / exploring / rejected / deferred / accepted) + reasoning. Separate from the plan.</li>
 			<li><strong>Spec / feature</strong> — a temporal tree of defined requirements (functional + non-functional). Its delivery status is COMPUTED, not set by hand.</li>
-			<li><strong>Task</strong> — a technical unit on the work board; feature|bug; links a spec node; carries commitRef.</li>
+			<li><strong>Task</strong> — a technical unit on the work board; feature|bug|chore; feature/bug link a spec node (chore needs none); carries commitRef.</li>
 			<li><strong>Relation</strong> — typed temporal edges between nodes (task↔spec, issue→task, idea→spec, blocks). They bind to a stable id, so links survive renames, and they're soft-closed so history is kept.</li>
 			<li><strong>Intake</strong> — a queue of raw issues → triage → {reject-with-reason | confirm → spawn task with links}.</li>
 		</ol>

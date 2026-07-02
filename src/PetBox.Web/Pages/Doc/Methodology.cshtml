@@ -30,7 +30,7 @@
 		</p>
 		<ul>
 			<li><strong><code>spec</code></strong> — the requirement tree (only DEFINED requirements). Node status <code>draft|defined|deprecated</code>. Each node also carries a COMPUTED <code>delivery</code> (see below).</li>
-			<li><strong><code>work</code></strong> — technical tasks, type <code>feature|bug</code>. Status <code>Pending→InProgress→Review→Done</code> (+ <code>Blocked|Deferred|Cancelled</code>). A feature/bug MUST link a spec node (see spec-link).</li>
+			<li><strong><code>work</code></strong> — technical tasks, type <code>feature|bug|chore</code>. Status <code>Pending→InProgress→Review→Done</code> (+ <code>Blocked|Deferred|Cancelled</code>). A feature/bug MUST link a spec node (see spec-link); <code>chore</code> — internal engineering hygiene (tests, flakes, refactoring, infra) — shares the FSM but needs no spec link.</li>
 			<li><strong><code>ideas</code></strong> — deliberation, type <code>idea</code>. Status <code>raw→exploring→{rejected|deferred|accepted}</code>.</li>
 			<li><strong><code>intake</code></strong> — raw issues, type <code>issue</code>. Status <code>reported→triage→{confirmed|duplicate|wontfix}→done</code>.</li>
 			<li><strong><code>simple</code></strong> — a lightweight preset for ad-hoc/scratch work: type <code>task|bug|feature|chore|issue</code>, status <code>Todo→InProgress→Done</code> (+ <code>Blocked|Cancelled</code>) with FREE transitions (any valid status → any, no gates), and free-form tags. No spec/idea governance.</li>
@@ -66,7 +66,7 @@
 		<p>Edges bind to the stable <code>nodeId</code> (in every upsert/get response), so they survive renames. They are temporal — soft-closed, not deleted (history kept; <code>relations.list ... includeHistory=true</code>). <code>tasks.get</code> surfaces them inline per node: <code>spec</code> (what a task implements), <code>blockedBy</code>, and on spec nodes <code>linkedTasks</code> — each resolved to its board + path + title.</p>
 		<p><strong>Finding the spec board:</strong> set it once per work board with <code>tasks.board_set_spec</code> (or <code>specBoard</code> on <code>board_create</code>); then <code>tasks.get</code>/<code>board_list</code> report it as <code>specBoard</code> and <code>specRef</code> is validated to point at that board. No mapping = the agent picks any <code>kind=spec</code> board and links by nodeId.</p>
 		<ul>
-			<li><strong><code>task_spec</code></strong> — set <code>specRef</code> (a spec nodeId) on a work feature/bug: links it to the spec node it implements. <strong>Required</strong> for a new work feature/bug (spec-link invariant — no work without a spec node). The target is validated: it must be an existing node on a spec board (and on the board's <code>specBoard</code> if set).</li>
+			<li><strong><code>task_spec</code></strong> — set <code>specRef</code> (a spec node slug or nodeId) on a work feature/bug: links it to the spec node it implements. <strong>Required</strong> for a new work feature/bug (spec-link invariant — no work without a spec node); <code>chore</code> is exempt. The target is validated: it must be an existing node on a spec board (and on the board's <code>specBoard</code> if set).</li>
 			<li><strong><code>blocks</code></strong> — set <code>blockedBy</code> (a nodeId) on a work task you move to <code>Blocked</code>. A Blocked task MUST name a blocker.</li>
 			<li><strong><code>issue_task</code></strong> — a confirmed intake issue spawns a work task; link them so the issue auto-closes when the task is done.</li>
 			<li><strong><code>idea_spec</code></strong> — an accepted idea produced this spec node/version.</li>
@@ -90,7 +90,7 @@
 		<ul>
 			<li><strong>idea</strong> (ideas board) — thinking in flux, an outcome to reach. Fast capture, no spec link.</li>
 			<li><strong>spec</strong> (spec board) — a DEFINED requirement. Changing a requirement = a new idea → a new spec version.</li>
-			<li><strong>work</strong> (work board) — a technical unit (feature/bug) that implements a spec node. Always links spec.</li>
+			<li><strong>work</strong> (work board) — a technical unit that implements a spec node (feature/bug, always links spec) or internal engineering hygiene (chore, no spec link).</li>
 			<li><strong>issue</strong> (intake board) — a raw report; triage to confirmed, then spawn work.</li>
 		</ul>
 		<p class="text-sm opacity-70">Fast capture lives on ideas/intake (no spec link); committed work lives on the work board (spec-linked). That separation is the point — see the <a href="@Routes.DocPhilosophy()">philosophy</a>.</p>

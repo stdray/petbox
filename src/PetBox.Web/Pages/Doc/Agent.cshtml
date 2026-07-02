@@ -151,7 +151,7 @@ Pass projectKey "&lt;proj&gt;" in every call.
 BOARDS have a kind, set at board_create and IMMUTABLE: simple (lightweight preset:
 task|bug|feature|chore|issue, Todo->InProgress->Done +Blocked|Cancelled, free
 transitions, free-form tags) | spec (requirements, computed delivery) | work
-(feature|bug, FSM) | ideas (fuzzy thinking) | intake (inbound issues). A cold upsert to
+(feature|bug|chore, FSM) | ideas (fuzzy thinking) | intake (inbound issues). A cold upsert to
 a missing board auto-creates a SIMPLE one — create boards explicitly with the right
 kind. Standard board names = their kind: ideas, spec, work, intake (+ simple for
 scratch). Use those names.
@@ -170,8 +170,9 @@ RIGHT-SIZE the rails — scale how deep, not whether to start from an idea:
   ongoing project  -> ideas -> spec -> work + intake (deeper)
 
 WORK rules: a new feature/bug MUST link a spec node — pass specRef = the spec node's
-nodeId (read it from the spec upsert response); pin the spec board via
-board_create(specBoard) or board_set_spec. Statuses Pending-&gt;InProgress-&gt;Review-&gt;Done;
+slug or nodeId; pin the spec board via board_create(specBoard) or board_set_spec.
+Type `chore` (internal engineering hygiene: tests, flakes, refactoring, infra) is the
+one exception — same FSM, no specRef required. Statuses Pending-&gt;InProgress-&gt;Review-&gt;Done;
 your ceiling is Review — never set Done, the maintainer confirms it. Blocked needs blockedBy.
 
 READING: tasks.get returns kind, specBoard and per-node links (spec/blockedBy/linkedTasks)
