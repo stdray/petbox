@@ -2,9 +2,9 @@ namespace PetBox.Tasks.Workflow;
 
 // A project's methodology as DATA — the user-defined counterpart of the hardcoded
 // WorkflowCatalog preset (spec methodology-from-primitives). One definition per project,
-// stored as a temporal JSON document (MethodologyDefRow); this slice only STORES and
-// VALIDATES it — wiring it into board-kind/FSM resolution is the next task, so the
-// hardcoded catalog keeps serving live boards untouched.
+// stored as a temporal JSON document (MethodologyDefRow) and resolved at runtime through
+// MethodologyRuntime: a kind the definition declares OVERRIDES the catalog; every other
+// kind (and a project with no definition) keeps the built-in preset.
 //
 // The shape mirrors what tasks.workflow answers per board: a kind hosts one or more
 // workflow blocks, each block is one state machine shared by every type slug in it.
@@ -32,11 +32,10 @@ public sealed record MethodologyWorkflowDef(
 	public string Initial => Statuses[0].Slug;
 }
 
-// A directed FSM edge — WorkflowTransition plus `PreconditionArtifact`, which is NEW vs
-// the hardcoded catalog: it names a comment-artifact tag (e.g. "spec_plan") that must
-// exist on the node before the transition fires (the exploring→review gate the catalog
-// enforces imperatively in the service, expressed as data). This slice only MODELS the
-// field; enforcement lands with the engine.
+// A directed FSM edge. `PreconditionArtifact` names a comment-artifact tag (e.g.
+// "spec_plan") that must exist on the node (as an `artifact:<slug>` comment) before the
+// transition fires — the exploring→review gate the catalog enforces imperatively in the
+// service, expressed as data and enforced by RequirePreconditionArtifactsAsync.
 public sealed record MethodologyTransitionDef(
 	string From,
 	string To,

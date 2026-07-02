@@ -58,9 +58,16 @@ public sealed record UpsertResultView(
 	IReadOnlyList<UpsertConflictView> Conflicts,
 	IReadOnlyList<PlanNodeDelta> Added, IReadOnlyList<PlanNodeDelta> Updated, IReadOnlyList<string> Removed);
 
-// The raw temporal upsert/delta result plus the board kind, ready for an adapter to
-// serialize. The service owns the logic; the adapter owns the wire shape.
-public sealed record UpsertOutcome(TemporalUpsertResult<PlanNode> Result, BoardKind Kind);
+// The raw temporal upsert/delta result plus the board's resolved kind name (a defined
+// kind's slug verbatim, else the catalog preset — lowercase either way), ready for an
+// adapter to serialize. The service owns the logic; the adapter owns the wire shape.
+public sealed record UpsertOutcome(TemporalUpsertResult<PlanNode> Result, string Kind);
+
+// The workflow surface of one board (tasks.workflow): the resolved kind name plus one
+// block per DISTINCT state machine — catalog kinds collapse identical FSMs (feature=bug=
+// chore on a work board is one block), definition kinds group by declaration. Transitions
+// carry PreconditionArtifact when the definition gates them on a comment artifact.
+public sealed record BoardWorkflowView(string Kind, IReadOnlyList<WorkflowBlock> Workflows);
 
 // A tag-projection group: nodes sharing one tag value in a grouped namespace (or the
 // "(none)" bucket). `Delivery` is the combined roll-up over every node in the group (spec

@@ -15,8 +15,11 @@ public sealed record WorkflowStatus(string Slug, string Name, StatusKind Kind);
 // A directed edge in a type's state machine. `RequiresApproval` marks the
 // transition as maintainer-only (the approve gate — capability modelled here,
 // enforcement is opt-in at the call site). `RequiresReason` demands a non-empty
-// body (e.g. triage → wontfix).
-public sealed record WorkflowTransition(string From, string To, bool RequiresApproval = false, bool RequiresReason = false);
+// body (e.g. triage → wontfix). `PreconditionArtifact` names a comment-artifact tag
+// (e.g. "spec_plan" → an `artifact:spec_plan` comment) the node must carry before the
+// transition fires — gates are transition data; the catalog presets leave it null (the
+// idea-review gate stays hardcoded in the service until the presets move to data).
+public sealed record WorkflowTransition(string From, string To, bool RequiresApproval = false, bool RequiresReason = false, string? PreconditionArtifact = null);
 
 // A state machine for one task type on a board kind. Convention: Statuses[0] is
 // the initial status. Slug matching is case-insensitive.

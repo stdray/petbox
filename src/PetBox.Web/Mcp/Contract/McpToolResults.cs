@@ -311,7 +311,10 @@ public sealed record TaskSearchResultView(
 // tasks.workflow wire shape (board kind + statuses/transitions catalog, grouped by FSM).
 public sealed record WorkflowStatusView(string Slug, string Name, string Kind);
 
-public sealed record WorkflowTransitionView(string From, string To, bool RequiresApproval, bool RequiresReason);
+// `PreconditionArtifact` names a comment-artifact tag the node must carry before the
+// transition fires — filled for definition-resolved kinds, null (omitted by the
+// serializer) for the catalog presets.
+public sealed record WorkflowTransitionView(string From, string To, bool RequiresApproval, bool RequiresReason, string? PreconditionArtifact = null);
 
 // One state machine shared by every type slug in `Types` — types with an identical FSM are
 // grouped into a single block (feature=bug=chore on a work board is ONE block, not three

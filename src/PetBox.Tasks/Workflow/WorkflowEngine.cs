@@ -14,8 +14,20 @@ public sealed record WorkflowResult(bool Ok, string? Error)
 // flip it on at the call site once constraints are clear from practice.
 public static class WorkflowEngine
 {
+	// Catalog-resolved convenience (the historical signature): resolve the workflow from
+	// the static preset catalog, then validate. Data-resolved callers use the overload
+	// below with a runtime-resolved Workflow.
 	public static WorkflowResult Validate(
 		BoardKind kind, string? type, string? fromSlug, string toSlug,
+		bool enforceApproval = false, bool actorCanApprove = false, bool hasReason = true) =>
+		Validate(WorkflowCatalog.For(kind, type), kind.ToString().ToLowerInvariant(), WorkflowCatalog.ValidTypes(kind),
+			type, fromSlug, toSlug, enforceApproval, actorCanApprove, hasReason);
+
+	// The resolution-agnostic core: `wf` is the already-resolved state machine (catalog or
+	// definition — null = the kind needs a known type), `kindName`/`validTypes` only feed
+	// the error messages.
+	public static WorkflowResult Validate(
+		Workflow? wf, string kindName, string validTypes, string? type, string? fromSlug, string toSlug,
 		bool enforceApproval = false, bool actorCanApprove = false, bool hasReason = true)
 	{
 		// Free boards now carry a real preset workflow (free transitions, fixed status vocab) —
@@ -29,13 +41,12 @@ public static class WorkflowEngine
 		if (fromSlug is not null && string.Equals(fromSlug, toSlug, StringComparison.OrdinalIgnoreCase))
 			return WorkflowResult.Success;
 
-		var wf = WorkflowCatalog.For(kind, type);
 		if (wf is null)
-			return WorkflowResult.Fail($"board kind '{kind.ToString().ToLowerInvariant()}' needs a known type ({WorkflowCatalog.ValidTypes(kind)}); got '{type}'");
+			return WorkflowResult.Fail($"board kind '{kindName}' needs a known type ({validTypes}); got '{type}'");
 
 		var to = wf.Status(toSlug);
 		if (to is null)
-			return WorkflowResult.Fail($"invalid status '{toSlug}' for {kind.ToString().ToLowerInvariant()}/{wf.Type}; valid: {wf.Slugs()}");
+			return WorkflowResult.Fail($"invalid status '{toSlug}' for {kindName}/{wf.Type}; valid: {wf.Slugs()}");
 
 		// Recovery: if the current status isn't known to this workflow (legacy/invalid), treat the
 		// move as a fresh start so a stuck node can be brought back to any valid status.

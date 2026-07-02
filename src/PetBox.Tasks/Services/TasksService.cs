@@ -55,12 +55,40 @@ public sealed partial class TasksService : ITasksService
 
 	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, CancellationToken ct = default)
 	{
-		var k = WorkflowCatalog.ParseKind(kind ?? "simple");
-		await AssertSingletonAsync(projectKey, k, ct);
-		await ValidateSpecBoardAsync(projectKey, kind ?? "simple", specBoard, ct);
-		var meta = await _boards.CreateAsync(projectKey, board, description, kind ?? "simple", specBoard, ct);
+		var kindSlug = (kind ?? "simple").Trim().ToLowerInvariant();
+		var runtime = await RuntimeAsync(projectKey, ct);
+		string canonical;
+		if (runtime.IsDefinedKind(kindSlug))
+		{
+			// A definition-declared kind is stored VERBATIM (no singleton rule — that is
+			// quartet behavior; a definition kind is as unlimited as `simple`).
+			canonical = kindSlug;
+		}
+		else if (Enum.TryParse<BoardKind>(kindSlug, ignoreCase: true, out var k))
+		{
+			canonical = k.ToString().ToLowerInvariant();
+			await AssertSingletonAsync(projectKey, k, ct);
+		}
+		else
+		{
+			throw new ArgumentException(
+				$"unknown board kind '{kind}' — valid kinds: {string.Join("|", runtime.KnownKinds())}" +
+				" (a custom kind must first be declared via tasks.methodology_def_upsert)");
+		}
+		await ValidateSpecBoardAsync(projectKey, canonical, specBoard, ct);
+		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, specBoard, ct);
 		await AutoWireSpecAsync(projectKey, ct); // a fresh spec or work board may complete the link
 		return meta;
+	}
+
+	// Load the project's methodology definition and wrap it as the FSM resolution seam —
+	// once per service call (no caching layer; SQLite is local), resolved BEFORE queries
+	// are built (the runtime helpers are sync and used inside query predicates). No
+	// definition → the pure-catalog runtime, so preset boards behave exactly as before.
+	async Task<MethodologyRuntime> RuntimeAsync(string projectKey, CancellationToken ct)
+	{
+		var view = await GetMethodologyDefinitionAsync(projectKey, ct);
+		return view is null ? MethodologyRuntime.CatalogOnly : new MethodologyRuntime(view.Definition);
 	}
 
 	// Reject a 2nd active board of a methodology kind (one-per-project). `free` is exempt.
@@ -110,6 +138,14 @@ public sealed partial class TasksService : ITasksService
 	{
 		await EnsureBoard(projectKey, board, ct);
 		return WorkflowCatalog.ParseKind((await _boards.FindAsync(projectKey, board, ct))!.Kind);
+	}
+
+	public async Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default)
+	{
+		await EnsureBoard(projectKey, board, ct);
+		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
+		var runtime = await RuntimeAsync(projectKey, ct);
+		return new BoardWorkflowView(runtime.KindName(meta.Kind), runtime.Blocks(meta.Kind));
 	}
 
 	// Pipeline order of the quartet kinds.
@@ -211,7 +247,7 @@ public sealed partial class TasksService : ITasksService
 		return set;
 	}
 
-	// ---- user-defined methodology definition (wave 1.1: storage + validation only) ----
+	// ---- user-defined methodology definition (storage; resolved live via RuntimeAsync) ----
 
 	// Whole-document integrity rules (slugs, per-block references, uniqueness). Static — no state.
 	static readonly MethodologyDefinitionValidator DefinitionValidator = new();
@@ -294,19 +330,20 @@ public sealed partial class TasksService : ITasksService
 		var current = all.Count == 0 ? 0 : all.Max(n => n.Version);
 
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
-		var kind = WorkflowCatalog.ParseKind(meta.Kind);
+		var runtime = await RuntimeAsync(projectKey, ct);
+		var catalogKind = runtime.CatalogKind(meta.Kind); // null = definition-resolved kind
 		var parentOf = await ParentMapAsync(projectKey, ct);
-		var delivery = kind == BoardKind.Spec ? await ComputeSpecDeliveryAsync(projectKey, active, parentOf, ct) : null;
+		var delivery = catalogKind == BoardKind.Spec ? await ComputeSpecDeliveryAsync(projectKey, active, parentOf, runtime, ct) : null;
 
 		var index = await BuildNodeIndexAsync(projectKey, ct);
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		var underId = ResolveUnderNodeId(under, active);
 		// A status filter is an EXPLICIT ask: naming a terminal status returns its nodes even
 		// with includeClosed=false (widen the pool first, then keep only the named slugs).
-		var statusFilter = ResolveStatusFilter(status, kind);
+		var statusFilter = ResolveStatusFilter(status, runtime, meta.Kind);
 		var visible = statusFilter is null
-			? FilterVisible(active, includeClosed, underId, parentOf)
-			: FilterVisible(active, includeClosed: true, underId, parentOf)
+			? FilterVisible(active, includeClosed, underId, parentOf, runtime, meta.Kind)
+			: FilterVisible(active, includeClosed: true, underId, parentOf, runtime, meta.Kind)
 				.Where(n => statusFilter.Contains(n.Status)).ToList();
 
 		var nodes = new List<PlanNodeView>();
@@ -316,7 +353,7 @@ public sealed partial class TasksService : ITasksService
 			var toEdges = n.NodeId.Length > 0 ? await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct) : [];
 			var spec = fromEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var blockedBy = toEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.FromNodeId, index)).ToList();
-			var linkedTasks = kind == BoardKind.Spec ? toEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
+			var linkedTasks = catalogKind == BoardKind.Spec ? toEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
 			var supersedes = fromEdges.Where(e => e.Kind == "supersedes").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var parentId = parentOf.GetValueOrDefault(n.NodeId);
 			nodes.Add(new PlanNodeView(
@@ -343,7 +380,7 @@ public sealed partial class TasksService : ITasksService
 				// (node-slug-addressable). board/key are validated slugs → URL-safe.
 				Url: urlPrefix is null ? null : urlPrefix + board + "/" + n.Key));
 		}
-		return new PlanBoardView(current, kind.ToString().ToLowerInvariant(), meta.SpecBoard, nodes);
+		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.SpecBoard, nodes);
 	}
 
 	public async Task<NodeDetailView?> GetNodeAsync(string projectKey, string nodeId, CancellationToken ct = default)
@@ -431,12 +468,13 @@ public sealed partial class TasksService : ITasksService
 	}
 
 	// Normalize/validate a status filter against the board kind's known slugs (across its
-	// hosted types), case-insensitive; null/empty = no filter. An unknown slug is rejected —
-	// it would otherwise silently return nothing (mirrors ResolveBoardFilter).
-	static HashSet<string>? ResolveStatusFilter(string[]? status, BoardKind kind)
+	// hosted types, catalog- or definition-resolved), case-insensitive; null/empty = no
+	// filter. An unknown slug is rejected — it would otherwise silently return nothing
+	// (mirrors ResolveBoardFilter).
+	static HashSet<string>? ResolveStatusFilter(string[]? status, MethodologyRuntime runtime, string? kindSlug)
 	{
 		if (status is null || status.Length == 0) return null;
-		var known = WorkflowCatalog.Types(kind).SelectMany(w => w.Statuses).Select(s => s.Slug)
+		var known = runtime.Types(kindSlug).SelectMany(w => w.Statuses).Select(s => s.Slug)
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		foreach (var raw in status)
@@ -491,14 +529,14 @@ public sealed partial class TasksService : ITasksService
 		var ctx = _boards.GetContext(projectKey);
 		var active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
-		var kind = WorkflowCatalog.ParseKind(meta.Kind);
+		var runtime = await RuntimeAsync(projectKey, ct);
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
-		var delivery = kind == BoardKind.Spec
-			? await ComputeSpecDeliveryAsync(projectKey, active, await ParentMapAsync(projectKey, ct), ct)
+		var delivery = runtime.CatalogKind(meta.Kind) == BoardKind.Spec
+			? await ComputeSpecDeliveryAsync(projectKey, active, await ParentMapAsync(projectKey, ct), runtime, ct)
 			: null;
 
 		var groups = ProjectByTags(active, dims, 0, tagsByNode, delivery);
-		return new GroupedBoardView(dims, kind.ToString().ToLowerInvariant(), groups);
+		return new GroupedBoardView(dims, runtime.KindName(meta.Kind), groups);
 	}
 
 	// Recursively bucket `nodes` by dimension `dims[depth]`, then by the remaining dimensions.
@@ -550,7 +588,8 @@ public sealed partial class TasksService : ITasksService
 
 	// Hide terminal (closed) nodes unless includeClosed; keep terminal part_of ancestors of
 	// any visible node so the tree stays connected. `underId` restricts to a part_of subtree.
-	static List<PlanNode> FilterVisible(List<PlanNode> active, bool includeClosed, string? underId, Dictionary<string, string> parentOf)
+	// Terminality is per the board's kind (a definition kind classifies by its own vocab).
+	static List<PlanNode> FilterVisible(List<PlanNode> active, bool includeClosed, string? underId, Dictionary<string, string> parentOf, MethodologyRuntime runtime, string? kindSlug)
 	{
 		IEnumerable<PlanNode> scoped = active;
 		if (underId is not null)
@@ -559,7 +598,7 @@ public sealed partial class TasksService : ITasksService
 		if (includeClosed) return pool;
 
 		var keep = new HashSet<string>(StringComparer.Ordinal); // nodeIds
-		foreach (var n in pool.Where(n => !WorkflowCatalog.IsTerminalSlug(n.Status)))
+		foreach (var n in pool.Where(n => !runtime.IsTerminalStatus(kindSlug, n.Status)))
 		{
 			keep.Add(n.NodeId);
 			var cur = n.NodeId; var guard = 0;
@@ -604,7 +643,7 @@ public sealed partial class TasksService : ITasksService
 	// COMPUTED spec roll-up (keyed by NodeId): a spec node's delivery derives from the
 	// tasks linked (task_spec) to it AND its part_of descendants (decomposition may cross
 	// boards). Replaces the old path-prefix descent.
-	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(string projectKey, IReadOnlyList<PlanNode> specNodes, Dictionary<string, string> parentOf, CancellationToken ct)
+	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(string projectKey, IReadOnlyList<PlanNode> specNodes, Dictionary<string, string> parentOf, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		var byNodeId = new Dictionary<string, (string Type, string Status)>(StringComparer.Ordinal);
 		var ctx = _boards.GetContext(projectKey);
@@ -634,17 +673,17 @@ public sealed partial class TasksService : ITasksService
 				if (tasksOf.TryGetValue(cur, out var ts)) foreach (var t in ts) taskIds.Add(t);
 				if (childrenOf.TryGetValue(cur, out var kids)) foreach (var k in kids) stack.Push(k);
 			}
-			result[s.NodeId] = Delivery(taskIds.Where(byNodeId.ContainsKey).Select(id => byNodeId[id]).ToList());
+			result[s.NodeId] = Delivery(taskIds.Where(byNodeId.ContainsKey).Select(id => byNodeId[id]).ToList(), runtime);
 		}
 		return result;
 	}
 
-	static string Delivery(List<(string Type, string Status)> tasks)
+	static string Delivery(List<(string Type, string Status)> tasks, MethodologyRuntime runtime)
 	{
 		var features = tasks.Where(t => t.Type == "feature").ToList();
 		if (features.Count == 0) return "not_started";
-		if (!features.All(f => WorkflowCatalog.KindOfSlug(f.Status) == StatusKind.TerminalOk)) return "in_progress";
-		var openBug = tasks.Any(t => t.Type == "bug" && WorkflowCatalog.KindOfSlug(t.Status) == StatusKind.Open);
+		if (!features.All(f => runtime.KindOfSlug(f.Status) == StatusKind.TerminalOk)) return "in_progress";
+		var openBug = tasks.Any(t => t.Type == "bug" && runtime.KindOfSlug(t.Status) == StatusKind.Open);
 		return openBug ? "done_with_defects" : "done";
 	}
 
@@ -662,7 +701,9 @@ public sealed partial class TasksService : ITasksService
 		if (meta.ClosedAt != null)
 			throw new InvalidOperationException($"board '{board}' is closed — reopen it (tasks.board_reopen) before writing");
 
-		var kind = WorkflowCatalog.ParseKind(meta.Kind);
+		var runtime = await RuntimeAsync(projectKey, ct);
+		var kindSlug = meta.Kind;
+		var catalogKind = runtime.CatalogKind(kindSlug); // null = definition-resolved kind
 		var ctx = _boards.GetContext(projectKey);
 		var prior = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
@@ -683,7 +724,7 @@ public sealed partial class TasksService : ITasksService
 				throw new ArgumentException($"node '{both}' is both deleted and upserted in one batch — pick one");
 		}
 
-		var desired = upsertPatches.Select(p => ApplyWorkflow(kind, Merge(p, prior), prior) with { Board = board }).ToArray();
+		var desired = upsertPatches.Select(p => ApplyWorkflow(runtime, kindSlug, Merge(p, prior), prior) with { Board = board }).ToArray();
 		ValidateChanges(desired, prior);
 		// Resolve slug specRefs to NodeIds ONCE, up front — both the validation below and the
 		// task_spec edge write (LinkRefsAsync) read this map, so it must never carry a raw slug.
@@ -693,11 +734,12 @@ public sealed partial class TasksService : ITasksService
 		var ideaRefs = LinkFields(upsertPatches, p => p.IdeaRef);
 		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
 		{
-			RequireSpecLinks(kind, desired, prior, specRefs);
-			await ValidateSpecRefsAsync(projectKey, meta, specRefs, ct);
-			await RequireBlockersAsync(kind, projectKey, desired, blockedBy, ct);
-			await RequireSpecPlanForReviewAsync(kind, projectKey, board, desired, prior, ct);
-			await RequireAcceptedIdeaForSpecAsync(kind, projectKey, desired, ideaRefs, ct);
+			RequireSpecLinks(catalogKind, desired, prior, specRefs);
+			await ValidateSpecRefsAsync(projectKey, meta, specRefs, runtime, ct);
+			await RequireBlockersAsync(catalogKind, projectKey, desired, blockedBy, ct);
+			await RequireSpecPlanForReviewAsync(catalogKind, projectKey, board, desired, prior, ct);
+			await RequireAcceptedIdeaForSpecAsync(catalogKind, projectKey, desired, ideaRefs, runtime, ct);
+			await RequirePreconditionArtifactsAsync(runtime, kindSlug, projectKey, board, desired, prior, ct);
 		}
 
 		// Children guard: a node with active part_of children is not deletable — unless its
@@ -728,7 +770,7 @@ public sealed partial class TasksService : ITasksService
 				var delta = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), 0,
 					partition: n => n.Board == board, ct: ct);
 				delta = delta with { Applied = false, Conflicts = guardConflicts };
-				return new UpsertOutcome(ScopeEchoToCall(delta, nodes, delta.CurrentVersion), kind);
+				return new UpsertOutcome(ScopeEchoToCall(delta, nodes, delta.CurrentVersion), runtime.KindName(kindSlug));
 			}
 		}
 		// Class-A lexical floor written INSIDE the entity tx: open nodes (re)indexed, terminal/
@@ -741,9 +783,9 @@ public sealed partial class TasksService : ITasksService
 			r = await TemporalStore.UpsertAsync(ctx, desired, dels, 0,
 				onWithinTx: async (tx, upserted, deletedKeys, c) =>
 				{
-					var tags = await NodeTagsAsync(tx, board, upserted.Where(TasksSearchDocs.IsIndexable).Select(n => n.NodeId), c);
+					var tags = await NodeTagsAsync(tx, board, upserted.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).Select(n => n.NodeId), c);
 					foreach (var n in upserted)
-						if (TasksSearchDocs.IsIndexable(n))
+						if (TasksSearchDocs.IsIndexable(n, runtime))
 							await fts.IndexAsync(tx, TasksSearchDocs.ToDoc(n, projectKey, tags.GetValueOrDefault(n.NodeId, [])), c);
 						else
 							await fts.DeleteAsync(tx, projectKey, board, n.Key, c); // left the open set
@@ -762,8 +804,8 @@ public sealed partial class TasksService : ITasksService
 				await LinkRefsAsync(projectKey, "blocks", desired, blockedBy, blockerIsFrom: true, ct);
 				await LinkRefsAsync(projectKey, "idea_spec", desired, ideaRefs, blockerIsFrom: true, ct);
 				await CloseBlocksOnLeaveAsync(projectKey, desired, prior, ct);
-				await RunDoneEffectsAsync(projectKey, kind, desired, ct);
-				await RunDeleteEffectsAsync(projectKey, board, deletePatches, prior, ct);
+				await RunDoneEffectsAsync(projectKey, catalogKind, runtime, desired, ct);
+				await RunDeleteEffectsAsync(projectKey, board, deletePatches, prior, runtime, ct);
 			}
 		// Tags + part_of are node metadata, not a content revision — apply whenever the
 		// upsert did not conflict (so a pure tag/parent change on an unchanged node still
@@ -771,9 +813,9 @@ public sealed partial class TasksService : ITasksService
 		if (r.Conflicts.Count == 0)
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.meta"))
 			{
-				await SetTagsAsync(projectKey, board, kind, upsertPatches, desired, ct);
+				await SetTagsAsync(projectKey, board, catalogKind, upsertPatches, desired, ct);
 				await SetPartOfAsync(projectKey, board, upsertPatches, desired, ct);
-				await SetSupersedesAsync(projectKey, board, upsertPatches, desired, ct);
+				await SetSupersedesAsync(projectKey, board, upsertPatches, desired, runtime, ct);
 			}
 		// Refresh the FTS Tags column now that SetTagsAsync (above) has run: the in-tx index wrote
 		// content + pre-upsert tags transactionally; re-index this batch's open nodes with the
@@ -781,7 +823,7 @@ public sealed partial class TasksService : ITasksService
 		// materialized off the write path by the async-vectorization worker.
 		if (r.Applied)
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.fts-tags"))
-				await RefreshFtsTagsAsync(ctx, projectKey, board, desired, ct);
+				await RefreshFtsTagsAsync(ctx, projectKey, board, desired, runtime, ct);
 		if (r.Applied)
 		{
 			// Post-effects re-read: cascade revisions (a superseded node moved to terminal-cancel,
@@ -792,7 +834,7 @@ public sealed partial class TasksService : ITasksService
 				ctx, 0, partition: n => n.Board == board, ct: ct);
 			r = r with { CurrentVersion = current, Added = added, Updated = updated, Removed = removed };
 		}
-		return new UpsertOutcome(ScopeEchoToCall(r, nodes, mainCursor), kind);
+		return new UpsertOutcome(ScopeEchoToCall(r, nodes, mainCursor), runtime.KindName(kindSlug));
 	}
 
 	// Scope a write echo to THIS call (spec sinceversion-contract — the write-ack carries no
@@ -821,7 +863,7 @@ public sealed partial class TasksService : ITasksService
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
 		var ctx = _boards.GetContext(projectKey);
 		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion, partition: n => n.Board == board, ct: ct);
-		return new UpsertOutcome(r, WorkflowCatalog.ParseKind(meta.Kind));
+		return new UpsertOutcome(r, (await RuntimeAsync(projectKey, ct)).KindName(meta.Kind));
 	}
 
 	// ---- read: unified search (list = search without a query; uniform-entity-verbs v2) ----
@@ -866,7 +908,8 @@ public sealed partial class TasksService : ITasksService
 		}
 		var underId = string.IsNullOrWhiteSpace(f.Under) ? null : await ResolveNodeRefAsync(projectKey, f.Under, boardFilter, ct);
 		var parentOf = underId is null ? null : await ParentMapAsync(projectKey, ct);
-		var statusFilter = ResolveStatusFilterAcross(f.Status, boardsMeta.Select(b => WorkflowCatalog.ParseKind(b.Kind)));
+		var runtime = await RuntimeAsync(projectKey, ct);
+		var statusFilter = ResolveStatusFilterAcross(f.Status, runtime, boardsMeta.Select(b => b.Kind));
 
 		List<TaskSearchHit> hits;
 		SearchRetrievers? retrievers = null;
@@ -893,7 +936,7 @@ public sealed partial class TasksService : ITasksService
 			// not) room to drop candidates and still fill `limit`, and the 50 floor keeps
 			// recall sane for small limits; an unbounded ask (limit 0) gets the floor.
 			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
-				Math.Max(req.Limit * 3, 50), urlPrefix, ct);
+				Math.Max(req.Limit * 3, 50), urlPrefix, runtime, ct);
 		}
 
 		if (underId is not null) hits = hits.Where(h => InSubtree(h.Node.NodeId, underId, parentOf!)).ToList();
@@ -909,7 +952,7 @@ public sealed partial class TasksService : ITasksService
 		return new TaskSearchResult(
 			hits,
 			Board: meta?.Name,
-			Kind: meta is null ? null : WorkflowCatalog.ParseKind(meta.Kind).ToString().ToLowerInvariant(),
+			Kind: meta is null ? null : runtime.KindName(meta.Kind),
 			SpecBoard: meta?.SpecBoard,
 			CurrentVersion: currentVersion,
 			Retrievers: retrievers);
@@ -921,10 +964,10 @@ public sealed partial class TasksService : ITasksService
 	// the vector index is simply absent (semantic=false, not degraded); a query-time embed
 	// failure is caught by the facade and flagged degraded.
 	async Task<(List<TaskSearchHit> Hits, SearchRetrievers Retrievers)> HybridCandidatesAsync(
-		string projectKey, string query, string? boardFilter, int k, string? urlPrefix, CancellationToken ct)
+		string projectKey, string query, string? boardFilter, int k, string? urlPrefix, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		var ctx = _boards.GetContext(projectKey);
-		await EnsureLexicalBackfillAsync(ctx, projectKey, ct);
+		await EnsureLexicalBackfillAsync(ctx, projectKey, runtime, ct);
 
 		Func<DataConnection> connect = () => _boards.NewConnection(projectKey);
 		var indexes = new List<ISearchIndex> { new SqliteFtsIndex(connect) };
@@ -1000,12 +1043,12 @@ public sealed partial class TasksService : ITasksService
 	// Status-filter validation for a read that may span boards of several kinds: a slug is
 	// valid if ANY board kind in scope knows it (a single-board read therefore validates
 	// against exactly that kind, like GetAsync). Unknown slugs are rejected — they would
-	// otherwise silently return nothing.
-	static HashSet<string>? ResolveStatusFilterAcross(IReadOnlyList<string>? status, IEnumerable<BoardKind> kinds)
+	// otherwise silently return nothing. Kinds are slugs (catalog- or definition-resolved).
+	static HashSet<string>? ResolveStatusFilterAcross(IReadOnlyList<string>? status, MethodologyRuntime runtime, IEnumerable<string> kindSlugs)
 	{
 		if (status is null || status.Count == 0) return null;
-		var known = kinds.Distinct()
-			.SelectMany(WorkflowCatalog.Types).SelectMany(w => w.Statuses).Select(s => s.Slug)
+		var known = kindSlugs.Select(runtime.KindName).Distinct(StringComparer.Ordinal)
+			.SelectMany(runtime.Types).SelectMany(w => w.Statuses).Select(s => s.Slug)
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 		foreach (var raw in status)
@@ -1061,7 +1104,7 @@ public sealed partial class TasksService : ITasksService
 	// convention (enforceApproval is off). NodeId comes from the prior row (desired rows get
 	// their NodeId assigned inside the temporal upsert, after this check).
 	async Task RequireSpecPlanForReviewAsync(
-		BoardKind kind, string projectKey, string board, PlanNode[] desired,
+		BoardKind? kind, string projectKey, string board, PlanNode[] desired,
 		IReadOnlyDictionary<string, PlanNode> prior, CancellationToken ct)
 	{
 		if (kind != BoardKind.Ideas) return;
@@ -1079,22 +1122,76 @@ public sealed partial class TasksService : ITasksService
 		}
 	}
 
+	// DATA-DRIVEN transition gate — the generalized form of the idea-review rule above: on a
+	// definition-resolved board, a transition whose definition names a PreconditionArtifact
+	// requires an active `artifact:<slug>` comment on the node before it fires. Catalog
+	// boards keep the hardcoded idea gate (the quartet has no definition data yet — it
+	// becomes a preset in wave 3). Mirrors WorkflowEngine's from-resolution (unchanged
+	// status skipped, unknown prior = recovery); landing DIRECTLY in a gated target status
+	// at creation is refused too, so the gate can't be bypassed by birth.
+	async Task RequirePreconditionArtifactsAsync(
+		MethodologyRuntime runtime, string? kindSlug, string projectKey, string board,
+		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
+	{
+		if (!runtime.IsDefinedKind(kindSlug)) return;
+		foreach (var d in desired)
+		{
+			var wf = runtime.For(kindSlug, d.Type.Length == 0 ? null : d.Type);
+			if (wf is null) continue; // ApplyWorkflow already rejected the unknown type
+			var p = prior.GetValueOrDefault(d.Key) ?? (d.PrevKey is not null ? prior.GetValueOrDefault(d.PrevKey) : null);
+			var from = p?.Status;
+			if (from is not null && string.Equals(from, d.Status, StringComparison.OrdinalIgnoreCase)) continue; // unchanged
+			if (from is not null && wf.Status(from) is null) from = null; // recovery — mirrors WorkflowEngine
+
+			string? artifact;
+			string transition;
+			if (from is null)
+			{
+				// No transition fired (creation/recovery) — but if any transition INTO this
+				// status is gated, entering it directly must satisfy the same artifact.
+				var gated = wf.Transitions.FirstOrDefault(t =>
+					t.PreconditionArtifact is not null && string.Equals(t.To, d.Status, StringComparison.OrdinalIgnoreCase));
+				if (gated is null) continue;
+				artifact = gated.PreconditionArtifact;
+				transition = $"'{gated.From}' -> '{gated.To}'";
+			}
+			else
+			{
+				var tr = wf.Transition(from, d.Status);
+				if (tr?.PreconditionArtifact is null) continue;
+				artifact = tr.PreconditionArtifact;
+				transition = $"'{from}' -> '{d.Status}'";
+			}
+
+			var tag = $"artifact:{artifact}";
+			if (p is null || p.NodeId.Length == 0)
+				throw new InvalidOperationException(
+					$"node '{d.Key}' can't be created directly in '{d.Status}' — transition {transition} requires an {tag} comment; create the node, add the comment, then transition");
+			var comments = await _comments.ListForNodeAsync(projectKey, board, p.NodeId, ct);
+			if (!comments.Any(c => c.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))))
+				throw new InvalidOperationException(
+					$"transition {transition} on node '{d.Key}' requires an {tag} comment (the transition's precondition artifact) — add the comment, then retry");
+		}
+	}
+
 	// Default status, assign/carry the stable NodeId (new = fresh, edit = keep, rename =
 	// inherit from source), and validate status/transition — the single workflow point.
-	static PlanNode ApplyWorkflow(BoardKind kind, PlanNode node, Dictionary<string, PlanNode> prior)
+	// The workflow resolves through the runtime: definition-declared kinds from data,
+	// everything else from the catalog exactly as before.
+	static PlanNode ApplyWorkflow(MethodologyRuntime runtime, string? kindSlug, PlanNode node, Dictionary<string, PlanNode> prior)
 	{
 		var type = node.Type.Length == 0 ? null : node.Type;
 		// Simple boards: type is a label from a small fixed set; empty defaults to `task`, and an
 		// out-of-set type is rejected. (Work validates type via For(); Simple's For() ignores type,
-		// so the vocabulary is enforced here.)
-		if (kind == BoardKind.Simple)
+		// so the vocabulary is enforced here. Definition kinds validate type via For(), like Work.)
+		if (runtime.CatalogKind(kindSlug) == BoardKind.Simple)
 		{
 			type ??= "task";
 			if (!WorkflowCatalog.SimpleTypes.Contains(type))
-				throw new ArgumentException($"invalid type '{type}' for a simple board; valid: {WorkflowCatalog.ValidTypes(kind)}");
+				throw new ArgumentException($"invalid type '{type}' for a simple board; valid: {WorkflowCatalog.ValidTypes(BoardKind.Simple)}");
 			node = node with { Type = type };
 		}
-		var wf = WorkflowCatalog.For(kind, type);
+		var wf = runtime.For(kindSlug, type);
 		var n = node.Status.Length > 0 ? node : node with { Status = wf?.Initial ?? "Pending" };
 
 		var current = prior.GetValueOrDefault(n.Key);
@@ -1105,7 +1202,8 @@ public sealed partial class TasksService : ITasksService
 		n = n with { NodeId = nodeId };
 
 		var from = current?.Status ?? source?.Status;
-		var res = WorkflowEngine.Validate(kind, type, from, n.Status, hasReason: !string.IsNullOrWhiteSpace(n.Body));
+		var res = WorkflowEngine.Validate(wf, runtime.KindName(kindSlug), runtime.ValidTypes(kindSlug),
+			type, from, n.Status, hasReason: !string.IsNullOrWhiteSpace(n.Body));
 		if (!res.Ok) throw new ArgumentException(res.Error);
 		return n;
 	}
@@ -1175,7 +1273,7 @@ public sealed partial class TasksService : ITasksService
 
 	// Validate each specRef target: it must resolve to a node on a spec board, and (if
 	// this work board has a SpecBoard set) on that specific board.
-	async Task ValidateSpecRefsAsync(string projectKey, TaskBoardMeta workBoard, Dictionary<string, string> specRefs, CancellationToken ct)
+	async Task ValidateSpecRefsAsync(string projectKey, TaskBoardMeta workBoard, Dictionary<string, string> specRefs, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		if (specRefs.Count == 0) return;
 		var index = await BuildNodeIndexAsync(projectKey, ct);
@@ -1183,7 +1281,7 @@ public sealed partial class TasksService : ITasksService
 		{
 			if (!index.TryGetValue(refId, out var t))
 				throw new ArgumentException($"specRef '{refId}' (node '{key}') does not resolve to any node");
-			if (WorkflowCatalog.ParseKind(t.BoardKind) != BoardKind.Spec)
+			if (runtime.CatalogKind(t.BoardKind) != BoardKind.Spec)
 				throw new ArgumentException($"specRef '{refId}' (node '{key}') points to board '{t.Board}', which is not a spec board");
 			if (workBoard.SpecBoard is { Length: > 0 } sb && t.Board != sb)
 				throw new ArgumentException($"specRef '{refId}' (node '{key}') is on board '{t.Board}', but this work board links spec board '{sb}'");
@@ -1194,7 +1292,7 @@ public sealed partial class TasksService : ITasksService
 	// reference an `accepted` idea via ideaRef — which becomes the idea_spec edge (linked
 	// after apply). No accepted idea, no spec write. WorkflowEngine stays pure; the idea
 	// node is read here.
-	async Task RequireAcceptedIdeaForSpecAsync(BoardKind kind, string projectKey, PlanNode[] desired, Dictionary<string, string> ideaRefs, CancellationToken ct)
+	async Task RequireAcceptedIdeaForSpecAsync(BoardKind? kind, string projectKey, PlanNode[] desired, Dictionary<string, string> ideaRefs, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		if (kind != BoardKind.Spec) return;
 		var index = await BuildNodeIndexAsync(projectKey, ct);
@@ -1204,7 +1302,7 @@ public sealed partial class TasksService : ITasksService
 				throw new ArgumentException($"a spec change must be made under an accepted idea — provide ideaRef (node '{n.Key}')");
 			if (!index.TryGetValue(ideaId, out var idea))
 				throw new ArgumentException($"ideaRef '{ideaId}' (node '{n.Key}') does not resolve to any node");
-			if (WorkflowCatalog.ParseKind(idea.BoardKind) != BoardKind.Ideas)
+			if (runtime.CatalogKind(idea.BoardKind) != BoardKind.Ideas)
 				throw new ArgumentException($"ideaRef '{ideaId}' (node '{n.Key}') is not an idea (board '{idea.Board}')");
 			if (!string.Equals(idea.Status, "accepted", StringComparison.OrdinalIgnoreCase))
 				throw new ArgumentException($"ideaRef '{ideaId}' (node '{n.Key}') idea is '{idea.Status}', not accepted — a spec change needs an accepted idea");
@@ -1213,22 +1311,22 @@ public sealed partial class TasksService : ITasksService
 
 	// FSM effect: when a work node reaches a TerminalOk status, auto-close any intake
 	// issue that spawned it and unblock tasks it was blocking. System action (no gate).
-	async Task RunDoneEffectsAsync(string projectKey, BoardKind kind, PlanNode[] desired, CancellationToken ct)
+	async Task RunDoneEffectsAsync(string projectKey, BoardKind? kind, MethodologyRuntime runtime, PlanNode[] desired, CancellationToken ct)
 	{
 		if (kind != BoardKind.Work) return;
-		foreach (var n in desired.Where(n => WorkflowCatalog.KindOfSlug(n.Status) == StatusKind.TerminalOk))
+		foreach (var n in desired.Where(n => runtime.KindOfSlug(n.Status) == StatusKind.TerminalOk))
 		{
 			foreach (var e in (await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct)).Where(e => e.Kind == "issue_task"))
-				await SetActiveNodeStatusAsync(projectKey, e.FromNodeId,
-					(wf, node) => WorkflowCatalog.IsTerminalSlug(node.Status) ? null : wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalOk)?.Slug, ct);
+				await SetActiveNodeStatusAsync(projectKey, e.FromNodeId, runtime,
+					(wf, node, isTerminal) => isTerminal ? null : wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalOk)?.Slug, ct);
 
 			foreach (var e in (await _relations.ListAsync(projectKey, n.NodeId, "from", ct: ct)).Where(e => e.Kind == "blocks"))
 			{
 				await _relations.CloseAsync(projectKey, "blocks", e.FromNodeId, e.ToNodeId, ct);
 				var stillBlocked = (await _relations.ListAsync(projectKey, e.ToNodeId, "to", ct: ct)).Any(x => x.Kind == "blocks");
 				if (!stillBlocked)
-					await SetActiveNodeStatusAsync(projectKey, e.ToNodeId,
-						(_, node) => string.Equals(node.Status, "Blocked", StringComparison.OrdinalIgnoreCase) ? "InProgress" : null, ct);
+					await SetActiveNodeStatusAsync(projectKey, e.ToNodeId, runtime,
+						(_, node, _) => string.Equals(node.Status, "Blocked", StringComparison.OrdinalIgnoreCase) ? "InProgress" : null, ct);
 			}
 		}
 	}
@@ -1249,7 +1347,7 @@ public sealed partial class TasksService : ITasksService
 	// every edge touching it (both directions, any kind) and its tags. Unblocking mirrors the
 	// Done effect: when the deleted node was a blocker, a target left with no blockers moves
 	// Blocked → InProgress. System action (no gate).
-	async Task RunDeleteEffectsAsync(string projectKey, string board, IReadOnlyList<NodePatch> deletePatches, Dictionary<string, PlanNode> prior, CancellationToken ct)
+	async Task RunDeleteEffectsAsync(string projectKey, string board, IReadOnlyList<NodePatch> deletePatches, Dictionary<string, PlanNode> prior, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		foreach (var p in deletePatches)
 		{
@@ -1261,8 +1359,8 @@ public sealed partial class TasksService : ITasksService
 				{
 					var stillBlocked = (await _relations.ListAsync(projectKey, e.ToNodeId, "to", ct: ct)).Any(x => x.Kind == "blocks");
 					if (!stillBlocked)
-						await SetActiveNodeStatusAsync(projectKey, e.ToNodeId,
-							(_, node) => string.Equals(node.Status, "Blocked", StringComparison.OrdinalIgnoreCase) ? "InProgress" : null, ct);
+						await SetActiveNodeStatusAsync(projectKey, e.ToNodeId, runtime,
+							(_, node, _) => string.Equals(node.Status, "Blocked", StringComparison.OrdinalIgnoreCase) ? "InProgress" : null, ct);
 				}
 			}
 			// An empty list REPLACES the node's full tag set — i.e. soft-closes every active tag.
@@ -1271,8 +1369,10 @@ public sealed partial class TasksService : ITasksService
 	}
 
 	// Find the active node with this NodeId across the project's boards and move it to a
-	// target status chosen by `pick` (null = leave as-is). System action (no gate).
-	async Task SetActiveNodeStatusAsync(string projectKey, string nodeId, Func<PetBox.Tasks.Workflow.Workflow?, PlanNode, string?> pick, CancellationToken ct)
+	// target status chosen by `pick` (null = leave as-is). System action (no gate). The
+	// pick receives the target board's runtime-resolved workflow and whether the node's
+	// CURRENT status is terminal for its board (per-kind classification).
+	async Task SetActiveNodeStatusAsync(string projectKey, string nodeId, MethodologyRuntime runtime, Func<PetBox.Tasks.Workflow.Workflow?, PlanNode, bool, string?> pick, CancellationToken ct)
 	{
 		// NodeId is unique across the project, so find the active row directly in the one
 		// project file; its Board tells us which partition to write back into.
@@ -1280,8 +1380,8 @@ public sealed partial class TasksService : ITasksService
 		var node = ctx.PlanNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
 		if (node is null) return;
 		var meta = await _boards.FindAsync(projectKey, node.Board, ct);
-		var wf = WorkflowCatalog.For(WorkflowCatalog.ParseKind(meta?.Kind), node.Type.Length == 0 ? null : node.Type);
-		var target = pick(wf, node);
+		var wf = runtime.For(meta?.Kind, node.Type.Length == 0 ? null : node.Type);
+		var target = pick(wf, node, runtime.IsTerminalStatus(meta?.Kind, node.Status));
 		if (target is null || string.Equals(target, node.Status, StringComparison.OrdinalIgnoreCase)) return;
 		await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = target } }, partition: n => n.Board == node.Board, ct: ct);
 		await _boards.TouchAsync(projectKey, node.Board, ct);
@@ -1304,11 +1404,12 @@ public sealed partial class TasksService : ITasksService
 	// Apply enforced tags after the upsert. A patch whose Tags is null OMITS tags (leave
 	// as-is); a non-null list (incl. empty) is the new full set for that node. Tags bind
 	// to the node's stable NodeId.
-	async Task SetTagsAsync(string projectKey, string board, BoardKind kind, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+	async Task SetTagsAsync(string projectKey, string board, BoardKind? kind, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
 	{
 		// Simple boards take free-form tags (any namespace + bare words); methodology boards
-		// keep the enforced area:/concern: namespaces.
-		var enforceNs = kind != BoardKind.Simple;
+		// keep the enforced area:/concern: namespaces. Definition-resolved kinds (kind ==
+		// null) are free-form too — the definition has no tag vocabulary yet (wave 2).
+		var enforceNs = kind is not (null or BoardKind.Simple);
 		var nodeIdOf = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
 		foreach (var p in patches)
 		{
@@ -1356,7 +1457,7 @@ public sealed partial class TasksService : ITasksService
 	// Apply supersedes after the upsert: the new node replaces another, which is moved to
 	// its kind's terminal-cancel (obsoleted). A system effect (no approve gate), like the
 	// Done effects. Self-supersede and a missing target are ignored.
-	async Task SetSupersedesAsync(string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+	async Task SetSupersedesAsync(string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		if (!patches.Any(p => !string.IsNullOrWhiteSpace(p.Supersedes))) return;
 		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
@@ -1373,8 +1474,8 @@ public sealed partial class TasksService : ITasksService
 			if (targetId == newId) continue; // a node can't supersede itself
 			await _relations.CreateAsync(projectKey, "supersedes", newId, targetId, ct);
 			// Obsolete the superseded node: move it to its workflow's terminal-cancel status.
-			await SetActiveNodeStatusAsync(projectKey, targetId,
-				(wf, node) => WorkflowCatalog.IsTerminalSlug(node.Status) ? null : wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalCancel)?.Slug, ct);
+			await SetActiveNodeStatusAsync(projectKey, targetId, runtime,
+				(wf, node, isTerminal) => isTerminal ? null : wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalCancel)?.Slug, ct);
 		}
 	}
 
@@ -1390,7 +1491,7 @@ public sealed partial class TasksService : ITasksService
 
 	// Invariant: a work task in `Blocked` must name a blocker (blockedBy in this call, or
 	// an already-active `blocks` edge into it). "Blocked requires a link."
-	async Task RequireBlockersAsync(BoardKind kind, string projectKey, PlanNode[] desired, Dictionary<string, string> blockedBy, CancellationToken ct)
+	async Task RequireBlockersAsync(BoardKind? kind, string projectKey, PlanNode[] desired, Dictionary<string, string> blockedBy, CancellationToken ct)
 	{
 		if (kind != BoardKind.Work) return;
 		foreach (var n in desired)
@@ -1417,7 +1518,7 @@ public sealed partial class TasksService : ITasksService
 
 	// Invariant: a NEW work feature/bug must link a spec node (specRef). Edits don't re-require
 	// it, and `chore` (engineering hygiene below the spec) is exempt by design.
-	static void RequireSpecLinks(BoardKind kind, PlanNode[] desired, Dictionary<string, PlanNode> prior, Dictionary<string, string> specRefs)
+	static void RequireSpecLinks(BoardKind? kind, PlanNode[] desired, Dictionary<string, PlanNode> prior, Dictionary<string, string> specRefs)
 	{
 		if (kind != BoardKind.Work) return;
 		foreach (var n in desired)
@@ -1463,18 +1564,31 @@ public sealed partial class TasksService : ITasksService
 		if (string.IsNullOrWhiteSpace(name)) return;
 
 		// Status/type must fit the board's kind — a cold "Pending" is invalid on kinded
-		// boards (ideas/spec/intake). Use the kind's initial status + its node type.
+		// boards (ideas/spec/intake). Use the kind's initial status + its node type. A
+		// definition-declared kind quick-adds its default type (first type of the first
+		// block) in that workflow's initial status.
 		var meta = await _boards.FindAsync(projectKey, board, ct);
-		var kind = WorkflowCatalog.ParseKind(meta?.Kind);
-		var type = kind switch
+		var runtime = await RuntimeAsync(projectKey, ct);
+		string type;
+		string status;
+		if (runtime.IsDefinedKind(meta?.Kind))
 		{
-			BoardKind.Ideas => "idea",
-			BoardKind.Spec => "spec",
-			BoardKind.Intake => "issue",
-			BoardKind.Simple => "task", // simple empty-type default (mirrors ApplyWorkflow)
-			_ => "",
-		};
-		var status = WorkflowCatalog.For(kind, type.Length == 0 ? null : type)?.Initial ?? "Pending";
+			type = runtime.DefaultType(meta!.Kind)!;
+			status = runtime.For(meta.Kind, type)!.Initial;
+		}
+		else
+		{
+			var kind = WorkflowCatalog.ParseKind(meta?.Kind);
+			type = kind switch
+			{
+				BoardKind.Ideas => "idea",
+				BoardKind.Spec => "spec",
+				BoardKind.Intake => "issue",
+				BoardKind.Simple => "task", // simple empty-type default (mirrors ApplyWorkflow)
+				_ => "",
+			};
+			status = WorkflowCatalog.For(kind, type.Length == 0 ? null : type)?.Initial ?? "Pending";
+		}
 
 		var key = GenKey(name);
 		var ctx = _boards.GetContext(projectKey);
@@ -1522,9 +1636,9 @@ public sealed partial class TasksService : ITasksService
 	// UpsertAsync) already committed content + membership transactionally with pre-upsert tags; this
 	// post-commit pass reflects SetTagsAsync into the FTS Tags column. Targeted (not a wholesale
 	// board rebuild) so it only re-writes the changed nodes and never empties the board's index.
-	static async Task RefreshFtsTagsAsync(TasksDb ctx, string projectKey, string board, IReadOnlyList<PlanNode> desired, CancellationToken ct)
+	static async Task RefreshFtsTagsAsync(TasksDb ctx, string projectKey, string board, IReadOnlyList<PlanNode> desired, MethodologyRuntime runtime, CancellationToken ct)
 	{
-		var open = desired.Where(TasksSearchDocs.IsIndexable).ToList();
+		var open = desired.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).ToList();
 		if (open.Count == 0) return;
 		var tags = await NodeTagsAsync(ctx, board, open.Select(n => n.NodeId), ct);
 		var fts = new SqliteFtsIndex(() => ctx);
@@ -1545,11 +1659,11 @@ public sealed partial class TasksService : ITasksService
 	// One-time lexical backfill: nodes written before the search retrofit have no search_fts rows.
 	// Cheap, count-guarded, runs at most once per project file — rebuilds the OPEN set across every
 	// board from the same projection the write seam uses.
-	static async Task EnsureLexicalBackfillAsync(TasksDb ctx, string scope, CancellationToken ct)
+	static async Task EnsureLexicalBackfillAsync(TasksDb ctx, string scope, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		if (ctx.Execute<long>("SELECT count(*) FROM search_fts") > 0) return;
 		var open = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
-			.Where(TasksSearchDocs.IsIndexable).ToList();
+			.Where(n => TasksSearchDocs.IsIndexable(n, runtime)).ToList();
 		if (open.Count == 0) return;
 
 		var tagsByNode = (await ctx.GetTable<NodeTag>().Where(t => t.ValidTo == null)

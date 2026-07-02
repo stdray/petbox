@@ -13,8 +13,12 @@ namespace PetBox.Tasks.Services;
 public static class TasksSearchDocs
 {
 	// Indexed iff the node has a stable identity and is not in a terminal workflow state.
-	public static bool IsIndexable(PlanNode n) =>
-		n.NodeId.Length > 0 && !WorkflowCatalog.IsTerminalSlug(n.Status);
+	// The runtime overload also recognizes a project definition's terminal statuses; the
+	// bare form is the catalog-only view (background board walkers without a runtime).
+	public static bool IsIndexable(PlanNode n) => IsIndexable(n, MethodologyRuntime.CatalogOnly);
+
+	public static bool IsIndexable(PlanNode n, MethodologyRuntime runtime) =>
+		n.NodeId.Length > 0 && !runtime.IsTerminalSlug(n.Status);
 
 	public static SearchDoc ToDoc(PlanNode n, string scope, IReadOnlyList<string> tags) =>
 		new(scope, n.Board, n.Key, n.Name + "\n" + n.Body, string.Join(' ', tags));

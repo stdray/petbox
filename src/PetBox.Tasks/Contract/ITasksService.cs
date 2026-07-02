@@ -43,8 +43,9 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// The workspace owning a project, or null if unknown. Adapters use it to assemble per-node
 	// UI permalinks (the URL is workspace-scoped but the MCP surface carries only projectKey).
 	Task<string?> ResolveWorkspaceAsync(string projectKey, CancellationToken ct = default);
-	// --- user-defined methodology definition (wave 1.1: storage + validation only;
-	//     the hardcoded WorkflowCatalog still serves live boards until the engine task) ---
+	// --- user-defined methodology definition (LIVE since wave 1.2: a kind the definition
+	//     declares resolves types/statuses/transitions from data; any other kind — or a
+	//     project without a definition — falls back to the built-in WorkflowCatalog) ---
 
 	// Validate and store the project's methodology definition as a new temporal revision.
 	// `version` is the baseline the author last saw (0 = "I believe none exists yet");
@@ -120,8 +121,15 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// (0 = unbounded listing / the adapter's query default). Board context (kind/specBoard/
 	// currentVersion) is filled when the read is board-scoped.
 	Task<TaskSearchResult> SearchNodesAsync(string projectKey, SearchRequest<TaskNodeFilter, TaskSortBy> request, string? urlPrefix = null, CancellationToken ct = default);
-	// Ensure the board exists and return its kind (used by the workflow discovery tool).
+	// Ensure the board exists and return its CATALOG kind (a definition-declared kind reads
+	// as Simple here, like any unknown slug always did). UI pages keep rendering off this;
+	// the FSM-aware surface is GetBoardWorkflowAsync.
 	Task<BoardKind> ResolveKindAsync(string projectKey, string board, CancellationToken ct = default);
+	// The board's workflow surface, DATA-DRIVEN: a kind the project's methodology definition
+	// declares resolves from the definition (blocks as declared, transitions carrying
+	// preconditionArtifact); any other kind falls back to the built-in catalog exactly as
+	// before (identical FSMs collapsed into one block). Powers tasks.workflow.
+	Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default);
 
 	// --- UI helpers (board page renders the raw active nodes in its own tree order) ---
 
