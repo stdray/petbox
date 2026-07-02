@@ -232,14 +232,15 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 	}
 
 	[Fact]
-	public async Task Doc_Agent_IsPublic_ShowsMcpUrlAndTree()
+	public async Task Doc_Agent_IsPublic_ShowsMcpUrlAndNodeModel()
 	{
 		using var resp = await _client.GetAsync("/doc/agent");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("doc-agent");
 		html.Should().Contain("/mcp");
-		html.Should().Contain("1-to-3 level"); // tree model documented
+		html.Should().Contain("flat slug"); // node model documented (flat key + partOf)
+		html.Should().Contain("tasks.search"); // the unified read verb documented
 	}
 
 	[Fact]

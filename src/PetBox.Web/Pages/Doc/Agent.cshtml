@@ -76,23 +76,23 @@ setx PETBOX_&lt;PROJECT&gt;_API_KEY "&lt;your key&gt;"</code></pre>
 			config file gitignored.
 		</p>
 
-		<h2>4. The plan is a 1-to-3 level tree</h2>
+		<h2>4. Plan nodes are flat slugs; hierarchy is <code>partOf</code></h2>
 		<p>
-			A board is a <strong>1-to-3 level tree</strong>. Address each node by its path, not a flat label —
-			pass <code>l1</code> (required), optional <code>l2</code>, optional <code>l3</code> (needs l2) — or the
-			same as an <code>"l1/l2/l3"</code> string in <code>key</code>. Each segment is lowercase
-			<code>^[a-z][a-z0-9_-]{0,99}$</code>. Create a parent before (or with) its children. Give every node a
-			short <code>title</code> AND a markdown <code>body</code>.
+			Every node has a <strong>flat slug</strong> <code>key</code> (lowercase
+			<code>^[a-z][a-z0-9_-]{0,99}$</code>, board-unique). Nesting is the <code>partOf</code> field — a
+			parent slug or nodeId (<code>""</code> detaches to a root); cross-cutting grouping is
+			<code>tags</code> (<code>area:*</code> / <code>concern:*</code>). Give every node a short
+			<code>title</code> AND a markdown <code>body</code>.
 		</p>
 		<pre><code>tasks.upsert board="spec" projectKey="&lt;proj&gt;" nodes=[
-  { "l1":"auth", "status":"defined", "title":"Auth" },
-  { "l1":"auth", "l2":"login", "status":"defined", "title":"Login flow" }
+  { "key":"auth", "status":"defined", "title":"Auth" },
+  { "key":"login", "partOf":"auth", "status":"defined", "title":"Login flow" }
 ]</code></pre>
 		<p>
 			<code>priority</code> is a sparse ordering int (lower first). <code>version</code> is the baseline you
-			last saw (0 = new). Rename/move with <code>prevL1/prevL2/prevL3</code> (or <code>prevKey</code>). The
-			upsert <strong>response is the fresh state</strong> (<code>added/updated/removed</code> +
-			<code>currentVersion</code>) — advance your cursor; don't re-read.
+			last saw (0 = new). Rename with <code>prevKey</code>. The upsert response is a pure ack for
+			<em>your</em> call (<code>added/updated/removed</code> + <code>currentVersion</code>); catch up on
+			everyone's changes via <code>tasks.delta</code> with a previous <code>currentVersion</code>.
 		</p>
 		<div class="not-prose my-4 p-4 rounded border border-primary/40 bg-primary/5 text-sm">
 			A board has a <strong>kind</strong> (spec / work / ideas / intake / simple) that drives its statuses,
@@ -104,7 +104,7 @@ setx PETBOX_&lt;PROJECT&gt;_API_KEY "&lt;your key&gt;"</code></pre>
 		<h2>5. Tools</h2>
 		<ul>
 			<li><code>tasks.board_create(kind?) / board_list / board_delete</code> — named boards; <code>kind</code> ∈ spec|work|ideas|intake|simple. A cold <code>tasks.upsert</code> auto-creates a simple board.</li>
-			<li><code>tasks.get / upsert / delta</code> — the node tree (key, nodeId, l1, l2, l3, depth, parentKey, status, type, title, body, priority, version; on a spec board also computed <code>delivery</code>). Node fields incl. <code>specRef</code> / <code>blockedBy</code> create links.</li>
+			<li><code>tasks.search / node_get / upsert / delta</code> — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; on a spec board also computed <code>delivery</code>). <code>search</code> is the one read verb: without <code>q</code> a deterministic listing (board or whole project), with <code>q</code> hybrid relevance search; filters (<code>status</code>, <code>keys</code>, <code>under</code>) and <code>sort</code> work in both modes. Node fields incl. <code>specRef</code> / <code>blockedBy</code> create links.</li>
 			<li><code>tasks.workflow</code> — the live statuses/transitions for a board's kind.</li>
 			<li><code>relations.create / list / delete</code> — typed temporal edges (task_spec|issue_task|idea_spec|blocks|nfr|dup). See the <a href="@Routes.DocMethodology()">cheatsheet</a>.</li>
 			<li><code>memory.store_list / store_create / store_delete</code> — named memory stores (a cold <code>memory.upsert</code> auto-creates the store).</li>
@@ -160,9 +160,9 @@ FLOW starts in `ideas`: a raw idea, deliberated (raw->exploring->accepted), is w
 PRODUCES the spec — the accepted idea's conclusions become spec nodes; work features
 implement them. Don't invent spec from nothing; let it fall out of an idea.
 
-NODES are a 1-to-3 level tree: address by l1 (required) + optional l2/l3, or "l1/l2/l3"
-in key (lowercase [a-z][a-z0-9_-]). Short `title` + markdown `body`. Links bind to the
-returned `nodeId`, not the path.
+NODES are FLAT slugs: `key` (lowercase [a-z][a-z0-9_-]); hierarchy is `partOf` (parent
+slug|nodeId), grouping is `tags`. Short `title` + markdown `body`. Links bind to the
+returned `nodeId`, not the slug.
 
 RIGHT-SIZE the rails — scale how deep, not whether to start from an idea:
   throwaway spike  -> one simple board (no idea)
@@ -175,18 +175,20 @@ Type `chore` (internal engineering hygiene: tests, flakes, refactoring, infra) i
 one exception — same FSM, no specRef required. Statuses Pending-&gt;InProgress-&gt;Review-&gt;Done;
 your ceiling is Review — never set Done, the maintainer confirms it. Blocked needs blockedBy.
 
-READING: tasks.get returns kind, specBoard and per-node links (spec/blockedBy/linkedTasks)
-plus spec `delivery`. It HIDES terminal nodes by default — includeClosed=true to include;
-under="l1/l2" scopes a subtree. Partial update: send only what changes — a status change
-needs just path + version + status. The upsert response IS the fresh state; advance your
-cursor, don't re-read.
+READING: tasks.search is THE read verb — without q a deterministic listing (board= one
+board, omit for the project), with q a hybrid relevance search; both modes take status[],
+keys[] (slug|nodeId), under=&lt;slug&gt; (subtree) and sort{by,desc}. A board listing carries
+kind, specBoard and per-node links (spec/blockedBy/linkedTasks) plus spec `delivery`; it
+HIDES terminal nodes by default — includeClosed=true to include. One full node:
+tasks.node_get. Partial update: send only what changes — a status change needs just
+key + version + status.
 
 STORE by lifetime: durable fact -> memory (type User|Feedback|Project|Reference); current
 thinking -> session; a unit of work with a status -> task.
 
 Depth: /doc/methodology (contract) + /doc/overview (modules).
 Tools: tasks.board_create/board_list/board_delete/board_set_spec/board_close/board_reopen/
-get/upsert/delta/workflow, relations.create/list/delete,
+search/node_get/upsert/delta/workflow, relations.create/list/delete,
 memory.store_*/list/search/get/upsert/delta, session.upsert/get/list.</code></pre>
 
 		<h2>8. Verify</h2>
