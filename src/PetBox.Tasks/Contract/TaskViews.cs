@@ -158,10 +158,11 @@ public sealed record MethodologyBoard(
 public sealed record MethodologyView(bool Enabled, IReadOnlyList<MethodologyBoard> Boards, string? Hint = null);
 
 // Ack of a methodology-definition write: the definition's current revision number (the
-// baseline for the next edit) and whether this call created a new revision (false = an
-// identical resubmit collapsed to a no-op). Conflicts throw instead — a singleton
-// document has no partial-batch outcome to report.
-public sealed record MethodologyDefAck(long Version, bool Changed);
+// baseline for the next edit), whether this call created a new revision (false = an
+// identical resubmit collapsed to a no-op), and how many live nodes the declared
+// `migration` rewrote onto the new resolution (0 = nothing needed repair). Conflicts
+// throw instead — a singleton document has no partial-batch outcome to report.
+public sealed record MethodologyDefAck(long Version, bool Changed, int Migrated = 0);
 
 // The project's active methodology definition plus its revision metadata. A null view
 // (from GetMethodologyDefinitionAsync) means the project has no definition and is on the

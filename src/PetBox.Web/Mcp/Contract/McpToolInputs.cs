@@ -143,6 +143,26 @@ public sealed record MethodologyTransitionInput
 	public string? PreconditionArtifact { get; init; }
 }
 
+// One entry of the `migration` argument of tasks.methodology_def_upsert: declared value
+// repairs for live nodes on boards of `kind` that a definition change would otherwise
+// strand. A mapping applies ONLY where a node's current value is invalid under the NEW
+// resolution — a valid value is never rewritten (declarative repair, not bulk rename).
+public sealed record MethodologyMigrationInput
+{
+	// The board-kind slug the mappings repair (a kind of the new definition, a builtin
+	// kind, or the slug of a kind the new definition DROPPED — its boards keep the slug).
+	public string? Kind { get; init; }
+	public MethodologyValueMapInput[]? Types { get; init; }
+	public MethodologyValueMapInput[]? Statuses { get; init; }
+}
+
+// One {from,to} value repair; `to` must be valid under the new resolution.
+public sealed record MethodologyValueMapInput
+{
+	public string? From { get; init; }
+	public string? To { get; init; }
+}
+
 // The `sort` argument of tasks.search: `by` names the axis (priority|created|updated|title|
 // relevance — relevance only with a query), `desc` flips the direction (ignored for
 // relevance, whose fused order is already most-relevant-first).

@@ -51,7 +51,15 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// `version` is the baseline the author last saw (0 = "I believe none exists yet");
 	// optimistic concurrency: a moved baseline throws, naming the current version so the
 	// caller re-reads and rebases. An identical resubmit is a no-op (Changed=false).
-	Task<MethodologyDefAck> DefineMethodologyAsync(string projectKey, MethodologyDefinition def, long version, CancellationToken ct = default);
+	// A CHANGE is checked against live data first (spec primitives-schema-migration):
+	// every active node on a board whose kind the old or new definition declares must fit
+	// the NEW resolution; `migration` declares per-kind {from,to} type/status repairs for
+	// values that don't (applied only where invalid). Any node still incompatible rejects
+	// the whole call naming the offenders — nothing is written. When everything is mapped,
+	// the definition commits first and the repaired nodes are rewritten as new temporal
+	// revisions (a system write — no FSM guards; the mapping IS the sanctioned transition);
+	// Migrated counts them.
+	Task<MethodologyDefAck> DefineMethodologyAsync(string projectKey, MethodologyDefinition def, long version, IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default);
 	// The project's active methodology definition + its revision metadata, or null when
 	// the project has none (it is then on the built-in MethodologyPresets).
 	Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default);

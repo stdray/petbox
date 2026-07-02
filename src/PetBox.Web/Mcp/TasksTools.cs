@@ -170,21 +170,34 @@ public static class TasksTools
 		`<namespace>:value` from this list (empty/omitted = free-form tags). The definition
 		is LIVE: a declared kind can be given to tasks.board_create, its boards resolve
 		types/statuses/transitions from this document (tasks.workflow shows them), and any
-		other kind keeps the built-in preset. Returns { version (the new baseline), changed
-		(false = identical resubmit, no new revision) }. Requires tasks:write.
+		other kind keeps the built-in preset. A definition CHANGE is validated against LIVE
+		NODES: every active node on a board whose kind the old or new definition declares
+		must fit the new resolution (type resolves, status known to its type's workflow). An
+		incompatible node that no mapping covers REJECTS the whole call, naming the board,
+		node key(s) and offending type/status — nothing is written. `migration` declares the
+		repairs: [{ kind, types?:[{from,to}], statuses?:[{from,to}] }] — applied ONLY where a
+		node's current value is invalid under the new resolution (a valid value is never
+		rewritten); `to` must be valid under the new definition. When everything is mapped,
+		the definition commits first and the repaired nodes are then rewritten as new
+		temporal revisions per board, without FSM guards (the mapping is the sanctioned
+		transition) — not one transaction with the definition, so re-check the named board if
+		a concurrent-write error is thrown mid-rewrite. Returns { version (the new baseline),
+		changed (false = identical resubmit, no new revision — skips the live-node check),
+		migrated (nodes rewritten; 0 = none needed) }. Requires tasks:write.
 		""")]
 	public static async Task<MethodologyDefUpsertResult> MethodologyDefUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("The whole methodology definition (structured document; see the tool description for the shape).")] MethodologyDefInput definition,
 		[Description("Baseline version you last saw; 0 = the project has no definition yet.")] long version = 0,
+		[Description("Per-kind {from,to} type/status repairs for live nodes the change would strand; applied only where the current value is invalid under the new resolution.")] MethodologyMigrationInput[]? migration = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var ack = await tasks.DefineMethodologyAsync(projectKey, ParseDefinition(definition), version, ct);
-		return new MethodologyDefUpsertResult(ack.Version, ack.Changed);
+		var ack = await tasks.DefineMethodologyAsync(projectKey, ParseDefinition(definition), version, ParseMigration(migration), ct);
+		return new MethodologyDefUpsertResult(ack.Version, ack.Changed, ack.Migrated);
 	}
 
 	[McpServerTool(Name = "tasks.methodology_def_get", Title = "Get the project's methodology definition", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefGetResult))]
@@ -263,6 +276,14 @@ public static class TasksTools
 		TagAxes = (d.TagAxes ?? [])
 			.Select(a => new MethodologyTagAxisDef(a.Namespace ?? string.Empty, a.Description)).ToList(),
 	};
+
+	// Map the typed migration document 1:1 (nulls → empty, so the service validator reports
+	// clear messages); null in = null out (no migration declared).
+	static List<MethodologyMigration>? ParseMigration(MethodologyMigrationInput[]? migration) =>
+		migration?.Select(m => new MethodologyMigration(
+			m.Kind ?? string.Empty,
+			(m.Types ?? []).Select(v => new MethodologyValueMap(v.From ?? string.Empty, v.To ?? string.Empty)).ToList(),
+			(m.Statuses ?? []).Select(v => new MethodologyValueMap(v.From ?? string.Empty, v.To ?? string.Empty)).ToList())).ToList();
 
 	static WorkflowStatus ParseStatus(MethodologyStatusInput s)
 	{

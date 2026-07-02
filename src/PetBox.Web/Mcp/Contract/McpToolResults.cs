@@ -328,10 +328,11 @@ public sealed record WorkflowGroupView(
 public sealed record WorkflowView(string Kind, IReadOnlyList<WorkflowGroupView> Workflows);
 
 // tasks.methodology_def_upsert ack: the definition's current revision number (the baseline
-// for the next edit) and whether this call created a new revision (false = an identical
-// resubmit collapsed to a no-op). A version conflict throws (the error envelope names the
-// current version), so this shape never carries conflicts.
-public sealed record MethodologyDefUpsertResult(long Version, bool Changed);
+// for the next edit), whether this call created a new revision (false = an identical
+// resubmit collapsed to a no-op), and how many live nodes the declared `migration` rewrote
+// onto the new resolution (0 = nothing needed repair). A version conflict throws (the error
+// envelope names the current version), so this shape never carries conflicts.
+public sealed record MethodologyDefUpsertResult(long Version, bool Changed, int Migrated = 0);
 
 // tasks.methodology_def_get answer. Defined=true → the stored definition (name/kinds) plus
 // its revision metadata. Defined=false → the project has no definition and runs on the
