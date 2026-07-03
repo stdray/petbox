@@ -27,12 +27,13 @@
 
 @functions {
 	// Computed spec delivery roll-up (spec boards only) -> daisyUI class. (Status badges live
-	// in the shared _PlanNodeCard partial; group headers only need delivery.)
+	// in the shared _PlanNodeCard partial; group headers only need delivery.) Muted (outline)
+	// palette — delivery is context, not an alert (spec-board-status-noise #11).
 	static string DeliveryBadge(string d) => d switch
 	{
-		"done" => "badge-success",
-		"in_progress" => "badge-warning",
-		"done_with_defects" => "badge-error",
+		"done" => "badge-success badge-outline",
+		"in_progress" => "badge-warning badge-outline",
+		"done_with_defects" => "badge-error badge-outline",
 		_ => "badge-ghost", // not_started
 	};
 }
@@ -102,7 +103,7 @@
 				{
 					var closed = PetBox.Tasks.Workflow.MethodologyPresets.IsTerminalSlug(row.Node.Status);
 					Model.CommentThreads.TryGetValue(row.Node.NodeId, out var thread);
-					<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, row.Node, row.Depth, closed, true, false, thread)" />
+					<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Kind, row.Node, row.Depth, closed, true, false, thread)" />
 				}
 			}
 		</ul>
@@ -137,7 +138,7 @@ else
 			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);
 			var hasChildren = parentIds.Contains(n.NodeId);
 			Model.CommentThreads.TryGetValue(n.NodeId, out var thread);
-			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n, n.Depth, closed, keepVisible, hasChildren, thread)" />
+			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Kind, n, n.Depth, closed, keepVisible, hasChildren, thread)" />
 		}
 	</ul>
 }

@@ -17,11 +17,12 @@
 		_ => "badge-neutral",
 	};
 
+	// Muted (outline) palette — delivery is context, not an alert (spec-board-status-noise #11).
 	static string DeliveryBadge(string d) => d switch
 	{
-		"done" => "badge-success",
-		"in_progress" => "badge-warning",
-		"done_with_defects" => "badge-error",
+		"done" => "badge-success badge-outline",
+		"in_progress" => "badge-warning badge-outline",
+		"done_with_defects" => "badge-error badge-outline",
 		_ => "badge-ghost",
 	};
 }
@@ -49,7 +50,12 @@
 				</span>
 			</div>
 			<div class="flex items-center gap-1 shrink-0">
-				<span class="badge @StatusBadge(n.Status) badge-sm" data-testid="node-status">@n.Status</span>
+				@* On a spec board `defined` is the ~universal default → pure noise; show the status
+				   badge only for a non-default (terminal `deprecated`) state (spec-board-status-noise #9). *@
+				@if (Model.Kind != PetBox.Tasks.Workflow.BoardKind.Spec || PetBox.Tasks.Workflow.MethodologyPresets.IsTerminalSlug(n.Status))
+				{
+					<span class="badge @StatusBadge(n.Status) badge-sm" data-testid="node-status">@n.Status</span>
+				}
 				@if (n.Delivery is not null)
 				{
 					<span class="badge @DeliveryBadge(n.Delivery) badge-sm" data-testid="node-delivery" title="delivery — computed from linked tasks">@n.Delivery</span>
