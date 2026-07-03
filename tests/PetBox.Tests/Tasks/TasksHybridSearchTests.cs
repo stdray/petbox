@@ -219,6 +219,67 @@ public sealed class TasksHybridSearchTests : IDisposable
 		(await tasks.SearchNodesAsync(Proj, Query("alpha"))).Hits.Should().BeEmpty();
 	}
 
+	[Fact]
+	public async Task ExactSlug_SurfacesTerminalNode_EvenThoughNotIndexed()
+	{
+		// exact-slug-lookup-terminal-nodes: a q that IS an existing node's slug must return the
+		// node even after it goes terminal (dropped from the open-set index). Before the escape
+		// hatch this returned empty; now it rides GetNodeAsync (includeClosed) and leads the hits.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("kql-spans-query", "spans note", "some body")]);
+		var version = (await tasks.GetAsync(Proj, "b", includeClosed: false)).Nodes.First(n => n.Key == "kql-spans-query").Version;
+		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "kql-spans-query", Version = version, Status = "Done" }]);
+
+		// Sanity: it's out of the relevance index (a plain content query no longer finds it).
+		(await tasks.SearchNodesAsync(Proj, Query("spans"))).Hits.Should().BeEmpty();
+
+		// The exact-slug q surfaces it regardless of terminality.
+		var res = await tasks.SearchNodesAsync(Proj, Query("kql-spans-query"));
+		res.Hits.Select(h => h.Node.Key).Should().Equal("kql-spans-query");
+		res.Hits[0].Node.Status.Should().Be("Done");
+	}
+
+	[Fact]
+	public async Task ExactSlug_OpenNodeMatchingBothWays_AppearsOnce()
+	{
+		// An open node whose slug equals the q also matches the relevance leg — the dedup guard
+		// must keep it single (escape hatch skips a hit the fused ranking already produced).
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("alpha", "alpha note", "alpha keyword")]);
+
+		var res = await tasks.SearchNodesAsync(Proj, Query("alpha"));
+		res.Hits.Select(h => h.Node.Key).Should().Equal("alpha"); // exactly one, not duplicated
+	}
+
+	[Fact]
+	public async Task ExactSlug_AmbiguousAcrossBoards_ReturnsAllMatches()
+	{
+		// exact-identifier-search-surfacing: the same slug on two boards, both terminal (so the
+		// relevance index can't surface them), must ALL come back on a project-wide q — ambiguity
+		// is not an error in search; each hit carries its board so the caller disambiguates.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "a", "simple", null, null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		foreach (var board in new[] { "a", "b" })
+		{
+			await tasks.UpsertAsync(Proj, board, [Node("dup", "dup note", "body")]);
+			var v = (await tasks.GetAsync(Proj, board, includeClosed: false)).Nodes.First(n => n.Key == "dup").Version;
+			await tasks.UpsertAsync(Proj, board, [new NodePatch { Key = "dup", Version = v, Status = "Done" }]);
+		}
+
+		// Project-wide (no board filter) → BOTH terminal matches, labelled by board, ordered by board.
+		var all = await tasks.SearchNodesAsync(Proj, Query("dup"));
+		all.Hits.Select(h => h.Board).Should().Equal("a", "b");
+		all.Hits.Should().OnlyContain(h => h.Node.Key == "dup" && h.Node.Status == "Done");
+
+		// Board-scoped narrows to that one board's terminal node.
+		var scoped = await tasks.SearchNodesAsync(Proj, Query("dup", board: "a"));
+		scoped.Hits.Select(h => h.Node.Key).Should().Equal("dup");
+		scoped.Hits[0].Board.Should().Be("a");
+	}
+
 	// ---- deterministic fakes (same shape as the memory hybrid-search fakes) ----
 
 	sealed class FakeLlmClient : ILlmClient

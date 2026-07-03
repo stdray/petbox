@@ -14,12 +14,12 @@ namespace PetBox.Web.Search;
 // caller can't see.
 //
 // Per project TWO legs run and merge:
-//   IDENTIFIER fast-path — SearchNodesAsync with Filter.Keys=[q] (resolved like
-//     tasks_node_get: a 32-hex value is a NodeId, anything else a slug — ResolveNodeRefAsync
-//     does that classification, not this service). This is the leg that finds a bare slug
+//   IDENTIFIER fast-path — tasks.ExactIdentifierHitsAsync(q) (resolved like tasks_node_get: a
+//     32-hex value is a NodeId, anything else a slug). This is the leg that finds a bare slug
 //     paste: the FTS index covers title/body/tags, not the key, so `q` alone would otherwise
-//     miss. A miss or a same-slug-on-two-boards ambiguity throws ArgumentException — caught
-//     and treated as "not in this project", never a fault.
+//     miss. It surfaces terminal nodes and, per exact-identifier-search-surfacing, returns ALL
+//     exact matches — a same-slug-on-two-boards paste yields both (labelled by board), not an
+//     error. A miss is an empty list, never a fault.
 //   FULL-TEXT — SearchNodesAsync with Query=q, a small per-project cap. Skipped when the
 //     identifier leg already found an exact hit in that project (redundant).
 // Exact hits are returned before full-text hits; within each leg, project order follows
@@ -94,24 +94,11 @@ public sealed class CrossScopeTaskSearchService(INavigationContext nav, IHttpCon
 			? null
 			: $"{scheme}://{host}{Routes.ProjectTasks(ws, project.Key)}/";
 
-		IReadOnlyList<TaskSearchHit> exactHits;
-		try
-		{
-			var res = await tasks.SearchNodesAsync(project.Key, new SearchRequest<TaskNodeFilter, TaskSortBy>
-			{
-				Filter = new TaskNodeFilter(Keys: [query]),
-				Limit = 1,
-				BodyLen = 0,
-			}, urlPrefix, ct).ConfigureAwait(false);
-			exactHits = res.Hits;
-		}
-		catch (ArgumentException)
-		{
-			// ResolveNodeRefAsync throws when the slug/NodeId doesn't match any active node in
-			// this project, or when the slug is ambiguous across two boards here — both simply
-			// mean "not (unambiguously) here", not a search fault.
-			exactHits = [];
-		}
+		// Exact-identifier leg (exact-identifier-search-surfacing): every node whose slug/NodeId
+		// exactly equals `query`, INCLUDING terminal ones and ALL boards when a slug is shared —
+		// ambiguity is not an error in search, so a same-slug-on-two-boards paste surfaces both
+		// (each row labelled by board). A miss is an empty list, never a fault (no try/catch).
+		var exactHits = await tasks.ExactIdentifierHitsAsync(project.Key, query, board: null, urlPrefix, ct).ConfigureAwait(false);
 
 		var exact = exactHits.Select(h => ToHit(ws, project.Key, h, exactMatch: true)).ToList();
 		if (exact.Count > 0)

@@ -121,6 +121,24 @@ public sealed class CrossScopeTaskSearchServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task IdentifierFastPath_AmbiguousSlugAcrossBoards_ReturnsAllMatches()
+	{
+		// exact-identifier-search-surfacing: a slug living on two boards of one project must
+		// surface BOTH (each labelled by board). The old exact leg went through the throwing
+		// ResolveNodeRefAsync and SWALLOWED the ambiguity (caught → zero exact hits); now every
+		// match comes back as an exact-match row — ambiguity is not an error in search.
+		await Seed(ProjA, "work", new NodePatch { Key = "dup-slug", Title = "Dup on work", Body = "x" });
+		await Seed(ProjA, "notes", new NodePatch { Key = "dup-slug", Title = "Dup on notes", Body = "x" });
+
+		var scope = ByWorkspace((Ws: "ws1", Project: Proj(ProjA, "ws1")));
+		var hits = await CoreOnly().SearchAsync(scope, "dup-slug", "https", "box.test");
+
+		hits.Should().HaveCount(2);
+		hits.Should().OnlyContain(h => h.ExactMatch && h.Key == "dup-slug" && h.ProjectKey == ProjA);
+		hits.Select(h => h.Board).Should().BeEquivalentTo(["notes", "work"]);
+	}
+
+	[Fact]
 	public async Task MergeOrdering_ExactHitsComeBeforeFullTextHits()
 	{
 		// proj-a carries the exact slug; proj-b only mentions the same term in a title (a

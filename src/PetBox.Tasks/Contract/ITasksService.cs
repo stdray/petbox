@@ -142,6 +142,15 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// (0 = unbounded listing / the adapter's query default). Board context (kind/specBoard/
 	// currentVersion) is filled when the read is board-scoped.
 	Task<TaskSearchResult> SearchNodesAsync(string projectKey, SearchRequest<TaskNodeFilter, TaskSortBy> request, string? urlPrefix = null, CancellationToken ct = default);
+	// Exact-identifier surfacing for SEARCH surfaces (spec exact-identifier-search-surfacing):
+	// resolve `identifier` (a slug or 32-hex NodeId) to EVERY exactly-matching node — including
+	// terminal/closed nodes the relevance index omits — each carrying its board. Unlike
+	// ResolveNodeRefAsync (a WRITE-addressing resolver that throws on a miss/ambiguity), this is
+	// a soft read: a miss is an empty list, and a slug living on several boards returns ALL of
+	// them (ambiguity is not an error in search). Ordered by board for a stable multi-board
+	// result; `board` narrows to one board. Backs the tasks_search escape hatch and the UI
+	// cross-scope identifier leg.
+	Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, CancellationToken ct = default);
 	// Ensure the board exists and return its PRESET kind (a definition-declared kind reads
 	// as Simple here, like any unknown slug always did). UI pages keep rendering off this;
 	// the FSM-aware surface is GetBoardWorkflowAsync.
