@@ -17,14 +17,13 @@ namespace PetBox.Web.Memory;
 // (still 200); an unknown project simply yields null parts, as the sessions API leaves it.
 public static class MemoryApi
 {
-	// The canon convention: store `canon`; entry `index` = the project's canon; entry
-	// `workspace` = the shared cross-project canon, living in the SAME container the MCP
-	// `workspace` memory scope resolves to (MemoryTools.WorkspaceContainer — physically the
-	// `$system` project; workspace and $system-project memory share one container, so the
-	// two canons are told apart by key, not by container).
+	// The canon convention: store `canon`, entry `index` — the same in every container. The
+	// project canon is `index` in the project container; the shared cross-project canon is
+	// `index` in the workspace container (MemoryTools.WorkspaceContainer — the reserved
+	// `$workspace` project the MCP `workspace` memory scope resolves to). Two containers, one
+	// key: the scope is the container, not a key suffix.
 	const string CanonStore = "canon";
 	const string CanonKey = "index";
-	const string CanonWorkspaceKey = "workspace";
 
 	public static void MapMemoryEndpoints(this IEndpointRouteBuilder app)
 	{
@@ -44,7 +43,7 @@ public static class MemoryApi
 			return TypedResults.Forbid();
 
 		var project = await ReadCanonAsync(memory, projectKey, CanonKey, ct);
-		var workspace = await ReadCanonAsync(memory, Mcp.MemoryTools.WorkspaceContainer, CanonWorkspaceKey, ct);
+		var workspace = await ReadCanonAsync(memory, Mcp.MemoryTools.WorkspaceContainer, CanonKey, ct);
 		return TypedResults.Ok(new CanonResponse(project, workspace));
 	}
 

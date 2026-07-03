@@ -12,8 +12,9 @@ Workspace (Key)               e.g. $system, infra, stdray
 
 - **Project is the unit everything is scoped by.** Memory/sessions/tasks/logs/config all key on `projectKey`.
 - An **API key** carries a `project` claim — either ONE project key, or `*` (cross-project). Most tools assert the call's `projectKey` against that claim.
-- **Reserved project:**
-  - `$system` — the built-in internal project AND the single **shared cross-project container**: self-logs, the dogfooding ideas/spec/roadmap boards, the `ops` memory store, and the destination of `scope=workspace` memory. (There used to be a separate `$workspace` project for cross-project sharing — consolidated into `$system` 2026-06-03; one container, not two.)
+- **Reserved projects:**
+  - `$system` — the built-in internal project: self-logs, the dogfooding ideas/spec/roadmap boards, and the `ops` memory store.
+  - `$workspace` — the **shared cross-project memory container**: the destination of `scope=workspace` memory, kept SEPARATE from `$system` so a project's memory cascade doesn't inherit all of `$system`'s memory as "workspace". (Briefly consolidated into `$system` 2026-06-03; revived as its own container 2026-07-03 — M031 re-ensures the row.)
 
 ## 2. Storage map (`/opt/petbox/data/`)
 

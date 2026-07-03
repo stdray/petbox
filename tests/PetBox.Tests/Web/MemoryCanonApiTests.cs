@@ -85,8 +85,8 @@ public sealed class MemoryCanonApiTests : IAsyncLifetime
 	}
 
 	// Seed a canon entry of a scope through the service door (auto-vivifies the store).
-	// The workspace canon lives in the `$system` container under key `workspace` (the same
-	// container the MCP workspace scope resolves to — scopes share it, keys tell them apart).
+	// The workspace canon lives in the reserved `$workspace` container under key `index` —
+	// the same store/key as the project canon; the scope is the container, not a key suffix.
 	async Task WriteCanonAsync(string projectKey, string body, string key = "index")
 	{
 		using var scope = _factory.Services.CreateScope();
@@ -100,7 +100,7 @@ public sealed class MemoryCanonApiTests : IAsyncLifetime
 	public async Task Canon_BothScopesPresent_ReturnsBothParts()
 	{
 		await WriteCanonAsync(TestProjectKey, "PROJECT canon index");
-		await WriteCanonAsync("$system", "WORKSPACE canon index", key: "workspace");
+		await WriteCanonAsync("$workspace", "WORKSPACE canon index");
 
 		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
 		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");

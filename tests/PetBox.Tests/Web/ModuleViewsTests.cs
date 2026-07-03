@@ -193,6 +193,33 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
 	}
 
+	// The reserved "$workspace" memory container (seeded by M028/M031) resolves as a project
+	// key — the memory page must render for it despite the `$` in the route (routing + project
+	// resolution). No stores in a fresh DB → the empty state, still 200.
+	[Fact]
+	public async Task WorkspaceMemory_PageRendersForDollarWorkspace()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/$workspace/memory");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("memory-title");
+		html.Should().Contain("memory-empty"); // no stores yet, but the page resolved the project
+	}
+
+	// The workspace dashboard surfaces a first-class "Workspace memory" entry linking to the
+	// shared container, and keeps "$workspace" itself out of the project grid (it's a memory
+	// container, not a user project).
+	[Fact]
+	public async Task Dashboard_ShowsWorkspaceMemoryEntry_AndHidesContainerFromGrid()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("dashboard-workspace-memory");
+		html.Should().Contain("/ui/$system/$workspace/memory");
+		html.Should().NotContain("data-project-key=\"$workspace\""); // container excluded from the grid
+	}
+
 	[Fact]
 	public async Task Sessions_EmptyList_RendersOk()
 	{
