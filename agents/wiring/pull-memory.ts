@@ -7,6 +7,7 @@
 // The project is resolved from cwd via the shared registry; if the cwd is not a registered
 // project this prints nothing and exits 0. Best-effort, never blocks — always exit 0.
 
+import { fetchCanonBlock } from "./canon.ts";
 import { resolveProject } from "./registry.ts";
 
 type HookInput = { cwd?: string; source?: string };
@@ -40,7 +41,9 @@ The entry point has two legs:
 
 As you work, **capture** incrementally (don't wait for session end): after a decision, a fixed bug, a discovered pattern, or a stated preference, store a concise fact via \`mcp__petbox__memory_remember\` (\`text\` = the learning; \`type\` = User|Feedback|Project|Reference; \`scope\` = workspace for facts that span projects or are about the user, else omit for this project). Curated/temporal edits go through \`mcp__petbox__memory_upsert\`.
 
-**Background autocapture is LIVE:** after a session settles (~minutes), the server distills durable facts and recurring behavior patterns from it into the \`autocaptured\` store on its own. So: (1) don't re-store what memory_search already shows as autocaptured — promote-worthy entries are the owner's call; (2) the **end-of-session sweep** is now an INSURANCE pass, not the only capture: before you stop, store the 1-3 learnings that must not wait for background distillation (a key decision + why, a root cause, a gotcha) — skip narration and anything derivable from code/git.`;
+**Background autocapture is LIVE:** after a session settles (~minutes), the server distills durable facts and recurring behavior patterns from it into the \`autocaptured\` store on its own. So: (1) don't re-store what memory_search already shows as autocaptured — promote-worthy entries are the owner's call; (2) the **end-of-session sweep** is now an INSURANCE pass, not the only capture: before you stop, store the 1-3 learnings that must not wait for background distillation (a key decision + why, a root cause, a gotcha) — and also record 0-2 process-friction observations (what got in the way, what you had to work around, what looked stale) — skip narration and anything derivable from code/git.
+
+**Process defects are findings, not obstacles:** never silently work around a process/doc defect or a contradiction between a document and reality — file an intake issue on the project's \`intake\` board (\`mcp__petbox__tasks_upsert\` type:"issue" status:"reported") instead of swallowing it. Criticism of the process is explicitly welcome and is never scope creep.`;
 
   if (source === "resume" || source === "compact") {
     out += `\n\nSession ${source} — also recall recent session/decision memories to pick up where you left off.`;
@@ -63,7 +66,11 @@ async function main(): Promise<void> {
   try {
     const resolved = resolveProject(cwd);
     if (!resolved) return; // not a registered project → no output
-    process.stdout.write(protocol(resolved.project, source));
+    let out = protocol(resolved.project, source);
+    // Append the curated memory canon when available (best-effort; degrades to nothing).
+    const canon = await fetchCanonBlock(resolved);
+    if (canon) out += `\n\n${canon}`;
+    process.stdout.write(out);
   } catch {
     // best-effort
   }

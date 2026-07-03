@@ -84,7 +84,27 @@ Re-running `wire.ts` for a project is only needed to change that project's confi
 - **A folder outside the registry → hooks no-op.** This is normal and intended: the global hooks
   run in every project, resolve `null` for unregistered cwds, and silently do nothing.
 
-## 6. Importing local session history
+## 6. Memory canon injected at session start
+
+Both SessionStart injectors (`pull-memory.ts` for Claude Code, `opencode-plugin.ts` for
+opencode) append the project's **memory canon** — the curated memory index, pointers to the
+durable facts — beneath the memory protocol. The shared builder is `canon.ts`, so the injected
+block is byte-identical across agents.
+
+- **Endpoint:** `GET {baseUrl}/api/memory/{project}/canon` with header `X-Api-Key` → 200
+  `{ "project": {body,updatedAt,version}|null, "workspace": {...}|null }`. Best-effort, ~8 s
+  timeout. The block carries a `### Project ({project})` section and/or a `### Workspace`
+  section — a section whose part is `null` is omitted; when both are empty nothing is injected.
+- **Offline cache:** every successful fetch writes the block to
+  `~/.petbox/cache/{project}.canon.md`. If a later fetch fails and a cache file exists, the
+  cached block is injected instead, prefixed with a stale marker line
+  (`⚠ Canon below is from the local cache (PetBox unreachable) — may be stale.`).
+- **Graceful degradation:** the endpoint is new — a server without it (404), any other error,
+  a timeout, or bad JSON simply yields no canon block (or the stale cache, if present). The
+  memory protocol is always injected regardless; the canon is purely additive. `canon.ts`
+  never throws.
+
+## 7. Importing local session history
 
 `import-sessions.ts` backfills the PetBox session archive from the agents'' LOCAL history —
 run it once after wiring a project (or any time) to make the whole past searchable:
