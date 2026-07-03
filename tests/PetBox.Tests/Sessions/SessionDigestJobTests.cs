@@ -1,5 +1,6 @@
 using LinqToDB;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -57,8 +58,15 @@ public sealed class SessionDigestJobTests : IDisposable
 		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
 	}
 
-	SessionDigestJob Job(ILlmClient? llm, TimeSpan? quiet = null, TimeSpan? budget = null) =>
-		new(_sessionsFactory, _sessions, _memory, llm, logger: null, quietPeriod: quiet ?? NoQuiet, budget: budget);
+	SessionDigestJob Job(ILlmClient? llm, TimeSpan? quiet = null, TimeSpan? budget = null,
+		ILogger<SessionDigestJob>? logger = null) =>
+		new(_sessionsFactory, _sessions, _memory, llm, logger: logger, quietPeriod: quiet ?? NoQuiet, budget: budget);
+
+	// A single message that clears the MinDistillChars (40) substance floor, so mechanics
+	// tests (cursor/delta/availability) actually reach the distiller — they are not testing
+	// the empty-session gate, which the dedicated tests below cover.
+	const string Big1 = "we investigated the flaky config resolver test and reproduced it locally";
+	const string Big2 = "then we shipped the fix to ci.512 and confirmed the smoke run passed";
 
 	static SessionMessageInput[] Msgs(params string[] contents) =>
 		contents.Select(c => new SessionMessageInput("user", c)).ToArray();
@@ -90,7 +98,7 @@ public sealed class SessionDigestJobTests : IDisposable
 	[Fact]
 	public async Task SecondPass_NoNewMessages_IsNoOpWithoutChatCalls()
 	{
-		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a", "b"));
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1, Big2));
 		var chat = new ChatFake();
 		var job = Job(chat);
 
@@ -104,13 +112,18 @@ public sealed class SessionDigestJobTests : IDisposable
 	[Fact]
 	public async Task Delta_RedistillsOnlyNewMessages_AndMergesIntoExistingDigest()
 	{
-		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("old-alpha", "old-beta"));
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+			Msgs("old-alpha: initial pass over the config resolver null-reference bug",
+				"old-beta: reproduced the crash locally against the staging snapshot"));
 		var chat = new ChatFake { NextText = "digest v1\n- old facts" };
 		var job = Job(chat);
 		await job.DrainAllAsync(CancellationToken.None);
 
 		// The hook re-pushes the grown transcript; only the tail is new.
-		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("old-alpha", "old-beta", "new-gamma"));
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+			Msgs("old-alpha: initial pass over the config resolver null-reference bug",
+				"old-beta: reproduced the crash locally against the staging snapshot",
+				"new-gamma: shipped the fix to ci.512 and verified it in the smoke run"));
 		chat.NextText = "digest v2\n- old facts\n- new gamma fact";
 		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(1);
 
@@ -138,7 +151,7 @@ public sealed class SessionDigestJobTests : IDisposable
 	[Fact]
 	public async Task ChatUnavailable_PassIsNoOp_AndCursorBackfillsOnRecovery()
 	{
-		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a"));
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1));
 		var chat = new ChatFake { Available = false };
 		var job = Job(chat);
 
@@ -160,7 +173,7 @@ public sealed class SessionDigestJobTests : IDisposable
 	[Fact]
 	public async Task EmptyChatAnswer_HoldsCursor_NoEntryWritten()
 	{
-		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a"));
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1));
 		var chat = new ChatFake { NextText = "   " };
 
 		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(0);
@@ -206,8 +219,8 @@ public sealed class SessionDigestJobTests : IDisposable
 	public async Task TwoProjects_ZeroBudget_RotationServesTheOtherNextPass()
 	{
 		_db.Insert(new Project { Key = "projb", WorkspaceKey = "ws", Name = "B", Description = "" });
-		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("сообщение А"));
-		await _sessions.UpsertAsync("projb", "s1", "claude-code", Msgs("сообщение Б"));
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("сессия про деплой конфигурации в проекте А, ci.512 готов"));
+		await _sessions.UpsertAsync("projb", "s1", "claude-code", Msgs("сессия про фикс бага векторизации в проекте Б, ci.513 готов"));
 		var chat = new ChatFake { NextText = "дайджест\n- факт" };
 		var job = Job(chat, budget: TimeSpan.Zero);
 
@@ -231,6 +244,123 @@ public sealed class SessionDigestJobTests : IDisposable
 		var res = await _memory.SearchAsync(Proj, SessionDigestJob.Store, "crashloop", type: null);
 
 		res.Hits.Select(h => h.Key).Should().Contain("s1"); // discovery = plain memory search over digests
+	}
+
+	// --- #1 skip before the LLM: empty/insubstantial sessions never reach chat ---
+
+	[Fact]
+	public async Task InsubstantialSession_IsSkippedBeforeChat_NoEntryMinted()
+	{
+		// A settled session carrying next to no text is the "empty session" the model used
+		// to answer "no content to digest"; the substance floor stops it before the call.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("ok"));
+		var chat = new ChatFake { NextText = "should never be produced" };
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		chat.Prompts.Should().BeEmpty();                                         // no chat spent
+		(await _memory.StoreExistsAsync(Proj, SessionDigestJob.Store)).Should().BeFalse(); // no digest minted
+	}
+
+	[Fact]
+	public async Task InsubstantialTrailingDelta_OverExistingDigest_AdvancesCursorWithoutChat()
+	{
+		// First a real distill, then the hook re-pushes with a trivial tail ("ok"): the tail
+		// is not worth a chat call, but the cursor advances past it so it is not re-examined.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1));
+		var chat = new ChatFake { NextText = "Сессия про конфиг\n- факт про фикс" };
+		var job = Job(chat);
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(1);
+		var callsAfterFirst = chat.Prompts.Count;
+
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1, "ok"));
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		chat.Prompts.Count.Should().Be(callsAfterFirst);        // trivial tail spent no chat
+		var entry = await _memory.GetAsync(Proj, SessionDigestJob.Store, "s1");
+		entry!.Description.Should().Be("Сессия про конфиг");    // body untouched
+		Cursor(entry.Metadata).Should().Be(2);                  // cursor moved past the tail
+	}
+
+	// --- #2 guard after the LLM: a refusal / empty answer is not written ---
+
+	[Fact]
+	public async Task LlmRefusal_NewSession_NotWritten_AndWarns()
+	{
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1));
+		var chat = new ChatFake { NextText = "No content to digest." };
+		var log = new CapturingLogger();
+
+		(await Job(chat, logger: log).DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		chat.Prompts.Should().HaveCount(1);                                     // the model WAS asked…
+		(await _memory.StoreExistsAsync(Proj, SessionDigestJob.Store)).Should().BeFalse(); // …but nothing written
+		log.Warnings.Should().Contain(w => w.Contains("no usable digest"));
+	}
+
+	[Fact]
+	public async Task LlmRefusal_OverExistingDigest_AdvancesCursor_KeepsBody()
+	{
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1));
+		var chat = new ChatFake { NextText = "Сессия про конфиг\n- реальный факт" };
+		var job = Job(chat);
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		// A substantial new turn arrives, but the model now refuses: keep the good digest,
+		// just move the cursor so the refusal is not retried forever.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1, Big2));
+		chat.NextText = "No content to digest.";
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		var entry = await _memory.GetAsync(Proj, SessionDigestJob.Store, "s1");
+		entry!.Description.Should().Be("Сессия про конфиг");    // prior digest preserved
+		entry.Body.Should().Contain("реальный факт");
+		Cursor(entry.Metadata).Should().Be(2);                  // advanced past the refused delta
+	}
+
+	// --- #3 self-cleanup: junk digests older passes minted are purged on a pass ---
+
+	[Fact]
+	public async Task Pass_PurgesExistingJunkDigests_KeepsRealOnes()
+	{
+		// Seed the store as an older pass would have: one stock-refusal digest, one super-short
+		// digest, and one genuine digest. The seed also gives the project a live session so the
+		// pass processes it.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1));
+		await _memory.UpsertAsync(Proj, SessionDigestJob.Store,
+		[
+			new MemoryEntryInput { Key = "junk-refusal", Type = "Reference", Description = "No content to digest.", Body = "", Tags = [SessionDigestJob.Tag] },
+			new MemoryEntryInput { Key = "junk-short", Type = "Reference", Description = "empty", Body = "", Tags = [SessionDigestJob.Tag] },
+			new MemoryEntryInput { Key = "real", Type = "Reference", Description = "Сессия про реальную работу над конфигом resolver", Body = "- починили NRE\n- задеплоили ci.512", Tags = [SessionDigestJob.Tag] },
+		], [], CancellationToken.None);
+
+		var chat = new ChatFake { NextText = "Сессия про конфиг\n- факт про фикс" };
+		var log = new CapturingLogger();
+		await Job(chat, logger: log).DrainAllAsync(CancellationToken.None);
+
+		(await _memory.GetAsync(Proj, SessionDigestJob.Store, "junk-refusal")).Should().BeNull();
+		(await _memory.GetAsync(Proj, SessionDigestJob.Store, "junk-short")).Should().BeNull();
+		(await _memory.GetAsync(Proj, SessionDigestJob.Store, "real")).Should().NotBeNull();
+		log.Warnings.Should().Contain(w => w.Contains("cleanup"));
+	}
+
+	// Captures warning-level messages so a test can assert the skip/guard/cleanup logged.
+	sealed class CapturingLogger : ILogger<SessionDigestJob>
+	{
+		public List<string> Warnings { get; } = [];
+		public IDisposable BeginScope<TState>(TState state) where TState : notnull => NullScope.Instance;
+		public bool IsEnabled(Microsoft.Extensions.Logging.LogLevel logLevel) => true;
+		public void Log<TState>(Microsoft.Extensions.Logging.LogLevel logLevel, EventId eventId, TState state,
+			Exception? exception, Func<TState, Exception?, string> formatter)
+		{
+			if (logLevel == Microsoft.Extensions.Logging.LogLevel.Warning) Warnings.Add(formatter(state, exception));
+		}
+
+		sealed class NullScope : IDisposable
+		{
+			public static readonly NullScope Instance = new();
+			public void Dispose() { }
+		}
 	}
 
 	// Chat-capable fake: returns NextText (or a generated digest), records every user
