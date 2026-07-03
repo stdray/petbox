@@ -34,5 +34,10 @@ sealed class RegisterKqlFunctionsInterceptor : ConnectionInterceptor
 		c.CreateFunction<string?, string, bool>("kql_has_cs", KqlSqlExpressions.HasCs, isDeterministic: true);
 		c.CreateFunction<string?, string, bool>("kql_matches_regex", KqlSqlExpressions.MatchesRegex, isDeterministic: true);
 		c.CreateFunction<string?, long, string?, string>("kql_extract", KqlSqlExpressions.Extract, isDeterministic: true);
+		// typed conversions: string → nullable value, NULL on malformed input (Kusto semantics)
+		c.CreateFunction<string?, long?>("kql_tolong", KqlSqlExpressions.ParseLong, isDeterministic: true);
+		c.CreateFunction<string?, double?>("kql_todouble", KqlSqlExpressions.ParseDouble, isDeterministic: true);
+		c.CreateFunction<string?, bool?>("kql_tobool", KqlSqlExpressions.ParseBool, isDeterministic: true);
+		c.CreateFunction<string?, long?>("kql_todatetime", KqlSqlExpressions.ParseDateTimeMs, isDeterministic: true);
 	}
 }

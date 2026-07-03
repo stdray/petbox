@@ -88,11 +88,13 @@ public sealed class KqlTransformerTests
 	}
 
 	[Fact]
-	public void UnknownColumn_Throws()
+	public void UnknownColumn_FallsBackToProperties()
 	{
+		// A name that is not a known event column resolves as a Properties.<name> lookup (bare-name
+		// fallback). The property is absent here, so the predicate simply matches nothing — rather than
+		// raising "column not supported". Known columns still win (covered by the Level/Message tests).
 		var ast = Parse("events | where Nonexistent == 'x'");
-		var act = () => KqlTransformer.Apply(Src(), ast).ToList();
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*Nonexistent*");
+		KqlTransformer.Apply(Src(), ast).ToList().Should().BeEmpty();
 	}
 
 	[Fact]

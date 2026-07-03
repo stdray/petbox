@@ -376,4 +376,39 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		byCtx["Web"].Should().Be(2);
 		byCtx["Worker"].Should().Be(1);
 	}
+
+	// --- typed Properties over real SQLite, ingested through the real CLEF parser: the bare-name
+	// fallback (`where DeviceId == ...`) resolves as a Properties lookup and translates to json_extract,
+	// and `toint(Properties.Status)` compares NUMERICALLY via the registered kql_tolong function (a
+	// plain CAST would read '99' as bigger than '500' textually / '0' for garbage). ---
+
+	[Fact]
+	public async Task TypedProperties_BareFallbackAndNumericConversion_OverSqlite()
+	{
+		// Ingest through the actual CLEF parser so PropertiesJson has the production stored shape.
+		var lines = new[]
+		{
+			"""{"@t":"2026-04-19T10:20:00Z","@m":"req a","DeviceId":"smoke-device","Status":200}""",
+			"""{"@t":"2026-04-19T10:21:00Z","@m":"req b","DeviceId":"smoke-device","Status":500}""",
+			"""{"@t":"2026-04-19T10:22:00Z","@m":"req c","DeviceId":"other-device","Status":503}""",
+			"""{"@t":"2026-04-19T10:23:00Z","@m":"req d","DeviceId":"smoke-device","Status":"garbage"}""",
+		};
+		var records = lines
+			.Select((l, i) => CleFParser.ParseLine(l, i + 1))
+			.Select(r => { r.IsSuccess.Should().BeTrue(); return ToRecord(r.Event!); })
+			.ToList();
+		await _logDb.LogEntries.BulkCopyAsync(records);
+
+		// bare-name fallback → json_extract string equality, translated to SQL.
+		(await RunAsync("events | where DeviceId == 'smoke-device'"))
+			.Should().BeEquivalentTo(["req a", "req b", "req d"]);
+
+		// honest numeric comparison: only the two Status >= 500 rows; the garbage row is null → excluded.
+		(await RunAsync("events | where toint(Properties.Status) >= 500"))
+			.Should().BeEquivalentTo(["req b", "req c"]);
+
+		// combined: bare fallback + numeric conversion, both in SQL.
+		(await RunAsync("events | where DeviceId == 'smoke-device' and toint(Status) >= 500"))
+			.Should().BeEquivalentTo(["req b"]);
+	}
 }

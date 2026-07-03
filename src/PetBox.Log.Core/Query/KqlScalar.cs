@@ -55,6 +55,11 @@ abstract class ScalarContext
 	// functions and comparisons operate on a single type: epoch-ms (long) under RecordScalarContext
 	// (SQL-translatable, matching the TimestampMs column) or DateTime under RowScalarContext.
 	public abstract Expr CoerceInstant(Expr e);
+
+	// Bridge a NULLABLE epoch-ms (long?, where null means "not a valid datetime" — Kusto's null) into
+	// this context's nullable instant representation: long? (epoch-ms) for the SQL/record context,
+	// DateTime? for the in-memory/row context. Used by todatetime(), whose result may be null.
+	public abstract Expr NullableInstant(Expr epochMsNullable);
 }
 
 // Leaves resolve to LogEntryRecord property accesses → the tree is SQL-translatable.
@@ -70,7 +75,12 @@ sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 		"Message" => Expr.Property(row, nameof(LogEntryRecord.Message)),
 		"MessageTemplate" => Expr.Property(row, nameof(LogEntryRecord.MessageTemplate)),
 		"Exception" => Expr.Property(row, nameof(LogEntryRecord.Exception)),
-		_ => throw new UnsupportedKqlException($"column '{name}' not supported"),
+		// Bare-name fallback: a name that is not a known event column resolves as a Properties.<name>
+		// lookup (string-typed json_extract), so `where DeviceId == 'x'` filters on the property. Known
+		// columns always win (matched above). Trade-off: a typo'd column now yields empty results
+		// rather than an error — but comparing a fallback (string) name to a non-string literal still
+		// raises a precise type error.
+		_ => ResolveProperties(name),
 	};
 
 	public override Expr ResolveProperties(string key)
@@ -101,6 +111,9 @@ sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 		}
 		throw new UnsupportedKqlException($"expected a datetime, got {e.Type.Name}");
 	}
+
+	// SQL instants are epoch-ms longs, so a nullable instant is already a long? — pass it through.
+	public override Expr NullableInstant(Expr epochMsNullable) => epochMsNullable;
 
 	public override Expr? TryColumnLiteralComparison(string columnName, Expr access, LiteralExpression literal, SyntaxKind op)
 	{
@@ -174,9 +187,14 @@ sealed class RowScalarContext(ParamExpr rowArray, IReadOnlyList<KqlColumn> colum
 	public override Expr ResolveColumn(string name)
 	{
 		var idx = IndexOf(name);
-		if (idx < 0)
+		if (idx >= 0)
+			return Cell(idx, columns[idx].ClrType);
+		// Bare-name fallback (post-split): an unknown name is a Properties.<name> lookup, but only when
+		// the current row shape still carries PropertiesJson. After a project/summarize that dropped it,
+		// there is nothing to look up, so the precise "unknown column" error stands.
+		if (IndexOf(nameof(LogEntryRecord.PropertiesJson)) < 0)
 			throw new UnsupportedKqlException($"unknown column '{name}'");
-		return Cell(idx, columns[idx].ClrType);
+		return ResolveProperties(name);
 	}
 
 	public override Expr ResolveProperties(string key)
@@ -211,6 +229,11 @@ sealed class RowScalarContext(ParamExpr rowArray, IReadOnlyList<KqlColumn> colum
 			return Expr.Call(typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.FromUnixMs))!, e);
 		throw new UnsupportedKqlException($"expected a datetime, got {e.Type.Name}");
 	}
+
+	// In-memory instants are DateTime, so a nullable instant is DateTime?: convert the epoch-ms long?
+	// (null-preserving) via FromUnixMsN.
+	public override Expr NullableInstant(Expr epochMsNullable) =>
+		Expr.Call(typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.FromUnixMsN))!, epochMsNullable);
 }
 
 static class KqlScalar
@@ -345,24 +368,31 @@ static class KqlScalar
 	// epoch-ms. (In the row context both sides are already DateTime, so this is a no-op there.)
 	static (Expr, Expr) NormalizeInstants(Expr le, Expr re, ScalarContext ctx)
 	{
-		if (le is System.Linq.Expressions.ConstantExpression { Value: DateTime } && re.Type == typeof(long))
+		// The record-context instant is long (or long? for todatetime); coerce a datetime() literal on
+		// the other side into that epoch-ms domain so both operands compare as ms.
+		if (le is System.Linq.Expressions.ConstantExpression { Value: DateTime } && IsEpochMs(re.Type))
 			return (ctx.CoerceInstant(le), re);
-		if (re is System.Linq.Expressions.ConstantExpression { Value: DateTime } && le.Type == typeof(long))
+		if (re is System.Linq.Expressions.ConstantExpression { Value: DateTime } && IsEpochMs(le.Type))
 			return (le, ctx.CoerceInstant(re));
 		return (le, re);
 	}
 
+	static bool IsEpochMs(Type t) => t == typeof(long) || t == typeof(long?);
+
 	static Expr Compare(Expr le, Expr re, SyntaxKind kind)
 	{
 		(le, re) = UnifyComparable(le, re, kind);
+		// liftToNull:false so a comparison with a nullable operand yields bool (not bool?): a null
+		// operand makes the comparison false, matching SQL's NULL-is-not-true and Kusto's null-in-where
+		// (typed conversions of malformed values produce null, which must simply not match).
 		return kind switch
 		{
-			SyntaxKind.EqualExpression => Expr.Equal(le, re),
-			SyntaxKind.NotEqualExpression => Expr.NotEqual(le, re),
-			SyntaxKind.LessThanExpression => Expr.LessThan(le, re),
-			SyntaxKind.LessThanOrEqualExpression => Expr.LessThanOrEqual(le, re),
-			SyntaxKind.GreaterThanExpression => Expr.GreaterThan(le, re),
-			SyntaxKind.GreaterThanOrEqualExpression => Expr.GreaterThanOrEqual(le, re),
+			SyntaxKind.EqualExpression => Expr.Equal(le, re, liftToNull: false, method: null),
+			SyntaxKind.NotEqualExpression => Expr.NotEqual(le, re, liftToNull: false, method: null),
+			SyntaxKind.LessThanExpression => Expr.LessThan(le, re, liftToNull: false, method: null),
+			SyntaxKind.LessThanOrEqualExpression => Expr.LessThanOrEqual(le, re, liftToNull: false, method: null),
+			SyntaxKind.GreaterThanExpression => Expr.GreaterThan(le, re, liftToNull: false, method: null),
+			SyntaxKind.GreaterThanOrEqualExpression => Expr.GreaterThanOrEqual(le, re, liftToNull: false, method: null),
 			_ => throw new UnsupportedKqlException($"comparison '{kind}' not supported"),
 		};
 	}
@@ -379,7 +409,7 @@ static class KqlScalar
 		foreach (var element in elements)
 		{
 			var (l, r) = UnifyComparable(le, element, SyntaxKind.EqualExpression);
-			var eq = Expr.Equal(l, r);
+			var eq = Expr.Equal(l, r, liftToNull: false, method: null);
 			acc = acc is null ? eq : Expr.OrElse(acc, eq);
 		}
 		return negate ? Expr.Not(acc!) : acc!;
@@ -392,7 +422,9 @@ static class KqlScalar
 		var hi = Compile(btw.Right.Second, ctx);
 		var (v1, lo1) = UnifyComparable(value, lo, SyntaxKind.GreaterThanOrEqualExpression);
 		var (v2, hi1) = UnifyComparable(value, hi, SyntaxKind.LessThanOrEqualExpression);
-		var inRange = Expr.AndAlso(Expr.GreaterThanOrEqual(v1, lo1), Expr.LessThanOrEqual(v2, hi1));
+		var inRange = Expr.AndAlso(
+			Expr.GreaterThanOrEqual(v1, lo1, liftToNull: false, method: null),
+			Expr.LessThanOrEqual(v2, hi1, liftToNull: false, method: null));
 		return btw.Kind == SyntaxKind.NotBetweenExpression ? Expr.Not(inRange) : inRange;
 	}
 
@@ -458,22 +490,56 @@ static class KqlScalar
 	static Expr ConvertTo(Expr e, Type t) => e.Type == t ? e : Expr.Convert(e, t);
 
 	// Coerce two operands of a comparison to a common comparable type: numeric promotion, or
-	// equal reference/value types. Strings and bools only support equality, not ordering.
+	// equal reference/value types. Strings and bools only support equality, not ordering. Either side
+	// may be nullable (typed conversions of malformed values yield null); the common type is then that
+	// nullable type so the comparison lifts (see Compare, which lifts to bool, not bool?).
 	static (Expr, Expr) UnifyComparable(Expr le, Expr re, SyntaxKind kind)
 	{
-		if (IsNumeric(le.Type) && IsNumeric(re.Type))
+		var lt = NonNullable(le.Type);
+		var rt = NonNullable(re.Type);
+		var anyNullable = IsNullable(le.Type) || IsNullable(re.Type);
+
+		if (IsNumeric(lt) && IsNumeric(rt))
 		{
-			var t = CommonNumeric(le.Type, re.Type);
-			return (ConvertTo(le, t), ConvertTo(re, t));
+			var t = CommonNumeric(lt, rt);
+			var target = anyNullable ? typeof(Nullable<>).MakeGenericType(t) : t;
+			return (ConvertComparable(le, target), ConvertComparable(re, target));
 		}
-		if (le.Type == re.Type)
+		if (lt == rt)
 		{
-			if ((le.Type == typeof(string) || le.Type == typeof(bool)) && !IsEqualityOnly(kind))
-				throw new UnsupportedKqlException($"'{le.Type.Name}' operands support only == and !=, not {kind}");
+			if ((lt == typeof(string) || lt == typeof(bool)) && !IsEqualityOnly(kind))
+				throw new UnsupportedKqlException($"'{lt.Name}' operands support only == and !=, not {kind}");
+			if (anyNullable && lt.IsValueType)
+			{
+				var target = typeof(Nullable<>).MakeGenericType(lt);
+				return (ConvertComparable(le, target), ConvertComparable(re, target));
+			}
 			return (le, re);
 		}
 		throw new UnsupportedKqlException($"cannot compare {le.Type.Name} with {re.Type.Name}");
 	}
+
+	// Convert a comparison operand to the (possibly nullable) target type. Numeric widening to a
+	// nullable target goes through the underlying numeric first so int→long? is a two-step lifted
+	// convert, never an illegal single-step one.
+	static Expr ConvertComparable(Expr e, Type target)
+	{
+		if (e.Type == target)
+			return e;
+		if (!IsNullable(target))
+			return ConvertTo(e, target);
+		var underlying = NonNullable(target);
+		if (NonNullable(e.Type) != underlying)
+			e = IsNullable(e.Type)
+				? Expr.Convert(e, typeof(Nullable<>).MakeGenericType(underlying))
+				: Expr.Convert(e, underlying);
+		return e.Type == target ? e : Expr.Convert(e, target);
+	}
+
+	public static bool IsNullable(Type t) => Nullable.GetUnderlyingType(t) is not null;
+
+	// The underlying type of a Nullable<T>, or the type itself.
+	public static Type NonNullable(Type t) => Nullable.GetUnderlyingType(t) ?? t;
 
 	// Unify the result branches of iff()/case() to a single type (Expr.Condition requires
 	// both branches share a type). Numeric branches promote; otherwise all must already agree.
@@ -533,6 +599,12 @@ static class KqlScalarFunctions
 			["startofmonth"] = (a, c) => StartOf(a, c, "startofmonth", nameof(KqlSqlExpressions.StartOfMonthMs)),
 			["startofyear"] = (a, c) => StartOf(a, c, "startofyear", nameof(KqlSqlExpressions.StartOfYearMs)),
 			["datetime_diff"] = DateTimeDiff,
+			["tostring"] = ToStringConv,
+			["toint"] = (a, c) => ToLongConv(a, "toint"),
+			["tolong"] = (a, c) => ToLongConv(a, "tolong"),
+			["todouble"] = ToDoubleConv,
+			["tobool"] = ToBoolConv,
+			["todatetime"] = ToDateTimeConv,
 		};
 
 	public static bool TryResolve(string name, out KqlScalarFunction fn) => Registry.TryGetValue(name, out fn!);
@@ -765,6 +837,93 @@ static class KqlScalarFunctions
 		instant.Type == typeof(long)
 			? instant
 			: Expr.Call(SqlM(nameof(KqlSqlExpressions.ToUnixMs)), instant);
+
+	// --- typed conversions: tostring / toint|tolong / todouble / tobool / todatetime. Each yields the
+	// target type — nullable for the string-parse path, since Kusto maps a malformed value to null, and
+	// that null flows through comparisons as "not matched" (see Compare's liftToNull:false). Numeric
+	// inputs convert directly (Expr.Convert → a faithful SQLite CAST); string inputs (the Properties
+	// case) route through the registered SQLite parse functions in KqlSqlExpressions. ---
+
+	static Expr ToStringConv(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"tostring() takes exactly 1 argument, got {args.Count}");
+		var a = args[0];
+		if (a.Type == typeof(string))
+			return a; // already a string (incl. Properties.<key>) — identity
+		if (a.Type == typeof(long))
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.LongToString)), a);
+		if (a.Type == typeof(int))
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.LongToString)), Expr.Convert(a, typeof(long)));
+		if (a.Type == typeof(bool))
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.BoolToString)), a);
+		throw new UnsupportedKqlException(
+			$"tostring() supports string, integer, and boolean arguments, got {a.Type.Name}");
+	}
+
+	static Expr ToLongConv(IReadOnlyList<Expr> args, string fn)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"{fn}() takes exactly 1 argument, got {args.Count}");
+		var a = args[0];
+		if (a.Type == typeof(string))
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.ParseLong)), a);
+		var u = KqlScalar.NonNullable(a.Type);
+		if (u == typeof(long) || u == typeof(int) || u == typeof(double))
+			return ToNullableNumeric(a, typeof(long));
+		throw new UnsupportedKqlException($"{fn}() cannot convert {a.Type.Name} to a long");
+	}
+
+	static Expr ToDoubleConv(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"todouble() takes exactly 1 argument, got {args.Count}");
+		var a = args[0];
+		if (a.Type == typeof(string))
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.ParseDouble)), a);
+		var u = KqlScalar.NonNullable(a.Type);
+		if (u == typeof(long) || u == typeof(int) || u == typeof(double))
+			return ToNullableNumeric(a, typeof(double));
+		throw new UnsupportedKqlException($"todouble() cannot convert {a.Type.Name} to a double");
+	}
+
+	static Expr ToBoolConv(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"tobool() takes exactly 1 argument, got {args.Count}");
+		var a = args[0];
+		if (a.Type == typeof(string))
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.ParseBool)), a);
+		if (KqlScalar.NonNullable(a.Type) == typeof(bool))
+			return a.Type == typeof(bool?) ? a : Expr.Convert(a, typeof(bool?));
+		throw new UnsupportedKqlException($"tobool() cannot convert {a.Type.Name} to a bool");
+	}
+
+	static Expr ToDateTimeConv(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"todatetime() takes exactly 1 argument, got {args.Count}");
+		var a = args[0];
+		Expr epochMs;
+		if (a.Type == typeof(string))
+			epochMs = Expr.Call(SqlM(nameof(KqlSqlExpressions.ParseDateTimeMs)), a);
+		else if (a.Type == typeof(long)) // already epoch-ms (the record instant)
+			epochMs = Expr.Convert(a, typeof(long?));
+		else if (a.Type == typeof(DateTime)) // the row instant
+			epochMs = Expr.Convert(Expr.Call(SqlM(nameof(KqlSqlExpressions.ToUnixMs)), a), typeof(long?));
+		else
+			throw new UnsupportedKqlException($"todatetime() supports a string or datetime argument, got {a.Type.Name}");
+		return ctx.NullableInstant(epochMs);
+	}
+
+	// Widen a non-null numeric (int/long/double) to a nullable target numeric (long?/double?), going
+	// through the underlying type first so the lift is always a legal two-step convert.
+	static Expr ToNullableNumeric(Expr e, Type numeric)
+	{
+		var target = typeof(Nullable<>).MakeGenericType(numeric);
+		var num = e.Type == numeric ? e : Expr.Convert(e, numeric);
+		return Expr.Convert(num, target);
+	}
 
 	static Expr RequireLong(Expr e, string what) => e.Type == typeof(long)
 		? e

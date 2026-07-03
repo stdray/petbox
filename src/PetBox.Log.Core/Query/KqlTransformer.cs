@@ -163,11 +163,21 @@ public static class KqlTransformer
 		void AddPassThrough(string outputName, string sourceName)
 		{
 			var sourceIndex = FindColumnIndex(input.Columns, sourceName);
-			if (sourceIndex < 0)
+			if (sourceIndex >= 0)
+			{
+				newColumns.Add(new KqlColumn(outputName, input.Columns[sourceIndex].ClrType));
+				var captured = sourceIndex;
+				producers.Add(row => row[captured]);
+				return;
+			}
+			// Bare-name fallback: an unknown name is a Properties.<name> lookup, when the row shape still
+			// carries PropertiesJson (else the precise unknown-column error stands).
+			var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
+			if (propIdx < 0)
 				throw new UnsupportedKqlException($"project: unknown column '{sourceName}'");
-			newColumns.Add(new KqlColumn(outputName, input.Columns[sourceIndex].ClrType));
-			var captured = sourceIndex;
-			producers.Add(row => row[captured]);
+			newColumns.Add(new KqlColumn(outputName, typeof(string)));
+			var path = "$." + sourceName;
+			producers.Add(row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path));
 		}
 	}
 
@@ -272,9 +282,15 @@ public static class KqlTransformer
 			case NameReference n:
 				{
 					var idx = FindColumnIndex(input.Columns, n.SimpleName);
-					if (idx < 0)
+					if (idx >= 0)
+						return (n.SimpleName, input.Columns[idx].ClrType, row => row[idx]);
+					// Bare-name fallback: group by Properties.<name> when the shape still has PropertiesJson.
+					var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
+					if (propIdx < 0)
 						throw new UnsupportedKqlException($"summarize by: unknown column '{n.SimpleName}'");
-					return (n.SimpleName, input.Columns[idx].ClrType, row => row[idx]);
+					var path = "$." + n.SimpleName;
+					return (n.SimpleName, typeof(string),
+						row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path));
 				}
 			case PathExpression p when IsPropertiesPath(p, out var propKey):
 				{
@@ -323,7 +339,9 @@ public static class KqlTransformer
 
 		static void RequireNumeric(Type t, string forFn)
 		{
-			if (!KqlScalar.IsNumericType(t))
+			// A typed conversion (toint/todouble) yields a nullable numeric; aggregate accumulators
+			// already skip null argument values, so accept the nullable form too.
+			if (!KqlScalar.IsNumericType(KqlScalar.NonNullable(t)))
 				throw new UnsupportedKqlException($"{forFn}() requires a numeric argument, got {t.Name}");
 		}
 
@@ -346,7 +364,7 @@ public static class KqlTransformer
 				{
 					var (type, f) = Arg("sum");
 					RequireNumeric(type, "sum");
-					return type == typeof(double)
+					return KqlScalar.NonNullable(type) == typeof(double)
 						? new AggSpec(name, typeof(double), () => new SumDoubleAccumulator(f))
 						: new AggSpec(name, typeof(long), () => new SumLongAccumulator(f));
 				}
@@ -729,10 +747,19 @@ public static class KqlTransformer
 				case NameReference n:
 					{
 						var idx = FindColumnIndex(input.Columns, n.SimpleName);
-						if (idx < 0)
+						if (idx >= 0)
+						{
+							outputColumns.Add(input.Columns[idx]);
+							extractors.Add(row => row[idx]);
+							break;
+						}
+						// Bare-name fallback: distinct Properties.<name> when the shape still has PropertiesJson.
+						var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
+						if (propIdx < 0)
 							throw new UnsupportedKqlException($"distinct: unknown column '{n.SimpleName}'");
-						outputColumns.Add(input.Columns[idx]);
-						extractors.Add(row => row[idx]);
+						outputColumns.Add(new KqlColumn(n.SimpleName, typeof(string)));
+						var path = "$." + n.SimpleName;
+						extractors.Add(row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path));
 						break;
 					}
 				case PathExpression p when IsPropertiesPath(p, out var propKey):

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using LinqToDB;
@@ -204,5 +205,50 @@ public static class KqlSqlExpressions
 
 	[Sql.Expression("CAST(strftime('%m', {0} / 1000, 'unixepoch') AS INTEGER)", ServerSideOnly = false)]
 	public static long MonthOfMs(long ms) => FromUnixMs(ms).Month;
+
+	// --- typed conversions: tostring / toint|tolong / todouble / tobool / todatetime. Malformed or
+	// missing input yields NULL (Kusto's conversion semantics), so the string-parse helpers return
+	// nullable value types. They are registered SQLite scalar functions (see RegisterKqlFunctions-
+	// Interceptor) rather than a bare CAST because SQLite's CAST is NOT faithful here: CAST('abc' AS
+	// INTEGER) is 0 (not NULL) and CAST('12x' AS INTEGER) is 12. Each C# body is the single source of
+	// truth the registered SQLite function and the in-memory differential path both call, so a
+	// `where toint(Properties.Status) >= 500` compares numerically and identically on either path.
+	// Numeric-to-numeric conversions (e.g. toint(Level)) don't need a function — a direct
+	// Expr.Convert translates to a CAST that agrees with the C# truncating cast — so only the
+	// string-input parse lives here. ---
+
+	[Sql.Function("kql_tolong", ServerSideOnly = false)]
+	public static long? ParseLong(string? s) =>
+		long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
+
+	[Sql.Function("kql_todouble", ServerSideOnly = false)]
+	public static double? ParseDouble(string? s) =>
+		double.TryParse(s, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var v)
+			? v
+			: null;
+
+	[Sql.Function("kql_tobool", ServerSideOnly = false)]
+	public static bool? ParseBool(string? s) => bool.TryParse(s, out var v) ? v : null;
+
+	// todatetime parses an ISO-8601 string to epoch-ms (the SQL/record instant representation).
+	// Assumes UTC for an unspecified offset and normalizes to UTC, matching how timestamps are stored.
+	[Sql.Function("kql_todatetime", ServerSideOnly = false)]
+	public static long? ParseDateTimeMs(string? s) =>
+		DateTime.TryParse(s, CultureInfo.InvariantCulture,
+			DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt)
+			? ToUnixMs(dt)
+			: null;
+
+	// tostring for integer/boolean scalars — a faithful CAST/CASE on the SQL side mirrored by the C#
+	// body. (String arguments pass through unchanged in the compiler and never reach here.)
+	[Sql.Expression("CAST({0} AS TEXT)", ServerSideOnly = false, IsNullable = Sql.IsNullableType.IfAnyParameterNullable)]
+	public static string LongToString(long v) => v.ToString(CultureInfo.InvariantCulture);
+
+	[Sql.Expression("(CASE WHEN {0} THEN 'true' ELSE 'false' END)", ServerSideOnly = false)]
+	public static string BoolToString(bool v) => v ? "true" : "false";
+
+	// Nullable epoch-ms → nullable DateTime, bridging todatetime into the in-memory/row instant
+	// representation (DateTime?), where null means "not a valid datetime".
+	public static DateTime? FromUnixMsN(long? ms) => ms.HasValue ? FromUnixMs(ms.Value) : null;
 }
 

@@ -69,11 +69,15 @@ public sealed class KqlResultTests
 	}
 
 	[Fact]
-	public void Project_UnknownColumn_Throws()
+	public async Task Project_UnknownColumn_FallsBackToProperty()
 	{
+		// A projected name that is not a column reads Properties.<name> (string). Absent here → null.
 		var ast = Parse("events | project Bogus");
-		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*Bogus*");
+		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		result.Columns.Select(c => c.Name).Should().ContainInOrder("Bogus");
+		result.Columns[0].ClrType.Should().Be<string>();
+		var rows = await Materialize(result);
+		rows.Should().OnlyContain(r => r[0] == null);
 	}
 
 	[Fact]
@@ -468,11 +472,16 @@ public sealed class KqlResultTests
 	}
 
 	[Fact]
-	public void Distinct_UnknownColumn_Throws()
+	public async Task Distinct_UnknownColumn_FallsBackToProperty()
 	{
+		// distinct of a name that is not a column de-dups Properties.<name>. Both rows lack the property,
+		// so a single distinct null remains (bare-name fallback).
 		var ast = Parse("events | distinct Bogus");
-		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*Bogus*");
+		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		result.Columns[0].Name.Should().Be("Bogus");
+		var rows = await Materialize(result);
+		rows.Should().ContainSingle();
+		rows[0][0].Should().BeNull();
 	}
 
 	// --- post-shape where: a `where` after a shape-changing op filters the computed rows ---

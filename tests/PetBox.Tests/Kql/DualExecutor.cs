@@ -1,5 +1,7 @@
+using System.Text.Json.Nodes;
 using Kusto.Language;
 using KustoLoco.Core;
+using PetBox.Log.Core;
 
 namespace PetBox.Tests.Kql;
 
@@ -10,22 +12,40 @@ public sealed record TestEvent(
 	string Message,
 	string? ServiceKey = null,
 	string? MessageTemplate = null,
-	string? Exception = null)
+	string? Exception = null,
+	IReadOnlyDictionary<string, object?>? Props = null)
 {
 	public string LevelName => ((LogLevel)Level).ToString();
 	public string EffectiveServiceKey => ServiceKey ?? "";
+
+	// A dynamic column so KustoLoco can resolve `Properties.<key>` the same way production does over
+	// PropertiesJson (see ToRecord). KustoLoco maps a JsonNode property to a dynamic-typed column.
+	public JsonNode? Properties
+	{
+		get
+		{
+			if (Props is null)
+				return null;
+			var o = new JsonObject();
+			foreach (var (k, v) in Props)
+				o[k] = v is null ? null : JsonValue.Create(v);
+			return o;
+		}
+	}
 
 	public static TestEvent FromName(
 		long id,
 		DateTime ts,
 		string levelName,
 		string message,
-		string? serviceKey = null) => new(
+		string? serviceKey = null,
+		IReadOnlyDictionary<string, object?>? props = null) => new(
 			id,
 			ts,
 			(int)(LogLevelParser.Parse(levelName) ?? throw new ArgumentException($"unknown level '{levelName}'")),
 			message,
-			serviceKey);
+			serviceKey,
+			Props: props);
 }
 
 static class DualExecutor
@@ -142,6 +162,6 @@ static class DualExecutor
 		MessageTemplate = t.MessageTemplate ?? t.Message,
 		Exception = t.Exception,
 		ServiceKey = t.EffectiveServiceKey,
-		PropertiesJson = "{}",
+		PropertiesJson = t.Props is null ? "{}" : PropertiesJsonSerializer.Serialize(t.Props),
 	};
 }

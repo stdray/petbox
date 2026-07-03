@@ -340,4 +340,46 @@ public sealed class DualExecutorTests
 	{
 		await DualExecutor.AssertSameTableAsync(kql, GroupData, ordered: true);
 	}
+
+	// Real per-row properties, carried into BOTH engines (production: PropertiesJson; KustoLoco: a
+	// dynamic Properties column). Values are stored with native JSON types (number / real / string).
+	// The bare-name fallback is NOT here — KustoLoco has no such fallback — it is production-only
+	// (KqlTypedPropertiesTests). todatetime/tobool are also production-only (KustoLoco tz-shifts and
+	// models dynamic differently); toint/tolong/todouble/tostring over Properties cooperate.
+	static readonly IReadOnlyList<TestEvent> PropsData =
+	[
+		TestEvent.FromName(1, new DateTime(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc), "Information", "a", "svc-a",
+			new Dictionary<string, object?> { ["Status"] = 200, ["Ratio"] = 1.5, ["user"] = "alice" }),
+		TestEvent.FromName(2, new DateTime(2026, 4, 19, 10, 1, 0, DateTimeKind.Utc), "Error", "b", "svc-b",
+			new Dictionary<string, object?> { ["Status"] = 500, ["Ratio"] = 2.5, ["user"] = "bob" }),
+		TestEvent.FromName(3, new DateTime(2026, 4, 19, 10, 2, 0, DateTimeKind.Utc), "Warning", "c", "svc-a",
+			new Dictionary<string, object?> { ["Status"] = 404, ["Ratio"] = 0.25, ["user"] = "carol" }),
+	];
+
+	[Theory]
+	[InlineData("events | where toint(Properties.Status) >= 400")]
+	[InlineData("events | where toint(Properties.Status) < 300")]
+	[InlineData("events | where tolong(Properties.Status) == 500")]
+	[InlineData("events | where todouble(Properties.Ratio) > 1.0")]
+	public async Task TypedPropertyFilters_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameAsync(kql, PropsData);
+	}
+
+	[Theory]
+	[InlineData("events | project Id, S = toint(Properties.Status)")]
+	[InlineData("events | project Id, R = todouble(Properties.Ratio)")]
+	[InlineData("events | project Id, U = tostring(Properties.user)")]
+	public async Task TypedPropertyProjections_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, PropsData);
+	}
+
+	[Theory]
+	[InlineData("events | summarize C = count() by U = tostring(Properties.user)")]
+	[InlineData("events | summarize Total = sum(toint(Properties.Status))")]
+	public async Task TypedPropertyAggregates_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, PropsData);
+	}
 }
