@@ -115,12 +115,13 @@ public static class KqlSqlExpressions
 	public static string? ToUpper(string? s) => s?.ToUpperInvariant();
 
 	// KQL substring(source, start[, length]). Non-negative start/length matches SQLite substr and
-	// .NET Substring exactly; out-of-range is clamped to the empty string. (Negative start/length —
-	// KQL's from-the-end semantics — are clamped to 0 here; documented, and not exercised.)
-	[Sql.Expression("substr({0}, {1} + 1)", ServerSideOnly = false, IsNullable = Sql.IsNullableType.Nullable)]
+	// .NET Substring exactly; out-of-range is clamped to the empty string. Negative start/length —
+	// KQL clamps them to 0, NOT SQLite's count-from-the-end — so the SQL translation clamps with
+	// max(...,0) to agree with the C# body (SubstringImpl) on either pipeline path.
+	[Sql.Expression("substr({0}, max({1}, 0) + 1)", ServerSideOnly = false, IsNullable = Sql.IsNullableType.Nullable)]
 	public static string? Substring2(string? s, long start) => SubstringImpl(s, start, null);
 
-	[Sql.Expression("substr({0}, {1} + 1, {2})", ServerSideOnly = false, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression("substr({0}, max({1}, 0) + 1, max({2}, 0))", ServerSideOnly = false, IsNullable = Sql.IsNullableType.Nullable)]
 	public static string? Substring3(string? s, long start, long length) => SubstringImpl(s, start, length);
 
 	static string? SubstringImpl(string? s, long start, long? length)
@@ -227,8 +228,18 @@ public static class KqlSqlExpressions
 			? v
 			: null;
 
+	// Accepts the textual forms "true"/"false" (from the in-memory json_extract, which renders a JSON
+	// boolean as its raw text) AND "1"/"0" (from SQLite's json_extract, which yields INTEGER 1/0 for a
+	// JSON boolean). Handling both keeps `tobool(Properties.X)` identical whether the predicate runs as
+	// SQLite SQL (pre-split `where`) or in-memory (post-split), which otherwise disagree by pipeline
+	// position — the SQL path fed "1"/"0" and rejected it, the in-memory path saw "true"/"false".
 	[Sql.Function("kql_tobool", ServerSideOnly = false)]
-	public static bool? ParseBool(string? s) => bool.TryParse(s, out var v) ? v : null;
+	public static bool? ParseBool(string? s)
+	{
+		if (bool.TryParse(s, out var v))
+			return v;
+		return s switch { "1" => true, "0" => false, _ => (bool?)null };
+	}
 
 	// todatetime parses an ISO-8601 string to epoch-ms (the SQL/record instant representation).
 	// Assumes UTC for an unspecified offset and normalizes to UTC, matching how timestamps are stored.
@@ -246,6 +257,15 @@ public static class KqlSqlExpressions
 
 	[Sql.Expression("(CASE WHEN {0} THEN 'true' ELSE 'false' END)", ServerSideOnly = false)]
 	public static string BoolToString(bool v) => v ? "true" : "false";
+
+	// Null-propagating variants: a nullable numeric/boolean scalar (the result of a typed conversion
+	// like toint/tobool) stringifies to null when null, else to its text — so tostring() composes over
+	// the conversion functions. CAST(NULL AS TEXT) is NULL in SQLite, matching the C# body.
+	[Sql.Expression("CAST({0} AS TEXT)", ServerSideOnly = false, IsNullable = Sql.IsNullableType.Nullable)]
+	public static string? LongToStringN(long? v) => v.HasValue ? v.Value.ToString(CultureInfo.InvariantCulture) : null;
+
+	[Sql.Expression("(CASE WHEN {0} IS NULL THEN NULL WHEN {0} THEN 'true' ELSE 'false' END)", ServerSideOnly = false, IsNullable = Sql.IsNullableType.Nullable)]
+	public static string? BoolToStringN(bool? v) => v.HasValue ? (v.Value ? "true" : "false") : null;
 
 	// Nullable epoch-ms → nullable DateTime, bridging todatetime into the in-memory/row instant
 	// representation (DateTime?), where null means "not a valid datetime".

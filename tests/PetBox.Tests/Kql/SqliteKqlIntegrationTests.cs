@@ -429,4 +429,61 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		(await RunAsync("events | where DeviceId == 'smoke-device' and toint(Status) >= 500"))
 			.Should().BeEquivalentTo(["req b"]);
 	}
+
+	static ImmutableDictionary<string, JsonElement> Props(string json) =>
+		JsonDocument.Parse(json).RootElement.EnumerateObject()
+			.Aggregate(ImmutableDictionary<string, JsonElement>.Empty, (acc, p) => acc.Add(p.Name, p.Value.Clone()));
+
+	// --- F3 (review): != excludes null operands identically in the real SQLite path ---
+
+	[Fact]
+	public async Task NotEqual_OverNullConversion_ExcludesNullRows_InSql()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(40, LogLevel.Information, "s200", "svc-z", Props("""{"Status":200}"""))),
+			ToRecord(Mk(41, LogLevel.Information, "s500", "svc-z", Props("""{"Status":500}"""))),
+			ToRecord(Mk(42, LogLevel.Information, "sbad", "svc-z", Props("""{"Status":"x"}"""))), // null
+		]);
+		// 200 excluded (equal), 500 kept, the unparseable (null) row excluded — matching Kusto (and the
+		// in-memory path), NOT C#'s lifted `!=` which would keep the null row.
+		(await RunAsync("events | where ServiceKey == 'svc-z' and toint(Properties.Status) != 200"))
+			.Should().BeEquivalentTo(["s500"]);
+	}
+
+	// --- F6 (review): a bare name resolves to a real column case-insensitively, in SQL ---
+
+	[Fact]
+	public async Task CaseInsensitiveColumnName_ResolvesToRealColumn_InSql()
+	{
+		(await RunAsync("events | where level == 4")).Should().BeEquivalentTo(["boom", "crash on Earth"]);
+		(await RunAsync("events | where message == 'boom'")).Should().BeEquivalentTo(["boom"]);
+	}
+
+	// --- F7 (review): tobool over a JSON boolean agrees on SQL (integer 1/0) and in-memory (true/false) ---
+
+	[Fact]
+	public async Task ToBool_OverJsonBoolean_AgreesInSql()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(45, LogLevel.Information, "on", "svc-b", Props("""{"Enabled":true}"""))),
+			ToRecord(Mk(46, LogLevel.Information, "off", "svc-b", Props("""{"Enabled":false}"""))),
+		]);
+		// SQLite json_extract yields INTEGER 1/0 for a JSON boolean; kql_tobool must accept it.
+		(await RunAsync("events | where ServiceKey == 'svc-b' and tobool(Properties.Enabled) == true"))
+			.Should().BeEquivalentTo(["on"]);
+		(await RunAsync("events | where ServiceKey == 'svc-b' and tobool(Properties.Enabled) == false"))
+			.Should().BeEquivalentTo(["off"]);
+	}
+
+	// --- F8 (review): negative substring start is clamped to 0 in SQL, matching the C# body ---
+
+	[Fact]
+	public async Task Substring_NegativeStart_ClampedInSql()
+	{
+		// substr with a negative start must clamp to 0 (KQL), NOT count from the end (SQLite default), so a
+		// negative-start substring equals the same-length substring from 0 on every row.
+		(await RunAsync("events | where substring(Message, -100, 5) == substring(Message, 0, 5)"))
+			.Should().HaveCount(5);
+		(await RunAsync("events | where substring(Message, -3) == Message")).Should().HaveCount(5);
+	}
 }

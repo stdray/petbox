@@ -5,6 +5,23 @@ namespace PetBox.Log.Core.Models;
 
 public enum LogLevel { Verbose = 0, Debug = 1, Information = 2, Warning = 3, Error = 4, Fatal = 5 }
 
+// The canonical numeric-level → name mapping shared by the ingest/materialization path and the KQL
+// engine (the LevelName computed column). Out-of-range levels render as "Unknown" rather than a bare
+// number, so a corrupt level never surfaces as a mysterious integer string.
+public static class LogLevelNames
+{
+	public static string ToName(int level) => level switch
+	{
+		0 => "Verbose",
+		1 => "Debug",
+		2 => "Information",
+		3 => "Warning",
+		4 => "Error",
+		5 => "Fatal",
+		_ => "Unknown",
+	};
+}
+
 public sealed record LogEntry
 {
 	public long Id { get; init; }

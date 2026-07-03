@@ -4,6 +4,7 @@ using Kusto.Language;
 using Kusto.Language.Syntax;
 using LinqToDB;
 using PetBox.Log.Core.Data;
+using PetBox.Log.Core.Models;
 using Expr = System.Linq.Expressions.Expression;
 using ParamExpr = System.Linq.Expressions.ParameterExpression;
 
@@ -99,19 +100,7 @@ public static class KqlTransformer
 			throw new UnsupportedKqlException($"unknown table '{tableName.SimpleName}'; only '{EventsTable}' is supported");
 
 		var now = (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime;
-		var q = source;
-		foreach (var op in operators.Skip(1))
-		{
-			q = op switch
-			{
-				FilterOperator f => ApplyWhere(q, f, now),
-				TakeOperator t => ApplyTake(q, t),
-				SortOperator s => ApplySort(q, s),
-				TopOperator t => ApplyTop(q, t),
-				_ => throw new UnsupportedKqlException($"operator '{op.Kind}' not supported"),
-			};
-		}
-		return q;
+		return ApplyPipeline(source, operators.Skip(1).ToList(), now);
 	}
 
 	static KqlResult ApplyShapeChanges(KqlResult input, IReadOnlyList<SyntaxNode> ops, DateTime now, IQueryable<LogEntryRecord> source)
@@ -149,63 +138,49 @@ public static class KqlTransformer
 	// expression is rejected — KQL auto-names it, which we don't reproduce.
 	static KqlResult ApplyProject(KqlResult input, ProjectOperator project, DateTime now)
 	{
-		var newColumns = new List<KqlColumn>();
-		var producers = new List<Func<object?[], object?>>();
+		// project is compiled SEQUENTIALLY like extend: each projected column is appended to a working
+		// row (input columns first, projected columns after) and the shared context reads from it, so a
+		// later projection can reference an earlier one in the SAME project. Bare column refs, `alias =
+		// column` renames and computed expressions all route through the scalar engine (which supplies
+		// the case-insensitive column resolution and the Properties.<name> bare-name fallback, and keeps
+		// the source column's type). An un-aliased computed expression is rejected — KQL auto-names it,
+		// which we don't reproduce. The output is the projected columns (the appended slots), in order.
+		var working = input.Columns.ToList();
 		var rowParam = Expr.Parameter(typeof(object?[]), "row");
-		var ctx = new RowScalarContext(rowParam, input.Columns) { UtcNow = now };
+		var ctx = new RowScalarContext(rowParam, working) { UtcNow = now };
+		var outColumns = new List<KqlColumn>();
+		var producers = new List<Func<object?[], object?>>();
 
 		foreach (var element in project.Expressions)
 		{
-			switch (element.Element)
+			var (name, expr) = element.Element switch
 			{
-				case NameReference n:
-					AddPassThrough(n.SimpleName, n.SimpleName);
-					break;
-				case SimpleNamedExpression { Name: NameDeclaration alias, Expression: NameReference src }:
-					AddPassThrough(alias.Name.SimpleName, src.SimpleName);
-					break;
-				case SimpleNamedExpression { Name: NameDeclaration alias, Expression: var expr }:
-					var (type, fn) = CompileCell(expr, ctx, rowParam);
-					newColumns.Add(new KqlColumn(alias.Name.SimpleName, type));
-					producers.Add(fn);
-					break;
-				default:
-					throw new UnsupportedKqlException(
-						$"project expression '{element.Element.Kind}' not supported (use a column ref or 'name = expression')");
-			}
+				NameReference n => (n.SimpleName, (Expression)n),
+				SimpleNamedExpression { Name: NameDeclaration alias, Expression: var e } => (alias.Name.SimpleName, e),
+				_ => throw new UnsupportedKqlException(
+					$"project expression '{element.Element.Kind}' not supported (use a column ref or 'name = expression')"),
+			};
+			var (type, fn) = CompileCell(expr, ctx, rowParam);
+			working.Add(new KqlColumn(name, type));
+			outColumns.Add(new KqlColumn(name, type));
+			producers.Add(fn);
 		}
 
-		return new KqlResult(newColumns, StreamCells(input.Rows, producers.ToArray()));
-
-		void AddPassThrough(string outputName, string sourceName)
-		{
-			var sourceIndex = FindColumnIndex(input.Columns, sourceName);
-			if (sourceIndex >= 0)
-			{
-				newColumns.Add(new KqlColumn(outputName, input.Columns[sourceIndex].ClrType));
-				var captured = sourceIndex;
-				producers.Add(row => row[captured]);
-				return;
-			}
-			// Bare-name fallback: an unknown name is a Properties.<name> lookup, when the row shape still
-			// carries PropertiesJson (else the precise unknown-column error stands).
-			var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
-			if (propIdx < 0)
-				throw new UnsupportedKqlException($"project: unknown column '{sourceName}'");
-			newColumns.Add(new KqlColumn(outputName, typeof(string)));
-			var path = "$." + sourceName;
-			producers.Add(row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path));
-		}
+		return new KqlResult(outColumns,
+			StreamProject(input.Rows, input.Columns.Count, working.Count, producers.ToArray()));
 	}
 
 	// extend appends computed columns (evaluated in-memory over the current row). Re-using an
-	// existing name replaces that column in place (KQL extend semantics). Each expression sees
-	// the input columns only.
+	// existing name replaces that column in place (KQL extend semantics). Expressions are compiled
+	// SEQUENTIALLY: `columns` grows as each element is compiled and the shared context reads from it,
+	// so a later expression sees the columns introduced by earlier ones in the SAME extend — Kusto
+	// allows this, e.g. `extend A = tostring(Level), B = strcat(A, '-x')`. Writes then execute in that
+	// same order over the output row so an earlier computed cell is populated before a later one reads it.
 	static KqlResult ApplyExtend(KqlResult input, ExtendOperator extend, DateTime now)
 	{
 		var columns = input.Columns.ToList();
 		var rowParam = Expr.Parameter(typeof(object?[]), "row");
-		var ctx = new RowScalarContext(rowParam, input.Columns) { UtcNow = now };
+		var ctx = new RowScalarContext(rowParam, columns) { UtcNow = now };
 		var writes = new List<(int TargetIndex, Func<object?[], object?> Fn)>();
 
 		foreach (var element in extend.Expressions)
@@ -298,7 +273,7 @@ public static class KqlTransformer
 		{
 			case NameReference n:
 				{
-					var idx = FindColumnIndex(input.Columns, n.SimpleName);
+					var idx = ResolveColumnIndexCI(input.Columns, n.SimpleName);
 					if (idx >= 0)
 						return (n.SimpleName, input.Columns[idx].ClrType, row => row[idx]);
 					// Bare-name fallback: group by Properties.<name> when the shape still has PropertiesJson.
@@ -377,32 +352,36 @@ public static class KqlTransformer
 					return new AggSpec(name, typeof(long), () => new CountIfAccumulator(f));
 				}
 
+			// sum/avg/min/max declare NULLABLE result types: an empty group, or one whose argument values
+			// are all null (aggregates skip null arguments), yields null from the accumulator — so a
+			// downstream `| where <agg> > 0` unboxes the cell as the nullable type (null → not matched)
+			// instead of crashing on an object→non-nullable-value unbox.
 			case "sum":
 				{
 					var (type, f) = Arg("sum");
 					RequireNumeric(type, "sum");
 					return KqlScalar.NonNullable(type) == typeof(double)
-						? new AggSpec(name, typeof(double), () => new SumDoubleAccumulator(f))
-						: new AggSpec(name, typeof(long), () => new SumLongAccumulator(f));
+						? new AggSpec(name, typeof(double?), () => new SumDoubleAccumulator(f))
+						: new AggSpec(name, typeof(long?), () => new SumLongAccumulator(f));
 				}
 
 			case "avg":
 				{
 					var (type, f) = Arg("avg");
 					RequireNumeric(type, "avg");
-					return new AggSpec(name, typeof(double), () => new AvgAccumulator(f));
+					return new AggSpec(name, typeof(double?), () => new AvgAccumulator(f));
 				}
 
 			case "min":
 				{
 					var (type, f) = Arg("min");
-					return new AggSpec(name, type, () => new MinMaxAccumulator(f, min: true));
+					return new AggSpec(name, Nullable(type), () => new MinMaxAccumulator(f, min: true));
 				}
 
 			case "max":
 				{
 					var (type, f) = Arg("max");
-					return new AggSpec(name, type, () => new MinMaxAccumulator(f, min: false));
+					return new AggSpec(name, Nullable(type), () => new MinMaxAccumulator(f, min: false));
 				}
 
 			case "dcount":
@@ -416,6 +395,11 @@ public static class KqlTransformer
 					$"aggregate '{fn}' not supported (supported: count, countif, sum, min, max, avg, dcount)");
 		}
 	}
+
+	// The nullable form of a value type (int → int?, DateTime → DateTime?), passing reference types and
+	// already-nullable types through — so an aggregate over any column can declare a null-capable result.
+	static Type Nullable(Type t) =>
+		t.IsValueType && !KqlScalar.IsNullable(t) ? typeof(Nullable<>).MakeGenericType(t) : t;
 
 	sealed record AggSpec(string OutputName, Type ResultType, Func<Accumulator> Factory);
 
@@ -545,6 +529,20 @@ public static class KqlTransformer
 				acc.Add(row);
 		}
 
+		// Kusto returns ONE row of default aggregates for a no-by `summarize` over EMPTY input (count()=0,
+		// sum/min/max/avg = null) rather than zero rows. Fold a fresh accumulator set to produce it.
+		if (groups.Count == 0 && groupExtractors.Length == 0)
+		{
+			var accs = new Accumulator[aggs.Length];
+			for (var i = 0; i < aggs.Length; i++)
+				accs[i] = aggs[i].Factory();
+			var single = new object?[aggs.Length];
+			for (var i = 0; i < aggs.Length; i++)
+				single[i] = accs[i].Result;
+			yield return single;
+			yield break;
+		}
+
 		foreach (var (key, accs) in groups)
 		{
 			var result = new object?[key.Values.Length + accs.Length];
@@ -587,16 +585,24 @@ public static class KqlTransformer
 		yield return [n];
 	}
 
-	static async IAsyncEnumerable<object?[]> StreamCells(
+	// project's stream: build a working row (input cells copied, then each projected cell computed in
+	// order over that same working row so a later projection sees earlier ones), then emit only the
+	// projected slots [inputWidth ..) as the output row.
+	static async IAsyncEnumerable<object?[]> StreamProject(
 		IAsyncEnumerable<object?[]> source,
+		int inputWidth,
+		int workingWidth,
 		Func<object?[], object?>[] producers,
 		[EnumeratorCancellation] CancellationToken ct = default)
 	{
 		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
 		{
-			var result = new object?[producers.Length];
+			var work = new object?[workingWidth];
+			Array.Copy(row, work, inputWidth);
 			for (var i = 0; i < producers.Length; i++)
-				result[i] = producers[i](row);
+				work[inputWidth + i] = producers[i](work);
+			var result = new object?[producers.Length];
+			Array.Copy(work, inputWidth, result, 0, producers.Length);
 			yield return result;
 		}
 	}
@@ -612,8 +618,10 @@ public static class KqlTransformer
 		{
 			var result = new object?[outputWidth];
 			Array.Copy(row, result, inputWidth);
+			// Writes read from `result` (not the input row) and run in element order, so a later extend
+			// expression observes the cells written by earlier ones in the same operator.
 			foreach (var (idx, fn) in writes)
-				result[idx] = fn(row);
+				result[idx] = fn(result);
 			yield return result;
 		}
 	}
@@ -763,7 +771,7 @@ public static class KqlTransformer
 					break;
 				case NameReference n:
 					{
-						var idx = FindColumnIndex(input.Columns, n.SimpleName);
+						var idx = ResolveColumnIndexCI(input.Columns, n.SimpleName);
 						if (idx >= 0)
 						{
 							outputColumns.Add(input.Columns[idx]);
@@ -818,6 +826,19 @@ public static class KqlTransformer
 	// a join/lookup right side must be a subquery over the SAME log (`events`), compiled by the same
 	// transformer against the same IQueryable source (RunCorrelationSubquery). ---
 
+	// Hard cap on the buffered build side (the fully materialized right subquery) of a join/lookup, so a
+	// `join (events)` over a large log cannot exhaust the (small) prod VM's memory. Exceeding it is a
+	// user-fixable error, not an internal fault, so it throws UnsupportedKqlException with a teaching
+	// message. Overridable per async-context (AsyncLocal, isolated across parallel tests) so the cap is
+	// exercisable without materializing 100k rows.
+	internal const int JoinBuildSideCap = 100_000;
+	static readonly AsyncLocal<int?> JoinBuildSideCapOverrideValue = new();
+	internal static int? JoinBuildSideCapOverride
+	{
+		get => JoinBuildSideCapOverrideValue.Value;
+		set => JoinBuildSideCapOverrideValue.Value = value;
+	}
+
 	enum JoinKind { InnerUnique, Inner, LeftOuter }
 
 	// join [kind=innerunique|inner|leftouter] (<right subquery>) on <key>[, <key2>...]. Left columns
@@ -833,7 +854,7 @@ public static class KqlTransformer
 			throw new UnsupportedKqlException("join requires an 'on' clause with equality key(s)");
 		var right = RunCorrelationSubquery(op.Expression, source, now, "join");
 		var (leftKeys, rightKeys, _) = ResolveJoinKeys(onClause, left, right, "join");
-		var (columns, included) = BuildJoinColumns(left, right, NoExcludedColumns);
+		var (columns, included) = BuildJoinColumns(left, right, NoExcludedColumns, rightNullable: kind == JoinKind.LeftOuter);
 		return new KqlResult(columns,
 			StreamJoinRows(left, right, leftKeys, rightKeys, kind, left.Columns.Count, included, columns.Count));
 	}
@@ -851,7 +872,7 @@ public static class KqlTransformer
 		var right = RunCorrelationSubquery(op.Expression, source, now, "lookup");
 		var (leftKeys, rightKeys, rightKeyCols) = ResolveJoinKeys(onClause, left, right, "lookup");
 		var exclude = new HashSet<int>(rightKeyCols.Where(i => i >= 0));
-		var (columns, included) = BuildJoinColumns(left, right, exclude);
+		var (columns, included) = BuildJoinColumns(left, right, exclude, rightNullable: true);
 		return new KqlResult(columns,
 			StreamJoinRows(left, right, leftKeys, rightKeys, JoinKind.LeftOuter, left.Columns.Count, included, columns.Count));
 	}
@@ -959,7 +980,7 @@ public static class KqlTransformer
 	// Properties fallback (so lookup knows there is no right key column to drop).
 	static Func<object?[], object?> ResolveKeyExtractor(KqlResult shape, string name, string opName, out int columnIndex)
 	{
-		var idx = FindColumnIndex(shape.Columns, name);
+		var idx = ResolveColumnIndexCI(shape.Columns, name);
 		if (idx >= 0)
 		{
 			columnIndex = idx;
@@ -975,8 +996,12 @@ public static class KqlTransformer
 
 	// Builds the joined column list: left columns verbatim, then the right columns (minus any
 	// excluded, used by lookup for the right key columns), each suffixed to a unique name on
-	// collision. `included` maps output right-column slots back to right-row indices.
-	static (List<KqlColumn> Columns, int[] Included) BuildJoinColumns(KqlResult left, KqlResult right, ISet<int> excludeRight)
+	// collision. `included` maps output right-column slots back to right-row indices. When
+	// `rightNullable` (a leftouter join or a lookup), each right value-type column is declared NULLABLE:
+	// an unmatched left row appends null right cells, so a non-nullable declared type would crash the
+	// downstream object→value unbox (strings are already null-capable and pass through unchanged).
+	static (List<KqlColumn> Columns, int[] Included) BuildJoinColumns(
+		KqlResult left, KqlResult right, ISet<int> excludeRight, bool rightNullable)
 	{
 		var columns = new List<KqlColumn>(left.Columns);
 		var used = new HashSet<string>(columns.Select(c => c.Name), StringComparer.Ordinal);
@@ -990,7 +1015,8 @@ public static class KqlTransformer
 			var n = 1;
 			while (!used.Add(name))
 				name = baseName + n++;
-			columns.Add(new KqlColumn(name, right.Columns[i].ClrType));
+			var type = rightNullable ? Nullable(right.Columns[i].ClrType) : right.Columns[i].ClrType;
+			columns.Add(new KqlColumn(name, type));
 			included.Add(i);
 		}
 		return (columns, included.ToArray());
@@ -1008,10 +1034,16 @@ public static class KqlTransformer
 		[EnumeratorCancellation] CancellationToken ct = default)
 	{
 		// Build side: buffer the right subquery, bucketed by key. A key with any null component never
-		// matches (Kusto join-on-null semantics).
+		// matches (Kusto join-on-null semantics). The buffer is capped so a runaway right side fails fast
+		// with a teaching error instead of OOMing.
+		var cap = JoinBuildSideCapOverride ?? JoinBuildSideCap;
+		var buffered = 0;
 		var buckets = new Dictionary<GroupKey, List<object?[]>>();
 		await foreach (var r in right.Rows.WithCancellation(ct).ConfigureAwait(false))
 		{
+			if (++buffered > cap)
+				throw new UnsupportedKqlException(
+					$"join right side exceeded {cap} rows; narrow it with where/take");
 			var key = MakeKey(rightKeys, r);
 			if (key is null)
 				continue;
@@ -1058,6 +1090,7 @@ public static class KqlTransformer
 	}
 
 	// A join key from a row, or null when any component is null (a null key never matches in Kusto).
+	// Each component is normalized so keys compare by VALUE, not boxed CLR type (see NormalizeKeyValue).
 	static GroupKey? MakeKey(Func<object?[], object?>[] extractors, object?[] row)
 	{
 		var values = new object?[extractors.Length];
@@ -1066,10 +1099,24 @@ public static class KqlTransformer
 			var v = extractors[i](row);
 			if (v is null)
 				return null;
-			values[i] = v;
+			values[i] = NormalizeKeyValue(v);
 		}
 		return new GroupKey(values);
 	}
+
+	// Normalizes a join-key value so equal keys match across trivial CLR-type differences: every integral
+	// width → long, float/double → double; strings, bools and datetimes pass through unchanged. Without
+	// this, GroupKey's boxed object.Equals treats 2 (int) and 2L (long) as unequal — e.g. a raw `Level`
+	// (int) column joined against a toint()-computed (long) key — so the join would silently emit nothing.
+	// Cross-kind keys (string vs numeric) still never match, matching Kusto's same-typed-key requirement.
+	static object NormalizeKeyValue(object v) => v switch
+	{
+		long l => l,
+		int or short or sbyte or byte or ushort or uint => Convert.ToInt64(v),
+		double d => d,
+		float f => (double)f,
+		_ => v,
+	};
 
 	// mv-expand <col>: one output row per element of a JSON-array value (Properties.<key> or a bare
 	// property name — the value json_extract returns for an array is its raw JSON text). Elements are
@@ -1116,7 +1163,7 @@ public static class KqlTransformer
 		{
 			case NameReference n:
 				{
-					var idx = FindColumnIndex(input.Columns, n.SimpleName);
+					var idx = ResolveColumnIndexCI(input.Columns, n.SimpleName);
 					if (idx >= 0)
 						return (n.SimpleName, idx, row => row[idx] as string);
 					var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
@@ -1332,6 +1379,28 @@ public static class KqlTransformer
 		return -1;
 	}
 
+	// Resolves a bare user-typed column reference to a row-shape column: exact (Ordinal) match wins;
+	// else a UNIQUE case-insensitive match (so prod field-casing like `level` / `message` binds to the
+	// real column instead of silently falling to the Properties bag). Returns -1 when nothing matches
+	// or the case-insensitive match is ambiguous → the caller's Properties.<name> fallback then applies.
+	// Distinct from FindColumnIndex, which stays exact for internal lookups (PropertiesJson, replace-in-
+	// place aliases) that must NOT case-fold.
+	internal static int ResolveColumnIndexCI(IReadOnlyList<KqlColumn> columns, string name)
+	{
+		var exact = FindColumnIndex(columns, name);
+		if (exact >= 0)
+			return exact;
+		var ci = -1;
+		for (var i = 0; i < columns.Count; i++)
+			if (string.Equals(columns[i].Name, name, StringComparison.OrdinalIgnoreCase))
+			{
+				if (ci >= 0)
+					return -1; // ambiguous → fall through to Properties
+				ci = i;
+			}
+		return ci;
+	}
+
 	static IQueryable<LogEntryRecord> ApplyPipeline(IQueryable<LogEntryRecord> source, IReadOnlyList<SyntaxNode> operators, DateTime now)
 	{
 		var q = source;
@@ -1361,7 +1430,7 @@ public static class KqlTransformer
 				r.ServiceKey,
 				DateTimeOffset.FromUnixTimeMilliseconds(r.TimestampMs).UtcDateTime,
 				r.Level,
-				LevelName(r.Level),
+				LogLevelNames.ToName(r.Level),
 				r.Message,
 				r.MessageTemplate,
 				r.Exception,
@@ -1369,17 +1438,6 @@ public static class KqlTransformer
 			];
 		}
 	}
-
-	static string LevelName(int level) => level switch
-	{
-		0 => "Verbose",
-		1 => "Debug",
-		2 => "Information",
-		3 => "Warning",
-		4 => "Error",
-		5 => "Fatal",
-		_ => "Unknown",
-	};
 
 	static IEnumerable<SyntaxNode> FlattenPipeline(SyntaxNode root)
 	{

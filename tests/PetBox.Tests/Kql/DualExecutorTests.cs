@@ -423,4 +423,15 @@ public sealed class DualExecutorTests
 	{
 		await DualExecutor.AssertSameTableAsync(kql, JoinData);
 	}
+
+	// F5 (review) — sequential extend/project column refs (`extend A = …, B = f(A)`) are pinned
+	// PRODUCTION-ONLY in KqlReviewFixesTests: the reference executor (like real Kusto) REJECTS a
+	// reference to a column introduced earlier in the same operator, so it cannot be differential.
+
+	// F9 (review): a no-by summarize over EMPTY input returns ONE row of default aggregates, not zero.
+	[Fact]
+	public async Task SummarizeNoBy_OverEmptyInput_YieldsSingleDefaultRow()
+	{
+		await DualExecutor.AssertSameTableAsync("events | where Level == 99 | summarize C = count()", Dataset);
+	}
 }

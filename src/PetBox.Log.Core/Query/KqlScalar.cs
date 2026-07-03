@@ -1,6 +1,7 @@
 using System.Reflection;
 using Kusto.Language.Syntax;
 using PetBox.Log.Core.Data;
+using PetBox.Log.Core.Models;
 using Expr = System.Linq.Expressions.Expression;
 using ParamExpr = System.Linq.Expressions.ParameterExpression;
 
@@ -65,7 +66,14 @@ abstract class ScalarContext
 // Leaves resolve to LogEntryRecord property accesses → the tree is SQL-translatable.
 sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 {
-	public override Expr ResolveColumn(string name) => name switch
+	// The user-facing scalar columns (excludes the internal PropertiesJson store, which is only reached
+	// via the Properties.<key> path form, never as a bare column). A bare name binds to one of these by
+	// exact match, else by a UNIQUE case-insensitive match — so prod field-casing (`level`, `message`)
+	// resolves to the real column. Everything else is a Properties.<name> lookup.
+	static readonly string[] ScalarColumns =
+		["Id", "Level", "LevelName", "Timestamp", "ServiceKey", "Message", "MessageTemplate", "Exception"];
+
+	public override Expr ResolveColumn(string name) => ResolveKnownName(name) switch
 	{
 		"Id" => Expr.Property(row, nameof(LogEntryRecord.Id)),
 		"Level" => Expr.Property(row, nameof(LogEntryRecord.Level)),
@@ -77,11 +85,29 @@ sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 		"Exception" => Expr.Property(row, nameof(LogEntryRecord.Exception)),
 		// Bare-name fallback: a name that is not a known event column resolves as a Properties.<name>
 		// lookup (string-typed json_extract), so `where DeviceId == 'x'` filters on the property. Known
-		// columns always win (matched above). Trade-off: a typo'd column now yields empty results
-		// rather than an error — but comparing a fallback (string) name to a non-string literal still
-		// raises a precise type error.
-		_ => ResolveProperties(name),
+		// columns always win (matched above). Trade-off: a TRUE typo'd column (no case-insensitive match)
+		// now yields empty results rather than an error — accepted cost of the dynamic Properties bag —
+		// but comparing a fallback (string) name to a non-string literal still raises a precise type error.
+		var other => ResolveProperties(other),
 	};
+
+	// Canonical column name for a bare reference: exact match wins; else a unique case-insensitive
+	// match; else the original name (→ Properties fallback in ResolveColumn's switch).
+	static string ResolveKnownName(string name)
+	{
+		foreach (var c in ScalarColumns)
+			if (string.Equals(c, name, StringComparison.Ordinal))
+				return c;
+		string? ci = null;
+		foreach (var c in ScalarColumns)
+			if (string.Equals(c, name, StringComparison.OrdinalIgnoreCase))
+			{
+				if (ci is not null)
+					return name; // ambiguous (cannot happen for the fixed schema) → Properties
+				ci = c;
+			}
+		return ci ?? name;
+	}
 
 	public override Expr ResolveProperties(string key)
 	{
@@ -135,20 +161,9 @@ sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 	Expr LevelName()
 	{
 		var level = Expr.Property(row, nameof(LogEntryRecord.Level));
-		var toName = typeof(RecordScalarContext).GetMethod(nameof(ToLevelName), BindingFlags.Static | BindingFlags.NonPublic)!;
+		var toName = typeof(LogLevelNames).GetMethod(nameof(LogLevelNames.ToName))!;
 		return Expr.Call(toName, level);
 	}
-
-	static string ToLevelName(int level) => level switch
-	{
-		0 => "Verbose",
-		1 => "Debug",
-		2 => "Information",
-		3 => "Warning",
-		4 => "Error",
-		5 => "Fatal",
-		_ => "Unknown",
-	};
 
 	// Timestamp is stored as epoch-ms, so a datetime() literal is converted to ms; integer /
 	// string columns require the matching literal kind. Preserves the exact user-facing
@@ -159,8 +174,7 @@ sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 		{
 			if (literal.LiteralValue is not DateTime dt)
 				throw new UnsupportedKqlException("Timestamp comparison requires a datetime() literal");
-			var utc = dt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : dt.ToUniversalTime();
-			return Expr.Constant(new DateTimeOffset(utc).ToUnixTimeMilliseconds());
+			return Expr.Constant(KqlSqlExpressions.ToUnixMs(dt));
 		}
 
 		if (targetType == typeof(long) || targetType == typeof(int))
@@ -186,7 +200,8 @@ sealed class RowScalarContext(ParamExpr rowArray, IReadOnlyList<KqlColumn> colum
 {
 	public override Expr ResolveColumn(string name)
 	{
-		var idx = IndexOf(name);
+		// Exact match, else a unique case-insensitive match to a real column (prod field-casing).
+		var idx = KqlTransformer.ResolveColumnIndexCI(columns, name);
 		if (idx >= 0)
 			return Cell(idx, columns[idx].ClrType);
 		// Bare-name fallback (post-split): an unknown name is a Properties.<name> lookup, but only when
@@ -382,10 +397,8 @@ static class KqlScalar
 	static Expr Compare(Expr le, Expr re, SyntaxKind kind)
 	{
 		(le, re) = UnifyComparable(le, re, kind);
-		// liftToNull:false so a comparison with a nullable operand yields bool (not bool?): a null
-		// operand makes the comparison false, matching SQL's NULL-is-not-true and Kusto's null-in-where
-		// (typed conversions of malformed values produce null, which must simply not match).
-		return kind switch
+		// liftToNull:false so a comparison with a nullable operand yields bool (not bool?).
+		var cmp = kind switch
 		{
 			SyntaxKind.EqualExpression => Expr.Equal(le, re, liftToNull: false, method: null),
 			SyntaxKind.NotEqualExpression => Expr.NotEqual(le, re, liftToNull: false, method: null),
@@ -395,6 +408,26 @@ static class KqlScalar
 			SyntaxKind.GreaterThanOrEqualExpression => Expr.GreaterThanOrEqual(le, re, liftToNull: false, method: null),
 			_ => throw new UnsupportedKqlException($"comparison '{kind}' not supported"),
 		};
+		// Kusto excludes a null operand from EVERY comparison (==, !=, <, <=, >, >=): a typed conversion of
+		// a malformed/missing value is null, and null matches nothing. C#'s lifted `!=` would instead
+		// return TRUE when exactly one side is null (so `where toint(x) != 5` would wrongly KEEP the null
+		// rows), while SQLite already yields NULL there (excluded) — a SQL-vs-in-memory divergence by
+		// pipeline position. Guard BOTH paths identically by requiring every nullable operand non-null.
+		// Built as a literal AndAlso so linq2db compiles the SAME tree the in-memory path runs.
+		// NOTE: two-valued, not Kusto's three-valued logic — not(<null compare>) gives not(false)=true
+		// here vs Kusto's not(null)=null; that edge is accepted and deliberately left unimplemented.
+		return NullGuard(cmp, le, re);
+	}
+
+	// AND `comparison` with a HasValue check for each nullable operand, so a null operand forces the whole
+	// comparison to false. A no-op when neither operand is a Nullable<T> (strings/bools/plain numerics).
+	static Expr NullGuard(Expr comparison, params Expr[] operands)
+	{
+		var guarded = comparison;
+		foreach (var op in operands)
+			if (IsNullable(op.Type))
+				guarded = Expr.AndAlso(Expr.Property(op, "HasValue"), guarded);
+		return guarded;
 	}
 
 	static Expr In(InExpression inx, ScalarContext ctx)
@@ -412,7 +445,10 @@ static class KqlScalar
 			var eq = Expr.Equal(l, r, liftToNull: false, method: null);
 			acc = acc is null ? eq : Expr.OrElse(acc, eq);
 		}
-		return negate ? Expr.Not(acc!) : acc!;
+		Expr result = negate ? Expr.Not(acc!) : acc!;
+		// A null left operand matches nothing, and its negation is still excluded — so both `in` and `!in`
+		// yield false for a null left (Kusto null semantics; see Compare's NOTE on two-valued logic).
+		return NullGuard(result, le);
 	}
 
 	static Expr Between(BetweenExpression btw, ScalarContext ctx)
@@ -425,7 +461,9 @@ static class KqlScalar
 		var inRange = Expr.AndAlso(
 			Expr.GreaterThanOrEqual(v1, lo1, liftToNull: false, method: null),
 			Expr.LessThanOrEqual(v2, hi1, liftToNull: false, method: null));
-		return btw.Kind == SyntaxKind.NotBetweenExpression ? Expr.Not(inRange) : inRange;
+		Expr result = btw.Kind == SyntaxKind.NotBetweenExpression ? Expr.Not(inRange) : inRange;
+		// A null value is excluded from both `between` and `!between` (Kusto null semantics).
+		return NullGuard(result, value);
 	}
 
 	static Expr Call(FunctionCallExpression call, ScalarContext ctx)
@@ -554,19 +592,49 @@ static class KqlScalar
 		var distinct = types.Distinct().ToList();
 		if (distinct.Count == 1)
 			return distinct[0];
-		if (distinct.All(IsNumeric))
-			return distinct.Aggregate(CommonNumeric);
+		// Numeric promotion, nullable-aware: a typed conversion (toint/todouble) yields a nullable
+		// numeric, so `iff(cond, toint(x), 0)` mixes long? and long — unify to the nullable common type
+		// (long?) rather than rejecting them as "incompatible".
+		if (distinct.All(t => IsNumeric(NonNullable(t))))
+		{
+			var common = distinct.Select(NonNullable).Aggregate(CommonNumeric);
+			return distinct.Any(IsNullable) ? typeof(Nullable<>).MakeGenericType(common) : common;
+		}
+		// Same underlying value type mixed with its nullable form (e.g. bool and bool?) → the nullable one.
+		var underlyings = distinct.Select(NonNullable).Distinct().ToList();
+		if (underlyings.Count == 1 && underlyings[0].IsValueType)
+			return typeof(Nullable<>).MakeGenericType(underlyings[0]);
 		throw new UnsupportedKqlException(
-			$"incompatible result types: {string.Join(", ", distinct.Select(t => t.Name))}");
+			$"incompatible result types: {string.Join(", ", distinct.Select(FriendlyTypeName))}");
 	}
 
 	public static Expr ConvertToValue(Expr e, Type t)
 	{
 		if (e.Type == t)
 			return e;
-		if (IsNumeric(e.Type) && IsNumeric(t))
+		// Numeric widening, nullable-aware (int→long?, long→long?, long?→double?, …) via the same
+		// two-step lifted convert the comparison path uses.
+		if (IsNumeric(NonNullable(e.Type)) && IsNumeric(NonNullable(t)))
+			return ConvertComparable(e, t);
+		// Widen a non-null value to its nullable form (bool→bool?, datetime→datetime?).
+		if (IsNullable(t) && NonNullable(t) == e.Type)
 			return Expr.Convert(e, t);
-		throw new UnsupportedKqlException($"cannot convert {e.Type.Name} to {t.Name}");
+		throw new UnsupportedKqlException($"cannot convert {FriendlyTypeName(e.Type)} to {FriendlyTypeName(t)}");
+	}
+
+	// User-facing KQL type name for an expression's CLR type (nullable-stripped): keeps error messages
+	// in the language the user writes rather than leaking raw CLR names like Int64 / Nullable`1.
+	public static string FriendlyTypeName(Type t)
+	{
+		var u = NonNullable(t);
+		return u == typeof(long) ? "long"
+			: u == typeof(int) ? "int"
+			: u == typeof(double) ? "double"
+			: u == typeof(bool) ? "bool"
+			: u == typeof(string) ? "string"
+			: u == typeof(DateTime) ? "datetime"
+			: u == typeof(TimeSpan) ? "timespan"
+			: u.Name;
 	}
 }
 
@@ -857,8 +925,16 @@ static class KqlScalarFunctions
 			return Expr.Call(SqlM(nameof(KqlSqlExpressions.LongToString)), Expr.Convert(a, typeof(long)));
 		if (a.Type == typeof(bool))
 			return Expr.Call(SqlM(nameof(KqlSqlExpressions.BoolToString)), a);
+		// Nullable variants (the result of a typed conversion like toint/tobool): null-propagate to a
+		// null string so tostring(toint(x)) composes instead of throwing on the Nullable`1 type.
+		if (a.Type == typeof(long?))
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.LongToStringN)), a);
+		if (a.Type == typeof(int?))
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.LongToStringN)), Expr.Convert(a, typeof(long?)));
+		if (a.Type == typeof(bool?))
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.BoolToStringN)), a);
 		throw new UnsupportedKqlException(
-			$"tostring() supports string, integer, and boolean arguments, got {a.Type.Name}");
+			$"tostring() supports string, integer, and boolean arguments, got {KqlScalar.FriendlyTypeName(a.Type)}");
 	}
 
 	static Expr ToLongConv(IReadOnlyList<Expr> args, string fn)
