@@ -166,7 +166,8 @@ public static class MemoryTools
 	// reach the shared container (that's the point). Personal facts are carried by
 	// type=User, not a separate container. Curated/temporal writes go through memory_upsert.
 
-	const string WorkspaceContainer = "$system";
+	// Internal: MemoryApi's canon endpoint reads the workspace canon from this same container.
+	internal const string WorkspaceContainer = "$system";
 	const string DefaultStore = "notes";
 
 	[McpServerTool(Name = "memory_remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
