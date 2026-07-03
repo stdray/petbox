@@ -25,6 +25,7 @@
  */
 import type { Plugin } from "@opencode-ai/plugin";
 import { pushTranscript } from "./append.ts";
+import { fetchCanonBlock } from "./canon.ts";
 import { resolveProject } from "./registry.ts";
 
 function memoryProtocol(project: string): string {
@@ -70,8 +71,14 @@ project). Curated/temporal edits go through \`petbox_memory_upsert\`.
 durable facts and recurring behavior patterns into the \`autocaptured\` store on its own. So:
 (1) don't re-store what memory_search already shows as autocaptured — promotion is the owner's
 call; (2) the **end-of-session sweep** is an INSURANCE pass, not the only capture: before
-you stop, store the 1-3 learnings that must not wait for background distillation — skip
-narration and anything derivable from code/git.`;
+you stop, store the 1-3 learnings that must not wait for background distillation — and also
+record 0-2 process-friction observations (what got in the way, what you had to work around,
+what looked stale) — skip narration and anything derivable from code/git.
+
+**Process defects are findings, not obstacles:** never silently work around a process/doc
+defect or a contradiction between a document and reality — file an intake issue on the
+project's \`intake\` board (\`petbox_tasks_upsert\` type:"issue" status:"reported") instead of
+swallowing it. Criticism of the process is explicitly welcome and is never scope creep.`;
 }
 
 export const PetboxPlugin: Plugin = async ({ client, directory }) => {
@@ -130,6 +137,9 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
     "experimental.chat.system.transform": async (_input, output) => {
       if (!resolved) return;
       output.system.push(memoryProtocol(resolved.project));
+      // Append the curated memory canon when available (best-effort; degrades to nothing).
+      const canon = await fetchCanonBlock(resolved);
+      if (canon) output.system.push(canon);
     },
 
     // Port of push-session — mirror the finished turn into PetBox's Session module.

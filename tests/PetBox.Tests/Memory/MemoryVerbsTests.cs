@@ -92,6 +92,46 @@ public sealed class MemoryVerbsTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Upsert_PatchWithoutType_KeepsCurrentType()
+	{
+		// explicit-write-semantics / memory-upsert-patch-type-required: memory_upsert is PATCH,
+		// so an omitted `type` on an EDIT must keep the current type — not be rejected. (Root
+		// cause was ToEntry doing ParseType(i.Type) with no fallback to current?.Type, unlike the
+		// neighbouring description/body/tags/metadata which all PATCH-fall back.)
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "the deploy tag drives prod releases", type: "Reference");
+
+		var hit = (await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "releases")).Items.Single();
+		hit.Type.Should().Be("Reference");
+
+		// PATCH the body only — the entry carries NO `type`. Must apply and keep type=Reference.
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = hit.Key, body = "an edited marker body", version = hit.Version },
+		});
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
+		res.Applied.Should().BeTrue();
+
+		var after = (await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "edited")).Items.Single();
+		after.Type.Should().Be("Reference"); // unchanged by the type-less PATCH
+		after.Body.Should().Contain("edited marker");
+	}
+
+	[Fact]
+	public async Task Upsert_NewEntryWithoutType_IsRejected()
+	{
+		// The PATCH fallback must NOT weaken create-semantics: a NEW entry (version 0) still
+		// requires an explicit type.
+		var http = Http("memory:read,memory:write");
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "no-type-new", description = "d", body = "b", version = 0 },
+		});
+		var act = async () => await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
+		await act.Should().ThrowAsync<ArgumentException>();
+	}
+
+	[Fact]
 	public async Task Remember_Workspace_IsCrossProject_NotVisibleToProjectScope()
 	{
 		var http = Http("memory:read,memory:write");

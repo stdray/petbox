@@ -24,6 +24,13 @@ public sealed class MemoryService : IMemoryService
 	// Fusion candidate depth; type filtering happens after resolution, so keep it generous.
 	const int SearchK = 50;
 
+	// The agent memory canon (spec agent-wiring, memory-canon-storage): store "canon", one
+	// `index` entry per scope, pulled into every session's context by the wiring hooks. It MUST
+	// stay a compact index of pointers, so its entry bodies carry a hard budget — enforced in the
+	// service door (UpsertAsync) so BOTH memory_upsert and memory_remember are covered.
+	const string CanonStore = "canon";
+	const int CanonBodyBudget = 10000;
+
 	readonly IMemoryStore _stores;
 	// Optional embedding capability (DI auto-fills when an LLM router is registered).
 	// Null → semantic search disabled (lexical-only); never throws.
@@ -336,6 +343,8 @@ public sealed class MemoryService : IMemoryService
 		op?.SetTag("petbox.upsert_count", upserts.Count);
 		op?.SetTag("petbox.delete_count", deletes.Count);
 
+		EnforceCanonBudget(store, upserts); // reject an oversized canon body before we vivify the store
+
 		await _stores.EnsureAsync(projectKey, store, ct); // auto-vivify on first write
 		var ctx = _stores.GetContext(projectKey, store);
 		var desired = MergePatches(ctx, upserts);
@@ -358,6 +367,23 @@ public sealed class MemoryService : IMemoryService
 		if (r.Applied)
 			await _stores.TouchAsync(projectKey, store, ct);
 		return new MemoryUpsertOutcome(ScopeEchoToCall(r, upserts, deletes));
+	}
+
+	// Canon write-gate (spec agent-wiring, memory-canon-storage): the canon store is a curated
+	// index pulled into every agent session, so an entry body over the budget is REJECTED with an
+	// educational message rather than bloating the pull. Only bodies actually supplied are measured
+	// — an omitted body on a PATCH edit keeps the current (already-within-budget) value. Other
+	// stores are never touched by this gate.
+	static void EnforceCanonBudget(string store, IReadOnlyList<MemoryEntryInput> upserts)
+	{
+		if (!string.Equals(store, CanonStore, StringComparison.OrdinalIgnoreCase)) return;
+		foreach (var u in upserts)
+			if (u.Body is { Length: > CanonBodyBudget })
+				throw new ArgumentException(
+					$"canon entry '{u.Key}' body is {u.Body.Length} chars, over the {CanonBodyBudget}-char budget. " +
+					"The memory canon must stay a COMPACT INDEX of pointers — short entries that link to detail " +
+					"elsewhere (task boards, docs, other memory stores), not a second knowledge base. Trim it to a " +
+					"lean index of references.");
 	}
 
 	// Scope a write echo to THIS call (spec sinceversion-contract — the write-ack carries no
@@ -536,7 +562,7 @@ public sealed class MemoryService : IMemoryService
 	{
 		Key = string.IsNullOrWhiteSpace(i.Key) ? throw new ArgumentException("key is required") : i.Key,
 		Version = i.Version,
-		Type = ParseType(i.Type),
+		Type = !string.IsNullOrWhiteSpace(i.Type) ? ParseType(i.Type) : current?.Type ?? throw new ArgumentException("type is required for new entries"),
 		Description = i.Description ?? current?.Description ?? string.Empty,
 		Body = i.Body ?? current?.Body ?? string.Empty,
 		// PATCH: null = keep the current set; a non-null list (incl. []) REPLACES it.

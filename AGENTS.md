@@ -1,164 +1,260 @@
 # AGENTS.md
 
 Guidance for coding agents working in this repository.
-Invariants: see [doc/invariants.md](doc/invariants.md). Status tracked in `my/prj/petbox/invariant-status.md`.
 
-## Status: Phase 0 — Scaffold
+## What PetBox is
 
-Empty repository. Template files copied from `wiki/cross-project/templates/dotnet/`. No code yet.
+PetBox is a **module monolith** (.NET 10, Razor Pages SSR + htmx + Alpine) that
+provides shared infrastructure for pet projects: one service with feature-toggled
+subsystems. It runs live at `petbox.3po.su`. Modules:
+
+- **Config** — tag-based configuration engine + resolve pipeline (`PetBox.Config`).
+- **Log** — log ingestion (Seq-compatible + OTLP) and a KQL query engine
+  (Kusto.Language + KustoLoco) (`PetBox.Log.Core`).
+- **Data** — per-project SQLite databases with a raw-SQL pass-through REST API and
+  DbUp-style schema migration (`PetBox.Data`).
+- **Tasks** — task boards with a user-defined methodology engine
+  (idea → spec → work → intake) (`PetBox.Tasks`).
+- **Memory** — durable, temporal, searchable agent memory stores (`PetBox.Memory`).
+- **Sessions** — working-session transcripts + digests + episodic search
+  (`PetBox.Sessions`; gated under the `Tasks` feature).
+- **LLM router** — a routed chat / embed / rerank facade over LLM providers
+  (`PetBox.LlmRouter`, `PetBox.LlmRouter.Contract`).
+- **Dashboard** — health polling, CI polling, dashboard UI (`PetBox.Dashboard`).
+- **Deploy** — deployment tracking (`PetBox.Deploy`).
+- **MCP surface** — an MCP tool surface over all of the above, in `PetBox.Web/Mcp`.
+
+`PetBox.Core` holds auth, the entity models, the SQLite context + migrations, search,
+and the feature-toggle infrastructure. `PetBox.Web` is the single entry point (Program.cs,
+Razor Pages, frontend assets, MCP endpoint). Client SDKs live under `src/clients-net`,
+`src/clients-ts`, `src/clients-py`.
+
+## Where the living truth lives
+
+**The live plan, status, and specification are NOT in this repo.** They live in the
+PetBox `$system` project's methodology boards, reached over the `petbox` MCP server
+(see "MCP access" below):
+
+- **ideas** — deliberations (raw → exploring → review → accepted; or rejected).
+- **spec** — the defined requirements tree.
+- **work** — technical tasks with a status lifecycle.
+- **intake** — the inbox (raw requests → triage).
+
+Canon for how these fit together: **[doc/methodology.md](doc/methodology.md)** (+
+[doc/methodology-engine.md](doc/methodology-engine.md) for the engine). The markdown
+files under `doc/` (`plan.md`, `spec.md`, `decision-log.md`, …) are **historical
+records**, not the working plan — do not treat them as current state.
+
+## Process contract (binding for ALL agents)
+
+1. **No code before a card:** every change starts from a work item on `$system`
+   (intake issue → promoted task, or accepted idea → spec → work). Create/move the
+   card BEFORE editing code.
+2. **Worktree before edits:** never edit the primary checkout; create a git worktree
+   for the change.
+3. **Tests:** run via Cake (`./build.ps1 -Target Test`, or `./build.sh --target=Test`)
+   or a filtered `dotnet test`; pipe output to `.tmp/test-run.log` and read the log
+   instead of scrolling the console.
+4. **Agent ceiling is Review:** mark finished work `Review`, never `Done`; the
+   maintainer confirms `Done`.
+5. **Deploy only on explicit command** (the `deploy` tag flow); after deploy, run a
+   live smoke against production endpoints.
+6. **Don't silently work around process/doc defects** — file an intake card on
+   `$system`.
 
 ## Build entry points
 
-- **Local:** `./build.sh --target=Test` (bash) or `pwsh ./build.ps1 -Target Test` (PowerShell). Bootstrap restores Cake + GitVersion tools, then runs the Cake task.
-- **Cake tasks:** Clean → Restore → Version (GitVersion) → Build → Test → Docker → DockerSmoke → DockerPush.
-- **Dev loop:** `bun run dev` (ts + css watchers via concurrently) and `dotnet watch` in parallel.
-- **CI:** mirrors `./build.sh --target=CI` (format verify + test). On `main` push + `deploy` tag push also runs `--target=DockerPush` with ghcr.io credentials.
-- **Deploy:** manual tag `deploy` only. `git tag deploy && git push origin deploy --force`.
+- **Local:** `./build.ps1 -Target Test` (PowerShell) or `./build.sh --target=Test`
+  (bash). The bootstrap restores the Cake script + GitVersion tool, then runs the
+  requested Cake target. The Cake build is `build.cs` (a `dotnet run` C# script).
+- **Cake targets (build/deploy chain):** `Clean → Restore → Version (GitVersion) →
+  Build → Test → Docker → DockerSmoke → DockerPush`. `Test` also installs the
+  Playwright chromium binary for the E2E suite. `Default` = `DockerPush`.
+- **Verify / CI target:** `Verify` (and its alias `CI`) runs `FormatVerify`
+  (`dotnet format --verify-no-changes`) + `Test` + the TS and Python SDK
+  lint/typecheck/test targets.
+- **Client publish targets:** `NuGetPush` (.NET → nuget.org), `NpmPublish`
+  (TS → npmjs), `PyPiPublish` (Python → PyPI) — each fired by its own tag.
+- **Dev loop:** `./build.ps1 -Target Dev` runs `bun run dev` (ts + css watchers) and
+  `dotnet watch run` side by side from `src/PetBox.Web`.
+- **CI:** `.github/workflows/ci.yml` on push to `main` runs the `Test` target; a
+  parallel job builds and pushes the Docker image to ghcr.io. Tags trigger extra
+  jobs: `deploy` (SSH deploy + post-deploy health smoke), `nuget`/`npm`/`pypi`
+  (client publish).
+- **Deploy:** manual `deploy` tag only — move the tag to the target commit and push
+  it (`git tag -f deploy <sha> && git push origin deploy --force`). The deploy job
+  SSHes to prod, pulls the new image, and health-checks the fresh container.
 
 ## MCP access during development
 
-`.mcp.json` at repo root registers the running petbox dev server as an MCP
-target named `petbox`. Tools exposed: `data.*` (7 tools) + `log_query`.
-Useful during dev for inspecting logs without leaving the editor:
-`log_query` with KQL like `events | where Level >= 4` shows what errored.
+`.mcp.json` at the repo root registers the **production** PetBox MCP server:
+
+```json
+"petbox": { "type": "http", "url": "https://petbox.3po.su/mcp",
+            "headers": { "X-Api-Key": "${PETBOX_API_KEY}" } }
+```
+
+It exposes the **full PetBox tool surface** (~72 tools, underscore-named):
+`tasks_*`, `memory_*`, `session_*`, `comments_*`, `relations_*`, `config_*`,
+`log_*` / `log_query`, `data_*` / `db_*`, `llm_*`, `deploy_*`, `apikey_*`,
+`project_*`, `health_search`, `report_issue`, `whoami`. Each tool's visibility is
+gated by the calling key's scopes.
 
 Setup (one-time, per machine):
-1. Set env var `PETBOX_DEV_APIKEY` to a `$system`-scoped ApiKey with
-   `logs:query,data:read,data:write,data:schema` scopes. Create one at
-   `/ui/admin/ws/$system/projects/$system/info`.
-2. Start the dev server (`dotnet watch` in `src/PetBox.Web/`).
-3. Claude Code (or any MCP-aware agent) picks up `.mcp.json` automatically.
+1. Set env var `PETBOX_API_KEY` to an ApiKey with the scopes you need (a
+   cross-project `$system` key covers everything). Mint one on the agent-keys admin
+   page or via `apikey_create`.
+2. Claude Code (or any MCP-aware agent) picks up `.mcp.json` automatically; the key
+   is never written into the file (it references `${PETBOX_API_KEY}`).
 
-Inspect via `mcp__petbox__log_query` calls; the key never lands in the
-config file because `.mcp.json` references `${PETBOX_DEV_APIKEY}`.
+Useful during dev: `log_query` with KQL like `events | where Level == "Error"` to see
+what errored; `tasks_search` / `memory_search` for the live plan and durable notes.
 
-## Documents — what goes where
-
-- **`doc/spec.md`** — pointer to vault spec at `my/idea/petbox/spec.md`.
-- **`doc/plan.md`** — phases with checkboxes and progress.
-- **`doc/decision-log.md`** — architectural decisions (newest on top).
-- **`doc/invariants.md`** — copy of `wiki/cross-project/invariants.md`.
-- **`doc/ui-conventions.md`** — canonical UI/component recipes (Tailwind/daisyUI choices, htmx/Alpine boundary, modals, tables, etc.). Consult before building new UI.
-- **`doc/settings-taxonomy.md`** — where every setting lives (entity catalog, L1/L2/L3 storage rules, C# records-with-attributes catalog model, admin area structure, extensibility scenarios). Read before adding a new configurable parameter.
-- **`doc/tasks-mcp/`** — bench of real plan/memory operations by coding agents. Used as design input for the future Tasks module. See `doc/tasks-mcp/README.md`.
-
-## Recording plan/memory actions
-
-When an agent (claude-code, factory droid, opencode, oh-my-pi, …) creates, edits, or deletes a plan or memory file while working on this repo, it MUST also append a record under `doc/tasks-mcp/` using the file naming and frontmatter format described in `doc/tasks-mcp/README.md`. Triggers:
-
-- Edits to `doc/plan.md` (project plan).
-- Edits to session plans in `~/.claude/plans/*.md` (or each agent's equivalent location).
-- Edits to memory files in `~/.claude/projects/*/memory/*.md` (or each agent's equivalent location).
-
-One operation per turn → one record file. The point is to accumulate real examples that will inform the design of the PetBox Tasks module.
+Note: bodies of PetBox nodes and comments render as **GFM markdown** — use `##`
+headings and REAL newlines (never a literal `\n`), or the text renders as mush.
 
 ## Tasks / Memory / Session — what goes where
 
 When recording state via the MCP tools, pick by lifetime:
 
-- **Session** (`session.*`) — the *current* working plan/thinking. Ephemeral, last-write-wins. "Stale next week?" → session.
-- **Tasks** (`tasks.*`) — a *unit of work with a status* tracked to Done. "Has a status that changes (Pending→Done)?" → task.
-- **Memory** (`memory.*`) — a *durable fact* that should outlive the work. "Will a future agent need this to avoid re-learning it?" → memory.
+- **Session** (`session_*`) — the *current* working plan/thinking. Ephemeral,
+  last-write-wins. "Stale next week?" → session.
+- **Tasks** (`tasks_*`) — a *unit of work with a status* tracked to Done. "Has a
+  status that changes (Pending → Done)?" → task.
+- **Memory** (`memory_*`) — a *durable fact* that should outlive the work. "Will a
+  future agent need this to avoid re-learning it?" → memory.
 
-Memory entries are typed (`user` | `feedback` | `project` | `reference`) — `type` is required on `memory_upsert`. Store durable facts not derivable from code/git/config; do **not** store what the repo/git already records, transient state, secrets, or actionable work (that's a task). `feedback`/`project` entries should include the *why* and *how to apply*. Search before writing, update over duplicating, delete when wrong (temporal history makes deletes safe). A cold `tasks_upsert` / `memory_upsert` auto-creates the board/store.
+Memory entries are typed (`User` | `Feedback` | `Project` | `Reference`) — `type` is
+required on a **new** entry (`memory_upsert` with version 0, or `memory_remember`); on
+an edit it is optional (an omitted field stays unchanged). Store durable facts not
+derivable from code/git/config; do **not** store what the repo/git already records,
+transient state, secrets, or actionable work (that's a task). `Feedback`/`Project`
+entries should include the *why* and *how to apply*. Search before writing, update
+over duplicating, delete when wrong (temporal history makes deletes safe). A cold
+`tasks_upsert` / `memory_upsert` auto-creates the board/store.
 
-## Live plan board (petbox `$system`/roadmap)
+## Documents — what's here
 
-The **live plan lives in petbox**, not in `doc/plan.md` — the tasks board
-`$system`/roadmap (via the `tasks.*` MCP tools) is the source of truth for active
-and upcoming work. `doc/plan.md` is kept as the historical/decision record (phases
-0–29) and is not the working plan anymore.
+Live reference docs:
+- **[doc/methodology.md](doc/methodology.md)** — how we run PetBox (idea → spec →
+  work → intake, the approve gate). Canon. Paired with
+  **[doc/methodology-engine.md](doc/methodology-engine.md)**.
+- **[doc/ui-conventions.md](doc/ui-conventions.md)** — canonical UI/component recipes
+  (Tailwind/daisyUI, htmx/Alpine boundary, modals, tables). Consult before building UI.
+- **[doc/settings-taxonomy.md](doc/settings-taxonomy.md)** — where every setting lives
+  (entity catalog, storage rules, admin structure). Read before adding a configurable.
 
-> **Project methodology** (how we run PetBox) is in [doc/methodology.md](doc/methodology.md).
-> **Approve gate (binding):** an agent's ceiling on a work item is **`Review`** —
-> mark a finished item `Review`, never `Done`. Only the maintainer confirms `Done`.
-> (Work was repeatedly reopened because agents self-certified completion.)
-
-Board phases (Phase > Wave > Task):
-
-- **`incoming`** — raw intake. New requests land here. The agent periodically
-  re-reads and triages: simple items it implements directly; complex items or ones
-  needing discussion get moved into a real phase.
-- **`parking`** ("Непонятные") — tasks the user doesn't understand from the
-  description or doesn't yet know what to do with. **When the user says "отправь X в
-  непонятные" (send X to parking), move/create that task under `parking` with a
-  Russian description.** The user reviews these in the UI, thinks, and returns them
-  to a real phase when ready.
-- **`polish`** — UX/polish doced items (incl. pending Phase 25 items migrated from
-  `doc/plan.md`).
-- Real work phases (e.g. `phase30`) — tracked features.
-
-Keep board node descriptions in Russian when the user will triage them in the UI
-(parking especially). Record durable findings/decisions into `$system`/dogfooding
-memory seamlessly (no "should I record this?" prompts) — see the memory rules above.
+Historical (frozen) — a record of how the project got here, not current state:
+`doc/plan.md`, `doc/spec.md`, `doc/decision-log.md`, and the older design notes.
 
 ## Target stack
 
-- .NET 10 monolith, Razor Pages SSR + htmx + Alpine.js
-- Tailwind CSS 3.4 + daisyUI 4, TypeScript via bun, tsc for bundling
-- SQLite via linq2db 6.3.0 for all data (Core, Logs, Data)
-- FluentMigrator for Core DB migrations
-- Seq.Extensions.Logging for structured logging ingestion
-- Kusto.Language + kusto-loco for KQL query engine
-- OpenTelemetry (AspNetCore instrumentation) for tracing
-- Docker: chiseled noble, `/app/data` volume, port 8080
+- .NET 10 monolith, Razor Pages SSR + htmx 2 + Alpine.js 3
+- Tailwind CSS 3.4 + daisyUI 4, TypeScript via bun
+- SQLite via linq2db 6.3.0 (Core DB, per-project Data DBs, module stores)
+- FluentMigrator for internal (Core/Tasks/Memory/Sessions) migrations
+- Seq.Extensions.Logging for structured log ingestion
+- Kusto.Language + KustoLoco for the KQL query engine
+- OpenTelemetry (AspNetCore + Http instrumentation) for tracing
+- Docker: chiseled noble runtime, `/app/data` volume, port 8080
 - Cake + GitVersion for build/versioning
 - GitHub Actions CI/CD with SSH deploy
-- E2E: Playwright with Lightpanda browser
+- E2E: Playwright (chromium)
 
 ## Module architecture
 
 PetBox is a module monolith. Each subsystem is feature-toggled via `appsettings.json`:
 
 ```
-Features: { Config: true, Logging: true, Data: true, Dashboard: true }
+Features: { Config: true, Logging: true, Data: true, Dashboard: true,
+            Tasks: true, Memory: true, LlmRouter: true, Deploy: true }
 ```
 
 Projects:
-- `PetBox.Core` — Auth, Project/Service/ApiKey models, SQLite context, localization, feature toggle infrastructure
-- `PetBox.Web` — single entry point, Program.cs, Razor Pages, frontend assets
-- `PetBox.Config` — tag-based config engine, resolve pipeline
-- `PetBox.Log.Core` — KQL engine, Seq ingestion
-- `PetBox.Data` — PostgREST HTTP API, linq2db.Remote.Grpc
-- `PetBox.Dashboard` — HealthPoller, CiPoller, /api/heartbeat, dashboard UI
+- `PetBox.Core` — Auth, Workspace/Project/ApiKey/… models, SQLite context +
+  FluentMigrator migrations, search, feature-toggle infrastructure.
+- `PetBox.Web` — single entry point (Program.cs), Razor Pages, frontend assets, MCP
+  endpoint (`Mcp/`).
+- `PetBox.Config` — tag-based config engine, resolve pipeline.
+- `PetBox.Log.Core` — KQL engine, Seq/OTLP ingestion.
+- `PetBox.Data` — per-project SQLite databases, raw-SQL pass-through REST, schema
+  migration + WAL checkpoint / orphan cleanup services.
+- `PetBox.Tasks` — task boards + methodology engine.
+- `PetBox.Memory` — temporal memory stores + hybrid (FTS + vector) search.
+- `PetBox.Sessions` — session transcripts, digests, episodic search.
+- `PetBox.LlmRouter` (+ `.Contract`) — routed LLM chat/embed/rerank.
+- `PetBox.Dashboard` — HealthPoller, CiPoller, dashboard UI.
+- `PetBox.Deploy` — deployment tracking.
 
 ## Entity model
 
-Core entities:
-- **Project** — top-level grouping (Key, Name, Description)
-- **Service** — running process within a project (Key, ProjectKey, Kind, Url, Version, ShortSha, Health)
-- **ApiKey** — auth credential (Key, ProjectKey, Scopes, CreatedAt)
-- **ConfigBinding** — tag-based key-value (Path, Value, Tags) — not FK'd to Service
-- **LogEntry** — immutable log record (Id, ServiceKey, Level, Message, Properties, Timestamp)
-- **DataTable** — yobadata table metadata (Name, ProjectKey, Columns, Read/Write/Delete flags)
+Core entities (in `PetBox.Core/Models`):
+- **Workspace** — the top-level container; a `WorkspaceMember` grants a `User` a role
+  in it.
+- **Project** — grouping within a workspace (Key, WorkspaceKey, Name, Description).
+- **ApiKey** — auth credential (Key, ProjectKey, Scopes, Name, ExpiresAt, …); the
+  `ProjectKey` claim may be the wildcard `*` (a cross-project key).
+- **ConfigBinding** — tag-based key-value (Path, Value, Tags) — not FK'd, resolved by
+  pure tag matching.
+- **HealthEndpoint / HealthReport** — dashboard health polling targets + results.
+- **DataDb / DataTable** — per-project Data-module database + table metadata.
+- **TaskBoardMeta**, **MemoryStoreMeta**, **Relation** — Tasks/Memory bookkeeping.
+- Log records are stored per named log; `LogMeta` is the catalog entry.
 
-Project/Service are organizational layers for UI. ConfigBinding uses tags (`project:kpvotes, service:kpvotes-bot`) — resolve pipeline is pure tag-based matching.
+`Workspace`/`Project` are organizational layers. ConfigBinding uses tags
+(`project:kpvotes`, `service:kpvotes-bot`) — the resolve pipeline is pure tag-based,
+most-specific-set wins. (The former standalone `Service` entity was removed —
+migration `M019_DropServices`.)
 
 ## Hard invariants
 
-- **Feature toggle gating.** Every subsystem checks `Features:<Name>` before registering endpoints/middleware/BackgroundServices. Disabled subsystem = zero runtime cost.
-- **Auth: local and remote modes.** Default local (validate against own DB). Remote mode (`Auth:Mode: remote, RemoteUrl: ...`) delegates validation to central instance. Log-only instances don't store users or keys.
-- **No PetBox self-config via ConfigModule.** PetBox configures itself from `appsettings.json` only. ConfigModule serves external consumers.
-- **`$system` project is undeletable.** Auto-created on first start. PetBox logs itself into `$system` services.
-- **Config resolve is deterministic.** Same tags → same binding. Tag-based matching: most specific tag set wins.
-- **ApiKey scopes are enumerable, not wildcards.** `config:read`, `logs:ingest`, `data:write`, `dashboard:read`, `admin`.
-- **LogEntry is append-only, immutable.** No update or delete. Retention policy TBD.
-- **Localization from day one.** All user-facing strings through `IStringLocalizer`. No Cyrillic/Hebrew/Arabic in UI strings — English-only chrome text.
-- **`data-testid` for UI selectors.** No text-matching, no CSS class selectors for E2E tests.
+- **Feature toggle gating.** Every subsystem checks `Features:<Name>` before
+  registering endpoints/middleware/BackgroundServices. Disabled subsystem = zero
+  runtime cost.
+- **Auth: local and remote modes.** Default local (validate against own DB). Remote
+  mode (`Auth:Mode: remote`, `RemoteUrl: …`) delegates validation to a central
+  instance.
+- **No PetBox self-config via ConfigModule.** PetBox configures itself from
+  `appsettings.json` only. ConfigModule serves external consumers.
+- **`$system` is the reserved built-in.** Auto-seeded on first migration as both a
+  workspace and a project; undeletable.
+- **Config resolve is deterministic.** Same tags → same binding; most specific tag
+  set wins.
+- **ApiKey scopes are an enumerated set, not wildcard scopes.** Scopes are drawn from
+  a fixed list (`config:read`/`write`, `logs:ingest`/`query`/`admin`,
+  `health:read`/`write`, `data:read`/`write`/`schema`, `tasks:read`/`write`,
+  `memory:read`/`write`, `llm:invoke`/`admin`, `deploy:read`/`write`,
+  `agent:poll`/`heartbeat`, `admin:provision`). A key's **project claim** may be the
+  wildcard `*` (a cross-project key), but its **scopes** are always explicit.
+- **Log records are append-only, immutable.** No update or delete of an ingested
+  event.
+- **English-only UI chrome.** UI strings are plain English literals — no
+  Cyrillic/Hebrew/Arabic in chrome text. (No localization infrastructure exists yet:
+  no `AddLocalization`/`IStringLocalizer` anywhere — adopting it is a future task;
+  don't add ad-hoc localization piecemeal.)
+- **`data-testid` for UI selectors.** No text-matching, no CSS class selectors for
+  E2E tests.
 - **No HTML in `.cs` files.** All markup in Razor (`.cshtml`).
 - **No inline JS in Razor.** All client logic in `ts/` files, bundled by bun.
-- **Frontend build is Release-only.** Debug uses `bun run dev` watcher.
+- **Frontend build is Release-only.** Debug uses the `bun run dev` watcher.
 
 ## Coding style
 
-- **Immutability and functional approach.** C#: `record`/`readonly record struct`, `init`-only, `IReadOnlyList<T>`, `switch` expressions. TS: `const`, `readonly`, `ReadonlyArray<T>`.
-- **Arrow/expression-bodied when it fits.** Expression-bodied members, `switch` expressions. Arrow functions for TS callbacks.
-- **Omit implicit access modifiers.** Don't write `internal`, `private`, `public` on interface members.
-- **Maximum static typing.** No `object`, no `dynamic`, no `any`. Generics and discriminated unions.
-- **Formatting:** tool defaults — `dotnet format` for C#, biome for TS. `.editorconfig` at repo root.
+- **Immutability and functional approach.** C#: `record`/`readonly record struct`,
+  `init`-only, `IReadOnlyList<T>`, `switch` expressions. TS: `const`, `readonly`,
+  `ReadonlyArray<T>`.
+- **Arrow/expression-bodied when it fits.** Expression-bodied members, `switch`
+  expressions. Arrow functions for TS callbacks.
+- **Omit implicit access modifiers.** Don't write `internal`, `private`, `public` on
+  interface members.
+- **Maximum static typing.** No `object`, no `dynamic`, no `any`. Generics and
+  discriminated unions.
+- **Formatting:** tool defaults — `dotnet format` for C#, biome for TS.
+  `.editorconfig` at repo root.
 
 ## Commit convention
 
 Conventional Commits. `type(scope): description`, ≤72 chars, imperative mood.
 Types: `feat`, `fix`, `refactor`, `test`, `style`, `docs`, `chore`, `build`.
-Scopes: `core`, `web`, `config`, `log`, `data`, `dashboard`, `auth`, `docs`, `deps`, `scaffold`.
+Scopes: `core`, `web`, `config`, `log`, `data`, `dashboard`, `tasks`, `memory`,
+`sessions`, `llm`, `deploy`, `auth`, `docs`, `deps`.

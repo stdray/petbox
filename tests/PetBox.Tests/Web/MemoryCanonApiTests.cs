@@ -1,0 +1,137 @@
+using System.Net;
+using System.Net.Http.Json;
+using LinqToDB;
+using LinqToDB.Async;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using PetBox.Core.Data;
+using PetBox.Core.Models;
+using PetBox.Core.Settings;
+using PetBox.Memory.Contract;
+using PetBox.Memory.Data;
+using PetBox.Web.Memory;
+
+namespace PetBox.Tests.Web;
+
+// GET /api/memory/{projectKey}/canon (spec agent-wiring, memory-canon-storage): the wiring-hook
+// read surface for the curated memory canon. Returns the project's canon index and the shared
+// workspace canon index; missing parts are null (still 200); no key is 401.
+[Collection("DataModule")]
+public sealed class MemoryCanonApiTests : IAsyncLifetime
+{
+	const string TestProjectKey = "kpvotes";
+	const string TestApiKey = "yb_key_test_canon_xyz";
+
+	readonly string _baseDir;
+	readonly WebApplicationFactory<Program> _factory;
+	HttpClient _client = null!;
+
+	public MemoryCanonApiTests()
+	{
+		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-canon-test-" + Guid.NewGuid().ToString("N"));
+		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
+
+		_factory = new WebApplicationFactory<Program>()
+			.WithWebHostBuilder(b =>
+			{
+				b.UseEnvironment("Testing");
+				b.ConfigureAppConfiguration((_, cfg) =>
+				{
+					cfg.AddInMemoryCollection(new Dictionary<string, string?>
+					{
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
+						["Features:Memory"] = "true",
+					});
+				});
+				b.ConfigureServices(svc =>
+				{
+					// Isolate the memory store files under a per-test temp dir (mirrors the
+					// IDataDbFactory override in QueryExecApiTests).
+					var existing = svc.SingleOrDefault(d => d.ServiceType == typeof(IScopedDbFactory<MemoryDb>));
+					if (existing is not null) svc.Remove(existing);
+					svc.AddSingleton<IScopedDbFactory<MemoryDb>>(_ => new ScopedDbFactory<MemoryDb>(
+						Path.Combine(_baseDir, "memory"), Scope.Project,
+						cs => new MemoryDb(MemoryDb.CreateOptions(cs)), MemorySchema.Ensure));
+				});
+			});
+	}
+
+	public async Task InitializeAsync()
+	{
+		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		TestSchema.Core(cs); // runs migrations: seeds $system + $workspace projects
+		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+
+		using var scope = _factory.Services.CreateScope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		await db.ApiKeys.Where(k => k.Key == TestApiKey).DeleteAsync();
+		await db.Projects.Where(p => p.Key == TestProjectKey).DeleteAsync();
+		await db.Workspaces.Where(w => w.Key == "test").DeleteAsync();
+
+		await db.InsertAsync(new Workspace { Key = "test", Name = "Test", CreatedAt = DateTime.UtcNow });
+		await db.InsertAsync(new Project { Key = TestProjectKey, WorkspaceKey = "test", Name = "KpVotes" });
+		await db.InsertAsync(new ApiKey { Key = TestApiKey, ProjectKey = TestProjectKey, Scopes = "memory:read,memory:write", CreatedAt = DateTime.UtcNow });
+	}
+
+	public async Task DisposeAsync()
+	{
+		_client.Dispose();
+		await _factory.DisposeAsync();
+		SqliteConnection.ClearAllPools();
+		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+	}
+
+	// Seed a canon entry of a scope through the service door (auto-vivifies the store).
+	// The workspace canon lives in the reserved `$workspace` container under key `index` —
+	// the same store/key as the project canon; the scope is the container, not a key suffix.
+	async Task WriteCanonAsync(string projectKey, string body, string key = "index")
+	{
+		using var scope = _factory.Services.CreateScope();
+		var memory = scope.ServiceProvider.GetRequiredService<IMemoryService>();
+		await memory.UpsertAsync(projectKey, "canon",
+			new[] { new MemoryEntryInput { Key = key, Version = 0, Type = "Reference", Description = "canon", Body = body } },
+			[]);
+	}
+
+	[Fact]
+	public async Task Canon_BothScopesPresent_ReturnsBothParts()
+	{
+		await WriteCanonAsync(TestProjectKey, "PROJECT canon index");
+		await WriteCanonAsync("$workspace", "WORKSPACE canon index");
+
+		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		var body = await resp.Content.ReadFromJsonAsync<CanonResponse>();
+		body.Should().NotBeNull();
+		body!.Project.Should().NotBeNull();
+		body.Project!.Body.Should().Be("PROJECT canon index");
+		body.Project.Version.Should().BeGreaterThan(0);
+		body.Workspace.Should().NotBeNull();
+		body.Workspace!.Body.Should().Be("WORKSPACE canon index");
+	}
+
+	[Fact]
+	public async Task Canon_NoEntries_ReturnsNullParts_Still200()
+	{
+		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		var body = await resp.Content.ReadFromJsonAsync<CanonResponse>();
+		body.Should().NotBeNull();
+		body!.Project.Should().BeNull();
+		body.Workspace.Should().BeNull();
+	}
+
+	[Fact]
+	public async Task Canon_NoApiKey_Returns401()
+	{
+		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
+		resp.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+	}
+}

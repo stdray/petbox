@@ -1134,6 +1134,35 @@
         }
       }
     },
+    "/api/memory/{projectKey}/canon": {
+      "get": {
+        "tags": [
+          "MemoryApi"
+        ],
+        "parameters": [
+          {
+            "name": "projectKey",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CanonResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "post": {
         "tags": [
@@ -1769,6 +1798,60 @@
       "BindingKind": {
         "type": "integer",
         "default": 0
+      },
+      "CanonPart": {
+        "required": [
+          "body",
+          "updatedAt",
+          "version"
+        ],
+        "type": "object",
+        "properties": {
+          "body": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "version": {
+            "pattern": "^-?(?:0|[1-9]\\d*)$",
+            "type": [
+              "integer",
+              "string"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "CanonResponse": {
+        "required": [
+          "project",
+          "workspace"
+        ],
+        "type": "object",
+        "properties": {
+          "project": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CanonPart"
+              }
+            ]
+          },
+          "workspace": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CanonPart"
+              }
+            ]
+          }
+        }
       },
       "ConfigAmbiguousResponse": {
         "required": [
@@ -3008,6 +3091,9 @@
     },
     {
       "name": "SessionApi"
+    },
+    {
+      "name": "MemoryApi"
     },
     {
       "name": "HealthApi"

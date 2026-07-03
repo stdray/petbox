@@ -22,6 +22,11 @@ public sealed class IndexModel : PageModel
 		_settings = settings;
 	}
 
+	// The reserved cross-project memory container (a container project, not a user project).
+	// It always lives under the "$system" workspace, so its memory page is a fixed address.
+	public const string WorkspaceMemoryContainer = "$workspace";
+	public const string WorkspaceMemoryWorkspace = "$system";
+
 	public string WorkspaceKey { get; private set; } = "$system";
 	public IReadOnlyList<Project> Projects { get; private set; } = [];
 	public IReadOnlyDictionary<string, IReadOnlyList<HealthRow>> ByProject { get; private set; }
@@ -41,7 +46,12 @@ public sealed class IndexModel : PageModel
 	{
 		WorkspaceKey = _nav.CurrentWorkspaceKey;
 		var wsKey = WorkspaceKey;
-		Projects = await _db.Projects.Where(p => p.WorkspaceKey == wsKey).OrderBy(p => p.Key).ToListAsync(ct);
+		// "$workspace" is the reserved cross-project MEMORY container, not a user project —
+		// keep it out of the project grid (it has no logs/dbs/keys) and surface it as the
+		// dedicated "Workspace memory" entry the view renders instead.
+		Projects = await _db.Projects
+			.Where(p => p.WorkspaceKey == wsKey && p.Key != WorkspaceMemoryContainer)
+			.OrderBy(p => p.Key).ToListAsync(ct);
 		var projectKeys = Projects.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
 
 		var dash = await _settings.GetAsync<DashboardSettings>(Scope.System, "$", ct);

@@ -1,5 +1,7 @@
 # Implementation Plan — PetBox
 
+> **Historical document (frozen)** — not a working plan/spec. Live status and plan live in PetBox ($system boards); see AGENTS.md.
+
 **Legend:** `[NEW]` — write from scratch. `[PORT <source>]` — copy with minimal changes. `[ADAPT <source>]` — copy but significant rework for new entity model.
 
 Key sources:

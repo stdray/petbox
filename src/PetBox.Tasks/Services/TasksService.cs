@@ -666,6 +666,44 @@ public sealed partial class TasksService : ITasksService
 		};
 	}
 
+	// exact-identifier-search-surfacing (spec): the exact-identifier escape hatch shared by the
+	// tasks_search query path and the UI cross-scope identifier leg. Mirrors ResolveNodeRefAsync's
+	// resolution (32-hex = NodeId, else a slug) but NEVER throws (a search is a soft ask, not an
+	// address) and returns ALL matches, not one: a slug living on several boards is not an error
+	// in search, so every match is surfaced (each hit carries its board, so the caller
+	// disambiguates). Each hit rides GetNodeAsync (includeClosed inside) so terminal/closed nodes
+	// surface like any other. Empty list on a miss; `board` narrows to one board.
+	public async Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, CancellationToken ct = default)
+	{
+		var v = (identifier ?? "").Trim();
+		if (v.Length == 0) return [];
+
+		TaskSearchHit? Enrich(NodeDetailView? detail)
+		{
+			if (detail is null) return null;
+			if (board is not null && !string.Equals(detail.Board, board, StringComparison.Ordinal)) return null;
+			var node = urlPrefix is null ? detail.Node : detail.Node with { Url = urlPrefix + detail.Board + "/" + detail.Node.Key };
+			return new TaskSearchHit(detail.Board, node);
+		}
+
+		var hits = new List<TaskSearchHit>();
+		if (LooksLikeNodeId(v))
+		{
+			// A NodeId is globally unique — at most one node, no ambiguity.
+			if (Enrich(await GetNodeAsync(projectKey, v, ct)) is { } hit) hits.Add(hit);
+			return hits;
+		}
+
+		var slug = v.ToLowerInvariant();
+		var ctx = _boards.GetContext(projectKey);
+		var q = ctx.PlanNodes.Where(n => n.ActiveTo == null && n.Key == slug);
+		if (board is not null) q = q.Where(n => n.Board == board);
+		foreach (var m in q.ToList().Where(n => n.NodeId.Length > 0).ToList())
+			if (Enrich(await GetNodeAsync(projectKey, m.NodeId, ct)) is { } hit) hits.Add(hit);
+		// Deterministic order between exact matches (spec: by board) so a multi-board slug is stable.
+		return hits.OrderBy(h => h.Board, StringComparer.Ordinal).ToList();
+	}
+
 	// The project-aware relation-kind vocabulary check (primitives-link-kinds): builtin
 	// process + neutral kinds plus the definition-declared linkKinds. The store no longer
 	// validates the vocabulary itself — this is the one door for user-supplied kinds.
@@ -1164,6 +1202,15 @@ public sealed partial class TasksService : ITasksService
 			// recall sane for small limits; an unbounded ask (limit 0) gets the floor.
 			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
 				Math.Max(req.Limit * 3, 50), urlPrefix, runtime, ct);
+
+			// exact-identifier-search-surfacing (spec): a query that exactly matches a node's
+			// slug reads as an addressed ask in disguise - surface EVERY exact match (a slug can
+			// live on several boards; ambiguity is not an error in search) even when terminal
+			// (closed nodes aren't indexed for relevance), ahead of the fused ranking. Still
+			// subject to the under/status/keys predicates below like any other hit.
+			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, ct);
+			var freshExact = exactHits.Where(e => !hits.Any(h => h.Board == e.Board && h.Node.Key == e.Node.Key)).ToList();
+			hits.InsertRange(0, freshExact);
 		}
 
 		if (underId is not null) hits = hits.Where(h => InSubtree(h.Node.NodeId, underId, parentOf!)).ToList();
