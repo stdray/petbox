@@ -36,6 +36,9 @@ public static class LogTools
 		}
 		catch (KqlParseException ex) { throw new ArgumentException(ex.Message); }
 		catch (LogNotFoundException ex) { throw new InvalidOperationException(ex.Message); }
+		// Non-shape-changing queries materialize inside QueryAsync, so an unsupported-subset
+		// error surfaces here, not in the enumeration below — map it the same way.
+		catch (UnsupportedKqlException ex) { throw new ArgumentException(ex.Message); }
 
 		try
 		{

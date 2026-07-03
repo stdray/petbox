@@ -225,6 +225,13 @@ public static class LogApi
 		{
 			return Results.BadRequest(new { error = "KQL parse error", details = ex.Details });
 		}
+		catch (UnsupportedKqlException ex)
+		{
+			// Parses fine but our KQL subset doesn't support it (e.g. no 'events' table ref,
+			// string literal against an int column). The non-shape-changing path materializes
+			// inside QueryAsync, so this surfaces here, not in the enumeration below.
+			return Results.BadRequest(new { error = ex.Message });
+		}
 
 		try
 		{

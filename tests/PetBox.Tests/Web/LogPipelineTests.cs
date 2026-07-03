@@ -290,6 +290,21 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
 	}
 
+	// Parses fine but is semantically unsupported by our KQL subset. These must map to a
+	// structured 400 (UnsupportedKqlException), never an unhandled HTML 500. Regression for
+	// the client-issues report: every valid-looking query 500'd because UnsupportedKqlException
+	// thrown from the non-shape-changing (events) path escaped the adapter's catch.
+	[Theory]
+	[InlineData("Level == \"Error\"")]   // no 'events' table reference
+	[InlineData("events | where Level == \"Error\"")]  // Level is int; string literal unsupported
+	[InlineData("events | where true")]  // bare boolean literal not a supported expression
+	public async Task Query_ParseableButUnsupported_Returns400(string kql)
+	{
+		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString(kql)}");
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+	}
+
 	[Fact]
 	public async Task Query_WithoutApiKey_Returns401()
 	{
