@@ -35,6 +35,7 @@ public static class MethodologyGuide
 			AppendKind(md, runtime, kind, invariants);
 
 		AppendRelationKinds(md, runtime);
+		AppendBodyConventions(md);
 		return new MethodologyGuideView(md.ToString(), invariants, source, definitionVersion);
 	}
 
@@ -161,6 +162,20 @@ public static class MethodologyGuide
 		md.AppendLine(declared.Count > 0
 			? $"- Project-declared (free semantic edges): {string.Join(", ", declared.Select(k => k.Description is null ? k.Slug : $"{k.Slug} ({k.Description})"))}"
 			: "- Project-declared: none.");
+	}
+
+	static void AppendBodyConventions(StringBuilder md)
+	{
+		md.AppendLine();
+		md.AppendLine("## Body conventions");
+		md.AppendLine();
+		md.AppendLine("Node bodies and comment bodies render as GFM markdown (marked+DOMPurify, gfm:true, breaks:true).");
+		md.AppendLine("- Use `## Heading` for top-level headings, NOT `==Heading==` or `--Heading--` — these ASCII decorations don't render as GFM headings.");
+		md.AppendLine("- Use `### Sub-heading` for nested sections.");
+		md.AppendLine("- Numbered lists as `1. item` (the renderer auto-numbers).");
+		md.AppendLine("- Real newlines separate paragraphs; a bare newline becomes a `<br>` — never write `\\n` literals.");
+		md.AppendLine("- Code blocks with triple backticks: ` ``` ` (language tag optional).");
+		md.AppendLine("- Inline code with single backticks: `` `code` ``.");
 	}
 
 	// The upsert field that expresses a creation-gating link kind (the validator limits

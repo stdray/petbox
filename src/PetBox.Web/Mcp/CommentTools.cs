@@ -28,7 +28,8 @@ public static class CommentTools
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey, string board,
 		[Description("The node to comment on: its slug key on `board`, or its 32-hex NodeId.")] string nodeId,
-		string author, string body,
+		string author,
+		[Description("Comment text; renders as GFM markdown — use ## headings, real newlines (not \\n literals, not ==headings==).")] string body,
 		string? parentId = null, string[]? tags = null,
 		CancellationToken ct = default)
 	{
@@ -74,7 +75,8 @@ public static class CommentTools
 	[Description("PATCH a comment (body; tags replace-if-provided — omitted `tags` stays as-is). `version` is the WATERMARK baseline: pass the thread `currentVersion` from your last read OR the comment's own version — both valid; an older baseline (the comment moved on) returns a conflict instead of clobbering. Body/tags only; you cannot re-parent a comment in v1. Returns {applied, currentVersion, id, conflicts}; when applied is false nothing was written — `id` is null and `conflicts[]` carries the baseline vs active version. Requires tasks:write.")]
 	public static async Task<CommentUpsertResult> EditAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments,
-		string projectKey, string board, string id, string body, long version,
+		string projectKey, string board, string id,
+		[Description("Comment text; renders as GFM markdown — use ## headings, real newlines (not \\n literals, not ==headings==).")] string body, long version,
 		string[]? tags = null,
 		CancellationToken ct = default)
 	{
