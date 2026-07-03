@@ -34,6 +34,13 @@ public sealed partial class MemoryStore : IMemoryStore
 	[GeneratedRegex(@"^[a-z][a-z0-9_-]{0,99}$")]
 	private static partial Regex NameRegex();
 
+	// Stores that are machine plumbing rather than user knowledge — tagged IsSystem on
+	// creation (incl. the auto-vivify write path, so the digest job's store is marked even
+	// though it never calls CreateStoreAsync explicitly). Kept in sync with the M030 backfill
+	// and SessionDigestJob.Store (spec: memoverhaul store taxonomy).
+	public static readonly IReadOnlySet<string> SystemStoreNames =
+		new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "session-digests" };
+
 	readonly PetBoxDb _db;
 	readonly IScopedDbFactory<MemoryDb> _factory;
 
@@ -93,6 +100,7 @@ public sealed partial class MemoryStore : IMemoryStore
 			Description = description,
 			CreatedAt = now,
 			UpdatedAt = now,
+			IsSystem = SystemStoreNames.Contains(store),
 		};
 		await _db.InsertAsync(meta, token: ct);
 

@@ -155,6 +155,28 @@ public sealed class MemoryVerbsTests : IDisposable
 			.Should().BeEquivalentTo(["ops"]);
 	}
 
+	// System stores (spec: memoverhaul store taxonomy) are machine plumbing — the implicit
+	// sweep excludes them like ops, but an explicit store: still reaches them.
+	[Fact]
+	public async Task Search_AllStores_SkipsSystemStores_ButExplicitStoreReaches()
+	{
+		var http = Http("memory:read,memory:write");
+		// "session-digests" is a well-known system store (MemoryStore.SystemStoreNames) — the
+		// auto-vivify write path marks it IsSystem even though nothing called CreateStoreAsync.
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "digest of prior sessions", store: "session-digests");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "public note about sessions", store: "notes");
+
+		// Implicit all-stores sweep must NOT surface the system store.
+		var sweep = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "sessions");
+		sweep.Items.Select(h => h.Store)
+			.Should().NotContain("session-digests").And.Contain("notes");
+
+		// Explicit store:session-digests is a deliberate ask and still reaches it.
+		var explicitSys = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "sessions", store: "session-digests");
+		explicitSys.Items.Select(h => h.Store)
+			.Should().BeEquivalentTo(["session-digests"]);
+	}
+
 	// list = search without q (uniform-entity-verbs v2): the listing cascades the same
 	// containers as a query, labels rows by scope, and defaults to updated desc.
 	[Fact]

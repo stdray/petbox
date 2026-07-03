@@ -4,9 +4,16 @@
 	ViewData["Title"] = $"Memory — {Model.Project?.Name ?? Model.ProjectKey}";
 }
 
+@{
+	// Knowledge stores are the curated/agent-facing memory; system stores (e.g.
+	// session-digests) are machine plumbing — set apart below, not counted as knowledge.
+	var knowledge = Model.Stores.Where(s => !s.IsSystem).ToList();
+	var systemStores = Model.Stores.Where(s => s.IsSystem).ToList();
+}
+
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
 	<h1 class="text-2xl font-semibold" data-testid="memory-title">@(Model.Project?.Name ?? Model.ProjectKey) · memory</h1>
-	<span class="badge badge-ghost">@Model.Stores.Count</span>
+	<span class="badge badge-ghost">@knowledge.Count</span>
 </div>
 
 @if (Model.Project is null)
@@ -27,21 +34,56 @@
 }
 else
 {
-	<section class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="memory-list">
-		@foreach (var s in Model.Stores)
-		{
-			<a href="@Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, s.Name)"
-				class="card bg-base-200 border border-base-300 hover:border-primary transition-colors"
-				data-testid="store-card" data-store-name="@s.Name">
-				<div class="card-body p-4">
-					<span class="font-mono font-semibold">@s.Name</span>
-					@if (!string.IsNullOrEmpty(s.Description))
-					{
-						<p class="text-sm opacity-80">@s.Description</p>
-					}
-					<div class="text-xs opacity-50 font-mono mt-2">updated @s.UpdatedAt.ToString("yyyy-MM-dd HH:mm") · created @s.CreatedAt.ToString("yyyy-MM-dd")</div>
-				</div>
-			</a>
-		}
-	</section>
+	@if (knowledge.Count == 0)
+	{
+		<div class="alert" data-testid="memory-empty-knowledge">No knowledge stores yet — only system stores exist. Agents create knowledge stores via the memory MCP tools.</div>
+	}
+	else
+	{
+		<section class="grid grid-cols-1 sm:grid-cols-2 gap-3" data-testid="memory-list">
+			@foreach (var s in knowledge)
+			{
+				<a href="@Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, s.Name)"
+					class="card bg-base-200 border border-base-300 hover:border-primary transition-colors"
+					data-testid="store-card" data-store-name="@s.Name">
+					<div class="card-body p-4">
+						<span class="font-mono font-semibold">@s.Name</span>
+						@if (!string.IsNullOrEmpty(s.Description))
+						{
+							<p class="text-sm opacity-80">@s.Description</p>
+						}
+						<div class="text-xs opacity-50 font-mono mt-2">updated @s.UpdatedAt.ToString("yyyy-MM-dd HH:mm") · created @s.CreatedAt.ToString("yyyy-MM-dd")</div>
+					</div>
+				</a>
+			}
+		</section>
+	}
+
+	@if (systemStores.Count > 0)
+	{
+		<section class="mt-8" data-testid="memory-system-list">
+			<h2 class="text-xs font-semibold uppercase tracking-wide opacity-50 mb-2">System stores</h2>
+			<p class="text-xs opacity-50 mb-3">Machine plumbing — excluded from the default memory search sweep, not project knowledge.</p>
+			<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+				@foreach (var s in systemStores)
+				{
+					<a href="@Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, s.Name)"
+						class="card bg-base-200/50 border border-base-300 border-dashed hover:border-primary transition-colors opacity-70"
+						data-testid="system-store-card" data-store-name="@s.Name">
+						<div class="card-body p-4">
+							<span class="font-mono font-semibold flex items-center gap-2">
+								@s.Name
+								<span class="badge badge-ghost badge-sm">system</span>
+							</span>
+							@if (!string.IsNullOrEmpty(s.Description))
+							{
+								<p class="text-sm opacity-80">@s.Description</p>
+							}
+							<div class="text-xs opacity-50 font-mono mt-2">updated @s.UpdatedAt.ToString("yyyy-MM-dd HH:mm") · created @s.CreatedAt.ToString("yyyy-MM-dd")</div>
+						</div>
+					</a>
+				}
+			</div>
+		</section>
+	}
 }
