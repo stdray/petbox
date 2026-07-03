@@ -536,7 +536,7 @@ public sealed class MemoryService : IMemoryService
 	{
 		Key = string.IsNullOrWhiteSpace(i.Key) ? throw new ArgumentException("key is required") : i.Key,
 		Version = i.Version,
-		Type = ParseType(i.Type),
+		Type = !string.IsNullOrWhiteSpace(i.Type) ? ParseType(i.Type) : current?.Type ?? throw new ArgumentException("type is required for new entries"),
 		Description = i.Description ?? current?.Description ?? string.Empty,
 		Body = i.Body ?? current?.Body ?? string.Empty,
 		// PATCH: null = keep the current set; a non-null list (incl. []) REPLACES it.

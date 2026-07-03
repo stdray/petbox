@@ -16,7 +16,7 @@ public sealed record MemoryEntryInput
 {
 	public required string Key { get; init; }
 	public long Version { get; init; }
-	public required string Type { get; init; }
+	public string? Type { get; init; }
 	public string? Description { get; init; }
 	public string? Body { get; init; }
 	public IReadOnlyList<string>? Tags { get; init; }

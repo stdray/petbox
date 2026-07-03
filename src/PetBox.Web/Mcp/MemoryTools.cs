@@ -484,7 +484,7 @@ public static class MemoryTools
 			{
 				Key = Req(e.Key, "key"),
 				Version = e.Version,
-				Type = Req(e.Type, "type"),
+				Type = e.Version == 0 ? Req(e.Type, "type") : e.Type,
 				Description = e.Description,
 				Body = e.Body,
 				Tags = e.Tags,
