@@ -58,8 +58,11 @@ public sealed class SearchService
 			}
 		}
 
-		var fused = HybridMerge.Rrf([.. rankings]);
-		var hitsOut = fused.Take(k).Select(id => byId[id]).ToList();
+		// Fuse by rank and carry the FUSED RRF score on each hit (overwriting the per-index Score,
+		// which is meaningless post-fusion) — a rank-based score comparable across separate
+		// SearchService calls, so a consumer can globally merge several per-container pools by it.
+		var fused = HybridMerge.RrfScored([.. rankings]);
+		var hitsOut = fused.Take(k).Select(f => byId[f.Key] with { Score = f.Score }).ToList();
 		return new SearchResponse(hitsOut, new SearchRetrievers(lexical, semantic, degraded));
 	}
 

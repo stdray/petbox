@@ -61,6 +61,19 @@ public sealed class MemoryStoreTests : IDisposable
 	public async Task Create_InvalidName_Throws() =>
 		await Assert.ThrowsAsync<ArgumentException>(() => _store.CreateAsync("proj", "Bad Name", null));
 
+	// Store taxonomy (spec: memoverhaul): a well-known system store name is tagged IsSystem
+	// at creation; an ordinary store is not.
+	[Fact]
+	public async Task Create_SessionDigestsStore_IsMarkedSystem_OrdinaryIsNot()
+	{
+		await _store.CreateAsync("proj", "session-digests", null);
+		await _store.CreateAsync("proj", "notes", null);
+
+		var stores = await _store.ListAsync("proj");
+		stores.Single(s => s.Name == "session-digests").IsSystem.Should().BeTrue();
+		stores.Single(s => s.Name == "notes").IsSystem.Should().BeFalse();
+	}
+
 	[Fact]
 	public async Task MemoryEntry_TemporalRoundtrip_ThroughStoreFile()
 	{

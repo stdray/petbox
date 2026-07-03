@@ -256,22 +256,34 @@ public static class MemoryTools
 		[Description("Max rows returned (default 20; 0 = no cap — the output budget still applies).")] int? limit = null,
 		[Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include usage counters (surfaced/opened/lastHitAt) per row (default false).")] bool includeUsage = false,
+		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
 		var cap = limit ?? DefaultLimit;
+		// A bare search is deliberate intent; only an explicit usage:"machine" (automated hook
+		// pulls) records the softer, un-counted-toward-value signal (spec: memoverhaul).
+		var deliberate = !string.Equals(usageSource?.Trim(), "machine", StringComparison.OrdinalIgnoreCase);
 
-		var rows = new List<MemorySearchHitView>();
+		// Each collected row carries its scope RANK (cascade order — project first) and fused
+		// relevance Score so we can HONESTLY merge across scopes below.
+		var scored = new List<(double Score, int ScopeRank, MemorySearchHitView Row)>();
 		// Aggregate provenance across every scope searched: lexical/semantic = OR of the
 		// legs that ran; degraded = OR (any leg that wanted semantic but couldn't).
 		SearchRetrievers? retrievers = null;
+		var scopeRank = -1;
 		foreach (var (scopeName, container) in SearchContainers(http, projectKey, scope))
 		{
 			ct.ThrowIfCancellationRequested();
-			var remaining = cap == 0 ? 0 : cap - rows.Count;
-			if (cap > 0 && remaining <= 0) break;
+			scopeRank++;
+			// QUERY: give each scope the FULL cap so both pools compete on merit — the honest
+			// cross-scope merge (by score) below decides the winners, not a greedy first-scope
+			// grab. LISTING keeps the project-first cascade (project precedence): the remainder
+			// after project fills, then stop when full.
+			var remaining = hasQuery ? cap : (cap == 0 ? 0 : cap - scored.Count);
+			if (!hasQuery && cap > 0 && remaining <= 0) break;
 			var res = await memory.SearchEntriesAsync(container, new SearchRequest<MemoryEntryFilter, MemorySortBy>
 			{
 				Query = hasQuery ? q : null,
@@ -294,16 +306,36 @@ public static class MemoryTools
 			foreach (var h in res.Hits)
 			{
 				var u = includeUsage && usageMap.TryGetValue(h.Store + "\x1f" + h.Entry.Key, out var uv) ? uv : null;
-				rows.Add(new MemorySearchHitView(scopeName, h.Store, h.Entry.Key, h.Entry.Type, h.Entry.Description,
+				scored.Add((h.Score, scopeRank, new MemorySearchHitView(scopeName, h.Store, h.Entry.Key, h.Entry.Type, h.Entry.Description,
 					// Uniform bodyLen contract, default a ~240-char snippet (compact listing).
 					ModuleMcp.Body(h.Entry.Body, bodyLen, ModuleMcp.DefaultSnippet), h.Entry.Tags, h.Entry.Version,
-					includeUsage ? (u?.Surfaced ?? 0) : null, includeUsage ? (u?.Opened ?? 0) : null, u?.LastHitAt));
+					includeUsage ? (u?.Surfaced ?? 0) : null, includeUsage ? (u?.Opened ?? 0) : null, u?.LastHitAt,
+					// W6 provenance surface: how many distinct sessions this fact was seen in
+					// (compact — a number only). Null when it carries no session provenance.
+					SourcesCount(h.Entry.Metadata))));
 			}
 			// Impression = the rows a SEARCH answer returned (a listing is curation — not counted).
 			if (hasQuery)
 				foreach (var g in res.Hits.GroupBy(h => h.Store, StringComparer.OrdinalIgnoreCase))
-					usage.Surfaced(container, g.Key, g.Select(h => h.Entry.Key).ToList());
+					usage.Surfaced(container, g.Key, g.Select(h => h.Entry.Key).ToList(), deliberate);
 		}
+
+		// Cross-scope honest merge (query mode, 2+ scopes contributed): the best hit wins
+		// regardless of container — order by fused+decayed score, ties resolve project-first
+		// (lower scope rank). With a single scope we keep the service's relevance order intact
+		// (re-sorting by raw score would undo its MMR diversification); a listing keeps the
+		// project-first cascade order it was collected in.
+		var multiScope = scored.Select(s => s.ScopeRank).Distinct().Count() > 1;
+		IEnumerable<(double Score, int ScopeRank, MemorySearchHitView Row)> orderedScored =
+			hasQuery && multiScope
+				// Quantize the score so genuine relevance/freshness gaps decide the order, but
+				// sub-threshold noise (two rank-0 hits whose Updated differ by milliseconds) ties
+				// and falls back to project-first — the documented cascade precedence. OrderBy is
+				// stable, so within a scope the service's relevance/MMR order is preserved.
+				? scored.OrderByDescending(s => Math.Round(s.Score, 6)).ThenBy(s => s.ScopeRank)
+				: scored;
+		var rows = orderedScored.Select(s => s.Row).ToList();
+		if (cap > 0 && rows.Count > cap) rows = rows.Take(cap).ToList();
 
 		// Response budget (MCP-adapter-only): measured on the wire form of the rows as they
 		// will be sent (bodies already sliced by the service), prefix-cut, marked — never silent.
@@ -366,6 +398,42 @@ public static class MemoryTools
 
 	static string NormalizeStore(string? store) =>
 		string.IsNullOrWhiteSpace(store) ? DefaultStore : store.Trim();
+
+	// W6 provenance surface (spec memoverhaul-provenance-surface): the count of DISTINCT sessions
+	// a fact was observed in, parsed cheaply from the entry metadata the session jobs stamp —
+	// `sessionId` (string) ∪ `seenIn` (array) ∪ `sources` (array), the same union the autocapture
+	// dedup measures as provenance width. Only a NUMBER goes on the wire (never the id list — the
+	// output budget stays lean); null when the fact carries no session provenance (e.g. a hand
+	// -written note), so the field is omitted rather than a noisy 0.
+	static int? SourcesCount(string metadata)
+	{
+		if (string.IsNullOrWhiteSpace(metadata)) return null;
+		try
+		{
+			using var doc = System.Text.Json.JsonDocument.Parse(metadata);
+			var root = doc.RootElement;
+			if (root.ValueKind != System.Text.Json.JsonValueKind.Object) return null;
+			var ids = new HashSet<string>(StringComparer.Ordinal);
+			if (root.TryGetProperty("sessionId", out var sid) && sid.ValueKind == System.Text.Json.JsonValueKind.String)
+			{
+				var s = sid.GetString();
+				if (!string.IsNullOrWhiteSpace(s)) ids.Add(s!);
+			}
+			foreach (var field in new[] { "seenIn", "sources" })
+				if (root.TryGetProperty(field, out var arr) && arr.ValueKind == System.Text.Json.JsonValueKind.Array)
+					foreach (var el in arr.EnumerateArray())
+						if (el.ValueKind == System.Text.Json.JsonValueKind.String)
+						{
+							var s = el.GetString();
+							if (!string.IsNullOrWhiteSpace(s)) ids.Add(s!);
+						}
+			return ids.Count > 0 ? ids.Count : null;
+		}
+		catch (System.Text.Json.JsonException)
+		{
+			return null; // opaque/unparseable metadata carries no countable provenance
+		}
+	}
 
 	// ---- adapter plumbing: JSON parsing + wire shaping (no domain logic) ----
 

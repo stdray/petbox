@@ -127,6 +127,11 @@ public partial class Program
 				Path.Combine(ResolveDataDir(sp), "memory"), PetBox.Core.Settings.Scope.Project,
 				cs => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(cs)), PetBox.Memory.Data.MemorySchema.Ensure));
 		builder.Services.AddScoped<PetBox.Memory.Data.IMemoryStore, PetBox.Memory.Data.MemoryStore>();
+		// Search relevance re-ranking policy (freshness decay + MMR diversity) — bound from the
+		// `Search` section (Search:Recency:*, Search:Diversity:*); enabled with conservative
+		// defaults when absent. Injected into MemoryService (reusable by tasks/session later).
+		builder.Services.AddSingleton(
+			builder.Configuration.GetSection("Search").Get<PetBox.Core.Search.SearchRerankOptions>() ?? new PetBox.Core.Search.SearchRerankOptions());
 		builder.Services.AddScoped<PetBox.Memory.Contract.IMemoryService, PetBox.Memory.Services.MemoryService>();
 		// Usage telemetry intake (spec: memory-usage-observability): singleton queue+drain;
 		// called ONLY by the MCP/UI adapters, so internal machine traffic never counts.
@@ -153,10 +158,25 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionDigestJob>();
 		// Autocapture: distills durable typed facts from settled sessions into the
 		// quarantined `autocaptured` memory store (dedup via hybrid neighbors + LLM judge).
+		// Dedup thresholds + periodic re-collapse interval are config-tunable (spec: memoverhaul).
+		builder.Services.Configure<PetBox.Web.Search.AutocaptureDedupOptions>(
+			builder.Configuration.GetSection("AutocaptureDedup"));
 		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionFactsJob>();
 		// Cross-session behavior-pattern mining over the accumulated distillates —
 		// registered AFTER the facts job so a tick mines the freshest observations.
 		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.BehaviorPatternJob>();
+		// Quarantine self-cleaning: retires aged autocaptured facts that never earned a
+		// deliberate reach. Report-only by default (structured log of candidates); enforce is
+		// opt-in via config. MinAge default 30d. Rides the enrichment tick, self-throttled via
+		// a singleton clock (the job itself is scoped — a fresh instance per tick).
+		builder.Services.AddSingleton<PetBox.Web.Search.MemoryQuarantineGcClock>();
+		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob>(sp => new PetBox.Web.Search.MemoryQuarantineGcJob(
+			sp.GetRequiredService<IScopedDbFactory<PetBox.Memory.Data.MemoryDb>>(),
+			sp.GetRequiredService<PetBox.Memory.Contract.IMemoryService>(),
+			sp.GetService<Microsoft.Extensions.Logging.ILogger<PetBox.Web.Search.MemoryQuarantineGcJob>>(),
+			minAge: builder.Configuration.GetValue<int?>("Memory:QuarantineGc:MinAgeDays") is { } days ? TimeSpan.FromDays(days) : null,
+			enforce: builder.Configuration.GetValue("Memory:QuarantineGc:Enforce", false),
+			clock: sp.GetRequiredService<PetBox.Web.Search.MemoryQuarantineGcClock>()));
 		// Two-stage session search: digest discovery (memory) → episodic hydration.
 		builder.Services.AddScoped<PetBox.Web.Search.SessionSearchService>();
 		// Episodic tier: transient per-session DuckDB index, hydrated on demand and aged

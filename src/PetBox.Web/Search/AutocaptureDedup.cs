@@ -5,6 +5,28 @@ using PetBox.Memory.Contract;
 
 namespace PetBox.Web.Search;
 
+// Tunables for the deterministic dedup guard (spec: memoverhaul / autocapture-dedup). Bound
+// from configuration section "AutocaptureDedup"; the defaults reproduce the pre-config values.
+public sealed class AutocaptureDedupOptions
+{
+	// Two entries must be near-identical in embedding space to collapse — conservative so
+	// genuinely different facts are never merged.
+	public double SemanticThreshold { get; set; } = AutocaptureDedup.DefaultSemanticThreshold;
+
+	// Above this many entries the O(n²) semantic clustering is skipped for the sweep and it
+	// falls back to text-only. The embed-once-per-pass cache removes the repeated-embedding
+	// cost, so the ceiling now guards only the cheap in-memory cosine loop (n² dot products,
+	// sub-second even at a few thousand entries, run at most once every RecollapseIntervalDays)
+	// — safe to keep generous.
+	public int MaxSemanticCluster { get; set; } = AutocaptureDedup.DefaultMaxSemanticCluster;
+
+	// The pre-existing-twin sweep is PERIODIC, not one-shot: re-run once the last sweep is
+	// older than this many days. New machine writes keep accruing consolidation debt, so a
+	// single lifetime sweep would let twins pile up again — this is also the "background
+	// consolidation" promise (W3) folded into the mining tick.
+	public int RecollapseIntervalDays { get; set; } = 7;
+}
+
 // Deterministic dedup guard for machine memory writes (spec: autocapture-dedup). The LLM
 // judge (SessionFactsJob) and the miner (BehaviorPatternJob) are SOFT filters: a
 // hallucinated "add", a paraphrase the neighbor search never surfaced, or an existing
@@ -17,17 +39,15 @@ namespace PetBox.Web.Search;
 //                route + VectorMath the vector index rides), thresholded conservatively so
 //                genuinely different facts are never merged.
 // Embedding failure/absence degrades to text-only — the same discipline as the chat-down
-// no-op the jobs already keep. A companion one-shot CollapseAsync folds pre-existing twins.
+// no-op the jobs already keep. A companion CollapseAsync folds pre-existing twins, run
+// periodically off the mining tick. An EmbeddingCache passed by the caller embeds each
+// distinct text at most once per DrainAllAsync pass (the store used to be re-embedded on
+// every candidate).
 internal static class AutocaptureDedup
 {
-	// Conservative: two entries must be near-identical in embedding space to collapse.
-	// Tuned to catch rephrasings ("petbox переехал на tun4" ≡ "petbox now lives on tun4")
-	// without eating distinct-but-related facts.
-	internal const double SemanticThreshold = 0.92;
-
-	// Above this many entries the O(n²) semantic clustering is skipped for the sweep and it
-	// falls back to text-only — brute-force cosine stays cheap only at the current scale.
-	internal const int MaxSemanticCluster = 800;
+	// Defaults for AutocaptureDedupOptions; the single source of truth for the magic numbers.
+	internal const double DefaultSemanticThreshold = 0.92;
+	internal const int DefaultMaxSemanticCluster = 2000;
 
 	// Identity key for the cheap pass: lowercase, every non-alphanumeric run → a single
 	// space, trimmed. Casing/punctuation drift no longer hides an exact duplicate.
@@ -51,9 +71,10 @@ internal static class AutocaptureDedup
 
 	// Returns the key of an existing entry that duplicates `candidateText`, or null. The
 	// cheap normalized-equality pass runs first; the semantic pass runs only when it found
-	// nothing and an embedder is available.
+	// nothing and an embedder is available. `cache` (per-pass) embeds the store once.
 	internal static async Task<string?> FindDuplicateKeyAsync(string project, string candidateText,
-		IReadOnlyList<(string Key, string Text)> existing, ILlmClient? llm, CancellationToken ct)
+		IReadOnlyList<(string Key, string Text)> existing, ILlmClient? llm, CancellationToken ct,
+		double semanticThreshold = DefaultSemanticThreshold, EmbeddingCache? cache = null)
 	{
 		if (existing.Count == 0 || string.IsNullOrWhiteSpace(candidateText)) return null;
 
@@ -62,7 +83,9 @@ internal static class AutocaptureDedup
 			foreach (var e in existing)
 				if (Normalize(e.Text) == norm) return e.Key;
 
-		var vectors = await TryEmbedAsync(project, [candidateText, .. existing.Select(e => e.Text)], llm, ct);
+		var texts = new List<string> { candidateText };
+		texts.AddRange(existing.Select(e => e.Text));
+		var vectors = await EmbedAsync(project, texts, llm, cache, ct);
 		if (vectors is null) return null;
 
 		var query = vectors[0];
@@ -73,22 +96,24 @@ internal static class AutocaptureDedup
 			var sim = VectorMath.Cosine(query, vectors[i + 1]);
 			if (sim > bestScore) { bestScore = sim; bestKey = existing[i].Key; }
 		}
-		return bestScore >= SemanticThreshold ? bestKey : null;
+		return bestScore >= semanticThreshold ? bestKey : null;
 	}
 
-	// One-shot idempotent collapse of pre-existing duplicate clusters in a quarantined store
-	// (requirement: fold the twins already on disk without hand-SQL). Clusters active entries
-	// by normalized-text ∪ semantic similarity, keeps the richest-provenance canonical, merges
-	// every cluster member's provenance into it, and soft-deletes the rest. Returns the number
-	// of entries removed. Callers gate it behind a durable cursor so it runs once per store and
-	// survives restart.
+	// Idempotent collapse of duplicate clusters in a quarantined store (requirement: fold the
+	// twins already on disk without hand-SQL). Clusters active entries by normalized-text ∪
+	// semantic similarity, keeps the richest-provenance canonical, merges every cluster
+	// member's provenance into it, and soft-deletes the rest. Returns the number of entries
+	// removed. Callers gate it behind a durable cursor so it runs at most once per
+	// RecollapseIntervalDays and survives restart.
 	internal static async Task<int> CollapseAsync(IMemoryService memory, string project, string store,
-		ILlmClient? llm, ILogger? logger, CancellationToken ct)
+		ILlmClient? llm, ILogger? logger, CancellationToken ct,
+		double semanticThreshold = DefaultSemanticThreshold, int maxSemanticCluster = DefaultMaxSemanticCluster,
+		EmbeddingCache? cache = null)
 	{
 		var entries = await memory.ListAsync(project, store, type: null, ct);
 		if (entries.Count < 2) return 0;
 
-		var clusters = await ClusterAsync(project, entries, llm, ct);
+		var clusters = await ClusterAsync(project, entries, llm, semanticThreshold, maxSemanticCluster, cache, ct);
 		var removed = 0;
 		foreach (var cluster in clusters)
 		{
@@ -116,7 +141,8 @@ internal static class AutocaptureDedup
 	}
 
 	static async Task<List<List<MemoryEntryView>>> ClusterAsync(string project,
-		IReadOnlyList<MemoryEntryView> entries, ILlmClient? llm, CancellationToken ct)
+		IReadOnlyList<MemoryEntryView> entries, ILlmClient? llm, double semanticThreshold,
+		int maxSemanticCluster, EmbeddingCache? cache, CancellationToken ct)
 	{
 		var n = entries.Count;
 		var parent = Enumerable.Range(0, n).ToArray();
@@ -130,13 +156,13 @@ internal static class AutocaptureDedup
 				if (norms[i].Length > 0 && norms[i] == norms[j]) Union(i, j);
 
 		// Semantic pass: cosine ≥ threshold folds rephrasings the cheap pass misses.
-		if (n <= MaxSemanticCluster)
+		if (n <= maxSemanticCluster)
 		{
-			var vectors = await TryEmbedAsync(project, entries.Select(e => e.Description).ToList(), llm, ct);
+			var vectors = await EmbedAsync(project, entries.Select(e => e.Description).ToList(), llm, cache, ct);
 			if (vectors is not null)
 				for (var i = 0; i < n; i++)
 					for (var j = i + 1; j < n; j++)
-						if (Find(i) != Find(j) && VectorMath.Cosine(vectors[i], vectors[j]) >= SemanticThreshold)
+						if (Find(i) != Find(j) && VectorMath.Cosine(vectors[i], vectors[j]) >= semanticThreshold)
 							Union(i, j);
 		}
 
@@ -190,7 +216,13 @@ internal static class AutocaptureDedup
 		return JsonSerializer.Serialize(dict);
 	}
 
-	static async Task<IReadOnlyList<float[]>?> TryEmbedAsync(string project, List<string> inputs,
+	// Embed with the optional per-pass cache; falls back to a direct batch embed when no cache
+	// is supplied (a match keeps the pre-cache behavior for callers that don't pass one).
+	static Task<IReadOnlyList<float[]>?> EmbedAsync(string project, List<string> inputs,
+		ILlmClient? llm, EmbeddingCache? cache, CancellationToken ct) =>
+		cache is not null ? cache.EmbedAsync(project, inputs, llm, ct) : TryEmbedAsync(project, inputs, llm, ct);
+
+	internal static async Task<IReadOnlyList<float[]>?> TryEmbedAsync(string project, IReadOnlyList<string> inputs,
 		ILlmClient? llm, CancellationToken ct)
 	{
 		if (llm is null || inputs.Count == 0) return null;
@@ -241,5 +273,36 @@ internal static class AutocaptureDedup
 			return doc.RootElement.TryGetProperty(prop, out var v) ? v.Clone() : null;
 		}
 		catch (JsonException) { return null; }
+	}
+}
+
+// Per-pass embedding memo: within one DrainAllAsync pass a candidate is compared against the
+// whole quarantined store, so the store's texts would be re-embedded on every candidate. This
+// caches vectors by exact text and batches only the misses, degrading to text-only (null) the
+// moment an embed fails — the same discipline as the chat-down no-op. Not thread-safe: a pass
+// runs sequentially on one worker.
+internal sealed class EmbeddingCache
+{
+	readonly Dictionary<string, float[]> _byText = new(StringComparer.Ordinal);
+
+	public async Task<IReadOnlyList<float[]>?> EmbedAsync(string project, IReadOnlyList<string> inputs,
+		ILlmClient? llm, CancellationToken ct)
+	{
+		if (inputs.Count == 0) return null;
+
+		var missing = new List<string>();
+		foreach (var t in inputs)
+			if (!_byText.ContainsKey(t) && !missing.Contains(t)) missing.Add(t);
+
+		if (missing.Count > 0)
+		{
+			var vectors = await AutocaptureDedup.TryEmbedAsync(project, missing, llm, ct);
+			if (vectors is null) return null; // embed down this attempt → text-only, don't poison the cache
+			for (var i = 0; i < missing.Count; i++) _byText[missing[i]] = vectors[i];
+		}
+
+		var result = new List<float[]>(inputs.Count);
+		foreach (var t in inputs) result.Add(_byText[t]);
+		return result;
 	}
 }

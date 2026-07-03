@@ -9,7 +9,11 @@ namespace PetBox.Memory.Contract;
 public interface IMemoryUsageRecorder
 {
 	// The entry keys actually RETURNED in a recall/search answer (post-limit) — an impression.
-	void Surfaced(string projectKey, string store, IReadOnlyList<string> keys);
+	// `deliberate` splits the honest value signal from noise: a DELIBERATE search (an agent/
+	// human typing a query) counts toward DeliberateCount; a MACHINE pull (automatic hook
+	// context priming, usage:"machine") bumps only SurfacedCount. Default deliberate — a bare
+	// search is a human intent (spec: memoverhaul honest usage signal).
+	void Surfaced(string projectKey, string store, IReadOnlyList<string> keys, bool deliberate = true);
 
 	// A direct memory_get of one entry — an engagement (stronger than an impression).
 	void Opened(string projectKey, string store, string key);
@@ -18,8 +22,9 @@ public interface IMemoryUsageRecorder
 	Task FlushAsync(CancellationToken ct = default);
 }
 
-// One entry's usage as exposed on read surfaces (opt-in flags / UI).
-public sealed record MemoryUsageView(long Surfaced, long Opened, DateTime? LastHitAt);
+// One entry's usage as exposed on read surfaces (opt-in flags / UI). `Deliberate` is the
+// subset of `Surfaced` from deliberate (non-machine) searches — the honest value signal.
+public sealed record MemoryUsageView(long Surfaced, long Opened, DateTime? LastHitAt, long Deliberate = 0);
 
 // Store-wide usage aggregate (spec: memory-usage-aggregate) — a single glance at how a
 // store's entries are actually reached. Coverage (how many entries ever surfaced/opened
@@ -29,6 +34,9 @@ public sealed record MemoryUsageView(long Surfaced, long Opened, DateTime? LastH
 public sealed record MemoryUsageAggregate(
 	int TotalEntries,
 	int SurfacedAtLeastOnce,
+	// The honest cut of SurfacedAtLeastOnce: entries reached by at least one DELIBERATE
+	// search (not just automatic machine pulls) — the coverage that actually proved value.
+	int DeliberatelySurfacedAtLeastOnce,
 	int OpenedAtLeastOnce,
 	// Fractions over the ACTIVE entry set (0 when the store is empty).
 	double SurfacedFraction,

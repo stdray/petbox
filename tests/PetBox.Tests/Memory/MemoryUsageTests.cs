@@ -236,4 +236,47 @@ public sealed class MemoryUsageTests : IDisposable
 		u.Surfaced.Should().Be(2);
 		u.Opened.Should().Be(1);
 	}
+
+	// Honest usage signal (spec: memoverhaul): a deliberate search (the default) counts toward
+	// BOTH the raw surfaced total and the deliberate cut; a machine pull (usage:"machine",
+	// e.g. an automatic hook prime) bumps only the raw total — never the deliberate cut GC trusts.
+	[Fact]
+	public async Task DeliberateSearch_CountsSurfacedAndDeliberate()
+	{
+		await Seed("u1");
+
+		await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
+		await _recorder.FlushAsync();
+
+		var u = (await _memory.GetUsageAsync(Proj, "notes"))["u1"];
+		u.Surfaced.Should().Be(1);
+		u.Deliberate.Should().Be(1);
+	}
+
+	[Fact]
+	public async Task MachineSearch_CountsSurfaced_ButNotDeliberate()
+	{
+		await Seed("u1");
+
+		await MemoryTools.SearchAsync(Http(), Flags(), _memory, _recorder, "телеметрию", scope: "project", store: "notes", usageSource: "machine");
+		await _recorder.FlushAsync();
+
+		var u = (await _memory.GetUsageAsync(Proj, "notes"))["u1"];
+		u.Surfaced.Should().Be(1); // still an impression
+		u.Deliberate.Should().Be(0); // but not a proven-value one
+	}
+
+	[Fact]
+	public async Task Aggregate_DeliberateCut_CountsOnlyDeliberatelySurfaced()
+	{
+		await Seed("u1", "u2", "u3");
+		_recorder.Surfaced(Proj, "notes", ["u1", "u2"], deliberate: false); // machine pulls
+		_recorder.Surfaced(Proj, "notes", ["u1"], deliberate: true);        // u1 also deliberately reached
+		await _recorder.FlushAsync();
+
+		var agg = await _memory.GetUsageAggregateAsync(Proj, "notes");
+
+		agg.SurfacedAtLeastOnce.Should().Be(2);              // u1, u2 surfaced (any source)
+		agg.DeliberatelySurfacedAtLeastOnce.Should().Be(1);  // only u1 proved value
+	}
 }

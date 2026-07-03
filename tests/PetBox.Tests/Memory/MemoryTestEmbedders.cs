@@ -53,7 +53,7 @@ public sealed class FakeLlmClient : ILlmClient
 // Usage-telemetry sink for adapter-signature tests that don't assert counters.
 public sealed class NoopUsageRecorder : PetBox.Memory.Contract.IMemoryUsageRecorder
 {
-	public void Surfaced(string projectKey, string store, IReadOnlyList<string> keys) { }
+	public void Surfaced(string projectKey, string store, IReadOnlyList<string> keys, bool deliberate = true) { }
 	public void Opened(string projectKey, string store, string key) { }
 	public Task FlushAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
