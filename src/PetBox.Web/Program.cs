@@ -421,6 +421,7 @@ public partial class Program
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, WorkspaceRoleAuthorizationHandler>();
 		builder.Services.AddScoped<INavigationContext, NavigationContext>();
+		builder.Services.AddScoped<PetBox.Web.Search.CrossScopeTaskSearchService>();
 		builder.Services.AddScoped<PetBox.Core.Settings.ISettingsResolver, PetBox.Web.Settings.SettingsResolver>();
 		builder.Services.AddRazorPages(options =>
 		{
