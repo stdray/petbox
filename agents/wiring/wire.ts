@@ -8,7 +8,13 @@
 //   3. (--key) persist it to user-scope env
 //   4. validate the key against /api/auth/validate
 //   5. upsert the registry entry (prefix → project, envVar)
-//   6. (re)generate per-project config files (.mcp.json, .opencode/opencode.json, SKILL.md)
+//   6. (re)generate per-project config files:
+//        - .mcp.json                         (Claude Code MCP)
+//        - .opencode/opencode.json           (opencode MCP)
+//        - .factory/mcp.json                 (Factory Droid MCP — idempotent merge)
+//        - .claude/skills/petbox/SKILL.md    (Claude Code skill; opencode reads it via its
+//                                             Claude-compatible skills discovery path)
+//        - .factory/skills/petbox/SKILL.md   (Factory Droid skill)
 //   7. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files)
 //   8. (--cleanup-legacy) remove the project's old per-project hook/plugin copies
 //   9. self-smoke: POST a tiny session and assert the server applied it
@@ -187,8 +193,28 @@ function upsertRegistry(prefix: string, project: string, envVar: string, baseUrl
 
 // ---- step 6: per-project files --------------------------------------------
 
+// Merge one MCP server into a possibly-shared JSON config (Droid's .factory/mcp.json can hold
+// team servers), preserving every other server and top-level key. Idempotent: re-running with
+// the same inputs yields byte-identical output. Only the `petbox` entry is (re)generated.
+function mergeMcpServer(path: string, name: string, server: unknown): void {
+  const data = readJson(path) ?? {};
+  if (!data.mcpServers || typeof data.mcpServers !== "object") data.mcpServers = {};
+  data.mcpServers[name] = server;
+  writeJson(path, data);
+}
+
+// Skill surfaces wire.ts writes the rendered petbox SKILL.md into. opencode is intentionally
+// absent: it discovers the skill through its Claude-compatible path (`.claude/skills/…`), and a
+// second same-name copy under `.opencode/skills/` would be a duplicate whose resolution opencode
+// does not document. Droid reads its own `.factory/skills/` root (its compat path is
+// `.agent/skills/`, NOT `.claude/skills/`), so it needs a dedicated copy.
+const SKILL_SURFACES: string[][] = [
+  [".claude", "skills"], // Claude Code (native) + opencode (Claude-compatible discovery)
+  [".factory", "skills"], // Factory Droid (native)
+];
+
 function writeProjectFiles(dir: string, project: string, envVar: string, workspace: string): void {
-  // .mcp.json
+  // .mcp.json (Claude Code) — petbox-only file owned by wire.ts, regenerated whole.
   const mcp = {
     mcpServers: {
       petbox: {
@@ -201,7 +227,7 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   writeJson(join(dir, ".mcp.json"), mcp);
   log(`[6/9] wrote ${join(dir, ".mcp.json")}`);
 
-  // .opencode/opencode.json
+  // .opencode/opencode.json (opencode) — petbox-only file owned by wire.ts, regenerated whole.
   const oc = {
     $schema: "https://opencode.ai/config.json",
     mcp: {
@@ -216,15 +242,29 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
   writeJson(join(dir, ".opencode", "opencode.json"), oc);
   log(`[6/9] wrote ${join(dir, ".opencode", "opencode.json")}`);
 
-  // .claude/skills/petbox/SKILL.md from template
+  // .factory/mcp.json (Factory Droid) — a project-level MCP config that may be shared with team
+  // servers, so merge (never clobber) rather than regenerate whole. Droid supports `${VAR}`
+  // env-var expansion in header values, so the key stays out of the file (no secret committed).
+  const droidMcpPath = join(dir, ".factory", "mcp.json");
+  mergeMcpServer(droidMcpPath, "petbox", {
+    type: "http",
+    url: `${DEFAULT_BASE_URL}/mcp`,
+    headers: { "X-Api-Key": `\${${envVar}}` },
+    disabled: false,
+  });
+  log(`[6/9] merged petbox MCP server into ${droidMcpPath}`);
+
+  // SKILL.md — render once from the template, then drop a copy into every native skill surface.
   const tpl = readFileSync(join(HERE, "templates", "SKILL.md"), "utf8");
   const skill = tpl
     .replace(/\{\{PROJECT\}\}/g, project)
     .replace(/\{\{WORKSPACE\}\}/g, workspace);
-  const skillPath = join(dir, ".claude", "skills", "petbox", "SKILL.md");
-  mkdirSync(dirname(skillPath), { recursive: true });
-  writeFileSync(skillPath, skill, "utf8");
-  log(`[6/9] wrote ${skillPath}`);
+  for (const surface of SKILL_SURFACES) {
+    const skillPath = join(dir, ...surface, "petbox", "SKILL.md");
+    mkdirSync(dirname(skillPath), { recursive: true });
+    writeFileSync(skillPath, skill, "utf8");
+    log(`[6/9] wrote ${skillPath}`);
+  }
 }
 
 // ---- step 7: global install ------------------------------------------------
