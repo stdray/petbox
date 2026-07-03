@@ -220,6 +220,24 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		html.Should().NotContain("data-project-key=\"$workspace\""); // container excluded from the grid
 	}
 
+	// The sidebar's workspace-level group: "Shared memory" is a live link to the shared
+	// container (the "coming soon" placeholder is gone), "Shared config" sits in the same
+	// top group, and the workspace-admin entry is gone (admin is reached via the header gear).
+	[Fact]
+	public async Task Sidebar_SharedMemoryLive_SharedConfigTop_NoWorkspaceAdmin()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().NotContain("coming soon");
+		html.Should().Contain("data-testid=\"nav-ws-memory\"");
+		html.Should().MatchRegex(
+			"""<a href="/ui/\$system/\$workspace/memory"[^>]*data-testid="nav-ws-memory""");
+		html.Should().Contain("Shared memory");
+		html.Should().Contain("data-testid=\"nav-shared-config\"");
+		html.Should().NotContain("data-testid=\"nav-ws-admin\"");
+	}
+
 	[Fact]
 	public async Task Sessions_EmptyList_RendersOk()
 	{

@@ -23,9 +23,8 @@ public sealed class IndexModel : PageModel
 	}
 
 	// The reserved cross-project memory container (a container project, not a user project).
-	// It always lives under the "$system" workspace, so its memory page is a fixed address.
+	// Its memory page is the fixed Routes.SharedMemory() address.
 	public const string WorkspaceMemoryContainer = "$workspace";
-	public const string WorkspaceMemoryWorkspace = "$system";
 
 	public string WorkspaceKey { get; private set; } = "$system";
 	public IReadOnlyList<Project> Projects { get; private set; } = [];
