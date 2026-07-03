@@ -79,8 +79,9 @@ public sealed class MemoryService : IMemoryService
 
 	// Stores skipped by the implicit "every store" sweep of the unified read: sensitive
 	// operational stores that must never be auto-pulled into an agent's context (e.g. "ops"
-	// has held secrets). An explicit Filter.Store still reaches them — only the implicit
-	// sweep excludes.
+	// has held secrets), PLUS every IsSystem store (e.g. session-digests — machine plumbing,
+	// not knowledge). An explicit Filter.Store still reaches any of them — only the implicit
+	// sweep excludes (spec: memoverhaul store taxonomy).
 	static readonly HashSet<string> SweepExcludedStores = new(StringComparer.OrdinalIgnoreCase) { "ops" };
 
 	// The generic uniform-read seam (implemented EXPLICITLY — the contract is a shared shape,
@@ -106,7 +107,7 @@ public sealed class MemoryService : IMemoryService
 		// A named store missing from THIS container yields no hits, not an error — the
 		// adapter's scope cascade reads several containers and the store may live in one.
 		IReadOnlyList<string> stores = string.IsNullOrWhiteSpace(f.Store)
-			? (await _stores.ListAsync(projectKey, ct)).Select(s => s.Name).Where(n => !SweepExcludedStores.Contains(n)).ToList()
+			? (await _stores.ListAsync(projectKey, ct)).Where(s => !s.IsSystem && !SweepExcludedStores.Contains(s.Name)).Select(s => s.Name).ToList()
 			: [f.Store!.Trim()];
 
 		var selected = new List<(string Store, MemoryEntry Entry)>();
@@ -295,7 +296,7 @@ public sealed class MemoryService : IMemoryService
 		if (keys is not null) q = q.Where(u => keys.Contains(u.Key));
 		return q.ToList().ToDictionary(
 			u => u.Key,
-			u => new MemoryUsageView(u.SurfacedCount, u.OpenedCount, u.LastHitAt),
+			u => new MemoryUsageView(u.SurfacedCount, u.OpenedCount, u.LastHitAt, u.DeliberateCount),
 			StringComparer.Ordinal);
 	}
 
@@ -311,6 +312,7 @@ public sealed class MemoryService : IMemoryService
 		var usage = ctx.Usage.ToList().ToDictionary(u => u.Key, StringComparer.Ordinal);
 
 		var surfacedCount = 0;
+		var deliberateCount = 0;
 		var openedCount = 0;
 		var surfacedHits = new List<DateTime>();
 		var dead = new List<(string Key, DateTime Created)>();
@@ -326,6 +328,7 @@ public sealed class MemoryService : IMemoryService
 			{
 				dead.Add((e.Key, e.Created)); // never surfaced — a dead-tail candidate
 			}
+			if (u is { DeliberateCount: > 0 }) deliberateCount++; // honest value cut
 			if (u is { OpenedCount: > 0 }) openedCount++;
 		}
 
@@ -337,6 +340,7 @@ public sealed class MemoryService : IMemoryService
 		return new MemoryUsageAggregate(
 			TotalEntries: total,
 			SurfacedAtLeastOnce: surfacedCount,
+			DeliberatelySurfacedAtLeastOnce: deliberateCount,
 			OpenedAtLeastOnce: openedCount,
 			SurfacedFraction: total == 0 ? 0 : (double)surfacedCount / total,
 			OpenedFraction: total == 0 ? 0 : (double)openedCount / total,

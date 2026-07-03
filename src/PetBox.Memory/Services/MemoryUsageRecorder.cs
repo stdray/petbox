@@ -15,7 +15,9 @@ namespace PetBox.Memory.Services;
 public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 {
 	abstract record Event;
-	sealed record Hit(string Project, string Store, string Key, bool Opened) : Event;
+	// Opened = an engagement (memory_get). For a surface (Opened=false), Deliberate splits an
+	// intentional search from an automatic machine pull; irrelevant for an Opened hit.
+	sealed record Hit(string Project, string Store, string Key, bool Opened, bool Deliberate) : Event;
 	sealed record FlushMark(TaskCompletionSource Done) : Event;
 
 	readonly IScopedDbFactory<MemoryDb> _factory;
@@ -31,14 +33,14 @@ public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 		_drain = Task.Run(DrainLoopAsync);
 	}
 
-	public void Surfaced(string projectKey, string store, IReadOnlyList<string> keys)
+	public void Surfaced(string projectKey, string store, IReadOnlyList<string> keys, bool deliberate = true)
 	{
 		foreach (var key in keys)
-			_events.Writer.TryWrite(new Hit(projectKey, store, key, Opened: false));
+			_events.Writer.TryWrite(new Hit(projectKey, store, key, Opened: false, Deliberate: deliberate));
 	}
 
 	public void Opened(string projectKey, string store, string key) =>
-		_events.Writer.TryWrite(new Hit(projectKey, store, key, Opened: true));
+		_events.Writer.TryWrite(new Hit(projectKey, store, key, Opened: true, Deliberate: true));
 
 	public async Task FlushAsync(CancellationToken ct = default)
 	{
@@ -79,15 +81,19 @@ public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 		// for this file before the raw upsert (reference: NewConnection ≠ migrations).
 		var db = _factory.GetDb(hit.Project, hit.Store);
 		db.Execute("""
-			INSERT INTO entry_usage (Key, SurfacedCount, OpenedCount, LastHitAt)
-			VALUES (@key, @surfaced, @opened, @at)
+			INSERT INTO entry_usage (Key, SurfacedCount, DeliberateCount, OpenedCount, LastHitAt)
+			VALUES (@key, @surfaced, @deliberate, @opened, @at)
 			ON CONFLICT(Key) DO UPDATE SET
 				SurfacedCount = SurfacedCount + excluded.SurfacedCount,
+				DeliberateCount = DeliberateCount + excluded.DeliberateCount,
 				OpenedCount = OpenedCount + excluded.OpenedCount,
 				LastHitAt = excluded.LastHitAt;
 			""",
 			new DataParameter("key", hit.Key),
 			new DataParameter("surfaced", hit.Opened ? 0 : 1),
+			// Deliberate is the honest subset of a surface: only an intentional (non-machine)
+			// search counts; an Opened hit is an engagement, not a surface.
+			new DataParameter("deliberate", !hit.Opened && hit.Deliberate ? 1 : 0),
 			new DataParameter("opened", hit.Opened ? 1 : 0),
 			new DataParameter("at", DateTime.UtcNow));
 	}

@@ -256,12 +256,16 @@ public static class MemoryTools
 		[Description("Max rows returned (default 20; 0 = no cap — the output budget still applies).")] int? limit = null,
 		[Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include usage counters (surfaced/opened/lastHitAt) per row (default false).")] bool includeUsage = false,
+		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
 		var cap = limit ?? DefaultLimit;
+		// A bare search is deliberate intent; only an explicit usage:"machine" (automated hook
+		// pulls) records the softer, un-counted-toward-value signal (spec: memoverhaul).
+		var deliberate = !string.Equals(usageSource?.Trim(), "machine", StringComparison.OrdinalIgnoreCase);
 
 		var rows = new List<MemorySearchHitView>();
 		// Aggregate provenance across every scope searched: lexical/semantic = OR of the
@@ -302,7 +306,7 @@ public static class MemoryTools
 			// Impression = the rows a SEARCH answer returned (a listing is curation — not counted).
 			if (hasQuery)
 				foreach (var g in res.Hits.GroupBy(h => h.Store, StringComparer.OrdinalIgnoreCase))
-					usage.Surfaced(container, g.Key, g.Select(h => h.Entry.Key).ToList());
+					usage.Surfaced(container, g.Key, g.Select(h => h.Entry.Key).ToList(), deliberate);
 		}
 
 		// Response budget (MCP-adapter-only): measured on the wire form of the rows as they

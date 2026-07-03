@@ -23,4 +23,10 @@ public sealed record MemoryStoreMeta
 
 	[Column, NotNull]
 	public DateTime UpdatedAt { get; init; }
+
+	// System stores are machine plumbing (e.g. session-digests), not user knowledge: they
+	// are excluded from the default memory_search sweep and set apart in the UI. An explicit
+	// store: still reaches them (spec: memoverhaul store taxonomy).
+	[Column, NotNull]
+	public bool IsSystem { get; init; }
 }

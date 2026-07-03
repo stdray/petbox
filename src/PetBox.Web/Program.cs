@@ -157,6 +157,18 @@ public partial class Program
 		// Cross-session behavior-pattern mining over the accumulated distillates —
 		// registered AFTER the facts job so a tick mines the freshest observations.
 		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.BehaviorPatternJob>();
+		// Quarantine self-cleaning: retires aged autocaptured facts that never earned a
+		// deliberate reach. Report-only by default (structured log of candidates); enforce is
+		// opt-in via config. MinAge default 30d. Rides the enrichment tick, self-throttled via
+		// a singleton clock (the job itself is scoped — a fresh instance per tick).
+		builder.Services.AddSingleton<PetBox.Web.Search.MemoryQuarantineGcClock>();
+		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob>(sp => new PetBox.Web.Search.MemoryQuarantineGcJob(
+			sp.GetRequiredService<IScopedDbFactory<PetBox.Memory.Data.MemoryDb>>(),
+			sp.GetRequiredService<PetBox.Memory.Contract.IMemoryService>(),
+			sp.GetService<Microsoft.Extensions.Logging.ILogger<PetBox.Web.Search.MemoryQuarantineGcJob>>(),
+			minAge: builder.Configuration.GetValue<int?>("Memory:QuarantineGc:MinAgeDays") is { } days ? TimeSpan.FromDays(days) : null,
+			enforce: builder.Configuration.GetValue("Memory:QuarantineGc:Enforce", false),
+			clock: sp.GetRequiredService<PetBox.Web.Search.MemoryQuarantineGcClock>()));
 		// Two-stage session search: digest discovery (memory) → episodic hydration.
 		builder.Services.AddScoped<PetBox.Web.Search.SessionSearchService>();
 		// Episodic tier: transient per-session DuckDB index, hydrated on demand and aged
