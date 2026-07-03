@@ -19,6 +19,10 @@ public static class KqlCompletionService
 		"order",
 		"top",
 		"distinct",
+		"join",
+		"lookup",
+		"mv-expand",
+		"parse",
 	};
 
 	public static KqlCompletionsResponse Complete(string query, int position)

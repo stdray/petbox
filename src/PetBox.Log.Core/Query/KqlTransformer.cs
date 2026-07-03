@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Kusto.Language;
 using Kusto.Language.Syntax;
 using LinqToDB;
@@ -31,7 +32,18 @@ public static class KqlTransformer
 		if (parseErrors.Count > 0)
 			throw new UnsupportedKqlException("KQL parse error: " + string.Join("; ", parseErrors.Select(d => d.Message)));
 
-		var operators = FlattenPipeline(code.Syntax).ToList();
+		// now()/ago() resolve to this single instant for the whole query (see ScalarContext.UtcNow).
+		var now = (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+		return ExecutePipeline(source, code.Syntax, now);
+	}
+
+	// Compiles and runs one `events`-rooted pipeline (the top-level query, or a correlation
+	// operator's right-hand subquery — see RunCorrelationSubquery) against `source`. The pre-split
+	// prefix runs as linq2db SQL; the shape-changing suffix runs in-memory. Recursion (a join/lookup
+	// whose right side is itself a pipeline) reuses the SAME compiler against the SAME log source.
+	static KqlResult ExecutePipeline(IQueryable<LogEntryRecord> source, SyntaxNode root, DateTime now)
+	{
+		var operators = FlattenPipeline(root).ToList();
 		if (operators.Count == 0)
 			throw new UnsupportedKqlException("empty query");
 
@@ -39,9 +51,6 @@ public static class KqlTransformer
 			throw new UnsupportedKqlException($"expected table reference, got {operators[0].GetType().Name}");
 		if (!string.Equals(tableName.SimpleName, EventsTable, StringComparison.Ordinal))
 			throw new UnsupportedKqlException($"unknown table '{tableName.SimpleName}'; only '{EventsTable}' is supported");
-
-		// now()/ago() resolve to this single instant for the whole query (see ScalarContext.UtcNow).
-		var now = (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime;
 
 		var pipeline = operators.Skip(1).ToList();
 		var splitAt = pipeline.FindIndex(IsShapeChangingOp);
@@ -55,7 +64,7 @@ public static class KqlTransformer
 
 		return postOps.Count == 0
 			? eventShape
-			: ApplyShapeChanges(eventShape, postOps, now);
+			: ApplyShapeChanges(eventShape, postOps, now, source);
 	}
 
 	// An operator whose output is no longer the event shape. `distinct` reduces to its chosen
@@ -63,7 +72,10 @@ public static class KqlTransformer
 	// preserve the current shape and are handled both pre-split (SQL) and post-split (in-memory),
 	// so a query that only sorts/limits stays entirely in the linq2db path.
 	static bool IsShapeChangingOp(SyntaxNode op) =>
-		op is ProjectOperator or CountOperator or SummarizeOperator or ExtendOperator or DistinctOperator;
+		op is ProjectOperator or CountOperator or SummarizeOperator or ExtendOperator or DistinctOperator
+			// correlation ops (wave 5): all post-materialization in-memory stages. join/lookup carry a
+			// right-hand subquery that runs independently; mv-expand/parse reshape each streamed row.
+			or JoinOperator or LookupOperator or MvExpandOperator or ParseOperator;
 
 	public static bool HasShapeChangingOps(KustoCode code)
 	{
@@ -102,7 +114,7 @@ public static class KqlTransformer
 		return q;
 	}
 
-	static KqlResult ApplyShapeChanges(KqlResult input, IReadOnlyList<SyntaxNode> ops, DateTime now)
+	static KqlResult ApplyShapeChanges(KqlResult input, IReadOnlyList<SyntaxNode> ops, DateTime now, IQueryable<LogEntryRecord> source)
 	{
 		var current = input;
 		foreach (var op in ops)
@@ -114,6 +126,11 @@ public static class KqlTransformer
 				CountOperator => ApplyCount(current),
 				SummarizeOperator s => ApplySummarize(current, s, now),
 				DistinctOperator d => ApplyDistinct(current, d),
+				// correlation ops. join/lookup compile their right subquery against the same `source`.
+				JoinOperator j => ApplyJoin(current, j, now, source),
+				LookupOperator l => ApplyLookup(current, l, now, source),
+				MvExpandOperator m => ApplyMvExpand(current, m, now),
+				ParseOperator p => ApplyParse(current, p, now),
 				// where / order by / take / top run in-memory once the pipeline has changed shape;
 				// their predicates and sort keys may reference computed (post-split) columns.
 				FilterOperator f => ApplyPostWhere(current, f, now),
@@ -796,6 +813,517 @@ public static class KqlTransformer
 		}
 	}
 
+	// --- correlation ops (wave 5): join / lookup / mv-expand / parse. All are post-materialization
+	// in-memory stages over the streamed object?[] rows. Cross-log/table addressing is out of scope:
+	// a join/lookup right side must be a subquery over the SAME log (`events`), compiled by the same
+	// transformer against the same IQueryable source (RunCorrelationSubquery). ---
+
+	enum JoinKind { InnerUnique, Inner, LeftOuter }
+
+	// join [kind=innerunique|inner|leftouter] (<right subquery>) on <key>[, <key2>...]. Left columns
+	// come first; right columns follow, each renamed <name>N (N = smallest suffix making it unique)
+	// on a name collision with an already-present column — so a self-join produces Id, …, Id1, ….
+	// Execution is a hash join with the (fully buffered) right subquery as the build side; the left
+	// side streams. Memory profile: O(right result size). Default kind is innerunique (Kusto default:
+	// the left side is de-duplicated by key, keeping the first row per key in input order).
+	static KqlResult ApplyJoin(KqlResult left, JoinOperator op, DateTime now, IQueryable<LogEntryRecord> source)
+	{
+		var kind = ParseJoinKind(op.Parameters, "join");
+		if (op.ConditionClause is not JoinOnClause onClause)
+			throw new UnsupportedKqlException("join requires an 'on' clause with equality key(s)");
+		var right = RunCorrelationSubquery(op.Expression, source, now, "join");
+		var (leftKeys, rightKeys, _) = ResolveJoinKeys(onClause, left, right, "join");
+		var (columns, included) = BuildJoinColumns(left, right, NoExcludedColumns);
+		return new KqlResult(columns,
+			StreamJoinRows(left, right, leftKeys, rightKeys, kind, left.Columns.Count, included, columns.Count));
+	}
+
+	// lookup (<right>) on <key>: sugar over a leftouter join for dimension-style enrichment. The only
+	// difference from a leftouter join (confirmed against the reference executor) is that the right-side
+	// KEY columns are dropped from the output — they equal the left keys. Unmatched left rows keep their
+	// columns with the appended right columns null. Reuses the same hash-join machinery as join.
+	static KqlResult ApplyLookup(KqlResult left, LookupOperator op, DateTime now, IQueryable<LogEntryRecord> source)
+	{
+		if (op.Parameters.Count > 0)
+			throw new UnsupportedKqlException("lookup parameters not supported (lookup is always a leftouter enrichment)");
+		if (op.LookupClause is not JoinOnClause onClause)
+			throw new UnsupportedKqlException("lookup requires an 'on' clause with equality key(s)");
+		var right = RunCorrelationSubquery(op.Expression, source, now, "lookup");
+		var (leftKeys, rightKeys, rightKeyCols) = ResolveJoinKeys(onClause, left, right, "lookup");
+		var exclude = new HashSet<int>(rightKeyCols.Where(i => i >= 0));
+		var (columns, included) = BuildJoinColumns(left, right, exclude);
+		return new KqlResult(columns,
+			StreamJoinRows(left, right, leftKeys, rightKeys, JoinKind.LeftOuter, left.Columns.Count, included, columns.Count));
+	}
+
+	static readonly HashSet<int> NoExcludedColumns = [];
+
+	static JoinKind ParseJoinKind(SyntaxList<NamedParameter> parameters, string opName)
+	{
+		var kind = JoinKind.InnerUnique;
+		for (var i = 0; i < parameters.Count; i++)
+		{
+			var p = parameters[i];
+			var name = p.Name?.SimpleName;
+			if (!string.Equals(name, "kind", StringComparison.Ordinal))
+				throw new UnsupportedKqlException($"{opName} parameter '{name}' not supported (only 'kind' is supported)");
+			var value = (p.Expression as LiteralExpression)?.LiteralValue?.ToString();
+			kind = value switch
+			{
+				"innerunique" => JoinKind.InnerUnique,
+				"inner" => JoinKind.Inner,
+				"leftouter" => JoinKind.LeftOuter,
+				_ => throw new UnsupportedKqlException(
+					$"{opName} kind '{value}' not supported (supported: innerunique, inner, leftouter)"),
+			};
+		}
+		return kind;
+	}
+
+	// The right side of a join/lookup: a full nested pipeline over the SAME log. Cross-log/table
+	// addressing is out of scope, so the leading table reference must be `events` — anything else
+	// gets a precise "must be the same log" error rather than a generic unknown-table one.
+	static KqlResult RunCorrelationSubquery(Expression rightExpr, IQueryable<LogEntryRecord> source, DateTime now, string opName)
+	{
+		var ops = FlattenPipeline(rightExpr).ToList();
+		if (ops.Count == 0 || ops[0] is not NameReference tbl)
+			throw new UnsupportedKqlException($"{opName} right side must be a subquery over '{EventsTable}'");
+		if (!string.Equals(tbl.SimpleName, EventsTable, StringComparison.Ordinal))
+			throw new UnsupportedKqlException(
+				$"{opName} right side must be the same log ('{EventsTable}'); cross-log/table joins are not supported (got '{tbl.SimpleName}')");
+		return ExecutePipeline(source, rightExpr, now);
+	}
+
+	// Resolves the on-clause into per-side key value-extractors. Two accepted forms (both equality):
+	//   `on Col[, Col2...]`  — the same column name on both sides (incl. the Properties bare-name
+	//                          fallback via the usual resolution);
+	//   `on $left.A == $right.B` — an explicit equality between one column on each side.
+	// Anything else (non-equality, or an equality that is not $left/$right) is rejected precisely.
+	// The returned RightKeyColumns carry each right key's column index (or -1 for a Properties
+	// fallback) so lookup can drop the right key columns from its output.
+	static (Func<object?[], object?>[] Left, Func<object?[], object?>[] Right, int[] RightKeyColumns) ResolveJoinKeys(
+		JoinOnClause onClause, KqlResult left, KqlResult right, string opName)
+	{
+		var lefts = new List<Func<object?[], object?>>();
+		var rights = new List<Func<object?[], object?>>();
+		var rightCols = new List<int>();
+
+		foreach (var element in onClause.Expressions)
+		{
+			switch (element.Element)
+			{
+				case NameReference n:
+					lefts.Add(ResolveKeyExtractor(left, n.SimpleName, opName, out _));
+					rights.Add(ResolveKeyExtractor(right, n.SimpleName, opName, out var idx));
+					rightCols.Add(idx);
+					break;
+				case BinaryExpression { Kind: SyntaxKind.EqualExpression, Left: var lhs, Right: var rhs }:
+					{
+						var a = DollarRef(lhs);
+						var b = DollarRef(rhs);
+						if (a is null || b is null || a.Value.IsLeft == b.Value.IsLeft)
+							throw new UnsupportedKqlException(
+								$"{opName} on: an equality must be '$left.col == $right.col' (got an unsupported on-clause)");
+						var (leftName, rightName) = a.Value.IsLeft
+							? (a.Value.Column, b.Value.Column)
+							: (b.Value.Column, a.Value.Column);
+						lefts.Add(ResolveKeyExtractor(left, leftName, opName, out _));
+						rights.Add(ResolveKeyExtractor(right, rightName, opName, out var ridx));
+						rightCols.Add(ridx);
+						break;
+					}
+				default:
+					throw new UnsupportedKqlException(
+						$"{opName} on: only equality on column names is supported (col or $left.col == $right.col), got '{element.Element.Kind}'");
+			}
+		}
+
+		if (lefts.Count == 0)
+			throw new UnsupportedKqlException($"{opName} requires at least one 'on' key");
+		return (lefts.ToArray(), rights.ToArray(), rightCols.ToArray());
+	}
+
+	static (string Column, bool IsLeft)? DollarRef(Expression e)
+	{
+		if (e is PathExpression { Expression: NameReference side, Selector: NameReference col })
+		{
+			if (side.SimpleName == "$left") return (col.SimpleName, true);
+			if (side.SimpleName == "$right") return (col.SimpleName, false);
+		}
+		return null;
+	}
+
+	// A join-key value extractor over a row of `shape`: a direct column (cheap index) or, when the
+	// name is not a column, the Properties.<name> bare-name fallback (json_extract, when the shape
+	// still carries PropertiesJson). `columnIndex` is the resolved column index, or -1 for the
+	// Properties fallback (so lookup knows there is no right key column to drop).
+	static Func<object?[], object?> ResolveKeyExtractor(KqlResult shape, string name, string opName, out int columnIndex)
+	{
+		var idx = FindColumnIndex(shape.Columns, name);
+		if (idx >= 0)
+		{
+			columnIndex = idx;
+			return row => row[idx];
+		}
+		var propIdx = FindColumnIndex(shape.Columns, nameof(LogEntryRecord.PropertiesJson));
+		if (propIdx < 0)
+			throw new UnsupportedKqlException($"{opName} on: unknown column '{name}'");
+		columnIndex = -1;
+		var path = "$." + name;
+		return row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path);
+	}
+
+	// Builds the joined column list: left columns verbatim, then the right columns (minus any
+	// excluded, used by lookup for the right key columns), each suffixed to a unique name on
+	// collision. `included` maps output right-column slots back to right-row indices.
+	static (List<KqlColumn> Columns, int[] Included) BuildJoinColumns(KqlResult left, KqlResult right, ISet<int> excludeRight)
+	{
+		var columns = new List<KqlColumn>(left.Columns);
+		var used = new HashSet<string>(columns.Select(c => c.Name), StringComparer.Ordinal);
+		var included = new List<int>();
+		for (var i = 0; i < right.Columns.Count; i++)
+		{
+			if (excludeRight.Contains(i))
+				continue;
+			var baseName = right.Columns[i].Name;
+			var name = baseName;
+			var n = 1;
+			while (!used.Add(name))
+				name = baseName + n++;
+			columns.Add(new KqlColumn(name, right.Columns[i].ClrType));
+			included.Add(i);
+		}
+		return (columns, included.ToArray());
+	}
+
+	static async IAsyncEnumerable<object?[]> StreamJoinRows(
+		KqlResult left,
+		KqlResult right,
+		Func<object?[], object?>[] leftKeys,
+		Func<object?[], object?>[] rightKeys,
+		JoinKind kind,
+		int leftWidth,
+		int[] rightIncluded,
+		int outputWidth,
+		[EnumeratorCancellation] CancellationToken ct = default)
+	{
+		// Build side: buffer the right subquery, bucketed by key. A key with any null component never
+		// matches (Kusto join-on-null semantics).
+		var buckets = new Dictionary<GroupKey, List<object?[]>>();
+		await foreach (var r in right.Rows.WithCancellation(ct).ConfigureAwait(false))
+		{
+			var key = MakeKey(rightKeys, r);
+			if (key is null)
+				continue;
+			if (!buckets.TryGetValue(key, out var list))
+				buckets[key] = list = [];
+			list.Add(r);
+		}
+
+		var seenLeft = kind == JoinKind.InnerUnique ? new HashSet<GroupKey>() : null;
+		await foreach (var l in left.Rows.WithCancellation(ct).ConfigureAwait(false))
+		{
+			var key = MakeKey(leftKeys, l);
+			if (kind == JoinKind.InnerUnique)
+			{
+				if (key is null)
+					continue; // a null key can never match under inner semantics
+				if (!seenLeft!.Add(key))
+					continue; // de-dup the left side, keeping the first row per key
+			}
+
+			List<object?[]>? matches = null;
+			if (key is not null)
+				buckets.TryGetValue(key, out matches);
+
+			if (matches is { Count: > 0 })
+			{
+				foreach (var r in matches)
+				{
+					var res = new object?[outputWidth];
+					Array.Copy(l, res, leftWidth);
+					for (var j = 0; j < rightIncluded.Length; j++)
+						res[leftWidth + j] = r[rightIncluded[j]];
+					yield return res;
+				}
+			}
+			else if (kind == JoinKind.LeftOuter)
+			{
+				var res = new object?[outputWidth];
+				Array.Copy(l, res, leftWidth);
+				yield return res; // right columns stay null
+			}
+			// inner / innerunique with no match: drop the left row
+		}
+	}
+
+	// A join key from a row, or null when any component is null (a null key never matches in Kusto).
+	static GroupKey? MakeKey(Func<object?[], object?>[] extractors, object?[] row)
+	{
+		var values = new object?[extractors.Length];
+		for (var i = 0; i < extractors.Length; i++)
+		{
+			var v = extractors[i](row);
+			if (v is null)
+				return null;
+			values[i] = v;
+		}
+		return new GroupKey(values);
+	}
+
+	// mv-expand <col>: one output row per element of a JSON-array value (Properties.<key> or a bare
+	// property name — the value json_extract returns for an array is its raw JSON text). Elements are
+	// string-typed like every other Properties value (a string element is its text; a number/bool/
+	// object element is its raw JSON). A non-array, missing, or null value drops the row (Kusto's
+	// default). PRODUCTION-ONLY differential coverage: the reference executor (KustoLoco) models
+	// dynamics as real array columns and cannot expand our Properties-JSON strings, so there is no
+	// differential test for this — semantics are pinned by unit tests instead.
+	static KqlResult ApplyMvExpand(KqlResult input, MvExpandOperator op, DateTime now)
+	{
+		if (op.Parameters.Count > 0)
+			throw new UnsupportedKqlException("mv-expand parameters (bagexpansion / with_itemindex) not supported");
+		if (op.RowLimitClause is not null)
+			throw new UnsupportedKqlException("mv-expand row limit not supported");
+		if (op.Expressions.Count != 1)
+			throw new UnsupportedKqlException("mv-expand supports exactly one column");
+		if (op.Expressions[0].Element is not MvExpandExpression mve)
+			throw new UnsupportedKqlException("mv-expand supports a column or Properties.<key>");
+		if (mve.ToTypeOf is not null)
+			throw new UnsupportedKqlException("mv-expand 'to typeof(...)' not supported (elements are string-typed)");
+
+		var (outName, targetIndex, extractor) = ResolveMvColumn(input, mve.Expression);
+		var columns = input.Columns.ToList();
+		int outIndex;
+		if (targetIndex >= 0)
+		{
+			columns[targetIndex] = new KqlColumn(outName, typeof(string)); // expanded in place, now string
+			outIndex = targetIndex;
+		}
+		else
+		{
+			columns.Add(new KqlColumn(outName, typeof(string)));
+			outIndex = columns.Count - 1;
+		}
+		return new KqlResult(columns, StreamMvExpand(input.Rows, extractor, outIndex, input.Columns.Count, columns.Count));
+	}
+
+	// Resolves the mv-expand target to (output column name, existing column index or -1, JSON-string
+	// extractor). A bare name that is a column expands that column in place; otherwise it (and the
+	// Properties.<key> path form) reads the property and appends a new column named after the leaf.
+	static (string Name, int TargetIndex, Func<object?[], string?> Extractor) ResolveMvColumn(KqlResult input, Expression expr)
+	{
+		switch (expr)
+		{
+			case NameReference n:
+				{
+					var idx = FindColumnIndex(input.Columns, n.SimpleName);
+					if (idx >= 0)
+						return (n.SimpleName, idx, row => row[idx] as string);
+					var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
+					if (propIdx < 0)
+						throw new UnsupportedKqlException($"mv-expand: unknown column '{n.SimpleName}'");
+					var path = "$." + n.SimpleName;
+					return (n.SimpleName, -1, row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path));
+				}
+			case PathExpression p when IsPropertiesPath(p, out var key):
+				{
+					var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
+					if (propIdx < 0)
+						throw new UnsupportedKqlException("mv-expand Properties.<key>: input has no PropertiesJson column");
+					var path = "$." + key;
+					return (key, -1, row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path));
+				}
+			default:
+				throw new UnsupportedKqlException("mv-expand supports a column or Properties.<key>");
+		}
+	}
+
+	static async IAsyncEnumerable<object?[]> StreamMvExpand(
+		IAsyncEnumerable<object?[]> source,
+		Func<object?[], string?> extractor,
+		int outIndex,
+		int inputWidth,
+		int outputWidth,
+		[EnumeratorCancellation] CancellationToken ct = default)
+	{
+		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
+		{
+			var elements = TryParseJsonArray(extractor(row));
+			if (elements is null)
+				continue; // non-array / missing / null → drop the row (empty array drops it too)
+			foreach (var element in elements)
+			{
+				var res = new object?[outputWidth];
+				Array.Copy(row, res, inputWidth);
+				res[outIndex] = element;
+				yield return res;
+			}
+		}
+	}
+
+	// Parses a JSON array string into its elements as strings (string element → its text; other kinds
+	// → raw JSON), or null when the value is not a JSON array. Kept separate from the iterator so the
+	// JsonDocument is disposed before any yield.
+	static List<string?>? TryParseJsonArray(string? json)
+	{
+		if (string.IsNullOrEmpty(json))
+			return null;
+		try
+		{
+			using var doc = JsonDocument.Parse(json);
+			if (doc.RootElement.ValueKind != JsonValueKind.Array)
+				return null;
+			var list = new List<string?>();
+			foreach (var el in doc.RootElement.EnumerateArray())
+				list.Add(el.ValueKind switch
+				{
+					JsonValueKind.String => el.GetString(),
+					JsonValueKind.Null or JsonValueKind.Undefined => null,
+					_ => el.GetRawText(),
+				});
+			return list;
+		}
+		catch (JsonException)
+		{
+			return null;
+		}
+	}
+
+	// parse <source> with "lit" Col "lit" Col … — the simple (default) star-free Kusto form. Literal
+	// segments are matched in order; the text between them fills the capture columns, which are
+	// string-typed and join the row shape (replacing a same-named column in place, like extend). A
+	// trailing capture (no following literal) takes the rest of the string. Non-matching rows are
+	// RETAINED with null captures (Kusto's `parse` semantics — `parse-where`, which would drop them,
+	// is not implemented). Unsupported flavors (kind=regex/relaxed, typed captures like Col:long,
+	// `*` wildcards) throw precisely. PRODUCTION-ONLY: the reference executor does not implement
+	// `parse`, so semantics are pinned by unit tests, not a differential.
+	static KqlResult ApplyParse(KqlResult input, ParseOperator op, DateTime now)
+	{
+		if (op.Parameters.Count > 0)
+			throw new UnsupportedKqlException(
+				"parse: only the default simple star-free form is supported (kind=regex / kind=relaxed not supported)");
+
+		var rowParam = Expr.Parameter(typeof(object?[]), "row");
+		var ctx = new RowScalarContext(rowParam, input.Columns) { UtcNow = now };
+		var srcExpr = KqlScalar.Compile(op.Expression, ctx);
+		if (srcExpr.Type != typeof(string))
+			throw new UnsupportedKqlException($"parse source must be a string column, got {srcExpr.Type.Name}");
+		var srcFn = Expr.Lambda<Func<object?[], string?>>(srcExpr, rowParam).Compile();
+
+		var segments = ParsePatternSegments(op.Patterns);
+		var captureNames = segments.Where(s => s.IsCapture).Select(s => s.Value).ToList();
+
+		var columns = input.Columns.ToList();
+		var captureIndex = new int[captureNames.Count];
+		for (var i = 0; i < captureNames.Count; i++)
+		{
+			var existing = FindColumnIndex(columns, captureNames[i]);
+			if (existing >= 0)
+			{
+				columns[existing] = new KqlColumn(captureNames[i], typeof(string));
+				captureIndex[i] = existing;
+			}
+			else
+			{
+				columns.Add(new KqlColumn(captureNames[i], typeof(string)));
+				captureIndex[i] = columns.Count - 1;
+			}
+		}
+
+		return new KqlResult(columns, StreamParse(input.Rows, srcFn, segments, captureIndex, input.Columns.Count, columns.Count));
+	}
+
+	// Turns the parse pattern into an ordered literal/capture segment list, rejecting the unsupported
+	// flavors (typed captures, `*` wildcards, two captures with no separating literal).
+	static IReadOnlyList<(bool IsCapture, string Value)> ParsePatternSegments(SyntaxList<SyntaxNode> patterns)
+	{
+		var segments = new List<(bool IsCapture, string Value)>();
+		for (var i = 0; i < patterns.Count; i++)
+		{
+			switch (patterns[i])
+			{
+				case LiteralExpression { LiteralValue: string s }:
+					segments.Add((false, s));
+					break;
+				case NameDeclaration nd:
+					if (segments.Count > 0 && segments[^1].IsCapture)
+						throw new UnsupportedKqlException(
+							"parse: two adjacent capture columns need a separating literal");
+					segments.Add((true, nd.SimpleName));
+					break;
+				case NameAndTypeDeclaration:
+					throw new UnsupportedKqlException("parse: typed captures (Col:type) not supported (captures are string-typed)");
+				default:
+					throw new UnsupportedKqlException(
+						$"parse: unsupported pattern element '{patterns[i].Kind}' (only string literals and star-free captures are supported)");
+			}
+		}
+		if (segments.Count == 0 || !segments.Any(s => s.IsCapture))
+			throw new UnsupportedKqlException("parse: the pattern must declare at least one capture column");
+		return segments;
+	}
+
+	static async IAsyncEnumerable<object?[]> StreamParse(
+		IAsyncEnumerable<object?[]> source,
+		Func<object?[], string?> srcFn,
+		IReadOnlyList<(bool IsCapture, string Value)> segments,
+		int[] captureIndex,
+		int inputWidth,
+		int outputWidth,
+		[EnumeratorCancellation] CancellationToken ct = default)
+	{
+		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
+		{
+			var captures = MatchParse(srcFn(row), segments, captureIndex.Length);
+			var res = new object?[outputWidth];
+			Array.Copy(row, res, inputWidth);
+			for (var i = 0; i < captureIndex.Length; i++)
+				res[captureIndex[i]] = captures[i];
+			yield return res;
+		}
+	}
+
+	// Simple (star-free) parse matcher: literals must appear in order; the text between them fills the
+	// captures. Returns the capture values, or an all-null array on non-match (the row is still kept).
+	static string?[] MatchParse(string? s, IReadOnlyList<(bool IsCapture, string Value)> segments, int captureCount)
+	{
+		var result = new string?[captureCount];
+		if (s is null)
+			return result;
+
+		var pos = 0;
+		var ci = 0;
+		var i = 0;
+		while (i < segments.Count)
+		{
+			if (!segments[i].IsCapture)
+			{
+				var lit = segments[i].Value;
+				if (pos + lit.Length > s.Length || string.CompareOrdinal(s, pos, lit, 0, lit.Length) != 0)
+					return new string?[captureCount]; // literal not found at position → non-match
+				pos += lit.Length;
+				i++;
+			}
+			else if (i + 1 < segments.Count)
+			{
+				// capture delimited by the following literal (segments never have adjacent captures)
+				var lit = segments[i + 1].Value;
+				var idx = lit.Length == 0 ? pos : s.IndexOf(lit, pos, StringComparison.Ordinal);
+				if (idx < 0)
+					return new string?[captureCount];
+				result[ci++] = s.Substring(pos, idx - pos);
+				pos = idx + lit.Length;
+				i += 2;
+			}
+			else
+			{
+				result[ci++] = s[pos..]; // trailing capture takes the rest
+				i++;
+			}
+		}
+		return result;
+	}
+
 	static int FindColumnIndex(IReadOnlyList<KqlColumn> columns, string name)
 	{
 		for (var i = 0; i < columns.Count; i++)
@@ -855,6 +1383,14 @@ public static class KqlTransformer
 
 	static IEnumerable<SyntaxNode> FlattenPipeline(SyntaxNode root)
 	{
+		// A bare table reference (e.g. the `(events)` right side of a join, after the parens are
+		// unwrapped by the caller, or a top-level query that is just a table name) has no pipe.
+		if (root is NameReference nameRoot)
+		{
+			yield return nameRoot;
+			yield break;
+		}
+
 		var pipes = root.GetDescendants<PipeExpression>();
 		if (pipes.Count == 0)
 		{

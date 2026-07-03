@@ -334,6 +334,24 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task Join_OverRealSqlite_BothSidesHitDb()
+	{
+		// Left prefix (where Level == 4) AND the right subquery (where Level >= 3) both run as SQLite
+		// SQL against the same LogDb before the in-memory hash join. Seed: Error rows are Id2(svc-b) and
+		// Id4(svc-c); right Level>=3 = Id2(svc-b),Id3(svc-a),Id4(svc-c). Join on ServiceKey pairs each
+		// Error row to the same-service right row(s): (2,2) and (4,4).
+		var code = KustoCode.Parse(
+			"events | where Level == 4 | join kind=inner (events | where Level >= 3) on ServiceKey | project Id, Id1");
+		var result = KqlTransformer.Execute(_logDb.LogEntries, code);
+		result.Columns.Select(c => c.Name).Should().ContainInOrder("Id", "Id1");
+
+		var rows = new List<(long, long)>();
+		await foreach (var row in result.Rows)
+			rows.Add(((long)row[0]!, (long)row[1]!));
+		rows.Should().BeEquivalentTo([(2L, 2L), (4L, 4L)]);
+	}
+
+	[Fact]
 	public async Task SummarizeSumByLevel_OverSqlSource()
 	{
 		var code = KustoCode.Parse("events | summarize Total = sum(Id) by Level");

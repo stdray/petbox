@@ -382,4 +382,45 @@ public sealed class DualExecutorTests
 	{
 		await DualExecutor.AssertSameTableAsync(kql, PropsData);
 	}
+
+	// --- correlation: join / lookup over a same-log subquery. The right subquery is a full pipeline
+	// over `events`. Both engines fully collide the self-join column names, so the right Id becomes
+	// `Id1`; a trailing `project Id, Id1` aligns the two engines' differing event shapes to a common
+	// pair of columns. Row order is not asserted (join output order is unspecified). mv-expand and
+	// parse are NOT here — the reference executor can't expand our Properties-JSON strings and doesn't
+	// implement parse — they are pinned production-side in KqlCorrelationTests.
+	static readonly IReadOnlyList<TestEvent> JoinData =
+	[
+		TestEvent.FromName(1, new DateTime(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc), "Information", "a", "svc-a"),
+		TestEvent.FromName(2, new DateTime(2026, 4, 19, 10, 1, 0, DateTimeKind.Utc), "Error", "b", "svc-a"),
+		TestEvent.FromName(3, new DateTime(2026, 4, 19, 10, 2, 0, DateTimeKind.Utc), "Warning", "c", "svc-b"),
+		TestEvent.FromName(4, new DateTime(2026, 4, 19, 10, 3, 0, DateTimeKind.Utc), "Error", "d", "svc-b"),
+		TestEvent.FromName(5, new DateTime(2026, 4, 19, 10, 4, 0, DateTimeKind.Utc), "Error", "e", "svc-c"),
+	];
+
+	[Theory]
+	// inner: every left×right match on the key
+	[InlineData("events | where Level == 4 | join kind=inner (events | where Level >= 3) on ServiceKey | project Id, Id1")]
+	// default kind = innerunique: the left side is de-duplicated by key (first row per key)
+	[InlineData("events | join (events | where Level == 4) on ServiceKey | project Id, Id1")]
+	[InlineData("events | join kind=innerunique (events | where Level >= 3) on ServiceKey | project Id, Id1")]
+	// leftouter: unmatched left rows survive with a null right Id
+	[InlineData("events | join kind=leftouter (events | where Level == 4) on ServiceKey | project Id, Id1")]
+	// multi-key equijoin
+	[InlineData("events | join kind=inner (events) on ServiceKey, Level | project Id, Id1")]
+	// explicit $left/$right equality (inner)
+	[InlineData("events | join kind=inner (events | where Level >= 3) on $left.ServiceKey == $right.ServiceKey | project Id, Id1")]
+	public async Task Join_MatchesReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, JoinData);
+	}
+
+	[Theory]
+	// lookup = leftouter, first matching right row only, right key column dropped from the output
+	[InlineData("events | lookup (events | where Level == 4) on ServiceKey | project Id, Id1")]
+	[InlineData("events | lookup (events) on ServiceKey | project Id, Message1")]
+	public async Task Lookup_MatchesReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, JoinData);
+	}
 }

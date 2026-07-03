@@ -19,14 +19,19 @@ public sealed class KqlSyntaxKindAllowlistTests
 		SyntaxKind.ExtendOperator,
 		SyntaxKind.TopOperator,
 		SyntaxKind.DistinctOperator,
+		// correlation ops (wave 5)
+		SyntaxKind.JoinOperator,
+		SyntaxKind.LookupOperator,
+		SyntaxKind.MvExpandOperator,
+		SyntaxKind.ParseOperator,
 	];
 
 	static readonly HashSet<string> ExplicitlyUnsupportedNames = new(StringComparer.Ordinal)
 	{
 		"ConsumeOperator", "GraphWhereEdgesOperator", "GraphWhereNodesOperator",
-		"MacroExpandOperator", "JoinOperator", "LookupOperator", "UnionOperator",
+		"MacroExpandOperator", "UnionOperator",
 		"TopHittersOperator", "TopNestedOperator",
-		"MvExpandOperator", "MvApplyOperator", "ParseOperator", "ParseWhereOperator",
+		"MvApplyOperator", "ParseWhereOperator",
 		"ParseKvOperator", "EvaluateOperator", "ExecuteAndCacheOperator", "FacetOperator",
 		"FindOperator", "SearchOperator", "SampleOperator", "SampleDistinctOperator",
 		"ScanOperator", "SerializeOperator", "RenderOperator", "MakeSeriesOperator",
@@ -83,6 +88,10 @@ public sealed class KqlSyntaxKindAllowlistTests
 			[SyntaxKind.SummarizeOperator] = "events | summarize count() by Level",
 			[SyntaxKind.ExtendOperator] = "events | extend Doubled = Level * 2",
 			[SyntaxKind.DistinctOperator] = "events | distinct Level",
+			[SyntaxKind.JoinOperator] = "events | join kind=inner (events) on ServiceKey",
+			[SyntaxKind.LookupOperator] = "events | lookup (events) on ServiceKey",
+			[SyntaxKind.MvExpandOperator] = "events | mv-expand Tags",
+			[SyntaxKind.ParseOperator] = "events | parse Message with \"a=\" A",
 		};
 
 		SupportedOperators.Should().BeEquivalentTo(applyExamples.Keys.Concat(executeExamples.Keys));
