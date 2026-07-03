@@ -45,6 +45,63 @@ public sealed class DualExecutorTests
 		await DualExecutor.AssertSameAsync(kql, Dataset);
 	}
 
+	// startswith / endswith (+ _cs). Case-insensitive by default; _cs is case-sensitive.
+	[Theory]
+	[InlineData("events | where Message startswith 'crash'")]
+	[InlineData("events | where Message startswith 'BOOM'")]     // ci: matches 'boom' and 'BOOM normalized'
+	[InlineData("events | where Message startswith 'zzz'")]
+	[InlineData("events | where Message startswith_cs 'BOOM'")]  // cs: only 'BOOM normalized'
+	[InlineData("events | where Message startswith_cs 'boom'")]
+	[InlineData("events | where Message endswith 'world'")]
+	[InlineData("events | where Message endswith 'ng'")]
+	[InlineData("events | where Message endswith 'EARTH'")]      // ci
+	[InlineData("events | where Message endswith_cs 'Earth'")]
+	[InlineData("events | where Message endswith_cs 'earth'")]
+	public async Task StartsEndsWith_MatchesReference(string kql)
+	{
+		await DualExecutor.AssertSameAsync(kql, Dataset);
+	}
+
+	// `has` = whole-term match. These needles ARE whole terms in the data, so honest term-matching
+	// and KustoLoco (which models `has` as a substring — see KqlStringOpsTests.Has_IsTermMatch_NotSubstring)
+	// coincide here. The term-vs-substring DISTINCTION (e.g. `has 'art'` in "starting") is where the
+	// two diverge and is pinned by production-only unit tests instead.
+	[Theory]
+	[InlineData("events | where Message has 'boom'")]
+	[InlineData("events | where Message has 'BOOM'")]
+	[InlineData("events | where Message has 'earth'")]
+	[InlineData("events | where Message has 'crash'")]
+	[InlineData("events | where Message has 'normalized'")]
+	[InlineData("events | where Message has_cs 'BOOM'")]
+	[InlineData("events | where Message has_cs 'boom'")]
+	public async Task HasTerm_MatchesReference(string kql)
+	{
+		await DualExecutor.AssertSameAsync(kql, Dataset);
+	}
+
+	[Theory]
+	[InlineData("events | where Message matches regex '^b.*m$'")]
+	[InlineData("events | where Message matches regex 'o.m'")]
+	[InlineData("events | where Message matches regex '[0-9]'")]
+	[InlineData("events | where Message matches regex 'wor.d'")]
+	public async Task MatchesRegex_MatchesReference(string kql)
+	{
+		await DualExecutor.AssertSameAsync(kql, Dataset);
+	}
+
+	[Theory]
+	[InlineData("events | project Id, L = tolower(Message)")]
+	[InlineData("events | project Id, U = toupper(Message)")]
+	[InlineData("events | project Id, S = substring(Message, 0, 4)")]
+	[InlineData("events | project Id, S = substring(Message, 2)")]
+	[InlineData("events | project Id, C = strcat(Message, '!')")]
+	[InlineData("events | project Id, C = strcat('[', Message, ']')")]
+	[InlineData("events | project Id, W = extract('([A-Za-z]+)', 1, Message)")]
+	public async Task StringFunctions_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, Dataset);
+	}
+
 	[Theory]
 	[InlineData("events | where Level >= 4 and ServiceKey == 'svc-b'")]
 	[InlineData("events | where Level == 4 or Level == 3")]

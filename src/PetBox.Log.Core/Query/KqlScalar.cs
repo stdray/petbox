@@ -216,13 +216,34 @@ static class KqlScalar
 			or SyntaxKind.MultiplyExpression
 			or SyntaxKind.DivideExpression
 			or SyntaxKind.ModuloExpression => Arithmetic(b, ctx),
+		// contains = substring; has = whole-term (see KqlSqlExpressions.Has). startswith/endswith and
+		// the case-sensitive _cs variants translate to fixed-length substring compares.
 		SyntaxKind.ContainsExpression => StringMatch(b, ctx, caseSensitive: false),
 		SyntaxKind.ContainsCsExpression => StringMatch(b, ctx, caseSensitive: true),
-		SyntaxKind.HasExpression => StringMatch(b, ctx, caseSensitive: false),
-		SyntaxKind.HasCsExpression => StringMatch(b, ctx, caseSensitive: true),
+		SyntaxKind.StartsWithExpression => StringFn(b, ctx, "startswith", nameof(KqlSqlExpressions.StartsWithI)),
+		SyntaxKind.StartsWithCsExpression => StringFn(b, ctx, "startswith_cs", nameof(KqlSqlExpressions.StartsWithCs)),
+		SyntaxKind.EndsWithExpression => StringFn(b, ctx, "endswith", nameof(KqlSqlExpressions.EndsWithI)),
+		SyntaxKind.EndsWithCsExpression => StringFn(b, ctx, "endswith_cs", nameof(KqlSqlExpressions.EndsWithCs)),
+		SyntaxKind.HasExpression => StringFn(b, ctx, "has", nameof(KqlSqlExpressions.Has)),
+		SyntaxKind.HasCsExpression => StringFn(b, ctx, "has_cs", nameof(KqlSqlExpressions.HasCs)),
+		SyntaxKind.MatchesRegexExpression => StringFn(b, ctx, "matches regex", nameof(KqlSqlExpressions.MatchesRegex)),
 		_ when IsComparison(b.Kind) => Comparison(b, ctx),
 		_ => throw new UnsupportedKqlException($"binary '{b.Kind}' not supported"),
 	};
+
+	// A `column <op> 'literal'` string predicate backed by a KqlSqlExpressions method (which carries
+	// both the SQLite translation and the in-memory body). Left must be string-typed, right a string
+	// literal (KQL requires a constant term/pattern for these operators).
+	static Expr StringFn(BinaryExpression b, ScalarContext ctx, string opName, string method)
+	{
+		var access = Compile(b.Left, ctx);
+		if (access.Type != typeof(string))
+			throw new UnsupportedKqlException($"'{opName}' requires a string operand on the left, got {access.Type.Name}");
+		if (b.Right is not LiteralExpression { LiteralValue: string needle })
+			throw new UnsupportedKqlException($"'{opName}' requires a string literal on the right");
+		var mi = typeof(KqlSqlExpressions).GetMethod(method)!;
+		return Expr.Call(mi, access, Expr.Constant(needle));
+	}
 
 	static Expr Arithmetic(BinaryExpression b, ScalarContext ctx)
 	{
@@ -437,6 +458,13 @@ static class KqlScalarFunctions
 			["iif"] = Iff,
 			["case"] = Case,
 			["bin"] = Bin,
+			["tolower"] = Tolower,
+			["toupper"] = Toupper,
+			["substring"] = Substring,
+			["strcat"] = Strcat,
+			["extract"] = Extract,
+			["parse_json"] = ParseJson,
+			["todynamic"] = ParseJson,
 		};
 
 	public static bool TryResolve(string name, out KqlScalarFunction fn) => Registry.TryGetValue(name, out fn!);
@@ -508,6 +536,84 @@ static class KqlScalarFunctions
 		throw new UnsupportedKqlException(
 			$"bin() supports (datetime, timespan) or (numeric, numeric), got ({value.Type.Name}, {step.Type.Name})");
 	}
+
+	// --- string functions (each backed by a dual SQL/in-memory KqlSqlExpressions method) ---
+
+	static Expr Tolower(IReadOnlyList<Expr> args, ScalarContext ctx) =>
+		StringXform(args, "tolower", nameof(KqlSqlExpressions.ToLower));
+
+	static Expr Toupper(IReadOnlyList<Expr> args, ScalarContext ctx) =>
+		StringXform(args, "toupper", nameof(KqlSqlExpressions.ToUpper));
+
+	static Expr StringXform(IReadOnlyList<Expr> args, string fn, string method)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"{fn}() takes exactly 1 argument, got {args.Count}");
+		if (args[0].Type != typeof(string))
+			throw new UnsupportedKqlException($"{fn}() requires a string argument, got {args[0].Type.Name}");
+		return Expr.Call(SqlM(method), args[0]);
+	}
+
+	static Expr Substring(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count is not (2 or 3))
+			throw new UnsupportedKqlException($"substring() takes 2 or 3 arguments (source, start[, length]), got {args.Count}");
+		if (args[0].Type != typeof(string))
+			throw new UnsupportedKqlException($"substring() requires a string source, got {args[0].Type.Name}");
+		var start = RequireLong(args[1], "substring() start");
+		if (args.Count == 2)
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.Substring2)), args[0], start);
+		var length = RequireLong(args[2], "substring() length");
+		return Expr.Call(SqlM(nameof(KqlSqlExpressions.Substring3)), args[0], start, length);
+	}
+
+	static Expr Strcat(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count < 1)
+			throw new UnsupportedKqlException("strcat() takes at least 1 argument");
+		foreach (var a in args)
+			if (a.Type != typeof(string))
+				throw new UnsupportedKqlException($"strcat() requires string arguments, got {a.Type.Name}");
+		// Fold pairwise through StrCat2 so a null operand renders as empty (Kusto semantics). A
+		// single argument still routes through StrCat2 to apply the same null-to-empty coercion.
+		if (args.Count == 1)
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.StrCat2)), args[0], Expr.Constant("", typeof(string)));
+		var acc = args[0];
+		for (var i = 1; i < args.Count; i++)
+			acc = Expr.Call(SqlM(nameof(KqlSqlExpressions.StrCat2)), acc, args[i]);
+		return acc;
+	}
+
+	static Expr Extract(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 3)
+			throw new UnsupportedKqlException($"extract() takes exactly 3 arguments (regex, captureGroup, source), got {args.Count}");
+		if (args[0].Type != typeof(string))
+			throw new UnsupportedKqlException($"extract() regex must be a string, got {args[0].Type.Name}");
+		var group = RequireLong(args[1], "extract() captureGroup");
+		if (args[2].Type != typeof(string))
+			throw new UnsupportedKqlException($"extract() source must be a string, got {args[2].Type.Name}");
+		return Expr.Call(SqlM(nameof(KqlSqlExpressions.Extract)), args[0], group, args[2]);
+	}
+
+	// parse_json/todynamic: dynamic values are not modeled, so this is a string passthrough — it
+	// returns its input JSON text unchanged. Field access is via the Properties.<key> path form.
+	static Expr ParseJson(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"parse_json() takes exactly 1 argument, got {args.Count}");
+		if (args[0].Type != typeof(string))
+			throw new UnsupportedKqlException($"parse_json() requires a string argument, got {args[0].Type.Name}");
+		return args[0];
+	}
+
+	static Expr RequireLong(Expr e, string what) => e.Type == typeof(long)
+		? e
+		: e.Type == typeof(int)
+			? Expr.Convert(e, typeof(long))
+			: throw new UnsupportedKqlException($"{what} requires an integer, got {e.Type.Name}");
+
+	static MethodInfo SqlM(string name) => typeof(KqlSqlExpressions).GetMethod(name)!;
 
 	static MethodInfo Method(string name) =>
 		typeof(KqlScalarFunctions).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic)!;

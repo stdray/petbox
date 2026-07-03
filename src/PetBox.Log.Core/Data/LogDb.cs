@@ -1,6 +1,7 @@
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
+using PetBox.Log.Core.Query;
 using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Log.Core.Data;
@@ -13,5 +14,7 @@ public sealed class LogDb : DataConnection
 	public ITable<SpanRecord> Spans => this.GetTable<SpanRecord>();
 
 	public static DataOptions<LogDb> CreateOptions(string connectionString) =>
-		new(new DataOptions().UseSQLite(connectionString));
+		new(new DataOptions()
+			.UseSQLite(connectionString)
+			.UseInterceptor(RegisterKqlFunctionsInterceptor.Instance));
 }

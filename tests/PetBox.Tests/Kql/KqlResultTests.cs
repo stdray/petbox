@@ -255,9 +255,9 @@ public sealed class KqlResultTests
 	[Fact]
 	public void Compute_UnsupportedFunction_ThrowsPrecise()
 	{
-		var ast = Parse("events | project Id, X = tolower(Message)");
+		var ast = Parse("events | project Id, X = strlen(Message)");
 		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*tolower*not supported*");
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*strlen*not supported*");
 	}
 
 	// --- Task A: aggregates over the int Level column (production-only; KustoLoco can't cast

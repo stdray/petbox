@@ -218,8 +218,8 @@ public sealed class KqlTransformerTests
 	[Fact]
 	public void Where_UnsupportedFunction_ThrowsPrecise()
 	{
-		var ast = Parse("events | where tolower(Message) == 'hello'");
+		var ast = Parse("events | where strlen(Message) == 5");
 		var act = () => KqlTransformer.Apply(Src(), ast).ToList();
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*tolower*not supported*");
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*strlen*not supported*");
 	}
 }

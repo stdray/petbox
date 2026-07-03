@@ -220,6 +220,48 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		messages.Should().BeEquivalentTo(["login"]);
 	}
 
+	// --- string ops over real SQLite: substr-based startswith/endswith, lower(), and the
+	// registered scalar functions kql_has / kql_matches_regex / kql_extract ---
+
+	[Fact]
+	public async Task StartsWith_TranslatesToSql()
+	{
+		(await RunAsync("events | where Message startswith 'crash'")).Should().BeEquivalentTo(["crash on Earth"]);
+		(await RunAsync("events | where Message startswith 'CRASH'")).Should().BeEquivalentTo(["crash on Earth"]); // ci
+		(await RunAsync("events | where Message startswith_cs 'CRASH'")).Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task EndsWith_TranslatesToSql()
+	{
+		(await RunAsync("events | where Message endswith 'world'")).Should().BeEquivalentTo(["hello world"]);
+		(await RunAsync("events | where Message endswith 'EARTH'")).Should().BeEquivalentTo(["crash on Earth"]); // ci
+	}
+
+	[Fact]
+	public async Task HasTerm_TranslatesToSqlViaRegisteredFunction()
+	{
+		(await RunAsync("events | where Message has 'earth'")).Should().BeEquivalentTo(["crash on Earth"]);
+		(await RunAsync("events | where Message has 'world'")).Should().BeEquivalentTo(["hello world"]);
+		// term match, not substring: 'art' is inside "starting" but not a whole term.
+		(await RunAsync("events | where Message has 'art'")).Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task MatchesRegex_TranslatesToSqlViaRegisteredFunction()
+	{
+		(await RunAsync("events | where Message matches regex '^h'")).Should().BeEquivalentTo(["hello world"]);
+		(await RunAsync("events | where Message matches regex 'o.m'")).Should().BeEquivalentTo(["boom"]);
+	}
+
+	[Fact]
+	public async Task StringFunctionsInWhere_TranslateToSql()
+	{
+		(await RunAsync("events | where tolower(Message) == 'boom'")).Should().BeEquivalentTo(["boom"]);
+		(await RunAsync("events | where substring(Message, 0, 5) == 'hello'")).Should().BeEquivalentTo(["hello world"]);
+		(await RunAsync("events | where extract('([a-z]+)', 1, Message) == 'boom'")).Should().BeEquivalentTo(["boom"]);
+	}
+
 	[Fact]
 	public async Task Top_TranslatesToSqlOrderByLimit()
 	{
