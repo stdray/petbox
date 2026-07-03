@@ -30,6 +30,13 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	// retriever; semantic is silently off when no embedding capability is available. The
 	// result carries which retrievers ran and whether it degraded.
 	Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default);
+	// Store-scoped hybrid search that RETAINS the re-ranking signals the plain SearchAsync drops:
+	// per-hit fused Score, freshness Updated, lexical-confirmation provenance and the entry Vector
+	// (spec search-fair-fusion). The one door for a caller that wants to run its OWN relevance
+	// policy (a semantic-noise floor, freshness decay, MMR diversity) over a single store's raw
+	// pool — e.g. session discovery over the digest store. Same retriever toggles / degradation
+	// semantics as SearchAsync (semantic silently off with no embedder → every hit LexicalConfirmed).
+	Task<MemoryScoredSearchResult> SearchScoredAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default);
 	// The unified read of ONE container (spec uniform-entity-verbs v2) behind memory_search.
 	//   No Query  → deterministic LISTING over the stores in scope (Filter.Store or the
 	//     implicit sweep, which skips sensitive stores); default order Updated desc (then

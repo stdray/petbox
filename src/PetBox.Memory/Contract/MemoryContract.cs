@@ -40,6 +40,23 @@ public sealed record MemoryUpsertOutcome(TemporalUpsertResult<MemoryEntry> Resul
 // lexical-only fallback from a true hybrid answer.
 public sealed record MemorySearchResult(IReadOnlyList<MemoryEntryView> Hits, PetBox.Core.Search.SearchRetrievers Retrievers);
 
+// A scored, provenance-tagged hit from a SINGLE store's hybrid search (store-scoped
+// SearchScoredAsync — spec search-fair-fusion). It RETAINS the re-ranking signals the plain
+// MemoryEntryView drops, so a caller can run its OWN relevance policy over one store's raw pool:
+//   Score           — the fused RRF relevance (rank-based, before any decay), the quantity a
+//                     relevance floor compares against;
+//   Updated         — the entry's freshness timestamp (feeds RecencyDecay.Weight);
+//   LexicalConfirmed— true when the LEXICAL leg surfaced this hit; false for a SEMANTIC-ONLY hit
+//                     (no lexical confirmation → a caller may floor it as noise). Always true in a
+//                     listing / lexical-only pass (no semantic leg ran, so nothing to floor);
+//   Vector          — the entry's embedding for MMR diversification (null without an embedder or
+//                     before the store was vectorized → MMR silently degrades to identity).
+public sealed record MemoryScoredHit(MemoryEntryView Entry, DateTime Updated, double Score, bool LexicalConfirmed, float[]? Vector);
+
+// The result of a store-scoped scored search: the scored hits (fused order) plus the aggregate
+// retriever provenance (which legs ran / degraded) — the same provenance MemorySearchResult carries.
+public sealed record MemoryScoredSearchResult(IReadOnlyList<MemoryScoredHit> Hits, PetBox.Core.Search.SearchRetrievers Retrievers);
+
 // ---- unified read (spec uniform-entity-verbs v2): list = search without a query ----
 
 // Filter axes of the unified memory read. `Store` narrows to one store within the container

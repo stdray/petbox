@@ -1,0 +1,57 @@
+@page "/ui/search"
+@model PetBox.Web.Pages.SearchModel
+@{
+	ViewData["Title"] = "Search";
+}
+
+<h1 class="text-2xl font-semibold mb-4" data-testid="search-title">Search</h1>
+
+<form method="get" action="/ui/search" class="mb-6 flex gap-2 max-w-xl" data-testid="search-page-form">
+	<input type="text" name="q" value="@Model.Q" placeholder="Slug, NodeId, or search text…"
+		class="input input-bordered flex-1" data-testid="search-page-input" autofocus />
+	<button type="submit" class="btn btn-primary" data-testid="search-page-submit">Search</button>
+</form>
+
+@if (string.IsNullOrWhiteSpace(Model.Q))
+{
+	<div class="opacity-60" data-testid="search-empty-state">
+		Paste a task slug or NodeId, or type a search phrase — results span every workspace and project you can access.
+	</div>
+	return;
+}
+
+@if (Model.Hits.Count == 0)
+{
+	<div class="alert" data-testid="search-no-results">No tasks found for "@Model.Q".</div>
+	return;
+}
+
+<div class="text-sm opacity-60 mb-3" data-testid="search-result-count">
+	@Model.Hits.Count result@(Model.Hits.Count == 1 ? "" : "s")
+</div>
+
+@foreach (var wsGroup in Model.Hits.GroupBy(h => h.Workspace, StringComparer.Ordinal))
+{
+	<section class="mb-6" data-testid="search-ws-group" data-workspace-key="@wsGroup.Key">
+		<h2 class="text-lg font-semibold font-mono mb-2">@wsGroup.Key</h2>
+		@foreach (var projGroup in wsGroup.GroupBy(h => h.ProjectKey, StringComparer.Ordinal))
+		{
+			<div class="mb-3" data-testid="search-project-group" data-project-key="@projGroup.Key">
+				<div class="text-xs uppercase opacity-50 font-mono mb-1">@projGroup.Key</div>
+				<ul class="menu bg-base-200 rounded-box p-1" data-testid="search-hits">
+					@foreach (var hit in projGroup)
+					{
+						<li data-testid="search-hit" data-node-id="@hit.NodeId">
+							<a href="@hit.Url" class="flex items-center gap-2">
+								<span class="font-mono text-xs opacity-50">@hit.Board</span>
+								<span class="badge badge-ghost badge-xs">@hit.Type</span>
+								<span class="flex-1">@hit.Title</span>
+								<span class="badge badge-outline badge-sm">@hit.Status</span>
+							</a>
+						</li>
+					}
+				</ul>
+			</div>
+		}
+	</section>
+}

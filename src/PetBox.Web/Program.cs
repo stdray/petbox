@@ -177,7 +177,12 @@ public partial class Program
 			minAge: builder.Configuration.GetValue<int?>("Memory:QuarantineGc:MinAgeDays") is { } days ? TimeSpan.FromDays(days) : null,
 			enforce: builder.Configuration.GetValue("Memory:QuarantineGc:Enforce", false),
 			clock: sp.GetRequiredService<PetBox.Web.Search.MemoryQuarantineGcClock>()));
-		// Two-stage session search: digest discovery (memory) → episodic hydration.
+		// Two-stage session search: digest discovery (memory) → episodic hydration. Discovery
+		// re-ranking reuses the shared `Search:Recency`/`Search:Diversity` policy (already a
+		// singleton above) for decay + MMR; the session-specific semantic-noise floor binds from
+		// `Search:Sessions:*` (conservative default when absent — spec search-fair-fusion).
+		builder.Services.AddSingleton(
+			builder.Configuration.GetSection("Search:Sessions").Get<PetBox.Web.Search.SessionSearchOptions>() ?? new PetBox.Web.Search.SessionSearchOptions());
 		builder.Services.AddScoped<PetBox.Web.Search.SessionSearchService>();
 		// Episodic tier: transient per-session DuckDB index, hydrated on demand and aged
 		// out by idleness. Singleton — it IS the hydration cache.
@@ -421,6 +426,7 @@ public partial class Program
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, WorkspaceRoleAuthorizationHandler>();
 		builder.Services.AddScoped<INavigationContext, NavigationContext>();
+		builder.Services.AddScoped<PetBox.Web.Search.CrossScopeTaskSearchService>();
 		builder.Services.AddScoped<PetBox.Core.Settings.ISettingsResolver, PetBox.Web.Settings.SettingsResolver>();
 		builder.Services.AddRazorPages(options =>
 		{

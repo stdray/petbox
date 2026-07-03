@@ -61,6 +61,13 @@
 				</div>
 				<div class="flex-1 flex items-center gap-3">
 					<a href="@statusUrl" class="text-lg font-semibold" data-testid="nav-home">PetBox</a>
+					@if (Nav.IsAuthenticated)
+					{
+						<form method="get" action="/ui/search" class="hidden sm:block ml-auto mr-3" data-testid="nav-search">
+							<input type="text" name="q" placeholder="Find a task…" title="Find a task by slug, NodeId, or text — searches every workspace and project you can access"
+								class="input input-sm input-bordered w-40 md:w-64" data-testid="nav-search-input" />
+						</form>
+					}
 				</div>
 				<div class="flex-none flex items-center gap-1">
 					@if (Nav.IsAuthenticated)
