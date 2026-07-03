@@ -5,7 +5,8 @@
       "url": "https://petbox.3po.su/mcp",
       "headers": {
         "X-Api-Key": "${PETBOX_API_KEY}"
-      }
+      },
+      "disabled": false
     }
   }
 }
