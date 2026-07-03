@@ -78,11 +78,83 @@
 }
 else
 {
+	// Single source of truth for the two manual snippets so their copy buttons carry the exact
+	// same text that is rendered. The wire one-liner lives on the PageModel (Model.WireCommand).
+	var envSnippet = $@"# macOS / Linux (current shell)
+export {envvar}=""{key}""
+
+# Windows PowerShell (persisted for new shells)
+setx {envvar} ""{key}""";
+
+	var agentPrompt = $@"Connect yourself to this project's PetBox server over MCP, then onboard end-to-end.
+
+Connection details:
+- MCP endpoint (HTTP/streamable): {mcp}
+- Auth: send header  X-Api-Key: {key}
+- Project key (pass as projectKey in every tool call): {proj}
+- MCP server name to register: petbox
+
+Follow the staged onboarding runbook (public, no auth — fetch and follow it):
+  {onboarding}
+It links the overview ({overview}) and the methodology, and walks you through each
+stage with a validation gate. Do the stages in order and do not skip a gate:
+
+1. Set the env var {envvar} in your process env from the key above (never commit it).
+   Confirm it is non-empty.
+2. Add a PROJECT-level MCP server named ""petbox"" (HTTP/streamable, the endpoint above,
+   header  X-Api-Key: ${{{envvar}}} ), then RESTART your MCP connection. Verify with
+   tasks_board_list projectKey ""{proj}"" — an empty list (not an auth error) means it works.
+3. Read the overview + methodology, then report back, in your own words: the board kinds,
+   how nodes are addressed (flat slug key + partOf hierarchy), the spec-link invariant, and the approve
+   gate (your ceiling is Review — never set Done). Wait for the maintainer to confirm.
+4. Optionally install the petbox SKILL.md (see the connect guide: {doc}).
+5. Then plan your implementation ON this PetBox backend and track it IN PetBox: capture
+   requirements on a spec board, technical tasks on a work board (linked via specRef),
+   ideas on an ideas board. Drive work to Review; leave Done to the maintainer.";
+
 	<div class="alert alert-warning mb-4 max-w-3xl" data-testid="connect-key-shown">
 		<div>
 			<div class="font-semibold">Copy this key now — it is shown only once.</div>
 			<code class="font-mono text-sm break-all" data-testid="connect-key-value">@key</code>
 		</div>
+	</div>
+
+	<div class="card bg-base-200 border border-base-300 max-w-3xl mb-4" data-testid="connect-wire-step">
+		<div class="card-body p-4">
+			<h3 class="card-title text-base">Wire the project (one command)</h3>
+			<p class="text-sm mb-1">
+				Run from the project folder you want to wire — <code>.</code> is that current directory.
+				One command installs the hooks, plugins and MCP config and drops the key in place.
+			</p>
+			<div class="flex items-start gap-2">
+				<pre class="bg-base-300 rounded p-3 text-xs whitespace-pre-wrap flex-1 mb-0"><code data-testid="connect-npx-command">@Model.WireCommand</code></pre>
+				<button type="button" class="btn btn-xs" data-copy="@Model.WireCommand">Copy</button>
+			</div>
+			<p class="text-xs opacity-70 mb-2">single quotes keep <code>$</code>-keys literal in bash/PowerShell</p>
+
+			<div class="text-sm font-semibold">What it installs</div>
+			<ul class="text-xs opacity-80 list-disc list-inside space-y-0.5 mb-2">
+				<li>global Stop / SessionStart hooks for Claude Code &amp; Factory Droid</li>
+				<li>a global opencode plugin</li>
+				<li>per-project MCP configs + the petbox skill</li>
+				<li>a stable kit copy in <code>~/.petbox/wire/</code></li>
+				<li>the key in <code>~/.petbox/keys.json</code> + the env var the MCP configs read</li>
+			</ul>
+
+			<div class="text-sm font-semibold">Verify</div>
+			<ul class="text-xs opacity-80 list-disc list-inside space-y-0.5 mb-2">
+				<li>watch for <code>[10/10] self-smoke: OK</code> in the output</li>
+				<li>open a <strong>new</strong> terminal — the MCP configs read the env var, which is set for new shells</li>
+				<li>run your agent in the folder — its first reply should open with <code>🧠 PetBox memory active</code></li>
+			</ul>
+
+			<p class="text-xs opacity-60 mb-0">Requires Node &gt;= 23.6.</p>
+		</div>
+	</div>
+
+	<div class="max-w-3xl mt-6 mb-2" data-testid="connect-manual-heading">
+		<h2 class="text-lg font-semibold">Manual setup (fallback)</h2>
+		<p class="text-xs opacity-60 mb-0">Prefer to wire it by hand, or the one-liner doesn't fit your setup? Do the two steps below.</p>
 	</div>
 
 	<div class="card bg-base-200 border border-base-300 max-w-3xl mb-4" data-testid="connect-env-step">
@@ -94,11 +166,10 @@ else
 				<code>PETBOX_API_KEY</code>) so several projects can coexist on one machine. Set it in the
 				environment where the agent runs, then start the agent from that same shell/session:
 			</p>
-			<pre class="bg-base-300 rounded p-3 text-xs whitespace-pre-wrap"><code># macOS / Linux (current shell)
-export @(envvar)="@key"
-
-# Windows PowerShell (persisted for new shells)
-setx @envvar "@key"</code></pre>
+			<div class="flex items-start gap-2">
+				<pre class="bg-base-300 rounded p-3 text-xs whitespace-pre-wrap flex-1 mb-0"><code>@envSnippet</code></pre>
+				<button type="button" class="btn btn-xs" data-copy="@envSnippet">Copy</button>
+			</div>
 			<p class="text-xs opacity-70 mb-0">
 				Don't commit it to a file. Pasting the prompt below also puts the key in the agent's chat
 				history — if that matters, rotate the key when you're done.
@@ -114,31 +185,10 @@ setx @envvar "@key"</code></pre>
 			<a href="@overview" target="_blank" rel="noopener">overview</a> and the
 			<a href="@methodology" target="_blank" rel="noopener">methodology</a> — so nothing is duplicated.
 		</p>
-		<pre class="bg-base-200 border border-base-300 rounded p-3 text-xs whitespace-pre-wrap" data-testid="connect-agent-prompt"><code>Connect yourself to this project's PetBox server over MCP, then onboard end-to-end.
-
-Connection details:
-- MCP endpoint (HTTP/streamable): @mcp
-- Auth: send header  X-Api-Key: @key
-- Project key (pass as projectKey in every tool call): @proj
-- MCP server name to register: petbox
-
-Follow the staged onboarding runbook (public, no auth — fetch and follow it):
-  @onboarding
-It links the overview (@overview) and the methodology, and walks you through each
-stage with a validation gate. Do the stages in order and do not skip a gate:
-
-1. Set the env var @envvar in your process env from the key above (never commit it).
-   Confirm it is non-empty.
-2. Add a PROJECT-level MCP server named "petbox" (HTTP/streamable, the endpoint above,
-   header  X-Api-Key: ${@envvar} ), then RESTART your MCP connection. Verify with
-   tasks_board_list projectKey "@proj" — an empty list (not an auth error) means it works.
-3. Read the overview + methodology, then report back, in your own words: the board kinds,
-   how nodes are addressed (l1/l2/l3 + title), the spec-link invariant, and the approve
-   gate (your ceiling is Review — never set Done). Wait for the maintainer to confirm.
-4. Optionally install the petbox SKILL.md (see the connect guide: @doc).
-5. Then plan your implementation ON this PetBox backend and track it IN PetBox: capture
-   requirements on a spec board, technical tasks on a work board (linked via specRef),
-   ideas on an ideas board. Drive work to Review; leave Done to the maintainer.</code></pre>
+		<div class="flex items-start gap-2">
+			<pre class="bg-base-200 border border-base-300 rounded p-3 text-xs whitespace-pre-wrap flex-1 mb-0" data-testid="connect-agent-prompt"><code>@agentPrompt</code></pre>
+			<button type="button" class="btn btn-xs" data-copy="@agentPrompt">Copy</button>
+		</div>
 	</div>
 
 	<div class="mt-4 flex flex-wrap items-center gap-2" data-testid="connect-doc-links">
