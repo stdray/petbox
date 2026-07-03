@@ -128,6 +128,38 @@ public sealed class KqlTransformerTests
 	}
 
 	[Fact]
+	public void Top_OrdersDescendingAndLimits()
+	{
+		var ast = Parse("events | top 2 by Id desc");
+		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		result.Select(r => r.Id).Should().ContainInOrder(4L, 3L);
+	}
+
+	[Fact]
+	public void Top_Ascending()
+	{
+		var ast = Parse("events | top 2 by Id asc");
+		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		result.Select(r => r.Id).Should().ContainInOrder(1L, 2L);
+	}
+
+	[Fact]
+	public void Top_DefaultDescending()
+	{
+		var ast = Parse("events | top 1 by Id");
+		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		result.Single().Id.Should().Be(4);
+	}
+
+	[Fact]
+	public void WhereThenTop_Composes()
+	{
+		var ast = Parse("events | where Level == 4 | top 1 by Id asc");
+		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		result.Single().Id.Should().Be(2);
+	}
+
+	[Fact]
 	public void ParseError_Throws()
 	{
 		var ast = Parse("events | where Level ==");

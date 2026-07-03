@@ -52,15 +52,19 @@ static class DualExecutor
 	// value), not just Ids. Needed for computed columns (extend / project) where the interesting
 	// output is the computed value. End such queries with a `project` so both engines expose the
 	// same named columns (KustoLoco's event shape differs from ours). Row order is not asserted.
-	public static async Task AssertSameTableAsync(string kql, IReadOnlyList<TestEvent> dataset)
+	public static async Task AssertSameTableAsync(string kql, IReadOnlyList<TestEvent> dataset, bool ordered = false)
 	{
 		var (refCols, refRows) = await RunReferenceTableAsync(kql, dataset);
 		var (prodCols, prodRows) = await RunProductionTableAsync(kql, dataset);
 
 		prodCols.Should().BeEquivalentTo(refCols,
 			$"production and reference must produce the same columns for {kql}");
-		prodRows.Should().BeEquivalentTo(refRows,
-			$"production and reference must produce the same rows for {kql}");
+		if (ordered)
+			prodRows.Should().BeEquivalentTo(refRows, o => o.WithStrictOrdering(),
+				$"production and reference must produce the same rows in order for {kql}");
+		else
+			prodRows.Should().BeEquivalentTo(refRows,
+				$"production and reference must produce the same rows for {kql}");
 	}
 
 	static async Task<(IReadOnlyList<string> Columns, IReadOnlyList<Dictionary<string, object?>> Rows)>

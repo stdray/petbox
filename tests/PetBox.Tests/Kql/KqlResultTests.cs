@@ -38,7 +38,7 @@ public sealed class KqlResultTests
 	[Fact]
 	public void Execute_Unsupported_ThrowsEagerly()
 	{
-		var ast = Parse("events | distinct Level");
+		var ast = Parse("events | sample 3");
 		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
 		act.Should().Throw<UnsupportedKqlException>();
 	}
@@ -403,5 +403,75 @@ public sealed class KqlResultTests
 		var ast = Parse("events | extend B = bin(Message, 1h) | project Id, B");
 		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*bin()*");
+	}
+
+	// --- Task B: post-shape order by / take / top / distinct ---
+
+	[Fact]
+	public async Task PostShape_OrderBy_AfterSummarize()
+	{
+		var ast = Parse("events | summarize Total = count() by ServiceKey | order by Total desc, ServiceKey asc");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		var rows = await Materialize(result);
+		rows.Select(r => (string)r[0]!).Should().ContainInOrder("svc-a", "svc-b"); // 3 then 2
+		rows.Select(r => (long)r[1]!).Should().ContainInOrder(3L, 2L);
+	}
+
+	[Fact]
+	public async Task PostShape_Take_AfterProject()
+	{
+		var ast = Parse("events | project Id, Lvl = Level | order by Id asc | take 2");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		var rows = await Materialize(result);
+		rows.Should().HaveCount(2);
+		rows.Select(r => (long)r[0]!).Should().ContainInOrder(1L, 2L);
+	}
+
+	[Fact]
+	public async Task PostShape_Top_AfterProject_SortsAndLimits()
+	{
+		var ast = Parse("events | project Id, Lvl = Level | top 3 by Id desc");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		var rows = await Materialize(result);
+		rows.Select(r => (long)r[0]!).Should().ContainInOrder(5L, 4L, 3L);
+	}
+
+	[Fact]
+	public async Task PostShape_Top_OnComputedColumn()
+	{
+		var ast = Parse("events | extend D = Id * 2 | project Id, D | top 2 by D desc");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		var rows = await Materialize(result);
+		rows.Select(r => (long)r[1]!).Should().ContainInOrder(10L, 8L);
+	}
+
+	[Fact]
+	public async Task Distinct_Columns_DeDups()
+	{
+		var ast = Parse("events | distinct ServiceKey");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		result.Columns.Select(c => c.Name).Should().ContainInOrder("ServiceKey");
+		var rows = await Materialize(result);
+		rows.Select(r => (string)r[0]!).Should().BeEquivalentTo(["svc-a", "svc-b"]);
+	}
+
+	[Fact]
+	public async Task Distinct_Star_DeDupsWholeRow()
+	{
+		var ast = Parse("events | where ServiceKey == 'svc-a' | distinct *");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		result.Columns.Select(c => c.Name).Should().ContainInOrder(
+			"Id", "ServiceKey", "Timestamp", "Level", "LevelName",
+			"Message", "MessageTemplate", "Exception", "PropertiesJson");
+		var rows = await Materialize(result);
+		rows.Should().HaveCount(3); // ids 1,2,4 all distinct
+	}
+
+	[Fact]
+	public void Distinct_UnknownColumn_Throws()
+	{
+		var ast = Parse("events | distinct Bogus");
+		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*Bogus*");
 	}
 }

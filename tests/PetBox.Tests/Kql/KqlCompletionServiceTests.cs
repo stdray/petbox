@@ -64,7 +64,7 @@ public sealed class KqlCompletionServiceTests
 		var result = KqlCompletionService.Complete(q, q.Length);
 
 		var displays = result.Items.Select(i => i.DisplayText).ToHashSet(StringComparer.Ordinal);
-		foreach (var op in new[] { "where", "take", "project", "extend", "count", "summarize", "sort", "order" })
+		foreach (var op in new[] { "where", "take", "project", "extend", "count", "summarize", "sort", "order", "top", "distinct" })
 			displays.Should().Contain(op, $"'{op}' is supported by KqlTransformer");
 	}
 
@@ -76,8 +76,6 @@ public sealed class KqlCompletionServiceTests
 	[InlineData("parse-kv")]
 	[InlineData("parse-where")]
 	[InlineData("evaluate")]
-	[InlineData("distinct")]
-	[InlineData("top")]
 	[InlineData("top-hitters")]
 	[InlineData("top-nested")]
 	[InlineData("render")]

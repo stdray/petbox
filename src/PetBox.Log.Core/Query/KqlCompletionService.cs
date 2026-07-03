@@ -17,6 +17,8 @@ public static class KqlCompletionService
 		"summarize",
 		"sort",
 		"order",
+		"top",
+		"distinct",
 	};
 
 	public static KqlCompletionsResponse Complete(string query, int position)

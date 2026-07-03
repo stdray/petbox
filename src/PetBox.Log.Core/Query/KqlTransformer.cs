@@ -55,8 +55,12 @@ public static class KqlTransformer
 			: ApplyShapeChanges(eventShape, postOps);
 	}
 
+	// An operator whose output is no longer the event shape. `distinct` reduces to its chosen
+	// columns; the others compute/aggregate. `order by` / `take` / `top` are NOT here — they
+	// preserve the current shape and are handled both pre-split (SQL) and post-split (in-memory),
+	// so a query that only sorts/limits stays entirely in the linq2db path.
 	static bool IsShapeChangingOp(SyntaxNode op) =>
-		op is ProjectOperator or CountOperator or SummarizeOperator or ExtendOperator;
+		op is ProjectOperator or CountOperator or SummarizeOperator or ExtendOperator or DistinctOperator;
 
 	public static bool HasShapeChangingOps(KustoCode code)
 	{
@@ -82,11 +86,12 @@ public static class KqlTransformer
 		var q = source;
 		foreach (var op in operators.Skip(1))
 		{
-			q = op switch
+		q = op switch
 			{
 				FilterOperator f => ApplyWhere(q, f),
 				TakeOperator t => ApplyTake(q, t),
 				SortOperator s => ApplySort(q, s),
+				TopOperator t => ApplyTop(q, t),
 				_ => throw new UnsupportedKqlException($"operator '{op.Kind}' not supported"),
 			};
 		}
@@ -104,6 +109,12 @@ public static class KqlTransformer
 				ProjectOperator p => ApplyProject(current, p),
 				CountOperator => ApplyCount(current),
 				SummarizeOperator s => ApplySummarize(current, s),
+				DistinctOperator d => ApplyDistinct(current, d),
+				// order by / take / top run in-memory once the pipeline has changed shape; their
+				// sort keys may reference computed (post-split) columns.
+				SortOperator s => ApplyPostSort(current, s),
+				TakeOperator t => ApplyPostTake(current, t),
+				TopOperator t => ApplyPostTop(current, t),
 				_ => throw new UnsupportedKqlException($"operator '{op.Kind}' not supported in shape-changing pipeline"),
 			};
 		}
@@ -567,6 +578,168 @@ public static class KqlTransformer
 		}
 	}
 
+	// --- post-shape (in-memory) order by / take / top / distinct ---
+	// These run after a shape change, over the streamed object?[] rows. order/top buffer the
+	// whole stream (a sort must); take just truncates. Sort keys compile through the wave-1
+	// scalar engine over the current row shape, so they may reference computed columns.
+
+	static KqlResult ApplyPostTake(KqlResult input, TakeOperator take)
+	{
+		if (take.Expression is not LiteralExpression { LiteralValue: long n })
+			throw new UnsupportedKqlException("take requires an integer literal");
+		return new KqlResult(input.Columns, StreamTake(input.Rows, checked((int)n)));
+	}
+
+	static KqlResult ApplyPostSort(KqlResult input, SortOperator sort)
+	{
+		var keys = sort.Expressions.Select(e => CompileSortKey(e.Element, input)).ToArray();
+		return new KqlResult(input.Columns, StreamSort(input.Rows, keys, limit: null));
+	}
+
+	static KqlResult ApplyPostTop(KqlResult input, TopOperator top)
+	{
+		if (top.Expression is not LiteralExpression { LiteralValue: long n })
+			throw new UnsupportedKqlException("top requires an integer literal count");
+		var key = CompileSortKey(top.ByExpression, input);
+		return new KqlResult(input.Columns, StreamSort(input.Rows, [key], limit: checked((int)n)));
+	}
+
+	// A sort key over a post-split row: (value extractor, descending). A bare expression or a
+	// column ref sorts ascending unless followed by `desc`; default (no ordering) is descending
+	// only for the whole `order by`/`top` when the user omits it — Kusto's default is descending,
+	// which the `!IsAscending` below preserves.
+	static (Func<object?[], object?> Key, bool Descending) CompileSortKey(Expression element, KqlResult input)
+	{
+		var rowParam = Expr.Parameter(typeof(object?[]), "row");
+		var ctx = new RowScalarContext(rowParam, input.Columns);
+		var (expr, descending) = element switch
+		{
+			OrderedExpression { Expression: var e, Ordering: var o } => (e, !IsAscending(o)),
+			_ => (element, true),
+		};
+		var (_, fn) = CompileCell(expr, ctx, rowParam);
+		return (fn, descending);
+	}
+
+	static async IAsyncEnumerable<object?[]> StreamTake(
+		IAsyncEnumerable<object?[]> source, int n, [EnumeratorCancellation] CancellationToken ct = default)
+	{
+		if (n <= 0)
+			yield break;
+		var emitted = 0;
+		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
+		{
+			yield return row;
+			if (++emitted >= n)
+				yield break;
+		}
+	}
+
+	static async IAsyncEnumerable<object?[]> StreamSort(
+		IAsyncEnumerable<object?[]> source,
+		IReadOnlyList<(Func<object?[], object?> Key, bool Descending)> keys,
+		int? limit,
+		[EnumeratorCancellation] CancellationToken ct = default)
+	{
+		var buffer = new List<object?[]>();
+		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
+			buffer.Add(row);
+
+		IOrderedEnumerable<object?[]>? ordered = null;
+		foreach (var (key, descending) in keys)
+		{
+			ordered = (ordered, descending) switch
+			{
+				(null, true) => buffer.OrderByDescending(key, BoxedComparer.Instance),
+				(null, false) => buffer.OrderBy(key, BoxedComparer.Instance),
+				(not null, true) => ordered.ThenByDescending(key, BoxedComparer.Instance),
+				(not null, false) => ordered.ThenBy(key, BoxedComparer.Instance),
+			};
+		}
+
+		var result = (IEnumerable<object?[]>?)ordered ?? buffer;
+		if (limit is { } n)
+			result = result.Take(n);
+		foreach (var row in result)
+			yield return row;
+	}
+
+	// Compares boxed scalar values (long/double/string/DateTime/…) for post-shape sorting.
+	// Comparer<object>.Default routes to the boxed value's IComparable and treats null as the
+	// smallest value, matching Kusto's nulls-first ascending order.
+	sealed class BoxedComparer : IComparer<object?>
+	{
+		public static readonly BoxedComparer Instance = new();
+		public int Compare(object? x, object? y) => Comparer<object>.Default.Compare(x!, y!);
+	}
+
+	// distinct <cols> | distinct *. In-memory de-dup over the streamed rows. We deliberately do
+	// NOT push this to SQL DISTINCT: the streamed rows are the full event shape (produced by
+	// StreamEventRecordRows), and a distinct column may be a computed value like LevelName or a
+	// json_extract of Properties that has no single SQLite column to DISTINCT on. De-duping the
+	// projected key set in memory reuses the existing GroupKey equality and keeps one code path.
+	static KqlResult ApplyDistinct(KqlResult input, DistinctOperator distinct)
+	{
+		var outputColumns = new List<KqlColumn>();
+		var extractors = new List<Func<object?[], object?>>();
+
+		foreach (var element in distinct.Expressions)
+		{
+			switch (element.Element)
+			{
+				case StarExpression:
+					if (distinct.Expressions.Count != 1)
+						throw new UnsupportedKqlException("distinct *: '*' cannot be combined with other columns");
+					for (var i = 0; i < input.Columns.Count; i++)
+					{
+						var idx = i;
+						outputColumns.Add(input.Columns[idx]);
+						extractors.Add(row => row[idx]);
+					}
+					break;
+				case NameReference n:
+					{
+						var idx = FindColumnIndex(input.Columns, n.SimpleName);
+						if (idx < 0)
+							throw new UnsupportedKqlException($"distinct: unknown column '{n.SimpleName}'");
+						outputColumns.Add(input.Columns[idx]);
+						extractors.Add(row => row[idx]);
+						break;
+					}
+				case PathExpression p when IsPropertiesPath(p, out var propKey):
+					{
+						var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
+						if (propIdx < 0)
+							throw new UnsupportedKqlException("distinct Properties.<key>: input has no PropertiesJson column");
+						outputColumns.Add(new KqlColumn("Properties." + propKey, typeof(string)));
+						extractors.Add(row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, "$." + propKey));
+						break;
+					}
+				default:
+					throw new UnsupportedKqlException(
+						$"distinct expression '{element.Element.Kind}' not supported (use column refs, Properties.<key>, or '*')");
+			}
+		}
+
+		return new KqlResult(outputColumns, StreamDistinct(input.Rows, extractors.ToArray()));
+	}
+
+	static async IAsyncEnumerable<object?[]> StreamDistinct(
+		IAsyncEnumerable<object?[]> source,
+		Func<object?[], object?>[] extractors,
+		[EnumeratorCancellation] CancellationToken ct = default)
+	{
+		var seen = new HashSet<GroupKey>();
+		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
+		{
+			var values = new object?[extractors.Length];
+			for (var i = 0; i < extractors.Length; i++)
+				values[i] = extractors[i](row);
+			if (seen.Add(new GroupKey(values)))
+				yield return values;
+		}
+	}
+
 	static int FindColumnIndex(IReadOnlyList<KqlColumn> columns, string name)
 	{
 		for (var i = 0; i < columns.Count; i++)
@@ -585,6 +758,7 @@ public static class KqlTransformer
 				FilterOperator f => ApplyWhere(q, f),
 				TakeOperator t => ApplyTake(q, t),
 				SortOperator s => ApplySort(q, s),
+				TopOperator t => ApplyTop(q, t),
 				_ => throw new UnsupportedKqlException($"operator '{op.Kind}' not supported"),
 			};
 		}
@@ -683,8 +857,7 @@ public static class KqlTransformer
 		{
 			var (columnName, descending) = element.Element switch
 			{
-				OrderedExpression { Expression: NameReference n, Ordering: var o }
-					=> (n.SimpleName, !string.Equals(o?.AscOrDescKeyword?.Text, "asc", StringComparison.Ordinal)),
+				OrderedExpression { Expression: NameReference n, Ordering: var o } => (n.SimpleName, !IsAscending(o)),
 				NameReference n => (n.SimpleName, true),
 				_ => throw new UnsupportedKqlException($"order-by expression '{element.Element.Kind}' not supported"),
 			};
@@ -693,6 +866,25 @@ public static class KqlTransformer
 		}
 		return ordered ?? source;
 	}
+
+	// `top N by <column> [asc|desc]` on the SQL path = ORDER BY + LIMIT. The by-expression is a
+	// bare column ref here (same reach as ApplySort); the post-split ApplyPostTop handles
+	// computed keys. Default ordering is descending, matching Kusto.
+	static IQueryable<LogEntryRecord> ApplyTop(IQueryable<LogEntryRecord> source, TopOperator top)
+	{
+		if (top.Expression is not LiteralExpression { LiteralValue: long n })
+			throw new UnsupportedKqlException("top requires an integer literal count");
+		var (columnName, descending) = top.ByExpression switch
+		{
+			OrderedExpression { Expression: NameReference nm, Ordering: var o } => (nm.SimpleName, !IsAscending(o)),
+			NameReference nm => (nm.SimpleName, true),
+			_ => throw new UnsupportedKqlException($"top by-expression '{top.ByExpression.Kind}' not supported (use a column ref)"),
+		};
+		return ApplyOrder(source, null, columnName, descending).Take(checked((int)n));
+	}
+
+	static bool IsAscending(OrderingClause? o) =>
+		string.Equals(o?.AscOrDescKeyword?.Text, "asc", StringComparison.Ordinal);
 
 	static IOrderedQueryable<LogEntryRecord> ApplyOrder(
 		IQueryable<LogEntryRecord> source,

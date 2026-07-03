@@ -200,4 +200,40 @@ public sealed class DualExecutorTests
 	{
 		await DualExecutor.AssertSameTableAsync(kql, GroupData);
 	}
+
+	[Theory]
+	[InlineData("events | project Id, Lvl = Level | order by Id desc")]
+	[InlineData("events | project Id, Lvl = Level | order by Lvl asc, Id desc")]
+	[InlineData("events | extend D = Id * 2 | project Id, D | order by D asc")]
+	[InlineData("events | summarize Total = count() by ServiceKey | order by Total desc, ServiceKey asc")]
+	public async Task PostShapeOrderBy_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData, ordered: true);
+	}
+
+	[Theory]
+	[InlineData("events | project Id, Lvl = Level | order by Id desc | take 2")]
+	[InlineData("events | project Id, Lvl = Level | order by Id asc | take 3")]
+	public async Task PostShapeOrderTake_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData, ordered: true);
+	}
+
+	[Theory]
+	[InlineData("events | project Id, Lvl = Level | top 3 by Id desc")]
+	[InlineData("events | project Id, Lvl = Level | top 2 by Id asc")]
+	[InlineData("events | extend D = Id * 2 | project Id, D | top 3 by D desc")]
+	public async Task PostShapeTop_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData, ordered: true);
+	}
+
+	[Theory]
+	[InlineData("events | distinct ServiceKey")]
+	[InlineData("events | distinct ServiceKey, Level")]
+	[InlineData("events | where Level >= 4 | distinct ServiceKey")]
+	public async Task Distinct_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData);
+	}
 }

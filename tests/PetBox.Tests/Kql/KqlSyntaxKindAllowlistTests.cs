@@ -11,18 +11,21 @@ public sealed class KqlSyntaxKindAllowlistTests
 	[
 		SyntaxKind.FilterOperator,
 		SyntaxKind.TakeOperator,
+		// SortOperator / TakeOperator also run post-shape (in-memory) after summarize/project/etc.
 		SyntaxKind.SortOperator,
 		SyntaxKind.ProjectOperator,
 		SyntaxKind.CountOperator,
 		SyntaxKind.SummarizeOperator,
 		SyntaxKind.ExtendOperator,
+		SyntaxKind.TopOperator,
+		SyntaxKind.DistinctOperator,
 	];
 
 	static readonly HashSet<string> ExplicitlyUnsupportedNames = new(StringComparer.Ordinal)
 	{
 		"ConsumeOperator", "GraphWhereEdgesOperator", "GraphWhereNodesOperator",
 		"MacroExpandOperator", "JoinOperator", "LookupOperator", "UnionOperator",
-		"DistinctOperator", "TopOperator", "TopHittersOperator", "TopNestedOperator",
+		"TopHittersOperator", "TopNestedOperator",
 		"MvExpandOperator", "MvApplyOperator", "ParseOperator", "ParseWhereOperator",
 		"ParseKvOperator", "EvaluateOperator", "ExecuteAndCacheOperator", "FacetOperator",
 		"FindOperator", "SearchOperator", "SampleOperator", "SampleDistinctOperator",
@@ -71,6 +74,7 @@ public sealed class KqlSyntaxKindAllowlistTests
 			[SyntaxKind.FilterOperator] = "events | where Level >= 3",
 			[SyntaxKind.TakeOperator] = "events | take 10",
 			[SyntaxKind.SortOperator] = "events | order by Timestamp desc",
+			[SyntaxKind.TopOperator] = "events | top 5 by Level desc",
 		};
 		var executeExamples = new Dictionary<SyntaxKind, string>
 		{
@@ -78,6 +82,7 @@ public sealed class KqlSyntaxKindAllowlistTests
 			[SyntaxKind.CountOperator] = "events | count",
 			[SyntaxKind.SummarizeOperator] = "events | summarize count() by Level",
 			[SyntaxKind.ExtendOperator] = "events | extend Doubled = Level * 2",
+			[SyntaxKind.DistinctOperator] = "events | distinct Level",
 		};
 
 		SupportedOperators.Should().BeEquivalentTo(applyExamples.Keys.Concat(executeExamples.Keys));

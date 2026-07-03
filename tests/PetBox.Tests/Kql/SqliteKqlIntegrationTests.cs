@@ -221,6 +221,36 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task Top_TranslatesToSqlOrderByLimit()
+	{
+		var desc = await RunAsync("events | top 2 by Id desc");
+		desc.Should().ContainInOrder("starting", "crash on Earth");
+		var asc = await RunAsync("events | top 2 by Id asc");
+		asc.Should().ContainInOrder("hello world", "boom");
+	}
+
+	[Fact]
+	public async Task WhereThenTop_ComposesSqlFilterAndLimit()
+	{
+		var messages = await RunAsync("events | where Level == 4 | top 1 by Id asc");
+		messages.Should().ContainInOrder("boom");
+	}
+
+	[Fact]
+	public async Task Distinct_StreamsFromSqlPreFilter()
+	{
+		// `where` (SQL) runs pre-split; `distinct` (shape-changing) de-dups in memory.
+		var code = KustoCode.Parse("events | where Level == 4 | distinct ServiceKey");
+		var result = KqlTransformer.Execute(_logDb.LogEntries, code);
+		result.Columns.Select(c => c.Name).Should().ContainInOrder("ServiceKey");
+
+		var values = new List<string?>();
+		await foreach (var row in result.Rows)
+			values.Add(row[0] as string);
+		values.Should().BeEquivalentTo(["svc-b", "svc-c"]); // the two Error rows
+	}
+
+	[Fact]
 	public async Task SummarizeSumByLevel_OverSqlSource()
 	{
 		var code = KustoCode.Parse("events | summarize Total = sum(Id) by Level");
