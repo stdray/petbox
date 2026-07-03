@@ -311,6 +311,10 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		// an API caller must get structured JSON with the failure type and message. (This test used to
 		// ride on `where LevelName == ...` being untranslatable; LevelName now translates via a CASE
 		// mapping — the spans-review fix 1 — so a malformed regex is the execution-fault vehicle.)
+		// The scalar function only runs when a row is scanned — seed one so an empty log
+		// (possible under test-order variance) can't turn the fault into an empty 200.
+		await PostClefAsync("svc-regex-fault",
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("regex-fault")}}"}""");
 		var kql = "events | where Message matches regex \"(\"";
 		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString(kql)}");
 		using var resp = await _client.SendAsync(req);
@@ -328,6 +332,9 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		// Shape-changing pipeline whose pre-filter fails during row STREAMING — the
 		// engine fault surfaces in the endpoint's await-foreach over Rows, a different
 		// code path than events materialization. Must still be structured JSON.
+		// Seed a row for the same reason as the materialization variant above.
+		await PostClefAsync("svc-regex-fault",
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("regex-fault-t")}}"}""");
 		var kql = "events | where Message matches regex \"(\" | summarize count() by Level";
 		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString(kql)}");
 		using var resp = await _client.SendAsync(req);
