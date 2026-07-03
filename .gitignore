@@ -1,5 +1,9 @@
 # .NET
 [Bb]in/
+# petbox-wire npm launcher lives in bin/ — not a .NET build dir; keep it tracked so the
+# published package (and a clean CI checkout) carries it.
+!src/clients-ts/petbox-wire/bin/
+!src/clients-ts/petbox-wire/bin/**
 [Oo]bj/
 [Oo]ut/
 [Dd]ebug/

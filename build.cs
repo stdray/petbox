@@ -32,6 +32,11 @@ var nugetProjects = new[] { clientCoreProject, clientConfigProject, clientLinq2D
 // TS SDK — published to the public npm registry (npmjs.org) via `npm` tag push.
 var tsSdkDir = "./src/clients-ts/petbox-client";
 
+// Agent-wiring kit — published to the public npm registry (npmjs.org) via the SAME `npm` tag
+// push as the SDK. Raw plain-TS package (native type-stripping): no install/build, only a
+// GitVersion version-stamp before publish.
+var tsWireDir = "./src/clients-ts/petbox-wire";
+
 // Python SDK — published to public PyPI via `pypi` tag push.
 var pyClientDir = "./src/clients-py/petbox-client";
 
@@ -365,7 +370,7 @@ Task("TsSdkPack")
 // NPM_TOKEN — an npmjs automation/publish token with rights to the @stdray-npm
 // scope. Writes a temporary .npmrc with the auth token, then `npm publish
 // --access public` (scoped packages are restricted by default; this one is public).
-Task("NpmPublish")
+Task("NpmClientPublish")
 	.IsDependentOn("TsSdkPack")
 	.Does(() =>
 	{
@@ -393,6 +398,62 @@ Task("NpmPublish")
 				System.IO.File.Delete(npmrc);
 		}
 	});
+
+// ─── agent-wiring kit (petbox-wire) — same npm registry, same `npm` tag ───
+
+// Stamp package.json version from GitVersion. The kit is raw plain TS (native type-stripping),
+// so there is no install/build/pack — just the version bump, mirroring TsSdkPack. GitVersion runs
+// standalone (only needs git) so we skip the full Clean→Restore→Version .NET chain.
+Task("TsWirePack")
+	.Does(() =>
+	{
+		var gv = GitVersion(new GitVersionSettings { OutputType = GitVersionOutput.Json, NoFetch = true });
+		// npm semver forbids '+', so replace the GitVersion build-metadata separator.
+		var npmVersion = gv.FullSemVer.Replace('+', '-');
+		Information("Stamping agent-wiring kit version: {0} (GitVersion: {1})", npmVersion, gv.FullSemVer);
+		StartProcess("npm", new ProcessSettings
+		{
+			Arguments = $"version {npmVersion} --no-git-tag-version --allow-same-version",
+			WorkingDirectory = tsWireDir,
+		});
+	});
+
+// Publishes the agent-wiring kit (petbox-wire, UNSCOPED public package) to registry.npmjs.org.
+// Same NPM_TOKEN + temporary-.npmrc mechanism as NpmClientPublish.
+Task("NpmWirePublish")
+	.IsDependentOn("TsWirePack")
+	.Does(() =>
+	{
+		var token = EnvironmentVariable("NPM_TOKEN");
+		if (string.IsNullOrWhiteSpace(token))
+			throw new CakeException("NPM_TOKEN environment variable is not set. Public npm publishing requires an npmjs token with publish rights.");
+
+		var absDir = MakeAbsolute(Directory(tsWireDir)).FullPath;
+		var npmrc = System.IO.Path.Combine(absDir, ".npmrc");
+		System.IO.File.WriteAllText(npmrc, $"//registry.npmjs.org/:_authToken={token}\n");
+		try
+		{
+			var exit = StartProcess("npm", new ProcessSettings
+			{
+				Arguments = "publish --access public",
+				WorkingDirectory = tsWireDir,
+			});
+			if (exit != 0)
+				throw new CakeException($"npm publish failed with exit code {exit}.");
+			Information("Published agent-wiring kit to npmjs (petbox-wire)");
+		}
+		finally
+		{
+			if (System.IO.File.Exists(npmrc))
+				System.IO.File.Delete(npmrc);
+		}
+	});
+
+// Aggregate published by the `npm` tag (CI calls `./build.sh --target=NpmPublish`): ships BOTH
+// npm packages — the SDK (@stdray-npm/petbox-client) and the wiring kit (petbox-wire).
+Task("NpmPublish")
+	.IsDependentOn("NpmClientPublish")
+	.IsDependentOn("NpmWirePublish");
 
 // ─── Python SDK build + publish (PyPI) ───
 

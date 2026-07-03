@@ -33,6 +33,20 @@ export function registryPath(): string {
   return join(homedir(), ".petbox", "projects.json");
 }
 
+// Cross-platform key store written by wire.ts: ~/.petbox/keys.json is a flat JSON map
+// { "<ENV_VAR>": "<key>" }. Read as a fallback when the env var is not set in the process
+// (so a machine wired via `npx petbox-wire` works without a user-scope env var). Never throws.
+function readKeyStore(envVar: string): string {
+  try {
+    const raw = readFileSync(join(homedir(), ".petbox", "keys.json"), "utf8");
+    const parsed = JSON.parse(raw);
+    const v = parsed && typeof parsed === "object" ? parsed[envVar] : undefined;
+    return typeof v === "string" ? v : "";
+  } catch {
+    return "";
+  }
+}
+
 // Normalize a path for prefix comparison: unify separators to "/", drop a trailing
 // separator, and lowercase on Windows (case-insensitive filesystem).
 function normalize(p: string): string {
@@ -87,7 +101,8 @@ export function resolveProject(dir: string): ResolvedProject | null {
     }
     if (!best) return null;
 
-    const apiKey = process.env[best.envVar];
+    // env var wins; fall back to ~/.petbox/keys.json (the wire.ts key store).
+    const apiKey = process.env[best.envVar] || readKeyStore(best.envVar);
     if (!apiKey || apiKey.trim().length === 0) return null;
 
     const baseUrl = (best.baseUrl && best.baseUrl.trim()) || DEFAULT_BASE_URL;

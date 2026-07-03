@@ -1,0 +1,24 @@
+{
+	"name": "petbox-wire",
+	"version": "0.0.0",
+	"description": "Wire any project to PetBox (Claude Code, opencode, Factory Droid) — global hooks, MCP configs and skills — with a single npx command, no repo clone.",
+	"type": "module",
+	"bin": {
+		"petbox-wire": "bin/petbox-wire.js"
+	},
+	"files": ["bin", "src", "README.md"],
+	"engines": {
+		"node": ">=23.6.0"
+	},
+	"keywords": ["petbox", "wiring", "claude-code", "opencode", "factory-droid", "mcp"],
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/stdray/petbox.git",
+		"directory": "src/clients-ts/petbox-wire"
+	},
+	"publishConfig": {
+		"registry": "https://registry.npmjs.org",
+		"access": "public"
+	}
+}
