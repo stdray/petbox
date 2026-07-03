@@ -94,13 +94,16 @@ static class DualExecutor
 	}
 
 	// Normalize so trivial CLR-type differences between the two engines don't cause spurious
-	// mismatches: all integers → long, all reals → rounded double, datetimes → UTC.
+	// mismatches: all integers → long, all reals → rounded double, datetimes → UTC wall-clock.
+	// Both engines carry UTC data, but KustoLoco returns computed datetimes (e.g. bin()) with
+	// Kind=Unspecified; ToUniversalTime() would then wrongly assume local time and shift them,
+	// so we reinterpret the wall-clock as UTC instead of converting.
 	static object? Norm(object? v) => v switch
 	{
 		null => null,
 		bool b => b,
 		string s => s,
-		DateTime dt => dt.ToUniversalTime(),
+		DateTime dt => DateTime.SpecifyKind(dt, DateTimeKind.Utc),
 		sbyte or byte or short or ushort or int or uint or long or ulong => Convert.ToInt64(v),
 		float or double or decimal => Math.Round(Convert.ToDouble(v), 9),
 		_ => v.ToString(),

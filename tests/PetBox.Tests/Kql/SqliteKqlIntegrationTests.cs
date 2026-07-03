@@ -221,6 +221,18 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task SummarizeSumByLevel_OverSqlSource()
+	{
+		var code = KustoCode.Parse("events | summarize Total = sum(Id) by Level");
+		var result = KqlTransformer.Execute(_logDb.LogEntries, code);
+
+		var rows = new List<object?[]>();
+		await foreach (var row in result.Rows) rows.Add(row);
+		var byLevel = rows.ToDictionary(r => (int)r[0]!, r => (long)r[1]!);
+		byLevel[(int)LogLevel.Error].Should().Be(2 + 4); // ids 2 and 4
+	}
+
+	[Fact]
 	public async Task SummarizeByProperty_GroupsViaJsonExtract()
 	{
 		await _logDb.LogEntries.BulkCopyAsync([

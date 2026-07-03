@@ -154,9 +154,9 @@ public sealed class KqlResultTests
 	[Fact]
 	public void Summarize_UnsupportedAggregate_Throws()
 	{
-		var ast = Parse("events | summarize avg(Level)");
+		var ast = Parse("events | summarize stdev(Level)");
 		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*avg*");
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*stdev*");
 	}
 
 	static async Task<List<object?[]>> Materialize(KqlResult result)
@@ -258,5 +258,150 @@ public sealed class KqlResultTests
 		var ast = Parse("events | project Id, X = tolower(Message)");
 		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*tolower*not supported*");
+	}
+
+	// --- Task A: aggregates over the int Level column (production-only; KustoLoco can't cast
+	// int->long here, so these are not in the differential suite) ---
+
+	static async Task<Dictionary<string, object?>> SummarizeByService(string kql)
+	{
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), Parse(kql));
+		var rows = await Materialize(result);
+		// column 0 = ServiceKey key, column 1 = the single aggregate
+		return rows.ToDictionary(r => (string)r[0]!, r => r[1]);
+	}
+
+	[Fact]
+	public async Task Summarize_Sum_ByService()
+	{
+		var by = await SummarizeByService("events | summarize sum(Level) by ServiceKey");
+		by["svc-a"].Should().Be((long)LogLevel.Error * 2 + (long)LogLevel.Information); // 4+4+2
+		by["svc-b"].Should().Be((long)LogLevel.Warning + (long)LogLevel.Error); // 3+4
+	}
+
+	[Fact]
+	public async Task Summarize_Min_Max_ByService()
+	{
+		var min = await SummarizeByService("events | summarize min(Level) by ServiceKey");
+		min["svc-a"].Should().Be((int)LogLevel.Information); // 2
+		min["svc-b"].Should().Be((int)LogLevel.Warning); // 3
+
+		var max = await SummarizeByService("events | summarize max(Level) by ServiceKey");
+		max["svc-a"].Should().Be((int)LogLevel.Error); // 4
+		max["svc-b"].Should().Be((int)LogLevel.Error); // 4
+	}
+
+	[Fact]
+	public async Task Summarize_Avg_ByService()
+	{
+		var by = await SummarizeByService("events | summarize avg(Level) by ServiceKey");
+		by["svc-a"].Should().Be(((double)((int)LogLevel.Error * 2 + (int)LogLevel.Information)) / 3);
+		by["svc-b"].Should().Be(((double)((int)LogLevel.Warning + (int)LogLevel.Error)) / 2);
+	}
+
+	[Fact]
+	public async Task Summarize_Dcount_ByService()
+	{
+		var by = await SummarizeByService("events | summarize dcount(Level) by ServiceKey");
+		by["svc-a"].Should().Be(2L); // {Error, Information}
+		by["svc-b"].Should().Be(2L); // {Warning, Error}
+	}
+
+	[Fact]
+	public async Task Summarize_Countif_ByService()
+	{
+		var by = await SummarizeByService("events | summarize countif(Level >= 4) by ServiceKey");
+		by["svc-a"].Should().Be(2L); // ids 1,2
+		by["svc-b"].Should().Be(1L); // id 5
+	}
+
+	[Fact]
+	public async Task Summarize_AliasesBothAggregateAndKey()
+	{
+		var ast = Parse("events | summarize Total = count(), High = countif(Level >= 4) by Svc = ServiceKey");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		result.Columns.Select(c => c.Name).Should().ContainInOrder("Svc", "Total", "High");
+
+		var rows = await Materialize(result);
+		var by = rows.ToDictionary(r => (string)r[0]!, r => ((long)r[1]!, (long)r[2]!));
+		by["svc-a"].Should().Be((3L, 2L));
+		by["svc-b"].Should().Be((2L, 1L));
+	}
+
+	[Fact]
+	public void Summarize_CountifNonBoolean_Throws()
+	{
+		var ast = Parse("events | summarize countif(Level) by ServiceKey");
+		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*boolean predicate*");
+	}
+
+	[Fact]
+	public void Summarize_SumNonNumeric_Throws()
+	{
+		var ast = Parse("events | summarize sum(Message) by ServiceKey");
+		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*sum*numeric*");
+	}
+
+	// --- Task A: bin() as time / numeric bucket ---
+
+	static readonly LogEntryRecord[] BinRows =
+	[
+		MkTs(1, "2026-04-19T10:15:00Z", LogLevel.Information),
+		MkTs(2, "2026-04-19T10:45:00Z", LogLevel.Information),
+		MkTs(3, "2026-04-19T11:05:00Z", LogLevel.Error),
+	];
+
+	static LogEntryRecord MkTs(long id, string iso, LogLevel level) => new()
+	{
+		Id = id,
+		TimestampMs = new DateTimeOffset(DateTime.Parse(iso, null, System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal)).ToUnixTimeMilliseconds(),
+		Level = (int)level,
+		Message = "m",
+		ServiceKey = "svc",
+	};
+
+	[Fact]
+	public async Task Summarize_ByHourBin_BucketsByHour()
+	{
+		var ast = Parse("events | summarize Cnt = count() by Hour = bin(Timestamp, 1h)");
+		var result = KqlTransformer.Execute(BinRows.AsQueryable(), ast);
+		result.Columns.Select(c => c.Name).Should().ContainInOrder("Hour", "Cnt");
+		result.Columns[0].ClrType.Should().Be<DateTime>();
+
+		var rows = await Materialize(result);
+		var by = rows.ToDictionary(r => (DateTime)r[0]!, r => (long)r[1]!);
+		by[new DateTime(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc)].Should().Be(2);
+		by[new DateTime(2026, 4, 19, 11, 0, 0, DateTimeKind.Utc)].Should().Be(1);
+	}
+
+	[Fact]
+	public async Task Extend_BinTimestamp_AsPlainScalar()
+	{
+		var ast = Parse("events | extend H = bin(Timestamp, 1h) | project Id, H");
+		var result = KqlTransformer.Execute(BinRows.AsQueryable(), ast);
+		var rows = await Materialize(result);
+		rows[0][1].Should().Be(new DateTime(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc));
+		rows[2][1].Should().Be(new DateTime(2026, 4, 19, 11, 0, 0, DateTimeKind.Utc));
+	}
+
+	[Fact]
+	public async Task Extend_BinNumeric_FloorsToMultiple()
+	{
+		var ast = Parse("events | extend B = bin(Id, 2) | project Id, B");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		result.Columns[^1].ClrType.Should().Be<long>();
+		var rows = await Materialize(result);
+		// Id 1->0, 2->2, 3->2, 4->4, 5->4
+		rows.Select(r => (long)r[1]!).Should().ContainInOrder(0L, 2L, 2L, 4L, 4L);
+	}
+
+	[Fact]
+	public void Bin_TypeMismatch_Throws()
+	{
+		var ast = Parse("events | extend B = bin(Message, 1h) | project Id, B");
+		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*bin()*");
 	}
 }

@@ -203,9 +203,30 @@ public static class KqlTransformer
 	static KqlResult ApplyCount(KqlResult input) =>
 		new([new KqlColumn("Count", typeof(long))], StreamCount(input.Rows));
 
+	// summarize <aggregates> [by <keys>]. Aggregate arguments and countif predicates are
+	// arbitrary scalar expressions compiled over the current (post-split) row via the wave-1
+	// engine; by-keys are column refs, Properties.<key>, or computed expressions (incl.
+	// bin(...) for time/numeric bucketing). Both aggregate results and by-keys accept an
+	// `alias = …` name. Grouping and folding are in-memory (the pipeline is already split).
 	static KqlResult ApplySummarize(KqlResult input, SummarizeOperator op)
 	{
-		var aggSpecs = new List<(string OutputName, KqlAggregate Kind)>();
+		var rowParam = Expr.Parameter(typeof(object?[]), "row");
+		var ctx = new RowScalarContext(rowParam, input.Columns);
+
+		var outputColumns = new List<KqlColumn>();
+		var keyExtractors = new List<Func<object?[], object?>>();
+
+		if (op.ByClause is not null)
+		{
+			foreach (var element in op.ByClause.Expressions)
+			{
+				var (name, type, fn) = CompileByKey(element.Element, input, ctx, rowParam);
+				outputColumns.Add(new KqlColumn(name, type));
+				keyExtractors.Add(fn);
+			}
+		}
+
+		var aggSpecs = new List<AggSpec>();
 		foreach (var element in op.Aggregates)
 		{
 			var (name, call) = element.Element switch
@@ -215,64 +236,246 @@ public static class KqlTransformer
 					=> (alias.Name.SimpleName, f),
 				_ => throw new UnsupportedKqlException($"summarize aggregate '{element.Element.Kind}' not supported"),
 			};
-
-			if (!string.Equals(call.Name.SimpleName, "count", StringComparison.Ordinal))
-				throw new UnsupportedKqlException($"aggregate '{call.Name.SimpleName}' not supported (only count() for now)");
-
-			aggSpecs.Add((name, KqlAggregate.Count));
+			var spec = BuildAggregate(name, call, ctx, rowParam);
+			aggSpecs.Add(spec);
+			outputColumns.Add(new KqlColumn(spec.OutputName, spec.ResultType));
 		}
 
-		var extractors = new List<Func<object?[], object?>>();
-		var outputColumns = new List<KqlColumn>();
-
-		if (op.ByClause is not null)
-		{
-			foreach (var element in op.ByClause.Expressions)
-			{
-				switch (element.Element)
-				{
-					case NameReference n:
-						{
-							var idx = FindColumnIndex(input.Columns, n.SimpleName);
-							if (idx < 0)
-								throw new UnsupportedKqlException($"summarize by: unknown column '{n.SimpleName}'");
-							outputColumns.Add(new KqlColumn(n.SimpleName, input.Columns[idx].ClrType));
-							var captured = idx;
-							extractors.Add(row => row[captured]);
-							break;
-						}
-					case PathExpression p when IsPropertiesPath(p, out var propKey):
-						{
-							var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
-							if (propIdx < 0)
-								throw new UnsupportedKqlException("summarize by Properties.<key>: input has no PropertiesJson column");
-							outputColumns.Add(new KqlColumn("Properties." + propKey, typeof(string)));
-							var key = propKey;
-							extractors.Add(row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, "$." + key));
-							break;
-						}
-					default:
-						throw new UnsupportedKqlException(
-							$"summarize by '{element.Element.Kind}' not supported (column ref or Properties.<key>)");
-				}
-			}
-		}
-
-		foreach (var (name, _) in aggSpecs)
-			outputColumns.Add(new KqlColumn(name, typeof(long)));
-
-		return new KqlResult(outputColumns, StreamSummarize(input.Rows, extractors.ToArray(), aggSpecs.Count));
+		return new KqlResult(outputColumns, StreamSummarize(input.Rows, keyExtractors.ToArray(), aggSpecs.ToArray()));
 	}
 
-	enum KqlAggregate { Count }
+	// A by-key: (output name, CLR type, value extractor). Bare column refs stay a cheap index
+	// pass-through; Properties.<key> is json_extract; anything else (incl. bin) compiles as a
+	// scalar. An un-aliased function call (e.g. `by bin(Timestamp, 1h)`) is named after its
+	// first column argument, matching Kusto's default column naming.
+	static (string Name, Type Type, Func<object?[], object?> Fn) CompileByKey(
+		Expression element, KqlResult input, RowScalarContext ctx, ParamExpr rowParam)
+	{
+		switch (element)
+		{
+			case NameReference n:
+				{
+					var idx = FindColumnIndex(input.Columns, n.SimpleName);
+					if (idx < 0)
+						throw new UnsupportedKqlException($"summarize by: unknown column '{n.SimpleName}'");
+					return (n.SimpleName, input.Columns[idx].ClrType, row => row[idx]);
+				}
+			case PathExpression p when IsPropertiesPath(p, out var propKey):
+				{
+					var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
+					if (propIdx < 0)
+						throw new UnsupportedKqlException("summarize by Properties.<key>: input has no PropertiesJson column");
+					return ("Properties." + propKey, typeof(string),
+						row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, "$." + propKey));
+				}
+			case SimpleNamedExpression { Name: NameDeclaration alias, Expression: var expr }:
+				{
+					var (type, fn) = CompileCell(expr, ctx, rowParam);
+					return (alias.Name.SimpleName, type, fn);
+				}
+			case FunctionCallExpression f:
+				{
+					var (type, fn) = CompileCell(f, ctx, rowParam);
+					return (DefaultKeyName(f), type, fn);
+				}
+			default:
+				throw new UnsupportedKqlException(
+					$"summarize by '{element.Kind}' not supported (column ref, Properties.<key>, or 'name = expression')");
+		}
+	}
+
+	// Kusto names an un-aliased `by bin(Col, …)` after Col; fall back to the function name.
+	static string DefaultKeyName(FunctionCallExpression f) =>
+		f.ArgumentList.Expressions.Count > 0 && f.ArgumentList.Expressions[0].Element is NameReference n
+			? n.SimpleName
+			: f.Name.SimpleName;
+
+	// Builds one aggregate: the output name, its result CLR type, and a factory for a fresh
+	// per-group accumulator. Aggregate arguments (and countif's predicate) are scalar
+	// expressions compiled over the row. New aggregates slot in here.
+	static AggSpec BuildAggregate(string name, FunctionCallExpression call, RowScalarContext ctx, ParamExpr rowParam)
+	{
+		var fn = call.Name.SimpleName;
+		var argElements = call.ArgumentList.Expressions;
+
+		(Type Type, Func<object?[], object?> Fn) Arg(string forFn)
+		{
+			if (argElements.Count != 1)
+				throw new UnsupportedKqlException($"{forFn}() takes exactly 1 argument, got {argElements.Count}");
+			return CompileCell(argElements[0].Element, ctx, rowParam);
+		}
+
+		static void RequireNumeric(Type t, string forFn)
+		{
+			if (!KqlScalar.IsNumericType(t))
+				throw new UnsupportedKqlException($"{forFn}() requires a numeric argument, got {t.Name}");
+		}
+
+		switch (fn)
+		{
+			case "count":
+				if (argElements.Count != 0)
+					throw new UnsupportedKqlException($"count() takes no arguments, got {argElements.Count}");
+				return new AggSpec(name, typeof(long), () => new CountAccumulator());
+
+			case "countif":
+				{
+					var (type, f) = Arg("countif");
+					if (type != typeof(bool))
+						throw new UnsupportedKqlException($"countif() requires a boolean predicate, got {type.Name}");
+					return new AggSpec(name, typeof(long), () => new CountIfAccumulator(f));
+				}
+
+			case "sum":
+				{
+					var (type, f) = Arg("sum");
+					RequireNumeric(type, "sum");
+					return type == typeof(double)
+						? new AggSpec(name, typeof(double), () => new SumDoubleAccumulator(f))
+						: new AggSpec(name, typeof(long), () => new SumLongAccumulator(f));
+				}
+
+			case "avg":
+				{
+					var (type, f) = Arg("avg");
+					RequireNumeric(type, "avg");
+					return new AggSpec(name, typeof(double), () => new AvgAccumulator(f));
+				}
+
+			case "min":
+				{
+					var (type, f) = Arg("min");
+					return new AggSpec(name, type, () => new MinMaxAccumulator(f, min: true));
+				}
+
+			case "max":
+				{
+					var (type, f) = Arg("max");
+					return new AggSpec(name, type, () => new MinMaxAccumulator(f, min: false));
+				}
+
+			case "dcount":
+				{
+					var (_, f) = Arg("dcount");
+					return new AggSpec(name, typeof(long), () => new DcountAccumulator(f));
+				}
+
+			default:
+				throw new UnsupportedKqlException(
+					$"aggregate '{fn}' not supported (supported: count, countif, sum, min, max, avg, dcount)");
+		}
+	}
+
+	sealed record AggSpec(string OutputName, Type ResultType, Func<Accumulator> Factory);
+
+	// A per-group fold. Add is called once per row in the group; Result yields the final value.
+	// Aggregates ignore null argument values (Kusto semantics); count() folds every row.
+	abstract class Accumulator
+	{
+		public abstract void Add(object?[] row);
+		public abstract object? Result { get; }
+	}
+
+	sealed class CountAccumulator : Accumulator
+	{
+		long _n;
+		public override void Add(object?[] row) => _n++;
+		public override object? Result => _n;
+	}
+
+	sealed class CountIfAccumulator(Func<object?[], object?> predicate) : Accumulator
+	{
+		long _n;
+		public override void Add(object?[] row)
+		{
+			if (predicate(row) is true)
+				_n++;
+		}
+		public override object? Result => _n;
+	}
+
+	sealed class SumLongAccumulator(Func<object?[], object?> arg) : Accumulator
+	{
+		long _sum;
+		bool _any;
+		public override void Add(object?[] row)
+		{
+			if (arg(row) is { } v)
+			{
+				_sum += Convert.ToInt64(v);
+				_any = true;
+			}
+		}
+		public override object? Result => _any ? _sum : null;
+	}
+
+	sealed class SumDoubleAccumulator(Func<object?[], object?> arg) : Accumulator
+	{
+		double _sum;
+		bool _any;
+		public override void Add(object?[] row)
+		{
+			if (arg(row) is { } v)
+			{
+				_sum += Convert.ToDouble(v);
+				_any = true;
+			}
+		}
+		public override object? Result => _any ? _sum : null;
+	}
+
+	sealed class AvgAccumulator(Func<object?[], object?> arg) : Accumulator
+	{
+		double _sum;
+		long _n;
+		public override void Add(object?[] row)
+		{
+			if (arg(row) is { } v)
+			{
+				_sum += Convert.ToDouble(v);
+				_n++;
+			}
+		}
+		public override object? Result => _n == 0 ? null : _sum / _n;
+	}
+
+	sealed class MinMaxAccumulator(Func<object?[], object?> arg, bool min) : Accumulator
+	{
+		object? _best;
+		public override void Add(object?[] row)
+		{
+			if (arg(row) is not { } v)
+				return;
+			if (_best is null)
+			{
+				_best = v;
+				return;
+			}
+			var cmp = Comparer<object>.Default.Compare(v, _best);
+			if (min ? cmp < 0 : cmp > 0)
+				_best = v;
+		}
+		public override object? Result => _best;
+	}
+
+	sealed class DcountAccumulator(Func<object?[], object?> arg) : Accumulator
+	{
+		readonly HashSet<object> _seen = [];
+		public override void Add(object?[] row)
+		{
+			if (arg(row) is { } v)
+				_seen.Add(v);
+		}
+		public override object? Result => (long)_seen.Count;
+	}
 
 	static async IAsyncEnumerable<object?[]> StreamSummarize(
 		IAsyncEnumerable<object?[]> source,
 		Func<object?[], object?>[] groupExtractors,
-		int aggCount,
+		AggSpec[] aggs,
 		[EnumeratorCancellation] CancellationToken ct = default)
 	{
-		var groups = new Dictionary<GroupKey, long>();
+		var groups = new Dictionary<GroupKey, Accumulator[]>();
 
 		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
 		{
@@ -280,17 +483,24 @@ public static class KqlTransformer
 			for (var i = 0; i < groupExtractors.Length; i++)
 				keyValues[i] = groupExtractors[i](row);
 			var key = new GroupKey(keyValues);
-			groups.TryGetValue(key, out var count);
-			groups[key] = count + 1;
+			if (!groups.TryGetValue(key, out var accs))
+			{
+				accs = new Accumulator[aggs.Length];
+				for (var i = 0; i < aggs.Length; i++)
+					accs[i] = aggs[i].Factory();
+				groups[key] = accs;
+			}
+			foreach (var acc in accs)
+				acc.Add(row);
 		}
 
-		foreach (var (key, count) in groups)
+		foreach (var (key, accs) in groups)
 		{
-			var result = new object?[key.Values.Length + aggCount];
+			var result = new object?[key.Values.Length + accs.Length];
 			for (var i = 0; i < key.Values.Length; i++)
 				result[i] = key.Values[i];
-			for (var i = 0; i < aggCount; i++)
-				result[key.Values.Length + i] = count;
+			for (var i = 0; i < accs.Length; i++)
+				result[key.Values.Length + i] = accs[i].Result;
 			yield return result;
 		}
 	}

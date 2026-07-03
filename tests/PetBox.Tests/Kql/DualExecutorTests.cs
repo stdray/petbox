@@ -152,4 +152,52 @@ public sealed class DualExecutorTests
 	{
 		await DualExecutor.AssertSameTableAsync(kql, Dataset);
 	}
+
+	// A group dataset with every ServiceKey populated (so string-column results have no
+	// null-vs-"" divergence) and timestamps spread across three hours for bin() bucketing.
+	// Aggregate arguments run over the long Id column: KustoLoco throws an int->long column
+	// cast for aggregates over the int Level column, so Level is covered by production-only
+	// unit tests instead (see KqlResultTests).
+	static readonly IReadOnlyList<TestEvent> GroupData =
+	[
+		TestEvent.FromName(1, new DateTime(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc), "Information", "a", "svc-a"),
+		TestEvent.FromName(2, new DateTime(2026, 4, 19, 10, 20, 0, DateTimeKind.Utc), "Error", "b", "svc-a"),
+		TestEvent.FromName(3, new DateTime(2026, 4, 19, 11, 0, 0, DateTimeKind.Utc), "Warning", "c", "svc-b"),
+		TestEvent.FromName(4, new DateTime(2026, 4, 19, 11, 30, 0, DateTimeKind.Utc), "Error", "d", "svc-b"),
+		TestEvent.FromName(5, new DateTime(2026, 4, 19, 12, 5, 0, DateTimeKind.Utc), "Error", "e", "svc-a"),
+		TestEvent.FromName(6, new DateTime(2026, 4, 19, 12, 5, 0, DateTimeKind.Utc), "Information", "f", "svc-c"),
+	];
+
+	[Theory]
+	[InlineData("events | summarize Total = count() by ServiceKey")]
+	[InlineData("events | summarize S = sum(Id) by ServiceKey")]
+	[InlineData("events | summarize Mn = min(Id) by ServiceKey")]
+	[InlineData("events | summarize Mx = max(Id) by ServiceKey")]
+	[InlineData("events | summarize A = avg(Id) by ServiceKey")]
+	[InlineData("events | summarize D = dcount(ServiceKey)")]
+	[InlineData("events | summarize D = dcount(ServiceKey) by ServiceKey")]
+	[InlineData("events | summarize C = countif(Level >= 4) by ServiceKey")]
+	[InlineData("events | summarize Total = count(), S = sum(Id), Mn = min(Id), Mx = max(Id) by ServiceKey")]
+	public async Task SummarizeAggregates_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData);
+	}
+
+	[Theory]
+	[InlineData("events | summarize Cnt = count() by Bucket = bin(Id, 2)")]
+	[InlineData("events | summarize Cnt = count() by Bucket = bin(Id, 3)")]
+	[InlineData("events | summarize Sm = sum(Id) by Bucket = bin(Id, 2)")]
+	public async Task SummarizeByNumericBin_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData);
+	}
+
+	[Theory]
+	[InlineData("events | summarize Cnt = count() by Hour = bin(Timestamp, 1h)")]
+	[InlineData("events | summarize Cnt = count() by Bucket = bin(Timestamp, 5m)")]
+	[InlineData("events | summarize Cnt = count() by Bucket = bin(Timestamp, 1d)")]
+	public async Task SummarizeByTimeBin_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData);
+	}
 }

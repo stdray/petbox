@@ -191,6 +191,7 @@ static class KqlScalar
 		bool b => Expr.Constant(b),
 		string s => Expr.Constant(s, typeof(string)),
 		DateTime dt => Expr.Constant(dt),
+		TimeSpan ts => Expr.Constant(ts),
 		null => throw new UnsupportedKqlException("null literal not supported"),
 		_ => throw new UnsupportedKqlException($"literal of type '{lit.LiteralValue.GetType().Name}' not supported"),
 	};
@@ -350,6 +351,10 @@ static class KqlScalar
 
 	static bool IsNumeric(Type t) => t == typeof(int) || t == typeof(long) || t == typeof(double);
 
+	// Exposed for the scalar-function registry (bin, aggregate args): the same numeric-kind
+	// test the compiler uses internally.
+	public static bool IsNumericType(Type t) => IsNumeric(t);
+
 	static bool IsEqualityOnly(SyntaxKind kind) => kind is
 		SyntaxKind.EqualExpression or SyntaxKind.NotEqualExpression;
 
@@ -431,6 +436,7 @@ static class KqlScalarFunctions
 			["iff"] = Iff,
 			["iif"] = Iff,
 			["case"] = Case,
+			["bin"] = Bin,
 		};
 
 	public static bool TryResolve(string name, out KqlScalarFunction fn) => Registry.TryGetValue(name, out fn!);
@@ -471,5 +477,63 @@ static class KqlScalarFunctions
 			result = Expr.Condition(cond, value, result);
 		}
 		return result;
+	}
+
+	// bin(value, step): floor `value` down to the nearest multiple of `step`. Two shapes:
+	//   (datetime, timespan) → datetime, floored on the tick timeline (so bin(t, 1h) is the
+	//     top of the hour). This is the time-bucket used by `summarize … by bin(Timestamp, 1h)`.
+	//   (numeric, numeric)   → numeric, floor(value/step)*step. Result is long when both sides
+	//     are integral, otherwise double.
+	// The step is a normal compiled expression (usually a literal, but any timespan/numeric
+	// expression works); a non-positive step throws at evaluation. Registering bin here means
+	// it is equally usable as a plain scalar (e.g. `extend Hour = bin(Timestamp, 1h)`).
+	static Expr Bin(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 2)
+			throw new UnsupportedKqlException($"bin() takes exactly 2 arguments (value, step), got {args.Count}");
+		var value = args[0];
+		var step = args[1];
+
+		if (value.Type == typeof(DateTime) && step.Type == typeof(TimeSpan))
+			return Expr.Call(Method(nameof(BinDateTime)), value, step);
+
+		if (KqlScalar.IsNumericType(value.Type) && KqlScalar.IsNumericType(step.Type))
+		{
+			var t = KqlScalar.CommonValueType([value.Type, step.Type]);
+			return t == typeof(long)
+				? Expr.Call(Method(nameof(BinLong)), KqlScalar.ConvertToValue(value, typeof(long)), KqlScalar.ConvertToValue(step, typeof(long)))
+				: Expr.Call(Method(nameof(BinDouble)), KqlScalar.ConvertToValue(value, typeof(double)), KqlScalar.ConvertToValue(step, typeof(double)));
+		}
+
+		throw new UnsupportedKqlException(
+			$"bin() supports (datetime, timespan) or (numeric, numeric), got ({value.Type.Name}, {step.Type.Name})");
+	}
+
+	static MethodInfo Method(string name) =>
+		typeof(KqlScalarFunctions).GetMethod(name, BindingFlags.Static | BindingFlags.NonPublic)!;
+
+	static DateTime BinDateTime(DateTime v, TimeSpan step)
+	{
+		if (step.Ticks <= 0)
+			throw new UnsupportedKqlException("bin() step must be a positive timespan");
+		var floored = v.Ticks / step.Ticks * step.Ticks;
+		return new DateTime(floored, v.Kind);
+	}
+
+	static long BinLong(long v, long step)
+	{
+		if (step <= 0)
+			throw new UnsupportedKqlException("bin() step must be positive");
+		var q = v / step;
+		if (v % step != 0 && v < 0)
+			q--; // floor toward negative infinity, not truncate toward zero
+		return q * step;
+	}
+
+	static double BinDouble(double v, double step)
+	{
+		if (step <= 0)
+			throw new UnsupportedKqlException("bin() step must be positive");
+		return Math.Floor(v / step) * step;
 	}
 }
