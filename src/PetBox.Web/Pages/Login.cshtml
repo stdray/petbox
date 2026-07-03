@@ -1,18 +1,10 @@
 @page
 @model LoginModel
 @{
-	ViewData["Title"] = "Sign in";
-	Layout = null;
+	ViewData["Title"] = "Sign in — PetBox";
+	ViewData["BodyClass"] = "min-h-full flex items-center justify-center bg-base-300";
+	Layout = "_PublicLayout";
 }
-<!DOCTYPE html>
-<html lang="en" data-theme="dark" class="h-full">
-<head>
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Sign in — PetBox</title>
-	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
-</head>
-<body class="min-h-full flex items-center justify-center bg-base-300">
 	<form method="post" id="login-form" autocomplete="on" class="card w-96 bg-base-200 p-6 shadow-xl">
 		<h1 class="text-xl font-semibold mb-4">Sign in to PetBox</h1>
 
@@ -39,5 +31,3 @@
 
 		<button type="submit" class="btn btn-primary" data-testid="login-submit">Sign in</button>
 	</form>
-</body>
-</html>

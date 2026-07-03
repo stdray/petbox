@@ -17,7 +17,7 @@
 						<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
 					}
 				</div>
-				<div data-md class="md-body opacity-80" data-testid="comment-body">@c.Body</div>
+				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body" })" />
 			</div>
 		}
 	</div>

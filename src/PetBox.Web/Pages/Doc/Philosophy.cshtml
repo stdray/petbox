@@ -1,18 +1,9 @@
 @page "/doc/methodology/philosophy"
 @model PetBox.Web.Pages.Doc.PhilosophyModel
 @{
-	ViewData["Title"] = "Methodology — PetBox docs";
-	Layout = null;
+	ViewData["Title"] = "Methodology (philosophy) — PetBox";
+	Layout = "_PublicLayout";
 }
-<!DOCTYPE html>
-<html lang="en" data-theme="dark" class="h-full">
-<head>
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Methodology (philosophy) — PetBox</title>
-	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
-</head>
-<body class="min-h-full">
 	<main class="prose prose-sm max-w-3xl mx-auto p-6" data-testid="doc-philosophy">
 		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a> · <a href="@Routes.DocMethodology()">cheatsheet</a></p>
 		<h1>PetBox methodology — the model</h1>
@@ -64,5 +55,3 @@
 
 		<p class="text-sm opacity-60 mt-8">Adopted incrementally on the current primitives (board kinds, relations, computed status). See the cheatsheet for the live contract.</p>
 	</main>
-</body>
-</html>

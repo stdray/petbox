@@ -40,6 +40,7 @@
 
 /* Rendered markdown (plan-node bodies). Tailwind's base reset strips heading/list styling and
    there is no typography plugin, so re-assert a compact, readable set scoped to .md-body. */
+.md-body { line-height: 1.6; max-width: 80ch; }
 .md-body > :first-child { margin-top: 0; }
 .md-body > :last-child { margin-bottom: 0; }
 .md-body h1, .md-body h2, .md-body h3, .md-body h4 { font-weight: 600; line-height: 1.25; margin: 0.6em 0 0.3em; }
@@ -47,10 +48,13 @@
 .md-body h2 { font-size: 1.18em; }
 .md-body h3 { font-size: 1.07em; }
 .md-body h4 { font-size: 1em; }
-.md-body p { margin: 0.4em 0; }
+.md-body p { margin: 0.85em 0; }
 .md-body ul { list-style: disc; padding-left: 1.4em; margin: 0.4em 0; }
 .md-body ol { list-style: decimal; padding-left: 1.4em; margin: 0.4em 0; }
-.md-body li { margin: 0.15em 0; }
+/* A lead-in paragraph immediately before a list reads as its heading — pull the list up so
+   the two don't drift apart (sibling form for broad support; lists keep their own margins). */
+.md-body p + ul, .md-body p + ol { margin-top: 0.3em; }
+.md-body li { margin: 0.3em 0; }
 .md-body a { color: oklch(var(--p)); text-decoration: underline; }
 .md-body code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; font-size: 0.85em; background-color: oklch(var(--p) / 0.1); border-radius: 0.25rem; padding: 0.05em 0.3em; }
 .md-body pre { background-color: oklch(var(--n) / 0.4); border-radius: 0.4rem; padding: 0.6em 0.8em; overflow-x: auto; margin: 0.5em 0; }
@@ -77,14 +81,10 @@
 	line-height: 1rem;
 }
 
-/* Selection contrast inside code/pre blocks. The default browser selection was
-   near-invisible on the dark theme (light highlight under light monospace text),
-   so selecting an agent key / MCP snippet on the Connect page made it unreadable.
-   Force the daisyUI primary pair, which contrasts in both light and dark themes. */
-code::selection,
-code *::selection,
-pre::selection,
-pre *::selection {
+/* Selection contrast. The UA default (and the inactive-window gray) is near-invisible
+   on the dark theme — light highlight under light text. A custom ::selection also
+   applies to unfocused windows, so force the daisyUI primary pair everywhere. */
+::selection {
 	background-color: oklch(var(--p));
 	color: oklch(var(--pc));
 }

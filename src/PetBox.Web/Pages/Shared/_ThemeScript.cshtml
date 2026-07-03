@@ -1,0 +1,5 @@
+@* Follow-system theme. daisyUI has no "system" theme, so when the effective setting is
+   System (or the request is anonymous) the server renders the flash-free "dark" default and
+   this runs before first paint to swap to "light" when the OS prefers light. Must live in
+   <head>, after the stylesheet link, so it beats the first paint. *@
+<script>document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";</script>

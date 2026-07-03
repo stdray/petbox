@@ -2,18 +2,9 @@
 @model PetBox.Web.Pages.Doc.OverviewModel
 @{
 	ViewData["Title"] = "PetBox overview — docs";
-	Layout = null;
+	Layout = "_PublicLayout";
 	var origin = Model.Origin;
 }
-<!DOCTYPE html>
-<html lang="en" data-theme="dark" class="h-full">
-<head>
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>PetBox overview — docs</title>
-	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
-</head>
-<body class="min-h-full">
 	<main class="prose prose-sm max-w-3xl mx-auto p-6" data-testid="doc-overview">
 		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a></p>
 		<h1>What PetBox is</h1>
@@ -87,5 +78,3 @@ client.on("change", lambda cfg: ...)     # hot-reload
 			<code>ideas</code> board. The plan lives next to the platform it runs on.
 		</p>
 	</main>
-</body>
-</html>

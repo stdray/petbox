@@ -61,7 +61,7 @@
 			@* Body is markdown, hydrated client-side (ts/markdown.ts) and clipped on the
 			   board — the full text lives on the node detail page (board-body-truncate). *@
 			<div class="mt-1">
-				<div data-md class="md-body text-base opacity-90 max-h-24 overflow-hidden" data-testid="node-body">@n.Body</div>
+				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-24 overflow-hidden" })" />
 				<a href="@nodeUrl" class="text-xs link link-hover opacity-60" data-testid="node-body-more">full ↗</a>
 			</div>
 		}

@@ -1,19 +1,10 @@
 @page "/doc/agent"
 @model PetBox.Web.Pages.Doc.AgentModel
 @{
-	ViewData["Title"] = "Connect a coding agent — PetBox docs";
-	Layout = null;
+	ViewData["Title"] = "Connect a coding agent — PetBox";
+	Layout = "_PublicLayout";
 	var mcp = Model.McpUrl;
 }
-<!DOCTYPE html>
-<html lang="en" data-theme="dark" class="h-full">
-<head>
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Connect a coding agent — PetBox</title>
-	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
-</head>
-<body class="min-h-full">
 	<main class="prose prose-sm max-w-3xl mx-auto p-6" data-testid="doc-agent">
 		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a></p>
 		<h1>Connect a coding agent to PetBox</h1>
@@ -201,5 +192,3 @@ memory_store_*/search/remember/get/upsert/delta, session_search/get/upsert/appen
 			An empty list (not an auth error) means it works.
 		</p>
 	</main>
-</body>
-</html>
