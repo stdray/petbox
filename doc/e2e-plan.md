@@ -1,3 +1,5 @@
+> **HISTORICAL — frozen on 2026-07-03.** This file is kept as a decision record; the current state lives in the $system boards (tasks/memory/sessions).
+
 # PetBox E2E test plan (Playwright)
 
 Infrastructure copied from `D:\my\prj\yobaconf\tests\YobaConf.E2ETests\Infrastructure\`:

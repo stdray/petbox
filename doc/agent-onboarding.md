@@ -1,3 +1,5 @@
+> **HISTORICAL — frozen on 2026-07-03.** This file is kept as a decision record; the current state lives in the $system boards (tasks/memory/sessions).
+
 # Agent onboarding
 
 How a coding agent (Claude Code, etc.) bootstraps a pet onto PetBox using a temporary

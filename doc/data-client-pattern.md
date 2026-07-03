@@ -1,3 +1,5 @@
+> **HISTORICAL — frozen on 2026-07-03.** This file is kept as a decision record; the current state lives in the $system boards (tasks/memory/sessions).
+
 # Data module — pet-side client pattern
 
 Reference doc for pets migrating from local storage to petbox's Data module

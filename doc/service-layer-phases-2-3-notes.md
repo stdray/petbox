@@ -1,3 +1,5 @@
+> **HISTORICAL — frozen on 2026-07-03.** This file is kept as a decision record; the current state lives in the $system boards (tasks/memory/sessions).
+
 # Service-layer refactor — Phase 1g done; Phase 2 & 3 readiness notes
 
 Branch `feat/service-layer`. Phase 1 + 1g are complete and committed (5 commits,
