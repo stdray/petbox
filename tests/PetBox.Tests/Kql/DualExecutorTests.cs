@@ -318,4 +318,26 @@ public sealed class DualExecutorTests
 	{
 		await DualExecutor.AssertSameTableAsync(kql, GroupData);
 	}
+
+	// where AFTER a shape-changing op filters the computed rows in memory (the headline case:
+	// filter groups by an aggregate).
+	[Theory]
+	[InlineData("events | summarize Total = count() by ServiceKey | where Total >= 2")]
+	[InlineData("events | summarize Total = count() by ServiceKey | where Total > 2")]
+	[InlineData("events | summarize S = sum(Id) by ServiceKey | where S > 5")]
+	[InlineData("events | project Id, Lvl = Level | where Lvl >= 4")]
+	[InlineData("events | extend D = Id * 2 | where D > 6 | project Id, D")]
+	[InlineData("events | summarize Total = count() by ServiceKey | where Total >= 2 and ServiceKey != 'svc-b'")]
+	public async Task PostShapeWhere_MatchesReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData);
+	}
+
+	[Theory]
+	[InlineData("events | summarize Total = count() by ServiceKey | where Total >= 2 | order by Total desc, ServiceKey asc")]
+	[InlineData("events | extend D = Id * 2 | where D > 4 | project Id, D | order by D asc")]
+	public async Task PostShapeWhere_ThenOrder_MatchesReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData, ordered: true);
+	}
 }

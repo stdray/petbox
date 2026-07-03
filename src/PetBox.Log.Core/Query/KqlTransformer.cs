@@ -114,8 +114,9 @@ public static class KqlTransformer
 				CountOperator => ApplyCount(current),
 				SummarizeOperator s => ApplySummarize(current, s, now),
 				DistinctOperator d => ApplyDistinct(current, d),
-				// order by / take / top run in-memory once the pipeline has changed shape; their
-				// sort keys may reference computed (post-split) columns.
+				// where / order by / take / top run in-memory once the pipeline has changed shape;
+				// their predicates and sort keys may reference computed (post-split) columns.
+				FilterOperator f => ApplyPostWhere(current, f, now),
 				SortOperator s => ApplyPostSort(current, s, now),
 				TakeOperator t => ApplyPostTake(current, t),
 				TopOperator t => ApplyPostTop(current, t, now),
@@ -608,6 +609,20 @@ public static class KqlTransformer
 		return new KqlResult(input.Columns, StreamSort(input.Rows, [key], limit: checked((int)n)));
 	}
 
+	// where after a shape change: compile the predicate with the scalar engine over the current
+	// (post-split) row shape and filter the streamed rows in memory. Lets a summarize/project result
+	// be filtered by a computed column, e.g. `summarize C = count() by ServiceKey | where C > 10`.
+	static KqlResult ApplyPostWhere(KqlResult input, FilterOperator filter, DateTime now)
+	{
+		var rowParam = Expr.Parameter(typeof(object?[]), "row");
+		var ctx = new RowScalarContext(rowParam, input.Columns) { UtcNow = now };
+		var body = KqlScalar.Compile(filter.Condition, ctx);
+		if (body.Type != typeof(bool))
+			throw new UnsupportedKqlException($"where condition must be boolean, got {body.Type.Name}");
+		var predicate = Expr.Lambda<Func<object?[], bool>>(body, rowParam).Compile();
+		return new KqlResult(input.Columns, StreamWhere(input.Rows, predicate));
+	}
+
 	// A sort key over a post-split row: (value extractor, descending). A bare expression or a
 	// column ref sorts ascending unless followed by `desc`; default (no ordering) is descending
 	// only for the whole `order by`/`top` when the user omits it — Kusto's default is descending,
@@ -623,6 +638,16 @@ public static class KqlTransformer
 		};
 		var (_, fn) = CompileCell(expr, ctx, rowParam);
 		return (fn, descending);
+	}
+
+	static async IAsyncEnumerable<object?[]> StreamWhere(
+		IAsyncEnumerable<object?[]> source,
+		Func<object?[], bool> predicate,
+		[EnumeratorCancellation] CancellationToken ct = default)
+	{
+		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
+			if (predicate(row))
+				yield return row;
 	}
 
 	static async IAsyncEnumerable<object?[]> StreamTake(

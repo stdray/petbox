@@ -474,4 +474,54 @@ public sealed class KqlResultTests
 		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*Bogus*");
 	}
+
+	// --- post-shape where: a `where` after a shape-changing op filters the computed rows ---
+
+	[Fact]
+	public async Task PostShape_Where_FiltersGroupsByAggregate()
+	{
+		// svc-a has 3 rows, svc-b has 2 → only svc-a passes Total > 2.
+		var ast = Parse("events | summarize Total = count() by ServiceKey | where Total > 2");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		result.Columns.Select(c => c.Name).Should().ContainInOrder("ServiceKey", "Total");
+		var rows = await Materialize(result);
+		rows.Should().ContainSingle();
+		rows[0][0].Should().Be("svc-a");
+		rows[0][1].Should().Be(3L);
+	}
+
+	[Fact]
+	public async Task PostShape_Where_OnComputedColumn()
+	{
+		var ast = Parse("events | extend D = Id * 2 | where D >= 8 | project Id, D");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		var rows = await Materialize(result);
+		rows.Select(r => (long)r[0]!).Should().BeEquivalentTo([4L, 5L]); // ids with Id*2 >= 8
+	}
+
+	[Fact]
+	public async Task PostShape_Where_ComposesWithOrderAndTake()
+	{
+		var ast = Parse("events | summarize Total = count() by ServiceKey | where Total >= 2 | order by Total desc | take 1");
+		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		var rows = await Materialize(result);
+		rows.Should().ContainSingle();
+		rows[0][0].Should().Be("svc-a"); // highest Total among those >= 2
+	}
+
+	[Fact]
+	public void PostShape_Where_NonBoolean_Throws()
+	{
+		var ast = Parse("events | summarize Total = count() by ServiceKey | where Total + 1");
+		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*boolean*");
+	}
+
+	[Fact]
+	public void PostShape_Where_UnknownColumn_Throws()
+	{
+		var ast = Parse("events | summarize Total = count() by ServiceKey | where Bogus > 1");
+		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*Bogus*");
+	}
 }
