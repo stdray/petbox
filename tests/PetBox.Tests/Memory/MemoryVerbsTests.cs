@@ -278,6 +278,63 @@ public sealed class MemoryVerbsTests : IDisposable
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => MemoryTools.RememberAsync(http, Flags(), _memory, "x"));
 	}
 
+	// workspace-memory-authz-fix: the reserved $workspace container feeds every project's
+	// cascade, so KEY-ADDRESSED curation (memory_upsert/get/…) must reach it too — not only
+	// the scope:"workspace" verbs. A project-scoped key (project claim = Proj, not "*") may
+	// address it directly.
+	[Fact]
+	public async Task Upsert_WorkspaceContainer_ByProjectScopedKey_Succeeds()
+	{
+		var http = Http("memory:read,memory:write");
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "index", type = "Project", description = "canon index", body = "the workspace canon", version = 0 },
+		});
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, MemoryTools.WorkspaceContainer, "canon", entries);
+		res.Applied.Should().BeTrue();
+		res.Added.Select(e => e.Key).Should().Contain("index");
+	}
+
+	[Fact]
+	public async Task Get_WorkspaceContainer_ByProjectScopedKey_Succeeds()
+	{
+		var http = Http("memory:read,memory:write");
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "index", type = "Project", description = "canon index", body = "the workspace canon", version = 0 },
+		});
+		await MemoryTools.UpsertAsync(http, Flags(), _memory, MemoryTools.WorkspaceContainer, "canon", entries);
+
+		var got = await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(),
+			MemoryTools.WorkspaceContainer, "canon", "index");
+		got.Should().NotBeNull();
+		got!.Body.Should().Contain("workspace canon");
+	}
+
+	// The write scope still gates the workspace pass: waving $workspace through the project
+	// assert does NOT bypass memory:write.
+	[Fact]
+	public async Task Upsert_WorkspaceContainer_WithoutWriteScope_IsRejected()
+	{
+		var http = Http("memory:read");
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "index", type = "Project", description = "d", body = "b", version = 0 },
+		});
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			MemoryTools.UpsertAsync(http, Flags(), _memory, MemoryTools.WorkspaceContainer, "canon", entries));
+	}
+
+	// AssertProject (tasks/sessions/etc.) is unchanged: a project-scoped key may NOT address
+	// $workspace as a project — only the memory surface's AssertMemoryProject waves it through.
+	[Fact]
+	public void NonMemoryTool_AddressingWorkspaceContainer_StillFails()
+	{
+		var http = Http("memory:read,memory:write");
+		Assert.Throws<UnauthorizedAccessException>(() =>
+			ModuleMcp.AssertProject(http, MemoryTools.WorkspaceContainer));
+	}
+
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");

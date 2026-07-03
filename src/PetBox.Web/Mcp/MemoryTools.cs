@@ -27,7 +27,7 @@ public static class MemoryTools
 		string projectKey, string store, string? description = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		AssertMemoryProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var meta = await memory.CreateStoreAsync(projectKey, store, description, ct);
 		return new MemoryStoreCreatedResult(meta.ProjectKey, meta.Name, meta.Description, meta.CreatedAt);
@@ -49,7 +49,7 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		AssertMemoryProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var list = await memory.ListStoresAsync(projectKey, ct);
 		var rows = new List<MemoryStoreRow>(list.Count);
@@ -74,7 +74,7 @@ public static class MemoryTools
 		string projectKey, string store, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		AssertMemoryProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
 	}
@@ -86,7 +86,7 @@ public static class MemoryTools
 		string projectKey, string store, string key, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		AssertMemoryProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var entry = await memory.GetAsync(projectKey, store, key, ct);
 		if (entry is not null)
@@ -131,7 +131,7 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		AssertMemoryProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var (upserts, deletes) = ParseEntries(entries);
 		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, ct), bodyLen);
@@ -146,7 +146,7 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		AssertMemoryProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		return Serialize(await memory.DeltaAsync(projectKey, store, sinceVersion, ct), bodyLen);
 	}
@@ -172,6 +172,18 @@ public static class MemoryTools
 	// $system's memory as "workspace".
 	internal const string WorkspaceContainer = "$workspace";
 	const string DefaultStore = "notes";
+
+	// Authorize a KEY-ADDRESSED memory projectKey. The reserved shared workspace container
+	// ($workspace) is reachable by ANY memory-scoped key — every project's cascade reads it,
+	// so key-addressed curation (memory_upsert/get/delta, memory_store_*) must address it
+	// directly too, mirroring how remember/search resolve scope:"workspace". The memory scope
+	// gate stays each tool's own AssertScope call. For every other target this is exactly
+	// AssertProject, so no non-memory module gains $workspace access.
+	static void AssertMemoryProject(IHttpContextAccessor http, string projectKey)
+	{
+		if (projectKey == WorkspaceContainer) return;
+		ModuleMcp.AssertProject(http, projectKey);
+	}
 
 	[McpServerTool(Name = "memory_remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
 	[Description("""
