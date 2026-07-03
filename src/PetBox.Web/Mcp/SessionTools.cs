@@ -88,13 +88,15 @@ public static class SessionTools
 
 	[McpServerTool(Name = "session_get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionGetResult))]
 	[Description("""
-		Get the active session blob by id, or null. The blob can be read INCREMENTALLY
-		(spec bounded-result-sets): pass `tail` for the last N chars, or `offset`+`limit`
-		for a window; with none, the full blob is returned. `length` (total chars) is
-		ALWAYS returned so a caller can poll for growth and then read only the new tail.
-		Requires tasks:read.
+		Get the active session blob by id. A missing/unknown id is a not-found ERROR (never
+		a bare null: a declared outputSchema demands structured content, so a null result is
+		rejected by strict MCP clients — the error rides the isError channel instead). The
+		blob can be read INCREMENTALLY (spec bounded-result-sets): pass `tail` for the last N
+		chars, or `offset`+`limit` for a window; with none, the full blob is returned.
+		`length` (total chars) is ALWAYS returned so a caller can poll for growth and then
+		read only the new tail. Requires tasks:read.
 		""")]
-	public static async Task<SessionGetResult?> GetAsync(
+	public static async Task<SessionGetResult> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey, string sessionId,
 		[Description("Return only the last N chars of the blob (0 = off). Takes precedence over offset/limit.")] int tail = 0,
@@ -106,7 +108,7 @@ public static class SessionTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var s = await sessions.GetAsync(projectKey, sessionId, ct);
-		if (s is null) return null;
+		if (s is null) throw new InvalidOperationException($"session '{sessionId}' not found in project '{projectKey}'");
 		var full = s.Content;
 		return new SessionGetResult(s.SessionId, s.Agent, Window(full, tail, offset, limit), full.Length, s.Version);
 	}
