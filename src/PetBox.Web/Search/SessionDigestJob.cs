@@ -33,6 +33,31 @@ public sealed class SessionDigestJob : IVectorizationJob
 	internal const int MessageCharCap = 4000;
 	internal const int BatchCharCap = 48_000;
 
+	// A CONSERVATIVE pre-filter: a settled session whose new delta carries less than this much
+	// meaningful (trimmed) text is almost certainly empty (a heartbeat, "ok", tool-call noise)
+	// — the kind the model answers "no content to digest". We skip it BEFORE the LLM: no chat
+	// spent, no noise digest minted, and (when a digest already exists) its cursor is advanced
+	// past the trivial tail so it is not re-examined. Kept low on purpose — the reliable
+	// content judge is the LLM, whose refusal the post-call guard catches; this floor only
+	// spares the obvious empties (spec: session-search discovery hygiene).
+	internal const int MinDistillChars = 20;
+
+	// A merged answer this short (after trim) is empty/degenerate, not a digest — a real
+	// digest is a title line plus fact lines. Kept low so it only catches near-empty output;
+	// phrased refusals ("no content to digest") are caught by RefusalMarkers regardless of
+	// length, and the MinDistillChars input floor is the primary empty-session defense. Same
+	// test detects the junk digests older passes minted, so a pass self-cleans them.
+	internal const int MinDigestChars = 12;
+
+	// Stock "there is nothing here to digest" phrasings a model emits for an empty session.
+	// Matched only inside a SHORT answer (a long legit digest may mention such words in a fact).
+	static readonly string[] RefusalMarkers =
+	{
+		"no content to digest", "nothing to digest", "no meaningful content",
+		"no substantial content", "no relevant content", "there is no content",
+		"nothing to summarize", "no content to summarize",
+	};
+
 	const string SystemPrompt =
 		"""
 		You maintain the discovery digest of one AI-agent work session. You are given the
@@ -91,6 +116,10 @@ public sealed class SessionDigestJob : IVectorizationJob
 				// connections; GetDb first runs the migrations so a file last opened
 				// before a schema change is current (reference: NewConnection ≠ migrations).
 				_factory.GetDb(project);
+
+				// Self-heal: purge junk digests older passes minted (empty / "no content to
+				// digest" / super-short) before distilling — a pass owns this machine store.
+				await CleanupJunkDigestsAsync(project, ct);
 
 				var headers = await _sessions.ListAsync(project, ct);
 				if (headers.Count == 0) continue;
@@ -162,6 +191,17 @@ public sealed class SessionDigestJob : IVectorizationJob
 		var delta = await _sessions.DeltaAsync(project, header.SessionId, cursor, ct);
 		if (delta.Count == 0) return false;
 
+		// #1 Skip before the LLM: an insubstantial delta (empty/heartbeat/tool-noise) is not
+		// distilled at all — no chat call, no digest minted. If a digest already exists, its
+		// cursor is advanced past this trivial tail so it is not re-examined; a brand-new
+		// empty session anchors no cursor (nothing to write it on) and is re-skipped cheaply.
+		if (!IsSubstantial(delta))
+		{
+			if (state is not null)
+				await AdvanceCursorAsync(project, header, state, delta[^1].Version, ct);
+			return false;
+		}
+
 		var digest = Compose(state?.Description, state?.Body);
 		var lastVersion = cursor;
 		foreach (var batch in Batches(delta))
@@ -175,13 +215,21 @@ public sealed class SessionDigestJob : IVectorizationJob
 		}
 		if (lastVersion == cursor) return false; // budget hit before the first batch
 
-		var (description, body) = Split(digest);
-		var metadata = JsonSerializer.Serialize(new
+		// #2 Guard after the LLM: a refusal / empty / super-short answer is NOT written as a
+		// digest. The cursor still advances (over an existing entry) so the same trailing
+		// noise is not re-distilled next tick; a session with no anchor entry mints nothing.
+		if (IsRefusal(digest))
 		{
-			sessionId = header.SessionId,
-			agent = header.Agent,
-			cursor = lastVersion,
-		});
+			_logger?.LogWarning(
+				"session digest skipped for {Project}/{Session}: model returned no usable digest ({Len} chars); cursor advanced, nothing written",
+				project, header.SessionId, digest.Trim().Length);
+			if (state is not null)
+				await AdvanceCursorAsync(project, header, state, lastVersion, ct);
+			return false;
+		}
+
+		var (description, body) = Split(digest);
+		var metadata = BuildMetadata(header, lastVersion);
 		var outcome = await _memory.UpsertAsync(project, Store, [new MemoryEntryInput
 		{
 			Key = header.SessionId,
@@ -216,6 +264,78 @@ public sealed class SessionDigestJob : IVectorizationJob
 		var nl = digest.IndexOf('\n');
 		if (nl < 0) return (digest, "");
 		return (digest[..nl].Trim(), digest[(nl + 1)..].Trim());
+	}
+
+	// A delta is worth a chat call only if its messages carry at least MinDistillChars of
+	// meaningful (trimmed) text combined. Cheap short-circuit as soon as the floor is met.
+	static bool IsSubstantial(IReadOnlyList<SessionMessage> delta)
+	{
+		var chars = 0;
+		foreach (var message in delta)
+		{
+			chars += (message.Content ?? "").Trim().Length;
+			if (chars >= MinDistillChars) return true;
+		}
+		return false;
+	}
+
+	// A model answer that is empty, super-short, or a stock "nothing to digest" refusal is
+	// not a digest. Markers are matched only inside a SHORT answer so a long legit digest
+	// mentioning such words in a fact is not misjudged.
+	static bool IsRefusal(string digest)
+	{
+		var text = (digest ?? "").Trim();
+		if (text.Length < MinDigestChars) return true;
+		if (text.Length <= 200)
+		{
+			var lower = text.ToLowerInvariant();
+			foreach (var marker in RefusalMarkers)
+				if (lower.Contains(marker)) return true;
+		}
+		return false;
+	}
+
+	static string BuildMetadata(SessionHeader header, long cursor) =>
+		JsonSerializer.Serialize(new { sessionId = header.SessionId, agent = header.Agent, cursor });
+
+	// Move an EXISTING digest's cursor forward without re-distilling or changing its body —
+	// used when a delta is insubstantial or the model refused, so the trailing noise is not
+	// reconsidered next tick. A conflict just means someone rewrote the entry; the held
+	// cursor re-converges next pass.
+	async Task AdvanceCursorAsync(string project, SessionHeader header, DigestState state, long cursor, CancellationToken ct)
+	{
+		if (cursor <= state.Cursor) return; // nothing to advance past
+		var outcome = await _memory.UpsertAsync(project, Store, [new MemoryEntryInput
+		{
+			Key = header.SessionId,
+			Version = state.EntryVersion,
+			Type = "Reference",
+			Description = state.Description,
+			Body = state.Body,
+			Tags = [Tag],
+			Metadata = BuildMetadata(header, cursor),
+		}], [], ct);
+		if (outcome.Result.Conflicts.Count > 0)
+			_logger?.LogWarning("session digest cursor-advance conflicted for {Project}/{Session}; retrying next tick",
+				project, header.SessionId);
+	}
+
+	// Self-heal the machine store: soft-delete any active digest whose text is empty, a stock
+	// refusal, or super-short — the shape older passes minted for empty sessions and the
+	// semantic leg of session_search then surfaced as weak-match noise. Idempotent: a
+	// soft-deleted entry drops out of the active listing, so it is not re-deleted next pass.
+	async Task CleanupJunkDigestsAsync(string project, CancellationToken ct)
+	{
+		if (!await _memory.StoreExistsAsync(project, Store, ct)) return;
+		var entries = await _memory.ListAsync(project, Store, type: null, ct);
+		var deletes = entries
+			.Where(e => IsRefusal(Compose(e.Description, e.Body)))
+			.Select(e => new MemoryDelete(e.Key, e.Version))
+			.ToList();
+		if (deletes.Count == 0) return;
+		await _memory.UpsertAsync(project, Store, [], deletes, ct);
+		_logger?.LogWarning("session digest cleanup: removed {Count} empty/no-content digest(s) in {Project}",
+			deletes.Count, project);
 	}
 
 	static IEnumerable<IReadOnlyList<SessionMessage>> Batches(IReadOnlyList<SessionMessage> delta)
