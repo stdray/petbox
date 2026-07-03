@@ -112,7 +112,10 @@ public sealed class NavigationContext(
 		{
 			if (_projects is not null) return _projects;
 			var wsKey = CurrentWorkspaceKey;
-			_projects = [.. db.Projects.Where(p => p.WorkspaceKey == wsKey).OrderBy(p => p.Key)];
+			// "$workspace" is the reserved cross-project memory container, not a user project —
+			// it has no logs/dbs/tasks, so it doesn't belong in the project tree. The workspace
+			// dashboard surfaces it as the dedicated "Workspace memory" entry instead.
+			_projects = [.. db.Projects.Where(p => p.WorkspaceKey == wsKey && p.Key != "$workspace").OrderBy(p => p.Key)];
 			return _projects;
 		}
 	}
