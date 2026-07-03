@@ -60,8 +60,11 @@ public enum MemorySortBy
 }
 
 // One selected entry labelled by its owning store (a container read sweeps stores, so rows
-// may span them — the label keeps provenance visible, mirroring TaskSearchHit.Board).
-public sealed record MemoryEntryHit(string Store, MemoryEntryView Entry);
+// may span them — the label keeps provenance visible, mirroring TaskSearchHit.Board). `Score`
+// is the fused, freshness-blended relevance (query mode; 0 in a listing) — the adapter uses it
+// to HONESTLY merge across scopes (project ⊕ workspace) so the best hit wins regardless of
+// container, rather than the old greedy "project takes the limit, workspace gets the remainder".
+public sealed record MemoryEntryHit(string Store, MemoryEntryView Entry, double Score = 0);
 
 // The rich per-family result of the unified read: the selected hits plus retriever
 // provenance (null in listing mode, where no retriever runs).

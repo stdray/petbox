@@ -35,11 +35,13 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	//     implicit sweep, which skips sensitive stores); default order Updated desc (then
 	//     key, then store), overridable by Sort (created/updated; Relevance is rejected
 	//     without a query).
-	//   With Query → relevance SELECTION per store (hybrid lexical FTS ⊕ semantic vectors,
-	//     RRF-fused; the fused ranking supplies a bounded candidate pool of max(3×limit, 50)
-	//     per store), stores visited in list order (fused order is per-store); an explicit
-	//     created/updated Sort reorders WITHIN the selected set. Retrievers provenance is
-	//     filled (OR across stores).
+	//   With Query → relevance SELECTION (hybrid lexical FTS ⊕ semantic vectors, RRF-fused; the
+	//     fused ranking supplies a bounded candidate pool of max(3×limit, 50) per store). Every
+	//     store's pool is then fused GLOBALLY by RRF score (the best hit wins regardless of which
+	//     store holds it), blended with freshness (time-decay) and MMR-diversified before the
+	//     limit; an explicit created/updated Sort reorders WITHIN the selected set. Retrievers
+	//     provenance is filled (OR across stores). MemoryEntryHit.Score carries the fused,
+	//     decayed relevance so the adapter can honestly merge across scopes.
 	// Filter.Type narrows in both modes. Limit caps the rows (0 = unbounded listing / the
 	// pool bound with a query); BodyLen snippets row bodies (0 = full).
 	Task<MemoryEntrySearchResult> SearchEntriesAsync(string projectKey, SearchRequest<MemoryEntryFilter, MemorySortBy> request, CancellationToken ct = default);

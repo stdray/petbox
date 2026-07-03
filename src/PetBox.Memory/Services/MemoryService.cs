@@ -28,11 +28,16 @@ public sealed class MemoryService : IMemoryService
 	// Optional embedding capability (DI auto-fills when an LLM router is registered).
 	// Null → semantic search disabled (lexical-only); never throws.
 	readonly ILlmClient? _llm;
+	// Relevance re-ranking policy (freshness decay + MMR diversity) bound from the `Search`
+	// config section. Defaults are enabled/conservative, so an un-wired construction (tests,
+	// other adapters) still gets the shipped ranking.
+	readonly SearchRerankOptions _rerank;
 
-	public MemoryService(IMemoryStore stores, ILlmClient? llm = null)
+	public MemoryService(IMemoryStore stores, ILlmClient? llm = null, SearchRerankOptions? rerank = null)
 	{
 		_stores = stores;
 		_llm = llm;
+		_rerank = rerank ?? new SearchRerankOptions();
 	}
 
 	// ---- store lifecycle ----
@@ -72,7 +77,7 @@ public sealed class MemoryService : IMemoryService
 		await EnsureStore(projectKey, store, ct);
 		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
 		var (hits, retrievers) = await SearchStoreAsync(projectKey, store, query, typeFilter, SearchK, lexical, semantic, ct);
-		return new MemorySearchResult(hits.Select(View).ToList(), retrievers);
+		return new MemorySearchResult(hits.Select(h => View(h.Entry)).ToList(), retrievers);
 	}
 
 	// ---- unified read (list = search without a query; uniform-entity-verbs v2) ----
@@ -110,7 +115,9 @@ public sealed class MemoryService : IMemoryService
 			? (await _stores.ListAsync(projectKey, ct)).Where(s => !s.IsSystem && !SweepExcludedStores.Contains(s.Name)).Select(s => s.Name).ToList()
 			: [f.Store!.Trim()];
 
-		var selected = new List<(string Store, MemoryEntry Entry)>();
+		// Each candidate carries its owning store, entry, the fused relevance Score (query mode),
+		// and the raw per-store vector (for MMR; null in listing mode / no embedder).
+		var selected = new List<Candidate>();
 		SearchRetrievers? retrievers = null;
 		foreach (var store in stores)
 		{
@@ -119,7 +126,8 @@ public sealed class MemoryService : IMemoryService
 			if (query is null)
 			{
 				// LISTING: the active entries of the store (deterministic; ordered below).
-				selected.AddRange(ListActive(_stores.GetContext(projectKey, store), typeFilter).Select(e => (store, e)));
+				selected.AddRange(ListActive(_stores.GetContext(projectKey, store), typeFilter)
+					.Select(e => new Candidate(store, e, 0, null)));
 			}
 			else
 			{
@@ -132,27 +140,71 @@ public sealed class MemoryService : IMemoryService
 				retrievers = retrievers is { } agg
 					? new SearchRetrievers(agg.Lexical | r.Lexical, agg.Semantic | r.Semantic, agg.Degraded | r.Degraded)
 					: r;
-				selected.AddRange(hits.Select(e => (store, e)));
+				var vecs = _llm is null ? null : LoadVectors(projectKey, store, hits.Select(h => h.Entry.Key).ToList());
+				selected.AddRange(hits.Select(h => new Candidate(store, h.Entry, h.Score,
+					vecs is not null && vecs.TryGetValue(h.Entry.Key, out var v) ? v : null)));
 			}
 		}
 		if (query is not null) retrievers ??= new SearchRetrievers(false, false, false);
+
+		// QUERY relevance order: fuse EVERY store's pool GLOBALLY by score (rank-based → comparable
+		// across stores, so a strong hit in a late store outranks a weak one in an early store —
+		// no longer a plain per-store concat), bleed in freshness (decay), then MMR-diversify.
+		if (query is not null)
+			selected = RankRelevance(selected);
 
 		selected = SortSelected(selected, request.Sort, hasQuery: query is not null);
 		if (request.Limit > 0 && selected.Count > request.Limit) selected = selected.Take(request.Limit).ToList();
 
 		var hits2 = selected.Select(x => new MemoryEntryHit(x.Store,
-			request.BodyLen > 0 ? View(x.Entry) with { Body = SnippetBody(x.Entry.Body, request.BodyLen) } : View(x.Entry))).ToList();
+			request.BodyLen > 0 ? View(x.Entry) with { Body = SnippetBody(x.Entry.Body, request.BodyLen) } : View(x.Entry),
+			x.Score)).ToList();
 		return new MemoryEntrySearchResult(hits2, retrievers);
 	}
 
-	// Final ordering of the selected set. No sort: query mode keeps the per-store fused
-	// order (stores in list order — the old recall semantics), a listing defaults to
-	// Updated desc (the freshest fact first — keys are opaque generated ids, so key order
-	// carries no meaning). An explicit created/updated sort reorders WITHIN the selected
-	// set; Relevance = keep the fused order (guarded to query mode; `desc` is meaningless
-	// there and ignored). Ties break on key then store for determinism.
-	static List<(string Store, MemoryEntry Entry)> SortSelected(
-		List<(string Store, MemoryEntry Entry)> hits, (MemorySortBy By, bool Desc)? sort, bool hasQuery)
+	// One selection candidate: its owning store, the entry, the fused relevance Score (query
+	// mode; 0 in a listing), and the entry's vector (for MMR; null without an embedder / in a
+	// listing). A record-struct so it slots into the existing list-building cheaply.
+	readonly record struct Candidate(string Store, MemoryEntry Entry, double Score, float[]? Vector);
+
+	// GLOBAL query relevance ordering across every store's candidate pool (spec memoverhaul):
+	//   1. Freshness decay — multiply the fused RRF score by an exp half-life weight on Updated,
+	//      so at comparable relevance the fresher fact wins (listing mode never reaches here).
+	//   2. Global order by that blended score (a rank-based RRF score is comparable across
+	//      stores → the single best hit wins regardless of container), ties → fresher, then key.
+	//   3. MMR diversification so the head is not a wall of near-duplicates (vector proximity;
+	//      silently identity without an embedder — no vectors were loaded).
+	List<Candidate> RankRelevance(List<Candidate> candidates)
+	{
+		if (candidates.Count == 0) return candidates;
+		var now = DateTime.UtcNow;
+		var recency = _rerank.Recency;
+		double Blended(Candidate c) => recency.Enabled
+			? c.Score * RecencyDecay.Weight(c.Entry.Updated, now, recency.HalfLifeDays)
+			: c.Score;
+
+		var blended = candidates
+			.Select(c => c with { Score = Blended(c) })
+			.OrderByDescending(c => c.Score)
+			.ThenByDescending(c => c.Entry.Updated)
+			.ThenBy(c => c.Entry.Key, StringComparer.Ordinal)
+			.ThenBy(c => c.Store, StringComparer.Ordinal)
+			.ToList();
+
+		var diversity = _rerank.Diversity;
+		if (diversity.Enabled)
+			blended = Mmr.Reorder(blended, c => c.Score, c => c.Vector, diversity.Lambda);
+		return blended;
+	}
+
+	// Final ordering of the selected set. No sort: query mode keeps the fused RELEVANCE order
+	// (global fusion + decay + MMR, already applied), a listing defaults to Updated desc (the
+	// freshest fact first — keys are opaque generated ids, so key order carries no meaning). An
+	// explicit created/updated sort reorders WITHIN the selected set; Relevance = keep the fused
+	// order (guarded to query mode; `desc` is meaningless there and ignored). Ties break on key
+	// then store for determinism.
+	static List<Candidate> SortSelected(
+		List<Candidate> hits, (MemorySortBy By, bool Desc)? sort, bool hasQuery)
 	{
 		if (sort is null)
 			return hasQuery ? hits : Ordered(hits, x => x.Entry.Updated, desc: true);
@@ -165,18 +217,52 @@ public sealed class MemoryService : IMemoryService
 		};
 	}
 
-	static List<(string Store, MemoryEntry Entry)> Ordered<TKey>(
-		List<(string Store, MemoryEntry Entry)> hits, Func<(string Store, MemoryEntry Entry), TKey> key, bool desc) =>
+	static List<Candidate> Ordered<TKey>(
+		List<Candidate> hits, Func<Candidate, TKey> key, bool desc) =>
 		(desc ? hits.OrderByDescending(key) : hits.OrderBy(key))
 			.ThenBy(x => x.Entry.Key, StringComparer.Ordinal)
 			.ThenBy(x => x.Store, StringComparer.Ordinal)
 			.ToList();
 
+	// Load the stored vectors for the given entry keys from ONE store's search_vec (the Class-B
+	// index table). Best-effort: a store that was never vectorized (no table/rows) simply yields
+	// no vectors, so MMR falls back to identity for it. Only called when an embedder is wired.
+	Dictionary<string, float[]> LoadVectors(string projectKey, string store, List<string> keys)
+	{
+		var map = new Dictionary<string, float[]>(StringComparer.Ordinal);
+		if (keys.Count == 0) return map;
+		try
+		{
+			var ctx = _stores.GetContext(projectKey, store);
+			var rows = ctx.GetTable<VecRow>()
+				.Where(r => r.Type == MemorySearchDocs.Type && keys.Contains(r.Id))
+				.Select(r => new { r.Id, r.Vec })
+				.ToList();
+			foreach (var r in rows)
+				map[r.Id] = VectorCodec.Decode(r.Vec);
+		}
+		catch
+		{
+			// No search_vec table yet (store never vectorized) — MMR degrades to identity, quietly.
+		}
+		return map;
+	}
+
+	// Minimal read-only mapping onto the vector index table owned by VectorSearchIndex; here only
+	// to pull (Id, Vec) for MMR proximity, never written through this type.
+	[LinqToDB.Mapping.Table("search_vec")]
+	sealed class VecRow
+	{
+		[LinqToDB.Mapping.Column] public string Type { get; set; } = string.Empty;
+		[LinqToDB.Mapping.Column] public string Id { get; set; } = string.Empty;
+		[LinqToDB.Mapping.Column] public byte[] Vec { get; set; } = [];
+	}
+
 	// Hybrid selection over ONE store's open entries (lexical FTS5 ⊕ semantic vectors,
-	// RRF-fused), entities returned in fused order with retriever provenance. `k` bounds
-	// the candidate pool. The type filter applies post-resolution (Type is constant in
-	// the index, as before).
-	async Task<(List<MemoryEntry> Hits, SearchRetrievers Retrievers)> SearchStoreAsync(
+	// RRF-fused), entities returned in fused order WITH their fused RRF score (for global
+	// cross-store fusion + decay upstream) and retriever provenance. `k` bounds the candidate
+	// pool. The type filter applies post-resolution (Type is constant in the index, as before).
+	async Task<(List<(MemoryEntry Entry, double Score)> Hits, SearchRetrievers Retrievers)> SearchStoreAsync(
 		string projectKey, string store, string query, MemoryType? typeFilter, int k,
 		bool? lexical, bool? semantic, CancellationToken ct)
 	{
@@ -184,9 +270,14 @@ public sealed class MemoryService : IMemoryService
 
 		// No searchable tokens (empty/punctuation query): degrade to a type-filtered listing —
 		// a filter-only query still returns a sensible set rather than nothing (preserved from
-		// the pre-contract behaviour; FtsQuery returns no match for such queries).
+		// the pre-contract behaviour; FtsQuery returns no match for such queries). Score by
+		// descending position so the listing order survives if decay is off.
 		if (FtsQuery.BuildMatch(query) is null)
-			return (ListActive(ctx, typeFilter), new SearchRetrievers(true, false, false));
+		{
+			var listing = ListActive(ctx, typeFilter);
+			var scoredListing = listing.Select((e, i) => (e, 1.0 / (i + 1))).ToList();
+			return (scoredListing, new SearchRetrievers(true, false, false));
+		}
 
 		await EnsureLexicalBackfillAsync(ctx, projectKey, ct);
 
@@ -199,12 +290,14 @@ public sealed class MemoryService : IMemoryService
 
 		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(null), k, ct);
 
-		// Resolve hits to entries (preserving fused order) and apply the MemoryType filter here.
+		// Resolve hits to entries (preserving fused order + score) and apply the MemoryType filter.
 		var ids = resp.Hits.Select(h => h.Id).ToList();
 		var order = ids.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i);
+		var score = resp.Hits.ToDictionary(h => h.Id, h => h.Score);
 		var hits = ctx.Entries.Where(e => e.ActiveTo == null && ids.Contains(e.Key)).ToList()
 			.Where(e => typeFilter == null || e.Type == typeFilter)
 			.OrderBy(e => order[e.Key])
+			.Select(e => (e, score[e.Key]))
 			.ToList();
 
 		return (hits, resp.Retrievers);

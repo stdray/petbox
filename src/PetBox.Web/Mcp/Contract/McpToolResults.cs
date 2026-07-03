@@ -198,7 +198,10 @@ public sealed record MemorySearchHitView(
 	long Version,
 	long? Surfaced = null,
 	long? Opened = null,
-	DateTime? LastHitAt = null);
+	DateTime? LastHitAt = null,
+	// Distinct source-session count (provenance width) — a compact number, null when the fact
+	// carries no session provenance (spec memoverhaul-provenance-surface).
+	int? SourcesCount = null);
 
 // The memory_search result — ONE shape for both modes (SearchEnvelope form): `Items` in
 // final order, `Retrievers` provenance with a query (null in listing mode), and the
