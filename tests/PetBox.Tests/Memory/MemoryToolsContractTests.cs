@@ -60,6 +60,25 @@ public sealed class MemoryToolsContractTests : IDisposable
 		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries));
 	}
 
+	// A missing key is a not-found ERROR, never a null result: memory_get declares an
+	// outputSchema, so a null (no structured content) is rejected by strict MCP clients as
+	// -32600. The throw rides the isError channel via McpErrorEnvelopeFilter — which strict
+	// clients accept (bug mcp-nullable-get-strict-32600). InvalidOperationException matches the
+	// surface-wide not-found convention.
+	[Fact]
+	public async Task Get_MissingKey_Throws()
+	{
+		var http = Http("memory:read,memory:write");
+		// Populate the store first so this isolates key-not-found (the former null-return path)
+		// from store-not-found.
+		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "present", type = "project", description = "d", body = "b" },
+		}));
+		await Assert.ThrowsAsync<InvalidOperationException>(
+			() => MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "no-such-key"));
+	}
+
 	[Fact]
 	public async Task Upsert_AutoVivifies_NormalisesTags_AndFiltersByType()
 	{

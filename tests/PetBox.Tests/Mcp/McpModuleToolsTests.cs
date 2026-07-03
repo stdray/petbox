@@ -219,6 +219,19 @@ public sealed class McpModuleToolsTests : IDisposable
 			.Content.Should().Be("3456");
 	}
 
+	// A missing id is a not-found ERROR, never a null result: session_get declares an
+	// outputSchema, so a null (no structured content) is rejected by strict MCP clients as
+	// -32600. The throw rides the isError channel via McpErrorEnvelopeFilter — which strict
+	// clients accept (bug mcp-nullable-get-strict-32600). InvalidOperationException matches the
+	// surface-wide not-found convention.
+	[Fact]
+	public async Task Session_Get_MissingId_Throws()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await Assert.ThrowsAsync<InvalidOperationException>(
+			() => SessionTools.GetAsync(http, Flags(), _sessionSvc, Proj, "does-not-exist"));
+	}
+
 	// session_append: the incremental writer against the server-authoritative cursor.
 	// The gap reject is a STRUCTURED result (applied:false + reason:"gap" + lastOrdinal),
 	// not an opaque throw — the client parses lastOrdinal and resends the tail.

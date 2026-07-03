@@ -83,17 +83,21 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory_get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryEntryView))]
-	[Description("Get the active entry by key, or null. Requires memory:read.")]
-	public static async Task<MemoryEntryView?> GetAsync(
+	[Description("""
+		Get the active entry by key. A missing/unknown key is a not-found ERROR (never a bare
+		null: a declared outputSchema demands structured content, so a null result is rejected
+		by strict MCP clients — the error rides the isError channel instead). Requires memory:read.
+		""")]
+	public static async Task<MemoryEntryView> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory, IMemoryUsageRecorder usage,
 		string projectKey, string store, string key, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		var entry = await memory.GetAsync(projectKey, store, key, ct);
-		if (entry is not null)
-			usage.Opened(projectKey, store, key); // engagement: the entry was deliberately opened
+		var entry = await memory.GetAsync(projectKey, store, key, ct)
+			?? throw new InvalidOperationException($"memory entry '{key}' not found in store '{store}' of project '{projectKey}'");
+		usage.Opened(projectKey, store, key); // engagement: the entry was deliberately opened
 		return entry;
 	}
 
