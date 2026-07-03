@@ -24,11 +24,12 @@
 		_ => "badge-neutral",
 	};
 
+	// Muted (outline) palette — delivery is context, not an alert (spec-board-status-noise #11).
 	static string DeliveryBadge(string d) => d switch
 	{
-		"done" => "badge-success",
-		"in_progress" => "badge-warning",
-		"done_with_defects" => "badge-error",
+		"done" => "badge-success badge-outline",
+		"in_progress" => "badge-warning badge-outline",
+		"done_with_defects" => "badge-error badge-outline",
 		_ => "badge-ghost",
 	};
 }

@@ -177,6 +177,39 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		html.Should().Contain("data-node-key=\"deep\" data-depth=\"2\"");
 	}
 
+	// On a spec board `defined` is the ~universal default status → pure visual noise; the card
+	// suppresses that badge and shows one only for a non-default (terminal `deprecated`) state
+	// (spec-board-status-noise #9). Nodes are seeded straight through TemporalStore to bypass the
+	// idea/FSM gates — this exercises the render path, not the write path.
+	[Fact]
+	public async Task SpecBoard_SuppressesDefaultDefinedStatus_ShowsTerminalDeprecated()
+	{
+		const string board = "specnoise";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "spec noise", "spec");
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "reqa", NodeId = "id-reqa", Version = 0, Status = "defined", Type = "spec", Name = "Req A", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "reqb", NodeId = "id-reqb", Version = 0, Status = "deprecated", Type = "spec", Name = "Req B", Body = "", Priority = 2 },
+			}, partition: n => n.Board == board);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		// Both cards render (deprecated is closed but the server emits it; the client hides it).
+		html.Should().Contain("data-node-key=\"reqa\"");
+		html.Should().Contain("data-node-key=\"reqb\"");
+		// The default `defined` gets NO status badge; the non-default `deprecated` still gets one.
+		html.Should().NotContain("data-testid=\"node-status\">defined");
+		html.Should().Contain("data-testid=\"node-status\">deprecated");
+	}
+
 	[Fact]
 	public async Task Memory_ListsCreatedStore()
 	{
