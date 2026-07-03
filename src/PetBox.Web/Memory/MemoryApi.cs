@@ -9,19 +9,22 @@ namespace PetBox.Web.Memory;
 // Non-MCP read surface for the agent memory canon (spec agent-wiring, memory-canon-storage).
 // The wiring hooks pull the curated canon index at session start over REST (a shell command
 // can't easily speak MCP), the same way the Stop hook pushes sessions via SessionApi. One
-// endpoint, project-scoped, returns BOTH the project's canon and the shared $workspace canon
-// (the pseudo-project seeded by M028) so a single call arms an agent's context.
+// endpoint, project-scoped, returns BOTH the project's canon and the shared workspace canon
+// so a single call arms an agent's context.
 //   GET /api/memory/{projectKey}/canon
 // Auth mirrors SessionApi: RequireAuthorization("ApiKey"), then assert memory:read and that the
 // key's project claim authorizes {projectKey}. Missing canon → the corresponding part is null
 // (still 200); an unknown project simply yields null parts, as the sessions API leaves it.
 public static class MemoryApi
 {
-	// The canon convention: one entry `index` in store `canon`, one per scope.
+	// The canon convention: store `canon`; entry `index` = the project's canon; entry
+	// `workspace` = the shared cross-project canon, living in the SAME container the MCP
+	// `workspace` memory scope resolves to (MemoryTools.WorkspaceContainer — physically the
+	// `$system` project; workspace and $system-project memory share one container, so the
+	// two canons are told apart by key, not by container).
 	const string CanonStore = "canon";
 	const string CanonKey = "index";
-	// The reserved cross-project container (seeded by M028) that backs the `workspace` part.
-	const string WorkspaceContainer = "$workspace";
+	const string CanonWorkspaceKey = "workspace";
 
 	public static void MapMemoryEndpoints(this IEndpointRouteBuilder app)
 	{
@@ -40,20 +43,20 @@ public static class MemoryApi
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains(ApiKeyScopes.MemoryRead))
 			return TypedResults.Forbid();
 
-		var project = await ReadCanonAsync(memory, projectKey, ct);
-		var workspace = await ReadCanonAsync(memory, WorkspaceContainer, ct);
+		var project = await ReadCanonAsync(memory, projectKey, CanonKey, ct);
+		var workspace = await ReadCanonAsync(memory, Mcp.MemoryTools.WorkspaceContainer, CanonWorkspaceKey, ct);
 		return TypedResults.Ok(new CanonResponse(project, workspace));
 	}
 
-	// The active `index` entry of a scope's canon store, or null when the store or entry is
-	// absent. The store-existence guard keeps a missing canon a null part (not a 500) — an
-	// unknown project has no store meta row either, so it lands here too.
-	static async Task<CanonPart?> ReadCanonAsync(IMemoryService memory, string projectKey, CancellationToken ct)
+	// The active canon entry of a scope, or null when the store or entry is absent. The
+	// store-existence guard keeps a missing canon a null part (not a 500) — an unknown
+	// project has no store meta row either, so it lands here too.
+	static async Task<CanonPart?> ReadCanonAsync(IMemoryService memory, string projectKey, string key, CancellationToken ct)
 	{
 		if (!await memory.StoreExistsAsync(projectKey, CanonStore, ct))
 			return null;
 		var entry = (await memory.ListActiveEntriesAsync(projectKey, CanonStore, ct))
-			.FirstOrDefault(e => e.Key == CanonKey);
+			.FirstOrDefault(e => e.Key == key);
 		return entry is null ? null : new CanonPart(entry.Body, entry.Updated, entry.Version);
 	}
 }
@@ -62,6 +65,6 @@ public static class MemoryApi
 // hook can cache and detect staleness. Null at the response level when the scope has no canon.
 public sealed record CanonPart(string Body, DateTime UpdatedAt, long Version);
 
-// GET /api/memory/{projectKey}/canon — the project's canon and the shared $workspace canon;
+// GET /api/memory/{projectKey}/canon — the project's canon and the shared workspace canon;
 // either part is null when that scope carries no canon index.
 public sealed record CanonResponse(CanonPart? Project, CanonPart? Workspace);

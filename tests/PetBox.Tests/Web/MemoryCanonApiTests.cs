@@ -18,7 +18,7 @@ namespace PetBox.Tests.Web;
 
 // GET /api/memory/{projectKey}/canon (spec agent-wiring, memory-canon-storage): the wiring-hook
 // read surface for the curated memory canon. Returns the project's canon index and the shared
-// $workspace canon index; missing parts are null (still 200); no key is 401.
+// workspace canon index; missing parts are null (still 200); no key is 401.
 [Collection("DataModule")]
 public sealed class MemoryCanonApiTests : IAsyncLifetime
 {
@@ -84,13 +84,15 @@ public sealed class MemoryCanonApiTests : IAsyncLifetime
 		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
 	}
 
-	// Seed the canon index of a scope through the service door (auto-vivifies the store).
-	async Task WriteCanonAsync(string projectKey, string body)
+	// Seed a canon entry of a scope through the service door (auto-vivifies the store).
+	// The workspace canon lives in the `$system` container under key `workspace` (the same
+	// container the MCP workspace scope resolves to — scopes share it, keys tell them apart).
+	async Task WriteCanonAsync(string projectKey, string body, string key = "index")
 	{
 		using var scope = _factory.Services.CreateScope();
 		var memory = scope.ServiceProvider.GetRequiredService<IMemoryService>();
 		await memory.UpsertAsync(projectKey, "canon",
-			new[] { new MemoryEntryInput { Key = "index", Version = 0, Type = "Reference", Description = "canon", Body = body } },
+			new[] { new MemoryEntryInput { Key = key, Version = 0, Type = "Reference", Description = "canon", Body = body } },
 			[]);
 	}
 
@@ -98,7 +100,7 @@ public sealed class MemoryCanonApiTests : IAsyncLifetime
 	public async Task Canon_BothScopesPresent_ReturnsBothParts()
 	{
 		await WriteCanonAsync(TestProjectKey, "PROJECT canon index");
-		await WriteCanonAsync("$workspace", "WORKSPACE canon index");
+		await WriteCanonAsync("$system", "WORKSPACE canon index", key: "workspace");
 
 		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
 		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
