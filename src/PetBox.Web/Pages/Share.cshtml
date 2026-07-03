@@ -1,18 +1,10 @@
 @page "/ui/share/{token}"
 @model PetBox.Web.Pages.ShareModel
 @{
-	ViewData["Title"] = "Shared Query";
-	Layout = null;
+	ViewData["Title"] = "Shared Query — PetBox";
+	ViewData["BodyClass"] = "min-h-full p-6";
+	Layout = "_PublicLayout";
 }
-<!DOCTYPE html>
-<html lang="en" data-theme="dark" class="h-full">
-<head>
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Shared Query — PetBox</title>
-	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
-</head>
-<body class="min-h-full p-6">
 	<div class="max-w-6xl mx-auto">
 		<h1 class="text-xl font-semibold mb-2">Shared Query Result</h1>
 
@@ -72,5 +64,3 @@
 			}
 		}
 	</div>
-</body>
-</html>

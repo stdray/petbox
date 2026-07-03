@@ -2,17 +2,8 @@
 @model PetBox.Web.Pages.Doc.IndexModel
 @{
 	ViewData["Title"] = "PetBox docs";
-	Layout = null;
+	Layout = "_PublicLayout";
 }
-<!DOCTYPE html>
-<html lang="en" data-theme="dark" class="h-full">
-<head>
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>PetBox docs</title>
-	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
-</head>
-<body class="min-h-full">
 	<main class="max-w-3xl mx-auto p-6">
 		<h1 class="text-2xl font-semibold mb-4" data-testid="doc-index-title">PetBox documentation</h1>
 		<p class="text-sm opacity-70 mb-6">
@@ -66,5 +57,3 @@
 			</li>
 		</ul>
 	</main>
-</body>
-</html>

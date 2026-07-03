@@ -1,18 +1,9 @@
 @page "/doc/methodology"
 @model PetBox.Web.Pages.Doc.MethodologyModel
 @{
-	ViewData["Title"] = "Methodology cheatsheet — PetBox docs";
-	Layout = null;
+	ViewData["Title"] = "Methodology cheatsheet — PetBox";
+	Layout = "_PublicLayout";
 }
-<!DOCTYPE html>
-<html lang="en" data-theme="dark" class="h-full">
-<head>
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Methodology cheatsheet — PetBox</title>
-	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
-</head>
-<body class="min-h-full">
 	<main class="prose prose-sm max-w-3xl mx-auto p-6" data-testid="doc-methodology">
 		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a></p>
 		<h1>Methodology cheatsheet (agent)</h1>
@@ -113,5 +104,3 @@
 			<li><code>report_issue</code> — file a PetBox bug/issue to the maintainer's intake.</li>
 		</ul>
 	</main>
-</body>
-</html>

@@ -2,17 +2,8 @@
 @model PetBox.Web.Pages.Doc.OnboardingModel
 @{
 	ViewData["Title"] = "Agent onboarding — docs";
-	Layout = null;
+	Layout = "_PublicLayout";
 }
-<!DOCTYPE html>
-<html lang="en" data-theme="dark" class="h-full">
-<head>
-	<meta charset="utf-8" />
-	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-	<title>Agent onboarding — docs</title>
-	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
-</head>
-<body class="min-h-full">
 	<main class="prose prose-sm max-w-3xl mx-auto p-6" data-testid="doc-onboarding">
 		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a></p>
 
@@ -156,5 +147,3 @@
 			<a href="@Routes.DocOverview()">overview</a> for what each module offers.
 		</p>
 	</main>
-</body>
-</html>

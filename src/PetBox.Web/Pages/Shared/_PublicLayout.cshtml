@@ -1,0 +1,20 @@
+@{
+	Layout = null;
+	// Anonymous pages have no stored theme setting, so they always render the flash-free "dark"
+	// default and let _ThemeScript follow the OS preference client-side. Body class is per-page.
+	var bodyClass = ViewData["BodyClass"] as string ?? "min-h-full";
+}
+<!DOCTYPE html>
+<html lang="en" data-theme="dark" class="h-full">
+<head>
+	<meta charset="utf-8" />
+	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+	<title>@ViewData["Title"]</title>
+	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
+	<partial name="_ThemeScript" />
+</head>
+<body class="@bodyClass">
+	@RenderBody()
+	@await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

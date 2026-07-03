@@ -31,28 +31,19 @@
 	var sharedConfigUrl = Routes.SharedConfig(currentWs);
 	var wsAdminUrl = Routes.WorkspaceAdmin(currentWs);
 
-	var theme = "dark";
-	var userIdRaw = Nav.IsAuthenticated
-		? Context.User.FindFirst(PetBox.Core.Auth.PetBoxClaims.UserId)?.Value
-		: null;
-	if (!string.IsNullOrEmpty(userIdRaw))
-	{
-		var ui = await Settings.GetAsync<PetBox.Core.Settings.UiSettings>(PetBox.Core.Settings.Scope.User, userIdRaw);
-		theme = ui.Theme switch
-		{
-			PetBox.Core.Settings.Theme.Light => "light",
-			PetBox.Core.Settings.Theme.System => "dark",
-			_ => "dark",
-		};
-	}
+	var (dataTheme, systemScript) = await PetBox.Web.Settings.ThemeHelper.ResolveForCurrentUserAsync(Nav, Settings, Context);
 }
 <!DOCTYPE html>
-<html lang="en" data-theme="@theme" class="h-full">
+<html lang="en" data-theme="@dataTheme" class="h-full">
 <head>
 	<meta charset="utf-8" />
 	<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 	<title>@ViewData["Title"] - PetBox</title>
 	<link rel="stylesheet" href="~/css/app.css" asp-append-version="true" />
+	@if (systemScript)
+	{
+		<partial name="_ThemeScript" />
+	}
 	<meta name="yb-current-ws" content="@currentWs" />
 	<script type="module" src="~/js/site.js" asp-append-version="true"></script>
 </head>
