@@ -127,6 +127,11 @@ public partial class Program
 				Path.Combine(ResolveDataDir(sp), "memory"), PetBox.Core.Settings.Scope.Project,
 				cs => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(cs)), PetBox.Memory.Data.MemorySchema.Ensure));
 		builder.Services.AddScoped<PetBox.Memory.Data.IMemoryStore, PetBox.Memory.Data.MemoryStore>();
+		// Search relevance re-ranking policy (freshness decay + MMR diversity) — bound from the
+		// `Search` section (Search:Recency:*, Search:Diversity:*); enabled with conservative
+		// defaults when absent. Injected into MemoryService (reusable by tasks/session later).
+		builder.Services.AddSingleton(
+			builder.Configuration.GetSection("Search").Get<PetBox.Core.Search.SearchRerankOptions>() ?? new PetBox.Core.Search.SearchRerankOptions());
 		builder.Services.AddScoped<PetBox.Memory.Contract.IMemoryService, PetBox.Memory.Services.MemoryService>();
 		// Usage telemetry intake (spec: memory-usage-observability): singleton queue+drain;
 		// called ONLY by the MCP/UI adapters, so internal machine traffic never counts.
