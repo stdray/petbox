@@ -1,17 +1,25 @@
 # Agent-wiring kit
 
-A single global TypeScript kit that wires any project to PetBox for both **Claude Code** and
-**opencode** — instead of copying PowerShell hooks and a per-project opencode plugin into every
-repo. The logic is installed once at user scope; each project keeps only thin config files (no
-logic). The active project is resolved per call by **cwd** against a global registry, so the
+A single global TypeScript kit that wires any project to PetBox for **Claude Code**, **opencode**
+and **Factory Droid** — instead of copying PowerShell hooks and a per-project opencode plugin into
+every repo. The logic is installed once at user scope; each project keeps only thin config files
+(no logic). The active project is resolved per call by **cwd** against a global registry, so the
 global hooks are a clean no-op in unregistered folders.
 
 Kit location: `D:\my\prj\petbox\agents\wiring\`
 
 - `registry.ts` — reads `~/.petbox/projects.json`, longest-prefix match of cwd → project + key.
+- `protocol.ts` — the **single source** for the injected memory-protocol text. `buildProtocol(project, tool, opts)`
+  renders one canonical text parametrized only by the MCP tool namer (`mcp__petbox__<verb>` for
+  Claude Code / Droid, `petbox_<verb>` for opencode) plus the opt-in resume/compact suffix. All
+  three SessionStart injectors render from it so the texts can't drift as hand-synced copies.
 - `push-session.ts` — Claude Code **Stop** hook (mirrors the transcript into the Session module).
 - `pull-memory.ts` — Claude Code **SessionStart** hook (injects the memory protocol).
 - `opencode-plugin.ts` — global opencode plugin (system-prompt memory protocol + `session.idle` push).
+- `droid-pull-memory.ts` — Factory Droid **SessionStart** hook (injects the memory protocol + canon).
+- `droid-push-session.ts` — Factory Droid **Stop** hook (mirrors the transcript into the Session module).
+- `droid-transcript.ts` — droid JSONL adapter (thin wrapper over `transcript.ts`'s shared extract/exclude rules).
+- `transcript.ts` — Claude Code transcript parsing + the shared `extractText`/`isExcluded` rules.
 - `wire.ts` — bootstrap CLI (everything below).
 - `templates/SKILL.md` — per-project Claude skill template (`{{PROJECT}}` / `{{WORKSPACE}}`).
 
@@ -51,6 +59,11 @@ Runtime: plain TypeScript executed by **node 24** native type-stripping. No buil
    - `~/.claude/settings.json` — **merge** a `Stop` → `node "<…>/push-session.ts"` and
      `SessionStart` → `node "<…>/pull-memory.ts"` hook. The rest of the live settings
      (env/permissions/statusLine/model/…) is preserved; duplicate commands are not re-added.
+   - `~/.factory/settings.json` — **merge** a `Stop` → `node "<…>/droid-push-session.ts"` and
+     `SessionStart` → `node "<…>/droid-pull-memory.ts"` hook under the `hooks` key (same merge
+     semantics: never clobber, skip duplicates). Factory Droid uses the Claude-Code-compatible
+     hook shape and snake_case payloads; the reference documents no `enableHooks` gate, so none
+     is written.
    - `~/.config/opencode/plugins/petbox.ts` — a thin shim that re-exports the kit plugin from
      its absolute `file:///` URL (single source of truth; overwritten if present).
 8. `--cleanup-legacy` (see §3).
@@ -127,3 +140,31 @@ node --experimental-strip-types agents/wiring/import-sessions.ts --agent claude 
 - After a big import the server pipelines (digest -> facts -> patterns) backfill in the
   background; with the budgeted drain expect tens of minutes for a multi-MB archive.
   Search fills in as it warms — nothing blocks.
+
+## 8. Factory Droid specifics
+
+Factory Droid (the `droid` CLI) has Claude-Code-compatible hooks, so it wires with the same two
+behaviors as the other agents from the shared modules:
+
+- **Settings location:** `~/.factory/settings.json`, `hooks` key (a documented fallback for
+  `~/.factory/hooks.json`). Same JSON shape as Claude Code:
+  `{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"…"}]}]}}`. `wire.ts` merges
+  the two droid hooks in and never clobbers existing content. The hooks reference documents no
+  `enableHooks` flag gating execution, so none is written.
+- **Hook events:** `SessionStart` → `droid-pull-memory.ts` (injects protocol + canon),
+  `Stop` → `droid-push-session.ts` (mirrors the transcript).
+- **Payloads:** droid delivers snake_case stdin (`session_id`, `transcript_path`, `cwd`,
+  `source`, `stop_hook_active`) — the same fields Claude Code uses, so the hooks read them
+  identically.
+- **SessionStart output contract:** `droid-pull-memory.ts` returns context via the documented
+  structured form `{ "hookSpecificOutput": { "hookEventName": "SessionStart", "additionalContext": "…" } }`
+  on stdout (stdout-as-context is also accepted; the structured form is the documented preference).
+- **MCP tool naming:** droid exposes MCP tools as `mcp__<server>__<tool>` (identical to Claude
+  Code), so the petbox verbs are `mcp__petbox__*` and the injected protocol renders byte-identical
+  to the Claude Code hook via the shared `protocol.ts` builder.
+- **Transcript adapter:** `droid-transcript.ts` parses droid JSONL (line 1
+  `{type:"session_start", …}`; turns `{type:"message", message:{role, content}}`, content a
+  string or `text`/`thinking`/`tool_use`/`tool_result` parts). It keeps user/assistant TEXT
+  turns only and reuses `transcript.ts`'s shared `extractText`/`isExcluded` rules, so
+  `<system-reminder>` injections (and `visibility:"llm_only"` records) and tool dumps are
+  dropped. Pushes under `agent:"droid"`.
