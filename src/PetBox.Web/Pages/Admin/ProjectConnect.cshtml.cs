@@ -46,6 +46,14 @@ public sealed class ProjectConnectModel : PageModel
 	// Set only on the POST response right after minting — shown once.
 	public string? NewKey { get; private set; }
 
+	// The one-command wiring line: runs the npm kit from the project folder (`.`), passing the
+	// freshly minted key + per-project env-var name. Single source of truth for both the rendered
+	// <pre> and the copy button. Null until a key is minted. The project key is single-quoted so
+	// `$`-prefixed keys (e.g. "$system") aren't eaten by the shell.
+	public string? WireCommand => NewKey is null
+		? null
+		: $"npx -y petbox-wire@latest . '{ProjectKey}' --key {NewKey} --env {EnvVarName}";
+
 	public IReadOnlyList<ApiKeyScope> AllScopes => ApiKeyScopes.All;
 
 	// Absolute MCP endpoint for this instance, derived from the current request so

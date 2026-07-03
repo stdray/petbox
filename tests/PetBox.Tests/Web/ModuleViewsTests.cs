@@ -301,6 +301,15 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task Connect_RendersMintForm()
+	{
+		using var resp = await GetAuthedAsync("/ui/admin/ws/$system/projects/$system/connect");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("connect-mint-form"); // GET shows the mint form (key not yet minted)
+	}
+
+	[Fact]
 	public async Task Doc_Index_IsPublic_NoRedirect()
 	{
 		// Anonymous client (no cookie) — doc pages must NOT redirect to /Login.

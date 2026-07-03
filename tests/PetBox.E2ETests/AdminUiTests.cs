@@ -25,23 +25,32 @@ public sealed class AdminUiTests(WebAppFixture app, ITestOutputHelper output) : 
 		}
 	}
 
+	// Minting moved to the project's Connect page: mint there, confirm the copy-ready wire
+	// instruction carries the fresh key + per-project env var, then revoke from the sysadmin
+	// management list (the key is a normal DB row and still shows up there).
 	[Fact]
-	public async Task AgentKeys_Issue_List_Revoke()
+	public async Task Connect_Mint_Instruction_And_Revoke()
 	{
 		var name = $"e2e-agent-{System.Guid.NewGuid():N}";
 
-		await _page!.GotoAsync("/ui/admin/sys/agent-keys");
-		await _page.GetByTestId("agent-key-name").FillAsync(name);
-		// admin:provision is checked by default; TTL defaults to 24.
-		await _page.GetByTestId("agent-key-issue-submit").ClickAsync();
+		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/connect");
+		await _page.GetByTestId("connect-key-name").FillAsync(name);
+		// Agent default scopes are pre-checked.
+		await _page.GetByTestId("connect-mint-submit").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
 
 		// Raw key shown once.
-		var issued = _page.GetByTestId("sys-agent-key-issued").Locator("code");
-		await Expect(issued).ToBeVisibleAsync();
-		(await issued.InnerTextAsync()).Should().StartWith("yb_key_");
+		var keyValue = (await _page.GetByTestId("connect-key-value").InnerTextAsync()).Trim();
+		keyValue.Should().StartWith("yb_key_");
 
-		// Appears in the table; revoke it.
+		// The one-command instruction carries the kit invocation, the fresh key and the env var.
+		var npx = await _page.GetByTestId("connect-npx-command").InnerTextAsync();
+		npx.Should().Contain("npx -y petbox-wire@latest");
+		npx.Should().Contain(keyValue);
+		npx.Should().Contain("--env PETBOX_SYSTEM_API_KEY");
+
+		// Appears in the sysadmin management list; revoke it there.
+		await _page.GotoAsync("/ui/admin/sys/agent-keys");
 		var row = _page.GetByTestId("agent-key-row").Filter(new() { HasText = name });
 		await Expect(row).ToHaveCountAsync(1);
 

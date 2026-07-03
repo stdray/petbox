@@ -7,59 +7,16 @@
 
 <div class="mb-4">
 	<h1 class="text-2xl font-semibold" data-testid="sys-agent-keys-title">Agent Keys</h1>
-	<p class="text-sm opacity-60">DB-minted API keys across all projects. Issue one with <code class="font-mono">admin:provision</code> (ROOT-equivalent: it can mint keys with any scopes for any project) so an agent can create a project, services, keys, and config via MCP. Leave TTL empty for a non-expiring key — the lifetime is your call.</p>
+	<p class="text-sm opacity-60">Management view of the DB-minted API keys issued across all projects — review what exists and revoke what's stale. Minting lives elsewhere (see below).</p>
 </div>
 
-@if (!string.IsNullOrEmpty(Model.ErrorMessage))
-{
-	<div class="alert alert-error mb-3 text-sm" data-testid="sys-agent-keys-error">@Model.ErrorMessage</div>
-}
-
-@if (!string.IsNullOrEmpty(Model.IssuedKey))
-{
-	<div class="alert alert-success mb-4 flex-col items-start" data-testid="sys-agent-key-issued">
-		<div class="font-semibold">Key issued — copy it now, it won't be shown again.</div>
-		<code class="font-mono break-all">@Model.IssuedKey</code>
-	</div>
-}
-
-<div class="card bg-base-200 mb-4">
-	<div class="card-body p-4">
-		<h2 class="text-base font-semibold mb-2">Issue agent key</h2>
-		<form method="post" asp-page-handler="Issue" class="space-y-3">
-			<div class="flex flex-wrap items-end gap-2" x-data="{ allProjects: false }">
-				<div>
-					<label class="text-xs opacity-60 block" for="ak-name">Name</label>
-					<input id="ak-name" name="name" class="input input-bordered input-sm" placeholder="kpvotes onboarding" data-testid="agent-key-name" />
-				</div>
-				<div>
-					<label class="text-xs opacity-60 block" for="ak-project">Project key</label>
-					<input id="ak-project" name="projectKey" class="input input-bordered input-sm font-mono" value="$system" data-testid="agent-key-project" :disabled="allProjects" :class="{ 'opacity-40': allProjects }" />
-				</div>
-				<div>
-					<label class="text-xs opacity-60 block" for="ak-ttl">TTL (hours, empty = never)</label>
-					<input id="ak-ttl" name="ttlHours" type="number" min="1" value="24" class="input input-bordered input-sm w-24" data-testid="agent-key-ttl" />
-				</div>
-				<label class="label cursor-pointer gap-2 p-0 pb-1" title="A cross-project key (project='*') reads AND writes across EVERY project — for monitoring / dev override. Powerful; keep the TTL short.">
-					<input type="checkbox" name="allProjects" value="true" class="checkbox checkbox-sm checkbox-warning" x-model="allProjects" data-testid="agent-key-all-projects" />
-					<span class="text-xs">All projects (cross-project <code class="font-mono">*</code>)</span>
-				</label>
-			</div>
-			<div data-testid="agent-key-scopes-group">
-				<div class="text-xs opacity-60 mb-1">Scopes</div>
-				<div class="flex flex-wrap gap-3">
-					@foreach (var s in Model.AllScopes)
-					{
-						<label class="label cursor-pointer gap-2 p-0">
-							<input type="checkbox" name="scopes" value="@s.Value" class="checkbox checkbox-sm"
-								data-testid="agent-key-scope-@s.Value" @(s.Value == "admin:provision" ? "checked" : "") />
-							<span class="font-mono text-xs" title="@s.Description">@s.Value</span>
-						</label>
-					}
-				</div>
-			</div>
-			<button type="submit" class="btn btn-primary btn-sm" data-testid="agent-key-issue-submit">Issue key</button>
-		</form>
+<div class="alert bg-base-200 border border-base-300 mb-4 text-sm" data-testid="sys-agent-keys-mint-hint">
+	<div>
+		<div class="font-semibold mb-1">Where to mint keys</div>
+		<ul class="list-disc list-inside space-y-0.5 opacity-80">
+			<li>Per-project keys — from the project's Connect page (sidebar → project → Connect).</li>
+			<li>Cross-project or TTL-scoped keys — via the MCP <code class="font-mono">apikey_create</code> tool.</li>
+		</ul>
 	</div>
 </div>
 
