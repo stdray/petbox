@@ -174,9 +174,11 @@ stale worktrees, into a single card). Use `tasks_upsert`:
 
 ```
 board: intake   type: issue   status: reported
-title: "audit: <one-line finding>"
+title: "audit: <one-line finding>"   (the "audit:" title prefix is how a run's
+                                       findings are grouped — tag namespaces can't)
 body:  <what, where, the evidence (path/commit/session ordinal), suggested fix>
-tags:  ["concern:process"]   (+ a check tag: audit:surface|zombie|tail|session)
+tags:  ["concern:process"]   (only the area|concern namespaces exist; a custom
+                              "audit:" namespace is rejected — group via the title)
 ```
 
 Do **not** promote, fix, or self-triage — `reported` is the ceiling; the owner
