@@ -103,7 +103,8 @@ public sealed class TraceModel : PageModel
 		var minStart = spans.Min(s => s.StartUnixNs);
 		var maxEnd = spans.Max(s => s.EndUnixNs);
 		var totalNs = Math.Max(1, maxEnd - minStart);
-		StartTime = new DateTimeOffset(minStart / 100, TimeSpan.Zero).UtcDateTime;
+		// unix-ns/100 = ticks SINCE THE UNIX EPOCH, not since year 1 — rebase explicitly.
+		StartTime = DateTime.UnixEpoch.AddTicks(minStart / 100);
 		TotalDuration = TimeSpan.FromTicks(totalNs / 100);
 
 		var childrenBy = spans.GroupBy(s => s.ParentSpanId ?? string.Empty)

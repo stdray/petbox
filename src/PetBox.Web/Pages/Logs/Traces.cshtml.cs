@@ -78,7 +78,8 @@ public sealed class TracesModel : PageModel
 			Traces = grouped.Select(g => new TraceSummary(
 				g.TraceId,
 				rootByTrace.GetValueOrDefault(g.TraceId, "(no root)"),
-				new DateTimeOffset(g.MinStart / 100, TimeSpan.Zero).UtcDateTime,
+				// unix-ns/100 = ticks SINCE THE UNIX EPOCH, not since year 1 — rebase explicitly.
+				DateTime.UnixEpoch.AddTicks(g.MinStart / 100),
 				TimeSpan.FromTicks((g.MaxEnd - g.MinStart) / 100),
 				g.Count,
 				g.WorstStatus)).ToList();
