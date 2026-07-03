@@ -528,7 +528,10 @@ public static class TasksTools
 		l1/l2/l3 path is gone). Nesting is the `partOf` field: a parent slug (on this board)
 		or a NodeId — null omits it, "" detaches to a root. A node may carry multiple parents'
 		worth of grouping via `tags` (an array of "namespace:value", namespaces area|concern;
-		[] clears, omit leaves as-is). Give each node a `title` and `body` (markdown). Other
+		[] clears, omit leaves as-is). Give each node a `title` and `body` (GFM markdown —
+		renders as formatted text: use ## headings, real newlines (not \\n literals, not
+		==headings==); numbered lists as `1.`; markdown is client-rendered via
+		marked+DOMPurify (gfm:true, breaks:true — a bare newline becomes a <br>)). Other
 		fields: status (slug — see tasks_workflow), type (feature|bug|chore on work boards;
 		chore = spec-less engineering hygiene), specRef (the spec node the work task
 		implements, as its slug on the linked spec board or a NodeId — REQUIRED for a new
