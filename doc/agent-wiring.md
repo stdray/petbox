@@ -195,3 +195,21 @@ It also wires the same two hook behaviors as the other agents from the shared mo
   turns only and reuses `transcript.ts`'s shared `extractText`/`isExcluded` rules, so
   `<system-reminder>` injections (and `visibility:"llm_only"` records) and tool dumps are
   dropped. Pushes under `agent:"droid"`.
+
+## Headless / exec run modes (gotchas from live experiments, 2026-07-03)
+
+Non-interactive runs behave differently per agent — the wiring works in all three, but the
+launch flags and sandbox rules differ:
+
+- **Factory Droid** (`droid exec "…"`): read-only by default — a task that edits files or
+  writes over MCP needs `--auto medium` or `--auto high`, else it halts with "insufficient
+  permission". At runtime droid names MCP tools `petbox___<tool>` (triple underscore) — the
+  docs' `mcp__<server>__<tool>` form did not match the shipped CLI (the protocol renders
+  droid tool names accordingly, see `protocol.ts` / `droidPetboxTool`).
+- **opencode** (`opencode run "…"`): permission prompts auto-reject in run mode, and paths
+  OUTSIDE the project folder are `external_directory` — a sibling `git worktree` is
+  unreachable. Create worktrees INSIDE the project folder (e.g. `./.wt-<task>`), remove them
+  when done.
+- **Claude Code** (`claude -p "…"`): headless prompts auto-deny too — pass
+  `--permission-mode acceptEdits` (or, deliberately and only on a trusted task,
+  `--dangerously-skip-permissions`).
