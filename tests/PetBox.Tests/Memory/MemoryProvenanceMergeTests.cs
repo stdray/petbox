@@ -99,7 +99,7 @@ public sealed class MemoryProvenanceMergeTests : IDisposable
 			seenIn = new[] { "s2", "s3" },
 			sources = new[] { "s3", "s4" }, // s3 overlaps seenIn → union {s1,s2,s3,s4} = 4
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "prov", type = "reference", description = "provenance fact", body = "kubernetes provenance note", metadata = meta },
 			new { key = "plain", type = "project", description = "plain fact", body = "kubernetes plain note" },

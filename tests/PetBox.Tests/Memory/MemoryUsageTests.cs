@@ -102,7 +102,7 @@ public sealed class MemoryUsageTests : IDisposable
 	{
 		await Seed("u1");
 
-		await MemoryTools.GetAsync(Http(), Flags(), _memory, _recorder, Proj, "notes", "u1");
+		await MemoryTools.GetAsync(Http(), Flags(), _db, _memory, _recorder, Proj, "notes", "u1");
 		await _recorder.FlushAsync();
 
 		var usage = await _memory.GetUsageAsync(Proj, "notes");
@@ -210,11 +210,11 @@ public sealed class MemoryUsageTests : IDisposable
 		_recorder.Surfaced(Proj, "notes", ["u1"]);
 		await _recorder.FlushAsync();
 
-		var plain = await MemoryTools.StoreListAsync(Http(), Flags(), _memory, Proj);
+		var plain = await MemoryTools.StoreListAsync(Http(), Flags(), _db, _memory, Proj);
 		plain.Stores.Should().ContainSingle();
 		plain.Stores[0].Usage.Should().BeNull(); // default off
 
-		var with = await MemoryTools.StoreListAsync(Http(), Flags(), _memory, Proj, includeUsage: true);
+		var with = await MemoryTools.StoreListAsync(Http(), Flags(), _db, _memory, Proj, includeUsage: true);
 		var row = with.Stores.Single(s => s.Name == "notes");
 		row.Usage.Should().NotBeNull();
 		row.Usage!.TotalEntries.Should().Be(2);

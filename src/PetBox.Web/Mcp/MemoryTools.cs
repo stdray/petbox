@@ -1,8 +1,11 @@
 using System.ComponentModel;
+using LinqToDB;
+using LinqToDB.Async;
 using ModelContextProtocol.Server;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
+using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Features;
 using PetBox.Core.Search;
@@ -23,11 +26,11 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]
 	[Description("CREATE a named memory store in a project (fails if it already exists). Requires memory:write.")]
 	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string projectKey, string store, string? description = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var meta = await memory.CreateStoreAsync(projectKey, store, description, ct);
 		return new MemoryStoreCreatedResult(meta.ProjectKey, meta.Name, meta.Description, meta.CreatedAt);
@@ -43,13 +46,13 @@ public static class MemoryTools
 		candidates). Reading this does NOT count as usage (curation, not an impression).
 		""")]
 	public static async Task<MemoryStoreListResult> StoreListAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string projectKey,
 		[Description("Attach a per-store usage aggregate (coverage, median recency, dead tail) (default false).")] bool includeUsage = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var list = await memory.ListStoresAsync(projectKey, ct);
 		var rows = new List<MemoryStoreRow>(list.Count);
@@ -70,11 +73,11 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreDeletedResult))]
 	[Description("Delete a memory store and its entries. Requires memory:write.")]
 	public static async Task<MemoryStoreDeletedResult> StoreDeleteAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string projectKey, string store, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
 	}
@@ -82,11 +85,11 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryEntryView))]
 	[Description("Get the active entry by key, or null. Requires memory:read.")]
 	public static async Task<MemoryEntryView?> GetAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
+		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory, IMemoryUsageRecorder usage,
 		string projectKey, string store, string key, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var entry = await memory.GetAsync(projectKey, store, key, ct);
 		if (entry is not null)
@@ -124,14 +127,14 @@ public static class MemoryTools
 		call memory_delta with it as `sinceVersion`.
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string projectKey, string store,
 		[Description("Array of entry objects: { key, type, description, body, tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var (upserts, deletes) = ParseEntries(entries);
 		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, ct), bodyLen);
@@ -140,13 +143,13 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface (a memory_upsert ack echoes only its own call; pass its `currentVersion` here for the full store delta). Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
 		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		ModuleMcp.AssertProject(http, projectKey);
+		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		return Serialize(await memory.DeltaAsync(projectKey, store, sinceVersion, ct), bodyLen);
 	}
@@ -162,8 +165,9 @@ public static class MemoryTools
 	//               projects or are about the user live here, one place for everyone.
 	// `search` with no scope CASCADES both (project ⊕ workspace) and returns rows labelled
 	// by scope so precedence is visible (project first); when the key's project IS the
-	// shared container the two collapse and it's searched once. Any memory-scoped key may
-	// reach the shared container (that's the point). Personal facts are carried by
+	// shared container the two collapse and it's searched once. Any memory-scoped key of
+	// the container's own workspace may reach it (see AssertMemoryProjectAsync — key
+	// -addressed curation checks the same membership). Personal facts are carried by
 	// type=User, not a separate container. Curated/temporal writes go through memory_upsert.
 
 	// Internal: MemoryApi's canon endpoint reads the workspace canon from this same container.
@@ -172,6 +176,37 @@ public static class MemoryTools
 	// $system's memory as "workspace".
 	internal const string WorkspaceContainer = "$workspace";
 	const string DefaultStore = "notes";
+
+	// Authorize a KEY-ADDRESSED memory projectKey. The reserved shared container ($workspace)
+	// feeds every project's memory cascade, so key-addressed curation (memory_upsert/get/delta,
+	// memory_store_*) must address it directly too, mirroring how remember/search resolve
+	// scope:"workspace" — but only WITHIN the workspace that owns the container (multi-user
+	// intent: another workspace's keys must not reach this one's shared memory). A key
+	// qualifies when its project claim is the wildcard "*" or names a project in the same
+	// workspace as the $workspace Projects row (seeded by M028/M031; its WorkspaceKey is
+	// resolved from the DB, not hardcoded). The memory scope gate stays each tool's own
+	// AssertScope call. For every other target this is exactly AssertProject, so no
+	// non-memory module gains $workspace access.
+	static async Task AssertMemoryProjectAsync(IHttpContextAccessor http, PetBoxDb db, string projectKey, CancellationToken ct)
+	{
+		if (projectKey != WorkspaceContainer)
+		{
+			ModuleMcp.AssertProject(http, projectKey);
+			return;
+		}
+		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
+		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		if (claim == ProjectScope.AllProjects) return;
+		var rows = await db.Projects
+			.Where(p => p.Key == WorkspaceContainer || p.Key == claim)
+			.Select(p => new { p.Key, p.WorkspaceKey })
+			.ToListAsync(ct);
+		var containerWs = rows.FirstOrDefault(p => p.Key == WorkspaceContainer)?.WorkspaceKey;
+		var callerWs = rows.FirstOrDefault(p => p.Key == claim)?.WorkspaceKey;
+		if (containerWs is null || callerWs is null || !string.Equals(callerWs, containerWs, StringComparison.Ordinal))
+			throw new UnauthorizedAccessException(
+				$"ApiKey is not scoped to project '{projectKey}' (the shared container is reachable only by keys of projects in its workspace)");
+	}
 
 	[McpServerTool(Name = "memory_remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
 	[Description("""
