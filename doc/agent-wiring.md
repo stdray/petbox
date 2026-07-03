@@ -6,9 +6,18 @@ every repo. The logic is installed once at user scope; each project keeps only t
 (no logic). The active project is resolved per call by **cwd** against a global registry, so the
 global hooks are a clean no-op in unregistered folders.
 
-Kit location: `D:\my\prj\petbox\agents\wiring\`
+The kit ships as the **`petbox-wire`** npm package, so a project can be wired without cloning the
+repo: `npx petbox-wire <dir> <project> --key <KEY>`.
 
-- `registry.ts` — reads `~/.petbox/projects.json`, longest-prefix match of cwd → project + key.
+Kit locations:
+- **Repo (source of truth):** `src/clients-ts/petbox-wire/src/` (the package's `src/`; `wire.ts`
+  is the bootstrap CLI, `bin/petbox-wire.js` is the npm launcher).
+- **Runtime (stable copy):** `~/.petbox/wire/` — `wire.ts` copies the kit here on every run, and
+  every global hook / opencode plugin link points at this stable path (so wiring survives npx
+  cache eviction and does not depend on any checkout).
+
+- `registry.ts` — reads `~/.petbox/projects.json`, longest-prefix match of cwd → project + key
+  (key from `process.env[VAR]`, else `~/.petbox/keys.json`).
 - `protocol.ts` — the **single source** for the injected memory-protocol text. `buildProtocol(project, tool, opts)`
   renders one canonical text parametrized only by the MCP tool namer (`mcp__petbox__<verb>` for
   Claude Code / Droid, `petbox_<verb>` for opencode) plus the opt-in resume/compact suffix. All
@@ -23,35 +32,54 @@ Kit location: `D:\my\prj\petbox\agents\wiring\`
 - `wire.ts` — bootstrap CLI (everything below).
 - `templates/SKILL.md` — per-project Claude skill template (`{{PROJECT}}` / `{{WORKSPACE}}`).
 
-Runtime: plain TypeScript executed by **node 24** native type-stripping. No build, no
-`package.json`, zero dependencies. (No `enum`/`namespace`/parameter-properties; type-only imports.)
+Runtime: plain TypeScript executed by **node ≥ 23.6** native type-stripping. Zero dependencies.
+(No `enum`/`namespace`/parameter-properties; type-only imports; relative imports with explicit
+`.ts`.) The npm package carries `bin/petbox-wire.js` (a plain-JS launcher that checks the Node
+version, then imports `wire.ts`) plus the `src/` kit.
 
 ## 1. Wiring a new project
 
 1. **Mint an API key.** From a Claude Code session on the `$system` project, call
    `mcp__petbox__apikey_create` scoped to the new project. (Key minting is intentionally out of
    scope for `wire.ts`.)
-2. **Run wire:**
+2. **Run wire** (no clone needed):
    ```
-   node D:\my\prj\petbox\agents\wiring\wire.ts <dir> <project> --key <KEY> --env <VAR>
+   npx petbox-wire <dir> <project> --key <KEY> --env <VAR>
+   ```
+   Dev, from a checkout (identical behavior — the kit is still copied to `~/.petbox/wire/`):
+   ```
+   node src/clients-ts/petbox-wire/src/wire.ts <dir> <project> --key <KEY> --env <VAR>
    ```
    - `--env` is optional; default is `<PROJECT>_API_KEY` (uppercased, non-alphanumerics → `_`).
    - `--workspace` is optional; default `stdray` (used only for the SKILL.md permalink).
-   - `--key` persists the key to user-scope env. Omit it once the env var is already set.
-3. **Restart your terminal** so the user-scope env var is visible to new sessions.
+   - `--key` persists the key (after validation) to `~/.petbox/keys.json` AND to a real
+     environment variable (Windows user-scope env / POSIX `~/.petbox/env.sh` sourced from the
+     login profiles) — the MCP configs reference `${VAR}`. Omit it once the key is already
+     stored. Kit hooks see the key immediately; **agents need a new terminal** after the first
+     wiring so their MCP configs resolve the env var.
 
-## 2. What `wire.ts` does (idempotent, 9 steps)
+## 2. What `wire.ts` does (idempotent, 10 steps)
 
-1. Derive the env-var name (`--env` or `<PROJECT>_API_KEY`).
-2. Obtain the key (`--key`, else the user-scope env var read via PowerShell). If absent, it
+1. Derive the env-var name (`--env`, else the existing registry entry's `envVar` for this
+   prefix, else `<PROJECT>_API_KEY`).
+2. Obtain the key (`--key`, else `process.env[VAR]`, else `~/.petbox/keys.json`). If absent, it
    prints how to mint one and exits 1.
-3. If `--key` was given, persist it to user-scope env (`[Environment]::SetEnvironmentVariable(..,'User')`).
-4. Validate the key: `GET /api/auth/validate` with `X-Api-Key`. On 200 it compares the returned
+3. Validate the key: `GET /api/auth/validate` with `X-Api-Key`. On 200 it compares the returned
    `project` to your `<project>` and aborts on mismatch; 401 aborts; a missing/non-standard
-   endpoint only warns and continues. (Contract: `src/PetBox.Core/Auth/AuthApi.cs`.)
-5. Upsert the registry entry `~/.petbox/projects.json`: `{prefix: <dir>, project, envVar}`
+   endpoint only warns and continues. (Contract: `src/PetBox.Core/Auth/AuthApi.cs`.) Validation
+   runs BEFORE persistence, so a bad key never lands in the stores.
+4. Persist the key everywhere agents look: the cross-platform key store `~/.petbox/keys.json`
+   (merge, never clobber; POSIX `chmod 0600`) for the kit hooks, plus a real environment
+   variable for the MCP configs — Windows: user-scope env via PowerShell; POSIX:
+   `~/.petbox/env.sh` regenerated from the key store and sourced (marker-guarded) from
+   `~/.profile`/`~/.bashrc`/`~/.zshenv`. Header values in the committed configs stay as `${VAR}`
+   references, so no secret lands in any project file.
+5. Copy the running kit (npx cache or checkout `src/`) into the stable location `~/.petbox/wire/`
+   (whole `src/` dir: all `.ts` + `templates/SKILL.md`, overwrite). Skipped when already running
+   the installed copy. Every global link in step 8 is computed from this stable path.
+6. Upsert the registry entry `~/.petbox/projects.json`: `{prefix: <dir>, project, envVar}`
    (replace by prefix; other entries untouched). `baseUrl` is written only when non-default.
-6. (Re)generate per-project files in `<dir>`:
+7. (Re)generate per-project files in `<dir>`:
    - `.mcp.json` — Claude Code MCP, `X-Api-Key: ${VAR}` (petbox-only file, regenerated whole).
    - `.opencode/opencode.json` — opencode remote MCP, `X-Api-Key: {env:VAR}` (regenerated whole).
    - `.factory/mcp.json` — Factory Droid MCP, `X-Api-Key: ${VAR}` — **merged** (never clobbers
@@ -64,19 +92,21 @@ Runtime: plain TypeScript executed by **node 24** native type-stripping. No buil
    - `.factory/skills/petbox/SKILL.md` — the same rendered skill for Factory Droid (its native
      skills root is `.factory/skills/`; its Claude-compat root is `.agent/skills/`, not
      `.claude/skills/`, so it needs a dedicated copy).
-7. Global install (idempotent):
-   - `~/.claude/settings.json` — **merge** a `Stop` → `node "<…>/push-session.ts"` and
-     `SessionStart` → `node "<…>/pull-memory.ts"` hook. The rest of the live settings
+8. Global install (idempotent; all commands point at the stable copy `~/.petbox/wire/`):
+   - `~/.claude/settings.json` — **merge** a `Stop` → `node "~/.petbox/wire/push-session.ts"` and
+     `SessionStart` → `node "~/.petbox/wire/pull-memory.ts"` hook. The rest of the live settings
      (env/permissions/statusLine/model/…) is preserved; duplicate commands are not re-added.
-   - `~/.factory/settings.json` — **merge** a `Stop` → `node "<…>/droid-push-session.ts"` and
-     `SessionStart` → `node "<…>/droid-pull-memory.ts"` hook under the `hooks` key (same merge
-     semantics: never clobber, skip duplicates). Factory Droid uses the Claude-Code-compatible
-     hook shape and snake_case payloads; the reference documents no `enableHooks` gate, so none
-     is written.
-   - `~/.config/opencode/plugins/petbox.ts` — a thin shim that re-exports the kit plugin from
-     its absolute `file:///` URL (single source of truth; overwritten if present).
-8. `--cleanup-legacy` (see §3).
-9. Self-smoke: `POST /api/sessions/<project>/wire-smoke?agent=wire` (application/x-ndjson) and assert a numeric `version` in the response.
+     **Stale-hook prune:** any existing kit hook whose command does not point at the current
+     stable path (e.g. an old checkout path like `…/agents/wiring/push-session.ts`) is removed.
+   - `~/.factory/settings.json` — **merge** a `Stop` → `node "~/.petbox/wire/droid-push-session.ts"`
+     and `SessionStart` → `node "~/.petbox/wire/droid-pull-memory.ts"` hook under the `hooks` key
+     (same merge + stale-prune semantics). Factory Droid uses the Claude-Code-compatible hook
+     shape and snake_case payloads; the reference documents no `enableHooks` gate, so none is
+     written.
+   - `~/.config/opencode/plugins/petbox.ts` — a thin shim that re-exports the kit plugin from the
+     stable copy's `file:///` URL (single source of truth; overwritten each run).
+9. `--cleanup-legacy` (see §3).
+10. Self-smoke: `POST /api/sessions/<project>/wire-smoke?agent=wire` (application/x-ndjson) and assert a numeric `version` in the response.
 
 ## 3. Migrating a legacy (per-project copy) repo
 
@@ -92,15 +122,28 @@ logic from `<dir>` only:
 
 ## 4. Fixing / evolving the kit
 
-The hooks and plugin live in exactly one place (`agents/wiring/`). The Claude hooks point at the
-absolute `.ts` files and the opencode shim re-exports the absolute plugin path, so editing a kit
-file is picked up by **every** wired project automatically — no per-project copies to re-roll.
-Re-running `wire.ts` for a project is only needed to change that project's config/registry entry.
+The canonical source is `src/clients-ts/petbox-wire/src/` in the repo. The runtime source of
+truth on each machine is the stable copy `~/.petbox/wire/`, which every global hook and the
+opencode shim point at.
+
+Workflow to ship a kit change:
+1. Edit the kit in the repo (`src/clients-ts/petbox-wire/src/…`).
+2. Publish by pushing the **`npm`** tag — CI (`./build.sh --target=NpmPublish`) stamps the
+   GitVersion version and publishes **both** npm packages (`@stdray-npm/petbox-client` and
+   `petbox-wire`).
+3. On each machine, re-run `npx petbox-wire@latest <dir> <project> --key <KEY>` (or the dev
+   checkout command). This refreshes `~/.petbox/wire/` and the generated config.
+
+Editing `~/.petbox/wire/` in place is no longer canonical — it is overwritten on the next run.
+Re-running `wire.ts` for a project is also how you change that project's config/registry entry.
 
 ## 5. Gotchas
 
-- **User-scope env is visible only to NEW terminals.** After `--key`, restart the terminal (the
-  current shell will not see the variable).
+- **Two key surfaces.** The kit hooks read `process.env[VAR]` first, then `~/.petbox/keys.json`
+  (via `registry.ts`) — they work immediately after wiring. The agents' MCP configs resolve
+  `${VAR}` from the real environment only, which wire persists per platform (Windows user-scope
+  env / POSIX `env.sh` + profile source) — **they need a new terminal / login shell** after the
+  first wiring. An already-exported env var always wins over the file.
 - **Stale MCP schema in a live session after a PetBox deploy.** Newly-added MCP tool params are
   cached per session; smoke them from a fresh session, not the one open during deploy.
 - **A folder outside the registry → hooks no-op.** This is normal and intended: the global hooks
@@ -131,9 +174,13 @@ block is byte-identical across agents.
 `import-sessions.ts` backfills the PetBox session archive from the agents'' LOCAL history —
 run it once after wiring a project (or any time) to make the whole past searchable:
 
+Run it from the stable runtime copy (installed by `wire.ts`), or from a checkout:
+
 ```bash
-node --experimental-strip-types agents/wiring/import-sessions.ts            # cwd project, all agents
-node --experimental-strip-types agents/wiring/import-sessions.ts --agent claude --project mykey
+node ~/.petbox/wire/import-sessions.ts                                          # cwd project, all agents
+node ~/.petbox/wire/import-sessions.ts --agent claude --project mykey
+# dev, from a checkout:
+node src/clients-ts/petbox-wire/src/import-sessions.ts
 # flags: --dry-run  --since YYYY-MM-DD  --limit N  --force
 ```
 

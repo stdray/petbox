@@ -1,34 +1,44 @@
-// Bootstrap CLI for the global agent-wiring kit.
+// Bootstrap CLI for the global agent-wiring kit — shipped as the `petbox-wire` npm package
+// (`npx petbox-wire <dir> <projectKey> …`), so a project can be wired without cloning the repo.
 //
-//   node wire.ts <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]
+//   npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]
+//   (dev, from a checkout: node <pkg>/src/wire.ts <dir> <projectKey> …)
 //
 // Idempotently wires a project to PetBox:
-//   1. derive the env-var name for the API key
-//   2. obtain the key (--key, else user-scope env)            — minting keys is OUT OF SCOPE
-//   3. (--key) persist it to user-scope env
-//   4. validate the key against /api/auth/validate
-//   5. upsert the registry entry (prefix → project, envVar)
-//   6. (re)generate per-project config files:
+//    1. derive the env-var name for the API key
+//    2. obtain the key (--key, else env var / ~/.petbox/keys.json)  — minting keys is OUT OF SCOPE
+//    3. validate the key against /api/auth/validate
+//    4. persist the key everywhere agents look: ~/.petbox/keys.json (kit hooks) + user-scope
+//       env on Windows / ~/.petbox/env.sh sourced from login profiles on POSIX (the per-project
+//       MCP configs reference ${ENV_VAR}, so a real environment variable must exist)
+//    5. copy the kit to a stable location (~/.petbox/wire/) so global hooks survive npx eviction
+//    6. upsert the registry entry (prefix → project, envVar)
+//    7. (re)generate per-project config files:
 //        - .mcp.json                         (Claude Code MCP)
 //        - .opencode/opencode.json           (opencode MCP)
 //        - .factory/mcp.json                 (Factory Droid MCP — idempotent merge)
 //        - .claude/skills/petbox/SKILL.md    (Claude Code skill; opencode reads it via its
 //                                             Claude-compatible skills discovery path)
 //        - .factory/skills/petbox/SKILL.md   (Factory Droid skill)
-//   7. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files)
-//   8. (--cleanup-legacy) remove the project's old per-project hook/plugin copies
-//   9. self-smoke: POST a tiny session and assert the server applied it
+//    8. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files);
+//       all links point at the stable copy (~/.petbox/wire/)
+//    9. (--cleanup-legacy) remove the project's old per-project hook/plugin copies
+//   10. self-smoke: POST a tiny session and assert the server applied it
 //
 // Unlike the hooks, this is a CLI: step failures surface loudly (no silent swallow).
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const DEFAULT_BASE_URL = "https://petbox.3po.su";
+// Where THIS run's kit lives (npx cache or a checkout's src dir).
 const HERE = dirname(fileURLToPath(import.meta.url));
+// Stable install location: the kit is copied here and every global hook/plugin link points at
+// it, so wiring survives npx cache eviction and does not depend on any checkout.
+const STABLE = join(homedir(), ".petbox", "wire");
 
 // ---- arg parsing -----------------------------------------------------------
 
@@ -43,7 +53,7 @@ type Args = {
 
 function usage(): never {
   console.error(
-    "usage: node wire.ts <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]",
+    "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]",
   );
   process.exit(2);
 }
@@ -77,37 +87,88 @@ function deriveEnvVar(projectKey: string): string {
   return projectKey.toUpperCase().replace(/[^A-Z0-9]/g, "_") + "_API_KEY";
 }
 
-// Read/write a user-scope environment variable via PowerShell (the current process may not
-// have it). Returns "" if unset.
-function getUserEnv(name: string): string {
-  try {
-    const out = execFileSync(
-      "powershell",
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `[Environment]::GetEnvironmentVariable('${name}','User')`,
-      ],
-      { encoding: "utf8" },
-    );
-    return out.trim();
-  } catch {
-    return "";
+// Cross-platform key store (~/.petbox/keys.json): a flat JSON map { "<ENV_VAR>": "<key>" }.
+// The kit's own hooks read it (via registry.ts) with no env var required. The per-project MCP
+// configs still reference ${ENV_VAR}, so persistKeyForAgents() additionally materializes a real
+// environment variable per platform.
+function keysStorePath(): string {
+  return join(homedir(), ".petbox", "keys.json");
+}
+
+// Read a key from the store. Returns "" if the file/entry is missing.
+function readKeyFromStore(name: string): string {
+  const store = readJson(keysStorePath());
+  const v = store && typeof store === "object" ? store[name] : undefined;
+  return typeof v === "string" ? v : "";
+}
+
+// Merge (never clobber) a key into the store. On POSIX tighten the file to 0600 (best-effort;
+// skipped on Windows, where chmod is a no-op / can throw).
+function writeKeyToStore(name: string, value: string): void {
+  const path = keysStorePath();
+  const store = readJson(path) ?? {};
+  store[name] = value;
+  writeJson(path, store);
+  if (process.platform !== "win32") {
+    try {
+      chmodSync(path, 0o600);
+    } catch {
+      /* best-effort */
+    }
   }
 }
 
-function setUserEnv(name: string, value: string): void {
-  execFileSync(
-    "powershell",
-    [
-      "-NoProfile",
-      "-NonInteractive",
-      "-Command",
-      `[Environment]::SetEnvironmentVariable('${name}', $env:WIRE_KEY_VALUE, 'User')`,
-    ],
-    { encoding: "utf8", env: { ...process.env, WIRE_KEY_VALUE: value } },
-  );
+// The agent MCP configs (.mcp.json `${VAR}`, opencode `{env:VAR}`, droid `${VAR}`) resolve the
+// key from a REAL environment variable — keys.json alone only covers the kit hooks. Persist it:
+//  - Windows: user-scope env via PowerShell (visible to NEW terminals);
+//  - POSIX: regenerate ~/.petbox/env.sh from the whole key store and make sure the login
+//    profiles source it (marker-guarded, idempotent).
+function persistKeyForAgents(envVar: string): void {
+  if (process.platform === "win32") {
+    const value = readKeyFromStore(envVar);
+    try {
+      execFileSync(
+        "powershell",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-Command",
+          `[Environment]::SetEnvironmentVariable('${envVar}', $env:WIRE_KEY_VALUE, 'User')`,
+        ],
+        { encoding: "utf8", env: { ...process.env, WIRE_KEY_VALUE: value } },
+      );
+      log(`[4/10] persisted ${envVar} to user-scope env (MCP configs read it; NEW terminals see it).`);
+    } catch (e) {
+      console.error(`[4/10] failed to persist ${envVar} to user-scope env — ${(e as Error).message}`);
+      process.exit(1);
+    }
+    return;
+  }
+
+  const store = readJson(keysStorePath()) ?? {};
+  const lines = Object.entries(store)
+    .filter(([, v]) => typeof v === "string")
+    .map(([k, v]) => `export ${k}=${JSON.stringify(v)}`);
+  const envShPath = join(homedir(), ".petbox", "env.sh");
+  writeFileSync(envShPath, "# Generated by petbox-wire from ~/.petbox/keys.json — do not edit.\n" + lines.join("\n") + "\n", "utf8");
+  try {
+    chmodSync(envShPath, 0o600);
+  } catch {
+    /* best-effort */
+  }
+
+  const marker = "# petbox-wire";
+  const sourceLine = `[ -f "$HOME/.petbox/env.sh" ] && . "$HOME/.petbox/env.sh" ${marker}`;
+  const profiles = [".profile", ".bashrc", ".zshenv"].map((f) => join(homedir(), f));
+  let sourced = false;
+  for (const p of profiles) {
+    if (!existsSync(p)) continue;
+    const content = readFileSync(p, "utf8");
+    if (!content.includes(marker)) appendFileSync(p, `\n${sourceLine}\n`, "utf8");
+    sourced = true;
+  }
+  if (!sourced) writeFileSync(profiles[0], sourceLine + "\n", "utf8");
+  log(`[4/10] wrote ${envShPath} and ensured login profiles source it (MCP configs read ${envVar}; new login shells see it).`);
 }
 
 function readJson(path: string): any {
@@ -140,24 +201,24 @@ async function validateKey(baseUrl: string, key: string, projectKey: string): Pr
       signal: AbortSignal.timeout(12000),
     });
   } catch (e) {
-    console.error(`[4/9] validate: could not reach ${uri} — ${(e as Error).message}. Aborting.`);
+    console.error(`[3/10] validate: could not reach ${uri} — ${(e as Error).message}. Aborting.`);
     process.exit(1);
   }
 
   if (resp.status === 401) {
-    console.error(`[4/9] validate: server rejected the API key (401). Aborting.`);
+    console.error(`[3/10] validate: server rejected the API key (401). Aborting.`);
     process.exit(1);
   }
   if (!resp.ok) {
     // Non-standard / endpoint missing → warn and continue.
-    log(`[4/9] validate: unexpected status ${resp.status} (endpoint missing?); continuing with a warning.`);
+    log(`[3/10] validate: unexpected status ${resp.status} (endpoint missing?); continuing with a warning.`);
     return;
   }
   let body: any = null;
   try {
     body = await resp.json();
   } catch {
-    log(`[4/9] validate: 200 but non-JSON body; continuing with a warning.`);
+    log(`[3/10] validate: 200 but non-JSON body; continuing with a warning.`);
     return;
   }
   // Contract (AuthApi.cs): 200 => { project, scopes } (camelCase, ASP.NET web defaults).
@@ -165,17 +226,44 @@ async function validateKey(baseUrl: string, key: string, projectKey: string): Pr
   if (typeof proj === "string" && proj.length > 0) {
     if (proj !== projectKey) {
       console.error(
-        `[4/9] validate: key belongs to project '${proj}', not '${projectKey}'. Aborting.`,
+        `[3/10] validate: key belongs to project '${proj}', not '${projectKey}'. Aborting.`,
       );
       process.exit(1);
     }
-    log(`[4/9] validate: OK — key scoped to '${proj}'.`);
+    log(`[3/10] validate: OK — key scoped to '${proj}'.`);
   } else {
-    log(`[4/9] validate: 200 without a project field; continuing with a warning.`);
+    log(`[3/10] validate: 200 without a project field; continuing with a warning.`);
   }
 }
 
-// ---- step 5: registry ------------------------------------------------------
+// ---- step 5: stable kit copy -----------------------------------------------
+
+// Copy the running kit (HERE — an npx cache dir or a checkout's src/) into the stable location
+// (~/.petbox/wire/), overwriting. Every global hook/plugin link is computed from STABLE, so the
+// wiring keeps working after npx evicts its cache or a checkout moves. Copies the whole src dir
+// (all .ts files + templates/SKILL.md). No-op when already running the installed copy.
+function copyKitToStable(): void {
+  if (resolve(HERE) === resolve(STABLE)) {
+    log(`[5/10] stable copy: already running the installed kit at ${STABLE} — skipped.`);
+    return;
+  }
+  mkdirSync(STABLE, { recursive: true });
+  cpSync(HERE, STABLE, { recursive: true, force: true });
+  log(`[5/10] stable copy: kit installed to ${STABLE} (from ${HERE}).`);
+}
+
+// ---- step 6: registry ------------------------------------------------------
+
+// Reuse the envVar of an existing registry entry for this exact prefix, so a plain re-run
+// stays idempotent even when the var name was customized via --env in the past.
+function registryEnvVar(prefix: string): string | undefined {
+  const data = readJson(join(homedir(), ".petbox", "projects.json"));
+  const entries: any[] = Array.isArray(data?.entries) ? data.entries : [];
+  const norm = (p: string) => p.replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();
+  const hit = entries.find((e) => norm(String(e?.prefix ?? "")) === norm(prefix));
+  const v = hit?.envVar;
+  return typeof v === "string" && v.length > 0 ? v : undefined;
+}
 
 function upsertRegistry(prefix: string, project: string, envVar: string, baseUrl: string): void {
   const path = join(homedir(), ".petbox", "projects.json");
@@ -188,10 +276,10 @@ function upsertRegistry(prefix: string, project: string, envVar: string, baseUrl
   if (baseUrl !== DEFAULT_BASE_URL) entry.baseUrl = baseUrl;
   next.push(entry);
   writeJson(path, { entries: next });
-  log(`[5/9] registry: upserted ${prefix} → ${project} (${envVar}) in ${path}`);
+  log(`[6/10] registry: upserted ${prefix} → ${project} (${envVar}) in ${path}`);
 }
 
-// ---- step 6: per-project files --------------------------------------------
+// ---- step 7: per-project files --------------------------------------------
 
 // Merge one MCP server into a possibly-shared JSON config (Droid's .factory/mcp.json can hold
 // team servers), preserving every other server and top-level key. Idempotent: re-running with
@@ -225,7 +313,7 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
     },
   };
   writeJson(join(dir, ".mcp.json"), mcp);
-  log(`[6/9] wrote ${join(dir, ".mcp.json")}`);
+  log(`[7/10] wrote ${join(dir, ".mcp.json")}`);
 
   // .opencode/opencode.json (opencode) — petbox-only file owned by wire.ts, regenerated whole.
   const oc = {
@@ -240,7 +328,7 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
     },
   };
   writeJson(join(dir, ".opencode", "opencode.json"), oc);
-  log(`[6/9] wrote ${join(dir, ".opencode", "opencode.json")}`);
+  log(`[7/10] wrote ${join(dir, ".opencode", "opencode.json")}`);
 
   // .factory/mcp.json (Factory Droid) — a project-level MCP config that may be shared with team
   // servers, so merge (never clobber) rather than regenerate whole. Droid supports `${VAR}`
@@ -252,7 +340,7 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
     headers: { "X-Api-Key": `\${${envVar}}` },
     disabled: false,
   });
-  log(`[6/9] merged petbox MCP server into ${droidMcpPath}`);
+  log(`[7/10] merged petbox MCP server into ${droidMcpPath}`);
 
   // SKILL.md — render once from the template, then drop a copy into every native skill surface.
   const tpl = readFileSync(join(HERE, "templates", "SKILL.md"), "utf8");
@@ -263,21 +351,57 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
     const skillPath = join(dir, ...surface, "petbox", "SKILL.md");
     mkdirSync(dirname(skillPath), { recursive: true });
     writeFileSync(skillPath, skill, "utf8");
-    log(`[6/9] wrote ${skillPath}`);
+    log(`[7/10] wrote ${skillPath}`);
   }
 }
 
-// ---- step 7: global install ------------------------------------------------
+// ---- step 8: global install ------------------------------------------------
+
+// Hook commands are `node "<STABLE>/<file>.ts"`. Older wirings (this repo's own owner box
+// included) left commands pointing at a checkout — e.g. `node "D:\…\agents\wiring\push-session.ts"`.
+// Recognize a kit hook by these command suffixes so we can prune the stale ones (any that don't
+// equal one of this run's stable commands).
+const KIT_HOOK_SUFFIXES = [
+  'push-session.ts"',
+  'pull-memory.ts"',
+  'droid-push-session.ts"',
+  'droid-pull-memory.ts"',
+];
+
+// Remove kit hook entries whose command is NOT one of the current stable commands (validCmds),
+// then drop any now-empty groups. Mutates hooksObj in place; returns the count pruned.
+function pruneStaleKitHooks(hooksObj: any, validCmds: Set<string>): number {
+  let removed = 0;
+  for (const event of Object.keys(hooksObj)) {
+    const groups: any[] = Array.isArray(hooksObj[event]) ? hooksObj[event] : [];
+    for (const g of groups) {
+      if (!g || !Array.isArray(g.hooks)) continue;
+      const before = g.hooks.length;
+      g.hooks = g.hooks.filter((h: any) => {
+        const c = typeof h?.command === "string" ? h.command : "";
+        const isKit = KIT_HOOK_SUFFIXES.some((s) => c.endsWith(s));
+        return !(isKit && !validCmds.has(c));
+      });
+      removed += before - g.hooks.length;
+    }
+    hooksObj[event] = groups.filter((g) => !(g && Array.isArray(g.hooks) && g.hooks.length === 0));
+  }
+  return removed;
+}
 
 function installGlobalHooks(): void {
-  const pushPath = join(HERE, "push-session.ts");
-  const pullPath = join(HERE, "pull-memory.ts");
-  const pushCmd = `node "${pushPath}"`;
-  const pullCmd = `node "${pullPath}"`;
+  const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
+  const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
+  const droidPushCmd = `node "${join(STABLE, "droid-push-session.ts")}"`;
+  const droidPullCmd = `node "${join(STABLE, "droid-pull-memory.ts")}"`;
+  // Every kit hook command this run considers current — the prune keeps these, drops the rest.
+  const validCmds = new Set([pushCmd, pullCmd, droidPushCmd, droidPullCmd]);
 
   const settingsPath = join(homedir(), ".claude", "settings.json");
   const settings = readJson(settingsPath) ?? {};
   if (!settings.hooks || typeof settings.hooks !== "object") settings.hooks = {};
+  const prunedClaude = pruneStaleKitHooks(settings.hooks, validCmds);
+  if (prunedClaude > 0) log(`[8/10] pruned ${prunedClaude} stale claude kit hook(s) not pointing at ${STABLE}.`);
 
   // Claude Code hooks shape: settings.hooks[event] = [{ matcher?, hooks: [{type, command}] }]
   const ensureHook = (event: string, command: string) => {
@@ -286,32 +410,29 @@ function installGlobalHooks(): void {
       (g) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => h?.command === command),
     );
     if (already) {
-      log(`[7/9] claude hook ${event} already present — skipped.`);
+      log(`[8/10] claude hook ${event} already present — skipped.`);
       return;
     }
     groups.push({ hooks: [{ type: "command", command }] });
     settings.hooks[event] = groups;
-    log(`[7/9] claude hook ${event} added.`);
+    log(`[8/10] claude hook ${event} added.`);
   };
 
   ensureHook("Stop", pushCmd);
   ensureHook("SessionStart", pullCmd);
   writeJson(settingsPath, settings);
-  log(`[7/9] merged hooks into ${settingsPath}`);
+  log(`[8/10] merged hooks into ${settingsPath}`);
 
   // Factory Droid hooks: same JSON shape as Claude Code, merged into ~/.factory/settings.json
   // under the `hooks` key (a documented fallback location). Droid exposes petbox tools as
   // `mcp__petbox__*` and delivers Claude-Code-compatible snake_case payloads, so it reuses the
   // shared protocol/append flow via its own thin hooks. No `enableHooks` flag is set: the droid
   // hooks reference does not document one gating hook execution.
-  const droidPushPath = join(HERE, "droid-push-session.ts");
-  const droidPullPath = join(HERE, "droid-pull-memory.ts");
-  const droidPushCmd = `node "${droidPushPath}"`;
-  const droidPullCmd = `node "${droidPullPath}"`;
-
   const droidSettingsPath = join(homedir(), ".factory", "settings.json");
   const droidSettings = readJson(droidSettingsPath) ?? {};
   if (!droidSettings.hooks || typeof droidSettings.hooks !== "object") droidSettings.hooks = {};
+  const prunedDroid = pruneStaleKitHooks(droidSettings.hooks, validCmds);
+  if (prunedDroid > 0) log(`[8/10] pruned ${prunedDroid} stale droid kit hook(s) not pointing at ${STABLE}.`);
 
   const ensureDroidHook = (event: string, command: string) => {
     const groups: any[] = Array.isArray(droidSettings.hooks[event]) ? droidSettings.hooks[event] : [];
@@ -319,21 +440,22 @@ function installGlobalHooks(): void {
       (g) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => h?.command === command),
     );
     if (already) {
-      log(`[7/9] droid hook ${event} already present — skipped.`);
+      log(`[8/10] droid hook ${event} already present — skipped.`);
       return;
     }
     groups.push({ hooks: [{ type: "command", command }] });
     droidSettings.hooks[event] = groups;
-    log(`[7/9] droid hook ${event} added.`);
+    log(`[8/10] droid hook ${event} added.`);
   };
 
   ensureDroidHook("Stop", droidPushCmd);
   ensureDroidHook("SessionStart", droidPullCmd);
   writeJson(droidSettingsPath, droidSettings);
-  log(`[7/9] merged droid hooks into ${droidSettingsPath}`);
+  log(`[8/10] merged droid hooks into ${droidSettingsPath}`);
 
-  // Global opencode plugin: thin shim re-exporting the kit plugin from an absolute file URL.
-  const pluginAbs = join(HERE, "opencode-plugin.ts");
+  // Global opencode plugin: thin shim re-exporting the kit plugin from the stable copy's file
+  // URL (overwritten each run, so an old shim pointing at a checkout is replaced).
+  const pluginAbs = join(STABLE, "opencode-plugin.ts");
   const pluginUrl = toFileUrl(pluginAbs);
   const shimDir = join(homedir(), ".config", "opencode", "plugins");
   mkdirSync(shimDir, { recursive: true });
@@ -344,17 +466,17 @@ function installGlobalHooks(): void {
 export { PetboxPlugin, default } from "${pluginUrl}";
 `;
   writeFileSync(shimPath, shim, "utf8");
-  log(`[7/9] wrote global opencode plugin shim ${shimPath} → ${pluginUrl}`);
+  log(`[8/10] wrote global opencode plugin shim ${shimPath} → ${pluginUrl}`);
 }
 
-// ---- step 8: cleanup legacy ------------------------------------------------
+// ---- step 9: cleanup legacy ------------------------------------------------
 
 function cleanupLegacy(dir: string): void {
   // .claude/hooks/ — drop the whole per-project hooks folder.
   const hooksDir = join(dir, ".claude", "hooks");
   if (existsSync(hooksDir)) {
     rmSync(hooksDir, { recursive: true, force: true });
-    log(`[8/9] removed ${hooksDir}`);
+    log(`[9/10] removed ${hooksDir}`);
   }
 
   // .claude/settings.local.json — drop ONLY the hooks key, keep permissions etc.
@@ -363,14 +485,14 @@ function cleanupLegacy(dir: string): void {
   if (local && typeof local === "object" && "hooks" in local) {
     delete local.hooks;
     writeJson(localPath, local);
-    log(`[8/9] removed 'hooks' key from ${localPath}`);
+    log(`[9/10] removed 'hooks' key from ${localPath}`);
   }
 
   // .opencode/plugin/ — drop the per-project plugin folder.
   const pluginDir = join(dir, ".opencode", "plugin");
   if (existsSync(pluginDir)) {
     rmSync(pluginDir, { recursive: true, force: true });
-    log(`[8/9] removed ${pluginDir}`);
+    log(`[9/10] removed ${pluginDir}`);
   }
 
   // .opencode node deps — only if package.json depends solely on @opencode-ai/plugin.
@@ -386,16 +508,16 @@ function cleanupLegacy(dir: string): void {
         const p = join(dir, ".opencode", f);
         if (existsSync(p)) {
           rmSync(p, { recursive: true, force: true });
-          log(`[8/9] removed ${p}`);
+          log(`[9/10] removed ${p}`);
         }
       }
     } else {
-      log(`[8/9] kept .opencode deps — package.json has non-plugin deps: ${keys.join(", ")}`);
+      log(`[9/10] kept .opencode deps — package.json has non-plugin deps: ${keys.join(", ")}`);
     }
   }
 }
 
-// ---- step 9: self-smoke ----------------------------------------------------
+// ---- step 10: self-smoke ---------------------------------------------------
 
 async function selfSmoke(baseUrl: string, project: string, key: string): Promise<void> {
   const uri = `${baseUrl}/api/sessions/${project}/wire-smoke?agent=wire`;
@@ -409,13 +531,13 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
       signal: AbortSignal.timeout(12000),
     });
   } catch (e) {
-    console.error(`[9/9] self-smoke: POST failed — ${(e as Error).message}`);
+    console.error(`[10/10] self-smoke: POST failed — ${(e as Error).message}`);
     process.exitCode = 1;
     return;
   }
   const text = await resp.text();
   if (!resp.ok) {
-    console.error(`[9/9] self-smoke: HTTP ${resp.status} — ${text}`);
+    console.error(`[10/10] self-smoke: HTTP ${resp.status} — ${text}`);
     process.exitCode = 1;
     return;
   }
@@ -426,9 +548,9 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
     /* keep raw */
   }
   if (typeof parsed?.version === "number") {
-    log(`[9/9] self-smoke: OK — sessionId=${parsed.sessionId}, version=${parsed.version}, messages=${parsed.messageCount}`);
+    log(`[10/10] self-smoke: OK — sessionId=${parsed.sessionId}, version=${parsed.version}, messages=${parsed.messageCount}`);
   } else {
-    console.error(`[9/9] self-smoke: server did not return a numeric version — ${text}`);
+    console.error(`[10/10] self-smoke: server did not return a numeric version — ${text}`);
     process.exitCode = 1;
   }
 }
@@ -447,50 +569,68 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  // 1. env var
-  const envVar = args.env ?? deriveEnvVar(project);
-  log(`[1/9] envVar = ${envVar}`);
+  // 1. env var — explicit --env wins; else reuse the existing registry entry (idempotent
+  // re-run with a customized var name); else derive from the project key.
+  const envVar = args.env ?? registryEnvVar(dir) ?? deriveEnvVar(project);
+  log(`[1/10] envVar = ${envVar}`);
 
-  // 2/3. key
+  // 2. key — --key wins, else process env (owner's inherited user-scope var still works),
+  // else the cross-platform key store (~/.petbox/keys.json).
   let key = args.key;
   if (key) {
-    setUserEnv(envVar, key);
-    log(`[3/9] persisted ${envVar} to user-scope env. NOTE: visible only to NEW terminals.`);
+    log(`[2/10] using --key from the command line.`);
   } else {
-    key = getUserEnv(envVar) || process.env[envVar] || "";
+    key = process.env[envVar] || readKeyFromStore(envVar) || "";
     if (!key) {
       console.error(
-        `[2/9] no API key found.\n` +
-          `  Provide one with --key <KEY>, or set ${envVar} at user scope first.\n` +
+        `[2/10] no API key found.\n` +
+          `  Provide one with --key <KEY>, or set ${envVar} (env or ~/.petbox/keys.json) first.\n` +
           `  Mint a key from a Claude session on the $system project:\n` +
           `    mcp__petbox__apikey_create  (project='${project}')\n` +
           `  Then re-run with --key <KEY>. (Minting keys is out of scope for wire.ts.)`,
       );
       process.exit(1);
     }
-    log(`[2/9] using existing user-scope ${envVar}.`);
+    log(`[2/10] using existing ${envVar} (env or key store).`);
   }
 
-  // 4. validate
+  // 3. validate — BEFORE persisting anything, so a bad key never lands in the stores.
   await validateKey(baseUrl, key, project);
 
-  // 5. registry
+  // 4. persist everywhere agents look: keys.json (kit hooks read it immediately) + a real
+  // env var per platform (the per-project MCP configs reference ${envVar}). Idempotent, so
+  // re-runs self-heal a machine where only one of the two exists.
+  writeKeyToStore(envVar, key);
+  log(`[4/10] persisted ${envVar} to ${keysStorePath()}.`);
+  persistKeyForAgents(envVar);
+
+  // 5. stable kit copy
+  copyKitToStable();
+
+  // 6. registry
   upsertRegistry(dir, project, envVar, baseUrl);
 
-  // 6. project files
+  // 7. project files
   writeProjectFiles(dir, project, envVar, workspace);
 
-  // 7. global install
+  // 8. global install
   installGlobalHooks();
 
-  // 8. cleanup legacy
+  // 9. cleanup legacy
   if (args.cleanupLegacy) cleanupLegacy(dir);
-  else log(`[8/9] cleanup-legacy not requested — skipped.`);
+  else log(`[9/10] cleanup-legacy not requested — skipped.`);
 
-  // 9. self-smoke
+  // 10. self-smoke
   await selfSmoke(baseUrl, project, key);
 
-  log(`done. Restart your terminal so the user-scope env var is visible to new sessions.`);
+  if (process.env[envVar]) {
+    log(`done.`);
+  } else {
+    log(
+      `done. NOTE: start a NEW terminal${process.platform === "win32" ? "" : " (login shell)"} before launching agents — ` +
+        `their MCP configs read ${envVar} from the environment. The kit hooks work immediately (keys.json).`,
+    );
+  }
 }
 
 main().catch((e) => {

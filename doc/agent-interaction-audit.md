@@ -47,10 +47,10 @@ deepseek) takes the stale surface as truth and breaks.
 
 **Surfaces in scope:**
 - `AGENTS.md` (the shared contract; the primary surface for opencode/droid).
-- `.claude/skills/*/SKILL.md` and `agents/wiring/templates/SKILL.md`.
+- `.claude/skills/*/SKILL.md` and `src/clients-ts/petbox-wire/src/templates/SKILL.md`.
 - MCP tool **descriptions** as served live (the text an agent reads to decide how to
   call a tool) vs. what the tool actually accepts/returns.
-- The wiring kit's injected canon / friction-duty text (`agents/wiring/protocol.ts`,
+- The wiring kit's injected canon / friction-duty text (`src/clients-ts/petbox-wire/src/protocol.ts`,
   `canon.ts`) vs. the live canon (`GET /api/memory/$system/canon`).
 
 **Procedure:**

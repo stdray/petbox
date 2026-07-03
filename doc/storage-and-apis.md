@@ -63,7 +63,7 @@ Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a sto
 
 Storage: `sessions/{projectKey}.db` — a **flat latest-snapshot** per session (one row, no temporal history), content stored as a Brotli-compressed JSONL message blob. Keyed by `sessionId`; `version` == the last message's ordinal.
 
-- **REST:** `POST /api/sessions/{projectKey}/{sessionId}?agent=…` — body is `application/x-ndjson` (one `{role, content}` message per line). This is what the agent **Stop hook** (`agents/wiring/push-session.ts`, opencode `opencode-plugin.ts`) calls every turn: it re-sends the full ordered transcript (last-write-wins; the server numbers the messages).
+- **REST:** `POST /api/sessions/{projectKey}/{sessionId}?agent=…` — body is `application/x-ndjson` (one `{role, content}` message per line). This is what the agent **Stop hook** (`src/clients-ts/petbox-wire/src/push-session.ts`, opencode `opencode-plugin.ts`) calls every turn: it re-sends the full ordered transcript (last-write-wins; the server numbers the messages).
 - **MCP:** `session_search|get|upsert|append|delete` — `session_search` is THE read verb (uniform-entity-verbs v2; replaced `session.list`): without `q` a listing of compact rows, with `q` the two-stage archive search (digest discovery → episodic hydration; hits carry message ordinals for `session_get`).
 - **UI:** `/ui/{ws}/{project}/sessions/{sessionId}` (read-only detail).
 
