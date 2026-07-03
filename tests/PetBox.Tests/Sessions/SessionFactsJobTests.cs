@@ -93,7 +93,9 @@ public sealed class SessionFactsJobTests : IDisposable
 	public async Task Extracts_WritesQuarantinedFacts_WithProvenance()
 	{
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("обсуждение", "итог: чинили парсер"));
-		var chat = new ScriptedChat(TwoFactsJson); // no memory stores exist yet → no judge calls
+		// The judge is ALWAYS consulted now (worth-gate): even with no existing neighbors each
+		// candidate is judged — here it clears the gate with "add".
+		var chat = new ScriptedChat(TwoFactsJson, """{"action":"add"}""");
 
 		var captured = await Job(chat).DrainAllAsync(CancellationToken.None);
 
@@ -111,7 +113,7 @@ public sealed class SessionFactsJobTests : IDisposable
 	public async Task SecondPass_NoNewMessages_NoChatSpent()
 	{
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a"));
-		var chat = new ScriptedChat(TwoFactsJson);
+		var chat = new ScriptedChat(TwoFactsJson, """{"action":"add"}""");
 		var job = Job(chat);
 		await job.DrainAllAsync(CancellationToken.None);
 		var calls = chat.Calls;
@@ -266,13 +268,119 @@ public sealed class SessionFactsJobTests : IDisposable
 	public async Task ChatUnavailable_NoOp_ThenBackfillsOnRecovery()
 	{
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("a"));
-		var chat = new ScriptedChat(TwoFactsJson) { Available = false };
+		var chat = new ScriptedChat(TwoFactsJson, """{"action":"add"}""") { Available = false };
 		var job = Job(chat);
 
 		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
 
 		chat.Available = true;
 		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(2); // un-advanced cursor backfilled
+	}
+
+	[Fact]
+	public async Task PerSessionCap_SpansAllBatches_NotPerBatch()
+	{
+		// W1: the per-session cap is HONEST across the whole DistillAsync pass. A long session
+		// spans two extraction batches, each yielding 5 distinct facts (10 total). The old cap
+		// was per-batch (Take(8) inside the loop) → up to 16; the new cap tops the SESSION at
+		// MaxCandidatesPerSession no matter how many batches it took.
+		var big = new string('ж', 4_000);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+			Msgs(Enumerable.Range(1, 13).Select(i => $"{i}: {big}").ToArray())); // 12+1 → 2 batches
+		var chat = new CapChat(perBatch: 5);
+
+		var captured = await Job(chat).DrainAllAsync(CancellationToken.None);
+
+		chat.ExtractCalls.Should().Be(2); // both batches were extracted (10 candidates offered)
+		captured.Should().Be(SessionFactsJob.MaxCandidatesPerSession); // …but the session is capped
+		(await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null))
+			.Should().HaveCount(SessionFactsJob.MaxCandidatesPerSession);
+	}
+
+	[Fact]
+	public async Task JudgeAlwaysConsulted_DropsNotWorthStoring_DeadLettered_NothingWritten()
+	{
+		// W1: with NO existing neighbors the judge is STILL consulted (worth-gate). Here it rules
+		// the candidate not durable (narration) → "drop": nothing is written and no store is minted.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("реализовал фичу и задеплоил ci.512"));
+		var chat = new ScriptedChat(
+			"""[{"type":"Project","description":"задеплоил ci.512 и прогнал смок","body":"нарратив о работе"}]""",
+			"""{"action":"drop"}""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		chat.Calls.Should().Be(2); // extraction + the judge WAS called despite zero neighbors
+		(await _memory.StoreExistsAsync(Proj, SessionFactsJob.Store)).Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task JudgeDelete_InvalidatesStaleAutocapturedEntry()
+	{
+		// W2: the judge may invalidate a stale autocaptured entry — "delete" soft-removes it.
+		await _memory.CreateStoreAsync(Proj, SessionFactsJob.Store, null);
+		await _memory.UpsertAsync(Proj, SessionFactsJob.Store, [new MemoryEntryInput
+		{
+			Key = "ac-stale", Version = 0, Type = "Project",
+			Description = "прод крутится на сервере tun3", Body = "устарело",
+			Metadata = """{"sessionId":"s0"}""",
+		}], []);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("на самом деле прод давно на tun4, tun3 мёртв"));
+		var chat = new ScriptedChat(
+			"""[{"type":"Project","description":"прод переехал с tun3 на tun4","body":"tun3 больше не используется"}]""",
+			"""{"action":"delete","key":"ac-stale"}""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		(await _memory.ListAsync(Proj, SessionFactsJob.Store, type: null)).Should().BeEmpty(); // stale entry gone
+	}
+
+	[Fact]
+	public async Task JudgeDelete_PointingAtCuratedNote_Ignored_NotesUntouched()
+	{
+		// W2 quarantine invariant: a "delete" that resolves to a NOTES key (or nowhere) is
+		// ignored — the machine never removes human curation.
+		await _memory.CreateStoreAsync(Proj, "notes", null);
+		await _memory.UpsertAsync(Proj, "notes", [new MemoryEntryInput
+		{
+			Key = "curated", Version = 0, Type = "Project",
+			Description = "куратор писал про tun3", Body = "рукописная заметка",
+		}], []);
+		var before = (await _memory.GetAsync(Proj, "notes", "curated"))!.Version;
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("прод переехал на tun4"));
+		var chat = new ScriptedChat(
+			"""[{"type":"Project","description":"прод переехал на tun4","body":"деталь"}]""",
+			"""{"action":"delete","key":"curated"}"""); // judge misfires at a curated key
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		(await _memory.GetAsync(Proj, "notes", "curated"))!.Version.Should().Be(before);      // untouched
+		(await _memory.StoreExistsAsync(Proj, SessionFactsJob.Store)).Should().BeFalse();     // no quarantine write
+	}
+
+	[Fact]
+	public async Task DedupGuard_EmbedsStoreOncePerPass_NotPerCandidate()
+	{
+		// W2: the embed cache. Two distinct new candidates in one pass are each deduped against
+		// the pre-seeded store entry; its text must be embedded ONCE for the whole pass (it used
+		// to be re-embedded on every candidate).
+		const string seed = "issue_task auto-close закрывает интейк issue на переходе work Done";
+		await _memory.CreateStoreAsync(Proj, SessionFactsJob.Store, null);
+		await _memory.UpsertAsync(Proj, SessionFactsJob.Store, [new MemoryEntryInput
+		{
+			Key = "ac-known", Version = 0, Type = "Feedback", Description = seed, Body = "уже знаем",
+			Metadata = """{"sessionId":"s0"}""",
+		}], []);
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("две разные новые темы"));
+		var chat = new CountingEmbedChat(
+			"""
+			[{"type":"Feedback","description":"gitversion падает на tag-only коммите нужен push main","body":"ф1"},
+			 {"type":"Reference","description":"worktree wwwroot пуст без bun install и build","body":"ф2"}]
+			""",
+			"""{"action":"add"}""");
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(2); // both distinct facts written
+
+		chat.EmbedInputs.Count(t => t == seed).Should().Be(1); // store text embedded once, cache reused it
 	}
 
 	// Chat fake answering from a scripted queue (extraction first, then judge calls); the
@@ -318,29 +426,103 @@ public sealed class SessionFactsJobTests : IDisposable
 		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
 			Task.FromResult(true);
 
+		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default) =>
+			Task.FromResult(HashedBagOfWords.Embed(request.Inputs));
+
+		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+	}
+
+	// Role-aware chat: every EXTRACT call returns `perBatch` fresh DISTINCT facts (namespaced by
+	// the extract-call index so batches never collide), every JUDGE call returns "add". Embedding
+	// is unsupported → the dedup guard degrades to text-only, and the distinct descriptions never
+	// collide there either. Lets a multi-batch session offer more candidates than the cap.
+	sealed class CapChat(int perBatch) : ILlmClient
+	{
+		public int ExtractCalls { get; private set; }
+
+		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
+		{
+			var system = request.Messages[0].Content;
+			string resp;
+			if (system.Contains("extract DURABLE", StringComparison.Ordinal))
+			{
+				ExtractCalls++;
+				var items = Enumerable.Range(1, perBatch).Select(i =>
+					$$"""{"type":"Project","description":"уникальный факт {{ExtractCalls}} {{i}}","body":"тело {{ExtractCalls}} {{i}}"}""");
+				resp = "[" + string.Join(",", items) + "]";
+			}
+			else resp = """{"action":"add"}""";
+			return Task.FromResult(new ChatResult(resp, new ModelIdentity("fake-chat", 0),
+				new ServedBy("fake", "fake-chat", 1, Degraded: false)));
+		}
+
+		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
+			Task.FromResult(true);
+		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+	}
+
+	// Scripted chat that embeds (BoW) and RECORDS every text handed to EmbedAsync, so a test can
+	// assert the per-pass cache embedded each store text only once.
+	sealed class CountingEmbedChat(params string[] responses) : ILlmClient
+	{
+		readonly Queue<string> _queue = new(responses);
+		string _last = responses[^1];
+		public List<string> EmbedInputs { get; } = [];
+
+		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default)
+		{
+			if (_queue.Count > 0) _last = _queue.Dequeue();
+			return Task.FromResult(new ChatResult(_last, new ModelIdentity("fake-chat", 0),
+				new ServedBy("fake", "fake-chat", 1, Degraded: false)));
+		}
+
+		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
+			Task.FromResult(true);
+
 		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default)
 		{
-			var vocab = new Dictionary<string, int>();
-			foreach (var input in request.Inputs)
-				foreach (var tok in Tokenize(input))
-					if (!vocab.ContainsKey(tok)) vocab[tok] = vocab.Count;
-			var dim = Math.Max(vocab.Count, 1);
-			var vectors = request.Inputs.Select(input =>
-			{
-				var v = new float[dim];
-				foreach (var tok in Tokenize(input)) v[vocab[tok]] += 1f;
-				return v;
-			}).ToList();
-			return Task.FromResult(new EmbedResult(vectors, new ModelIdentity("fake-embed", 0),
-				new ServedBy("fake", "fake-embed", 1, Degraded: false)));
+			EmbedInputs.AddRange(request.Inputs);
+			return Task.FromResult(HashedBagOfWords.Embed(request.Inputs));
 		}
 
 		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
 			throw new NotSupportedException();
-
-		static IEnumerable<string> Tokenize(string? s) =>
-			(s ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-				.Select(t => new string(t.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray()))
-				.Where(t => t.Length > 0);
 	}
+}
+
+// Deterministic, BATCH-INDEPENDENT bag-of-words embedder: each token maps to a FIXED dimension
+// (FNV-1a hash mod dim), so a given text always embeds to the same vector regardless of which
+// batch it rode in. That is what a real embedder does, and it is what makes the per-pass
+// embedding cache transparent — a per-call vocab would give a cached text a different basis.
+static class HashedBagOfWords
+{
+	const int Dim = 1024;
+
+	public static EmbedResult Embed(IReadOnlyList<string> inputs)
+	{
+		var vectors = inputs.Select(Vector).ToList();
+		return new EmbedResult(vectors, new ModelIdentity("fake-embed", 0),
+			new ServedBy("fake", "fake-embed", 1, Degraded: false));
+	}
+
+	static float[] Vector(string? text)
+	{
+		var v = new float[Dim];
+		foreach (var tok in Tokenize(text))
+		{
+			uint h = 2166136261;
+			foreach (var c in tok) h = (h ^ c) * 16777619;
+			v[h % Dim] += 1f;
+		}
+		return v;
+	}
+
+	static IEnumerable<string> Tokenize(string? s) =>
+		(s ?? "").Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
+			.Select(t => new string(t.Where(char.IsLetterOrDigit).Select(char.ToLowerInvariant).ToArray()))
+			.Where(t => t.Length > 0);
 }

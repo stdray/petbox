@@ -1,5 +1,6 @@
 using LinqToDB;
 using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Options;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -48,7 +49,8 @@ public sealed class BehaviorPatternJobTests : IDisposable
 		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
 	}
 
-	BehaviorPatternJob Job(ILlmClient? llm) => new(_factory, _memory, llm);
+	BehaviorPatternJob Job(ILlmClient? llm, AutocaptureDedupOptions? dedup = null) =>
+		new(_factory, _memory, llm, dedup: dedup is null ? null : Options.Create(dedup));
 
 	Task SeedFeedback(string key, string sessionId, string description) =>
 		_memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
@@ -93,25 +95,28 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	}
 
 	[Fact]
-	public async Task OneFreshObservation_Triggers_EmptyAnswerAdvancesCursor()
+	public async Task OneFreshObservation_DoesNotTrigger_SecondObservationDoes()
 	{
-		// One fresh entry MUST trigger: the facts-judge merges repeats into an existing
-		// entry, so repetition may never show up as a second fresh row.
+		// A pattern is REPETITION → it needs ≥MinNewFeedback (2) fresh observations. One lone
+		// entry doesn't burn a mine-chat; the cursor holds until a second observation lands.
 		await SeedFeedback("f1", "s1", "одинокое наблюдение");
 		var chat = new ScriptedChat("[]");
 		var job = Job(chat);
 
 		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
-		chat.Calls.Should().Be(1); // mined, honestly found nothing
+		chat.Calls.Should().Be(0); // gate held — no chat spent on a single observation
 
+		await SeedFeedback("f2", "s2", "второе наблюдение");
 		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
-		chat.Calls.Should().Be(1); // cursor advanced — no re-burn on the same observation
+		chat.Calls.Should().Be(1); // two fresh now → mined, honestly found nothing
 	}
 
 	[Fact]
-	public async Task SingleEntry_WithAccumulatedSeenIn_ProvesRepetitionByItself()
+	public async Task MergedEntrysSessionIds_AreVisibleToMiner_OnceGateClears()
 	{
-		// The facts-judge merge accumulates seenIn — one entry can carry ≥2 sources.
+		// The facts-judge merge accumulates seenIn, so one entry can carry ≥2 sessionIds; the
+		// miner sees them as one FACT's sessionIds. The ≥2-fresh-rows gate still needs a second
+		// observation before firing — supplied here by a plain second feedback.
 		await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
 		{
 			Key = "f-merged", Version = 0, Type = "Feedback",
@@ -119,6 +124,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 			Tags = ["autocaptured", "behavior:pattern"],
 			Metadata = """{"sessionId":"s2","seenIn":["s2","s1"]}""",
 		}], []);
+		await SeedFeedback("f2", "s3", "ещё одно наблюдение про миграции");
 		var chat = new ScriptedChat(
 			"""[{"description":"когда миграция — сначала бэкап","body":"из двух сессий","sources":["s1","s2"]}]""");
 
@@ -169,12 +175,18 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	{
 		// Slice 1 already tags single-session procedures behavior:pattern at extraction —
 		// they must still count as observations (the prod gap: they were fed to the miner
-		// as "existing patterns" with no sources and could never consolidate).
-		foreach (var (key, sid) in new[] { ("f1", "s1"), ("f2", "s2") })
+		// as "existing patterns" with no sources and could never consolidate). The two phrasings
+		// differ so the deterministic sweep leaves them as two distinct observations (the miner
+		// is what consolidates a repeated PROCEDURE, not the exact-text collapse).
+		foreach (var (key, sid, desc) in new[]
+				{
+					("f1", "s1", "когда миграция сначала делай бэкап и checksum"),
+					("f2", "s2", "перед миграцией сперва бэкап потом проверка checksum"),
+				})
 			await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
 			{
 				Key = key, Version = 0, Type = "Feedback",
-				Description = "когда миграция — сначала бэкап и checksum", Body = "из " + sid,
+				Description = desc, Body = "из " + sid,
 				Tags = ["autocaptured", "behavior:pattern"],
 				Metadata = $"{{\"sessionId\":\"{sid}\"}}",
 			}], []);
@@ -272,6 +284,47 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	}
 
 	[Fact]
+	public async Task DedupSweep_IsPeriodic_ReRunsAfterInterval_NotOnceForever()
+	{
+		// W2: the sweep is PERIODIC, not one-shot. With a 0-day interval it re-runs every pass,
+		// so twins that appear AFTER the first sweep are still folded (background consolidation).
+		var opts = new AutocaptureDedupOptions { RecollapseIntervalDays = 0 };
+		await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
+		{
+			Key = "bp-a", Version = 0, Type = "Feedback",
+			Description = "petbox переехал на сервер tun4 apps1 узел", Body = "из s1",
+			Tags = ["autocaptured", "behavior:pattern"], Metadata = """{"sources":["s1","s2"]}""",
+		}], []);
+		await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
+		{
+			Key = "bp-b", Version = 0, Type = "Feedback",
+			Description = "petbox теперь переехал на сервер tun4 apps1 узел", Body = "из s3",
+			Tags = ["autocaptured", "behavior:pattern"], Metadata = """{"sources":["s2","s3"]}""",
+		}], []);
+
+		await Job(new EmbeddingChat("[]"), opts).DrainAllAsync(CancellationToken.None);
+		Patterns(await _memory.ListAsync(Proj, Store, "Feedback")).Should().HaveCount(1); // first pair folded
+
+		// A NEW pair of twins lands after the first sweep. A one-shot sweep would leave them; a
+		// periodic one folds them on the next pass.
+		await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
+		{
+			Key = "bp-c", Version = 0, Type = "Feedback",
+			Description = "бэкапы хранятся только локально на сервере петбокса", Body = "из s4",
+			Tags = ["autocaptured", "behavior:pattern"], Metadata = """{"sources":["s4","s5"]}""",
+		}], []);
+		await _memory.UpsertAsync(Proj, Store, [new MemoryEntryInput
+		{
+			Key = "bp-d", Version = 0, Type = "Feedback",
+			Description = "бэкапы хранятся сейчас только локально на сервере петбокса", Body = "из s6",
+			Tags = ["autocaptured", "behavior:pattern"], Metadata = """{"sources":["s5","s6"]}""",
+		}], []);
+
+		await Job(new EmbeddingChat("[]"), opts).DrainAllAsync(CancellationToken.None);
+		Patterns(await _memory.ListAsync(Proj, Store, "Feedback")).Should().HaveCount(2); // second pair folded too
+	}
+
+	[Fact]
 	public async Task MalformedMining_AdvancesCursor_NoCrash_NoBurnLoop()
 	{
 		await SeedFeedback("f1", "s1", "раз");
@@ -338,24 +391,31 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	}
 }
 
-// Deterministic bag-of-words embedder shared by the dedup tests (exact BoW cosine).
+// Deterministic, BATCH-INDEPENDENT bag-of-words embedder shared by the dedup tests: each token
+// maps to a FIXED dimension (FNV-1a hash mod dim), so a text always embeds to the same vector
+// regardless of the batch it rode in. A per-call vocab would give a cached text a different
+// basis and break the per-pass embedding cache (sweep embeds descriptions, then mining re-embeds).
 static class BagOfWords
 {
+	const int Dim = 1024;
+
 	public static EmbedResult Embed(IReadOnlyList<string> inputs)
 	{
-		var vocab = new Dictionary<string, int>();
-		foreach (var input in inputs)
-			foreach (var tok in Tokenize(input))
-				if (!vocab.ContainsKey(tok)) vocab[tok] = vocab.Count;
-		var dim = Math.Max(vocab.Count, 1);
-		var vectors = inputs.Select(input =>
-		{
-			var v = new float[dim];
-			foreach (var tok in Tokenize(input)) v[vocab[tok]] += 1f;
-			return v;
-		}).ToList();
+		var vectors = inputs.Select(Vector).ToList();
 		return new EmbedResult(vectors, new ModelIdentity("fake-embed", 0),
 			new ServedBy("fake", "fake-embed", 1, Degraded: false));
+	}
+
+	static float[] Vector(string? text)
+	{
+		var v = new float[Dim];
+		foreach (var tok in Tokenize(text))
+		{
+			uint h = 2166136261;
+			foreach (var c in tok) h = (h ^ c) * 16777619;
+			v[h % Dim] += 1f;
+		}
+		return v;
 	}
 
 	static IEnumerable<string> Tokenize(string? s) =>

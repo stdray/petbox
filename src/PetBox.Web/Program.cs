@@ -153,6 +153,9 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionDigestJob>();
 		// Autocapture: distills durable typed facts from settled sessions into the
 		// quarantined `autocaptured` memory store (dedup via hybrid neighbors + LLM judge).
+		// Dedup thresholds + periodic re-collapse interval are config-tunable (spec: memoverhaul).
+		builder.Services.Configure<PetBox.Web.Search.AutocaptureDedupOptions>(
+			builder.Configuration.GetSection("AutocaptureDedup"));
 		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionFactsJob>();
 		// Cross-session behavior-pattern mining over the accumulated distillates —
 		// registered AFTER the facts job so a tick mines the freshest observations.

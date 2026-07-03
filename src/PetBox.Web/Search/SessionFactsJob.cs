@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 using PetBox.Core.Data;
 using PetBox.Core.Search;
 using PetBox.LlmRouter.Contract;
@@ -45,20 +46,44 @@ public sealed class SessionFactsJob : IVectorizationJob
 		a recurring PROCEDURE — an action sequence the session repeats or prescribes ("before
 		merging, re-check git status"). For a procedure: type=Feedback, phrase the description
 		as «когда X — делай Y», and include "behavior:pattern" in tags.
-		Keep distinctive identifiers/slugs/error texts VERBATIM. Do NOT extract narration,
-		progress reports, or anything derivable from code or git history. When nothing
-		qualifies, output [].
+
+		DURABILITY TEST — before emitting anything, ask: "would a FUTURE agent, a month from
+		now, need this — and is it NOT already derivable from the code, git history, or the
+		task/spec boards?" If it is derivable there, it is NOT a fact. Keep distinctive
+		identifiers/slugs/error texts VERBATIM.
+
+		Do NOT extract (these are the common false positives):
+		  • narration of work done — "реализовано/задеплоено/добавлен пакет X/wave N готова",
+		    "смок прошёл", ci numbers, commit hashes, "переименовал файл", executed plans;
+		  • progress/status reports and per-session bookkeeping (what was tried this session,
+		    which tests ran, transient TODOs);
+		  • anything a `git log`, the code, or a board query would already answer.
+		A record of THIS session's activity is not durable knowledge — the session transcript
+		already holds it.
+
+		Emit at most 1–3 candidates for this fragment; most fragments yield zero. WHEN IN
+		DOUBT, output []. When nothing qualifies, output [].
 		""";
 
 	const string JudgePrompt =
 		"""
-		You deduplicate facts for an agent memory. Given a CANDIDATE fact and EXISTING
-		entries (each with store, key, description, body), answer with STRICT JSON only:
-		  {"action":"add|update|skip","key":"<existing key when action=update>","description":"<merged>","body":"<merged>"}
-		Rules: if an existing entry already covers the candidate's knowledge → "skip".
-		If an AUTOCAPTURED entry covers it but the candidate adds material new detail →
-		"update" that entry with the merged content. Otherwise → "add". Never pick an
-		entry from the notes store for update.
+		You are the write-gate for an agent's long-term memory. Given a CANDIDATE fact and
+		EXISTING entries (each with store, key, description, body), answer with STRICT JSON only:
+		  {"action":"add|update|skip|drop|delete","key":"<existing key for update/delete>","description":"<merged>","body":"<merged>"}
+		Decide TWO things in this one answer:
+		1. Is it worth storing AT ALL? If the candidate is narration of work done, a
+		   progress/status report, session-specific bookkeeping, or anything derivable from
+		   code, git history, or the task/spec boards → "drop". When unsure whether it is
+		   durable knowledge → "drop".
+		2. If worth keeping, deduplicate against EXISTING:
+		   • an existing entry already covers the candidate's knowledge → "skip";
+		   • an AUTOCAPTURED entry covers it but the candidate adds material new detail →
+		     "update" that entry (key + merged description/body);
+		   • an AUTOCAPTURED entry is now STALE or contradicted by the candidate → "delete"
+		     (key = that entry) to invalidate it;
+		   • otherwise → "add".
+		Never pick an entry from the notes store for update or delete — those are human-curated
+		and off-limits to the machine.
 		""";
 
 	readonly IScopedDbFactory<SessionsDb> _factory;
@@ -68,13 +93,15 @@ public sealed class SessionFactsJob : IVectorizationJob
 	readonly ILogger<SessionFactsJob>? _logger;
 	readonly TimeSpan _quietPeriod;
 	readonly TimeSpan _budget;
+	readonly AutocaptureDedupOptions _dedup;
 
 	// Round-robin start position across passes; passes run strictly sequentially.
 	static int _rotation;
 
 	public SessionFactsJob(IScopedDbFactory<SessionsDb> factory, ISessionService sessions,
 		IMemoryService memory, ILlmClient? llm = null, ILogger<SessionFactsJob>? logger = null,
-		TimeSpan? quietPeriod = null, TimeSpan? budget = null)
+		TimeSpan? quietPeriod = null, TimeSpan? budget = null,
+		IOptions<AutocaptureDedupOptions>? dedup = null)
 	{
 		_factory = factory;
 		_sessions = sessions;
@@ -83,6 +110,7 @@ public sealed class SessionFactsJob : IVectorizationJob
 		_logger = logger;
 		_quietPeriod = quietPeriod ?? DefaultQuietPeriod;
 		_budget = budget ?? DrainPacing.DefaultBudget;
+		_dedup = dedup?.Value ?? new AutocaptureDedupOptions();
 	}
 
 	static string CursorName(string sessionId) => "session-facts:" + sessionId;
@@ -110,6 +138,10 @@ public sealed class SessionFactsJob : IVectorizationJob
 
 				var headers = await _sessions.ListAsync(project, ct);
 				var cutoff = DateTime.UtcNow - _quietPeriod;
+				// One embedding memo per project per pass: the dedup guard compares every
+				// candidate against the whole quarantined store, so the store's texts are
+				// embedded once here instead of once per candidate.
+				var embedCache = new EmbeddingCache();
 				foreach (var header in headers)
 				{
 					ct.ThrowIfCancellationRequested();
@@ -119,7 +151,7 @@ public sealed class SessionFactsJob : IVectorizationJob
 					if (header.Version <= cursor) continue;
 					try
 					{
-						captured += await DistillAsync(project, header.SessionId, cursor, cursors, clock, ct);
+						captured += await DistillAsync(project, header.SessionId, cursor, cursors, clock, embedCache, ct);
 					}
 					catch (Exception ex) when (ex is not OperationCanceledException)
 					{
@@ -137,13 +169,17 @@ public sealed class SessionFactsJob : IVectorizationJob
 	}
 
 	async Task<int> DistillAsync(string project, string sessionId, long cursor,
-		SqliteIndexCursorStore cursors, DrainClock clock, CancellationToken ct)
+		SqliteIndexCursorStore cursors, DrainClock clock, EmbeddingCache embedCache, CancellationToken ct)
 	{
 		var remaining = await _sessions.DeltaAsync(project, sessionId, cursor, ct);
 		var captured = 0;
-		// Bounded batches until the delta is EMPTY or the pass budget runs out; the cursor
-		// advances per batch, so a partial drain resumes exactly where it parked.
-		while (remaining.Count > 0 && !clock.ProjectExhausted)
+		// Honest per-session cap: the counter spans EVERY batch of this DistillAsync pass, so a
+		// long session can't mint MaxCandidatesPerSession facts per batch (it used to). Once the
+		// cap is hit we stop spending chat calls; the cursor parks and a later pass resumes.
+		var taken = 0;
+		// Bounded batches until the delta is EMPTY, the pass budget runs out, or the per-session
+		// cap is reached; the cursor advances per batch, so a partial drain resumes where it parked.
+		while (remaining.Count > 0 && !clock.ProjectExhausted && taken < MaxCandidatesPerSession)
 		{
 			ct.ThrowIfCancellationRequested();
 			var (batch, lastVersion) = TakeBatch(remaining);
@@ -152,18 +188,22 @@ public sealed class SessionFactsJob : IVectorizationJob
 			if (candidates is null)
 			{
 				// Unparseable output: advancing past the batch is deliberate — holding the
-				// cursor would re-spend a chat call on the same bad input every tick.
-				_logger?.LogWarning("facts extraction returned unparseable output for {Project}/{Session}; batch skipped",
-					project, sessionId);
+				// cursor would re-spend a chat call on the same bad input every tick. Dead-letter
+				// the raw body so a lost extraction is findable in the self-log (log_query), not
+				// a silent drop.
+				_logger?.LogWarning("facts extraction returned unparseable output for {Project}/{Session}; batch skipped. raw={Raw}",
+					project, sessionId, Clip(raw, 2000));
 			}
 			else
 			{
-				foreach (var candidate in candidates.Take(MaxCandidatesPerSession))
+				foreach (var candidate in candidates)
 				{
 					ct.ThrowIfCancellationRequested();
+					if (taken >= MaxCandidatesPerSession) break;
 					if (string.IsNullOrWhiteSpace(candidate.Description) && string.IsNullOrWhiteSpace(candidate.Body))
 						continue;
-					if (await ApplyAsync(project, sessionId, batch[0].Version, lastVersion, candidate, ct))
+					taken++;
+					if (await ApplyAsync(project, sessionId, batch[0].Version, lastVersion, candidate, embedCache, ct))
 						captured++;
 				}
 			}
@@ -175,13 +215,38 @@ public sealed class SessionFactsJob : IVectorizationJob
 	}
 
 	async Task<bool> ApplyAsync(string project, string sessionId, long fromVersion, long toVersion,
-		FactCandidate candidate, CancellationToken ct)
+		FactCandidate candidate, EmbeddingCache embedCache, CancellationToken ct)
 	{
+		// The judge is ALWAYS consulted now — it is the worth-gate as well as the dedup gate,
+		// so even a candidate with no retrieved neighbors must clear "is this worth storing?".
 		var neighbors = await CollectNeighborsAsync(project, candidate, ct);
-		var verdict = neighbors.Count == 0
-			? new JudgeVerdict("add", null, null, null)
-			: await JudgeAsync(project, candidate, neighbors, ct);
+		var verdict = await JudgeAsync(project, candidate, neighbors, ct);
 		if (verdict is null || verdict.Action == "skip") return false;
+
+		// Worth-gate: the judge ruled this not durable (narration / session bookkeeping /
+		// derivable from code or boards). Dead-letter the body so the drop is findable.
+		if (verdict.Action == "drop")
+		{
+			_logger?.LogWarning("facts judge DROPPED a candidate as not worth storing for {Project}/{Session}. description={Description} body={Body}",
+				project, sessionId, Clip(candidate.Description ?? "", 500), Clip(candidate.Body ?? "", 1000));
+			return false;
+		}
+
+		// Invalidation: the candidate makes an existing entry stale. Quarantine invariant —
+		// the machine may delete ONLY from its own store; a key that resolves anywhere else
+		// (or nowhere) is ignored with a warning, never acted on.
+		if (verdict.Action == "delete")
+		{
+			if (verdict.Key is not null && await _memory.StoreExistsAsync(project, Store, ct)
+				&& await _memory.GetAsync(project, Store, verdict.Key, ct) is { } stale)
+			{
+				await _memory.UpsertAsync(project, Store, [], [new MemoryDelete(stale.Key, stale.Version)], ct);
+				return true;
+			}
+			_logger?.LogWarning("facts judge DELETE pointed at a non-quarantine or missing key for {Project}; ignored. key={Key}",
+				project, verdict.Key);
+			return false;
+		}
 
 		var metadata = JsonSerializer.Serialize(new
 		{
@@ -194,7 +259,7 @@ public sealed class SessionFactsJob : IVectorizationJob
 			? [Tag]
 			: [Tag, .. candidate.Tags!.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)];
 
-		if (verdict.Action == "update" && verdict.Key is not null)
+		if (verdict.Action == "update" && verdict.Key is not null && await _memory.StoreExistsAsync(project, Store, ct))
 		{
 			// Quarantine invariant: the machine may merge ONLY into its own store. A judge
 			// pointing anywhere else degrades to add — knowledge is kept, curation isn't touched.
@@ -233,7 +298,7 @@ public sealed class SessionFactsJob : IVectorizationJob
 			var dupKey = await AutocaptureDedup.FindDuplicateKeyAsync(project,
 				string.IsNullOrWhiteSpace(candidate.Description) ? candidate.Body ?? "" : candidate.Description,
 				existing.Select(e => (e.Key, Text: string.IsNullOrWhiteSpace(e.Description) ? e.Body : e.Description)).ToList(),
-				_llm, ct);
+				_llm, ct, _dedup.SemanticThreshold, embedCache);
 			if (dupKey is not null) return false;
 		}
 
@@ -281,7 +346,7 @@ public sealed class SessionFactsJob : IVectorizationJob
 		try
 		{
 			var verdict = JsonSerializer.Deserialize<JudgeVerdict>(StripFences(raw), JsonOpts);
-			if (verdict is null || verdict.Action is not ("add" or "update" or "skip"))
+			if (verdict is null || verdict.Action is not ("add" or "update" or "skip" or "drop" or "delete"))
 				return Fallback();
 			return verdict;
 		}

@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using Microsoft.Extensions.Options;
 using PetBox.Core.Data;
 using PetBox.Core.Search;
 using PetBox.LlmRouter.Contract;
@@ -26,15 +27,17 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 	const string QuarantineStore = SessionFactsJob.Store;
 	const string CuratedStore = "notes";
 	const string CursorIndex = "behavior-mining";
-	// One-shot durable marker: the pre-existing-duplicate collapse runs once per project and
-	// survives restart (co-located with the store, like every other cursor). 0 = not yet swept.
+	// PERIODIC durable marker for the pre-existing-duplicate collapse: it stores the UNIX
+	// SECONDS of the last sweep (co-located with the store, like every other cursor). 0 = never
+	// swept. The sweep re-runs once the marker is older than RecollapseIntervalDays — machine
+	// writes keep accruing consolidation debt, so a single lifetime sweep isn't enough.
 	const string DedupSweepIndex = "autocapture-dedup-sweep";
 
-	// One fresh observation is enough to mine: the facts-judge MERGES repeats into an
-	// existing entry (an UPDATE, not a second row), so "two fresh entries" may never
-	// happen even though repetition did. The ≥2-distinct-sources rule still gates what
-	// gets written — an early pass just answers [].
-	internal const int MinNewFeedback = 1;
+	// A pattern is REPETITION — it needs ≥2 distinct sources. Mining on a single fresh
+	// Feedback burns a chat call that can only answer [] (one observation can't repeat),
+	// unless that entry already carries ≥2 accumulated sources (seenIn) — but then it is
+	// not "fresh" in isolation either. Wait for ≥2 fresh observations before firing.
+	internal const int MinNewFeedback = 2;
 	internal const int MaxInputEntries = 60;
 	internal const int MaxPatternsPerPass = 5;
 	internal const int BodyClip = 300;
@@ -57,18 +60,21 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 	readonly ILlmClient? _llm;
 	readonly ILogger<BehaviorPatternJob>? _logger;
 	readonly TimeSpan _budget;
+	readonly AutocaptureDedupOptions _dedup;
 
 	// Round-robin start position across passes; passes run strictly sequentially.
 	static int _rotation;
 
 	public BehaviorPatternJob(IScopedDbFactory<MemoryDb> factory, IMemoryService memory,
-		ILlmClient? llm = null, ILogger<BehaviorPatternJob>? logger = null, TimeSpan? budget = null)
+		ILlmClient? llm = null, ILogger<BehaviorPatternJob>? logger = null, TimeSpan? budget = null,
+		IOptions<AutocaptureDedupOptions>? dedup = null)
 	{
 		_factory = factory;
 		_memory = memory;
 		_llm = llm;
 		_logger = logger;
 		_budget = budget ?? DrainPacing.DefaultBudget;
+		_dedup = dedup?.Value ?? new AutocaptureDedupOptions();
 	}
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
@@ -91,13 +97,23 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 				_factory.GetDb(project, QuarantineStore);
 				var cursors = new SqliteIndexCursorStore(() => _factory.NewConnection(project, QuarantineStore));
 
-				// One-shot cleanup of twins already on disk (spec: autocapture-dedup). Runs
-				// before the fresh-observation gate so a store with duplicates but no new
-				// feedback is still healed; the durable marker keeps it to once per project.
-				if (await cursors.GetCursorAsync(DedupSweepIndex, ct) == 0)
+				// One embedding memo per project per pass, shared by the sweep and the miner's
+				// dedup guard (both compare against the whole store).
+				var embedCache = new EmbeddingCache();
+
+				// PERIODIC cleanup of twins on disk (spec: autocapture-dedup; also the W3
+				// "background consolidation" promise). Runs before the fresh-observation gate so
+				// a store with duplicates but no new feedback is still healed; the durable marker
+				// holds the last sweep time and re-runs once it is older than the configured
+				// interval.
+				var lastSweep = await cursors.GetCursorAsync(DedupSweepIndex, ct);
+				var nowUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+				var intervalSeconds = (long)TimeSpan.FromDays(Math.Max(0, _dedup.RecollapseIntervalDays)).TotalSeconds;
+				if (lastSweep == 0 || nowUnix - lastSweep >= intervalSeconds)
 				{
-					await AutocaptureDedup.CollapseAsync(_memory, project, QuarantineStore, _llm, _logger, ct);
-					await cursors.SetCursorAsync(DedupSweepIndex, 1, ct);
+					await AutocaptureDedup.CollapseAsync(_memory, project, QuarantineStore, _llm, _logger, ct,
+						_dedup.SemanticThreshold, _dedup.MaxSemanticCluster, embedCache);
+					await cursors.SetCursorAsync(DedupSweepIndex, nowUnix, ct);
 				}
 
 				var cursor = await cursors.GetCursorAsync(CursorIndex, ct);
@@ -106,7 +122,7 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 				var fresh = delta.Added.Concat(delta.Updated).Count(e => e.Type == MemoryType.Feedback);
 				if (fresh < MinNewFeedback) continue; // cursor holds — wait for more observations
 
-				mined += await MineAsync(project, ct);
+				mined += await MineAsync(project, embedCache, ct);
 				clock.Unit();
 
 				// Re-read the version AFTER our own writes so the patterns we just wrote
@@ -122,7 +138,7 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 		return mined;
 	}
 
-	async Task<int> MineAsync(string project, CancellationToken ct)
+	async Task<int> MineAsync(string project, EmbeddingCache embedCache, CancellationToken ct)
 	{
 		var feedback = new List<MemoryEntryView>();
 		feedback.AddRange(await _memory.ListAsync(project, QuarantineStore, "Feedback", ct));
@@ -185,7 +201,8 @@ public sealed class BehaviorPatternJob : IVectorizationJob
 			{
 				var dupKey = await AutocaptureDedup.FindDuplicateKeyAsync(project,
 					candidate.Description,
-					existingPatterns.Select(p => (p.Key, p.Description)).ToList(), _llm, ct);
+					existingPatterns.Select(p => (p.Key, p.Description)).ToList(), _llm, ct,
+					_dedup.SemanticThreshold, embedCache);
 				if (dupKey is not null) existing = existingPatterns.First(p => p.Key == dupKey);
 			}
 			var metadata = JsonSerializer.Serialize(new
