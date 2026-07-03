@@ -161,6 +161,48 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task WhereIn_TranslatesToSql()
+	{
+		var messages = await RunAsync("events | where Level in (3, 4)");
+		messages.Should().BeEquivalentTo(["boom", "meh", "crash on Earth"]);
+	}
+
+	[Fact]
+	public async Task WhereNotIn_TranslatesToSql()
+	{
+		var messages = await RunAsync("events | where Level !in (4)");
+		messages.Should().BeEquivalentTo(["hello world", "meh", "starting"]);
+	}
+
+	[Fact]
+	public async Task WhereBetween_TranslatesToSql()
+	{
+		var messages = await RunAsync("events | where Level between (3 .. 4)");
+		messages.Should().BeEquivalentTo(["boom", "meh", "crash on Earth"]);
+	}
+
+	[Fact]
+	public async Task WhereArithmetic_TranslatesToSql()
+	{
+		var messages = await RunAsync("events | where Level + 1 == 5");
+		messages.Should().BeEquivalentTo(["boom", "crash on Earth"]);
+	}
+
+	[Fact]
+	public async Task WhereModulo_TranslatesToSql()
+	{
+		var messages = await RunAsync("events | where Id % 2 == 0");
+		messages.Should().HaveCount(2);
+	}
+
+	[Fact]
+	public async Task WhereIff_TranslatesToSql()
+	{
+		var messages = await RunAsync("events | where iff(Level >= 4, 1, 0) == 1");
+		messages.Should().BeEquivalentTo(["boom", "crash on Earth"]);
+	}
+
+	[Fact]
 	public async Task PropertiesEq_TranslatesToJsonExtract()
 	{
 		await _logDb.LogEntries.BulkCopyAsync([

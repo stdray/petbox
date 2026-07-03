@@ -15,6 +15,7 @@ public sealed class KqlSyntaxKindAllowlistTests
 		SyntaxKind.ProjectOperator,
 		SyntaxKind.CountOperator,
 		SyntaxKind.SummarizeOperator,
+		SyntaxKind.ExtendOperator,
 	];
 
 	static readonly HashSet<string> ExplicitlyUnsupportedNames = new(StringComparer.Ordinal)
@@ -32,7 +33,7 @@ public sealed class KqlSyntaxKindAllowlistTests
 		"ProjectByNamesOperator", "RangeOperator", "PrintOperator", "AssertSchemaOperator",
 		"ForkOperator", "BadQueryOperator", "GraphMarkComponentsOperator",
 		"GraphMatchOperator", "GraphShortestPathsOperator", "GraphToTableOperator",
-		"MakeGraphOperator", "ExtendOperator",
+		"MakeGraphOperator",
 	};
 
 	[Fact]
@@ -76,6 +77,7 @@ public sealed class KqlSyntaxKindAllowlistTests
 			[SyntaxKind.ProjectOperator] = "events | project Level",
 			[SyntaxKind.CountOperator] = "events | count",
 			[SyntaxKind.SummarizeOperator] = "events | summarize count() by Level",
+			[SyntaxKind.ExtendOperator] = "events | extend Doubled = Level * 2",
 		};
 
 		SupportedOperators.Should().BeEquivalentTo(applyExamples.Keys.Concat(executeExamples.Keys));

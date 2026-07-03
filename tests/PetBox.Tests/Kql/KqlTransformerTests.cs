@@ -134,4 +134,60 @@ public sealed class KqlTransformerTests
 		var act = () => KqlTransformer.Apply(Src(), ast).ToList();
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*parse error*");
 	}
+
+	[Fact]
+	public void Where_In_FiltersBySet()
+	{
+		var ast = Parse("events | where Level in (3, 4)");
+		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 3L, 4L]);
+	}
+
+	[Fact]
+	public void Where_NotIn_FiltersBySet()
+	{
+		var ast = Parse("events | where Level !in (4)");
+		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		result.Select(r => r.Id).Should().BeEquivalentTo([1L, 3L]);
+	}
+
+	[Fact]
+	public void Where_Between_FiltersRange()
+	{
+		var ast = Parse("events | where Level between (3 .. 4)");
+		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 3L, 4L]);
+	}
+
+	[Fact]
+	public void Where_Arithmetic_Filters()
+	{
+		var ast = Parse("events | where Level + 1 == 5");
+		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
+	}
+
+	[Fact]
+	public void Where_Modulo_Filters()
+	{
+		var ast = Parse("events | where Id % 2 == 0");
+		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
+	}
+
+	[Fact]
+	public void Where_Iff_Filters()
+	{
+		var ast = Parse("events | where iff(Level == 4, 1, 0) == 1");
+		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
+	}
+
+	[Fact]
+	public void Where_UnsupportedFunction_ThrowsPrecise()
+	{
+		var ast = Parse("events | where tolower(Message) == 'hello'");
+		var act = () => KqlTransformer.Apply(Src(), ast).ToList();
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*tolower*not supported*");
+	}
 }

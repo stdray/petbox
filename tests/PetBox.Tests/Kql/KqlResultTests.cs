@@ -158,4 +158,105 @@ public sealed class KqlResultTests
 		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*avg*");
 	}
+
+	static async Task<List<object?[]>> Materialize(KqlResult result)
+	{
+		var rows = new List<object?[]>();
+		await foreach (var r in result.Rows) rows.Add(r);
+		return rows;
+	}
+
+	[Fact]
+	public async Task Extend_AppendsComputedColumn()
+	{
+		var ast = Parse("events | extend Doubled = Level * 2");
+		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+
+		result.Columns.Select(c => c.Name).Should().Contain("Doubled");
+		result.Columns[^1].Should().Be(new KqlColumn("Doubled", typeof(long)));
+
+		var rows = await Materialize(result);
+		// Original event columns preserved (Id at 0), Doubled appended last.
+		rows[0][0].Should().Be(1L);
+		rows[0][^1].Should().Be((long)LogLevel.Information * 2);
+		rows[1][^1].Should().Be((long)LogLevel.Error * 2);
+	}
+
+	[Fact]
+	public async Task Extend_ReplacesExistingColumnInPlace()
+	{
+		var ast = Parse("events | extend Level = Level + 100");
+		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+
+		// Replaced in place: still one Level column, now typed long.
+		result.Columns.Count(c => c.Name == "Level").Should().Be(1);
+		var levelIdx = result.Columns.ToList().FindIndex(c => c.Name == "Level");
+		result.Columns[levelIdx].ClrType.Should().Be<long>();
+
+		var rows = await Materialize(result);
+		rows[0][levelIdx].Should().Be((long)LogLevel.Information + 100);
+	}
+
+	[Fact]
+	public async Task Extend_MultipleColumns()
+	{
+		var ast = Parse("events | extend A = Level + 1, B = Id * 10");
+		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+
+		var rows = await Materialize(result);
+		var cols = result.Columns.Select(c => c.Name).ToList();
+		var a = cols.IndexOf("A");
+		var b = cols.IndexOf("B");
+		rows[1][a].Should().Be((long)LogLevel.Error + 1);
+		rows[1][b].Should().Be(20L);
+	}
+
+	[Fact]
+	public void Extend_BareExpressionWithoutAlias_Throws()
+	{
+		var ast = Parse("events | extend Level + 1");
+		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*name = expression*");
+	}
+
+	[Fact]
+	public async Task Project_ComputedExpression()
+	{
+		var ast = Parse("events | project Id, Doubled = Level * 2");
+		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+
+		result.Columns.Select(c => c.Name).Should().ContainInOrder("Id", "Doubled");
+		result.Columns[1].ClrType.Should().Be<long>();
+
+		var rows = await Materialize(result);
+		rows[0][0].Should().Be(1L);
+		rows[0][1].Should().Be((long)LogLevel.Information * 2);
+	}
+
+	[Fact]
+	public async Task Project_IffExpression_ProducesStrings()
+	{
+		var ast = Parse("events | project Id, Sev = iff(Level >= 4, 'high', 'low')");
+		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+
+		var rows = await Materialize(result);
+		rows[0][1].Should().Be("low");  // Information
+		rows[1][1].Should().Be("high"); // Error
+	}
+
+	[Fact]
+	public void Project_UnAliasedComputed_ThrowsPrecise()
+	{
+		var ast = Parse("events | project Level * 2");
+		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*name = expression*");
+	}
+
+	[Fact]
+	public void Compute_UnsupportedFunction_ThrowsPrecise()
+	{
+		var ast = Parse("events | project Id, X = tolower(Message)");
+		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*tolower*not supported*");
+	}
 }

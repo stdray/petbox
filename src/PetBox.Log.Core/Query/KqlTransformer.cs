@@ -100,6 +100,7 @@ public static class KqlTransformer
 		{
 			current = op switch
 			{
+				ExtendOperator e => ApplyExtend(current, e),
 				ProjectOperator p => ApplyProject(current, p),
 				CountOperator => ApplyCount(current),
 				SummarizeOperator s => ApplySummarize(current, s),
@@ -109,31 +110,94 @@ public static class KqlTransformer
 		return current;
 	}
 
+	// project selects/renames/computes columns. A bare column ref or `alias = column` is a
+	// pass-through (keeps the source type); `alias = <expression>` compiles a scalar over the
+	// current row shape and evaluates it in-memory (post-split). An un-aliased computed
+	// expression is rejected — KQL auto-names it, which we don't reproduce.
 	static KqlResult ApplyProject(KqlResult input, ProjectOperator project)
 	{
-		var specs = new List<(string OutputName, int SourceIndex)>();
 		var newColumns = new List<KqlColumn>();
+		var producers = new List<Func<object?[], object?>>();
+		var rowParam = Expr.Parameter(typeof(object?[]), "row");
+		var ctx = new RowScalarContext(rowParam, input.Columns);
 
 		foreach (var element in project.Expressions)
 		{
-			var (outputName, sourceName) = element.Element switch
+			switch (element.Element)
 			{
-				NameReference n => (n.SimpleName, n.SimpleName),
-				SimpleNamedExpression { Name: NameDeclaration alias, Expression: NameReference src }
-					=> (alias.Name.SimpleName, src.SimpleName),
-				_ => throw new UnsupportedKqlException(
-					$"project expression '{element.Element.Kind}' not supported (only column refs and 'alias = column')"),
-			};
+				case NameReference n:
+					AddPassThrough(n.SimpleName, n.SimpleName);
+					break;
+				case SimpleNamedExpression { Name: NameDeclaration alias, Expression: NameReference src }:
+					AddPassThrough(alias.Name.SimpleName, src.SimpleName);
+					break;
+				case SimpleNamedExpression { Name: NameDeclaration alias, Expression: var expr }:
+					var (type, fn) = CompileCell(expr, ctx, rowParam);
+					newColumns.Add(new KqlColumn(alias.Name.SimpleName, type));
+					producers.Add(fn);
+					break;
+				default:
+					throw new UnsupportedKqlException(
+						$"project expression '{element.Element.Kind}' not supported (use a column ref or 'name = expression')");
+			}
+		}
 
+		return new KqlResult(newColumns, StreamCells(input.Rows, producers.ToArray()));
+
+		void AddPassThrough(string outputName, string sourceName)
+		{
 			var sourceIndex = FindColumnIndex(input.Columns, sourceName);
 			if (sourceIndex < 0)
 				throw new UnsupportedKqlException($"project: unknown column '{sourceName}'");
-
-			specs.Add((outputName, sourceIndex));
 			newColumns.Add(new KqlColumn(outputName, input.Columns[sourceIndex].ClrType));
+			var captured = sourceIndex;
+			producers.Add(row => row[captured]);
+		}
+	}
+
+	// extend appends computed columns (evaluated in-memory over the current row). Re-using an
+	// existing name replaces that column in place (KQL extend semantics). Each expression sees
+	// the input columns only.
+	static KqlResult ApplyExtend(KqlResult input, ExtendOperator extend)
+	{
+		var columns = input.Columns.ToList();
+		var rowParam = Expr.Parameter(typeof(object?[]), "row");
+		var ctx = new RowScalarContext(rowParam, input.Columns);
+		var writes = new List<(int TargetIndex, Func<object?[], object?> Fn)>();
+
+		foreach (var element in extend.Expressions)
+		{
+			if (element.Element is not SimpleNamedExpression { Name: NameDeclaration alias, Expression: var expr })
+				throw new UnsupportedKqlException(
+					$"extend expression '{element.Element.Kind}' not supported (use 'name = expression')");
+
+			var (type, fn) = CompileCell(expr, ctx, rowParam);
+			var name = alias.Name.SimpleName;
+			var existing = FindColumnIndex(columns, name);
+			int target;
+			if (existing >= 0)
+			{
+				columns[existing] = new KqlColumn(name, type);
+				target = existing;
+			}
+			else
+			{
+				columns.Add(new KqlColumn(name, type));
+				target = columns.Count - 1;
+			}
+			writes.Add((target, fn));
 		}
 
-		return new KqlResult(newColumns, StreamProjected(input.Rows, specs.Select(s => s.SourceIndex).ToArray()));
+		return new KqlResult(columns, StreamExtend(input.Rows, input.Columns.Count, columns.Count, writes.ToArray()));
+	}
+
+	// Compile a scalar KQL expression to a delegate over a materialized object?[] row.
+	static (Type Type, Func<object?[], object?> Fn) CompileCell(Expression expr, RowScalarContext ctx, ParamExpr rowParam)
+	{
+		var body = KqlScalar.Compile(expr, ctx);
+		var boxed = Expr.Convert(body, typeof(object));
+		var fn = Expr.Lambda<Func<object?[], object?>>(boxed, rowParam).Compile();
+		return (body.Type, fn);
 	}
 
 	static KqlResult ApplyCount(KqlResult input) =>
@@ -262,16 +326,33 @@ public static class KqlTransformer
 		yield return [n];
 	}
 
-	static async IAsyncEnumerable<object?[]> StreamProjected(
+	static async IAsyncEnumerable<object?[]> StreamCells(
 		IAsyncEnumerable<object?[]> source,
-		int[] indices,
+		Func<object?[], object?>[] producers,
 		[EnumeratorCancellation] CancellationToken ct = default)
 	{
 		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
 		{
-			var result = new object?[indices.Length];
-			for (var i = 0; i < indices.Length; i++)
-				result[i] = row[indices[i]];
+			var result = new object?[producers.Length];
+			for (var i = 0; i < producers.Length; i++)
+				result[i] = producers[i](row);
+			yield return result;
+		}
+	}
+
+	static async IAsyncEnumerable<object?[]> StreamExtend(
+		IAsyncEnumerable<object?[]> source,
+		int inputWidth,
+		int outputWidth,
+		(int TargetIndex, Func<object?[], object?> Fn)[] writes,
+		[EnumeratorCancellation] CancellationToken ct = default)
+	{
+		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
+		{
+			var result = new object?[outputWidth];
+			Array.Copy(row, result, inputWidth);
+			foreach (var (idx, fn) in writes)
+				result[idx] = fn(row);
 			yield return result;
 		}
 	}
@@ -371,7 +452,7 @@ public static class KqlTransformer
 	static IQueryable<LogEntryRecord> ApplyWhere(IQueryable<LogEntryRecord> source, FilterOperator filter)
 	{
 		var row = Expr.Parameter(typeof(LogEntryRecord), "e");
-		var body = BuildExpression(filter.Condition, row);
+		var body = KqlScalar.Compile(filter.Condition, new RecordScalarContext(row));
 		if (body.Type != typeof(bool))
 			throw new UnsupportedKqlException($"where condition must be boolean, got {body.Type.Name}");
 		var predicate = Expr.Lambda<Func<LogEntryRecord, bool>>(body, row);
@@ -410,7 +491,7 @@ public static class KqlTransformer
 		bool descending)
 	{
 		var row = Expr.Parameter(typeof(LogEntryRecord), "e");
-		var access = BuildColumnAccess(row, columnName);
+		var access = new RecordScalarContext(row).ResolveColumn(columnName);
 		var keyType = access.Type;
 		var keyLambda = Expr.Lambda(access, row);
 
@@ -432,70 +513,9 @@ public static class KqlTransformer
 		return (IOrderedQueryable<LogEntryRecord>)source.Provider.CreateQuery<LogEntryRecord>(callExpr);
 	}
 
-	static Expr BuildExpression(Expression node, ParamExpr row) => node switch
-	{
-		BinaryExpression binary => BuildBinary(binary, row),
-		FunctionCallExpression call when IsNotCall(call) => Expr.Not(BuildExpression(NotArgument(call), row)),
-		ParenthesizedExpression paren => BuildExpression(paren.Expression, row),
-		_ => throw new UnsupportedKqlException($"expression '{node.Kind}' not supported"),
-	};
-
-	static bool IsNotCall(FunctionCallExpression call) =>
-		string.Equals(call.Name.SimpleName, "not", StringComparison.Ordinal);
-
-	static Expression NotArgument(FunctionCallExpression call)
-	{
-		var args = call.ArgumentList.Expressions;
-		if (args.Count != 1)
-			throw new UnsupportedKqlException($"not() takes exactly one argument, got {args.Count}");
-		return args[0].Element;
-	}
-
-	static Expr BuildBinary(BinaryExpression binary, ParamExpr row)
-	{
-		if (binary.Kind == SyntaxKind.AndExpression)
-			return Expr.AndAlso(BuildExpression(binary.Left, row), BuildExpression(binary.Right, row));
-		if (binary.Kind == SyntaxKind.OrExpression)
-			return Expr.OrElse(BuildExpression(binary.Left, row), BuildExpression(binary.Right, row));
-
-		var (column, access) = BuildLhs(binary.Left, row, binary.Kind);
-
-		if (binary.Right is not LiteralExpression literal)
-			throw new UnsupportedKqlException($"right side of '{binary.Kind}' must be a literal, got {binary.Right.Kind}");
-
-		if (binary.Kind is SyntaxKind.ContainsExpression or SyntaxKind.ContainsCsExpression)
-			return BuildContains(access, column, literal, binary.Kind == SyntaxKind.ContainsCsExpression);
-
-		if (binary.Kind == SyntaxKind.HasExpression)
-			return BuildContains(access, column, literal, caseSensitive: false);
-
-		if (binary.Kind == SyntaxKind.HasCsExpression)
-			return BuildContains(access, column, literal, caseSensitive: true);
-
-		var coerced = CoerceLiteral(literal, access.Type, column);
-
-		return binary.Kind switch
-		{
-			SyntaxKind.EqualExpression => Expr.Equal(access, coerced),
-			SyntaxKind.NotEqualExpression => Expr.NotEqual(access, coerced),
-			SyntaxKind.LessThanExpression => Expr.LessThan(access, coerced),
-			SyntaxKind.LessThanOrEqualExpression => Expr.LessThanOrEqual(access, coerced),
-			SyntaxKind.GreaterThanExpression => Expr.GreaterThan(access, coerced),
-			SyntaxKind.GreaterThanOrEqualExpression => Expr.GreaterThanOrEqual(access, coerced),
-			_ => throw new UnsupportedKqlException($"binary '{binary.Kind}' not supported"),
-		};
-	}
-
-	static (string column, Expr access) BuildLhs(Expression left, ParamExpr row, SyntaxKind op) => left switch
-	{
-		NameReference n => (n.SimpleName, BuildColumnAccess(row, n.SimpleName)),
-		PathExpression p when IsPropertiesPath(p, out var key) =>
-			("Properties." + key, BuildPropertiesAccess(row, key)),
-		_ => throw new UnsupportedKqlException(
-			$"left side of '{op}' must be a column name or Properties.<key>, got {left.Kind}"),
-	};
-
-	static bool IsPropertiesPath(PathExpression path, out string key)
+	// Recognizes a `Properties.<key>` path (the only nested access the schema exposes). Shared
+	// by the scalar engine (KqlScalar) and summarize's by-clause.
+	internal static bool IsPropertiesPath(PathExpression path, out string key)
 	{
 		if (path.Expression is NameReference { SimpleName: "Properties" }
 			&& path.Selector is NameReference sel)
@@ -505,84 +525,5 @@ public static class KqlTransformer
 		}
 		key = "";
 		return false;
-	}
-
-	static Expr BuildPropertiesAccess(ParamExpr row, string key)
-	{
-		var propertiesJson = Expr.Property(row, nameof(LogEntryRecord.PropertiesJson));
-		var path = Expr.Constant("$." + key, typeof(string));
-		var method = typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.JsonExtract))!;
-		return Expr.Call(method, propertiesJson, path);
-	}
-
-	static Expr BuildColumnAccess(ParamExpr row, string column) => column switch
-	{
-		"Id" => Expr.Property(row, nameof(LogEntryRecord.Id)),
-		"Level" => Expr.Property(row, nameof(LogEntryRecord.Level)),
-		"LevelName" => BuildLevelName(row),
-		"Timestamp" => Expr.Property(row, nameof(LogEntryRecord.TimestampMs)),
-		"ServiceKey" => Expr.Property(row, nameof(LogEntryRecord.ServiceKey)),
-		"Message" => Expr.Property(row, nameof(LogEntryRecord.Message)),
-		"MessageTemplate" => Expr.Property(row, nameof(LogEntryRecord.MessageTemplate)),
-		"Exception" => Expr.Property(row, nameof(LogEntryRecord.Exception)),
-		_ => throw new UnsupportedKqlException($"column '{column}' not supported"),
-	};
-
-	static Expr BuildLevelName(ParamExpr row)
-	{
-		var level = Expr.Property(row, nameof(LogEntryRecord.Level));
-		var toName = typeof(KqlTransformer).GetMethod(nameof(ToLevelName),
-			System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic)!;
-		return Expr.Call(toName, level);
-	}
-
-	static string ToLevelName(int level) => level switch
-	{
-		0 => "Verbose",
-		1 => "Debug",
-		2 => "Information",
-		3 => "Warning",
-		4 => "Error",
-		5 => "Fatal",
-		_ => "Unknown",
-	};
-
-	static Expr CoerceLiteral(LiteralExpression literal, Type targetType, string column)
-	{
-		if (column == "Timestamp")
-		{
-			if (literal.LiteralValue is not DateTime dt)
-				throw new UnsupportedKqlException("Timestamp comparison requires a datetime() literal");
-			var utc = dt.Kind == DateTimeKind.Unspecified ? DateTime.SpecifyKind(dt, DateTimeKind.Utc) : dt.ToUniversalTime();
-			return Expr.Constant(new DateTimeOffset(utc).ToUnixTimeMilliseconds());
-		}
-
-		if (targetType == typeof(long) || targetType == typeof(int))
-		{
-			if (literal.LiteralValue is long n)
-				return targetType == typeof(int) ? Expr.Constant(checked((int)n)) : Expr.Constant(n);
-			throw new UnsupportedKqlException($"{column} comparison requires an integer literal");
-		}
-
-		if (targetType == typeof(string))
-		{
-			if (literal.LiteralValue is string s)
-				return Expr.Constant(s, typeof(string));
-			throw new UnsupportedKqlException($"{column} comparison requires a string literal");
-		}
-
-		throw new UnsupportedKqlException($"cannot coerce literal for column '{column}' of type {targetType.Name}");
-	}
-
-	static Expr BuildContains(Expr access, string column, LiteralExpression literal, bool caseSensitive)
-	{
-		if (access.Type != typeof(string))
-			throw new UnsupportedKqlException($"contains requires a string column, got '{column}'");
-		if (literal.LiteralValue is not string needle)
-			throw new UnsupportedKqlException("contains requires a string literal");
-
-		var method = typeof(string).GetMethod(nameof(string.Contains), [typeof(string), typeof(StringComparison)])!;
-		var comparison = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-		return Expr.Call(access, method, Expr.Constant(needle), Expr.Constant(comparison));
 	}
 }
