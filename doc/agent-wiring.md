@@ -212,4 +212,7 @@ launch flags and sandbox rules differ:
   when done.
 - **Claude Code** (`claude -p "…"`): headless prompts auto-deny too — pass
   `--permission-mode acceptEdits` (or, deliberately and only on a trusted task,
-  `--dangerously-skip-permissions`).
+  `--dangerously-skip-permissions`). Claude Code also carries a built-in
+  "commit/push only when asked" default that can override the repo's process contract in
+  one-shot runs — phrase headless tasks with an explicit finish line ("доведи до Review:
+  ветка + коммит + пуш"), which satisfies that rule.

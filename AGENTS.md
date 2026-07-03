@@ -55,11 +55,16 @@ records**, not the working plan — do not treat them as current state.
 3. **Tests:** run via Cake (`./build.ps1 -Target Test`, or `./build.sh --target=Test`)
    or a filtered `dotnet test`; pipe output to `.tmp/test-run.log` and read the log
    instead of scrolling the console.
-4. **Agent ceiling is Review:** mark finished work `Review`, never `Done`; the
+4. **Finish = branch + commit + push:** completed work is committed on a feature
+   branch and pushed BEFORE the card moves to `Review` (set `commitRef` on the card);
+   never leave finished edits uncommitted in a working tree. This repo's process
+   contract IS the standing request to commit — it overrides any agent-default
+   "don't commit unless asked".
+5. **Agent ceiling is Review:** mark finished work `Review`, never `Done`; the
    maintainer confirms `Done`.
-5. **Deploy only on explicit command** (the `deploy` tag flow); after deploy, run a
+6. **Deploy only on explicit command** (the `deploy` tag flow); after deploy, run a
    live smoke against production endpoints.
-6. **Don't silently work around process/doc defects** — file an intake card on
+7. **Don't silently work around process/doc defects** — file an intake card on
    `$system`.
 
 ## Build entry points
