@@ -55,9 +55,10 @@ records**, not the working plan — do not treat them as current state.
 3. **Tests:** run via Cake (`./build.ps1 -Target Test`, or `./build.sh --target=Test`)
    or a filtered `dotnet test`; pipe output to `.tmp/test-run.log` and read the log
    instead of scrolling the console. For readable FAILURE detail (a quiet log drops the
-   assertion messages), add `--logger "trx;LogFileName=res.trx"` and parse it with
-   **`dotnet run tools/parse_trx.cs`** (newest `.trx` under cwd; prints each failure's
-   message + trimmed stack; exit code = failed count). See the header of that file.
+   assertion messages), add `--logger "trx;LogFileName=res.trx"` and render it with
+   **`dotnet trx`** (the `dotnet-trx` local tool, in `.config/dotnet-tools.json`; run
+   `dotnet tool restore` once). It auto-discovers `*.trx` under the cwd and prints each
+   failed test's message + stack (`--path <dir>` to scope, `-v verbose` for all).
 4. **Finish = branch + commit + push:** completed work is committed on a feature
    branch and pushed BEFORE the card moves to `Review` (set `commitRef` on the card);
    never leave finished edits uncommitted in a working tree. This repo's process

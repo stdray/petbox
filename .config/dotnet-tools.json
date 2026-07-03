@@ -5,6 +5,10 @@
 		"gitversion.tool": {
 			"version": "6.4.0",
 			"commands": ["dotnet-gitversion"]
+		},
+		"dotnet-trx": {
+			"version": "1.0.1",
+			"commands": ["trx"]
 		}
 	}
 }
