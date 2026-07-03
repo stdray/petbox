@@ -35,7 +35,7 @@ Razor Pages, frontend assets, MCP endpoint). Client SDKs live under `src/clients
 PetBox `$system` project's methodology boards, reached over the `petbox` MCP server
 (see "MCP access" below):
 
-- **ideas** — deliberations (open/exploring/rejected/deferred/accepted).
+- **ideas** — deliberations (raw → exploring → review → accepted; or rejected).
 - **spec** — the defined requirements tree.
 - **work** — technical tasks with a status lifecycle.
 - **intake** — the inbox (raw requests → triage).
