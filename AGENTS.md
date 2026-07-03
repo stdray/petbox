@@ -148,6 +148,10 @@ Live reference docs:
   (Tailwind/daisyUI, htmx/Alpine boundary, modals, tables). Consult before building UI.
 - **[doc/settings-taxonomy.md](doc/settings-taxonomy.md)** — where every setting lives
   (entity catalog, storage rules, admin structure). Read before adding a configurable.
+- **[doc/agent-interaction-audit.md](doc/agent-interaction-audit.md)** — the weekly
+  audit playbook: surface freshness, zombie cards, uncommitted tails, session-archive
+  process-violation sampling (incl. false-verify). Run it to audit; it files intake
+  cards + an owner report.
 
 Historical (frozen) — a record of how the project got here, not current state:
 `doc/plan.md`, `doc/spec.md`, `doc/decision-log.md`, and the older design notes.
