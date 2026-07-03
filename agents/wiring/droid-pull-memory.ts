@@ -3,9 +3,9 @@
 // Injects the PetBox memory protocol + curated canon so the agent recalls relevant memory at
 // session start and captures learnings as it works, via the already-connected petbox MCP.
 //
-// Droid exposes MCP tools with the SAME `mcp__<server>__<tool>` naming as Claude Code
-// (docs.factory.ai/reference/hooks-reference), so the petbox verbs are `mcp__petbox__*` — the
-// shared buildProtocol renders identically to the Claude Code hook. Droid's SessionStart stdin
+// Droid names MCP tools `<server>___<tool>` (triple underscore) at runtime — observed live
+// in exec mode; the docs' `mcp__<server>__<tool>` form did not match. The protocol renders
+// with droidPetboxTool (`petbox___*`); the canon block stays byte-identical across agents. Droid's SessionStart stdin
 // is snake_case (`session_id`, `transcript_path`, `cwd`, `source`), the same shape Claude Code
 // uses, so we resolve the project from `cwd` and pass `source` through for the resume nudge.
 //
