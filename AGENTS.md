@@ -228,8 +228,10 @@ migration `M019_DropServices`.)
   wildcard `*` (a cross-project key), but its **scopes** are always explicit.
 - **Log records are append-only, immutable.** No update or delete of an ingested
   event.
-- **Localization from day one.** All user-facing strings through `IStringLocalizer`.
-  English-only chrome text — no Cyrillic/Hebrew/Arabic in UI strings.
+- **English-only UI chrome.** UI strings are plain English literals — no
+  Cyrillic/Hebrew/Arabic in chrome text. (No localization infrastructure exists yet:
+  no `AddLocalization`/`IStringLocalizer` anywhere — adopting it is a future task;
+  don't add ad-hoc localization piecemeal.)
 - **`data-testid` for UI selectors.** No text-matching, no CSS class selectors for
   E2E tests.
 - **No HTML in `.cs` files.** All markup in Razor (`.cshtml`).
