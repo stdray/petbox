@@ -80,6 +80,20 @@ public sealed class MemoryService : IMemoryService
 		return new MemorySearchResult(hits.Select(h => View(h.Entry)).ToList(), retrievers);
 	}
 
+	public async Task<MemoryScoredSearchResult> SearchScoredAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default)
+	{
+		await EnsureStore(projectKey, store, ct);
+		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
+		var (hits, retrievers) = await SearchStoreAsync(projectKey, store, query, typeFilter, SearchK, lexical, semantic, ct);
+		// Load the pool's vectors ONCE (when an embedder is wired) so a caller's MMR has proximity;
+		// without an embedder there is nothing to load and MMR degrades to identity downstream.
+		var vecs = _llm is null ? null : LoadVectors(projectKey, store, hits.Select(h => h.Entry.Key).ToList());
+		var scored = hits.Select(h => new MemoryScoredHit(
+			View(h.Entry), h.Entry.Updated, h.Score, h.LexicalConfirmed,
+			vecs is not null && vecs.TryGetValue(h.Entry.Key, out var v) ? v : null)).ToList();
+		return new MemoryScoredSearchResult(scored, retrievers);
+	}
+
 	// ---- unified read (list = search without a query; uniform-entity-verbs v2) ----
 
 	// Stores skipped by the implicit "every store" sweep of the unified read: sensitive
@@ -262,7 +276,7 @@ public sealed class MemoryService : IMemoryService
 	// RRF-fused), entities returned in fused order WITH their fused RRF score (for global
 	// cross-store fusion + decay upstream) and retriever provenance. `k` bounds the candidate
 	// pool. The type filter applies post-resolution (Type is constant in the index, as before).
-	async Task<(List<(MemoryEntry Entry, double Score)> Hits, SearchRetrievers Retrievers)> SearchStoreAsync(
+	async Task<(List<(MemoryEntry Entry, double Score, bool LexicalConfirmed)> Hits, SearchRetrievers Retrievers)> SearchStoreAsync(
 		string projectKey, string store, string query, MemoryType? typeFilter, int k,
 		bool? lexical, bool? semantic, CancellationToken ct)
 	{
@@ -271,11 +285,12 @@ public sealed class MemoryService : IMemoryService
 		// No searchable tokens (empty/punctuation query): degrade to a type-filtered listing —
 		// a filter-only query still returns a sensible set rather than nothing (preserved from
 		// the pre-contract behaviour; FtsQuery returns no match for such queries). Score by
-		// descending position so the listing order survives if decay is off.
+		// descending position so the listing order survives if decay is off. A deterministic
+		// listing is not semantic noise, so every row counts as lexically confirmed.
 		if (FtsQuery.BuildMatch(query) is null)
 		{
 			var listing = ListActive(ctx, typeFilter);
-			var scoredListing = listing.Select((e, i) => (e, 1.0 / (i + 1))).ToList();
+			var scoredListing = listing.Select((e, i) => (e, 1.0 / (i + 1), true)).ToList();
 			return (scoredListing, new SearchRetrievers(true, false, false));
 		}
 
@@ -291,13 +306,18 @@ public sealed class MemoryService : IMemoryService
 		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(null), k, ct);
 
 		// Resolve hits to entries (preserving fused order + score) and apply the MemoryType filter.
+		// The fused hit's Retriever names the FIRST index that surfaced it; the lexical index is
+		// always registered before the vector one (below), so "lexical" ⟺ the lexical leg confirmed
+		// this hit and "semantic" ⟺ it was surfaced by the vector leg ALONE (unconfirmed noise a
+		// caller may floor). No lexical leg (lexical:false) → nothing is confirmed.
 		var ids = resp.Hits.Select(h => h.Id).ToList();
 		var order = ids.Select((id, i) => (id, i)).ToDictionary(x => x.id, x => x.i);
 		var score = resp.Hits.ToDictionary(h => h.Id, h => h.Score);
+		var confirmed = resp.Hits.ToDictionary(h => h.Id, h => h.Retriever == "lexical");
 		var hits = ctx.Entries.Where(e => e.ActiveTo == null && ids.Contains(e.Key)).ToList()
 			.Where(e => typeFilter == null || e.Type == typeFilter)
 			.OrderBy(e => order[e.Key])
-			.Select(e => (e, score[e.Key]))
+			.Select(e => (e, score[e.Key], confirmed[e.Key]))
 			.ToList();
 
 		return (hits, resp.Retrievers);
