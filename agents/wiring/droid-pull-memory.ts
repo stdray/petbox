@@ -16,7 +16,7 @@
 // Best-effort, always exit 0, no output for an unregistered cwd.
 
 import { fetchCanonBlock } from "./canon.ts";
-import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
+import { buildProtocol, droidPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
 
 type HookInput = { cwd?: string; source?: string };
@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   try {
     const resolved = resolveProject(cwd);
     if (!resolved) return; // not a registered project → no output
-    let context = buildProtocol(resolved.project, mcpPetboxTool, { source });
+    let context = buildProtocol(resolved.project, droidPetboxTool, { source });
     // Append the curated memory canon when available (best-effort; degrades to nothing).
     const canon = await fetchCanonBlock(resolved);
     if (canon) context += `\n\n${canon}`;

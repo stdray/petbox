@@ -65,3 +65,8 @@ export const mcpPetboxTool: ToolNamer = (verb) => `mcp__petbox__${verb}`;
 
 // The opencode tool namer: petbox tools are exposed as `petbox_<verb>`.
 export const opencodePetboxTool: ToolNamer = (verb) => `petbox_${verb}`;
+
+// Factory Droid exposes MCP tools as `<server>___<tool>` (triple underscore) — observed
+// live in exec mode (session 7be9f6c2: `mcp__petbox__*` answers "not permitted in exec
+// mode"); the docs' `mcp__<server>__<tool>` form did not match the shipped CLI.
+export const droidPetboxTool: ToolNamer = (verb) => `petbox___${verb}`;
