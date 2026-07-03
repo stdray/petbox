@@ -185,12 +185,17 @@ public partial class Program
 			builder.Configuration.GetSection("Search:Sessions").Get<PetBox.Web.Search.SessionSearchOptions>() ?? new PetBox.Web.Search.SessionSearchOptions());
 		builder.Services.AddScoped<PetBox.Web.Search.SessionSearchService>();
 		// Episodic tier: transient per-session DuckDB index, hydrated on demand and aged
-		// out by idleness. Singleton — it IS the hydration cache.
+		// out by idleness. Singleton — it IS the hydration cache. The stage-2 in-session
+		// fair-fusion knobs (junk-exclusion min length + semantic-noise floor, spec
+		// search-fair-fusion) bind from `Search:Episodic:*` — sibling of the stage-1
+		// `Search:Sessions:*` floor above; conservative defaults when absent.
 		builder.Services.AddSingleton<PetBox.Sessions.Contract.ISessionEpisodicIndex>(sp =>
 			new PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex(
 				sp.GetRequiredService<IScopedDbFactory<PetBox.Sessions.Data.SessionsDb>>(),
 				sp.GetService<PetBox.LlmRouter.Contract.ILlmClient>(),
-				sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex>>()));
+				sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex>>(),
+				options: builder.Configuration.GetSection("Search:Episodic").Get<PetBox.Sessions.Contract.SessionEpisodicOptions>()
+					?? new PetBox.Sessions.Contract.SessionEpisodicOptions()));
 		// Deploy: single FLEET-WIDE mutable db (one node hosts containers from many
 		// projects, so NOT per-project scoped). Schema ensured once at startup in Configure().
 		builder.Services.AddScoped(sp => new PetBox.Deploy.Data.DeployDb(

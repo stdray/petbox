@@ -47,6 +47,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 	readonly TimeSpan _ttl;
 	readonly int _maxHydrated;
 	readonly TimeProvider _time;
+	readonly SessionEpisodicOptions _options;
 
 	readonly Dictionary<string, Hydrated> _cache = new(StringComparer.Ordinal);
 	// One gate serializes hydration AND queries: a DuckDB connection is not thread-safe,
@@ -55,7 +56,8 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 
 	public DuckDbSessionEpisodicIndex(IScopedDbFactory<SessionsDb> factory, ILlmClient? llm = null,
 		ILogger<DuckDbSessionEpisodicIndex>? logger = null, TimeSpan? ttl = null,
-		int maxHydrated = DefaultMaxHydrated, TimeProvider? time = null)
+		int maxHydrated = DefaultMaxHydrated, TimeProvider? time = null,
+		SessionEpisodicOptions? options = null)
 	{
 		_factory = factory;
 		_store = new SessionStore(factory);
@@ -64,6 +66,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		_ttl = ttl ?? DefaultTtl;
 		_maxHydrated = maxHydrated;
 		_time = time ?? TimeProvider.System;
+		_options = options ?? new SessionEpisodicOptions();
 	}
 
 	public async Task<SessionEpisodicResult?> SearchAsync(string projectKey, string sessionId, string query, int k, CancellationToken ct = default)
@@ -211,12 +214,26 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		if (_llm is not null && await _llm.IsAvailableAsync(projectKey, LlmCapability.Embed, ct))
 			indexes.Add(new VectorLeg(entry, q => EnsureVectorsAndEmbedQueryAsync(projectKey, entry, q, ct)));
 
-		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(null), k, ct);
+		// OVER-FETCH, then floor, then cut to k: fetching only k and then dropping semantic
+		// noise would return SHORT. A pool of max(3k, 20) (naturally bounded by the session's
+		// message count) leaves substantive hits to refill the quota after the floor trims the
+		// junk. The floor mirrors stage-1 discovery (RankDiscovery, spec: search-fair-fusion).
+		var pool = Math.Max(3 * k, 20);
+		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(null), pool, ct);
 
 		var byVersion = entry.Messages.ToDictionary(m => m.Version);
-		var hits = new List<SessionEpisodicHit>(resp.Hits.Count);
+		var hits = new List<SessionEpisodicHit>(k);
 		foreach (var h in resp.Hits)
 		{
+			if (hits.Count >= k) break;
+			// W5 semantic floor: drop a hit surfaced by the semantic leg ALONE whose fused RRF
+			// relevance is below the floor. The lexical index is registered FIRST, so — exactly
+			// as MemoryService.SearchStoreAsync documents — Retriever=="lexical" ⟺ lexically
+			// confirmed (never floored, the lexical leg vouched for it), "semantic" ⟺ vector-only
+			// (unconfirmed, a caller may floor it). This only trims the weak tail: rank-0 junk is
+			// already kept OUT of the semantic candidate set upstream (MinSemanticChars), because
+			// its 1/60 ≈ 0.0167 fused score would clear any sane floor.
+			if (_options.SemanticFloor > 0 && h.Retriever != "lexical" && h.Score < _options.SemanticFloor) continue;
 			if (!long.TryParse(h.Id, out var ordinal) || !byVersion.TryGetValue(ordinal, out var msg)) continue;
 			hits.Add(new SessionEpisodicHit(ordinal, msg.Role, Snippet(msg.Content, query), h.Score, h.Retriever));
 		}
@@ -258,6 +275,14 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		for (var i = 0; i < entry.Messages.Count; i++)
 		{
 			var message = entry.Messages[i];
+			// Junk exclusion from the SEMANTIC leg only: a message too short to carry meaning
+			// ("```", "Записано.", "No response requested.") is left as a null vector — not
+			// embedded (no wasted embed call / message_vec cache row) and filtered from the
+			// cosine candidates. These nulls are STABLE across the entry.Vectors memoization
+			// (the same indices are skipped every time). The FTS leg keeps indexing it — a
+			// lexical token match on a short message is legitimate and must never be dropped.
+			if (_options.MinSemanticChars > 0 && message.Content.Trim().Length < _options.MinSemanticChars)
+				continue;
 			if (cached.TryGetValue(message.Version, out var row)
 				&& row.Model == model && row.Dim == dim && row.Hash == ContentHash(message.Content))
 				vectors[i] = VectorCodec.Decode(row.Vec);
@@ -389,7 +414,12 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		public async Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default)
 		{
 			var q = await ensureAndEmbedQuery(query);
-			var candidates = entry.Messages.Select((m, i) => (Key: m.Version.ToString(), Vec: entry.Vectors![i]));
+			// Skip messages excluded from the semantic leg (null vector = junk kept OUT by
+			// EnsureMessageVectorsAsync) before cosine — they were never embedded.
+			var candidates = entry.Messages
+				.Select((m, i) => (Key: m.Version.ToString(), Vec: entry.Vectors![i]))
+				.Where(c => c.Vec is not null)
+				.Select(c => (c.Key, Vec: c.Vec!));
 			return VectorMath.TopK(q, candidates, k)
 				.Select(t => new Hit("message", t.Key, t.Score, "semantic"))
 				.ToList();

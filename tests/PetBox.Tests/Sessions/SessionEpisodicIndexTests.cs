@@ -64,8 +64,10 @@ public sealed class SessionEpisodicIndexTests : IDisposable
 	[Fact]
 	public async Task Vector_FindsParaphrase_WithNoSharedTokens()
 	{
+		// Substantive (>= the 30-char semantic floor) so the real feature does not exclude it —
+		// a genuine paraphrase-bearing message is never this short in practice.
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
-			Msgs($"deploy pipeline {EpisodicEmbedFake.NearQueryMarker}", "совершенно другое сообщение"));
+			Msgs($"deploy the whole release pipeline today {EpisodicEmbedFake.NearQueryMarker}", "совершенно другое сообщение"));
 		using var index = new DuckDbSessionEpisodicIndex(_factory, new EpisodicEmbedFake());
 
 		var res = await index.SearchAsync(Proj, "s1", "паравозик", k: 5);
@@ -149,7 +151,10 @@ public sealed class SessionEpisodicIndexTests : IDisposable
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("первое сообщение", "второе сообщение"));
 		var fake = new EpisodicEmbedFake();
 		var time = new FakeTimeProvider();
-		using var index = new DuckDbSessionEpisodicIndex(_factory, fake, ttl: TimeSpan.FromMinutes(10), time: time);
+		// MinSemanticChars=0: this test exercises the vector CACHE, so every (short) message must
+		// embed — the junk-length gate is orthogonal and off here.
+		using var index = new DuckDbSessionEpisodicIndex(_factory, fake, ttl: TimeSpan.FromMinutes(10), time: time,
+			options: new SessionEpisodicOptions { MinSemanticChars = 0 });
 
 		await index.SearchAsync(Proj, "s1", "сообщение", k: 5); // embeds query + both messages
 		var inputsAfterFirst = fake.Inputs.Count;
@@ -169,7 +174,10 @@ public sealed class SessionEpisodicIndexTests : IDisposable
 	{
 		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs("старый текст"));
 		var fake = new EpisodicEmbedFake();
-		using var index = new DuckDbSessionEpisodicIndex(_factory, fake);
+		// MinSemanticChars=0: this test asserts on per-ordinal embed calls (hash invalidation +
+		// new ordinal), so the short messages must reach the embedder.
+		using var index = new DuckDbSessionEpisodicIndex(_factory, fake,
+			options: new SessionEpisodicOptions { MinSemanticChars = 0 });
 		await index.SearchAsync(Proj, "s1", "текст", k: 5);
 
 		// The re-push rewrote ordinal 1's content (and grew the session → re-hydration).
@@ -178,6 +186,83 @@ public sealed class SessionEpisodicIndexTests : IDisposable
 
 		fake.Inputs.Should().Contain("совсем новый текст"); // hash mismatch → re-embedded
 		fake.Inputs.Should().Contain("хвост");              // new ordinal → embedded
+	}
+
+	[Fact]
+	public async Task Semantic_ExcludesJunk_QuotaFilledWithSubstantiveHits()
+	{
+		// Two substantive marker-messages the semantic leg should surface, interleaved with the
+		// trivial service messages ("```", "Записано.", "No response requested.") that the plain
+		// hybrid would otherwise float to rank 0 of the semantic leg.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(
+			$"deploy the whole pipeline {EpisodicEmbedFake.NearQueryMarker} мы настроили и проверили конвейер", // 1 substantive
+			"```",                                                                                              // 2 junk
+			"Записано.",                                                                                        // 3 junk
+			$"второй содержательный ответ {EpisodicEmbedFake.NearQueryMarker} про архитектуру и дизайн решения", // 4 substantive
+			"No response requested."));                                                                         // 5 junk
+		using var index = new DuckDbSessionEpisodicIndex(_factory, new EpisodicEmbedFake());
+
+		var res = await index.SearchAsync(Proj, "s1", "паравозик", k: 2);
+
+		res!.Retrievers.Semantic.Should().BeTrue();
+		// The k=2 quota is filled by the substantive hits (over-fetch refills past the excluded
+		// junk); no junk ordinal survives.
+		res.Hits.Should().HaveCount(2);
+		res.Hits.Should().OnlyContain(h => h.Message == 1 || h.Message == 4);
+	}
+
+	[Fact]
+	public async Task LexicalMatch_OnShortMessage_IsNeverFloored()
+	{
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(
+			"длинное содержательное сообщение совсем про другую тему без нужного токена", // 1 substantive, no match
+			"деплой ок"));                                                                // 2 short (<30), lexical target
+		using var index = new DuckDbSessionEpisodicIndex(_factory, new EpisodicEmbedFake());
+
+		var res = await index.SearchAsync(Proj, "s1", "деплой", k: 5);
+
+		// The short message is kept OUT of the semantic leg but the lexical leg still indexes it;
+		// a precise BM25 token hit on a short message must survive.
+		res!.Hits.Should().Contain(h => h.Message == 2 && h.Retriever == "lexical");
+	}
+
+	[Fact]
+	public async Task JunkMessages_AreNotEmbedded_NoWastedCallsOrCacheRows()
+	{
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(
+			$"содержательное сообщение {EpisodicEmbedFake.NearQueryMarker} с реальным смыслом внутри", // 1 substantive
+			"```",                                                                                     // 2 junk
+			"Записано."));                                                                             // 3 junk
+		var fake = new EpisodicEmbedFake();
+		using var index = new DuckDbSessionEpisodicIndex(_factory, fake);
+
+		await index.SearchAsync(Proj, "s1", "паравозик", k: 5);
+
+		fake.Inputs.Should().NotContain("```");
+		fake.Inputs.Should().NotContain("Записано.");
+		fake.Inputs.Should().Contain(c => c.Contains("реальным смыслом")); // the substantive one embedded
+		// And no message_vec cache rows were spent on the junk — only the one substantive message.
+		_factory.GetDb(Proj).MessageVectors.Count(v => v.SessionId == "s1").Should().Be(1);
+	}
+
+	[Fact]
+	public async Task SemanticOnlyHit_BelowFloor_IsDropped_UnlessDisabled()
+	{
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(
+			$"уникальное содержательное сообщение про дизайн и планы {EpisodicEmbedFake.NearQueryMarker}"));
+
+		// A lone semantic-only hit fuses to 1/60 ≈ 0.0167 at rank 0; a floor above that drops it —
+		// the score floor CAN trim a rank-0 hit, it just cannot catch junk cheaper than the floor.
+		using var strict = new DuckDbSessionEpisodicIndex(_factory, new EpisodicEmbedFake(),
+			options: new SessionEpisodicOptions { SemanticFloor = 0.02 });
+		var dropped = await strict.SearchAsync(Proj, "s1", "паравозик", k: 5);
+		dropped!.Hits.Should().BeEmpty();
+
+		// Disabling both knobs (0) restores the old behavior — the semantic hit survives.
+		using var lax = new DuckDbSessionEpisodicIndex(_factory, new EpisodicEmbedFake(),
+			options: new SessionEpisodicOptions { SemanticFloor = 0, MinSemanticChars = 0 });
+		var kept = await lax.SearchAsync(Proj, "s1", "паравозик", k: 5);
+		kept!.Hits.Should().Contain(h => h.Message == 1 && h.Retriever == "semantic");
 	}
 
 	// Embeds the marker (and any query) onto the same unit vector so a paraphrase with no
