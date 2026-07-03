@@ -3,7 +3,7 @@ name: CI
 on:
   push:
     branches: [main]
-    tags: ['deploy', 'nuget', 'npm', 'pypi']
+    tags: ['deploy', 'nuget', 'npm', 'npm-wire', 'pypi']
 
 permissions:
   contents: read
@@ -13,7 +13,7 @@ concurrency:
   # A push to main and the `deploy` tag move land the SAME commit, firing two
   # redundant CI runs. Group both by commit so the `deploy` run cancels the
   # `main` run (deploy runs everything main does, plus the deploy job). Other
-  # refs (nuget/npm/pypi tags) keep their per-ref+sha group and still cancel
+  # refs (nuget/npm/npm-wire/pypi tags) keep their per-ref+sha group and still cancel
   # their own stale runs.
   group: ${{ (github.ref == 'refs/heads/main' || github.ref == 'refs/tags/deploy') && format('ci-commit-{0}', github.sha) || format('ci-{0}-{1}', github.ref_name, github.sha) }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
@@ -22,9 +22,9 @@ jobs:
   # Correctness gate. Runs in PARALLEL with `publish` (image build) — `deploy` needs
   # both — so tests and the image build no longer run back-to-back. The image build
   # may still push even if tests fail (harmless: `deploy` is gated on this job).
-  # Skipped on the package-publish tags (nuget/npm/pypi), which carry no app change.
+  # Skipped on the package-publish tags (nuget/npm/npm-wire/pypi), which carry no app change.
   test:
-    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/pypi'
+    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/npm-wire' && github.ref != 'refs/tags/pypi'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -63,7 +63,7 @@ jobs:
         run: ./build.sh --target=Test --playwrightWithDeps=false
 
   publish:
-    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/pypi'
+    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/npm-wire' && github.ref != 'refs/tags/pypi'
     runs-on: ubuntu-latest
     outputs:
       dockerTag: ${{ steps.publish.outputs.dockerTag }}
@@ -262,6 +262,39 @@ jobs:
         run: |
           chmod +x ./build.sh
           ./build.sh --target=NpmPublish
+
+  # ─── petbox-wire (agent-wiring kit) publish to public npmjs on `npm-wire` tag push ───
+  # Own tag by convention (deploy/nuget/npm/pypi are per-package channels too). Raw plain-TS
+  # package: no bun/build — only the GitVersion stamp (needs full history) and `npm publish`.
+  npm-wire-publish:
+    if: github.event_name == 'push' && github.ref == 'refs/tags/npm-wire'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Publish petbox-wire to public npmjs
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          chmod +x ./build.sh
+          ./build.sh --target=NpmWirePublish
 
   # ─── Python SDK publish to public PyPI on `pypi` tag push ───
   pypi-publish:

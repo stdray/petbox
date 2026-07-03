@@ -128,9 +128,9 @@ opencode shim point at.
 
 Workflow to ship a kit change:
 1. Edit the kit in the repo (`src/clients-ts/petbox-wire/src/…`).
-2. Publish by pushing the **`npm`** tag — CI (`./build.sh --target=NpmPublish`) stamps the
-   GitVersion version and publishes **both** npm packages (`@stdray-npm/petbox-client` and
-   `petbox-wire`).
+2. Publish by pushing the **`npm-wire`** tag — CI (`./build.sh --target=NpmWirePublish`)
+   stamps the GitVersion version and publishes `petbox-wire` (one tag per package channel;
+   `npm` still publishes only `@stdray-npm/petbox-client`).
 3. On each machine, re-run `npx petbox-wire@latest <dir> <project> --key <KEY>` (or the dev
    checkout command). This refreshes `~/.petbox/wire/` and the generated config.
 

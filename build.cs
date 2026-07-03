@@ -32,9 +32,9 @@ var nugetProjects = new[] { clientCoreProject, clientConfigProject, clientLinq2D
 // TS SDK — published to the public npm registry (npmjs.org) via `npm` tag push.
 var tsSdkDir = "./src/clients-ts/petbox-client";
 
-// Agent-wiring kit — published to the public npm registry (npmjs.org) via the SAME `npm` tag
-// push as the SDK. Raw plain-TS package (native type-stripping): no install/build, only a
-// GitVersion version-stamp before publish.
+// Agent-wiring kit — published to the public npm registry (npmjs.org) via its OWN `npm-wire`
+// tag push (one tag per package channel, like deploy/nuget/npm/pypi). Raw plain-TS package
+// (native type-stripping): no install/build, only a GitVersion version-stamp before publish.
 var tsWireDir = "./src/clients-ts/petbox-wire";
 
 // Python SDK — published to public PyPI via `pypi` tag push.
@@ -370,7 +370,7 @@ Task("TsSdkPack")
 // NPM_TOKEN — an npmjs automation/publish token with rights to the @stdray-npm
 // scope. Writes a temporary .npmrc with the auth token, then `npm publish
 // --access public` (scoped packages are restricted by default; this one is public).
-Task("NpmClientPublish")
+Task("NpmPublish")
 	.IsDependentOn("TsSdkPack")
 	.Does(() =>
 	{
@@ -399,7 +399,7 @@ Task("NpmClientPublish")
 		}
 	});
 
-// ─── agent-wiring kit (petbox-wire) — same npm registry, same `npm` tag ───
+// ─── agent-wiring kit (petbox-wire) — same npm registry, own `npm-wire` tag ───
 
 // Stamp package.json version from GitVersion. The kit is raw plain TS (native type-stripping),
 // so there is no install/build/pack — just the version bump, mirroring TsSdkPack. GitVersion runs
@@ -418,8 +418,9 @@ Task("TsWirePack")
 		});
 	});
 
-// Publishes the agent-wiring kit (petbox-wire, UNSCOPED public package) to registry.npmjs.org.
-// Same NPM_TOKEN + temporary-.npmrc mechanism as NpmClientPublish.
+// Publishes the agent-wiring kit (petbox-wire, UNSCOPED public package) to registry.npmjs.org
+// on its own `npm-wire` tag (CI calls `./build.sh --target=NpmWirePublish`). Same NPM_TOKEN +
+// temporary-.npmrc mechanism as NpmPublish.
 Task("NpmWirePublish")
 	.IsDependentOn("TsWirePack")
 	.Does(() =>
@@ -448,12 +449,6 @@ Task("NpmWirePublish")
 				System.IO.File.Delete(npmrc);
 		}
 	});
-
-// Aggregate published by the `npm` tag (CI calls `./build.sh --target=NpmPublish`): ships BOTH
-// npm packages — the SDK (@stdray-npm/petbox-client) and the wiring kit (petbox-wire).
-Task("NpmPublish")
-	.IsDependentOn("NpmClientPublish")
-	.IsDependentOn("NpmWirePublish");
 
 // ─── Python SDK build + publish (PyPI) ───
 
