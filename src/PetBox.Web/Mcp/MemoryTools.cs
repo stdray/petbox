@@ -158,7 +158,7 @@ public static class MemoryTools
 	// the low-ceremony capture verb. Both carry the `scope` dimension over the per-project
 	// store files —
 	//   project   → the key's own project  (default; the usual case)
-	//   workspace → the shared cross-project container ("$system") — facts that span
+	//   workspace → the shared cross-project container ("$workspace") — facts that span
 	//               projects or are about the user live here, one place for everyone.
 	// `search` with no scope CASCADES both (project ⊕ workspace) and returns rows labelled
 	// by scope so precedence is visible (project first); when the key's project IS the
@@ -167,7 +167,10 @@ public static class MemoryTools
 	// type=User, not a separate container. Curated/temporal writes go through memory_upsert.
 
 	// Internal: MemoryApi's canon endpoint reads the workspace canon from this same container.
-	internal const string WorkspaceContainer = "$system";
+	// The reserved "$workspace" project (seeded/ensured by M028/M031) is a container, not a
+	// user project — distinct from "$system" so a project's cascade doesn't inherit ALL of
+	// $system's memory as "workspace".
+	internal const string WorkspaceContainer = "$workspace";
 	const string DefaultStore = "notes";
 
 	[McpServerTool(Name = "memory_remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
