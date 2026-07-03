@@ -168,8 +168,8 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Memory_Upsert_Search_Roundtrip()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.StoreCreateAsync(http, Flags(), _memory, Proj, "notes");
-		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes",
+		await MemoryTools.StoreCreateAsync(http, Flags(), _db, _memory, Proj, "notes");
+		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes",
 			McpInputs.Entries(new[]
 			{
 				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = new[] { "go", "style" } },

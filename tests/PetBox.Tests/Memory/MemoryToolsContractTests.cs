@@ -57,7 +57,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "k", description = "d", body = "b" },
 		});
 		// The missing-type validation throws; McpErrorEnvelopeFilter renders {error} on the wire.
-		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries));
+		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries));
 	}
 
 	[Fact]
@@ -71,7 +71,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "go-style", type = "reference", description = "Go", body = "tabs", tags = new[] { "Go", " STYLE ", "go" } },
 			new { key = "prefers-tabs", type = "feedback", description = "tabs", body = "user likes tabs" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries);
 		(await _store.ExistsAsync(Proj, "notes")).Should().BeTrue();
 
 		// Tags normalised: lowercased, trimmed, de-duped.
@@ -99,7 +99,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "auth-scopes", type = "project", description = "API key scopes", body = "scopes are enumerable, not wildcards" },
 			new { key = "go-style", type = "reference", description = "Go conventions", body = "use tabs not spaces" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries);
 
 		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"scope", scope: "project", store: "notes");
@@ -116,7 +116,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		// rich input schema), so the old JSON-*string* fallback for stale-schema clients is gone —
 		// a reconnect refreshes the cached schema (see McpToolInputs deviation note).
 		var entries = McpInputs.EntriesJson("""[{"key":"k","type":"project","description":"d","body":"b"}]""");
-		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "strstore", entries);
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "strstore", entries);
 		res.Added.Should().ContainSingle()
 			.Which.Key.Should().Be("k");
 	}
@@ -129,10 +129,10 @@ public sealed class MemoryToolsContractTests : IDisposable
 		{
 			new { key = "temp", type = "project", description = "temp", body = "to be removed" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries);
 
 		var del = McpInputs.Entries(new object[] { new { key = "temp", deleted = true } });
-		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", del);
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", del);
 		res.Removed.Should().Contain("temp");
 
 		var list = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
@@ -148,19 +148,19 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Upsert_Patch_TagsOnlyEdit_KeepsDescriptionAndBody()
 	{
 		var http = Http("memory:read,memory:write");
-		var created = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var created = (await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "k", type = "project", description = "keep-d", body = "keep-b", tags = new[] { "t1", "t2" } },
 		}))).Added.Single();
 
 		// The incident payload: only key/type/tags/version — description and body omitted.
-		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "k", type = "project", tags = new[] { "t3" }, version = created.Version },
 		}));
 		res.Applied.Should().BeTrue();
 
-		var after = (await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(), Proj, "notes", "k"))!;
+		var after = (await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "k"))!;
 		after.Description.Should().Be("keep-d");
 		after.Body.Should().Be("keep-b");
 		after.Tags.Should().Equal("t3");
@@ -172,19 +172,19 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Upsert_Patch_ExplicitEmptyClears_OmittedStays()
 	{
 		var http = Http("memory:read,memory:write");
-		var created = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var created = (await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "c", type = "project", description = "d", body = "b", tags = new[] { "t" } },
 		}))).Added.Single();
 
 		// body:"" clears the body; omitted description/tags stay.
-		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "c", type = "project", body = "", version = created.Version },
 		}));
 		res.Applied.Should().BeTrue();
 
-		var after = (await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(), Proj, "notes", "c"))!;
+		var after = (await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "c"))!;
 		after.Body.Should().BeEmpty();
 		after.Description.Should().Be("d");
 		after.Tags.Should().Equal("t");
@@ -196,13 +196,13 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Upsert_NewEntry_PartialFields_OmittedStartEmpty()
 	{
 		var http = Http("memory:read,memory:write");
-		var res = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "fresh", type = "project", body = "only-body" },
 		}));
 		res.Applied.Should().BeTrue();
 
-		var after = (await MemoryTools.GetAsync(http, Flags(), _memory, new NoopUsageRecorder(), Proj, "notes", "fresh"))!;
+		var after = (await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "fresh"))!;
 		after.Body.Should().Be("only-body");
 		after.Description.Should().BeEmpty();
 		after.Tags.Should().BeEmpty();
@@ -222,7 +222,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		{
 			new { key = "k", type = "project", description = "one-liner", body = big },
 		});
-		var added = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries))
+		var added = (await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries))
 			.Added.Single();
 		added.Description.Should().Be("one-liner");
 		added.Body.Should().BeNull();
@@ -232,7 +232,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		{
 			new { key = "k2", type = "project", description = "d", body = big },
 		});
-		var sliced = (await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries2, bodyLen: 300))
+		var sliced = (await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries2, bodyLen: 300))
 			.Added.Single(e => e.Key == "k2")
 			.Body!;
 		sliced.Length.Should().Be(301);
@@ -253,7 +253,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 			new { key = "b", type = "project", description = "db", body = "alpha short" },
 			new { key = "c", type = "project", description = "dc", body = "alpha scope" },
 		});
-		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", entries);
+		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries);
 
 		// listing: limit caps the count.
 		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
@@ -293,18 +293,18 @@ public sealed class MemoryToolsContractTests : IDisposable
 	public async Task Upsert_EchoCurrentVersion_IsValidNextBaseline_FutureRejected()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "a", type = "project", description = "d", body = "b" },
 		}));                                                                            // v1
-		var second = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var second = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "c", type = "project", description = "d", body = "b" },
 		}));                                                                            // v2 -> store cursor
 		var cursor = second.CurrentVersion;
 
 		// Edit 'a' (own version 1) at the store cursor baseline — accepted.
-		var edit = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var edit = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "a", type = "project", body = "edited", version = cursor },
 		}));
@@ -312,7 +312,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		edit.Conflicts.Should().BeEmpty();
 
 		// A baseline above the store cursor is a FutureBaseline conflict, Reason surfaced.
-		var future = await MemoryTools.UpsertAsync(http, Flags(), _memory, Proj, "notes", McpInputs.Entries(new object[]
+		var future = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
 		{
 			new { key = "a", type = "project", body = "x", version = cursor + 500 },
 		}));
