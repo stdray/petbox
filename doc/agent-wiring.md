@@ -51,10 +51,19 @@ Runtime: plain TypeScript executed by **node 24** native type-stripping. No buil
    endpoint only warns and continues. (Contract: `src/PetBox.Core/Auth/AuthApi.cs`.)
 5. Upsert the registry entry `~/.petbox/projects.json`: `{prefix: <dir>, project, envVar}`
    (replace by prefix; other entries untouched). `baseUrl` is written only when non-default.
-6. (Re)generate per-project files in `<dir>` (existing files are overwritten = "regenerate"):
-   - `.mcp.json` — Claude Code MCP, `X-Api-Key: ${VAR}`.
-   - `.opencode/opencode.json` — opencode remote MCP, `X-Api-Key: {env:VAR}`.
+6. (Re)generate per-project files in `<dir>`:
+   - `.mcp.json` — Claude Code MCP, `X-Api-Key: ${VAR}` (petbox-only file, regenerated whole).
+   - `.opencode/opencode.json` — opencode remote MCP, `X-Api-Key: {env:VAR}` (regenerated whole).
+   - `.factory/mcp.json` — Factory Droid MCP, `X-Api-Key: ${VAR}` — **merged** (never clobbers
+     other team servers or top-level keys; only the `petbox` entry is regenerated). Droid expands
+     `${VAR}` in header values, so the key stays in the env var, never the file.
    - `.claude/skills/petbox/SKILL.md` — from the template with `{{PROJECT}}`/`{{WORKSPACE}}`.
+     Serves Claude Code natively **and** opencode, which discovers it via its Claude-compatible
+     skills path (`.claude/skills/…`); wire.ts deliberately writes no second `.opencode/skills/`
+     copy (a same-name duplicate whose resolution opencode does not document).
+   - `.factory/skills/petbox/SKILL.md` — the same rendered skill for Factory Droid (its native
+     skills root is `.factory/skills/`; its Claude-compat root is `.agent/skills/`, not
+     `.claude/skills/`, so it needs a dedicated copy).
 7. Global install (idempotent):
    - `~/.claude/settings.json` — **merge** a `Stop` → `node "<…>/push-session.ts"` and
      `SessionStart` → `node "<…>/pull-memory.ts"` hook. The rest of the live settings
@@ -143,8 +152,26 @@ node --experimental-strip-types agents/wiring/import-sessions.ts --agent claude 
 
 ## 8. Factory Droid specifics
 
-Factory Droid (the `droid` CLI) has Claude-Code-compatible hooks, so it wires with the same two
-behaviors as the other agents from the shared modules:
+Factory Droid (the `droid` CLI) is a **first-class** wiring target: after `wire.ts` it has MCP,
+hooks and skills with zero manual steps, at parity with Claude Code.
+
+- **MCP registration:** `<dir>/.factory/mcp.json` — Droid's documented project-level MCP config
+  (`docs.factory.ai/cli/configuration/mcp`). Shape is the standard `mcpServers` map:
+  `{"mcpServers":{"petbox":{"type":"http","url":"https://petbox.3po.su/mcp","headers":{"X-Api-Key":"${VAR}"},"disabled":false}}}`.
+  Droid expands `${VAR}` (and `${VAR:-default}`) in `url` and header **values**, so the API key
+  lives in the env var, never the committed file (matches Droid's "never put secrets in project
+  config" guidance). `wire.ts` **merges** the `petbox` entry in — any other team servers and
+  top-level keys are preserved; re-runs are byte-identical. (An equivalent interactive path is
+  `droid mcp add petbox https://petbox.3po.su/mcp --type http --header "X-Api-Key: ${VAR}"`;
+  writing the file directly keeps the merge idempotent and offline.)
+- **Skills:** `<dir>/.factory/skills/petbox/SKILL.md` — Droid's documented native skills root
+  (`docs.factory.ai/cli/configuration/skills`: workspace skills live at
+  `<repo>/.factory/skills/<name>/SKILL.md`, YAML frontmatter with `name`/`description`). It is the
+  same rendered template used for Claude Code. Droid's *only* Claude-compat skills root is
+  `.agent/skills/` (not `.claude/skills/`), so it needs its own copy rather than piggybacking on
+  the Claude one.
+
+It also wires the same two hook behaviors as the other agents from the shared modules:
 
 - **Settings location:** `~/.factory/settings.json`, `hooks` key (a documented fallback for
   `~/.factory/hooks.json`). Same JSON shape as Claude Code:
