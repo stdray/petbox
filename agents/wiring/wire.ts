@@ -9,7 +9,7 @@
 //   4. validate the key against /api/auth/validate
 //   5. upsert the registry entry (prefix → project, envVar)
 //   6. (re)generate per-project config files (.mcp.json, .opencode/opencode.json, SKILL.md)
-//   7. install the global Claude hooks + opencode plugin (merge, never clobber live files)
+//   7. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files)
 //   8. (--cleanup-legacy) remove the project's old per-project hook/plugin copies
 //   9. self-smoke: POST a tiny session and assert the server applied it
 //
@@ -258,6 +258,39 @@ function installGlobalHooks(): void {
   ensureHook("SessionStart", pullCmd);
   writeJson(settingsPath, settings);
   log(`[7/9] merged hooks into ${settingsPath}`);
+
+  // Factory Droid hooks: same JSON shape as Claude Code, merged into ~/.factory/settings.json
+  // under the `hooks` key (a documented fallback location). Droid exposes petbox tools as
+  // `mcp__petbox__*` and delivers Claude-Code-compatible snake_case payloads, so it reuses the
+  // shared protocol/append flow via its own thin hooks. No `enableHooks` flag is set: the droid
+  // hooks reference does not document one gating hook execution.
+  const droidPushPath = join(HERE, "droid-push-session.ts");
+  const droidPullPath = join(HERE, "droid-pull-memory.ts");
+  const droidPushCmd = `node "${droidPushPath}"`;
+  const droidPullCmd = `node "${droidPullPath}"`;
+
+  const droidSettingsPath = join(homedir(), ".factory", "settings.json");
+  const droidSettings = readJson(droidSettingsPath) ?? {};
+  if (!droidSettings.hooks || typeof droidSettings.hooks !== "object") droidSettings.hooks = {};
+
+  const ensureDroidHook = (event: string, command: string) => {
+    const groups: any[] = Array.isArray(droidSettings.hooks[event]) ? droidSettings.hooks[event] : [];
+    const already = groups.some(
+      (g) => Array.isArray(g?.hooks) && g.hooks.some((h: any) => h?.command === command),
+    );
+    if (already) {
+      log(`[7/9] droid hook ${event} already present — skipped.`);
+      return;
+    }
+    groups.push({ hooks: [{ type: "command", command }] });
+    droidSettings.hooks[event] = groups;
+    log(`[7/9] droid hook ${event} added.`);
+  };
+
+  ensureDroidHook("Stop", droidPushCmd);
+  ensureDroidHook("SessionStart", droidPullCmd);
+  writeJson(droidSettingsPath, droidSettings);
+  log(`[7/9] merged droid hooks into ${droidSettingsPath}`);
 
   // Global opencode plugin: thin shim re-exporting the kit plugin from an absolute file URL.
   const pluginAbs = join(HERE, "opencode-plugin.ts");

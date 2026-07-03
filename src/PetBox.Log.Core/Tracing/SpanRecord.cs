@@ -60,6 +60,5 @@ public sealed record SpanRecord
 	[Column, NotNull]
 	public string LinksJson { get; init; } = "[]";
 
-	public DateTime StartTime => new(StartUnixNs / 100, DateTimeKind.Utc);
 	public TimeSpan Duration => TimeSpan.FromTicks((EndUnixNs - StartUnixNs) / 100);
 }
