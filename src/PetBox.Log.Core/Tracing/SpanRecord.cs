@@ -5,6 +5,33 @@ namespace PetBox.Log.Core.Tracing;
 public enum SpanKind { Internal = 0, Server = 1, Client = 2, Producer = 3, Consumer = 4 }
 public enum SpanStatusCode { Unset = 0, Ok = 1, Error = 2 }
 
+// Numeric-code → name mappings for the KQL engine's computed KindName / StatusName columns — the span
+// analog of LogLevelNames (Level/LevelName on events). An out-of-range code renders as "Unknown" rather
+// than a bare number, so a corrupt value never surfaces as a mysterious integer string.
+public static class SpanKindNames
+{
+	public static string ToName(int kind) => kind switch
+	{
+		0 => "Internal",
+		1 => "Server",
+		2 => "Client",
+		3 => "Producer",
+		4 => "Consumer",
+		_ => "Unknown",
+	};
+}
+
+public static class SpanStatusNames
+{
+	public static string ToName(int code) => code switch
+	{
+		0 => "Unset",
+		1 => "Ok",
+		2 => "Error",
+		_ => "Unknown",
+	};
+}
+
 [Table("Spans")]
 public sealed record SpanRecord
 {

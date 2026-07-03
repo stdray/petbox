@@ -108,4 +108,43 @@ public sealed class KqlCompletionServiceTests
 		props.Should().NotBeNull();
 		props!.BeforeText.Should().Be("Properties.");
 	}
+
+	// --- the second table root: `spans` ---
+
+	[Fact]
+	public void TableName_ReturnsSpans()
+	{
+		const string q = "spa";
+		var result = KqlCompletionService.Complete(q, q.Length);
+		result.Items.Should().Contain(i => i.DisplayText == "spans");
+	}
+
+	[Fact]
+	public void SpansRoot_OffersSpanColumns()
+	{
+		const string q = "spans | where ";
+		var result = KqlCompletionService.Complete(q, q.Length);
+		var displays = result.Items.Select(i => i.DisplayText).ToHashSet(StringComparer.Ordinal);
+		foreach (var col in new[] { "TraceId", "SpanId", "Name", "Kind", "KindName", "Start", "End", "Duration", "Status" })
+			displays.Should().Contain(col, $"'{col}' is a spans column");
+	}
+
+	[Fact]
+	public void SpansRoot_ColumnPrefix_Filters()
+	{
+		const string q = "spans | where Tra";
+		var result = KqlCompletionService.Complete(q, q.Length);
+		result.Items.Should().Contain(i => i.DisplayText == "TraceId");
+		result.Items.Should().AllSatisfy(i => i.DisplayText.StartsWith("Tra", StringComparison.Ordinal));
+	}
+
+	[Fact]
+	public void SpansRoot_AfterPipe_Offers_SupportedOperators()
+	{
+		const string q = "spans | ";
+		var result = KqlCompletionService.Complete(q, q.Length);
+		var displays = result.Items.Select(i => i.DisplayText).ToHashSet(StringComparer.Ordinal);
+		foreach (var op in new[] { "where", "project", "summarize", "top", "distinct", "join" })
+			displays.Should().Contain(op, $"'{op}' is supported over the spans root");
+	}
 }

@@ -2,6 +2,7 @@ using System.Reflection;
 using Kusto.Language.Syntax;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Models;
+using PetBox.Log.Core.Tracing;
 using Expr = System.Linq.Expressions.Expression;
 using ParamExpr = System.Linq.Expressions.ParameterExpression;
 
@@ -63,47 +64,57 @@ abstract class ScalarContext
 	public abstract Expr NullableInstant(Expr epochMsNullable);
 }
 
-// Leaves resolve to LogEntryRecord property accesses → the tree is SQL-translatable.
-sealed class RecordScalarContext(ParamExpr row) : ScalarContext
+// Shared machinery for the SQL/record contexts of the two table roots (events / spans). Leaves resolve
+// to record property accesses, so the compiled tree is SQL-translatable by linq2db; instants are
+// epoch-ms (long). A derived context supplies only what differs per root: the user-facing column list,
+// each canonical column's access expression, the stored JSON bag (PropertiesJson / AttributesJson), and
+// the literal coercion for its instant/duration columns. Everything else — bare-name resolution (exact,
+// else a UNIQUE case-insensitive match, else the Properties fallback), the column-literal comparison
+// fast path, and the instant plumbing — lands here ONCE for both roots.
+abstract class SqlRecordScalarContext : ScalarContext
 {
-	// The user-facing scalar columns (excludes the internal PropertiesJson store, which is only reached
-	// via the Properties.<key> path form, never as a bare column). A bare name binds to one of these by
-	// exact match, else by a UNIQUE case-insensitive match — so prod field-casing (`level`, `message`)
-	// resolves to the real column. Everything else is a Properties.<name> lookup.
-	static readonly string[] ScalarColumns =
-		["Id", "Level", "LevelName", "Timestamp", "ServiceKey", "Message", "MessageTemplate", "Exception"];
+	// The user-facing scalar columns (excludes the internal JSON store, which is only reached via the
+	// Properties.<key> path form / bare-name fallback, never as a bare column).
+	protected abstract IReadOnlyList<string> KnownColumns { get; }
 
-	public override Expr ResolveColumn(string name) => ResolveKnownName(name) switch
+	// The access expression for a CANONICAL column name (an element of KnownColumns).
+	protected abstract Expr KnownColumnAccess(string canonical);
+
+	// The stored JSON bag backing Properties.<key> lookups.
+	protected abstract Expr JsonBag { get; }
+
+	// Literal coercion for the root's special (instant / duration) columns, by CANONICAL name.
+	// Return null to fall through to the shared integer/string tail.
+	protected abstract Expr? CoerceSpecialLiteral(string canonicalColumn, LiteralExpression literal);
+
+	public override Expr ResolveColumn(string name)
 	{
-		"Id" => Expr.Property(row, nameof(LogEntryRecord.Id)),
-		"Level" => Expr.Property(row, nameof(LogEntryRecord.Level)),
-		"LevelName" => LevelName(),
-		"Timestamp" => Expr.Property(row, nameof(LogEntryRecord.TimestampMs)),
-		"ServiceKey" => Expr.Property(row, nameof(LogEntryRecord.ServiceKey)),
-		"Message" => Expr.Property(row, nameof(LogEntryRecord.Message)),
-		"MessageTemplate" => Expr.Property(row, nameof(LogEntryRecord.MessageTemplate)),
-		"Exception" => Expr.Property(row, nameof(LogEntryRecord.Exception)),
-		// Bare-name fallback: a name that is not a known event column resolves as a Properties.<name>
-		// lookup (string-typed json_extract), so `where DeviceId == 'x'` filters on the property. Known
-		// columns always win (matched above). Trade-off: a TRUE typo'd column (no case-insensitive match)
-		// now yields empty results rather than an error — accepted cost of the dynamic Properties bag —
-		// but comparing a fallback (string) name to a non-string literal still raises a precise type error.
-		var other => ResolveProperties(other),
-	};
+		var canonical = ResolveKnownName(name);
+		foreach (var c in KnownColumns)
+			if (string.Equals(c, canonical, StringComparison.Ordinal))
+				return KnownColumnAccess(canonical);
+		// Bare-name fallback: a name that is not a known column resolves as a Properties.<name> lookup
+		// (string-typed json_extract), so `where DeviceId == 'x'` filters on the property. Known columns
+		// always win (matched above). Trade-off: a TRUE typo'd column (no case-insensitive match) yields
+		// empty results rather than an error — accepted cost of the dynamic bag — but comparing a
+		// fallback (string) name to a non-string literal still raises a precise type error.
+		return ResolveProperties(canonical);
+	}
 
 	// Canonical column name for a bare reference: exact match wins; else a unique case-insensitive
-	// match; else the original name (→ Properties fallback in ResolveColumn's switch).
-	static string ResolveKnownName(string name)
+	// match (so prod field-casing like `level` / `start` binds to the real column); else the original
+	// name (→ the Properties fallback).
+	protected string ResolveKnownName(string name)
 	{
-		foreach (var c in ScalarColumns)
+		foreach (var c in KnownColumns)
 			if (string.Equals(c, name, StringComparison.Ordinal))
 				return c;
 		string? ci = null;
-		foreach (var c in ScalarColumns)
+		foreach (var c in KnownColumns)
 			if (string.Equals(c, name, StringComparison.OrdinalIgnoreCase))
 			{
 				if (ci is not null)
-					return name; // ambiguous (cannot happen for the fixed schema) → Properties
+					return name; // ambiguous (cannot happen for the fixed schemas) → Properties
 				ci = c;
 			}
 		return ci ?? name;
@@ -111,14 +122,13 @@ sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 
 	public override Expr ResolveProperties(string key)
 	{
-		var propertiesJson = Expr.Property(row, nameof(LogEntryRecord.PropertiesJson));
 		var path = Expr.Constant("$." + key, typeof(string));
 		var method = typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.JsonExtract))!;
-		return Expr.Call(method, propertiesJson, path);
+		return Expr.Call(method, JsonBag, path);
 	}
 
 	// now() in the SQL context is a constant epoch-ms long, so `where Timestamp > ago(1h)` compares
-	// long-to-long against TimestampMs and translates to SQLite as a literal.
+	// long-to-long and translates to SQLite as a literal.
 	public override Expr CurrentInstant() => Expr.Constant(KqlSqlExpressions.ToUnixMs(UtcNow));
 
 	// SQL instants are epoch-ms longs. A long passes through; a datetime() literal (a compile-time
@@ -145,7 +155,10 @@ sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 	{
 		if (!KqlScalar.IsComparison(op))
 			return null;
-		var coerced = CoerceLiteral(literal, access.Type, columnName);
+		// Coerce against the RESOLVED canonical name: the user may have typed `start` / `timestamp`
+		// (bound case-insensitively by ResolveColumn), and the special-column check must agree with
+		// that binding, not with the raw spelling.
+		var coerced = CoerceLiteral(literal, access.Type, ResolveKnownName(columnName));
 		return op switch
 		{
 			SyntaxKind.EqualExpression => Expr.Equal(access, coerced),
@@ -158,30 +171,26 @@ sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 		};
 	}
 
-	Expr LevelName()
+	// Root-specific instant/duration columns first (datetime → epoch-ms, timespan → ticks); integer /
+	// string columns require the matching literal kind. Preserves the exact user-facing messages the
+	// `where` path has always produced.
+	Expr CoerceLiteral(LiteralExpression literal, Type targetType, string column)
 	{
-		var level = Expr.Property(row, nameof(LogEntryRecord.Level));
-		var toName = typeof(LogLevelNames).GetMethod(nameof(LogLevelNames.ToName))!;
-		return Expr.Call(toName, level);
-	}
-
-	// Timestamp is stored as epoch-ms, so a datetime() literal is converted to ms; integer /
-	// string columns require the matching literal kind. Preserves the exact user-facing
-	// messages the `where` path has always produced.
-	static Expr CoerceLiteral(LiteralExpression literal, Type targetType, string column)
-	{
-		if (column == "Timestamp")
-		{
-			if (literal.LiteralValue is not DateTime dt)
-				throw new UnsupportedKqlException("Timestamp comparison requires a datetime() literal");
-			return Expr.Constant(KqlSqlExpressions.ToUnixMs(dt));
-		}
+		if (CoerceSpecialLiteral(column, literal) is { } special)
+			return special;
 
 		if (targetType == typeof(long) || targetType == typeof(int))
 		{
-			if (literal.LiteralValue is long n)
-				return targetType == typeof(int) ? Expr.Constant(checked((int)n)) : Expr.Constant(n);
-			throw new UnsupportedKqlException($"{column} comparison requires an integer literal");
+			if (literal.LiteralValue is not long n)
+				throw new UnsupportedKqlException($"{column} comparison requires an integer literal");
+			if (targetType == typeof(int))
+			{
+				// An out-of-range literal is a user error, not an engine fault: teach, don't overflow.
+				if (n is < int.MinValue or > int.MaxValue)
+					throw new UnsupportedKqlException($"{column} literal {n} is out of range for an int column");
+				return Expr.Constant((int)n);
+			}
+			return Expr.Constant(n);
 		}
 
 		if (targetType == typeof(string))
@@ -192,6 +201,115 @@ sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 		}
 
 		throw new UnsupportedKqlException($"cannot coerce literal for column '{column}' of type {targetType.Name}");
+	}
+}
+
+// Leaves resolve to LogEntryRecord property accesses → the tree is SQL-translatable.
+sealed class RecordScalarContext(ParamExpr row) : SqlRecordScalarContext
+{
+	static readonly string[] Columns =
+		["Id", "Level", "LevelName", "Timestamp", "ServiceKey", "Message", "MessageTemplate", "Exception"];
+
+	protected override IReadOnlyList<string> KnownColumns => Columns;
+
+	protected override Expr JsonBag => Expr.Property(row, nameof(LogEntryRecord.PropertiesJson));
+
+	protected override Expr KnownColumnAccess(string canonical) => canonical switch
+	{
+		"Id" => Expr.Property(row, nameof(LogEntryRecord.Id)),
+		"Level" => Expr.Property(row, nameof(LogEntryRecord.Level)),
+		// A computed name column; the CASE-mapped KqlSqlExpressions.LevelName keeps it SQL-translatable
+		// in a pre-split where/order (a raw LogLevelNames.ToName call has no linq2db translation and
+		// failed at enumeration on a real log DB).
+		"LevelName" => Expr.Call(
+			typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.LevelName))!,
+			Expr.Property(row, nameof(LogEntryRecord.Level))),
+		"Timestamp" => Expr.Property(row, nameof(LogEntryRecord.TimestampMs)),
+		"ServiceKey" => Expr.Property(row, nameof(LogEntryRecord.ServiceKey)),
+		"Message" => Expr.Property(row, nameof(LogEntryRecord.Message)),
+		"MessageTemplate" => Expr.Property(row, nameof(LogEntryRecord.MessageTemplate)),
+		"Exception" => Expr.Property(row, nameof(LogEntryRecord.Exception)),
+		_ => throw new UnsupportedKqlException($"unknown column '{canonical}'"), // unreachable
+	};
+
+	// Timestamp is stored as epoch-ms, so a datetime() literal is converted to ms.
+	protected override Expr? CoerceSpecialLiteral(string canonical, LiteralExpression literal)
+	{
+		if (canonical != "Timestamp")
+			return null;
+		if (literal.LiteralValue is not DateTime dt)
+			throw new UnsupportedKqlException("Timestamp comparison requires a datetime() literal");
+		return Expr.Constant(KqlSqlExpressions.ToUnixMs(dt));
+	}
+}
+
+// Leaves resolve to SpanRecord property accesses → the tree is SQL-translatable. The `spans` root's
+// counterpart to RecordScalarContext: instants stay epoch-ms (long) in the SQL domain, matching events'
+// Timestamp convention, so the whole datetime machinery (CoerceInstant / now / ago / startof*) is reused
+// unchanged. Start/End are derived from the stored unix-ns columns; Duration is a computed tick count;
+// Kind/Status expose a name form (KindName/StatusName) like Level/LevelName; attributes resolve through
+// AttributesJson (the PropertiesJson analog).
+sealed class SpanRecordScalarContext(ParamExpr row) : SqlRecordScalarContext
+{
+	static readonly string[] Columns =
+	[
+		"SpanId", "TraceId", "ParentSpanId", "Name", "Kind", "KindName",
+		"Start", "End", "Duration", "Status", "StatusName", "StatusDescription",
+	];
+
+	protected override IReadOnlyList<string> KnownColumns => Columns;
+
+	protected override Expr JsonBag => Expr.Property(row, nameof(SpanRecord.AttributesJson));
+
+	protected override Expr KnownColumnAccess(string canonical) => canonical switch
+	{
+		"SpanId" => Expr.Property(row, nameof(SpanRecord.SpanId)),
+		"TraceId" => Expr.Property(row, nameof(SpanRecord.TraceId)),
+		"ParentSpanId" => Expr.Property(row, nameof(SpanRecord.ParentSpanId)),
+		"Name" => Expr.Property(row, nameof(SpanRecord.Name)),
+		"Kind" => Expr.Property(row, nameof(SpanRecord.Kind)),
+		// Computed name columns via the CASE-mapped KqlSqlExpressions helpers — SQL-translatable in a
+		// pre-split where/order, exactly like events' LevelName.
+		"KindName" => Expr.Call(
+			typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.SpanKindName))!,
+			Expr.Property(row, nameof(SpanRecord.Kind))),
+		// Start/End are stored as unix-ns; the SQL instant domain is epoch-ms (long), matching events'
+		// TimestampMs (epoch-ms = unix-ns / 1_000_000, integer division → ms precision).
+		"Start" => EpochMs(nameof(SpanRecord.StartUnixNs)),
+		"End" => EpochMs(nameof(SpanRecord.EndUnixNs)),
+		// Duration is a tick count (100ns units) = (End - Start) unix-ns / 100, so a timespan literal
+		// compares via its .Ticks.
+		"Duration" => Expr.Divide(
+			Expr.Subtract(Expr.Property(row, nameof(SpanRecord.EndUnixNs)), Expr.Property(row, nameof(SpanRecord.StartUnixNs))),
+			Expr.Constant(100L)),
+		"Status" => Expr.Property(row, nameof(SpanRecord.StatusCode)),
+		"StatusName" => Expr.Call(
+			typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.SpanStatusName))!,
+			Expr.Property(row, nameof(SpanRecord.StatusCode))),
+		"StatusDescription" => Expr.Property(row, nameof(SpanRecord.StatusDescription)),
+		_ => throw new UnsupportedKqlException($"unknown column '{canonical}'"), // unreachable
+	};
+
+	Expr EpochMs(string nsProperty) =>
+		Expr.Divide(Expr.Property(row, nsProperty), Expr.Constant(1_000_000L));
+
+	// Start/End compare against a datetime() literal (→ epoch-ms); Duration against a timespan literal
+	// (→ ticks).
+	protected override Expr? CoerceSpecialLiteral(string canonical, LiteralExpression literal)
+	{
+		if (canonical is "Start" or "End")
+		{
+			if (literal.LiteralValue is not DateTime dt)
+				throw new UnsupportedKqlException($"{canonical} comparison requires a datetime() literal");
+			return Expr.Constant(KqlSqlExpressions.ToUnixMs(dt));
+		}
+		if (canonical == "Duration")
+		{
+			if (literal.LiteralValue is not TimeSpan ts)
+				throw new UnsupportedKqlException("Duration comparison requires a timespan literal");
+			return Expr.Constant(ts.Ticks);
+		}
+		return null;
 	}
 }
 
@@ -377,10 +495,12 @@ static class KqlScalar
 		return Compare(le, re, b.Kind);
 	}
 
-	// A datetime() literal compiles to a DateTime constant, but a datetime-valued EXPRESSION in the
-	// record context is epoch-ms (long). When the two are compared — e.g. startofday(Timestamp) ==
-	// datetime(...) — coerce the literal into the other operand's instant representation so both are
-	// epoch-ms. (In the row context both sides are already DateTime, so this is a no-op there.)
+	// A datetime()/timespan literal compiles to a DateTime/TimeSpan constant, but the corresponding
+	// EXPRESSION in the record context is a long (epoch-ms for instants like Timestamp/Start/End; ticks
+	// for spans' Duration). When the two meet in a comparison — plain, reversed (`200ms < Duration`),
+	// `in`, or `between` — coerce the literal into the long domain so both sides compare numerically.
+	// (In the row context instants are DateTime and durations TimeSpan — never long — so this never
+	// fires there and pipeline position doesn't change semantics.)
 	static (Expr, Expr) NormalizeInstants(Expr le, Expr re, ScalarContext ctx)
 	{
 		// The record-context instant is long (or long? for todatetime); coerce a datetime() literal on
@@ -389,6 +509,14 @@ static class KqlScalar
 			return (ctx.CoerceInstant(le), re);
 		if (re is System.Linq.Expressions.ConstantExpression { Value: DateTime } && IsEpochMs(le.Type))
 			return (le, ctx.CoerceInstant(re));
+		// A timespan literal against a long expression: the record context stores durations as ticks
+		// (spans' Duration), so fold the literal to its tick count. NOTE: like the DateTime branch above,
+		// this cannot verify the long side really is a duration — `Id > 1h` compares against ticks
+		// silently — the accepted cost of the untagged long domain.
+		if (le is System.Linq.Expressions.ConstantExpression { Value: TimeSpan lts } && IsEpochMs(re.Type))
+			return (Expr.Constant(lts.Ticks), re);
+		if (re is System.Linq.Expressions.ConstantExpression { Value: TimeSpan rts } && IsEpochMs(le.Type))
+			return (le, Expr.Constant(rts.Ticks));
 		return (le, re);
 	}
 
@@ -441,7 +569,11 @@ static class KqlScalar
 		Expr? acc = null;
 		foreach (var element in elements)
 		{
-			var (l, r) = UnifyComparable(le, element, SyntaxKind.EqualExpression);
+			// datetime()/timespan literals in the list normalize into the record context's long domain
+			// (epoch-ms / ticks), exactly like a plain comparison — so `Duration in (100ms, 50ms)` and
+			// `Start in (datetime(...))` work identically pre- and post-split.
+			var (nl, nr) = NormalizeInstants(le, element, ctx);
+			var (l, r) = UnifyComparable(nl, nr, SyntaxKind.EqualExpression);
 			var eq = Expr.Equal(l, r, liftToNull: false, method: null);
 			acc = acc is null ? eq : Expr.OrElse(acc, eq);
 		}
@@ -456,8 +588,13 @@ static class KqlScalar
 		var value = Compile(btw.Left, ctx);
 		var lo = Compile(btw.Right.First, ctx);
 		var hi = Compile(btw.Right.Second, ctx);
-		var (v1, lo1) = UnifyComparable(value, lo, SyntaxKind.GreaterThanOrEqualExpression);
-		var (v2, hi1) = UnifyComparable(value, hi, SyntaxKind.LessThanOrEqualExpression);
+		// Range bounds normalize like comparison operands (datetime → epoch-ms, timespan → ticks in the
+		// record context), so `Timestamp between (datetime .. datetime)` / `Duration between (a .. b)`
+		// work pre-split too.
+		(var v1, lo) = NormalizeInstants(value, lo, ctx);
+		(var v2, hi) = NormalizeInstants(value, hi, ctx);
+		(v1, var lo1) = UnifyComparable(v1, lo, SyntaxKind.GreaterThanOrEqualExpression);
+		(v2, var hi1) = UnifyComparable(v2, hi, SyntaxKind.LessThanOrEqualExpression);
 		var inRange = Expr.AndAlso(
 			Expr.GreaterThanOrEqual(v1, lo1, liftToNull: false, method: null),
 			Expr.LessThanOrEqual(v2, hi1, liftToNull: false, method: null));

@@ -293,7 +293,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Query_UnsupportedKql_Returns400()
 	{
-		// Parses fine but the transformer rejects it (only the 'events' table exists) —
+		// Parses fine but 'Level' is not a table root (events/spans are) —
 		// UnsupportedKqlException is a user error, not a 500.
 		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString("Level | take 1")}");
 		using var resp = await _client.SendAsync(req);
@@ -305,20 +305,20 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	[Fact]
 	public async Task Query_ExecutionError_ReturnsStructuredJson500()
 	{
-		// Valid syntax, passes the transformer (LevelName is a known column), but the
-		// built expression calls a CLR method linq2db cannot translate to SQL — the
-		// query fails at EXECUTION (materialization), not at parse. That used to escape
-		// as the HTML /Error page; an API caller must get structured JSON with the
-		// failure type and message.
-		var kql = "events | where LevelName == \"Error\"";
+		// Valid syntax, passes the transformer (matches regex is supported), but the PATTERN is
+		// malformed — the failure happens at EXECUTION (inside the registered kql_matches_regex scalar
+		// function during materialization), not at parse. That used to escape as the HTML /Error page;
+		// an API caller must get structured JSON with the failure type and message. (This test used to
+		// ride on `where LevelName == ...` being untranslatable; LevelName now translates via a CASE
+		// mapping — the spans-review fix 1 — so a malformed regex is the execution-fault vehicle.)
+		var kql = "events | where Message matches regex \"(\"";
 		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString(kql)}");
 		using var resp = await _client.SendAsync(req);
 
 		resp.StatusCode.Should().Be(HttpStatusCode.InternalServerError);
 		resp.Content.Headers.ContentType!.MediaType.Should().Be("application/json");
 		var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
-		doc.RootElement.GetProperty("error").GetString().Should()
-			.Contain("KQL execution failed").And.Contain("LevelName");
+		doc.RootElement.GetProperty("error").GetString().Should().Contain("KQL execution failed");
 		doc.RootElement.GetProperty("type").GetString().Should().NotBeNullOrEmpty();
 	}
 
@@ -328,7 +328,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		// Shape-changing pipeline whose pre-filter fails during row STREAMING — the
 		// engine fault surfaces in the endpoint's await-foreach over Rows, a different
 		// code path than events materialization. Must still be structured JSON.
-		var kql = "events | where LevelName == \"Error\" | summarize count() by Level";
+		var kql = "events | where Message matches regex \"(\" | summarize count() by Level";
 		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString(kql)}");
 		using var resp = await _client.SendAsync(req);
 
@@ -821,5 +821,75 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
 		ProjectLogCount(proj, "backend", msg).Should().Be(1);
+	}
+
+	// --- the `spans` table root over the REST surface (spans-review fixes 2/5/8): the same endpoint
+	// routes the spans root through LogQueryService, errors are classified like events, and the
+	// unknown-table message truthfully lists both roots on this surface ---
+
+	async Task InsertSpanAsync(string traceId, string spanId, int kind, int status, long durMs)
+	{
+		using var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+			.CreateScope(_factory.Services);
+		var store = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+			.GetRequiredService<PetBox.Log.Core.Data.ILogStore>(scope.ServiceProvider);
+		using var db = store.NewContext("$system", "default");
+		var startNs = new DateTimeOffset(2026, 4, 19, 10, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds() * 1_000_000L;
+		await db.InsertAsync(new PetBox.Log.Core.Tracing.SpanRecord
+		{
+			SpanId = spanId,
+			TraceId = traceId,
+			Name = "GET /x",
+			Kind = kind,
+			StartUnixNs = startNs,
+			EndUnixNs = startNs + durMs * 1_000_000L,
+			StatusCode = status,
+			AttributesJson = """{"peer":"eu"}""",
+		});
+	}
+
+	[Fact]
+	public async Task SpansQuery_OverRest_ReturnsTableWithSpanColumns()
+	{
+		var traceId = Guid.NewGuid().ToString("N");
+		await InsertSpanAsync(traceId, "sp-" + Guid.NewGuid().ToString("N")[..8], kind: 2, status: 2, durMs: 400);
+
+		var doc = await QueryAsync(
+			$"spans | where TraceId == '{traceId}' and Duration > 200ms | project TraceId, KindName, StatusName, peer");
+		var cols = doc.RootElement.GetProperty("columns").EnumerateArray().Select(c => c.GetString()).ToList();
+		cols.Should().ContainInOrder("TraceId", "KindName", "StatusName", "peer");
+		var rows = doc.RootElement.GetProperty("rows");
+		rows.GetArrayLength().Should().Be(1);
+		rows[0][0].GetString().Should().Be(traceId);
+		rows[0][1].GetString().Should().Be("Client");
+		rows[0][2].GetString().Should().Be("Error");
+		rows[0][3].GetString().Should().Be("eu");
+	}
+
+	[Fact]
+	public async Task UnknownTable_OverRest_400_ListsBothRoots()
+	{
+		var req = LogRequest("/api/logs/$system/default/query?q=" + Uri.EscapeDataString("bogus | take 1"));
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+		var body = await resp.Content.ReadAsStringAsync();
+		body.Should().Contain("events").And.Contain("spans");
+	}
+
+	[Fact]
+	public async Task SpansUnsupportedConstruct_OverRest_400_SameErrorAsEvents()
+	{
+		async Task<(HttpStatusCode Status, string Body)> Q(string kql)
+		{
+			var req = LogRequest("/api/logs/$system/default/query?q=" + Uri.EscapeDataString(kql));
+			using var resp = await _client.SendAsync(req);
+			return (resp.StatusCode, await resp.Content.ReadAsStringAsync());
+		}
+
+		var spans = await Q("spans | sample 3");
+		var events = await Q("events | sample 3");
+		spans.Status.Should().Be(HttpStatusCode.BadRequest);
+		events.Status.Should().Be(HttpStatusCode.BadRequest);
+		spans.Body.Should().Be(events.Body); // structural-error parity across roots on the same surface
 	}
 }

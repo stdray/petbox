@@ -127,6 +127,20 @@ public sealed class IndexModel : PageModel
 		}
 
 		IsShapeChanged = KqlTransformer.HasShapeChangingOps(userCode);
+		var root = KqlTransformer.GetRootTableName(userCode);
+		var isSpans = string.Equals(root, KqlTransformer.SpansTable, StringComparison.Ordinal);
+		// This page routes BOTH roots (like LogQueryService), so an unknown root gets the full
+		// supported-table list rather than the events-only message the engine entries would emit.
+		if (root is not null && !isSpans && !string.Equals(root, KqlTransformer.EventsTable, StringComparison.Ordinal))
+		{
+			KqlError = KqlTransformer.UnknownTableMessage(root);
+			return Page();
+		}
+		// A spans query always yields the streamed span column shape (there is no LogEntry row form for
+		// a span), so it renders through the same table branch as shape-changed events queries and skips
+		// the events cursor paging (Timestamp/Id ordering doesn't apply to spans).
+		if (isSpans)
+			IsShapeChanged = true;
 		var effectiveKql = IsShapeChanged ? UserKql : AppendPageLimits(UserKql);
 
 		KustoCode code;
@@ -152,7 +166,9 @@ public sealed class IndexModel : PageModel
 		{
 			if (IsShapeChanged)
 			{
-				KqlResult = KqlTransformer.Execute(logDb.LogEntries, code);
+				KqlResult = isSpans
+					? KqlTransformer.ExecuteSpans(logDb.Spans, code)
+					: KqlTransformer.Execute(logDb.LogEntries, code);
 				await foreach (var row in KqlResult.Rows.WithCancellation(ct))
 					KqlRows.Add(row);
 			}

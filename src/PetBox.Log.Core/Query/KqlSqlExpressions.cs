@@ -3,6 +3,8 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using LinqToDB;
 using LinqToDB.SqlQuery;
+using PetBox.Log.Core.Models;
+using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Log.Core.Query;
 
@@ -270,5 +272,20 @@ public static class KqlSqlExpressions
 	// Nullable epoch-ms → nullable DateTime, bridging todatetime into the in-memory/row instant
 	// representation (DateTime?), where null means "not a valid datetime".
 	public static DateTime? FromUnixMsN(long? ms) => ms.HasValue ? FromUnixMs(ms.Value) : null;
+
+	// --- computed name columns: LevelName (events), KindName / StatusName (spans). The CASE mapping
+	// keeps a pre-split `where LevelName == 'Error'` / `order by KindName` SQL-translatable (a raw call
+	// to the *Names.ToName map has no linq2db translation and would fail at enumeration on a real log
+	// DB); the C# body delegates to the same canonical map the streamed row shape uses, so the SQL and
+	// in-memory paths agree exactly. ---
+
+	[Sql.Expression("(CASE {0} WHEN 0 THEN 'Verbose' WHEN 1 THEN 'Debug' WHEN 2 THEN 'Information' WHEN 3 THEN 'Warning' WHEN 4 THEN 'Error' WHEN 5 THEN 'Fatal' ELSE 'Unknown' END)", ServerSideOnly = false)]
+	public static string LevelName(int level) => LogLevelNames.ToName(level);
+
+	[Sql.Expression("(CASE {0} WHEN 0 THEN 'Internal' WHEN 1 THEN 'Server' WHEN 2 THEN 'Client' WHEN 3 THEN 'Producer' WHEN 4 THEN 'Consumer' ELSE 'Unknown' END)", ServerSideOnly = false)]
+	public static string SpanKindName(int kind) => SpanKindNames.ToName(kind);
+
+	[Sql.Expression("(CASE {0} WHEN 0 THEN 'Unset' WHEN 1 THEN 'Ok' WHEN 2 THEN 'Error' ELSE 'Unknown' END)", ServerSideOnly = false)]
+	public static string SpanStatusName(int code) => SpanStatusNames.ToName(code);
 }
 

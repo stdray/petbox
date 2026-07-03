@@ -191,22 +191,24 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 	{
 		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log_query");
 
-		// Valid syntax, but the built expression fails linq2db SQL translation at
-		// EXECUTION time (LevelName is CLR-computed). The raw engine exception used to
-		// surface as the framework's opaque "An error occurred invoking 'log_query'.";
-		// via McpErrorEnvelopeFilter it must be a structured {error} with the failure
-		// class (KqlExecutionException) and the reason.
+		// Valid syntax, but the regex PATTERN is malformed, so the registered scalar
+		// function throws at EXECUTION time. The raw engine exception used to surface as
+		// the framework's opaque "An error occurred invoking 'log_query'."; via
+		// McpErrorEnvelopeFilter it must be a structured {error} with the failure class
+		// (KqlExecutionException) and the reason. (This test used to ride on `where
+		// LevelName == ...` being untranslatable; LevelName now translates via a CASE
+		// mapping — spans-review fix 1 — so a malformed regex is the fault vehicle.)
 		var result = await tool.CallAsync(new Dictionary<string, object?>
 		{
 			["projectKey"] = TestProjectKey,
 			["logName"] = LogNames.Default,
-			["kql"] = "events | where LevelName == \"Error\"",
+			["kql"] = "events | where Message matches regex \"(\"",
 		});
 
 		var text = result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
 		text.Should().Contain("\"error\"");
 		text.Should().Contain("KqlExecutionException");
-		text.Should().Contain("KQL execution failed").And.Contain("LevelName");
+		text.Should().Contain("KQL execution failed");
 	}
 
 	[Fact]
@@ -221,7 +223,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		{
 			["projectKey"] = TestProjectKey,
 			["logName"] = LogNames.Default,
-			["kql"] = "events | where LevelName == \"Error\" | summarize count() by Level",
+			["kql"] = "events | where Message matches regex \"(\" | summarize count() by Level",
 		});
 
 		var text = result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;

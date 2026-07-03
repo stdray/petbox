@@ -486,4 +486,53 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 			.Should().HaveCount(5);
 		(await RunAsync("events | where substring(Message, -3) == Message")).Should().HaveCount(5);
 	}
+
+	// --- spans-review fix 1: LevelName is a computed CASE column, so a pre-split where/order over it
+	// must TRANSLATE to SQLite (a raw LogLevelNames.ToName call used to die at enumeration here) ---
+
+	[Fact]
+	public async Task LevelName_Where_TranslatesToSql()
+	{
+		(await RunAsync("events | where LevelName == 'Error'"))
+			.Should().BeEquivalentTo(["boom", "crash on Earth"]);
+	}
+
+	[Fact]
+	public async Task LevelName_OrderBy_TranslatesToSql()
+	{
+		// Alphabetical by name: Debug(starting), Error(boom/crash), Information(hello world), Warning(meh).
+		var messages = await RunAsync("events | order by LevelName asc");
+		messages[0].Should().Be("starting");
+		messages[^1].Should().Be("meh");
+	}
+
+	// --- spans-review fix 3: the special-column literal coercion must key on the RESOLVED canonical
+	// name, so the case-insensitive `timestamp` form takes datetime literals like `Timestamp` does ---
+
+	[Fact]
+	public async Task LowercaseTimestamp_WithDatetimeLiteral_TranslatesToSql()
+	{
+		(await RunAsync("events | where timestamp >= datetime(2026-04-19T10:03:00Z)"))
+			.Should().BeEquivalentTo(["meh", "crash on Earth", "starting"]);
+	}
+
+	// --- spans-review fix 4: datetime literals normalize inside `between` on the SQL path too ---
+
+	[Fact]
+	public async Task TimestampBetween_DatetimeLiterals_TranslatesToSql()
+	{
+		(await RunAsync(
+			"events | where Timestamp between (datetime(2026-04-19T10:02:00Z) .. datetime(2026-04-19T10:04:00Z))"))
+			.Should().BeEquivalentTo(["boom", "meh", "crash on Earth"]); // inclusive bounds
+	}
+
+	// --- spans-review fix 5: an out-of-int-range literal against an int column (Level) is a precise
+	// user error, not a raw OverflowException ---
+
+	[Fact]
+	public async Task Level_OutOfRangeLiteral_ThrowsPrecise()
+	{
+		var act = () => RunAsync("events | where Level == 3000000000");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*out of range*");
+	}
 }

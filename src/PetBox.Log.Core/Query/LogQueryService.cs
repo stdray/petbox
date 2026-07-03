@@ -69,12 +69,30 @@ public sealed class LogQueryService(ILogStore store) : ILogQueryService
 		catch (Exception ex) { throw new KqlParseException([ex.Message]); }
 
 		var logDb = store.GetContext(projectKey, logName);
+		var root = KqlTransformer.GetRootTableName(code);
+
+		// The `spans` root runs the SAME KQL subset over the log's Spans table. A plain spans query has no
+		// LogEntry-shaped result, so spans ALWAYS yield the streamed span column shape (a Table); the
+		// events root keeps its Events/Table split. Row streaming stays lazy, so an engine fault during
+		// enumeration is wrapped just like the events Table path.
+		if (string.Equals(root, KqlTransformer.SpansTable, StringComparison.Ordinal))
+		{
+			var spanTable = BuildTable(() => KqlTransformer.ExecuteSpans(logDb.Spans, code), kql);
+			return new LogQueryResult.Table(spanTable with { Rows = WrapExecutionErrors(spanTable.Rows, kql, ct) });
+		}
+
+		// An unknown root fails HERE with the full supported-table list: the events-only engine entries
+		// below (Execute/Apply) are entitled to claim only 'events', which would be wrong on this
+		// surface, where `spans` works too.
+		if (root is not null && !string.Equals(root, KqlTransformer.EventsTable, StringComparison.Ordinal))
+			throw new UnsupportedKqlException(KqlTransformer.UnknownTableMessage(root));
+
 		if (KqlTransformer.HasShapeChangingOps(code))
 		{
 			// Execute throws UnsupportedKqlException synchronously while building the
 			// pipeline (user error); actual row streaming is lazy and enumerated by the
 			// ADAPTER, so engine failures there must be translated at the source.
-			var table = KqlTransformer.Execute(logDb.LogEntries, code);
+			var table = BuildTable(() => KqlTransformer.Execute(logDb.LogEntries, code), kql);
 			return new LogQueryResult.Table(table with { Rows = WrapExecutionErrors(table.Rows, kql, ct) });
 		}
 
@@ -83,6 +101,17 @@ public sealed class LogQueryService(ILogStore store) : ILogQueryService
 			var records = await KqlTransformer.Apply(logDb.LogEntries, code).ToListAsync(ct);
 			return new LogQueryResult.Events(records.Select(r => r.ToEntry()).ToList());
 		}
+		catch (UnsupportedKqlException) { throw; }
+		catch (OperationCanceledException) { throw; }
+		catch (Exception ex) { throw new KqlExecutionException(kql, ex); }
+	}
+
+	// Classify SYNCHRONOUS pipeline-build failures identically for both roots: UnsupportedKqlException
+	// is the user's error and propagates as-is; anything else is an engine fault → the typed execution
+	// error (streamed failures get the same treatment in WrapExecutionErrors below).
+	static KqlResult BuildTable(Func<KqlResult> build, string kql)
+	{
+		try { return build(); }
 		catch (UnsupportedKqlException) { throw; }
 		catch (OperationCanceledException) { throw; }
 		catch (Exception ex) { throw new KqlExecutionException(kql, ex); }

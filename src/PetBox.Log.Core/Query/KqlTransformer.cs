@@ -5,6 +5,7 @@ using Kusto.Language.Syntax;
 using LinqToDB;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Models;
+using PetBox.Log.Core.Tracing;
 using Expr = System.Linq.Expressions.Expression;
 using ParamExpr = System.Linq.Expressions.ParameterExpression;
 
@@ -13,6 +14,7 @@ namespace PetBox.Log.Core.Query;
 public static class KqlTransformer
 {
 	public const string EventsTable = "events";
+	public const string SpansTable = "spans";
 
 	public static readonly IReadOnlyList<KqlColumn> EventRecordColumns =
 	[
@@ -27,22 +29,130 @@ public static class KqlTransformer
 		new("PropertiesJson", typeof(string)),
 	];
 
+	// The streamed `spans` row shape. Start/End are epoch-ms-derived instants (like events' Timestamp),
+	// Duration a TimeSpan, Kind/Status carry a name form. The final column is named "PropertiesJson"
+	// (carrying the span's AttributesJson) so the shared post-split machinery — RowScalarContext's
+	// bare-name/Properties fallback, summarize/distinct/join/mv-expand — locates the JSON bag unchanged.
+	public static readonly IReadOnlyList<KqlColumn> SpanRecordColumns =
+	[
+		new("SpanId", typeof(string)),
+		new("TraceId", typeof(string)),
+		new("ParentSpanId", typeof(string)),
+		new("Name", typeof(string)),
+		new("Kind", typeof(int)),
+		new("KindName", typeof(string)),
+		new("Start", typeof(DateTime)),
+		new("End", typeof(DateTime)),
+		new("Duration", typeof(TimeSpan)),
+		new("Status", typeof(int)),
+		new("StatusName", typeof(string)),
+		new("StatusDescription", typeof(string)),
+		new("PropertiesJson", typeof(string)),
+	];
+
+	// A table root: its name, streamed column shape, the SQL/record ScalarContext factory for the
+	// pre-split `where`/`order`/`top` path, and how one record materializes into a streamed row. This is
+	// the ONLY thing that varies between the `events` and `spans` roots; the whole pipeline (pre-split SQL,
+	// the shape-changing suffix, correlation subqueries) is otherwise identical and shared generically.
+	sealed record RootSpec<T>(
+		string TableName,
+		IReadOnlyList<KqlColumn> Columns,
+		Func<ParamExpr, ScalarContext> MakeContext,
+		Func<T, object?[]> ToRow);
+
+	static RootSpec<LogEntryRecord> EventsSpec(DateTime now) => new(
+		EventsTable,
+		EventRecordColumns,
+		row => new RecordScalarContext(row) { UtcNow = now },
+		EventToRow);
+
+	static RootSpec<SpanRecord> SpansSpec(DateTime now) => new(
+		SpansTable,
+		SpanRecordColumns,
+		row => new SpanRecordScalarContext(row) { UtcNow = now },
+		SpanToRow);
+
+	static object?[] EventToRow(LogEntryRecord r) =>
+	[
+		r.Id,
+		r.ServiceKey,
+		DateTimeOffset.FromUnixTimeMilliseconds(r.TimestampMs).UtcDateTime,
+		r.Level,
+		LogLevelNames.ToName(r.Level),
+		r.Message,
+		r.MessageTemplate,
+		r.Exception,
+		r.PropertiesJson,
+	];
+
+	static object?[] SpanToRow(SpanRecord s) =>
+	[
+		s.SpanId,
+		s.TraceId,
+		s.ParentSpanId,
+		s.Name,
+		s.Kind,
+		SpanKindNames.ToName(s.Kind),
+		DateTimeOffset.FromUnixTimeMilliseconds(s.StartUnixNs / 1_000_000).UtcDateTime,
+		DateTimeOffset.FromUnixTimeMilliseconds(s.EndUnixNs / 1_000_000).UtcDateTime,
+		s.Duration,
+		s.StatusCode,
+		SpanStatusNames.ToName(s.StatusCode),
+		s.StatusDescription,
+		s.AttributesJson,
+	];
+
+	// The teaching error for an unknown table root. Only surfaces that actually route BOTH roots
+	// (LogQueryService for MCP/REST, the Logs UI page) may emit it; events-only surfaces (Apply — the
+	// share pages) claim only 'events' instead, so the message is true wherever it appears.
+	public static string UnknownTableMessage(string got) =>
+		$"unknown table '{got}'; supported tables: {EventsTable}, {SpansTable}";
+
+	// The leading table reference of a query ('events' / 'spans' / other), or null when there is none.
+	// LogQueryService and the Logs UI page route on this to pick the record type and to reject unknown
+	// roots with the full supported-table list.
+	public static string? GetRootTableName(KustoCode code)
+	{
+		ArgumentNullException.ThrowIfNull(code);
+		var ops = FlattenPipeline(code.Syntax).ToList();
+		return ops.Count > 0 && ops[0] is NameReference n ? n.SimpleName : null;
+	}
+
+	// The right-hand subquery of a correlation op (join/lookup), pre-validated to be over the same root and
+	// executed against the same typed source. Closes over the root's source + spec so ApplyShapeChanges
+	// stays record-type-agnostic.
+	delegate KqlResult SubqueryRunner(Expression rightExpr, string opName);
+
 	public static KqlResult Execute(IQueryable<LogEntryRecord> source, KustoCode code, TimeProvider? clock = null)
+	{
+		var now = ParseAndClock(code, clock);
+		return ExecutePipeline(source, code.Syntax, now, EventsSpec(now));
+	}
+
+	// The `spans` root: the SAME KQL subset over a named log's Spans table. Unlike events, a plain
+	// (non-shape-changing) spans query has no LogEntry-shaped result, so this ALWAYS yields the streamed
+	// span column shape (a Table); LogQueryService routes to it on the `spans` root.
+	public static KqlResult ExecuteSpans(IQueryable<SpanRecord> source, KustoCode code, TimeProvider? clock = null)
+	{
+		var now = ParseAndClock(code, clock);
+		return ExecutePipeline(source, code.Syntax, now, SpansSpec(now));
+	}
+
+	// Guards parse diagnostics and resolves the single now()/ago() instant for the whole query.
+	static DateTime ParseAndClock(KustoCode code, TimeProvider? clock)
 	{
 		var parseErrors = code.GetDiagnostics().Where(d => d.Severity == "Error").ToList();
 		if (parseErrors.Count > 0)
 			throw new UnsupportedKqlException("KQL parse error: " + string.Join("; ", parseErrors.Select(d => d.Message)));
-
-		// now()/ago() resolve to this single instant for the whole query (see ScalarContext.UtcNow).
-		var now = (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime;
-		return ExecutePipeline(source, code.Syntax, now);
+		return (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime;
 	}
 
-	// Compiles and runs one `events`-rooted pipeline (the top-level query, or a correlation
-	// operator's right-hand subquery — see RunCorrelationSubquery) against `source`. The pre-split
-	// prefix runs as linq2db SQL; the shape-changing suffix runs in-memory. Recursion (a join/lookup
-	// whose right side is itself a pipeline) reuses the SAME compiler against the SAME log source.
-	static KqlResult ExecutePipeline(IQueryable<LogEntryRecord> source, SyntaxNode root, DateTime now)
+	// Compiles and runs one rooted pipeline (the top-level query, or a correlation operator's right-hand
+	// subquery — see RunCorrelationSubquery) against `source`. The pre-split prefix runs as linq2db SQL;
+	// the shape-changing suffix runs in-memory. Recursion (a join/lookup whose right side is itself a
+	// pipeline) reuses the SAME compiler against the SAME log source. Generic over the record type: the
+	// `spec` supplies the only root-specific pieces (name, column shape, SQL context, row projector).
+	static KqlResult ExecutePipeline<T>(IQueryable<T> source, SyntaxNode root, DateTime now, RootSpec<T> spec)
 	{
 		var operators = FlattenPipeline(root).ToList();
 		if (operators.Count == 0)
@@ -50,8 +160,8 @@ public static class KqlTransformer
 
 		if (operators[0] is not NameReference tableName)
 			throw new UnsupportedKqlException($"expected table reference, got {operators[0].GetType().Name}");
-		if (!string.Equals(tableName.SimpleName, EventsTable, StringComparison.Ordinal))
-			throw new UnsupportedKqlException($"unknown table '{tableName.SimpleName}'; only '{EventsTable}' is supported");
+		if (!string.Equals(tableName.SimpleName, spec.TableName, StringComparison.Ordinal))
+			throw new UnsupportedKqlException(UnknownTableMessage(tableName.SimpleName));
 
 		var pipeline = operators.Skip(1).ToList();
 		var splitAt = pipeline.FindIndex(IsShapeChangingOp);
@@ -60,12 +170,14 @@ public static class KqlTransformer
 			? (pipeline, new List<SyntaxNode>())
 			: (pipeline.Take(splitAt).ToList(), pipeline.Skip(splitAt).ToList());
 
-		var preResult = ApplyPipeline(source, preOps, now);
-		var eventShape = new KqlResult(EventRecordColumns, StreamEventRecordRows(preResult));
+		var preResult = ApplyPipeline(source, preOps, spec.MakeContext);
+		var recordShape = new KqlResult(spec.Columns, StreamRecordRows(preResult, spec.ToRow));
 
-		return postOps.Count == 0
-			? eventShape
-			: ApplyShapeChanges(eventShape, postOps, now, source);
+		if (postOps.Count == 0)
+			return recordShape;
+
+		SubqueryRunner runSub = (rightExpr, opName) => RunCorrelationSubquery(rightExpr, source, now, opName, spec);
+		return ApplyShapeChanges(recordShape, postOps, now, runSub);
 	}
 
 	// An operator whose output is no longer the event shape. `distinct` reduces to its chosen
@@ -96,14 +208,18 @@ public static class KqlTransformer
 
 		if (operators[0] is not NameReference tableName)
 			throw new UnsupportedKqlException($"expected table reference, got {operators[0].GetType().Name}");
+		// Apply is the events-only surface (the share pages stream LogEntryRecords); surfaces that route
+		// both roots (LogQueryService, the Logs UI) validate the root BEFORE reaching here, so this
+		// message may truthfully claim events only.
 		if (!string.Equals(tableName.SimpleName, EventsTable, StringComparison.Ordinal))
-			throw new UnsupportedKqlException($"unknown table '{tableName.SimpleName}'; only '{EventsTable}' is supported");
+			throw new UnsupportedKqlException(
+				$"unknown table '{tableName.SimpleName}'; only '{EventsTable}' is supported here");
 
 		var now = (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime;
-		return ApplyPipeline(source, operators.Skip(1).ToList(), now);
+		return ApplyPipeline(source, operators.Skip(1).ToList(), EventsSpec(now).MakeContext);
 	}
 
-	static KqlResult ApplyShapeChanges(KqlResult input, IReadOnlyList<SyntaxNode> ops, DateTime now, IQueryable<LogEntryRecord> source)
+	static KqlResult ApplyShapeChanges(KqlResult input, IReadOnlyList<SyntaxNode> ops, DateTime now, SubqueryRunner runSub)
 	{
 		var current = input;
 		foreach (var op in ops)
@@ -115,9 +231,9 @@ public static class KqlTransformer
 				CountOperator => ApplyCount(current),
 				SummarizeOperator s => ApplySummarize(current, s, now),
 				DistinctOperator d => ApplyDistinct(current, d),
-				// correlation ops. join/lookup compile their right subquery against the same `source`.
-				JoinOperator j => ApplyJoin(current, j, now, source),
-				LookupOperator l => ApplyLookup(current, l, now, source),
+				// correlation ops. join/lookup compile their right subquery against the same root source.
+				JoinOperator j => ApplyJoin(current, j, now, runSub),
+				LookupOperator l => ApplyLookup(current, l, now, runSub),
 				MvExpandOperator m => ApplyMvExpand(current, m, now),
 				ParseOperator p => ApplyParse(current, p, now),
 				// where / order by / take / top run in-memory once the pipeline has changed shape;
@@ -847,12 +963,12 @@ public static class KqlTransformer
 	// Execution is a hash join with the (fully buffered) right subquery as the build side; the left
 	// side streams. Memory profile: O(right result size). Default kind is innerunique (Kusto default:
 	// the left side is de-duplicated by key, keeping the first row per key in input order).
-	static KqlResult ApplyJoin(KqlResult left, JoinOperator op, DateTime now, IQueryable<LogEntryRecord> source)
+	static KqlResult ApplyJoin(KqlResult left, JoinOperator op, DateTime now, SubqueryRunner runSub)
 	{
 		var kind = ParseJoinKind(op.Parameters, "join");
 		if (op.ConditionClause is not JoinOnClause onClause)
 			throw new UnsupportedKqlException("join requires an 'on' clause with equality key(s)");
-		var right = RunCorrelationSubquery(op.Expression, source, now, "join");
+		var right = runSub(op.Expression, "join");
 		var (leftKeys, rightKeys, _) = ResolveJoinKeys(onClause, left, right, "join");
 		var (columns, included) = BuildJoinColumns(left, right, NoExcludedColumns, rightNullable: kind == JoinKind.LeftOuter);
 		return new KqlResult(columns,
@@ -863,13 +979,13 @@ public static class KqlTransformer
 	// difference from a leftouter join (confirmed against the reference executor) is that the right-side
 	// KEY columns are dropped from the output — they equal the left keys. Unmatched left rows keep their
 	// columns with the appended right columns null. Reuses the same hash-join machinery as join.
-	static KqlResult ApplyLookup(KqlResult left, LookupOperator op, DateTime now, IQueryable<LogEntryRecord> source)
+	static KqlResult ApplyLookup(KqlResult left, LookupOperator op, DateTime now, SubqueryRunner runSub)
 	{
 		if (op.Parameters.Count > 0)
 			throw new UnsupportedKqlException("lookup parameters not supported (lookup is always a leftouter enrichment)");
 		if (op.LookupClause is not JoinOnClause onClause)
 			throw new UnsupportedKqlException("lookup requires an 'on' clause with equality key(s)");
-		var right = RunCorrelationSubquery(op.Expression, source, now, "lookup");
+		var right = runSub(op.Expression, "lookup");
 		var (leftKeys, rightKeys, rightKeyCols) = ResolveJoinKeys(onClause, left, right, "lookup");
 		var exclude = new HashSet<int>(rightKeyCols.Where(i => i >= 0));
 		var (columns, included) = BuildJoinColumns(left, right, exclude, rightNullable: true);
@@ -901,18 +1017,19 @@ public static class KqlTransformer
 		return kind;
 	}
 
-	// The right side of a join/lookup: a full nested pipeline over the SAME log. Cross-log/table
-	// addressing is out of scope, so the leading table reference must be `events` — anything else
-	// gets a precise "must be the same log" error rather than a generic unknown-table one.
-	static KqlResult RunCorrelationSubquery(Expression rightExpr, IQueryable<LogEntryRecord> source, DateTime now, string opName)
+	// The right side of a join/lookup: a full nested pipeline over the SAME log root. Cross-log/table
+	// addressing is out of scope, so the leading table reference must match the current root (`events` or
+	// `spans`) — anything else gets a precise "must be the same log" error rather than a generic
+	// unknown-table one.
+	static KqlResult RunCorrelationSubquery<T>(Expression rightExpr, IQueryable<T> source, DateTime now, string opName, RootSpec<T> spec)
 	{
 		var ops = FlattenPipeline(rightExpr).ToList();
 		if (ops.Count == 0 || ops[0] is not NameReference tbl)
-			throw new UnsupportedKqlException($"{opName} right side must be a subquery over '{EventsTable}'");
-		if (!string.Equals(tbl.SimpleName, EventsTable, StringComparison.Ordinal))
+			throw new UnsupportedKqlException($"{opName} right side must be a subquery over '{spec.TableName}'");
+		if (!string.Equals(tbl.SimpleName, spec.TableName, StringComparison.Ordinal))
 			throw new UnsupportedKqlException(
-				$"{opName} right side must be the same log ('{EventsTable}'); cross-log/table joins are not supported (got '{tbl.SimpleName}')");
-		return ExecutePipeline(source, rightExpr, now);
+				$"{opName} right side must be the same log ('{spec.TableName}'); cross-log/table joins are not supported (got '{tbl.SimpleName}')");
+		return ExecutePipeline(source, rightExpr, now, spec);
 	}
 
 	// Resolves the on-clause into per-side key value-extractors. Two accepted forms (both equality):
@@ -1401,42 +1518,32 @@ public static class KqlTransformer
 		return ci;
 	}
 
-	static IQueryable<LogEntryRecord> ApplyPipeline(IQueryable<LogEntryRecord> source, IReadOnlyList<SyntaxNode> operators, DateTime now)
+	static IQueryable<T> ApplyPipeline<T>(IQueryable<T> source, IReadOnlyList<SyntaxNode> operators, Func<ParamExpr, ScalarContext> makeCtx)
 	{
 		var q = source;
 		foreach (var op in operators)
 		{
 			q = op switch
 			{
-				FilterOperator f => ApplyWhere(q, f, now),
+				FilterOperator f => ApplyWhere(q, f, makeCtx),
 				TakeOperator t => ApplyTake(q, t),
-				SortOperator s => ApplySort(q, s),
-				TopOperator t => ApplyTop(q, t),
+				SortOperator s => ApplySort(q, s, makeCtx),
+				TopOperator t => ApplyTop(q, t, makeCtx),
 				_ => throw new UnsupportedKqlException($"operator '{op.Kind}' not supported"),
 			};
 		}
 		return q;
 	}
 
-	static async IAsyncEnumerable<object?[]> StreamEventRecordRows(
-		IQueryable<LogEntryRecord> query,
+	// Streams the pre-split SQL query into the root's object?[] row shape. linq2db's AsAsyncEnumerable
+	// drives real SQLite; over an in-memory IQueryable (tests) it falls back to synchronous enumeration.
+	static async IAsyncEnumerable<object?[]> StreamRecordRows<T>(
+		IQueryable<T> query,
+		Func<T, object?[]> toRow,
 		[EnumeratorCancellation] CancellationToken ct = default)
 	{
 		await foreach (var r in query.AsAsyncEnumerable().WithCancellation(ct).ConfigureAwait(false))
-		{
-			yield return
-			[
-				r.Id,
-				r.ServiceKey,
-				DateTimeOffset.FromUnixTimeMilliseconds(r.TimestampMs).UtcDateTime,
-				r.Level,
-				LogLevelNames.ToName(r.Level),
-				r.Message,
-				r.MessageTemplate,
-				r.Exception,
-				r.PropertiesJson,
-			];
-		}
+			yield return toRow(r);
 	}
 
 	static IEnumerable<SyntaxNode> FlattenPipeline(SyntaxNode root)
@@ -1483,26 +1590,26 @@ public static class KqlTransformer
 			yield return stack.Pop();
 	}
 
-	static IQueryable<LogEntryRecord> ApplyWhere(IQueryable<LogEntryRecord> source, FilterOperator filter, DateTime now)
+	static IQueryable<T> ApplyWhere<T>(IQueryable<T> source, FilterOperator filter, Func<ParamExpr, ScalarContext> makeCtx)
 	{
-		var row = Expr.Parameter(typeof(LogEntryRecord), "e");
-		var body = KqlScalar.Compile(filter.Condition, new RecordScalarContext(row) { UtcNow = now });
+		var row = Expr.Parameter(typeof(T), "e");
+		var body = KqlScalar.Compile(filter.Condition, makeCtx(row));
 		if (body.Type != typeof(bool))
 			throw new UnsupportedKqlException($"where condition must be boolean, got {body.Type.Name}");
-		var predicate = Expr.Lambda<Func<LogEntryRecord, bool>>(body, row);
+		var predicate = Expr.Lambda<Func<T, bool>>(body, row);
 		return source.Where(predicate);
 	}
 
-	static IQueryable<LogEntryRecord> ApplyTake(IQueryable<LogEntryRecord> source, TakeOperator take)
+	static IQueryable<T> ApplyTake<T>(IQueryable<T> source, TakeOperator take)
 	{
 		if (take.Expression is not LiteralExpression { LiteralValue: long n })
 			throw new UnsupportedKqlException("take requires an integer literal");
 		return source.Take(checked((int)n));
 	}
 
-	static IQueryable<LogEntryRecord> ApplySort(IQueryable<LogEntryRecord> source, SortOperator sort)
+	static IQueryable<T> ApplySort<T>(IQueryable<T> source, SortOperator sort, Func<ParamExpr, ScalarContext> makeCtx)
 	{
-		IOrderedQueryable<LogEntryRecord>? ordered = null;
+		IOrderedQueryable<T>? ordered = null;
 		foreach (var element in sort.Expressions)
 		{
 			var (columnName, descending) = element.Element switch
@@ -1512,7 +1619,7 @@ public static class KqlTransformer
 				_ => throw new UnsupportedKqlException($"order-by expression '{element.Element.Kind}' not supported"),
 			};
 
-			ordered = ApplyOrder(source, ordered, columnName, descending);
+			ordered = ApplyOrder(source, ordered, columnName, descending, makeCtx);
 		}
 		return ordered ?? source;
 	}
@@ -1520,7 +1627,7 @@ public static class KqlTransformer
 	// `top N by <column> [asc|desc]` on the SQL path = ORDER BY + LIMIT. The by-expression is a
 	// bare column ref here (same reach as ApplySort); the post-split ApplyPostTop handles
 	// computed keys. Default ordering is descending, matching Kusto.
-	static IQueryable<LogEntryRecord> ApplyTop(IQueryable<LogEntryRecord> source, TopOperator top)
+	static IQueryable<T> ApplyTop<T>(IQueryable<T> source, TopOperator top, Func<ParamExpr, ScalarContext> makeCtx)
 	{
 		if (top.Expression is not LiteralExpression { LiteralValue: long n })
 			throw new UnsupportedKqlException("top requires an integer literal count");
@@ -1530,20 +1637,21 @@ public static class KqlTransformer
 			NameReference nm => (nm.SimpleName, true),
 			_ => throw new UnsupportedKqlException($"top by-expression '{top.ByExpression.Kind}' not supported (use a column ref)"),
 		};
-		return ApplyOrder(source, null, columnName, descending).Take(checked((int)n));
+		return ApplyOrder(source, null, columnName, descending, makeCtx).Take(checked((int)n));
 	}
 
 	static bool IsAscending(OrderingClause? o) =>
 		string.Equals(o?.AscOrDescKeyword?.Text, "asc", StringComparison.Ordinal);
 
-	static IOrderedQueryable<LogEntryRecord> ApplyOrder(
-		IQueryable<LogEntryRecord> source,
-		IOrderedQueryable<LogEntryRecord>? prior,
+	static IOrderedQueryable<T> ApplyOrder<T>(
+		IQueryable<T> source,
+		IOrderedQueryable<T>? prior,
 		string columnName,
-		bool descending)
+		bool descending,
+		Func<ParamExpr, ScalarContext> makeCtx)
 	{
-		var row = Expr.Parameter(typeof(LogEntryRecord), "e");
-		var access = new RecordScalarContext(row).ResolveColumn(columnName);
+		var row = Expr.Parameter(typeof(T), "e");
+		var access = makeCtx(row).ResolveColumn(columnName);
 		var keyType = access.Type;
 		var keyLambda = Expr.Lambda(access, row);
 
@@ -1559,10 +1667,10 @@ public static class KqlTransformer
 			.Single(m => m.Name == methodName
 				&& m.GetParameters().Length == 2
 				&& m.GetGenericArguments().Length == 2)
-			.MakeGenericMethod(typeof(LogEntryRecord), keyType);
+			.MakeGenericMethod(typeof(T), keyType);
 
 		var callExpr = Expr.Call(queryableMethod, (prior ?? source).Expression, Expr.Quote(keyLambda));
-		return (IOrderedQueryable<LogEntryRecord>)source.Provider.CreateQuery<LogEntryRecord>(callExpr);
+		return (IOrderedQueryable<T>)source.Provider.CreateQuery<T>(callExpr);
 	}
 
 	// Recognizes a `Properties.<key>` path (the only nested access the schema exposes). Shared
