@@ -1,5 +1,7 @@
 # PetBox — Specification
 
+> **Historical document (frozen)** — not a working plan/spec. Live status and plan live in PetBox ($system boards); see AGENTS.md.
+
 Module monolith for pet-project infrastructure. Config, logging, data access, dashboard — one service, feature-toggled subsystems. Код собран из портов yobaconf и yobalog плюс новых модулей.
 
 Эта спека — живой документ в репе. Vault-копия (`my/idea/petbox/spec.md`) считается архивной.

@@ -1,5 +1,7 @@
 # Architectural Decision Log
 
+> **Historical document (frozen)** — not a working plan/spec. Live status and plan live in PetBox ($system boards); see AGENTS.md.
+
 Newest decisions on top. Each entry: short title, date, context, decision, consequences.
 
 ---
