@@ -152,5 +152,57 @@ public static class KqlSqlExpressions
 		var g = m.Groups[(int)captureGroup];
 		return g.Success ? g.Value : "";
 	}
+
+	// --- datetime instant conversion. A wall-clock instant is stored/compared as epoch-ms (long) in
+	// the SQL/record context and as DateTime in the in-memory/row context; these bridge the two. ---
+
+	public static long ToUnixMs(DateTime dt)
+	{
+		var utc = dt.Kind == DateTimeKind.Unspecified
+			? DateTime.SpecifyKind(dt, DateTimeKind.Utc)
+			: dt.ToUniversalTime();
+		return new DateTimeOffset(utc).ToUnixTimeMilliseconds();
+	}
+
+	public static DateTime FromUnixMs(long ms) => DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime;
+
+	// --- startof* on epoch-ms. SQLite via strftime(...,'unixepoch',...); the C# body mirrors it for
+	// the in-memory path. Week starts Sunday (Kusto): start-of-day minus the day-of-week (%w, 0=Sun). ---
+
+	[Sql.Expression("(CAST(strftime('%s', {0} / 1000, 'unixepoch', 'start of day') AS INTEGER) * 1000)", ServerSideOnly = false)]
+	public static long StartOfDayMs(long ms)
+	{
+		var d = FromUnixMs(ms);
+		return ToUnixMs(new DateTime(d.Year, d.Month, d.Day, 0, 0, 0, DateTimeKind.Utc));
+	}
+
+	[Sql.Expression("(CAST(strftime('%s', {0} / 1000, 'unixepoch', 'start of day', '-' || strftime('%w', {0} / 1000, 'unixepoch') || ' days') AS INTEGER) * 1000)", ServerSideOnly = false)]
+	public static long StartOfWeekMs(long ms)
+	{
+		var d = FromUnixMs(ms);
+		var startOfDay = new DateTime(d.Year, d.Month, d.Day, 0, 0, 0, DateTimeKind.Utc);
+		return ToUnixMs(startOfDay.AddDays(-(int)startOfDay.DayOfWeek));
+	}
+
+	[Sql.Expression("(CAST(strftime('%s', {0} / 1000, 'unixepoch', 'start of month') AS INTEGER) * 1000)", ServerSideOnly = false)]
+	public static long StartOfMonthMs(long ms)
+	{
+		var d = FromUnixMs(ms);
+		return ToUnixMs(new DateTime(d.Year, d.Month, 1, 0, 0, 0, DateTimeKind.Utc));
+	}
+
+	[Sql.Expression("(CAST(strftime('%s', {0} / 1000, 'unixepoch', 'start of year') AS INTEGER) * 1000)", ServerSideOnly = false)]
+	public static long StartOfYearMs(long ms)
+	{
+		var d = FromUnixMs(ms);
+		return ToUnixMs(new DateTime(d.Year, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+	}
+
+	// Calendar-field extraction for datetime_diff's calendar parts (year/quarter/month).
+	[Sql.Expression("CAST(strftime('%Y', {0} / 1000, 'unixepoch') AS INTEGER)", ServerSideOnly = false)]
+	public static long YearOfMs(long ms) => FromUnixMs(ms).Year;
+
+	[Sql.Expression("CAST(strftime('%m', {0} / 1000, 'unixepoch') AS INTEGER)", ServerSideOnly = false)]
+	public static long MonthOfMs(long ms) => FromUnixMs(ms).Month;
 }
 

@@ -293,4 +293,29 @@ public sealed class DualExecutorTests
 	{
 		await DualExecutor.AssertSameTableAsync(kql, GroupData);
 	}
+
+	// datetime functions over columns/literals (NOT now()/ago(), whose value KustoLoco owns — those
+	// are pinned-clock production-only unit tests in KqlDateTimeTests).
+	[Theory]
+	[InlineData("events | project Id, D = startofday(Timestamp)")]
+	[InlineData("events | project Id, D = startofweek(Timestamp)")]
+	[InlineData("events | project Id, D = startofmonth(Timestamp)")]
+	[InlineData("events | project Id, D = startofyear(Timestamp)")]
+	[InlineData("events | extend D = startofday(Timestamp) | project Id, D")]
+	public async Task StartOf_MatchesReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData);
+	}
+
+	// datetime_diff is NOT differential-tested: KustoLoco tz-shifts datetime() literals by the host's
+	// local offset and uses raw (not period-boundary) truncation, so it disagrees with real Kusto on
+	// non-UTC hosts. Our boundary semantics are pinned against the canonical Kusto doc examples in
+	// KqlDateTimeTests instead.
+	[Theory]
+	[InlineData("events | summarize Cnt = count() by Day = startofday(Timestamp)")]
+	[InlineData("events | summarize Cnt = count() by Month = startofmonth(Timestamp)")]
+	public async Task SummarizeByStartOf_MatchesReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData);
+	}
 }

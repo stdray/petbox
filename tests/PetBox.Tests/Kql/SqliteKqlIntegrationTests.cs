@@ -89,6 +89,18 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		return list.Select(r => r.Message).ToList();
 	}
 
+	async Task<IReadOnlyList<string>> RunAtAsync(string kql, TimeProvider clock)
+	{
+		var code = KustoCode.Parse(kql);
+		var query = KqlTransformer.Apply(_logDb.LogEntries, code, clock);
+		return query.ToList().Select(r => r.Message).ToList();
+	}
+
+	sealed class FixedClock(DateTime utcNow) : TimeProvider
+	{
+		public override DateTimeOffset GetUtcNow() => new(utcNow, TimeSpan.Zero);
+	}
+
 	[Fact]
 	public async Task WhereLevel_TranslatesToSql()
 	{
@@ -260,6 +272,35 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		(await RunAsync("events | where tolower(Message) == 'boom'")).Should().BeEquivalentTo(["boom"]);
 		(await RunAsync("events | where substring(Message, 0, 5) == 'hello'")).Should().BeEquivalentTo(["hello world"]);
 		(await RunAsync("events | where extract('([a-z]+)', 1, Message) == 'boom'")).Should().BeEquivalentTo(["boom"]);
+	}
+
+	// --- datetime ops over real SQLite: ago() as an epoch-ms constant, startof* via strftime, and
+	// datetime_diff via epoch-ms integer arithmetic ---
+
+	[Fact]
+	public async Task Ago_TranslatesToEpochConstantInSql()
+	{
+		// pinned now = 2026-04-19T10:04:30Z; seed timestamps are 10:01..10:05.
+		var clock = new FixedClock(new DateTime(2026, 4, 19, 10, 4, 30, DateTimeKind.Utc));
+		(await RunAtAsync("events | where Timestamp > ago(2m)", clock))
+			.Should().BeEquivalentTo(["meh", "crash on Earth", "starting"]);
+	}
+
+	[Fact]
+	public async Task StartOf_TranslatesToStrftimeInSql()
+	{
+		(await RunAsync("events | where startofday(Timestamp) == datetime(2026-04-19)")).Should().HaveCount(5);
+		(await RunAsync("events | where startofmonth(Timestamp) == datetime(2026-04-01)")).Should().HaveCount(5);
+	}
+
+	[Fact]
+	public async Task DateTimeDiff_TranslatesToSqlArithmetic()
+	{
+		// 10:01 is 601 minutes into the day; only the first seed row.
+		(await RunAsync("events | where datetime_diff('minute', Timestamp, startofday(Timestamp)) == 601"))
+			.Should().BeEquivalentTo(["hello world"]);
+		(await RunAsync("events | where datetime_diff('hour', Timestamp, startofday(Timestamp)) == 10"))
+			.Should().HaveCount(5); // all seed rows are in the 10:00 hour
 	}
 
 	[Fact]

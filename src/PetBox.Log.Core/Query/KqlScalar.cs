@@ -31,6 +31,11 @@ delegate Expr KqlScalarFunction(IReadOnlyList<Expr> args, ScalarContext ctx);
 
 abstract class ScalarContext
 {
+	// The single wall-clock instant now()/ago() resolve to, evaluated once at query compile time and
+	// threaded down from KqlTransformer so every operator in a query sees the same "now" (and tests
+	// can pin it). Always UTC.
+	public DateTime UtcNow { get; init; }
+
 	// Resolve a bare column reference (e.g. Level, Message) to an expression yielding its value.
 	public abstract Expr ResolveColumn(string name);
 
@@ -41,6 +46,15 @@ abstract class ScalarContext
 	// storage type (datetime -> epoch-ms in the record context) and emit a precise,
 	// column-named error. Return null to fall through to the general compile-both-sides path.
 	public virtual Expr? TryColumnLiteralComparison(string columnName, Expr columnAccess, LiteralExpression literal, SyntaxKind op) => null;
+
+	// now() in this context's instant representation: epoch-ms (long) for the SQL/record context,
+	// DateTime for the in-memory/row context. See CoerceInstant for the representation contract.
+	public abstract Expr CurrentInstant();
+
+	// Normalize a datetime-typed scalar into this context's instant representation so datetime
+	// functions and comparisons operate on a single type: epoch-ms (long) under RecordScalarContext
+	// (SQL-translatable, matching the TimestampMs column) or DateTime under RowScalarContext.
+	public abstract Expr CoerceInstant(Expr e);
 }
 
 // Leaves resolve to LogEntryRecord property accesses → the tree is SQL-translatable.
@@ -65,6 +79,27 @@ sealed class RecordScalarContext(ParamExpr row) : ScalarContext
 		var path = Expr.Constant("$." + key, typeof(string));
 		var method = typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.JsonExtract))!;
 		return Expr.Call(method, propertiesJson, path);
+	}
+
+	// now() in the SQL context is a constant epoch-ms long, so `where Timestamp > ago(1h)` compares
+	// long-to-long against TimestampMs and translates to SQLite as a literal.
+	public override Expr CurrentInstant() => Expr.Constant(KqlSqlExpressions.ToUnixMs(UtcNow));
+
+	// SQL instants are epoch-ms longs. A long passes through; a datetime() literal (a compile-time
+	// DateTime constant) folds to its epoch-ms constant. A non-constant DateTime cannot be produced
+	// SQL-side here, so it is rejected with a clear message rather than emitting untranslatable SQL.
+	public override Expr CoerceInstant(Expr e)
+	{
+		if (e.Type == typeof(long))
+			return e;
+		if (e.Type == typeof(DateTime))
+		{
+			if (e is System.Linq.Expressions.ConstantExpression { Value: DateTime dt })
+				return Expr.Constant(KqlSqlExpressions.ToUnixMs(dt));
+			throw new UnsupportedKqlException(
+				"a computed datetime is not supported inside a SQL `where`; use it in project/extend/summarize instead");
+		}
+		throw new UnsupportedKqlException($"expected a datetime, got {e.Type.Name}");
 	}
 
 	public override Expr? TryColumnLiteralComparison(string columnName, Expr access, LiteralExpression literal, SyntaxKind op)
@@ -164,6 +199,18 @@ sealed class RowScalarContext(ParamExpr rowArray, IReadOnlyList<KqlColumn> colum
 	}
 
 	Expr Cell(int idx, Type type) => Expr.Convert(Expr.ArrayIndex(rowArray, Expr.Constant(idx)), type);
+
+	// In-memory instants are DateTime, matching the materialized Timestamp column.
+	public override Expr CurrentInstant() => Expr.Constant(UtcNow);
+
+	public override Expr CoerceInstant(Expr e)
+	{
+		if (e.Type == typeof(DateTime))
+			return e;
+		if (e.Type == typeof(long)) // an epoch-ms value that reached the in-memory path
+			return Expr.Call(typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.FromUnixMs))!, e);
+		throw new UnsupportedKqlException($"expected a datetime, got {e.Type.Name}");
+	}
 }
 
 static class KqlScalar
@@ -288,7 +335,21 @@ static class KqlScalar
 
 		var le = Compile(b.Left, ctx);
 		var re = Compile(b.Right, ctx);
+		(le, re) = NormalizeInstants(le, re, ctx);
 		return Compare(le, re, b.Kind);
+	}
+
+	// A datetime() literal compiles to a DateTime constant, but a datetime-valued EXPRESSION in the
+	// record context is epoch-ms (long). When the two are compared — e.g. startofday(Timestamp) ==
+	// datetime(...) — coerce the literal into the other operand's instant representation so both are
+	// epoch-ms. (In the row context both sides are already DateTime, so this is a no-op there.)
+	static (Expr, Expr) NormalizeInstants(Expr le, Expr re, ScalarContext ctx)
+	{
+		if (le is System.Linq.Expressions.ConstantExpression { Value: DateTime } && re.Type == typeof(long))
+			return (ctx.CoerceInstant(le), re);
+		if (re is System.Linq.Expressions.ConstantExpression { Value: DateTime } && le.Type == typeof(long))
+			return (le, ctx.CoerceInstant(re));
+		return (le, re);
 	}
 
 	static Expr Compare(Expr le, Expr re, SyntaxKind kind)
@@ -465,6 +526,13 @@ static class KqlScalarFunctions
 			["extract"] = Extract,
 			["parse_json"] = ParseJson,
 			["todynamic"] = ParseJson,
+			["now"] = Now,
+			["ago"] = Ago,
+			["startofday"] = (a, c) => StartOf(a, c, "startofday", nameof(KqlSqlExpressions.StartOfDayMs)),
+			["startofweek"] = (a, c) => StartOf(a, c, "startofweek", nameof(KqlSqlExpressions.StartOfWeekMs)),
+			["startofmonth"] = (a, c) => StartOf(a, c, "startofmonth", nameof(KqlSqlExpressions.StartOfMonthMs)),
+			["startofyear"] = (a, c) => StartOf(a, c, "startofyear", nameof(KqlSqlExpressions.StartOfYearMs)),
+			["datetime_diff"] = DateTimeDiff,
 		};
 
 	public static bool TryResolve(string name, out KqlScalarFunction fn) => Registry.TryGetValue(name, out fn!);
@@ -606,6 +674,97 @@ static class KqlScalarFunctions
 			throw new UnsupportedKqlException($"parse_json() requires a string argument, got {args[0].Type.Name}");
 		return args[0];
 	}
+
+	// --- datetime functions. Instants are epoch-ms (long) in the SQL/record context and DateTime in
+	// the in-memory/row context; ScalarContext.CoerceInstant/CurrentInstant bridge the two, and the
+	// ms-domain helpers (StartOf*Ms, YearOfMs, …) carry both a SQLite translation and a C# body. ---
+
+	static Expr Now(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 0)
+			throw new UnsupportedKqlException($"now() takes no arguments, got {args.Count}");
+		return ctx.CurrentInstant();
+	}
+
+	static Expr Ago(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"ago() takes exactly 1 argument (a timespan), got {args.Count}");
+		if (args[0].Type != typeof(TimeSpan))
+			throw new UnsupportedKqlException($"ago() requires a timespan argument, got {args[0].Type.Name}");
+		// now - span, folded to a constant instant for the usual constant `ago(1h)`.
+		if (args[0] is System.Linq.Expressions.ConstantExpression { Value: TimeSpan span })
+			return ctx.CoerceInstant(Expr.Constant(ctx.UtcNow - span));
+		var subtract = typeof(DateTime).GetMethod(nameof(DateTime.Subtract), [typeof(TimeSpan)])!;
+		return ctx.CoerceInstant(Expr.Call(Expr.Constant(ctx.UtcNow), subtract, args[0]));
+	}
+
+	static Expr StartOf(IReadOnlyList<Expr> args, ScalarContext ctx, string fn, string msMethod)
+	{
+		if (args.Count != 1)
+			throw new UnsupportedKqlException($"{fn}() takes exactly 1 argument (a datetime), got {args.Count}");
+		var instant = ctx.CoerceInstant(args[0]);
+		var wasDateTime = instant.Type == typeof(DateTime);
+		var ms = wasDateTime ? Expr.Call(SqlM(nameof(KqlSqlExpressions.ToUnixMs)), instant) : instant;
+		var startMs = Expr.Call(SqlM(msMethod), ms);
+		return wasDateTime ? Expr.Call(SqlM(nameof(KqlSqlExpressions.FromUnixMs)), startMs) : startMs;
+	}
+
+	// datetime_diff(period, datetime1, datetime2) = datetime1 - datetime2 counted in whole periods,
+	// where each operand is first truncated to its period boundary (Kusto counts boundary crossings,
+	// not the raw truncated difference). Fixed-width parts divide epoch-ms (day/hour/… boundaries are
+	// epoch-aligned); week uses the Sunday-anchored startofweek; year/quarter/month are calendar-field
+	// differences. Result is a signed long.
+	static Expr DateTimeDiff(IReadOnlyList<Expr> args, ScalarContext ctx)
+	{
+		if (args.Count != 3)
+			throw new UnsupportedKqlException($"datetime_diff() takes exactly 3 arguments (period, datetime1, datetime2), got {args.Count}");
+		if (args[0] is not System.Linq.Expressions.ConstantExpression { Value: string part })
+			throw new UnsupportedKqlException("datetime_diff() period must be a string literal");
+
+		var aMs = ToEpochMs(ctx.CoerceInstant(args[1]));
+		var bMs = ToEpochMs(ctx.CoerceInstant(args[2]));
+
+		long? fixedUnit = part.ToLowerInvariant() switch
+		{
+			"millisecond" => 1L,
+			"second" => 1_000L,
+			"minute" => 60_000L,
+			"hour" => 3_600_000L,
+			"day" => 86_400_000L,
+			_ => null,
+		};
+		if (fixedUnit is { } unit)
+			return Expr.Subtract(
+				Expr.Divide(aMs, Expr.Constant(unit)),
+				Expr.Divide(bMs, Expr.Constant(unit)));
+
+		Expr YearOf(Expr ms) => Expr.Call(SqlM(nameof(KqlSqlExpressions.YearOfMs)), ms);
+		Expr MonthOf(Expr ms) => Expr.Call(SqlM(nameof(KqlSqlExpressions.MonthOfMs)), ms);
+		Expr TotalMonths(Expr ms) => Expr.Add(Expr.Multiply(YearOf(ms), Expr.Constant(12L)), MonthOf(ms));
+		Expr Quarters(Expr ms) => Expr.Add(
+			Expr.Multiply(YearOf(ms), Expr.Constant(4L)),
+			Expr.Divide(Expr.Subtract(MonthOf(ms), Expr.Constant(1L)), Expr.Constant(3L)));
+
+		return part.ToLowerInvariant() switch
+		{
+			"week" => Expr.Divide(
+				Expr.Subtract(
+					Expr.Call(SqlM(nameof(KqlSqlExpressions.StartOfWeekMs)), aMs),
+					Expr.Call(SqlM(nameof(KqlSqlExpressions.StartOfWeekMs)), bMs)),
+				Expr.Constant(604_800_000L)),
+			"year" => Expr.Subtract(YearOf(aMs), YearOf(bMs)),
+			"month" => Expr.Subtract(TotalMonths(aMs), TotalMonths(bMs)),
+			"quarter" => Expr.Subtract(Quarters(aMs), Quarters(bMs)),
+			_ => throw new UnsupportedKqlException(
+				$"datetime_diff() period '{part}' not supported (year, quarter, month, week, day, hour, minute, second, millisecond)"),
+		};
+	}
+
+	static Expr ToEpochMs(Expr instant) =>
+		instant.Type == typeof(long)
+			? instant
+			: Expr.Call(SqlM(nameof(KqlSqlExpressions.ToUnixMs)), instant);
 
 	static Expr RequireLong(Expr e, string what) => e.Type == typeof(long)
 		? e

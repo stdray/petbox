@@ -25,7 +25,7 @@ public static class KqlTransformer
 		new("PropertiesJson", typeof(string)),
 	];
 
-	public static KqlResult Execute(IQueryable<LogEntryRecord> source, KustoCode code)
+	public static KqlResult Execute(IQueryable<LogEntryRecord> source, KustoCode code, TimeProvider? clock = null)
 	{
 		var parseErrors = code.GetDiagnostics().Where(d => d.Severity == "Error").ToList();
 		if (parseErrors.Count > 0)
@@ -40,6 +40,9 @@ public static class KqlTransformer
 		if (!string.Equals(tableName.SimpleName, EventsTable, StringComparison.Ordinal))
 			throw new UnsupportedKqlException($"unknown table '{tableName.SimpleName}'; only '{EventsTable}' is supported");
 
+		// now()/ago() resolve to this single instant for the whole query (see ScalarContext.UtcNow).
+		var now = (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+
 		var pipeline = operators.Skip(1).ToList();
 		var splitAt = pipeline.FindIndex(IsShapeChangingOp);
 
@@ -47,12 +50,12 @@ public static class KqlTransformer
 			? (pipeline, new List<SyntaxNode>())
 			: (pipeline.Take(splitAt).ToList(), pipeline.Skip(splitAt).ToList());
 
-		var preResult = ApplyPipeline(source, preOps);
+		var preResult = ApplyPipeline(source, preOps, now);
 		var eventShape = new KqlResult(EventRecordColumns, StreamEventRecordRows(preResult));
 
 		return postOps.Count == 0
 			? eventShape
-			: ApplyShapeChanges(eventShape, postOps);
+			: ApplyShapeChanges(eventShape, postOps, now);
 	}
 
 	// An operator whose output is no longer the event shape. `distinct` reduces to its chosen
@@ -68,7 +71,7 @@ public static class KqlTransformer
 		return FlattenPipeline(code.Syntax).Any(IsShapeChangingOp);
 	}
 
-	public static IQueryable<LogEntryRecord> Apply(IQueryable<LogEntryRecord> source, KustoCode code)
+	public static IQueryable<LogEntryRecord> Apply(IQueryable<LogEntryRecord> source, KustoCode code, TimeProvider? clock = null)
 	{
 		var parseErrors = code.GetDiagnostics().Where(d => d.Severity == "Error").ToList();
 		if (parseErrors.Count > 0)
@@ -83,12 +86,13 @@ public static class KqlTransformer
 		if (!string.Equals(tableName.SimpleName, EventsTable, StringComparison.Ordinal))
 			throw new UnsupportedKqlException($"unknown table '{tableName.SimpleName}'; only '{EventsTable}' is supported");
 
+		var now = (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime;
 		var q = source;
 		foreach (var op in operators.Skip(1))
 		{
-		q = op switch
+			q = op switch
 			{
-				FilterOperator f => ApplyWhere(q, f),
+				FilterOperator f => ApplyWhere(q, f, now),
 				TakeOperator t => ApplyTake(q, t),
 				SortOperator s => ApplySort(q, s),
 				TopOperator t => ApplyTop(q, t),
@@ -98,23 +102,23 @@ public static class KqlTransformer
 		return q;
 	}
 
-	static KqlResult ApplyShapeChanges(KqlResult input, IReadOnlyList<SyntaxNode> ops)
+	static KqlResult ApplyShapeChanges(KqlResult input, IReadOnlyList<SyntaxNode> ops, DateTime now)
 	{
 		var current = input;
 		foreach (var op in ops)
 		{
 			current = op switch
 			{
-				ExtendOperator e => ApplyExtend(current, e),
-				ProjectOperator p => ApplyProject(current, p),
+				ExtendOperator e => ApplyExtend(current, e, now),
+				ProjectOperator p => ApplyProject(current, p, now),
 				CountOperator => ApplyCount(current),
-				SummarizeOperator s => ApplySummarize(current, s),
+				SummarizeOperator s => ApplySummarize(current, s, now),
 				DistinctOperator d => ApplyDistinct(current, d),
 				// order by / take / top run in-memory once the pipeline has changed shape; their
 				// sort keys may reference computed (post-split) columns.
-				SortOperator s => ApplyPostSort(current, s),
+				SortOperator s => ApplyPostSort(current, s, now),
 				TakeOperator t => ApplyPostTake(current, t),
-				TopOperator t => ApplyPostTop(current, t),
+				TopOperator t => ApplyPostTop(current, t, now),
 				_ => throw new UnsupportedKqlException($"operator '{op.Kind}' not supported in shape-changing pipeline"),
 			};
 		}
@@ -125,12 +129,12 @@ public static class KqlTransformer
 	// pass-through (keeps the source type); `alias = <expression>` compiles a scalar over the
 	// current row shape and evaluates it in-memory (post-split). An un-aliased computed
 	// expression is rejected — KQL auto-names it, which we don't reproduce.
-	static KqlResult ApplyProject(KqlResult input, ProjectOperator project)
+	static KqlResult ApplyProject(KqlResult input, ProjectOperator project, DateTime now)
 	{
 		var newColumns = new List<KqlColumn>();
 		var producers = new List<Func<object?[], object?>>();
 		var rowParam = Expr.Parameter(typeof(object?[]), "row");
-		var ctx = new RowScalarContext(rowParam, input.Columns);
+		var ctx = new RowScalarContext(rowParam, input.Columns) { UtcNow = now };
 
 		foreach (var element in project.Expressions)
 		{
@@ -169,11 +173,11 @@ public static class KqlTransformer
 	// extend appends computed columns (evaluated in-memory over the current row). Re-using an
 	// existing name replaces that column in place (KQL extend semantics). Each expression sees
 	// the input columns only.
-	static KqlResult ApplyExtend(KqlResult input, ExtendOperator extend)
+	static KqlResult ApplyExtend(KqlResult input, ExtendOperator extend, DateTime now)
 	{
 		var columns = input.Columns.ToList();
 		var rowParam = Expr.Parameter(typeof(object?[]), "row");
-		var ctx = new RowScalarContext(rowParam, input.Columns);
+		var ctx = new RowScalarContext(rowParam, input.Columns) { UtcNow = now };
 		var writes = new List<(int TargetIndex, Func<object?[], object?> Fn)>();
 
 		foreach (var element in extend.Expressions)
@@ -219,10 +223,10 @@ public static class KqlTransformer
 	// engine; by-keys are column refs, Properties.<key>, or computed expressions (incl.
 	// bin(...) for time/numeric bucketing). Both aggregate results and by-keys accept an
 	// `alias = …` name. Grouping and folding are in-memory (the pipeline is already split).
-	static KqlResult ApplySummarize(KqlResult input, SummarizeOperator op)
+	static KqlResult ApplySummarize(KqlResult input, SummarizeOperator op, DateTime now)
 	{
 		var rowParam = Expr.Parameter(typeof(object?[]), "row");
-		var ctx = new RowScalarContext(rowParam, input.Columns);
+		var ctx = new RowScalarContext(rowParam, input.Columns) { UtcNow = now };
 
 		var outputColumns = new List<KqlColumn>();
 		var keyExtractors = new List<Func<object?[], object?>>();
@@ -590,17 +594,17 @@ public static class KqlTransformer
 		return new KqlResult(input.Columns, StreamTake(input.Rows, checked((int)n)));
 	}
 
-	static KqlResult ApplyPostSort(KqlResult input, SortOperator sort)
+	static KqlResult ApplyPostSort(KqlResult input, SortOperator sort, DateTime now)
 	{
-		var keys = sort.Expressions.Select(e => CompileSortKey(e.Element, input)).ToArray();
+		var keys = sort.Expressions.Select(e => CompileSortKey(e.Element, input, now)).ToArray();
 		return new KqlResult(input.Columns, StreamSort(input.Rows, keys, limit: null));
 	}
 
-	static KqlResult ApplyPostTop(KqlResult input, TopOperator top)
+	static KqlResult ApplyPostTop(KqlResult input, TopOperator top, DateTime now)
 	{
 		if (top.Expression is not LiteralExpression { LiteralValue: long n })
 			throw new UnsupportedKqlException("top requires an integer literal count");
-		var key = CompileSortKey(top.ByExpression, input);
+		var key = CompileSortKey(top.ByExpression, input, now);
 		return new KqlResult(input.Columns, StreamSort(input.Rows, [key], limit: checked((int)n)));
 	}
 
@@ -608,10 +612,10 @@ public static class KqlTransformer
 	// column ref sorts ascending unless followed by `desc`; default (no ordering) is descending
 	// only for the whole `order by`/`top` when the user omits it — Kusto's default is descending,
 	// which the `!IsAscending` below preserves.
-	static (Func<object?[], object?> Key, bool Descending) CompileSortKey(Expression element, KqlResult input)
+	static (Func<object?[], object?> Key, bool Descending) CompileSortKey(Expression element, KqlResult input, DateTime now)
 	{
 		var rowParam = Expr.Parameter(typeof(object?[]), "row");
-		var ctx = new RowScalarContext(rowParam, input.Columns);
+		var ctx = new RowScalarContext(rowParam, input.Columns) { UtcNow = now };
 		var (expr, descending) = element switch
 		{
 			OrderedExpression { Expression: var e, Ordering: var o } => (e, !IsAscending(o)),
@@ -748,14 +752,14 @@ public static class KqlTransformer
 		return -1;
 	}
 
-	static IQueryable<LogEntryRecord> ApplyPipeline(IQueryable<LogEntryRecord> source, IReadOnlyList<SyntaxNode> operators)
+	static IQueryable<LogEntryRecord> ApplyPipeline(IQueryable<LogEntryRecord> source, IReadOnlyList<SyntaxNode> operators, DateTime now)
 	{
 		var q = source;
 		foreach (var op in operators)
 		{
 			q = op switch
 			{
-				FilterOperator f => ApplyWhere(q, f),
+				FilterOperator f => ApplyWhere(q, f, now),
 				TakeOperator t => ApplyTake(q, t),
 				SortOperator s => ApplySort(q, s),
 				TopOperator t => ApplyTop(q, t),
@@ -833,10 +837,10 @@ public static class KqlTransformer
 			yield return stack.Pop();
 	}
 
-	static IQueryable<LogEntryRecord> ApplyWhere(IQueryable<LogEntryRecord> source, FilterOperator filter)
+	static IQueryable<LogEntryRecord> ApplyWhere(IQueryable<LogEntryRecord> source, FilterOperator filter, DateTime now)
 	{
 		var row = Expr.Parameter(typeof(LogEntryRecord), "e");
-		var body = KqlScalar.Compile(filter.Condition, new RecordScalarContext(row));
+		var body = KqlScalar.Compile(filter.Condition, new RecordScalarContext(row) { UtcNow = now });
 		if (body.Type != typeof(bool))
 			throw new UnsupportedKqlException($"where condition must be boolean, got {body.Type.Name}");
 		var predicate = Expr.Lambda<Func<LogEntryRecord, bool>>(body, row);
