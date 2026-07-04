@@ -155,22 +155,17 @@
 			</div>
 		}
 
-		@{
-			var sections = new (string Label, IReadOnlyList<PetBox.Tasks.Contract.LinkDto>? Links)[]
-			{
-				("implements (spec)", node.Spec),
-				("linked tasks", node.LinkedTasks),
-				("blocked by", node.BlockedBy),
-				("supersedes", node.Supersedes),
-			};
-		}
-		@foreach (var (label, links) in sections)
+		@* Exhaustive relation panel (node-relations-panel): every relation kind in both directions
+		   — children (part_of down), blocks/blocked by, implements/linked, idea/spec, issue/tasks,
+		   supersedes/superseded by — computed by the service into Detail.Relations. Only non-empty
+		   groups render, in a fixed reading order; each row shows the target's live status. *@
+		@foreach (var group in Model.Detail.Relations)
 		{
-			@if (links is { Count: > 0 })
+			@if (group.Links.Count > 0)
 			{
-				<div class="text-sm opacity-80 mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1" data-testid="node-links">
-					<span class="opacity-60">@label:</span>
-					@foreach (var l in links)
+				<div class="text-sm opacity-80 mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1" data-testid="node-links" data-relation="@group.Label">
+					<span class="opacity-60">@group.Label:</span>
+					@foreach (var l in group.Links)
 					{
 						@if (l.NodeId.Length > 0 && l.Status != "missing")
 						{

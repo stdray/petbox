@@ -36,12 +36,25 @@ public sealed record PlanBoardView(
 public sealed record NodeRefResolution(string Board, string Key, string NodeId, string Title);
 
 // One node resolved by its stable NodeId alone (cross-board): its owning board + kind,
-// the fully-enriched node view, and its part_of ancestor chain ordered root→parent (for
-// breadcrumbs). Powers the per-node detail page, which addresses a node by id, not board.
-public sealed record NodeDetailView(string Board, string Kind, PlanNodeView Node, IReadOnlyList<NodeCrumb> Ancestors);
+// the fully-enriched node view, its part_of ancestor chain ordered root→parent (for
+// breadcrumbs), and the EXHAUSTIVE relation panel (`Relations`) — every relation kind in
+// both directions (children, blocks/blocked-by, implements/linked, idea/spec, issue/tasks,
+// supersedes/superseded-by), one group per non-empty kind×direction. Powers the per-node
+// detail page, which addresses a node by id, not board.
+public sealed record NodeDetailView(
+	string Board, string Kind, PlanNodeView Node, IReadOnlyList<NodeCrumb> Ancestors,
+	IReadOnlyList<NodeRelationGroup> Relations);
 
 // A lightweight node pointer (no body/links) — used for breadcrumb ancestors.
 public sealed record NodeCrumb(string NodeId, string Slug, string Title);
+
+// One relation kind × direction as a labelled bucket of resolved targets (node-relations-panel).
+// `Label` is the human name for the direction ("children" = part_of reverse, "blocks" = blocks
+// forward, "superseded by" = supersedes reverse, …); each LinkDto in `Links` carries the target's
+// live status (so the detail page shows a status chip per row). Emitted only when non-empty, in a
+// fixed reading order. Unlike PlanNodeView's typed link fields (spec/blockedBy/…) this is the
+// COMPLETE two-way view, so the detail page renders the full graph around a node in one place.
+public sealed record NodeRelationGroup(string Label, IReadOnlyList<LinkDto> Links);
 
 // Delta projection of a node (no links/delivery/tags — that's GetAsync). `Body` is the
 // compact-echo opt-in (spec echo-compact-by-default): null by default (the serializer

@@ -307,7 +307,9 @@ public static class TasksTools
 		fully-enriched node: key, nodeId, parentNodeId/parentSlug/depth, status, type, title,
 		the `body` (COMPLETE by default — this is the pointed full read; the uniform bodyLen knob still applies: 0 = no body, N>0 = the first N chars, -1 = full), priority, version, tags, links (`spec`,
 		`blockedBy`; on a spec node `linkedTasks` + the computed `delivery`), plus `url` when
-		includeUrl. An addressed read ignores terminality: a Done/Cancelled/deprecated node is
+		includeUrl. `relations` is the EXHAUSTIVE two-way relation panel — one labelled group per
+		non-empty kind×direction (children, blocks/blocked by, implements/linked tasks, idea/spec,
+		issue/tasks, supersedes/superseded by), each target carrying its live status. An addressed read ignores terminality: a Done/Cancelled/deprecated node is
 		returned like any other (no includeClosed needed). A node that doesn't exist on the
 		board is a clear error, not an empty result. Use this instead of re-fetching a whole
 		board when you need one node's full body. Requires tasks:read.
