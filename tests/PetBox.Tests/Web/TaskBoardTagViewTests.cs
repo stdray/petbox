@@ -48,7 +48,7 @@ public sealed class TaskBoardTagViewTests : IDisposable
 		{ ["Features:Tasks"] = "true" }).Build());
 
 	TaskBoardModel Model() =>
-		new(Flags(), _tasks, new CommentService(_factory)) { WorkspaceKey = "ws", ProjectKey = "proj", Board = "g" };
+		new(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = "proj", Board = "g" };
 
 	// a is in two areas (multimembership) + a concern; b is one area, no concern → "(none)".
 	async Task Seed()

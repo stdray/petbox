@@ -70,13 +70,23 @@
 			@* Body is markdown, hydrated client-side (ts/markdown.ts) and clipped on the
 			   board — the full text lives on the node detail page (board-body-truncate). *@
 			<div class="mt-1">
-				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-24 overflow-hidden" })" />
+				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-24 overflow-hidden", CommitUrlTemplate = Model.CommitUrlTemplate })" />
 				<a href="@nodeUrl" class="text-xs link link-hover opacity-60" data-testid="node-body-more">full ↗</a>
 			</div>
 		}
 		@if (!string.IsNullOrEmpty(n.CommitRef))
 		{
-			<div class="text-xs opacity-50 font-mono mt-1">@n.CommitRef</div>
+			var commitUrl = PetBox.Web.Rendering.CommitUrl.For(Model.CommitUrlTemplate, n.CommitRef);
+			<div class="text-xs opacity-50 font-mono mt-1">
+				@if (commitUrl is not null)
+				{
+					<a href="@commitUrl" target="_blank" rel="noopener" class="link link-hover" data-testid="node-commit-link">@n.CommitRef</a>
+				}
+				else
+				{
+					@n.CommitRef
+				}
+			</div>
 		}
 		@if (n.LinkedTasks is { Count: > 0 })
 		{
@@ -89,7 +99,7 @@
 		}
 		@if (Model.Thread is { Count: > 0 })
 		{
-			<partial name="_CommentThread" model="Model.Thread" />
+			<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, Model.CommitUrlTemplate))" />
 		}
 	</div>
 </li>

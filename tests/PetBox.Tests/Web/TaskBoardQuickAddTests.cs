@@ -53,7 +53,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 	{
 		var board = "b-" + kind.ToString().ToLowerInvariant();
 		await _store.CreateAsync("proj", board, null, kind.ToString());
-		return new TaskBoardModel(Flags(), _tasks, new CommentService(_factory)) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
+		return new TaskBoardModel(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
 	}
 
 	int ActiveNodeCount(string board) =>

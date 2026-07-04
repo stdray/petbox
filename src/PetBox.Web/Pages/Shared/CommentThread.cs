@@ -7,6 +7,11 @@ namespace PetBox.Web.Pages.Shared;
 // view just iterates with an indent — the same shape the plan-node list uses.
 public sealed record CommentLine(CommentView Comment, int Depth);
 
+// Model for the _CommentThread partial: the DFS-flattened lines plus the project's optional
+// commit-view URL template, threaded down so comment bodies autolink commit hashes the same way
+// node bodies do. Null template = plain text (the pre-feature behavior).
+public sealed record CommentThreadModel(IReadOnlyList<CommentLine> Lines, string? CommitUrlTemplate = null);
+
 // Shared thread flattener used by both the board page and the node detail page (so the two
 // surfaces render the SAME thread shape via the _CommentThread partial). Pure/static.
 public static class CommentThread

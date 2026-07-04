@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Features;
+using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Pages.Shared;
@@ -18,12 +19,14 @@ public sealed class TaskBoardModel : PageModel
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
 	readonly ICommentService _comments;
+	readonly ISettingsResolver _settings;
 
-	public TaskBoardModel(FeatureFlags features, ITasksService tasks, ICommentService comments)
+	public TaskBoardModel(FeatureFlags features, ITasksService tasks, ICommentService comments, ISettingsResolver settings)
 	{
 		_features = features;
 		_tasks = tasks;
 		_comments = comments;
+		_settings = settings;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -64,6 +67,10 @@ public sealed class TaskBoardModel : PageModel
 
 	public bool ShowQuickAdd { get; private set; }
 
+	// The project's commit-view URL template (RepoSettings, Scope.Project). When set, the commit-ref
+	// chip on each card links to it and commit hashes in node/comment bodies autolink. Empty = off.
+	public string? CommitUrlTemplate { get; private set; }
+
 	// The board's EFFECTIVE process, resolved through MethodologyRuntime — the same seam
 	// the MCP tools / TasksService use (project definition first, preset fallback), so a
 	// definition-declared custom kind renders its own statuses/terminality instead of
@@ -97,7 +104,7 @@ public sealed class TaskBoardModel : PageModel
 		string WorkspaceKey, string ProjectKey, string Board, MethodologyRuntime Runtime,
 		string? KindSlug, PlanNodeView Node,
 		int Depth, bool Closed, bool KeepVisible, bool HasChildren,
-		IReadOnlyList<CommentLine>? Thread);
+		IReadOnlyList<CommentLine>? Thread, string? CommitUrlTemplate = null);
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
@@ -107,6 +114,9 @@ public sealed class TaskBoardModel : PageModel
 		(Runtime, KindSlug) = await ResolveProcessAsync(ct);
 		KindName = Runtime.KindName(KindSlug);
 		ShowQuickAdd = Runtime.QuickAddAllowed(KindSlug);
+
+		// Project-scoped commit-view template (cascades to workspace/system); empty when unset.
+		CommitUrlTemplate = (await _settings.GetAsync<RepoSettings>(Scope.Project, ProjectKey, ct)).CommitUrlTemplate;
 
 		// The board's FSM surface, embedded for the "View workflow" modal (a few KB — no extra endpoint).
 		var workflow = await _tasks.GetBoardWorkflowAsync(ProjectKey, Board, ct);

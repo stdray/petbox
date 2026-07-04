@@ -1,11 +1,11 @@
-@model IReadOnlyList<PetBox.Web.Pages.Shared.CommentLine>
+@model PetBox.Web.Pages.Shared.CommentThreadModel
 @* Read-only discussion thread under one plan node, DFS-flattened with an indent. Shared by
    the board page and the node detail page. Writes still go through the comments_* MCP tools
    (interactive UI is a separate task). Renders nothing when the thread is empty. *@
-@if (Model.Count > 0)
+@if (Model.Lines.Count > 0)
 {
 	<div class="mt-2 border-t border-base-300 pt-2 flex flex-col gap-1.5" data-testid="node-comments">
-		@foreach (var line in Model)
+		@foreach (var line in Model.Lines)
 		{
 			var c = line.Comment;
 			<div class="text-sm" data-testid="comment" data-comment-id="@c.Id" style="margin-left:@(line.Depth * 1.25)rem">
@@ -17,7 +17,7 @@
 						<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
 					}
 				</div>
-				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body" })" />
+				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate })" />
 			</div>
 		}
 	</div>

@@ -12,7 +12,7 @@
 }
 @if (Model.ServerRender)
 {
-	<div class="@cls" data-testid="@Model.TestId" style="@Model.Style">@Html.Raw(Md.RenderToHtml(Model.Body))</div>
+	<div class="@cls" data-testid="@Model.TestId" style="@Model.Style">@Html.Raw(Md.RenderToHtml(Model.Body, Model.CommitUrlTemplate))</div>
 }
 else
 {

@@ -119,3 +119,114 @@ public sealed class MarkdownRendererTests
 		html.Should().NotContain("<script"); // no live script element
 	}
 }
+
+// Commit-hash autolinking (commit-links-impl): when a project declares a commit-view URL template
+// (RepoSettings.CommitUrlTemplate, literal {sha} placeholder), standalone 7–40-hex words in PLAIN
+// TEXT runs become links to the commit view. Code spans/blocks and existing links are excluded;
+// with no usable template the output is byte-identical to the template-less path.
+public sealed class MarkdownRendererCommitLinkTests
+{
+	const string Template = "https://github.com/user/repo/commit/{sha}";
+
+	static readonly IMarkdownRenderer R = new MarkdownRenderer();
+
+	static string Html(string md, string? template = Template) => R.RenderToHtml(md, template);
+
+	[Fact]
+	public void ShortHash_7Hex_Autolinks()
+	{
+		var html = Html("fixed in cc20e34 yesterday");
+		html.Should().Contain("<a href=\"https://github.com/user/repo/commit/cc20e34\"");
+		html.Should().Contain(">cc20e34</a>");
+	}
+
+	[Fact]
+	public void FullHash_40Hex_Autolinks()
+	{
+		var sha = "0123456789abcdef0123456789abcdef01234567";
+		Html($"see {sha}.").Should().Contain($"<a href=\"https://github.com/user/repo/commit/{sha}\"");
+	}
+
+	[Fact]
+	public void Autolink_CarriesTargetBlankAndNoopener_ThroughSanitizer()
+	{
+		// The generated anchor must SURVIVE sanitization with all three attributes intact.
+		var html = Html("fixed in cc20e34");
+		html.Should().Contain("href=\"https://github.com/user/repo/commit/cc20e34\"");
+		html.Should().Contain("target=\"_blank\"");
+		html.Should().Contain("rel=\"noopener\"");
+	}
+
+	[Fact]
+	public void Hash_InsideCodeSpan_DoesNotLink()
+	{
+		var html = Html("run `git show cc20e34` locally");
+		html.Should().NotContain("<a");
+		html.Should().Contain("<code>git show cc20e34</code>");
+	}
+
+	[Fact]
+	public void Hash_InsideFencedCodeBlock_DoesNotLink()
+	{
+		var html = Html("```\ngit revert cc20e34\n```");
+		html.Should().NotContain("<a");
+		html.Should().Contain("cc20e34");
+	}
+
+	[Fact]
+	public void Hash_InsideExistingLinkText_DoesNotDoubleLink()
+	{
+		var html = Html("[cc20e34](https://example.com/x)");
+		// Exactly the author's link — no nested/extra anchor to the commit view.
+		html.Should().Contain("href=\"https://example.com/x\"");
+		html.Should().NotContain("github.com/user/repo/commit");
+	}
+
+	[Fact]
+	public void NonHexWord_DoesNotLink()
+	{
+		// 7+ chars but with non-hex letters.
+		Html("deadbeefx and ggggggg stay plain").Should().NotContain("<a");
+	}
+
+	[Fact]
+	public void SixHexWord_DoesNotLink()
+	{
+		Html("abc123 is too short").Should().NotContain("<a");
+	}
+
+	[Fact]
+	public void NoTemplate_OutputIdenticalToLegacyPath()
+	{
+		var md = "## Head\nfixed in cc20e34\n\n- item deadbeef1";
+		R.RenderToHtml(md, null).Should().Be(R.RenderToHtml(md));
+		R.RenderToHtml(md, "").Should().Be(R.RenderToHtml(md));
+		R.RenderToHtml(md, null).Should().NotContain("<a");
+	}
+
+	[Fact]
+	public void TemplateWithoutShaPlaceholder_TreatedAsUnset()
+	{
+		var html = Html("fixed in cc20e34", "https://github.com/user/repo/commits");
+		html.Should().NotContain("<a");
+		html.Should().Be(R.RenderToHtml("fixed in cc20e34"));
+	}
+
+	[Fact]
+	public void MultipleHashes_InOneRun_AllLink_TextPreserved()
+	{
+		var html = Html("between cc20e34 and 35203f6 words survive");
+		html.Should().Contain("commit/cc20e34\"");
+		html.Should().Contain("commit/35203f6\"");
+		html.Should().Contain("between ");
+		html.Should().Contain(" and ");
+		html.Should().Contain(" words survive");
+	}
+
+	[Fact]
+	public void Hash_GluedToLetters_DoesNotLink()
+	{
+		// \b word boundary: `xcc20e34` is one word, not a standalone hash.
+		Html("xcc20e34 is not a hash").Should().NotContain("<a");
+	}
+}

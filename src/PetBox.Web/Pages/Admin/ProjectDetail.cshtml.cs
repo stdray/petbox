@@ -30,6 +30,10 @@ public sealed class ProjectDetailModel : PageModel
 	public int EffectiveRetentionDays { get; private set; }
 	public int? RetentionOverrideDays { get; private set; }
 
+	// The project's effective commit-view URL template (RepoSettings, cascaded). Empty = unset →
+	// commit refs/hashes render as plain text. A literal {sha} placeholder is expanded per commit.
+	public string CommitUrlTemplate { get; private set; } = "";
+
 	[BindProperty(SupportsGet = true)]
 	public string WorkspaceKey { get; set; } = string.Empty;
 
@@ -65,6 +69,37 @@ public sealed class ProjectDetailModel : PageModel
 		RetentionOverrideDays = overrideRow is null
 			? null
 			: int.TryParse(overrideRow.Value, out var d) ? d : null;
+
+		// Effective commit-view template via the same cascade (project → workspace → system).
+		CommitUrlTemplate = (await _settings.GetAsync<RepoSettings>(Scope.Project, ProjectKey)).CommitUrlTemplate;
+	}
+
+	// Set (or clear, when blank) the per-project commit-view URL template. An empty text input
+	// binds to null, so normalize to "" before comparing/writing — a blank submit resets the
+	// override so the project falls back up the cascade.
+	public async Task<IActionResult> OnPostSetCommitTemplateAsync(string? commitUrlTemplate)
+	{
+		var trimmed = (commitUrlTemplate ?? string.Empty).Trim();
+		var oldSettings = await _settings.GetAsync<RepoSettings>(Scope.Project, ProjectKey);
+
+		if (trimmed.Length == 0)
+		{
+			await _settings.ResetAsync<RepoSettings>(Scope.Project, ProjectKey, nameof(RepoSettings.CommitUrlTemplate));
+			return Self();
+		}
+
+		var newSettings = oldSettings with { CommitUrlTemplate = trimmed };
+		var userIdRaw = User.FindFirst(PetBox.Core.Auth.PetBoxClaims.UserId)?.Value;
+		long? userId = long.TryParse(userIdRaw, out var uid) ? uid : null;
+		await _settings.SetAsync(Scope.Project, ProjectKey, newSettings, oldSettings, userId);
+		return Self();
+	}
+
+	// Drop the project's own commit-view override so it falls back up the cascade.
+	public async Task<IActionResult> OnPostClearCommitTemplateAsync()
+	{
+		await _settings.ResetAsync<RepoSettings>(Scope.Project, ProjectKey, nameof(RepoSettings.CommitUrlTemplate));
+		return Self();
 	}
 
 	public async Task<IActionResult> OnPostSetRetentionAsync(int retainDays)

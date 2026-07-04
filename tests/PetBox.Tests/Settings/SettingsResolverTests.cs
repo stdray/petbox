@@ -339,4 +339,27 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 		[Setting(TopLevel = Scope.User, Key = "test.misc.flag")]
 		public bool Flag { get; init; }
 	}
+
+	[Fact]
+	public async Task RepoSettings_CommitUrlTemplate_ProjectRowResolves_DefaultEmpty()
+	{
+		// The real RepoSettings record (commit-links-impl): default is "" (no template), a
+		// Project-scope row at repo.commitUrlTemplate wins for that project.
+		var (resolver, db) = await GetResolverAsync(projectKey: "proj-repo", workspaceKey: "ws-repo");
+
+		(await resolver.GetAsync<RepoSettings>(Scope.Project, "proj-repo")).CommitUrlTemplate.Should().BeEmpty();
+
+		await db.InsertAsync(new Setting
+		{
+			Scope = "Project",
+			ScopeKey = "proj-repo",
+			Path = "repo.commitUrlTemplate",
+			Type = "string",
+			Value = "https://github.com/user/repo/commit/{sha}",
+			UpdatedAt = DateTime.UtcNow,
+		});
+
+		var resolved = await resolver.GetAsync<RepoSettings>(Scope.Project, "proj-repo");
+		resolved.CommitUrlTemplate.Should().Be("https://github.com/user/repo/commit/{sha}");
+	}
 }
