@@ -368,7 +368,11 @@ public static class TasksTools
 		With `q` each row carries `score` (the fused, rank-based relevance) and `retriever`
 		("lexical" = lexically confirmed, "semantic" = surfaced by the vector leg alone,
 		"exact" = an exact slug match); a semantic-only hit below the relevance floor is
-		dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows).
+		dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows). Query
+		rows are LEAN (spec search-lean-rows): identity/title/snippet/status/tags/version +
+		score/retriever only — links/delivery/parent/commits/priority are dropped and ride the
+		listing mode (no q) or tasks_node_get (version stays as the CAS baseline for an
+		upsert-after-find, tags aid selection).
 
 		PROJECTION: `groupBy` = an ORDERED, comma-separated list of tag namespaces (e.g.
 		"area" or "area,concern") returns the tag-bucket view instead of rows (`groups`
@@ -434,7 +438,7 @@ public static class TasksTools
 
 		// Response budget (MCP-adapter-only): the adapter shapes each body per the uniform bodyLen
 		// knob (default a ~240-char snippet) THEN measures the wire form, prefix-cuts, marks — never silent.
-		var rows = res.Hits.Select(h => SearchRow(h, bodyLen)).ToList();
+		var rows = res.Hits.Select(h => SearchRow(h, bodyLen, lean: hasQuery)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(rows);
 		return new TaskSearchResultView(
 			kept, res.Board, res.Kind, res.SpecBoard, res.CurrentVersion,
@@ -466,30 +470,36 @@ public static class TasksTools
 
 	// Wire shape for one row: the enriched node view flattened with its owning board (rows
 	// may span boards). RenamedFrom is omitted when empty (null → dropped by the serializer).
-	static TaskSearchNodeView SearchRow(TaskSearchHit h, int? bodyLen)
+	// LEAN when the caller has a query (spec search-lean-rows): a relevance row carries only
+	// what picks the entity — identity/title/snippet/status/tags/version + score/retriever —
+	// while the enrichment (parent/depth/delivery/spec/links/commits/priority) is nulled →
+	// omitted on the wire; completeness comes from listing mode or tasks_node_get. Version is
+	// kept as the CAS baseline for upsert-after-find (same as memory_search rows) and Tags aid
+	// selection. Listing mode (no query) keeps the full row unchanged.
+	static TaskSearchNodeView SearchRow(TaskSearchHit h, int? bodyLen, bool lean)
 	{
 		var n = h.Node;
 		return new TaskSearchNodeView(
 			Key: n.Key,
 			NodeId: n.NodeId,
 			Board: h.Board,
-			ParentNodeId: n.ParentNodeId,
-			ParentSlug: n.ParentSlug,
-			Depth: n.Depth,
+			ParentNodeId: lean ? null : n.ParentNodeId,
+			ParentSlug: lean ? null : n.ParentSlug,
+			Depth: lean ? null : (int?)n.Depth,
 			Status: n.Status,
 			Type: n.Type,
 			Title: n.Title,
 			// Uniform bodyLen contract, default a ~240-char snippet (compact listing); null
 			// (bodyLen:0) is omitted by the serializer.
 			Body: ModuleMcp.Body(n.Body, bodyLen, ModuleMcp.DefaultSnippet),
-			Commits: n.Commits,
-			Priority: n.Priority,
-			Delivery: n.Delivery,
-			Spec: n.Spec,
-			BlockedBy: n.BlockedBy,
-			LinkedTasks: n.LinkedTasks,
-			Supersedes: n.Supersedes,
-			RenamedFrom: n.RenamedFrom is { Count: > 0 } rf ? rf : null,
+			Commits: lean ? null : n.Commits,
+			Priority: lean ? null : (long?)n.Priority,
+			Delivery: lean ? null : n.Delivery,
+			Spec: lean ? null : n.Spec,
+			BlockedBy: lean ? null : n.BlockedBy,
+			LinkedTasks: lean ? null : n.LinkedTasks,
+			Supersedes: lean ? null : n.Supersedes,
+			RenamedFrom: lean ? null : (n.RenamedFrom is { Count: > 0 } rf ? rf : null),
 			Tags: n.Tags,
 			Version: n.Version,
 			Url: n.Url,
