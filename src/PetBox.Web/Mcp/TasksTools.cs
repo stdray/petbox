@@ -210,7 +210,7 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var ack = await tasks.DefineMethodologyAsync(projectKey, ParseDefinition(definition), version, ParseMigration(migration), ct);
+		var ack = await tasks.DefineMethodologyAsync(projectKey, MethodologyWire.ParseDefinition(definition), version, MethodologyWire.ParseMigration(migration), ct);
 		return new MethodologyDefUpsertResult(ack.Version, ack.Changed, ack.Migrated);
 	}
 
@@ -252,47 +252,12 @@ public static class TasksTools
 		// Preset copy: render the built-in preset as a definition template (version 0, no
 		// created/updated — it was never stored). Same output shape as the stored definition.
 		if (!string.IsNullOrWhiteSpace(preset))
-			return ProjectDefinition(MethodologyPresets.RenderPresetDefinition(preset), version: 0, created: null, updated: null);
+			return MethodologyWire.ProjectDefinition(MethodologyPresets.RenderPresetDefinition(preset), version: 0, created: null, updated: null);
 		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
 		if (view is null)
 			return new MethodologyDefGetResult(Defined: false, Preset: BuiltinPreset);
-		return ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
+		return MethodologyWire.ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
 	}
-
-	// Project a MethodologyDefinition onto the def_get wire result (Defined=true). Shared by the
-	// stored-definition read and the preset-copy render, so both paths use ONE shape — the strict
-	// outputSchema clients validate against is identical whichever source produced the document.
-	static MethodologyDefGetResult ProjectDefinition(MethodologyDefinition def, long version, DateTime? created, DateTime? updated) =>
-		new(
-			Defined: true,
-			Name: def.Name,
-			Kinds: def.Kinds.Select(k => new MethodologyKindView(
-				k.Kind, k.QuickAddAllowed,
-				k.Workflows.Select(w => new MethodologyWorkflowBlockView(
-					Types: w.Types,
-					Initial: w.Initial,
-					Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
-					Transitions: w.Transitions.Select(t => new MethodologyTransitionView(
-						t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact,
-						t.EnforceApproval,
-						Checklist: t.Checklist is { Count: > 0 } ? t.Checklist : null)).ToList())).ToList(),
-				LinkConstraints: k.LinkConstraints is { Count: > 0 }
-					? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(
-						c.Type, c.Link, c.TargetKind,
-						TargetStatuses: c.TargetStatuses is { Count: > 0 } ? c.TargetStatuses : null)).ToList()
-					: null,
-				Effects: k.Effects is { Count: > 0 }
-					? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom)).ToList()
-					: null)).ToList(),
-			Version: version,
-			Created: created,
-			Updated: updated,
-			LinkKinds: def.LinkKinds is { Count: > 0 }
-				? def.LinkKinds.Select(lk => new MethodologyLinkKindView(lk.Slug, lk.Description)).ToList()
-				: null,
-			TagAxes: def.TagAxes is { Count: > 0 }
-				? def.TagAxes.Select(a => new MethodologyTagAxisView(a.Namespace, a.Description)).ToList()
-				: null);
 
 	[McpServerTool(Name = "tasks_methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
 	[Description("""
@@ -330,59 +295,9 @@ public static class TasksTools
 	// (simple + the methodology quartet kinds — MethodologyPresets).
 	const string BuiltinPreset = MethodologyPresets.Name;
 
-	// Map the typed wire document onto the domain definition 1:1 (nulls → empty lists —
-	// the validator then reports "needs at least one ..." instead of an opaque NRE).
-	// Only the status-kind STRING needs parsing here; integrity stays in the service.
-	static MethodologyDefinition ParseDefinition(MethodologyDefInput d) => new(
-		d.Name ?? string.Empty,
-		(d.Kinds ?? []).Select(k => new MethodologyKindDef(
-			k.Kind ?? string.Empty,
-			k.QuickAddAllowed,
-			(k.Workflows ?? []).Select(w => new MethodologyWorkflowDef(
-				w.Types ?? [],
-				(w.Statuses ?? []).Select(ParseStatus).ToList(),
-				(w.Transitions ?? []).Select(t => new MethodologyTransitionDef(
-					t.From ?? string.Empty, t.To ?? string.Empty,
-					t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)
-				{
-					EnforceApproval = t.EnforceApproval,
-					Checklist = (t.Checklist ?? []).Select(i => i ?? string.Empty).ToList(),
-				}).ToList())).ToList())
-		{
-			LinkConstraints = (k.LinkConstraints ?? [])
-				.Select(c => new MethodologyLinkConstraintDef(c.Type ?? string.Empty, c.Link ?? string.Empty)
-				{
-					TargetKind = c.TargetKind,
-					TargetStatuses = c.TargetStatuses?.Select(s => s ?? string.Empty).ToList(),
-				}).ToList(),
-			Effects = (k.Effects ?? [])
-				.Select(e => new MethodologyTransitionEffectDef(
-					e.On ?? string.Empty, e.Link ?? string.Empty, e.Direction ?? string.Empty,
-					e.Set ?? string.Empty, e.OnlyFrom)).ToList(),
-		}).ToList())
-	{
-		LinkKinds = (d.LinkKinds ?? [])
-			.Select(lk => new MethodologyLinkKindDef(lk.Slug ?? string.Empty, lk.Description)).ToList(),
-		TagAxes = (d.TagAxes ?? [])
-			.Select(a => new MethodologyTagAxisDef(a.Namespace ?? string.Empty, a.Description)).ToList(),
-	};
-
-	// Map the typed migration document 1:1 (nulls → empty, so the service validator reports
-	// clear messages); null in = null out (no migration declared).
-	static List<MethodologyMigration>? ParseMigration(MethodologyMigrationInput[]? migration) =>
-		migration?.Select(m => new MethodologyMigration(
-			m.Kind ?? string.Empty,
-			(m.Types ?? []).Select(v => new MethodologyValueMap(v.From ?? string.Empty, v.To ?? string.Empty)).ToList(),
-			(m.Statuses ?? []).Select(v => new MethodologyValueMap(v.From ?? string.Empty, v.To ?? string.Empty)).ToList())).ToList();
-
-	static WorkflowStatus ParseStatus(MethodologyStatusInput s)
-	{
-		var slug = s.Slug ?? string.Empty;
-		var kind = StatusKind.Open;
-		if (!string.IsNullOrWhiteSpace(s.Kind) && !Enum.TryParse(s.Kind.Trim(), ignoreCase: true, out kind))
-			throw new ArgumentException($"status '{slug}': kind '{s.Kind}' is not a status kind (valid: open|terminalok|terminalcancel)");
-		return new WorkflowStatus(slug, string.IsNullOrWhiteSpace(s.Name) ? slug : s.Name, kind);
-	}
+	// The definition wire mapping (ParseDefinition/ParseMigration/ProjectDefinition) lives in
+	// MethodologyWire — shared with the admin methodology-editor page, so the editor's JSON is
+	// shape-identical to the def_get/def_upsert documents.
 
 	[McpServerTool(Name = "tasks_node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
 	[Description("""
