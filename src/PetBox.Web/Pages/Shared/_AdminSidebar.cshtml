@@ -28,6 +28,10 @@
 <aside class="bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col" data-testid="admin-sidebar">
 	@if (isAuthenticated)
 	{
+		<div class="px-2 pt-2 flex items-center justify-end">
+			<partial name="_SidebarPin" />
+		</div>
+
 		<ul class="menu menu-sm w-full p-2 gap-0.5" data-testid="admin-side-tree">
 			<li>
 				<details open data-testid="admin-side-workspaces-tree">

@@ -18,7 +18,7 @@ Hard invariants live in `AGENTS.md` ("Hard invariants" section) — localization
 
 ## Layout shell
 
-- Drawer-based responsive: `drawer lg:drawer-open` on outer container. Sidebar in `drawer-side`, content in `drawer-content`.
+- Drawer-based responsive: `drawer drawer-open` on outer container. Sidebar in `drawer-side`, content in `drawer-content`. The sidebar is docked open by default at every width; the pin toggle (`_SidebarPin` partial, `ts/sidebar.ts`) adds/removes `drawer-open` and persists the choice in localStorage — uniform across all zones (/ui, /ui/admin, /ui/me).
 - Top bar (navbar): `navbar bg-base-200 border-b border-base-300 px-2 lg:px-4 min-h-12`.
 - Sidebar: `bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col`.
 

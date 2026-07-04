@@ -6,6 +6,10 @@
 <aside class="bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col" data-testid="account-sidebar">
 	@if (Nav.IsAuthenticated)
 	{
+		<div class="px-2 pt-2 flex items-center justify-end">
+			<partial name="_SidebarPin" />
+		</div>
+
 		<div class="p-3 border-b border-base-300">
 			<div class="text-xs opacity-50 uppercase tracking-wide">Signed in as</div>
 			<div class="font-mono text-sm truncate" data-testid="account-sidebar-user">@Nav.Username</div>

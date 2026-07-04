@@ -16,8 +16,10 @@ function apply(pinned: boolean): void {
 	// Pinned: docked open inline at any width (the drawer-open class).
 	// Unpinned: a floating drawer — collapse it (uncheck the toggle) so it hides;
 	// the always-visible navbar hamburger reopens it as an overlay.
-	document.getElementById("app-drawer")?.classList.toggle(PINNED_CLASS, pinned);
-	const toggle = document.getElementById("sidebar-toggle") as HTMLInputElement | null;
+	// Selected by class, not id, so this works uniformly across every zone's
+	// layout (/ui, /ui/admin, /ui/me) — each page renders exactly one drawer.
+	document.querySelector(".drawer")?.classList.toggle(PINNED_CLASS, pinned);
+	const toggle = document.querySelector<HTMLInputElement>(".drawer-toggle");
 	if (toggle && !pinned) toggle.checked = false;
 	document.querySelectorAll<HTMLElement>("[data-sidebar-pin]").forEach((btn) => {
 		btn.setAttribute("aria-pressed", String(pinned));
