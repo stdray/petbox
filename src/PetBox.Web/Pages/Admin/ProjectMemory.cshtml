@@ -32,19 +32,32 @@
 		{
 			<div class="card bg-base-200 border border-base-300" data-testid="store-card" data-store-name="@s.Name">
 				<div class="card-body p-4">
-					<a href="@Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, s.Name)"
-						class="font-mono font-semibold link link-hover" data-testid="store-open">@s.Name</a>
+					<div class="flex items-baseline justify-between gap-2">
+						<a href="@Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, s.Name)"
+							class="font-mono font-semibold link link-hover" data-testid="store-open">@s.Name</a>
+						@if (s.IsSystem)
+						{
+							<span class="badge badge-ghost badge-xs" data-testid="store-system-badge">system</span>
+						}
+					</div>
 					@if (!string.IsNullOrEmpty(s.Description))
 					{
 						<p class="text-sm opacity-80">@s.Description</p>
 					}
 					<div class="card-actions justify-between mt-2">
 						<span class="text-xs opacity-50 font-mono">@s.CreatedAt.ToString("yyyy-MM-dd")</span>
-						<form method="post" asp-page-handler="Delete" asp-route-name="@s.Name"
-							onsubmit="return confirm('Delete store @s.Name? All entries will be removed.')" style="display:inline">
-							@Html.AntiForgeryToken()
-							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="store-delete">Delete</button>
-						</form>
+						@if (s.IsSystem)
+						{
+							<span class="text-xs opacity-40 italic" data-testid="store-system-note">machine plumbing — protected</span>
+						}
+						else
+						{
+							<form method="post" asp-page-handler="Delete" asp-route-name="@s.Name"
+								onsubmit="return confirm('Delete store @s.Name? All entries will be removed.')" style="display:inline">
+								@Html.AntiForgeryToken()
+								<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="store-delete">Delete</button>
+							</form>
+						}
 					</div>
 				</div>
 			</div>

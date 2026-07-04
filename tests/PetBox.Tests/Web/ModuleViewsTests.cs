@@ -432,6 +432,31 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-store-name=\"notes\"");
 	}
 
+	// A system store (IsSystem — e.g. session-digests) is badged and its Delete button removed on
+	// the admin memory page, mirroring the ProjectLogs self-log guard (ui-admin-memory-system-store-guard).
+	[Fact]
+	public async Task MemoryAdmin_SystemStore_BadgedAndNotDeletable()
+	{
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var stores = scope.ServiceProvider.GetRequiredService<PetBox.Memory.Data.IMemoryStore>();
+			if (!await stores.ExistsAsync("$system", "session-digests"))
+				await stores.CreateAsync("$system", "session-digests", "digests");
+		}
+
+		using var resp = await GetAuthedAsync("/ui/admin/ws/$system/projects/$system/memory");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		// The system store's card carries the badge and its protected note, not a Delete button.
+		html.Should().MatchRegex(
+			"""data-store-name="session-digests"[\s\S]*?data-testid="store-system-badge"[^>]*>system<""");
+		html.Should().MatchRegex(
+			"""data-store-name="session-digests"[\s\S]*?data-testid="store-system-note">""");
+		// The ordinary "notes" store still gets a Delete button.
+		html.Should().Contain("data-testid=\"store-delete\"");
+	}
+
 	[Fact]
 	public async Task Connect_RendersMintForm()
 	{
