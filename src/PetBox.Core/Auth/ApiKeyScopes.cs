@@ -24,6 +24,7 @@ public static class ApiKeyScopes
 	public const string DataSchema = "data:schema";
 	public const string TasksRead = "tasks:read";
 	public const string TasksWrite = "tasks:write";
+	public const string TasksApprove = "tasks:approve";
 	public const string MemoryRead = "memory:read";
 	public const string MemoryWrite = "memory:write";
 	public const string LlmInvoke = "llm:invoke";
@@ -48,6 +49,7 @@ public static class ApiKeyScopes
 		new(DataSchema,  "Schema apply / lifecycle","CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs.",          "Data"),
 		new(TasksRead,   "Read tasks",             "List/read task boards and plan nodes (and sessions) via the MCP tasks.*/session.* tools.", "Tasks"),
 		new(TasksWrite,  "Write tasks",            "Create boards and upsert plan nodes / append sessions via the MCP tasks.*/session.* tools.", "Tasks"),
+		new(TasksApprove, "Approve tasks",         "Perform approval-gated workflow transitions the methodology ENFORCES (enforceApproval) — the maintainer capability. Meaningless without tasks:write.", "Tasks"),
 		new(MemoryRead,  "Read memory",            "List/read memory stores and entries via the MCP memory.* tools.", "Memory"),
 		new(MemoryWrite, "Write memory",           "Create stores and upsert entries via the MCP memory.* tools.", "Memory"),
 		new(LlmInvoke,   "Invoke LLM router",      "Call embed/rerank/chat through the router via the MCP llm_embed/rerank/chat tools.", "LlmRouter"),

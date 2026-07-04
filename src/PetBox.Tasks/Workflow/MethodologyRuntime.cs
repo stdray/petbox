@@ -54,6 +54,14 @@ public sealed class MethodologyRuntime
 			? kind.LinkConstraints ?? []
 			: MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).LinkConstraints;
 
+	// Declared transition effects of a kind (schema v2), same merge as every resolver:
+	// the definition's when it declares the kind, else the preset's (work: intake
+	// auto-close + blocks auto-unblock — as data). Executed by RunTransitionEffectsAsync.
+	public IReadOnlyList<MethodologyTransitionEffectDef> Effects(string? kindSlug) =>
+		kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind)
+			? kind.Effects ?? []
+			: MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).Effects;
+
 	// Tag axes governing a board of this kind — ONE rule for everything: no axes =
 	// free-form tags, axes declared = enforced namespace allowlist. A definition-resolved
 	// kind runs on the definition's (project-wide) axes; a preset kind on the preset's

@@ -124,7 +124,11 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// subtree). The write carries NO cursor parameter and never returns other writers'
 	// history; CurrentVersion is the board-wide cursor to feed DeltaAsync (the only
 	// delta/catch-up surface).
-	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, CancellationToken ct = default);
+	// `actor` carries the caller's CAPABILITIES (null = TasksActor.None): transitions whose
+	// methodology declares EnforceApproval demand an approving actor — the doors translate
+	// their auth (tasks:approve scope at the MCP door, the cookie-authenticated owner in
+	// the UI) into it; the module itself never reads the request.
+	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, TasksActor? actor = null, CancellationToken ct = default);
 	// Nodes added/updated/removed since the cursor (no writes).
 	Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default);
 	// The unified tasks read (spec uniform-entity-verbs v2) behind tasks_search — the one

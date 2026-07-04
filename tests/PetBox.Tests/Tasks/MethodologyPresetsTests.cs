@@ -224,15 +224,44 @@ public sealed class MethodologyPresetsTests
 	[Fact]
 	public void WorkPreset_LinkConstraints_FeatureBugNeedSpec_ChoreExempt()
 	{
+		// Schema v2: the constraints now DECLARE their target — a specRef must point at a
+		// spec-kind node (the guard the service used to hardcode).
 		var constraints = Runtime.LinkConstraints("work");
-		constraints.Select(c => (c.Type, c.Link)).Should().Equal(
-			("feature", "task_spec"),
-			("bug", "task_spec"));
-		// chore is exempt BECAUSE no constraint names it — the exemption is data-shaped.
+		constraints.Select(c => (c.Type, c.Link, c.TargetKind)).Should().Equal(
+			("feature", "task_spec", "spec"),
+			("bug", "task_spec", "spec"));
+		constraints.Should().OnlyContain(c => c.TargetStatuses == null); // any spec status links
+																		 // chore is exempt BECAUSE no constraint names it — the exemption is data-shaped.
 		constraints.Should().NotContain(c => c.Type == "chore");
-		// No other preset kind constrains creation.
-		foreach (var kind in new[] { "simple", "spec", "ideas", "intake" })
+		// Besides spec's ideaRef governance (its own fact below), no other preset kind
+		// constrains creation.
+		foreach (var kind in new[] { "simple", "ideas", "intake" })
 			Runtime.LinkConstraints(kind).Should().BeEmpty();
+	}
+
+	// Schema v2 (engine-v2-quartet-parity): spec-write-needs-accepted-idea is constraint
+	// DATA — link idea_spec targeting an ideas node in `accepted`. idea_spec is a
+	// provenance link, so the service requires it on EVERY write of the type.
+	[Fact]
+	public void SpecPreset_IdeaRefGovernance_IsConstraintData()
+	{
+		var c = Runtime.LinkConstraints("spec").Should().ContainSingle().Subject;
+		(c.Type, c.Link, c.TargetKind).Should().Be(("spec", "idea_spec", "ideas"));
+		c.TargetStatuses.Should().Equal("accepted");
+	}
+
+	// Schema v2 (engine-v2-quartet-parity): the Done automation is effect DATA on the work
+	// preset — intake auto-close rides the INCOMING issue_task edge (issue -> task), the
+	// unblock rides the OUTGOING blocks edge (blocker -> blocked) gated on OnlyFrom=Blocked.
+	[Fact]
+	public void WorkPreset_DoneAutomation_IsEffectData()
+	{
+		Runtime.Effects("work").Should().Equal(
+			new MethodologyTransitionEffectDef("Done", "issue_task", "incoming", "done"),
+			new MethodologyTransitionEffectDef("Done", "blocks", "outgoing", "InProgress", "Blocked"));
+		// No other preset kind declares effects.
+		foreach (var kind in new[] { "simple", "spec", "ideas", "intake" })
+			Runtime.Effects(kind).Should().BeEmpty();
 	}
 
 	[Fact]

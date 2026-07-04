@@ -38,9 +38,9 @@ public sealed record MethodologyKindDef(
 	// global law.
 	public IReadOnlyList<MethodologyLinkConstraintDef> LinkConstraints { get; init; } = [];
 	// Declared transition effects (schema v2): "when a node of THIS kind enters status
-	// `On`, set linked nodes to `Set`" — the generalization of the hardcoded cross-board
-	// automation (intake auto-close, blocks auto-unblock) as DATA. Default empty. Schema +
-	// validation only in this wave; the engine executes them in a later task.
+	// `On`, set linked nodes to `Set`" — the generalization of the once-hardcoded
+	// cross-board automation (intake auto-close, blocks auto-unblock) as DATA. Default
+	// empty. Executed by TasksService.RunTransitionEffectsAsync.
 	public IReadOnlyList<MethodologyTransitionEffectDef> Effects { get; init; } = [];
 }
 
@@ -54,8 +54,8 @@ public sealed record MethodologyLinkConstraintDef(string Type, string Link)
 {
 	// Optional link-target declaration (schema v2): the required link must point at a node
 	// of kind `TargetKind` and/or in one of `TargetStatuses` — the generalization of the
-	// hardcoded ideaRef→accepted-idea guard as data. Cross-kind targets resolve at runtime
-	// (a later task); this wave stores + validates the declaration only. Null = no
+	// once-hardcoded ideaRef→accepted-idea guard as data. Cross-kind targets resolve at
+	// runtime, enforced at write time by TasksService.ValidateLinkTargetsAsync. Null = no
 	// restriction beyond the link kind itself.
 	public string? TargetKind { get; init; }
 	public IReadOnlyList<string>? TargetStatuses { get; init; }
@@ -67,7 +67,7 @@ public sealed record MethodologyLinkConstraintDef(string Type, string Link)
 // points at the linked one) is set to status `Set`; `OnlyFrom` optionally restricts the
 // effect to linked nodes currently in that status. `Set`/`OnlyFrom` name statuses of the
 // LINKED node's kind — cross-kind, so they are format-checked only and resolve at
-// runtime. Declaration only in this wave; execution is the engine task.
+// runtime. Executed by TasksService.RunTransitionEffectsAsync when the node enters `On`.
 public sealed record MethodologyTransitionEffectDef(
 	string On,
 	string Link,
@@ -95,10 +95,10 @@ public sealed record MethodologyWorkflowDef(
 	public string Initial => Statuses[0].Slug;
 
 	// Map this block onto the shared FSM vocabulary as one type's workflow, carrying the
-	// transition gates (approval/reason/precondition artifact).
+	// transition gates (approval/reason/precondition artifact) and the approval-gate mode.
 	public Workflow ToWorkflow(string type) =>
 		new(type, Statuses,
-			Transitions.Select(t => new WorkflowTransition(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList());
+			Transitions.Select(t => new WorkflowTransition(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact) { EnforceApproval = t.EnforceApproval }).ToList());
 }
 
 // A directed FSM edge. `PreconditionArtifact` names a comment-artifact tag (e.g.

@@ -638,9 +638,12 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// The SESSION key's scopes decide the actor capability: tasks:approve elevates the
+		// write past methodology-ENFORCED approval gates (enforceApproval transitions).
+		var actor = ModuleMcp.HasScope(http, ApiKeyScopes.TasksApprove) ? TasksActor.Approver : TasksActor.None;
 		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, ct), urlPrefix, bodyLen);
+		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, actor, ct), urlPrefix, bodyLen);
 	}
 
 	[McpServerTool(Name = "tasks_delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]

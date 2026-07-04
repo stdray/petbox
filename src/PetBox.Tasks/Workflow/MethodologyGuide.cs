@@ -168,7 +168,12 @@ public static class MethodologyGuide
 		md.AppendLine();
 		foreach (var c in constraints)
 		{
-			md.AppendLine($"- A new `{c.Type}` must carry a `{c.Link}` link (provide `{LinkField(c.Link)}` in the creating upsert){TargetProse(c)}. Edits don't re-require it.");
+			// Cadence follows the link kind's builtin semantics (mirrors RequireDefinitionLinks):
+			// idea_spec is a PROVENANCE link required on every write; the rest gate creation only.
+			var cadence = string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase)
+				? $"- EVERY write of a `{c.Type}` must carry a `{c.Link}` link (provide `{LinkField(c.Link)}` in each upsert — it names the authorizing node)"
+				: $"- A new `{c.Type}` must carry a `{c.Link}` link (provide `{LinkField(c.Link)}` in the creating upsert)";
+			md.AppendLine($"{cadence}{TargetProse(c)}.{(string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase) ? "" : " Edits don't re-require it.")}");
 			invariants.Add(new(kind, "link_constraint", $"{c.Type} requires {c.Link} ({LinkField(c.Link)}){TargetDetail(c)}"));
 		}
 	}
@@ -190,14 +195,14 @@ public static class MethodologyGuide
 			? ""
 			: $" -> {c.TargetKind ?? "*"}{(c.TargetStatuses is { Count: > 0 } s ? $"[{string.Join("|", s)}]" : "")}";
 
-	// Declared transition effects, one line each — stated as what the data DECLARES; the
-	// engine applies them when effect execution ships (engine v2).
+	// Declared transition effects, one line each — the engine EXECUTES them when a node of
+	// this kind enters the trigger status (RunTransitionEffectsAsync).
 	static void AppendEffects(StringBuilder md, string kind, IReadOnlyList<MethodologyTransitionEffectDef> effects, List<MethodologyInvariant> invariants)
 	{
 		md.AppendLine();
 		md.AppendLine("### Transition effects");
 		md.AppendLine();
-		md.AppendLine("Declared cross-node automation (the effect data of this kind; executed by the server once effect execution ships — do not apply them by hand):");
+		md.AppendLine("Cross-node automation the SERVER executes when a node of this kind enters the trigger status — do not apply these by hand:");
 		foreach (var e in effects)
 		{
 			var scope = e.OnlyFrom is null ? "" : $" currently in {e.OnlyFrom}";
