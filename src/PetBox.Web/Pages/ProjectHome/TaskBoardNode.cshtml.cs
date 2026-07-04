@@ -59,6 +59,11 @@ public sealed class TaskBoardNodeModel : PageModel
 	// the edit is re-rendered with the message inline rather than silently dropped.
 	public string? Error { get; private set; }
 
+	// The node board's workflow surface, embedded as a JSON island for the "View workflow" modal
+	// (ts/workflow-viz.ts). The node-type badge opens the block matching the node's type. Resolved
+	// through MethodologyRuntime, so user-defined methodologies visualize out of the box.
+	public string? WorkflowJson { get; private set; }
+
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
@@ -124,6 +129,9 @@ public sealed class TaskBoardNodeModel : PageModel
 		var kind = MethodologyPresets.ParseKind(detail.Kind);
 		var type = detail.Node.Type.Length == 0 ? null : detail.Node.Type;
 		NextStatuses = MethodologyPresets.For(kind, type)?.NextFrom(detail.Node.Status) ?? [];
+
+		// The board's FSM surface for the "View workflow" modal (a few KB — no extra endpoint).
+		WorkflowJson = WorkflowGraphJson.Serialize(await _tasks.GetBoardWorkflowAsync(ProjectKey, detail.Board, ct));
 
 		// Use the RESOLVED node id, not the bound NodeId property: on the canonical slug-URL
 		// (/tasks/{board}/{slug}) only Board+Slug are bound and NodeId is empty, which would

@@ -70,6 +70,8 @@
 				{
 					<span class="badge badge-ghost badge-sm" data-testid="node-type">@node.Type</span>
 				}
+				@* Opens the "View workflow" modal with this type's FSM graph (ts/workflow-viz.ts). *@
+				<button type="button" class="btn btn-ghost btn-xs gap-1" data-testid="workflow-open" data-workflow-type="@node.Type" title="View this type's workflow graph">⤳ workflow</button>
 				<span class="badge @StatusBadge(node.Status) badge-sm" data-testid="node-status">@node.Status</span>
 				@if (Model.NextStatuses.Count > 0)
 				{
@@ -175,3 +177,8 @@
 		<partial name="_CommentThread" model="Model.Thread" />
 	</div>
 </div>
+
+@if (Model.WorkflowJson is not null)
+{
+	<partial name="_WorkflowModal" model="Model.WorkflowJson" />
+}
