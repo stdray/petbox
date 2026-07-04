@@ -14,8 +14,10 @@
 	};
 	var curBy = string.Join(",", Model.GroupDims);
 
-	var kindName = Model.Kind.ToString().ToLowerInvariant();
-	var isSimple = Model.Kind == PetBox.Tasks.Workflow.BoardKind.Simple;
+	// Effective kind via MethodologyRuntime (definition first, preset fallback) — a
+	// definition-declared custom kind shows its own slug, not the Simple fallback.
+	var kindName = Model.KindName;
+	var isSimple = Model.Runtime.PresetKind(Model.KindSlug) == PetBox.Tasks.Workflow.BoardKind.Simple;
 	// Surface the board kind explicitly so its statuses read as "this is a simple/methodology
 	// board", not "the statuses are broken". Simple = a lightweight preset (fixed vocab, free
 	// transitions); methodology kinds add gates.
@@ -111,9 +113,9 @@
 				}
 				else
 				{
-					var closed = PetBox.Tasks.Workflow.MethodologyPresets.IsTerminalSlug(row.Node.Status);
+					var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, row.Node.Status);
 					Model.CommentThreads.TryGetValue(row.Node.NodeId, out var thread);
-					<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Kind, row.Node, row.Depth, closed, true, false, thread)" />
+					<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, row.Node, row.Depth, closed, true, false, thread)" />
 				}
 			}
 		</ul>
@@ -142,13 +144,13 @@ else
 	<ul class="flex flex-col gap-2" data-testid="board-nodes">
 		@foreach (var n in Model.Nodes)
 		{
-			var closed = PetBox.Tasks.Workflow.MethodologyPresets.IsTerminalSlug(n.Status);
+			var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
 			// A closed node hides under "active only" — unless it still has open
 			// descendants, in which case it stays so its children aren't orphaned.
 			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);
 			var hasChildren = parentIds.Contains(n.NodeId);
 			Model.CommentThreads.TryGetValue(n.NodeId, out var thread);
-			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Kind, n, n.Depth, closed, keepVisible, hasChildren, thread)" />
+			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread)" />
 		}
 	</ul>
 }

@@ -210,6 +210,80 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		html.Should().Contain("data-testid=\"node-status\">deprecated");
 	}
 
+	// Installs a methodology DEFINITION declaring the custom kind `support` (own statuses,
+	// custom terminal `closed`, quick-add DISABLED) and creates a board of that kind with
+	// one open + one closed node. Seeds through the store/TemporalStore like the other
+	// board fixtures — this exercises the render path, not the write path.
+	async Task SeedSupportKindBoardAsync(string board)
+	{
+		using var scope = _factory.Services.CreateScope();
+		var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+		await tasks.DefineMethodologyAsync("$system", new PetBox.Tasks.Workflow.MethodologyDefinition("custom",
+		[
+			new PetBox.Tasks.Workflow.MethodologyKindDef("support", QuickAddAllowed: false,
+			[
+				new PetBox.Tasks.Workflow.MethodologyWorkflowDef(["ticket"],
+					[
+						new("new", "New", PetBox.Tasks.Workflow.StatusKind.Open),
+						new("closed", "Closed", PetBox.Tasks.Workflow.StatusKind.TerminalOk),
+					],
+					[new("new", "closed")]),
+			]),
+		]), version: 0);
+
+		var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+		if (!await boards.ExistsAsync("$system", board))
+			await boards.CreateAsync("$system", board, "support tickets", "support");
+		var ctx = boards.GetContext("$system");
+		await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+		{
+			new PetBox.Tasks.Data.PlanNode { Board = board, Key = "t1", NodeId = "id-t1", Version = 0, Status = "new", Type = "ticket", Name = "Open ticket", Body = "", Priority = 1 },
+			new PetBox.Tasks.Data.PlanNode { Board = board, Key = "t2", NodeId = "id-t2", Version = 0, Status = "closed", Type = "ticket", Name = "Closed ticket", Body = "", Priority = 2 },
+		}, partition: n => n.Board == board);
+	}
+
+	// A definition-declared CUSTOM kind must resolve through MethodologyRuntime, not the
+	// preset fallback (which read any unknown slug as Simple): the kind badge shows the
+	// custom slug, the custom statuses render with definition-classified badges, the custom
+	// terminal `closed` is marked closed (data-closed drives the active-only hiding), and
+	// quick-add follows the definition (disabled here — the Simple fallback would show it).
+	[Fact]
+	public async Task TaskBoard_CustomDefinedKind_ResolvesProcessFromDefinition_NotPresetFallback()
+	{
+		const string board = "tickets";
+		await SeedSupportKindBoardAsync(board);
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		// Kind badge = the definition's slug, not the Simple fallback.
+		html.Should().Contain("data-kind=\"support\"");
+		html.Should().NotContain("data-kind=\"simple\"");
+		// The custom statuses render, classified by the DEFINITION: open → info, terminal → success.
+		html.Should().Contain("badge-info badge-sm\" data-testid=\"node-status\">new");
+		html.Should().Contain("badge-success badge-sm\" data-testid=\"node-status\">closed");
+		// The custom terminal is CLOSED (hidden under active-only); the open node is not.
+		html.Should().MatchRegex("data-node-key=\"t2\"[^>]*data-closed=\"true\"");
+		html.Should().MatchRegex("data-node-key=\"t1\"[^>]*data-closed=\"false\"");
+		// Quick-add follows the definition (false); the Simple fallback would render the form.
+		html.Should().NotContain("data-testid=\"task-create\"");
+	}
+
+	// The admin boards list resolves kind badges through the runtime too — a custom-kind
+	// board shows its declared slug, not "simple".
+	[Fact]
+	public async Task TasksAdmin_CustomDefinedKind_BadgeShowsDefinitionKind()
+	{
+		await SeedSupportKindBoardAsync("tickets");
+
+		using var resp = await GetAuthedAsync("/ui/admin/ws/$system/projects/$system/tasks");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().MatchRegex("""data-board-name="tickets"[\s\S]*?data-testid="board-kind"[^>]*>support<""");
+	}
+
 	[Fact]
 	public async Task Memory_ListsCreatedStore()
 	{
