@@ -12,21 +12,25 @@ using PetBox.Log.Core.Ingestion;
 
 namespace PetBox.Tests.Data;
 
-// Sanity tests for the single Log MCP tool (log_query). Deep KQL behavior is
-// covered by the LogPipeline + KqlTransformer tests; this just verifies the
-// MCP surface routes correctly and respects auth.
-public sealed class McpLogToolsTests : IAsyncLifetime
+// Shared per-class host for McpLogToolsTests (xUnit news the test class per test, so
+// without this fixture every test boots its own WebApplicationFactory). The two log rows
+// are seeded once and never mutated; the only shared-state mutation across tests is
+// LogQuery_MissingScope_Rejected narrowing the ApiKey's scopes in the core db, which
+// ResetAsync restores before every test.
+public sealed class McpLogToolsFixture : IAsyncLifetime
 {
-	const string TestProjectKey = "kpvotes";
-	const string TestApiKey = "yb_key_test_mcp_log_xyz";
-	const string TestServiceKey = "kpvotes-net";
+	public const string TestProjectKey = "kpvotes";
+	public const string TestApiKey = "yb_key_test_mcp_log_xyz";
+	public const string TestServiceKey = "kpvotes-net";
+	public const string TestScopes = "logs:query,logs:ingest";
 
 	readonly string _baseDir;
-	readonly WebApplicationFactory<Program> _factory;
-	McpClient _mcp = null!;
 	HttpClient _http = null!;
 
-	public McpLogToolsTests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public McpClient Mcp { get; private set; } = null!;
+
+	public McpLogToolsFixture()
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-mcp-log-test-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
@@ -39,7 +43,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		Environment.SetEnvironmentVariable("Features__Logging", "true");
 		Environment.SetEnvironmentVariable("Features__Data", "true");
 
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -67,11 +71,11 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 	{
 		// Force MigrationRunner.Run on the test DB up front — WebApplicationFactory + static
 		// Configure(app) does not always trigger migrations for tests that only touch DI.
-		var __testCs = _factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
+		var __testCs = Factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(__testCs);
-		_http = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		_http = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using (var scope = _factory.Services.CreateScope())
+		using (var scope = Factory.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			await db.ApiKeys.Where(k => k.Key == TestApiKey).DeleteAsync();
@@ -80,14 +84,14 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 
 			await db.InsertAsync(new Workspace { Key = "test", Name = "Test", CreatedAt = DateTime.UtcNow });
 			await db.InsertAsync(new Project { Key = TestProjectKey, WorkspaceKey = "test", Name = "KpVotes" });
-			await db.InsertAsync(new ApiKey { Key = TestApiKey, ProjectKey = TestProjectKey, Scopes = "logs:query,logs:ingest", CreatedAt = DateTime.UtcNow });
+			await db.InsertAsync(new ApiKey { Key = TestApiKey, ProjectKey = TestProjectKey, Scopes = TestScopes, CreatedAt = DateTime.UtcNow });
 
 			var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
 			await store.CreateAsync(TestProjectKey, LogNames.Default, null);
 		}
 
 		// Seed two log entries so log_query has something to return.
-		using (var scope = _factory.Services.CreateScope())
+		using (var scope = Factory.Services.CreateScope())
 		{
 			var pipeline = scope.ServiceProvider.GetRequiredService<IIngestionPipeline>();
 			var records = new[]
@@ -122,16 +126,52 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 			Endpoint = new Uri(_http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = TestApiKey },
 		}, _http);
-		_mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		Mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+	}
+
+	// Per-test reset under the shared host: restore the ApiKey's scopes, which
+	// LogQuery_MissingScope_Rejected narrows to data:read (auth reads the key row per
+	// request, so the restore takes effect immediately).
+	public async Task ResetAsync()
+	{
+		using var scope = Factory.Services.CreateScope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		await db.ApiKeys.Where(k => k.Key == TestApiKey)
+			.Set(k => k.Scopes, TestScopes)
+			.UpdateAsync();
 	}
 
 	public async Task DisposeAsync()
 	{
-		await _mcp.DisposeAsync();
+		await Mcp.DisposeAsync();
 		_http.Dispose();
-		await _factory.DisposeAsync();
+		await Factory.DisposeAsync();
 		TestDirs.CleanupOrDefer(_baseDir);
 	}
+}
+
+// Sanity tests for the single Log MCP tool (log_query). Deep KQL behavior is
+// covered by the LogPipeline + KqlTransformer tests; this just verifies the
+// MCP surface routes correctly and respects auth.
+public sealed class McpLogToolsTests : IClassFixture<McpLogToolsFixture>, IAsyncLifetime
+{
+	const string TestProjectKey = McpLogToolsFixture.TestProjectKey;
+	const string TestApiKey = McpLogToolsFixture.TestApiKey;
+
+	readonly McpLogToolsFixture _fx;
+	readonly WebApplicationFactory<Program> _factory;
+	readonly McpClient _mcp;
+
+	public McpLogToolsTests(McpLogToolsFixture fx)
+	{
+		_fx = fx;
+		_factory = fx.Factory;
+		_mcp = fx.Mcp;
+	}
+
+	public Task InitializeAsync() => _fx.ResetAsync();
+
+	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
 
 	[Fact]
 	public async Task LogQuery_Tool_IsDiscoverable()

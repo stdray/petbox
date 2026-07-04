@@ -9,17 +9,23 @@ using PetBox.Core.Settings;
 
 namespace PetBox.Tests.Settings;
 
-[Collection("WebAppFactory")]
-public sealed class SettingsResolverTests : IAsyncLifetime
+// Shared per-class host for SettingsResolverTests (xUnit news the test class per test, so
+// without this fixture every test boots its own WebApplicationFactory). The class used to
+// sit in the serialized WebAppFactory collection on the CWD-relative default database (its
+// CONNECTIONSTRINGS__YOBOBOX env write was dead — nothing reads that name); it now gets its
+// own Guid-named temp db via in-memory config, writes only constant env values and never
+// nulls them, so it runs in parallel with everything else. No per-test reset is needed:
+// every test uses its own scope keys (proj-*/ws-*/user-*) and setting paths.
+public sealed class SettingsResolverFixture : IAsyncLifetime
 {
-	readonly WebApplicationFactory<Program> _factory;
 	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	public SettingsResolverTests()
+	public WebApplicationFactory<Program> Factory { get; }
+
+	public SettingsResolverFixture()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -27,6 +33,7 @@ public sealed class SettingsResolverTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = TestPasswordHash,
 					});
@@ -34,21 +41,23 @@ public sealed class SettingsResolverTests : IAsyncLifetime
 			});
 	}
 
-	public async Task InitializeAsync()
+	public Task InitializeAsync()
 	{
-		// Shared in-memory DB across the WebAppFactory collection means previous
-		// tests may have inserted Setting rows. Wipe to avoid cross-test cascade leaks.
-		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
-		await db.Settings.DeleteAsync();
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		TestSchema.Core(cs);
+		return Task.CompletedTask;
 	}
 
-	public Task DisposeAsync()
+	public async Task DisposeAsync() => await Factory.DisposeAsync();
+}
+
+public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixture>
+{
+	readonly WebApplicationFactory<Program> _factory;
+
+	public SettingsResolverTests(SettingsResolverFixture fx)
 	{
-		_factory.Dispose();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__YOBOBOX", null);
-		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", null);
-		return Task.CompletedTask;
+		_factory = fx.Factory;
 	}
 
 	// Test records — defined as nested types to keep them local to these tests.

@@ -6,24 +6,24 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace PetBox.Tests.Web;
 
-// Covers the IA tree lazy-partials (/ui/_nav/tree) and the main-UI data
-// leaf-views added in the tree-navigation work: the unified authz gate
-// (unknown project/db → 404, unauthenticated → login redirect) and the
-// happy-path log listing for the seeded $system project.
-[Collection("WebAppFactory")]
-public sealed class NavTreeAndDataViewTests : IAsyncLifetime
+// Shared per-class host for NavTreeAndDataViewTests (xUnit news the test class per test,
+// so without this fixture every test boots its own WebApplicationFactory). No per-test
+// reset is needed: all tests are read-only against the once-seeded $system default log.
+// The class also left the serialized WebAppFactory collection: it uses its own Guid temp
+// db via in-memory config and writes only the constant ASPNETCORE_ENVIRONMENT=Testing
+// (never nulled), so it is parallel-safe.
+public sealed class NavTreeAndDataViewFixture : IAsyncLifetime
 {
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
+	public const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	const string TestPassword = "test123";
-	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
 
-	public NavTreeAndDataViewTests()
+	public NavTreeAndDataViewFixture()
 	{
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
 		var dbPath = Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db");
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -43,11 +43,14 @@ public sealed class NavTreeAndDataViewTests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		// HandleCookies=false: the shared client must stay stateless — with a cookie jar the
+		// auth cookie from one test's login would leak into the unauthenticated-redirect test.
+		// GetAuthedAsync passes cookies manually, so it works without the jar.
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		var store = scope.ServiceProvider.GetRequiredService<PetBox.Log.Core.Data.ILogStore>();
 		if (!await store.ExistsAsync("$system", "default"))
 			await store.CreateAsync("$system", "default", null);
@@ -55,8 +58,24 @@ public sealed class NavTreeAndDataViewTests : IAsyncLifetime
 
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
+		Client.Dispose();
+		await Factory.DisposeAsync();
+	}
+}
+
+// Covers the IA tree lazy-partials (/ui/_nav/tree) and the main-UI data
+// leaf-views added in the tree-navigation work: the unified authz gate
+// (unknown project/db → 404, unauthenticated → login redirect) and the
+// happy-path log listing for the seeded $system project.
+public sealed class NavTreeAndDataViewTests : IClassFixture<NavTreeAndDataViewFixture>
+{
+	readonly HttpClient _client;
+
+	const string TestPassword = "test123";
+
+	public NavTreeAndDataViewTests(NavTreeAndDataViewFixture fx)
+	{
+		_client = fx.Client;
 	}
 
 	// Logs in (anti-forgery + cookie) and returns the authenticated response for url.

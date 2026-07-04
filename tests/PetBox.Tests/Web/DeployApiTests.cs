@@ -14,35 +14,48 @@ using PetBox.Deploy.Data;
 
 namespace PetBox.Tests.Web;
 
-// Integration tests for the deploy agent contract (/agent/*) and node onboarding
-// (/api/deploy/nodes): scope enforcement, node-claim → node resolution, and key minting.
-[Collection("WebAppFactory")]
-public sealed class DeployApiTests : IAsyncLifetime
+// Shared per-class host for DeployApiTests (xUnit news the test class per test, so without
+// this fixture every test boots its own WebApplicationFactory). No per-test reset is
+// needed: the node + deployment are seeded once, tests only read them or enroll fresh
+// Guid-named nodes; the heartbeat status write is invisible to the poll assertions.
+// The class also left the serialized WebAppFactory collection: its per-class connection
+// string moved from the process-global CONNECTIONSTRINGS__PETBOX env var (which would leak
+// into concurrently booting hosts) to in-memory config, and no env var is written at all.
+public sealed class DeployApiFixture : IAsyncLifetime
 {
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
+	public const string AdminKey = "yb_key_deploy_admin_test";   // deploy:write
+	public const string NodeKey = "yb_key_deploy_node_test";     // agent:poll,agent:heartbeat
 
-	const string AdminKey = "yb_key_deploy_admin_test";   // deploy:write
-	const string NodeKey = "yb_key_deploy_node_test";     // agent:poll,agent:heartbeat
-	readonly string _node = "node-" + Guid.NewGuid().ToString("N")[..8];
+	public string Node { get; } = "node-" + Guid.NewGuid().ToString("N")[..8];
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
 
-	public DeployApiTests()
+	public DeployApiFixture()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
-		_factory = new WebApplicationFactory<Program>()
-			.WithWebHostBuilder(b => b.UseEnvironment("Testing"));
+		Factory = new WebApplicationFactory<Program>()
+			.WithWebHostBuilder(b =>
+			{
+				b.UseEnvironment("Testing");
+				b.ConfigureAppConfiguration((_, cfg) =>
+				{
+					cfg.AddInMemoryCollection(new Dictionary<string, string?>
+					{
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
+					});
+				});
+			});
 	}
 
 	public async Task InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 		await db.InsertAsync(new ApiKey { Key = AdminKey, ProjectKey = "ops", Scopes = "deploy:read,deploy:write", CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new ApiKey { Key = NodeKey, ProjectKey = _node, Scopes = "agent:poll,agent:heartbeat", CreatedAt = DateTime.UtcNow });
+		await db.InsertAsync(new ApiKey { Key = NodeKey, ProjectKey = Node, Scopes = "agent:poll,agent:heartbeat", CreatedAt = DateTime.UtcNow });
 
 		// deploy.db is shared across test instances (same temp dir) — clear it for isolation.
 		var deploy = scope.ServiceProvider.GetRequiredService<DeployDb>();
@@ -61,15 +74,31 @@ public sealed class DeployApiTests : IAsyncLifetime
 		await configDb.InsertAsync(new ConfigBinding { Path = "GREETING", Value = "hi", Tags = "ws:wsdep,project:proj", CreatedAt = now, UpdatedAt = now });
 
 		var svc = scope.ServiceProvider.GetRequiredService<IDeployService>();
-		await svc.UpsertNodeAsync(new NodeInput(_node, "Test node", "net.x", false));
-		await svc.UpsertDeploymentAsync(new DeploymentInput(null, "bot", "proj", _node, "img1", DesiredState.Running, false, "net.x", "env:prod"));
+		await svc.UpsertNodeAsync(new NodeInput(Node, "Test node", "net.x", false));
+		await svc.UpsertDeploymentAsync(new DeploymentInput(null, "bot", "proj", Node, "img1", DesiredState.Running, false, "net.x", "env:prod"));
 	}
 
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", null);
+		Client.Dispose();
+		await Factory.DisposeAsync();
+	}
+}
+
+// Integration tests for the deploy agent contract (/agent/*) and node onboarding
+// (/api/deploy/nodes): scope enforcement, node-claim → node resolution, and key minting.
+public sealed class DeployApiTests : IClassFixture<DeployApiFixture>
+{
+	const string AdminKey = DeployApiFixture.AdminKey;
+	const string NodeKey = DeployApiFixture.NodeKey;
+
+	readonly HttpClient _client;
+	readonly string _node;
+
+	public DeployApiTests(DeployApiFixture fx)
+	{
+		_client = fx.Client;
+		_node = fx.Node;
 	}
 
 	static HttpRequestMessage Req(HttpMethod m, string path, string key)

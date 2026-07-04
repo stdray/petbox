@@ -17,7 +17,10 @@ namespace PetBox.Tests.Web;
 // returned 200 and left the row intact). Drives the actual rendered delete <form> through
 // HTTP — antiforgery + cookie + link-generated action — which the page-model unit tests
 // (LlmAdminPageTests / ConfigPipelineTests) bypass.
-[Collection("WebAppFactory")]
+// Single-test class: a shared per-class fixture would save nothing, so it keeps the
+// per-test host. It left the serialized WebAppFactory collection though: the per-class
+// connection string moved from the process-global CONNECTIONSTRINGS__PETBOX env var to
+// in-memory config, and no env var is written at all.
 public sealed class ConfigDeleteBindingTests : IAsyncLifetime
 {
 	readonly WebApplicationFactory<Program> _factory;
@@ -29,7 +32,6 @@ public sealed class ConfigDeleteBindingTests : IAsyncLifetime
 
 	public ConfigDeleteBindingTests()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
@@ -38,6 +40,7 @@ public sealed class ConfigDeleteBindingTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
 						["Features:Config"] = "true",
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = TestPasswordHash,
@@ -54,24 +57,19 @@ public sealed class ConfigDeleteBindingTests : IAsyncLifetime
 
 		using var scope = _factory.Services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
-		try
+		await db.InsertAsync(new ApiKey
 		{
-			await db.InsertAsync(new ApiKey
-			{
-				Key = WriteKey,
-				ProjectKey = "$system",
-				Scopes = "config:read,config:write",
-				CreatedAt = DateTime.UtcNow,
-			});
-		}
-		catch (Microsoft.Data.Sqlite.SqliteException) { /* shared in-memory DB — already inserted */ }
+			Key = WriteKey,
+			ProjectKey = "$system",
+			Scopes = "config:read,config:write",
+			CreatedAt = DateTime.UtcNow,
+		});
 	}
 
 	public async Task DisposeAsync()
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", null);
 	}
 
 	[Fact]

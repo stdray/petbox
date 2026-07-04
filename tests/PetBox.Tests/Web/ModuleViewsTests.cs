@@ -90,7 +90,8 @@ public sealed class ModuleViewsFixture : IAsyncLifetime
 // the feature gate (module off → 404 on a board/store detail), the happy-path
 // board/store listing for the seeded $system project, and unknown-container 404.
 // Mirrors NavTreeAndDataViewTests (cookie auth + in-memory config).
-[Collection("WebAppFactory")]
+// Out of the serialized WebAppFactory collection: the fixture writes only the constant
+// ASPNETCORE_ENVIRONMENT=Testing (never nulled) and uses its own Guid temp db.
 public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 {
 	readonly WebApplicationFactory<Program> _factory;

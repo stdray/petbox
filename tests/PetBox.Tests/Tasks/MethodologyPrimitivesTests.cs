@@ -1,15 +1,6 @@
 using System.Text.Json;
-using LinqToDB;
-using LinqToDB.Async;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
-using PetBox.Core.Data;
-using PetBox.Core.Models;
-using PetBox.Tasks.Data;
 
 namespace PetBox.Tests.Tasks;
 
@@ -25,79 +16,22 @@ namespace PetBox.Tests.Tasks;
 //
 // The custom kind under test: `support`, one block shared by ticket|incident
 // (New → Open → Resolved), with `incident` constrained to carry a `blocks` link at birth.
-public sealed class MethodologyPrimitivesTests : IAsyncLifetime
+public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimitivesFixture>, IAsyncLifetime
 {
 	const string ProjectKey = "mprm";
-	const string AgentKey = "yb_key_mprm_agent"; // tasks:read,tasks:write
 
-	readonly string _baseDir;
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _http = null!;
-	McpClient _mcp = null!;
+	readonly MethodologyPrimitivesFixture _fx;
+	readonly McpClient _mcp;
 
-	public MethodologyPrimitivesTests()
+	public MethodologyPrimitivesTests(MethodologyPrimitivesFixture fx)
 	{
-		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-mprm-" + Guid.NewGuid().ToString("N"));
-		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
-		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
-		Environment.SetEnvironmentVariable("Features__Tasks", "true");
-
-		_factory = new WebApplicationFactory<Program>()
-			.WithWebHostBuilder(b =>
-			{
-				b.UseEnvironment("Testing");
-				b.ConfigureAppConfiguration((_, cfg) =>
-				{
-					cfg.AddInMemoryCollection(new Dictionary<string, string?>
-					{
-						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
-						["Features:Tasks"] = "true",
-					});
-				});
-				b.ConfigureServices(svc =>
-				{
-					var tasksFactory = svc.SingleOrDefault(d => d.ServiceType == typeof(IScopedDbFactory<TasksDb>));
-					if (tasksFactory is not null) svc.Remove(tasksFactory);
-					svc.AddSingleton<IScopedDbFactory<TasksDb>>(_ => new ScopedDbFactory<TasksDb>(
-						Path.Combine(_baseDir, "tasks"), PetBox.Core.Settings.Scope.Project,
-						cs => new TasksDb(TasksDb.CreateOptions(cs)), TasksSchema.Ensure));
-				});
-			});
+		_fx = fx;
+		_mcp = fx.Mcp;
 	}
 
-	public async Task InitializeAsync()
-	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
-		TestSchema.Core(cs);
+	public Task InitializeAsync() => _fx.ResetAsync();
 
-		using (var scope = _factory.Services.CreateScope())
-		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
-			await db.ApiKeys.Where(k => k.Key == AgentKey).DeleteAsync();
-			await db.Projects.Where(p => p.Key == ProjectKey).DeleteAsync();
-			await db.Workspaces.Where(w => w.Key == "test").DeleteAsync();
-			await db.InsertAsync(new Workspace { Key = "test", Name = "Test", CreatedAt = DateTime.UtcNow });
-			await db.InsertAsync(new Project { Key = ProjectKey, WorkspaceKey = "test", Name = "Primitives" });
-			await db.InsertAsync(new ApiKey { Key = AgentKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write", CreatedAt = DateTime.UtcNow });
-		}
-
-		_http = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
-		_http.DefaultRequestHeaders.Add("X-Api-Key", AgentKey);
-		var transport = new HttpClientTransport(new HttpClientTransportOptions
-		{
-			Endpoint = new Uri(_http.BaseAddress!, "/mcp"),
-			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = AgentKey },
-		}, _http);
-		_mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
-	}
-
-	public async Task DisposeAsync()
-	{
-		await _mcp.DisposeAsync();
-		_http.Dispose();
-		await _factory.DisposeAsync();
-		TestDirs.CleanupOrDefer(_baseDir);
-	}
+	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
 
 	// ── helpers ──────────────────────────────────────────────────────────────
 
