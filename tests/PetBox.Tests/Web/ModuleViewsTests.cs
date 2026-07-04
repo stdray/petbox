@@ -385,6 +385,44 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().NotContain("data-project-key=\"$workspace\""); // container excluded from the grid
 	}
 
+	// A VALID member landing on the real workspace key still renders the dashboard (200) —
+	// the junk-key rejection must not break the legitimate default-workspace landing.
+	[Fact]
+	public async Task Dashboard_KnownWorkspaceKey_Renders200()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"dashboard-title\"");
+	}
+
+	// The /ui/{workspaceKey} catch-all must NOT silently fall back to the resolved default
+	// ($system) for an unknown/non-member workspace key — it returns 404 (ui-404-and-junk-route).
+	[Fact]
+	public async Task Dashboard_UnknownWorkspaceKey_Returns404_NotSilentSystem()
+	{
+		using var resp = await GetAuthedAsync("/ui/no-such-workspace");
+		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+		// The friendly custom 404 re-executes the minimal-layout Error page, not the $system status.
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"error-title\"");
+		html.Should().NotContain("data-testid=\"dashboard-projects\"");
+	}
+
+	// An entirely unmatched path renders the custom 404 (StatusCodePages re-execute) in the
+	// minimal Error shell — not the bare browser 404, and not the authenticated topbar/sidebar.
+	[Fact]
+	public async Task UnknownPath_Returns404_WithCustomErrorPage_InMinimalShell()
+	{
+		using var resp = await _client.GetAsync("/this/path/does/not/exist");
+		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"error-title\""); // custom error page rendered
+		html.Should().Contain("404");
+		// Minimal (_PublicLayout) shell — no authenticated chrome.
+		html.Should().NotContain("data-testid=\"nav-ws-memory\"");
+	}
+
 	// The sidebar's workspace-level group: "Shared memory" is a live link to the shared
 	// container (the "coming soon" placeholder is gone), "Shared config" sits in the same
 	// top group, and the workspace-admin entry is gone (admin is reached via the header gear).
