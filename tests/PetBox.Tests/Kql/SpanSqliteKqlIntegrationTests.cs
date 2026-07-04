@@ -325,4 +325,25 @@ public sealed class SpanSqliteKqlIntegrationTests : IAsyncLifetime
 		rows.Select(r => (TimeSpan)r[2]!).Should().ContainInOrder(
 			TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(80), TimeSpan.FromMilliseconds(120));
 	}
+
+	// --- intake kql-propertiesjson-identity-split, spans twin: the streamed span row names its JSON
+	// bag "PropertiesJson" (carrying AttributesJson), so the pre-split context must bind the same bare
+	// name to the same value instead of falling back to an Attributes["PropertiesJson"] NULL lookup. ---
+
+	[Fact]
+	public async Task PropertiesJsonColumn_SameMeaningPreAndPostSplit()
+	{
+		// pre-split: a real column filter over the raw attributes JSON, translated to SQL (was 0 rows).
+		(await IdsAsync("spans | where PropertiesJson contains 'status_code'"))
+			.Should().BeEquivalentTo(["s1", "s2", "s3"]);
+		// case-insensitive binding, like every other column.
+		(await IdsAsync("spans | where propertiesjson contains 'status_code'"))
+			.Should().BeEquivalentTo(["s1", "s2", "s3"]);
+		// the SAME predicate post-split must agree.
+		var code = KustoCode.Parse("spans | extend one = 1 | where PropertiesJson contains 'status_code' | project SpanId");
+		var result = KqlTransformer.ExecuteSpans(_logDb.Spans, code);
+		var rows = new List<object?[]>();
+		await foreach (var row in result.Rows) rows.Add(row);
+		rows.Select(r => r[0]).Should().BeEquivalentTo(["s1", "s2", "s3"]);
+	}
 }

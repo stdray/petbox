@@ -24,6 +24,7 @@ public static class KqlSchema
 		new ColumnSymbol("Message", ScalarTypes.String),
 		new ColumnSymbol("MessageTemplate", ScalarTypes.String),
 		new ColumnSymbol("Exception", ScalarTypes.String),
+		new ColumnSymbol("PropertiesJson", ScalarTypes.String),
 		new ColumnSymbol("Properties", ScalarTypes.Dynamic));
 
 	// The Spans table root: the same KQL subset (whole operator catalog) over a named log's Spans table.
@@ -44,6 +45,8 @@ public static class KqlSchema
 		new ColumnSymbol("Status", ScalarTypes.Int),
 		new ColumnSymbol("StatusName", ScalarTypes.String),
 		new ColumnSymbol("StatusDescription", ScalarTypes.String),
+		// The raw JSON bag under its streamed-row name (AttributesJson content — see LogSchema).
+		new ColumnSymbol("PropertiesJson", ScalarTypes.String),
 		new ColumnSymbol("Properties", ScalarTypes.Dynamic));
 
 	public static readonly GlobalState Globals = GlobalState.Default
