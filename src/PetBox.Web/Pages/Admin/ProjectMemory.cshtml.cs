@@ -70,6 +70,17 @@ public sealed class ProjectMemoryModel : PageModel
 	{
 		if (!_features.IsEnabled(Feature.Memory)) return NotFound();
 
+		// Defense in depth: system stores (e.g. session-digests) are machine plumbing, not user
+		// knowledge — the UI hides their Delete button, but reject the POST too so a crafted request
+		// can never remove one. `IsSystem` is the canonical store-taxonomy flag (spec: memoverhaul).
+		var stores = await _memory.ListStoresAsync(ProjectKey);
+		if (stores.Any((MemoryStoreMeta s) => s.IsSystem && string.Equals(s.Name, name, StringComparison.OrdinalIgnoreCase)))
+		{
+			ErrorMessage = $"The system store '{name}' cannot be deleted.";
+			Stores = [.. stores];
+			return Page();
+		}
+
 		await _memory.DeleteStoreAsync(ProjectKey, name);
 		return RedirectToPage();
 	}
