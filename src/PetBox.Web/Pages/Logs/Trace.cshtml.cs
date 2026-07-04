@@ -16,6 +16,9 @@ public sealed class TraceModel : PageModel
 	public TraceModel(ILogStore logStore) => _logStore = logStore;
 
 	[BindProperty(SupportsGet = true)]
+	public string? WorkspaceKey { get; set; }
+
+	[BindProperty(SupportsGet = true)]
 	public string? ProjectKey { get; set; }
 
 	[BindProperty(SupportsGet = true, Name = "log")]
@@ -24,7 +27,11 @@ public sealed class TraceModel : PageModel
 	[BindProperty(SupportsGet = true)]
 	public string TraceId { get; set; } = string.Empty;
 
+	public string EffectiveWorkspaceKey { get; private set; } = "";
 	public string EffectiveProjectKey { get; private set; } = "";
+	// The log actually resolved for this trace — carried on the "← traces" back link so it
+	// returns to the same log the user was viewing.
+	public string? SelectedLog { get; private set; }
 	public IReadOnlyList<WaterfallRow> Rows { get; private set; } = [];
 	public bool TraceNotFound { get; private set; }
 	public DateTime StartTime { get; private set; }
@@ -78,6 +85,7 @@ public sealed class TraceModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
+		EffectiveWorkspaceKey = WorkspaceKey ?? "";
 		EffectiveProjectKey = ProjectKey ?? "";
 		if (string.IsNullOrEmpty(EffectiveProjectKey)) { TraceNotFound = true; return; }
 
@@ -85,6 +93,7 @@ public sealed class TraceModel : PageModel
 		var selectedLog = !string.IsNullOrWhiteSpace(LogName) && logs.Contains(LogName, StringComparer.Ordinal)
 			? LogName
 			: logs.Contains(LogNames.Default, StringComparer.Ordinal) ? LogNames.Default : logs.FirstOrDefault();
+		SelectedLog = selectedLog;
 		if (selectedLog is null) { TraceNotFound = true; return; }
 
 		var logDb = _logStore.GetContext(EffectiveProjectKey, selectedLog);
