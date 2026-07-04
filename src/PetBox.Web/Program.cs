@@ -453,6 +453,19 @@ public partial class Program
 		});
 	}
 
+	// Path prefixes for programmatic (non-browser) surfaces that must keep their raw status
+	// codes + JSON/empty bodies rather than the HTML /Error re-execute. Ordinal, case-insensitive.
+	static readonly string[] ProgrammaticPathPrefixes =
+		["/api", "/mcp", "/v1", "/health", "/version", "/agent", "/openapi"];
+
+	static bool IsProgrammaticPath(PathString path)
+	{
+		foreach (var prefix in ProgrammaticPathPrefixes)
+			if (path.StartsWithSegments(prefix, StringComparison.OrdinalIgnoreCase))
+				return true;
+		return false;
+	}
+
 	public static void Configure(WebApplication app)
 	{
 		// Resolve via Services (not app.Configuration directly) — under
@@ -531,6 +544,25 @@ public partial class Program
 			app.UseExceptionHandler("/Error");
 			app.UseHsts();
 		}
+
+		// Friendly custom error page for bare 4xx/5xx responses that carry no body — most
+		// importantly a 404 for an unknown path or an unknown/non-member workspace key (the
+		// /ui/{workspaceKey} catch-all now returns NotFound instead of masquerading as $system).
+		// Re-executes the /Error Razor page preserving the original status code (passed as ?code).
+		app.UseStatusCodePagesWithReExecute("/Error", "?code={0}");
+
+		// Programmatic surfaces (REST/MCP/telemetry/health) must keep returning their raw status
+		// codes — JSON problem bodies already opt out (they set a ContentType, which the
+		// status-code-pages middleware skips), but bare codes (401/403/500) would otherwise be
+		// re-executed into an HTML page. Disable the re-execute for those path prefixes so only
+		// browser routes get the friendly page.
+		app.Use(async (ctx, next) =>
+		{
+			if (IsProgrammaticPath(ctx.Request.Path)
+				&& ctx.Features.Get<Microsoft.AspNetCore.Diagnostics.IStatusCodePagesFeature>() is { } scp)
+				scp.Enabled = false;
+			await next();
+		});
 
 		app.UseStaticFiles();
 		app.UseRouting();

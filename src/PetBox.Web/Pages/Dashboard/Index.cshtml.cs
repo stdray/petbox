@@ -1,5 +1,6 @@
 using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -41,9 +42,19 @@ public sealed class IndexModel : PageModel
 		string Svc, string? Name, IReadOnlyDictionary<string, string> OtherTags,
 		string? Version, string? Sha, string? BuildDate, string Status, DateTime ReceivedAt);
 
-	public async Task OnGetAsync(CancellationToken ct)
+	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
+		// The /ui/{workspaceKey} catch-all must NOT silently render the resolved default
+		// workspace (previously $system) for an unknown or non-member key. NavigationContext
+		// only resolves the route key when the user is a member of it (ResolveWorkspace step 1);
+		// a junk/inaccessible key falls through to the cookie/claim/first-membership fallback,
+		// so the resolved key differs from the route key → treat it as not found. A VALID user
+		// on a real key they belong to resolves back to that same key and renders normally.
+		var routeKey = RouteData.Values["workspaceKey"]?.ToString();
 		WorkspaceKey = _nav.CurrentWorkspaceKey;
+		if (string.IsNullOrEmpty(routeKey) || !string.Equals(WorkspaceKey, routeKey, StringComparison.Ordinal))
+			return NotFound();
+
 		var wsKey = WorkspaceKey;
 		// "$workspace" is the reserved cross-project MEMORY container, not a user project —
 		// keep it out of the project grid (it has no logs/dbs/keys) and surface it as the
@@ -91,6 +102,8 @@ public sealed class IndexModel : PageModel
 			kv => kv.Key,
 			kv => (IReadOnlyList<HealthRow>)kv.Value.OrderBy(h => h.Svc, StringComparer.Ordinal).ToList(),
 			StringComparer.Ordinal);
+
+		return Page();
 	}
 
 	static async Task<IReadOnlyDictionary<string, int>> CountByProjectAsync(IQueryable<string> projectKeys, CancellationToken ct)
