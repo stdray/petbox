@@ -128,8 +128,10 @@ public partial class Program
 				cs => new PetBox.Memory.Data.MemoryDb(PetBox.Memory.Data.MemoryDb.CreateOptions(cs)), PetBox.Memory.Data.MemorySchema.Ensure));
 		builder.Services.AddScoped<PetBox.Memory.Data.IMemoryStore, PetBox.Memory.Data.MemoryStore>();
 		// Search relevance re-ranking policy (freshness decay + MMR diversity) — bound from the
-		// `Search` section (Search:Recency:*, Search:Diversity:*); enabled with conservative
-		// defaults when absent. Injected into MemoryService (reusable by tasks/session later).
+		// `Search` section (Search:Recency:*, Search:Diversity:*, Search:Floor:*); enabled with
+		// conservative defaults when absent. Now carries the semantic floor too, and is injected
+		// into MemoryService AND TasksService (each optional ctor param resolves this singleton;
+		// SessionSearchService reuses it as well).
 		builder.Services.AddSingleton(
 			builder.Configuration.GetSection("Search").Get<PetBox.Core.Search.SearchRerankOptions>() ?? new PetBox.Core.Search.SearchRerankOptions());
 		builder.Services.AddScoped<PetBox.Memory.Contract.IMemoryService, PetBox.Memory.Services.MemoryService>();

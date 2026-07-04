@@ -292,6 +292,9 @@ public static class MemoryTools
 
 		Returns { items: [{ scope, store, key, type, description, body, tags, version }], retrievers? };
 		`version` is the entry's CAS baseline for memory_upsert (pass it back to edit without a Stale round-trip).
+		With `q` each row also carries `score` (the fused, freshness-blended relevance) and `retriever`
+		("lexical" = lexically confirmed, "semantic" = surfaced by the vector leg alone); a semantic-only
+		hit below the relevance floor is dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows).
 		""")]
 	public static async Task<MemorySearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
@@ -360,7 +363,9 @@ public static class MemoryTools
 					includeUsage ? (u?.Surfaced ?? 0) : null, includeUsage ? (u?.Opened ?? 0) : null, u?.LastHitAt,
 					// W6 provenance surface: how many distinct sessions this fact was seen in
 					// (compact — a number only). Null when it carries no session provenance.
-					SourcesCount(h.Entry.Metadata))));
+					SourcesCount(h.Entry.Metadata),
+					// Per-row relevance provenance (query mode only; null → omitted in a listing).
+					Score: hasQuery ? Math.Round(h.Score, 6) : null, Retriever: h.Retriever)));
 			}
 			// Impression = the rows a SEARCH answer returned (a listing is curation — not counted).
 			if (hasQuery)

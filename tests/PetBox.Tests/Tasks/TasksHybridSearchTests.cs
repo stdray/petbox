@@ -277,6 +277,77 @@ public sealed class TasksHybridSearchTests : IDisposable
 		scoped.Hits[0].Board.Should().Be("a");
 	}
 
+	// ---- per-row score/retriever + semantic floor (search-fusion-floor-impl) ----
+
+	[Fact]
+	public async Task Query_RowsCarryScoreAndRetriever_ListingLeavesThemNull()
+	{
+		var tasks = Service(new FakeLlmClient());
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b",
+		[
+			Node("marmot-1", "marmot note", "the marmot keyword appears here"),
+			Node("marmot-2", "marmot too", "another marmot keyword lives here"),
+		]);
+		await DrainVectors(new FakeLlmClient(), "b");
+
+		// Query mode: both nodes match lexically → retriever "lexical" and each carries a fused
+		// RRF score, descending down the result order.
+		var query = await tasks.SearchNodesAsync(Proj, Query("marmot"));
+		query.Hits.Should().OnlyContain(h => h.Retriever == "lexical" && h.Score != null);
+		query.Hits.Select(h => h.Score!.Value).Should().BeInDescendingOrder();
+
+		// Listing mode runs no relevance leg → score/retriever stay null (omitted on the wire).
+		var listing = await tasks.SearchNodesAsync(Proj,
+			new PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy> { Filter = new TaskNodeFilter("b") });
+		listing.Hits.Should().OnlyContain(h => h.Score == null && h.Retriever == null);
+	}
+
+	[Fact]
+	public async Task Floor_DropsSemanticOnlyTail_LimitIsCeilingNotPlan()
+	{
+		var tasks = Service(new FakeLlmClient());
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		// Eight nodes that match ONLY semantically: each body carries the near-query marker (its
+		// embedding collapses onto the query vector) but shares no lexical token with the query.
+		var nodes = Enumerable.Range(0, 8)
+			.Select(i => Node($"sem-{i}", $"note {i}", FakeLlmClient.NearQueryMarker + $" filler{i}"))
+			.ToArray();
+		await tasks.UpsertAsync(Proj, "b", nodes);
+		await DrainVectors(new FakeLlmClient(), "b");
+
+		// A token that appears in NO body: the lexical leg confirms nothing, the vector leg alone
+		// surfaces all eight. Even with a generous limit the answer is NOT padded to eight — the
+		// sub-floor semantic-only tail is dropped, so only the ~top-5 candidates survive.
+		var res = await tasks.SearchNodesAsync(Proj,
+			new PetBox.Core.Contract.SearchRequest<TaskNodeFilter, TaskSortBy>
+			{
+				Query = "zqxjkw",
+				Filter = new TaskNodeFilter("b"),
+				Limit = 50,
+			});
+
+		res.Hits.Should().OnlyContain(h => h.Retriever == "semantic");
+		res.Hits.Count.Should().BeInRange(1, 5,
+			"sub-floor semantic-only hits are cut, so limit is a ceiling not a plan");
+	}
+
+	[Fact]
+	public async Task ExactSlug_Hit_CarriesExactRetriever_AndNullScore()
+	{
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("wombat-burrow", "wombat note", "some body")]);
+		// Terminal → out of the relevance index; only the exact-slug escape hatch can surface it.
+		var version = (await tasks.GetAsync(Proj, "b", includeClosed: false)).Nodes.First(n => n.Key == "wombat-burrow").Version;
+		await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "wombat-burrow", Version = version, Status = "Done" }]);
+
+		var res = await tasks.SearchNodesAsync(Proj, Query("wombat-burrow"));
+		res.Hits.Should().ContainSingle();
+		res.Hits[0].Retriever.Should().Be("exact");
+		res.Hits[0].Score.Should().BeNull(); // an addressed match has no fused score
+	}
+
 	// ---- deterministic fakes (same shape as the memory hybrid-search fakes) ----
 
 	sealed class FakeLlmClient : ILlmClient

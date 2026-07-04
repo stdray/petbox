@@ -190,6 +190,52 @@ public sealed class MemoryFusionRerankTests : IDisposable
 		res.Retrievers!.Value.Degraded.Should().BeFalse();
 	}
 
+	// ---- per-row retriever provenance + semantic floor (search-fusion-floor-impl) ----
+
+	[Fact]
+	public async Task Retriever_LabelsLexicalConfirmedVsSemanticOnly()
+	{
+		// "lex" carries the query token (lexically confirmed); "sem" only sits on the query vector
+		// (AAA → [1,0], the query embeds to [1,0] too) without the token, so the vector leg alone
+		// surfaces it. Floor default active (decay/MMR off): with just two candidates both survive.
+		var llm = new ScriptedEmbedder();
+		var memory = new MemoryService(_store, llm, Off);
+		await memory.CreateStoreAsync(Proj, "notes", null);
+		await memory.UpsertAsync(Proj, "notes",
+		[
+			Entry("lex", "portal keyword here"),
+			Entry("sem", "AAA unrelated words"),
+		], []);
+		await DrainVectors(llm, "notes");
+
+		var hits = (await memory.SearchEntriesAsync(Proj, Query("portal"))).Hits;
+		hits.Single(h => h.Entry.Key == "lex").Retriever.Should().Be("lexical");
+		hits.Single(h => h.Entry.Key == "sem").Retriever.Should().Be("semantic");
+	}
+
+	[Fact]
+	public async Task Floor_CutsSemanticOnlyTail_LexicalConfirmedSurvives()
+	{
+		// One lexically-confirmed entry + eight semantic-only entries (all embed to [1,0], on the
+		// query vector, but only "lex" carries the token). Floor default active (decay/MMR off).
+		var llm = new ScriptedEmbedder();
+		var memory = new MemoryService(_store, llm, Off);
+		await memory.CreateStoreAsync(Proj, "notes", null);
+		var entries = new List<MemoryEntryInput> { Entry("lex", "portal lexical anchor") };
+		for (var i = 0; i < 8; i++) entries.Add(Entry($"sem-{i}", $"AAA filler {i}"));
+		await memory.UpsertAsync(Proj, "notes", entries, []);
+		await DrainVectors(llm, "notes");
+
+		var hits = (await memory.SearchEntriesAsync(Proj, Query("portal", limit: 50))).Hits;
+		var keys = hits.Select(h => h.Entry.Key).ToList();
+
+		// A lexically-confirmed hit is NEVER floored, whatever its score.
+		keys.Should().Contain("lex");
+		// The semantic-only tail is cut — NOT all eight survive (limit is a ceiling, not a plan).
+		keys.Count(k => k.StartsWith("sem-")).Should().BeInRange(1, 5);
+		hits.Where(h => h.Entry.Key.StartsWith("sem-")).Should().OnlyContain(h => h.Retriever == "semantic");
+	}
+
 	// Vectors are materialized OFF the write path — drain them with the SAME embedder the query
 	// path uses (mirrors MemoryHybridSearchTests / MemoryVectorizationJob for one store).
 	async Task DrainVectors(ILlmClient llm, string store)

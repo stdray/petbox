@@ -26,13 +26,23 @@ public sealed record DiversityOptions
 	public double Lambda { get; init; } = 0.7;
 }
 
+// Semantic-noise floor: a fused hit NOT confirmed by the lexical leg must clear this fused
+// RRF score to be returned at all (limit is a ceiling, not a plan — spec search-relevance-floor).
+// RRF is rank-based (1/(60+rank)), so 0.0155 keeps roughly the top-5 semantic-only candidates
+// of a fused pool and cuts the tail the vector leg pads with. 0 disables.
+public sealed record FloorOptions
+{
+	public double SemanticFloor { get; init; } = 0.0155;
+}
+
 // The whole search re-ranking policy, bound from the `Search` config section
-// (Search:Recency:*, Search:Diversity:*). Both sub-knobs default enabled with conservative
-// parameters, so wiring it changes ranking but not the contract.
+// (Search:Recency:*, Search:Diversity:*, Search:Floor:*). Both sub-knobs default enabled with
+// conservative parameters, so wiring it changes ranking but not the contract.
 public sealed record SearchRerankOptions
 {
 	public RecencyOptions Recency { get; init; } = new();
 	public DiversityOptions Diversity { get; init; } = new();
+	public FloorOptions Floor { get; init; } = new();
 }
 
 public static class RecencyDecay
