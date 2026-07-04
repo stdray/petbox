@@ -535,4 +535,175 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		var act = () => RunAsync("events | where Level == 3000000000");
 		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*out of range*");
 	}
+
+	// --- Properties["dotted.key"] bracket indexing: a flat lookup via SQLite's BUILTIN json_extract
+	// with a QUOTED-label path ('$."region.code"'), inside which dots are literal key characters —
+	// the unquoted path syntax would wrongly split the key on dots ---
+
+	[Fact]
+	public async Task BracketIndexedDottedKey_Where_TranslatesToSql()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(50, LogLevel.Information, "req-eu", "svc-d", Props("""{"region.code":"eu","http.status_code":200}"""))),
+			ToRecord(Mk(51, LogLevel.Information, "req-us", "svc-d", Props("""{"region.code":"us","http.status_code":500}"""))),
+		]);
+
+		(await RunAsync("""events | where ServiceKey == 'svc-d' and Properties["region.code"] == "eu" """))
+			.Should().BeEquivalentTo(["req-eu"]);
+		// typed conversion over the indexed value, still in SQL
+		(await RunAsync("""events | where ServiceKey == 'svc-d' and toint(Properties["http.status_code"]) >= 500"""))
+			.Should().BeEquivalentTo(["req-us"]);
+	}
+
+	[Fact]
+	public async Task BracketIndexedValue_Project_OverSqlSource()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(52, LogLevel.Information, "proj-row", "svc-e", Props("""{"petbox.request_chars":250}"""))),
+		]);
+
+		var code = KustoCode.Parse("""events | where ServiceKey == 'svc-e' | project V = Properties["petbox.request_chars"]""");
+		var result = KqlTransformer.Execute(_logDb.LogEntries, code);
+		var rows = new List<object?[]>();
+		await foreach (var row in result.Rows) rows.Add(row);
+		rows.Should().ContainSingle();
+		rows[0][0].Should().Be("250"); // string representation of the JSON number, like bare access
+	}
+
+	[Fact]
+	public async Task BracketIndexedKey_WithQuotesAndSpecialChars_NormalizedAtBothBoundaries()
+	{
+		// The raw key carries a double quote + dot + space. The WRITE boundary (PropertiesJsonSerializer,
+		// which Mk routes through) normalizes it to `we_ird. key` before storage; the SEARCH boundary
+		// applies the same KqlPropertyKeys rule to the requested key — so BOTH the raw spelling and the
+		// normalized spelling find the row, and the stored key embeds safely in the quoted JSON-path label.
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(53, LogLevel.Information, "weird-row", "svc-f", Props("""{"we\"ird. key":"v1"}"""))),
+		]);
+
+		(await RunAsync("events | where ServiceKey == 'svc-f' and Properties[\"we\\\"ird. key\"] == 'v1'"))
+			.Should().BeEquivalentTo(["weird-row"]); // raw request, normalized at search
+		(await RunAsync("events | where ServiceKey == 'svc-f' and Properties[\"we_ird. key\"] == 'v1'"))
+			.Should().BeEquivalentTo(["weird-row"]); // the normalized (stored) form directly
+	}
+
+	// --- value-representation parity (live-confirmed prod bug): a bag lookup compared to a string
+	// literal must agree pre-split (SQL) and post-split (in-memory). Raw json_extract yields INTEGER
+	// affinity for JSON numbers (SQLite `integer = 'text'` is silently FALSE) and 0/1 for booleans;
+	// the CASE json_type / CAST AS TEXT shape renders exactly the in-memory text representation. ---
+
+	async Task<IReadOnlyList<object?>> PostSplitMessages(string kql)
+	{
+		var result = KqlTransformer.Execute(_logDb.LogEntries, KustoCode.Parse(kql));
+		var rows = new List<object?[]>();
+		await foreach (var row in result.Rows) rows.Add(row);
+		return rows.Select(r => r[0]).ToList();
+	}
+
+	[Fact]
+	public async Task NumericBagValue_StringLiteral_AgreesPreAndPostSplit()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(20, LogLevel.Information, "st200", "svc-g", Props("""{"Status":200}"""))),
+			ToRecord(Mk(21, LogLevel.Information, "st500", "svc-g", Props("""{"Status":500}"""))),
+		]);
+
+		// pre-split: the predicate runs as SQLite SQL (this returned 0 rows on prod before the fix)
+		(await RunAsync("events | where ServiceKey == 'svc-g' and Properties.Status == '200'"))
+			.Should().BeEquivalentTo(["st200"]);
+		// post-split: the SAME predicate after a shape change runs in-memory — must agree
+		(await PostSplitMessages(
+			"events | where ServiceKey == 'svc-g' | extend one = 1 | where Properties.Status == '200' | project Message"))
+			.Should().BeEquivalentTo(["st200"]);
+	}
+
+	[Fact]
+	public async Task BooleanBagValue_StringLiteral_AgreesPreAndPostSplit()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(25, LogLevel.Information, "flag-on", "svc-h", Props("""{"Enabled":true}"""))),
+			ToRecord(Mk(26, LogLevel.Information, "flag-off", "svc-h", Props("""{"Enabled":false}"""))),
+		]);
+
+		// json_type CASE renders 'true'/'false' — the in-memory GetRawText form, NOT SQLite's 0/1.
+		(await RunAsync("events | where ServiceKey == 'svc-h' and Properties.Enabled == 'true'"))
+			.Should().BeEquivalentTo(["flag-on"]);
+		(await PostSplitMessages(
+			"events | where ServiceKey == 'svc-h' | extend one = 1 | where Properties.Enabled == 'true' | project Message"))
+			.Should().BeEquivalentTo(["flag-on"]);
+	}
+
+	// --- ServerSideOnly=true: the predicate must appear IN the generated SQL. A client-side fallback
+	// (ServerSideOnly=false) would materialize the whole table and the filter would vanish from the
+	// SQL text — this pins that the bag lookup and the computed name column translate server-side. ---
+
+	[Fact]
+	public void GeneratedSql_BagLookupAndNameColumn_TranslateServerSide()
+	{
+		var bag = KqlTransformer.Apply(_logDb.LogEntries,
+			KustoCode.Parse("""events | where Properties["region.code"] == "eu" """));
+		var bagSql = bag.ToSqlQuery().Sql;
+		bagSql.Should().Contain("json_extract");
+		bagSql.Should().Contain("region.code"); // the quoted-label path carries the dotted key intact
+
+		var levelName = KqlTransformer.Apply(_logDb.LogEntries,
+			KustoCode.Parse("events | where LevelName == 'Error'"));
+		levelName.ToSqlQuery().Sql.Should().Contain("CASE"); // the LevelName CASE mapping, in SQL
+	}
+
+	// --- review #1: JSON number TEXT forms agree across pipeline positions. SQLite's CAST
+	// canonicalizes the spelling ('2.50' → '2.5', '1e3' → '1000.0'); the in-memory JsonGet renders
+	// numbers the same way (NumberText). This test compares against ACTUAL SQLite output: the same
+	// literal must match the row on the pre-split (SQL) path and the post-split (in-memory) path.
+	// NOTE: extreme magnitudes are pinned here too ('1.0e+20'); should SQLite's %.15g and .NET's G15
+	// ever disagree, it will be in the last rounding digits of such extremes — the accepted residual
+	// edge documented at KqlSqlExpressions.NumberText. ---
+
+	[Fact]
+	public async Task NumberTextForms_AgreeAcrossPipelinePositions()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(35, LogLevel.Information, "nums", "svc-n",
+				Props("""{"a":2.50,"b":1e3,"c":3,"d":2.5,"x":1e20}"""))),
+		]);
+
+		// the pinned canonical text forms (what JsonGet/NumberText renders in-memory)
+		var expected = new Dictionary<string, string>
+		{
+			["a"] = "2.5",      // trailing zero dropped
+			["b"] = "1000.0",   // e-notation source, integral real → '.0'
+			["c"] = "3",        // integer stays plain
+			["d"] = "2.5",      // canonical already
+			["x"] = "1.0e+20",  // e-notation with '.0' mantissa
+		};
+		foreach (var (key, form) in expected)
+		{
+			// post-split: the in-memory rendering equals the pinned form
+			(await PostSplitMessages(
+				$"events | where ServiceKey == 'svc-n' | extend one = 1 | where Properties.{key} == '{form}' | project Message"))
+				.Should().BeEquivalentTo(["nums"], $"post-split (in-memory) text form of key '{key}'");
+			// pre-split: ACTUAL SQLite CAST renders the same text for the same row
+			(await RunAsync($"events | where ServiceKey == 'svc-n' and Properties.{key} == '{form}'"))
+				.Should().BeEquivalentTo(["nums"], $"pre-split (SQLite CAST) text form of key '{key}'");
+		}
+	}
+
+	// --- review #4: string ordering must not depend on pipeline position. Pre-split ORDER BY runs
+	// under SQLite's BINARY collation ('B' 0x42 < 'a' 0x61); the post-split comparer is ordinal. ---
+
+	[Fact]
+	public async Task StringSort_BinaryCollation_AgreesPreAndPostSplit()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(33, LogLevel.Information, "row-apple", "svc-j", Props("""{"fruit":"apple"}"""))),
+			ToRecord(Mk(34, LogLevel.Information, "row-Banana", "svc-j", Props("""{"fruit":"Banana"}"""))),
+		]);
+
+		var pre = await RunAsync("events | where ServiceKey == 'svc-j' | order by fruit asc");
+		pre[0].Should().Be("row-Banana"); // BINARY: uppercase first
+
+		var post = await PostSplitMessages(
+			"events | where ServiceKey == 'svc-j' | extend one = 1 | order by fruit asc | project Message");
+		post[0].Should().Be("row-Banana"); // ordinal comparer matches BINARY — same winner
+	}
 }

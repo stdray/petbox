@@ -144,10 +144,15 @@ static class OtlpLogsParser
 			return ImmutableDictionary<string, JsonElement>.Empty;
 
 		var builder = ImmutableDictionary.CreateBuilder<string, JsonElement>(StringComparer.Ordinal);
+		// WRITE-boundary key normalization (KqlPropertyKeys): stored attribute keys are always
+		// KQL-addressable — safe inside a quoted JSON-path label — matching the search boundary. The
+		// allocator suffixes DISTINCT originals that collide on one normalized name ('_2', '_3', …)
+		// instead of silently last-wins-dropping them; a repeated identical key stays last-wins.
+		var names = new PetBox.Log.Core.Query.KqlPropertyKeys.NameAllocator();
 		foreach (var kv in attributes)
 		{
 			if (string.IsNullOrEmpty(kv.Key)) continue;
-			builder[kv.Key] = AnyValueToJson(kv.Value);
+			builder[names.Assign(kv.Key)] = AnyValueToJson(kv.Value);
 		}
 		return builder.ToImmutable();
 	}

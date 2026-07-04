@@ -243,4 +243,86 @@ public sealed class SpanSqliteKqlIntegrationTests : IAsyncLifetime
 		var act = () => IdsAsync("spans | where Kind == 3000000000");
 		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*out of range*");
 	}
+
+	// --- Properties["dotted.key"] bracket indexing over real SQLite: builtin json_extract with a
+	// QUOTED-label path, so dotted OTLP attribute keys (petbox.request_chars, …) are addressable —
+	// the unquoted path syntax would wrongly split them into nested segments ---
+
+	static SpanRecord McpSpan(string spanId, string name, int startSec, int durMs, long req, long resp, string tool) =>
+		Span(spanId, "tm", name, SpanKind.Internal, startSec, durMs, SpanStatusCode.Ok,
+			$$"""{"petbox.request_chars":{{req}},"petbox.response_chars":{{resp}},"petbox.tool":"{{tool}}"}""");
+
+	async Task SeedMcpSpansAsync() =>
+		await _logDb.Spans.BulkCopyAsync([
+			McpSpan("m1", "mcp.tool tasks_search", 10, 120, 250, 9000, "tasks_search"),
+			McpSpan("m2", "mcp.tool tasks_search", 11, 80, 100, 500, "tasks_search"),
+			McpSpan("m3", "mcp.tool memory_search", 12, 60, 40, 700, "memory_search"),
+			McpSpan("m4", "mcp.tool tasks_search", 13, 30, 77, 333, "tasks_search"),
+		]);
+
+	[Fact]
+	public async Task BracketIndexedAttribute_Where_TranslatesToSql()
+	{
+		await SeedMcpSpansAsync();
+		(await IdsAsync("""spans | where Properties["petbox.tool"] == "memory_search" """))
+			.Should().BeEquivalentTo(["m3"]);
+		(await IdsAsync("""spans | where todouble(Properties["petbox.request_chars"]) >= 100"""))
+			.Should().BeEquivalentTo(["m1", "m2"]);
+	}
+
+	[Fact]
+	public async Task BracketIndexedAttribute_Project_OverSqlSource()
+	{
+		await SeedMcpSpansAsync();
+		var code = KustoCode.Parse("""spans | where SpanId == "m1" | project Tool = Properties["petbox.tool"], Req = Properties["petbox.request_chars"]""");
+		var result = KqlTransformer.ExecuteSpans(_logDb.Spans, code);
+		var rows = new List<object?[]>();
+		await foreach (var row in result.Rows) rows.Add(row);
+		rows.Should().ContainSingle();
+		rows[0][0].Should().Be("tasks_search");
+		rows[0][1].Should().Be("250"); // JSON number → its raw text, same representation as bare access
+	}
+
+	// --- value-representation parity on the spans root (see SqliteKqlIntegrationTests for the events
+	// twin and the live prod report): a numeric attribute compared to a string literal must agree
+	// pre-split (SQL, the CASE/CAST text rendering) and post-split (in-memory text bag). ---
+
+	[Fact]
+	public async Task NumericAttribute_StringLiteral_AgreesPreAndPostSplit()
+	{
+		await SeedMcpSpansAsync();
+		// pre-split SQL
+		(await IdsAsync("""spans | where Properties["petbox.request_chars"] == "250" """))
+			.Should().BeEquivalentTo(["m1"]);
+		// the SAME predicate post-split
+		var code = KustoCode.Parse(
+			"""spans | extend one = 1 | where Properties["petbox.request_chars"] == "250" | project SpanId""");
+		var result = KqlTransformer.ExecuteSpans(_logDb.Spans, code);
+		var rows = new List<object?[]>();
+		await foreach (var row in result.Rows) rows.Add(row);
+		rows.Select(r => r[0]).Should().BeEquivalentTo(["m1"]);
+	}
+
+	// The exact query from the live agent report that motivated bracket indexing, verbatim, against a
+	// real Spans table: where + top pre-split (SQL), project with todouble over indexed values post-split.
+	[Fact]
+	public async Task ReportedQuery_TopSpansWithRequestResponseChars_Works()
+	{
+		await SeedMcpSpansAsync();
+		var code = KustoCode.Parse(
+			"""
+			spans | where Name == "mcp.tool tasks_search" | top 3 by Start desc
+			| project Start, Name, Duration, req=todouble(Properties["petbox.request_chars"]), resp=todouble(Properties["petbox.response_chars"])
+			""");
+		var result = KqlTransformer.ExecuteSpans(_logDb.Spans, code);
+		result.Columns.Select(c => c.Name).Should().ContainInOrder("Start", "Name", "Duration", "req", "resp");
+
+		var rows = new List<object?[]>();
+		await foreach (var row in result.Rows) rows.Add(row);
+		rows.Should().HaveCount(3); // m4, m2, m1 by Start desc (m3 is a different tool)
+		rows.Select(r => (double?)r[3]).Should().ContainInOrder(77d, 100d, 250d);
+		rows.Select(r => (double?)r[4]).Should().ContainInOrder(333d, 500d, 9000d);
+		rows.Select(r => (TimeSpan)r[2]!).Should().ContainInOrder(
+			TimeSpan.FromMilliseconds(30), TimeSpan.FromMilliseconds(80), TimeSpan.FromMilliseconds(120));
+	}
 }

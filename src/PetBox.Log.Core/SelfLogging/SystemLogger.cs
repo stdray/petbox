@@ -86,7 +86,9 @@ sealed class SystemLogger : ILogger
 			Message = message,
 			MessageTemplate = template,
 			Exception = exception?.ToString(),
-			Properties = JsonSerializer.Serialize(props),
+			// The shared WRITE boundary (key normalization + collision policy), NOT raw serialization —
+			// self-log properties must be as KQL-addressable as ingested ones.
+			Properties = PropertiesJsonSerializer.Serialize(props),
 		};
 
 		_writer.TryWrite(candidate);

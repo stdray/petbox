@@ -90,9 +90,8 @@ abstract class SqlRecordScalarContext : ScalarContext
 	public override Expr ResolveColumn(string name)
 	{
 		var canonical = ResolveKnownName(name);
-		foreach (var c in KnownColumns)
-			if (string.Equals(c, canonical, StringComparison.Ordinal))
-				return KnownColumnAccess(canonical);
+		if (IsKnownColumn(canonical))
+			return KnownColumnAccess(canonical);
 		// Bare-name fallback: a name that is not a known column resolves as a Properties.<name> lookup
 		// (string-typed json_extract), so `where DeviceId == 'x'` filters on the property. Known columns
 		// always win (matched above). Trade-off: a TRUE typo'd column (no case-insensitive match) yields
@@ -101,14 +100,23 @@ abstract class SqlRecordScalarContext : ScalarContext
 		return ResolveProperties(canonical);
 	}
 
+	// Membership in the root's KnownColumns (exact/Ordinal) — the ONE scan shared by bare-name
+	// resolution, canonicalization, and the bag-vs-column split in the literal coercion below.
+	protected bool IsKnownColumn(string canonical)
+	{
+		foreach (var c in KnownColumns)
+			if (string.Equals(c, canonical, StringComparison.Ordinal))
+				return true;
+		return false;
+	}
+
 	// Canonical column name for a bare reference: exact match wins; else a unique case-insensitive
 	// match (so prod field-casing like `level` / `start` binds to the real column); else the original
 	// name (→ the Properties fallback).
 	protected string ResolveKnownName(string name)
 	{
-		foreach (var c in KnownColumns)
-			if (string.Equals(c, name, StringComparison.Ordinal))
-				return c;
+		if (IsKnownColumn(name))
+			return name;
 		string? ci = null;
 		foreach (var c in KnownColumns)
 			if (string.Equals(c, name, StringComparison.OrdinalIgnoreCase))
@@ -120,11 +128,18 @@ abstract class SqlRecordScalarContext : ScalarContext
 		return ci ?? name;
 	}
 
+	// All Properties access — bare-name fallback, Properties.<key>, Properties["key"] — is a FLAT
+	// lookup: the requested key is NORMALIZED here (one of the two search-boundary seam owners, see
+	// KqlPropertyKeys; KqlTransformer.BagValueExtractor is the other) and embedded as a double-QUOTED
+	// JSON-path label, so SQLite's BUILTIN json_extract resolves dotted OTLP keys
+	// (petbox.request_chars) natively — dots inside a quoted label are literal key characters. One
+	// representation everywhere: the string-typed JSON value (string → its text, number → SQLite's
+	// canonical text form, bool → 'true'/'false') or null when missing.
 	public override Expr ResolveProperties(string key)
 	{
-		var path = Expr.Constant("$." + key, typeof(string));
 		var method = typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.JsonExtract))!;
-		return Expr.Call(method, JsonBag, path);
+		var path = KqlSqlExpressions.JsonPath(KqlPropertyKeys.Normalize(key));
+		return Expr.Call(method, JsonBag, Expr.Constant(path, typeof(string)));
 	}
 
 	// now() in the SQL context is a constant epoch-ms long, so `where Timestamp > ago(1h)` compares
@@ -158,7 +173,8 @@ abstract class SqlRecordScalarContext : ScalarContext
 		// Coerce against the RESOLVED canonical name: the user may have typed `start` / `timestamp`
 		// (bound case-insensitively by ResolveColumn), and the special-column check must agree with
 		// that binding, not with the raw spelling.
-		var coerced = CoerceLiteral(literal, access.Type, ResolveKnownName(columnName));
+		var canonical = ResolveKnownName(columnName);
+		var coerced = CoerceLiteral(literal, access.Type, canonical, isBagValue: !IsKnownColumn(canonical));
 		return op switch
 		{
 			SyntaxKind.EqualExpression => Expr.Equal(access, coerced),
@@ -174,7 +190,7 @@ abstract class SqlRecordScalarContext : ScalarContext
 	// Root-specific instant/duration columns first (datetime → epoch-ms, timespan → ticks); integer /
 	// string columns require the matching literal kind. Preserves the exact user-facing messages the
 	// `where` path has always produced.
-	Expr CoerceLiteral(LiteralExpression literal, Type targetType, string column)
+	Expr CoerceLiteral(LiteralExpression literal, Type targetType, string column, bool isBagValue)
 	{
 		if (CoerceSpecialLiteral(column, literal) is { } special)
 			return special;
@@ -197,7 +213,14 @@ abstract class SqlRecordScalarContext : ScalarContext
 		{
 			if (literal.LiteralValue is string s)
 				return Expr.Constant(s, typeof(string));
-			throw new UnsupportedKqlException($"{column} comparison requires a string literal");
+			// A bag value compared against a non-string literal: teach BOTH working forms. The string
+			// form is honest since bag lookups yield text identically pre- and post-split (see
+			// KqlSqlExpressions.JsonExtract's CASE/CAST shape); toint()/todouble() give true numeric
+			// comparison. Explicit conversions stay the convention — a silent literal-to-text coercion
+			// would false-negative on equivalent spellings ("200" vs 200.0).
+			throw new UnsupportedKqlException(isBagValue
+				? $"{column} is a Properties value (text); compare against a string literal, or wrap it in toint()/todouble() for a numeric comparison"
+				: $"{column} comparison requires a string literal");
 		}
 
 		throw new UnsupportedKqlException($"cannot coerce literal for column '{column}' of type {targetType.Name}");
@@ -330,15 +353,17 @@ sealed class RowScalarContext(ParamExpr rowArray, IReadOnlyList<KqlColumn> colum
 		return ResolveProperties(name);
 	}
 
+	// Flat lookup under the NORMALIZED key over the row's PropertiesJson cell — the same JsonGet body
+	// the SQL path's quoted-label json_extract mirrors (see SqlRecordScalarContext.ResolveProperties),
+	// so pipeline position is neutral.
 	public override Expr ResolveProperties(string key)
 	{
 		var idx = IndexOf(nameof(LogEntryRecord.PropertiesJson));
 		if (idx < 0)
 			throw new UnsupportedKqlException("Properties.<key>: input has no PropertiesJson column");
 		var jsonCell = Cell(idx, typeof(string));
-		var path = Expr.Constant("$." + key, typeof(string));
-		var method = typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.JsonExtract))!;
-		return Expr.Call(method, jsonCell, path);
+		var method = typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.JsonGet))!;
+		return Expr.Call(method, jsonCell, Expr.Constant(KqlPropertyKeys.Normalize(key), typeof(string)));
 	}
 
 	int IndexOf(string name)
@@ -376,6 +401,9 @@ static class KqlScalar
 		LiteralExpression lit => Literal(lit),
 		NameReference n => ctx.ResolveColumn(n.SimpleName),
 		PathExpression p when KqlTransformer.IsPropertiesPath(p, out var key) => ctx.ResolveProperties(key),
+		// Properties["any.key"] — the canonical form for dotted OTLP attribute keys (bracket indexing
+		// with a string-literal selector; a computed selector throws precisely inside the recognizer).
+		ElementExpression el when KqlTransformer.IsPropertiesIndex(el, out var key) => ctx.ResolveProperties(key),
 		ParenthesizedExpression paren => Compile(paren.Expression, ctx),
 		PrefixUnaryExpression u => Unary(u, ctx),
 		BinaryExpression b => Binary(b, ctx),
@@ -622,6 +650,10 @@ static class KqlScalar
 				return true;
 			case PathExpression p when KqlTransformer.IsPropertiesPath(p, out var key):
 				columnName = "Properties." + key;
+				access = ctx.ResolveProperties(key);
+				return true;
+			case ElementExpression el when KqlTransformer.IsPropertiesIndex(el, out var key):
+				columnName = $"Properties[\"{key}\"]";
 				access = ctx.ResolveProperties(key);
 				return true;
 			default:

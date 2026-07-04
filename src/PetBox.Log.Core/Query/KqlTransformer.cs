@@ -378,10 +378,26 @@ public static class KqlTransformer
 		return new KqlResult(outputColumns, StreamSummarize(input.Rows, keyExtractors.ToArray(), aggSpecs.ToArray()));
 	}
 
+	// The single owner of bag-key access over a MATERIALIZED row shape — every summarize-by /
+	// distinct / mv-expand / join-key Properties lookup funnels through here. It NORMALIZES the
+	// requested key (the search-boundary rule; ScalarContext.ResolveProperties is the equivalent seam
+	// for the expression paths — see KqlPropertyKeys) and returns the flat lookup over the row's
+	// PropertiesJson cell. Throws `missingBagError` when the current shape no longer carries the bag.
+	static Func<object?[], string?> BagValueExtractor(
+		IReadOnlyList<KqlColumn> columns, string rawKey, string missingBagError)
+	{
+		var propIdx = FindColumnIndex(columns, nameof(LogEntryRecord.PropertiesJson));
+		if (propIdx < 0)
+			throw new UnsupportedKqlException(missingBagError);
+		var key = KqlPropertyKeys.Normalize(rawKey);
+		return row => KqlSqlExpressions.JsonGet(row[propIdx] as string, key);
+	}
+
 	// A by-key: (output name, CLR type, value extractor). Bare column refs stay a cheap index
-	// pass-through; Properties.<key> is json_extract; anything else (incl. bin) compiles as a
-	// scalar. An un-aliased function call (e.g. `by bin(Timestamp, 1h)`) is named after its
-	// first column argument, matching Kusto's default column naming.
+	// pass-through; Properties access (bare fallback / path / bracket-index) is the shared
+	// BagValueExtractor; anything else (incl. bin) compiles as a scalar. An un-aliased function call
+	// (e.g. `by bin(Timestamp, 1h)`) is named after its first column argument, matching Kusto's
+	// default column naming.
 	static (string Name, Type Type, Func<object?[], object?> Fn) CompileByKey(
 		Expression element, KqlResult input, RowScalarContext ctx, ParamExpr rowParam)
 	{
@@ -393,21 +409,15 @@ public static class KqlTransformer
 					if (idx >= 0)
 						return (n.SimpleName, input.Columns[idx].ClrType, row => row[idx]);
 					// Bare-name fallback: group by Properties.<name> when the shape still has PropertiesJson.
-					var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
-					if (propIdx < 0)
-						throw new UnsupportedKqlException($"summarize by: unknown column '{n.SimpleName}'");
-					var path = "$." + n.SimpleName;
 					return (n.SimpleName, typeof(string),
-						row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path));
+						BagValueExtractor(input.Columns, n.SimpleName, $"summarize by: unknown column '{n.SimpleName}'"));
 				}
 			case PathExpression p when IsPropertiesPath(p, out var propKey):
-				{
-					var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
-					if (propIdx < 0)
-						throw new UnsupportedKqlException("summarize by Properties.<key>: input has no PropertiesJson column");
-					return ("Properties." + propKey, typeof(string),
-						row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, "$." + propKey));
-				}
+				return ("Properties." + propKey, typeof(string),
+					BagValueExtractor(input.Columns, propKey, "summarize by Properties.<key>: input has no PropertiesJson column"));
+			case ElementExpression el when IsPropertiesIndex(el, out var idxKey):
+				return ("Properties." + idxKey, typeof(string),
+					BagValueExtractor(input.Columns, idxKey, "summarize by Properties[\"key\"]: input has no PropertiesJson column"));
 			case SimpleNamedExpression { Name: NameDeclaration alias, Expression: var expr }:
 				{
 					var (type, fn) = CompileCell(expr, ctx, rowParam);
@@ -420,7 +430,7 @@ public static class KqlTransformer
 				}
 			default:
 				throw new UnsupportedKqlException(
-					$"summarize by '{element.Kind}' not supported (column ref, Properties.<key>, or 'name = expression')");
+					$"summarize by '{element.Kind}' not supported (column ref, Properties.<key>, Properties[\"key\"], or 'name = expression')");
 		}
 	}
 
@@ -854,11 +864,18 @@ public static class KqlTransformer
 
 	// Compares boxed scalar values (long/double/string/DateTime/…) for post-shape sorting.
 	// Comparer<object>.Default routes to the boxed value's IComparable and treats null as the
-	// smallest value, matching Kusto's nulls-first ascending order.
+	// smallest value, matching Kusto's nulls-first ascending order. STRINGS compare ORDINAL: the
+	// pre-split ORDER BY runs under SQLite's BINARY collation, and String.CompareTo (culture-
+	// sensitive) would order the same clause differently by pipeline position ("apple" before
+	// "Banana" post-split, after it pre-split).
 	sealed class BoxedComparer : IComparer<object?>
 	{
 		public static readonly BoxedComparer Instance = new();
-		public int Compare(object? x, object? y) => Comparer<object>.Default.Compare(x!, y!);
+
+		public int Compare(object? x, object? y) =>
+			x is string sx && y is string sy
+				? StringComparer.Ordinal.Compare(sx, sy)
+				: Comparer<object>.Default.Compare(x!, y!);
 	}
 
 	// distinct <cols> | distinct *. In-memory de-dup over the streamed rows. We deliberately do
@@ -895,26 +912,21 @@ public static class KqlTransformer
 							break;
 						}
 						// Bare-name fallback: distinct Properties.<name> when the shape still has PropertiesJson.
-						var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
-						if (propIdx < 0)
-							throw new UnsupportedKqlException($"distinct: unknown column '{n.SimpleName}'");
 						outputColumns.Add(new KqlColumn(n.SimpleName, typeof(string)));
-						var path = "$." + n.SimpleName;
-						extractors.Add(row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path));
+						extractors.Add(BagValueExtractor(input.Columns, n.SimpleName, $"distinct: unknown column '{n.SimpleName}'"));
 						break;
 					}
 				case PathExpression p when IsPropertiesPath(p, out var propKey):
-					{
-						var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
-						if (propIdx < 0)
-							throw new UnsupportedKqlException("distinct Properties.<key>: input has no PropertiesJson column");
-						outputColumns.Add(new KqlColumn("Properties." + propKey, typeof(string)));
-						extractors.Add(row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, "$." + propKey));
-						break;
-					}
+					outputColumns.Add(new KqlColumn("Properties." + propKey, typeof(string)));
+					extractors.Add(BagValueExtractor(input.Columns, propKey, "distinct Properties.<key>: input has no PropertiesJson column"));
+					break;
+				case ElementExpression el when IsPropertiesIndex(el, out var idxKey):
+					outputColumns.Add(new KqlColumn("Properties." + idxKey, typeof(string)));
+					extractors.Add(BagValueExtractor(input.Columns, idxKey, "distinct Properties[\"key\"]: input has no PropertiesJson column"));
+					break;
 				default:
 					throw new UnsupportedKqlException(
-						$"distinct expression '{element.Element.Kind}' not supported (use column refs, Properties.<key>, or '*')");
+						$"distinct expression '{element.Element.Kind}' not supported (use column refs, Properties.<key>, Properties[\"key\"], or '*')");
 			}
 		}
 
@@ -1092,9 +1104,9 @@ public static class KqlTransformer
 	}
 
 	// A join-key value extractor over a row of `shape`: a direct column (cheap index) or, when the
-	// name is not a column, the Properties.<name> bare-name fallback (json_extract, when the shape
-	// still carries PropertiesJson). `columnIndex` is the resolved column index, or -1 for the
-	// Properties fallback (so lookup knows there is no right key column to drop).
+	// name is not a column, the Properties.<name> bare-name fallback via the shared BagValueExtractor.
+	// `columnIndex` is the resolved column index, or -1 for the Properties fallback (so lookup knows
+	// there is no right key column to drop).
 	static Func<object?[], object?> ResolveKeyExtractor(KqlResult shape, string name, string opName, out int columnIndex)
 	{
 		var idx = ResolveColumnIndexCI(shape.Columns, name);
@@ -1103,12 +1115,8 @@ public static class KqlTransformer
 			columnIndex = idx;
 			return row => row[idx];
 		}
-		var propIdx = FindColumnIndex(shape.Columns, nameof(LogEntryRecord.PropertiesJson));
-		if (propIdx < 0)
-			throw new UnsupportedKqlException($"{opName} on: unknown column '{name}'");
 		columnIndex = -1;
-		var path = "$." + name;
-		return row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path);
+		return BagValueExtractor(shape.Columns, name, $"{opName} on: unknown column '{name}'");
 	}
 
 	// Builds the joined column list: left columns verbatim, then the right columns (minus any
@@ -1283,22 +1291,17 @@ public static class KqlTransformer
 					var idx = ResolveColumnIndexCI(input.Columns, n.SimpleName);
 					if (idx >= 0)
 						return (n.SimpleName, idx, row => row[idx] as string);
-					var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
-					if (propIdx < 0)
-						throw new UnsupportedKqlException($"mv-expand: unknown column '{n.SimpleName}'");
-					var path = "$." + n.SimpleName;
-					return (n.SimpleName, -1, row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path));
+					return (n.SimpleName, -1,
+						BagValueExtractor(input.Columns, n.SimpleName, $"mv-expand: unknown column '{n.SimpleName}'"));
 				}
 			case PathExpression p when IsPropertiesPath(p, out var key):
-				{
-					var propIdx = FindColumnIndex(input.Columns, nameof(LogEntryRecord.PropertiesJson));
-					if (propIdx < 0)
-						throw new UnsupportedKqlException("mv-expand Properties.<key>: input has no PropertiesJson column");
-					var path = "$." + key;
-					return (key, -1, row => KqlSqlExpressions.JsonExtract(row[propIdx] as string, path));
-				}
+				return (key, -1,
+					BagValueExtractor(input.Columns, key, "mv-expand Properties.<key>: input has no PropertiesJson column"));
+			case ElementExpression el when IsPropertiesIndex(el, out var idxKey):
+				return (idxKey, -1,
+					BagValueExtractor(input.Columns, idxKey, "mv-expand Properties[\"key\"]: input has no PropertiesJson column"));
 			default:
-				throw new UnsupportedKqlException("mv-expand supports a column or Properties.<key>");
+				throw new UnsupportedKqlException("mv-expand supports a column, Properties.<key>, or Properties[\"key\"]");
 		}
 	}
 
@@ -1612,32 +1615,30 @@ public static class KqlTransformer
 		IOrderedQueryable<T>? ordered = null;
 		foreach (var element in sort.Expressions)
 		{
-			var (columnName, descending) = element.Element switch
+			var (keyExpr, descending) = element.Element switch
 			{
-				OrderedExpression { Expression: NameReference n, Ordering: var o } => (n.SimpleName, !IsAscending(o)),
-				NameReference n => (n.SimpleName, true),
-				_ => throw new UnsupportedKqlException($"order-by expression '{element.Element.Kind}' not supported"),
+				OrderedExpression { Expression: var e, Ordering: var o } => (e, !IsAscending(o)),
+				var e => ((Expression)e, true),
 			};
 
-			ordered = ApplyOrder(source, ordered, columnName, descending, makeCtx);
+			ordered = ApplyOrder(source, ordered, keyExpr, descending, makeCtx, "order-by expression");
 		}
 		return ordered ?? source;
 	}
 
-	// `top N by <column> [asc|desc]` on the SQL path = ORDER BY + LIMIT. The by-expression is a
-	// bare column ref here (same reach as ApplySort); the post-split ApplyPostTop handles
-	// computed keys. Default ordering is descending, matching Kusto.
+	// `top N by <column> [asc|desc]` on the SQL path = ORDER BY + LIMIT. The by-expression is a bare
+	// column ref or a Properties access here (same reach as ApplySort); the post-split ApplyPostTop
+	// handles computed keys. Default ordering is descending, matching Kusto.
 	static IQueryable<T> ApplyTop<T>(IQueryable<T> source, TopOperator top, Func<ParamExpr, ScalarContext> makeCtx)
 	{
 		if (top.Expression is not LiteralExpression { LiteralValue: long n })
 			throw new UnsupportedKqlException("top requires an integer literal count");
-		var (columnName, descending) = top.ByExpression switch
+		var (keyExpr, descending) = top.ByExpression switch
 		{
-			OrderedExpression { Expression: NameReference nm, Ordering: var o } => (nm.SimpleName, !IsAscending(o)),
-			NameReference nm => (nm.SimpleName, true),
-			_ => throw new UnsupportedKqlException($"top by-expression '{top.ByExpression.Kind}' not supported (use a column ref)"),
+			OrderedExpression { Expression: var e, Ordering: var o } => (e, !IsAscending(o)),
+			var e => ((Expression)e, true),
 		};
-		return ApplyOrder(source, null, columnName, descending, makeCtx).Take(checked((int)n));
+		return ApplyOrder(source, null, keyExpr, descending, makeCtx, "top by-expression").Take(checked((int)n));
 	}
 
 	static bool IsAscending(OrderingClause? o) =>
@@ -1646,12 +1647,23 @@ public static class KqlTransformer
 	static IOrderedQueryable<T> ApplyOrder<T>(
 		IQueryable<T> source,
 		IOrderedQueryable<T>? prior,
-		string columnName,
+		Expression keyExpr,
 		bool descending,
-		Func<ParamExpr, ScalarContext> makeCtx)
+		Func<ParamExpr, ScalarContext> makeCtx,
+		string what)
 	{
 		var row = Expr.Parameter(typeof(T), "e");
-		var access = makeCtx(row).ResolveColumn(columnName);
+		var ctx = makeCtx(row);
+		// A bare column ref, or a Properties access (path / bracket-index form) — all SQL-translatable
+		// key shapes. Computed keys stay post-split (ApplyPostSort/ApplyPostTop compile any scalar).
+		var access = keyExpr switch
+		{
+			NameReference n => ctx.ResolveColumn(n.SimpleName),
+			PathExpression p when IsPropertiesPath(p, out var pathKey) => ctx.ResolveProperties(pathKey),
+			ElementExpression el when IsPropertiesIndex(el, out var idxKey) => ctx.ResolveProperties(idxKey),
+			_ => throw new UnsupportedKqlException(
+				$"{what} '{keyExpr.Kind}' not supported (use a column ref, Properties.<key>, or Properties[\"key\"])"),
+		};
 		var keyType = access.Type;
 		var keyLambda = Expr.Lambda(access, row);
 
@@ -1673,17 +1685,50 @@ public static class KqlTransformer
 		return (IOrderedQueryable<T>)source.Provider.CreateQuery<T>(callExpr);
 	}
 
-	// Recognizes a `Properties.<key>` path (the only nested access the schema exposes). Shared
-	// by the scalar engine (KqlScalar) and summarize's by-clause.
+	// Recognizes a `Properties.<key>` path, flattening a dotted chain into ONE flat key:
+	// Properties.petbox.tool → "petbox.tool". The bag is FLAT (OTLP attribute names are dotted), so the
+	// whole remainder after Properties is a single key, never nested segments. Shared by the scalar
+	// engine (KqlScalar), summarize's by-clause, distinct and mv-expand. The bracket form
+	// Properties["petbox.tool"] (IsPropertiesIndex) is the canonical contract; this dotted form is the
+	// ergonomic alias for keys that are valid identifier chains.
 	internal static bool IsPropertiesPath(PathExpression path, out string key)
 	{
-		if (path.Expression is NameReference { SimpleName: "Properties" }
-			&& path.Selector is NameReference sel)
+		var parts = new Stack<string>();
+		Expression current = path;
+		while (current is PathExpression { Selector: NameReference sel } p)
 		{
-			key = sel.SimpleName;
+			parts.Push(sel.SimpleName);
+			current = p.Expression;
+		}
+		if (current is NameReference { SimpleName: "Properties" } && parts.Count > 0)
+		{
+			// The key keeps the user's spelling here — it doubles as the display/column name. Search-
+			// boundary normalization happens at the single seam the key flows into (ScalarContext.
+			// ResolveProperties / BagValueExtractor, see KqlPropertyKeys).
+			key = string.Join(".", parts);
 			return true;
 		}
 		key = "";
 		return false;
+	}
+
+	// Recognizes `Properties["any.key"]` — bracket indexing with a STRING-LITERAL selector, the
+	// canonical way to address a flat bag key (dotted OTLP names, keys with spaces/quotes/…). A
+	// Properties[...] whose selector is NOT a string literal is a precise structural error rather than
+	// a generic unsupported-expression one; non-Properties targets return false and keep the generic
+	// error path.
+	internal static bool IsPropertiesIndex(ElementExpression element, out string key)
+	{
+		key = "";
+		if (element.Expression is not NameReference { SimpleName: "Properties" })
+			return false;
+		if (element.Selector is BracketedExpression { Expression: LiteralExpression { LiteralValue: string s } })
+		{
+			// The key keeps the user's spelling (display/column name); normalization happens at the
+			// single search-boundary seam it flows into (see IsPropertiesPath's note).
+			key = s;
+			return true;
+		}
+		throw new UnsupportedKqlException("Properties[...] indexing requires a string literal key, e.g. Properties[\"petbox.request_chars\"]");
 	}
 }
