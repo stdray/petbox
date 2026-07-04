@@ -20,7 +20,7 @@
 		{
 			<div class="text-sm opacity-70 mb-2">
 				Project: <span class="font-mono">@link.ProjectKey</span> ·
-				Expires: <time class="local-time" datetime="@link.ExpiresAt.ToString("o")">@link.ExpiresAt:yyyy-MM-dd HH:mm:ss</time>
+				Expires: <time class="local-time" datetime="@link.ExpiresAt.ToString("o")">@link.ExpiresAt.ToString("yyyy-MM-dd HH:mm:ss")</time>
 			</div>
 			<pre class="bg-base-200 rounded p-3 text-xs font-mono mb-4 whitespace-pre-wrap">@link.Kql</pre>
 
