@@ -235,6 +235,80 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		(await Search(q: "heron")).Nodes.Should().HaveCount(3); // default 20 covers all
 	}
 
+	// A NON-vacuous node — it HAS a parent (partOf), a spec link (task_spec relation), commits and
+	// tags — used by both the lean q-mode and the enriched listing-mode assertions below.
+	async Task<(string FeatId, string SpecId)> SeedEnrichedNode()
+	{
+		var up = await Seed("b", """
+			[{"key":"parent","status":"Todo","title":"parent","body":"root"},
+			 {"key":"spec-target","status":"Todo","title":"spec target","body":"target"},
+			 {"key":"marmot-feat","status":"Todo","title":"marmot feature","body":"the marmot keyword","partOf":"parent","commits":["abc1234"],"tags":["area:search"]}]
+			""");
+		var featId = up.Added.Single(n => n.Key == "marmot-feat").NodeId;
+		var specId = up.Added.Single(n => n.Key == "spec-target").NodeId;
+		// Direct task_spec edge → the node carries a `spec` link on ANY board kind (the listing
+		// enrichment), so the q-mode drop of it below is not vacuous.
+		await new RelationStore(_db).CreateAsync(Proj, "task_spec", featId, specId);
+		return (featId, specId);
+	}
+
+	[Fact]
+	public async Task Query_RowsAreLean_EnrichmentOmitted() // spec search-lean-rows
+	{
+		var (featId, _) = await SeedEnrichedNode();
+
+		var res = await Search(q: "marmot", includeUrl: true);
+		var row = res.Nodes.Single(n => n.Key == "marmot-feat");
+
+		// Lean cut: a relevance row carries nothing beyond what picks the entity — the
+		// enrichment (parent/depth/delivery/spec/links/commits/priority) is omitted (null → dropped).
+		row.ParentNodeId.Should().BeNull();
+		row.ParentSlug.Should().BeNull();
+		row.Depth.Should().BeNull();
+		row.Delivery.Should().BeNull();
+		row.Spec.Should().BeNull();
+		row.BlockedBy.Should().BeNull();
+		row.LinkedTasks.Should().BeNull();
+		row.Supersedes.Should().BeNull();
+		row.RenamedFrom.Should().BeNull();
+		row.Commits.Should().BeNull();
+		row.Priority.Should().BeNull();
+
+		// Kept: identity/title/status/type/tags/version + score/retriever (+ url when asked).
+		row.Key.Should().Be("marmot-feat");
+		row.NodeId.Should().Be(featId);
+		row.Board.Should().Be("b");
+		row.Status.Should().Be("Todo");
+		row.Type.Should().NotBeNull();
+		row.Title.Should().Be("marmot feature");
+		row.Tags.Should().Contain("area:search");
+		row.Version.Should().BeGreaterThan(0);
+		row.Score.Should().NotBeNull();
+		row.Retriever.Should().Be("lexical");
+		row.Url.Should().NotBeNull();
+	}
+
+	[Fact]
+	public async Task Listing_KeepsEnrichment_LeanCutIsQueryModeOnly() // spec search-lean-rows
+	{
+		var (_, specId) = await SeedEnrichedNode();
+
+		// The SAME node in listing mode (no q) keeps its full enrichment — the lean cut is q-mode only.
+		var res = await Search(board: "b");
+		var row = res.Nodes.Single(n => n.Key == "marmot-feat");
+
+		row.ParentSlug.Should().Be("parent");
+		row.ParentNodeId.Should().NotBeNull();
+		row.Depth.Should().Be(1);
+		row.Commits.Should().BeEquivalentTo("abc1234");
+		row.Priority.Should().NotBeNull();
+		row.Spec.Should().NotBeNull();
+		row.Spec!.Should().ContainSingle(l => l.NodeId == specId);
+		// A listing runs no relevance leg → no per-row provenance.
+		row.Score.Should().BeNull();
+		row.Retriever.Should().BeNull();
+	}
+
 	// ---- sort ----
 
 	[Fact]

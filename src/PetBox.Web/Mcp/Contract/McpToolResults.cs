@@ -308,19 +308,24 @@ public sealed record BoardReopenedResult(bool Reopened);
 // per-row relevance provenance (spec search-row-provenance): query mode only (Score is the
 // fused rank-based RRF value, Retriever names how the hit surfaced —
 // "lexical"|"semantic"|"exact"); both null and omitted on the wire in listing mode.
+// QUERY-mode rows are LEAN (spec search-lean-rows): a relevance row carries only what picks
+// the entity — identity/title/snippet/status/tags/version + score/retriever; the enrichment
+// (parent/depth/delivery/spec/links/commits/priority) is nulled → omitted on the wire and
+// rides listing mode or tasks_node_get. Depth/Priority/Commits are therefore NULLABLE so
+// they can be dropped in query mode; listing mode always fills them.
 public sealed record TaskSearchNodeView(
 	string Key,
 	string NodeId,
 	string Board,
 	string? ParentNodeId,
 	string? ParentSlug,
-	int Depth,
+	int? Depth,
 	string Status,
 	string Type,
 	string Title,
 	string? Body, // uniform bodyLen contract: ~240 snippet default, full at -1, omitted (null) at 0
-	IReadOnlyList<string> Commits,
-	long Priority,
+	IReadOnlyList<string>? Commits,
+	long? Priority,
 	string? Delivery,
 	IReadOnlyList<LinkDto>? Spec,
 	IReadOnlyList<LinkDto>? BlockedBy,
