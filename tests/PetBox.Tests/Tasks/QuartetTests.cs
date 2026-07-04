@@ -83,10 +83,29 @@ public sealed class QuartetTests : IDisposable
 	[Fact]
 	public async Task Enable_UnknownPreset_Rejected_ListingSlugs()
 	{
-		var act = () => _tasks.EnableMethodologyAsync(Proj, "classic");
+		var act = () => _tasks.EnableMethodologyAsync(Proj, "banana");
 		(await act.Should().ThrowAsync<ArgumentException>())
-			.WithMessage("*unknown methodology preset 'classic'*")
+			.WithMessage("*unknown methodology preset 'banana'*")
 			.WithMessage("*quartet*");
+	}
+
+	// preset-classic: enable with the `classic` preset provisions exactly one standalone
+	// classic board — no quartet, no auto-wire, and a rerun is idempotent.
+	[Fact]
+	public async Task Enable_ClassicPreset_ProvisionsOneClassicBoard()
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "classic");
+		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
+		var classic = boards.Should().ContainSingle().Subject;
+		classic.Kind.Should().Be("classic");
+		classic.SpecBoard.Should().BeNull("classic is outside the spec/work auto-wire");
+
+		// Idempotent rerun; and classic is NOT a singleton — more boards may be created.
+		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "classic");
+		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(1);
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "another", "classic");
+		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(2);
 	}
 
 	// Preset copy: def_get with `preset` renders the built-in preset as a COPYABLE definition
@@ -117,7 +136,7 @@ public sealed class QuartetTests : IDisposable
 		stored.Version.Should().BeGreaterThan(0);
 
 		// Unknown preset → clear error listing the available slugs.
-		var bad = () => TasksTools.MethodologyDefGetAsync(http, Flags(), _tasks, Proj, preset: "classic");
+		var bad = () => TasksTools.MethodologyDefGetAsync(http, Flags(), _tasks, Proj, preset: "banana");
 		(await bad.Should().ThrowAsync<ArgumentException>()).WithMessage("*available presets*");
 	}
 

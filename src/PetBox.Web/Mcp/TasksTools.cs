@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE a named task board in a project. `kind` sets the board role (simple|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition declares via tasks_methodology_def_upsert) which drives the workflow — call tasks_workflow to see the valid types/statuses/transitions for a kind; an unknown kind is rejected naming the valid ones. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
+	[Description("CREATE a named task board in a project. `kind` sets the board role (simple|classic|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition declares via tasks_methodology_def_upsert) which drives the workflow — call tasks_workflow to see the valid types/statuses/transitions for a kind; an unknown kind is rejected naming the valid ones. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null, CancellationToken ct = default)
@@ -99,7 +99,7 @@ public static class TasksTools
 	public static async Task<MethodologyView> MethodologyEnableAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("The methodology preset to provision (default \"quartet\" = intake/ideas/spec/work). Unknown slug → a clear error listing the available presets.")] string? preset = null,
+		[Description("The methodology preset to provision (default \"quartet\" = intake/ideas/spec/work; \"classic\" = one standalone GitHub/Jira/Linear-level board). Unknown slug → a clear error listing the available presets.")] string? preset = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
