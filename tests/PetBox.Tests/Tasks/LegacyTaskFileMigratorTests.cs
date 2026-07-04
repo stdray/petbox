@@ -8,7 +8,6 @@ namespace PetBox.Tests.Tasks;
 
 // Zero-loss migration from legacy per-board files (tasks/<project>/<board>.db) to the
 // per-project file (tasks/<project>.db), with Board stamped, originals kept, idempotent.
-[Collection("DataModule")]
 public sealed class LegacyTaskFileMigratorTests : IDisposable
 {
 	readonly string _dir;
@@ -27,8 +26,7 @@ public sealed class LegacyTaskFileMigratorTests : IDisposable
 	public void Dispose()
 	{
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	// A legacy per-board file with `count` active nodes (keys phase-1..phase-N), Board unset.
@@ -42,7 +40,7 @@ public sealed class LegacyTaskFileMigratorTests : IDisposable
 		var now = DateTime.UtcNow;
 		for (var i = 1; i <= count; i++)
 			db.Insert(new PlanNode { Key = $"phase-{i}", Version = i, Status = "Pending", Name = $"N{i}", Body = "b", Priority = i, NodeId = Guid.NewGuid().ToString("N"), ActiveFrom = i, Created = now, Updated = now });
-		SqliteConnection.ClearAllPools();
+		TestDirs.ClearPoolsUnder(_tasksDir);
 	}
 
 	[Fact]
@@ -94,7 +92,7 @@ public sealed class LegacyTaskFileMigratorTests : IDisposable
 				""";
 			cmd.ExecuteNonQuery();
 		}
-		SqliteConnection.ClearAllPools();
+		TestDirs.ClearPoolsUnder(_tasksDir);
 
 		new LegacyTaskFileMigrator(_tasksDir, _factory).Migrate().Should().Be(1);
 

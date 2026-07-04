@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -16,7 +15,6 @@ namespace PetBox.Tests.Tasks;
 // wave). Part 1 exercises every new validator rule through the service door
 // (DefineMethodologyAsync validates the whole document before storing); part 2 (separate
 // class below) checks the guide renders the new data honestly.
-[Collection("DataModule")]
 public sealed class MethodologySchemaV2ValidationTests : IDisposable
 {
 	const string Proj = "proj";
@@ -42,8 +40,7 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	// ── definition builders ──────────────────────────────────────────────────

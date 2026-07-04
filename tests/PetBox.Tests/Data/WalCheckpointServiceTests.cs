@@ -10,7 +10,6 @@ using PetBox.Data;
 
 namespace PetBox.Tests.Data;
 
-[Collection("DataModule")]
 public sealed class WalCheckpointServiceTests : IAsyncLifetime
 {
 	const string TestProjectKey = "kpvotes";
@@ -57,8 +56,7 @@ public sealed class WalCheckpointServiceTests : IAsyncLifetime
 	public async Task DisposeAsync()
 	{
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	[Fact]
@@ -93,7 +91,7 @@ public sealed class WalCheckpointServiceTests : IAsyncLifetime
 			cmd.CommandText = "CREATE TABLE t (id INTEGER); INSERT INTO t VALUES (1), (2), (3)";
 			await cmd.ExecuteNonQueryAsync();
 		}
-		SqliteConnection.ClearAllPools();
+		TestDirs.ClearPoolsUnder(_baseDir);
 
 		// Run checkpoint pass — should not throw, should observe the DataDbs row.
 		var service = ActivatorUtilities.CreateInstance<WalCheckpointService>(_factory.Services);

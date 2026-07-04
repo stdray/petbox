@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Search;
 using PetBox.Core.Settings;
@@ -60,7 +59,6 @@ public sealed class TokenStemmerTests
 }
 
 // The same promise end-to-end through the real FTS5 table.
-[Collection("DataModule")]
 public sealed class FtsStemmingIntegrationTests : IDisposable
 {
 	readonly string _dir;
@@ -80,8 +78,7 @@ public sealed class FtsStemmingIntegrationTests : IDisposable
 	public void Dispose()
 	{
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	Task Index(string id, string text) =>

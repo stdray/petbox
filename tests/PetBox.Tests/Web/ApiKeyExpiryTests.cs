@@ -10,23 +10,27 @@ using PetBox.Core.Models;
 
 namespace PetBox.Tests.Web;
 
-// WS6.1 — the auth handler rejects an ApiKey past its ExpiresAt.
-[Collection("WebAppFactory")]
-public sealed class ApiKeyExpiryTests : IAsyncLifetime
+// Shared per-class host for ApiKeyExpiryTests (xUnit news the test class per test, so
+// without this fixture every test boots its own WebApplicationFactory). No per-test reset
+// is needed: the two keys are seeded once and every test only sends read requests. The
+// class also left the serialized WebAppFactory collection: its per-class connection string
+// moved from the process-global CONNECTIONSTRINGS__PETBOX env var to in-memory config, and
+// no env var is written at all.
+public sealed class ApiKeyExpiryFixture : IAsyncLifetime
 {
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
+	public const string ExpiredKey = "yb_key_expired_test";
+	public const string ValidKey = "yb_key_valid_test";
 
 	const string Ws = "wsexp";
 	const string Project = "projexp";
-	const string ExpiredKey = "yb_key_expired_test";
-	const string ValidKey = "yb_key_valid_test";
 	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	public ApiKeyExpiryTests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
+
+	public ApiKeyExpiryFixture()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -34,6 +38,7 @@ public sealed class ApiKeyExpiryTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
 						["Features:Config"] = "true",
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = TestPasswordHash,
@@ -44,11 +49,11 @@ public sealed class ApiKeyExpiryTests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 		await db.Projects.Where(p => p.Key == Project).DeleteAsync();
 		await db.ApiKeys.Where(k => k.Key == ExpiredKey || k.Key == ValidKey).DeleteAsync();
@@ -61,9 +66,22 @@ public sealed class ApiKeyExpiryTests : IAsyncLifetime
 
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", null);
+		Client.Dispose();
+		await Factory.DisposeAsync();
+	}
+}
+
+// WS6.1 — the auth handler rejects an ApiKey past its ExpiresAt.
+public sealed class ApiKeyExpiryTests : IClassFixture<ApiKeyExpiryFixture>
+{
+	const string ExpiredKey = ApiKeyExpiryFixture.ExpiredKey;
+	const string ValidKey = ApiKeyExpiryFixture.ValidKey;
+
+	readonly HttpClient _client;
+
+	public ApiKeyExpiryTests(ApiKeyExpiryFixture fx)
+	{
+		_client = fx.Client;
 	}
 
 	[Fact]

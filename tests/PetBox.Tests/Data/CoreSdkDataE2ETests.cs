@@ -3,7 +3,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Client;
@@ -13,27 +12,26 @@ using PetBox.Data;
 
 namespace PetBox.Tests.Data;
 
-// End-to-end: drive the real PetBox.Client SDK (core transport + Data client) against an
-// in-process petbox via WebApplicationFactory's handler. Proves the full round-trip
-// create-db → schema → exec → query through the published client, not just raw HTTP.
-[Collection("DataModule")]
-public sealed class CoreSdkDataE2ETests : IAsyncLifetime
+// Shared per-class host for CoreSdkDataE2ETests (xUnit news the test class per test, so
+// without this fixture both tests boot their own WebApplicationFactory). No per-test reset
+// is needed: only one test creates the "store" db, the other is a read-only not-found check.
+public sealed class CoreSdkDataE2EFixture : IAsyncLifetime
 {
-	const string TestProjectKey = "sdke2e";
-	const string TestApiKey = "yb_key_sdk_e2e_xyz";
-	const string TestWorkspace = "sdke2e-ws";
-	const string TestDbName = "store";
+	public const string TestProjectKey = "sdke2e";
+	public const string TestApiKey = "yb_key_sdk_e2e_xyz";
+	public const string TestWorkspace = "sdke2e-ws";
 
 	readonly string _baseDir;
-	readonly WebApplicationFactory<Program> _factory;
-	PetBoxClient _sdk = null!;
 
-	public CoreSdkDataE2ETests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public PetBoxClient Sdk { get; private set; } = null!;
+
+	public CoreSdkDataE2EFixture()
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-sdke2e-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -56,13 +54,13 @@ public sealed class CoreSdkDataE2ETests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
 
 		// Handler routed to the in-process server — the SDK builds its own HttpClient around it.
-		var handler = _factory.Server.CreateHandler();
+		var handler = Factory.Server.CreateHandler();
 
-		using (var scope = _factory.Services.CreateScope())
+		using (var scope = Factory.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			await db.ApiKeys.Where(k => k.Key == TestApiKey).DeleteAsync();
@@ -74,7 +72,7 @@ public sealed class CoreSdkDataE2ETests : IAsyncLifetime
 			await db.InsertAsync(new ApiKey { Key = TestApiKey, ProjectKey = TestProjectKey, Scopes = "data:read,data:write,data:schema", CreatedAt = DateTime.UtcNow });
 		}
 
-		_sdk = new PetBoxClient(new PetBoxClientOptions
+		Sdk = new PetBoxClient(new PetBoxClientOptions
 		{
 			Endpoint = "http://localhost",
 			ApiKey = TestApiKey,
@@ -84,10 +82,25 @@ public sealed class CoreSdkDataE2ETests : IAsyncLifetime
 
 	public async Task DisposeAsync()
 	{
-		_sdk.Dispose();
-		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		Sdk.Dispose();
+		await Factory.DisposeAsync();
+		TestDirs.CleanupOrDefer(_baseDir);
+	}
+}
+
+// End-to-end: drive the real PetBox.Client SDK (core transport + Data client) against an
+// in-process petbox via WebApplicationFactory's handler. Proves the full round-trip
+// create-db → schema → exec → query through the published client, not just raw HTTP.
+public sealed class CoreSdkDataE2ETests : IClassFixture<CoreSdkDataE2EFixture>
+{
+	const string TestProjectKey = CoreSdkDataE2EFixture.TestProjectKey;
+	const string TestDbName = "store";
+
+	readonly PetBoxClient _sdk;
+
+	public CoreSdkDataE2ETests(CoreSdkDataE2EFixture fx)
+	{
+		_sdk = fx.Sdk;
 	}
 
 	[Fact]

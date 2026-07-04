@@ -5,7 +5,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
@@ -14,23 +13,28 @@ using PetBox.Data;
 
 namespace PetBox.Tests.Data;
 
-[Collection("DataModule")]
-public sealed class QueryExecApiTests : IAsyncLifetime
+// Shared per-class host for QueryExecApiTests (xUnit news the test class per test, so
+// without this fixture every test boots its own WebApplicationFactory). The "cache"
+// DataDb + votes table are seeded once; per-test isolation comes from ResetAsync, which
+// empties the votes table (tests insert rows with the constant id=1, and one test asserts
+// the table starts EMPTY) and strips the timeout header one test adds to the shared client.
+public sealed class QueryExecApiFixture : IAsyncLifetime
 {
-	const string TestProjectKey = "kpvotes";
-	const string TestApiKey = "yb_key_test_query_xyz";
-	const string TestDbName = "cache";
+	public const string TestProjectKey = "kpvotes";
+	public const string TestApiKey = "yb_key_test_query_xyz";
+	public const string TestDbName = "cache";
 
 	readonly string _baseDir;
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
 
-	public QueryExecApiTests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
+
+	public QueryExecApiFixture()
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-qe-test-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -55,11 +59,11 @@ public sealed class QueryExecApiTests : IAsyncLifetime
 	{
 		// Force MigrationRunner.Run on the test DB up front — WebApplicationFactory + static
 		// Configure(app) does not always trigger migrations for tests that only touch DI.
-		var __testCs = _factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
+		var __testCs = Factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(__testCs);
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 		await db.DataDbs.DeleteAsync();
 		await db.ApiKeys.Where(k => k.Key == TestApiKey).DeleteAsync();
@@ -70,11 +74,11 @@ public sealed class QueryExecApiTests : IAsyncLifetime
 		await db.InsertAsync(new Project { Key = TestProjectKey, WorkspaceKey = "test", Name = "KpVotes" });
 		await db.InsertAsync(new ApiKey { Key = TestApiKey, ProjectKey = TestProjectKey, Scopes = "data:read,data:write,data:schema", CreatedAt = DateTime.UtcNow });
 
-		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+		Client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
 
 		// Create DataDb + schema for the query/exec scenarios.
-		await _client.PostAsJsonAsync($"/api/data/{TestProjectKey}/dbs", new { name = TestDbName });
-		await _client.PostAsJsonAsync($"/api/data/{TestProjectKey}/{TestDbName}/schema",
+		await Client.PostAsJsonAsync($"/api/data/{TestProjectKey}/dbs", new { name = TestDbName });
+		await Client.PostAsJsonAsync($"/api/data/{TestProjectKey}/{TestDbName}/schema",
 			new
 			{
 				name = "M001",
@@ -82,13 +86,42 @@ public sealed class QueryExecApiTests : IAsyncLifetime
 			});
 	}
 
+	// Per-test reset under the shared host: empty the votes table (constant row ids across
+	// tests; one test asserts SELECT * starts empty) and drop the per-request timeout header
+	// Query_TimeoutHeader_AcceptedWithinLimit adds to the shared client.
+	public async Task ResetAsync()
+	{
+		Client.DefaultRequestHeaders.Remove("X-PetBox-Timeout-Seconds");
+		var resp = await Client.PostAsJsonAsync($"/api/data/{TestProjectKey}/{TestDbName}/exec",
+			new { sql = "DELETE FROM votes" });
+		resp.EnsureSuccessStatusCode();
+	}
+
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		Client.Dispose();
+		await Factory.DisposeAsync();
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
+}
+
+public sealed class QueryExecApiTests : IClassFixture<QueryExecApiFixture>, IAsyncLifetime
+{
+	const string TestProjectKey = QueryExecApiFixture.TestProjectKey;
+	const string TestDbName = QueryExecApiFixture.TestDbName;
+
+	readonly QueryExecApiFixture _fx;
+	readonly HttpClient _client;
+
+	public QueryExecApiTests(QueryExecApiFixture fx)
+	{
+		_fx = fx;
+		_client = fx.Client;
+	}
+
+	public Task InitializeAsync() => _fx.ResetAsync();
+
+	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
 
 	[Fact]
 	public async Task Exec_Insert_Then_Query_Roundtrip()

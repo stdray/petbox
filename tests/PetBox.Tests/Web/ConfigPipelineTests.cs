@@ -11,21 +11,24 @@ using PetBox.Core.Models;
 
 namespace PetBox.Tests.Web;
 
-[Collection("WebAppFactory")]
-public sealed class ConfigPipelineTests : IAsyncLifetime
+// Shared per-class host for ConfigPipelineTests (xUnit news the test class per test, so
+// without this fixture every test boots its own WebApplicationFactory). No per-test reset
+// is needed: the mutating tests write bindings under Guid-unique paths; the rest are
+// auth-rejection checks and a page render. The class also left the serialized
+// WebAppFactory collection: its per-class connection string moved from the process-global
+// CONNECTIONSTRINGS__PETBOX env var to in-memory config (the env var was plumbing — the
+// subject is the bindings REST surface, not host configuration), and no env var is written.
+public sealed class ConfigPipelineFixture : IAsyncLifetime
 {
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
-
-	const string ReadKey = "yb_key_system_internal";
-	const string WriteKey = "yb_key_test_config_write";
-	const string TestPassword = "test123";
+	public const string WriteKey = "yb_key_test_config_write";
 	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	public ConfigPipelineTests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
+
+	public ConfigPipelineFixture()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -33,6 +36,7 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
 						["Features:Config"] = "true",
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = TestPasswordHash,
@@ -43,36 +47,46 @@ public sealed class ConfigPipelineTests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
-		var __testCs = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>(_factory.Services).GetConnectionString("PetBox")!;
-		TestSchema.Core(__testCs);
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		TestSchema.Core(cs);
+		// HandleCookies=false: the shared client must stay stateless — with a cookie jar the
+		// auth cookie from the page-render test's login would leak into the 401/403 API tests.
+		// GetPageAsync passes cookies manually, so it works without the jar.
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions
 		{
 			AllowAutoRedirect = false,
+			HandleCookies = false,
 		});
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
-		try
+		await db.InsertAsync(new ApiKey
 		{
-			await db.InsertAsync(new ApiKey
-			{
-				Key = WriteKey,
-				ProjectKey = "$system",
-				Scopes = "config:read,config:write",
-				CreatedAt = DateTime.UtcNow,
-			});
-		}
-		catch (Microsoft.Data.Sqlite.SqliteException)
-		{
-			// shared in-memory DB — key already inserted by another test instance
-		}
+			Key = WriteKey,
+			ProjectKey = "$system",
+			Scopes = "config:read,config:write",
+			CreatedAt = DateTime.UtcNow,
+		});
 	}
 
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", null);
+		Client.Dispose();
+		await Factory.DisposeAsync();
+	}
+}
+
+public sealed class ConfigPipelineTests : IClassFixture<ConfigPipelineFixture>
+{
+	const string ReadKey = "yb_key_system_internal";
+	const string WriteKey = ConfigPipelineFixture.WriteKey;
+	const string TestPassword = "test123";
+
+	readonly HttpClient _client;
+
+	public ConfigPipelineTests(ConfigPipelineFixture fx)
+	{
+		_client = fx.Client;
 	}
 
 	async Task<HttpResponseMessage> GetPageAsync(string url)

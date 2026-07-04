@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -13,7 +12,6 @@ namespace PetBox.Tests.Memory;
 // index pulled into every agent session, so an entry body over the 10000-char budget is rejected
 // with an educational message. Gated in the service door so both memory_upsert and memory_remember
 // (which share IMemoryService.UpsertAsync) are covered; other stores are never touched.
-[Collection("DataModule")]
 public sealed class MemoryCanonGateTests : IDisposable
 {
 	const string Proj = "proj";
@@ -41,8 +39,7 @@ public sealed class MemoryCanonGateTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static MemoryEntryInput Index(string body) => new()

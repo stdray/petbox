@@ -5,7 +5,6 @@ using LinqToDB.DataProvider.SQLite;
 using LinqToDB.Mapping;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Client;
@@ -19,7 +18,6 @@ namespace PetBox.Tests.Data;
 // End-to-end for the linq2db integration: build a query with linq2db, let the SDK extract its
 // SQL and run it through petbox, materialize the result. Proves the generated SQL is valid
 // SQLite the server actually executes — the full client → wire → server → client path.
-[Collection("DataModule")]
 public sealed class Linq2DbDataE2ETests : IAsyncLifetime
 {
 	const string TestProjectKey = "l2dbe2e";
@@ -101,8 +99,7 @@ public sealed class Linq2DbDataE2ETests : IAsyncLifetime
 	{
 		_sdk.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	[Fact]

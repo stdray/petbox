@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -448,7 +447,6 @@ public sealed class MethodologyPresetsTests
 
 // The preset-driven guards exercised through the SERVICE (the paths that used to be the
 // hardcoded RequireSpecLinks / RequireSpecPlanForReviewAsync / TagStore builtin pair).
-[Collection("DataModule")]
 public sealed class MethodologyPresetGuardsTests : IDisposable
 {
 	const string Proj = "proj";
@@ -476,8 +474,7 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	Task<UpsertOutcome> Upsert(string board, params NodePatch[] nodes) =>

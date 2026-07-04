@@ -22,11 +22,14 @@ public sealed class KestrelAppHost : IAsyncDisposable
 		_tempDir = Path.Combine(Path.GetTempPath(), "petbox-e2e-" + Guid.NewGuid().ToString("N")[..8]);
 		Directory.CreateDirectory(_tempDir);
 
+		// A remote CDP browser (PETBOX_E2E_CDP, e.g. lightpanda in WSL) can't reach the
+		// Windows loopback — bind all interfaces and advertise a host-reachable address.
+		var remoteBrowser = Environment.GetEnvironmentVariable("PETBOX_E2E_CDP") is { Length: > 0 };
 		var settings = new Dictionary<string, string?>(
 			StringComparer.OrdinalIgnoreCase)
 		{
 			["ConnectionStrings:PetBox"] = $"Data Source={_tempDir}/petbox.db",
-			["urls"] = "http://127.0.0.1:0",
+			["urls"] = remoteBrowser ? "http://0.0.0.0:0" : "http://127.0.0.1:0",
 		};
 		configure(settings);
 
@@ -46,6 +49,16 @@ public sealed class KestrelAppHost : IAsyncDisposable
 		BaseUrl = _app.Services.GetRequiredService<IServer>()
 			.Features.Get<IServerAddressesFeature>()?.Addresses.FirstOrDefault()
 			?? throw new InvalidOperationException("Kestrel did not report an address");
+
+		if (remoteBrowser)
+		{
+			// PETBOX_E2E_BASEHOST overrides; default = first non-loopback IPv4 of this machine.
+			var host = Environment.GetEnvironmentVariable("PETBOX_E2E_BASEHOST")
+				?? System.Net.Dns.GetHostAddresses(System.Net.Dns.GetHostName())
+					.First(a => a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork
+						&& !System.Net.IPAddress.IsLoopback(a)).ToString();
+			BaseUrl = BaseUrl.Replace("0.0.0.0", host);
+		}
 
 		WarmUp();
 	}

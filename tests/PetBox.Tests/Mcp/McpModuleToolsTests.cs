@@ -2,7 +2,6 @@ using System.Security.Claims;
 using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -23,7 +22,6 @@ namespace PetBox.Tests.Mcp;
 // HttpContext + real stores). The MCP transport itself is covered by the
 // existing McpDataToolsTests; here we validate tool logic, auth guards, and
 // the temporal integration.
-[Collection("DataModule")]
 public sealed class McpModuleToolsTests : IDisposable
 {
 	const string Proj = "proj";
@@ -73,8 +71,7 @@ public sealed class McpModuleToolsTests : IDisposable
 		_tasksFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		_memFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		_sessFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

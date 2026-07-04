@@ -37,7 +37,7 @@ public sealed class LegacyMigrationTests
 						('b',1,2,'B','x',0,1,NULL,'2026-01-01','2026-01-01');
 					""");
 			}
-			SqliteConnection.ClearAllPools();
+			TestDirs.ClearPoolsUnder(dir);
 
 			// New code opens the file → M002/M003/M004 run in place.
 			TasksSchema.Ensure(cs);
@@ -53,8 +53,7 @@ public sealed class LegacyMigrationTests
 		}
 		finally
 		{
-			SqliteConnection.ClearAllPools();
-			if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
+			TestDirs.CleanupOrDefer(dir);
 		}
 	}
 

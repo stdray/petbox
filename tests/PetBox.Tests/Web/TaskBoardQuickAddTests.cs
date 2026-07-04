@@ -1,6 +1,5 @@
 using LinqToDB;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -17,7 +16,6 @@ namespace PetBox.Tests.Web;
 // bare form can't supply — Spec (ideaRef) and Work (specRef). Free/Ideas/Intake keep it.
 // These tests verify the render flag + POST gate track the single preset knob (MethodologyPresets.QuickAddAllowed); the
 // expectation is read from that same knob, so flipping a kind's policy flips both together.
-[Collection("DataModule")]
 public sealed class TaskBoardQuickAddTests : IDisposable
 {
 	readonly string _dir;
@@ -44,8 +42,7 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static FeatureFlags Flags() =>

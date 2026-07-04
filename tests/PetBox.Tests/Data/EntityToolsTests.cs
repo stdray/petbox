@@ -3,7 +3,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -14,23 +13,23 @@ using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Data;
 
-// Covers the per-type lifecycle MCP tools that replaced the generic entity.* surface
-// (typed-surface Phase 4): log_create/list/delete, db_create/describe, and the
-// config.* binding tools. Each tool now takes flat, typed params (no JsonElement),
-// so a real MCP client gets a per-field input schema. Provisioning (project/apikey)
-// lives in ProvisioningToolsTests; SQL round-trips in McpDataToolsTests.
-[Collection("DataModule")]
-public sealed class EntityToolsTests : IAsyncLifetime
+// Shared per-class host for EntityToolsTests (xUnit news the test class per test, so
+// without this fixture every test boots its own WebApplicationFactory). No per-test reset
+// is needed: each test uses its own entity names (log "audit" is created+deleted within one
+// test; dbs "appdb"/"listdb"/ "ghost" are each touched by exactly one test), config-binding
+// paths are either Guid-unique or asserted with idempotent Contains/single-active checks.
+public sealed class EntityToolsFixture : IAsyncLifetime
 {
-	const string ProjectKey = "entproj";
-	const string ApiKey = "yb_key_entity_tools";
+	public const string ProjectKey = "entproj";
+	public const string ApiKey = "yb_key_entity_tools";
 
 	readonly string _baseDir;
-	readonly WebApplicationFactory<Program> _factory;
-	McpClient _mcp = null!;
 	HttpClient _http = null!;
 
-	public EntityToolsTests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public McpClient Mcp { get; private set; } = null!;
+
+	public EntityToolsFixture()
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-entity-test-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
@@ -38,7 +37,7 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		Environment.SetEnvironmentVariable("Features__Logging", "true");
 		Environment.SetEnvironmentVariable("Features__Data", "true");
 
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -68,11 +67,11 @@ public sealed class EntityToolsTests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
-		_http = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		_http = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using (var scope = _factory.Services.CreateScope())
+		using (var scope = Factory.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			await db.ApiKeys.Where(k => k.Key == ApiKey).DeleteAsync();
@@ -95,16 +94,34 @@ public sealed class EntityToolsTests : IAsyncLifetime
 			Endpoint = new Uri(_http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = ApiKey },
 		}, _http);
-		_mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		Mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
 	}
 
 	public async Task DisposeAsync()
 	{
-		await _mcp.DisposeAsync();
+		await Mcp.DisposeAsync();
 		_http.Dispose();
-		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		await Factory.DisposeAsync();
+		TestDirs.CleanupOrDefer(_baseDir);
+	}
+}
+
+// Covers the per-type lifecycle MCP tools that replaced the generic entity.* surface
+// (typed-surface Phase 4): log_create/list/delete, db_create/describe, and the
+// config.* binding tools. Each tool now takes flat, typed params (no JsonElement),
+// so a real MCP client gets a per-field input schema. Provisioning (project/apikey)
+// lives in ProvisioningToolsTests; SQL round-trips in McpDataToolsTests.
+public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
+{
+	const string ProjectKey = EntityToolsFixture.ProjectKey;
+
+	readonly WebApplicationFactory<Program> _factory;
+	readonly McpClient _mcp;
+
+	public EntityToolsTests(EntityToolsFixture fx)
+	{
+		_factory = fx.Factory;
+		_mcp = fx.Mcp;
 	}
 
 	async Task<McpClientTool> ToolAsync(string name) =>

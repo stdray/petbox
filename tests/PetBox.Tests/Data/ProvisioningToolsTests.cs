@@ -10,30 +10,29 @@ using PetBox.Core.Models;
 
 namespace PetBox.Tests.Data;
 
-// WS6.2 — agent-provisioning MCP tools, now typed per-type (typed-surface Phase 4):
-// project_create/list, apikey_create/list/delete (replacing the generic entity.* dispatch).
-// An agent key with admin:provision can create a project and mint a downstream key; a key
-// without the scope is rejected. Every tool surfaces failures as a structured {error}
-// payload (GuardAsync), so we assert error CONTENT, not just IsError.
-[Collection("DataModule")]
-public sealed class ProvisioningToolsTests : IAsyncLifetime
+// Shared per-class host for ProvisioningToolsTests (xUnit news the test class per test, so
+// without this fixture every test boots its own WebApplicationFactory). No per-test reset
+// is needed: tests create projects/keys with Guid-unique keys, and the only constant-name
+// entity (the wildcard "maintenance" key) is asserted with accumulation-tolerant
+// Any/Contains checks.
+public sealed class ProvisioningToolsFixture : IAsyncLifetime
 {
-	const string Workspace = "wsprov";
-	const string AgentKey = "yb_key_agent_prov";
-	const string NoScopeKey = "yb_key_no_prov";
+	public const string Workspace = "wsprov";
+	public const string AgentKey = "yb_key_agent_prov";
+	public const string NoScopeKey = "yb_key_no_prov";
 
-	readonly WebApplicationFactory<Program> _factory;
 	HttpClient _http = null!;
-	McpClient _mcp = null!;
 
-	public ProvisioningToolsTests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public McpClient Mcp { get; private set; } = null!;
+
+	public ProvisioningToolsFixture()
 	{
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
 		Environment.SetEnvironmentVariable("Features__Config", "true");
 
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -41,6 +40,10 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
+						// In-memory config (not the CONNECTIONSTRINGS__PETBOX env var): a
+						// process-wide env write with a per-class value would leak into any
+						// host booting concurrently now that classes run in parallel.
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
 						["Features:Config"] = "true",
 					});
 				});
@@ -49,11 +52,11 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
-		_http = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		_http = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using (var scope = _factory.Services.CreateScope())
+		using (var scope = Factory.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			await db.ApiKeys.Where(k => k.Key == AgentKey || k.Key == NoScopeKey).DeleteAsync();
@@ -69,15 +72,34 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 			Endpoint = new Uri(_http.BaseAddress!, "/mcp"),
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = AgentKey },
 		}, _http);
-		_mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		Mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
 	}
 
 	public async Task DisposeAsync()
 	{
-		await _mcp.DisposeAsync();
+		await Mcp.DisposeAsync();
 		_http.Dispose();
-		await _factory.DisposeAsync();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", null);
+		await Factory.DisposeAsync();
+	}
+}
+
+// WS6.2 — agent-provisioning MCP tools, now typed per-type (typed-surface Phase 4):
+// project_create/list, apikey_create/list/delete (replacing the generic entity.* dispatch).
+// An agent key with admin:provision can create a project and mint a downstream key; a key
+// without the scope is rejected. Every tool surfaces failures as a structured {error}
+// payload (GuardAsync), so we assert error CONTENT, not just IsError.
+public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixture>
+{
+	const string Workspace = ProvisioningToolsFixture.Workspace;
+	const string NoScopeKey = ProvisioningToolsFixture.NoScopeKey;
+
+	readonly WebApplicationFactory<Program> _factory;
+	readonly McpClient _mcp;
+
+	public ProvisioningToolsTests(ProvisioningToolsFixture fx)
+	{
+		_factory = fx.Factory;
+		_mcp = fx.Mcp;
 	}
 
 	async Task<McpClientTool> ToolAsync(string name) =>

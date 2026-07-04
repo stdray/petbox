@@ -4,7 +4,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
@@ -13,23 +12,28 @@ using PetBox.Data;
 
 namespace PetBox.Tests.Data;
 
-[Collection("DataModule")]
-public sealed class SchemaApiTests : IAsyncLifetime
+// Shared per-class host for SchemaApiTests (xUnit news the test class per test, so
+// without this fixture every test boots its own WebApplicationFactory). Tests apply
+// migrations with the constant names M001/M002 into the constant "cache" db and one test
+// asserts the migrations list starts EMPTY, so ResetAsync recreates the target DataDb
+// from scratch before every test (metadata row + physical file).
+public sealed class SchemaApiFixture : IAsyncLifetime
 {
-	const string TestProjectKey = "kpvotes";
-	const string TestApiKey = "yb_key_test_schema_xyz";
-	const string TestDbName = "cache";
+	public const string TestProjectKey = "kpvotes";
+	public const string TestApiKey = "yb_key_test_schema_xyz";
+	public const string TestDbName = "cache";
 
 	readonly string _baseDir;
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
 
-	public SchemaApiTests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
+
+	public SchemaApiFixture()
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-schemaapi-test-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -54,11 +58,11 @@ public sealed class SchemaApiTests : IAsyncLifetime
 	{
 		// Force MigrationRunner.Run on the test DB up front — WebApplicationFactory + static
 		// Configure(app) does not always trigger migrations for tests that only touch DI.
-		var __testCs = _factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
+		var __testCs = Factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(__testCs);
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 
 		await db.DataDbs.DeleteAsync();
@@ -70,20 +74,57 @@ public sealed class SchemaApiTests : IAsyncLifetime
 		await db.InsertAsync(new Project { Key = TestProjectKey, WorkspaceKey = "test", Name = "KpVotes" });
 		await db.InsertAsync(new ApiKey { Key = TestApiKey, ProjectKey = TestProjectKey, Scopes = "data:read,data:schema", CreatedAt = DateTime.UtcNow });
 
-		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+		Client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+	}
 
-		// Create a target DataDb for the schema tests.
-		var resp = await _client.PostAsJsonAsync($"/api/data/{TestProjectKey}/dbs", new { name = TestDbName });
+	// Per-test reset under the shared host: drop all DataDbs metadata rows, delete the
+	// physical files a previous test created (pool handles released first), then recreate
+	// the empty "cache" target db every test starts from.
+	public async Task ResetAsync()
+	{
+		using (var scope = Factory.Services.CreateScope())
+		{
+			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			await db.DataDbs.DeleteAsync();
+		}
+
+		if (Directory.Exists(_baseDir))
+		{
+			TestDirs.ClearPoolsUnder(_baseDir); // release pooled handles before file deletes
+			foreach (var file in Directory.EnumerateFiles(_baseDir, "*.db", SearchOption.AllDirectories))
+				if (!PetBox.Core.Data.ScopedDbFiles.TryDelete(file))
+					throw new InvalidOperationException($"per-test reset could not delete {file} (still locked)");
+		}
+
+		var resp = await Client.PostAsJsonAsync($"/api/data/{TestProjectKey}/dbs", new { name = TestDbName });
 		resp.EnsureSuccessStatusCode();
 	}
 
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		Client.Dispose();
+		await Factory.DisposeAsync();
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
+}
+
+public sealed class SchemaApiTests : IClassFixture<SchemaApiFixture>, IAsyncLifetime
+{
+	const string TestProjectKey = SchemaApiFixture.TestProjectKey;
+	const string TestDbName = SchemaApiFixture.TestDbName;
+
+	readonly SchemaApiFixture _fx;
+	readonly HttpClient _client;
+
+	public SchemaApiTests(SchemaApiFixture fx)
+	{
+		_fx = fx;
+		_client = fx.Client;
+	}
+
+	public Task InitializeAsync() => _fx.ResetAsync();
+
+	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
 
 	[Fact]
 	public async Task Apply_NewScript_Returns200_Applied()

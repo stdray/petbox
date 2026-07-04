@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Settings;
 using PetBox.Sessions.Contract;
@@ -10,7 +9,6 @@ namespace PetBox.Tests.Sessions;
 // Covers the converged session write path: the MCP session_upsert tool and the REST Stop-hook
 // endpoint both delegate to ISessionService, so testing the service exercises the one path both
 // surfaces share (the arch test proves neither bypasses it). Latest-snapshot, last-write-wins.
-[Collection("DataModule")]
 public sealed class SessionServiceTests : IDisposable
 {
 	readonly string _dir;
@@ -29,8 +27,7 @@ public sealed class SessionServiceTests : IDisposable
 	public void Dispose()
 	{
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static SessionMessageInput[] Msgs(params (string Role, string Content)[] m) =>

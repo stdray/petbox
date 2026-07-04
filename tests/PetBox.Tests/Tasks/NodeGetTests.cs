@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -19,7 +18,6 @@ namespace PetBox.Tests.Tasks;
 // returned like any other (an addressed ask has no includeClosed), and a miss is a clear
 // board-naming error. Plus the tasks_search `status` filter: only the named slugs, with a
 // terminal slug honored even when includeClosed=false.
-[Collection("DataModule")]
 public sealed class NodeGetTests : IDisposable
 {
 	const string Proj = "proj";
@@ -45,8 +43,7 @@ public sealed class NodeGetTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static IHttpContextAccessor Http(string scopes = "tasks:read,tasks:write")

@@ -15,11 +15,7 @@ public sealed class BackupTests : IDisposable
 		Directory.CreateDirectory(_dir);
 	}
 
-	public void Dispose()
-	{
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
-	}
+	public void Dispose() => TestDirs.CleanupOrDefer(_dir);
 
 	[Fact]
 	public void SnapshotAll_CopiesValidDb_MirroringLayout()

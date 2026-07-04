@@ -4,7 +4,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -34,11 +33,15 @@ namespace PetBox.Tests.Mcp;
 //      structuredContent conforms (the happy path a strict client validates).
 //   3. Edge battery: not-found / delete-missing branches — assert the universal strict-client
 //      property (isError OR conforms). This is exactly where the -32600 class lives.
-[Collection("DataModule")]
-public sealed class McpOutputSchemaConformanceTests : IAsyncLifetime
+// Shared per-class host for the conformance battery (xUnit news the test class per test,
+// so without this fixture all three tests boot their own WebApplicationFactory — with
+// EVERY feature enabled, one of the most expensive hosts in the suite). No per-test reset
+// is needed: the coverage gate is read-only, the success battery seeds its entities exactly
+// once, and the edge battery only probes not-found branches (isError either way).
+public sealed class McpOutputSchemaConformanceFixture : IAsyncLifetime
 {
-	const string ProjectKey = "conf";
-	const string ApiKey = "yb_key_conf_agent";
+	public const string ProjectKey = "conf";
+	public const string ApiKey = "yb_key_conf_agent";
 	// Full enumerated scope set — so scope-gating never turns a covered read into an isError.
 	const string Scopes =
 		"config:read,config:write,logs:ingest,logs:query,logs:admin,health:read,health:write," +
@@ -49,48 +52,10 @@ public sealed class McpOutputSchemaConformanceTests : IAsyncLifetime
 	readonly WebApplicationFactory<Program> _factory;
 	HttpClient _http = null!;
 	McpClient _mcp = null!;
-	IReadOnlyDictionary<string, McpClientTool> _tools = null!;
 
-	// ── Explicit non-coverage, each with a reason. The coverage gate requires every
-	// outputSchema tool to be here OR exercised in the battery. Two kinds of reason:
-	//   external  — cannot succeed in-process (needs a live LLM endpoint / SSH to a fleet node).
-	//   pending   — a write with complex/chained state or args not yet wired; TRACKED in the
-	//               chore so it is enforced-visible, never silently missed.
-	static readonly IReadOnlyDictionary<string, string> Excluded = new Dictionary<string, string>
-	{
-		// external: real infrastructure
-		["llm_chat"] = "external: needs a live LLM endpoint",
-		["llm_embed"] = "external: needs a live LLM endpoint",
-		["llm_rerank"] = "external: needs a live LLM endpoint",
-		["deploy_start"] = "external: SSHes to a fleet node",
-		["deploy_stop"] = "external: SSHes to a fleet node",
-		// pending: chained/complex state — tracked in mcp-conformance-exhaustive
-		["session_append"] = "pending: message-array shape not yet wired",
-		["tasks_board_set_spec"] = "pending: needs a spec board seeded",
-		["tasks_methodology_enable"] = "pending: mutates board setup mid-battery",
-		["tasks_methodology_def_upsert"] = "pending: full methodology-definition JSON",
-		["config_binding_upsert"] = "pending: binding args not yet wired",
-		["config_binding_delete"] = "pending: binding args not yet wired",
-		["db_create"] = "pending: Data chain (create→schema→exec→query→describe)",
-		["db_delete"] = "pending: Data chain",
-		["db_describe"] = "pending: Data chain (needs a db+schema)",
-		["data_schema_apply"] = "pending: Data chain",
-		["data_query"] = "pending: Data chain (needs a db+table)",
-		["data_exec"] = "pending: Data chain (needs a db+table)",
-		["deploy_node_upsert"] = "pending: node args not yet wired",
-		["deploy_upsert"] = "pending: deployment args not yet wired",
-		["deploy_move"] = "pending: deployment+node args",
-		["deploy_node_delete"] = "pending: needs a seeded node",
-		["deploy_delete"] = "pending: needs a seeded deployment",
-		["project_create"] = "pending: workspace/project args not yet wired",
-		["relations_create"] = "pending: endpoint refs not yet wired",
-		["apikey_create"] = "pending: mint args not yet wired",
-		["apikey_delete"] = "pending: needs a minted key",
-		["report_issue"] = "pending: issue args not yet wired",
-		["llm_config_set"] = "pending: registry payload not yet wired",
-	};
+	public IReadOnlyDictionary<string, McpClientTool> Tools { get; private set; } = null!;
 
-	public McpOutputSchemaConformanceTests()
+	public McpOutputSchemaConformanceFixture()
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-conf-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
@@ -152,7 +117,7 @@ public sealed class McpOutputSchemaConformanceTests : IAsyncLifetime
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = ApiKey },
 		}, _http);
 		_mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
-		_tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
+		Tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
 	}
 
 	public async Task DisposeAsync()
@@ -160,9 +125,59 @@ public sealed class McpOutputSchemaConformanceTests : IAsyncLifetime
 		await _mcp.DisposeAsync();
 		_http.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
+}
+
+public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSchemaConformanceFixture>
+{
+	const string ProjectKey = McpOutputSchemaConformanceFixture.ProjectKey;
+
+	readonly IReadOnlyDictionary<string, McpClientTool> _tools;
+
+	public McpOutputSchemaConformanceTests(McpOutputSchemaConformanceFixture fx)
+	{
+		_tools = fx.Tools;
+	}
+
+	// ── Explicit non-coverage, each with a reason. The coverage gate requires every
+	// outputSchema tool to be here OR exercised in the battery. Two kinds of reason:
+	//   external  — cannot succeed in-process (needs a live LLM endpoint / SSH to a fleet node).
+	//   pending   — a write with complex/chained state or args not yet wired; TRACKED in the
+	//               chore so it is enforced-visible, never silently missed.
+	static readonly IReadOnlyDictionary<string, string> Excluded = new Dictionary<string, string>
+	{
+		// external: real infrastructure
+		["llm_chat"] = "external: needs a live LLM endpoint",
+		["llm_embed"] = "external: needs a live LLM endpoint",
+		["llm_rerank"] = "external: needs a live LLM endpoint",
+		["deploy_start"] = "external: SSHes to a fleet node",
+		["deploy_stop"] = "external: SSHes to a fleet node",
+		// pending: chained/complex state — tracked in mcp-conformance-exhaustive
+		["session_append"] = "pending: message-array shape not yet wired",
+		["tasks_board_set_spec"] = "pending: needs a spec board seeded",
+		["tasks_methodology_enable"] = "pending: mutates board setup mid-battery",
+		["tasks_methodology_def_upsert"] = "pending: full methodology-definition JSON",
+		["config_binding_upsert"] = "pending: binding args not yet wired",
+		["config_binding_delete"] = "pending: binding args not yet wired",
+		["db_create"] = "pending: Data chain (create→schema→exec→query→describe)",
+		["db_delete"] = "pending: Data chain",
+		["db_describe"] = "pending: Data chain (needs a db+schema)",
+		["data_schema_apply"] = "pending: Data chain",
+		["data_query"] = "pending: Data chain (needs a db+table)",
+		["data_exec"] = "pending: Data chain (needs a db+table)",
+		["deploy_node_upsert"] = "pending: node args not yet wired",
+		["deploy_upsert"] = "pending: deployment args not yet wired",
+		["deploy_move"] = "pending: deployment+node args",
+		["deploy_node_delete"] = "pending: needs a seeded node",
+		["deploy_delete"] = "pending: needs a seeded deployment",
+		["project_create"] = "pending: workspace/project args not yet wired",
+		["relations_create"] = "pending: endpoint refs not yet wired",
+		["apikey_create"] = "pending: mint args not yet wired",
+		["apikey_delete"] = "pending: needs a minted key",
+		["report_issue"] = "pending: issue args not yet wired",
+		["llm_config_set"] = "pending: registry payload not yet wired",
+	};
 
 	// 1. COVERAGE GATE — nothing escapes. Every tool that declares an outputSchema is either
 	// exercised in the battery below or explicitly Excluded with a reason.

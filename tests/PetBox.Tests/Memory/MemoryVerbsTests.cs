@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -18,7 +17,6 @@ namespace PetBox.Tests.Memory;
 // that cascades project ⊕ workspace, sweeps every store by default, and labels rows by
 // scope. The "$workspace" container project is seeded by M028, so MigrationRunner makes
 // it available here.
-[Collection("DataModule")]
 public sealed class MemoryVerbsTests : IDisposable
 {
 	const string Proj = "proj";
@@ -52,8 +50,7 @@ public sealed class MemoryVerbsTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

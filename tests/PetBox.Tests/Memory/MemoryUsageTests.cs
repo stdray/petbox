@@ -1,7 +1,6 @@
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -18,7 +17,6 @@ namespace PetBox.Tests.Memory;
 // engagement, listing counts nothing, internal IMemoryService traffic counts nothing,
 // counters surface only under includeUsage, and the read path never waits on the write
 // (the recorder is a queue — tests flush explicitly).
-[Collection("DataModule")]
 public sealed class MemoryUsageTests : IDisposable
 {
 	const string Proj = "proj";
@@ -35,7 +33,7 @@ public sealed class MemoryUsageTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-memusage-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
-		MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
@@ -50,8 +48,7 @@ public sealed class MemoryUsageTests : IDisposable
 		_recorder.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static IHttpContextAccessor Http()

@@ -2,7 +2,6 @@ using System.Security.Claims;
 using System.Text.Json;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -15,7 +14,6 @@ namespace PetBox.Tests.Mcp;
 
 // Exercises the deploy.* MCP tool methods directly (mocked HttpContext + real DeployDb +
 // PetBoxDb for key minting). Validates tool logic, scope guards, and key minting.
-[Collection("DataModule")]
 public sealed class DeployToolsTests : IDisposable
 {
 	readonly string _dir;
@@ -41,8 +39,7 @@ public sealed class DeployToolsTests : IDisposable
 	{
 		_deploy.Dispose();
 		_db.Dispose();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

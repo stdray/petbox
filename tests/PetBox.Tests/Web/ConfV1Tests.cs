@@ -12,22 +12,26 @@ using PetBox.Core.Models;
 
 namespace PetBox.Tests.Web;
 
-// Integration tests for the legacy yobaconf-compatible bulk-resolve endpoint /v1/conf.
-[Collection("WebAppFactory")]
-public sealed class ConfV1Tests : IAsyncLifetime
+// Shared per-class host for ConfV1Tests (xUnit news the test class per test, so without
+// this fixture every test boots its own WebApplicationFactory). No per-test reset is
+// needed: the three bindings are seeded once and every test only READS them through
+// /v1/conf. The class also left the serialized WebAppFactory collection: its per-class
+// connection string moved from the process-global CONNECTIONSTRINGS__PETBOX env var to
+// in-memory config (the env var was plumbing, not the subject under test — /v1/conf
+// resolves workspace config BINDINGS, not host configuration), and no env var is written.
+public sealed class ConfV1Fixture : IAsyncLifetime
 {
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
-
-	const string Ws = "wsv1";
-	const string Project = "projv1";
-	const string Key = "yb_key_v1conf_test";
+	public const string Ws = "wsv1";
+	public const string Project = "projv1";
+	public const string Key = "yb_key_v1conf_test";
 	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	public ConfV1Tests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
+
+	public ConfV1Fixture()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -35,6 +39,7 @@ public sealed class ConfV1Tests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
 						["Features:Config"] = "true",
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = TestPasswordHash,
@@ -45,11 +50,11 @@ public sealed class ConfV1Tests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 		await db.Workspaces.Where(w => w.Key == Ws).DeleteAsync();
 		await db.Projects.Where(p => p.Key == Project).DeleteAsync();
@@ -72,9 +77,21 @@ public sealed class ConfV1Tests : IAsyncLifetime
 
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", null);
+		Client.Dispose();
+		await Factory.DisposeAsync();
+	}
+}
+
+// Integration tests for the legacy yobaconf-compatible bulk-resolve endpoint /v1/conf.
+public sealed class ConfV1Tests : IClassFixture<ConfV1Fixture>
+{
+	const string Key = ConfV1Fixture.Key;
+
+	readonly HttpClient _client;
+
+	public ConfV1Tests(ConfV1Fixture fx)
+	{
+		_client = fx.Client;
 	}
 
 	static HttpRequestMessage Conf(string query, string headerName = "X-YobaConf-ApiKey")

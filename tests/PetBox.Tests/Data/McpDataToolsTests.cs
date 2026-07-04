@@ -4,7 +4,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -14,29 +13,27 @@ using PetBox.Data;
 
 namespace PetBox.Tests.Data;
 
-// Sanity tests for the MCP server: tools/list discovery + a couple of
-// round-trips that exercise the most-trafficked Data tools (create_db,
-// schema_apply, exec, query). Deep behavior is already covered by the REST
-// QueryExecApiTests / SchemaApiTests — the MCP layer reuses the same code
-// paths, so we just verify the surface works end-to-end through the protocol.
-[Collection("DataModule")]
-public sealed class McpDataToolsTests : IAsyncLifetime
+// Shared per-class host for McpDataToolsTests (xUnit news the test class per test, so
+// without this fixture every test boots its own WebApplicationFactory). No per-test reset
+// is needed: each mutating test creates its own db name ("mcptest" / "tmp"), touched by
+// exactly one test; the rest are read-only discovery/rejection checks.
+public sealed class McpDataToolsFixture : IAsyncLifetime
 {
-	const string TestProjectKey = "kpvotes";
-	const string TestApiKey = "yb_key_test_mcp_xyz";
-	const string TestDbName = "mcptest";
+	public const string TestProjectKey = "kpvotes";
+	public const string TestApiKey = "yb_key_test_mcp_xyz";
 
 	readonly string _baseDir;
-	readonly WebApplicationFactory<Program> _factory;
-	McpClient _mcp = null!;
 	HttpClient _http = null!;
 
-	public McpDataToolsTests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public McpClient Mcp { get; private set; } = null!;
+
+	public McpDataToolsFixture()
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-mcp-test-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -61,11 +58,11 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 	{
 		// Force MigrationRunner.Run on the test DB up front — WebApplicationFactory + static
 		// Configure(app) does not always trigger migrations for tests that only touch DI.
-		var __testCs = _factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
+		var __testCs = Factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(__testCs);
-		_http = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		_http = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using (var scope = _factory.Services.CreateScope())
+		using (var scope = Factory.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			await db.DataDbs.DeleteAsync();
@@ -92,16 +89,33 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = TestApiKey },
 		}, _http);
 
-		_mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+		Mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
 	}
 
 	public async Task DisposeAsync()
 	{
-		await _mcp.DisposeAsync();
+		await Mcp.DisposeAsync();
 		_http.Dispose();
-		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		await Factory.DisposeAsync();
+		TestDirs.CleanupOrDefer(_baseDir);
+	}
+}
+
+// Sanity tests for the MCP server: tools/list discovery + a couple of
+// round-trips that exercise the most-trafficked Data tools (create_db,
+// schema_apply, exec, query). Deep behavior is already covered by the REST
+// QueryExecApiTests / SchemaApiTests — the MCP layer reuses the same code
+// paths, so we just verify the surface works end-to-end through the protocol.
+public sealed class McpDataToolsTests : IClassFixture<McpDataToolsFixture>
+{
+	const string TestProjectKey = McpDataToolsFixture.TestProjectKey;
+	const string TestDbName = "mcptest";
+
+	readonly McpClient _mcp;
+
+	public McpDataToolsTests(McpDataToolsFixture fx)
+	{
+		_mcp = fx.Mcp;
 	}
 
 	[Fact]

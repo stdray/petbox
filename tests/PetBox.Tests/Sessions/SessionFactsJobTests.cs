@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -19,7 +18,6 @@ namespace PetBox.Tests.Sessions;
 // store with verbatim provenance; repeats are judged against retrieved neighbors and
 // never duplicate; curated stores are never machine-modified; bad LLM output neither
 // crashes the pass nor burns chat calls forever.
-[Collection("DataModule")]
 public sealed class SessionFactsJobTests : IDisposable
 {
 	const string Proj = "proj";
@@ -37,7 +35,7 @@ public sealed class SessionFactsJobTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-sessfacts-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
-		MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_sessionsFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
@@ -53,8 +51,7 @@ public sealed class SessionFactsJobTests : IDisposable
 		_db.Dispose();
 		_sessionsFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		_memoryFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	SessionFactsJob Job(ILlmClient? llm, TimeSpan? budget = null) =>

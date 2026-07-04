@@ -18,10 +18,12 @@ namespace PetBox.Tests.Observability;
 // Self-tracing (spec: self-tracing): service-layer writes emit operation-boundary spans
 // so a request trace decomposes in the waterfall instead of being a single AspNetCore
 // span. Listeners subscribe per-source, mirroring what AddSource does in Program.cs.
-[Collection("DataModule")]
+// The sources are process-global statics, so under parallel classes the listener also
+// sees spans from other tests' hosts — every assertion pins spans to THIS test via the
+// unique project key (or span identity), never by operation name alone.
 public sealed class SelfTracingTests : IDisposable
 {
-	const string Proj = "proj";
+	readonly string _proj = "proj-" + Guid.NewGuid().ToString("N")[..8];
 	readonly string _dir;
 	readonly PetBoxDb _db;
 
@@ -32,13 +34,13 @@ public sealed class SelfTracingTests : IDisposable
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
 		TestSchema.Core(cs);
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
-		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
+		_db.Insert(new Project { Key = _proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 	}
 
 	public void Dispose()
 	{
 		_db.Dispose();
-		try { Directory.Delete(_dir, recursive: true); } catch { }
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static (ActivityListener Listener, List<Activity> Started) Listen(string sourceName)
@@ -54,6 +56,12 @@ public sealed class SelfTracingTests : IDisposable
 		return (listener, started);
 	}
 
+	// Parallel tests may still be appending when we start asserting — enumerate a copy.
+	static Activity[] Snapshot(List<Activity> started)
+	{
+		lock (started) return started.ToArray();
+	}
+
 	[Fact]
 	public async Task Tasks_upsert_emits_operation_span_with_segment_children()
 	{
@@ -65,18 +73,18 @@ public sealed class SelfTracingTests : IDisposable
 		var (listener, started) = Listen(PetBoxActivitySources.TasksSourceName);
 		using (listener)
 		{
-			var r = await tasks.UpsertAsync(Proj, "b", new[] { new NodePatch { Key = "n1", Title = "T", Body = "x" } });
+			var r = await tasks.UpsertAsync(_proj, "b", new[] { new NodePatch { Key = "n1", Title = "T", Body = "x" } });
 			Assert.True(r.Result.Applied);
 		}
 
-		var op = Assert.Single(started, a => a.OperationName == "tasks.upsert");
-		Assert.Equal(Proj, op.GetTagItem("petbox.project"));
+		var snap = Snapshot(started);
+		var op = Assert.Single(snap, a => a.OperationName == "tasks.upsert" && Equals(a.GetTagItem("petbox.project"), _proj));
 		Assert.Equal("b", op.GetTagItem("petbox.board"));
-		var temporal = Assert.Single(started, a => a.OperationName == "tasks.upsert.temporal");
+		var temporal = Assert.Single(snap, a => a.OperationName == "tasks.upsert.temporal" && a.ParentSpanId == op.SpanId);
 		Assert.Equal(op.SpanId, temporal.ParentSpanId);
 		// The applied write also runs the links and fts-tags segments under the same parent.
-		Assert.Contains(started, a => a.OperationName == "tasks.upsert.links" && a.ParentSpanId == op.SpanId);
-		Assert.Contains(started, a => a.OperationName == "tasks.upsert.fts-tags" && a.ParentSpanId == op.SpanId);
+		Assert.Contains(snap, a => a.OperationName == "tasks.upsert.links" && a.ParentSpanId == op.SpanId);
+		Assert.Contains(snap, a => a.OperationName == "tasks.upsert.fts-tags" && a.ParentSpanId == op.SpanId);
 	}
 
 	[Fact]
@@ -89,14 +97,13 @@ public sealed class SelfTracingTests : IDisposable
 		var (listener, started) = Listen(PetBoxActivitySources.MemorySourceName);
 		using (listener)
 		{
-			var r = await memory.UpsertAsync(Proj, "notes",
+			var r = await memory.UpsertAsync(_proj, "notes",
 				new[] { new MemoryEntryInput { Key = "k1", Type = "Project", Body = "x" } },
 				Array.Empty<MemoryDelete>());
 			Assert.True(r.Result.Applied);
 		}
 
-		var op = Assert.Single(started, a => a.OperationName == "memory.upsert");
-		Assert.Equal(Proj, op.GetTagItem("petbox.project"));
+		var op = Assert.Single(Snapshot(started), a => a.OperationName == "memory.upsert" && Equals(a.GetTagItem("petbox.project"), _proj));
 		Assert.Equal("notes", op.GetTagItem("petbox.store"));
 		Assert.Equal(1, op.GetTagItem("petbox.upsert_count"));
 	}
@@ -105,11 +112,13 @@ public sealed class SelfTracingTests : IDisposable
 	public void Mcp_tool_span_is_named_by_tool()
 	{
 		var (listener, started) = Listen(PetBoxActivitySources.McpSourceName);
+		Activity? span;
 		using (listener)
-		using (var span = McpTracingFilter.StartToolSpan("tasks.upsert"))
+		using (span = McpTracingFilter.StartToolSpan("tasks.upsert"))
 			Assert.NotNull(span);
 
-		var op = Assert.Single(started);
+		// Other tests' MCP hosts emit identically-named spans — pin by identity.
+		var op = Assert.Single(Snapshot(started), a => ReferenceEquals(a, span));
 		Assert.Equal("mcp.tool tasks.upsert", op.OperationName);
 		Assert.Equal("tasks.upsert", op.GetTagItem("petbox.tool"));
 	}

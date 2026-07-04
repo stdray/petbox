@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -9,7 +8,6 @@ namespace PetBox.Tests.Tasks;
 
 // Enforced node tags: replace-set semantics with SCD-2 soft-close, controlled
 // namespaces, and a real FK to the vocabulary (node_tag.Tag -> tag_vocab.Tag).
-[Collection("DataModule")]
 public sealed class TagStoreTests : IDisposable
 {
 	const string Proj = "proj";
@@ -36,8 +34,7 @@ public sealed class TagStoreTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

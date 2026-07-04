@@ -1,6 +1,5 @@
 using LinqToDB;
 using LinqToDB.Data;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Search;
@@ -17,7 +16,6 @@ namespace PetBox.Tests.Tasks;
 // makes the semantic leg reproducible so we can assert (a) the fused union, (b) graceful
 // degrade to lexical-only when embedding is absent, (c) the model/dim guard that ignores
 // incomparable stored vectors, (d) Cyrillic lexical match, and (e) board-filter scoping.
-[Collection("DataModule")]
 public sealed class TasksHybridSearchTests : IDisposable
 {
 	const string Proj = "proj";
@@ -49,8 +47,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	TasksService Service(ILlmClient? llm) => new(_store, _relations, _tags, _commentSvc, llm);

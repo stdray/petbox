@@ -4,26 +4,32 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 
 namespace PetBox.Tests.Web;
 
-// WS1 (persistent cookie) + WS3 (bootstrap-admin lockdown) — both exercised via the login POST.
-[Collection("WebAppFactory")]
-public sealed class LoginAuthTests : IAsyncLifetime
+// Shared per-class host for LoginAuthTests. The tests are order-sensitive on a fresh users
+// table (seeding a real sysadmin locks out the bootstrap admin), so ResetAsync wipes
+// Users/WorkspaceMembers before every test; PETBOX_ADMIN_FORCE is read per-request, so the
+// mid-test toggle works on a shared host. The class STAYS in the serialized WebAppFactory
+// collection because of that mid-test process-global env toggle. The per-class connection
+// string moved from the CONNECTIONSTRINGS__PETBOX env var to in-memory config so it cannot
+// leak into concurrently booting hosts.
+public sealed class LoginAuthFixture : IAsyncLifetime
 {
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
+	public const string Password = "test123";
+	public const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	const string Password = "test123";
-	const string PasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
 
-	public LoginAuthTests()
+	public LoginAuthFixture()
 	{
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
 		Environment.SetEnvironmentVariable("PETBOX_ADMIN_FORCE", null);
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -31,6 +37,7 @@ public sealed class LoginAuthTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = PasswordHash,
 					});
@@ -40,20 +47,54 @@ public sealed class LoginAuthTests : IAsyncLifetime
 
 	public Task InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
 		// HandleCookies=false → stateless requests; we pass the antiforgery cookie manually and
 		// never leak an auth cookie between logins (each GET /Login re-issues the antiforgery cookie).
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
 		return Task.CompletedTask;
+	}
+
+	// Per-test reset under the shared host: drop every user (membership rows first — they
+	// reference users), then re-run the startup bootstrapper so the env-admin User +
+	// $system-admin membership rows exist again exactly as on first boot.
+	public async Task ResetAsync()
+	{
+		using var scope = Factory.Services.CreateScope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		await db.WorkspaceMembers.DeleteAsync();
+		await db.Users.DeleteAsync();
+		AdminBootstrapper.EnsureAdminUser(db, scope.ServiceProvider.GetRequiredService<IOptions<AdminOptions>>());
 	}
 
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", null);
+		Client.Dispose();
+		await Factory.DisposeAsync();
 	}
+}
+
+// WS1 (persistent cookie) + WS3 (bootstrap-admin lockdown) — both exercised via the login POST.
+[Collection("WebAppFactory")]
+public sealed class LoginAuthTests : IClassFixture<LoginAuthFixture>, IAsyncLifetime
+{
+	const string Password = LoginAuthFixture.Password;
+	const string PasswordHash = LoginAuthFixture.PasswordHash;
+
+	readonly LoginAuthFixture _fx;
+	readonly WebApplicationFactory<Program> _factory;
+	readonly HttpClient _client;
+
+	public LoginAuthTests(LoginAuthFixture fx)
+	{
+		_fx = fx;
+		_factory = fx.Factory;
+		_client = fx.Client;
+	}
+
+	public Task InitializeAsync() => _fx.ResetAsync();
+
+	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
 
 	async Task<HttpResponseMessage> LoginAsync(string username, string password)
 	{

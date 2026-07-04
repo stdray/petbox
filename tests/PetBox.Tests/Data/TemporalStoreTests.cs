@@ -9,7 +9,6 @@ namespace PetBox.Tests.Data;
 // Exercises the generic temporal-upsert engine through a sample "plan node"
 // payload (enum Status + Body + optional CommitRef). Ports the LINQPad
 // concurrency scenarios into the repo with a temp-file SQLite DB.
-[Collection("DataModule")]
 public sealed class TemporalStoreTests : IDisposable
 {
 	readonly string _dir;
@@ -23,11 +22,7 @@ public sealed class TemporalStoreTests : IDisposable
 		EnsureSchema(_cs);
 	}
 
-	public void Dispose()
-	{
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
-	}
+	public void Dispose() => TestDirs.CleanupOrDefer(_dir);
 
 	[Fact]
 	public async Task Insert_NewNodes_AreActive_AtVersion1()

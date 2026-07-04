@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -15,7 +14,6 @@ namespace PetBox.Tests.Web;
 // The board page's tag-groups projection (board-tag-grouping): ?view=tags&by=<ordered ns list>
 // flattens GetGroupedAsync into header/card rows. The projection is a pure view — the part_of
 // tree is untouched (tag-grouping-is-projection); a bad/empty `by` falls back to the tree.
-[Collection("DataModule")]
 public sealed class TaskBoardTagViewTests : IDisposable
 {
 	readonly string _dir;
@@ -42,8 +40,7 @@ public sealed class TaskBoardTagViewTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static FeatureFlags Flags() =>

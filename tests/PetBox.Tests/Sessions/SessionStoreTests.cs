@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Settings;
 using PetBox.Sessions.Contract;
@@ -7,7 +6,6 @@ using PetBox.Sessions.Data;
 
 namespace PetBox.Tests.Sessions;
 
-[Collection("DataModule")]
 public sealed class SessionStoreTests : IDisposable
 {
 	readonly string _dir;
@@ -26,8 +24,7 @@ public sealed class SessionStoreTests : IDisposable
 	public void Dispose()
 	{
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static SessionRow Row(string id, string text) => new()

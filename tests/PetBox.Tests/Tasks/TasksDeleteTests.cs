@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
@@ -15,7 +14,6 @@ namespace PetBox.Tests.Tasks;
 // FTS row — and rides the normal upsert result (removed[] + closed). Guards: a node with
 // active part_of children is refused via a Rejected conflict; delete cannot combine with
 // rename or an upsert of the same key in one batch.
-[Collection("DataModule")]
 public sealed class TasksDeleteTests : IDisposable
 {
 	const string Proj = "proj";
@@ -45,8 +43,7 @@ public sealed class TasksDeleteTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static NodePatch Node(string key, string? partOf = null, string? title = null, string? blockedBy = null, string? status = null, IReadOnlyList<string>? tags = null, long version = 0) => new()

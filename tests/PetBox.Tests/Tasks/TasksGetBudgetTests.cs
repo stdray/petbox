@@ -3,7 +3,6 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -21,7 +20,6 @@ namespace PetBox.Tests.Tasks;
 // prefix-cut on the wire form of its rows and marked structurally (truncated/omitted +
 // a narrowing hint) — never silently; a board that fits serializes exactly as before
 // (the marker fields default to null and the wire serializer omits nulls).
-[Collection("DataModule")]
 public sealed class TasksGetBudgetTests : IDisposable
 {
 	const string Proj = "proj";
@@ -47,8 +45,7 @@ public sealed class TasksGetBudgetTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static IHttpContextAccessor Http()

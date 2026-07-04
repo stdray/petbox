@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -14,7 +13,6 @@ namespace PetBox.Tests.Memory;
 // never earned a DELIBERATE reach. report-only writes nothing (only logs candidates); enforce
 // soft-deletes recoverably; it touches ONLY the autocaptured store, and spares any entry that
 // was deliberately searched/opened or is still young.
-[Collection("DataModule")]
 public sealed class MemoryQuarantineGcJobTests : IDisposable
 {
 	const string Proj = "proj";
@@ -51,8 +49,7 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 		_recorder.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	MemoryQuarantineGcJob Job(bool enforce, TimeSpan? minAge = null) =>
