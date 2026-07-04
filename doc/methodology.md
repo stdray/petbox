@@ -84,12 +84,26 @@ Intake is the **inbox for raw observations** that are neither an idea nor a task
 bugs ("font too small"), questions ("does model X cope with the methodology?"), wishes.
 Two queues (agent-reported, user-reported); items land at `reported` (via `report_issue`
 or a direct upsert). It is NOT part of the requirements pipeline — it's a holding area
-until each item is routed. **Triage** moves an item to exactly one of:
+until each item is routed.
+
+**Intake is deferred triage, NOT a mandatory gateway.** It exists for reports whose
+reporter is not the router (external users, an agent without the context to diagnose) and
+for observations you don't want to route right now (noticed mid-task — park it, don't
+derail). When the reporter CAN route — the maintainer, or an agent with a clear diagnosis —
+and the destination is obvious, create the node at the destination directly and skip
+intake: engineering hygiene → a work `chore` (spec-less by design, no `specRef`); a bug
+violating an EXISTING spec node → a work `bug` with `specRef`; a product thought with no
+spec reflection → an idea. The chain's integrity is protected by the destination rules
+themselves (feature/bug still requires `specRef`, a spec write still requires an accepted
+idea) — an intake hop adds nothing when the routing is already known.
+
+**Triage** moves an item to exactly one of:
 
 - **reject** — `wontfix` / `duplicate`, with a reason (the record stays; thinking isn't lost).
 - **promote to a task** — *only when the item maps to an EXISTING spec node.* The work task
   links that spec node (`specRef` → `task_spec`) and the intake issue (`issue_task`); the
-  issue auto-closes when the task reaches `Done`.
+  issue auto-closes when the task reaches `Done`. Spec-less engineering hygiene promotes to
+  a `chore` (no spec node needed).
 - **escalate to an idea** — *when the item has NO reflection in the spec.* You can't make a
   work task for it: a work feature/bug REQUIRES a `specRef`, and there is no spec node to
   point at. That absence IS the signal — the requirement was never specified. The item
