@@ -18,7 +18,7 @@ public sealed record TaskBoardMeta
 	[Column, Nullable]
 	public string? Description { get; init; }
 
-	// Board role: simple|spec|ideas|intake|work (default simple). Drives the workflow
+	// Board role: simple|classic|spec|ideas|intake|work (default simple). Drives the workflow
 	// (types/statuses/transitions) + invariants/effects via MethodologyPresets. Legacy rows
 	// may still carry "free" (M029 migrates them; ParseKind also maps "free" → Simple).
 	[Column, NotNull]

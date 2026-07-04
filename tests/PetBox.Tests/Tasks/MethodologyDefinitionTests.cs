@@ -156,6 +156,129 @@ public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefini
 			.GetProperty("name").GetString().Should().Be("Draft", "omitted status name defaults to the slug");
 	}
 
+	// 1b. schema v2: enforceApproval, checklist, effects and link-constraint targets
+	// round-trip intact through upsert → get, and the empty defaults are OMITTED from the
+	// wire (no checklist/effects/target keys where nothing is declared).
+	[Fact]
+	public async Task Define_SchemaV2Fields_RoundTripIntact()
+	{
+		var up = await Upsert(new
+		{
+			name = "acme-v2",
+			kinds = new object[]
+			{
+				new
+				{
+					kind = "flow",
+					workflows = new object[]
+					{
+						new
+						{
+							types = new[] { "task" },
+							statuses = new object[]
+							{
+								new { slug = "Todo", kind = "open" },
+								new { slug = "Doing", kind = "open" },
+								new { slug = "Done", kind = "terminalok" },
+							},
+							transitions = new object[]
+							{
+								new { from = "Todo", to = "Doing", checklist = new[] { "scope agreed", "branch created" } },
+								new { from = "Doing", to = "Done", requiresApproval = true, enforceApproval = true },
+							},
+						},
+					},
+					linkConstraints = new object[]
+					{
+						// targetKind `docs` is declared below → targetStatuses validate against it.
+						new { type = "task", link = "task_spec", targetKind = "docs", targetStatuses = new[] { "published" } },
+					},
+					effects = new object[]
+					{
+						new { on = "Done", link = "issue_task", direction = "incoming", set = "done", onlyFrom = "confirmed" },
+					},
+				},
+				new
+				{
+					kind = "docs",
+					workflows = new object[]
+					{
+						new
+						{
+							types = new[] { "doc" },
+							statuses = new object[]
+							{
+								new { slug = "published", kind = "open" },
+								new { slug = "retired", kind = "terminalcancel" },
+							},
+							transitions = new object[] { new { from = "published", to = "retired" } },
+						},
+					},
+				},
+			},
+		});
+		IsErr(up).Should().BeFalse(Text(up));
+
+		var got = Parse(await Get());
+		var flow = got.GetProperty("kinds").EnumerateArray().Single(k => k.GetProperty("kind").GetString() == "flow");
+		var transitions = flow.GetProperty("workflows")[0].GetProperty("transitions").EnumerateArray().ToList();
+
+		transitions[0].GetProperty("checklist").EnumerateArray().Select(i => i.GetString())
+			.Should().Equal("scope agreed", "branch created");
+		transitions[0].GetProperty("enforceApproval").GetBoolean().Should().BeFalse();
+		transitions[1].GetProperty("enforceApproval").GetBoolean().Should().BeTrue();
+		transitions[1].GetProperty("requiresApproval").GetBoolean().Should().BeTrue();
+		transitions[1].TryGetProperty("checklist", out _).Should().BeFalse("an empty checklist is omitted");
+
+		var constraint = flow.GetProperty("linkConstraints").EnumerateArray().Single();
+		constraint.GetProperty("targetKind").GetString().Should().Be("docs");
+		constraint.GetProperty("targetStatuses").EnumerateArray().Select(s => s.GetString()).Should().Equal("published");
+
+		var effect = flow.GetProperty("effects").EnumerateArray().Single();
+		effect.GetProperty("on").GetString().Should().Be("Done");
+		effect.GetProperty("link").GetString().Should().Be("issue_task");
+		effect.GetProperty("direction").GetString().Should().Be("incoming");
+		effect.GetProperty("set").GetString().Should().Be("done");
+		effect.GetProperty("onlyFrom").GetString().Should().Be("confirmed");
+
+		var docs = got.GetProperty("kinds").EnumerateArray().Single(k => k.GetProperty("kind").GetString() == "docs");
+		docs.TryGetProperty("effects", out _).Should().BeFalse("a kind with no effects omits the key");
+		docs.TryGetProperty("linkConstraints", out _).Should().BeFalse("a kind with no constraints omits the key");
+	}
+
+	// 1c. schema v2 validation reaches through the MCP door: enforceApproval on an
+	// approval-free transition is rejected with the validator's message.
+	[Fact]
+	public async Task Define_EnforceWithoutRequiresApproval_Rejected()
+	{
+		var r = await Upsert(new
+		{
+			name = "bad",
+			kinds = new object[]
+			{
+				new
+				{
+					kind = "flow",
+					workflows = new object[]
+					{
+						new
+						{
+							types = new[] { "task" },
+							statuses = new object[]
+							{
+								new { slug = "Todo", kind = "open" },
+								new { slug = "Done", kind = "terminalok" },
+							},
+							transitions = new object[] { new { from = "Todo", to = "Done", enforceApproval = true } },
+						},
+					},
+				},
+			},
+		});
+		IsErr(r).Should().BeTrue(Text(r));
+		Text(r).Should().Contain("enforceApproval is only meaningful with requiresApproval");
+	}
+
 	// 2. optimistic concurrency: two writers both submitting baseline 0 — the second is a
 	// clear conflict naming the current version, not a clobber.
 	[Fact]

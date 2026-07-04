@@ -7,7 +7,7 @@
 	var levelInt = Model.Level.ToString(System.Globalization.CultureInfo.InvariantCulture);
 	var traceKql = LogEntryViewModel.KqlString(Model.TraceId);
 }
-<tr class="@rowClasses" data-testid="events-row"@(Model.IsLive ? "" : $" data-event-id=\"{Model.Id}\"")>
+<tr class="@rowClasses" data-testid="events-row" data-event-id="@(Model.IsLive ? null : Model.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))">
 	<td class="font-mono text-xs opacity-70 whitespace-nowrap relative group">
 		<time class="local-time" datetime="@LogEntryViewModel.IsoUtc(Model.Timestamp)" title="UTC: @LogEntryViewModel.IsoUtc(Model.Timestamp)">@LogEntryViewModel.IsoUtc(Model.Timestamp)</time>
 		@if (showChips)
@@ -43,6 +43,13 @@
 				data-copy="@Model.ToJson()"
 				data-testid="event-copy-json"
 				title="Copy event as JSON">⧉</button>
+			@if (!Model.IsLive)
+			{
+				<button type="button" class="btn btn-ghost btn-xs opacity-40 hover:opacity-100"
+					data-event-link="@Model.Id"
+					data-testid="event-copy-link"
+					title="Copy link to this event">🔗</button>
+			}
 		</div>
 		@if (!string.IsNullOrEmpty(Model.Exception))
 		{

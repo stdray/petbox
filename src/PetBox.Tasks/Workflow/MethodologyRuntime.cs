@@ -18,6 +18,11 @@ public sealed class MethodologyRuntime
 	// The no-definition runtime: every answer falls through to the built-in presets.
 	public static readonly MethodologyRuntime PresetsOnly = new(null);
 
+	// Wrap an optionally-present definition — the null-coalesce every surface (service,
+	// Razor pages) applies when it holds a MethodologyDefView? in hand.
+	public static MethodologyRuntime From(MethodologyDefinition? definition) =>
+		definition is null ? PresetsOnly : new(definition);
+
 	// Builtin relation kinds with PROCESS meaning (FSM effects / guards key on these):
 	// task_spec (specRef), issue_task (intake auto-close), idea_spec (ideaRef), blocks
 	// (gating + unblock effect), part_of (decomposition), supersedes (obsoletion).
@@ -48,6 +53,14 @@ public sealed class MethodologyRuntime
 		kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind)
 			? kind.LinkConstraints ?? []
 			: MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).LinkConstraints;
+
+	// Declared transition effects of a kind (schema v2), same merge as every resolver:
+	// the definition's when it declares the kind, else the preset's (work: intake
+	// auto-close + blocks auto-unblock — as data). Executed by RunTransitionEffectsAsync.
+	public IReadOnlyList<MethodologyTransitionEffectDef> Effects(string? kindSlug) =>
+		kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind)
+			? kind.Effects ?? []
+			: MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).Effects;
 
 	// Tag axes governing a board of this kind — ONE rule for everything: no axes =
 	// free-form tags, axes declared = enforced namespace allowlist. A definition-resolved
@@ -81,8 +94,9 @@ public sealed class MethodologyRuntime
 	public string KindName(string? kindSlug) =>
 		IsDefinedKind(kindSlug) ? kindSlug! : MethodologyPresets.ParseKind(kindSlug).ToString().ToLowerInvariant();
 
-	// The preset kinds in guide order: the quartet pipeline first, `simple` last.
-	static readonly BoardKind[] PipelineOrder = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work, BoardKind.Simple];
+	// The preset kinds in guide order: the quartet pipeline first, then the standalone
+	// kinds (`classic`, `simple` last).
+	static readonly BoardKind[] PipelineOrder = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work, BoardKind.Classic, BoardKind.Simple];
 
 	// The project's EFFECTIVE kind set — what the process guide renders: every definition-
 	// declared kind (declaration order) followed by every preset kind the definition does
@@ -152,18 +166,22 @@ public sealed class MethodologyRuntime
 	public bool IsTerminalSlug(string slug) =>
 		KindOfSlug(slug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;
 
-	// Per-board terminal classification (the closed-node predicate): a DEFINED kind
-	// classifies against its own status vocabulary (falling back to the project-wide scan
-	// only for an out-of-vocab legacy slug); a preset kind keeps the preset-wide scan
-	// exactly as today.
-	public bool IsTerminalStatus(string? kindSlug, string statusSlug)
+	// Per-board status classification (badge coloring and the closed-node predicate): a
+	// DEFINED kind classifies against its own status vocabulary (falling back to the
+	// project-wide scan only for an out-of-vocab legacy slug); a preset kind keeps the
+	// preset-wide scan exactly as today.
+	public StatusKind? StatusKindOf(string? kindSlug, string statusSlug)
 	{
 		if (kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind))
 			foreach (var block in kind.Workflows)
 				if (StatusOf(block, statusSlug) is { } s)
-					return s.Kind is StatusKind.TerminalOk or StatusKind.TerminalCancel;
-		return IsTerminalSlug(statusSlug);
+					return s.Kind;
+		return KindOfSlug(statusSlug);
 	}
+
+	// Per-board terminal classification — StatusKindOf's terminal projection.
+	public bool IsTerminalStatus(string? kindSlug, string statusSlug) =>
+		StatusKindOf(kindSlug, statusSlug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;
 
 	// All workflow BLOCKS of a kind (the tasks_workflow discovery shape). One block per
 	// workflow declaration, for defined and preset kinds alike — the preset data is

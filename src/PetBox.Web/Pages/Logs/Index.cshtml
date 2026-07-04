@@ -174,11 +174,12 @@
 <dialog id="share-modal" class="modal">
 	<div class="modal-box max-w-md">
 		<h3 class="text-lg font-semibold mb-1">Share query</h3>
-		<p class="text-xs opacity-70 mb-3">Copy URL with current KQL to share.</p>
+		<p class="text-xs opacity-70 mb-3">The link carries an opaque token — the query text stays on the server. Anyone with the link can view the results until it expires.</p>
 		<div class="join w-full">
 			<input id="share-url" type="text" readonly class="input input-sm input-bordered join-item w-full font-mono text-xs" />
 			<button type="button" class="btn btn-sm join-item" data-share-copy>Copy</button>
 		</div>
+		<p id="share-expiry" class="text-xs opacity-60 mt-2"></p>
 		<form method="dialog" class="mt-3"><button class="btn btn-sm btn-ghost">Close</button></form>
 	</div>
 	<form method="dialog" class="modal-backdrop"><button>close</button></form>
@@ -197,6 +198,12 @@
 }
 else if (Model.IsShapeChanged)
 {
+	if (Model.KqlTruncated)
+	{
+		<div class="alert alert-warning mb-4" data-testid="kql-truncated">
+			Result truncated at @PetBox.Log.Core.Query.KqlLimits.MaxTake.ToString("N0") rows — narrow the query (add where / take).
+		</div>
+	}
 	if (Model.KqlRows.Count == 0)
 	{
 		<div class="alert">Query returned no rows.</div>
@@ -230,7 +237,14 @@ else if (Model.IsShapeChanged)
 }
 else if (Model.Events.Count == 0)
 {
-	<div data-testid="events-empty" class="alert">No events match the query.</div>
+	@if (Model.EventRowId is { } missingId)
+	{
+		<div data-testid="event-notfound" class="alert alert-warning">Event @missingId was not found — it may have been removed by retention.</div>
+	}
+	else
+	{
+		<div data-testid="events-empty" class="alert">No events match the query.</div>
+	}
 }
 else
 {

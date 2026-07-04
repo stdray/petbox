@@ -2,9 +2,11 @@ namespace PetBox.Tasks.Workflow;
 
 // Role of a board. Drives which task types/statuses/transitions apply and which
 // invariants/effects fire. `Simple` (default, formerly `Free`) = a lightweight preset
-// with a fixed status/type vocab and free transitions; the methodology kinds add gates.
+// with a fixed status/type vocab and free transitions; the methodology kinds add gates;
+// `Classic` = the standalone GitHub/Jira/Linear-level status model (simple-like: no
+// singleton rule, no auto-wire, free-form tags).
 // Simple is first so it stays the ParseKind fallback — a legacy "free" string maps to it.
-public enum BoardKind { Simple, Spec, Ideas, Intake, Work }
+public enum BoardKind { Simple, Spec, Ideas, Intake, Work, Classic }
 
 // Terminal kind of a status — data that powers UI "closed" predicate + badge,
 // and the (capability-level) approve gate (only a maintainer reaches TerminalOk).
@@ -19,7 +21,14 @@ public sealed record WorkflowStatus(string Slug, string Name, StatusKind Kind);
 // (e.g. "spec_plan" → an `artifact:spec_plan` comment) the node must carry before the
 // transition fires — gates are transition data, enforced by
 // RequirePreconditionArtifactsAsync (the ideas preset gates exploring→review this way).
-public sealed record WorkflowTransition(string From, string To, bool RequiresApproval = false, bool RequiresReason = false, string? PreconditionArtifact = null);
+public sealed record WorkflowTransition(string From, string To, bool RequiresApproval = false, bool RequiresReason = false, string? PreconditionArtifact = null)
+{
+	// Approval-gate MODE (schema v2): with RequiresApproval, `true` means the server BLOCKS
+	// the transition unless the actor can approve (tasks:approve at the MCP door, the
+	// cookie-authenticated owner in the UI); `false` keeps owner-only by CONVENTION. The
+	// builtin presets never enforce, so live preset behavior is unchanged.
+	public bool EnforceApproval { get; init; }
+}
 
 // A state machine for one task type on a board kind. Convention: Statuses[0] is
 // the initial status. Slug matching is case-insensitive.

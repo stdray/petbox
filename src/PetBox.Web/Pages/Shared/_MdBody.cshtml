@@ -1,10 +1,20 @@
 @model PetBox.Web.Pages.Shared.MdBodyModel
+@inject PetBox.Web.Rendering.IMarkdownRenderer Md
 @* The ONE markdown-body renderer (node bodies, comment bodies, edit preview). Uniform
    typography — text-base, no opacity dimming — so every surface renders markdown at the same
-   size. Only layout-level extras (margins/borders/padding) belong in ExtraClasses. The body is
-   emitted as PLAIN TEXT inside [data-md]; ts/markdown.ts hydrates it to sanitized HTML. *@
+   size. Only layout-level extras (margins/borders/padding) belong in ExtraClasses.
+   READ surfaces (ServerRender=true) are rendered to sanitized HTML on the SERVER and emitted
+   as real markup (real <p>/<ul>/<h2>…) so browser reader-view can detect the article. The edit
+   preview (ServerRender=false) is emitted empty and filled client-side by ts/nodeEdit.ts. *@
 @{
 	var cls = "md-body text-base";
 	if (!string.IsNullOrEmpty(Model.ExtraClasses)) { cls += " " + Model.ExtraClasses; }
 }
-<div data-md="@(Model.DataMd ? "" : null)" class="@cls" data-testid="@Model.TestId" style="@Model.Style">@Model.Body</div>
+@if (Model.ServerRender)
+{
+	<div class="@cls" data-testid="@Model.TestId" style="@Model.Style">@Html.Raw(Md.RenderToHtml(Model.Body))</div>
+}
+else
+{
+	<div class="@cls" data-testid="@Model.TestId" style="@Model.Style"></div>
+}

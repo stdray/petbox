@@ -122,13 +122,15 @@ public sealed record LogEventView(
 // log_query is a discriminated union over `Kind`: "events" (Count + Events set; the table
 // fields null/omitted) or "table" (Columns + Rows set; the events fields null/omitted). One
 // record carries both arms; null-omission keeps each arm's wire identical to the old anonymous
-// objects. Rows are an open table (cells are arbitrary scalars).
+// objects. Rows are an open table (cells are arbitrary scalars). Truncated (either arm): the
+// result was cut by the service's row cap (KqlLimits); true when cut, omitted otherwise.
 public sealed record LogQueryResultView(
 	string Kind,
 	int? Count = null,
 	IReadOnlyList<LogEventView>? Events = null,
 	IReadOnlyList<string>? Columns = null,
-	IReadOnlyList<IReadOnlyList<object?>>? Rows = null);
+	IReadOnlyList<IReadOnlyList<object?>>? Rows = null,
+	bool? Truncated = null);
 
 // ---- memory.* ------------------------------------------------------------------------
 
@@ -377,14 +379,24 @@ public sealed record MethodologyDefGetResult(
 
 // One kind of a stored methodology definition; workflow blocks reuse the tasks_workflow
 // status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the
-// kind's per-type creation link requirements (null = none declared).
+// kind's per-type creation link requirements, Effects its declared transition effects
+// (null = none declared, omitted by the serializer).
 public sealed record MethodologyKindView(
 	string Kind, bool QuickAddAllowed, IReadOnlyList<MethodologyWorkflowBlockView> Workflows,
-	IReadOnlyList<MethodologyLinkConstraintView>? LinkConstraints = null);
+	IReadOnlyList<MethodologyLinkConstraintView>? LinkConstraints = null,
+	IReadOnlyList<MethodologyEffectView>? Effects = null);
 
 // "A new <type> on this kind's boards must carry a <link> at creation" (link =
-// task_spec|blocks|idea_spec — the upsert-expressible kinds).
-public sealed record MethodologyLinkConstraintView(string Type, string Link);
+// task_spec|blocks|idea_spec — the upsert-expressible kinds). `targetKind`/
+// `targetStatuses` declare what the link must point at (null = no restriction, omitted).
+public sealed record MethodologyLinkConstraintView(
+	string Type, string Link,
+	string? TargetKind = null, IReadOnlyList<string>? TargetStatuses = null);
+
+// One declared transition effect: on entering `on`, `direction` `link` nodes are set to
+// `set` (`onlyFrom` = only linked nodes currently in that status; null = any, omitted).
+public sealed record MethodologyEffectView(
+	string On, string Link, string Direction, string Set, string? OnlyFrom = null);
 
 // A project-declared relation kind (free semantic edge, no FSM effects).
 public sealed record MethodologyLinkKindView(string Slug, string? Description = null);
@@ -399,6 +411,9 @@ public sealed record MethodologyWorkflowBlockView(
 	IReadOnlyList<MethodologyTransitionView> Transitions);
 
 // WorkflowTransitionView plus the definition-only `preconditionArtifact` (a comment-artifact
-// tag required before the transition; null = omitted by the serializer).
+// tag required before the transition; null = omitted by the serializer), `enforceApproval`
+// (the approval gate is server-blocked, not convention) and `checklist` (free-text
+// conditions; null = none declared, omitted).
 public sealed record MethodologyTransitionView(
-	string From, string To, bool RequiresApproval, bool RequiresReason, string? PreconditionArtifact = null);
+	string From, string To, bool RequiresApproval, bool RequiresReason, string? PreconditionArtifact = null,
+	bool EnforceApproval = false, IReadOnlyList<string>? Checklist = null);

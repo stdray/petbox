@@ -64,10 +64,22 @@ public sealed class TaskBoardModel : PageModel
 
 	public bool ShowQuickAdd { get; private set; }
 
-	// The board's kind (simple|spec|ideas|intake|work), surfaced so the UI can show it
-	// explicitly — a simple board's lightweight statuses otherwise look like "broken
-	// statuses" rather than a deliberate board kind.
-	public BoardKind Kind { get; private set; }
+	// The board's EFFECTIVE process, resolved through MethodologyRuntime — the same seam
+	// the MCP tools / TasksService use (project definition first, preset fallback), so a
+	// definition-declared custom kind renders its own statuses/terminality instead of
+	// falling back to the Simple preset. KindSlug is the stored board kind (the runtime
+	// lookup key); KindName is what the badge shows (a defined kind verbatim, else the
+	// parsed preset name — `free`/unknown read as `simple`, exactly as before).
+	public MethodologyRuntime Runtime { get; private set; } = MethodologyRuntime.PresetsOnly;
+	public string? KindSlug { get; private set; }
+	public string KindName { get; private set; } = string.Empty;
+
+	// The board's workflow surface (per-type FSM blocks) + its JSON island for the "View
+	// workflow" modal. WorkflowBlocks drives the header triggers (one per block); WorkflowJson
+	// is the payload ts/workflow-viz.ts renders. Resolved through MethodologyRuntime, so
+	// user-defined methodologies visualize out of the box.
+	public IReadOnlyList<WorkflowBlock> WorkflowBlocks { get; private set; } = [];
+	public string? WorkflowJson { get; private set; }
 
 	// One flattened row of the tag-groups pane: a group HEADER (Node null) at nesting `Depth`,
 	// or a node CARD (Node set) sitting just under its deepest group. Flattening keeps the
@@ -75,12 +87,15 @@ public sealed class TaskBoardModel : PageModel
 	public sealed record GroupRow(int Depth, string? GroupKey, string? Delivery, PlanNodeView? Node);
 
 	// Everything the shared _PlanNodeCard partial needs to render one node card in either
-	// pane. `Depth` drives the indent (part_of depth in the tree pane, 0 in the tag-groups
-	// pane — grouping is the structure there). `HasChildren` shows the collapse caret (tree
-	// only). The tree-interactivity data-* (parent/closed/keep-visible) are inert in the tag
-	// pane because ts/board.ts binds only to the tree's board-nodes list.
+	// pane. `Runtime` + `KindSlug` let the card classify statuses per the board's EFFECTIVE
+	// kind (definition first, preset fallback). `Depth` drives the indent (part_of depth in
+	// the tree pane, 0 in the tag-groups pane — grouping is the structure there).
+	// `HasChildren` shows the collapse caret (tree only). The tree-interactivity data-*
+	// (parent/closed/keep-visible) are inert in the tag pane because ts/board.ts binds only
+	// to the tree's board-nodes list.
 	public sealed record PlanNodeCard(
-		string WorkspaceKey, string ProjectKey, string Board, BoardKind Kind, PlanNodeView Node,
+		string WorkspaceKey, string ProjectKey, string Board, MethodologyRuntime Runtime,
+		string? KindSlug, PlanNodeView Node,
 		int Depth, bool Closed, bool KeepVisible, bool HasChildren,
 		IReadOnlyList<CommentLine>? Thread);
 
@@ -89,14 +104,19 @@ public sealed class TaskBoardModel : PageModel
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
-		var kind = await _tasks.ResolveKindAsync(ProjectKey, Board, ct);
-		Kind = kind;
-		ShowQuickAdd = MethodologyPresets.QuickAddAllowed(kind);
+		(Runtime, KindSlug) = await ResolveProcessAsync(ct);
+		KindName = Runtime.KindName(KindSlug);
+		ShowQuickAdd = Runtime.QuickAddAllowed(KindSlug);
+
+		// The board's FSM surface, embedded for the "View workflow" modal (a few KB — no extra endpoint).
+		var workflow = await _tasks.GetBoardWorkflowAsync(ProjectKey, Board, ct);
+		WorkflowBlocks = workflow.Workflows;
+		WorkflowJson = WorkflowGraphJson.Serialize(workflow);
 
 		// includeClosed: we render closed nodes too (the "active only" toggle hides them
 		// client-side); GetAsync supplies each node's part_of parent + depth.
 		var view = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, ct: ct);
-		Nodes = OrderHierarchically([.. view.Nodes], out var keepVisible);
+		Nodes = OrderHierarchically([.. view.Nodes], Runtime, KindSlug, out var keepVisible);
 		ClosedWithActiveDescendant = keepVisible;
 
 		// One query for every comment on the board, grouped by owning node; DFS-flatten each
@@ -143,11 +163,24 @@ public sealed class TaskBoardModel : PageModel
 		return rows;
 	}
 
+	// The board's effective process context: the project's MethodologyRuntime (via the
+	// service door — the SAME instance construction every service call applies) plus this
+	// board's stored kind slug. ListBoardsAsync supplies the raw slug; ITasksService has
+	// no single-board metadata read and this page must not open the store directly.
+	async Task<(MethodologyRuntime Runtime, string? KindSlug)> ResolveProcessAsync(CancellationToken ct)
+	{
+		var runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);
+		var meta = (await _tasks.ListBoardsAsync(ProjectKey, ct))
+			.FirstOrDefault(b => string.Equals(b.Name, Board, StringComparison.Ordinal));
+		return (runtime, meta?.Kind);
+	}
+
 	// Render order is the plan tree itself — DFS by part_of parent, siblings ordered by
 	// Priority then Key. A flat priority sort let a low-priority child of an early branch
 	// visually drift past a later one (finding D11). DFS keeps every node under its parent.
 	static List<PlanNodeView> OrderHierarchically(
-		List<PlanNodeView> nodes, out IReadOnlySet<string> closedWithActiveDescendant)
+		List<PlanNodeView> nodes, MethodologyRuntime runtime, string? kindSlug,
+		out IReadOnlySet<string> closedWithActiveDescendant)
 	{
 		var byId = new Dictionary<string, PlanNodeView>(StringComparer.Ordinal);
 		foreach (var n in nodes) byId[n.NodeId] = n;
@@ -182,7 +215,7 @@ public sealed class TaskBoardModel : PageModel
 		{
 			if (!visited.Add(node.NodeId)) return false;
 			ordered.Add(node);
-			var closed = MethodologyPresets.IsTerminalSlug(node.Status);
+			var closed = runtime.IsTerminalStatus(kindSlug, node.Status);
 			var hasActiveDescendant = false;
 			if (childMap.TryGetValue(node.NodeId, out var kids))
 				foreach (var kid in kids)
@@ -204,8 +237,8 @@ public sealed class TaskBoardModel : PageModel
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
-		var kind = await _tasks.ResolveKindAsync(ProjectKey, Board, ct);
-		if (!MethodologyPresets.QuickAddAllowed(kind)) return BadRequest();
+		var (runtime, kindSlug) = await ResolveProcessAsync(ct);
+		if (!runtime.QuickAddAllowed(kindSlug)) return BadRequest();
 
 		await _tasks.QuickAddAsync(ProjectKey, Board, name, body, priority, ct);
 

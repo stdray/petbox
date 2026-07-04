@@ -190,6 +190,7 @@ public sealed class MethodologyPresetsTests
 	{
 		// The single knob: only Spec and Work reject the bare quick-add form.
 		MethodologyPresets.QuickAddAllowed(BoardKind.Simple).Should().BeTrue();
+		MethodologyPresets.QuickAddAllowed(BoardKind.Classic).Should().BeTrue();
 		MethodologyPresets.QuickAddAllowed(BoardKind.Ideas).Should().BeTrue();
 		MethodologyPresets.QuickAddAllowed(BoardKind.Intake).Should().BeTrue();
 		MethodologyPresets.QuickAddAllowed(BoardKind.Spec).Should().BeFalse();
@@ -200,6 +201,98 @@ public sealed class MethodologyPresetsTests
 		Runtime.DefaultType("spec").Should().Be("spec");
 		Runtime.DefaultType("intake").Should().Be("issue");
 		Runtime.DefaultType("simple").Should().Be("task");
+		Runtime.DefaultType("classic").Should().Be("task");
+	}
+
+	// ── the `classic` preset (spec preset-classic): a single-kind status model at the
+	// level of the GitHub/Jira/Linear defaults ──────────────────────────────────────
+
+	static readonly WorkflowStatus[] ClassicStatuses =
+	[
+		new("Backlog", "Backlog", StatusKind.Open),
+		new("Todo", "Todo", StatusKind.Open),
+		new("InProgress", "In progress", StatusKind.Open),
+		new("InReview", "In review", StatusKind.Open),
+		new("Done", "Done", StatusKind.TerminalOk),
+		new("Cancelled", "Cancelled", StatusKind.TerminalCancel),
+		new("Duplicate", "Duplicate", StatusKind.TerminalCancel),
+	];
+
+	// The full classic edge set: free among the open statuses, explicit closes (a reason
+	// into Cancelled/Duplicate), reopen-to-Todo from every terminal.
+	static IReadOnlyList<(string From, string To, bool Reason)> ClassicEdges()
+	{
+		var open = ClassicStatuses.Where(s => s.Kind == StatusKind.Open).Select(s => s.Slug).ToList();
+		var edges = new List<(string, string, bool)>();
+		foreach (var from in open)
+			foreach (var to in open.Where(t => t != from))
+				edges.Add((from, to, false));
+		foreach (var from in open)
+		{
+			edges.Add((from, "Done", false));
+			edges.Add((from, "Cancelled", true));
+			edges.Add((from, "Duplicate", true));
+		}
+		foreach (var terminal in new[] { "Done", "Cancelled", "Duplicate" })
+			edges.Add((terminal, "Todo", false));
+		return edges;
+	}
+
+	[Fact]
+	public void ClassicPreset_Snapshot_Statuses_Transitions_Gates()
+	{
+		// Every type resolves the same status vocabulary and edge set (the checklist is the
+		// bug block's only difference, and it lives on the DEFINITION data, not the FSM).
+		foreach (var type in new[] { "task", "feature", "bug" })
+		{
+			var wf = Runtime.For("classic", type)!;
+			wf.Statuses.Should().Equal(ClassicStatuses, $"classic/{type} statuses are the snapshot");
+			wf.Initial.Should().Be("Backlog");
+			wf.Transitions.Select(t => (t.From, t.To, t.RequiresReason))
+				.Should().BeEquivalentTo(ClassicEdges(), $"classic/{type} edges are the snapshot");
+			// No approval gates at all, no precondition artifacts — low-ceremony by design.
+			wf.Transitions.Should().OnlyContain(t =>
+				!t.RequiresApproval && !t.EnforceApproval && t.PreconditionArtifact == null);
+		}
+		Runtime.ValidTypes("classic").Should().Be("task|feature|bug");
+	}
+
+	[Fact]
+	public void ClassicPreset_TypeSelectsBlock_UnknownTypeRejected_UntypedDefaults()
+	{
+		// Untyped resolves the first block's default type (quick-add contract)...
+		var untyped = Runtime.For("classic", null)!;
+		untyped.Type.Should().Be("task");
+		untyped.Initial.Should().Be("Backlog");
+		// ...but a NON-EMPTY unknown type is ambiguous across the two blocks → null,
+		// the same "type required" posture as work (the engine names the valid types).
+		Runtime.For("classic", "banana").Should().BeNull();
+		// Two blocks: task|feature share one FSM, bug carries its own (for the checklist).
+		Runtime.Blocks("classic").Should().HaveCount(2);
+		MethodologyPresets.ParseKind("classic").Should().Be(BoardKind.Classic);
+	}
+
+	const string BugReproChecklistItem =
+		"Есть воспроизведение бага, или зафиксирована причина, почему воспроизведения нет";
+
+	[Fact]
+	public void ClassicPreset_BugChecklist_OnStartOfWorkEdgesOnly()
+	{
+		var kind = MethodologyPresets.KindDef(BoardKind.Classic);
+		kind.QuickAddAllowed.Should().BeTrue();
+
+		// The bug block carries the repro checklist on the start-of-work edges ONLY
+		// (Backlog|Todo → InProgress); the rework return (InReview → InProgress) is free.
+		var bug = kind.Workflows.Single(b => b.Types.Contains("bug"));
+		var checklisted = bug.Transitions.Where(t => t.Checklist is { Count: > 0 }).ToList();
+		checklisted.Select(t => (t.From, t.To))
+			.Should().BeEquivalentTo(new[] { ("Backlog", "InProgress"), ("Todo", "InProgress") });
+		checklisted.Should().OnlyContain(t => t.Checklist.Count == 1 && t.Checklist[0] == BugReproChecklistItem);
+
+		// task|feature share the other block, with NO checklist anywhere.
+		var taskBlock = kind.Workflows.Single(b => b.Types.Contains("task"));
+		taskBlock.Types.Should().Equal("task", "feature");
+		taskBlock.Transitions.Should().OnlyContain(t => t.Checklist == null || t.Checklist.Count == 0);
 	}
 
 	[Fact]
@@ -212,8 +305,12 @@ public sealed class MethodologyPresetsTests
 		Runtime.IsTerminalSlug("accepted").Should().BeTrue();
 		Runtime.IsTerminalSlug("rejected").Should().BeTrue();
 		Runtime.IsTerminalSlug("wontfix").Should().BeTrue();
+		Runtime.IsTerminalSlug("Duplicate").Should().BeTrue(); // intake + classic agree: TerminalCancel
 		Runtime.IsTerminalSlug("Blocked").Should().BeFalse();
 		Runtime.IsTerminalSlug("review").Should().BeFalse();
+		// classic's new open slugs classify as open, not legacy-unknown.
+		Runtime.KindOfSlug("Backlog").Should().Be(StatusKind.Open);
+		Runtime.KindOfSlug("InReview").Should().Be(StatusKind.Open);
 		Runtime.KindOfSlug("not-a-status").Should().BeNull(); // legacy/unknown slug
 		MethodologyPresets.ParseKind("free").Should().Be(BoardKind.Simple); // M029 legacy mapping
 	}
@@ -223,15 +320,44 @@ public sealed class MethodologyPresetsTests
 	[Fact]
 	public void WorkPreset_LinkConstraints_FeatureBugNeedSpec_ChoreExempt()
 	{
+		// Schema v2: the constraints now DECLARE their target — a specRef must point at a
+		// spec-kind node (the guard the service used to hardcode).
 		var constraints = Runtime.LinkConstraints("work");
-		constraints.Select(c => (c.Type, c.Link)).Should().Equal(
-			("feature", "task_spec"),
-			("bug", "task_spec"));
-		// chore is exempt BECAUSE no constraint names it — the exemption is data-shaped.
+		constraints.Select(c => (c.Type, c.Link, c.TargetKind)).Should().Equal(
+			("feature", "task_spec", "spec"),
+			("bug", "task_spec", "spec"));
+		constraints.Should().OnlyContain(c => c.TargetStatuses == null); // any spec status links
+																		 // chore is exempt BECAUSE no constraint names it — the exemption is data-shaped.
 		constraints.Should().NotContain(c => c.Type == "chore");
-		// No other preset kind constrains creation.
-		foreach (var kind in new[] { "simple", "spec", "ideas", "intake" })
+		// Besides spec's ideaRef governance (its own fact below), no other preset kind
+		// constrains creation.
+		foreach (var kind in new[] { "simple", "classic", "ideas", "intake" })
 			Runtime.LinkConstraints(kind).Should().BeEmpty();
+	}
+
+	// Schema v2 (engine-v2-quartet-parity): spec-write-needs-accepted-idea is constraint
+	// DATA — link idea_spec targeting an ideas node in `accepted`. idea_spec is a
+	// provenance link, so the service requires it on EVERY write of the type.
+	[Fact]
+	public void SpecPreset_IdeaRefGovernance_IsConstraintData()
+	{
+		var c = Runtime.LinkConstraints("spec").Should().ContainSingle().Subject;
+		(c.Type, c.Link, c.TargetKind).Should().Be(("spec", "idea_spec", "ideas"));
+		c.TargetStatuses.Should().Equal("accepted");
+	}
+
+	// Schema v2 (engine-v2-quartet-parity): the Done automation is effect DATA on the work
+	// preset — intake auto-close rides the INCOMING issue_task edge (issue -> task), the
+	// unblock rides the OUTGOING blocks edge (blocker -> blocked) gated on OnlyFrom=Blocked.
+	[Fact]
+	public void WorkPreset_DoneAutomation_IsEffectData()
+	{
+		Runtime.Effects("work").Should().Equal(
+			new MethodologyTransitionEffectDef("Done", "issue_task", "incoming", "done"),
+			new MethodologyTransitionEffectDef("Done", "blocks", "outgoing", "InProgress", "Blocked"));
+		// No other preset kind declares effects.
+		foreach (var kind in new[] { "simple", "classic", "spec", "ideas", "intake" })
+			Runtime.Effects(kind).Should().BeEmpty();
 	}
 
 	[Fact]
@@ -241,7 +367,7 @@ public sealed class MethodologyPresetsTests
 		wf.Transition("exploring", "review")!.PreconditionArtifact.Should().Be("spec_plan");
 
 		// ...and it is the ONLY precondition artifact in the whole preset surface.
-		foreach (var kind in new[] { "simple", "spec", "ideas", "intake", "work" })
+		foreach (var kind in new[] { "simple", "classic", "spec", "ideas", "intake", "work" })
 			foreach (var w in Runtime.Types(kind))
 				w.Transitions.Where(t => t.PreconditionArtifact is not null)
 					.Should().BeEquivalentTo(kind == "ideas"
@@ -254,8 +380,68 @@ public sealed class MethodologyPresetsTests
 	{
 		foreach (var kind in new[] { "spec", "ideas", "intake", "work" })
 			Runtime.TagAxes(kind).Select(a => a.Namespace).Should().Equal("area", "concern");
-		// simple declares NO axes → axes-emptiness = free-form tags, the one rule.
+		// simple and classic declare NO axes → axes-emptiness = free-form tags, the one rule.
 		Runtime.TagAxes("simple").Should().BeEmpty();
+		Runtime.TagAxes("classic").Should().BeEmpty();
+	}
+
+	// ── Part 3: the provisioning-preset registry (enable + copy-as-definition) ──
+
+	[Fact]
+	public void ProvisioningRegistry_ResolvesQuartet_CaseInsensitive_DefaultsOnBlank()
+	{
+		var expected = new[] { BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work };
+		foreach (var slug in new[] { "quartet", "QUARTET", " Quartet ", null, "" })
+			MethodologyPresets.ResolveProvisioningPreset(slug).Kinds.Should().Equal(expected,
+				$"'{slug ?? "<null>"}' must resolve the quartet (default) in pipeline order");
+		MethodologyPresets.DefaultProvisioningPreset.Should().Be("quartet");
+	}
+
+	[Fact]
+	public void ProvisioningRegistry_UnknownPreset_ErrorListsAvailableSlugs()
+	{
+		var act = () => MethodologyPresets.ResolveProvisioningPreset("banana");
+		act.Should().Throw<ArgumentException>()
+			.WithMessage("*unknown methodology preset 'banana'*")
+			.WithMessage("*quartet*")   // names the available slugs...
+			.WithMessage("*classic*");  // ...both of them
+	}
+
+	[Fact]
+	public void ProvisioningRegistry_Classic_OneStandaloneBoardKind()
+	{
+		MethodologyPresets.ResolveProvisioningPreset("classic").Kinds.Should().Equal(BoardKind.Classic);
+	}
+
+	[Fact]
+	public void RenderPresetDefinition_Classic_MirrorsPresetShape_NoAxes()
+	{
+		var def = MethodologyPresets.RenderPresetDefinition("classic");
+		def.Name.Should().Be("classic");
+		def.Kinds.Should().ContainSingle().Which.Should().BeEquivalentTo(MethodologyPresets.KindDef(BoardKind.Classic));
+		// classic's tag posture travels with the copy: NO axes = free-form tags (the quartet
+		// render keeps area/concern — its own test above).
+		def.TagAxes.Should().BeEmpty();
+		def.LinkKinds.Should().BeEmpty();
+	}
+
+	[Fact]
+	public void RenderPresetDefinition_Quartet_MirrorsPresetShapes()
+	{
+		var def = MethodologyPresets.RenderPresetDefinition("quartet");
+		// The preset slug is the definition name (a valid slug); one KindDef per board kind,
+		// in pipeline order; the builtin tag axes carry over as tagAxes.
+		def.Name.Should().Be("quartet");
+		def.Kinds.Select(k => k.Kind).Should().Equal("intake", "ideas", "spec", "work");
+		def.TagAxes.Select(a => a.Namespace).Should().Equal("area", "concern");
+
+		// Each rendered kind IS the preset KindDef — same workflows/statuses/transitions and
+		// the work link constraints (feature/bug → task_spec) verbatim.
+		foreach (var kind in new[] { BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work })
+		{
+			var rendered = def.Kinds.Single(k => string.Equals(k.Kind, kind.ToString(), StringComparison.OrdinalIgnoreCase));
+			rendered.Should().BeEquivalentTo(MethodologyPresets.KindDef(kind));
+		}
 	}
 }
 
@@ -350,6 +536,52 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		var ok = await Upsert("ideas", new NodePatch { Key = "i", Status = "review", Version = node.Version });
 		ok.Result.Applied.Should().BeTrue();
 		(await _tasks.GetAsync(Proj, "ideas")).Nodes.Single().Status.Should().Be("review");
+	}
+
+	// The classic preset end-to-end through the service: standalone (non-singleton) board
+	// creation, the quick-add default, free open-status movement, the reason gate into the
+	// not-delivered terminals, the type-vocabulary door, the reopen edge.
+	[Fact]
+	public async Task Classic_Board_EndToEnd_QuickAdd_ReasonGate_TypeDoor()
+	{
+		// Standalone AND unlimited — no quartet singleton rule for classic.
+		await _tasks.CreateBoardAsync(Proj, "backlog", "classic", null, null);
+		await _tasks.CreateBoardAsync(Proj, "backlog2", "classic", null, null);
+
+		// Quick-add creates a `task` born in Backlog.
+		await _tasks.QuickAddAsync(Proj, "backlog", "First thing", null, 0);
+		var node = (await _tasks.GetAsync(Proj, "backlog")).Nodes.Single();
+		node.Type.Should().Be("task");
+		node.Status.Should().Be("Backlog");
+
+		// Open statuses move freely (Backlog → InProgress skips Todo, no gate).
+		await Upsert("backlog", new NodePatch { Key = node.Key, Status = "InProgress", Version = node.Version });
+
+		// Cancelled demands a reason: a body-less status change is refused...
+		var v1 = (await _tasks.GetAsync(Proj, "backlog")).Nodes.Single().Version;
+		var noReason = () => Upsert("backlog", new NodePatch { Key = node.Key, Status = "Cancelled", Version = v1 });
+		(await noReason.Should().ThrowAsync<ArgumentException>()).WithMessage("*requires a reason*");
+		// ...and the reason in the body lets the same transition apply.
+		await Upsert("backlog", new NodePatch { Key = node.Key, Status = "Cancelled", Version = v1, Body = "obsolete — superseded by the v2 flow" });
+		(await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes.Single().Status.Should().Be("Cancelled");
+
+		// A closed node reopens to Todo — but ONLY to Todo (terminals are not free).
+		var v2 = (await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes.Single().Version;
+		var badReopen = () => Upsert("backlog", new NodePatch { Key = node.Key, Status = "InProgress", Version = v2 });
+		(await badReopen.Should().ThrowAsync<ArgumentException>()).WithMessage("*no transition*");
+		await Upsert("backlog", new NodePatch { Key = node.Key, Status = "Todo", Version = v2 });
+		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single().Status.Should().Be("Todo");
+
+		// The type door: bug is a first-class type (its own block), an unknown type is
+		// refused naming the vocabulary (multi-block kinds are strict like work).
+		await Upsert("backlog", new NodePatch { Key = "b", Type = "bug", Title = "B", Body = "x" });
+		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single(n => n.Key == "b").Status.Should().Be("Backlog");
+		var badType = () => Upsert("backlog", new NodePatch { Key = "z", Type = "banana", Title = "Z", Body = "x" });
+		(await badType.Should().ThrowAsync<ArgumentException>()).WithMessage("*task|feature|bug*");
+
+		// Free-form tags, like simple (classic declares no axes).
+		await Upsert("backlog", new NodePatch { Key = "t", Title = "T", Body = "x", Tags = ["severity:high", "urgent"] });
+		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single(n => n.Key == "t").Tags.Should().Equal("severity:high", "tag:urgent");
 	}
 
 	[Fact]

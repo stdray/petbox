@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE a named task board in a project. `kind` sets the board role (simple|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition declares via tasks_methodology_def_upsert) which drives the workflow — call tasks_workflow to see the valid types/statuses/transitions for a kind; an unknown kind is rejected naming the valid ones. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
+	[Description("CREATE a named task board in a project. `kind` sets the board role (simple|classic|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition declares via tasks_methodology_def_upsert) which drives the workflow — call tasks_workflow to see the valid types/statuses/transitions for a kind; an unknown kind is rejected naming the valid ones. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null, CancellationToken ct = default)
@@ -94,16 +94,18 @@ public static class TasksTools
 		return new BoardReopenedResult(await tasks.SetClosedAsync(projectKey, board, false, ct));
 	}
 
-	[McpServerTool(Name = "tasks_methodology_enable", Title = "Enable the methodology quartet", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
-	[Description("Provision the four singleton methodology boards (intake/ideas/spec/work) if missing and auto-wire work->spec. Idempotent — opt-in; a project's methodology lives on these, ad-hoc work stays on simple boards. The four kinds are one-per-project. Requires tasks:write. Returns the quartet surface (intake→ideas→spec→work).")]
+	[McpServerTool(Name = "tasks_methodology_enable", Title = "Enable a methodology preset", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
+	[Description("Provision a methodology PRESET's singleton boards if missing and auto-wire work->spec. `preset` selects the board set (default \"quartet\" = intake/ideas/spec/work; an unknown slug is rejected naming the available presets) — the quartet is the only preset today. Idempotent — opt-in; a project's methodology lives on these boards, ad-hoc work stays on simple boards. The methodology kinds are one-per-project. Requires tasks:write. Returns the quartet surface (intake→ideas→spec→work).")]
 	public static async Task<MethodologyView> MethodologyEnableAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, CancellationToken ct = default)
+		string projectKey,
+		[Description("The methodology preset to provision (default \"quartet\" = intake/ideas/spec/work; \"classic\" = one standalone GitHub/Jira/Linear-level board). Unknown slug → a clear error listing the available presets.")] string? preset = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return await tasks.EnableMethodologyAsync(projectKey, ct);
+		return await tasks.EnableMethodologyAsync(projectKey, preset ?? MethodologyPresets.DefaultProvisioningPreset, ct);
 	}
 
 	[McpServerTool(Name = "tasks_methodology_get", Title = "Get the methodology quartet", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
@@ -156,15 +158,26 @@ public static class TasksTools
 		statuses of ITS block, no duplicate edges). `definition` shape: { name, kinds:[{
 		kind, quickAddAllowed?, workflows:[{ types:[...], statuses:[{ slug, name?,
 		kind?: open|terminalok|terminalcancel }], transitions:[{ from, to,
-		requiresApproval?, requiresReason?, preconditionArtifact? }] }],
-		linkConstraints?:[{ type, link }] }], linkKinds?:[{ slug, description? }],
+		requiresApproval?, enforceApproval?, requiresReason?, preconditionArtifact?,
+		checklist?:[...] }] }], linkConstraints?:[{ type, link, targetKind?,
+		targetStatuses? }], effects?:[{ on, link, direction, set, onlyFrom? }] }],
+		linkKinds?:[{ slug, description? }],
 		tagAxes?:[{ namespace, description? }] }; statuses[0] is
 		the initial status; `preconditionArtifact` names a comment-artifact tag (e.g.
 		"spec_plan") the node must carry before the transition (enforced: the upsert refuses
 		the transition until an `artifact:<slug>` comment exists on the node).
+		`enforceApproval` (only with requiresApproval:true) declares the approval gate as
+		server-blocked rather than owner-only by convention; `checklist` is free-text
+		conditions to confirm before the transition (guide-rendered, not enforced).
 		`linkConstraints` (per kind): "a NEW node of `type` must carry a `link` at creation"
 		— link ∈ task_spec|blocks|idea_spec (the kinds expressible in the upsert call as
-		specRef/blockedBy/ideaRef); edits don't re-require it. `linkKinds` (project-wide):
+		specRef/blockedBy/ideaRef); edits don't re-require it; `targetKind`/`targetStatuses`
+		optionally declare what the link must point at (a node of that kind / in one of those
+		statuses — declaration only, runtime resolution lands with engine v2). `effects`
+		(per kind, declaration only — executed once engine v2 ships): on a node of this kind
+		ENTERING status `on`, linked nodes over relation `link` in `direction`
+		(incoming|outgoing) are set to `set`; `onlyFrom` restricts to linked nodes currently
+		in that status. `linkKinds` (project-wide):
 		additional relation kinds for relations_create (free semantic edges, no FSM effects;
 		must not collide with builtin kinds). `tagAxes` (project-wide): declared tag
 		namespaces — when present, tags on definition-resolved boards must be
@@ -207,47 +220,79 @@ public static class TasksTools
 		document (kinds/types/statuses/transitions as data), NOT the quartet board index
 		(that is tasks_methodology_get). Defined=true → { name, kinds:[{ kind,
 		quickAddAllowed, workflows:[{ types, initial, statuses:[{ slug, name, kind }],
-		transitions:[{ from, to, requiresApproval, requiresReason, preconditionArtifact? }]
-		}], linkConstraints?:[{ type, link }] }], version (the baseline for
+		transitions:[{ from, to, requiresApproval, requiresReason, preconditionArtifact?,
+		enforceApproval, checklist? }] }], linkConstraints?:[{ type, link, targetKind?,
+		targetStatuses? }], effects?:[{ on, link, direction, set, onlyFrom? }] }], version
+		(the baseline for
 		tasks_methodology_def_upsert), created, updated, linkKinds?:[{ slug, description? }],
 		tagAxes?:[{ namespace, description? }] } (the ?-marked lists are omitted when the
 		definition declares none). Defined=false → the project has no definition of its own
 		and runs on the built-in preset (`preset` names it) — an honest state, not an error.
-		Requires tasks:read.
+
+		Pass `preset` (e.g. "quartet") to get that BUILT-IN preset RENDERED as a definition
+		document (same shape, Defined=true, version 0, created/updated omitted) instead of the
+		project's stored definition — a copyable STARTING POINT for a custom methodology: edit
+		it, then install it via tasks_methodology_def_upsert (version 0). WARNING: this is a
+		template, not an equivalent of the built-in quartet. The quartet kinds
+		(intake/ideas/spec/work) declared in a DEFINITION LOSE their hardcoded BoardKind engine
+		semantics — spec delivery roll-up, the ideaRef guard on spec writes, intake auto-close,
+		and blocks auto-unblock are NOT reproduced from definition data (until engine v2). The
+		statuses/transitions/gates and tag axes carry over; the cross-board process automation
+		does not. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyDefGetResult> MethodologyDefGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, CancellationToken ct = default)
+		string projectKey,
+		[Description("Render this built-in preset (e.g. \"quartet\") as a definition document (read-only template) instead of the project's stored definition. Omit for the stored definition.")] string? preset = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		// Preset copy: render the built-in preset as a definition template (version 0, no
+		// created/updated — it was never stored). Same output shape as the stored definition.
+		if (!string.IsNullOrWhiteSpace(preset))
+			return ProjectDefinition(MethodologyPresets.RenderPresetDefinition(preset), version: 0, created: null, updated: null);
 		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
 		if (view is null)
 			return new MethodologyDefGetResult(Defined: false, Preset: BuiltinPreset);
-		return new MethodologyDefGetResult(
+		return ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
+	}
+
+	// Project a MethodologyDefinition onto the def_get wire result (Defined=true). Shared by the
+	// stored-definition read and the preset-copy render, so both paths use ONE shape — the strict
+	// outputSchema clients validate against is identical whichever source produced the document.
+	static MethodologyDefGetResult ProjectDefinition(MethodologyDefinition def, long version, DateTime? created, DateTime? updated) =>
+		new(
 			Defined: true,
-			Name: view.Definition.Name,
-			Kinds: view.Definition.Kinds.Select(k => new MethodologyKindView(
+			Name: def.Name,
+			Kinds: def.Kinds.Select(k => new MethodologyKindView(
 				k.Kind, k.QuickAddAllowed,
 				k.Workflows.Select(w => new MethodologyWorkflowBlockView(
 					Types: w.Types,
 					Initial: w.Initial,
 					Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
-					Transitions: w.Transitions.Select(t => new MethodologyTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList(),
+					Transitions: w.Transitions.Select(t => new MethodologyTransitionView(
+						t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact,
+						t.EnforceApproval,
+						Checklist: t.Checklist is { Count: > 0 } ? t.Checklist : null)).ToList())).ToList(),
 				LinkConstraints: k.LinkConstraints is { Count: > 0 }
-					? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(c.Type, c.Link)).ToList()
+					? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(
+						c.Type, c.Link, c.TargetKind,
+						TargetStatuses: c.TargetStatuses is { Count: > 0 } ? c.TargetStatuses : null)).ToList()
+					: null,
+				Effects: k.Effects is { Count: > 0 }
+					? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom)).ToList()
 					: null)).ToList(),
-			Version: view.Version,
-			Created: view.Created,
-			Updated: view.Updated,
-			LinkKinds: view.Definition.LinkKinds is { Count: > 0 }
-				? view.Definition.LinkKinds.Select(lk => new MethodologyLinkKindView(lk.Slug, lk.Description)).ToList()
+			Version: version,
+			Created: created,
+			Updated: updated,
+			LinkKinds: def.LinkKinds is { Count: > 0 }
+				? def.LinkKinds.Select(lk => new MethodologyLinkKindView(lk.Slug, lk.Description)).ToList()
 				: null,
-			TagAxes: view.Definition.TagAxes is { Count: > 0 }
-				? view.Definition.TagAxes.Select(a => new MethodologyTagAxisView(a.Namespace, a.Description)).ToList()
+			TagAxes: def.TagAxes is { Count: > 0 }
+				? def.TagAxes.Select(a => new MethodologyTagAxisView(a.Namespace, a.Description)).ToList()
 				: null);
-	}
 
 	[McpServerTool(Name = "tasks_methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
 	[Description("""
@@ -260,11 +305,14 @@ public static class TasksTools
 		per effective kind: types (quick-add default marked), statuses grouped
 		open/terminal, initial status, the transition map (collapsed to "free" when a block
 		allows every move), the GATES as behavioral invariants (owner-only transitions the
-		agent NEVER performs, reason-required moves, artifact:<slug> comment preconditions),
-		creation link requirements (specRef/blockedBy/ideaRef), tag axes (or free-form),
+		agent NEVER performs — marked enforced vs convention, reason-required moves,
+		artifact:<slug> comment preconditions, pre-transition checklists), creation link
+		requirements (specRef/blockedBy/ideaRef, incl. declared link targets), declared
+		transition effects, tag axes (or free-form),
 		and the relation-kind dictionary (process vs neutral vs project-declared).
 		`invariants` is the same derivation machine-readable: [{ kind, rule:
-		approval_gate|reason_required|precondition_artifact|link_constraint|tag_axes,
+		approval_gate|approval_gate_enforced|reason_required|precondition_artifact|
+		checklist|transition_effect|link_constraint|tag_axes,
 		detail }]. `source` = presets|definition|mixed; `definitionVersion` when a
 		definition exists. Bounded (a handful of kinds) — no truncation. Requires tasks:read.
 		""")]
@@ -295,10 +343,22 @@ public static class TasksTools
 				(w.Statuses ?? []).Select(ParseStatus).ToList(),
 				(w.Transitions ?? []).Select(t => new MethodologyTransitionDef(
 					t.From ?? string.Empty, t.To ?? string.Empty,
-					t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList())
+					t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)
+				{
+					EnforceApproval = t.EnforceApproval,
+					Checklist = (t.Checklist ?? []).Select(i => i ?? string.Empty).ToList(),
+				}).ToList())).ToList())
 		{
 			LinkConstraints = (k.LinkConstraints ?? [])
-				.Select(c => new MethodologyLinkConstraintDef(c.Type ?? string.Empty, c.Link ?? string.Empty)).ToList(),
+				.Select(c => new MethodologyLinkConstraintDef(c.Type ?? string.Empty, c.Link ?? string.Empty)
+				{
+					TargetKind = c.TargetKind,
+					TargetStatuses = c.TargetStatuses?.Select(s => s ?? string.Empty).ToList(),
+				}).ToList(),
+			Effects = (k.Effects ?? [])
+				.Select(e => new MethodologyTransitionEffectDef(
+					e.On ?? string.Empty, e.Link ?? string.Empty, e.Direction ?? string.Empty,
+					e.Set ?? string.Empty, e.OnlyFrom)).ToList(),
 		}).ToList())
 	{
 		LinkKinds = (d.LinkKinds ?? [])
@@ -578,9 +638,12 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		// The SESSION key's scopes decide the actor capability: tasks:approve elevates the
+		// write past methodology-ENFORCED approval gates (enforceApproval transitions).
+		var actor = ModuleMcp.HasScope(http, ApiKeyScopes.TasksApprove) ? TasksActor.Approver : TasksActor.None;
 		var patches = ParseNodePatches(nodes);
 		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, ct), urlPrefix, bodyLen);
+		return Serialize(await tasks.UpsertAsync(projectKey, board, patches, actor, ct), urlPrefix, bodyLen);
 	}
 
 	[McpServerTool(Name = "tasks_delta", Title = "Plan delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]

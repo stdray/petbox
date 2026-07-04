@@ -50,7 +50,8 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- board lifecycle ----
 
-	// The methodology kinds are per-project singletons (the quartet); `simple` is unlimited.
+	// The methodology kinds are per-project singletons (the quartet); `simple` and
+	// `classic` are unlimited.
 	static readonly BoardKind[] Methodological = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
 
 	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, CancellationToken ct = default)
@@ -90,6 +91,12 @@ public sealed partial class TasksService : ITasksService
 		var view = await GetMethodologyDefinitionAsync(projectKey, ct);
 		return view is null ? MethodologyRuntime.PresetsOnly : new MethodologyRuntime(view.Definition);
 	}
+
+	// The public door to the resolution seam (same instance the private RuntimeAsync builds
+	// for every service call). UI pages hold it for a request to answer kind/terminality/
+	// quick-add/next-status the SAME way the MCP path does.
+	public Task<MethodologyRuntime> GetRuntimeAsync(string projectKey, CancellationToken ct = default) =>
+		RuntimeAsync(projectKey, ct);
 
 	// Reject a 2nd active board of a methodology kind (one-per-project). `free` is exempt.
 	async Task AssertSingletonAsync(string projectKey, BoardKind kind, CancellationToken ct)
@@ -151,10 +158,13 @@ public sealed partial class TasksService : ITasksService
 	// Pipeline order of the quartet kinds.
 	static readonly BoardKind[] Quartet = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work];
 
-	public async Task<MethodologyView> EnableMethodologyAsync(string projectKey, CancellationToken ct = default)
+	public async Task<MethodologyView> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default)
 	{
+		// The preset selects WHICH board kinds to provision (default = the quartet, behavior
+		// unchanged); an unknown slug is rejected before any board is created.
+		var kinds = MethodologyPresets.ResolveProvisioningPreset(preset).Kinds;
 		var boards = await _boards.ListAsync(projectKey, ct);
-		foreach (var kind in Quartet)
+		foreach (var kind in kinds)
 		{
 			if (boards.Any(b => b.ClosedAt == null && MethodologyPresets.ParseKind(b.Kind) == kind)) continue;
 			var name = kind.ToString().ToLowerInvariant();
@@ -947,8 +957,9 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- write: upsert ----
 
-	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, CancellationToken ct = default)
+	public async Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, TasksActor? actor = null, CancellationToken ct = default)
 	{
+		actor ??= TasksActor.None;
 		using var op = PetBoxActivitySources.Tasks.StartActivity("tasks.upsert");
 		op?.SetTag("petbox.project", projectKey);
 		op?.SetTag("petbox.board", board);
@@ -982,7 +993,7 @@ public sealed partial class TasksService : ITasksService
 				throw new ArgumentException($"node '{both}' is both deleted and upserted in one batch — pick one");
 		}
 
-		var desired = upsertPatches.Select(p => ApplyWorkflow(runtime, kindSlug, Merge(p, prior), prior) with { Board = board }).ToArray();
+		var desired = upsertPatches.Select(p => ApplyWorkflow(runtime, kindSlug, Merge(p, prior), prior, actor) with { Board = board }).ToArray();
 		ValidateChanges(desired, prior);
 		// Resolve slug specRefs to NodeIds ONCE, up front — both the validation below and the
 		// task_spec edge write (LinkRefsAsync) read this map, so it must never carry a raw slug.
@@ -993,9 +1004,8 @@ public sealed partial class TasksService : ITasksService
 		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
 		{
 			RequireDefinitionLinks(runtime, kindSlug, desired, prior, specRefs, blockedBy, ideaRefs);
-			await ValidateSpecRefsAsync(projectKey, meta, specRefs, runtime, ct);
+			await ValidateLinkTargetsAsync(projectKey, meta, kindSlug, runtime, specRefs, ideaRefs, ct);
 			await RequireBlockersAsync(presetKind, projectKey, desired, blockedBy, ct);
-			await RequireAcceptedIdeaForSpecAsync(presetKind, projectKey, desired, ideaRefs, runtime, ct);
 			await RequirePreconditionArtifactsAsync(runtime, kindSlug, projectKey, board, desired, prior, ct);
 		}
 
@@ -1061,7 +1071,7 @@ public sealed partial class TasksService : ITasksService
 				await LinkRefsAsync(projectKey, "blocks", desired, blockedBy, blockerIsFrom: true, ct);
 				await LinkRefsAsync(projectKey, "idea_spec", desired, ideaRefs, blockerIsFrom: true, ct);
 				await CloseBlocksOnLeaveAsync(projectKey, desired, prior, ct);
-				await RunDoneEffectsAsync(projectKey, presetKind, runtime, desired, ct);
+				await RunTransitionEffectsAsync(projectKey, kindSlug, runtime, desired, prior, ct);
 				await RunDeleteEffectsAsync(projectKey, board, deletePatches, prior, runtime, ct);
 			}
 		// Tags + part_of are node metadata, not a content revision — apply whenever the
@@ -1429,7 +1439,7 @@ public sealed partial class TasksService : ITasksService
 	// inherit from source), and validate status/transition — the single workflow point.
 	// The workflow resolves through the runtime: definition-declared kinds from data,
 	// everything else from the built-in presets exactly as before.
-	static PlanNode ApplyWorkflow(MethodologyRuntime runtime, string? kindSlug, PlanNode node, Dictionary<string, PlanNode> prior)
+	static PlanNode ApplyWorkflow(MethodologyRuntime runtime, string? kindSlug, PlanNode node, Dictionary<string, PlanNode> prior, TasksActor actor)
 	{
 		var type = node.Type.Length == 0 ? null : node.Type;
 		// Simple boards: type is a label from a small fixed set; empty defaults to `task`, and an
@@ -1453,8 +1463,10 @@ public sealed partial class TasksService : ITasksService
 		n = n with { NodeId = nodeId };
 
 		var from = current?.Status ?? source?.Status;
+		// Per-transition enforcement only (the global enforceApproval flag stays off): a
+		// transition whose methodology declares EnforceApproval demands an approving actor.
 		var res = WorkflowEngine.Validate(wf, runtime.KindName(kindSlug), runtime.ValidTypes(kindSlug),
-			type, from, n.Status, hasReason: !string.IsNullOrWhiteSpace(n.Body));
+			type, from, n.Status, actorCanApprove: actor.CanApprove, hasReason: !string.IsNullOrWhiteSpace(n.Body));
 		if (!res.Ok) throw new ArgumentException(res.Error);
 		return n;
 	}
@@ -1522,62 +1534,98 @@ public sealed partial class TasksService : ITasksService
 	// practice — the two are trivially distinguishable.
 	static bool LooksLikeNodeId(string v) => v.Length == 32 && v.All(Uri.IsHexDigit);
 
-	// Validate each specRef target: it must resolve to a node on a spec board, and (if
-	// this work board has a SpecBoard set) on that specific board.
-	async Task ValidateSpecRefsAsync(string projectKey, TaskBoardMeta workBoard, Dictionary<string, string> specRefs, MethodologyRuntime runtime, CancellationToken ct)
+	// DATA-DRIVEN link-target guard (schema v2, was ValidateSpecRefsAsync +
+	// RequireAcceptedIdeaForSpecAsync): every PROVIDED ref must resolve to a real node, and
+	// when the writing kind's constraints declare a target for that link kind (TargetKind /
+	// TargetStatuses), the target's EFFECTIVE kind and status must match. The target rule is
+	// KIND-level, not type-level: the constraint's Type says who MUST carry the link, its
+	// target says what the link points at for this kind — so a voluntary ref (e.g. a chore's
+	// specRef) is validated by the same rule. The SpecBoard binding stays alongside: it is
+	// the quartet auto-wire's board pin, data on the board meta rather than the methodology.
+	async Task ValidateLinkTargetsAsync(
+		string projectKey, TaskBoardMeta board, string? kindSlug, MethodologyRuntime runtime,
+		Dictionary<string, string> specRefs, Dictionary<string, string> ideaRefs, CancellationToken ct)
 	{
-		if (specRefs.Count == 0) return;
+		if (specRefs.Count == 0 && ideaRefs.Count == 0) return;
 		var index = await BuildNodeIndexAsync(projectKey, ct);
-		foreach (var (key, refId) in specRefs)
+		var constraints = runtime.LinkConstraints(kindSlug);
+
+		ValidateRefs("specRef", "task_spec", specRefs);
+		ValidateRefs("ideaRef", "idea_spec", ideaRefs);
+
+		// Auto-wire pin: when this board links a specific spec board, every specRef must
+		// live on it (same message as always).
+		if (board.SpecBoard is { Length: > 0 } sb)
+			foreach (var (key, refId) in specRefs)
+				if (index.TryGetValue(refId, out var t) && t.Board != sb)
+					throw new ArgumentException($"specRef '{refId}' (node '{key}') is on board '{t.Board}', but this work board links spec board '{sb}'");
+
+		void ValidateRefs(string field, string link, Dictionary<string, string> refs)
 		{
-			if (!index.TryGetValue(refId, out var t))
-				throw new ArgumentException($"specRef '{refId}' (node '{key}') does not resolve to any node");
-			if (runtime.PresetKind(t.BoardKind) != BoardKind.Spec)
-				throw new ArgumentException($"specRef '{refId}' (node '{key}') points to board '{t.Board}', which is not a spec board");
-			if (workBoard.SpecBoard is { Length: > 0 } sb && t.Board != sb)
-				throw new ArgumentException($"specRef '{refId}' (node '{key}') is on board '{t.Board}', but this work board links spec board '{sb}'");
+			if (refs.Count == 0) return;
+			// The kind's target rule for this link kind: the first constraint declaring one
+			// (the validator keeps (type, link) pairs unique; quartet declares one rule per link).
+			var rule = constraints.FirstOrDefault(c =>
+				string.Equals(c.Link, link, StringComparison.OrdinalIgnoreCase)
+				&& (c.TargetKind is not null || c.TargetStatuses is { Count: > 0 }));
+			foreach (var (key, refId) in refs)
+			{
+				if (!index.TryGetValue(refId, out var t))
+					throw new ArgumentException($"{field} '{refId}' (node '{key}') does not resolve to any node");
+				if (rule is null) continue;
+				if (rule.TargetKind is not null && !string.Equals(runtime.KindName(t.BoardKind), rule.TargetKind, StringComparison.OrdinalIgnoreCase))
+					throw new ArgumentException($"{field} '{refId}' (node '{key}') points to board '{t.Board}', which is not a {rule.TargetKind} board");
+				if (rule.TargetStatuses is { Count: > 0 } ts && !ts.Contains(t.Status, StringComparer.OrdinalIgnoreCase))
+					throw new ArgumentException($"{field} '{refId}' (node '{key}') target is '{t.Status}', not {string.Join("|", ts)} — a {runtime.KindName(kindSlug)} change needs a {rule.TargetKind ?? link} node in status {string.Join("|", ts)}");
+			}
 		}
 	}
 
-	// spec-write-needs-accepted-idea (governance): every create/change of a spec node must
-	// reference an `accepted` idea via ideaRef — which becomes the idea_spec edge (linked
-	// after apply). No accepted idea, no spec write. WorkflowEngine stays pure; the idea
-	// node is read here.
-	async Task RequireAcceptedIdeaForSpecAsync(BoardKind? kind, string projectKey, PlanNode[] desired, Dictionary<string, string> ideaRefs, MethodologyRuntime runtime, CancellationToken ct)
+	// DATA-DRIVEN transition effects (schema v2, was the Work-only RunDoneEffectsAsync):
+	// when a node ENTERS a status, its effective kind's declared Effects fire — for each
+	// effect matching the entered status, every node linked through `Link` in `Direction`
+	// (incoming = the linked node points at this one, outgoing = the reverse) is moved to
+	// `Set`, filtered by `OnlyFrom` when declared. System action, same audit trail as the
+	// old hardcode (a temporal revision via SetActiveNodeStatusAsync, no gate). Generic
+	// safety rules: an effect never reopens a node whose current status is terminal for its
+	// board, and `Set` must exist in the linked node's workflow (cross-kind statuses resolve
+	// here, at runtime — an unresolvable one skips the node, canonical slug casing applies).
+	// One builtin special: `blocks` is a GATING relation, so an effect traversing it
+	// CONSUMES the edge (temporal close) and applies only when the linked node has no other
+	// active blocker left — the historical Done-unblock semantics, now for any kind that
+	// declares a blocks effect.
+	async Task RunTransitionEffectsAsync(
+		string projectKey, string? kindSlug, MethodologyRuntime runtime,
+		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
 	{
-		if (kind != BoardKind.Spec) return;
-		var index = await BuildNodeIndexAsync(projectKey, ct);
+		var effects = runtime.Effects(kindSlug);
+		if (effects.Count == 0) return;
 		foreach (var n in desired)
 		{
-			if (!ideaRefs.TryGetValue(n.Key, out var ideaId))
-				throw new ArgumentException($"a spec change must be made under an accepted idea — provide ideaRef (node '{n.Key}')");
-			if (!index.TryGetValue(ideaId, out var idea))
-				throw new ArgumentException($"ideaRef '{ideaId}' (node '{n.Key}') does not resolve to any node");
-			if (runtime.PresetKind(idea.BoardKind) != BoardKind.Ideas)
-				throw new ArgumentException($"ideaRef '{ideaId}' (node '{n.Key}') is not an idea (board '{idea.Board}')");
-			if (!string.Equals(idea.Status, "accepted", StringComparison.OrdinalIgnoreCase))
-				throw new ArgumentException($"ideaRef '{ideaId}' (node '{n.Key}') idea is '{idea.Status}', not accepted — a spec change needs an accepted idea");
-		}
-	}
-
-	// FSM effect: when a work node reaches a TerminalOk status, auto-close any intake
-	// issue that spawned it and unblock tasks it was blocking. System action (no gate).
-	async Task RunDoneEffectsAsync(string projectKey, BoardKind? kind, MethodologyRuntime runtime, PlanNode[] desired, CancellationToken ct)
-	{
-		if (kind != BoardKind.Work) return;
-		foreach (var n in desired.Where(n => runtime.KindOfSlug(n.Status) == StatusKind.TerminalOk))
-		{
-			foreach (var e in (await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct)).Where(e => e.Kind == "issue_task"))
-				await SetActiveNodeStatusAsync(projectKey, e.FromNodeId, runtime,
-					(wf, node, isTerminal) => isTerminal ? null : wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalOk)?.Slug, ct);
-
-			foreach (var e in (await _relations.ListAsync(projectKey, n.NodeId, "from", ct: ct)).Where(e => e.Kind == "blocks"))
+			var cur = prior.GetValueOrDefault(n.Key) ?? (n.PrevKey is not null ? prior.GetValueOrDefault(n.PrevKey) : null);
+			var entered = cur is null || !string.Equals(cur.Status, n.Status, StringComparison.OrdinalIgnoreCase);
+			if (!entered || n.NodeId.Length == 0) continue;
+			foreach (var e in effects.Where(e => string.Equals(e.On, n.Status, StringComparison.OrdinalIgnoreCase)))
 			{
-				await _relations.CloseAsync(projectKey, "blocks", e.FromNodeId, e.ToNodeId, ct);
-				var stillBlocked = (await _relations.ListAsync(projectKey, e.ToNodeId, "to", ct: ct)).Any(x => x.Kind == "blocks");
-				if (!stillBlocked)
-					await SetActiveNodeStatusAsync(projectKey, e.ToNodeId, runtime,
-						(_, node, _) => string.Equals(node.Status, "Blocked", StringComparison.OrdinalIgnoreCase) ? "InProgress" : null, ct);
+				var incoming = string.Equals(e.Direction, "incoming", StringComparison.OrdinalIgnoreCase);
+				var edges = (await _relations.ListAsync(projectKey, n.NodeId, incoming ? "to" : "from", ct: ct))
+					.Where(x => string.Equals(x.Kind, e.Link, StringComparison.OrdinalIgnoreCase)).ToList();
+				foreach (var edge in edges)
+				{
+					var linkedId = incoming ? edge.FromNodeId : edge.ToNodeId;
+					if (string.Equals(e.Link, "blocks", StringComparison.OrdinalIgnoreCase))
+					{
+						// gating semantics: consume the edge; release only the last blocker
+						await _relations.CloseAsync(projectKey, "blocks", edge.FromNodeId, edge.ToNodeId, ct);
+						var stillBlocked = (await _relations.ListAsync(projectKey, linkedId, "to", ct: ct)).Any(x => x.Kind == "blocks");
+						if (stillBlocked) continue;
+					}
+					await SetActiveNodeStatusAsync(projectKey, linkedId, runtime,
+						(wf, node, isTerminal) =>
+							isTerminal ? null
+							: e.OnlyFrom is not null && !string.Equals(node.Status, e.OnlyFrom, StringComparison.OrdinalIgnoreCase) ? null
+							: wf?.Status(e.Set)?.Slug, ct);
+				}
 			}
 		}
 	}
@@ -1772,12 +1820,16 @@ public sealed partial class TasksService : ITasksService
 		}
 	}
 
-	// DATA-DRIVEN creation link constraints (primitives-link-constraints): a NEW node of a
+	// DATA-DRIVEN link constraints (primitives-link-constraints): a NEW node of a
 	// constrained type must carry the constrained link in THIS call (task_spec = specRef,
-	// blocks = blockedBy, idea_spec = ideaRef — the validator admits only these). Edits
-	// don't re-require the link. Constraints resolve through the runtime for preset and
-	// definition kinds alike — the work preset declares feature/bug → task_spec, and
-	// `chore` (engineering hygiene below the spec) is exempt because no constraint names it.
+	// blocks = blockedBy, idea_spec = ideaRef — the validator admits only these).
+	// CADENCE follows the builtin link kind's semantics: task_spec/blocks are STRUCTURAL
+	// edges, required at creation only (edits don't re-require them); idea_spec is a
+	// PROVENANCE edge — every write of a constrained type must name the idea that
+	// authorizes it (the spec-write governance, now as data). Constraints resolve through
+	// the runtime for preset and definition kinds alike — the work preset declares
+	// feature/bug → task_spec, and `chore` (engineering hygiene below the spec) is exempt
+	// because no constraint names it; the spec preset declares spec → idea_spec.
 	static void RequireDefinitionLinks(
 		MethodologyRuntime runtime, string? kindSlug, PlanNode[] desired,
 		Dictionary<string, PlanNode> prior,
@@ -1788,22 +1840,30 @@ public sealed partial class TasksService : ITasksService
 		foreach (var n in desired)
 		{
 			var isNew = !prior.ContainsKey(n.Key) && (n.PrevKey is null || !prior.ContainsKey(n.PrevKey));
-			if (!isNew) continue;
+			// The node's EFFECTIVE type: single-FSM preset kinds accept untyped nodes (an
+			// untyped spec node IS a `spec`), so an empty type resolves to the kind's default
+			// before constraint matching — the old kind-wide guard's reach, as data.
+			var type = n.Type.Length == 0 ? runtime.DefaultType(kindSlug) : n.Type;
 			foreach (var c in constraints)
 			{
-				if (!string.Equals(c.Type, n.Type, StringComparison.OrdinalIgnoreCase)) continue;
+				if (!string.Equals(c.Type, type, StringComparison.OrdinalIgnoreCase)) continue;
+				var everyWrite = string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase);
+				if (!isNew && !everyWrite) continue;
 				var kindName = runtime.KindName(kindSlug);
-				// task_spec keeps the historical, target-naming wording; the generic form
-				// names the link kind + the upsert field that expresses it.
+				// task_spec keeps the historical, target-naming wording; idea_spec states the
+				// provenance rule with the declared target; the generic form names the link
+				// kind + the upsert field that expresses it.
 				var message = c.Link.ToLowerInvariant() switch
 				{
 					"task_spec" when !specRefs.ContainsKey(n.Key) =>
-						$"a {kindName} {n.Type} must link a spec node — provide specRef (node '{n.Key}')",
+						$"a {kindName} {n.Type} must link a {c.TargetKind ?? "spec"} node — provide specRef (node '{n.Key}')",
 					"blocks" when !blockedBy.ContainsKey(n.Key) =>
 						$"a {kindName} {n.Type} must carry a {c.Link} link at creation — provide blockedBy (node '{n.Key}')",
 					// idea_spec — the validator admits no other kind
 					"idea_spec" when !ideaRefs.ContainsKey(n.Key) =>
-						$"a {kindName} {n.Type} must carry a {c.Link} link at creation — provide ideaRef (node '{n.Key}')",
+						c.TargetStatuses is { Count: > 0 } ts
+							? $"a {kindName} change must be made under {string.Join("|", ts)} {c.TargetKind ?? c.Link} — provide ideaRef (node '{n.Key}')"
+							: $"a {kindName} {n.Type} must carry a {c.Link} link on every write — provide ideaRef (node '{n.Key}')",
 					_ => null,
 				};
 				if (message is not null) throw new ArgumentException(message);

@@ -356,6 +356,40 @@ document.addEventListener("click", (event) => {
 	});
 });
 
+// ---------- Event permalink ----------
+// The copied link carries only the row id (?event=): the server rebuilds the
+// filter itself, so no query text appears in the URL.
+document.addEventListener("click", (event) => {
+	const target = event.target as HTMLElement | null;
+	const btn = target?.closest("[data-event-link]") as HTMLButtonElement | null;
+	if (!btn) return;
+	event.stopPropagation();
+	event.preventDefault();
+
+	const url = `${window.location.origin}${window.location.pathname}?event=${btn.dataset["eventLink"]}`;
+	void navigator.clipboard.writeText(url).then(() => {
+		const original = btn.textContent;
+		btn.textContent = "copied";
+		btn.dataset["state"] = "copied";
+		setTimeout(() => {
+			btn.textContent = original;
+			btn.removeAttribute("data-state");
+		}, 1200);
+	});
+});
+
+// Highlight and expand the row an ?event= permalink points at.
+(() => {
+	const id = new URLSearchParams(window.location.search).get("event");
+	if (!id) return;
+	const row = document.querySelector(`tr[data-event-id="${CSS.escape(id)}"]`);
+	if (!row) return;
+	row.classList.add("event-permalink-target");
+	const details = row.nextElementSibling;
+	if (details?.classList.contains("event-details")) details.classList.remove("hidden");
+	row.scrollIntoView({ block: "center" });
+})();
+
 // ---------- Expandable event row ----------
 document.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement | null;
@@ -495,6 +529,43 @@ document.addEventListener("change", (event) => {
 })();
 
 // ---------- Share modal ----------
+// The link must not expose the KQL text: the query is stored server-side
+// (POST /api/share) and the URL carries only the opaque token.
+let shareLinkCache: { key: string; url: string; expiresAt: string } | null = null;
+
+async function createShareLink(project: string, log: string, kql: string): Promise<void> {
+	const urlInput = document.getElementById("share-url") as HTMLInputElement | null;
+	const expiryEl = document.getElementById("share-expiry");
+	if (!urlInput) return;
+
+	const cacheKey = `${project} ${log} ${kql}`;
+	if (shareLinkCache?.key === cacheKey) {
+		urlInput.value = shareLinkCache.url;
+		if (expiryEl) expiryEl.textContent = `Expires ${new Date(shareLinkCache.expiresAt).toLocaleString()}`;
+		return;
+	}
+
+	urlInput.value = "";
+	urlInput.placeholder = "Creating link…";
+	if (expiryEl) expiryEl.textContent = "";
+	try {
+		const resp = await fetch("/api/share", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ projectKey: project, logName: log, kql, ttlMinutes: 0 }),
+		});
+		if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+		const created = (await resp.json()) as { id: string; expiresAt: string };
+		const url = `${window.location.origin}/ui/share/${created.id}`;
+		shareLinkCache = { key: cacheKey, url, expiresAt: created.expiresAt };
+		urlInput.value = url;
+		if (expiryEl) expiryEl.textContent = `Expires ${new Date(created.expiresAt).toLocaleString()}`;
+	} catch {
+		urlInput.placeholder = "Failed to create share link";
+		if (expiryEl) expiryEl.textContent = "";
+	}
+}
+
 document.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement | null;
 	if (!target) return;
@@ -503,25 +574,17 @@ document.addEventListener("click", (event) => {
 	if (openBtn) {
 		const modal = document.getElementById("share-modal") as HTMLDialogElement | null;
 		modal?.showModal();
+		void createShareLink(
+			openBtn.dataset["project"] ?? "",
+			openBtn.dataset["log"] ?? "",
+			openBtn.dataset["kql"] ?? "events",
+		);
 		return;
 	}
 
 	if (target.closest("[data-share-copy]")) {
 		const url = (document.getElementById("share-url") as HTMLInputElement | null)?.value ?? "";
-		void navigator.clipboard.writeText(url);
+		if (url) void navigator.clipboard.writeText(url);
 		return;
-	}
-});
-
-// Pre-fill share URL when modal opens
-document.addEventListener("click", (event) => {
-	const target = event.target as HTMLElement | null;
-	const btn = target?.closest("[data-share-modal-open]") as HTMLElement | null;
-	if (!btn) return;
-	const kql = btn.dataset["kql"] ?? "events";
-	const urlInput = document.getElementById("share-url") as HTMLInputElement | null;
-	if (urlInput) {
-		// Share the current per-log viewer URL with the active query.
-		urlInput.value = `${window.location.origin}${window.location.pathname}?kql=${encodeURIComponent(kql)}`;
 	}
 });

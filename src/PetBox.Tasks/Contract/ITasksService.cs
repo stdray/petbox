@@ -30,9 +30,10 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 
 	// --- methodology quartet (intake+ideas+spec+work as a per-project singleton unit) ---
 
-	// Provision the four singleton boards (intake/ideas/spec/work) if missing and auto-wire
-	// work->spec. Idempotent. Returns the quartet surface.
-	Task<MethodologyView> EnableMethodologyAsync(string projectKey, CancellationToken ct = default);
+	// Provision a methodology preset's singleton boards if missing and auto-wire work->spec.
+	// `preset` selects the board set (default "quartet" = intake/ideas/spec/work; unknown slug
+	// is a clear error). Idempotent. Returns the quartet surface.
+	Task<MethodologyView> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default);
 	// The quartet as one compact INDEX (intake→ideas→spec→work): header rows (no body by
 	// default) + a status histogram per board. `bodyLen`>0 slices the first N body chars into
 	// each row; `includeBoards` (kind names) restricts which quartet boards return. Enabled =
@@ -123,7 +124,11 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// subtree). The write carries NO cursor parameter and never returns other writers'
 	// history; CurrentVersion is the board-wide cursor to feed DeltaAsync (the only
 	// delta/catch-up surface).
-	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, CancellationToken ct = default);
+	// `actor` carries the caller's CAPABILITIES (null = TasksActor.None): transitions whose
+	// methodology declares EnforceApproval demand an approving actor — the doors translate
+	// their auth (tasks:approve scope at the MCP door, the cookie-authenticated owner in
+	// the UI) into it; the module itself never reads the request.
+	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, TasksActor? actor = null, CancellationToken ct = default);
 	// Nodes added/updated/removed since the cursor (no writes).
 	Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default);
 	// The unified tasks read (spec uniform-entity-verbs v2) behind tasks_search — the one
@@ -160,6 +165,13 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// preconditionArtifact); any other kind falls back to the built-in presets exactly as
 	// before (identical FSMs collapsed into one block). Powers tasks_workflow.
 	Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default);
+	// The project's data-driven FSM resolution seam — the SAME MethodologyRuntime the MCP
+	// tools resolve through (the project's methodology definition merged over the built-in
+	// presets). UI pages resolve kind name / quick-add / terminality / next-statuses off this
+	// (pass a board's stored kind slug OR its resolved KindName — they resolve identically) so
+	// a definition-declared custom kind behaves the same on UI, MCP and REST. The instance is
+	// immutable and cheap (built once per call), so a page may hold it for the whole request.
+	Task<MethodologyRuntime> GetRuntimeAsync(string projectKey, CancellationToken ct = default);
 
 	// --- UI helpers (board page renders the raw active nodes in its own tree order) ---
 

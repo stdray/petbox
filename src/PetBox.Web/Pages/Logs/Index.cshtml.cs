@@ -33,6 +33,10 @@ public sealed class IndexModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "saved")]
 	public string? SavedName { get; set; }
 
+	// Event permalink: the URL carries only the row id (?event=), never query text.
+	[BindProperty(SupportsGet = true, Name = "event")]
+	public long? EventRowId { get; set; }
+
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
 	public string? WorkspaceKey { get; set; }
 
@@ -50,6 +54,9 @@ public sealed class IndexModel : PageModel
 
 	public List<LogEntryViewModel> Events { get; } = [];
 	public List<object?[]> KqlRows { get; } = [];
+
+	// The shape-changed row accumulation hit KqlLimits.MaxTake and was cut (memory guard).
+	public bool KqlTruncated { get; private set; }
 	public KqlResult? KqlResult { get; private set; }
 	public string? NextCursor { get; private set; }
 	public List<string> Services { get; private set; } = [];
@@ -108,6 +115,9 @@ public sealed class IndexModel : PageModel
 		}
 
 		UserKql = string.IsNullOrWhiteSpace(RawKql) ? "events" : RawKql.Trim();
+
+		if (EventRowId is { } eventRowId)
+			UserKql = FormattableString.Invariant($"events | where Id == {eventRowId}");
 
 		KustoCode userCode;
 		try
@@ -170,7 +180,14 @@ public sealed class IndexModel : PageModel
 					? KqlTransformer.ExecuteSpans(logDb.Spans, code)
 					: KqlTransformer.Execute(logDb.LogEntries, code);
 				await foreach (var row in KqlResult.Rows.WithCancellation(ct))
+				{
+					if (KqlRows.Count >= KqlLimits.MaxTake)
+					{
+						KqlTruncated = true;
+						break;
+					}
 					KqlRows.Add(row);
+				}
 			}
 			else
 			{
