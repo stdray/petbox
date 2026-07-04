@@ -22,12 +22,15 @@ namespace PetBox.Web.Rendering;
 // HtmlSanitizer.Sanitize is thread-safe. Registered as a singleton in Program.cs.
 public sealed class MarkdownRenderer : IMarkdownRenderer
 {
-	// A standalone word of 7–40 hex chars (a git commit hash / short ref). \b keeps it to a whole
-	// word so a hash glued to letters (`x1234567`) or a 6-hex word is left alone. At least one
-	// a-f letter is required: an all-digit word is far more likely a date (20260704) or a
-	// timestamp than a commit hash, and false links on plain numbers hurt more than missing the
-	// ~4% of short hashes that happen to be all digits.
-	static readonly Regex HashRx = new(@"\b(?=[0-9]*[a-fA-F])[0-9a-fA-F]{7,40}\b",
+	// A standalone word shaped like a git commit hash: 7–12 hex (abbreviated) or exactly 40 hex
+	// (full). NOT the naive 7–40 range — PetBox's own identifiers live in between (32-hex NodeIds,
+	// memory-note keys), and hash-autolinking them as commits is worse than missing an unusually
+	// long abbreviation. Edges must not touch a word char OR a hyphen (custom lookarounds instead
+	// of \b): `\b` treats `-` as a boundary, which turned the hex tail of prefixed keys like
+	// `m-<32hex>` / `ac-<12hex>` into "hashes". At least one a-f letter is required: an all-digit
+	// word is far more likely a date (20260704) or a timestamp than a commit hash.
+	static readonly Regex HashRx = new(
+		@"(?<![\w-])(?=[0-9]*[a-fA-F])(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{7,12})(?![\w-])",
 		RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
 	// A `[[slug]]` node mention: the same flat-slug shape a board key has (a-z start,
