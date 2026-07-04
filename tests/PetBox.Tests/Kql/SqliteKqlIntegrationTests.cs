@@ -633,6 +633,31 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 			.Should().BeEquivalentTo(["flag-on"]);
 	}
 
+	// --- intake kql-propertiesjson-identity-split: `PropertiesJson` is the SAME real column pre- and
+	// post-split. Pre-split it used to fall through the bare-name fallback as
+	// Properties["PropertiesJson"] → json_extract NULL → a supported `where` silently returned 0 rows,
+	// while post-split the streamed shape exposed it as a genuine column. ---
+
+	[Fact]
+	public async Task PropertiesJsonColumn_SameMeaningPreAndPostSplit()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(55, LogLevel.Information, "with-ctx", "svc-pj", Props("""{"SourceContext":"PetBox.Web.Mcp"}"""))),
+			ToRecord(Mk(56, LogLevel.Information, "no-ctx", "svc-pj", Props("""{"Other":"x"}"""))),
+		]);
+
+		// pre-split: a real column filter over the raw JSON text, translated to SQL (was 0 rows).
+		(await RunAsync("events | where ServiceKey == 'svc-pj' and PropertiesJson contains 'SourceContext'"))
+			.Should().BeEquivalentTo(["with-ctx"]);
+		// case-insensitive binding, like every other column.
+		(await RunAsync("events | where ServiceKey == 'svc-pj' and propertiesjson contains 'SourceContext'"))
+			.Should().BeEquivalentTo(["with-ctx"]);
+		// the SAME predicate post-split must agree.
+		(await PostSplitMessages(
+			"events | where ServiceKey == 'svc-pj' | extend one = 1 | where PropertiesJson contains 'SourceContext' | project Message"))
+			.Should().BeEquivalentTo(["with-ctx"]);
+	}
+
 	// --- ServerSideOnly=true: the predicate must appear IN the generated SQL. A client-side fallback
 	// (ServerSideOnly=false) would materialize the whole table and the filter would vanish from the
 	// SQL text — this pins that the bag lookup and the computed name column translate server-side. ---

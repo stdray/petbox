@@ -73,8 +73,10 @@ abstract class ScalarContext
 // fast path, and the instant plumbing — lands here ONCE for both roots.
 abstract class SqlRecordScalarContext : ScalarContext
 {
-	// The user-facing scalar columns (excludes the internal JSON store, which is only reached via the
-	// Properties.<key> path form / bare-name fallback, never as a bare column).
+	// The user-facing scalar columns. Includes "PropertiesJson" (the raw JSON bag): the post-split
+	// streamed shape exposes it as a real column on both roots, so the pre-split contexts must bind
+	// the same name to the same value — otherwise the bare name silently falls back to a
+	// Properties["PropertiesJson"] lookup (NULL) and a supported query returns empty instead of rows.
 	protected abstract IReadOnlyList<string> KnownColumns { get; }
 
 	// The access expression for a CANONICAL column name (an element of KnownColumns).
@@ -231,7 +233,7 @@ abstract class SqlRecordScalarContext : ScalarContext
 sealed class RecordScalarContext(ParamExpr row) : SqlRecordScalarContext
 {
 	static readonly string[] Columns =
-		["Id", "Level", "LevelName", "Timestamp", "ServiceKey", "Message", "MessageTemplate", "Exception"];
+		["Id", "Level", "LevelName", "Timestamp", "ServiceKey", "Message", "MessageTemplate", "Exception", "PropertiesJson"];
 
 	protected override IReadOnlyList<string> KnownColumns => Columns;
 
@@ -252,6 +254,7 @@ sealed class RecordScalarContext(ParamExpr row) : SqlRecordScalarContext
 		"Message" => Expr.Property(row, nameof(LogEntryRecord.Message)),
 		"MessageTemplate" => Expr.Property(row, nameof(LogEntryRecord.MessageTemplate)),
 		"Exception" => Expr.Property(row, nameof(LogEntryRecord.Exception)),
+		"PropertiesJson" => Expr.Property(row, nameof(LogEntryRecord.PropertiesJson)),
 		_ => throw new UnsupportedKqlException($"unknown column '{canonical}'"), // unreachable
 	};
 
@@ -277,7 +280,7 @@ sealed class SpanRecordScalarContext(ParamExpr row) : SqlRecordScalarContext
 	static readonly string[] Columns =
 	[
 		"SpanId", "TraceId", "ParentSpanId", "Name", "Kind", "KindName",
-		"Start", "End", "Duration", "Status", "StatusName", "StatusDescription",
+		"Start", "End", "Duration", "Status", "StatusName", "StatusDescription", "PropertiesJson",
 	];
 
 	protected override IReadOnlyList<string> KnownColumns => Columns;
@@ -310,6 +313,9 @@ sealed class SpanRecordScalarContext(ParamExpr row) : SqlRecordScalarContext
 			typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.SpanStatusName))!,
 			Expr.Property(row, nameof(SpanRecord.StatusCode))),
 		"StatusDescription" => Expr.Property(row, nameof(SpanRecord.StatusDescription)),
+		// The streamed span row names its JSON bag "PropertiesJson" (carrying AttributesJson, see
+		// LogSchema.SpanRecordColumns) — the pre-split binding must agree.
+		"PropertiesJson" => Expr.Property(row, nameof(SpanRecord.AttributesJson)),
 		_ => throw new UnsupportedKqlException($"unknown column '{canonical}'"), // unreachable
 	};
 
