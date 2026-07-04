@@ -12,22 +12,30 @@ using PetBox.Data;
 
 namespace PetBox.Tests.Data;
 
-public sealed class DataDbsApiTests : IAsyncLifetime
+// Shared per-class host for DataDbsApiTests (xUnit news the test class per test, so
+// without this fixture each of the 11 tests boots its own WebApplicationFactory).
+// Per-test DATA isolation comes from ResetAsync: tests create data DBs with constant
+// names ("cache", "audit") and two tests assert the list starts EMPTY, so the reset
+// wipes the DataDbs metadata rows AND deletes the physical .db files under the test's
+// baseDir (pool handles released first — a lingering same-name file would make the
+// next create throw "already exists").
+public sealed class DataDbsApiFixture : IAsyncLifetime
 {
-	const string TestProjectKey = "kpvotes";
-	const string TestApiKey = "yb_key_test_data_schema_xyz";
+	public const string TestProjectKey = "kpvotes";
+	public const string TestApiKey = "yb_key_test_data_schema_xyz";
 
 	readonly string _baseDir;
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
 
-	public DataDbsApiTests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
+
+	public DataDbsApiFixture()
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-api-test-" + Guid.NewGuid().ToString("N"));
 
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -56,11 +64,11 @@ public sealed class DataDbsApiTests : IAsyncLifetime
 	{
 		// Force MigrationRunner.Run on the test DB up front — WebApplicationFactory + static
 		// Configure(app) does not always trigger migrations for tests that only touch DI.
-		var __testCs = _factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
+		var __testCs = Factory.Services.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(__testCs);
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 
 		// Wipe + seed: kpvotes project + an ApiKey with data:schema scope.
@@ -91,15 +99,52 @@ public sealed class DataDbsApiTests : IAsyncLifetime
 			CreatedAt = DateTime.UtcNow,
 		});
 
-		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+		Client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+	}
+
+	// Per-test reset under the shared host: drop all DataDbs metadata rows and delete
+	// the physical files a previous test created through the REST surface.
+	public async Task ResetAsync()
+	{
+		using (var scope = Factory.Services.CreateScope())
+		{
+			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			await db.DataDbs.DeleteAsync();
+		}
+
+		if (!Directory.Exists(_baseDir)) return;
+		TestDirs.ClearPoolsUnder(_baseDir); // release pooled handles before file deletes
+		foreach (var file in Directory.EnumerateFiles(_baseDir, "*.db", SearchOption.AllDirectories))
+			if (!PetBox.Core.Data.ScopedDbFiles.TryDelete(file))
+				throw new InvalidOperationException($"per-test reset could not delete {file} (still locked)");
 	}
 
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
+		Client.Dispose();
+		await Factory.DisposeAsync();
 		TestDirs.CleanupOrDefer(_baseDir);
 	}
+}
+
+public sealed class DataDbsApiTests : IClassFixture<DataDbsApiFixture>, IAsyncLifetime
+{
+	const string TestProjectKey = DataDbsApiFixture.TestProjectKey;
+
+	readonly DataDbsApiFixture _fx;
+	readonly WebApplicationFactory<Program> _factory;
+	readonly HttpClient _client;
+
+	public DataDbsApiTests(DataDbsApiFixture fx)
+	{
+		_fx = fx;
+		_factory = fx.Factory;
+		_client = fx.Client;
+	}
+
+	public Task InitializeAsync() => _fx.ResetAsync();
+
+	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
 
 	[Fact]
 	public async Task Post_CreatesDb_AndPersistsRow()

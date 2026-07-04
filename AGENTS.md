@@ -59,6 +59,8 @@ records**, not the working plan — do not treat them as current state.
    **`dotnet trx`** (the `dotnet-trx` local tool, in `.config/dotnet-tools.json`; run
    `dotnet tool restore` once). It auto-discovers `*.trx` under the cwd and prints each
    failed test's message + stack (`--path <dir>` to scope, `-v verbose` for all).
+   For TIMING analysis (per-class totals, wall-clock critical path of a parallel run)
+   use `dotnet run scripts/trx-timings.cs -- <run.trx>` — don't re-write that parser.
 4. **Finish = branch + commit + push:** completed work is committed on a feature
    branch and pushed BEFORE the card moves to `Review` (set `commitRef` on the card);
    never leave finished edits uncommitted in a working tree. This repo's process

@@ -9,26 +9,27 @@ using PetBox.Core.Settings;
 
 namespace PetBox.Tests.Web;
 
-// Covers the main-UI read views for the Tasks / Memory / Sessions modules:
-// the feature gate (module off → 404 on a board/store detail), the happy-path
-// board/store listing for the seeded $system project, and unknown-container 404.
-// Mirrors NavTreeAndDataViewTests (cookie auth + in-memory config).
-[Collection("WebAppFactory")]
-public sealed class ModuleViewsTests : IAsyncLifetime
+// Shared per-class host for ModuleViewsTests (xUnit news the test class per test, so
+// without this fixture each of the ~19 tests boots its own WebApplicationFactory). No
+// per-test reset is needed: the class only ADDS distinctly-named containers ("roadmap"
+// and "notes" seeded once here; "ordertest"/"specnoise" created by single tests with
+// exists-guards), and every assertion is Contains/NotContain on names no other test
+// touches — accumulated state is invisible across tests.
+public sealed class ModuleViewsFixture : IAsyncLifetime
 {
-	readonly WebApplicationFactory<Program> _factory;
+	public const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+
 	readonly string _baseDir;
-	HttpClient _client = null!;
 
-	const string TestPassword = "test123";
-	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
 
-	public ModuleViewsTests()
+	public ModuleViewsFixture()
 	{
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-modviews-" + Guid.NewGuid().ToString("N"));
 		var dbPath = Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db");
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -64,11 +65,11 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
-		using var scope = _factory.Services.CreateScope();
+		using var scope = Factory.Services.CreateScope();
 		var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
 		if (!await boards.ExistsAsync("$system", "roadmap"))
 			await boards.CreateAsync("$system", "roadmap", "the plan");
@@ -79,9 +80,28 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
+		Client.Dispose();
+		await Factory.DisposeAsync();
 		TestDirs.CleanupOrDefer(_baseDir);
+	}
+}
+
+// Covers the main-UI read views for the Tasks / Memory / Sessions modules:
+// the feature gate (module off → 404 on a board/store detail), the happy-path
+// board/store listing for the seeded $system project, and unknown-container 404.
+// Mirrors NavTreeAndDataViewTests (cookie auth + in-memory config).
+[Collection("WebAppFactory")]
+public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
+{
+	readonly WebApplicationFactory<Program> _factory;
+	readonly HttpClient _client;
+
+	const string TestPassword = "test123";
+
+	public ModuleViewsTests(ModuleViewsFixture fx)
+	{
+		_factory = fx.Factory;
+		_client = fx.Client;
 	}
 
 	// Logs in (anti-forgery + cookie) and returns the authenticated response for url.

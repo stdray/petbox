@@ -12,17 +12,19 @@ using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Web;
 
-[Collection("WebAppFactory")]
-public sealed class LogPipelineTests : IAsyncLifetime
+// Shared per-class host for LogPipelineTests: xUnit news the test class per test, so
+// without this fixture all 40+ tests each boot their own WebApplicationFactory. No
+// per-test reset is needed: every test isolates by unique message/service-key/project
+// (Guid suffixes) or asserts on before/after deltas, so accumulated log rows and seeded
+// projects from earlier tests in the class are invisible to later ones.
+public sealed class LogPipelineFixture : IAsyncLifetime
 {
-	readonly WebApplicationFactory<Program> _factory;
-	HttpClient _client = null!;
+	public const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
 
-	const string ApiKey = "yb_key_system_internal";
-	const string TestPassword = "test123";
-	const string TestPasswordHash = "pbkdf2$100000$h1twJi/he3s8S7jSM9pkGQ==$efnLBffww5Gprn6BjpNgZkTcG+1zNu2L6z3TZ7YvD/o=";
+	public WebApplicationFactory<Program> Factory { get; }
+	public HttpClient Client { get; private set; } = null!;
 
-	public LogPipelineTests()
+	public LogPipelineFixture()
 	{
 		// WebApplication.CreateBuilder reads ASPNETCORE_ENVIRONMENT at construction
 		// — before WithWebHostBuilder.UseEnvironment("Testing") gets a chance to
@@ -31,7 +33,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		// false at ConfigureServices time, and IIngestionPipeline isn't registered.
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
 		var dbPath = Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db");
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -51,16 +53,16 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
-		var __testCs = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>(_factory.Services).GetConnectionString("PetBox")!;
+		var __testCs = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions.GetRequiredService<Microsoft.Extensions.Configuration.IConfiguration>(Factory.Services).GetConnectionString("PetBox")!;
 		TestSchema.Core(__testCs);
-		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions
+		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions
 		{
 			AllowAutoRedirect = false,
 		});
 
 		// Logs are explicit now; create the $system/default log these tests ingest into.
 		using var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
-			.CreateScope(_factory.Services);
+			.CreateScope(Factory.Services);
 		var store = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
 			.GetRequiredService<PetBox.Log.Core.Data.ILogStore>(scope.ServiceProvider);
 		if (!await store.ExistsAsync("$system", "default"))
@@ -69,8 +71,24 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 	public async Task DisposeAsync()
 	{
-		_client.Dispose();
-		await _factory.DisposeAsync();
+		Client.Dispose();
+		await Factory.DisposeAsync();
+	}
+}
+
+[Collection("WebAppFactory")]
+public sealed class LogPipelineTests : IClassFixture<LogPipelineFixture>
+{
+	readonly WebApplicationFactory<Program> _factory;
+	readonly HttpClient _client;
+
+	const string ApiKey = "yb_key_system_internal";
+	const string TestPassword = "test123";
+
+	public LogPipelineTests(LogPipelineFixture fx)
+	{
+		_factory = fx.Factory;
+		_client = fx.Client;
 	}
 
 	async Task<HttpResponseMessage> GetPageAsync(string url)
@@ -146,15 +164,46 @@ public sealed class LogPipelineTests : IAsyncLifetime
 
 	static string UniqueMsg(string marker) => $"__test__{marker}__{Guid.NewGuid():N}";
 
+	// Ingestion is asynchronous — ChannelIngestionPipeline enqueues and a background
+	// writer loop persists — so a 200 from an ingest endpoint does not mean the rows
+	// are queryable yet. Poll until a marker message is visible; the channel is FIFO
+	// per (project, log), so once the LAST message of a batch lands, everything posted
+	// before it has landed too. Every test that ingests into a log it (or a later
+	// test) queries must wait — under the shared per-class host an unflushed batch
+	// would otherwise leak into the next test's before/after count.
+	async Task WaitForIngestAsync(string marker, string projectKey = "$system", string logName = "default")
+	{
+		for (var i = 0; i < 400; i++)
+		{
+			var doc = await QueryAsync($"events | where Message contains \"{marker}\" | take 1", projectKey, logName);
+			if (doc.RootElement.GetProperty("count").GetInt32() > 0) return;
+			await Task.Delay(25);
+		}
+		throw new Xunit.Sdk.XunitException($"ingested marker '{marker}' not visible in {projectKey}/{logName} after 10s");
+	}
+
+	// Same, for project logs the test's $system key cannot query over REST — count
+	// rows directly through ILogStore.
+	async Task WaitForProjectIngestAsync(string projectKey, string logName, string message)
+	{
+		for (var i = 0; i < 400; i++)
+		{
+			if (ProjectLogCount(projectKey, logName, message) > 0) return;
+			await Task.Delay(25);
+		}
+		throw new Xunit.Sdk.XunitException($"ingested message '{message}' not visible in {projectKey}/{logName} after 10s");
+	}
+
 	[Fact]
 	public async Task Ingest_ValidClef_ReturnsIngestedCount()
 	{
 		var msg = UniqueMsg("a1");
+		var msgLast = UniqueMsg("a3");
 		var resp = await PostClefAsync("svc-a",
 			$$"""
 			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}
 			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"{{UniqueMsg("a2")}}","@x":"ex"}
-			{"@t":"2024-01-01T00:00:02Z","@l":"Warning","@m":"{{UniqueMsg("a3")}}","drive":"C:"}
+			{"@t":"2024-01-01T00:00:02Z","@l":"Warning","@m":"{{msgLast}}","drive":"C:"}
 			""");
 
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -163,6 +212,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		doc.RootElement.GetProperty("ingested").GetInt32().Should().Be(3);
 		doc.RootElement.GetProperty("errors").GetInt32().Should().Be(0);
 
+		await WaitForIngestAsync(msgLast);
 		var c = await TotalCount();
 		c.Should().BeGreaterThanOrEqualTo(3);
 	}
@@ -195,13 +245,15 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	{
 		var before = await TotalCount();
 		var msg = UniqueMsg("d1");
+		var msgLast = UniqueMsg("d2");
 
 		await PostClefAsync("svc-d",
 			$$"""
 			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}
-			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"{{UniqueMsg("d2")}}"}
+			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"{{msgLast}}"}
 			""");
 
+		await WaitForIngestAsync(msgLast);
 		var after = await TotalCount();
 		after.Should().Be(before + 2);
 
@@ -223,6 +275,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			{"@t":"2024-01-01T00:00:02Z","@l":"Warning","@m":"{{msgWarn}}"}
 			""");
 
+		await WaitForIngestAsync(msgWarn);
 		var doc = await QueryAsync($"events | where Message == \"{msgError}\" | take 1");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
 		doc.RootElement.GetProperty("events")[0].GetProperty("Level").GetString().Should().Be("Error");
@@ -245,6 +298,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			{"@t":"2024-01-01T00:00:02Z","@l":"Info","@m":"prefix {{needle}} suffix"}
 			""");
 
+		await WaitForIngestAsync($"prefix {needle} suffix");
 		var doc = await QueryAsync($"events | where Message contains \"{needle}\" | take 10");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(2);
 	}
@@ -253,13 +307,15 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	public async Task Query_Count()
 	{
 		var before = await TotalCount();
+		var msgLast = UniqueMsg("g3");
 		await PostClefAsync("svc-g",
 			$$"""
 			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("g1")}}"}
 			{"@t":"2024-01-01T00:00:01Z","@l":"Info","@m":"{{UniqueMsg("g2")}}"}
-			{"@t":"2024-01-01T00:00:02Z","@l":"Error","@m":"{{UniqueMsg("g3")}}"}
+			{"@t":"2024-01-01T00:00:02Z","@l":"Error","@m":"{{msgLast}}"}
 			""");
 
+		await WaitForIngestAsync(msgLast);
 		var after = await TotalCount();
 		after.Should().Be(before + 3);
 	}
@@ -268,12 +324,14 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	public async Task Query_SummarizeCountByLevel()
 	{
 		var before = await TotalCount();
+		var msgLast = UniqueMsg("h2");
 		await PostClefAsync("svc-h",
 			$$"""
 			{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("h1")}}"}
-			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"{{UniqueMsg("h2")}}"}
+			{"@t":"2024-01-01T00:00:01Z","@l":"Error","@m":"{{msgLast}}"}
 			""");
 
+		await WaitForIngestAsync(msgLast);
 		var after = await TotalCount();
 		after.Should().Be(before + 2);
 
@@ -313,8 +371,10 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		// mapping — the spans-review fix 1 — so a malformed regex is the execution-fault vehicle.)
 		// The scalar function only runs when a row is scanned — seed one so an empty log
 		// (possible under test-order variance) can't turn the fault into an empty 200.
+		var seed = UniqueMsg("regex-fault");
 		await PostClefAsync("svc-regex-fault",
-			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("regex-fault")}}"}""");
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{seed}}"}""");
+		await WaitForIngestAsync(seed);
 		var kql = "events | where Message matches regex \"(\"";
 		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString(kql)}");
 		using var resp = await _client.SendAsync(req);
@@ -333,8 +393,10 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		// engine fault surfaces in the endpoint's await-foreach over Rows, a different
 		// code path than events materialization. Must still be structured JSON.
 		// Seed a row for the same reason as the materialization variant above.
+		var seed = UniqueMsg("regex-fault-t");
 		await PostClefAsync("svc-regex-fault",
-			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("regex-fault-t")}}"}""");
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{seed}}"}""");
+		await WaitForIngestAsync(seed);
 		var kql = "events | where Message matches regex \"(\" | summarize count() by Level";
 		var req = LogRequest($"/api/logs/$system/default/query?q={Uri.EscapeDataString(kql)}");
 		using var resp = await _client.SendAsync(req);
@@ -357,8 +419,10 @@ public sealed class LogPipelineTests : IAsyncLifetime
 	public async Task Services_ReturnsDistinctKeys()
 	{
 		var svc = $"svc-i-{Guid.NewGuid():N}"[..12];
+		var msg = UniqueMsg("i1");
 		await PostClefAsync(svc,
-			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{UniqueMsg("i1")}}"}""");
+			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}""");
+		await WaitForIngestAsync(msg);
 
 		var req = LogRequest("/api/logs/$system/default/services");
 		using var resp = await _client.SendAsync(req);
@@ -450,6 +514,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
 		// Seq self-log lands in the petbox self-log ($system/petbox), not default.
+		await WaitForIngestAsync(msg, "$system", "petbox");
 		var doc = await QueryAsync($"events | where Message == \"{msg}\" | take 1", "$system", "petbox");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
 		var evt = doc.RootElement.GetProperty("events")[0];
@@ -469,6 +534,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msgA}}"}""");
 		await PostClefAsync(svcB,
 			$$"""{"@t":"2024-01-01T00:00:01Z","@l":"Info","@m":"{{msgB}}"}""");
+		await WaitForIngestAsync(msgB); // FIFO: msgB visible ⇒ msgA landed too
 
 		var doc = await QueryAsync($"events | where ServiceKey == \"{svcA}\" | take 10");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
@@ -533,6 +599,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
 		// Lands in the project's OWN default log — not petbox's $system self-log.
+		await WaitForProjectIngestAsync(proj, LogNames.Default, msg);
 		ProjectLogCount(proj, LogNames.Default, msg).Should().Be(1);
 		ProjectLogCount(LogNames.SystemProject, LogNames.SelfLog, msg).Should().Be(0);
 	}
@@ -638,6 +705,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 		JsonDocument.Parse(await resp.Content.ReadAsStringAsync())
 			.RootElement.GetProperty("ingested").GetInt32().Should().Be(1);
 
+		await WaitForIngestAsync(msg);
 		var q = await QueryAsync($"events | where Message == \"{msg}\" | take 1");
 		q.RootElement.GetProperty("count").GetInt32().Should().Be(1);
 	}
@@ -652,6 +720,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			JsonEnvelope("/api/ingest/$system/default/clef", ApiKey, "X-Api-Key", "env-raw-svc", body));
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
+		await WaitForIngestAsync(msg);
 		var doc = await QueryAsync($"events | where Message == \"{msg}\" | take 1");
 		doc.RootElement.GetProperty("count").GetInt32().Should().Be(1);
 		var evt = doc.RootElement.GetProperty("events")[0];
@@ -674,6 +743,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			JsonEnvelope("/api/events/raw", key, "X-Seq-ApiKey", null!, body));
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
+		await WaitForProjectIngestAsync(proj, LogNames.Default, msg);
 		ProjectLogCount(proj, LogNames.Default, msg).Should().Be(1);
 	}
 
@@ -730,6 +800,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			$$"""{"@t":"2024-01-01T00:00:00Z","@l":"Info","@m":"{{msg}}"}""" + "\n"));
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
+		await WaitForProjectIngestAsync(proj, "backend", msg);
 		ProjectLogCount(proj, "backend", msg).Should().Be(1);
 		ProjectLogServiceKey(proj, "backend", msg).Should().Be("seq");
 	}
@@ -748,6 +819,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			serviceKey: "yobapub"));
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
+		await WaitForProjectIngestAsync(proj, "backend", msg);
 		ProjectLogServiceKey(proj, "backend", msg).Should().Be("yobapub");
 	}
 
@@ -827,6 +899,7 @@ public sealed class LogPipelineTests : IAsyncLifetime
 			$"/api/ingest/{proj}/backend/compat/seq/api/events/raw", key, "X-Seq-ApiKey", null!, body));
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 
+		await WaitForProjectIngestAsync(proj, "backend", msg);
 		ProjectLogCount(proj, "backend", msg).Should().Be(1);
 	}
 

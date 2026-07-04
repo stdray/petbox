@@ -3,6 +3,7 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -13,42 +14,35 @@ using PetBox.Tasks.Data;
 
 namespace PetBox.Tests.Tasks;
 
-// Scenario smoke tests for the Tasks methodology (spec + relations + FSM).
-// These encode the TARGET api/mcp contract and are expected to be RED until the
-// unified schema + workflow engine + relations are built (TDD by contract).
-//
-// Target surface assumed here (to be built):
-//   tasks_board_create(projectKey, board, kind?, description?)  kind ∈ spec|ideas|intake|work|free (def free)
-//   tasks_upsert nodes carry: key, type?(feature|bug), status(slug), name, body, priority?, specRef?(spec NodeId)
-//     - upsert response nodes carry a stable `nodeId`
-//     - on a `work` board a feature/bug WITHOUT specRef is rejected (spec-link invariant)
-//     - specRef on upsert creates the node + a `task_spec` relation atomically
-//     - setting a terminal status (done) requires the `tasks:approve` scope (approve-gate)
-//   tasks_workflow(projectKey, board) → { kind, workflows:[{ types:[...], initial, statuses, transitions }] }
-//   relations_create(projectKey, kind, fromNodeId, toNodeId)   kind ∈ task_spec|issue_task|idea_spec|blocks|nfr|dup
-//   relations_list(projectKey, nodeId, direction?)             direction ∈ from|to|both (default both)
-//   report_issue(title, detail) → lands on an intake-kind board, status `reported`
-public sealed class TasksMethodologySmokeTests : IAsyncLifetime
+// Shared per-class host for TasksMethodologySmokeTests: one WebApplicationFactory +
+// one MCP handshake pair for the whole class (xUnit news the test CLASS per test, so
+// without this fixture every one of the ~30 tests boots its own host — the single
+// biggest wall-clock cost in the suite). Per-test DATA isolation is restored by
+// ResetAsync: the core catalog rows (task_boards, relations) for the test project are
+// wiped and the per-project tasks file (nodes, comments, tags, version cursors, search
+// index) is deleted outright, so every test still starts from an empty project.
+public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 {
-	const string ProjectKey = "wf";
-	const string AgentKey = "yb_key_wf_agent";        // tasks:read,tasks:write   (an agent — cannot approve)
-	const string MaintainerKey = "yb_key_wf_approve"; // + tasks:approve          (the maintainer — confirms Done)
+	public const string ProjectKey = "wf";
+	public const string AgentKey = "yb_key_wf_agent";        // tasks:read,tasks:write   (an agent — cannot approve)
+	public const string MaintainerKey = "yb_key_wf_approve"; // + tasks:approve          (the maintainer — confirms Done)
 
 	readonly string _baseDir;
-	readonly WebApplicationFactory<Program> _factory;
 	HttpClient _httpAgent = null!;
 	HttpClient _httpApprove = null!;
-	McpClient _agent = null!;       // default client used by most scenarios
-	McpClient _approver = null!;
 
-	public TasksMethodologySmokeTests()
+	public WebApplicationFactory<Program> Factory { get; }
+	public McpClient Agent { get; private set; } = null!;    // default client used by most scenarios
+	public McpClient Approver { get; private set; } = null!;
+
+	public TasksMethodologySmokeFixture()
 	{
 		_baseDir = Path.Combine(Path.GetTempPath(), "petbox-wf-smoke-" + Guid.NewGuid().ToString("N"));
 		Environment.SetEnvironmentVariable("PETBOX_MASTER_KEY", "test-key-for-secrets");
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
 		Environment.SetEnvironmentVariable("Features__Tasks", "true");
 
-		_factory = new WebApplicationFactory<Program>()
+		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
@@ -73,10 +67,10 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 
 	public async Task InitializeAsync()
 	{
-		var cs = _factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
+		var cs = Factory.Services.GetRequiredService<IConfiguration>().GetConnectionString("PetBox")!;
 		TestSchema.Core(cs);
 
-		using (var scope = _factory.Services.CreateScope())
+		using (var scope = Factory.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			await db.ApiKeys.Where(k => k.Key == AgentKey || k.Key == MaintainerKey).DeleteAsync();
@@ -88,13 +82,37 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 			await db.InsertAsync(new ApiKey { Key = MaintainerKey, ProjectKey = ProjectKey, Scopes = "tasks:read,tasks:write,tasks:approve", CreatedAt = DateTime.UtcNow });
 		}
 
-		(_httpAgent, _agent) = await ConnectAsync(AgentKey);
-		(_httpApprove, _approver) = await ConnectAsync(MaintainerKey);
+		(_httpAgent, Agent) = await ConnectAsync(AgentKey);
+		(_httpApprove, Approver) = await ConnectAsync(MaintainerKey);
+	}
+
+	// Wipe everything the previous test may have written under the shared host, so each
+	// test sees an empty "wf" project: catalog + edges live in petbox.db (task_boards,
+	// relations — boards like `spec`/`ideas` are per-project singletons, so leftover rows
+	// would change board_create/auto-wire behavior); nodes/comments/tags/version cursors/
+	// search index all live in the per-project tasks file, which we delete wholesale.
+	public async Task ResetAsync()
+	{
+		using (var scope = Factory.Services.CreateScope())
+		{
+			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			await db.TaskBoards.Where(b => b.ProjectKey == ProjectKey).DeleteAsync();
+			await db.Relations.Where(r => r.ProjectKey == ProjectKey).DeleteAsync();
+		}
+
+		var tasksFactory = Factory.Services.GetRequiredService<IScopedDbFactory<TasksDb>>();
+		await tasksFactory.EvictAsync(ProjectKey);
+		var path = Path.Combine(_baseDir, "tasks", ProjectKey + ".db");
+		// Pool identity is the connection string; TasksDb.CreateOptions appends Foreign Keys=True.
+		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={path}"));
+		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={path};Foreign Keys=True"));
+		if (!ScopedDbFiles.TryDelete(path))
+			throw new InvalidOperationException($"per-test reset could not delete {path} (still locked)");
 	}
 
 	async Task<(HttpClient, McpClient)> ConnectAsync(string apiKey)
 	{
-		var http = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		var http = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 		http.DefaultRequestHeaders.Add("X-Api-Key", apiKey);
 		var transport = new HttpClientTransport(new HttpClientTransportOptions
 		{
@@ -107,13 +125,48 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 
 	public async Task DisposeAsync()
 	{
-		await _agent.DisposeAsync();
-		await _approver.DisposeAsync();
+		await Agent.DisposeAsync();
+		await Approver.DisposeAsync();
 		_httpAgent.Dispose();
 		_httpApprove.Dispose();
-		await _factory.DisposeAsync();
+		await Factory.DisposeAsync();
 		TestDirs.CleanupOrDefer(_baseDir);
 	}
+}
+
+// Scenario smoke tests for the Tasks methodology (spec + relations + FSM).
+// These encode the TARGET api/mcp contract and are expected to be RED until the
+// unified schema + workflow engine + relations are built (TDD by contract).
+//
+// Target surface assumed here (to be built):
+//   tasks_board_create(projectKey, board, kind?, description?)  kind ∈ spec|ideas|intake|work|free (def free)
+//   tasks_upsert nodes carry: key, type?(feature|bug), status(slug), name, body, priority?, specRef?(spec NodeId)
+//     - upsert response nodes carry a stable `nodeId`
+//     - on a `work` board a feature/bug WITHOUT specRef is rejected (spec-link invariant)
+//     - specRef on upsert creates the node + a `task_spec` relation atomically
+//     - setting a terminal status (done) requires the `tasks:approve` scope (approve-gate)
+//   tasks_workflow(projectKey, board) → { kind, workflows:[{ types:[...], initial, statuses, transitions }] }
+//   relations_create(projectKey, kind, fromNodeId, toNodeId)   kind ∈ task_spec|issue_task|idea_spec|blocks|nfr|dup
+//   relations_list(projectKey, nodeId, direction?)             direction ∈ from|to|both (default both)
+//   report_issue(title, detail) → lands on an intake-kind board, status `reported`
+public sealed class TasksMethodologySmokeTests : IClassFixture<TasksMethodologySmokeFixture>, IAsyncLifetime
+{
+	const string ProjectKey = TasksMethodologySmokeFixture.ProjectKey;
+
+	readonly TasksMethodologySmokeFixture _fx;
+	readonly McpClient _agent;     // default client used by most scenarios
+	readonly McpClient _approver;
+
+	public TasksMethodologySmokeTests(TasksMethodologySmokeFixture fx)
+	{
+		_fx = fx;
+		_agent = fx.Agent;
+		_approver = fx.Approver;
+	}
+
+	public Task InitializeAsync() => _fx.ResetAsync();
+
+	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
 
 	// ── helpers ──────────────────────────────────────────────────────────────
 	static async Task<CallToolResult> Call(McpClient mcp, string tool, object args) =>
