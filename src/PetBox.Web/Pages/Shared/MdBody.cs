@@ -1,3 +1,5 @@
+using PetBox.Web.Rendering;
+
 namespace PetBox.Web.Pages.Shared;
 
 // View model for _MdBody.cshtml — the ONE markdown-body renderer shared by node bodies,
@@ -29,4 +31,9 @@ public sealed record MdBodyModel
 	// literal {sha}), the server renderer autolinks standalone commit hashes in the body. Null on
 	// the live edit preview (ServerRender=false) — that surface stays unlinked by design.
 	public string? CommitUrlTemplate { get; init; }
+
+	// Optional slug→target map for `[[slug]]` node mentions (node-ref-autolink). When set, the
+	// server renderer turns a mention that resolves to a project node into a link to its detail
+	// page; unmapped mentions stay literal. Null on the live edit preview (ServerRender=false).
+	public IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs { get; init; }
 }

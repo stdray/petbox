@@ -29,6 +29,12 @@ public sealed record PlanNodeView(
 public sealed record PlanBoardView(
 	long CurrentVersion, string Kind, string? SpecBoard, IReadOnlyList<PlanNodeView> Nodes);
 
+// One `[[slug]]` mention resolved to a live project node (node-ref-autolink): the node's
+// CURRENT location (Board + Key — the mention may have named a FORMER slug that renamed) plus
+// its stable NodeId and Title. A mention that is ambiguous (the slug lives on 2+ boards) or a
+// miss is simply absent from the resolution map — the renderer then leaves it literal.
+public sealed record NodeRefResolution(string Board, string Key, string NodeId, string Title);
+
 // One node resolved by its stable NodeId alone (cross-board): its owning board + kind,
 // the fully-enriched node view, and its part_of ancestor chain ordered root→parent (for
 // breadcrumbs). Powers the per-node detail page, which addresses a node by id, not board.

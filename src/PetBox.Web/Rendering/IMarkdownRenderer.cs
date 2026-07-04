@@ -9,7 +9,10 @@ public interface IMarkdownRenderer
 	// Parse `markdown` to HTML and sanitize it (parity with the client DOMPurify path). Safe to
 	// emit via @Html.Raw. Returns "" for null/empty input. When `commitUrlTemplate` is a usable
 	// template (non-empty, carrying a literal {sha}), standalone 7–40-hex commit hashes in plain
-	// text runs are autolinked to the commit view (code spans/blocks and existing links excluded);
-	// otherwise the output is byte-identical to the template-less path.
-	string RenderToHtml(string? markdown, string? commitUrlTemplate = null);
+	// text runs are autolinked to the commit view. When `nodeRefs` maps a slug to a target, a
+	// `[[slug]]` mention in a plain text run becomes a link to that node (link text = the bare
+	// slug; an unmapped mention stays literal). Both transforms exclude code spans/blocks and
+	// existing links. With neither context the output is byte-identical to the plain path.
+	string RenderToHtml(string? markdown, string? commitUrlTemplate = null,
+		IReadOnlyDictionary<string, NodeRefTarget>? nodeRefs = null);
 }

@@ -6,6 +6,7 @@ using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Pages.Shared;
+using PetBox.Web.Rendering;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -76,6 +77,12 @@ public sealed class TaskBoardNodeModel : PageModel
 	// The project's commit-view URL template (RepoSettings, Scope.Project). When set, the commit-ref
 	// chip links to it and commit hashes in the body / comments autolink. Empty = plain text.
 	public string? CommitUrlTemplate { get; private set; }
+
+	// Resolved `[[slug]]` mentions found in the body + comment bodies (node-ref-autolink), keyed by
+	// the MENTIONED slug. Handed to the markdown renderer so those mentions become links. Empty when
+	// nothing resolved.
+	public IReadOnlyDictionary<string, NodeRefTarget> NodeRefs { get; private set; }
+		= new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal);
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
@@ -167,6 +174,11 @@ public sealed class TaskBoardNodeModel : PageModel
 		// otherwise return an empty thread (comments/spec_plan vanish).
 		var comments = await _comments.ListForNodeAsync(ProjectKey, detail.Board, detail.Node.NodeId, ct);
 		Thread = CommentThread.Flatten(comments);
+
+		// Resolve `[[slug]]` mentions in the body + every comment body in ONE batch, so the
+		// renderer can turn resolvable mentions into node links (node-ref-autolink).
+		NodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey,
+			comments.Select(c => c.Body).Prepend(detail.Node.Body), ct);
 		return Page();
 	}
 }

@@ -115,7 +115,7 @@
 				{
 					var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, row.Node.Status);
 					Model.CommentThreads.TryGetValue(row.Node.NodeId, out var thread);
-					<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, row.Node, row.Depth, closed, true, false, thread, Model.CommitUrlTemplate)" />
+					<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, row.Node, row.Depth, closed, true, false, thread, Model.CommitUrlTemplate, Model.NodeRefs)" />
 				}
 			}
 		</ul>
@@ -150,7 +150,7 @@ else
 			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);
 			var hasChildren = parentIds.Contains(n.NodeId);
 			Model.CommentThreads.TryGetValue(n.NodeId, out var thread);
-			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread, Model.CommitUrlTemplate)" />
+			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread, Model.CommitUrlTemplate, Model.NodeRefs)" />
 		}
 	</ul>
 }

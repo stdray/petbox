@@ -128,7 +128,7 @@
 			@if (!string.IsNullOrEmpty(node.Body))
 			{
 				<article class="mt-3">
-					<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "node-body", CommitUrlTemplate = Model.CommitUrlTemplate })" />
+					<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "node-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs })" />
 				</article>
 			}
 			else
@@ -190,7 +190,7 @@
 			}
 		}
 
-		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, Model.CommitUrlTemplate))" />
+		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, Model.CommitUrlTemplate, Model.NodeRefs))" />
 	</div>
 </div>
 
