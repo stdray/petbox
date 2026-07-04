@@ -441,6 +441,53 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("connect-mint-form"); // GET shows the mint form (key not yet minted)
 	}
 
+	// The Config subpages are custom-routed (@page "/ui/{workspaceKey}/config/..."), so the
+	// asp-page/asp-route tag helpers can't build their URLs and render an empty href="" — a dead
+	// link. Sibling links must be built via Routes.* to yield real, clickable URLs.
+	// Regression guard for ui-deadlinks-asp-page.
+	[Fact]
+	public async Task ConfigHistory_BackAndClearLinks_HaveRealHrefs()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/config/history");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().MatchRegex("href=\"/ui/\\$system/config\"[\\s\\S]{0,80}?data-testid=\"back-to-config\""); // ← All bindings
+		html.Should().Contain("href=\"/ui/$system/config/history\""); // Clear
+	}
+
+	[Fact]
+	public async Task ConfigPreview_BackLink_HasRealHref()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/config/preview");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().MatchRegex("href=\"/ui/\\$system/config\"[\\s\\S]{0,80}?data-testid=\"back-to-config\"");
+	}
+
+	[Fact]
+	public async Task ConfigEditor_BackAndCancelLinks_HaveRealHref()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/config/editor");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("href=\"/ui/$system/config\""); // both ← All bindings and Cancel
+		html.Should().MatchRegex("href=\"/ui/\\$system/config\"[^>]*data-testid=\"config-cancel-btn\"");
+	}
+
+	// The trace page is custom-routed too and its "← traces" link was missing the workspace
+	// route value (WorkspaceKey unbound), so asp-page produced an empty href. The link now
+	// builds via Routes.ProjectTraces. Empty log store → trace-not-found, but the page (and its
+	// back link) still render.
+	[Fact]
+	public async Task Trace_BackToTracesLink_HasRealHref()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/$system/traces/nonexistent-trace");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("href=\"/ui/$system/$system/traces\""); // ← traces
+		html.Should().Contain("&larr; traces");
+	}
+
 	[Fact]
 	public async Task Doc_Index_IsPublic_NoRedirect()
 	{

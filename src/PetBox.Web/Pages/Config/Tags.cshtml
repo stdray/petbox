@@ -6,7 +6,7 @@
 }
 
 <div class="mb-4 text-sm">
-	<a asp-page="/Config/Index" asp-route-workspaceKey="@Model.EffectiveWorkspaceKey"
+	<a href="@PetBox.Web.Routes.SharedConfig(Model.EffectiveWorkspaceKey)"
 		class="link opacity-70 hover:opacity-100" data-testid="back-to-config">← All bindings</a>
 	<span class="badge badge-outline font-mono ml-2">@Model.EffectiveWorkspaceKey</span>
 </div>
