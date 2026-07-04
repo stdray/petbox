@@ -22,4 +22,16 @@ public static class TasksSearchDocs
 
 	public static SearchDoc ToDoc(PlanNode n, string scope, IReadOnlyList<string> tags) =>
 		new(scope, n.Board, n.Key, n.Name + "\n" + n.Body, string.Join(' ', tags));
+
+	// Namespace prefix for a comment's FTS Id. A node slug is `[a-z][a-z0-9_-]*` (no colon
+	// ever), so "c:" + commentKey is collision-free within the same Type=board partition — a
+	// comment doc keeps Type=board (board scoping) but is addressed apart from node slugs.
+	public const string CommentIdPrefix = "c:";
+
+	// A comment as a board-search doc: Type=board (owner node's board) keeps board scoping,
+	// Id="c:"+Key namespaces it off node slugs, Text=Body. Tags are set post-upsert (SetTagsAsync
+	// runs after the temporal write), so they aren't cheaply available on the write path — left
+	// null; the read path resolves the hit to its OWNER node regardless.
+	public static SearchDoc CommentToDoc(CommentRow c, string scope) =>
+		new(scope, c.Board, CommentIdPrefix + c.Key, c.Body, null);
 }

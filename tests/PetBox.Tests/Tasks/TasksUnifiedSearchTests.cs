@@ -26,6 +26,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 	readonly string _dir;
 	readonly PetBoxDb _db;
 	readonly ScopedDbFactory<TasksDb> _factory;
+	readonly CommentService _commentSvc;
 	readonly TasksService _tasks;
 
 	public TasksUnifiedSearchTests()
@@ -38,7 +39,8 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
-		_tasks = new TasksService(new TaskBoardStore(_db, _factory), new RelationStore(_db), new TagStore(_factory), new CommentService(_factory));
+		_commentSvc = new CommentService(_factory);
+		_tasks = new TasksService(new TaskBoardStore(_db, _factory), new RelationStore(_db), new TagStore(_factory), _commentSvc);
 	}
 
 	public void Dispose()
@@ -307,6 +309,21 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		// A listing runs no relevance leg → no per-row provenance.
 		row.Score.Should().BeNull();
 		row.Retriever.Should().BeNull();
+	}
+
+	[Fact]
+	public async Task Query_CommentMatch_LeanWireRow_CarriesMatchedIn() // spec tasks-search-comments
+	{
+		await Seed("b", """[{"key":"host","status":"Todo","title":"Host","body":"plain node body","priority":10}]""");
+		var nodeId = (await _tasks.GetAsync(Proj, "b", includeClosed: false)).Nodes.First(n => n.Key == "host").NodeId;
+		await _commentSvc.AddAsync(Proj, "b", nodeId, null, "author", "dugong note lives in this comment", null);
+
+		// The token is only in the comment — the OWNER node row comes back, marked on the wire.
+		var res = await Search(q: "dugong");
+		res.Nodes.Should().ContainSingle();
+		res.Nodes[0].Key.Should().Be("host");
+		res.Nodes[0].MatchedIn.Should().Be("comment");
+		res.Nodes[0].Retriever.Should().Be("lexical");
 	}
 
 	// ---- sort ----

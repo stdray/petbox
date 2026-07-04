@@ -368,7 +368,10 @@ public static class TasksTools
 		With `q` each row carries `score` (the fused, rank-based relevance) and `retriever`
 		("lexical" = lexically confirmed, "semantic" = surfaced by the vector leg alone,
 		"exact" = an exact slug match); a semantic-only hit below the relevance floor is
-		dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows). Query
+		dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows). COMMENTS
+		are searched too (lexical leg): a comment match returns its OWNER node row marked
+		`matchedIn:"comment"` (spec tasks-search-comments); a plain node match leaves it null.
+		Query
 		rows are LEAN (spec search-lean-rows): identity/title/snippet/status/tags/version +
 		score/retriever only — links/delivery/parent/commits/priority are dropped and ride the
 		listing mode (no q) or tasks_node_get (version stays as the CAS baseline for an
@@ -505,7 +508,9 @@ public static class TasksTools
 			Url: n.Url,
 			// Per-row relevance provenance (query mode; null → omitted in listing mode).
 			Score: h.Score is { } s ? Math.Round(s, 6) : null,
-			Retriever: h.Retriever);
+			Retriever: h.Retriever,
+			// Relevance provenance — survives the lean cut like Score/Retriever.
+			MatchedIn: h.MatchedIn);
 	}
 
 	// Split a comma-separated groupBy ("area,concern") into the ordered dimension list the

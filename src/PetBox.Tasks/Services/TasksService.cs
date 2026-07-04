@@ -1379,29 +1379,55 @@ public sealed partial class TasksService : ITasksService
 		var floored = resp.Hits.Where(h => h.Retriever == "lexical" || floor <= 0 || h.Score >= floor).ToList();
 		if (floored.Count == 0) return ([], resp.Retrievers);
 
-		// Hits carry Type=board, Id=slug — group by board, build each owning board's enriched
-		// view once, pick the matched nodes by slug, order by fused relevance, threading each
-		// node's fused score + retriever provenance onto its wire hit.
-		var order = new Dictionary<(string Board, string Slug), int>();
-		var provenance = new Dictionary<(string Board, string Slug), (double Score, string? Retriever)>();
-		for (var i = 0; i < floored.Count; i++)
-		{
-			order[(floored[i].Type, floored[i].Id)] = i;
-			provenance[(floored[i].Type, floored[i].Id)] = (floored[i].Score, floored[i].Retriever);
-		}
+		// Resolve comment hits (tasks-search-comments): a doc with Id "c:<key>" is a COMMENT, not
+		// a node — map its key to the owner node (one query over the ACTIVE comment rows) and
+		// surface the OWNER node row. A comment doc keeps Type=board, so it lands in the owning
+		// board's group below like any node hit.
+		var commentKeys = floored
+			.Where(h => h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal))
+			.Select(h => h.Id[TasksSearchDocs.CommentIdPrefix.Length..]).Distinct().ToList();
+		var ownerByComment = commentKeys.Count == 0
+			? new Dictionary<string, string>()
+			: (await ctx.GetTable<CommentRow>()
+					.Where(c => commentKeys.Contains(c.Key) && c.ActiveTo == null)
+					.Select(c => new { c.Key, c.NodeId }).ToListAsync(ct))
+				.ToDictionary(c => c.Key, c => c.NodeId, StringComparer.Ordinal);
 
-		var hits = new List<TaskSearchHit>();
-		foreach (var g in floored.GroupBy(h => h.Type, StringComparer.Ordinal))
+		// Hits carry Type=board, Id=slug (nodes) or "c:"+commentKey (comments) — group by board,
+		// build each owning board's enriched OPEN view once, resolve each hit to a node row and
+		// thread its fused score/retriever + a MatchedIn marker. Fused rank is the hit's index in
+		// `floored`; a group yields ascending rank, so the FIRST time a (board, slug) target
+		// appears WINS its rank — a node that surfaced both directly AND via its comment (or via
+		// several comments) dedupes to the better/earlier rank, keeping that hit's provenance.
+		var ranked = new List<(int Rank, TaskSearchHit Hit)>();
+		var seen = new HashSet<(string Board, string Slug)>();
+		foreach (var g in floored.Select((h, rank) => (h, rank)).GroupBy(x => x.h.Type, StringComparer.Ordinal))
 		{
 			var view = await GetAsync(projectKey, g.Key, includeClosed: false, urlPrefix: urlPrefix, ct: ct);
-			var slugs = g.Select(h => h.Id).ToHashSet(StringComparer.Ordinal);
-			foreach (var n in view.Nodes.Where(n => slugs.Contains(n.Key)))
+			var bySlug = view.Nodes.ToDictionary(n => n.Key, StringComparer.Ordinal);
+			var byNodeId = view.Nodes.ToDictionary(n => n.NodeId, StringComparer.Ordinal);
+			foreach (var (h, rank) in g)
 			{
-				var (score, retriever) = provenance[(g.Key, n.Key)];
-				hits.Add(new TaskSearchHit(g.Key, n, score, retriever));
+				var isComment = h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal);
+				PlanNodeView? node;
+				if (isComment)
+				{
+					// A comment resolves to its owner in the SAME open view; if the owner is
+					// absent (closed/terminal — the node's FTS row is gone but the comment row
+					// lingered) the hit is dropped. This staleness is bounded and harmless.
+					var key = h.Id[TasksSearchDocs.CommentIdPrefix.Length..];
+					node = ownerByComment.TryGetValue(key, out var nodeId) && byNodeId.TryGetValue(nodeId, out var owner) ? owner : null;
+				}
+				else
+				{
+					node = bySlug.GetValueOrDefault(h.Id);
+				}
+				if (node is null) continue;
+				if (!seen.Add((g.Key, node.Key))) continue; // target already surfaced at a better rank
+				ranked.Add((rank, new TaskSearchHit(g.Key, node, h.Score, h.Retriever, isComment ? "comment" : null)));
 			}
 		}
-		return (hits.OrderBy(h => order.GetValueOrDefault((h.Board, h.Node.Key), int.MaxValue)).ToList(), resp.Retrievers);
+		return (ranked.OrderBy(x => x.Rank).Select(x => x.Hit).ToList(), resp.Retrievers);
 	}
 
 	// Final ordering of the selected set. No sort: query mode keeps the fused relevance
@@ -2184,10 +2210,19 @@ public sealed partial class TasksService : ITasksService
 		}
 	}
 
-	// One-time lexical backfill: nodes written before the search retrofit have no search_fts rows.
-	// Cheap, count-guarded, runs at most once per project file — rebuilds the OPEN set across every
-	// board from the same projection the write seam uses.
+	// One-time lexical backfill: content written before a search retrofit has no search_fts rows.
+	// TWO independently-guarded passes both run: nodes (for a file predating the node retrofit) and
+	// comments (for a file predating tasks-search-comments — its nodes are already indexed, so the
+	// node guard alone would never re-run). Cheap, count-guarded, at most once per project file each.
 	static async Task EnsureLexicalBackfillAsync(TasksDb ctx, string scope, MethodologyRuntime runtime, CancellationToken ct)
+	{
+		await BackfillNodesAsync(ctx, scope, runtime, ct);
+		await BackfillCommentsAsync(ctx, scope, runtime, ct);
+	}
+
+	// Node backfill: rebuilds the OPEN set across every board from the same projection the write
+	// seam uses. Guard is ANY search_fts row (node or comment) — a virgin file is the only re-run.
+	static async Task BackfillNodesAsync(TasksDb ctx, string scope, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		if (ctx.Execute<long>("SELECT count(*) FROM search_fts") > 0) return;
 		var open = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
@@ -2204,6 +2239,37 @@ public sealed partial class TasksService : ITasksService
 		{
 			foreach (var n in open)
 				await fts.IndexAsync(ctx, TasksSearchDocs.ToDoc(n, scope, tagsByNode.GetValueOrDefault(n.NodeId, [])), ct);
+			await tx.CommitAsync(ct);
+		}
+		catch
+		{
+			await tx.RollbackAsync(ct);
+			throw;
+		}
+	}
+
+	// Comment backfill: own guard (no "c:%" row yet) so it runs on files whose nodes are already
+	// indexed. Indexes every ACTIVE comment whose owner node is currently indexable (resolve owner
+	// via PlanNodes by NodeId) — a comment under a closed/terminal owner is dropped at read time
+	// anyway. Empty-comment files re-run the cheap count each search, matching the node guard's cost.
+	static async Task BackfillCommentsAsync(TasksDb ctx, string scope, MethodologyRuntime runtime, CancellationToken ct)
+	{
+		if (ctx.Execute<long>("SELECT count(*) FROM search_fts WHERE Id LIKE 'c:%'") > 0) return;
+		var comments = await ctx.GetTable<CommentRow>().Where(c => c.ActiveTo == null).ToListAsync(ct);
+		if (comments.Count == 0) return;
+
+		var indexable = ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
+			.Where(n => TasksSearchDocs.IsIndexable(n, runtime))
+			.Select(n => n.NodeId).ToHashSet(StringComparer.Ordinal);
+		var toIndex = comments.Where(c => indexable.Contains(c.NodeId)).ToList();
+		if (toIndex.Count == 0) return;
+
+		var fts = new SqliteFtsIndex(() => ctx);
+		using var tx = await ctx.BeginTransactionAsync(ct);
+		try
+		{
+			foreach (var c in toIndex)
+				await fts.IndexAsync(ctx, TasksSearchDocs.CommentToDoc(c, scope), ct);
 			await tx.CommitAsync(ct);
 		}
 		catch

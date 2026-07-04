@@ -2,6 +2,7 @@ using LinqToDB;
 using LinqToDB.Async;
 using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
+using PetBox.Core.Search;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 
@@ -44,7 +45,19 @@ public sealed class CommentService : ICommentService
 			ParentId = string.IsNullOrEmpty(parentId) ? null : parentId,
 			Author = author ?? string.Empty, Body = body,
 		};
-		var r = await TemporalStore.UpsertAsync(ctx, new[] { row }, partition: x => x.Board == board, ct: ct);
+		// Class-A lexical floor: index the comment INSIDE the entity tx (onWithinTx), so a
+		// committed comment is never lexically-stale and the FTS row rolls back with it —
+		// same discipline as MemoryService/RefreshFtsTagsAsync. Indexed UNCONDITIONALLY (no
+		// owner-indexability check): a comment under a terminal/closed node is filtered at
+		// read time (owner absent from the open board view), so the extra row is harmless and
+		// saves a lookup. Tags aren't set yet (SetTagsAsync runs after) → doc carries none.
+		var fts = new SqliteFtsIndex(() => ctx);
+		var r = await TemporalStore.UpsertAsync(ctx, new[] { row }, partition: x => x.Board == board,
+			onWithinTx: async (tx, upserted, _, c) =>
+			{
+				foreach (var u in upserted)
+					await fts.IndexAsync(tx, TasksSearchDocs.CommentToDoc(u, projectKey), c);
+			}, ct: ct);
 		if (r.Applied) await SetTagsAsync(ctx, id, board, tags, ct);
 		return Map(r, id);
 	}
@@ -63,7 +76,15 @@ public sealed class CommentService : ICommentService
 		// Carry identity/parent/author; only the body changes. `version` is the caller's
 		// baseline — TemporalStore turns a stale one into a conflict, not a clobber.
 		var row = current with { Version = version, Body = body };
-		var r = await TemporalStore.UpsertAsync(ctx, new[] { row }, partition: x => x.Board == board, ct: ct);
+		// Re-index the edited body inside the entity tx (the old text's row is overwritten by
+		// IndexAsync's delete+insert on (Scope,Type,Id), so a stale-body search stops matching).
+		var fts = new SqliteFtsIndex(() => ctx);
+		var r = await TemporalStore.UpsertAsync(ctx, new[] { row }, partition: x => x.Board == board,
+			onWithinTx: async (tx, upserted, _, c) =>
+			{
+				foreach (var u in upserted)
+					await fts.IndexAsync(tx, TasksSearchDocs.CommentToDoc(u, projectKey), c);
+			}, ct: ct);
 		if (r.Applied && tags is not null) await SetTagsAsync(ctx, id, board, tags, ct);
 		return Map(r, id);
 	}
@@ -80,9 +101,16 @@ public sealed class CommentService : ICommentService
 		if (hasChildren)
 			throw new InvalidOperationException($"comment '{id}' has replies — delete them first");
 
-		// Soft-close the comment (no replacement revision) + its active tags.
+		// Soft-close the comment (no replacement revision) + its active tags. Drop the FTS row
+		// inside the entity tx, keyed by the "c:"+id address.
+		var fts = new SqliteFtsIndex(() => ctx);
 		var r = await TemporalStore.UpsertAsync(
-			ctx, Array.Empty<CommentRow>(), new[] { (id, 0L) }, partition: x => x.Board == board, ct: ct);
+			ctx, Array.Empty<CommentRow>(), new[] { (id, 0L) }, partition: x => x.Board == board,
+			onWithinTx: async (tx, _, deletedKeys, c) =>
+			{
+				foreach (var key in deletedKeys)
+					await fts.DeleteAsync(tx, projectKey, board, TasksSearchDocs.CommentIdPrefix + key, c);
+			}, ct: ct);
 		await ctx.GetTable<CommentTag>()
 			.Where(t => t.CommentId == id && t.ValidTo == null)
 			.Set(t => t.ValidTo, _ => DateTime.UtcNow)

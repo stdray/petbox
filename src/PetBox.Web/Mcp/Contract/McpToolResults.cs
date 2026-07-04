@@ -336,7 +336,11 @@ public sealed record TaskSearchNodeView(
 	long Version,
 	string? Url,
 	double? Score = null,
-	string? Retriever = null);
+	string? Retriever = null,
+	// "comment" when the row surfaced because a COMMENT under this node matched the query
+	// (tasks-search-comments); null when the node itself matched. Relevance provenance, so it
+	// survives the lean q-mode cut like Score/Retriever.
+	string? MatchedIn = null);
 
 // The tasks_search result — ONE shape for every mode (a single OutputSchemaType):
 //   listing/query  → `Nodes` (final order), plus board context (Board/Kind/SpecBoard/
