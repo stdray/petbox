@@ -229,6 +229,53 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-testid=\"node-status\">deprecated");
 	}
 
+	// ui-spec-status-board-node-mismatch: the node DETAIL page must apply the SAME spec-board status
+	// suppression as the board (previously it always showed the badge, so board and node disagreed).
+	// A non-terminal spec status (`defined`) → NO status badge; the terminal `deprecated` → badge
+	// shows. A non-spec (work) board keeps its status badge — non-spec boards are unaffected. Seeded
+	// through TemporalStore to bypass the idea/FSM gates — this exercises the render path.
+	[Fact]
+	public async Task SpecNodeDetail_HidesNonTerminalStatus_ShowsDeprecated_WorkNodeUnaffected()
+	{
+		const string spec = "specnodepage";
+		const string work = "worknodepage";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", spec))
+				await boards.CreateAsync("$system", spec, "spec node page", "spec");
+			if (!await boards.ExistsAsync("$system", work))
+				await boards.CreateAsync("$system", work, "work node page"); // default (simple) kind
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = spec, Key = "sdef", NodeId = "id-sdef", Version = 0, Status = "defined", Type = "spec", Name = "Spec defined", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Board = spec, Key = "sdep", NodeId = "id-sdep", Version = 0, Status = "deprecated", Type = "spec", Name = "Spec deprecated", Body = "", Priority = 2 },
+			}, partition: n => n.Board == spec);
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = work, Key = "wtask", NodeId = "id-wtask", Version = 0, Status = "InProgress", Type = "task", Name = "Work task", Body = "", Priority = 1 },
+			}, partition: n => n.Board == work);
+		}
+
+		// Spec node, non-terminal `defined`: NO status badge — matches the board's hide rule.
+		using var defResp = await GetAuthedAsync($"/ui/$system/$system/tasks/{spec}/sdef");
+		defResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var defHtml = await defResp.Content.ReadAsStringAsync();
+		defHtml.Should().Contain("data-testid=\"node-name\""); // the detail page did render
+		defHtml.Should().NotContain("data-testid=\"node-status\""); // …but no status badge
+
+		// Spec node, terminal `deprecated`: the status badge shows (as on the board).
+		using var depResp = await GetAuthedAsync($"/ui/$system/$system/tasks/{spec}/sdep");
+		var depHtml = await depResp.Content.ReadAsStringAsync();
+		depHtml.Should().Contain("data-testid=\"node-status\">deprecated");
+
+		// Work (non-spec) board node: the status badge always shows — behaviour unchanged.
+		using var workResp = await GetAuthedAsync($"/ui/$system/$system/tasks/{work}/wtask");
+		var workHtml = await workResp.Content.ReadAsStringAsync();
+		workHtml.Should().Contain("data-testid=\"node-status\">InProgress");
+	}
+
 	// server-md-render / reader-view: a node body is markdown rendered to HTML on the SERVER inside
 	// a semantic <article>, so the initial response carries real <article>/<p> (what Firefox's
 	// isProbablyReaderable counts) — not raw markdown text hydrated later on the client.

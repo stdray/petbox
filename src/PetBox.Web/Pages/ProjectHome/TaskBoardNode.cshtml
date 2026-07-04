@@ -13,27 +13,6 @@
 		: $"{nodeKindName} board — statuses follow the {nodeKindName} workflow";
 }
 
-@functions {
-	// StatusKind -> daisyUI badge (presentation; domain owns the StatusKind). Mirrors TaskBoard.
-	// The kind is resolved through the runtime per the board's kind (custom statuses colour right).
-	static string StatusBadge(PetBox.Tasks.Workflow.StatusKind? kind) => kind switch
-	{
-		PetBox.Tasks.Workflow.StatusKind.TerminalOk => "badge-success",
-		PetBox.Tasks.Workflow.StatusKind.TerminalCancel => "badge-ghost",
-		PetBox.Tasks.Workflow.StatusKind.Open => "badge-info",
-		_ => "badge-neutral",
-	};
-
-	// Muted (outline) palette — delivery is context, not an alert (spec-board-status-noise #11).
-	static string DeliveryBadge(string d) => d switch
-	{
-		"done" => "badge-success badge-outline",
-		"in_progress" => "badge-warning badge-outline",
-		"done_with_defects" => "badge-error badge-outline",
-		_ => "badge-ghost",
-	};
-}
-
 @* Breadcrumb: tasks / {board} / {ancestors…} / {this node}. The node is addressed by its
    stable id, so the trail is reconstructed from the part_of chain the service returns. *@
 <div class="mb-4 flex items-center gap-2 flex-wrap text-sm" data-testid="node-breadcrumb">
@@ -72,7 +51,11 @@
 				}
 				@* Opens the "View workflow" modal with this type's FSM graph (ts/workflow-viz.ts). *@
 				<button type="button" class="btn btn-ghost btn-xs gap-1" data-testid="workflow-open" data-workflow-type="@node.Type" title="View this type's workflow graph">⤳ workflow</button>
-				<span class="badge @StatusBadge(Model.Runtime.StatusKindOf(Model.Detail.Kind, node.Status)) badge-sm" data-testid="node-status">@node.Status</span>
+				@* Status badge via the shared partial — the SAME spec-board suppression rule as the
+				   board: a non-terminal status on a spec board renders nothing, so the node page and
+				   the board agree on this field (ui-spec-status-board-node-mismatch). The status-change
+				   form below is unaffected — only the read-only badge is suppressed. *@
+				<partial name="_StatusBadge" model="new PetBox.Web.Pages.Shared.StatusBadgeModel(Model.Runtime, Model.Detail.Kind, node.Status)" />
 				@if (Model.NextStatuses.Count > 0)
 				{
 					<form method="post" asp-page-handler="Status" class="inline-flex items-center gap-1" data-testid="node-status-form">
@@ -88,7 +71,7 @@
 				}
 				@if (node.Delivery is not null)
 				{
-					<span class="badge @DeliveryBadge(node.Delivery) badge-sm" data-testid="node-delivery" title="delivery — computed from linked tasks">@node.Delivery</span>
+					<partial name="_DeliveryBadge" model="new PetBox.Web.Pages.Shared.DeliveryBadgeModel(node.Delivery)" />
 				}
 				<button type="button" class="btn btn-ghost btn-xs" data-testid="node-edit-toggle">edit</button>
 			</div>

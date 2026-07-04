@@ -27,19 +27,6 @@
 		: $"{kindName} board — statuses follow the {kindName} workflow";
 }
 
-@functions {
-	// Computed spec delivery roll-up (spec boards only) -> daisyUI class. (Status badges live
-	// in the shared _PlanNodeCard partial; group headers only need delivery.) Muted (outline)
-	// palette — delivery is context, not an alert (spec-board-status-noise #11).
-	static string DeliveryBadge(string d) => d switch
-	{
-		"done" => "badge-success badge-outline",
-		"in_progress" => "badge-warning badge-outline",
-		"done_with_defects" => "badge-error badge-outline",
-		_ => "badge-ghost", // not_started
-	};
-}
-
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
 	<a href="@Routes.ProjectTasks(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70" data-testid="board-breadcrumb">tasks</a>
 	<span class="opacity-40">/</span>
@@ -106,7 +93,7 @@
 							<span class="font-mono font-semibold text-sm">@row.GroupKey</span>
 							@if (row.Delivery is not null)
 							{
-								<span class="badge @DeliveryBadge(row.Delivery) badge-xs" title="delivery — rolled up over this group">@row.Delivery</span>
+								<partial name="_DeliveryBadge" model="@(new PetBox.Web.Pages.Shared.DeliveryBadgeModel(row.Delivery) { Size = "badge-xs", Title = "delivery — rolled up over this group", TestId = null })" />
 							}
 						</div>
 					</li>
