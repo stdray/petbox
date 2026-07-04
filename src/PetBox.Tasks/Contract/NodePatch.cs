@@ -5,7 +5,7 @@ namespace PetBox.Tasks.Contract;
 // (and PrevKey for a rename) before handing it here. Read-merge semantics live in the
 // service: a string field that is null was OMITTED (inherit the prior active row),
 // while a non-null value (including "") is an explicit set/clear. Priority null = omit.
-// CommitRef is nullable on the row, so its presence is carried by CommitRefSet.
+// Commits is an SCD-2 association like Tags: null = don't touch, [] = clear, a list REPLACES.
 public sealed record NodePatch
 {
 	// Flat board-unique slug, already validated/normalized by the adapter (no '/').
@@ -29,9 +29,13 @@ public sealed record NodePatch
 	public string? Type { get; init; }
 	public string? Title { get; init; }
 	public string? Body { get; init; }
-	public bool CommitRefSet { get; init; }
-	public string? CommitRef { get; init; }
 	public long? Priority { get; init; }
+
+	// Attached commit SHAs (node-commits-impl). null = OMIT (leave the node's commits as-is);
+	// a non-null list (incl. empty) REPLACES the node's full commit set — same semantics as
+	// Tags. Values are normalized (trim, lowercase, dedupe, drop empties) and validated (hex,
+	// 7..40 chars) by the service.
+	public IReadOnlyList<string>? Commits { get; init; }
 
 	// Per-node link fields. specRef → the spec NodeId this task implements (task_spec).
 	// blockedBy → a NodeId that blocks this task (blocks). Null/empty = no link given.

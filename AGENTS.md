@@ -62,7 +62,7 @@ records**, not the working plan — do not treat them as current state.
    For TIMING analysis (per-class totals, wall-clock critical path of a parallel run)
    use `dotnet run scripts/trx-timings.cs -- <run.trx>` — don't re-write that parser.
 4. **Finish = branch + commit + push:** completed work is committed on a feature
-   branch and pushed BEFORE the card moves to `Review` (set `commitRef` on the card);
+   branch and pushed BEFORE the card moves to `Review` (add commits to the card via `commits[]`);
    never leave finished edits uncommitted in a working tree. This repo's process
    contract IS the standing request to commit — it overrides any agent-default
    "don't commit unless asked".

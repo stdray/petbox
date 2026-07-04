@@ -23,7 +23,7 @@ entity plan_nodes {
   Board : text   ' какая доска
   Type : text?   ' feature|bug (null на free)
   Status : text  ' slug
-  Name / Body / Priority / CommitRef?
+  Name / Body / Priority / Commits[]
   PrevKey? / ActiveFrom / ActiveTo? / Created / Updated
 }
 entity relations {

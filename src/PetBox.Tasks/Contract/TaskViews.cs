@@ -16,7 +16,7 @@ public sealed record LinkDto(string NodeId, string? Board, string? Slug, string?
 // parent (null = root); Depth is its computed distance from a root.
 public sealed record PlanNodeView(
 	string Key, string NodeId, string? ParentNodeId, string? ParentSlug, int Depth,
-	string Status, string Type, string Title, string Body, string? CommitRef, long Priority, long Version,
+	string Status, string Type, string Title, string Body, IReadOnlyList<string> Commits, long Priority, long Version,
 	string? Delivery, IReadOnlyList<LinkDto>? Spec, IReadOnlyList<LinkDto>? BlockedBy,
 	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<LinkDto>? Supersedes, IReadOnlyList<string> RenamedFrom, IReadOnlyList<string> Tags,
 	string? Url = null);
@@ -43,7 +43,7 @@ public sealed record NodeCrumb(string NodeId, string Slug, string Title);
 // when the caller passes bodyLen > 0.
 public sealed record PlanNodeDelta(
 	string Key, string NodeId, string Status, string Type, string Title, string? Body,
-	string? CommitRef, long Priority, long Version, string? Url = null);
+	IReadOnlyList<string> Commits, long Priority, long Version, string? Url = null);
 
 // One row the caller could not apply (optimistic-concurrency miss, or a domain-guard
 // refusal — then Reason says why), shaped for the wire. On a Stale conflict,
@@ -134,7 +134,11 @@ public sealed record TaskNodeFilter(
 	string? Under = null,
 	IReadOnlyList<string>? Status = null,
 	IReadOnlyList<string>? Keys = null,
-	bool IncludeClosed = false);
+	bool IncludeClosed = false,
+	// Reverse commit lookup (node-commits-impl): keep only nodes carrying this commit. An
+	// EXACT match on a stored sha, or — when the query is >=7 hex chars — a PREFIX match on a
+	// stored full sha (a short query finds the long commit). null/empty = no filter.
+	string? Commit = null);
 
 // The unified tasks read result (list = search without query): the selected hits in their
 // final order, the board context when the read was board-scoped (Kind/SpecBoard/

@@ -15,7 +15,7 @@ namespace PetBox.Web.Mcp;
 // record property `required` (a positional record's ctor params are all
 // non-optional, so STJ requires them all — nullability is orthogonal). A strict
 // client (opencode/DeepSeek) then rejects our structuredContent with
-// "must have required property 'commitRef'" because the omitted null key is
+// "must have required property 'body'" because the omitted null key is
 // absent yet declared required.
 //
 // Fix: generate an HONEST schema — nullable properties are NOT required (they

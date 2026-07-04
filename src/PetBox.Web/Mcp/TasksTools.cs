@@ -335,7 +335,7 @@ public static class TasksTools
 		without `q`; replaces the former tasks.get). Nodes are FLAT (a single slug `key`);
 		hierarchy is the part_of edge, surfaced as parentNodeId/parentSlug and a computed
 		`depth` (0 = root) — build the tree from those. Every row carries its `board` plus
-		key, nodeId, status, type, title, body, priority, version, renamedFrom, `tags`, and
+		key, nodeId, status, type, title, body, priority, version, renamedFrom, `tags`, `commits` (attached commit SHAs), and
 		links: `spec` (spec nodes a task implements), `blockedBy`, and on a spec board
 		`linkedTasks` + the COMPUTED `delivery` roll-up (not_started|in_progress|done|
 		done_with_defects).
@@ -357,7 +357,7 @@ public static class TasksTools
 		returns its nodes even without includeClosed — an explicit ask; an unknown slug is
 		rejected); `keys` = address specific nodes (slug|NodeId mixed, resolved like
 		tasks_node_get — a miss or an ambiguous cross-board slug is a clear error, and an
-		addressed terminal node is returned without includeClosed).
+		addressed terminal node is returned without includeClosed); `commit` = keep only nodes carrying that commit SHA (exact, or a >=7-hex prefix resolving a stored full sha).
 
 		SORT: `sort` = {by: priority|created|updated|title|relevance, desc?}. Without `q`
 		the default is priority (asking for relevance is an error); with `q` the default is
@@ -397,6 +397,7 @@ public static class TasksTools
 		[Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with tasks_node_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
 		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
+		[Description("Reverse commit lookup: keep only nodes carrying this commit SHA — an exact match, or a >=7-hex prefix that resolves a stored full sha. Applies in both modes.")] string? commit = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -420,7 +421,7 @@ public static class TasksTools
 		var res = await tasks.SearchNodesAsync(projectKey, new SearchRequest<TaskNodeFilter, TaskSortBy>
 		{
 			Query = hasQuery ? q : null,
-			Filter = new TaskNodeFilter(board, under, status, keys, includeClosed),
+			Filter = new TaskNodeFilter(board, under, status, keys, includeClosed, commit),
 			Sort = ParseSort(sort),
 			Limit = limit ?? (hasQuery ? DefaultSearchLimit : 0),
 			BodyLen = 0, // request FULL bodies; the adapter applies the uniform bodyLen contract below
@@ -476,7 +477,7 @@ public static class TasksTools
 			// Uniform bodyLen contract, default a ~240-char snippet (compact listing); null
 			// (bodyLen:0) is omitted by the serializer.
 			Body: ModuleMcp.Body(n.Body, bodyLen, ModuleMcp.DefaultSnippet),
-			CommitRef: n.CommitRef,
+			Commits: n.Commits,
 			Priority: n.Priority,
 			Delivery: n.Delivery,
 			Spec: n.Spec,
@@ -515,7 +516,9 @@ public static class TasksTools
 		the idea_spec edge), blockedBy (the blocking node as its slug on THIS board or a
 		NodeId — the same slug-or-NodeId convention as specRef/partOf), supersedes
 		(a slug|NodeId this node replaces — the old one is moved to its terminal-cancel),
-		commitRef?, priority? (sparse int, lower first), version (WATERMARK baseline: pass the
+		commits? (an ARRAY of commit SHAs — hex, 7..40 chars; null omits, [] clears, a list
+		REPLACES the node's full commit set, same PATCH semantics as tags), priority? (sparse
+		int, lower first), version (WATERMARK baseline: pass the
 		board `currentVersion` from your last read OR the node's own version — both are valid; 0 =
 		new; a version above this board's cursor is rejected as a wrong-scope baseline). The guard
 		is about PAYLOAD, not version arithmetic: a payload identical to the node's current state
@@ -543,7 +546,7 @@ public static class TasksTools
 		carry the call's own nodes plus nodes its cascade effects touched (a `supersedes`
 		target obsoleted, a deleted subtree, an unblocked task) — never other writers'
 		history, and there is no cursor parameter on a write. added/updated carry the node
-		(key, nodeId, status, type, title, commitRef, priority, version); `body` follows the
+		(key, nodeId, status, type, title, commits[], priority, version); `body` follows the
 		uniform bodyLen knob (omitted here = NO body, a compact ack; 0 = no body; N>0 = the first
 		N chars, "…" when cut; -1 = full body). `currentVersion` is the board-wide cursor: for a full delta
 		since a cursor (everything changed by anyone — rebase/merge/catch-up), call
@@ -552,7 +555,7 @@ public static class TasksTools
 	public static async Task<UpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board,
-		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/commitRef/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
+		[Description("Array of node objects: flat `key`, optional `partOf` (parent slug|NodeId), `tags` (array of ns:value), `commits` (array of hex SHAs), `specRef` (spec slug|NodeId), `ideaRef`, `blockedBy` (blocker slug|NodeId), `supersedes`, status/type/title/body/priority/version, and `prevKey` to rename.")] PlanNodeInput[] nodes,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("Include an absolute `url` permalink to each returned node's detail page (off by default).")] bool includeUrl = false,
 		CancellationToken ct = default)
@@ -647,7 +650,7 @@ public static class TasksTools
 		Type: n.Type,
 		Title: n.Name,
 		Body: ModuleMcp.Body(n.Body, bodyLen, ModuleMcp.NoBody),
-		CommitRef: n.CommitRef,
+		Commits: n.Commits,
 		Priority: n.Priority,
 		Version: n.Version,
 		Url: urlPrefix is null ? null : urlPrefix + n.Board + "/" + n.Key);
@@ -673,10 +676,9 @@ public static class TasksTools
 				Type = n.Type,
 				Title = n.Title,
 				Body = n.Body,
-				// CommitRef: null = omit (don't touch), any non-null (incl. "") = explicit set/clear.
-				// Carries the old CommitRefSet presence bit via null-ness of the typed field.
-				CommitRefSet = n.CommitRef is not null,
-				CommitRef = n.CommitRef,
+				// Commits: null = omit (don't touch); a non-null list (incl. empty) REPLACES the
+				// node's full commit set — same semantics as Tags.
+				Commits = n.Commits,
 				Priority = n.Priority,
 				SpecRef = n.SpecRef,
 				IdeaRef = n.IdeaRef,

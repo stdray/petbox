@@ -44,7 +44,10 @@ public sealed record PlanNodeInput
 	public string? Type { get; init; }
 	public string? Title { get; init; }
 	public string? Body { get; init; }
-	public string? CommitRef { get; init; }
+
+	// Attached commit SHAs (node-commits-impl). null = omit (don't touch); a non-null list
+	// (incl. empty) REPLACES the node's full commit set — same semantics as Tags.
+	public IReadOnlyList<string>? Commits { get; init; }
 
 	// Baseline version last seen (0 = new); sparse ordering int.
 	public long Version { get; init; }

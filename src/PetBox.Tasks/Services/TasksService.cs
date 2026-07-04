@@ -546,6 +546,7 @@ public sealed partial class TasksService : ITasksService
 
 		var index = await BuildNodeIndexAsync(projectKey, ct);
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
+		var commitsByNode = await BoardCommitsAsync(ctx, board, ct);
 		var underId = ResolveUnderNodeId(under, active);
 		// A status filter is an EXPLICIT ask: naming a terminal status returns its nodes even
 		// with includeClosed=false (widen the pool first, then keep only the named slugs).
@@ -575,7 +576,7 @@ public sealed partial class TasksService : ITasksService
 				Type: n.Type,
 				Title: n.Name,
 				Body: n.Body,
-				CommitRef: n.CommitRef,
+				Commits: commitsByNode.TryGetValue(n.NodeId, out var cs) ? cs : [],
 				Priority: n.Priority,
 				Version: n.Version,
 				Delivery: delivery is not null && delivery.TryGetValue(n.NodeId, out var dv) ? dv : null,
@@ -1093,6 +1094,7 @@ public sealed partial class TasksService : ITasksService
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.meta"))
 			{
 				await SetTagsAsync(projectKey, board, runtime, kindSlug, upsertPatches, desired, ct);
+				await SetCommitsAsync(ctx, board, upsertPatches, desired, ct);
 				await SetPartOfAsync(projectKey, board, upsertPatches, desired, ct);
 				await SetSupersedesAsync(projectKey, board, upsertPatches, desired, runtime, ct);
 			}
@@ -1111,7 +1113,13 @@ public sealed partial class TasksService : ITasksService
 			// did, and CurrentVersion is a cursor an immediate DeltaAsync returns nothing for.
 			var (added, updated, removed, current) = await TemporalStore.ChangesSinceAsync<PlanNode>(
 				ctx, 0, partition: n => n.Board == board, ct: ct);
-			r = r with { CurrentVersion = current, Added = added, Updated = updated, Removed = removed };
+			r = r with
+			{
+				CurrentVersion = current,
+				Added = await AttachCommitsAsync(ctx, board, added, ct),
+				Updated = await AttachCommitsAsync(ctx, board, updated, ct),
+				Removed = removed,
+			};
 		}
 		return new UpsertOutcome(ScopeEchoToCall(r, nodes, mainCursor), runtime.KindName(kindSlug));
 	}
@@ -1150,6 +1158,11 @@ public sealed partial class TasksService : ITasksService
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
 		var ctx = _boards.GetContext(projectKey);
 		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion, partition: n => n.Board == board, ct: ct);
+		r = r with
+		{
+			Added = await AttachCommitsAsync(ctx, board, r.Added, ct),
+			Updated = await AttachCommitsAsync(ctx, board, r.Updated, ct),
+		};
 		return new UpsertOutcome(r, (await RuntimeAsync(projectKey, ct)).KindName(meta.Kind));
 	}
 
@@ -1238,6 +1251,13 @@ public sealed partial class TasksService : ITasksService
 		if (underId is not null) hits = hits.Where(h => InSubtree(h.Node.NodeId, underId, parentOf!)).ToList();
 		if (statusFilter is not null) hits = hits.Where(h => statusFilter.Contains(h.Node.Status)).ToList();
 		if (keyIds is not null) hits = hits.Where(h => keyIds.Contains(h.Node.NodeId)).ToList();
+		// Reverse commit lookup (node-commits-impl): keep only nodes carrying the commit
+		// (exact, or a >=7-hex prefix on a stored full sha). Project-wide over plan_node_commits.
+		if (!string.IsNullOrWhiteSpace(f.Commit))
+		{
+			var carrying = await NodesCarryingCommitAsync(_boards.GetContext(projectKey), f.Commit, ct);
+			hits = hits.Where(h => carrying.Contains(h.Node.NodeId)).ToList();
+		}
 
 		hits = SortHits(projectKey, hits, req.Sort, hasQuery: query is not null);
 		if (req.Limit > 0 && hits.Count > req.Limit) hits = hits.Take(req.Limit).ToList();
@@ -1376,7 +1396,6 @@ public sealed partial class TasksService : ITasksService
 			Type = (p.Type ?? cur?.Type ?? string.Empty).ToLowerInvariant(),
 			Name = p.Title ?? cur?.Name ?? string.Empty,
 			Body = p.Body ?? cur?.Body ?? string.Empty,
-			CommitRef = p.CommitRefSet ? p.CommitRef : cur?.CommitRef,
 			Priority = p.Priority ?? cur?.Priority ?? 0,
 			PrevKey = p.PrevKey,
 		};
@@ -1733,6 +1752,86 @@ public sealed partial class TasksService : ITasksService
 			if (nodeIdOf.TryGetValue(p.Key, out var nid) && nid.Length > 0)
 				await _tags.SetAsync(projectKey, board, nid, p.Tags, enforceNs, namespaces, ct);
 		}
+	}
+
+	// Apply attached commits after the upsert (node-commits-impl), mirroring SetTagsAsync +
+	// the SCD-2 tag write. A patch whose Commits is null OMITS them (leave as-is); a non-null
+	// list (incl. empty) is the node's new full commit set. Commits bind to the stable NodeId.
+	static async Task SetCommitsAsync(TasksDb ctx, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
+	{
+		if (!patches.Any(p => p.Commits is not null)) return;
+		var nodeIdOf = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
+		foreach (var p in patches)
+		{
+			if (p.Commits is null) continue;
+			if (!nodeIdOf.TryGetValue(p.Key, out var nid) || nid.Length == 0) continue;
+
+			var desiredSet = NormalizeCommits(p.Commits);
+			var active = await ctx.PlanNodeCommits.Where(c => c.NodeId == nid && c.ValidTo == null).ToListAsync(ct);
+			var activeShas = active.Select(c => c.Sha).ToHashSet(StringComparer.Ordinal);
+			var now = DateTime.UtcNow;
+
+			// Soft-close commits no longer desired.
+			foreach (var a in active.Where(a => !desiredSet.Contains(a.Sha)))
+				await ctx.PlanNodeCommits
+					.Where(c => c.NodeId == nid && c.Sha == a.Sha && c.ValidTo == null)
+					.Set(c => c.ValidTo, _ => (DateTime?)now)
+					.UpdateAsync(ct);
+
+			// Insert newly desired commits.
+			foreach (var sha in desiredSet.Where(s => !activeShas.Contains(s)))
+				await ctx.InsertAsync(new PlanNodeCommit { NodeId = nid, Board = board, Sha = sha, ValidFrom = now }, token: ct);
+		}
+	}
+
+	// Active (ValidTo == null) commits for a whole board, nodeId -> sorted sha list.
+	static async Task<Dictionary<string, List<string>>> BoardCommitsAsync(TasksDb ctx, string board, CancellationToken ct)
+	{
+		var rows = await ctx.PlanNodeCommits.Where(c => c.Board == board && c.ValidTo == null)
+			.Select(c => new { c.NodeId, c.Sha }).ToListAsync(ct);
+		return rows.GroupBy(r => r.NodeId, StringComparer.Ordinal)
+			.ToDictionary(g => g.Key, g => g.Select(x => x.Sha).OrderBy(s => s, StringComparer.Ordinal).ToList(), StringComparer.Ordinal);
+	}
+
+	// Populate PlanNode.Commits (the NotColumn enrichment field) for an echo batch so the
+	// write-ack / delta projection carries a node's attached commits.
+	static async Task<IReadOnlyList<PlanNode>> AttachCommitsAsync(TasksDb ctx, string board, IReadOnlyList<PlanNode> nodes, CancellationToken ct)
+	{
+		if (nodes.Count == 0) return nodes;
+		var byNode = await BoardCommitsAsync(ctx, board, ct);
+		return nodes.Select(n => n with { Commits = byNode.TryGetValue(n.NodeId, out var cs) ? cs : [] }).ToList();
+	}
+
+	// Normalize a commit set: trim, lowercase, dedupe, drop empties; reject a value that is
+	// not hex or whose length is outside 7..40 (git short-sha floor .. full sha). Empty in →
+	// empty set (an explicit clear). Same validation-error shape as tag normalization.
+	static HashSet<string> NormalizeCommits(IReadOnlyList<string>? commits)
+	{
+		var set = new HashSet<string>(StringComparer.Ordinal);
+		if (commits is null) return set;
+		foreach (var raw in commits)
+		{
+			if (string.IsNullOrWhiteSpace(raw)) continue;
+			var sha = raw.Trim().ToLowerInvariant();
+			if (sha.Length is < 7 or > 40 || !sha.All(Uri.IsHexDigit))
+				throw new ArgumentException($"commit '{raw}' must be a hex commit id of 7..40 chars");
+			set.Add(sha);
+		}
+		return set;
+	}
+
+	// nodeId -> its active commit set (reverse lookup + attach helper), read on ctx.
+	static async Task<HashSet<string>> NodesCarryingCommitAsync(TasksDb ctx, string commit, CancellationToken ct)
+	{
+		var v = (commit ?? "").Trim().ToLowerInvariant();
+		if (v.Length == 0) return [];
+		// EXACT match always; PREFIX match on a stored full sha only when the query is a >=7
+		// hex short id (a short query finds the long commit — spec: prefix match on stored value).
+		var prefixable = v.Length >= 7 && v.All(Uri.IsHexDigit);
+		var rows = await ctx.PlanNodeCommits
+			.Where(c => c.ValidTo == null && (c.Sha == v || (prefixable && c.Sha.StartsWith(v))))
+			.Select(c => c.NodeId).ToListAsync(ct);
+		return rows.ToHashSet(StringComparer.Ordinal);
 	}
 
 	// Apply part_of (vertical decomposition) after the upsert. A patch whose PartOf is null

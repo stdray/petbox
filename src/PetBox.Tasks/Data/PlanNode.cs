@@ -24,11 +24,15 @@ public sealed record PlanNode : TemporalRow
 	// Short human title shown as the node heading; Body holds the longer detail.
 	[Column, NotNull] public string Name { get; init; } = string.Empty;
 	[Column, NotNull] public string Body { get; init; } = string.Empty;
-	[Column, Nullable] public string? CommitRef { get; init; }
 	[Column] public long Priority { get; init; }
 
+	// Attached commits (node-commits-impl): NOT a stored column and NOT part of the payload
+	// (like tags, commits are an SCD-2 association in plan_node_commits, so editing them never
+	// mints a node revision). Read paths populate this for enrichment; empty by default.
+	[NotColumn] public IReadOnlyList<string> Commits { get; init; } = [];
+
 	public override bool SamePayload(TemporalRow other) =>
-		other is PlanNode p && p.Status == Status && p.Type == Type && p.Name == Name && p.Body == Body && p.CommitRef == CommitRef && p.Priority == Priority;
+		other is PlanNode p && p.Status == Status && p.Type == Type && p.Name == Name && p.Body == Body && p.Priority == Priority;
 
 	// Wire-facing names (title, not Name) — these land in a Stale conflict's
 	// ChangedFields. Mirrors SamePayload field-for-field.
@@ -40,7 +44,6 @@ public sealed record PlanNode : TemporalRow
 		if (p.Type != Type) fields.Add("type");
 		if (p.Name != Name) fields.Add("title");
 		if (p.Body != Body) fields.Add("body");
-		if (p.CommitRef != CommitRef) fields.Add("commitRef");
 		if (p.Priority != Priority) fields.Add("priority");
 		return fields;
 	}

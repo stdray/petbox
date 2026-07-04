@@ -37,7 +37,7 @@ Bridge from P1: `spec leaf with no linked tasks → create tasks → backlog`.
    cross-reference NFR leaves via M:N links.
 4. **Task** — technical unit; lives in a backlog; carries `type`
    (`feature|bug|chore|…`, `auto` = the agent classifies); M:N-linked to spec leaves;
-   provenance (originating issue + spec item); `commitRef`.
+   provenance (originating issue + spec item); `commits[]`.
 5. **Intake** — the inbox (agent + user queues) → triage → {reject-with-reason |
    promote to a task (only if a spec node already exists) | escalate to an idea (no spec
    reflection → P1)}. See "Intake — the inbox, and the no-spec rule" below.
@@ -107,7 +107,7 @@ just broken); a wish/new-capability usually doesn't, and becomes an idea.
 
 The chain above is **temporal, not just structural**. Implementation of new behaviour does
 not start until the chain exists: accepted idea → spec node → work task (`InProgress`). The
-work task is created **before** the code; `commitRef` lands when it reaches `Review`.
+work task is created **before** the code; `commits[]` land when it reaches `Review`.
 
 Creating the chain retroactively — ship first, then backfill idea/spec/work — is a
 **violation even though the result looks identical**: the board's integrity checks are
@@ -132,7 +132,7 @@ An iteration = a **filtered backlog** (pull a batch by: no blockers, priority,
 connectivity, simplicity, clear statement; plus carry-overs that failed
 review/tests/approval). No sprint ceremony / story points. It closes with a
 **release** whose artifacts are: test results + version tag + build + deploy target
-(= our CI `ci.NNN` + `commitRef` + deploy).
+(= our CI `ci.NNN` + `commits[]` + deploy).
 
 ## Spec-node status — computed bottom-up, type-aware
 
@@ -187,7 +187,7 @@ scopes, storage) is NOT a requirement; it lives in the **work task** (and the co
 
 ## It rides on what PetBox already has
 - Spec = temporal tree ← `TemporalStore` (SCD-2).
-- Iteration = release ← CI `ci.NNN` + `commitRef` + deploy.
+- Iteration = release ← CI `ci.NNN` + `commits[]` + deploy.
 - Intake ← the `incoming` phase + `report_issue`.
 - `type=auto` ← the agent already classifies incoming requests reliably.
 

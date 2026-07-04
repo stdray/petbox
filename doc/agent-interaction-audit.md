@@ -83,7 +83,7 @@ truth" the boards are supposed to be.
 1. List open work: `tasks_search board:work status:[Pending,Review]` (+ ideas/spec in
    non-terminal states).
 2. For each, look for evidence it is actually done:
-   - `commitRef` set, or a commit whose message/scope names the card slug —
+   - `commits[]` set, or a commit whose message/scope names the card slug —
      `git log --oneline --all --grep <slug>`.
    - The described change already present on `main` (read the touched file).
    - Shipped: the commit is at/behind the `deploy` tag and live `/version`.
@@ -144,7 +144,7 @@ actually doing so.
    - **No worktree** — edits made directly in the primary checkout.
    - **Self-graded status** — agent set `Done`/`accepted` itself (ceiling is Review).
    - **Uncommitted finish** — work called finished / moved to Review with no
-     branch+commit+push and no `commitRef`.
+     branch+commit+push and no `commits[]`.
    - **Deploy without command**, or a deploy with no post-deploy live smoke.
    - **Silent workaround** — hit a process/doc defect and worked around it instead of
      filing an intake card.

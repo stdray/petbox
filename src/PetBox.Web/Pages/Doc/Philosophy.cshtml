@@ -29,7 +29,7 @@
 			<li><strong>Session</strong> — raw transcript of one episode; source material.</li>
 			<li><strong>Idea / deliberation</strong> — a thread of thinking distilled from sessions, with an outcome (open / exploring / rejected / deferred / accepted) + reasoning. Separate from the plan.</li>
 			<li><strong>Spec / feature</strong> — a temporal tree of defined requirements (functional + non-functional). Its delivery status is COMPUTED, not set by hand.</li>
-			<li><strong>Task</strong> — a technical unit on the work board; feature|bug|chore; feature/bug link a spec node (chore needs none); carries commitRef.</li>
+			<li><strong>Task</strong> — a technical unit on the work board; feature|bug|chore; feature/bug link a spec node (chore needs none); carries commits[].</li>
 			<li><strong>Relation</strong> — typed temporal edges between nodes (task↔spec, issue→task, idea→spec, blocks). They bind to a stable id, so links survive renames, and they're soft-closed so history is kept.</li>
 			<li><strong>Intake</strong> — a queue of raw issues → triage → {reject-with-reason | confirm → spawn task with links}.</li>
 		</ol>

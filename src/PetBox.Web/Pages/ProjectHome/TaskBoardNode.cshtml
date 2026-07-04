@@ -137,17 +137,20 @@
 			}
 		</div>
 
-		@if (!string.IsNullOrEmpty(node.CommitRef))
+		@if (node.Commits is { Count: > 0 })
 		{
-			var commitUrl = PetBox.Web.Rendering.CommitUrl.For(Model.CommitUrlTemplate, node.CommitRef);
-			<div class="text-xs opacity-50 font-mono mt-2">
-				@if (commitUrl is not null)
+			<div class="text-xs opacity-50 font-mono mt-2 flex flex-wrap gap-x-2 gap-y-1" data-testid="node-commits">
+				@foreach (var sha in node.Commits)
 				{
-					<a href="@commitUrl" target="_blank" rel="noopener" class="link link-hover" data-testid="node-commit-link">@node.CommitRef</a>
-				}
-				else
-				{
-					@node.CommitRef
+					var commitUrl = PetBox.Web.Rendering.CommitUrl.For(Model.CommitUrlTemplate, sha);
+					if (commitUrl is not null)
+					{
+						<a href="@commitUrl" target="_blank" rel="noopener" class="link link-hover" data-testid="node-commit-link">@sha</a>
+					}
+					else
+					{
+						<span data-testid="node-commit">@sha</span>
+					}
 				}
 			</div>
 		}
