@@ -6,8 +6,10 @@ namespace PetBox.Tasks.Workflow;
 // The machine-readable form of one process rule the guide derives from the methodology
 // data (spec artifacts-from-definition): the same derivation the markdown renders as
 // prose, kept structured so future consumers (memory invariants, artifact codegen) don't
-// re-parse markdown. Rule ∈ approval_gate | reason_required | precondition_artifact |
-// link_constraint | tag_axes; Detail is the rule's compact payload (e.g. "Review -> Done",
+// re-parse markdown. Rule ∈ approval_gate (owner-only by convention) |
+// approval_gate_enforced (the server blocks it) | reason_required |
+// precondition_artifact | checklist | transition_effect | link_constraint | tag_axes;
+// Detail is the rule's compact payload (e.g. "Review -> Done",
 // "feature requires task_spec (specRef)", "area|concern").
 public sealed record MethodologyInvariant(string Kind, string Rule, string Detail);
 
@@ -29,7 +31,8 @@ public static class MethodologyGuide
 		md.AppendLine($"# Process guide: {name}");
 		md.AppendLine();
 		md.AppendLine($"How to work this project's boards — derived at runtime from the project's methodology data (source: {source}). "
-			+ "Everything below (types, statuses, transitions, gates) is ENFORCED by the server; this guide describes the data, it adds no rules of its own.");
+			+ "This guide describes the data, it adds no rules of its own. Types, statuses, transitions and gates are ENFORCED by the server "
+			+ "unless a rule is explicitly marked as a convention (a convention gate or a checklist is binding process, but the server does not block it).");
 
 		foreach (var kind in runtime.EffectiveKinds())
 			AppendKind(md, runtime, kind, invariants);
@@ -69,6 +72,9 @@ public static class MethodologyGuide
 
 		if (kind.LinkConstraints is { Count: > 0 } constraints)
 			AppendLinkConstraints(md, kind.Kind, constraints, invariants);
+
+		if (kind.Effects is { Count: > 0 } effects)
+			AppendEffects(md, kind.Kind, effects, invariants);
 	}
 
 	static void AppendWorkflow(StringBuilder md, string kind, MethodologyWorkflowDef block, List<MethodologyInvariant> invariants)
@@ -104,27 +110,35 @@ public static class MethodologyGuide
 		foreach (var t in block.Transitions)
 		{
 			var marks = new List<string>();
-			if (t.RequiresApproval) marks.Add("OWNER-ONLY");
+			if (t.RequiresApproval) marks.Add(t.EnforceApproval ? "OWNER-ONLY (enforced)" : "OWNER-ONLY");
 			if (t.RequiresReason) marks.Add("reason required");
 			if (t.PreconditionArtifact is not null) marks.Add($"requires artifact:{t.PreconditionArtifact}");
+			if (t.Checklist is { Count: > 0 }) marks.Add("checklist");
 			md.AppendLine($"  - {t.From} -> {t.To}{(marks.Count > 0 ? $" [{string.Join("; ", marks)}]" : "")}");
 		}
 	}
 
 	// The gates as BEHAVIORAL invariants — the prose an agent must act on, each mirrored
 	// into the structured list. Order: transitions in declaration order; a transition
-	// carrying several gates emits them approval → reason → artifact.
+	// carrying several gates emits them approval → reason → artifact → checklist.
 	static void AppendGates(StringBuilder md, string kind, MethodologyWorkflowDef block, List<MethodologyInvariant> invariants)
 	{
-		var gated = block.Transitions.Where(t => t.RequiresApproval || t.RequiresReason || t.PreconditionArtifact is not null).ToList();
+		var gated = block.Transitions
+			.Where(t => t.RequiresApproval || t.RequiresReason || t.PreconditionArtifact is not null || t.Checklist is { Count: > 0 })
+			.ToList();
 		if (gated.Count == 0) return;
 		md.AppendLine("- GATES (behavioral invariants):");
 		foreach (var t in gated)
 		{
 			if (t.RequiresApproval)
 			{
-				md.AppendLine($"  - The agent NEVER performs {t.From} -> {t.To} — that transition is the owner's/maintainer's call. Stop at {t.From} and hand over.");
-				invariants.Add(new(kind, "approval_gate", $"{t.From} -> {t.To}"));
+				// The gate MODE, honestly: enforced = the server blocks a non-owner;
+				// convention = the rule binds the agent but the server does not block it.
+				var mode = t.EnforceApproval
+					? "owner-only (enforced by the server — it blocks the transition)"
+					: "owner-only (convention — the server does not block it)";
+				md.AppendLine($"  - The agent NEVER performs {t.From} -> {t.To} — that transition is the owner's/maintainer's call, {mode}. Stop at {t.From} and hand over.");
+				invariants.Add(new(kind, t.EnforceApproval ? "approval_gate_enforced" : "approval_gate", $"{t.From} -> {t.To}"));
 			}
 			if (t.RequiresReason)
 			{
@@ -136,6 +150,14 @@ public static class MethodologyGuide
 				md.AppendLine($"  - Add an `artifact:{t.PreconditionArtifact}` comment on the node before {t.From} -> {t.To} — the transition is rejected without it.");
 				invariants.Add(new(kind, "precondition_artifact", $"{t.From} -> {t.To} requires artifact:{t.PreconditionArtifact}"));
 			}
+			if (t.Checklist is { Count: > 0 } checklist)
+			{
+				// Free-text conditions — a convention block, not server-checked.
+				md.AppendLine($"  - Before {t.From} -> {t.To} confirm (convention — the server does not check these):");
+				foreach (var item in checklist)
+					md.AppendLine($"    - {item}");
+				invariants.Add(new(kind, "checklist", $"{t.From} -> {t.To}: {string.Join(" | ", checklist)}"));
+			}
 		}
 	}
 
@@ -146,8 +168,42 @@ public static class MethodologyGuide
 		md.AppendLine();
 		foreach (var c in constraints)
 		{
-			md.AppendLine($"- A new `{c.Type}` must carry a `{c.Link}` link (provide `{LinkField(c.Link)}` in the creating upsert). Edits don't re-require it.");
-			invariants.Add(new(kind, "link_constraint", $"{c.Type} requires {c.Link} ({LinkField(c.Link)})"));
+			md.AppendLine($"- A new `{c.Type}` must carry a `{c.Link}` link (provide `{LinkField(c.Link)}` in the creating upsert){TargetProse(c)}. Edits don't re-require it.");
+			invariants.Add(new(kind, "link_constraint", $"{c.Type} requires {c.Link} ({LinkField(c.Link)}){TargetDetail(c)}"));
+		}
+	}
+
+	// The declared link target as prose ("must link a <kind> node in status <s1|s2>") —
+	// empty when the constraint declares none (the pre-v2 line, verbatim).
+	static string TargetProse(MethodologyLinkConstraintDef c) =>
+		(c.TargetKind, c.TargetStatuses) switch
+		{
+			(null, null or { Count: 0 }) => "",
+			({ } k, null or { Count: 0 }) => $" — it must link a `{k}` node",
+			(null, { } s) => $" — it must link a node in status {string.Join("|", s)}",
+			({ } k, { } s) => $" — it must link a `{k}` node in status {string.Join("|", s)}",
+		};
+
+	// The same target compactly for the machine invariant (e.g. " -> spec[defined]").
+	static string TargetDetail(MethodologyLinkConstraintDef c) =>
+		c.TargetKind is null && c.TargetStatuses is not { Count: > 0 }
+			? ""
+			: $" -> {c.TargetKind ?? "*"}{(c.TargetStatuses is { Count: > 0 } s ? $"[{string.Join("|", s)}]" : "")}";
+
+	// Declared transition effects, one line each — stated as what the data DECLARES; the
+	// engine applies them when effect execution ships (engine v2).
+	static void AppendEffects(StringBuilder md, string kind, IReadOnlyList<MethodologyTransitionEffectDef> effects, List<MethodologyInvariant> invariants)
+	{
+		md.AppendLine();
+		md.AppendLine("### Transition effects");
+		md.AppendLine();
+		md.AppendLine("Declared cross-node automation (the effect data of this kind; executed by the server once effect execution ships — do not apply them by hand):");
+		foreach (var e in effects)
+		{
+			var scope = e.OnlyFrom is null ? "" : $" currently in {e.OnlyFrom}";
+			md.AppendLine($"- On entering {e.On}, {e.Direction} `{e.Link}` nodes{scope} are set to {e.Set}.");
+			invariants.Add(new(kind, "transition_effect",
+				$"{e.On}: {e.Direction} {e.Link}{(e.OnlyFrom is null ? "" : $" from {e.OnlyFrom}")} -> {e.Set}"));
 		}
 	}
 
@@ -195,7 +251,7 @@ public static class MethodologyGuide
 	{
 		var n = block.Statuses.Count;
 		if (n < 2 || block.Transitions.Count != n * (n - 1)) return false;
-		if (block.Transitions.Any(t => t.RequiresApproval || t.RequiresReason || t.PreconditionArtifact is not null)) return false;
+		if (block.Transitions.Any(t => t.RequiresApproval || t.RequiresReason || t.PreconditionArtifact is not null || t.Checklist is { Count: > 0 })) return false;
 		var edges = block.Transitions
 			.Select(t => (From: t.From.ToLowerInvariant(), To: t.To.ToLowerInvariant()))
 			.ToHashSet();

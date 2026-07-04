@@ -158,15 +158,26 @@ public static class TasksTools
 		statuses of ITS block, no duplicate edges). `definition` shape: { name, kinds:[{
 		kind, quickAddAllowed?, workflows:[{ types:[...], statuses:[{ slug, name?,
 		kind?: open|terminalok|terminalcancel }], transitions:[{ from, to,
-		requiresApproval?, requiresReason?, preconditionArtifact? }] }],
-		linkConstraints?:[{ type, link }] }], linkKinds?:[{ slug, description? }],
+		requiresApproval?, enforceApproval?, requiresReason?, preconditionArtifact?,
+		checklist?:[...] }] }], linkConstraints?:[{ type, link, targetKind?,
+		targetStatuses? }], effects?:[{ on, link, direction, set, onlyFrom? }] }],
+		linkKinds?:[{ slug, description? }],
 		tagAxes?:[{ namespace, description? }] }; statuses[0] is
 		the initial status; `preconditionArtifact` names a comment-artifact tag (e.g.
 		"spec_plan") the node must carry before the transition (enforced: the upsert refuses
 		the transition until an `artifact:<slug>` comment exists on the node).
+		`enforceApproval` (only with requiresApproval:true) declares the approval gate as
+		server-blocked rather than owner-only by convention; `checklist` is free-text
+		conditions to confirm before the transition (guide-rendered, not enforced).
 		`linkConstraints` (per kind): "a NEW node of `type` must carry a `link` at creation"
 		— link ∈ task_spec|blocks|idea_spec (the kinds expressible in the upsert call as
-		specRef/blockedBy/ideaRef); edits don't re-require it. `linkKinds` (project-wide):
+		specRef/blockedBy/ideaRef); edits don't re-require it; `targetKind`/`targetStatuses`
+		optionally declare what the link must point at (a node of that kind / in one of those
+		statuses — declaration only, runtime resolution lands with engine v2). `effects`
+		(per kind, declaration only — executed once engine v2 ships): on a node of this kind
+		ENTERING status `on`, linked nodes over relation `link` in `direction`
+		(incoming|outgoing) are set to `set`; `onlyFrom` restricts to linked nodes currently
+		in that status. `linkKinds` (project-wide):
 		additional relation kinds for relations_create (free semantic edges, no FSM effects;
 		must not collide with builtin kinds). `tagAxes` (project-wide): declared tag
 		namespaces — when present, tags on definition-resolved boards must be
@@ -209,8 +220,10 @@ public static class TasksTools
 		document (kinds/types/statuses/transitions as data), NOT the quartet board index
 		(that is tasks_methodology_get). Defined=true → { name, kinds:[{ kind,
 		quickAddAllowed, workflows:[{ types, initial, statuses:[{ slug, name, kind }],
-		transitions:[{ from, to, requiresApproval, requiresReason, preconditionArtifact? }]
-		}], linkConstraints?:[{ type, link }] }], version (the baseline for
+		transitions:[{ from, to, requiresApproval, requiresReason, preconditionArtifact?,
+		enforceApproval, checklist? }] }], linkConstraints?:[{ type, link, targetKind?,
+		targetStatuses? }], effects?:[{ on, link, direction, set, onlyFrom? }] }], version
+		(the baseline for
 		tasks_methodology_def_upsert), created, updated, linkKinds?:[{ slug, description? }],
 		tagAxes?:[{ namespace, description? }] } (the ?-marked lists are omitted when the
 		definition declares none). Defined=false → the project has no definition of its own
@@ -259,9 +272,17 @@ public static class TasksTools
 					Types: w.Types,
 					Initial: w.Initial,
 					Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
-					Transitions: w.Transitions.Select(t => new MethodologyTransitionView(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList(),
+					Transitions: w.Transitions.Select(t => new MethodologyTransitionView(
+						t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact,
+						t.EnforceApproval,
+						Checklist: t.Checklist is { Count: > 0 } ? t.Checklist : null)).ToList())).ToList(),
 				LinkConstraints: k.LinkConstraints is { Count: > 0 }
-					? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(c.Type, c.Link)).ToList()
+					? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(
+						c.Type, c.Link, c.TargetKind,
+						TargetStatuses: c.TargetStatuses is { Count: > 0 } ? c.TargetStatuses : null)).ToList()
+					: null,
+				Effects: k.Effects is { Count: > 0 }
+					? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom)).ToList()
 					: null)).ToList(),
 			Version: version,
 			Created: created,
@@ -284,11 +305,14 @@ public static class TasksTools
 		per effective kind: types (quick-add default marked), statuses grouped
 		open/terminal, initial status, the transition map (collapsed to "free" when a block
 		allows every move), the GATES as behavioral invariants (owner-only transitions the
-		agent NEVER performs, reason-required moves, artifact:<slug> comment preconditions),
-		creation link requirements (specRef/blockedBy/ideaRef), tag axes (or free-form),
+		agent NEVER performs — marked enforced vs convention, reason-required moves,
+		artifact:<slug> comment preconditions, pre-transition checklists), creation link
+		requirements (specRef/blockedBy/ideaRef, incl. declared link targets), declared
+		transition effects, tag axes (or free-form),
 		and the relation-kind dictionary (process vs neutral vs project-declared).
 		`invariants` is the same derivation machine-readable: [{ kind, rule:
-		approval_gate|reason_required|precondition_artifact|link_constraint|tag_axes,
+		approval_gate|approval_gate_enforced|reason_required|precondition_artifact|
+		checklist|transition_effect|link_constraint|tag_axes,
 		detail }]. `source` = presets|definition|mixed; `definitionVersion` when a
 		definition exists. Bounded (a handful of kinds) — no truncation. Requires tasks:read.
 		""")]
@@ -319,10 +343,22 @@ public static class TasksTools
 				(w.Statuses ?? []).Select(ParseStatus).ToList(),
 				(w.Transitions ?? []).Select(t => new MethodologyTransitionDef(
 					t.From ?? string.Empty, t.To ?? string.Empty,
-					t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)).ToList())).ToList())
+					t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)
+				{
+					EnforceApproval = t.EnforceApproval,
+					Checklist = (t.Checklist ?? []).Select(i => i ?? string.Empty).ToList(),
+				}).ToList())).ToList())
 		{
 			LinkConstraints = (k.LinkConstraints ?? [])
-				.Select(c => new MethodologyLinkConstraintDef(c.Type ?? string.Empty, c.Link ?? string.Empty)).ToList(),
+				.Select(c => new MethodologyLinkConstraintDef(c.Type ?? string.Empty, c.Link ?? string.Empty)
+				{
+					TargetKind = c.TargetKind,
+					TargetStatuses = c.TargetStatuses?.Select(s => s ?? string.Empty).ToList(),
+				}).ToList(),
+			Effects = (k.Effects ?? [])
+				.Select(e => new MethodologyTransitionEffectDef(
+					e.On ?? string.Empty, e.Link ?? string.Empty, e.Direction ?? string.Empty,
+					e.Set ?? string.Empty, e.OnlyFrom)).ToList(),
 		}).ToList())
 	{
 		LinkKinds = (d.LinkKinds ?? [])
