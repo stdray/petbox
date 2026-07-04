@@ -31,25 +31,34 @@ public sealed class WorkspaceUsersModel : PageModel
 		Members = members.Select(m => (m, userMap.GetValueOrDefault(m.UserId, "?"))).ToList();
 	}
 
-	public async Task<IActionResult> OnPostAddAsync(string workspaceKey, string Username, string Password, WorkspaceRole Role)
+	public async Task<IActionResult> OnPostAddAsync(string workspaceKey, string Username, string? Password, WorkspaceRole Role)
 	{
-		if (string.IsNullOrWhiteSpace(Username) || string.IsNullOrWhiteSpace(Password))
+		if (string.IsNullOrWhiteSpace(Username))
 		{
-			ErrorMessage = "Username and password are required.";
+			ErrorMessage = "Username is required.";
 			LoadMembers(workspaceKey);
 			return Page();
 		}
-
-		var hash = AdminPasswordHasher.Hash(Password);
 
 		var existing = _db.Users.FirstOrDefault(u => u.Username == Username);
 		long userId;
 		if (existing is not null)
 		{
+			// Existing account: ignore any supplied password — never overwrite it; add membership only.
 			userId = existing.Id;
 		}
 		else
 		{
+			// New account: a password is mandatory so the user is loginable (an empty PasswordHash
+			// cannot authenticate — see M008_Users), matching the Admin › Users create flow.
+			if (string.IsNullOrWhiteSpace(Password))
+			{
+				ErrorMessage = "A password is required to create a new user.";
+				LoadMembers(workspaceKey);
+				return Page();
+			}
+
+			var hash = AdminPasswordHasher.Hash(Password);
 			var newId = await _db.InsertWithInt64IdentityAsync(new User { Username = Username, PasswordHash = hash, CreatedAt = DateTime.UtcNow });
 			userId = newId;
 		}
