@@ -121,9 +121,11 @@ public sealed class MarkdownRendererTests
 }
 
 // Commit-hash autolinking (commit-links-impl): when a project declares a commit-view URL template
-// (RepoSettings.CommitUrlTemplate, literal {sha} placeholder), standalone 7–40-hex words in PLAIN
-// TEXT runs become links to the commit view. Code spans/blocks and existing links are excluded;
-// with no usable template the output is byte-identical to the template-less path.
+// (RepoSettings.CommitUrlTemplate, literal {sha} placeholder), standalone git-hash-shaped words
+// (7–12 hex abbreviated / exactly 40 hex full) in PLAIN TEXT runs become links to the commit view.
+// PetBox's own hex identifiers (32-hex NodeIds, prefixed memory keys like m-…/ac-…) must NOT link.
+// Code spans/blocks and existing links are excluded; with no usable template the output is
+// byte-identical to the template-less path.
 public sealed class MarkdownRendererCommitLinkTests
 {
 	const string Template = "https://github.com/user/repo/commit/{sha}";
@@ -200,6 +202,43 @@ public sealed class MarkdownRendererCommitLinkTests
 	{
 		// 8-digit dates and 10-digit timestamps are hex-shaped but are numbers, not hashes.
 		Html("shipped 20260704, epoch 1751600000").Should().NotContain("<a");
+	}
+
+	[Fact]
+	public void NodeId_32Hex_DoesNotLink()
+	{
+		// PetBox NodeIds are bare 32-hex words — inside the old 7–40 range, not a git hash shape.
+		Html("node b9ed7a8700aa405c8e5a6a9153a72fa4 mentioned").Should().NotContain("<a");
+	}
+
+	[Fact]
+	public void MidLengthHex_13To39_DoesNotLink()
+	{
+		// Between an abbreviation (≤12) and a full sha (40) there is no real git hash form.
+		Html("id abcdef0123456 here").Should().NotContain("<a"); // 13 hex
+		Html("id abcdef0123456789abcdef0123456789abcdef0 here").Should().NotContain("<a"); // 39 hex
+	}
+
+	[Fact]
+	public void PrefixedMemoryKeys_DoNotLink()
+	{
+		// `-` is a \b boundary, so the old regex linked the hex tail of m-…/ac-… memory keys.
+		var html = Html("see m-749286fed1d747768aade4bb4b6a006a and ac-8e952de324f3 notes");
+		html.Should().NotContain("<a");
+	}
+
+	[Fact]
+	public void HyphenGluedHash_DoesNotLink()
+	{
+		// A hex run touching a hyphen is part of a larger identifier, not a standalone hash.
+		Html("build cc20e34-hotfix tag").Should().NotContain("<a");
+	}
+
+	[Fact]
+	public void TwelveHexWord_StillLinks()
+	{
+		// 12 hex is the upper end of common git abbreviations (core.abbrev up to 12).
+		Html("fixed in cc20e34abc12 today").Should().Contain("commit/cc20e34abc12\"");
 	}
 
 	[Fact]
