@@ -196,6 +196,15 @@ public static class KqlTransformer
 		return FlattenPipeline(code.Syntax).Any(IsShapeChangingOp);
 	}
 
+	// Whether the TOP-LEVEL pipeline carries an explicit row bound (take/limit/top). Used by the
+	// response capping (KqlLimits): only a top-level limit bounds the final row count — a take inside
+	// a join/lookup subquery bounds the build side, not the output, and deliberately does not count.
+	public static bool HasExplicitRowLimit(KustoCode code)
+	{
+		ArgumentNullException.ThrowIfNull(code);
+		return FlattenPipeline(code.Syntax).Any(op => op is TakeOperator or TopOperator);
+	}
+
 	public static IQueryable<LogEntryRecord> Apply(IQueryable<LogEntryRecord> source, KustoCode code, TimeProvider? clock = null)
 	{
 		var parseErrors = code.GetDiagnostics().Where(d => d.Severity == "Error").ToList();
@@ -624,8 +633,8 @@ public static class KqlTransformer
 		readonly HashSet<object> _seen = [];
 		public override void Add(object?[] row)
 		{
-			if (arg(row) is { } v)
-				_seen.Add(v);
+			if (arg(row) is { } v && _seen.Add(v))
+				GuardBufferCap(_seen.Count, "dcount (distinct values)");
 		}
 		public override object? Result => (long)_seen.Count;
 	}
@@ -650,6 +659,7 @@ public static class KqlTransformer
 				for (var i = 0; i < aggs.Length; i++)
 					accs[i] = aggs[i].Factory();
 				groups[key] = accs;
+				GuardBufferCap(groups.Count, "summarize (distinct groups)");
 			}
 			foreach (var acc in accs)
 				acc.Add(row);
@@ -841,7 +851,10 @@ public static class KqlTransformer
 	{
 		var buffer = new List<object?[]>();
 		await foreach (var row in source.WithCancellation(ct).ConfigureAwait(false))
+		{
 			buffer.Add(row);
+			GuardBufferCap(buffer.Count, "order by/top");
+		}
 
 		IOrderedEnumerable<object?[]>? ordered = null;
 		foreach (var (key, descending) in keys)
@@ -945,7 +958,10 @@ public static class KqlTransformer
 			for (var i = 0; i < extractors.Length; i++)
 				values[i] = extractors[i](row);
 			if (seen.Add(new GroupKey(values)))
+			{
+				GuardBufferCap(seen.Count, "distinct");
 				yield return values;
+			}
 		}
 	}
 
@@ -965,6 +981,27 @@ public static class KqlTransformer
 	{
 		get => JoinBuildSideCapOverrideValue.Value;
 		set => JoinBuildSideCapOverrideValue.Value = value;
+	}
+
+	// The same protection for EVERY other in-memory collection that grows with the scanned input:
+	// sort's row buffer, summarize's group table, distinct's seen-set, dcount's value set. A query
+	// whose buffered volume is not bounded by a service constant must fail as a user-fixable error
+	// (narrow the query), never OOM the (small) prod VM. Overridable per async-context for tests,
+	// like JoinBuildSideCapOverride.
+	internal const int InMemoryBufferCap = 100_000;
+	static readonly AsyncLocal<int?> InMemoryBufferCapOverrideValue = new();
+	internal static int? InMemoryBufferCapOverride
+	{
+		get => InMemoryBufferCapOverrideValue.Value;
+		set => InMemoryBufferCapOverrideValue.Value = value;
+	}
+
+	static void GuardBufferCap(int bufferedCount, string opName)
+	{
+		var cap = InMemoryBufferCapOverride ?? InMemoryBufferCap;
+		if (bufferedCount > cap)
+			throw new UnsupportedKqlException(
+				$"{opName} buffered more than {cap} rows in memory; narrow the query (add where, take, or a tighter time range)");
 	}
 
 	enum JoinKind { InnerUnique, Inner, LeftOuter }

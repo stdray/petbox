@@ -284,9 +284,10 @@ public static class LogApi
 		try
 		{
 			if (queryResult is LogQueryResult.Table table)
-				return await WriteShapeChangedResult(table.Result, ct);
+				return await WriteShapeChangedResult(table.Result, table.Truncation, ct);
 
-			var events = ((LogQueryResult.Events)queryResult).Items;
+			var eventsResult = (LogQueryResult.Events)queryResult;
+			var events = eventsResult.Items;
 			var dtos = events.Select(e => new LogEventDto(
 				e.Id,
 				e.ServiceKey,
@@ -296,7 +297,7 @@ public static class LogApi
 				e.MessageTemplate,
 				e.Exception,
 				e.GetProperties().ToDictionary(kv => kv.Key, kv => JsonSerializer.Serialize(kv.Value)))).ToList();
-			return Results.Json(new LogEventsResponse(dtos.Count, dtos));
+			return Results.Json(new LogEventsResponse(dtos.Count, dtos, eventsResult.Truncated));
 		}
 		catch (UnsupportedKqlException ex)
 		{
@@ -322,7 +323,7 @@ public static class LogApi
 				(ex is KqlExecutionException ? ex.InnerException?.GetType() : null)?.Name ?? ex.GetType().Name),
 			statusCode: StatusCodes.Status500InternalServerError);
 
-	static async Task<IResult> WriteShapeChangedResult(KqlResult result, CancellationToken ct)
+	static async Task<IResult> WriteShapeChangedResult(KqlResult result, TruncationSignal truncation, CancellationToken ct)
 	{
 		var columns = result.Columns.Select(c => c.Name).ToImmutableArray();
 		var rows = new List<ImmutableArray<JsonElement?>>();
@@ -332,7 +333,8 @@ public static class LogApi
 				cell is null ? (JsonElement?)null : JsonSerializer.SerializeToElement(cell)));
 			rows.Add(arr);
 		}
-		return Results.Json(new KqlTableResponse(columns, rows));
+		// The signal is final only after the enumeration above.
+		return Results.Json(new KqlTableResponse(columns, rows, truncation.Truncated));
 	}
 
 	static async Task<IResult> GetServicesAsync(

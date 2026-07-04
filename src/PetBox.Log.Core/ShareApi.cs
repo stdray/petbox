@@ -97,7 +97,9 @@ public static class ShareApi
 		var masker = new ValueMasker(Convert.FromBase64String(share.SaltBase64));
 
 		var logDb = store.GetContext(share.ProjectKey, share.LogName);
-		var records = await KqlTransformer.Apply(logDb.LogEntries, code).ToListAsync(ct);
+		// Memory guard only (KqlLimits.MaxTake, no default take): a share exports whatever its
+		// stored KQL selects, but never an unbounded materialization on the small prod VM.
+		var records = await KqlTransformer.Apply(logDb.LogEntries, code).Take(KqlLimits.MaxTake).ToListAsync(ct);
 		var entries = records.Select(r => r.ToEntry()).ToList();
 
 		ctx.Response.Headers.ContentType = "text/tab-separated-values; charset=utf-8";

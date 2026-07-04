@@ -122,13 +122,15 @@ public sealed record LogEventView(
 // log_query is a discriminated union over `Kind`: "events" (Count + Events set; the table
 // fields null/omitted) or "table" (Columns + Rows set; the events fields null/omitted). One
 // record carries both arms; null-omission keeps each arm's wire identical to the old anonymous
-// objects. Rows are an open table (cells are arbitrary scalars).
+// objects. Rows are an open table (cells are arbitrary scalars). Truncated (either arm): the
+// result was cut by the service's row cap (KqlLimits); true when cut, omitted otherwise.
 public sealed record LogQueryResultView(
 	string Kind,
 	int? Count = null,
 	IReadOnlyList<LogEventView>? Events = null,
 	IReadOnlyList<string>? Columns = null,
-	IReadOnlyList<IReadOnlyList<object?>>? Rows = null);
+	IReadOnlyList<IReadOnlyList<object?>>? Rows = null,
+	bool? Truncated = null);
 
 // ---- memory.* ------------------------------------------------------------------------
 

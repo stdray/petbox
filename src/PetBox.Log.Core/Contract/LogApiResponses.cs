@@ -42,12 +42,14 @@ public sealed record LogEventDto(
 	[property: JsonPropertyName("Exception")] string? Exception,
 	[property: JsonPropertyName("Properties")] Dictionary<string, string> Properties);
 
-// Events-shaped query result: a count and the projected events.
-public sealed record LogEventsResponse(int Count, IReadOnlyList<LogEventDto> Events);
+// Events-shaped query result: a count and the projected events. Truncated: the response was
+// cut by the service's row cap (KqlLimits — the default take or the hard max); add/tighten
+// take to bound the query deliberately.
+public sealed record LogEventsResponse(int Count, IReadOnlyList<LogEventDto> Events, bool Truncated = false);
 
 // Table-shaped (KQL projection/summarize) query result: column names plus rows
-// of JSON cells (null where the cell was null).
-public sealed record KqlTableResponse(IReadOnlyList<string> Columns, IReadOnlyList<ImmutableArray<JsonElement?>> Rows);
+// of JSON cells (null where the cell was null). Truncated: as on LogEventsResponse.
+public sealed record KqlTableResponse(IReadOnlyList<string> Columns, IReadOnlyList<ImmutableArray<JsonElement?>> Rows, bool Truncated = false);
 
 // REST echo of a freshly created share link: its id and expiry.
 public sealed record ShareCreatedResponse(string Id, DateTime ExpiresAt);
