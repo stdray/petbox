@@ -1,0 +1,102 @@
+@page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/methodology"
+@model PetBox.Web.Pages.Admin.ProjectMethodologyModel
+@{
+	ViewData["Title"] = $"{Model.ProjectKey} — Methodology";
+	Layout = "_AdminLayout";
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold">@Model.ProjectKey · methodology definition</h1>
+	<a href="@Routes.ProjectTasksAdmin(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover text-sm opacity-70" data-testid="methodology-back-to-tasks">task boards</a>
+</div>
+
+@if (Model.ProjectNotFound)
+{
+	<p class="text-error font-semibold" data-testid="project-methodology-error">Project not found</p>
+	return;
+}
+
+@if (Model.Saved)
+{
+	<div class="alert alert-success mb-3" data-testid="methodology-saved">Definition saved.</div>
+}
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3 whitespace-pre-wrap font-mono text-sm" data-testid="methodology-errors">@Model.ErrorMessage</div>
+}
+
+@* Current state: the stored definition's identity, or the honest presets-only state. *@
+<div class="card bg-base-200 border border-base-300 mb-4 max-w-4xl" data-testid="methodology-state">
+	<div class="card-body p-4">
+		@if (Model.Stored is not null)
+		{
+			<div class="flex items-baseline gap-2 flex-wrap">
+				<span class="font-semibold">Stored definition</span>
+				<span class="font-mono" data-testid="methodology-state-name">@Model.Stored.Definition.Name</span>
+				<span class="badge badge-ghost badge-sm font-mono" data-testid="methodology-state-version">version @Model.Stored.Version</span>
+			</div>
+			<div class="flex gap-1 mt-1 flex-wrap">
+				@foreach (var k in Model.Stored.Definition.Kinds)
+				{
+					<span class="badge badge-neutral badge-sm font-mono" data-testid="methodology-state-kind">@k.Kind</span>
+				}
+			</div>
+			<p class="text-xs opacity-60 mt-1">Updated @Model.Stored.Updated.ToString("yyyy-MM-dd HH:mm") UTC. The document below is exactly what <span class="font-mono">tasks_methodology_def_get</span> returns — it can be edited here or via MCP interchangeably.</p>
+		}
+		else
+		{
+			<p class="text-sm opacity-80" data-testid="methodology-state-presets">No stored definition — this project runs on the builtin presets. Load a preset below as a template, edit it, and save to install a custom methodology.</p>
+		}
+	</div>
+</div>
+
+@* Template loader: fills the textarea with a builtin preset rendered as a definition
+   document (server round-trip; replaces the current textarea contents). *@
+<form method="post" asp-page-handler="LoadPreset" class="mb-3 flex items-end gap-2" data-testid="methodology-template-form">
+	@Html.AntiForgeryToken()
+	<label class="form-control">
+		<span class="label-text text-xs">Preset template</span>
+		<select name="preset" class="select select-bordered select-sm font-mono" data-testid="methodology-template-select">
+			@foreach (var p in Model.Presets)
+			{
+				<option value="@p.Slug" title="@p.Description">@p.Slug</option>
+			}
+		</select>
+	</label>
+	<button type="submit" class="btn btn-sm" data-testid="methodology-template-load">Load preset as template</button>
+</form>
+
+@* The document editor: same JSON shape as tasks_methodology_def_get / def_upsert. *@
+<form method="post" class="max-w-4xl" data-testid="methodology-form">
+	@Html.AntiForgeryToken()
+	<input type="hidden" name="version" value="@Model.Version" />
+	<label class="form-control">
+		<span class="label-text">Definition document (JSON)</span>
+		<textarea name="definitionJson" rows="24" spellcheck="false" wrap="off"
+			class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
+			placeholder='{ "name": "custom", "kinds": [ { "kind": "job", "workflows": [ ... ] } ] }'
+			data-testid="methodology-json">@Model.DefinitionJson</textarea>
+	</label>
+	<label class="form-control mt-2">
+		<span class="label-text">Migration map (optional JSON) — <span class="opacity-60">per-kind {from,to} type/status repairs for live nodes an incompatible change would strand, e.g. <span class="font-mono">[{"kind":"work","statuses":[{"from":"Blocked","to":"Todo"}]}]</span></span></span>
+		<textarea name="migrationJson" rows="3" spellcheck="false"
+			class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
+			data-testid="methodology-migration-json">@Model.MigrationJson</textarea>
+	</label>
+	<div class="mt-3 flex gap-2">
+		<button type="submit" asp-page-handler="Save" class="btn btn-sm btn-primary" data-testid="methodology-save">Save definition</button>
+		<button type="submit" asp-page-handler="Preview" class="btn btn-sm btn-ghost" data-testid="methodology-preview-btn">Preview workflows</button>
+	</div>
+</form>
+
+@* FSM preview: one SVG per workflow block, per kind — rendered client-side by the same
+   workflow-graph renderer the per-type board modal uses (ts/methodology-preview.ts). *@
+@if (!string.IsNullOrEmpty(Model.PreviewJson))
+{
+	<section class="mt-6 max-w-4xl">
+		<h2 class="text-lg font-semibold mb-2">Workflow preview</h2>
+		<script type="application/json" data-testid="methodology-preview-data">@Html.Raw(Model.PreviewJson)</script>
+		<div data-testid="methodology-preview"></div>
+	</section>
+}

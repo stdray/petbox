@@ -123,6 +123,9 @@
 																				<li>
 																					<a href="@Routes.ProjectTasksAdmin(w.Key, p.Key)" class="@(At(Routes.ProjectTasksAdmin(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-tasks">Tasks</a>
 																				</li>
+																				<li>
+																					<a href="@Routes.ProjectMethodologyAdmin(w.Key, p.Key)" class="@(At(Routes.ProjectMethodologyAdmin(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-methodology">Methodology</a>
+																				</li>
 																			}
 																			@if (Features.IsEnabled(Feature.Memory))
 																			{

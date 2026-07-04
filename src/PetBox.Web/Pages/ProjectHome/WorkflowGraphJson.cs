@@ -15,17 +15,22 @@ public static class WorkflowGraphJson
 {
 	static readonly JsonSerializerOptions Options = new(JsonSerializerDefaults.Web);
 
-	public static string Serialize(BoardWorkflowView view)
-	{
-		var doc = new GraphDoc(
+	public static string Serialize(BoardWorkflowView view) =>
+		JsonSerializer.Serialize(ToDoc(view), Options);
+
+	// The methodology editor previews EVERY kind of a definition at once: an ARRAY of the same
+	// doc shape, one entry per kind — the render contract per block is unchanged.
+	public static string SerializeMany(IEnumerable<BoardWorkflowView> views) =>
+		JsonSerializer.Serialize(views.Select(ToDoc).ToList(), Options);
+
+	static GraphDoc ToDoc(BoardWorkflowView view) =>
+		new(
 			view.Kind,
 			[.. view.Workflows.Select(b => new GraphBlock(
 				b.Types,
 				[.. b.Workflow.Statuses.Select(s => new GraphStatus(s.Slug, s.Name, s.Kind.ToString()))],
 				[.. b.Workflow.Transitions.Select(t => new GraphTransition(
 					t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact))]))]);
-		return JsonSerializer.Serialize(doc, Options);
-	}
 
 	sealed record GraphDoc(string Kind, IReadOnlyList<GraphBlock> Blocks);
 
