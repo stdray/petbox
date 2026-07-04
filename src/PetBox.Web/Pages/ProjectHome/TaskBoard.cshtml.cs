@@ -163,16 +163,16 @@ public sealed class TaskBoardModel : PageModel
 		return rows;
 	}
 
-	// The board's effective process context: the project's MethodologyRuntime (definition
-	// first, preset fallback — the same construction TasksService applies) plus this
+	// The board's effective process context: the project's MethodologyRuntime (via the
+	// service door — the SAME instance construction every service call applies) plus this
 	// board's stored kind slug. ListBoardsAsync supplies the raw slug; ITasksService has
 	// no single-board metadata read and this page must not open the store directly.
 	async Task<(MethodologyRuntime Runtime, string? KindSlug)> ResolveProcessAsync(CancellationToken ct)
 	{
-		var definition = await _tasks.GetMethodologyDefinitionAsync(ProjectKey, ct);
+		var runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);
 		var meta = (await _tasks.ListBoardsAsync(ProjectKey, ct))
 			.FirstOrDefault(b => string.Equals(b.Name, Board, StringComparison.Ordinal));
-		return (MethodologyRuntime.From(definition?.Definition), meta?.Kind);
+		return (runtime, meta?.Kind);
 	}
 
 	// Render order is the plan tree itself — DFS by part_of parent, siblings ordered by

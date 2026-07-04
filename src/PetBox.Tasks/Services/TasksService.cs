@@ -91,6 +91,12 @@ public sealed partial class TasksService : ITasksService
 		return view is null ? MethodologyRuntime.PresetsOnly : new MethodologyRuntime(view.Definition);
 	}
 
+	// The public door to the resolution seam (same instance the private RuntimeAsync builds
+	// for every service call). UI pages hold it for a request to answer kind/terminality/
+	// quick-add/next-status the SAME way the MCP path does.
+	public Task<MethodologyRuntime> GetRuntimeAsync(string projectKey, CancellationToken ct = default) =>
+		RuntimeAsync(projectKey, ct);
+
 	// Reject a 2nd active board of a methodology kind (one-per-project). `free` is exempt.
 	async Task AssertSingletonAsync(string projectKey, BoardKind kind, CancellationToken ct)
 	{

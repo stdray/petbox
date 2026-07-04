@@ -161,6 +161,13 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// preconditionArtifact); any other kind falls back to the built-in presets exactly as
 	// before (identical FSMs collapsed into one block). Powers tasks_workflow.
 	Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default);
+	// The project's data-driven FSM resolution seam — the SAME MethodologyRuntime the MCP
+	// tools resolve through (the project's methodology definition merged over the built-in
+	// presets). UI pages resolve kind name / quick-add / terminality / next-statuses off this
+	// (pass a board's stored kind slug OR its resolved KindName — they resolve identically) so
+	// a definition-declared custom kind behaves the same on UI, MCP and REST. The instance is
+	// immutable and cheap (built once per call), so a page may hold it for the whole request.
+	Task<MethodologyRuntime> GetRuntimeAsync(string projectKey, CancellationToken ct = default);
 
 	// --- UI helpers (board page renders the raw active nodes in its own tree order) ---
 

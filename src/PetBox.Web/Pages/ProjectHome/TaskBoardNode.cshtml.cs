@@ -64,6 +64,12 @@ public sealed class TaskBoardNodeModel : PageModel
 	// through MethodologyRuntime, so user-defined methodologies visualize out of the box.
 	public string? WorkflowJson { get; private set; }
 
+	// The project's FSM resolution seam (methodology definition merged over the presets) — the
+	// SAME surface MCP resolves through. The view resolves the node's kind name, badge colour
+	// and terminality off this + Detail.Kind (the board's resolved KindName, a valid runtime
+	// input), so a definition-declared custom kind renders as it behaves, not as `Simple`.
+	public MethodologyRuntime Runtime { get; private set; } = MethodologyRuntime.PresetsOnly;
+
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
@@ -126,9 +132,12 @@ public sealed class TaskBoardNodeModel : PageModel
 		Detail = detail;
 		Error = error;
 
-		var kind = MethodologyPresets.ParseKind(detail.Kind);
+		// Resolve the legal next statuses through the SAME runtime the MCP path uses, keyed by
+		// the board's resolved kind — so a definition-declared kind offers transitions from its
+		// OWN FSM instead of the `Simple` fallback ParseKind would collapse a custom slug to.
+		Runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);
 		var type = detail.Node.Type.Length == 0 ? null : detail.Node.Type;
-		NextStatuses = MethodologyPresets.For(kind, type)?.NextFrom(detail.Node.Status) ?? [];
+		NextStatuses = Runtime.For(detail.Kind, type)?.NextFrom(detail.Node.Status) ?? [];
 
 		// The board's FSM surface for the "View workflow" modal (a few KB — no extra endpoint).
 		WorkflowJson = WorkflowGraphJson.Serialize(await _tasks.GetBoardWorkflowAsync(ProjectKey, detail.Board, ct));

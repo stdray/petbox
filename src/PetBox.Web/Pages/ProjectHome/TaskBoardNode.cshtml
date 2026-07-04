@@ -4,9 +4,8 @@
 	var node = Model.Detail.Node;
 	ViewData["Title"] = string.IsNullOrEmpty(node.Title) ? node.Key : node.Title;
 
-	var nodeKind = PetBox.Tasks.Workflow.MethodologyPresets.ParseKind(Model.Detail.Kind);
-	var nodeKindName = nodeKind.ToString().ToLowerInvariant();
-	var nodeIsSimple = nodeKind == PetBox.Tasks.Workflow.BoardKind.Simple;
+	var nodeKindName = Model.Detail.Kind; // the board's resolved KindName (custom kind verbatim)
+	var nodeIsSimple = Model.Runtime.PresetKind(Model.Detail.Kind) == PetBox.Tasks.Workflow.BoardKind.Simple;
 	// Make the board kind explicit so its statuses read as a deliberate kind, not "broken".
 	var nodeKindBadgeClass = nodeIsSimple ? "badge-info badge-outline" : "badge-neutral";
 	var nodeKindTitle = nodeIsSimple
@@ -15,8 +14,9 @@
 }
 
 @functions {
-	// Status slug -> daisyUI badge (presentation; domain owns the StatusKind). Mirrors TaskBoard.
-	static string StatusBadge(string slug) => PetBox.Tasks.Workflow.MethodologyPresets.KindOfSlug(slug) switch
+	// StatusKind -> daisyUI badge (presentation; domain owns the StatusKind). Mirrors TaskBoard.
+	// The kind is resolved through the runtime per the board's kind (custom statuses colour right).
+	static string StatusBadge(PetBox.Tasks.Workflow.StatusKind? kind) => kind switch
 	{
 		PetBox.Tasks.Workflow.StatusKind.TerminalOk => "badge-success",
 		PetBox.Tasks.Workflow.StatusKind.TerminalCancel => "badge-ghost",
@@ -72,7 +72,7 @@
 				}
 				@* Opens the "View workflow" modal with this type's FSM graph (ts/workflow-viz.ts). *@
 				<button type="button" class="btn btn-ghost btn-xs gap-1" data-testid="workflow-open" data-workflow-type="@node.Type" title="View this type's workflow graph">⤳ workflow</button>
-				<span class="badge @StatusBadge(node.Status) badge-sm" data-testid="node-status">@node.Status</span>
+				<span class="badge @StatusBadge(Model.Runtime.StatusKindOf(Model.Detail.Kind, node.Status)) badge-sm" data-testid="node-status">@node.Status</span>
 				@if (Model.NextStatuses.Count > 0)
 				{
 					<form method="post" asp-page-handler="Status" class="inline-flex items-center gap-1" data-testid="node-status-form">
