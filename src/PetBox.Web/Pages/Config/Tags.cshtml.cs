@@ -69,15 +69,25 @@ public sealed class TagsModel : PageModel
 		Declared = configDb.Tags.OrderBy(t => t.TagKey).ToList();
 
 		var bindings = configDb.Bindings.ToList();
+		UsedKeyValues = AggregateUsedValues(bindings.Select(b => b.Tags));
+	}
+
+	// Aggregates the distinct values seen per tag namespace across all binding tag strings.
+	// Binding tags are canonical "namespace:value" tokens (matching Config/Index.ParseTags),
+	// split on the first ':'. Bare-namespace tokens with no ':' carry no value and are skipped.
+	public static IReadOnlyDictionary<string, IReadOnlyList<string>> AggregateUsedValues(
+		IEnumerable<string?> bindingTags)
+	{
 		var used = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
-		foreach (var b in bindings)
+		foreach (var tags in bindingTags)
 		{
-			foreach (var pair in b.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+			if (string.IsNullOrWhiteSpace(tags)) continue;
+			foreach (var part in tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
 			{
-				var eq = pair.IndexOf('=');
-				if (eq <= 0) continue;
-				var key = pair[..eq].Trim();
-				var value = pair[(eq + 1)..].Trim();
+				var sep = part.IndexOf(':');
+				if (sep <= 0) continue;
+				var key = part[..sep].Trim();
+				var value = part[(sep + 1)..].Trim();
 				if (!used.TryGetValue(key, out var set))
 				{
 					set = new SortedSet<string>(StringComparer.Ordinal);
@@ -86,7 +96,7 @@ public sealed class TagsModel : PageModel
 				set.Add(value);
 			}
 		}
-		UsedKeyValues = used.ToDictionary(
+		return used.ToDictionary(
 			kv => kv.Key,
 			kv => (IReadOnlyList<string>)[.. kv.Value]);
 	}
