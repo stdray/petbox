@@ -104,6 +104,14 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// across EVERY board in the project — unambiguous resolves; the same slug on 2+ boards
 	// is an error naming the boards (pass the NodeId); a miss is a clear error, never null.
 	Task<string> ResolveNodeRefAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default);
+	// Batch-resolve `[[slug]]` node mentions for the read surfaces (node-ref-autolink). Each
+	// input slug resolves over the project's ACTIVE nodes to its current location, matching BOTH
+	// current keys AND former keys (rename history via PrevKey lineage) so a mention survives a
+	// rename. A current key takes precedence over a former key of the same spelling; a slug that
+	// resolves to 2+ boards (ambiguous) or to nothing is OMITTED from the map (the renderer then
+	// leaves the mention literal). One batched read of the project's node history — no per-slug
+	// loop. The key of each returned entry is the REQUESTED slug (as mentioned).
+	Task<IReadOnlyDictionary<string, NodeRefResolution>> ResolveSlugsAsync(string projectKey, IReadOnlyCollection<string> slugs, CancellationToken ct = default);
 	// Validate a relation kind against the PROJECT's vocabulary — builtin process kinds
 	// (task_spec|issue_task|idea_spec|blocks|part_of|supersedes), builtin neutral kinds
 	// (relates_to|depends_on|mirrors — free semantic edges, no FSM effects), and the kinds

@@ -6,6 +6,7 @@ using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Pages.Shared;
+using PetBox.Web.Rendering;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -71,6 +72,12 @@ public sealed class TaskBoardModel : PageModel
 	// chip on each card links to it and commit hashes in node/comment bodies autolink. Empty = off.
 	public string? CommitUrlTemplate { get; private set; }
 
+	// Resolved `[[slug]]` mentions across all card bodies + comment bodies (node-ref-autolink),
+	// keyed by the mentioned slug. Threaded into each card so the renderer links resolvable
+	// mentions. Empty when nothing resolved.
+	public IReadOnlyDictionary<string, NodeRefTarget> NodeRefs { get; private set; }
+		= new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal);
+
 	// The board's EFFECTIVE process, resolved through MethodologyRuntime — the same seam
 	// the MCP tools / TasksService use (project definition first, preset fallback), so a
 	// definition-declared custom kind renders its own statuses/terminality instead of
@@ -104,7 +111,8 @@ public sealed class TaskBoardModel : PageModel
 		string WorkspaceKey, string ProjectKey, string Board, MethodologyRuntime Runtime,
 		string? KindSlug, PlanNodeView Node,
 		int Depth, bool Closed, bool KeepVisible, bool HasChildren,
-		IReadOnlyList<CommentLine>? Thread, string? CommitUrlTemplate = null);
+		IReadOnlyList<CommentLine>? Thread, string? CommitUrlTemplate = null,
+		IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs = null);
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
@@ -134,6 +142,12 @@ public sealed class TaskBoardModel : PageModel
 		var byNode = await _comments.ListForBoardAsync(ProjectKey, Board, ct);
 		CommentThreads = byNode
 			.ToDictionary(g => g.Key, g => CommentThread.Flatten(g), StringComparer.Ordinal);
+
+		// Resolve `[[slug]]` mentions across every card body + every comment body in ONE batch
+		// (node-ref-autolink), so each card's renderer can link resolvable mentions.
+		var bodies = Nodes.Select(n => (string?)n.Body)
+			.Concat(byNode.SelectMany(g => g).Select(c => (string?)c.Body));
+		NodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey, bodies, ct);
 
 		// Tag-groups projection: only when explicitly requested with a valid dimension list.
 		// Bad/empty `by` silently falls back to the tree (the service would reject it) — the

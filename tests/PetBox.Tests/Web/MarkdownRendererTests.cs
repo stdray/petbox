@@ -237,3 +237,116 @@ public sealed class MarkdownRendererCommitLinkTests
 		Html("xcc20e34 is not a hash").Should().NotContain("<a");
 	}
 }
+
+// `[[slug]]` node-mention autolinking (node-ref-autolink-impl): a mention in a plain text run
+// becomes a link to that node's detail page WHEN the slug resolves (the caller hands the renderer
+// a prebuilt slug→target map — the renderer never touches the DB). An unmapped mention stays
+// literal. Code spans/blocks and existing links are excluded, exactly like the commit-hash pass.
+public sealed class MarkdownRendererNodeRefTests
+{
+	const string Url = "/ui/ws/proj/tasks/spec/some-node";
+
+	static readonly IMarkdownRenderer R = new MarkdownRenderer();
+
+	static IReadOnlyDictionary<string, NodeRefTarget> Map(params (string Slug, string Url, string? Title)[] entries)
+		=> entries.ToDictionary(e => e.Slug, e => new NodeRefTarget(e.Url, e.Title), StringComparer.Ordinal);
+
+	static string Html(string md, IReadOnlyDictionary<string, NodeRefTarget>? map)
+		=> R.RenderToHtml(md, null, map);
+
+	[Fact]
+	public void ResolvableMention_LinksWithSlugTextAndTitleAttribute()
+	{
+		var html = Html("see [[some-node]] for details", Map(("some-node", Url, "The Spec Node")));
+		html.Should().Contain($"<a href=\"{Url}\"");
+		html.Should().Contain("title=\"The Spec Node\"");
+		// Link TEXT is the bare slug — no brackets.
+		html.Should().Contain(">some-node</a>");
+		html.Should().NotContain("[[some-node]]");
+	}
+
+	[Fact]
+	public void ResolvableMention_SurvivesSanitizer()
+	{
+		// The generated anchor (relative href + title) must live through HtmlSanitizer.
+		var html = Html("[[some-node]]", Map(("some-node", Url, "Title")));
+		html.Should().Contain($"href=\"{Url}\"");
+		html.Should().Contain("title=\"Title\"");
+		html.Should().Contain(">some-node</a>");
+	}
+
+	[Fact]
+	public void UnresolvableMention_StaysLiteral()
+	{
+		// The slug is not in the map → the original `[[slug]]` text is preserved, no link.
+		var html = Html("mentions [[ghost-node]] here", Map(("some-node", Url, "T")));
+		html.Should().NotContain("<a");
+		html.Should().Contain("[[ghost-node]]");
+	}
+
+	[Fact]
+	public void Mention_InsideCodeSpan_DoesNotLink()
+	{
+		var html = Html("type `[[some-node]]` verbatim", Map(("some-node", Url, "T")));
+		html.Should().NotContain("<a");
+		html.Should().Contain("<code>[[some-node]]</code>");
+	}
+
+	[Fact]
+	public void Mention_InsideFencedCodeBlock_DoesNotLink()
+	{
+		var html = Html("```\nref [[some-node]]\n```", Map(("some-node", Url, "T")));
+		html.Should().NotContain("<a");
+		html.Should().Contain("[[some-node]]");
+	}
+
+	[Fact]
+	public void Mention_InsideExistingLink_DoesNotDoubleLink()
+	{
+		// An author's explicit link whose TEXT contains a mention keeps just that one anchor.
+		var html = Html("[[[some-node]]](https://example.com/x)", Map(("some-node", Url, "T")));
+		html.Should().Contain("href=\"https://example.com/x\"");
+		html.Should().NotContain($"href=\"{Url}\"");
+	}
+
+	[Fact]
+	public void HashAndMention_InOneBody_BothLink()
+	{
+		const string template = "https://github.com/user/repo/commit/{sha}";
+		var html = R.RenderToHtml("fixed cc20e34 for [[some-node]]", template, Map(("some-node", Url, "T")));
+		html.Should().Contain("commit/cc20e34\"");
+		html.Should().Contain($"href=\"{Url}\"");
+		html.Should().Contain(">some-node</a>");
+	}
+
+	[Fact]
+	public void MultipleMentions_InOneRun_AllLink_TextPreserved()
+	{
+		var html = Html("both [[node-a]] and [[node-b]] linked",
+			Map(("node-a", "/a", "A"), ("node-b", "/b", "B")));
+		html.Should().Contain("href=\"/a\"").And.Contain(">node-a</a>");
+		html.Should().Contain("href=\"/b\"").And.Contain(">node-b</a>");
+		html.Should().Contain("both ").And.Contain(" and ").And.Contain(" linked");
+	}
+
+	[Fact]
+	public void UnresolvedMentionWrappingHashLikeSlug_StaysFullyLiteral()
+	{
+		// `[[abc1234]]` — the inner slug is hex-shaped, but an UNRESOLVED mention must render
+		// as its original text even with the commit template active (no linked hash inside).
+		const string template = "https://github.com/user/repo/commit/{sha}";
+		var html = R.RenderToHtml("nope [[abc1234]] here", template, Map(("other", Url, "T")));
+		html.Should().NotContain("<a");
+		html.Should().Contain("[[abc1234]]");
+	}
+
+	[Fact]
+	public void NoMap_OutputIdenticalToPlainPath()
+	{
+		var md = "## Head\nsee [[some-node]] and [[other]]\n\n- item";
+		R.RenderToHtml(md, null, null).Should().Be(R.RenderToHtml(md));
+		// An empty map is the plain path too (no mention resolves).
+		R.RenderToHtml(md, null, Map()).Should().Be(R.RenderToHtml(md));
+		R.RenderToHtml(md, null, null).Should().NotContain("<a");
+	}
+}

@@ -677,6 +677,76 @@ public sealed partial class TasksService : ITasksService
 		};
 	}
 
+	// Batch `[[slug]]` mention resolution (node-ref-autolink). Resolves each requested slug over
+	// the project's ACTIVE nodes to its current (Board, Key, NodeId, Title), matching current keys
+	// AND former keys (PrevKey lineage — mentions survive renames). A current key wins over a
+	// former key of the same spelling; a slug resolving to 2+ boards (ambiguous) or to nothing is
+	// omitted. One read of the project's node history, resolved in memory (no per-slug loop).
+	public Task<IReadOnlyDictionary<string, NodeRefResolution>> ResolveSlugsAsync(string projectKey, IReadOnlyCollection<string> slugs, CancellationToken ct = default)
+	{
+		var wanted = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var s in slugs)
+		{
+			var v = s?.Trim().ToLowerInvariant();
+			if (!string.IsNullOrEmpty(v)) wanted.Add(v);
+		}
+		var empty = (IReadOnlyDictionary<string, NodeRefResolution>)new Dictionary<string, NodeRefResolution>(StringComparer.Ordinal);
+		if (wanted.Count == 0) return Task.FromResult(empty);
+
+		// All revisions across every board (history is needed to trace former slugs). A minimal
+		// projection keeps the read cheap; ordering/grouping is done in memory.
+		var ctx = _boards.GetContext(projectKey);
+		var rows = ctx.PlanNodes
+			.Select(n => new { n.Board, n.Key, n.NodeId, n.Name, n.PrevKey, n.Version, n.ActiveTo })
+			.ToList();
+
+		// Per-(board,key) birth edge: the earliest revision's PrevKey (the slug it renamed FROM).
+		var edge = new Dictionary<(string Board, string Key), string>();
+		foreach (var g in rows.GroupBy(r => (r.Board, r.Key)))
+		{
+			var birth = g.OrderBy(r => r.Version).First();
+			if (!string.IsNullOrEmpty(birth.PrevKey))
+				edge[(g.Key.Board, g.Key.Key)] = birth.PrevKey!;
+		}
+
+		// A wanted slug matched as a CURRENT key beats the same spelling matched as a FORMER key
+		// (the live node is the natural target). Each map value is the list of matching active
+		// nodes; a >1 count means the slug is ambiguous across boards → dropped below.
+		var currentHits = new Dictionary<string, List<NodeRefResolution>>(StringComparer.Ordinal);
+		var formerHits = new Dictionary<string, List<NodeRefResolution>>(StringComparer.Ordinal);
+		static void AddHit(Dictionary<string, List<NodeRefResolution>> map, string slug, NodeRefResolution hit)
+		{
+			if (!map.TryGetValue(slug, out var list)) map[slug] = list = new List<NodeRefResolution>();
+			list.Add(hit);
+		}
+
+		foreach (var a in rows.Where(r => r.ActiveTo == null && r.NodeId.Length > 0))
+		{
+			var hit = new NodeRefResolution(a.Board, a.Key, a.NodeId, a.Name);
+			if (wanted.Contains(a.Key))
+				AddHit(currentHits, a.Key, hit);
+			// Walk this node's rename chain back through its former keys.
+			var cur = a.Key;
+			var guard = 0;
+			while (edge.TryGetValue((a.Board, cur), out var prev) && guard++ < 1000)
+			{
+				if (wanted.Contains(prev))
+					AddHit(formerHits, prev, hit);
+				cur = prev;
+			}
+		}
+
+		var result = new Dictionary<string, NodeRefResolution>(StringComparer.Ordinal);
+		foreach (var slug in wanted)
+		{
+			var hits = currentHits.TryGetValue(slug, out var c) ? c
+				: formerHits.TryGetValue(slug, out var f) ? f : null;
+			if (hits is { Count: 1 })
+				result[slug] = hits[0];
+		}
+		return Task.FromResult((IReadOnlyDictionary<string, NodeRefResolution>)result);
+	}
+
 	// exact-identifier-search-surfacing (spec): the exact-identifier escape hatch shared by the
 	// tasks_search query path and the UI cross-scope identifier leg. Mirrors ResolveNodeRefAsync's
 	// resolution (32-hex = NodeId, else a slug) but NEVER throws (a search is a soft ask, not an

@@ -1,4 +1,5 @@
 using PetBox.Tasks.Contract;
+using PetBox.Web.Rendering;
 
 namespace PetBox.Web.Pages.Shared;
 
@@ -8,9 +9,13 @@ namespace PetBox.Web.Pages.Shared;
 public sealed record CommentLine(CommentView Comment, int Depth);
 
 // Model for the _CommentThread partial: the DFS-flattened lines plus the project's optional
-// commit-view URL template, threaded down so comment bodies autolink commit hashes the same way
-// node bodies do. Null template = plain text (the pre-feature behavior).
-public sealed record CommentThreadModel(IReadOnlyList<CommentLine> Lines, string? CommitUrlTemplate = null);
+// commit-view URL template and `[[slug]]` node-mention map, threaded down so comment bodies
+// autolink commit hashes and node mentions the same way node bodies do. Null template / null
+// map = plain text (the pre-feature behavior).
+public sealed record CommentThreadModel(
+	IReadOnlyList<CommentLine> Lines,
+	string? CommitUrlTemplate = null,
+	IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs = null);
 
 // Shared thread flattener used by both the board page and the node detail page (so the two
 // surfaces render the SAME thread shape via the _CommentThread partial). Pure/static.

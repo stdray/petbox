@@ -17,7 +17,7 @@
 						<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
 					}
 				</div>
-				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate })" />
+				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs })" />
 			</div>
 		}
 	</div>

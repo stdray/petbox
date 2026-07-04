@@ -70,7 +70,7 @@
 			@* Body is markdown, hydrated client-side (ts/markdown.ts) and clipped on the
 			   board — the full text lives on the node detail page (board-body-truncate). *@
 			<div class="mt-1">
-				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-24 overflow-hidden", CommitUrlTemplate = Model.CommitUrlTemplate })" />
+				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-24 overflow-hidden", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs })" />
 				<a href="@nodeUrl" class="text-xs link link-hover opacity-60" data-testid="node-body-more">full ↗</a>
 			</div>
 		}
@@ -102,7 +102,7 @@
 		}
 		@if (Model.Thread is { Count: > 0 })
 		{
-			<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, Model.CommitUrlTemplate))" />
+			<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, Model.CommitUrlTemplate, Model.NodeRefs))" />
 		}
 	</div>
 </li>
