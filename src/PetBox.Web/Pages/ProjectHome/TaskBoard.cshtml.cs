@@ -69,6 +69,13 @@ public sealed class TaskBoardModel : PageModel
 	// statuses" rather than a deliberate board kind.
 	public BoardKind Kind { get; private set; }
 
+	// The board's workflow surface (per-type FSM blocks) + its JSON island for the "View
+	// workflow" modal. WorkflowBlocks drives the header triggers (one per block); WorkflowJson
+	// is the payload ts/workflow-viz.ts renders. Resolved through MethodologyRuntime, so
+	// user-defined methodologies visualize out of the box.
+	public IReadOnlyList<WorkflowBlock> WorkflowBlocks { get; private set; } = [];
+	public string? WorkflowJson { get; private set; }
+
 	// One flattened row of the tag-groups pane: a group HEADER (Node null) at nesting `Depth`,
 	// or a node CARD (Node set) sitting just under its deepest group. Flattening keeps the
 	// Razor a single loop — the same shape the part_of pane already renders.
@@ -92,6 +99,11 @@ public sealed class TaskBoardModel : PageModel
 		var kind = await _tasks.ResolveKindAsync(ProjectKey, Board, ct);
 		Kind = kind;
 		ShowQuickAdd = MethodologyPresets.QuickAddAllowed(kind);
+
+		// The board's FSM surface, embedded for the "View workflow" modal (a few KB — no extra endpoint).
+		var workflow = await _tasks.GetBoardWorkflowAsync(ProjectKey, Board, ct);
+		WorkflowBlocks = workflow.Workflows;
+		WorkflowJson = WorkflowGraphJson.Serialize(workflow);
 
 		// includeClosed: we render closed nodes too (the "active only" toggle hides them
 		// client-side); GetAsync supplies each node's part_of parent + depth.

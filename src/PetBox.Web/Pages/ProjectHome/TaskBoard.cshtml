@@ -44,6 +44,16 @@
 	<h1 class="text-2xl font-semibold font-mono" data-testid="board-title">@Model.Board</h1>
 	<span class="badge @kindBadgeClass" data-testid="board-kind" data-kind="@kindName" title="@kindTitle">@kindName</span>
 	<span class="badge badge-ghost">@Model.Nodes.Count node(s)</span>
+	@* Per-type "View workflow" triggers — one per FSM block (a preset kind has exactly one).
+	   Opens the daisyUI modal with the block's status graph (ts/workflow-viz.ts). *@
+	@if (Model.WorkflowBlocks.Count > 0)
+	{
+		<span class="text-xs opacity-50 ml-1">workflow:</span>
+		@foreach (var wb in Model.WorkflowBlocks)
+		{
+			<button type="button" class="btn btn-ghost btn-xs gap-1" data-testid="workflow-open" data-workflow-type="@wb.Types[0]" title="View this type's workflow graph">⤳ @string.Join(" · ", wb.Types)</button>
+		}
+	}
 </div>
 
 @if (Model.ShowQuickAdd)
@@ -141,4 +151,9 @@ else
 			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Kind, n, n.Depth, closed, keepVisible, hasChildren, thread)" />
 		}
 	</ul>
+}
+
+@if (Model.WorkflowJson is not null)
+{
+	<partial name="_WorkflowModal" model="Model.WorkflowJson" />
 }

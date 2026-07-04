@@ -1,0 +1,26 @@
+@model string
+
+@* Shared "View workflow" modal + its JSON island. Rendered on the board and node-detail pages.
+   The <script type="application/json"> carries the board's whole workflow surface (BoardWorkflowView
+   serialized by WorkflowGraphJson); ts/workflow-viz.ts reads it, and on a [data-workflow-open] click
+   renders the block for that type into #workflow-graph. No inline JS — the module is bundled by bun.
+   The modal is closed by default (daisyUI `.modal`); the module toggles `.modal-open`. *@
+
+<div class="modal" data-testid="workflow-modal" role="dialog" aria-modal="true">
+	<div class="modal-box max-w-3xl">
+		<div class="flex items-center justify-between gap-2 mb-3">
+			<h3 class="font-semibold text-lg" data-testid="workflow-modal-title">View workflow</h3>
+			<button type="button" class="btn btn-sm btn-circle btn-ghost" data-testid="workflow-modal-close" aria-label="Close">✕</button>
+		</div>
+		<div class="overflow-x-auto" data-testid="workflow-graph"></div>
+		<div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs opacity-70" data-testid="workflow-legend">
+			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-neutral"></span> open</span>
+			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-success"></span> done</span>
+			<span class="inline-flex items-center gap-1"><span class="badge badge-xs badge-error"></span> cancelled</span>
+			<span class="opacity-80">▶ initial · edge labels = gates (approve / reason / artifact:&lt;slug&gt;)</span>
+		</div>
+	</div>
+	<div class="modal-backdrop" data-testid="workflow-modal-backdrop"></div>
+</div>
+
+<script type="application/json" data-testid="workflow-data">@Html.Raw(Model)</script>
