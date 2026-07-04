@@ -111,5 +111,5 @@ public static class Routes
 	public static string Login(string returnUrl) => $"/Login?returnUrl={Uri.EscapeDataString(returnUrl)}";
 	public static string Logout() => "/api/auth/logout";
 	public static string Error() => "/Error";
-	public static string Share(string token) => $"/s/{token}";
+	public static string Share(string token) => $"/ui/share/{token}";
 }
