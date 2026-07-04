@@ -210,7 +210,13 @@ public sealed record MemorySearchHitView(
 	DateTime? LastHitAt = null,
 	// Distinct source-session count (provenance width) — a compact number, null when the fact
 	// carries no session provenance (spec memoverhaul-provenance-surface).
-	int? SourcesCount = null);
+	int? SourcesCount = null,
+	// Per-row relevance provenance (spec search-row-provenance): query mode only — Score is the
+	// fused, freshness-blended relevance, Retriever names how the hit surfaced ("lexical" =
+	// lexically confirmed, "semantic" = vector-only); both null and omitted on the wire in
+	// listing mode.
+	double? Score = null,
+	string? Retriever = null);
 
 // The memory_search result — ONE shape for both modes (SearchEnvelope form): `Items` in
 // final order, `Retrievers` provenance with a query (null in listing mode), and the
@@ -298,7 +304,10 @@ public sealed record BoardReopenedResult(bool Reopened);
 
 // tasks_search wire row: a board-aware projection of an enriched node (rows may span
 // boards, so each carries `Board`). Tree navigation rides ParentNodeId/ParentSlug/Depth
-// (the part_of projection); null fields are omitted on the wire.
+// (the part_of projection); null fields are omitted on the wire. Score/Retriever carry the
+// per-row relevance provenance (spec search-row-provenance): query mode only (Score is the
+// fused rank-based RRF value, Retriever names how the hit surfaced —
+// "lexical"|"semantic"|"exact"); both null and omitted on the wire in listing mode.
 public sealed record TaskSearchNodeView(
 	string Key,
 	string NodeId,
@@ -320,7 +329,9 @@ public sealed record TaskSearchNodeView(
 	IReadOnlyList<string>? RenamedFrom,
 	IReadOnlyList<string> Tags,
 	long Version,
-	string? Url);
+	string? Url,
+	double? Score = null,
+	string? Retriever = null);
 
 // The tasks_search result — ONE shape for every mode (a single OutputSchemaType):
 //   listing/query  → `Nodes` (final order), plus board context (Board/Kind/SpecBoard/

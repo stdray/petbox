@@ -365,6 +365,11 @@ public static class TasksTools
 		is ignored for relevance). `limit` caps the rows (with `q` it defaults to 20, 0 =
 		no cap; a listing is unbounded by default — the output budget still applies).
 
+		With `q` each row carries `score` (the fused, rank-based relevance) and `retriever`
+		("lexical" = lexically confirmed, "semantic" = surfaced by the vector leg alone,
+		"exact" = an exact slug match); a semantic-only hit below the relevance floor is
+		dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows).
+
 		PROJECTION: `groupBy` = an ORDERED, comma-separated list of tag namespaces (e.g.
 		"area" or "area,concern") returns the tag-bucket view instead of rows (`groups`
 		nested in that order, "(none)" for untagged, each with a delivery roll-up); needs
@@ -487,7 +492,10 @@ public static class TasksTools
 			RenamedFrom: n.RenamedFrom is { Count: > 0 } rf ? rf : null,
 			Tags: n.Tags,
 			Version: n.Version,
-			Url: n.Url);
+			Url: n.Url,
+			// Per-row relevance provenance (query mode; null → omitted in listing mode).
+			Score: h.Score is { } s ? Math.Round(s, 6) : null,
+			Retriever: h.Retriever);
 	}
 
 	// Split a comma-separated groupBy ("area,concern") into the ordered dimension list the

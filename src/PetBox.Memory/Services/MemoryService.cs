@@ -163,7 +163,7 @@ public sealed class MemoryService : IMemoryService
 					: r;
 				var vecs = _llm is null ? null : LoadVectors(projectKey, store, hits.Select(h => h.Entry.Key).ToList());
 				selected.AddRange(hits.Select(h => new Candidate(store, h.Entry, h.Score,
-					vecs is not null && vecs.TryGetValue(h.Entry.Key, out var v) ? v : null)));
+					vecs is not null && vecs.TryGetValue(h.Entry.Key, out var v) ? v : null, h.LexicalConfirmed)));
 			}
 		}
 		if (query is not null) retrievers ??= new SearchRetrievers(false, false, false);
@@ -177,16 +177,21 @@ public sealed class MemoryService : IMemoryService
 		selected = SortSelected(selected, request.Sort, hasQuery: query is not null);
 		if (request.Limit > 0 && selected.Count > request.Limit) selected = selected.Take(request.Limit).ToList();
 
+		// Retriever provenance: query mode names how the hit surfaced (lexically confirmed vs
+		// vector-only); a listing ran no relevance leg, so it stays null.
 		var hits2 = selected.Select(x => new MemoryEntryHit(x.Store,
 			request.BodyLen > 0 ? View(x.Entry) with { Body = SnippetBody(x.Entry.Body, request.BodyLen) } : View(x.Entry),
-			x.Score)).ToList();
+			x.Score,
+			query is null ? null : (x.LexicalConfirmed ? "lexical" : "semantic"))).ToList();
 		return new MemoryEntrySearchResult(hits2, retrievers);
 	}
 
 	// One selection candidate: its owning store, the entry, the fused relevance Score (query
-	// mode; 0 in a listing), and the entry's vector (for MMR; null without an embedder / in a
-	// listing). A record-struct so it slots into the existing list-building cheaply.
-	readonly record struct Candidate(string Store, MemoryEntry Entry, double Score, float[]? Vector);
+	// mode; 0 in a listing), the entry's vector (for MMR; null without an embedder / in a
+	// listing), and whether the lexical leg confirmed it (query mode — drives the semantic-noise
+	// floor + retriever provenance; always false in a listing, where the floor never runs). A
+	// record-struct so it slots into the existing list-building cheaply.
+	readonly record struct Candidate(string Store, MemoryEntry Entry, double Score, float[]? Vector, bool LexicalConfirmed = false);
 
 	// GLOBAL query relevance ordering across every store's candidate pool (spec memoverhaul):
 	//   1. Freshness decay — multiply the fused RRF score by an exp half-life weight on Updated,
@@ -198,6 +203,14 @@ public sealed class MemoryService : IMemoryService
 	List<Candidate> RankRelevance(List<Candidate> candidates)
 	{
 		if (candidates.Count == 0) return candidates;
+
+		// Semantic-noise floor (spec search-relevance-floor): FIRST drop a hit the lexical leg did
+		// NOT confirm whose RAW fused score is below the floor — the floor operates on the raw RRF
+		// score (decay only reorders survivors, it must not push a hit under the floor), mirroring
+		// SessionSearchService. A lexically-confirmed hit is never floored; floor <= 0 disables.
+		var floor = _rerank.Floor.SemanticFloor;
+		if (floor > 0) candidates = candidates.Where(c => c.LexicalConfirmed || c.Score >= floor).ToList();
+
 		var now = DateTime.UtcNow;
 		var recency = _rerank.Recency;
 		double Blended(Candidate c) => recency.Enabled

@@ -112,8 +112,10 @@ public sealed record PlanNodeHeader(
 	IReadOnlyList<string> Tags, string? Url = null);
 
 // One unified-read hit: the enriched node view plus its owning board (a read may span
-// boards, and PlanNodeView itself doesn't carry the board).
-public sealed record TaskSearchHit(string Board, PlanNodeView Node);
+// boards, and PlanNodeView itself doesn't carry the board). Query mode fills Score (the fused
+// RRF relevance) and Retriever provenance ("lexical"|"semantic"|"exact"); listing mode leaves
+// both null (no relevance ran).
+public sealed record TaskSearchHit(string Board, PlanNodeView Node, double? Score = null, string? Retriever = null);
 
 // The sort axis of the unified tasks read. Priority = the deterministic listing default
 // (priority then key); Relevance = the fused hybrid order, valid ONLY with a query (it is

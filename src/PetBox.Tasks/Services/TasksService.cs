@@ -31,6 +31,11 @@ public sealed partial class TasksService : ITasksService
 	// Optional embedding capability (DI auto-fills when an LLM router is registered).
 	// Null → semantic search disabled and embed-on-write skipped (lexical-only); never throws.
 	readonly ILlmClient? _llm;
+	// Relevance re-ranking policy — here only the semantic-noise floor is consumed (query search).
+	// Bound from the `Search` config section; defaults are conservative, so an un-wired
+	// construction (tests, other adapters) still gets the shipped flooring (same pattern as
+	// MemoryService).
+	readonly SearchRerankOptions _rerank;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
@@ -39,13 +44,14 @@ public sealed partial class TasksService : ITasksService
 	// candidate depth is per-request: max(3×limit, 50) — see SearchNodesAsync.
 	const int VectorDim = 1024;
 
-	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null)
+	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null, SearchRerankOptions? rerank = null)
 	{
 		_boards = boards;
 		_relations = relations;
 		_tags = tags;
 		_comments = comments;
 		_llm = llm;
+		_rerank = rerank ?? new SearchRerankOptions();
 	}
 
 	// ---- board lifecycle ----
@@ -1314,7 +1320,9 @@ public sealed partial class TasksService : ITasksService
 			// (closed nodes aren't indexed for relevance), ahead of the fused ranking. Still
 			// subject to the under/status/keys predicates below like any other hit.
 			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, ct);
-			var freshExact = exactHits.Where(e => !hits.Any(h => h.Board == e.Board && h.Node.Key == e.Node.Key)).ToList();
+			// An addressed match has no fused score (Score stays null); it is confirmed by identity.
+			var freshExact = exactHits.Where(e => !hits.Any(h => h.Board == e.Board && h.Node.Key == e.Node.Key))
+				.Select(e => e with { Retriever = "exact" }).ToList();
 			hits.InsertRange(0, freshExact);
 		}
 
@@ -1363,19 +1371,35 @@ public sealed partial class TasksService : ITasksService
 		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(boardFilter), k, ct);
 		if (resp.Hits.Count == 0) return ([], resp.Retrievers);
 
+		// Semantic-noise floor (spec search-relevance-floor): a hit the lexical leg did NOT confirm
+		// must clear the fused RRF floor to survive — the limit is a ceiling, not a plan, so the
+		// vector-only tail is cut here rather than padded out. A lexically-confirmed hit bypasses
+		// the floor (the lexical leg vouched for it); floor <= 0 disables.
+		var floor = _rerank.Floor.SemanticFloor;
+		var floored = resp.Hits.Where(h => h.Retriever == "lexical" || floor <= 0 || h.Score >= floor).ToList();
+		if (floored.Count == 0) return ([], resp.Retrievers);
+
 		// Hits carry Type=board, Id=slug — group by board, build each owning board's enriched
-		// view once, pick the matched nodes by slug, order by fused relevance.
+		// view once, pick the matched nodes by slug, order by fused relevance, threading each
+		// node's fused score + retriever provenance onto its wire hit.
 		var order = new Dictionary<(string Board, string Slug), int>();
-		for (var i = 0; i < resp.Hits.Count; i++)
-			order[(resp.Hits[i].Type, resp.Hits[i].Id)] = i;
+		var provenance = new Dictionary<(string Board, string Slug), (double Score, string? Retriever)>();
+		for (var i = 0; i < floored.Count; i++)
+		{
+			order[(floored[i].Type, floored[i].Id)] = i;
+			provenance[(floored[i].Type, floored[i].Id)] = (floored[i].Score, floored[i].Retriever);
+		}
 
 		var hits = new List<TaskSearchHit>();
-		foreach (var g in resp.Hits.GroupBy(h => h.Type, StringComparer.Ordinal))
+		foreach (var g in floored.GroupBy(h => h.Type, StringComparer.Ordinal))
 		{
 			var view = await GetAsync(projectKey, g.Key, includeClosed: false, urlPrefix: urlPrefix, ct: ct);
 			var slugs = g.Select(h => h.Id).ToHashSet(StringComparer.Ordinal);
 			foreach (var n in view.Nodes.Where(n => slugs.Contains(n.Key)))
-				hits.Add(new TaskSearchHit(g.Key, n));
+			{
+				var (score, retriever) = provenance[(g.Key, n.Key)];
+				hits.Add(new TaskSearchHit(g.Key, n, score, retriever));
+			}
 		}
 		return (hits.OrderBy(h => order.GetValueOrDefault((h.Board, h.Node.Key), int.MaxValue)).ToList(), resp.Retrievers);
 	}

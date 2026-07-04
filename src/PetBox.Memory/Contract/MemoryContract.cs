@@ -81,7 +81,9 @@ public enum MemorySortBy
 // is the fused, freshness-blended relevance (query mode; 0 in a listing) — the adapter uses it
 // to HONESTLY merge across scopes (project ⊕ workspace) so the best hit wins regardless of
 // container, rather than the old greedy "project takes the limit, workspace gets the remainder".
-public sealed record MemoryEntryHit(string Store, MemoryEntryView Entry, double Score = 0);
+// Retriever names how the hit surfaced in query mode ("lexical" = lexically confirmed,
+// "semantic" = surfaced by the vector leg alone); null in listing mode (no relevance ran).
+public sealed record MemoryEntryHit(string Store, MemoryEntryView Entry, double Score = 0, string? Retriever = null);
 
 // The rich per-family result of the unified read: the selected hits plus retriever
 // provenance (null in listing mode, where no retriever runs).
