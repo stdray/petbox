@@ -24,7 +24,7 @@ namespace PetBox.Web.Mcp;
 public static class LogTools
 {
 	[McpServerTool(Name = "log_query", Title = "Run KQL query against a named log", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LogQueryResultView))]
-	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Requires logs:query scope.")]
+	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Responses are row-capped: no explicit take/top applies a default limit (1000 rows), an explicit one is bounded by a hard max (100k); a cut result carries truncated: true — add/tighten take (or aggregate) to bound the query deliberately. Requires logs:query scope.")]
 	public static async Task<LogQueryResultView> QueryAsync(
 		IHttpContextAccessor http,
 		ILogQueryService logs,
@@ -52,10 +52,13 @@ public static class LogTools
 				var rows = new List<IReadOnlyList<object?>>();
 				await foreach (var row in table.Result.Rows.WithCancellation(ct))
 					rows.Add(row.Select(cell => (object?)cell).ToList());
-				return new LogQueryResultView("table", Columns: columns, Rows: rows);
+				// The truncation signal is final only after the enumeration above; omit when false.
+				return new LogQueryResultView("table", Columns: columns, Rows: rows,
+					Truncated: table.Truncation.Truncated ? true : null);
 			}
 
-			var events = ((LogQueryResult.Events)result).Items.Select(e => new LogEventView(
+			var eventsResult = (LogQueryResult.Events)result;
+			var events = eventsResult.Items.Select(e => new LogEventView(
 				Id: e.Id,
 				ServiceKey: e.ServiceKey,
 				Timestamp: e.Timestamp.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture),
@@ -64,7 +67,8 @@ public static class LogTools
 				MessageTemplate: e.MessageTemplate,
 				Exception: e.Exception,
 				Properties: e.GetProperties().ToDictionary(kv => kv.Key, kv => (object?)JsonSerializer.Serialize(kv.Value)))).ToList();
-			return new LogQueryResultView("events", Count: events.Count, Events: events);
+			return new LogQueryResultView("events", Count: events.Count, Events: events,
+				Truncated: eventsResult.Truncated ? true : null);
 		}
 		catch (UnsupportedKqlException ex)
 		{

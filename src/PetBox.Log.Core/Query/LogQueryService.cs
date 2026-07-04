@@ -20,11 +20,20 @@ public interface ILogQueryService
 }
 
 // Discriminated result: a plain query yields materialized events; a shape-changing
-// pipeline (summarize/project/…) yields a streaming column/row table.
+// pipeline (summarize/project/…) yields a streaming column/row table. Both arms carry a
+// truncation signal (KqlLimits response capping): Events is materialized, so a plain bool;
+// Table streams, so the flag lives in a box the limiter sets WHEN it cuts the stream —
+// adapters read it only after enumerating Rows (both buffer before writing the response).
 public abstract record LogQueryResult
 {
-	public sealed record Events(IReadOnlyList<LogEntry> Items) : LogQueryResult;
-	public sealed record Table(KqlResult Result) : LogQueryResult;
+	public sealed record Events(IReadOnlyList<LogEntry> Items, bool Truncated) : LogQueryResult;
+	public sealed record Table(KqlResult Result, TruncationSignal Truncation) : LogQueryResult;
+}
+
+// Mutable by design: set during row enumeration, read after it.
+public sealed class TruncationSignal
+{
+	public bool Truncated { get; internal set; }
 }
 
 // The named log does not exist for this project. Adapters map it (REST -> 404).
@@ -71,6 +80,11 @@ public sealed class LogQueryService(ILogStore store) : ILogQueryService
 		var logDb = store.GetContext(projectKey, logName);
 		var root = KqlTransformer.GetRootTableName(code);
 
+		// Response capping (KqlLimits): no explicit take/top → DefaultTake, an explicit one is
+		// bounded by MaxTake. Applied to every arm below; the extra probed row is how truncation
+		// is detected without a separate count query.
+		var limit = KqlLimits.EffectiveRowLimit(code);
+
 		// The `spans` root runs the SAME KQL subset over the log's Spans table. A plain spans query has no
 		// LogEntry-shaped result, so spans ALWAYS yield the streamed span column shape (a Table); the
 		// events root keeps its Events/Table split. Row streaming stays lazy, so an engine fault during
@@ -78,7 +92,10 @@ public sealed class LogQueryService(ILogStore store) : ILogQueryService
 		if (string.Equals(root, KqlTransformer.SpansTable, StringComparison.Ordinal))
 		{
 			var spanTable = BuildTable(() => KqlTransformer.ExecuteSpans(logDb.Spans, code), kql);
-			return new LogQueryResult.Table(spanTable with { Rows = WrapExecutionErrors(spanTable.Rows, kql, ct) });
+			var spanSignal = new TruncationSignal();
+			return new LogQueryResult.Table(
+				spanTable with { Rows = LimitRows(WrapExecutionErrors(spanTable.Rows, kql, ct), limit, spanSignal, ct) },
+				spanSignal);
 		}
 
 		// An unknown root fails HERE with the full supported-table list: the events-only engine entries
@@ -93,17 +110,43 @@ public sealed class LogQueryService(ILogStore store) : ILogQueryService
 			// pipeline (user error); actual row streaming is lazy and enumerated by the
 			// ADAPTER, so engine failures there must be translated at the source.
 			var table = BuildTable(() => KqlTransformer.Execute(logDb.LogEntries, code), kql);
-			return new LogQueryResult.Table(table with { Rows = WrapExecutionErrors(table.Rows, kql, ct) });
+			var signal = new TruncationSignal();
+			return new LogQueryResult.Table(
+				table with { Rows = LimitRows(WrapExecutionErrors(table.Rows, kql, ct), limit, signal, ct) },
+				signal);
 		}
 
 		try
 		{
-			var records = await KqlTransformer.Apply(logDb.LogEntries, code).ToListAsync(ct);
-			return new LogQueryResult.Events(records.Select(r => r.ToEntry()).ToList());
+			// Take(limit + 1) rides the SQL LIMIT (composing with any explicit take as a min), so a
+			// plain `events` never materializes the whole table — the OOM vector this capping closes.
+			var records = await KqlTransformer.Apply(logDb.LogEntries, code).Take(limit + 1).ToListAsync(ct);
+			var truncated = records.Count > limit;
+			if (truncated)
+				records.RemoveAt(records.Count - 1);
+			return new LogQueryResult.Events(records.Select(r => r.ToEntry()).ToList(), truncated);
 		}
 		catch (UnsupportedKqlException) { throw; }
 		catch (OperationCanceledException) { throw; }
 		catch (Exception ex) { throw new KqlExecutionException(kql, ex); }
+	}
+
+	// Cuts the streamed rows at `limit` and flags the signal when at least one more row existed.
+	static async IAsyncEnumerable<object?[]> LimitRows(
+		IAsyncEnumerable<object?[]> rows, int limit, TruncationSignal signal,
+		[EnumeratorCancellation] CancellationToken ct = default)
+	{
+		var emitted = 0;
+		await foreach (var row in rows.WithCancellation(ct).ConfigureAwait(false))
+		{
+			if (emitted >= limit)
+			{
+				signal.Truncated = true;
+				yield break;
+			}
+			emitted++;
+			yield return row;
+		}
 	}
 
 	// Classify SYNCHRONOUS pipeline-build failures identically for both roots: UnsupportedKqlException

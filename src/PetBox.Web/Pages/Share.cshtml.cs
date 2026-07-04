@@ -64,7 +64,8 @@ public sealed class ShareModel : PageModel
 		var logDb = _logStore.GetContext(share.ProjectKey, share.LogName);
 		try
 		{
-			var records = await KqlTransformer.Apply(logDb.LogEntries, code).ToListAsync(ct);
+			// Memory guard only (KqlLimits.MaxTake, no default take) — same bound as the TSV export.
+			var records = await KqlTransformer.Apply(logDb.LogEntries, code).Take(KqlLimits.MaxTake).ToListAsync(ct);
 			var visible = columns.Where(c => policy.ModeFor(c) != MaskMode.Hide).ToArray();
 			Columns = visible;
 

@@ -197,6 +197,12 @@
 }
 else if (Model.IsShapeChanged)
 {
+	if (Model.KqlTruncated)
+	{
+		<div class="alert alert-warning mb-4" data-testid="kql-truncated">
+			Result truncated at @PetBox.Log.Core.Query.KqlLimits.MaxTake.ToString("N0") rows — narrow the query (add where / take).
+		</div>
+	}
 	if (Model.KqlRows.Count == 0)
 	{
 		<div class="alert">Query returned no rows.</div>

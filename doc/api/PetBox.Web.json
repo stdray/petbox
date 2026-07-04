@@ -2357,6 +2357,10 @@
             "items": {
               "type": "array"
             }
+          },
+          "truncated": {
+            "type": "boolean",
+            "default": false
           }
         }
       },
