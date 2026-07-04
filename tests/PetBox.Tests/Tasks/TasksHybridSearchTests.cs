@@ -348,6 +348,109 @@ public sealed class TasksHybridSearchTests : IDisposable
 		res.Hits[0].Score.Should().BeNull(); // an addressed match has no fused score
 	}
 
+	// ---- comments in the lexical corpus (tasks-search-comments) ----
+
+	// Add a root comment under a node (resolves the owner's stable NodeId from the open view).
+	async Task<CommentUpsertResult> AddComment(TasksService tasks, string board, string nodeKey, string body)
+	{
+		var view = await tasks.GetAsync(Proj, board, includeClosed: false);
+		var nodeId = view.Nodes.First(n => n.Key == nodeKey).NodeId;
+		return await _commentSvc.AddAsync(Proj, board, nodeId, null, "author", body, null);
+	}
+
+	[Fact]
+	public async Task CommentMatch_ReturnsOwnerNode_MarkedMatchedInComment()
+	{
+		// The node body does NOT contain the token — only the comment does. The hit must still
+		// come back, pointing at the OWNER node, marked matchedIn="comment" with lexical provenance.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("host", "host note", "unrelated node body")]);
+		await AddComment(tasks, "b", "host", "the platypus insight lives in this comment");
+
+		var res = await tasks.SearchNodesAsync(Proj, Query("platypus"));
+
+		res.Hits.Should().ContainSingle();
+		res.Hits[0].Node.Key.Should().Be("host");
+		res.Hits[0].MatchedIn.Should().Be("comment");
+		res.Hits[0].Retriever.Should().Be("lexical");
+		res.Hits[0].Score.Should().NotBeNull();
+	}
+
+	[Fact]
+	public async Task NodeAndCommentBothMatch_SingleRow_NodeWins_MatchedInNull()
+	{
+		// Both the node (directly) and its comment match the query. The direct node hit — the token
+		// packed into a short doc — outranks the single mention buried in a longer comment, so the
+		// node wins the fused rank; the comment hit is a duplicate and is dropped (matchedIn stays null).
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("beaver", "beaver beaver", "beaver beaver beaver")]);
+		await AddComment(tasks, "b", "beaver", "a long passing note that mentions beaver once amid much other filler text here");
+
+		var res = await tasks.SearchNodesAsync(Proj, Query("beaver"));
+
+		res.Hits.Should().ContainSingle(); // no duplicate row
+		res.Hits[0].Node.Key.Should().Be("beaver");
+		res.Hits[0].MatchedIn.Should().BeNull(); // the node won the better rank
+	}
+
+	[Fact]
+	public async Task CommentEdit_ReindexesText_Delete_RemovesFromIndex()
+	{
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("host", "host note", "unrelated body")]);
+		var add = await AddComment(tasks, "b", "host", "quokka feedback goes here");
+
+		(await tasks.SearchNodesAsync(Proj, Query("quokka"))).Hits.Select(h => h.Node.Key).Should().Equal("host");
+
+		// Edit swaps the token: the OLD text stops matching, the NEW text finds the owner node.
+		await _commentSvc.EditAsync(Proj, "b", add.Id!, "wombat feedback goes here", null, add.CurrentVersion);
+		(await tasks.SearchNodesAsync(Proj, Query("quokka"))).Hits.Should().BeEmpty();
+		(await tasks.SearchNodesAsync(Proj, Query("wombat"))).Hits.Select(h => h.Node.Key).Should().Equal("host");
+
+		// Delete drops the comment's FTS row entirely.
+		(await _commentSvc.DeleteAsync(Proj, "b", add.Id!)).Should().BeTrue();
+		(await tasks.SearchNodesAsync(Proj, Query("wombat"))).Hits.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task CommentBackfill_ReindexesAfterFtsRowsWiped()
+	{
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "b", [Node("host", "host note", "unrelated body")]);
+		await AddComment(tasks, "b", "host", "narwhal note in a comment");
+
+		// Write path already indexed the comment.
+		(await tasks.SearchNodesAsync(Proj, Query("narwhal"))).Hits.Select(h => h.Node.Key).Should().Equal("host");
+
+		// Simulate a file predating tasks-search-comments: wipe ONLY the comment FTS rows (node rows
+		// stay), so the node-backfill guard is satisfied and only the comment backfill re-runs.
+		var ctx = _store.GetContext(Proj);
+		ctx.Execute("DELETE FROM search_fts WHERE Id LIKE 'c:%'");
+		ctx.Execute<long>("SELECT count(*) FROM search_fts WHERE Id LIKE 'c:%'").Should().Be(0);
+
+		// The next query runs the comment backfill (guard: no c:% rows) → the comment is found again.
+		(await tasks.SearchNodesAsync(Proj, Query("narwhal"))).Hits.Select(h => h.Node.Key).Should().Equal("host");
+	}
+
+	[Fact]
+	public async Task CommentOnBoardA_DoesNotLeakIntoBoardBQuery()
+	{
+		// Type=board scoping: a comment under a board-A node must not surface in a board-B query.
+		var tasks = Service(llm: null);
+		await tasks.CreateBoardAsync(Proj, "a", "simple", null, null);
+		await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
+		await tasks.UpsertAsync(Proj, "a", [Node("anode", "a node", "body a")]);
+		await tasks.UpsertAsync(Proj, "b", [Node("bnode", "b node", "body b")]);
+		await AddComment(tasks, "a", "anode", "axolotl only in a board-a comment");
+
+		(await tasks.SearchNodesAsync(Proj, Query("axolotl", board: "b"))).Hits.Should().BeEmpty();
+		(await tasks.SearchNodesAsync(Proj, Query("axolotl", board: "a"))).Hits.Select(h => h.Node.Key).Should().Equal("anode");
+	}
+
 	// ---- deterministic fakes (same shape as the memory hybrid-search fakes) ----
 
 	sealed class FakeLlmClient : ILlmClient

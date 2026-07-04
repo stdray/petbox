@@ -114,8 +114,10 @@ public sealed record PlanNodeHeader(
 // One unified-read hit: the enriched node view plus its owning board (a read may span
 // boards, and PlanNodeView itself doesn't carry the board). Query mode fills Score (the fused
 // RRF relevance) and Retriever provenance ("lexical"|"semantic"|"exact"); listing mode leaves
-// both null (no relevance ran).
-public sealed record TaskSearchHit(string Board, PlanNodeView Node, double? Score = null, string? Retriever = null);
+// both null (no relevance ran). MatchedIn = "comment" when this node surfaced because a COMMENT
+// under it matched the query (tasks-search-comments) — the hit points at the owner node; null
+// when the node itself matched (name/body/tags).
+public sealed record TaskSearchHit(string Board, PlanNodeView Node, double? Score = null, string? Retriever = null, string? MatchedIn = null);
 
 // The sort axis of the unified tasks read. Priority = the deterministic listing default
 // (priority then key); Relevance = the fused hybrid order, valid ONLY with a query (it is
