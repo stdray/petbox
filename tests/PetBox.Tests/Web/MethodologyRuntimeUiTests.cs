@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -19,7 +18,6 @@ namespace PetBox.Tests.Web;
 // UI's questions from its own data instead of collapsing to the `Simple` preset fallback.
 // These are service-door tests: define a methodology with a custom kind, then assert both the
 // raw runtime answers and the TaskBoard PageModel that wires them.
-[Collection("DataModule")]
 public sealed class MethodologyRuntimeUiTests : IDisposable
 {
 	const string Proj = "proj";
@@ -47,8 +45,7 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static FeatureFlags Flags() =>

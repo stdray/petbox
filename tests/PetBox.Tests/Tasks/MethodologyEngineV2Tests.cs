@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -21,7 +20,6 @@ namespace PetBox.Tests.Tasks;
 // demand an approving actor (tasks:approve at the MCP door; the UI owner as
 // TasksActor.Approver). The quartet parity itself is covered by the existing preset/smoke
 // tests; this file proves the same machinery works for a kind no preset ever heard of.
-[Collection("DataModule")]
 public sealed class MethodologyEngineV2Tests : IDisposable
 {
 	const string Proj = "proj";
@@ -49,8 +47,7 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	// A methodology no preset knows: `ticket` declares a transition EFFECT over the

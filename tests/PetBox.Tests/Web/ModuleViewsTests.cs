@@ -273,6 +273,9 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	{
 		using var scope = _factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+		// Shared per-class host: a definition may already exist from an earlier test in this
+		// class — baseline on the current version instead of assuming a fresh project (0).
+		var currentDef = await tasks.GetMethodologyDefinitionAsync("$system");
 		await tasks.DefineMethodologyAsync("$system", new PetBox.Tasks.Workflow.MethodologyDefinition("custom",
 		[
 			new PetBox.Tasks.Workflow.MethodologyKindDef("support", QuickAddAllowed: false,
@@ -284,7 +287,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 					],
 					[new("new", "closed")]),
 			]),
-		]), version: 0);
+		]), version: currentDef?.Version ?? 0);
 
 		var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
 		if (!await boards.ExistsAsync("$system", board))
