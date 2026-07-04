@@ -3,9 +3,9 @@
 @{
 	ViewData["Title"] = $"{Model.TableName} — {Model.DbName}";
 
-	string PageHref(int page) =>
+	string PageHref(int pageNum) =>
 		$"{PetBox.Web.Routes.ProjectTable(Model.WorkspaceKey, Model.ProjectKey, Model.DbName, Model.TableName)}"
-		+ $"?sql={Uri.EscapeDataString(Model.Sql)}&page={page}";
+		+ $"?sql={Uri.EscapeDataString(Model.Sql)}&pageNum={pageNum}";
 }
 
 <div class="mb-3 flex items-baseline gap-2 flex-wrap text-sm">
