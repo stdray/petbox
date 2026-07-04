@@ -247,4 +247,53 @@ public static class MethodologyPresets
 	// A node is "closed" (hidden under active-only) if its status is terminal in some preset.
 	public static bool IsTerminalSlug(string slug) =>
 		KindOfSlug(slug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;
+
+	// ---- provisioning presets (methodology enable + copy-as-definition) ----
+
+	// A named PROVISIONING PRESET: the board kinds `tasks_methodology_enable` creates as one
+	// unit, plus human-facing metadata for the enable UI. The point of the registry is that a
+	// new preset (e.g. a leaner "classic" pipeline) is added here as PURE DATA — no surface
+	// (service / MCP tool / admin UI) changes, they all read this list.
+	public sealed record MethodologyProvisioningPreset(
+		string Slug, string DisplayName, string Description, IReadOnlyList<BoardKind> Kinds);
+
+	// The slug enable defaults to (and the historical, only preset today).
+	public const string DefaultProvisioningPreset = "quartet";
+
+	// The provisioning preset registry. Today exactly one entry: the quartet
+	// (intake→ideas→spec→work) enabled since the methodology shipped.
+	public static readonly IReadOnlyList<MethodologyProvisioningPreset> ProvisioningPresets =
+	[
+		new("quartet", "Methodology quartet",
+			"The intake → ideas → spec → work pipeline: four singleton boards, work auto-wired to spec.",
+			[BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work]),
+	];
+
+	// Resolve a preset slug (case-insensitive; null/blank = the default). An unknown slug is a
+	// clear error listing the available slugs — the same posture as an unknown board kind.
+	public static MethodologyProvisioningPreset ResolveProvisioningPreset(string? slug)
+	{
+		var s = (slug ?? DefaultProvisioningPreset).Trim().ToLowerInvariant();
+		if (s.Length == 0) s = DefaultProvisioningPreset;
+		return ProvisioningPresets.FirstOrDefault(p => string.Equals(p.Slug, s, StringComparison.OrdinalIgnoreCase))
+			?? throw new ArgumentException(
+				$"unknown methodology preset '{slug}' — available presets: {string.Join("|", ProvisioningPresets.Select(p => p.Slug))}");
+	}
+
+	// Render a provisioning preset as a MethodologyDefinition DOCUMENT — the same shapes the
+	// presets already build (one KindDef per board kind + the builtin tag axes) — so a user can
+	// copy it as a starting point and edit it through tasks_methodology_def_upsert. The document
+	// passes MethodologyDefinitionValidator (the preset slug is the definition name; every kind
+	// slug, status and transition come straight from the preset data). Read-only: the returned
+	// definition is a template, NOT an installed methodology — and declaring the quartet kinds in
+	// a definition does NOT reproduce their hardcoded BoardKind engine semantics (delivery
+	// roll-up, ideaRef guard, intake auto-close, blocks auto-unblock).
+	public static MethodologyDefinition RenderPresetDefinition(string? slug)
+	{
+		var preset = ResolveProvisioningPreset(slug);
+		return new MethodologyDefinition(preset.Slug, preset.Kinds.Select(KindDef).ToList())
+		{
+			TagAxes = BuiltinAxes,
+		};
+	}
 }

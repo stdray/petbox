@@ -10,6 +10,7 @@ using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
+using PetBox.Tasks.Workflow;
 using PetBox.Web.Mcp;
 
 namespace PetBox.Tests.Tasks;
@@ -64,6 +65,60 @@ public sealed class QuartetTests : IDisposable
 		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
 		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards
 			.Count.Should().Be(4);
+	}
+
+	// enable-preset-param: enable takes a `preset` (default "quartet"); passing the quartet
+	// explicitly provisions exactly what the default does.
+	[Fact]
+	public async Task Enable_ExplicitQuartetPreset_ProvisionsSameAsDefault()
+	{
+		var http = Http("tasks:read,tasks:write");
+		var en = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "quartet");
+		en.Enabled.Should().BeTrue();
+		en.Boards.Select(b => b.Kind).Should().Equal("intake", "ideas", "spec", "work");
+	}
+
+	// An unknown preset slug is rejected before any board is created, naming the available
+	// slugs. (The MCP tool surfaces service errors, so assert the message on the service.)
+	[Fact]
+	public async Task Enable_UnknownPreset_Rejected_ListingSlugs()
+	{
+		var act = () => _tasks.EnableMethodologyAsync(Proj, "classic");
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*unknown methodology preset 'classic'*")
+			.WithMessage("*quartet*");
+	}
+
+	// Preset copy: def_get with `preset` renders the built-in preset as a COPYABLE definition
+	// template (Defined, version 0, no created/updated) in the SAME output shape as a stored
+	// definition — and that template is valid (installing it through the service, which runs
+	// MethodologyDefinitionValidator, succeeds).
+	[Fact]
+	public async Task MethodologyDefGet_PresetRender_IsValidCopyableTemplate()
+	{
+		var http = Http("tasks:read,tasks:write");
+
+		var render = await TasksTools.MethodologyDefGetAsync(http, Flags(), _tasks, Proj, preset: "quartet");
+		render.Defined.Should().BeTrue();
+		render.Version.Should().Be(0);
+		render.Created.Should().BeNull();
+		render.Name.Should().Be("quartet");
+		render.Kinds!.Select(k => k.Kind).Should().Equal("intake", "ideas", "spec", "work");
+		render.TagAxes!.Select(a => a.Namespace).Should().Equal("area", "concern");
+
+		// The template is a VALID definition — install it via the service door (validates first).
+		var ack = await _tasks.DefineMethodologyAsync(Proj, MethodologyPresets.RenderPresetDefinition("quartet"), 0);
+		ack.Changed.Should().BeTrue();
+
+		// Without preset, def_get now reads the STORED definition (real version, not the template).
+		var stored = await TasksTools.MethodologyDefGetAsync(http, Flags(), _tasks, Proj);
+		stored.Defined.Should().BeTrue();
+		stored.Name.Should().Be("quartet");
+		stored.Version.Should().BeGreaterThan(0);
+
+		// Unknown preset → clear error listing the available slugs.
+		var bad = () => TasksTools.MethodologyDefGetAsync(http, Flags(), _tasks, Proj, preset: "classic");
+		(await bad.Should().ThrowAsync<ArgumentException>()).WithMessage("*available presets*");
 	}
 
 	[Fact]

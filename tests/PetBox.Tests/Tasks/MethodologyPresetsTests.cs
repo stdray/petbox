@@ -258,6 +258,46 @@ public sealed class MethodologyPresetsTests
 		// simple declares NO axes → axes-emptiness = free-form tags, the one rule.
 		Runtime.TagAxes("simple").Should().BeEmpty();
 	}
+
+	// ── Part 3: the provisioning-preset registry (enable + copy-as-definition) ──
+
+	[Fact]
+	public void ProvisioningRegistry_ResolvesQuartet_CaseInsensitive_DefaultsOnBlank()
+	{
+		var expected = new[] { BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work };
+		foreach (var slug in new[] { "quartet", "QUARTET", " Quartet ", null, "" })
+			MethodologyPresets.ResolveProvisioningPreset(slug).Kinds.Should().Equal(expected,
+				$"'{slug ?? "<null>"}' must resolve the quartet (default) in pipeline order");
+		MethodologyPresets.DefaultProvisioningPreset.Should().Be("quartet");
+	}
+
+	[Fact]
+	public void ProvisioningRegistry_UnknownPreset_ErrorListsAvailableSlugs()
+	{
+		var act = () => MethodologyPresets.ResolveProvisioningPreset("classic");
+		act.Should().Throw<ArgumentException>()
+			.WithMessage("*unknown methodology preset 'classic'*")
+			.WithMessage("*quartet*"); // names the available slugs
+	}
+
+	[Fact]
+	public void RenderPresetDefinition_Quartet_MirrorsPresetShapes()
+	{
+		var def = MethodologyPresets.RenderPresetDefinition("quartet");
+		// The preset slug is the definition name (a valid slug); one KindDef per board kind,
+		// in pipeline order; the builtin tag axes carry over as tagAxes.
+		def.Name.Should().Be("quartet");
+		def.Kinds.Select(k => k.Kind).Should().Equal("intake", "ideas", "spec", "work");
+		def.TagAxes.Select(a => a.Namespace).Should().Equal("area", "concern");
+
+		// Each rendered kind IS the preset KindDef — same workflows/statuses/transitions and
+		// the work link constraints (feature/bug → task_spec) verbatim.
+		foreach (var kind in new[] { BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work })
+		{
+			var rendered = def.Kinds.Single(k => string.Equals(k.Kind, kind.ToString(), StringComparison.OrdinalIgnoreCase));
+			rendered.Should().BeEquivalentTo(MethodologyPresets.KindDef(kind));
+		}
+	}
 }
 
 // The preset-driven guards exercised through the SERVICE (the paths that used to be the
