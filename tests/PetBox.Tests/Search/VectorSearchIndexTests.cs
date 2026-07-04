@@ -1,6 +1,5 @@
 using LinqToDB;
 using LinqToDB.Data;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Search;
 
 namespace PetBox.Tests.Search;
@@ -11,7 +10,6 @@ namespace PetBox.Tests.Search;
 // model/dim guard, and (c) MRL truncation to the configured dim. The vector index is Eventual,
 // so the facade does NOT drive it on write — these tests materialize it directly (standing in
 // for the async-vectorization worker).
-[Collection("DataModule")]
 public sealed class VectorSearchIndexTests : IDisposable
 {
 	const string Scope = "proj/notes";
@@ -30,8 +28,7 @@ public sealed class VectorSearchIndexTests : IDisposable
 
 	public void Dispose()
 	{
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	DataConnection Connect() => new(new DataOptions().UseSQLite(_cs));

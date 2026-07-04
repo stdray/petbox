@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Deploy.Contract;
 using PetBox.Deploy.Data;
 using PetBox.Deploy.Services;
@@ -9,7 +8,6 @@ namespace PetBox.Tests.Deploy;
 // Covers the fleet-wide deploy service CRUD that the agent endpoints, MCP tools and UI
 // all delegate to: node registry, per-(service,node) desired state, the one-copy-per-node
 // invariant, ConfigHash, and node-delete cascade.
-[Collection("DataModule")]
 public sealed class DeployServiceTests : IDisposable
 {
 	readonly string _dir;
@@ -29,8 +27,7 @@ public sealed class DeployServiceTests : IDisposable
 	public void Dispose()
 	{
 		_db.Dispose();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -16,7 +15,6 @@ namespace PetBox.Tests.Tasks;
 
 // methodology-quartet: opt-in provisioning of the four singleton boards + auto-wiring
 // work->spec, the one-per-project singleton guard, and the unified surface.
-[Collection("DataModule")]
 public sealed class QuartetTests : IDisposable
 {
 	const string Proj = "proj";
@@ -42,8 +40,7 @@ public sealed class QuartetTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

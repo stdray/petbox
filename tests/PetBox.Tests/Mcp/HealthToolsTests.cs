@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Web.Mcp;
@@ -29,8 +28,7 @@ public sealed class HealthToolsTests : IDisposable
 	public void Dispose()
 	{
 		_db.Dispose();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	// Append a report for (svc, project) received at `receivedAt`.

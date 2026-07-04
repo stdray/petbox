@@ -15,7 +15,6 @@ namespace PetBox.Tests.Data;
 // An agent key with admin:provision can create a project and mint a downstream key; a key
 // without the scope is rejected. Every tool surfaces failures as a structured {error}
 // payload (GuardAsync), so we assert error CONTENT, not just IsError.
-[Collection("DataModule")]
 public sealed class ProvisioningToolsTests : IAsyncLifetime
 {
 	const string Workspace = "wsprov";
@@ -32,7 +31,6 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
 		Environment.SetEnvironmentVariable("Features__Config", "true");
 
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared");
 		_factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
@@ -41,6 +39,10 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
+						// In-memory config (not the CONNECTIONSTRINGS__PETBOX env var): a
+						// process-wide env write with a per-class value would leak into any
+						// host booting concurrently now that classes run in parallel.
+						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
 						["Features:Config"] = "true",
 					});
 				});
@@ -77,7 +79,6 @@ public sealed class ProvisioningToolsTests : IAsyncLifetime
 		await _mcp.DisposeAsync();
 		_http.Dispose();
 		await _factory.DisposeAsync();
-		Environment.SetEnvironmentVariable("CONNECTIONSTRINGS__PETBOX", null);
 	}
 
 	async Task<McpClientTool> ToolAsync(string name) =>

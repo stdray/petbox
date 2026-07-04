@@ -3,7 +3,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -23,7 +22,6 @@ namespace PetBox.Tests.Tasks;
 //   (b) a project with a custom `support` kind renders that kind's gates/constraints/axes
 //       from its definition (source reflects it) alongside the preset fallback;
 //   (c) the rendering is deterministic — two calls, identical text.
-[Collection("DataModule")]
 public sealed class MethodologyGuideTests : IAsyncLifetime
 {
 	const string ProjectKey = "mgd";
@@ -95,8 +93,7 @@ public sealed class MethodologyGuideTests : IAsyncLifetime
 		await _mcp.DisposeAsync();
 		_http.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	// ── helpers ──────────────────────────────────────────────────────────────

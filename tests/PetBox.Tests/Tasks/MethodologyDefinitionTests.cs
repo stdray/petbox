@@ -3,7 +3,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -19,7 +18,6 @@ namespace PetBox.Tests.Tasks;
 // pure data in this slice — live boards still run the built-in presets —
 // so these tests cover the document round-trip, the optimistic-concurrency contract and
 // the whole-document integrity validation, not FSM behavior.
-[Collection("DataModule")]
 public sealed class MethodologyDefinitionTests : IAsyncLifetime
 {
 	const string ProjectKey = "mdef";
@@ -91,8 +89,7 @@ public sealed class MethodologyDefinitionTests : IAsyncLifetime
 		await _mcp.DisposeAsync();
 		_http.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	// ── helpers ──────────────────────────────────────────────────────────────

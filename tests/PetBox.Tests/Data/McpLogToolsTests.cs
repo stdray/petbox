@@ -2,7 +2,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -16,7 +15,6 @@ namespace PetBox.Tests.Data;
 // Sanity tests for the single Log MCP tool (log_query). Deep KQL behavior is
 // covered by the LogPipeline + KqlTransformer tests; this just verifies the
 // MCP surface routes correctly and respects auth.
-[Collection("DataModule")]
 public sealed class McpLogToolsTests : IAsyncLifetime
 {
 	const string TestProjectKey = "kpvotes";
@@ -132,8 +130,7 @@ public sealed class McpLogToolsTests : IAsyncLifetime
 		await _mcp.DisposeAsync();
 		_http.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	[Fact]

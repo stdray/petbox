@@ -5,7 +5,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
@@ -14,7 +13,6 @@ using PetBox.Data;
 
 namespace PetBox.Tests.Data;
 
-[Collection("DataModule")]
 public sealed class QueryExecApiTests : IAsyncLifetime
 {
 	const string TestProjectKey = "kpvotes";
@@ -86,8 +84,7 @@ public sealed class QueryExecApiTests : IAsyncLifetime
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	[Fact]

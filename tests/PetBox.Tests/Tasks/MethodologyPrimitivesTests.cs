@@ -3,7 +3,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -26,7 +25,6 @@ namespace PetBox.Tests.Tasks;
 //
 // The custom kind under test: `support`, one block shared by ticket|incident
 // (New → Open → Resolved), with `incident` constrained to carry a `blocks` link at birth.
-[Collection("DataModule")]
 public sealed class MethodologyPrimitivesTests : IAsyncLifetime
 {
 	const string ProjectKey = "mprm";
@@ -98,8 +96,7 @@ public sealed class MethodologyPrimitivesTests : IAsyncLifetime
 		await _mcp.DisposeAsync();
 		_http.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	// ── helpers ──────────────────────────────────────────────────────────────

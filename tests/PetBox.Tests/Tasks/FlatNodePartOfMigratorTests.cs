@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
@@ -11,7 +10,6 @@ namespace PetBox.Tests.Tasks;
 // The one-time spec-flat-tags back-fill: legacy "phase/wave/task" keys become flat slugs,
 // the old nesting becomes part_of edges, and same-slug collisions across branches get a
 // stable suffix. Idempotent.
-[Collection("DataModule")]
 public sealed class FlatNodePartOfMigratorTests : IDisposable
 {
 	const string Proj = "proj";
@@ -35,8 +33,7 @@ public sealed class FlatNodePartOfMigratorTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

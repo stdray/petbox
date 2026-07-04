@@ -3,10 +3,6 @@ using PetBox.Data;
 
 namespace PetBox.Tests.Data;
 
-// Tests share the global SqliteConnection pool — serialize across this file
-// and SchemaRunnerTests to avoid one Dispose's ClearAllPools yanking a
-// connection out of the other's in-flight test.
-[Collection("DataModule")]
 public sealed class DataDbFactoryTests : IDisposable
 {
 	readonly string _baseDir;
@@ -18,13 +14,7 @@ public sealed class DataDbFactoryTests : IDisposable
 		_factory = new DataDbFactory(_baseDir);
 	}
 
-	public void Dispose()
-	{
-		// SqliteConnection.ClearAllPools releases any pooled file handles so the
-		// tempdir can be deleted on Windows.
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
-	}
+	public void Dispose() => TestDirs.CleanupOrDefer(_baseDir);
 
 	[Fact]
 	public void GetDbPath_Returns_Project_Subdirectory_File()
@@ -86,7 +76,7 @@ public sealed class DataDbFactoryTests : IDisposable
 			cmd.CommandText = "CREATE TABLE x (id INTEGER); INSERT INTO x VALUES (1);";
 			await cmd.ExecuteNonQueryAsync();
 		}
-		SqliteConnection.ClearAllPools();
+		TestDirs.ClearPoolsUnder(_baseDir);
 
 		var deleted = _factory.TryDelete("myproj", "cache");
 
@@ -130,7 +120,7 @@ public sealed class DataDbFactoryTests : IDisposable
 			cmd.CommandText = "CREATE TABLE only_in_a (id INTEGER)";
 			await cmd.ExecuteNonQueryAsync();
 		}
-		SqliteConnection.ClearAllPools();
+		TestDirs.ClearPoolsUnder(_baseDir);
 
 		await using var connB = new SqliteConnection(csB);
 		await connB.OpenAsync();

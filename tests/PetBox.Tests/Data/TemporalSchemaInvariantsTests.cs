@@ -16,11 +16,7 @@ public sealed class TemporalSchemaInvariantsTests : IDisposable
 		Directory.CreateDirectory(_dir);
 	}
 
-	public void Dispose()
-	{
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
-	}
+	public void Dispose() => TestDirs.CleanupOrDefer(_dir);
 
 	[Theory]
 	[InlineData("tasks", "plan_nodes", "ux_plan_nodes_active_board_key")]

@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Data;
@@ -9,7 +8,6 @@ namespace PetBox.Tests.Tasks;
 // Node comments: a temporal, tree-structured, open-tagged discussion thread under any node.
 // Comments live in the per-project tasks file (M007) but never touch ITasksService — so
 // these tests drive CommentService directly over a ScopedDbFactory<TasksDb>, no board needed.
-[Collection("DataModule")]
 public sealed class CommentServiceTests : IDisposable
 {
 	readonly string _dir;
@@ -28,8 +26,7 @@ public sealed class CommentServiceTests : IDisposable
 	public void Dispose()
 	{
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

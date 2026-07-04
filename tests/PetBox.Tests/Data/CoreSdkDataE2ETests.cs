@@ -3,7 +3,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Client;
@@ -16,7 +15,6 @@ namespace PetBox.Tests.Data;
 // End-to-end: drive the real PetBox.Client SDK (core transport + Data client) against an
 // in-process petbox via WebApplicationFactory's handler. Proves the full round-trip
 // create-db → schema → exec → query through the published client, not just raw HTTP.
-[Collection("DataModule")]
 public sealed class CoreSdkDataE2ETests : IAsyncLifetime
 {
 	const string TestProjectKey = "sdke2e";
@@ -86,8 +84,7 @@ public sealed class CoreSdkDataE2ETests : IAsyncLifetime
 	{
 		_sdk.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	[Fact]

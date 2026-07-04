@@ -4,7 +4,6 @@ using PetBox.Data.Schema;
 
 namespace PetBox.Tests.Data;
 
-[Collection("DataModule")]
 public sealed class SchemaRunnerTests : IDisposable
 {
 	readonly string _baseDir;
@@ -18,11 +17,7 @@ public sealed class SchemaRunnerTests : IDisposable
 		_runner = new SchemaRunner();
 	}
 
-	public void Dispose()
-	{
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
-	}
+	public void Dispose() => TestDirs.CleanupOrDefer(_baseDir);
 
 	async Task<string> NewDbAsync()
 	{

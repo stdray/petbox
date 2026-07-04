@@ -3,7 +3,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -19,7 +18,6 @@ namespace PetBox.Tests.Data;
 // config.* binding tools. Each tool now takes flat, typed params (no JsonElement),
 // so a real MCP client gets a per-field input schema. Provisioning (project/apikey)
 // lives in ProvisioningToolsTests; SQL round-trips in McpDataToolsTests.
-[Collection("DataModule")]
 public sealed class EntityToolsTests : IAsyncLifetime
 {
 	const string ProjectKey = "entproj";
@@ -103,8 +101,7 @@ public sealed class EntityToolsTests : IAsyncLifetime
 		await _mcp.DisposeAsync();
 		_http.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	async Task<McpClientTool> ToolAsync(string name) =>

@@ -2,7 +2,6 @@ using System.Security.Claims;
 using System.Text.Json;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -18,7 +17,6 @@ namespace PetBox.Tests.Tasks;
 // Verifies the flat-node + part_of tree contract surfaced by the Tasks MCP tools:
 // nodes are flat slugs, vertical structure is the part_of edge, and tasks_search returns
 // parentNodeId/parentSlug + a computed depth (the projection that replaced l1/l2/l3).
-[Collection("DataModule")]
 public sealed class TasksTreeContractTests : IDisposable
 {
 	const string Proj = "proj";
@@ -66,8 +64,7 @@ public sealed class TasksTreeContractTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

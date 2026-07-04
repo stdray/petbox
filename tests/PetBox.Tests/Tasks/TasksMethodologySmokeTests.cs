@@ -3,7 +3,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -29,7 +28,6 @@ namespace PetBox.Tests.Tasks;
 //   relations_create(projectKey, kind, fromNodeId, toNodeId)   kind ∈ task_spec|issue_task|idea_spec|blocks|nfr|dup
 //   relations_list(projectKey, nodeId, direction?)             direction ∈ from|to|both (default both)
 //   report_issue(title, detail) → lands on an intake-kind board, status `reported`
-[Collection("DataModule")]
 public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 {
 	const string ProjectKey = "wf";
@@ -114,8 +112,7 @@ public sealed class TasksMethodologySmokeTests : IAsyncLifetime
 		_httpAgent.Dispose();
 		_httpApprove.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	// ── helpers ──────────────────────────────────────────────────────────────

@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -18,7 +17,6 @@ namespace PetBox.Tests.Sessions;
 // SessionDigestJob distills digests into memory → SessionSearchService discovers the
 // right session through the digest store and drills inside it through the episodic
 // index, returning message-ordinal provenance.
-[Collection("DataModule")]
 public sealed class SessionSearchServiceTests : IDisposable
 {
 	const string Proj = "proj";
@@ -38,7 +36,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-sesssearch-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
-		MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_sessionsFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
@@ -57,8 +55,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 		_db.Dispose();
 		_sessionsFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		_memoryFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static SessionMessageInput[] Msgs(params string[] contents) =>

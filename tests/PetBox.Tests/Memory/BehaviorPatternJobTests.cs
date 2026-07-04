@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -17,7 +16,6 @@ namespace PetBox.Tests.Memory;
 // metadata.sources = every contributing sessionId); a single-source claim is rejected;
 // an update extends sources instead of duplicating; mining fires only once enough fresh
 // Feedback accumulated; bad LLM output neither crashes nor loops.
-[Collection("DataModule")]
 public sealed class BehaviorPatternJobTests : IDisposable
 {
 	const string Proj = "proj";
@@ -33,7 +31,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-bpmine-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
-		MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
@@ -45,8 +43,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	BehaviorPatternJob Job(ILlmClient? llm, AutocaptureDedupOptions? dedup = null) =>

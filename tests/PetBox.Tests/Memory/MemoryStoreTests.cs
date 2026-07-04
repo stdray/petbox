@@ -1,6 +1,5 @@
 using LinqToDB;
 using LinqToDB.Data;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
@@ -9,7 +8,6 @@ using PetBox.Memory.Data;
 
 namespace PetBox.Tests.Memory;
 
-[Collection("DataModule")]
 public sealed class MemoryStoreTests : IDisposable
 {
 	readonly string _dir;
@@ -34,8 +32,7 @@ public sealed class MemoryStoreTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

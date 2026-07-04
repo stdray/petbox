@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -16,7 +15,6 @@ namespace PetBox.Tests.Web;
 // own leg) with full-text hits. Exercised against REAL TasksService instances over several
 // project files sharing one factory root — exactly how multiple projects live in prod (one
 // tasks DB file per project key under the same root).
-[Collection("DataModule")]
 public sealed class CrossScopeTaskSearchServiceTests : IDisposable
 {
 	const string ProjA = "proj-a"; // lives in ws1
@@ -48,8 +46,7 @@ public sealed class CrossScopeTaskSearchServiceTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	// The dict shape ProjectsByWorkspace hands the service — access scoping lives entirely in

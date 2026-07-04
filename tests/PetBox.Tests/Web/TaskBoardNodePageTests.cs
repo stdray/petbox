@@ -1,7 +1,6 @@
 using LinqToDB;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -17,7 +16,6 @@ namespace PetBox.Tests.Web;
 // The per-node detail page (TaskBoardNode: /ui/{ws}/{project}/tasks/node/{nodeId}) and the
 // cross-board GetNodeAsync that powers it: a node is addressed by its stable NodeId alone, so
 // resolution must not need the board, must rebuild the part_of breadcrumb, and surface the thread.
-[Collection("DataModule")]
 public sealed class TaskBoardNodePageTests : IDisposable
 {
 	const string Proj = "proj";
@@ -47,8 +45,7 @@ public sealed class TaskBoardNodePageTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static FeatureFlags Flags(bool tasks = true) =>

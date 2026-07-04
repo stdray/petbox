@@ -4,7 +4,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -34,7 +33,6 @@ namespace PetBox.Tests.Mcp;
 //      structuredContent conforms (the happy path a strict client validates).
 //   3. Edge battery: not-found / delete-missing branches — assert the universal strict-client
 //      property (isError OR conforms). This is exactly where the -32600 class lives.
-[Collection("DataModule")]
 public sealed class McpOutputSchemaConformanceTests : IAsyncLifetime
 {
 	const string ProjectKey = "conf";
@@ -160,8 +158,7 @@ public sealed class McpOutputSchemaConformanceTests : IAsyncLifetime
 		await _mcp.DisposeAsync();
 		_http.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	// 1. COVERAGE GATE — nothing escapes. Every tool that declares an outputSchema is either

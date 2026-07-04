@@ -2,7 +2,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
@@ -10,7 +9,6 @@ using PetBox.Data;
 
 namespace PetBox.Tests.Data;
 
-[Collection("DataModule")]
 public sealed class OrphanCleanupServiceTests : IAsyncLifetime
 {
 	const string TestProjectKey = "kpvotes";
@@ -58,8 +56,7 @@ public sealed class OrphanCleanupServiceTests : IAsyncLifetime
 	public async Task DisposeAsync()
 	{
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	[Fact]
@@ -70,7 +67,7 @@ public sealed class OrphanCleanupServiceTests : IAsyncLifetime
 		await factory.CreateAsync(TestProjectKey, "orphan2", DataDbFactory.DefaultMaxPageCount);
 
 		// No DataDbs rows inserted — both files are orphans by definition.
-		SqliteConnection.ClearAllPools();
+		TestDirs.ClearPoolsUnder(_baseDir);
 
 		var service = ActivatorUtilities.CreateInstance<OrphanCleanupService>(_factory.Services);
 		await service.RunOncePassAsync(CancellationToken.None);
@@ -98,7 +95,7 @@ public sealed class OrphanCleanupServiceTests : IAsyncLifetime
 				UpdatedAt = now,
 			});
 		}
-		SqliteConnection.ClearAllPools();
+		TestDirs.ClearPoolsUnder(_baseDir);
 
 		var service = ActivatorUtilities.CreateInstance<OrphanCleanupService>(_factory.Services);
 		await service.RunOncePassAsync(CancellationToken.None);
@@ -113,7 +110,7 @@ public sealed class OrphanCleanupServiceTests : IAsyncLifetime
 		// cleaned up just as for known projects.
 		var factory = _factory.Services.GetRequiredService<IDataDbFactory>();
 		await factory.CreateAsync("vanished-project", "lonely", DataDbFactory.DefaultMaxPageCount);
-		SqliteConnection.ClearAllPools();
+		TestDirs.ClearPoolsUnder(_baseDir);
 
 		var service = ActivatorUtilities.CreateInstance<OrphanCleanupService>(_factory.Services);
 		await service.RunOncePassAsync(CancellationToken.None);

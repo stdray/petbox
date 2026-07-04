@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -16,7 +15,6 @@ namespace PetBox.Tests.Memory;
 // Verifies the A4 taxonomy contract on the Memory MCP surface: type is required on
 // upsert, list/search filter by type, tags normalise, and the store auto-vivifies
 // on a cold upsert (A3, mirrored for memory).
-[Collection("DataModule")]
 public sealed class MemoryToolsContractTests : IDisposable
 {
 	const string Proj = "proj";
@@ -44,8 +42,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	[Fact]

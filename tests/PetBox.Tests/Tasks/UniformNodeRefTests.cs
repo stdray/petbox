@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -20,7 +19,6 @@ namespace PetBox.Tests.Tasks;
 // param) with an "ambiguous slug … boards: […]" error when a slug lives on 2+ boards;
 // comments_create/list resolve a slug on their `board` param. 32-hex values are always NodeIds
 // (passthrough — the pre-existing NodeId paths are the regression baseline).
-[Collection("DataModule")]
 public sealed class UniformNodeRefTests : IDisposable
 {
 	const string Proj = "proj";
@@ -50,8 +48,7 @@ public sealed class UniformNodeRefTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static IHttpContextAccessor Http(string scopes = "tasks:read,tasks:write")

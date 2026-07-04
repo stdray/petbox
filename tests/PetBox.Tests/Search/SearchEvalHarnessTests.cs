@@ -1,6 +1,5 @@
 using LinqToDB;
 using LinqToDB.Data;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Search;
 using PetBox.Core.Search.Eval;
 
@@ -12,7 +11,6 @@ namespace PetBox.Tests.Search;
 // scale. Here it ranks two digest strategies (full-text vs title-only) on a deterministic,
 // LLM-free corpus and proves it can tell them apart by recall@k — the empirical bench the
 // design calls for (memory m-1a5c37fe).
-[Collection("DataModule")]
 public sealed class SearchEvalHarnessTests : IDisposable
 {
 	const string Scope = "proj/sessions";
@@ -26,8 +24,7 @@ public sealed class SearchEvalHarnessTests : IDisposable
 
 	public void Dispose()
 	{
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	// A tiny labeled corpus: three "sessions" whose distinctive words live in the BODY but not

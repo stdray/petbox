@@ -2,7 +2,6 @@ using System.Net;
 using LinqToDB.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
@@ -82,8 +81,7 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	// Logs in (anti-forgery + cookie) and returns the authenticated response for url.

@@ -16,7 +16,6 @@ namespace PetBox.Tests.Search;
 // pre-M006 has no search_cursor and killed the whole pass in prod), and (b) isolate per-file
 // failures so one broken store cannot block the backfill of every other store (spec:
 // durable-backfill).
-[Collection("DataModule")]
 public sealed class VectorizationJobResilienceTests : IDisposable
 {
 	const string Proj = "proj";

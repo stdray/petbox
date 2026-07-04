@@ -3,7 +3,6 @@ using FluentValidation.Results;
 using LinqToDB;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -16,7 +15,6 @@ namespace PetBox.Tests.Llm;
 // The LLM-router admin page (spec llm-admin-ui + llm-routes-ui): add/update/delete provider
 // endpoints AND routes over ILlmRegistryAdmin, surface validation errors, gate on
 // Feature.LlmRouter. Keys are write-only; routes are addressed by row index for edit/delete.
-[Collection("DataModule")]
 public sealed class LlmAdminPageTests : IDisposable
 {
 	const string Proj = "p";
@@ -36,8 +34,7 @@ public sealed class LlmAdminPageTests : IDisposable
 	public void Dispose()
 	{
 		_db.Dispose();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static FeatureFlags Features(bool llmRouter)

@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
@@ -15,7 +14,6 @@ namespace PetBox.Tests.Tasks;
 // other writers' history — an insert of 3 nodes on a live board must not return 78 foreign
 // nodes. The write carries NO cursor parameter; the full board delta since a cursor lives
 // exclusively on tasks_delta, and `currentVersion` stays the board-wide cursor for it.
-[Collection("DataModule")]
 public sealed class UpsertEchoScopeTests : IDisposable
 {
 	const string Proj = "proj";
@@ -43,8 +41,7 @@ public sealed class UpsertEchoScopeTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static NodePatch Node(string key, string? title = null, string? status = null,

@@ -2,7 +2,6 @@ using System.Security.Claims;
 using System.Text.Json;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -18,7 +17,6 @@ namespace PetBox.Tests.Memory;
 // The scope cascade (project ⊕ workspace) used to hand the limit greedily to the project leg and
 // leave workspace the remainder; now both scopes compete on fused relevance so the best hit wins
 // regardless of container. And each row carries a compact sourcesCount parsed from metadata.
-[Collection("DataModule")]
 public sealed class MemoryProvenanceMergeTests : IDisposable
 {
 	const string Proj = "proj";
@@ -46,8 +44,7 @@ public sealed class MemoryProvenanceMergeTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	// W5.2: a strong (rank-0) hit in the WORKSPACE scope must outrank a weak (rank-2) hit in the

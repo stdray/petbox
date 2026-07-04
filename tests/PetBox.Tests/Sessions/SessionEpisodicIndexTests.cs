@@ -1,4 +1,3 @@
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Time.Testing;
 using PetBox.Core.Data;
 using PetBox.Core.Settings;
@@ -14,7 +13,6 @@ namespace PetBox.Tests.Sessions;
 // russian-stem FTS recall that SQLite prefix-matching cannot give, a semantic leg that
 // finds paraphrases, honest degradation when the embedder is down, TTL aging, and
 // re-hydration when the session grew past the cached version.
-[Collection("DataModule")]
 public sealed class SessionEpisodicIndexTests : IDisposable
 {
 	const string Proj = "proj";
@@ -35,8 +33,7 @@ public sealed class SessionEpisodicIndexTests : IDisposable
 	public void Dispose()
 	{
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static SessionMessageInput[] Msgs(params string[] contents) =>

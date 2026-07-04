@@ -4,7 +4,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
@@ -19,7 +18,6 @@ namespace PetBox.Tests.Data;
 // schema_apply, exec, query). Deep behavior is already covered by the REST
 // QueryExecApiTests / SchemaApiTests — the MCP layer reuses the same code
 // paths, so we just verify the surface works end-to-end through the protocol.
-[Collection("DataModule")]
 public sealed class McpDataToolsTests : IAsyncLifetime
 {
 	const string TestProjectKey = "kpvotes";
@@ -100,8 +98,7 @@ public sealed class McpDataToolsTests : IAsyncLifetime
 		await _mcp.DisposeAsync();
 		_http.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	[Fact]

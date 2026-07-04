@@ -1,5 +1,4 @@
 using LinqToDB;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -19,7 +18,6 @@ namespace PetBox.Tests.Sessions;
 // into the project's `session-digests` memory store, incrementally (the digest entry's
 // metadata cursor feeds ISessionService.DeltaAsync), without ever re-distilling an
 // unchanged session, and degrades to a no-op when chat is unavailable.
-[Collection("DataModule")]
 public sealed class SessionDigestJobTests : IDisposable
 {
 	const string Proj = "proj";
@@ -38,7 +36,7 @@ public sealed class SessionDigestJobTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-sessdigest-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
-		MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_sessionsFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
@@ -54,8 +52,7 @@ public sealed class SessionDigestJobTests : IDisposable
 		_db.Dispose();
 		_sessionsFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		_memoryFactory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	SessionDigestJob Job(ILlmClient? llm, TimeSpan? quiet = null, TimeSpan? budget = null,

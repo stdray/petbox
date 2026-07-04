@@ -1,6 +1,5 @@
 using LinqToDB;
 using LinqToDB.Data;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Search;
 
 namespace PetBox.Tests.Search;
@@ -10,7 +9,6 @@ namespace PetBox.Tests.Search;
 // entity-addressed index/search, the TRANSACTIONAL lexical floor (a rolled-back write leaves
 // no trace), Russian/mixed tokenization, type filtering, delete, RRF fusion across indexes,
 // and honest provenance (which retrievers ran + degraded).
-[Collection("DataModule")]
 public sealed class SearchServiceTests : IDisposable
 {
 	const string Scope = "proj/notes";
@@ -28,8 +26,7 @@ public sealed class SearchServiceTests : IDisposable
 
 	public void Dispose()
 	{
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	DataConnection Connect() => new(new DataOptions().UseSQLite(_cs));

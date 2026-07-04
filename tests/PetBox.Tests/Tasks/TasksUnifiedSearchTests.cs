@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -21,7 +20,6 @@ namespace PetBox.Tests.Tasks;
 // the shared predicates (status, keys slug|NodeId mixed, terminal addressing), the
 // server-side sort axes, and the mode/parameter guards (relevance-without-q, groupBy+q).
 // These fixtures run without an embedder, so query mode is lexical-only by construction.
-[Collection("DataModule")]
 public sealed class TasksUnifiedSearchTests : IDisposable
 {
 	const string Proj = "proj";
@@ -47,8 +45,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static IHttpContextAccessor Http()

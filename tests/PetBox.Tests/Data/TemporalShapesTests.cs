@@ -10,7 +10,6 @@ namespace PetBox.Tests.Data;
 // blob keyed by sessionId) and a Memory note (description+body+tags keyed by
 // name). Same engine, same concurrency semantics, different payloads.
 
-[Collection("DataModule")]
 public sealed class TemporalSessionTests : IDisposable
 {
 	readonly string _dir;
@@ -24,11 +23,7 @@ public sealed class TemporalSessionTests : IDisposable
 		EnsureSchema(_cs);
 	}
 
-	public void Dispose()
-	{
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
-	}
+	public void Dispose() => TestDirs.CleanupOrDefer(_dir);
 
 	[Fact]
 	public async Task Save_Then_Edit_KeepsRevisions()
@@ -107,7 +102,6 @@ public sealed class TemporalSessionTests : IDisposable
 	}
 }
 
-[Collection("DataModule")]
 public sealed class TemporalMemoryTests : IDisposable
 {
 	readonly string _dir;
@@ -121,11 +115,7 @@ public sealed class TemporalMemoryTests : IDisposable
 		EnsureSchema(_cs);
 	}
 
-	public void Dispose()
-	{
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
-	}
+	public void Dispose() => TestDirs.CleanupOrDefer(_dir);
 
 	[Fact]
 	public async Task TagsChange_CreatesRevision()

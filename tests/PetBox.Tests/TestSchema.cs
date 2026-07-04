@@ -26,7 +26,9 @@ public static class TestSchema
 			cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE);";
 			cmd.ExecuteNonQuery();
 		}
-		SqliteConnection.ClearAllPools();
+		// Release only this template's pooled handle — a global ClearAllPools here would
+		// yank pooled connections out from under tests already running in parallel.
+		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={path}"));
 		return path;
 	}
 

@@ -2,7 +2,6 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using LinqToDB.Mapping;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Search;
 using PetBox.Core.Search.Eval;
@@ -18,7 +17,6 @@ namespace PetBox.Tests.SearchCore;
 // plus identifier controls. Strategy A = the pre-stemming floor (raw text, `tok*` match);
 // strategy B = the shipped one (shadow stems + `(tok* OR stem*)`). The corpus includes
 // forms stemming is NOT expected to fix (suppletive/aspect pairs) to keep the number honest.
-[Collection("DataModule")]
 public sealed class FtsStemmingEvalTests : IDisposable
 {
 	readonly ITestOutputHelper _output;
@@ -37,8 +35,7 @@ public sealed class FtsStemmingEvalTests : IDisposable
 	public void Dispose()
 	{
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	// (doc id, text) — petbox-flavored mixed ru/en content.

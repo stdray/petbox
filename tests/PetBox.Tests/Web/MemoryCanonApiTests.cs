@@ -4,7 +4,6 @@ using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
@@ -19,7 +18,6 @@ namespace PetBox.Tests.Web;
 // GET /api/memory/{projectKey}/canon (spec agent-wiring, memory-canon-storage): the wiring-hook
 // read surface for the curated memory canon. Returns the project's canon index and the shared
 // workspace canon index; missing parts are null (still 200); no key is 401.
-[Collection("DataModule")]
 public sealed class MemoryCanonApiTests : IAsyncLifetime
 {
 	const string TestProjectKey = "kpvotes";
@@ -80,8 +78,7 @@ public sealed class MemoryCanonApiTests : IAsyncLifetime
 	{
 		_client.Dispose();
 		await _factory.DisposeAsync();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_baseDir)) Directory.Delete(_baseDir, recursive: true);
+		TestDirs.CleanupOrDefer(_baseDir);
 	}
 
 	// Seed a canon entry of a scope through the service door (auto-vivifies the store).

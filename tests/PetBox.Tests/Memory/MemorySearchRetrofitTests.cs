@@ -1,6 +1,5 @@
 using LinqToDB;
 using LinqToDB.Data;
-using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
@@ -17,7 +16,6 @@ namespace PetBox.Tests.Memory;
 // back WITH the entity), pre-retrofit data backfills lexically on demand, and vectors are
 // materialized off the write path by the async-vectorization worker — durably (a down embedder
 // backfills on recovery, nothing lost).
-[Collection("DataModule")]
 public sealed class MemorySearchRetrofitTests : IDisposable
 {
 	const string Proj = "proj";
@@ -31,7 +29,7 @@ public sealed class MemorySearchRetrofitTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-memretro-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
-		MigrationRunner.Run(cs);
+		TestSchema.Core(cs);
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
@@ -43,8 +41,7 @@ public sealed class MemorySearchRetrofitTests : IDisposable
 	{
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
-		SqliteConnection.ClearAllPools();
-		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+		TestDirs.CleanupOrDefer(_dir);
 	}
 
 	static MemoryEntryInput Entry(string key, string description, string body) =>
