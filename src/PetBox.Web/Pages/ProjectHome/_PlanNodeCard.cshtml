@@ -9,7 +9,9 @@
 
 @functions {
 	// Same presentation mapping as TaskBoard / the node detail page (domain owns StatusKind).
-	static string StatusBadge(string slug) => PetBox.Tasks.Workflow.MethodologyPresets.KindOfSlug(slug) switch
+	// Classification comes from MethodologyRuntime.StatusKindOf (the board's effective kind —
+	// a definition-declared custom status classifies from the definition, not the presets).
+	static string StatusBadge(PetBox.Tasks.Workflow.StatusKind? kind) => kind switch
 	{
 		PetBox.Tasks.Workflow.StatusKind.TerminalOk => "badge-success",
 		PetBox.Tasks.Workflow.StatusKind.TerminalCancel => "badge-ghost",
@@ -51,10 +53,11 @@
 			</div>
 			<div class="flex items-center gap-1 shrink-0">
 				@* On a spec board `defined` is the ~universal default → pure noise; show the status
-				   badge only for a non-default (terminal `deprecated`) state (spec-board-status-noise #9). *@
-				@if (Model.Kind != PetBox.Tasks.Workflow.BoardKind.Spec || PetBox.Tasks.Workflow.MethodologyPresets.IsTerminalSlug(n.Status))
+				   badge only for a non-default (terminal `deprecated`) state (spec-board-status-noise #9).
+				   The suppression is a SPEC-PRESET behavior (PresetKind is null for a defined custom kind). *@
+				@if (Model.Runtime.PresetKind(Model.KindSlug) != PetBox.Tasks.Workflow.BoardKind.Spec || Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status))
 				{
-					<span class="badge @StatusBadge(n.Status) badge-sm" data-testid="node-status">@n.Status</span>
+					<span class="badge @StatusBadge(Model.Runtime.StatusKindOf(Model.KindSlug, n.Status)) badge-sm" data-testid="node-status">@n.Status</span>
 				}
 				@if (n.Delivery is not null)
 				{

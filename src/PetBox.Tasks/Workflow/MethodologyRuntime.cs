@@ -18,6 +18,11 @@ public sealed class MethodologyRuntime
 	// The no-definition runtime: every answer falls through to the built-in presets.
 	public static readonly MethodologyRuntime PresetsOnly = new(null);
 
+	// Wrap an optionally-present definition — the null-coalesce every surface (service,
+	// Razor pages) applies when it holds a MethodologyDefView? in hand.
+	public static MethodologyRuntime From(MethodologyDefinition? definition) =>
+		definition is null ? PresetsOnly : new(definition);
+
 	// Builtin relation kinds with PROCESS meaning (FSM effects / guards key on these):
 	// task_spec (specRef), issue_task (intake auto-close), idea_spec (ideaRef), blocks
 	// (gating + unblock effect), part_of (decomposition), supersedes (obsoletion).
@@ -152,18 +157,22 @@ public sealed class MethodologyRuntime
 	public bool IsTerminalSlug(string slug) =>
 		KindOfSlug(slug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;
 
-	// Per-board terminal classification (the closed-node predicate): a DEFINED kind
-	// classifies against its own status vocabulary (falling back to the project-wide scan
-	// only for an out-of-vocab legacy slug); a preset kind keeps the preset-wide scan
-	// exactly as today.
-	public bool IsTerminalStatus(string? kindSlug, string statusSlug)
+	// Per-board status classification (badge coloring and the closed-node predicate): a
+	// DEFINED kind classifies against its own status vocabulary (falling back to the
+	// project-wide scan only for an out-of-vocab legacy slug); a preset kind keeps the
+	// preset-wide scan exactly as today.
+	public StatusKind? StatusKindOf(string? kindSlug, string statusSlug)
 	{
 		if (kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind))
 			foreach (var block in kind.Workflows)
 				if (StatusOf(block, statusSlug) is { } s)
-					return s.Kind is StatusKind.TerminalOk or StatusKind.TerminalCancel;
-		return IsTerminalSlug(statusSlug);
+					return s.Kind;
+		return KindOfSlug(statusSlug);
 	}
+
+	// Per-board terminal classification — StatusKindOf's terminal projection.
+	public bool IsTerminalStatus(string? kindSlug, string statusSlug) =>
+		StatusKindOf(kindSlug, statusSlug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;
 
 	// All workflow BLOCKS of a kind (the tasks_workflow discovery shape). One block per
 	// workflow declaration, for defined and preset kinds alike — the preset data is

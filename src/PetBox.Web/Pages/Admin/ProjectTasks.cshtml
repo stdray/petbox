@@ -40,9 +40,10 @@
 					}
 					<div class="flex gap-1 mt-1">
 						@{
-							// Legacy rows may store "free"; show it as "simple" (ParseKind maps it, M029 migrates it).
-							var listKind = PetBox.Tasks.Workflow.MethodologyPresets.ParseKind(b.Kind).ToString().ToLowerInvariant();
-							var listIsSimple = listKind == "simple";
+							// Effective kind via MethodologyRuntime: a definition-declared kind reads verbatim;
+							// preset kinds parse as before (legacy "free" shows as "simple" — M029 migrates it).
+							var listKind = Model.Runtime.KindName(b.Kind);
+							var listIsSimple = Model.Runtime.PresetKind(b.Kind) == PetBox.Tasks.Workflow.BoardKind.Simple;
 							var listKindClass = listIsSimple ? "badge-info badge-outline" : "badge-neutral";
 							var listKindTitle = listIsSimple
 								? "simple board — lightweight preset: statuses Todo|InProgress|Blocked|Done|Cancelled, free transitions, types task|bug|feature|chore|issue"

@@ -39,6 +39,11 @@ public sealed class ProjectTasksModel : PageModel
 	public bool ProjectNotFound { get; private set; }
 	public string? ErrorMessage { get; private set; }
 
+	// The project's effective process (definition first, preset fallback) — kind badges
+	// resolve through this, so a definition-declared custom kind shows its own slug
+	// instead of the Simple fallback.
+	public MethodologyRuntime Runtime { get; private set; } = MethodologyRuntime.PresetsOnly;
+
 	// The four methodology kinds are per-project singletons. The UI offers EITHER enabling
 	// the whole quartet OR adding free boards — never individual methodology-kind boards.
 	static readonly string[] MethodologyKinds = ["spec", "ideas", "intake", "work"];
@@ -57,6 +62,7 @@ public sealed class ProjectTasksModel : PageModel
 		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
+		Runtime = MethodologyRuntime.From((await _tasks.GetMethodologyDefinitionAsync(ProjectKey, ct))?.Definition);
 		Boards = [.. await _tasks.ListBoardsAsync(ProjectKey, ct)];
 		var openKinds = Boards.Where(b => b.ClosedAt == null).Select(b => b.Kind).ToHashSet(StringComparer.Ordinal);
 		MethodologyEnabled = MethodologyKinds.All(openKinds.Contains);
