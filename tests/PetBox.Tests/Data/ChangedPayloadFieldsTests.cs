@@ -12,14 +12,14 @@ public sealed class ChangedPayloadFieldsTests
 	[Fact]
 	public void PlanNode_NamesExactlyTheMovedFields()
 	{
-		var a = new PlanNode { Key = "k", Status = "Pending", Type = "bug", Name = "t", Body = "b", CommitRef = null, Priority = 0 };
+		var a = new PlanNode { Key = "k", Status = "Pending", Type = "bug", Name = "t", Body = "b", Priority = 0 };
 
 		a.ChangedPayloadFields(a).Should().BeEmpty();
 		a.SamePayload(a).Should().BeTrue();
 
-		var moved = a with { Status = "Done", Body = "b2", CommitRef = "abc1234" };
+		var moved = a with { Status = "Done", Body = "b2" };
 		moved.SamePayload(a).Should().BeFalse();
-		moved.ChangedPayloadFields(a).Should().BeEquivalentTo(["status", "body", "commitRef"]);
+		moved.ChangedPayloadFields(a).Should().BeEquivalentTo(["status", "body"]);
 
 		// Wire names, not CLR names: Name surfaces as "title".
 		(a with { Name = "t2" }).ChangedPayloadFields(a).Should().Equal("title");

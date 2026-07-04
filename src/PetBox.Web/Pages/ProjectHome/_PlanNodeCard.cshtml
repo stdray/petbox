@@ -74,9 +74,14 @@
 				<a href="@nodeUrl" class="text-xs link link-hover opacity-60" data-testid="node-body-more">full ↗</a>
 			</div>
 		}
-		@if (!string.IsNullOrEmpty(n.CommitRef))
+		@if (n.Commits is { Count: > 0 })
 		{
-			<div class="text-xs opacity-50 font-mono mt-1">@n.CommitRef</div>
+			<div class="text-xs opacity-50 font-mono mt-1 flex flex-wrap gap-x-2 gap-y-1" data-testid="node-commits">
+				@foreach (var sha in n.Commits)
+				{
+					<span data-testid="node-commit">@sha</span>
+				}
+			</div>
 		}
 		@if (n.LinkedTasks is { Count: > 0 })
 		{

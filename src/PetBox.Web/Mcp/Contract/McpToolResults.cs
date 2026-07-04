@@ -310,7 +310,7 @@ public sealed record TaskSearchNodeView(
 	string Type,
 	string Title,
 	string? Body, // uniform bodyLen contract: ~240 snippet default, full at -1, omitted (null) at 0
-	string? CommitRef,
+	IReadOnlyList<string> Commits,
 	long Priority,
 	string? Delivery,
 	IReadOnlyList<LinkDto>? Spec,
