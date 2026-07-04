@@ -622,8 +622,49 @@ public sealed partial class TasksService : ITasksService
 			cur = p.ParentNodeId;
 		}
 		ancestors.Reverse();
-		return new NodeDetailView(board, view.Kind, node, ancestors);
+
+		// The EXHAUSTIVE relation panel (node-relations-panel): every relation kind in both
+		// directions, resolved against the project-wide node index. The board `view` above only
+		// carries PlanNodeView's typed subset (spec/blockedBy/…) and no children — this fills the
+		// gap so the detail page renders the full graph around a node in one place.
+		var relIndex = await BuildNodeIndexAsync(projectKey, ct);
+		var fromEdges = await _relations.ListAsync(projectKey, nodeId, "from", ct: ct);
+		var toEdges = await _relations.ListAsync(projectKey, nodeId, "to", ct: ct);
+		var relations = new List<NodeRelationGroup>();
+		foreach (var (kind, fromSide, label) in RelationPanelSpecs)
+		{
+			var targets = fromSide
+				? fromEdges.Where(e => e.Kind == kind).Select(e => e.ToNodeId)
+				: toEdges.Where(e => e.Kind == kind).Select(e => e.FromNodeId);
+			var links = targets
+				.Select(id => LinkRef(id, relIndex))
+				.OrderBy(l => l.Board ?? "", StringComparer.Ordinal)
+				.ThenBy(l => l.Slug ?? "", StringComparer.Ordinal)
+				.ToList();
+			if (links.Count > 0) relations.Add(new NodeRelationGroup(label, links));
+		}
+
+		return new NodeDetailView(board, view.Kind, node, ancestors, relations);
 	}
+
+	// The node detail page's relation panel: every relation kind × direction, in reading order.
+	// FromSide=true → this node is the edge's FROM (target = ToNodeId); false → this node is the TO
+	// (target = FromNodeId). part_of-forward (the parent) is intentionally absent — the breadcrumb
+	// already shows the ancestor chain. Kinds match MethodologyRuntime.ProcessRelationKinds.
+	static readonly (string Kind, bool FromSide, string Label)[] RelationPanelSpecs =
+	[
+		("part_of", false, "children"),
+		("blocks", false, "blocked by"),
+		("blocks", true, "blocks"),
+		("task_spec", true, "implements (spec)"),
+		("task_spec", false, "linked tasks"),
+		("idea_spec", true, "spec"),
+		("idea_spec", false, "idea"),
+		("issue_task", true, "tasks"),
+		("issue_task", false, "from issue"),
+		("supersedes", true, "supersedes"),
+		("supersedes", false, "superseded by"),
+	];
 
 	public async Task<NodeDetailView?> GetNodeBySlugAsync(string projectKey, string board, string slug, CancellationToken ct = default)
 	{

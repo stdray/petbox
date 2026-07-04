@@ -97,6 +97,33 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		(await _tasks.GetNodeAsync(Proj, "no-such-node-id")).Should().BeNull();
 	}
 
+	// node-relations-panel: the detail view must surface EVERY relation kind in both directions —
+	// children (part_of down) and blocks/blocked-by both ways — not just the typed subset the board
+	// tree carries. A leaf with no descendants must NOT emit an empty "children" group.
+	[Fact]
+	public async Task GetNodeAsync_RelationsPanel_SurfacesChildrenAndBlocksBothWays()
+	{
+		await Upsert("plan",
+			new NodePatch { Key = "parent", Title = "Parent", BlockedBy = "blocker" },
+			new NodePatch { Key = "blocker", Title = "Blocker" },
+			new NodePatch { Key = "c1", PartOf = "parent", Title = "Child 1" },
+			new NodePatch { Key = "c2", PartOf = "parent", Title = "Child 2" });
+
+		var parent = await _tasks.GetNodeAsync(Proj, NodeId("plan", "parent"));
+		var children = parent!.Relations.Single(r => r.Label == "children");
+		children.Links.Select(l => l.Slug).Should().Equal("c1", "c2"); // board+slug ordered
+		children.Links.Should().OnlyContain(l => l.Status != "missing" && l.Status.Length > 0);
+		parent.Relations.Single(r => r.Label == "blocked by").Links.Select(l => l.Slug).Should().Equal("blocker");
+
+		// The blocker sees the reverse direction: it BLOCKS the parent.
+		var blocker = await _tasks.GetNodeAsync(Proj, NodeId("plan", "blocker"));
+		blocker!.Relations.Single(r => r.Label == "blocks").Links.Select(l => l.Slug).Should().Equal("parent");
+
+		// A leaf child emits no "children" group at all (only non-empty groups are present).
+		var leaf = await _tasks.GetNodeAsync(Proj, NodeId("plan", "c1"));
+		leaf!.Relations.Should().NotContain(r => r.Label == "children");
+	}
+
 	[Fact]
 	public async Task OnGet_RendersNode_WithFullBodyAndThread()
 	{
