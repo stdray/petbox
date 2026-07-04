@@ -55,7 +55,9 @@ public sealed class TableModel : PageModel
 
 	public string DefaultSql => $"SELECT * FROM \"{TableName.Replace("\"", "\"\"")}\"";
 
-	public async Task<IActionResult> OnGetAsync(string? sql, int? page, CancellationToken ct)
+	// NOTE: the paging arg is 'pageNum', not 'page' — 'page' is a reserved
+	// route-key in Razor Pages, so a ?page=N query value never binds here.
+	public async Task<IActionResult> OnGetAsync(string? sql, int? pageNum, CancellationToken ct)
 	{
 		if (!DataEnabled) return Page();
 
@@ -64,7 +66,7 @@ public sealed class TableModel : PageModel
 		if (!exists) { DbNotFound = true; return Page(); }
 
 		Sql = string.IsNullOrWhiteSpace(sql) ? DefaultSql : sql.Trim();
-		PageNum = page is > 0 ? page.Value : 0;
+		PageNum = pageNum is > 0 ? pageNum.Value : 0;
 
 		await RunAsync(ct);
 		return Page();
