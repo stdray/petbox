@@ -1,0 +1,5 @@
+@model PetBox.Web.Pages.Shared.DeliveryBadgeModel
+@* The ONE spec-delivery badge (board group roll-up, board card, node detail page). Colour comes
+   from the single DeliveryBadgeModel mapping; size/title/testid are per-surface. A null TestId
+   omits the attribute (Razor drops null-valued attributes) — the group-header roll-up carries none. *@
+<span class="badge @Model.CssClass @Model.Size" data-testid="@Model.TestId" title="@Model.Title">@Model.Delivery</span>

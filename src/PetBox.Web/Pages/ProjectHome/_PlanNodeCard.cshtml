@@ -7,28 +7,6 @@
 	var search = $"{n.Title} {n.Key} {n.Body} {string.Join(' ', n.Tags)}".ToLowerInvariant();
 }
 
-@functions {
-	// Same presentation mapping as TaskBoard / the node detail page (domain owns StatusKind).
-	// Classification comes from MethodologyRuntime.StatusKindOf (the board's effective kind —
-	// a definition-declared custom status classifies from the definition, not the presets).
-	static string StatusBadge(PetBox.Tasks.Workflow.StatusKind? kind) => kind switch
-	{
-		PetBox.Tasks.Workflow.StatusKind.TerminalOk => "badge-success",
-		PetBox.Tasks.Workflow.StatusKind.TerminalCancel => "badge-ghost",
-		PetBox.Tasks.Workflow.StatusKind.Open => "badge-info",
-		_ => "badge-neutral",
-	};
-
-	// Muted (outline) palette — delivery is context, not an alert (spec-board-status-noise #11).
-	static string DeliveryBadge(string d) => d switch
-	{
-		"done" => "badge-success badge-outline",
-		"in_progress" => "badge-warning badge-outline",
-		"done_with_defects" => "badge-error badge-outline",
-		_ => "badge-ghost",
-	};
-}
-
 @* One plan-node card. Reused by both the part_of tree and the tag-groups projection; the
    data-* attributes power ts/board.ts (tree pane only — the tag pane uses a different list). *@
 <li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@Model.Depth" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-closed="@Model.Closed.ToString().ToLowerInvariant()" data-keep-visible="@Model.KeepVisible.ToString().ToLowerInvariant()" data-status="@n.Status" data-type="@n.Type" data-search="@search" style="margin-left:@(Model.Depth * 1.5)rem">
@@ -52,16 +30,13 @@
 				</span>
 			</div>
 			<div class="flex items-center gap-1 shrink-0">
-				@* On a spec board `defined` is the ~universal default → pure noise; show the status
-				   badge only for a non-default (terminal `deprecated`) state (spec-board-status-noise #9).
-				   The suppression is a SPEC-PRESET behavior (PresetKind is null for a defined custom kind). *@
-				@if (Model.Runtime.PresetKind(Model.KindSlug) != PetBox.Tasks.Workflow.BoardKind.Spec || Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status))
-				{
-					<span class="badge @StatusBadge(Model.Runtime.StatusKindOf(Model.KindSlug, n.Status)) badge-sm" data-testid="node-status">@n.Status</span>
-				}
+				@* Status + delivery badges via the shared partials — the ONE spec-board suppression
+				   rule (StatusBadgeModel.Show) and colour mappings, so the board card and the node
+				   detail page can never drift (ui-spec-status-board-node-mismatch). *@
+				<partial name="_StatusBadge" model="new PetBox.Web.Pages.Shared.StatusBadgeModel(Model.Runtime, Model.KindSlug, n.Status)" />
 				@if (n.Delivery is not null)
 				{
-					<span class="badge @DeliveryBadge(n.Delivery) badge-sm" data-testid="node-delivery" title="delivery — computed from linked tasks">@n.Delivery</span>
+					<partial name="_DeliveryBadge" model="new PetBox.Web.Pages.Shared.DeliveryBadgeModel(n.Delivery)" />
 				}
 			</div>
 		</div>
