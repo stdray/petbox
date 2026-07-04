@@ -37,6 +37,11 @@ public sealed record MethodologyKindDef(
 	// empty — NO requirement is the default; constraints are opt-in per type, never a
 	// global law.
 	public IReadOnlyList<MethodologyLinkConstraintDef> LinkConstraints { get; init; } = [];
+	// Declared transition effects (schema v2): "when a node of THIS kind enters status
+	// `On`, set linked nodes to `Set`" — the generalization of the hardcoded cross-board
+	// automation (intake auto-close, blocks auto-unblock) as DATA. Default empty. Schema +
+	// validation only in this wave; the engine executes them in a later task.
+	public IReadOnlyList<MethodologyTransitionEffectDef> Effects { get; init; } = [];
 }
 
 // "A NEW node of type `Type` on a board of this kind must carry a link of kind `Link` at
@@ -45,7 +50,30 @@ public sealed record MethodologyKindDef(
 // `Link` is limited to the kinds expressible IN the upsert call: task_spec (specRef),
 // blocks (blockedBy), idea_spec (ideaRef) — post-hoc relation kinds can't gate creation.
 // Edits don't re-require the link.
-public sealed record MethodologyLinkConstraintDef(string Type, string Link);
+public sealed record MethodologyLinkConstraintDef(string Type, string Link)
+{
+	// Optional link-target declaration (schema v2): the required link must point at a node
+	// of kind `TargetKind` and/or in one of `TargetStatuses` — the generalization of the
+	// hardcoded ideaRef→accepted-idea guard as data. Cross-kind targets resolve at runtime
+	// (a later task); this wave stores + validates the declaration only. Null = no
+	// restriction beyond the link kind itself.
+	public string? TargetKind { get; init; }
+	public IReadOnlyList<string>? TargetStatuses { get; init; }
+}
+
+// One declared transition effect of a kind (schema v2, spec engine-v2). Fires when a node
+// of the OWNING kind ENTERS status `On`: every node linked through relation kind `Link`
+// in `Direction` (incoming = the linked node points at this one, outgoing = this node
+// points at the linked one) is set to status `Set`; `OnlyFrom` optionally restricts the
+// effect to linked nodes currently in that status. `Set`/`OnlyFrom` name statuses of the
+// LINKED node's kind — cross-kind, so they are format-checked only and resolve at
+// runtime. Declaration only in this wave; execution is the engine task.
+public sealed record MethodologyTransitionEffectDef(
+	string On,
+	string Link,
+	string Direction,
+	string Set,
+	string? OnlyFrom = null);
 
 // A project-declared relation kind: a free semantic edge with NO FSM effects and no
 // process meaning (like the builtin neutral kinds). `Slug` follows the common slug spec
@@ -82,4 +110,15 @@ public sealed record MethodologyTransitionDef(
 	string To,
 	bool RequiresApproval = false,
 	bool RequiresReason = false,
-	string? PreconditionArtifact = null);
+	string? PreconditionArtifact = null)
+{
+	// Approval-gate MODE (schema v2), meaningful only with RequiresApproval: true = the
+	// server BLOCKS the transition for a non-owner (the WorkflowEngine enforceApproval
+	// capability, wired up by the engine task); false = owner-only by CONVENTION — the
+	// guide states the rule, the server does not block (the historical v1 posture, so
+	// existing documents keep behavior).
+	public bool EnforceApproval { get; init; }
+	// Free-text conditions to confirm before this transition (schema v2). Rendered by the
+	// guide as a checklist; never enforced by the server — a convention, not a gate.
+	public IReadOnlyList<string> Checklist { get; init; } = [];
+}

@@ -19,10 +19,25 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 
 	static bool IsSlug(string? s) => s is not null && SlugRegex().IsMatch(s);
 
+	// STATUS-slug shape: like the slug spec but case-insensitive, because status slugs are
+	// exempt from the canonical spec (the built-in catalog itself uses "InProgress"-style
+	// slugs). Used for cross-kind status references (effect Set/OnlyFrom, constraint
+	// TargetStatuses) that can't be resolved against a declared vocabulary.
+	[GeneratedRegex(@"^[a-zA-Z][a-zA-Z0-9_-]{0,99}$")]
+	private static partial Regex StatusSlugRegex();
+
+	static bool IsStatusSlug(string? s) => s is not null && StatusSlugRegex().IsMatch(s);
+
 	// Link kinds a creation constraint may name: the ones expressible IN the upsert call
 	// (task_spec = specRef, blocks = blockedBy, idea_spec = ideaRef). Any other kind is
 	// wired post-hoc via relations_create and therefore can't gate creation.
 	static readonly string[] UpsertExpressibleLinks = ["task_spec", "blocks", "idea_spec"];
+
+	// A transition-effect direction relative to the OWNING node's edge.
+	static readonly string[] EffectDirections = ["incoming", "outgoing"];
+
+	// Checklist items are one-line free-text conditions, not documents.
+	const int ChecklistItemMaxLength = 500;
 
 	public MethodologyDefinitionValidator()
 	{
@@ -37,6 +52,20 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		RuleFor(d => d.Kinds)
 			.Custom((kinds, ctx) =>
 			{
+				// Cross-kind context for the schema-v2 declarations: effect links resolve
+				// against the whole relation-kind vocabulary (builtin process + neutral +
+				// definition-declared), and a constraint's TargetKind/TargetStatuses resolve
+				// against the definition's OWN kinds when it declares the target.
+				var knownLinks = new HashSet<string>(
+					MethodologyRuntime.ProcessRelationKinds
+						.Concat(MethodologyRuntime.NeutralRelationKinds)
+						.Concat((ctx.InstanceToValidate.LinkKinds ?? []).Select(lk => lk.Slug ?? "")),
+					StringComparer.OrdinalIgnoreCase);
+				var declaredKindStatuses = (kinds ?? [])
+					.Where(k => IsSlug(k.Kind))
+					.DistinctBy(k => k.Kind, StringComparer.OrdinalIgnoreCase)
+					.ToDictionary(k => k.Kind, KindStatuses, StringComparer.OrdinalIgnoreCase);
+
 				var seenKinds = new HashSet<string>(StringComparer.Ordinal);
 				foreach (var kind in kinds ?? [])
 				{
@@ -50,7 +79,7 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 						ctx.AddFailure($"kind '{kind.Kind}' is defined more than once");
 						continue;
 					}
-					ValidateKind(kind, ctx);
+					ValidateKind(kind, knownLinks, declaredKindStatuses, ctx);
 				}
 			});
 
@@ -84,7 +113,19 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 			});
 	}
 
-	static void ValidateKind(MethodologyKindDef kind, ValidationContext<MethodologyDefinition> ctx)
+	// The status vocabulary of one kind: every status slug across ALL its workflow blocks
+	// (case-insensitive — the Workflow slug-matching convention).
+	static HashSet<string> KindStatuses(MethodologyKindDef kind) =>
+		(kind.Workflows ?? [])
+			.SelectMany(b => b.Statuses ?? [])
+			.Select(s => s.Slug ?? "")
+			.ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+	static void ValidateKind(
+		MethodologyKindDef kind,
+		HashSet<string> knownLinks,
+		Dictionary<string, HashSet<string>> declaredKindStatuses,
+		ValidationContext<MethodologyDefinition> ctx)
 	{
 		if (kind.Workflows is not { Count: > 0 })
 		{
@@ -123,6 +164,65 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 				ctx.AddFailure($"kind '{kind.Kind}': link constraint ({c.Type}, {c.Link}): type '{c.Type}' is not declared by this kind's workflow blocks (types: {string.Join("|", seenTypes)})");
 			else if (!seenConstraints.Add((c.Type.ToLowerInvariant(), c.Link.ToLowerInvariant())))
 				ctx.AddFailure($"kind '{kind.Kind}': duplicate link constraint ({c.Type}, {c.Link})");
+			ValidateConstraintTarget(kind.Kind, c, declaredKindStatuses, ctx);
+		}
+
+		ValidateEffects(kind, KindStatuses(kind), knownLinks, ctx);
+	}
+
+	// Link-constraint TARGET declaration (schema v2): `TargetKind` is a kind slug; when the
+	// definition itself declares that kind, `TargetStatuses` must be statuses of it — a
+	// target OUTSIDE the definition (a preset kind, or another project's vocabulary) is
+	// format-checked only and resolves at runtime (a later task).
+	static void ValidateConstraintTarget(
+		string kindSlug, MethodologyLinkConstraintDef c,
+		Dictionary<string, HashSet<string>> declaredKindStatuses,
+		ValidationContext<MethodologyDefinition> ctx)
+	{
+		var label = $"kind '{kindSlug}': link constraint ({c.Type}, {c.Link})";
+		if (c.TargetKind is not null && !IsSlug(c.TargetKind))
+			ctx.AddFailure($"{label}: targetKind '{c.TargetKind}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
+		if (c.TargetStatuses is null) return;
+		if (c.TargetStatuses.Count == 0)
+		{
+			ctx.AddFailure($"{label}: targetStatuses must be non-empty when provided (omit it for no status restriction)");
+			return;
+		}
+		var declared = c.TargetKind is not null && declaredKindStatuses.TryGetValue(c.TargetKind, out var s) ? s : null;
+		foreach (var status in c.TargetStatuses)
+		{
+			if (declared is not null && !declared.Contains(status ?? ""))
+				ctx.AddFailure($"{label}: target status '{status}' is not a status of kind '{c.TargetKind}' (statuses: {string.Join("|", declared)})");
+			else if (declared is null && !IsStatusSlug(status))
+				ctx.AddFailure($"{label}: target status '{status}' is not a valid status slug (^[a-zA-Z][a-zA-Z0-9_-]{{0,99}}$)");
+		}
+	}
+
+	// Transition effects (schema v2): `On` triggers on the OWNING kind's own statuses;
+	// `Link` must be a relation kind the project knows (builtin process/neutral or a
+	// definition-declared linkKind); `Direction` is incoming|outgoing; `Set`/`OnlyFrom`
+	// name statuses of the LINKED node's kind — cross-kind, so format-checked only (no
+	// static resolution); an (On, Link, Direction) triple is declared at most once.
+	static void ValidateEffects(
+		MethodologyKindDef kind, HashSet<string> kindStatuses, HashSet<string> knownLinks,
+		ValidationContext<MethodologyDefinition> ctx)
+	{
+		var seen = new HashSet<(string, string, string)>();
+		foreach (var e in kind.Effects ?? [])
+		{
+			var label = $"kind '{kind.Kind}': effect (on {e.On}, {e.Direction} {e.Link} -> {e.Set})";
+			if (string.IsNullOrWhiteSpace(e.On) || !kindStatuses.Contains(e.On))
+				ctx.AddFailure($"{label}: 'on' '{e.On}' is not a status this kind's workflow blocks declare (statuses: {string.Join("|", kindStatuses)})");
+			if (!EffectDirections.Contains(e.Direction ?? "", StringComparer.OrdinalIgnoreCase))
+				ctx.AddFailure($"{label}: direction '{e.Direction}' is not valid ({string.Join("|", EffectDirections)})");
+			if (!knownLinks.Contains(e.Link ?? ""))
+				ctx.AddFailure($"{label}: link '{e.Link}' is not a relation kind this project knows (builtin: {string.Join("|", MethodologyRuntime.ProcessRelationKinds.Concat(MethodologyRuntime.NeutralRelationKinds))}; or declare it in linkKinds)");
+			if (!IsStatusSlug(e.Set))
+				ctx.AddFailure($"{label}: 'set' '{e.Set}' is not a valid status slug (^[a-zA-Z][a-zA-Z0-9_-]{{0,99}}$)");
+			if (e.OnlyFrom is not null && !IsStatusSlug(e.OnlyFrom))
+				ctx.AddFailure($"{label}: onlyFrom '{e.OnlyFrom}' is not a valid status slug (^[a-zA-Z][a-zA-Z0-9_-]{{0,99}}$)");
+			if (!seen.Add((e.On?.ToLowerInvariant() ?? "", e.Link?.ToLowerInvariant() ?? "", e.Direction?.ToLowerInvariant() ?? "")))
+				ctx.AddFailure($"kind '{kind.Kind}': duplicate effect (on {e.On}, {e.Direction} {e.Link}) — one declaration per (on, link, direction)");
 		}
 	}
 
@@ -158,6 +258,16 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 				ctx.AddFailure($"{blockName}: duplicate transition ({t.From} -> {t.To})");
 			if (t.PreconditionArtifact is not null && !IsSlug(t.PreconditionArtifact))
 				ctx.AddFailure($"{blockName}: transition ({t.From} -> {t.To}): preconditionArtifact '{t.PreconditionArtifact}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
+			// enforceApproval is a MODE of the approval gate, not a gate of its own.
+			if (t.EnforceApproval && !t.RequiresApproval)
+				ctx.AddFailure($"{blockName}: transition ({t.From} -> {t.To}): enforceApproval is only meaningful with requiresApproval — set requiresApproval:true or drop enforceApproval");
+			foreach (var item in t.Checklist ?? [])
+			{
+				if (string.IsNullOrWhiteSpace(item))
+					ctx.AddFailure($"{blockName}: transition ({t.From} -> {t.To}): a checklist item must be a non-empty string");
+				else if (item.Length > ChecklistItemMaxLength)
+					ctx.AddFailure($"{blockName}: transition ({t.From} -> {t.To}): a checklist item exceeds {ChecklistItemMaxLength} chars — keep items one-line conditions");
+			}
 		}
 	}
 }

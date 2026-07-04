@@ -88,14 +88,34 @@ public sealed record MethodologyKindInput
 	// Per-type creation link requirements ("a new <type> must carry a <link>"); omitted =
 	// no requirement (constraints are opt-in per type).
 	public MethodologyLinkConstraintInput[]? LinkConstraints { get; init; }
+	// Declared transition effects ("on entering <on>, set <direction> <link> nodes to
+	// <set>"); omitted = none. Declaration only — the engine executes them in a later wave.
+	public MethodologyEffectInput[]? Effects { get; init; }
 }
 
 // "A NEW node of type `type` must carry a link of kind `link` at creation." `link` must
 // be upsert-expressible: task_spec (specRef) | blocks (blockedBy) | idea_spec (ideaRef).
+// `targetKind`/`targetStatuses` optionally declare what the link must point at: a node of
+// that kind and/or in one of those statuses (declaration only in this wave).
 public sealed record MethodologyLinkConstraintInput
 {
 	public string? Type { get; init; }
 	public string? Link { get; init; }
+	public string? TargetKind { get; init; }
+	public string[]? TargetStatuses { get; init; }
+}
+
+// One declared transition effect of a kind: when a node of this kind ENTERS status `on`,
+// linked nodes over relation kind `link` in `direction` (incoming|outgoing) are set to
+// status `set`; `onlyFrom` optionally restricts the effect to linked nodes currently in
+// that status.
+public sealed record MethodologyEffectInput
+{
+	public string? On { get; init; }
+	public string? Link { get; init; }
+	public string? Direction { get; init; }
+	public string? Set { get; init; }
+	public string? OnlyFrom { get; init; }
 }
 
 // A project-declared relation kind: a free semantic edge, no FSM effects. `slug` must not
@@ -133,7 +153,9 @@ public sealed record MethodologyStatusInput
 
 // A directed FSM edge. `preconditionArtifact` names a comment-artifact tag (e.g.
 // "spec_plan") that must exist on the node before the transition — modeled here,
-// enforced by the engine task.
+// enforced by the engine task. `enforceApproval` (only with requiresApproval) declares
+// the approval gate as server-BLOCKED rather than owner-only by convention; `checklist`
+// is free-text conditions to confirm before the transition (guide-rendered, not enforced).
 public sealed record MethodologyTransitionInput
 {
 	public string? From { get; init; }
@@ -141,6 +163,8 @@ public sealed record MethodologyTransitionInput
 	public bool RequiresApproval { get; init; }
 	public bool RequiresReason { get; init; }
 	public string? PreconditionArtifact { get; init; }
+	public bool EnforceApproval { get; init; }
+	public string[]? Checklist { get; init; }
 }
 
 // One entry of the `migration` argument of tasks_methodology_def_upsert: declared value
