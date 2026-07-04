@@ -33,6 +33,13 @@ public abstract record TemporalRow
 	// engine collapse no-op resubmits and absorb identical concurrent edits.
 	public abstract bool SamePayload(TemporalRow other);
 
+	// Names of payload fields whose values differ from `other` — the informed-conflict
+	// surface: a Stale answer names WHAT moved past the author's baseline so the caller
+	// rebases on facts instead of a blind re-read. Must agree with SamePayload (empty
+	// exactly when SamePayload is true). Default: empty — a row type that does not
+	// override still conflicts correctly, just without the field list.
+	public virtual IReadOnlyList<string> ChangedPayloadFields(TemporalRow other) => [];
+
 	// Returns a copy of this row as a fresh active revision numbered `version`.
 	// Derived records implement via `this with { ... }`.
 	public abstract TemporalRow AsRevision(long version, DateTime created, DateTime updated);

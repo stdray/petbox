@@ -171,8 +171,14 @@ public sealed record MemoryEntryRow(
 public sealed record RetrieverInfo(bool Lexical, bool Semantic, bool Degraded);
 
 // memory_upsert / memory_delta echo (mirrors the old anonymous Serialize shape).
-public sealed record MemoryConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null);
+// ChangedFields (Stale only): THIS entry's payload fields that moved past the author's
+// baseline — the informed-retry surface, entity-scoped by construction.
+public sealed record MemoryConflictView(
+	string Key, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null,
+	IReadOnlyList<string>? ChangedFields = null);
 
+// AutoResolved: keys whose stale baseline was accepted because the entry's payload had not
+// semantically moved since the author's read (bookkeeping bumps only) — applied + reported.
 public sealed record MemoryUpsertResultView(
 	bool Applied,
 	long CurrentVersion,
@@ -181,7 +187,8 @@ public sealed record MemoryUpsertResultView(
 	IReadOnlyList<MemoryConflictView> Conflicts,
 	IReadOnlyList<MemoryEntryRow> Added,
 	IReadOnlyList<MemoryEntryRow> Updated,
-	IReadOnlyList<string> Removed);
+	IReadOnlyList<string> Removed,
+	IReadOnlyList<string> AutoResolved);
 
 public sealed record MemoryRememberResult(string Id, string Scope, string Store, string Key);
 

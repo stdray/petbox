@@ -31,6 +31,20 @@ public sealed record MemoryEntry : TemporalRow
 	public override bool SamePayload(TemporalRow other) =>
 		other is MemoryEntry m && m.Type == Type && m.Description == Description && m.Body == Body && m.Tags == Tags && m.Metadata == Metadata;
 
+	// Wire-facing names — these land in a Stale conflict's ChangedFields. Mirrors
+	// SamePayload field-for-field.
+	public override IReadOnlyList<string> ChangedPayloadFields(TemporalRow other)
+	{
+		if (other is not MemoryEntry m) return [];
+		var fields = new List<string>();
+		if (m.Type != Type) fields.Add("type");
+		if (m.Description != Description) fields.Add("description");
+		if (m.Body != Body) fields.Add("body");
+		if (m.Tags != Tags) fields.Add("tags");
+		if (m.Metadata != Metadata) fields.Add("metadata");
+		return fields;
+	}
+
 	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
 		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };
 }

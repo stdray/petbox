@@ -30,6 +30,21 @@ public sealed record PlanNode : TemporalRow
 	public override bool SamePayload(TemporalRow other) =>
 		other is PlanNode p && p.Status == Status && p.Type == Type && p.Name == Name && p.Body == Body && p.CommitRef == CommitRef && p.Priority == Priority;
 
+	// Wire-facing names (title, not Name) — these land in a Stale conflict's
+	// ChangedFields. Mirrors SamePayload field-for-field.
+	public override IReadOnlyList<string> ChangedPayloadFields(TemporalRow other)
+	{
+		if (other is not PlanNode p) return [];
+		var fields = new List<string>();
+		if (p.Status != Status) fields.Add("status");
+		if (p.Type != Type) fields.Add("type");
+		if (p.Name != Name) fields.Add("title");
+		if (p.Body != Body) fields.Add("body");
+		if (p.CommitRef != CommitRef) fields.Add("commitRef");
+		if (p.Priority != Priority) fields.Add("priority");
+		return fields;
+	}
+
 	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
 		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };
 }

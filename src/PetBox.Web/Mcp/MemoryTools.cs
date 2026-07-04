@@ -114,14 +114,19 @@ public static class MemoryTools
 		strings, normalised on write ([] clears, omit leaves as-is).
 		`version` is the WATERMARK baseline: pass the store `currentVersion` from your last read OR
 		the entry's own version — both valid; 0 = new; a version above the store cursor is rejected
-		as a wrong-scope baseline. Set `prevKey` to rename.
+		as a wrong-scope baseline. The guard is about PAYLOAD: an old baseline conflicts ONLY when
+		the entry semantically moved after your read — a payload identical to the current state
+		no-ops, and bookkeeping bumps auto-resolve (keys land in `autoResolved[]`). Set `prevKey`
+		to rename.
 		To delete an entry, pass { key, deleted:true } (optional version baseline) — it is
 		soft-closed (history kept) and appears in the result's `removed`.
 		Store durable facts not derivable from code/git/config; actionable work goes to a
 		task board, not here.
 		Returns the pure write-ack { applied, currentVersion, inserted, closed, conflicts[],
-		added[], updated[], removed[] }. `applied` is the SINGLE source of truth: FALSE = nothing
-			written (conflicts[] carry each rejected key's baseline vs active version;
+		added[], updated[], removed[], autoResolved[] }. `applied` is the SINGLE source of truth:
+		FALSE = nothing
+			written (conflicts[] carry each rejected key's baseline vs active version; a Stale
+			conflict also names `changedFields` — THIS entry's fields that moved, rebase on those;
 			added/updated/removed EMPTY; re-read via memory_delta to rebase). When TRUE,
 			added/updated/removed cover ONLY this call's entries
 		(never other writers' history — there is no cursor parameter on a write) and carry
@@ -488,10 +493,11 @@ public static class MemoryTools
 			CurrentVersion: r.CurrentVersion,
 			Inserted: r.Inserted,
 			Closed: r.Closed,
-			Conflicts: r.Conflicts.Select(c => new MemoryConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason)).ToList(),
+			Conflicts: r.Conflicts.Select(c => new MemoryConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason, c.ChangedFields)).ToList(),
 			Added: r.Added.Select(e => EntryDto(e, bodyLen)).ToList(),
 			Updated: r.Updated.Select(e => EntryDto(e, bodyLen)).ToList(),
-			Removed: r.Removed.ToList());
+			Removed: r.Removed.ToList(),
+			AutoResolved: r.AutoResolved.ToList());
 	}
 
 	// `body` is sliced to bodyLen (null when 0 → omitted by the serializer) so the write-echo

@@ -115,7 +115,14 @@ public sealed class TaskBoardNodeModel : PageModel
 			// methodology-enforced approval gates (enforceApproval) are the owner's call.
 			var outcome = await _tasks.UpsertAsync(ProjectKey, detail.Board, [patch], TasksActor.Approver, ct);
 			if (outcome.Result.Conflicts.Count > 0)
-				return await LoadAsync(ct, "Узел изменился с момента открытия страницы — обновите её и повторите правку.");
+			{
+				// A Stale conflict now names the moved fields (Reason) — surface them so the
+				// user knows WHAT changed instead of just "re-open and retry".
+				var reason = outcome.Result.Conflicts[0].Reason;
+				return await LoadAsync(ct, string.IsNullOrEmpty(reason)
+					? "Узел изменился с момента открытия страницы — обновите её и повторите правку."
+					: $"Узел изменился с момента открытия страницы ({reason}) — обновите её и повторите правку.");
+			}
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{

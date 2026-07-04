@@ -28,6 +28,16 @@ public sealed record CommentRow : TemporalRow
 	public override bool SamePayload(TemporalRow other) =>
 		other is CommentRow c && c.Body == Body && c.Author == Author && c.ParentId == ParentId;
 
+	public override IReadOnlyList<string> ChangedPayloadFields(TemporalRow other)
+	{
+		if (other is not CommentRow c) return [];
+		var fields = new List<string>();
+		if (c.Body != Body) fields.Add("body");
+		if (c.Author != Author) fields.Add("author");
+		if (c.ParentId != ParentId) fields.Add("parentId");
+		return fields;
+	}
+
 	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
 		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };
 }

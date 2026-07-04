@@ -364,6 +364,16 @@ public sealed class MemoryService : IMemoryService
 			},
 			ct: ct);
 
+		// Concurrency outcomes as COUNTS/kinds only (never values) — makes Stale/auto-resolve
+		// measurable in telemetry (intake stale-baseline-blind-retry).
+		if (r.Conflicts.Count > 0)
+		{
+			op?.SetTag("petbox.conflicts", r.Conflicts.Count);
+			op?.SetTag("petbox.conflict_kinds", string.Join(",", r.Conflicts.Select(c => c.Kind.ToString()).Distinct()));
+		}
+		if (r.AutoResolved.Count > 0)
+			op?.SetTag("petbox.auto_resolved", r.AutoResolved.Count);
+
 		if (r.Applied)
 			await _stores.TouchAsync(projectKey, store, ct);
 		return new MemoryUpsertOutcome(ScopeEchoToCall(r, upserts, deletes));

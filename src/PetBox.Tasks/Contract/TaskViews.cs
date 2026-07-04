@@ -46,17 +46,25 @@ public sealed record PlanNodeDelta(
 	string? CommitRef, long Priority, long Version, string? Url = null);
 
 // One row the caller could not apply (optimistic-concurrency miss, or a domain-guard
-// refusal — then Reason says why), shaped for the wire.
-public sealed record UpsertConflictView(string Key, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null);
+// refusal — then Reason says why), shaped for the wire. On a Stale conflict,
+// ChangedFields names THIS node's payload fields that moved past the author's baseline
+// (entity-scoped — never other nodes' noise), so the retry is informed, not blind.
+public sealed record UpsertConflictView(
+	string Key, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null,
+	IReadOnlyList<string>? ChangedFields = null);
 
 // The tasks_upsert / tasks_delta response. For an upsert it is a pure write-ack: what was
 // applied (counts), any Conflicts, and Added/Updated/Removed scoped to THIS call only —
 // CurrentVersion is the board-wide cursor for tasks_delta. For a delta it carries the full
 // board changes since the caller's cursor (Added/Updated as node projections, Removed keys).
+// AutoResolved: keys whose stale baseline was accepted because the node's payload had not
+// semantically moved since the author's read (bookkeeping bumps only) — applied, and
+// reported so the resolution stays visible.
 public sealed record UpsertResultView(
 	bool Applied, long CurrentVersion, string Kind, int Inserted, int Closed,
 	IReadOnlyList<UpsertConflictView> Conflicts,
-	IReadOnlyList<PlanNodeDelta> Added, IReadOnlyList<PlanNodeDelta> Updated, IReadOnlyList<string> Removed);
+	IReadOnlyList<PlanNodeDelta> Added, IReadOnlyList<PlanNodeDelta> Updated, IReadOnlyList<string> Removed,
+	IReadOnlyList<string> AutoResolved);
 
 // The raw temporal upsert/delta result plus the board's resolved kind name (a defined
 // kind's slug verbatim, else the preset name — lowercase either way), ready for an

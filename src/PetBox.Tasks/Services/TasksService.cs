@@ -293,9 +293,9 @@ public sealed partial class TasksService : ITasksService
 		var current = await GetMethodologyDefinitionAsync(projectKey, ct);
 		// An identical definition can't change any node's resolution, so we skip the migration
 		// planning below. It does NOT skip the store: TemporalStore is the baseline arbiter — an
-		// identical resubmit on a VALID watermark baseline no-ops there (Changed:false), while an
-		// identical resubmit on a stale/future baseline raises the same conflict a real change
-		// would (SamePayload now runs after baseline validation). So the baseline is never ignored.
+		// identical resubmit no-ops on any non-FUTURE baseline (stale included: the store already
+		// holds what the author wants, so there is nothing to protect — the guard is about payload,
+		// not version arithmetic), while a future baseline still conflicts (wrong-scope quote).
 		var sameDefinition = current is not null && JsonSerializer.Serialize(current.Definition, DefinitionJson) == row.Json;
 		var rewrites = new List<(string Board, List<PlanNode> Nodes)>();
 		if (!sameDefinition)
@@ -1046,7 +1046,8 @@ public sealed partial class TasksService : ITasksService
 		// post-commit RefreshFtsTagsAsync. Vectors are materialized by the worker, not here.
 		var fts = new SqliteFtsIndex(() => ctx);
 		TemporalUpsertResult<PlanNode> r;
-		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.temporal"))
+		using (var temporalSpan = PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.temporal"))
+		{
 			r = await TemporalStore.UpsertAsync(ctx, desired, dels, 0,
 				onWithinTx: async (tx, upserted, deletedKeys, c) =>
 				{
@@ -1060,6 +1061,17 @@ public sealed partial class TasksService : ITasksService
 						await fts.DeleteAsync(tx, projectKey, board, key, c);
 				},
 				partition: n => n.Board == board, ct: ct);
+			// Concurrency outcomes as COUNTS/kinds only (privacy contract: forms and sizes,
+			// never values) — before this, a Stale outcome was invisible in telemetry
+			// (intake stale-baseline-blind-retry).
+			if (r.Conflicts.Count > 0)
+			{
+				temporalSpan?.SetTag("petbox.conflicts", r.Conflicts.Count);
+				temporalSpan?.SetTag("petbox.conflict_kinds", string.Join(",", r.Conflicts.Select(c => c.Kind.ToString()).Distinct()));
+			}
+			if (r.AutoResolved.Count > 0)
+				temporalSpan?.SetTag("petbox.auto_resolved", r.AutoResolved.Count);
+		}
 		// The main write's cursor: any row revision beyond it was written by THIS call's
 		// cascade effects below (supersedes obsoletion, unblocking) — the echo scoping keys on it.
 		var mainCursor = r.CurrentVersion;

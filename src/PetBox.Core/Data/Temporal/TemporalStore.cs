@@ -35,13 +35,17 @@ public enum TemporalConflictKind
 }
 
 // One row the caller could not apply because the store moved under its baseline
-// (or a domain guard refused it — then Reason says why).
+// (or a domain guard refused it — then Reason says why). On a Stale conflict,
+// ChangedFields names the payload fields of THIS entity that differ between the
+// revision the author read and the current one (entity-scoped by construction —
+// never other entities' noise), so a retry is informed, not blind.
 public sealed record TemporalConflict(
 	string Key,
 	TemporalConflictKind Kind,
 	long BaselineVersion,
 	long? ActiveVersion,
-	string? Reason = null);
+	string? Reason = null,
+	IReadOnlyList<string>? ChangedFields = null);
 
 // Result of an upsert. Besides what was applied, carries the delta the caller
 // asked for via `sinceVersion`: every active row that changed since that cursor
@@ -55,7 +59,11 @@ public sealed record TemporalUpsertResult<TRow>(
 	IReadOnlyList<TemporalConflict> Conflicts,
 	IReadOnlyList<TRow> Added,
 	IReadOnlyList<TRow> Updated,
-	IReadOnlyList<string> Removed)
+	IReadOnlyList<string> Removed,
+	// Keys whose baseline was stale but whose entity payload had NOT semantically moved
+	// since the author's read (bookkeeping rewrites only, incl. A→B→A) — applied instead
+	// of conflicting, and reported here so the resolution stays visible, never silent.
+	IReadOnlyList<string> AutoResolved)
 	where TRow : TemporalRow
 {
 	public bool HasConflicts => Conflicts.Count > 0;
@@ -66,15 +74,23 @@ public sealed record TemporalUpsertResult<TRow>(
 // Each desired row carries a WATERMARK baseline in Version: the version the author
 // last saw for THIS entity, OR the scope cursor (currentVersion) from their last read
 // of the whole scope — either is a valid baseline (Version == 0 = "new, read nothing").
-// Optimistic concurrency is a watermark, not an exact match:
+// Optimistic concurrency is a watermark, not an exact match — and it guards PAYLOAD,
+// not version arithmetic:
 //   * an EDIT applies when its baseline is AT OR AFTER the entity's current revision
-//     (the entity was unchanged since the author's read) and is Stale only when the
-//     entity moved PAST the baseline (a concurrent edit in think-time);
+//     (the entity was unchanged since the author's read);
+//   * a payload IDENTICAL to the current revision is a no-op on any non-future baseline —
+//     the store already holds what the author wants (a resubmit, an identical concurrent
+//     edit, or an FSM effect that got there first), so there is nothing to protect;
+//   * a baseline BEHIND the entity's revision is Stale only when the payload moved
+//     SEMANTICALLY after the author's read; if the intervening revisions left the payload
+//     as the author read it (bookkeeping rewrites, A→B→A), the edit applies and the key is
+//     reported in AutoResolved. A genuine Stale carries ChangedFields — the entity's own
+//     fields that moved — so the retry is informed, not blind;
 //   * a CREATE (no active row) applies for ANY baseline ≤ the scope cursor, 0 included —
 //     there is nothing to clobber;
 //   * a baseline ABOVE the scope cursor is a FutureBaseline conflict — the author is
 //     quoting a version this scope never reached, usually a cursor from another
-//     board/store.
+//     board/store. Checked before everything, including the identical-payload no-op.
 // So a caller may stamp every row in a batch with the single scope currentVersion it
 // last read: the touched entity applies, untouched entities collapse to no-ops, and only
 // a genuine concurrent change to a specific entity rejects. Any conflict aborts the whole
@@ -145,12 +161,19 @@ public static class TemporalStore
 		var nextVersion = fromVersion + 1;
 		var now = (time ?? TimeProvider.System).GetUtcNow().UtcDateTime;
 
-		var batch = Classify(desired, active, fromVersion, nextVersion, now);
+		// The revision each stale-suspect author actually read (per key: the latest revision
+		// with Version <= their baseline) — the reference point for telling a SEMANTIC move
+		// (payload changed after the read → genuine conflict, with the changed fields named)
+		// from a bookkeeping rewrite (payload identical → the write auto-resolves).
+		var baselines = await BaselineRevisionsAsync(table, desired, delete, active, partition, ct);
+
+		var batch = Classify(desired, active, baselines, fromVersion, nextVersion, now);
 
 		// Soft-delete: close the active row, no replacement revision -> shows up in
 		// the delta's `removed`. Same watermark rules as an edit: a baseline above the
 		// scope cursor is FutureBaseline; a baseline that predates the entity's current
-		// revision is Stale; anything ≥ the current revision (0 = delete regardless) closes.
+		// revision is Stale unless the payload never semantically moved since the read;
+		// anything ≥ the current revision (0 = delete regardless) closes.
 		foreach (var (key, version) in delete)
 		{
 			active.TryGetValue(key, out var current);
@@ -159,7 +182,16 @@ public static class TemporalStore
 			if (version > fromVersion)
 				batch.Conflicts.Add(new(key, TemporalConflictKind.FutureBaseline, version, fromVersion, FutureBaselineReason(version, fromVersion)));
 			else if (version != 0 && version < current.Version)
-				batch.Conflicts.Add(new(key, TemporalConflictKind.Stale, version, current.Version));
+			{
+				var read = baselines.GetValueOrDefault(key);
+				if (read is not null && read.SamePayload(current))
+				{
+					batch.ToClose.Add((key, current.Version));
+					batch.AutoResolved.Add(key);
+				}
+				else
+					batch.Conflicts.Add(StaleConflict(key, version, current, read));
+			}
 			else
 				batch.ToClose.Add((key, current.Version));
 		}
@@ -190,7 +222,10 @@ public static class TemporalStore
 		var (added, updated, removed) = await DeltaAsync(table, sinceVersion, partition, ct);
 		var currentVersion = await MaxVersionAsync(table, partition, ct);
 
-		return new TemporalUpsertResult<TRow>(applied, currentVersion, inserted, closed, conflicts, added, updated, removed);
+		// AutoResolved is only meaningful when the batch landed (a conflict elsewhere aborts
+		// the whole batch, so a "resolved" row was not actually written).
+		var autoResolved = applied ? (IReadOnlyList<string>)batch.AutoResolved : [];
+		return new TemporalUpsertResult<TRow>(applied, currentVersion, inserted, closed, conflicts, added, updated, removed, autoResolved);
 	}
 
 	// Standalone delta read: the active rows that changed since `sinceVersion` (split into
@@ -234,22 +269,55 @@ public static class TemporalStore
 		return await q.Select(x => (long?)x.Version).MaxAsync(ct) ?? 0;
 	}
 
+	// For every row that will hit the stale branch (baseline > 0 and behind the entity's
+	// current revision, payload not already identical), fetch the revision the author
+	// actually read: the entity's latest revision with Version <= the baseline (history
+	// rows are stamped with scope-cursor values, so a scope-cursor baseline resolves the
+	// same way as an entity-version baseline). One point query per suspect key — the
+	// conflict path is rare, so this costs nothing on the happy path.
+	static async Task<Dictionary<string, TRow>> BaselineRevisionsAsync<TRow>(
+		ITable<TRow> table, IReadOnlyList<TRow> desired, IReadOnlyList<(string Key, long Version)> delete,
+		Dictionary<string, TRow> active, Expression<Func<TRow, bool>>? partition, CancellationToken ct)
+		where TRow : TemporalRow
+	{
+		var wanted = new Dictionary<string, long>();
+		foreach (var d in desired)
+			if (d.PrevKey is null && d.Version > 0
+				&& active.TryGetValue(d.Key, out var cur) && d.Version < cur.Version && !cur.SamePayload(d))
+				wanted.TryAdd(d.Key, d.Version);
+		foreach (var (key, version) in delete)
+			if (version > 0 && active.TryGetValue(key, out var cur) && version < cur.Version)
+				wanted.TryAdd(key, version);
+
+		var result = new Dictionary<string, TRow>();
+		foreach (var (key, baseline) in wanted)
+		{
+			var q = table.Where(x => x.Key == key && x.Version <= baseline);
+			if (partition is not null) q = q.Where(partition);
+			var read = await q.OrderByDescending(x => x.Version).FirstOrDefaultAsync(ct);
+			if (read is not null) result[key] = read;
+		}
+		return result;
+	}
+
 	// ── 2. classify each desired row against its active revision ─────────────
 
 	sealed record Batch<TRow>(
 		List<(string Key, long Version)> ToClose,
 		List<TRow> ToInsert,
-		List<TemporalConflict> Conflicts)
+		List<TemporalConflict> Conflicts,
+		List<string> AutoResolved)
 		where TRow : TemporalRow
 	{
 		public bool IsEmpty => ToClose.Count == 0 && ToInsert.Count == 0;
 	}
 
 	static Batch<TRow> Classify<TRow>(
-		IReadOnlyList<TRow> desired, Dictionary<string, TRow> active, long fromVersion, long nextVersion, DateTime now)
+		IReadOnlyList<TRow> desired, Dictionary<string, TRow> active, Dictionary<string, TRow> baselines,
+		long fromVersion, long nextVersion, DateTime now)
 		where TRow : TemporalRow
 	{
-		var batch = new Batch<TRow>([], [], []);
+		var batch = new Batch<TRow>([], [], [], []);
 
 		foreach (var d in desired)
 		{
@@ -293,14 +361,30 @@ public static class TemporalStore
 				// query the classifier deliberately avoids.
 				batch.ToInsert.Add(Revision(d, nextVersion, created: now, now));
 			}
-			else if (d.Version < current.Version) // entity moved past the author's baseline
-			{
-				batch.Conflicts.Add(new(d.Key, TemporalConflictKind.Stale, d.Version, current.Version));
-			}
 			else if (current.SamePayload(d))
 			{
-				// no-op: identical payload on a valid watermark baseline (a resubmit, or an
-				// identical concurrent edit)
+				// no-op: the store already holds exactly what the author wants — a resubmit, an
+				// identical concurrent edit, or an FSM effect that already made this change.
+				// Deliberately BEFORE the stale check (but after FutureBaseline, which still
+				// teaches a wrong-scope quote): forcing a re-read round-trip when there is
+				// nothing to rebase is the blind-retry defect, not protection (intake
+				// stale-baseline-blind-retry).
+			}
+			else if (d.Version < current.Version) // entity moved past the author's baseline
+			{
+				// Only a SEMANTIC move rejects (spec baseline-watermark: rejected is exactly
+				// what changed after the author's read). If every intervening revision left
+				// the payload as the author read it (bookkeeping rewrites, A→B→A), the read
+				// is still fresh in substance — apply, and report the key in AutoResolved.
+				var read = baselines.GetValueOrDefault(d.Key);
+				if (read is not null && read.SamePayload(current))
+				{
+					batch.ToClose.Add((d.Key, current.Version));
+					batch.ToInsert.Add(Revision(d, nextVersion, created: current.Created, now));
+					batch.AutoResolved.Add(d.Key);
+				}
+				else
+					batch.Conflicts.Add(StaleConflict(d.Key, d.Version, current, read));
 			}
 			else
 			{
@@ -316,6 +400,26 @@ public static class TemporalStore
 	static string FutureBaselineReason(long baseline, long cursor) =>
 		$"your baseline {baseline} is ahead of this scope's cursor {cursor} — a version from another board/scope? " +
 		"pass the currentVersion from your last read of THIS scope (or the entity's own version); 0 = new entity.";
+
+	// An INFORMED Stale: names the payload fields of this entity that moved past the
+	// author's baseline (from ChangedPayloadFields — entity-scoped by construction).
+	// `read` is null when the entity did not exist at the baseline (created after the
+	// author's read, or baseline 0 on an existing key) — then there is nothing to diff.
+	static TemporalConflict StaleConflict<TRow>(string key, long baseline, TRow current, TRow? read)
+		where TRow : TemporalRow
+	{
+		var fields = read is null ? null : current.ChangedPayloadFields(read);
+		var reason =
+			fields is { Count: > 0 }
+				? $"changed after your baseline {baseline}: {string.Join(", ", fields)} — re-read and rebase on version {current.Version}"
+			: read is null
+				? baseline == 0
+					? $"an active row already exists at version {current.Version} — you submitted baseline 0 (new); re-read before overwriting"
+					: $"the entity was created after your baseline {baseline} — you never read it; re-read before overwriting"
+			: null; // payload differs but this row type names no fields — keep the classic terse Stale
+		return new(key, TemporalConflictKind.Stale, baseline, current.Version, reason,
+			fields is { Count: > 0 } ? fields : null);
+	}
 
 	static TRow Revision<TRow>(TRow desired, long version, DateTime created, DateTime updated)
 		where TRow : TemporalRow =>

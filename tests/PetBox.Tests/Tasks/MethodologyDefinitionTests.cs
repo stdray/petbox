@@ -328,19 +328,25 @@ public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefini
 		Text(future).Should().Contain("ahead of this project").And.Contain("cursor 1");
 	}
 
-	// 3c. rule-6 alignment: an IDENTICAL definition on a STALE baseline is the same conflict a real
-	// change would raise — the service no longer treats byte-equality as an unconditional no-op; the
-	// store validates the baseline first (SamePayload runs AFTER baseline validation).
+	// 3c. an IDENTICAL definition is a no-op even on a STALE baseline — the store already
+	// holds exactly what the author submits, so there is nothing to protect (the guard is
+	// about payload, not version arithmetic; intake stale-baseline-blind-retry). A FUTURE
+	// baseline still conflicts (3b above) — the wrong-scope teaching is never skipped.
 	[Fact]
-	public async Task Define_IdenticalDefinition_StaleBaseline_Conflicts()
+	public async Task Define_IdenticalDefinition_StaleBaseline_IsNoOp()
 	{
 		IsErr(await Upsert(ValidDefinition())).Should().BeFalse();                                       // -> version 1
 		IsErr(await Upsert(ValidDefinition(epicDoneName: "Delivered"), version: 1)).Should().BeFalse();  // -> version 2
 
 		// Resubmit the CURRENT definition byte-for-byte, but with the superseded baseline 1.
 		var stale = await Upsert(ValidDefinition(epicDoneName: "Delivered"), version: 1);
-		IsErr(stale).Should().BeTrue(Text(stale));
-		Text(stale).Should().Contain("is stale");
+		IsErr(stale).Should().BeFalse(Text(stale));
+		Text(stale).Should().Contain("\"changed\":false"); // no-op: nothing written, no conflict
+
+		// A REAL change on the same stale baseline still conflicts (the genuine race).
+		var moved = await Upsert(ValidDefinition(epicDoneName: "Landed"), version: 1);
+		IsErr(moved).Should().BeTrue(Text(moved));
+		Text(moved).Should().Contain("is stale");
 	}
 
 	// 4a. a transition referencing a status outside its block is rejected, naming the edge.

@@ -260,10 +260,13 @@ public sealed class TemporalStoreTests : IDisposable
 		ActiveOf("fresh0").Should().NotBeNull();
 	}
 
-	// A payload identical to the CURRENT revision but on a STALE baseline is a conflict now —
-	// SamePayload no longer short-circuits before the baseline is validated.
+	// A payload identical to the CURRENT revision is a no-op even on a STALE baseline —
+	// the store already holds what the author wants (a resubmit, an identical concurrent
+	// edit, or an FSM effect that got there first), so there is nothing to protect and a
+	// forced re-read round-trip would be the blind-retry defect, not protection
+	// (intake stale-baseline-blind-retry). FutureBaseline still beats this (below).
 	[Fact]
-	public async Task IdenticalPayload_StaleBaseline_Conflicts_NotSilentNoOp()
+	public async Task IdenticalPayload_StaleBaseline_IsNoOp()
 	{
 		await Upsert(Node("wal", PlanStatus.Pending, "v1"));                 // v1
 		await Upsert(Node("wal", PlanStatus.Done, "final", baseline: 1));    // B -> v2 (current = Done/final)
@@ -271,8 +274,129 @@ public sealed class TemporalStoreTests : IDisposable
 		// A resubmits the SAME payload as the current revision, but still believes baseline is v1.
 		var r = await Upsert(Node("wal", PlanStatus.Done, "final", baseline: 1));
 
+		r.Applied.Should().BeTrue();
+		r.Inserted.Should().Be(0);
+		r.Closed.Should().Be(0);
+		r.AutoResolved.Should().BeEmpty();                 // a no-op is not a resolved write
+		All().Count(x => x.Key == "wal").Should().Be(2);   // no new revision
+	}
+
+	// The identical-payload no-op never overrides the wrong-scope teaching: a FUTURE
+	// baseline conflicts even when the payload matches the current revision.
+	[Fact]
+	public async Task IdenticalPayload_FutureBaseline_Conflicts()
+	{
+		await Upsert(Node("wal", PlanStatus.Done, "final")); // v1 -> cursor 1
+
+		var r = await Upsert(Node("wal", PlanStatus.Done, "final", baseline: 9));
+
 		r.Applied.Should().BeFalse();
-		r.Conflicts.Should().ContainSingle(c => c.Key == "wal" && c.Kind == TemporalConflictKind.Stale);
+		r.Conflicts.Should().ContainSingle(c => c.Key == "wal" && c.Kind == TemporalConflictKind.FutureBaseline);
+	}
+
+	// ── stale-branch payload arbitration (intake stale-baseline-blind-retry) ─────
+	// Stale guards PAYLOAD, not version arithmetic: a baseline behind the entity's
+	// revision rejects only when the payload semantically moved after the author's read.
+
+	// A→B→A: the entity was rewritten past the baseline, but its payload ended up exactly
+	// what the author read — the edit applies and the key is reported in AutoResolved.
+	[Fact]
+	public async Task StaleEdit_PayloadUnmovedSinceRead_AutoResolves()
+	{
+		await Upsert(Node("wal", PlanStatus.Pending, "P1"));                     // v1 (author reads this)
+		await Upsert(Node("wal", PlanStatus.Done, "P2", baseline: 1));           // v2: moved away
+		await Upsert(Node("wal", PlanStatus.Pending, "P1", baseline: 2));        // v3: moved BACK (payload == v1)
+
+		var r = await Upsert(Node("wal", PlanStatus.InProgress, "mine", baseline: 1)); // author edits on v1
+
+		r.Applied.Should().BeTrue();
+		r.AutoResolved.Should().Equal("wal");
+		r.Conflicts.Should().BeEmpty();
+		ActiveOf("wal")!.Body.Should().Be("mine");
+		ActiveOf("wal")!.Status.Should().Be(PlanStatus.InProgress);
+	}
+
+	// A genuine semantic move still conflicts — and now names WHICH payload fields moved
+	// (entity-scoped: the author rebases on facts instead of a blind re-read).
+	[Fact]
+	public async Task StaleEdit_SemanticMove_Conflicts_WithChangedFields()
+	{
+		await Upsert(Node("wal", PlanStatus.Pending, "P1"));                 // v1 (author reads this)
+		await Upsert(Node("wal", PlanStatus.Done, "P1", baseline: 1));       // v2: status moved, body kept
+
+		var r = await Upsert(Node("wal", PlanStatus.InProgress, "mine", baseline: 1));
+
+		r.Applied.Should().BeFalse();
+		var c = r.Conflicts.Should().ContainSingle(x => x.Key == "wal" && x.Kind == TemporalConflictKind.Stale).Subject;
+		c.ChangedFields.Should().Equal("status");           // body did NOT move — not named
+		c.Reason.Should().Contain("status").And.Contain("rebase");
+		ActiveOf("wal")!.Status.Should().Be(PlanStatus.Done); // untouched
+	}
+
+	// Baseline 0 on an EXISTING key: the author believes the entity is new — they never
+	// read it, so there is nothing to diff; the reason teaches instead of listing fields.
+	[Fact]
+	public async Task StaleEdit_BaselineZero_OnExistingKey_Conflicts_WithoutFields()
+	{
+		await Upsert(Node("wal", PlanStatus.Done, "theirs")); // v1
+
+		var r = await Upsert(Node("wal", PlanStatus.Pending, "mine")); // baseline 0 = "new"
+
+		r.Applied.Should().BeFalse();
+		var c = r.Conflicts.Should().ContainSingle(x => x.Key == "wal" && x.Kind == TemporalConflictKind.Stale).Subject;
+		c.ChangedFields.Should().BeNull();
+		c.Reason.Should().Contain("baseline 0");
+	}
+
+	// The same payload arbitration covers soft-deletes: a stale delete baseline closes
+	// when the payload never moved since the read (A→B→A), and conflicts with the moved
+	// fields named when it did.
+	[Fact]
+	public async Task Delete_StaleBaseline_PayloadUnmovedSinceRead_AutoResolves()
+	{
+		await Upsert(Node("a", PlanStatus.Pending, "P1"));               // v1 (author reads this)
+		await Upsert(Node("a", PlanStatus.Done, "P2", baseline: 1));     // v2
+		await Upsert(Node("a", PlanStatus.Pending, "P1", baseline: 2));  // v3: back to what the author read
+
+		var r = await Delete(("a", 1));
+
+		r.Applied.Should().BeTrue();
+		r.AutoResolved.Should().Equal("a");
+		ActiveOf("a").Should().BeNull();
+	}
+
+	[Fact]
+	public async Task Delete_StaleBaseline_SemanticMove_Conflicts_WithChangedFields()
+	{
+		await Upsert(Node("a", PlanStatus.Pending, "v1"));           // v1
+		await Upsert(Node("a", PlanStatus.Done, "v2", baseline: 1)); // v2: status + body moved
+
+		var r = await Delete(("a", 1));
+
+		r.Applied.Should().BeFalse();
+		var c = r.Conflicts.Should().ContainSingle(x => x.Key == "a" && x.Kind == TemporalConflictKind.Stale).Subject;
+		c.ChangedFields.Should().BeEquivalentTo(["status", "body"]);
+		ActiveOf("a").Should().NotBeNull();
+	}
+
+	// A conflict elsewhere in the batch still aborts EVERYTHING — an auto-resolvable row
+	// must not report as resolved when it was not actually written.
+	[Fact]
+	public async Task Batch_AutoResolvable_PlusRealConflict_Aborts_ReportsNoAutoResolved()
+	{
+		await Upsert(Node("ok", PlanStatus.Pending, "P1"), Node("bad", PlanStatus.Pending, "Q1")); // v1
+		await Upsert(Node("ok", PlanStatus.Done, "P2", baseline: 1));                              // v2
+		await Upsert(Node("ok", PlanStatus.Pending, "P1", baseline: 2));                           // v3: ok back to read-state
+		await Upsert(Node("bad", PlanStatus.Done, "Q2", baseline: 3));                             // v4: bad semantically moved
+
+		var r = await Upsert(
+			Node("ok", PlanStatus.InProgress, "mine", baseline: 1),   // would auto-resolve
+			Node("bad", PlanStatus.InProgress, "mine", baseline: 1)); // genuine Stale
+
+		r.Applied.Should().BeFalse();
+		r.AutoResolved.Should().BeEmpty();
+		r.Conflicts.Should().ContainSingle(c => c.Key == "bad" && c.Kind == TemporalConflictKind.Stale);
+		ActiveOf("ok")!.Body.Should().Be("P1"); // nothing written
 	}
 
 	// Identical payload on a VALID watermark baseline (cursor above the entity's own version) is
@@ -460,6 +584,17 @@ public sealed record PlanRow : TemporalRow
 
 	public override bool SamePayload(TemporalRow other) =>
 		other is PlanRow p && p.Status == Status && p.Body == Body && p.CommitRef == CommitRef && p.Priority == Priority;
+
+	public override IReadOnlyList<string> ChangedPayloadFields(TemporalRow other)
+	{
+		if (other is not PlanRow p) return [];
+		var fields = new List<string>();
+		if (p.Status != Status) fields.Add("status");
+		if (p.Body != Body) fields.Add("body");
+		if (p.CommitRef != CommitRef) fields.Add("commitRef");
+		if (p.Priority != Priority) fields.Add("priority");
+		return fields;
+	}
 
 	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
 		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };

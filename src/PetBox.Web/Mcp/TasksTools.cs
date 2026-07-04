@@ -602,8 +602,12 @@ public static class TasksTools
 		(a slug|NodeId this node replaces — the old one is moved to its terminal-cancel),
 		commitRef?, priority? (sparse int, lower first), version (WATERMARK baseline: pass the
 		board `currentVersion` from your last read OR the node's own version — both are valid; 0 =
-		new; a version above this board's cursor is rejected as a wrong-scope baseline). Rename via
-		prevKey. A cold call auto-creates the board.
+		new; a version above this board's cursor is rejected as a wrong-scope baseline). The guard
+		is about PAYLOAD, not version arithmetic: a payload identical to the node's current state
+		no-ops even on an old baseline (an FSM effect or another writer already did it — no retry
+		needed), and an old baseline conflicts ONLY when the node semantically moved after your
+		read — attachment writes and other bookkeeping bumps auto-resolve (their keys land in
+		`autoResolved[]`). Rename via prevKey. A cold call auto-creates the board.
 
 		To DELETE a node, pass { key, deleted:true } (optional version baseline; 0 = delete
 		regardless) — the node is soft-closed (history kept), its edges and tags are closed, and
@@ -613,9 +617,12 @@ public static class TasksTools
 		change — retiring a real requirement stays `deprecated`).
 
 		Returns the pure write-ack { applied, currentVersion, inserted, closed, conflicts[],
-		added[], updated[], removed[] }. `applied` is the SINGLE source of truth: when it is FALSE
+		added[], updated[], removed[], autoResolved[] }. `applied` is the SINGLE source of truth:
+		when it is FALSE
 			nothing was written — `conflicts[]` explains every rejected key (its baseline vs the
-			active version, plus a reason for a guard refusal) and added/updated/removed are EMPTY;
+			active version, plus a reason for a guard refusal; a Stale conflict also carries
+			`changedFields` — THIS node's payload fields that moved past your baseline, so rebase
+			on those facts instead of blindly resubmitting) and added/updated/removed are EMPTY;
 			re-read via tasks_delta (or tasks_search) to rebase, then resubmit. When `applied` is
 			TRUE the echo covers ONLY this call: added/updated/removed
 		carry the call's own nodes plus nodes its cascade effects touched (a `supersedes`
@@ -709,10 +716,11 @@ public static class TasksTools
 			Kind: o.Kind,
 			Inserted: r.Inserted,
 			Closed: r.Closed,
-			Conflicts: r.Conflicts.Select(c => new UpsertConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason)).ToList(),
+			Conflicts: r.Conflicts.Select(c => new UpsertConflictView(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason, c.ChangedFields)).ToList(),
 			Added: r.Added.Select(n => NodeDto(n, urlPrefix, bodyLen)).ToList(),
 			Updated: r.Updated.Select(n => NodeDto(n, urlPrefix, bodyLen)).ToList(),
-			Removed: r.Removed.ToList());
+			Removed: r.Removed.ToList(),
+			AutoResolved: r.AutoResolved.ToList());
 	}
 
 	// Delta projection of a node (no links/delivery/tags — that's tasks_search). camelCased by the

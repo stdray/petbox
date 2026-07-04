@@ -21,6 +21,9 @@ public sealed record MethodologyDefRow : TemporalRow
 	public override bool SamePayload(TemporalRow other) =>
 		other is MethodologyDefRow m && m.Json == Json;
 
+	public override IReadOnlyList<string> ChangedPayloadFields(TemporalRow other) =>
+		other is MethodologyDefRow m && m.Json != Json ? ["definition"] : [];
+
 	public override TemporalRow AsRevision(long version, DateTime created, DateTime updated) =>
 		this with { Version = version, ActiveFrom = version, ActiveTo = null, Created = created, Updated = updated };
 }
