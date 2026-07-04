@@ -14,7 +14,7 @@ public sealed class WorkflowEngineTests
 			MethodologyPresets.ValidTypes(kind), type, fromSlug, toSlug, enforceApproval, actorCanApprove, hasReason);
 
 	public static IEnumerable<object[]> AllKinds =>
-		[[BoardKind.Simple], [BoardKind.Spec], [BoardKind.Ideas], [BoardKind.Intake], [BoardKind.Work]];
+		[[BoardKind.Simple], [BoardKind.Classic], [BoardKind.Spec], [BoardKind.Ideas], [BoardKind.Intake], [BoardKind.Work]];
 
 	[Theory]
 	[MemberData(nameof(AllKinds))]

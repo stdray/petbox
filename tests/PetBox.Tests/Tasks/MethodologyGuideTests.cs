@@ -173,8 +173,8 @@ public sealed class MethodologyGuideTests : IAsyncLifetime
 		},
 	};
 
-	// (a) no definition → the guide covers the preset quartet + simple, and the invariants
-	// that used to be hardcoded prose are rendered from the preset DATA.
+	// (a) no definition → the guide covers the preset quartet + classic + simple, and the
+	// invariants that used to be hardcoded prose are rendered from the preset DATA.
 	[Fact]
 	public async Task PresetsOnly_GuideCoversQuartetAndSimple_InvariantsAreDataBorn()
 	{
@@ -188,6 +188,7 @@ public sealed class MethodologyGuideTests : IAsyncLifetime
 		md.Should().Contain("## Kind: ideas");
 		md.Should().Contain("## Kind: spec");
 		md.Should().Contain("## Kind: work");
+		md.Should().Contain("## Kind: classic");
 		md.Should().Contain("## Kind: simple");
 
 		// The approve gates — 'agent never self-sets Done/accepted', born from RequiresApproval.
@@ -202,6 +203,16 @@ public sealed class MethodologyGuideTests : IAsyncLifetime
 		// Simple's all-pairs block collapses instead of listing 20 edges.
 		md.Should().Contain("Transitions: free — any status may move to any other (Todo | InProgress | Blocked | Done | Cancelled)");
 
+		// classic (preset-classic): both blocks render (task|feature shared FSM, bug on its
+		// own for the checklist), the reason gates into the not-delivered terminals, and the
+		// bug repro checklist as a convention block.
+		md.Should().Contain("### Workflow: task | feature");
+		md.Should().Contain("### Workflow: bug");
+		md.Should().Contain("- Types: task (default), feature, bug");
+		md.Should().Contain("InProgress -> Cancelled requires a reason");
+		md.Should().Contain("Before Todo -> InProgress confirm (convention — the server does not check these):");
+		md.Should().Contain("Есть воспроизведение бага, или зафиксирована причина, почему воспроизведения нет");
+
 		var inv = Invariants(guide);
 		inv.Should().Contain(("work", "approval_gate", "Review -> Done"));
 		inv.Should().Contain(("ideas", "approval_gate", "review -> accepted"));
@@ -213,6 +224,14 @@ public sealed class MethodologyGuideTests : IAsyncLifetime
 		inv.Should().Contain(("work", "transition_effect", "Done: outgoing blocks from Blocked -> InProgress"));
 		inv.Should().Contain(("work", "tag_axes", "area|concern"));
 		inv.Should().NotContain(i => i.Kind == "simple" && i.Rule == "tag_axes", "simple declares no axes");
+
+		// classic's gates, machine-readable: reason gates + the bug checklist; no axes, no
+		// approval gate anywhere in the kind.
+		inv.Should().Contain(("classic", "reason_required", "Todo -> Cancelled"));
+		inv.Should().Contain(("classic", "reason_required", "InReview -> Duplicate"));
+		inv.Should().Contain(("classic", "checklist",
+			"Todo -> InProgress: Есть воспроизведение бага, или зафиксирована причина, почему воспроизведения нет"));
+		inv.Should().NotContain(i => i.Kind == "classic" && (i.Rule == "tag_axes" || i.Rule.StartsWith("approval_gate")));
 	}
 
 	// (b) a definition kind renders its gates/constraints/axes from DATA — the same renderer,

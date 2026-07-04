@@ -50,7 +50,8 @@ public sealed partial class TasksService : ITasksService
 
 	// ---- board lifecycle ----
 
-	// The methodology kinds are per-project singletons (the quartet); `simple` is unlimited.
+	// The methodology kinds are per-project singletons (the quartet); `simple` and
+	// `classic` are unlimited.
 	static readonly BoardKind[] Methodological = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
 
 	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, CancellationToken ct = default)

@@ -94,8 +94,9 @@ public sealed class MethodologyRuntime
 	public string KindName(string? kindSlug) =>
 		IsDefinedKind(kindSlug) ? kindSlug! : MethodologyPresets.ParseKind(kindSlug).ToString().ToLowerInvariant();
 
-	// The preset kinds in guide order: the quartet pipeline first, `simple` last.
-	static readonly BoardKind[] PipelineOrder = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work, BoardKind.Simple];
+	// The preset kinds in guide order: the quartet pipeline first, then the standalone
+	// kinds (`classic`, `simple` last).
+	static readonly BoardKind[] PipelineOrder = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work, BoardKind.Classic, BoardKind.Simple];
 
 	// The project's EFFECTIVE kind set — what the process guide renders: every definition-
 	// declared kind (declaration order) followed by every preset kind the definition does

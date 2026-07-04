@@ -1,7 +1,7 @@
 namespace PetBox.Tasks.Workflow;
 
 // The built-in processes — the methodology quartet (intake|ideas|spec|work) and the
-// lightweight `simple` kind — expressed as PRESET METHODOLOGY DEFINITIONS: the same
+// standalone `simple` and `classic` kinds — expressed as PRESET METHODOLOGY DEFINITIONS: the same
 // MethodologyDefinition shapes a project can store, constructed in code (spec
 // primitives-preset-quartet). This replaces the hardcoded WorkflowCatalog 1:1, and the
 // wave-2 primitives that used to be imperative service code are now preset DATA:
@@ -52,6 +52,70 @@ public static class MethodologyPresets
 		 from b in statuses
 		 where !string.Equals(a.Slug, b.Slug, StringComparison.OrdinalIgnoreCase)
 		 select new MethodologyTransitionDef(a.Slug, b.Slug)).ToList();
+
+	// CLASSIC (spec preset-classic) — a single-kind status model at the level of the
+	// GitHub/Jira/Linear defaults: Backlog/Todo (Linear + GitHub Projects), InProgress (all
+	// three), InReview (Linear's default started status; GitHub models review outside
+	// Issues), Done, and the not-delivered pair Cancelled/Duplicate (GitHub close reasons
+	// "not planned"/"duplicate", Linear's Canceled/Duplicate). Transitions are FREE among
+	// the OPEN statuses (Jira's default workflow allows all transitions; Linear/GitHub
+	// don't gate status moves — low ceremony wins); terminals are reached EXPLICITLY, with
+	// a reason required into Cancelled/Duplicate, and a closed node reopens to Todo (the
+	// GitHub reopen). No approval gates anywhere, no link constraints, no effects, free-form
+	// tags — and NO quartet semantics (no singleton rule, no auto-wire), same as `simple`.
+	static readonly WorkflowStatus[] ClassicStatuses =
+	[
+		new("Backlog", "Backlog", StatusKind.Open),
+		new("Todo", "Todo", StatusKind.Open),
+		new("InProgress", "In progress", StatusKind.Open),
+		new("InReview", "In review", StatusKind.Open),
+		new("Done", "Done", StatusKind.TerminalOk),
+		new("Cancelled", "Cancelled", StatusKind.TerminalCancel),
+		new("Duplicate", "Duplicate", StatusKind.TerminalCancel),
+	];
+
+	// The bug-only start-of-work checklist (guide-level convention — the server does not
+	// enforce checklists): a bug needs a reproduction before work starts, or a recorded
+	// reason why none exists.
+	const string BugReproChecklistItem =
+		"Есть воспроизведение бага, или зафиксирована причина, почему воспроизведения нет";
+
+	// Classic's edge set: all ordered pairs among the OPEN statuses (free movement), every
+	// open status may close explicitly (Done ungated; Cancelled/Duplicate demand a reason),
+	// and each terminal reopens to Todo. `bugChecklist` attaches the repro checklist to the
+	// start-of-work edges (Backlog|Todo → InProgress) — the bug block's only difference.
+	// InReview → InProgress carries no checklist even for bugs: it is the rework return,
+	// the reproduction question was already settled when work first started.
+	static List<MethodologyTransitionDef> ClassicTransitions(bool bugChecklist)
+	{
+		var open = ClassicStatuses.Where(s => s.Kind == StatusKind.Open).Select(s => s.Slug).ToList();
+		var edges = new List<MethodologyTransitionDef>();
+		foreach (var from in open)
+			foreach (var to in open.Where(t => t != from))
+				edges.Add(new(from, to)
+				{
+					Checklist = bugChecklist && to == "InProgress" && from is "Backlog" or "Todo"
+						? [BugReproChecklistItem] : [],
+				});
+		foreach (var from in open)
+		{
+			edges.Add(new(from, "Done"));
+			edges.Add(new(from, "Cancelled", RequiresReason: true));
+			edges.Add(new(from, "Duplicate", RequiresReason: true));
+		}
+		foreach (var terminal in new[] { "Done", "Cancelled", "Duplicate" })
+			edges.Add(new(terminal, "Todo"));
+		return edges;
+	}
+
+	// task|feature share one block; `bug` is its OWN block with the same statuses/edges
+	// because the checklist is per-transition data — on the shared block it would bind
+	// every type. Block order matters: task is first ⇒ the quick-add/untyped default.
+	static readonly MethodologyKindDef ClassicKind = new("classic", QuickAddAllowed: true,
+	[
+		new MethodologyWorkflowDef(["task", "feature"], ClassicStatuses, ClassicTransitions(bugChecklist: false)),
+		new MethodologyWorkflowDef(["bug"], ClassicStatuses, ClassicTransitions(bugChecklist: true)),
+	]);
 
 	// WORK reuses the EXISTING status vocabulary (Pending/InProgress/Done/Blocked/
 	// Deferred/Cancelled) + Review, so live boards and the MCP/UI contract don't break.
@@ -188,6 +252,7 @@ public static class MethodologyPresets
 		BoardKind.Ideas => IdeasKind,
 		BoardKind.Intake => IntakeKind,
 		BoardKind.Work => WorkKind,
+		BoardKind.Classic => ClassicKind,
 		_ => SimpleKind,
 	};
 
@@ -200,11 +265,11 @@ public static class MethodologyPresets
 		new MethodologyTagAxisDef("concern"),
 	];
 
-	// The quartet kinds enforce the builtin axes; `simple` declares NONE — so the one
-	// axes-emptiness rule (no axes = free-form tags) reproduces "methodology boards
-	// enforce, simple doesn't" without a second mechanism.
+	// The quartet kinds enforce the builtin axes; `simple` and `classic` declare NONE — so
+	// the one axes-emptiness rule (no axes = free-form tags) reproduces "methodology boards
+	// enforce, simple/classic don't" without a second mechanism.
 	public static IReadOnlyList<MethodologyTagAxisDef> TagAxes(BoardKind kind) =>
-		kind == BoardKind.Simple ? [] : BuiltinAxes;
+		kind is BoardKind.Simple or BoardKind.Classic ? [] : BuiltinAxes;
 
 	// ---- resolution helpers over the preset data ----
 
@@ -222,23 +287,23 @@ public static class MethodologyPresets
 	public static string DefaultType(BoardKind kind) => KindDef(kind).Workflows[0].Types[0];
 
 	// The workflow for a (kind, type). Work is STRICT: type selects the workflow and an
-	// unknown/empty type yields null (the "type required" contract). Every other preset
-	// kind hosts ONE state machine — type is a label, not a branch, so For ignores it
-	// (the historical catalog semantics: an untyped or oddly-typed node on a spec/ideas/
-	// intake/simple board still resolves its kind's workflow; simple's type VOCABULARY is
-	// enforced separately at the write door).
+	// unknown/empty type yields null (the "type required" contract). A SINGLE-BLOCK kind
+	// hosts one state machine — type is a label, not a branch, so any/empty type resolves
+	// the one FSM (the historical catalog semantics: an untyped or oddly-typed node on a
+	// spec/ideas/intake/simple board still resolves its kind's workflow; simple's type
+	// VOCABULARY is enforced separately at the write door). A MULTI-BLOCK non-Work kind
+	// (classic) is lenient only for the EMPTY type (→ the first block's default type); a
+	// non-empty type must select its block — an unknown type is ambiguous across blocks,
+	// so it yields null like Work does.
 	public static Workflow? For(BoardKind kind, string? type)
 	{
 		var def = KindDef(kind);
-		if (kind != BoardKind.Work)
-		{
-			var block = def.Workflows[0];
-			var label = string.IsNullOrEmpty(type) ? block.Types[0] : type.ToLowerInvariant();
-			return block.ToWorkflow(label);
-		}
-		if (string.IsNullOrEmpty(type)) return null;
-		var match = def.Workflows.FirstOrDefault(b => b.Types.Contains(type, StringComparer.OrdinalIgnoreCase));
-		return match?.ToWorkflow(type.ToLowerInvariant());
+		if (string.IsNullOrEmpty(type))
+			return kind == BoardKind.Work ? null : def.Workflows[0].ToWorkflow(def.Workflows[0].Types[0]);
+		var label = type.ToLowerInvariant();
+		var block = def.Workflows.FirstOrDefault(b => b.Types.Contains(label, StringComparer.OrdinalIgnoreCase));
+		if (block is not null) return block.ToWorkflow(label);
+		return kind != BoardKind.Work && def.Workflows.Count == 1 ? def.Workflows[0].ToWorkflow(label) : null;
 	}
 
 	// All workflows hosted by a kind, one per type slug (status-filter validation).
@@ -255,7 +320,7 @@ public static class MethodologyPresets
 	public static string ValidTypes(BoardKind kind) =>
 		string.Join("|", KindDef(kind).Workflows.SelectMany(b => b.Types));
 
-	static readonly BoardKind[] AllKinds = [BoardKind.Simple, BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
+	static readonly BoardKind[] AllKinds = [BoardKind.Simple, BoardKind.Classic, BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
 
 	// StatusKind for a status slug across ALL presets (case-insensitive), or null if
 	// the slug isn't in any preset workflow (e.g. a legacy free-board status pre-migration).
@@ -285,13 +350,16 @@ public static class MethodologyPresets
 	// The slug enable defaults to (and the historical, only preset today).
 	public const string DefaultProvisioningPreset = "quartet";
 
-	// The provisioning preset registry. Today exactly one entry: the quartet
-	// (intake→ideas→spec→work) enabled since the methodology shipped.
+	// The provisioning preset registry: the quartet (intake→ideas→spec→work, enabled since
+	// the methodology shipped) and `classic` (one standalone GitHub/Jira/Linear-level board).
 	public static readonly IReadOnlyList<MethodologyProvisioningPreset> ProvisioningPresets =
 	[
 		new("quartet", "Methodology quartet",
 			"The intake → ideas → spec → work pipeline: four singleton boards, work auto-wired to spec.",
 			[BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work]),
+		new("classic", "Classic",
+			"A single-kind status model at the level of the GitHub/Jira/Linear defaults: one classic board (task|feature|bug), free transitions among open statuses, free-form tags.",
+			[BoardKind.Classic]),
 	];
 
 	// Resolve a preset slug (case-insensitive; null/blank = the default). An unknown slug is a
@@ -319,7 +387,9 @@ public static class MethodologyPresets
 		var preset = ResolveProvisioningPreset(slug);
 		return new MethodologyDefinition(preset.Slug, preset.Kinds.Select(KindDef).ToList())
 		{
-			TagAxes = BuiltinAxes,
+			// The axes of the preset's OWN kinds (quartet → the builtin area/concern pair;
+			// classic → none = free-form), so the copy keeps the preset's tag posture.
+			TagAxes = preset.Kinds.SelectMany(TagAxes).DistinctBy(a => a.Namespace).ToList(),
 		};
 	}
 }
