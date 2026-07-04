@@ -237,7 +237,14 @@ else if (Model.IsShapeChanged)
 }
 else if (Model.Events.Count == 0)
 {
-	<div data-testid="events-empty" class="alert">No events match the query.</div>
+	@if (Model.EventRowId is { } missingId)
+	{
+		<div data-testid="event-notfound" class="alert alert-warning">Event @missingId was not found — it may have been removed by retention.</div>
+	}
+	else
+	{
+		<div data-testid="events-empty" class="alert">No events match the query.</div>
+	}
 }
 else
 {

@@ -33,6 +33,10 @@ public sealed class IndexModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "saved")]
 	public string? SavedName { get; set; }
 
+	// Event permalink: the URL carries only the row id (?event=), never query text.
+	[BindProperty(SupportsGet = true, Name = "event")]
+	public long? EventRowId { get; set; }
+
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
 	public string? WorkspaceKey { get; set; }
 
@@ -111,6 +115,9 @@ public sealed class IndexModel : PageModel
 		}
 
 		UserKql = string.IsNullOrWhiteSpace(RawKql) ? "events" : RawKql.Trim();
+
+		if (EventRowId is { } eventRowId)
+			UserKql = FormattableString.Invariant($"events | where Id == {eventRowId}");
 
 		KustoCode userCode;
 		try
