@@ -196,6 +196,13 @@ public sealed class MarkdownRendererCommitLinkTests
 	}
 
 	[Fact]
+	public void AllDigitWord_DoesNotLink()
+	{
+		// 8-digit dates and 10-digit timestamps are hex-shaped but are numbers, not hashes.
+		Html("shipped 20260704, epoch 1751600000").Should().NotContain("<a");
+	}
+
+	[Fact]
 	public void NoTemplate_OutputIdenticalToLegacyPath()
 	{
 		var md = "## Head\nfixed in cc20e34\n\n- item deadbeef1";

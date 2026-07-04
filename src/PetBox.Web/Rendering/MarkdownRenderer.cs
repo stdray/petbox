@@ -23,8 +23,11 @@ namespace PetBox.Web.Rendering;
 public sealed class MarkdownRenderer : IMarkdownRenderer
 {
 	// A standalone word of 7–40 hex chars (a git commit hash / short ref). \b keeps it to a whole
-	// word so a hash glued to letters (`x1234567`) or a 6-hex word is left alone.
-	static readonly Regex HashRx = new(@"\b[0-9a-fA-F]{7,40}\b",
+	// word so a hash glued to letters (`x1234567`) or a 6-hex word is left alone. At least one
+	// a-f letter is required: an all-digit word is far more likely a date (20260704) or a
+	// timestamp than a commit hash, and false links on plain numbers hurt more than missing the
+	// ~4% of short hashes that happen to be all digits.
+	static readonly Regex HashRx = new(@"\b(?=[0-9]*[a-fA-F])[0-9a-fA-F]{7,40}\b",
 		RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
 	readonly MarkdownPipeline _pipeline;
