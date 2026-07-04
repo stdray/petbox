@@ -140,7 +140,7 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 		await _tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
 		await _store.CreateAsync(Proj, "risks", "risk board", "risk");
 
-		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory))
+		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver())
 		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = "risks" };
 		await model.OnGetAsync(default);
 
@@ -160,7 +160,7 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 		await _tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
 		await _store.CreateAsync(Proj, "risks", "risk board", "risk");
 
-		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory))
+		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver())
 		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = "risks" };
 		var result = await model.OnPostCreateAsync("a risk", "body", 50, default);
 

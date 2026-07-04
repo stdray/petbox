@@ -24,4 +24,9 @@ public sealed record MdBodyModel
 	// When false, the element is left empty for the live edit-preview, which ts/nodeEdit.ts fills
 	// client-side (ts/markdown.ts) as the user types.
 	public bool ServerRender { get; init; } = true;
+
+	// Optional commit-view URL template (RepoSettings.CommitUrlTemplate). When set (and carrying a
+	// literal {sha}), the server renderer autolinks standalone commit hashes in the body. Null on
+	// the live edit preview (ServerRender=false) — that surface stays unlinked by design.
+	public string? CommitUrlTemplate { get; init; }
 }

@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Features;
+using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Pages.Shared;
@@ -22,12 +23,14 @@ public sealed class TaskBoardNodeModel : PageModel
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
 	readonly ICommentService _comments;
+	readonly ISettingsResolver _settings;
 
-	public TaskBoardNodeModel(FeatureFlags features, ITasksService tasks, ICommentService comments)
+	public TaskBoardNodeModel(FeatureFlags features, ITasksService tasks, ICommentService comments, ISettingsResolver settings)
 	{
 		_features = features;
 		_tasks = tasks;
 		_comments = comments;
+		_settings = settings;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -69,6 +72,10 @@ public sealed class TaskBoardNodeModel : PageModel
 	// and terminality off this + Detail.Kind (the board's resolved KindName, a valid runtime
 	// input), so a definition-declared custom kind renders as it behaves, not as `Simple`.
 	public MethodologyRuntime Runtime { get; private set; } = MethodologyRuntime.PresetsOnly;
+
+	// The project's commit-view URL template (RepoSettings, Scope.Project). When set, the commit-ref
+	// chip links to it and commit hashes in the body / comments autolink. Empty = plain text.
+	public string? CommitUrlTemplate { get; private set; }
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
@@ -145,6 +152,10 @@ public sealed class TaskBoardNodeModel : PageModel
 		// the board's resolved kind — so a definition-declared kind offers transitions from its
 		// OWN FSM instead of the `Simple` fallback ParseKind would collapse a custom slug to.
 		Runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);
+
+		// Project-scoped commit-view template (cascades to workspace/system); empty when unset.
+		CommitUrlTemplate = (await _settings.GetAsync<RepoSettings>(Scope.Project, ProjectKey, ct)).CommitUrlTemplate;
+
 		var type = detail.Node.Type.Length == 0 ? null : detail.Node.Type;
 		NextStatuses = Runtime.For(detail.Kind, type)?.NextFrom(detail.Node.Status) ?? [];
 

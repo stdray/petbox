@@ -272,3 +272,45 @@
 		</div>
 	</form>
 </section>
+
+<div class="divider"></div>
+
+<section class="mb-6 max-w-3xl" data-testid="project-commit-links-section">
+	<div class="flex items-center gap-3 mb-3">
+		<h2 class="text-lg font-semibold">Commit links</h2>
+		@if (!string.IsNullOrEmpty(Model.CommitUrlTemplate))
+		{
+			<span class="badge badge-info badge-sm" data-testid="project-commit-template-set-badge">set</span>
+		}
+		else
+		{
+			<span class="badge badge-ghost badge-sm" data-testid="project-commit-template-unset-badge">not set</span>
+		}
+	</div>
+	<p class="text-xs opacity-60 mb-3">
+		Commit-view URL template with a literal <code>{sha}</code> placeholder, e.g.
+		<code>https://github.com/user/repo/commit/{sha}</code>. When set, commit refs on task
+		cards and commit hashes in node/comment bodies become links. Leave empty to keep plain text.
+	</p>
+
+	<form method="post" asp-page-handler="SetCommitTemplate" class="card bg-base-200 border border-base-300" data-testid="project-commit-template-form">
+		@Html.AntiForgeryToken()
+		<div class="card-body p-4">
+			<label class="form-control">
+				<span class="label-text">Commit URL template</span>
+				<input type="text" name="commitUrlTemplate" maxlength="500"
+					value="@Model.CommitUrlTemplate"
+					class="input input-bordered input-sm font-mono"
+					placeholder="https://github.com/user/repo/commit/{sha}"
+					data-testid="project-commit-template-input" />
+			</label>
+			<div class="card-actions mt-3 flex-wrap">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="project-commit-template-save">Save</button>
+				@if (!string.IsNullOrEmpty(Model.CommitUrlTemplate))
+				{
+					<button type="submit" formaction="?handler=ClearCommitTemplate" class="btn btn-sm btn-ghost" data-testid="project-commit-template-clear">Clear</button>
+				}
+			</div>
+		</div>
+	</form>
+</section>

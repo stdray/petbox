@@ -59,7 +59,7 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		_store.GetContext(Proj).PlanNodes.Where(n => n.Board == board && n.Key == key && n.ActiveTo == null).ToList().Single().NodeId;
 
 	TaskBoardNodeModel Page(bool tasks = true) =>
-		new(Flags(tasks), _tasks, _comments) { WorkspaceKey = "ws", ProjectKey = Proj };
+		new(Flags(tasks), _tasks, _comments, new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = Proj };
 
 	[Fact]
 	public async Task GetNodeAsync_ResolvesByIdAcrossBoards_WithoutKnowingTheBoard()
