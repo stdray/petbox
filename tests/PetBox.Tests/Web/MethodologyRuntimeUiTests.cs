@@ -1,0 +1,174 @@
+using LinqToDB;
+using Microsoft.Data.Sqlite;
+using Microsoft.Extensions.Configuration;
+using PetBox.Core.Data;
+using PetBox.Core.Features;
+using PetBox.Core.Models;
+using PetBox.Core.Settings;
+using PetBox.Tasks.Contract;
+using PetBox.Tasks.Data;
+using PetBox.Tasks.Services;
+using PetBox.Tasks.Workflow;
+using PetBox.Web.Pages.ProjectHome;
+
+namespace PetBox.Tests.Web;
+
+// ui-methodology-runtime-unify: the board UI resolves kind/terminality/quick-add/next-status
+// through ITasksService.GetRuntimeAsync (the SAME MethodologyRuntime the MCP tools use), not
+// the MethodologyPresets statics. A DEFINITION-declared custom kind must therefore answer the
+// UI's questions from its own data instead of collapsing to the `Simple` preset fallback.
+// These are service-door tests: define a methodology with a custom kind, then assert both the
+// raw runtime answers and the TaskBoard PageModel that wires them.
+[Collection("DataModule")]
+public sealed class MethodologyRuntimeUiTests : IDisposable
+{
+	const string Proj = "proj";
+	readonly string _dir;
+	readonly PetBoxDb _db;
+	readonly ScopedDbFactory<TasksDb> _factory;
+	readonly TaskBoardStore _store;
+	readonly TasksService _tasks;
+
+	public MethodologyRuntimeUiTests()
+	{
+		_dir = Path.Combine(Path.GetTempPath(), "petbox-uiruntime-" + Guid.NewGuid().ToString("N"));
+		Directory.CreateDirectory(_dir);
+		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
+		TestSchema.Core(cs);
+		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
+		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
+		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
+			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+		_store = new TaskBoardStore(_db, _factory);
+		_tasks = new TasksService(_store, new RelationStore(_db), new TagStore(_factory), new CommentService(_factory));
+	}
+
+	public void Dispose()
+	{
+		_db.Dispose();
+		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
+		SqliteConnection.ClearAllPools();
+		if (Directory.Exists(_dir)) Directory.Delete(_dir, recursive: true);
+	}
+
+	static FeatureFlags Flags() =>
+		new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+		{ ["Features:Tasks"] = "true" }).Build());
+
+	// A custom kind `risk`: quick-add OFF, its own vocab with two TERMINAL slugs (`Mitigated`
+	// terminalok, `Dropped` terminalcancel) that the presets don't know — the exact shape the
+	// preset fallback would misclassify (custom terminals read as non-terminal, quick-add wrongly
+	// allowed, kind badge lies "simple").
+	static MethodologyDefinition RiskDefinition() => new(
+		"acme-risk",
+		[
+			new MethodologyKindDef(
+				Kind: "risk",
+				QuickAddAllowed: false,
+				Workflows:
+				[
+					new MethodologyWorkflowDef(
+						Types: ["risk"],
+						Statuses:
+						[
+							new WorkflowStatus("Open", "Open", StatusKind.Open),
+							new WorkflowStatus("Assessing", "Assessing", StatusKind.Open),
+							new WorkflowStatus("Mitigated", "Mitigated", StatusKind.TerminalOk),
+							new WorkflowStatus("Dropped", "Dropped", StatusKind.TerminalCancel),
+						],
+						Transitions:
+						[
+							new MethodologyTransitionDef("Open", "Assessing"),
+							new MethodologyTransitionDef("Assessing", "Mitigated"),
+							new MethodologyTransitionDef("Assessing", "Dropped"),
+						]),
+				]),
+		]);
+
+	// 1. The runtime the UI now resolves through answers a definition-declared kind from its
+	//    OWN data — every question the board/node pages ask.
+	[Fact]
+	public async Task GetRuntime_DefinedKind_AnswersFromDefinition()
+	{
+		await _tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
+		var runtime = await _tasks.GetRuntimeAsync(Proj);
+
+		// Kind badge names the custom slug (not the `simple` fallback).
+		runtime.KindName("risk").Should().Be("risk");
+		runtime.PresetKind("risk").Should().BeNull("a definition-declared kind has no process role");
+
+		// Custom terminal statuses ARE terminal (drives active-only hiding + the closed badge).
+		runtime.IsTerminalStatus("risk", "Mitigated").Should().BeTrue();
+		runtime.IsTerminalStatus("risk", "Dropped").Should().BeTrue();
+		runtime.IsTerminalStatus("risk", "Open").Should().BeFalse();
+		runtime.IsTerminalStatus("risk", "Assessing").Should().BeFalse();
+		runtime.StatusKindOf("risk", "Mitigated").Should().Be(StatusKind.TerminalOk);
+		runtime.StatusKindOf("risk", "Dropped").Should().Be(StatusKind.TerminalCancel);
+
+		// Quick-add follows the kind's own policy (OFF here).
+		runtime.QuickAddAllowed("risk").Should().BeFalse();
+
+		// The node page's NextStatuses come from the kind's own FSM.
+		var wf = runtime.For("risk", "risk");
+		wf.Should().NotBeNull();
+		wf!.NextFrom("Assessing").Should().BeEquivalentTo("Mitigated", "Dropped");
+		wf.NextFrom("Open").Should().BeEquivalentTo(["Assessing"]);
+	}
+
+	// 2. A definition that declares `risk` leaves the built-in presets untouched — the same
+	//    runtime still answers preset kinds exactly as MethodologyPresets always did (criterion 3).
+	[Fact]
+	public async Task GetRuntime_PresetKinds_Unchanged()
+	{
+		await _tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
+		var runtime = await _tasks.GetRuntimeAsync(Proj);
+
+		runtime.KindName("simple").Should().Be("simple");
+		runtime.PresetKind("simple").Should().Be(BoardKind.Simple);
+		runtime.QuickAddAllowed("simple").Should().BeTrue();
+		runtime.IsTerminalStatus("simple", "Done").Should().BeTrue();
+		runtime.IsTerminalStatus("simple", "InProgress").Should().BeFalse();
+
+		// Spec preset stays a quartet kind (the _PlanNodeCard spec-noise guard keys on this).
+		runtime.PresetKind("spec").Should().Be(BoardKind.Spec);
+		runtime.QuickAddAllowed("spec").Should().BeFalse();
+	}
+
+	// 3. The TaskBoard PageModel — the actual UI surface — renders a custom-kind board off the
+	//    runtime: the kind badge shows the custom slug, it is NOT the simple preset, and quick-add
+	//    is gated by the kind's own policy (all previously wrong under the preset fallback).
+	[Fact]
+	public async Task TaskBoardModel_DefinedKind_ResolvesThroughRuntime()
+	{
+		await _tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
+		await _store.CreateAsync(Proj, "risks", "risk board", "risk");
+
+		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory))
+		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = "risks" };
+		await model.OnGetAsync(default);
+
+		model.KindSlug.Should().Be("risk");
+		model.KindName.Should().Be("risk", "the badge names the custom kind, not `simple`");
+		model.Runtime.PresetKind(model.KindSlug).Should().BeNull("a defined kind has no preset process role");
+		model.ShowQuickAdd.Should().BeFalse("the custom kind sets quickAddAllowed:false");
+		// The wired runtime is the definition-aware one, so its per-board terminality is honored.
+		model.Runtime.IsTerminalStatus(model.KindSlug, "Mitigated").Should().BeTrue();
+	}
+
+	// 3b. The POST quick-add gate honors the custom kind's policy too (not the `simple` fallback,
+	//     which would wrongly allow the write).
+	[Fact]
+	public async Task TaskBoardModel_QuickAddPost_GatedByDefinedPolicy()
+	{
+		await _tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
+		await _store.CreateAsync(Proj, "risks", "risk board", "risk");
+
+		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory))
+		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = "risks" };
+		var result = await model.OnPostCreateAsync("a risk", "body", 50, default);
+
+		result.Should().BeOfType<Microsoft.AspNetCore.Mvc.BadRequestResult>();
+		_store.GetContext(Proj).PlanNodes.Count(n => n.Board == "risks" && n.ActiveTo == null)
+			.Should().Be(0, "quick-add is gated off for this kind — nothing written");
+	}
+}
