@@ -356,6 +356,40 @@ document.addEventListener("click", (event) => {
 	});
 });
 
+// ---------- Event permalink ----------
+// The copied link carries only the row id (?event=): the server rebuilds the
+// filter itself, so no query text appears in the URL.
+document.addEventListener("click", (event) => {
+	const target = event.target as HTMLElement | null;
+	const btn = target?.closest("[data-event-link]") as HTMLButtonElement | null;
+	if (!btn) return;
+	event.stopPropagation();
+	event.preventDefault();
+
+	const url = `${window.location.origin}${window.location.pathname}?event=${btn.dataset["eventLink"]}`;
+	void navigator.clipboard.writeText(url).then(() => {
+		const original = btn.textContent;
+		btn.textContent = "copied";
+		btn.dataset["state"] = "copied";
+		setTimeout(() => {
+			btn.textContent = original;
+			btn.removeAttribute("data-state");
+		}, 1200);
+	});
+});
+
+// Highlight and expand the row an ?event= permalink points at.
+(() => {
+	const id = new URLSearchParams(window.location.search).get("event");
+	if (!id) return;
+	const row = document.querySelector(`tr[data-event-id="${CSS.escape(id)}"]`);
+	if (!row) return;
+	row.classList.add("event-permalink-target");
+	const details = row.nextElementSibling;
+	if (details?.classList.contains("event-details")) details.classList.remove("hidden");
+	row.scrollIntoView({ block: "center" });
+})();
+
 // ---------- Expandable event row ----------
 document.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement | null;
