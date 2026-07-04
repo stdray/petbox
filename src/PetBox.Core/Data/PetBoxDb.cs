@@ -100,7 +100,14 @@ public sealed class PetBoxDb : DataConnection
 			.Property(q => q.Id).IsPrimaryKey()
 			.Property(q => q.Name).HasLength(200).IsNullable(false)
 			.Property(q => q.Kql).HasDataType(DataType.Text).IsNullable(false)
-			.Property(q => q.ProjectKey).HasLength(100).IsNullable(false);
+			.Property(q => q.ProjectKey).HasLength(100).IsNullable(false)
+			// CreatedAt/UpdatedAt must be declared explicitly for the same reason as
+			// ApiKey.ExpiresAt/ShareLink below: with a partially-Fluent entity linq2db
+			// drops the undeclared DateTime columns from the schema cache, so INSERT
+			// omitted them and the NOT NULL constraint failed → "Save as" 500'd
+			// (work card ui-saved-query-500).
+			.Property(q => q.CreatedAt).HasDataType(DataType.DateTime).IsNullable(false)
+			.Property(q => q.UpdatedAt).HasDataType(DataType.DateTime).IsNullable(false);
 
 		// ShareLink has all-[Column] attributes but mixing attribute-based mapping
 		// with FluentMapping for other entities seems to drop some columns from
