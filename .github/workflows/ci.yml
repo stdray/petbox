@@ -49,12 +49,17 @@ jobs:
       # Cache the chromium binary Playwright downloads for the E2E suite so it isn't
       # re-fetched every run. The hosted runner already has Chrome's shared libs, so
       # the build skips `--with-deps` (the slow apt-get) via --playwrightWithDeps=false.
+      # Key on the Microsoft.Playwright VERSION, not the whole packages file — any
+      # unrelated package bump used to rotate the key and re-download chromium.
+      - name: Resolve Playwright version
+        id: playwright-version
+        run: echo "version=$(grep -oP '(?<=Include="Microsoft.Playwright" Version=")[^"]+' Directory.Packages.props)" >> "$GITHUB_OUTPUT"
+
       - name: Cache Playwright browsers
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('Directory.Packages.props') }}
-          restore-keys: playwright-${{ runner.os }}-
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
 
       - name: Ensure build script is executable
         run: chmod +x ./build.sh

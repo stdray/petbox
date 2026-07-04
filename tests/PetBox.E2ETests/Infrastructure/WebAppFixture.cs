@@ -31,7 +31,12 @@ public sealed class WebAppFixture : IAsyncLifetime
 		});
 
 		_playwright = await Playwright.CreateAsync();
-		_browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true });
+		// PETBOX_E2E_CDP=ws://host:port/ points the suite at an external CDP browser
+		// (e.g. lightpanda in WSL) instead of launching the bundled chromium.
+		var cdp = Environment.GetEnvironmentVariable("PETBOX_E2E_CDP");
+		_browser = string.IsNullOrEmpty(cdp)
+			? await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = true })
+			: await _playwright.Chromium.ConnectOverCDPAsync(cdp);
 
 		_storageStatePath = Path.Combine(
 			Path.GetTempPath(),
