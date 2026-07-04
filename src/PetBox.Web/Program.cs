@@ -433,6 +433,9 @@ public partial class Program
 		builder.Services.AddScoped<INavigationContext, NavigationContext>();
 		builder.Services.AddScoped<PetBox.Web.Search.CrossScopeTaskSearchService>();
 		builder.Services.AddScoped<PetBox.Core.Settings.ISettingsResolver, PetBox.Web.Settings.SettingsResolver>();
+		// Server-side markdown renderer for read surfaces (reader-view detectability). Singleton:
+		// the Markdig pipeline + HtmlSanitizer are built once and are thread-safe to reuse.
+		builder.Services.AddSingleton<PetBox.Web.Rendering.IMarkdownRenderer, PetBox.Web.Rendering.MarkdownRenderer>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.

@@ -114,19 +114,22 @@
 				<a role="tab" class="tab" data-testid="node-edit-preview-tab">preview</a>
 			</div>
 			<textarea name="body" rows="12" class="textarea textarea-bordered textarea-sm w-full font-mono" placeholder="Body (markdown)" data-testid="node-edit-body" aria-label="Body">@node.Body</textarea>
-			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { TestId = "node-edit-preview", ExtraClasses = "border border-base-300 rounded p-3 min-h-24", Style = "display:none", DataMd = false })" />
+			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { TestId = "node-edit-preview", ExtraClasses = "border border-base-300 rounded p-3 min-h-24", Style = "display:none", ServerRender = false })" />
 			<div class="flex items-center gap-2">
 				<button type="submit" class="btn btn-sm btn-primary" data-testid="node-edit-save">Save</button>
 				<button type="button" class="btn btn-sm btn-ghost" data-testid="node-edit-cancel">Cancel</button>
 			</div>
 		</form>
 
-		@* Read body, no truncation (node-page-full-body). Rendered as markdown client-side
-		   (ts/markdown.ts hydrates [data-md]); storage/format unchanged. Hidden while editing. *@
+		@* Read body, no truncation (node-page-full-body). Markdown is rendered to sanitized HTML on
+		   the SERVER (_MdBody / IMarkdownRenderer) inside a semantic <article> so browser reader-view
+		   can detect it; storage/format unchanged. Hidden while editing. *@
 		<div data-testid="node-read-body">
 			@if (!string.IsNullOrEmpty(node.Body))
 			{
-				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "node-body", ExtraClasses = "mt-3" })" />
+				<article class="mt-3">
+					<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "node-body" })" />
+				</article>
 			}
 			else
 			{

@@ -210,6 +210,42 @@ public sealed class ModuleViewsTests : IAsyncLifetime
 		html.Should().Contain("data-testid=\"node-status\">deprecated");
 	}
 
+	// server-md-render / reader-view: a node body is markdown rendered to HTML on the SERVER inside
+	// a semantic <article>, so the initial response carries real <article>/<p> (what Firefox's
+	// isProbablyReaderable counts) — not raw markdown text hydrated later on the client.
+	[Fact]
+	public async Task NodeDetail_RendersBodyMarkdownServerSide_AsArticleWithParagraphs()
+	{
+		const string board = "readerview";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "reader view");
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode
+				{
+					Board = board, Key = "rv", NodeId = "id-rv", Version = 0, Status = "Pending",
+					Name = "Reader node",
+					Body = "The first paragraph of body text.\n\nAnd a **second** paragraph here.",
+					Priority = 1,
+				},
+			}, partition: n => n.Board == board);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}/rv");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		// Server-rendered markdown: real markup in the initial DOM, not raw markdown in [data-md].
+		html.Should().Contain("<article");
+		html.Should().Contain("<p>The first paragraph of body text.</p>");
+		html.Should().Contain("<strong>second</strong>");
+		html.Should().NotContain("data-md=");
+	}
+
 	[Fact]
 	public async Task Memory_ListsCreatedStore()
 	{

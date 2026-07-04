@@ -7,8 +7,9 @@ namespace PetBox.Web.Pages.Shared;
 // at the same size.
 public sealed record MdBodyModel
 {
-	// Raw markdown source, server-rendered as plain text into the [data-md] element; the
-	// client (ts/markdown.ts) hydrates it to sanitized HTML. "" for the JS-filled preview.
+	// Raw markdown source. On READ surfaces it is rendered to sanitized HTML on the SERVER
+	// (IMarkdownRenderer) and emitted as real markup so the initial DOM is reader-view detectable.
+	// "" for the JS-filled edit preview.
 	public string Body { get; init; } = "";
 
 	public required string TestId { get; init; }
@@ -19,7 +20,8 @@ public sealed record MdBodyModel
 	// Inline style passthrough (e.g. the edit preview's display:none).
 	public string? Style { get; init; }
 
-	// The edit preview carries no data-md (it's filled imperatively by ts/nodeEdit.ts);
-	// every rendered body opts in so ts/markdown.ts hydrates it on load.
-	public bool DataMd { get; init; } = true;
+	// When true (default), Body is rendered to sanitized HTML on the server and emitted directly.
+	// When false, the element is left empty for the live edit-preview, which ts/nodeEdit.ts fills
+	// client-side (ts/markdown.ts) as the user types.
+	public bool ServerRender { get; init; } = true;
 }
