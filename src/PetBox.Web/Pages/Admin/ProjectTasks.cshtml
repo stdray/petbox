@@ -88,8 +88,17 @@
 			else
 			{
 				<p class="text-sm opacity-80">Provision the four linked boards — <span class="font-mono">intake</span>, <span class="font-mono">ideas</span>, <span class="font-mono">spec</span>, <span class="font-mono">work</span> — as a single unit and auto-wire work → spec. Idempotent (adds only what's missing). The four kinds are one-per-project; pick this <strong>or</strong> simple boards.</p>
-				<form method="post" asp-page-handler="EnableMethodology" class="card-actions mt-3" data-testid="methodology-enable-form">
+				<form method="post" asp-page-handler="EnableMethodology" class="card-actions mt-3 items-end gap-2" data-testid="methodology-enable-form">
 					@Html.AntiForgeryToken()
+					<label class="form-control">
+						<span class="label-text text-xs">Preset</span>
+						<select name="preset" class="select select-bordered select-sm font-mono" data-testid="methodology-preset-select">
+							@foreach (var p in Model.Presets)
+							{
+								<option value="@p.Slug" title="@p.Description">@p.DisplayName</option>
+							}
+						</select>
+					</label>
 					<button type="submit" class="btn btn-sm btn-primary" data-testid="methodology-enable">Enable methodology</button>
 				</form>
 			}

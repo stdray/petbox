@@ -30,9 +30,10 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 
 	// --- methodology quartet (intake+ideas+spec+work as a per-project singleton unit) ---
 
-	// Provision the four singleton boards (intake/ideas/spec/work) if missing and auto-wire
-	// work->spec. Idempotent. Returns the quartet surface.
-	Task<MethodologyView> EnableMethodologyAsync(string projectKey, CancellationToken ct = default);
+	// Provision a methodology preset's singleton boards if missing and auto-wire work->spec.
+	// `preset` selects the board set (default "quartet" = intake/ideas/spec/work; unknown slug
+	// is a clear error). Idempotent. Returns the quartet surface.
+	Task<MethodologyView> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default);
 	// The quartet as one compact INDEX (intake→ideas→spec→work): header rows (no body by
 	// default) + a status histogram per board. `bodyLen`>0 slices the first N body chars into
 	// each row; `includeBoards` (kind names) restricts which quartet boards return. Enabled =

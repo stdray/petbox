@@ -151,10 +151,13 @@ public sealed partial class TasksService : ITasksService
 	// Pipeline order of the quartet kinds.
 	static readonly BoardKind[] Quartet = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work];
 
-	public async Task<MethodologyView> EnableMethodologyAsync(string projectKey, CancellationToken ct = default)
+	public async Task<MethodologyView> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default)
 	{
+		// The preset selects WHICH board kinds to provision (default = the quartet, behavior
+		// unchanged); an unknown slug is rejected before any board is created.
+		var kinds = MethodologyPresets.ResolveProvisioningPreset(preset).Kinds;
 		var boards = await _boards.ListAsync(projectKey, ct);
-		foreach (var kind in Quartet)
+		foreach (var kind in kinds)
 		{
 			if (boards.Any(b => b.ClosedAt == null && MethodologyPresets.ParseKind(b.Kind) == kind)) continue;
 			var name = kind.ToString().ToLowerInvariant();

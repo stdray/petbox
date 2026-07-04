@@ -94,16 +94,18 @@ public static class TasksTools
 		return new BoardReopenedResult(await tasks.SetClosedAsync(projectKey, board, false, ct));
 	}
 
-	[McpServerTool(Name = "tasks_methodology_enable", Title = "Enable the methodology quartet", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
-	[Description("Provision the four singleton methodology boards (intake/ideas/spec/work) if missing and auto-wire work->spec. Idempotent — opt-in; a project's methodology lives on these, ad-hoc work stays on simple boards. The four kinds are one-per-project. Requires tasks:write. Returns the quartet surface (intake→ideas→spec→work).")]
+	[McpServerTool(Name = "tasks_methodology_enable", Title = "Enable a methodology preset", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
+	[Description("Provision a methodology PRESET's singleton boards if missing and auto-wire work->spec. `preset` selects the board set (default \"quartet\" = intake/ideas/spec/work; an unknown slug is rejected naming the available presets) — the quartet is the only preset today. Idempotent — opt-in; a project's methodology lives on these boards, ad-hoc work stays on simple boards. The methodology kinds are one-per-project. Requires tasks:write. Returns the quartet surface (intake→ideas→spec→work).")]
 	public static async Task<MethodologyView> MethodologyEnableAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, CancellationToken ct = default)
+		string projectKey,
+		[Description("The methodology preset to provision (default \"quartet\" = intake/ideas/spec/work). Unknown slug → a clear error listing the available presets.")] string? preset = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return await tasks.EnableMethodologyAsync(projectKey, ct);
+		return await tasks.EnableMethodologyAsync(projectKey, preset ?? MethodologyPresets.DefaultProvisioningPreset, ct);
 	}
 
 	[McpServerTool(Name = "tasks_methodology_get", Title = "Get the methodology quartet", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
@@ -213,22 +215,45 @@ public static class TasksTools
 		tagAxes?:[{ namespace, description? }] } (the ?-marked lists are omitted when the
 		definition declares none). Defined=false → the project has no definition of its own
 		and runs on the built-in preset (`preset` names it) — an honest state, not an error.
-		Requires tasks:read.
+
+		Pass `preset` (e.g. "quartet") to get that BUILT-IN preset RENDERED as a definition
+		document (same shape, Defined=true, version 0, created/updated omitted) instead of the
+		project's stored definition — a copyable STARTING POINT for a custom methodology: edit
+		it, then install it via tasks_methodology_def_upsert (version 0). WARNING: this is a
+		template, not an equivalent of the built-in quartet. The quartet kinds
+		(intake/ideas/spec/work) declared in a DEFINITION LOSE their hardcoded BoardKind engine
+		semantics — spec delivery roll-up, the ideaRef guard on spec writes, intake auto-close,
+		and blocks auto-unblock are NOT reproduced from definition data (until engine v2). The
+		statuses/transitions/gates and tag axes carry over; the cross-board process automation
+		does not. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyDefGetResult> MethodologyDefGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, CancellationToken ct = default)
+		string projectKey,
+		[Description("Render this built-in preset (e.g. \"quartet\") as a definition document (read-only template) instead of the project's stored definition. Omit for the stored definition.")] string? preset = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		// Preset copy: render the built-in preset as a definition template (version 0, no
+		// created/updated — it was never stored). Same output shape as the stored definition.
+		if (!string.IsNullOrWhiteSpace(preset))
+			return ProjectDefinition(MethodologyPresets.RenderPresetDefinition(preset), version: 0, created: null, updated: null);
 		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
 		if (view is null)
 			return new MethodologyDefGetResult(Defined: false, Preset: BuiltinPreset);
-		return new MethodologyDefGetResult(
+		return ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
+	}
+
+	// Project a MethodologyDefinition onto the def_get wire result (Defined=true). Shared by the
+	// stored-definition read and the preset-copy render, so both paths use ONE shape — the strict
+	// outputSchema clients validate against is identical whichever source produced the document.
+	static MethodologyDefGetResult ProjectDefinition(MethodologyDefinition def, long version, DateTime? created, DateTime? updated) =>
+		new(
 			Defined: true,
-			Name: view.Definition.Name,
-			Kinds: view.Definition.Kinds.Select(k => new MethodologyKindView(
+			Name: def.Name,
+			Kinds: def.Kinds.Select(k => new MethodologyKindView(
 				k.Kind, k.QuickAddAllowed,
 				k.Workflows.Select(w => new MethodologyWorkflowBlockView(
 					Types: w.Types,
@@ -238,16 +263,15 @@ public static class TasksTools
 				LinkConstraints: k.LinkConstraints is { Count: > 0 }
 					? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(c.Type, c.Link)).ToList()
 					: null)).ToList(),
-			Version: view.Version,
-			Created: view.Created,
-			Updated: view.Updated,
-			LinkKinds: view.Definition.LinkKinds is { Count: > 0 }
-				? view.Definition.LinkKinds.Select(lk => new MethodologyLinkKindView(lk.Slug, lk.Description)).ToList()
+			Version: version,
+			Created: created,
+			Updated: updated,
+			LinkKinds: def.LinkKinds is { Count: > 0 }
+				? def.LinkKinds.Select(lk => new MethodologyLinkKindView(lk.Slug, lk.Description)).ToList()
 				: null,
-			TagAxes: view.Definition.TagAxes is { Count: > 0 }
-				? view.Definition.TagAxes.Select(a => new MethodologyTagAxisView(a.Namespace, a.Description)).ToList()
+			TagAxes: def.TagAxes is { Count: > 0 }
+				? def.TagAxes.Select(a => new MethodologyTagAxisView(a.Namespace, a.Description)).ToList()
 				: null);
-	}
 
 	[McpServerTool(Name = "tasks_methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
 	[Description("""

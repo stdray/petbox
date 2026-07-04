@@ -6,6 +6,7 @@ using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Tasks.Contract;
+using PetBox.Tasks.Workflow;
 
 namespace PetBox.Web.Pages.Admin;
 
@@ -43,6 +44,11 @@ public sealed class ProjectTasksModel : PageModel
 	static readonly string[] MethodologyKinds = ["spec", "ideas", "intake", "work"];
 	public bool MethodologyEnabled { get; private set; }
 
+	// The provisioning presets offered next to the Enable button (one today: the quartet).
+	// Read straight off the registry, so a new preset appears here without touching the page.
+	public IReadOnlyList<MethodologyPresets.MethodologyProvisioningPreset> Presets { get; } =
+		MethodologyPresets.ProvisioningPresets;
+
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks))
@@ -77,15 +83,17 @@ public sealed class ProjectTasksModel : PageModel
 		return RedirectToPage();
 	}
 
-	// Opt-in: provision the four singleton methodology boards (intake/ideas/spec/work) and
-	// auto-wire work->spec. Idempotent — adds only what's missing.
-	public async Task<IActionResult> OnPostEnableMethodologyAsync(CancellationToken ct)
+	// Opt-in: provision the chosen preset's singleton methodology boards and auto-wire
+	// work->spec. Idempotent — adds only what's missing. An empty <select> value binds to null
+	// (Razor gotcha), so fall back to the default preset before delegating.
+	public async Task<IActionResult> OnPostEnableMethodologyAsync(string? preset, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
 		try
 		{
-			await _tasks.EnableMethodologyAsync(ProjectKey, ct);
+			await _tasks.EnableMethodologyAsync(ProjectKey,
+				string.IsNullOrWhiteSpace(preset) ? MethodologyPresets.DefaultProvisioningPreset : preset, ct);
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{
