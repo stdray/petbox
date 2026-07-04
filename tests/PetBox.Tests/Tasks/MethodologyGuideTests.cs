@@ -206,7 +206,11 @@ public sealed class MethodologyGuideTests : IAsyncLifetime
 		inv.Should().Contain(("work", "approval_gate", "Review -> Done"));
 		inv.Should().Contain(("ideas", "approval_gate", "review -> accepted"));
 		inv.Should().Contain(("ideas", "precondition_artifact", "exploring -> review requires artifact:spec_plan"));
-		inv.Should().Contain(("work", "link_constraint", "feature requires task_spec (specRef)"));
+		// engine-v2: constraints carry their declared target, effects render as invariants.
+		inv.Should().Contain(("work", "link_constraint", "feature requires task_spec (specRef) -> spec"));
+		inv.Should().Contain(("spec", "link_constraint", "spec requires idea_spec (ideaRef) -> ideas[accepted]"));
+		inv.Should().Contain(("work", "transition_effect", "Done: incoming issue_task -> done"));
+		inv.Should().Contain(("work", "transition_effect", "Done: outgoing blocks from Blocked -> InProgress"));
 		inv.Should().Contain(("work", "tag_axes", "area|concern"));
 		inv.Should().NotContain(i => i.Kind == "simple" && i.Rule == "tag_axes", "simple declares no axes");
 	}

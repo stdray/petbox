@@ -105,7 +105,9 @@ public sealed class TaskBoardNodeModel : PageModel
 		var patch = mutate(new NodePatch { Key = detail.Node.Key, Version = version });
 		try
 		{
-			var outcome = await _tasks.UpsertAsync(ProjectKey, detail.Board, [patch], ct: ct);
+			// The interactive UI is the cookie-authenticated owner — an APPROVING actor:
+			// methodology-enforced approval gates (enforceApproval) are the owner's call.
+			var outcome = await _tasks.UpsertAsync(ProjectKey, detail.Board, [patch], TasksActor.Approver, ct);
 			if (outcome.Result.Conflicts.Count > 0)
 				return await LoadAsync(ct, "Узел изменился с момента открытия страницы — обновите её и повторите правку.");
 		}

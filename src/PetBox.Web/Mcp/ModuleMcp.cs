@@ -41,11 +41,19 @@ static class ModuleMcp
 
 	public static void AssertScope(IHttpContextAccessor http, string required)
 	{
+		if (!HasScope(http, required))
+			throw new UnauthorizedAccessException($"ApiKey lacks required scope '{required}'");
+	}
+
+	// Non-throwing scope probe for OPTIONAL capabilities (e.g. tasks:approve elevating an
+	// upsert to an approving actor). Reads the SESSION key's claims off the request
+	// principal — the same source AssertScope enforces against.
+	public static bool HasScope(IHttpContextAccessor http, string scope)
+	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		var parts = scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		if (!parts.Contains(required, StringComparer.Ordinal))
-			throw new UnauthorizedAccessException($"ApiKey lacks required scope '{required}'");
+		return parts.Contains(scope, StringComparer.Ordinal);
 	}
 
 	public static void AssertFeature(FeatureFlags features, Feature feature)

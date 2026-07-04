@@ -9,9 +9,12 @@ public sealed record WorkflowResult(bool Ok, string? Error)
 // THE single validation point for task status / transitions. Both "unknown status"
 // and "no such transition" are decided here so the rule lives in one place.
 //
-// `enforceApproval` is OFF by default: the approve gate is modelled (transitions
-// carry RequiresApproval; TerminalOk = maintainer-only) but NOT enforced in v1 —
-// flip it on at the call site once constraints are clear from practice.
+// The approve gate has TWO switches: the global `enforceApproval` flag (OFF by default —
+// the historical v1 capability, kept for tests/callers that enforce wholesale) and the
+// per-transition `EnforceApproval` MODE (schema v2) a methodology declares as data. Either
+// one demands `actorCanApprove` (tasks:approve at the MCP door, the cookie-authenticated
+// owner in the UI). The builtin presets declare no enforced gate, so preset behavior is
+// unchanged; a definition opts in per transition.
 public static class WorkflowEngine
 {
 	// The resolution-agnostic core: `wf` is the already-resolved state machine (preset or
@@ -52,15 +55,23 @@ public static class WorkflowEngine
 				return WorkflowResult.Fail($"no transition '{fromSlug}' -> '{toSlug}'; from '{fromSlug}' you can go to: {string.Join("|", wf.NextFrom(fromSlug!))}");
 			if (tr.RequiresReason && !hasReason)
 				return WorkflowResult.Fail($"transition '{fromSlug}' -> '{toSlug}' requires a reason (non-empty body)");
-			if (enforceApproval && tr.RequiresApproval && !actorCanApprove)
+			if (tr.RequiresApproval && (enforceApproval || tr.EnforceApproval) && !actorCanApprove)
 				return WorkflowResult.Fail($"transition '{fromSlug}' -> '{toSlug}' requires maintainer approval");
 		}
-		else if (fromSlug is null && enforceApproval && to.Kind == StatusKind.TerminalOk && !actorCanApprove)
+		else if (fromSlug is null && !actorCanApprove && GatedAtBirth(wf, to, toSlug, enforceApproval))
 		{
-			// creating a node directly in a terminal-ok status is an approval too
+			// creating a node directly in an approval-gated status is an approval too
 			return WorkflowResult.Fail($"only a maintainer can set status '{toSlug}'");
 		}
 
 		return WorkflowResult.Success;
 	}
+
+	// Birth into a gated status can't bypass the gate: under the global flag any TerminalOk
+	// status is maintainer-only (the historical rule); under per-transition enforcement a
+	// status that is the target of an ENFORCED approval transition is too (mirrors the
+	// precondition-artifact birth rule in RequirePreconditionArtifactsAsync).
+	static bool GatedAtBirth(Workflow wf, WorkflowStatus to, string toSlug, bool enforceApproval) =>
+		(enforceApproval && to.Kind == StatusKind.TerminalOk)
+		|| wf.Transitions.Any(t => t.RequiresApproval && t.EnforceApproval && string.Equals(t.To, toSlug, StringComparison.OrdinalIgnoreCase));
 }

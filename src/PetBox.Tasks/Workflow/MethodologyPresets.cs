@@ -87,10 +87,25 @@ public static class MethodologyPresets
 			]),
 	])
 	{
+		// Schema v2: the link target is DATA — a specRef must point at a spec-kind node
+		// (the guard the service used to hardcode as ValidateSpecRefsAsync).
 		LinkConstraints =
 		[
-			new MethodologyLinkConstraintDef("feature", "task_spec"),
-			new MethodologyLinkConstraintDef("bug", "task_spec"),
+			new MethodologyLinkConstraintDef("feature", "task_spec") { TargetKind = "spec" },
+			new MethodologyLinkConstraintDef("bug", "task_spec") { TargetKind = "spec" },
+		],
+		// Schema v2: the FSM effects are DATA (executed by RunTransitionEffectsAsync) —
+		// the automation the service used to hardcode as RunDoneEffectsAsync:
+		//   - a work node entering Done closes intake issues that spawned it (issue_task
+		//     edges point issue -> task, i.e. INCOMING on the work node);
+		//   - a work node entering Done releases nodes it was blocking (blocks edges point
+		//     blocker -> blocked, i.e. OUTGOING), Blocked -> InProgress. The `blocks` kind
+		//     is a builtin GATING relation: the executor consumes the traversed edge and
+		//     applies the effect only when no other active blocker remains.
+		Effects =
+		[
+			new MethodologyTransitionEffectDef(On: "Done", Link: "issue_task", Direction: "incoming", Set: "done"),
+			new MethodologyTransitionEffectDef(On: "Done", Link: "blocks", Direction: "outgoing", Set: "InProgress", OnlyFrom: "Blocked"),
 		],
 	};
 
@@ -108,7 +123,17 @@ public static class MethodologyPresets
 			[
 				new("defined", "deprecated"),
 			]),
-	]);
+	])
+	{
+		// Schema v2: spec-write-needs-accepted-idea as DATA (was the hardcoded
+		// RequireAcceptedIdeaForSpecAsync): the ideaRef must point at an ideas-kind node in
+		// `accepted`. idea_spec is a PROVENANCE link — the constraint binds EVERY write of
+		// the type, not just creation (each spec change names the idea that authorizes it).
+		LinkConstraints =
+		[
+			new MethodologyLinkConstraintDef("spec", "idea_spec") { TargetKind = "ideas", TargetStatuses = ["accepted"] },
+		],
+	};
 
 	// Mirrors the work gate: an idea reaches `review` (agent ceiling), the maintainer
 	// approves `review → accepted`. Entering `review` requires an artifact:spec_plan
@@ -285,9 +310,10 @@ public static class MethodologyPresets
 	// copy it as a starting point and edit it through tasks_methodology_def_upsert. The document
 	// passes MethodologyDefinitionValidator (the preset slug is the definition name; every kind
 	// slug, status and transition come straight from the preset data). Read-only: the returned
-	// definition is a template, NOT an installed methodology — and declaring the quartet kinds in
-	// a definition does NOT reproduce their hardcoded BoardKind engine semantics (delivery
-	// roll-up, ideaRef guard, intake auto-close, blocks auto-unblock).
+	// definition is a template, NOT an installed methodology. The data-born semantics (link
+	// constraints incl. targets — the ideaRef/specRef guards — and transition effects — intake
+	// auto-close, blocks auto-unblock) DO travel with the copy; only the enum-keyed extras
+	// (delivery roll-up, quartet singleton rule, auto-wire) stay preset-only.
 	public static MethodologyDefinition RenderPresetDefinition(string? slug)
 	{
 		var preset = ResolveProvisioningPreset(slug);
