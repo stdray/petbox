@@ -617,6 +617,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("/mcp");
 		html.Should().Contain("flat slug"); // node model documented (flat key + partOf)
 		html.Should().Contain("tasks_search"); // the unified read verb documented
+		html.Should().NotContain("{{mcp}}"); // the mcp-endpoint placeholder was substituted at render, not leaked
 	}
 
 	[Fact]
@@ -645,6 +646,40 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("doc-overview");
 		html.Should().Contain("petbox-client"); // published client lib documented
+		html.Should().Contain("What PetBox is</h1>"); // rendered from the md canon's H1, not hardcoded
+		html.Should().NotContain("{{origin}}"); // the base-URL placeholder was substituted at render, not leaked
+	}
+
+	// The five /doc pages render their prose from the markdown canon (Pages/Doc/content/*.md) through
+	// the shared server renderer (IMarkdownRenderer via _MdBody) — not hardcoded HTML. Proof: a known
+	// H1 from each md file appears as a real closing <h1> in the initial response (so the file resolved
+	// at the runtime path and went through the GFM renderer). Guards the doc-drift fix end to end.
+	[Theory]
+	[InlineData("/doc/overview", "What PetBox is</h1>")]
+	[InlineData("/doc/agent", "Connect a coding agent to PetBox</h1>")]
+	[InlineData("/doc/onboarding", "Agent onboarding</h1>")]
+	[InlineData("/doc/methodology", "Methodology cheatsheet (agent)</h1>")]
+	[InlineData("/doc/methodology/philosophy", "the model</h1>")]
+	public async Task Doc_Pages_RenderMarkdownCanon_HeadingFromMd(string url, string heading)
+	{
+		using var resp = await _client.GetAsync(url);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain(heading);
+	}
+
+	// The doc markdown canon MUST be present at the runtime content path (ContentRootPath-relative)
+	// and load through DocContent with the dynamic substitution applied — otherwise /doc 500s for a
+	// missing file in the published container. Guards the csproj <Content> copy + path resolution.
+	[Fact]
+	public void Doc_MarkdownCanon_ResolvesUnderContentRoot_AndSubstitutes()
+	{
+		var docs = _factory.Services.GetRequiredService<PetBox.Web.Pages.Doc.DocContent>();
+		foreach (var slug in new[] { "overview", "agent", "onboarding", "methodology", "philosophy" })
+			docs.Read(slug).Should().NotBeNullOrWhiteSpace($"{slug}.md must ship at the runtime doc path");
+		// The origin placeholder is replaced in-place (proves the substitution mechanism runs).
+		var overview = docs.Read("overview", new Dictionary<string, string> { ["origin"] = "https://example.test" });
+		overview.Should().Contain("https://example.test").And.NotContain("{{origin}}");
 	}
 
 	[Fact]

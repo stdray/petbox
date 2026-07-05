@@ -3,78 +3,12 @@
 @{
 	ViewData["Title"] = "PetBox overview — docs";
 	Layout = "_PublicLayout";
-	var origin = Model.Origin;
 }
-	<main class="prose prose-sm max-w-3xl mx-auto p-6" data-testid="doc-overview">
+	@* Thin shell: the prose is the markdown canon Pages/Doc/content/overview.md, rendered on the
+	   server through the shared IMarkdownRenderer (via _MdBody). No HTML duplication to hand-sync. *@
+	<main class="max-w-3xl mx-auto p-6" data-testid="doc-overview">
 		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a></p>
-		<h1>What PetBox is</h1>
-		<p>
-			PetBox is a self-hostable <strong>module monolith</strong> — a small backplane for personal
-			projects and bots. Each subsystem is feature-toggled; together they cover the boring infra
-			(config, logs, data, health) plus a durable place for <strong>agents</strong> to plan and
-			remember work. One .NET service, SQLite storage, behind Caddy.
-		</p>
-		<p>Three audiences, three surfaces:</p>
-		<ul>
-			<li><strong><code>/ui/…</code></strong> — humans (admin + read views).</li>
-			<li><strong><code>/api/…</code>, <code>/v1/…</code></strong> — programs (REST).</li>
-			<li><strong><code>/mcp</code></strong> — coding agents (MCP tools). See <a href="@Routes.DocAgent()">Connect an agent</a>.</li>
-		</ul>
-		<p>Auth is an <strong>API key</strong> (<code>X-Api-Key</code>) scoped to a project, with enumerable scopes (<code>config:read</code>, <code>logs:query</code>, <code>data:write</code>, <code>tasks:write</code>, …).</p>
-
-		<h2>Modules</h2>
-		<ul>
-			<li><strong>Config</strong> — a tag-based config store. A binding has a path, a value (or encrypted secret) and tags; resolution picks the most specific match for a caller's tag vector. Consume the resolved bundle over REST (<code>/v1/conf</code>, ETag-aware) or via the client libraries; manage it in the UI or over MCP.</li>
-			<li><strong>Logging</strong> — Seq-compatible structured logs. Ingest CLEF (the Seq <code>/api/events/raw</code> shape), query with <strong>KQL</strong> via <code>log_query</code> (MCP) or REST. Per-project named logs. A stock Seq client writes into a <em>named</em> log via the compat base — <code>serverUrl = …/api/ingest/{project}/{log}/compat/seq</code> with a regular project API key as the Seq key (the client appends <code>api/events/raw</code> itself); mimicked protocols collect under <code>compat/{protocol}</code>.</li>
-			<li><strong>Data</strong> — per-project SQLite databases with a REST raw-SQL pass-through (<code>/api/data/{project}/{db}/exec</code> and <code>/query</code>) and schema apply; also exposed over MCP (<code>data.*</code>).</li>
-			<li><strong>Dashboard</strong> — health/CI polling and a heartbeat endpoint; the at-a-glance status view.</li>
-			<li><strong>Tasks / Memory / Sessions</strong> — the agent-collaboration layer over MCP: task boards (the spec/work/idea rails), durable memory notes, and per-project session plans. This is where an agent plans and records work. See the <a href="@Routes.DocMethodology()">methodology cheatsheet</a> and its <a href="@Routes.DocPhilosophy()">model</a>.</li>
-		</ul>
-
-		<h2>Client libraries (published)</h2>
-		<p>Today the published SDKs cover the <strong>config</strong> surface (ETag-aware polling into your app's native config); data/log SDK surfaces are planned. Everything else is reachable directly over REST/MCP.</p>
-		<h3>TypeScript — <code>@@stdray-npm/petbox-client</code> (npm)</h3>
-		<pre><code>npm i @@stdray-npm/petbox-client</code></pre>
-		<pre><code>import { PetBoxConfigClient } from "@@stdray-npm/petbox-client";
-
-const cfg = new PetBoxConfigClient({
-  baseUrl: "@origin",
-  apiKey: process.env.PETBOX_API_KEY!,
-  tags: { project: "kpvotes", service: "bot" },
-});
-const resolved = await cfg.start();        // first fetch + background ETag polling
-cfg.on("change", next => { /* hot-reload */ });
-// one-shot (no polling): fetchConfig({ ... })</code></pre>
-		<h3>.NET — <code>PetBox.Client.Config</code> (NuGet, GitHub Packages)</h3>
-		<pre><code>builder.Configuration.AddPetBoxConfig(o =&gt;
-{
-    o.BaseUrl = "@origin";
-    o.ApiKey  = builder.Configuration["PETBOX_API_KEY"]!;
-    o.Tags    = new() { ["project"] = "kpvotes", ["service"] = "bot" };
-    o.CacheDirectory = "/var/cache/petbox"; // last-known-good on disk (mount a volume)
-});
-// resolved config flows into IConfiguration; ETag polling hot-reloads it.
-// CacheDirectory: boots on the last good config after a restart even if petbox is down.</code></pre>
-		<h3>Python — <code>petbox-client</code> (PyPI)</h3>
-		<pre><code>pip install petbox-client</code></pre>
-		<pre><code>import os
-from petbox_client import PetBoxConfigClient, PetBoxConfigClientOptions
-
-client = PetBoxConfigClient(PetBoxConfigClientOptions(
-    endpoint="@origin",
-    api_key=os.environ["PETBOX_API_KEY"],
-    tags={"project": "kpvotes", "service": "bot"},
-))
-config = client.start()                  # first fetch + background ETag polling
-client.on("change", lambda cfg: ...)     # hot-reload
-# one-shot (no polling): fetch_config(...)</code></pre>
-
-		<h2>Building on PetBox (for agents)</h2>
-		<p>
-			A typical loop: connect over MCP (<a href="@Routes.DocAgent()">guide</a>), read the
-			<a href="@Routes.DocMethodology()">methodology</a>, then <strong>build your app against PetBox</strong>
-			(config/logs/data) while <strong>tracking the work in PetBox itself</strong> — capture requirements on a
-			<code>spec</code> board, the technical tasks on a <code>work</code> board (linked to spec), ideas on an
-			<code>ideas</code> board. The plan lives next to the platform it runs on.
-		</p>
+		<article>
+			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = Model.Markdown, TestId = "doc-overview-body" })" />
+		</article>
 	</main>
