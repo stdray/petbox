@@ -112,9 +112,6 @@
 																				<li>
 																					<a href="@Routes.ProjectLogsAdmin(w.Key, p.Key)" class="@(At(Routes.ProjectLogsAdmin(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-logs">Logs</a>
 																				</li>
-																				<li>
-																					<a href="@Routes.ProjectLogSettings(w.Key, p.Key)" class="@(At(Routes.ProjectLogSettings(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-log">Log settings</a>
-																				</li>
 																			}
 																			@if (Features.IsEnabled(Feature.Data))
 																			{

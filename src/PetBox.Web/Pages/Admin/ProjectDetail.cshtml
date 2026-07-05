@@ -246,10 +246,20 @@
 			<span class="badge badge-ghost badge-sm" data-testid="project-retention-default-badge">default: @Model.EffectiveRetentionDays days</span>
 		}
 	</div>
-	<p class="text-xs opacity-60 mb-3">
-		How long to keep log entries before the hourly sweep deletes them. Without an override, this project uses the
-		<a href="@Routes.Sys()" class="link" data-testid="project-retention-sys-link">system default</a>
-		(@Model.EffectiveRetentionDays days).
+	<p class="text-xs opacity-60 mb-3" data-testid="project-retention-hint">
+		How long to keep log entries before the hourly sweep deletes them.
+		@if (Model.RetentionOverrideDays is { } ov)
+		{
+			<text>This project overrides the
+			<a href="@Routes.Sys()" class="link" data-testid="project-retention-sys-link">system default</a>
+			(@Model.DefaultRetentionDays days) and keeps entries for @ov days. Reset to fall back to the default.</text>
+		}
+		else
+		{
+			<text>Without an override, this project uses the
+			<a href="@Routes.Sys()" class="link" data-testid="project-retention-sys-link">system default</a>
+			(@Model.EffectiveRetentionDays days).</text>
+		}
 	</p>
 
 	<form method="post" asp-page-handler="SetRetention" class="card bg-base-200 border border-base-300" data-testid="project-retention-form">
