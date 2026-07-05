@@ -3,14 +3,10 @@
 @using PetBox.Web.Settings
 @model PetBox.Web.Settings.SettingsFormFieldsModel
 @{
-	var props = Model.RecordType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+	var visible = SettingsFormFieldSelector.GetEditable(Model.RecordType, Model.CurrentScope);
 }
-@foreach (var prop in props)
+@foreach (var (prop, attr) in visible)
 {
-	var attr = prop.GetCustomAttribute<SettingAttribute>();
-	if (attr is null) continue;
-	if ((int)Model.CurrentScope > (int)attr.TopLevel) { continue; }
-
 	var current = prop.GetValue(Model.Current);
 	var fieldId = $"setting-{prop.Name}";
 	var inputName = prop.Name;
