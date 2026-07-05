@@ -85,7 +85,12 @@ desktop.ini
 .env.*.local
 
 # Claude Code (personal)
-.claude/
+.claude/*
+# ...except the petbox-methodology skill canon — its content should be tracked/distributed
+# (each level must be un-ignored explicitly: git won't descend into an ignored dir otherwise)
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/petbox-methodology/
 
 # opencode (personal)
 .opencode/
