@@ -16,9 +16,13 @@
 
 @if (Model.Session is not null)
 {
+	@* Session content is GFM markdown (agents write `### user` / `### assistant` role headers,
+	   code blocks, lists). Render it via the ONE shared markdown renderer (_MdBody / IMarkdownRenderer)
+	   — the same server-side, sanitized pipeline node bodies and comments use — so role headers become
+	   real headings and code blocks/long lines render sanely, instead of a raw `<pre>` blob. *@
 	<article class="card bg-base-200 border border-base-300" data-testid="session-content">
 		<div class="card-body p-4">
-			<pre class="whitespace-pre-wrap text-sm font-mono">@Model.Session.Content</pre>
+			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = Model.Session.Content, TestId = "session-body" })" />
 		</div>
 	</article>
 }
