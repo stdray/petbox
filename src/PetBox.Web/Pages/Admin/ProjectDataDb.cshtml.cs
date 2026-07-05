@@ -40,7 +40,6 @@ public sealed class ProjectDataDbModel : PageModel
 	public IReadOnlyList<TableInfo> Tables { get; private set; } = [];
 	public IReadOnlyList<MigrationRow> Migrations { get; private set; } = [];
 	public string? ErrorMessage { get; private set; }
-	public string? SuccessMessage { get; private set; }
 
 	public async Task<IActionResult> OnGetAsync()
 	{
@@ -74,11 +73,13 @@ public sealed class ProjectDataDbModel : PageModel
 		switch (result.Kind)
 		{
 			case SchemaApplyKind.Applied:
-				SuccessMessage = $"Applied {name} (hash {result.Hash[..8]}…)";
-				break;
+				// PRG: a successful migration redirects to the clean DB URL (no lingering
+				// ?handler=Apply that a refresh would re-POST), carrying the success notice.
+				this.NotifySuccess($"Applied {name} (hash {result.Hash[..8]}…).");
+				return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey, dbName = DbName });
 			case SchemaApplyKind.AlreadyApplied:
-				SuccessMessage = $"{name} already applied — no-op.";
-				break;
+				this.NotifySuccess($"{name} already applied — no-op.");
+				return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey, dbName = DbName });
 			case SchemaApplyKind.Conflict:
 				ErrorMessage = $"Conflict: {name} already exists with a different hash. "
 					+ $"Existing {result.ExistingHash![..8]}… vs provided {result.Hash[..8]}…";
@@ -88,6 +89,7 @@ public sealed class ProjectDataDbModel : PageModel
 				break;
 		}
 
+		// Failure paths re-render in place so the pasted SQL and error stay together.
 		await PopulateAsync();
 		return Page();
 	}

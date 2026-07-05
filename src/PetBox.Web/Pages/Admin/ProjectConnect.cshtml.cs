@@ -78,6 +78,9 @@ public sealed class ProjectConnectModel : PageModel
 	{
 		Project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
 		if (Project is null) { ProjectNotFound = true; return Page(); }
+		// A just-minted key rides here across the Post/Redirect/Get from OnPostMint and is shown
+		// once; a refresh (no TempData) falls back to the mint form. See Notice.CarryNewKey.
+		NewKey = this.TakeNewKey();
 		return Page();
 	}
 
@@ -115,7 +118,9 @@ public sealed class ProjectConnectModel : PageModel
 			CreatedAt = DateTime.UtcNow,
 		});
 
-		NewKey = keyValue;
-		return Page();
+		// PRG: carry the one-time key across a redirect to the clean connect URL, so a refresh
+		// re-POSTs nothing (no accidental second key) yet the key still shows exactly once.
+		this.CarryNewKey(keyValue);
+		return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey });
 	}
 }

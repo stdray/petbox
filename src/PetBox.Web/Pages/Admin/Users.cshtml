@@ -86,7 +86,7 @@ else
 								</form>
 								@if (!u.IsBootstrapAdmin)
 								{
-									<form method="post" asp-page-handler="Delete" onsubmit="return confirm('Delete user @u.Username?');">
+									<form method="post" asp-page-handler="Delete" onsubmit="return confirm('Delete user @u.Username? This removes the account and all its workspace memberships. This cannot be undone.');">
 										<input type="hidden" name="userId" value="@u.Id" />
 										<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="sys-user-delete">Delete</button>
 									</form>

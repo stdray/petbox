@@ -1,0 +1,12 @@
+@* Shared post-mutation success notice. Reads (and consumes) the message carried across a
+	Post/Redirect/Get in TempData by PageModel.NotifySuccess. Rendered once by every app layout,
+	so a successful mutator's feedback shows consistently after its redirect. *@
+@{
+	var noticeSuccess = TempData[PetBox.Web.Pages.Notice.SuccessKey] as string;
+}
+@if (!string.IsNullOrEmpty(noticeSuccess))
+{
+	<div role="status" class="alert alert-success mb-4 text-sm" data-testid="notice-success">
+		<span>@noticeSuccess</span>
+	</div>
+}

@@ -55,10 +55,6 @@
 {
 	<div class="alert alert-error mb-3" data-testid="config-error">@Model.ErrorMessage</div>
 }
-@if (!string.IsNullOrEmpty(Model.SuccessMessage))
-{
-	<div class="alert alert-success mb-3" data-testid="config-success">@Model.SuccessMessage</div>
-}
 
 <form method="get" class="mb-4 flex flex-wrap items-end gap-2" data-testid="config-filter-form">
 	<label class="form-control">
@@ -121,7 +117,8 @@
 						<span class="font-medium">@f.Name</span>
 						<span class="font-mono opacity-70 ml-1">@label</span>
 					</a>
-					<form method="post" action="@(clearUrl)?handler=DeleteFilter" class="join-item">
+					<form method="post" action="@(clearUrl)?handler=DeleteFilter" class="join-item"
+						onsubmit="return confirm('Delete saved filter @f.Name?')">
 						@Html.AntiForgeryToken()
 						<input type="hidden" name="id" value="@f.Id" />
 						<button type="submit" class="btn btn-xs btn-outline btn-error" title="Delete saved filter"

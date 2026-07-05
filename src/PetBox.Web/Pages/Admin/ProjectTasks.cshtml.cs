@@ -86,6 +86,7 @@ public sealed class ProjectTasksModel : PageModel
 			return Page();
 		}
 
+		this.NotifySuccess($"Board '{name?.Trim()}' created.");
 		return RedirectToPage();
 	}
 
@@ -116,6 +117,7 @@ public sealed class ProjectTasksModel : PageModel
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
 		await _tasks.DeleteBoardAsync(ProjectKey, name, ct);
+		this.NotifySuccess($"Board '{name}' deleted.");
 		return RedirectToPage();
 	}
 
@@ -124,6 +126,7 @@ public sealed class ProjectTasksModel : PageModel
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
 		await _tasks.SetClosedAsync(ProjectKey, name, closed, ct);
+		this.NotifySuccess(closed ? $"Board '{name}' closed." : $"Board '{name}' reopened.");
 		return RedirectToPage();
 	}
 }
