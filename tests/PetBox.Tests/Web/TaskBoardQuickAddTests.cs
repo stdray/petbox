@@ -103,4 +103,33 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 		n.Status.Should().Be("Todo");  // free preset initial
 		n.Type.Should().Be("task");    // free empty-type default
 	}
+
+	// closed-board-disabled-display: a Simple board normally allows quick-add, but once
+	// closed the content page must hide it (and expose ClosedAt for the header badge) —
+	// mirrors the server-side reject in TasksService.UpsertAsync, purely on the render side.
+	[Fact]
+	public async Task OnGet_OnClosedBoard_HidesQuickAdd_AndExposesClosedAt()
+	{
+		var model = await Board(BoardKind.Simple);
+		await _tasks.SetClosedAsync("proj", model.Board, true, default);
+
+		await model.OnGetAsync(default);
+
+		model.ShowQuickAdd.Should().BeFalse();
+		model.ClosedAt.Should().NotBeNull();
+	}
+
+	// The POST gate mirrors the render decision: closing a board that otherwise allows
+	// quick-add must reject the create, not just hide the form.
+	[Fact]
+	public async Task OnPostCreate_OnClosedBoard_RejectsEvenWhenKindAllowsQuickAdd()
+	{
+		var model = await Board(BoardKind.Simple);
+		await _tasks.SetClosedAsync("proj", model.Board, true, default);
+
+		var result = await model.OnPostCreateAsync("My item", "details", 50, default);
+
+		result.Should().BeOfType<BadRequestResult>();
+		ActiveNodeCount(model.Board).Should().Be(0);
+	}
 }

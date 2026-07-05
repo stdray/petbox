@@ -544,6 +544,38 @@ public sealed class TasksMethodologySmokeTests : IClassFixture<TasksMethodologyS
 		FieldOf(s3, "auth", "delivery").Should().Be("done_with_defects");
 	}
 
+	// 13b. an umbrella spec node with task-less leaves must NOT roll up to `done` just because
+	// the flat union of all tasks-in-subtree happens to be all-Done — a leaf with zero linked
+	// tasks is `not_started`, so the umbrella reads `in_progress` while any leaf is unstarted.
+	[Fact]
+	public async Task SpecRollup_UmbrellaWithTaskLessLeaves_IsNotDone()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var ir = await AcceptedIdeaId();
+		await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "spec",
+			nodes = Nodes(
+				new { key = "umbrella", status = "defined", title = "Umbrella", body = "x", ideaRef = ir },
+				new { key = "leaf1", partOf = "umbrella", status = "defined", title = "Leaf1", body = "x", ideaRef = ir },
+				new { key = "leaf2", partOf = "umbrella", status = "defined", title = "Leaf2", body = "x", ideaRef = ir },
+				new { key = "leaf3", partOf = "umbrella", status = "defined", title = "Leaf3", body = "x", ideaRef = ir })
+		});
+		var searchAfterCreate = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
+		var leaf1Id = NodeId(searchAfterCreate, "leaf1");
+
+		// leaf2 and leaf3 get NO linked tasks at all; only leaf1 gets a Done feature.
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Done", title = "F", body = "x", specRef = leaf1Id }) });
+
+		var s = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
+		FieldOf(s, "leaf1", "delivery").Should().Be("done");
+		FieldOf(s, "leaf2", "delivery").Should().Be("not_started", "a leaf with no linked tasks is not_started, not silently absent from the rollup");
+		FieldOf(s, "leaf3", "delivery").Should().Be("not_started");
+		FieldOf(s, "umbrella", "delivery").Should().Be("in_progress", "one done leaf + two not-started leaves must NOT roll up to done");
+	}
+
 	// 14. a closed board rejects writes (agents stop writing by inertia); reopen restores writes.
 	[Fact]
 	public async Task ClosedBoard_RejectsWrites_UntilReopened()
