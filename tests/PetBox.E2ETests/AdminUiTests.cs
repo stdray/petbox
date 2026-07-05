@@ -100,6 +100,28 @@ public sealed class AdminUiTests(WebAppFixture app, ITestOutputHelper output) : 
 		await Expect(adminRow.GetByTestId("sys-user-delete")).ToHaveCountAsync(0);
 	}
 
+	// ui-deploy-form-layout: the "New deployment" form is broken out of a single flex-wrap row
+	// into labelled sections (Identity / Networking / Resources / Runtime). Render-presence guard:
+	// every grouping marker renders AND every field still submits (the POST contract is unchanged —
+	// same field names/handler, so the fields must still be on the page).
+	[Fact]
+	public async Task Deploy_NewDeploymentForm_GroupedIntoSections()
+	{
+		await _page!.GotoAsync("/ui/admin/sys/deploy");
+
+		// The four grouped sections.
+		await Expect(_page.GetByTestId("dep-section-identity")).ToBeVisibleAsync();
+		await Expect(_page.GetByTestId("dep-section-networking")).ToBeVisibleAsync();
+		await Expect(_page.GetByTestId("dep-section-resources")).ToBeVisibleAsync();
+		await Expect(_page.GetByTestId("dep-section-runtime")).ToBeVisibleAsync();
+
+		// Every posting field (and the submit) still renders — the contract is intact.
+		foreach (var id in new[]
+			{ "dep-service", "dep-project", "dep-node", "dep-image", "dep-ports",
+			  "dep-volumes", "dep-restart", "dep-memory", "dep-domain", "dep-add" })
+			await Expect(_page.GetByTestId(id)).ToHaveCountAsync(1);
+	}
+
 	[Fact]
 	public async Task Nav_SidebarHasAgentKeys_NoDuplicateTabs()
 	{
