@@ -75,9 +75,8 @@
 				}
 			</div>
 		}
-		@if (Model.Thread is { Count: > 0 })
-		{
-			<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, Model.CommitUrlTemplate, Model.NodeRefs))" />
-		}
+		@* Always rendered (comments-ui-edit): the add-comment form is the entry point into a
+		   node's discussion even before it has any comments, not just once one exists. *@
+		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread ?? [], n.NodeId, Model.CommitUrlTemplate, Model.NodeRefs))" />
 	</div>
 </li>

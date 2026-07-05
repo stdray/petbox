@@ -27,6 +27,11 @@
 		: $"{kindName} board — statuses follow the {kindName} workflow";
 }
 
+@if (Model.Error is not null)
+{
+	<div class="alert alert-error text-sm py-2 mb-3" data-testid="board-comment-error" role="alert">@Model.Error</div>
+}
+
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
 	<a href="@Routes.ProjectTasks(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70" data-testid="board-breadcrumb">tasks</a>
 	<span class="opacity-40">/</span>

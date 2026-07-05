@@ -105,6 +105,73 @@ public sealed class TaskBoardNodeModel : PageModel
 		return await ApplyAsync(p => p with { Title = title ?? string.Empty, Body = body ?? string.Empty }, version, ct);
 	}
 
+	// comments-ui-edit: add a comment (or, when parentId is set, a reply) under this node. Goes
+	// through ICommentService.AddAsync — the SAME door the comments_create MCP tool uses — so
+	// the reply-parent / same-thread guard applies identically here. `nodeId` rides along on the
+	// form as a hidden field (shared markup with the board page) but is ignored here: the node
+	// is always the one this page already resolves itself, never client-supplied.
+	public async Task<IActionResult> OnPostCommentAddAsync(string? parentId, string body, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		var detail = await ResolveAsync(ct);
+		if (detail is null) return NotFound();
+
+		try
+		{
+			var author = User.Identity?.Name ?? "system";
+			var result = await _comments.AddAsync(ProjectKey, detail.Board, detail.Node.NodeId, parentId, author, body, tags: null, ct);
+			if (!result.Applied)
+				return await LoadAsync(ct, "Could not add the comment — refresh and try again.");
+		}
+		catch (ArgumentException ex)
+		{
+			return await LoadAsync(ct, ex.Message);
+		}
+		return Redirect(Routes.TaskBoardNodeBySlug(WorkspaceKey, ProjectKey, detail.Board, detail.Node.Key));
+	}
+
+	// comments-ui-edit: edit a comment's body in place. `version` is the watermark baseline the
+	// form rendered with; a stale one comes back as a conflict (Applied:false), surfaced as the
+	// page Error rather than silently clobbering a comment that moved on since the render.
+	public async Task<IActionResult> OnPostCommentEditAsync(string id, string body, long version, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		var detail = await ResolveAsync(ct);
+		if (detail is null) return NotFound();
+
+		try
+		{
+			var result = await _comments.EditAsync(ProjectKey, detail.Board, id, body, tags: null, version, ct);
+			if (!result.Applied)
+				return await LoadAsync(ct, "This comment changed since the page was opened — refresh and redo your edit.");
+		}
+		catch (ArgumentException ex)
+		{
+			return await LoadAsync(ct, ex.Message);
+		}
+		return Redirect(Routes.TaskBoardNodeBySlug(WorkspaceKey, ProjectKey, detail.Board, detail.Node.Key));
+	}
+
+	// comments-ui-edit: soft-delete a comment. Rejected (InvalidOperationException) while it
+	// still has active replies — the guard from ICommentService.DeleteAsync, surfaced inline
+	// instead of a raw 500.
+	public async Task<IActionResult> OnPostCommentDeleteAsync(string id, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		var detail = await ResolveAsync(ct);
+		if (detail is null) return NotFound();
+
+		try
+		{
+			await _comments.DeleteAsync(ProjectKey, detail.Board, id, ct);
+		}
+		catch (InvalidOperationException ex)
+		{
+			return await LoadAsync(ct, ex.Message);
+		}
+		return Redirect(Routes.TaskBoardNodeBySlug(WorkspaceKey, ProjectKey, detail.Board, detail.Node.Key));
+	}
+
 	// Resolve the node by whichever address the request carried: the opaque nodeId alias, or
 	// the canonical (board, slug). Either way the caller can't retarget the board/key.
 	Task<NodeDetailView?> ResolveAsync(CancellationToken ct) =>

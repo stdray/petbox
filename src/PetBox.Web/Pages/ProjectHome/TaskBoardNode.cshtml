@@ -168,7 +168,7 @@
 			}
 		}
 
-		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, Model.CommitUrlTemplate, Model.NodeRefs))" />
+		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, Model.NodeRefs))" />
 	</div>
 </div>
 
