@@ -30,14 +30,14 @@ public sealed class PreferencesModel : PageModel
 		return Page();
 	}
 
-	public async Task<IActionResult> OnPostSaveAsync(Theme Theme, DefaultHome DefaultHome)
+	public async Task<IActionResult> OnPostSaveAsync(Theme Theme)
 	{
 		if (!TryGetUserId(out var userId, out var userIdString))
 			return RedirectToPage("/Login");
 
 		UserIdString = userIdString;
 		var old = await _resolver.GetAsync<UiSettings>(Scope.User, userIdString);
-		var updated = old with { Theme = Theme, DefaultHome = DefaultHome };
+		var updated = old with { Theme = Theme };
 
 		await _resolver.SetAsync(Scope.User, userIdString, updated, old, userId);
 
