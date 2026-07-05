@@ -60,6 +60,10 @@ public sealed class ProjectDetailModel : PageModel
 		Project = _db.Projects.FirstOrDefault(p => p.Key == ProjectKey);
 		if (Project is null) return;
 
+		// A just-minted key rides here across the Post/Redirect/Get from OnPostCreateKey and is
+		// shown once; a refresh (no TempData) drops it. See Notice.CarryNewKey.
+		NewKey = this.TakeNewKey();
+
 		HealthEndpoints = _db.HealthEndpoints.Where(e => e.ProjectKey == ProjectKey).OrderBy(e => e.Url).ToList();
 		Keys = _db.ApiKeys.Where(k => k.ProjectKey == ProjectKey).OrderByDescending(k => k.CreatedAt).ToList();
 
@@ -199,9 +203,10 @@ public sealed class ProjectDetailModel : PageModel
 			CreatedAt = DateTime.UtcNow,
 		});
 
-		NewKey = keyValue;
-		await OnGetAsync();
-		return Page();
+		// PRG: carry the one-time key across a redirect to the clean project URL (no lingering
+		// ?handler=CreateKey a refresh would re-POST) — the key still shows exactly once.
+		this.CarryNewKey(keyValue);
+		return Self();
 	}
 
 	public async Task<IActionResult> OnPostRevokeKeyAsync(string keyValue)
@@ -256,6 +261,7 @@ public sealed class ProjectDetailModel : PageModel
 			return Page();
 		}
 
+		this.NotifySuccess($"Project '{ProjectKey}' deleted.");
 		return Redirect(Routes.WorkspaceAdminProjects(WorkspaceKey));
 	}
 }

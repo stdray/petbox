@@ -20,10 +20,6 @@
 {
 	<div class="alert alert-error mb-3" data-testid="datadb-error">@Model.ErrorMessage</div>
 }
-@if (!string.IsNullOrEmpty(Model.SuccessMessage))
-{
-	<div class="alert alert-success mb-3" data-testid="datadb-success">@Model.SuccessMessage</div>
-}
 
 <section class="mb-6" data-testid="datadb-tables-section">
 	<h2 class="text-lg font-semibold mb-2">Tables</h2>

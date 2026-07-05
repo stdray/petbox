@@ -56,7 +56,6 @@ public sealed class IndexModel : PageModel
 
 	public IReadOnlyList<Core.Models.ConfigBinding> Rows { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
-	public string? SuccessMessage { get; set; }
 	public bool SecretsAvailable => _encryptor.IsAvailable;
 
 	public static IReadOnlyList<(string Key, string Value)> ParseTagsDisplay(string tags)
@@ -83,10 +82,6 @@ public sealed class IndexModel : PageModel
 			.Where(f => f.WorkspaceKey == EffectiveWorkspaceKey)
 			.OrderBy(f => f.Name)
 			.ToList();
-
-		var flash = Request.Query["deleteSuccess"].FirstOrDefault();
-		if (!string.IsNullOrEmpty(flash))
-			SuccessMessage = "Binding deleted.";
 
 		var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
 		var all = configDb.Bindings.Where(b => !b.IsDeleted).OrderBy(b => b.Path).ToList();
@@ -163,10 +158,12 @@ public sealed class IndexModel : PageModel
 				.Update();
 		}
 
-		// Build the redirect URL by hand (LocalRedirect) — RedirectToPage("Index") uses page-name
-		// link generation, which yields an empty URL for these custom-routed config pages and
+		// PRG + shared success notice (carried in TempData across the redirect), replacing the
+		// old ?deleteSuccess=1 query flag. Build the redirect URL by hand (LocalRedirect) —
+		// RedirectToPage("Index") yields an empty URL for these custom-routed config pages and
 		// throws at execution (500). Mirrors RedirectBack; the page is also linked via Routes.*.
-		return RedirectBack("deleteSuccess=1");
+		this.NotifySuccess("Binding deleted.");
+		return RedirectBack();
 	}
 
 	public IActionResult OnPostSaveFilter(string name)
@@ -189,6 +186,7 @@ public sealed class IndexModel : PageModel
 				_db.Insert(new SavedConfigFilter { WorkspaceKey = EffectiveWorkspaceKey, Name = trimmed, FilterTags = filterTags, CreatedAt = DateTime.UtcNow });
 			else
 				_db.SavedConfigFilters.Where(f => f.Id == existing.Id).Set(f => f.FilterTags, filterTags).Update();
+			this.NotifySuccess($"Filter '{trimmed}' saved.");
 		}
 		return RedirectBack();
 	}
@@ -197,6 +195,7 @@ public sealed class IndexModel : PageModel
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
 		_db.SavedConfigFilters.Where(f => f.Id == id && f.WorkspaceKey == EffectiveWorkspaceKey).Delete();
+		this.NotifySuccess("Saved filter deleted.");
 		return RedirectBack();
 	}
 

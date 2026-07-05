@@ -69,6 +69,7 @@ public sealed class WorkspacesModel : PageModel
 			}
 		}
 
+		this.NotifySuccess($"Workspace '{Key}' created.");
 		return RedirectToPage();
 	}
 
@@ -95,6 +96,7 @@ public sealed class WorkspacesModel : PageModel
 		// survive the workspace, then delete the workspace itself.
 		await _db.WorkspaceMembers.Where(m => m.WorkspaceKey == key).DeleteAsync();
 		await _db.Workspaces.Where(w => w.Key == key).DeleteAsync();
+		this.NotifySuccess($"Workspace '{key}' deleted.");
 		return RedirectToPage();
 	}
 }

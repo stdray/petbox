@@ -78,6 +78,7 @@ public sealed class UsersModel : PageModel
 			CreatedAt = DateTime.UtcNow,
 		});
 
+		this.NotifySuccess($"User '{username.Trim()}' created.");
 		return RedirectToPage();
 	}
 
@@ -95,6 +96,7 @@ public sealed class UsersModel : PageModel
 			.Set(u => u.PasswordHash, AdminPasswordHasher.Hash(newPassword))
 			.UpdateAsync();
 
+		this.NotifySuccess("Password reset.");
 		return RedirectToPage();
 	}
 
@@ -134,6 +136,7 @@ public sealed class UsersModel : PageModel
 		await _db.WorkspaceMembers.Where(m => m.UserId == userId).DeleteAsync();
 		await _db.Users.Where(u => u.Id == userId).DeleteAsync();
 
+		this.NotifySuccess($"User '{user.Username}' deleted.");
 		return RedirectToPage();
 	}
 }
