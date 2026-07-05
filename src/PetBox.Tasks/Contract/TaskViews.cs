@@ -196,6 +196,24 @@ public sealed record MethodologyBoard(
 // human/agent-readable pointer on how to narrow the query (null = complete answer).
 public sealed record MethodologyView(bool Enabled, IReadOnlyList<MethodologyBoard> Boards, string? Hint = null);
 
+// One board kind a PROVISIONING PRESET (tasks_methodology_enable) declares, as reported
+// back by the enable call itself (methodology-enable-response-scope): `Name` is the board
+// that now serves this kind (null only when another board already owns that name and
+// nothing could be provisioned), `Created` is true only when THIS call created it (false on
+// an idempotent rerun, or when nothing was created), `Counts` is the same cheap status
+// histogram MethodologyBoard carries (no node dump), and `Workflow` is the kind's FSM blocks
+// (the tasks_workflow shape) so the response is self-contained — no follow-up call needed to
+// know how to use what was just provisioned.
+public sealed record MethodologyEnableBoard(
+	string Kind, string? Name, bool Created, IReadOnlyDictionary<string, int> Counts,
+	IReadOnlyList<WorkflowBlock> Workflow);
+
+// tasks_methodology_enable's response: the preset that was applied, and the board(s) IT
+// provisions — NOT the methodology quartet surface (that is tasks_methodology_get's job; a
+// non-quartet preset like `classic` has nothing to do with those four boards, so dumping
+// them here described the wrong thing).
+public sealed record MethodologyEnableResult(string Preset, IReadOnlyList<MethodologyEnableBoard> Boards);
+
 // Ack of a methodology-definition write: the definition's current revision number (the
 // baseline for the next edit), whether this call created a new revision (false = an
 // identical resubmit collapsed to a no-op), and how many live nodes the declared

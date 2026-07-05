@@ -94,9 +94,27 @@ public static class TasksTools
 		return new BoardReopenedResult(await tasks.SetClosedAsync(projectKey, board, false, ct));
 	}
 
-	[McpServerTool(Name = "tasks_methodology_enable", Title = "Enable a methodology preset", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
-	[Description("Provision a methodology PRESET's singleton boards if missing and auto-wire work->spec. `preset` selects the board set (default \"quartet\" = intake/ideas/spec/work; an unknown slug is rejected naming the available presets) — the quartet is the only preset today. Idempotent — opt-in; a project's methodology lives on these boards, ad-hoc work stays on simple boards. The methodology kinds are one-per-project. Requires tasks:write. Returns the quartet surface (intake→ideas→spec→work).")]
-	public static async Task<MethodologyView> MethodologyEnableAsync(
+	[McpServerTool(Name = "tasks_methodology_enable", Title = "Enable a methodology preset", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyEnableResult))]
+	[Description("""
+		Provision a methodology PRESET's board(s) if missing and (quartet only) auto-wire
+		work->spec. `preset` selects which board kind(s) to create (default "quartet" =
+		intake/ideas/spec/work — one-per-project singletons; "classic" = one standalone
+		classic board (task|feature|bug), NOT a singleton — an unknown slug is rejected
+		naming the available presets). Idempotent for the quartet; a rerun on a
+		non-singleton preset leaves its existing board(s) alone (use tasks_board_create with
+		the preset's kind for another one). Opt-in — a project's methodology lives on these
+		boards, ad-hoc work stays on simple boards. Requires tasks:write.
+
+		Returns what THIS CALL's preset provisioned — NOT the methodology quartet index
+		(call tasks_methodology_get for that; irrelevant when `preset` isn't "quartet"):
+		`preset` (the resolved slug) and `boards[]`, one row per kind the preset declares —
+		`kind`, `name` (the board now serving that kind; null only if another board already
+		owns that name and nothing could be provisioned), `created` (false on an idempotent
+		rerun, or when nothing was created), `counts` (a status histogram, like
+		tasks_methodology_get's board rows — no node dump), and `workflow` (the kind's FSM
+		blocks, the tasks_workflow shape) so the response is self-contained.
+		""")]
+	public static async Task<MethodologyEnableResult> MethodologyEnableAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("The methodology preset to provision (default \"quartet\" = intake/ideas/spec/work; \"classic\" = one standalone GitHub/Jira/Linear-level board). Unknown slug → a clear error listing the available presets.")] string? preset = null,

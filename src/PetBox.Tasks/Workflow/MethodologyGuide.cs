@@ -39,7 +39,15 @@ public static class MethodologyGuide
 
 		AppendRelationKinds(md, runtime);
 		AppendBodyConventions(md);
-		return new MethodologyGuideView(md.ToString(), invariants, source, definitionVersion);
+		// A kind whose workflow is split into several blocks (types sharing one FSM each) can
+		// carry the SAME status pair on two different blocks (e.g. a `ticket`/`incident` split
+		// that both gate "Open -> Junk" with a reason) — the invariant's Detail names only the
+		// status edge, not the block/type, so both blocks would otherwise contribute the
+		// identical (Kind, Rule, Detail) tuple and a downstream consumer keying on the
+		// invariants list would see the rule twice for one real rule. MethodologyInvariant is a
+		// record (structural equality over Kind/Rule/Detail), so Distinct() is the exact dedup —
+		// first occurrence wins, order preserved (Guide_IsDeterministic).
+		return new MethodologyGuideView(md.ToString(), invariants.Distinct().ToList(), source, definitionVersion);
 	}
 
 	static void AppendKind(StringBuilder md, MethodologyRuntime runtime, MethodologyKindDef kind, List<MethodologyInvariant> invariants)

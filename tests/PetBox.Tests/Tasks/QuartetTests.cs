@@ -49,17 +49,22 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		var en = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
-		en.Enabled.Should().BeTrue();
+		en.Preset.Should().Be("quartet");
 		en.Boards.Select(b => b.Kind)
 			.Should().Equal("intake", "ideas", "spec", "work"); // pipeline order
+		// methodology-enable-response-scope: the enable ack describes what THIS preset
+		// provisioned (created + its own workflow), not the quartet node dump.
+		en.Boards.Should().OnlyContain(b => b.Created && b.Name == b.Kind && b.Workflow.Count > 0);
 
 		// work board auto-wired to the spec board.
 		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
 		var work = boards.Single(b => b.Kind == "work");
 		work.SpecBoard.Should().Be("spec");
 
-		// Idempotent: a rerun keeps exactly four methodology boards.
-		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+		// Idempotent: a rerun keeps exactly four methodology boards, and reports Created:false
+		// for every kind (already provisioned).
+		var again = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+		again.Boards.Should().OnlyContain(b => !b.Created);
 		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards
 			.Count.Should().Be(4);
 	}
@@ -71,7 +76,7 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		var en = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "quartet");
-		en.Enabled.Should().BeTrue();
+		en.Preset.Should().Be("quartet");
 		en.Boards.Select(b => b.Kind).Should().Equal("intake", "ideas", "spec", "work");
 	}
 
@@ -92,17 +97,51 @@ public sealed class QuartetTests : IDisposable
 	public async Task Enable_ClassicPreset_ProvisionsOneClassicBoard()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "classic");
+		var en = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "classic");
+		// methodology-enable-response-scope: the ack names the CLASSIC board it provisioned +
+		// its workflow — not the (irrelevant, all-empty) quartet.
+		en.Preset.Should().Be("classic");
+		var reported = en.Boards.Should().ContainSingle().Subject;
+		reported.Kind.Should().Be("classic");
+		reported.Name.Should().Be("classic");
+		reported.Created.Should().BeTrue();
+		reported.Workflow.Should().ContainSingle().Which.Types.Should().Equal("task", "feature", "bug");
+
 		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
 		var classic = boards.Should().ContainSingle().Subject;
 		classic.Kind.Should().Be("classic");
 		classic.SpecBoard.Should().BeNull("classic is outside the spec/work auto-wire");
 
 		// Idempotent rerun; and classic is NOT a singleton — more boards may be created.
-		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "classic");
+		var again = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "classic");
+		again.Boards.Should().ContainSingle().Which.Created.Should().BeFalse("the classic kind is already provisioned");
 		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(1);
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "another", "classic");
 		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(2);
+	}
+
+	// quick-add-stores-default-type: a single-FSM kind (every preset kind but Work) resolves
+	// an untyped node to its declared default (first type of the first block) for FSM
+	// purposes; this pins that the WRITE materializes the same default into the stored row
+	// (and so the UI) instead of persisting an empty string — the store and the resolution
+	// now agree. Covers a quartet kind (ideas -> idea) and the classic preset (classic -> task).
+	[Theory]
+	[InlineData("quartet", "ideas", "idea")]
+	[InlineData("classic", "classic", "task")]
+	public async Task Upsert_UntypedNode_MaterializesKindDefaultType(string preset, string board, string defaultType)
+	{
+		var http = Http("tasks:read,tasks:write");
+		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: preset);
+		var nodes = McpInputs.NodesJson("""[{"key":"untyped-a","title":"A"}]"""); // no type, no status
+		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, board, nodes);
+
+		res.Applied.Should().BeTrue();
+		var added = res.Added.Should().ContainSingle().Subject;
+		added.Type.Should().Be(defaultType, "the stored type must match the kind's runtime-resolved default, not \"\"");
+
+		// The persisted row agrees too (not just the write echo).
+		var read = await TasksTools.NodeGetAsync(http, Flags(), _tasks, Proj, board, "untyped-a");
+		read.Node.Type.Should().Be(defaultType);
 	}
 
 	// Preset copy: def_get with `preset` renders the built-in preset as a COPYABLE definition
