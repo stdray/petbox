@@ -1,63 +1,23 @@
-using System.Globalization;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Auth;
-using PetBox.Core.Data;
-using PetBox.Core.Settings;
-using PetBox.Web.Settings;
 
 namespace PetBox.Web.Pages.Admin;
 
+// Per-project log retention now lives ONLY on the project Info page (/info), which owns the
+// single working override control (card ui-log-retention-settings-fix). At project scope this
+// page had no configurable fields — every LogSettings property caps out at Workspace/System
+// scope, so the form rendered empty yet still reported a false "Log settings saved." on a no-op
+// and re-POSTed on refresh (no PRG). The page is kept only as a redirect so existing
+// links/bookmarks to /log land on the real retention control instead of an empty form.
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectLogSettingsModel : PageModel
 {
-	readonly ISettingsResolver _resolver;
-	readonly PetBoxDb _db;
-
-	public ProjectLogSettingsModel(ISettingsResolver resolver, PetBoxDb db)
-	{
-		_resolver = resolver;
-		_db = db;
-	}
-
 	[BindProperty(SupportsGet = true)]
 	public string WorkspaceKey { get; set; } = string.Empty;
 
 	[BindProperty(SupportsGet = true)]
 	public string ProjectKey { get; set; } = string.Empty;
 
-	public LogSettings Current { get; private set; } = new();
-	public bool ProjectExists { get; private set; }
-	public string? SuccessMessage { get; set; }
-	public string? ErrorMessage { get; set; }
-
-	public async Task OnGetAsync()
-	{
-		ProjectExists = _db.Projects.Any(p => p.Key == ProjectKey);
-		if (!ProjectExists) return;
-		Current = await _resolver.GetAsync<LogSettings>(Scope.Project, ProjectKey);
-	}
-
-	public async Task<IActionResult> OnPostSaveAsync()
-	{
-		ProjectExists = _db.Projects.Any(p => p.Key == ProjectKey);
-		if (!ProjectExists)
-		{
-			ErrorMessage = "Project not found.";
-			return Page();
-		}
-
-		var old = await _resolver.GetAsync<LogSettings>(Scope.Project, ProjectKey);
-		var updated = SettingsFormBinder.BuildFrom(Request.Form, old);
-
-		var userIdRaw = User.FindFirst(PetBoxClaims.UserId)?.Value;
-		long? userId = long.TryParse(userIdRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) ? id : null;
-
-		await _resolver.SetAsync(Scope.Project, ProjectKey, updated, old, userId);
-
-		Current = updated;
-		SuccessMessage = "Log settings saved.";
-		return Page();
-	}
+	public IActionResult OnGet() => Redirect(Routes.ProjectSettings(WorkspaceKey, ProjectKey));
 }

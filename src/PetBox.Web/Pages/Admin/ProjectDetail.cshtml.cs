@@ -30,6 +30,12 @@ public sealed class ProjectDetailModel : PageModel
 	public int EffectiveRetentionDays { get; private set; }
 	public int? RetentionOverrideDays { get; private set; }
 
+	// The retention this project would fall back to if its override were removed — the
+	// cascade resolved from ABOVE the project (workspace → system), so the project's own
+	// override row is excluded. This is the true "system default" value; the hint shows it
+	// so an active override can never masquerade as the default (card ui-log-retention-settings-fix).
+	public int DefaultRetentionDays { get; private set; }
+
 	// The project's effective commit-view URL template (RepoSettings, cascaded). Empty = unset →
 	// commit refs/hashes render as plain text. A literal {sha} placeholder is expanded per commit.
 	public string CommitUrlTemplate { get; private set; } = "";
@@ -58,10 +64,14 @@ public sealed class ProjectDetailModel : PageModel
 		Keys = _db.ApiKeys.Where(k => k.ProjectKey == ProjectKey).OrderByDescending(k => k.CreatedAt).ToList();
 
 		// Effective LogSettings via cascade (project → workspace → system).
+		var isSystem = string.Equals(ProjectKey, "$system", StringComparison.Ordinal);
 		var effective = await _settings.GetAsync<LogSettings>(Scope.Project, ProjectKey);
-		EffectiveRetentionDays = string.Equals(ProjectKey, "$system", StringComparison.Ordinal)
-			? effective.SystemRetainDays
-			: effective.RetentionDays;
+		EffectiveRetentionDays = isSystem ? effective.SystemRetainDays : effective.RetentionDays;
+
+		// The fallback default: same cascade but started at Workspace scope, which never reads
+		// the project's own override row. Equals EffectiveRetentionDays when there is no override.
+		var fallback = await _settings.GetAsync<LogSettings>(Scope.Workspace, WorkspaceKey);
+		DefaultRetentionDays = isSystem ? fallback.SystemRetainDays : fallback.RetentionDays;
 
 		// Has the project explicitly overridden its own retention?
 		var overrideRow = _db.Settings.FirstOrDefault(s =>
