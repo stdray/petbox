@@ -27,6 +27,11 @@
 		: $"{kindName} board — statuses follow the {kindName} workflow";
 }
 
+@if (Model.Error is not null)
+{
+	<div class="alert alert-error text-sm py-2 mb-3" data-testid="board-comment-error" role="alert">@Model.Error</div>
+}
+
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
 	<a href="@Routes.ProjectTasks(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70" data-testid="board-breadcrumb">tasks</a>
 	<span class="opacity-40">/</span>
@@ -127,6 +132,17 @@ else
 			<input type="checkbox" class="toggle toggle-xs" data-testid="active-only-toggle" />
 			<span>active only</span>
 		</label>
+		@* Client-side row-order toggle (board-sort-impl): reorders the rendered <li>s in place
+		   (siblings only — the part_of nesting itself is untouched, per finding D11 on the
+		   server ordering) and persists the choice to localStorage["tasksSort"]. *@
+		<span class="text-xs opacity-60 ml-1">sort:</span>
+		<select class="select select-bordered select-xs" data-testid="board-sort-by" aria-label="Sort by">
+			<option value="priority">priority</option>
+			<option value="created">created</option>
+			<option value="updated">updated</option>
+			<option value="title">title</option>
+		</select>
+		<button type="button" class="btn btn-ghost btn-xs font-mono" data-testid="board-sort-dir" aria-label="Toggle sort direction" title="toggle ascending / descending">↑</button>
 	</div>
 	<ul class="flex flex-col gap-2" data-testid="board-nodes">
 		@foreach (var n in Model.Nodes)

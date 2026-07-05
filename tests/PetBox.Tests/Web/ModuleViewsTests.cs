@@ -352,7 +352,10 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		// Body rendered as GFM via the shared renderer, not plain text.
 		html.Should().Contain("data-testid=\"comment-body\"");
 		html.Should().Contain("<strong>bold</strong>");
-		html.Should().NotContain("a **bold** remark");
+		// The raw markdown source appears exactly once — inside the (hidden until toggled)
+		// comment-edit-body textarea (comments-ui-edit), never inside the rendered read body.
+		System.Text.RegularExpressions.Regex.Count(html, System.Text.RegularExpressions.Regex.Escape("a **bold** remark")).Should().Be(1);
+		html.Should().Contain("data-testid=\"comment-edit-body\"");
 		// Created timestamp is present as a localizable `time.local-time` element.
 		html.Should().MatchRegex(
 			"<time class=\"local-time[^\"]*\"[^>]*data-testid=\"comment-time\"");

@@ -8,8 +8,11 @@
 }
 
 @* One plan-node card. Reused by both the part_of tree and the tag-groups projection; the
-   data-* attributes power ts/board.ts (tree pane only — the tag pane uses a different list). *@
-<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@Model.Depth" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-closed="@Model.Closed.ToString().ToLowerInvariant()" data-keep-visible="@Model.KeepVisible.ToString().ToLowerInvariant()" data-status="@n.Status" data-type="@n.Type" data-search="@search" style="margin-left:@(Model.Depth * 1.5)rem">
+   data-* attributes power ts/board.ts (tree pane only — the tag pane uses a different list).
+   data-priority/title/created/updated (board-sort-impl) feed the client sort toggle — CreatedAt/
+   UpdatedAt come straight off the active PlanNode revision, so they're only meaningful here in
+   the tree pane. *@
+<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@Model.Depth" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-closed="@Model.Closed.ToString().ToLowerInvariant()" data-keep-visible="@Model.KeepVisible.ToString().ToLowerInvariant()" data-status="@n.Status" data-type="@n.Type" data-search="@search" data-priority="@n.Priority" data-title="@n.Title" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" style="margin-left:@(Model.Depth * 1.5)rem">
 	<div class="card-body p-3">
 		<div class="flex items-baseline justify-between gap-2">
 			<div class="min-w-0 flex items-baseline gap-2 flex-wrap">
@@ -75,9 +78,8 @@
 				}
 			</div>
 		}
-		@if (Model.Thread is { Count: > 0 })
-		{
-			<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, Model.CommitUrlTemplate, Model.NodeRefs))" />
-		}
+		@* Always rendered (comments-ui-edit): the add-comment form is the entry point into a
+		   node's discussion even before it has any comments, not just once one exists. *@
+		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread ?? [], n.NodeId, Model.CommitUrlTemplate, Model.NodeRefs))" />
 	</div>
 </li>
