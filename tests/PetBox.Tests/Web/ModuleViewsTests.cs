@@ -497,6 +497,46 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("sessions-empty");
 	}
 
+	// ui-session-gfm-render: the session detail page renders its content as GFM markdown through the
+	// ONE shared renderer (_MdBody / IMarkdownRenderer) — the multi-message `### role` headers become
+	// real <h3> headings and code fences become <pre><code>, not a raw `### user …` blob in a <pre>.
+	[Fact]
+	public async Task SessionDetail_RendersContentAsGfmMarkdown_NotRawBlob()
+	{
+		const string sessionId = "gfm-session";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var store = scope.ServiceProvider.GetRequiredService<PetBox.Sessions.Data.ISessionStore>();
+			var messages = new[]
+			{
+				new PetBox.Sessions.Contract.SessionMessage(1, "user", "Run `dotnet build` and report."),
+				new PetBox.Sessions.Contract.SessionMessage(2, "assistant", "Done:\n\n```\nBuild succeeded.\n```"),
+			};
+			await store.UpsertAsync("$system", new PetBox.Sessions.Data.SessionRow
+			{
+				SessionId = sessionId,
+				Agent = "claude",
+				ContentZ = PetBox.Sessions.Data.SessionContent.Encode(messages),
+				Version = 2,
+				Updated = DateTime.UtcNow,
+			});
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/sessions/{sessionId}");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		// The `### role` headers are rendered to real heading markup by the shared renderer …
+		html.Should().Contain("<h3");
+		html.Should().MatchRegex("<h3[^>]*>user</h3>");
+		html.Should().MatchRegex("<h3[^>]*>assistant</h3>");
+		// … the code fence became a code block, and it went through the shared _MdBody surface …
+		html.Should().Contain("<pre><code>");
+		html.Should().Contain("data-testid=\"session-body\"");
+		// … so the raw markdown header text is NOT emitted literally.
+		html.Should().NotContain("### user");
+	}
+
 	[Fact]
 	public async Task TasksAdmin_RendersCreateForm_AndListsBoard()
 	{
