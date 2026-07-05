@@ -153,6 +153,55 @@ public sealed class AdminProjectsAuthzTests : IClassFixture<AdminProjectsAuthzFi
 			"the cross-tenant create must not have inserted a row into wsb — this is the exploit the fix closes");
 	}
 
+	// SECURITY VERIFICATION (authz-cleanup precursor): ProjectsModel.WorkspaceKey is
+	// [BindProperty(SupportsGet = true)], but the WorkspaceAdmin policy's requirement handler
+	// (WorkspaceRoleAuthorizationHandler) derives the target workspace from
+	// HttpContext.GetRouteValue("workspaceKey") — the ROUTE, not the bound property. ASP.NET
+	// Core's default composite value provider order is Form -> Route -> Query, so a form field
+	// named "WorkspaceKey" can rebind the property AFTER the route-based authz check already
+	// passed. This test POSTs to a route eve legitimately administers (wsa) so the policy
+	// succeeds, then smuggles a form field WorkspaceKey=wsb to see whether the INSERT lands in
+	// the workspace the attacker does NOT administer.
+	[Fact]
+	public async Task OnPostCreate_FormWorkspaceKey_CannotOverrideRouteWorkspace()
+	{
+		var authCookie = await LoginAsync("eve");
+
+		var ownPageReq = new HttpRequestMessage(HttpMethod.Get, "/ui/admin/ws/wsa/projects");
+		ownPageReq.Headers.Add("Cookie", authCookie);
+		using var ownPage = await _client.SendAsync(ownPageReq);
+		ownPage.StatusCode.Should().Be(HttpStatusCode.OK, "eve administers wsa and must be able to load its own projects page");
+		var (token, afCookie) = ExtractAntiforgery(ownPage, await ownPage.Content.ReadAsStringAsync());
+
+		// Route workspace is wsa (policy passes for eve); form body smuggles WorkspaceKey=wsb.
+		var createReq = new HttpRequestMessage(HttpMethod.Post, "/ui/admin/ws/wsa/projects?handler=Create");
+		createReq.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+		{
+			["key"] = "pwn",
+			["name"] = "pwn",
+			["description"] = "",
+			["WorkspaceKey"] = "wsb",
+			["__RequestVerificationToken"] = token,
+		});
+		createReq.Headers.Add("Cookie", $"{authCookie}; {afCookie}");
+		using var createResp = await _client.SendAsync(createReq);
+
+		// The WorkspaceAdmin policy check is expected to PASS here (route == wsa, eve's own
+		// workspace) — this test is about where the INSERT lands, not whether authz fires.
+		createResp.StatusCode.Should().Be(HttpStatusCode.Redirect, "eve is Admin of the route workspace (wsa), so the policy allows the POST");
+
+		using var scope = _fx.Factory.Services.CreateScope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		var landedInWsb = db.Projects.Any(p => p.WorkspaceKey == "wsb" && p.Key == "pwn");
+		var landedInWsa = db.Projects.Any(p => p.WorkspaceKey == "wsa" && p.Key == "pwn");
+
+		landedInWsb.Should().BeFalse(
+			"a form-supplied WorkspaceKey must NOT override the route workspace used for the authz check — " +
+			"if this fails, eve (Admin of wsa only) escalated into wsb via the bound property");
+		landedInWsa.Should().BeTrue(
+			"the create should still succeed, but scoped to the route workspace (wsa) eve actually administers");
+	}
+
 	[Fact]
 	public async Task Admin_of_wsb_can_create_a_project_in_wsb()
 	{
