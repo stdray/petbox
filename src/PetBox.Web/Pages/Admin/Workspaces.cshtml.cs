@@ -81,6 +81,19 @@ public sealed class WorkspacesModel : PageModel
 			return Page();
 		}
 
+		// Forbid deleting a non-empty workspace — projects own heavy data (DBs, boards,
+		// memory, logs). The operator must delete or move them first (variant A).
+		var projectCount = await _db.Projects.CountAsync(p => p.WorkspaceKey == key);
+		if (projectCount > 0)
+		{
+			ErrorMessage = $"This workspace has {projectCount} project(s). Delete or move them first.";
+			OnGet();
+			return Page();
+		}
+
+		// The workspace is empty: drop its memberships so no orphaned WorkspaceMember rows
+		// survive the workspace, then delete the workspace itself.
+		await _db.WorkspaceMembers.Where(m => m.WorkspaceKey == key).DeleteAsync();
 		await _db.Workspaces.Where(w => w.Key == key).DeleteAsync();
 		return RedirectToPage();
 	}
