@@ -8,6 +8,7 @@ using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -47,6 +48,14 @@ public static class ShareApi
 	{
 		if (string.IsNullOrWhiteSpace(req.ProjectKey) || string.IsNullOrWhiteSpace(req.Kql))
 			return Results.BadRequest(new ErrorResponse("ProjectKey and Kql required"));
+
+		// req.ProjectKey comes from the JSON body (attacker-controlled) — bare .RequireAuthorization()
+		// only proves SOME authenticated identity, not that it's authorized for THIS project. Without
+		// this, any authenticated caller could mint a share link (served anonymously at GetTsvAsync)
+		// exporting another project's log data. Same ProjectScope.Authorizes pattern as SessionApi.
+		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		if (!ProjectScope.Authorizes(claim, req.ProjectKey))
+			return Results.Forbid();
 
 		var salt = RandomNumberGenerator.GetBytes(32);
 		var id = Convert.ToHexString(RandomNumberGenerator.GetBytes(20)).ToLowerInvariant();

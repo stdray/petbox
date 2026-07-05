@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
@@ -114,6 +115,24 @@ public static class OtlpEndpoints
 		return Results.Ok(new IngestResponse(result.Candidates.Count, result.Errors));
 	}
 
+	// The "ApiKey" policy on these three routes only proves SOME api key authenticated — it does
+	// NOT compare the caller's project claim to the route's {projectKey}, unlike the equivalent
+	// CLEF/Seq ingest handlers in LogApi.cs (AuthorizeProject). Without this, any api key could
+	// inject OTLP logs/traces/metrics into any project. The bare self-export routes below
+	// (SelfIngest*, AllowAnonymous + shared-secret X-Seq-ApiKey) are a deliberately different,
+	// unauthenticated-by-design contract and are left untouched.
+	static bool AuthorizeProject(HttpContext ctx, string projectKey, out IResult forbid)
+	{
+		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		if (!ProjectScope.Authorizes(claim, projectKey))
+		{
+			forbid = Results.Forbid();
+			return false;
+		}
+		forbid = null!;
+		return true;
+	}
+
 	static async Task<IResult> IngestLogs(
 		HttpContext ctx,
 		string projectKey,
@@ -122,6 +141,8 @@ public static class OtlpEndpoints
 		IIngestionPipeline pipeline,
 		CancellationToken ct)
 	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(serviceKey))
 			return Results.BadRequest(new ErrorResponse("X-Service-Key header required"));
@@ -147,6 +168,8 @@ public static class OtlpEndpoints
 		ILogStore store,
 		CancellationToken ct)
 	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'; create it first"));
 
@@ -171,6 +194,8 @@ public static class OtlpEndpoints
 		ILogStore store,
 		CancellationToken ct)
 	{
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'; create it first"));
 
