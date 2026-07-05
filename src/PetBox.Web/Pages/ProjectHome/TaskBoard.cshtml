@@ -37,6 +37,10 @@
 	<span class="opacity-40">/</span>
 	<h1 class="text-2xl font-semibold font-mono" data-testid="board-title">@Model.Board</h1>
 	<span class="badge @kindBadgeClass" data-testid="board-kind" data-kind="@kindName" title="@kindTitle">@kindName</span>
+	@if (Model.ClosedAt is not null)
+	{
+		<span class="badge badge-warning badge-xs" data-testid="board-closed-badge" title="closed — read-only, writes are rejected">closed</span>
+	}
 	<span class="badge badge-ghost">@Model.Nodes.Count node(s)</span>
 	@* Per-type "View workflow" triggers — one per FSM block (a preset kind has exactly one).
 	   Opens the daisyUI modal with the block's status graph (ts/workflow-viz.ts). *@
