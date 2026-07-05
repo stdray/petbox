@@ -1,9 +1,17 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
 @inject PetBox.Core.Settings.ISettingsResolver Settings
+@inject PetBox.Tasks.Contract.ITasksService Tasks
 @{
 	var currentWs = Nav.CurrentWorkspaceKey;
 	var currentProject = Nav.CurrentProjectKey;
 	var fewProjects = Nav.ProjectsInCurrentWorkspace.Count < 3;
+	// Boards are surfaced as Tasks sub-nav ONLY for the project in context (no global
+	// fan-out): one cheap metadata read, and only when Tasks is on and a project is active.
+	IReadOnlyList<PetBox.Core.Models.TaskBoardMeta> currentProjectBoards = [];
+	if (Nav.TasksEnabled && !string.IsNullOrEmpty(currentProject))
+	{
+		currentProjectBoards = await Tasks.ListBoardsAsync(currentProject, Context.RequestAborted);
+	}
 	// Tree expand state is persisted client-side in the petbox.sidebar.tree cookie
 	// (see ts/sidebar.ts) so we can render <details open> up front — no JS reflow
 	// after paint. Only project nodes are tracked here; lazy log/db nodes auto-open
@@ -27,6 +35,9 @@
 	var path = Context.Request.Path.Value ?? string.Empty;
 	bool IsActive(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
 	bool IsExactly(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
+	// True on the URL itself or any descendant path (a board's node pages) — but NOT a
+	// sibling that merely shares a name prefix (roadmap vs roadmap-v2).
+	bool IsUnder(string url) => IsExactly(url) || path.StartsWith(url + "/", StringComparison.OrdinalIgnoreCase);
 	var statusUrl = Routes.Workspace(currentWs);
 	var sharedMemoryUrl = Routes.SharedMemory();
 	var sharedConfigUrl = Routes.SharedConfig(currentWs);
@@ -211,7 +222,33 @@
 												}
 											@if (Nav.TasksEnabled)
 											{
-												<li><a href="@pTasks" class="@(IsActive(pTasks) ? "active" : "")" data-testid="nav-proj-tasks">Tasks</a></li>
+												@if (isCurrent && currentProjectBoards.Count > 0)
+												{
+													<li data-testid="nav-proj-tasks-node">
+														<details open="@(IsActive(pTasks))">
+															<summary class="@(IsExactly(pTasks) ? "active" : "")"><a href="@pTasks" data-testid="nav-proj-tasks">Tasks</a></summary>
+															<ul>
+																@foreach (var board in currentProjectBoards)
+																{
+																	var pBoard = Routes.ProjectTaskBoard(currentWs, project.Key, board.Name);
+																	<li data-testid="nav-proj-task-board-node" data-board-name="@board.Name">
+																		<a href="@pBoard" class="@(IsUnder(pBoard) ? "active" : "")" data-testid="nav-proj-task-board">
+																			<span class="font-mono text-xs truncate">@board.Name</span>
+																			@if (board.ClosedAt is not null)
+																			{
+																				<span class="badge badge-ghost badge-xs">closed</span>
+																			}
+																		</a>
+																	</li>
+																}
+															</ul>
+														</details>
+													</li>
+												}
+												else
+												{
+													<li><a href="@pTasks" class="@(IsActive(pTasks) ? "active" : "")" data-testid="nav-proj-tasks">Tasks</a></li>
+												}
 											}
 											@if (Nav.MemoryEnabled)
 											{

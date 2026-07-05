@@ -488,6 +488,36 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().NotContain("data-testid=\"nav-ws-admin\"");
 	}
 
+	// The sidebar surfaces the CURRENT project's task boards as sub-nav under the "Tasks"
+	// item (ui-sidebar-boards-nav): on a project-scoped page each board renders as a nested
+	// link to its board page, so the boards are reachable without first opening the Tasks list.
+	[Fact]
+	public async Task Sidebar_CurrentProjectBoards_RenderUnderTasks_WithHrefs()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/$system/tasks");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		// The Tasks item became an expandable node with the board sub-link beneath it.
+		html.Should().Contain("data-testid=\"nav-proj-tasks-node\"");
+		html.Should().MatchRegex(
+			"""<a href="/ui/\$system/\$system/tasks/roadmap"[^>]*data-testid="nav-proj-task-board""");
+	}
+
+	// The board the page is on is highlighted in the sidebar sub-nav (active class), including
+	// on a node page beneath the board.
+	[Fact]
+	public async Task Sidebar_ActiveBoard_IsHighlighted()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/$system/tasks/roadmap");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		// The roadmap board sub-link carries the active class on its own board page.
+		html.Should().MatchRegex(
+			"""<a href="/ui/\$system/\$system/tasks/roadmap" class="active" data-testid="nav-proj-task-board""");
+	}
+
 	[Fact]
 	public async Task Sessions_EmptyList_RendersOk()
 	{
