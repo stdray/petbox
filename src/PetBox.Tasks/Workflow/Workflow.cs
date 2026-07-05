@@ -28,6 +28,11 @@ public sealed record WorkflowTransition(string From, string To, bool RequiresApp
 	// cookie-authenticated owner in the UI); `false` keeps owner-only by CONVENTION. The
 	// builtin presets never enforce, so live preset behavior is unchanged.
 	public bool EnforceApproval { get; init; }
+
+	// Free-text pre-transition conditions (schema v2) — a convention the guide renders and
+	// the workflow graph marks; never server-enforced. Carried here so presentation surfaces
+	// (the graph's `checklist` edge marker) see it without re-reading the definition.
+	public IReadOnlyList<string> Checklist { get; init; } = [];
 }
 
 // A state machine for one task type on a board kind. Convention: Statuses[0] is

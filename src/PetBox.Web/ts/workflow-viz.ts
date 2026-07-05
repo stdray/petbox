@@ -19,6 +19,8 @@ export interface WorkflowEdge {
 	readonly requiresApproval?: boolean;
 	readonly requiresReason?: boolean;
 	readonly preconditionArtifact?: string | null;
+	// True when the transition declares a pre-transition checklist (convention gate).
+	readonly checklist?: boolean;
 }
 
 // One state machine: the set of type slugs sharing it + its statuses and transitions. The pure
@@ -94,6 +96,7 @@ function gateLabel(t: WorkflowEdge): string {
 	if (t.requiresApproval) parts.push("approve");
 	if (t.requiresReason) parts.push("reason");
 	if (t.preconditionArtifact) parts.push(`artifact:${t.preconditionArtifact}`);
+	if (t.checklist) parts.push("checklist");
 	return parts.join(" ");
 }
 
@@ -103,6 +106,60 @@ interface Placed {
 	row: number;
 	x: number;
 	y: number;
+}
+
+interface Rect {
+	readonly x: number;
+	readonly y: number;
+	readonly w: number;
+	readonly h: number;
+}
+
+const intersects = (a: Rect, b: Rect): boolean =>
+	a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+// Point on the quadratic P1→C→P2 at parameter t.
+const qPoint = (
+	p1: { x: number; y: number },
+	c: { x: number; y: number },
+	p2: { x: number; y: number },
+	t: number,
+) => ({
+	x: (1 - t) * (1 - t) * p1.x + 2 * (1 - t) * t * c.x + t * t * p2.x,
+	y: (1 - t) * (1 - t) * p1.y + 2 * (1 - t) * t * c.y + t * t * p2.y,
+});
+
+// Where a gate label may sit on its edge: the midpoint first, then sliding toward either
+// end. A dense graph (free-transition presets, multi-row columns) drops midpoints inside
+// node boxes and on sibling labels — each candidate is collision-checked against every
+// node and every already-placed label, and the first clean spot wins (midpoint fallback
+// when the whole edge is crowded). Order matters: near-middle candidates first, so labels
+// stay visually attached to their edge's center when possible.
+const LABEL_T_CANDIDATES = [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82];
+
+const LABEL_H = 15;
+
+// Pick the label's center: the first collision-free candidate along the edge, clamped
+// into the viewBox so a label near the border never clips.
+function placeLabel(
+	labelW: number,
+	pointAt: (t: number) => { x: number; y: number },
+	obstacles: ReadonlyArray<Rect>,
+	placedLabels: ReadonlyArray<Rect>,
+	viewWidth: number,
+): { x: number; y: number } {
+	const clampX = (x: number): number =>
+		Math.min(Math.max(x, labelW / 2 + 2), Math.max(viewWidth - labelW / 2 - 2, labelW / 2 + 2));
+	let fallback: { x: number; y: number } | null = null;
+	for (const t of LABEL_T_CANDIDATES) {
+		const p = pointAt(t);
+		const center = { x: clampX(p.x), y: p.y };
+		fallback ??= center;
+		const rect: Rect = { x: center.x - labelW / 2, y: center.y - LABEL_H / 2, w: labelW, h: LABEL_H };
+		const clear = !obstacles.some((o) => intersects(rect, o)) && !placedLabels.some((o) => intersects(rect, o));
+		if (clear) return center;
+	}
+	return fallback ?? pointAt(0.5);
 }
 
 // The point where the ray from a node's center toward (tx,ty) meets that node's border — so an
@@ -224,6 +281,10 @@ export function renderWorkflow(container: HTMLElement, graph: WorkflowGraph): vo
 	const labelLayer = el("g", {});
 	const nodeLayer = el("g", {});
 
+	// Node boxes are obstacles for gate labels; labels also avoid one another.
+	const nodeRects: Rect[] = [...placed.values()].map((p) => ({ x: p.x, y: p.y, w: NODE_W, h: NODE_H }));
+	const labelRects: Rect[] = [];
+
 	const pairSet = new Set(graph.transitions.map((t) => `${norm(t.from)}|${norm(t.to)}`));
 	for (const t of graph.transitions) {
 		const a = placed.get(norm(t.from));
@@ -269,12 +330,15 @@ export function renderWorkflow(container: HTMLElement, graph: WorkflowGraph): vo
 
 		const label = gateLabel(t);
 		if (label) {
-			// Point on the quadratic at t=0.5 = ¼·P1 + ½·C + ¼·P2.
-			const lx = 0.25 * p1.x + 0.5 * cx + 0.25 * p2.x;
-			const ly = 0.25 * p1.y + 0.5 * cy + 0.25 * p2.y;
+			// Slide along the curve to the first spot that overlaps no node and no earlier
+			// label (dense graphs drop midpoints inside node boxes), clamped into the view.
 			const w = label.length * 5.9 + 8;
-			labelLayer.appendChild(el("rect", { x: lx - w / 2, y: ly - 8, width: w, height: 15, rx: 3, fill: LABEL_BG }));
-			const text = el("text", { x: lx, y: ly + 3, "text-anchor": "middle", "font-size": 10, fill: LABEL_FG });
+			const spot = placeLabel(w, (tt) => qPoint(p1, { x: cx, y: cy }, p2, tt), nodeRects, labelRects, width);
+			labelRects.push({ x: spot.x - w / 2, y: spot.y - LABEL_H / 2, w, h: LABEL_H });
+			labelLayer.appendChild(
+				el("rect", { x: spot.x - w / 2, y: spot.y - LABEL_H / 2, width: w, height: LABEL_H, rx: 3, fill: LABEL_BG }),
+			);
+			const text = el("text", { x: spot.x, y: spot.y + 3.5, "text-anchor": "middle", "font-size": 10, fill: LABEL_FG });
 			text.textContent = label;
 			labelLayer.appendChild(text);
 		}

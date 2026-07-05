@@ -205,11 +205,21 @@ public static class MethodologyGuide
 		md.AppendLine("Cross-node automation the SERVER executes when a node of this kind enters the trigger status — do not apply these by hand:");
 		foreach (var e in effects)
 		{
-			var scope = e.OnlyFrom is null ? "" : $" currently in {e.OnlyFrom}";
-			md.AppendLine($"- On entering {e.On}, {e.Direction} `{e.Link}` nodes{scope} are set to {e.Set}.");
+			md.AppendLine($"- {EffectSentence(e, markdown: true)}");
 			invariants.Add(new(kind, "transition_effect",
 				$"{e.On}: {e.Direction} {e.Link}{(e.OnlyFrom is null ? "" : $" from {e.OnlyFrom}")} -> {e.Set}"));
 		}
+	}
+
+	// ONE phrasing for a declared transition effect, shared by the guide markdown (link in
+	// backticks) and plain-text surfaces (the methodology editor's per-kind effects
+	// annotation) — so "On entering Done, incoming issue_task nodes are set to done." reads
+	// identically wherever effects surface.
+	public static string EffectSentence(MethodologyTransitionEffectDef e, bool markdown = false)
+	{
+		var link = markdown ? $"`{e.Link}`" : e.Link;
+		var scope = e.OnlyFrom is null ? "" : $" currently in {e.OnlyFrom}";
+		return $"On entering {e.On}, {e.Direction} {link} nodes{scope} are set to {e.Set}.";
 	}
 
 	static void AppendRelationKinds(StringBuilder md, MethodologyRuntime runtime)

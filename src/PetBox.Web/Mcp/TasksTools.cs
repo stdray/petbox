@@ -214,6 +214,33 @@ public static class TasksTools
 		return new MethodologyDefUpsertResult(ack.Version, ack.Changed, ack.Migrated);
 	}
 
+	[McpServerTool(Name = "tasks_methodology_def_delete", Title = "Delete the project's methodology definition (revert to builtin presets)", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefDeleteResult))]
+	[Description("""
+		Delete the project's USER-DEFINED METHODOLOGY DEFINITION — every kind reverts to the
+		built-in presets (a declared quartet kind to its preset, a custom kind to `simple`).
+		`version` is the watermark baseline from your last tasks_methodology_def_get; a
+		stale/future baseline is a clear conflict error naming the current version — re-read
+		and retry. Validated against LIVE NODES before anything is written: every active node
+		on a board whose kind the definition declares must fit the preset resolution it falls
+		back to; an incompatible node REJECTS the whole call naming board/node/value (there is
+		no migration on delete — move/close the offenders first, or change the definition via
+		tasks_methodology_def_upsert with a migration instead). Deleting when no definition
+		exists is an idempotent no-op (deleted:false). The revision history is kept (temporal
+		soft-close) — the delete is itself a revision, not an erasure. Requires tasks:write.
+		""")]
+	public static async Task<MethodologyDefDeleteResult> MethodologyDefDeleteAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Watermark baseline: the `version` from your last tasks_methodology_def_get; 0 = delete the current revision regardless.")] long version = 0,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var ack = await tasks.DeleteMethodologyAsync(projectKey, version, ct);
+		return new MethodologyDefDeleteResult(ack.Changed, ack.Version);
+	}
+
 	[McpServerTool(Name = "tasks_methodology_def_get", Title = "Get the project's methodology definition", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefGetResult))]
 	[Description("""
 		Return the project's USER-DEFINED METHODOLOGY DEFINITION — the stored process

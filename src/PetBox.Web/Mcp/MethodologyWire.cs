@@ -16,10 +16,9 @@ static class MethodologyWire
 	// reused verbatim so the editor's JSON is shape-identical to the def_get/def_upsert wire.
 	public static readonly JsonSerializerOptions WireOptions = McpJsonUtilities.DefaultOptions;
 
-	// Textarea-facing variant: same shape, indented for hand editing.
-	static readonly JsonSerializerOptions Indented = new(McpJsonUtilities.DefaultOptions) { WriteIndented = true };
-
-	public static string ToJson(MethodologyDefGetResult doc) => JsonSerializer.Serialize(doc, Indented);
+	// Textarea-facing variant: same shape and value stream, laid out for hand editing —
+	// indented, except statuses[]/transitions[] elements one-per-line (MethodologyJsonFormat).
+	public static string ToJson(MethodologyDefGetResult doc) => MethodologyJsonFormat.ToDisplayJson(doc, WireOptions);
 
 	// Parse a pasted definition document (the def_get output / def_upsert `definition` shape;
 	// extra envelope fields like `defined`/`version` are ignored). Bad JSON and a bad status

@@ -29,6 +29,48 @@
 		animation: petbox-btn-flash 450ms ease-out;
 	}
 
+	/* JSON highlight overlay (ts/json-highlight.ts): a transparent textarea over a
+	   tokenized <pre> mirror. The mirror copies the textarea's font/padding metrics at
+	   attach time; here only stacking, transparency and token colors live. */
+	.json-hl-wrap {
+		position: relative;
+	}
+	.json-hl-mirror {
+		position: absolute;
+		inset: 0;
+		margin: 0;
+		overflow: hidden;
+		pointer-events: none;
+		white-space: pre;
+		border-style: solid;
+		border-color: transparent;
+		border-radius: var(--rounded-btn, 0.5rem);
+		/* The mirror carries the field background; the textarea above it goes transparent. */
+		background-color: oklch(var(--b1));
+		color: oklch(var(--bc));
+	}
+	.json-hl-input {
+		position: relative;
+		background: transparent;
+		color: transparent;
+		caret-color: oklch(var(--bc));
+	}
+	.json-hl-input::placeholder {
+		color: oklch(var(--bc) / 0.4);
+	}
+	.json-tok-key {
+		color: oklch(var(--p));
+	}
+	.json-tok-str {
+		color: oklch(var(--su));
+	}
+	.json-tok-num {
+		color: oklch(var(--wa));
+	}
+	.json-tok-kw {
+		color: oklch(var(--s));
+	}
+
 	@keyframes petbox-btn-flash {
 		0%,
 		25% {

@@ -337,6 +337,37 @@ public sealed partial class TasksService : ITasksService
 		return new MethodologyDefAck(r.CurrentVersion, Changed: r.Inserted > 0, Migrated: migrated);
 	}
 
+	public async Task<MethodologyDefAck> DeleteMethodologyAsync(string projectKey, long version, CancellationToken ct = default)
+	{
+		var current = await GetMethodologyDefinitionAsync(projectKey, ct);
+		if (current is null)
+			return new MethodologyDefAck(Version: 0, Changed: false); // idempotent: nothing to delete
+
+		// Live-node compatibility against the PRESETS-ONLY resolution the delete reverts to:
+		// every active node on a board whose kind the current definition declares must fit
+		// the preset it falls back to (a declared quartet kind → its preset; a custom kind →
+		// `simple`). No `migration` on delete — an incompatible node REJECTS the call with a
+		// clear message and nothing is written (repair the definition/nodes first, or change
+		// the definition with a migration instead of deleting it).
+		var ctx = _boards.GetContext(projectKey);
+		var boards = (await _boards.ListAsync(projectKey, ct)).Where(b => b.ClosedAt == null).ToList();
+		PlanDefinitionMigration(ctx, current.Definition, newDef: null, MethodologyRuntime.PresetsOnly, [], boards,
+			action: "delete (revert to builtin presets)", migrationHint: false);
+
+		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<MethodologyDefRow>(),
+			[(MethodologyDefRow.SingletonKey, version)], ct: ct);
+		if (!r.Applied)
+		{
+			var c = r.Conflicts[0];
+			throw new InvalidOperationException(c.Kind switch
+			{
+				TemporalConflictKind.FutureBaseline => $"methodology definition conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — re-read with tasks_methodology_def_get and retry the delete against the current version",
+				_ => $"methodology definition conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with tasks_methodology_def_get and retry the delete against the current version",
+			});
+		}
+		return new MethodologyDefAck(r.CurrentVersion, Changed: r.Closed > 0);
+	}
+
 	// Integrity of the migration document itself, against the NEW resolution: every entry
 	// names a kind that resolves somewhere (declared by the new definition, a builtin
 	// preset, or the kind slug of an existing board — a DROPPED kind's boards keep their
@@ -394,9 +425,10 @@ public sealed partial class TasksService : ITasksService
 	// rewritten). Returns the per-board rewrite batches; any node still incompatible after
 	// the mappings throws, naming board/node/value — the caller then writes NOTHING.
 	static List<(string Board, List<PlanNode> Nodes)> PlanDefinitionMigration(
-		TasksDb ctx, MethodologyDefinition? oldDef, MethodologyDefinition newDef,
+		TasksDb ctx, MethodologyDefinition? oldDef, MethodologyDefinition? newDef,
 		MethodologyRuntime newRuntime, IReadOnlyList<MethodologyMigration> migration,
-		IReadOnlyList<TaskBoardMeta> boards)
+		IReadOnlyList<TaskBoardMeta> boards,
+		string action = "change", bool migrationHint = true)
 	{
 		static bool Declares(MethodologyDefinition? d, string? kind) =>
 			kind is not null && d is not null && d.Kinds.Any(k => string.Equals(k.Kind, kind, StringComparison.OrdinalIgnoreCase));
@@ -450,10 +482,12 @@ public sealed partial class TasksService : ITasksService
 		{
 			const int cap = 10;
 			var more = problems.Count > cap ? $" …and {problems.Count - cap} more" : "";
+			var fix = migrationHint
+				? " Extend `migration` (per kind: types:[{from,to}] / statuses:[{from,to}]) to map every remaining value, or fix the nodes first."
+				: " Move or close the offending nodes first, or change the definition (with a migration) instead of deleting it.";
 			throw new ArgumentException(
-				"methodology definition change is incompatible with live nodes — rejected, nothing was written: "
-				+ string.Join("; ", problems.Take(cap)) + more
-				+ ". Extend `migration` (per kind: types:[{from,to}] / statuses:[{from,to}]) to map every remaining value, or fix the nodes first.");
+				$"methodology definition {action} is incompatible with live nodes — rejected, nothing was written: "
+				+ string.Join("; ", problems.Take(cap)) + more + fix);
 		}
 		return rewrites;
 	}
