@@ -1062,9 +1062,10 @@ public sealed partial class TasksService : ITasksService
 			? new LinkDto(nodeId, r.Board, r.Slug, r.Title, r.Status)
 			: new LinkDto(nodeId, null, null, null, "missing");
 
-	// COMPUTED spec roll-up (keyed by NodeId): a spec node's delivery derives from the
-	// tasks linked (task_spec) to it AND its part_of descendants (decomposition may cross
-	// boards). Replaces the old path-prefix descent.
+	// COMPUTED spec roll-up (keyed by NodeId): a spec node's delivery derives bottom-up from
+	// the tasks linked (task_spec) to it and its part_of descendants (decomposition may cross
+	// boards) — each leaf resolves independently before combining, rather than pooling every
+	// task in the subtree into one flat union.
 	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(string projectKey, IReadOnlyList<PlanNode> specNodes, Dictionary<string, string> parentOf, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		var byNodeId = new Dictionary<string, (string Type, string Status)>(StringComparer.Ordinal);
@@ -1081,23 +1082,31 @@ public sealed partial class TasksService : ITasksService
 			.GroupBy(e => e.ToNodeId, StringComparer.Ordinal)
 			.ToDictionary(g => g.Key, g => g.Select(e => e.FromNodeId).ToList(), StringComparer.Ordinal);
 
-		var result = new Dictionary<string, string>(StringComparer.Ordinal);
-		foreach (var s in specNodes)
+		// Bottom-up, memoized: a node's delivery combines its OWN directly-linked tasks (if any)
+		// with each child's recursively-computed delivery, via the same CombineDelivery used for
+		// tag-group rollups. A leaf with no linked tasks has no inputs at all, so CombineDelivery
+		// defaults it to not_started — it no longer disappears into a flat subtree-wide task union
+		// (which used to hide task-less leaves and let an umbrella wrongly read as `done` when some
+		// leaves had no work whatsoever).
+		var memo = new Dictionary<string, string>(StringComparer.Ordinal);
+		var visiting = new HashSet<string>(StringComparer.Ordinal);
+		string DeliveryOf(string nodeId)
 		{
-			// BFS the spec node's part_of subtree, union each node's inbound tasks.
-			var taskIds = new HashSet<string>(StringComparer.Ordinal);
-			var stack = new Stack<string>(); stack.Push(s.NodeId); var guard = 0;
-			var seen = new HashSet<string>(StringComparer.Ordinal);
-			while (stack.Count > 0 && guard++ < 100000)
-			{
-				var cur = stack.Pop();
-				if (!seen.Add(cur)) continue;
-				if (tasksOf.TryGetValue(cur, out var ts)) foreach (var t in ts) taskIds.Add(t);
-				if (childrenOf.TryGetValue(cur, out var kids)) foreach (var k in kids) stack.Push(k);
-			}
-			result[s.NodeId] = Delivery(taskIds.Where(byNodeId.ContainsKey).Select(id => byNodeId[id]).ToList(), runtime);
+			if (memo.TryGetValue(nodeId, out var cached)) return cached;
+			if (!visiting.Add(nodeId)) return "not_started"; // cycle guard; part_of shouldn't cycle
+			string? own = tasksOf.TryGetValue(nodeId, out var ts)
+				? Delivery(ts.Where(byNodeId.ContainsKey).Select(id => byNodeId[id]).ToList(), runtime)
+				: null;
+			var childDeliveries = childrenOf.TryGetValue(nodeId, out var kids)
+				? kids.Select(DeliveryOf)
+				: Enumerable.Empty<string>();
+			var result = CombineDelivery(own is null ? childDeliveries : childDeliveries.Append(own)) ?? "not_started";
+			visiting.Remove(nodeId);
+			memo[nodeId] = result;
+			return result;
 		}
-		return result;
+
+		return specNodes.ToDictionary(s => s.NodeId, s => DeliveryOf(s.NodeId), StringComparer.Ordinal);
 	}
 
 	static string Delivery(List<(string Type, string Status)> tasks, MethodologyRuntime runtime)
