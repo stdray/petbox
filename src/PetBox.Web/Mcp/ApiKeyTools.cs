@@ -30,6 +30,10 @@ public static class ApiKeyTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
+		// A key's name is its only human-readable label in the admin list; blank names are
+		// the prod-data symptom we're closing off. Reject empty/whitespace here (the admin UI
+		// already does) — duplicates are still allowed (names are labels, not identifiers).
+		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 		if (string.IsNullOrWhiteSpace(scopes)) throw new ArgumentException("scopes is required");
 
 		string effectiveProject;
@@ -62,7 +66,7 @@ public static class ApiKeyTools
 			Key = keyValue,
 			ProjectKey = effectiveProject,
 			Scopes = string.Join(',', valid),
-			Name = string.IsNullOrWhiteSpace(name) ? "agent-minted" : name.Trim(),
+			Name = name.Trim(),
 			CreatedAt = DateTime.UtcNow,
 			ExpiresAt = expiresAt,
 		}, token: ct);

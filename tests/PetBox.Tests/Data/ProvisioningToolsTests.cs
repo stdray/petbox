@@ -231,6 +231,52 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 	}
 
 	[Fact]
+	public async Task MintKey_EmptyName_Rejected()
+	{
+		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
+		await (await ToolAsync("project_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "x",
+		});
+		var result = await (await ToolAsync("apikey_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = projectKey, ["name"] = "   ", ["scopes"] = "data:read",
+		});
+		// Structured {error} payload (GuardAsync) — a whitespace-only name is rejected, not
+		// silently defaulted; nothing is minted.
+		Text(result).Should().Contain("name is required");
+
+		using var scope = _factory.Services.CreateScope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		(await db.ApiKeys.AnyAsync(k => k.ProjectKey == projectKey)).Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task MintKey_DuplicateName_Allowed()
+	{
+		// Names are labels, not identifiers — minting two keys with the same (valid) name
+		// succeeds. The name is trimmed on the way in.
+		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
+		await (await ToolAsync("project_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "x",
+		});
+		var mint = await ToolAsync("apikey_create");
+		Text(await mint.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = projectKey, ["name"] = "agent", ["scopes"] = "data:read",
+		})).Should().NotContain("\"error\"");
+		Text(await mint.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = projectKey, ["name"] = "  agent  ", ["scopes"] = "data:read",
+		})).Should().NotContain("\"error\"");
+
+		using var scope = _factory.Services.CreateScope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		(await db.ApiKeys.CountAsync(k => k.ProjectKey == projectKey && k.Name == "agent")).Should().Be(2);
+	}
+
+	[Fact]
 	public async Task ProjectDelete_DoesNotExist_NoAlias()
 	{
 		// project has no delete (it would orphan logs/dbs/keys) — there is no project.delete tool.
