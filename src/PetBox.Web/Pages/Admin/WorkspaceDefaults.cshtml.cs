@@ -16,7 +16,8 @@ public sealed class WorkspaceDefaultsModel : PageModel
 
 	public WorkspaceDefaultsModel(ISettingsResolver resolver) => _resolver = resolver;
 
-	[BindProperty(SupportsGet = true)]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")]
 	public string WorkspaceKey { get; set; } = string.Empty;
 
 	// Records exposed on a workspace's Defaults page. Any record with at least

@@ -14,7 +14,7 @@ namespace PetBox.Web.Pages.ProjectHome;
 // the currently-active plan nodes (ActiveTo == null) in plan-tree order. Reads and
 // the quick-add write both go through ITasksService — the page never opens the DB
 // context itself, so quick-add gets the same NodeId/status handling the MCP path does.
-[Authorize]
+[Authorize(Policy = "WorkspaceMember")]
 public sealed class TaskBoardModel : PageModel
 {
 	readonly FeatureFlags _features;
@@ -30,10 +30,11 @@ public sealed class TaskBoardModel : PageModel
 		_settings = settings;
 	}
 
-	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")]
 	public string WorkspaceKey { get; set; } = string.Empty;
 
-	[BindProperty(SupportsGet = true, Name = "projectKey")]
+	[FromRoute(Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
 	[BindProperty(SupportsGet = true, Name = "board")]

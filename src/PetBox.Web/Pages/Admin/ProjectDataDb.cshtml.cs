@@ -31,9 +31,10 @@ public sealed class ProjectDataDbModel : PageModel
 		_runner = runner;
 	}
 
-	[BindProperty(SupportsGet = true)] public string WorkspaceKey { get; set; } = string.Empty;
-	[BindProperty(SupportsGet = true)] public string ProjectKey { get; set; } = string.Empty;
-	[BindProperty(SupportsGet = true)] public string DbName { get; set; } = string.Empty;
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")] public string WorkspaceKey { get; set; } = string.Empty;
+	[FromRoute(Name = "projectKey")] public string ProjectKey { get; set; } = string.Empty;
+	[FromRoute(Name = "dbName")] public string DbName { get; set; } = string.Empty;
 
 	public DataDb? Db { get; private set; }
 	public bool DbNotFound { get; private set; }

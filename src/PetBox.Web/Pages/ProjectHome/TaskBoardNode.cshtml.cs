@@ -18,7 +18,7 @@ namespace PetBox.Web.Pages.ProjectHome;
 // ITasksService / ICommentService — the page never opens the DB context itself, and the edit
 // handlers route through UpsertAsync so a UI edit hits the SAME guards (FSM, ideaRef, concurrency)
 // as the MCP path (spec edit-respects-guards). NetArchTest enforces the door.
-[Authorize]
+[Authorize(Policy = "WorkspaceMember")]
 public sealed class TaskBoardNodeModel : PageModel
 {
 	readonly FeatureFlags _features;
@@ -34,10 +34,11 @@ public sealed class TaskBoardNodeModel : PageModel
 		_settings = settings;
 	}
 
-	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")]
 	public string WorkspaceKey { get; set; } = string.Empty;
 
-	[BindProperty(SupportsGet = true, Name = "projectKey")]
+	[FromRoute(Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
 	// The page is reachable two ways: the canonical human-readable slug-URL

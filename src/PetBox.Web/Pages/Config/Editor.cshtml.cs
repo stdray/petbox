@@ -10,7 +10,7 @@ using BindingContentHash = PetBox.Config.BindingContentHash;
 
 namespace PetBox.Web.Pages.Config;
 
-[Authorize]
+[Authorize(Policy = "WorkspaceAdmin")]
 public sealed class EditorModel : PageModel
 {
 	readonly IConfigDbFactory _configFactory;
@@ -22,9 +22,14 @@ public sealed class EditorModel : PageModel
 		_encryptor = encryptor;
 	}
 
-	[BindProperty(SupportsGet = true)]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")]
 	public string? WorkspaceKey { get; set; }
 
+	// Not workspace-scoping — BindingId only selects a row inside the ALREADY route-locked
+	// workspace's configDb (a foreign workspace's id simply won't exist there), so this one is
+	// left on the ordinary composite bind (SupportsGet, so both the editor GET prefill and the
+	// hidden field on save keep working).
 	[BindProperty(SupportsGet = true)]
 	public long? BindingId { get; set; }
 

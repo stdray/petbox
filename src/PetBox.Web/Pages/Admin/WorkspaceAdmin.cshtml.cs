@@ -20,7 +20,8 @@ public sealed class WorkspaceAdminModel : PageModel
 		_configFactory = configFactory;
 	}
 
-	[BindProperty(SupportsGet = true)]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")]
 	public string WorkspaceKey { get; set; } = string.Empty;
 
 	public Workspace? Workspace { get; private set; }

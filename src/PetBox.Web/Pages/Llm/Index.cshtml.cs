@@ -14,7 +14,7 @@ namespace PetBox.Web.Pages.Llm;
 // WRITE-ONLY — GetAsync never returns them, so the form only offers set/replace (blank keeps the
 // existing key). Routes have no id of their own, so edit/delete address a route by its row index
 // in the stored list. Mirrors the Config admin page. Depends only on PetBox.LlmRouter.Contract.
-[Authorize]
+[Authorize(Policy = "WorkspaceAdmin")]
 public sealed class IndexModel : PageModel
 {
 	readonly ILlmRegistryAdmin _registry;
@@ -28,8 +28,9 @@ public sealed class IndexModel : PageModel
 		_db = db;
 	}
 
-	[BindProperty(SupportsGet = true)] public string WorkspaceKey { get; set; } = string.Empty;
-	[BindProperty(SupportsGet = true)] public string ProjectKey { get; set; } = string.Empty;
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")] public string WorkspaceKey { get; set; } = string.Empty;
+	[FromRoute(Name = "projectKey")] public string ProjectKey { get; set; } = string.Empty;
 
 	public IReadOnlyList<LlmEndpoint> Endpoints { get; private set; } = [];
 	public IReadOnlyList<LlmRoute> Routes { get; private set; } = [];

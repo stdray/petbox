@@ -14,7 +14,11 @@ public sealed class ProjectsModel : PageModel
 
 	public ProjectsModel(PetBoxDb db) => _db = db;
 
-	[BindProperty(SupportsGet = true)]
+	// authz-bypass-project-create: bound ONLY from the route — never Form/Query — so a POST
+	// body field named "WorkspaceKey" cannot retarget the write after the WorkspaceAdmin policy
+	// has already checked the ROUTE workspace. ASP.NET's default composite provider order is
+	// Form -> Route -> Query, which is exactly the hole [FromRoute] closes.
+	[FromRoute(Name = "workspaceKey")]
 	public string WorkspaceKey { get; set; } = string.Empty;
 
 	public IReadOnlyList<Project> ProjectsInWorkspace { get; private set; } = [];

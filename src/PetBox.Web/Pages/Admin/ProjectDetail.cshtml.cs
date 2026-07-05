@@ -9,7 +9,7 @@ using PetBox.Core.Settings;
 
 namespace PetBox.Web.Pages.Admin;
 
-[Authorize]
+[Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectDetailModel : PageModel
 {
 	readonly PetBoxDb _db;
@@ -40,10 +40,11 @@ public sealed class ProjectDetailModel : PageModel
 	// commit refs/hashes render as plain text. A literal {sha} placeholder is expanded per commit.
 	public string CommitUrlTemplate { get; private set; } = "";
 
-	[BindProperty(SupportsGet = true)]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")]
 	public string WorkspaceKey { get; set; } = string.Empty;
 
-	[BindProperty(SupportsGet = true)]
+	[FromRoute(Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
 	// Back-compat alias for the old testid/template that referenced `Model.Key`.

@@ -17,7 +17,7 @@ public sealed class WorkspaceUsersModel : PageModel
 	public IReadOnlyList<(WorkspaceMember Member, string Username)> Members { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet(string workspaceKey)
+	public void OnGet([FromRoute(Name = "workspaceKey")] string workspaceKey)
 	{
 		LoadMembers(workspaceKey);
 	}
@@ -31,7 +31,10 @@ public sealed class WorkspaceUsersModel : PageModel
 		Members = members.Select(m => (m, userMap.GetValueOrDefault(m.UserId, "?"))).ToList();
 	}
 
-	public async Task<IActionResult> OnPostAddAsync(string workspaceKey, string Username, string? Password, WorkspaceRole Role)
+	// authz-bypass-project-create: [FromRoute] pins this to the ROUTE workspace — never a
+	// form-supplied "workspaceKey" field, which the default composite provider (Form -> Route ->
+	// Query) would otherwise let override the route after the WorkspaceAdmin policy check passed.
+	public async Task<IActionResult> OnPostAddAsync([FromRoute(Name = "workspaceKey")] string workspaceKey, string Username, string? Password, WorkspaceRole Role)
 	{
 		if (string.IsNullOrWhiteSpace(Username))
 		{
@@ -71,7 +74,7 @@ public sealed class WorkspaceUsersModel : PageModel
 		return RedirectToPage();
 	}
 
-	public async Task<IActionResult> OnPostRemoveAsync(string workspaceKey, long userId)
+	public async Task<IActionResult> OnPostRemoveAsync([FromRoute(Name = "workspaceKey")] string workspaceKey, long userId)
 	{
 		await _db.WorkspaceMembers.Where(m => m.UserId == userId && m.WorkspaceKey == workspaceKey).DeleteAsync();
 		this.NotifySuccess("Member removed.");
