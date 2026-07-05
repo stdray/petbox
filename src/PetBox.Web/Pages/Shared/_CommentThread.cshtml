@@ -11,6 +11,15 @@
 			<div class="text-sm" data-testid="comment" data-comment-id="@c.Id" style="margin-left:@(line.Depth * 1.25)rem">
 				<div class="flex items-baseline gap-2 flex-wrap">
 					<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
+					@* Created time — UTC in the `datetime` attribute, localized client-side by
+					   ts/logs.ts (the site-wide `time.local-time` pass), same as every other
+					   timestamp. An edit bumps Updated past Created → a muted "(edited)" hint that
+					   carries the edit time in its title. Keeps the thread's chronology legible. *@
+					<time class="local-time text-xs opacity-50 font-mono" datetime="@c.Created.ToString("o")" data-testid="comment-time">@c.Created.ToString("yyyy-MM-dd HH:mm")</time>
+					@if (c.Updated > c.Created)
+					{
+						<span class="text-xs opacity-40 italic" data-testid="comment-edited" title="edited @c.Updated.ToString("yyyy-MM-dd HH:mm") UTC">(edited)</span>
+					}
 					@foreach (var tag in c.Tags)
 					{
 						var artifact = tag.StartsWith("artifact:", StringComparison.Ordinal);
