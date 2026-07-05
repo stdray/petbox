@@ -93,6 +93,11 @@ public sealed class TaskBoardModel : PageModel
 	public string? KindSlug { get; private set; }
 	public string KindName { get; private set; } = string.Empty;
 
+	// closed-board-disabled-display: null = open. Mirrors the list/sidebar closed badge
+	// (TaskBoardMeta.ClosedAt) onto this content page — the write path already rejects
+	// (TasksService.UpsertAsync) a closed board, so this drives the badge + hides quick-add.
+	public DateTime? ClosedAt { get; private set; }
+
 	// The board's workflow surface (per-type FSM blocks) + its JSON island for the "View
 	// workflow" modal. WorkflowBlocks drives the header triggers (one per block); WorkflowJson
 	// is the payload ts/workflow-viz.ts renders. Resolved through MethodologyRuntime, so
@@ -193,9 +198,11 @@ public sealed class TaskBoardModel : PageModel
 	async Task<IActionResult> LoadAsync(CancellationToken ct, string? error = null)
 	{
 		Error = error;
-		(Runtime, KindSlug) = await ResolveProcessAsync(ct);
+		(Runtime, KindSlug, ClosedAt) = await ResolveProcessAsync(ct);
 		KindName = Runtime.KindName(KindSlug);
-		ShowQuickAdd = Runtime.QuickAddAllowed(KindSlug);
+		// closed-board-disabled-display: a closed board never shows quick-add, regardless of
+		// what the kind would otherwise allow — mirrors the server-side reject in UpsertAsync.
+		ShowQuickAdd = Runtime.QuickAddAllowed(KindSlug) && ClosedAt is null;
 
 		// Project-scoped commit-view template (cascades to workspace/system); empty when unset.
 		CommitUrlTemplate = (await _settings.GetAsync<RepoSettings>(Scope.Project, ProjectKey, ct)).CommitUrlTemplate;
@@ -265,12 +272,12 @@ public sealed class TaskBoardModel : PageModel
 	// service door — the SAME instance construction every service call applies) plus this
 	// board's stored kind slug. ListBoardsAsync supplies the raw slug; ITasksService has
 	// no single-board metadata read and this page must not open the store directly.
-	async Task<(MethodologyRuntime Runtime, string? KindSlug)> ResolveProcessAsync(CancellationToken ct)
+	async Task<(MethodologyRuntime Runtime, string? KindSlug, DateTime? ClosedAt)> ResolveProcessAsync(CancellationToken ct)
 	{
 		var runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);
 		var meta = (await _tasks.ListBoardsAsync(ProjectKey, ct))
 			.FirstOrDefault(b => string.Equals(b.Name, Board, StringComparison.Ordinal));
-		return (runtime, meta?.Kind);
+		return (runtime, meta?.Kind, meta?.ClosedAt);
 	}
 
 	// Render order is the plan tree itself — DFS by part_of parent, siblings ordered by
@@ -335,8 +342,8 @@ public sealed class TaskBoardModel : PageModel
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
-		var (runtime, kindSlug) = await ResolveProcessAsync(ct);
-		if (!runtime.QuickAddAllowed(kindSlug)) return BadRequest();
+		var (runtime, kindSlug, closedAt) = await ResolveProcessAsync(ct);
+		if (!runtime.QuickAddAllowed(kindSlug) || closedAt is not null) return BadRequest();
 
 		await _tasks.QuickAddAsync(ProjectKey, Board, name, body, priority, ct);
 
