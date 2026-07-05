@@ -68,6 +68,11 @@ public sealed class TaskBoardModel : PageModel
 
 	public bool ShowQuickAdd { get; private set; }
 
+	// Set when a comment mutation (add/reply/edit/delete) was rejected — a guard violation or
+	// an optimistic-concurrency conflict re-renders the board with the message inline rather
+	// than silently dropping it (mirrors TaskBoardNodeModel.Error / edit-respects-guards).
+	public string? Error { get; private set; }
+
 	// The project's commit-view URL template (RepoSettings, Scope.Project). When set, the commit-ref
 	// chip on each card links to it and commit hashes in node/comment bodies autolink. Empty = off.
 	public string? CommitUrlTemplate { get; private set; }
@@ -118,7 +123,76 @@ public sealed class TaskBoardModel : PageModel
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
+		return await LoadAsync(ct);
+	}
 
+	// comments-ui-edit: add a comment (or, when parentId is set, a reply) under `nodeId` — a
+	// hidden form field, since this page renders MANY node cards (unlike the node detail page,
+	// which resolves its one node from the bound route). Goes through ICommentService.AddAsync,
+	// the same door comments_create (MCP) uses.
+	public async Task<IActionResult> OnPostCommentAddAsync(string nodeId, string? parentId, string body, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
+
+		try
+		{
+			var author = User.Identity?.Name ?? "system";
+			var result = await _comments.AddAsync(ProjectKey, Board, nodeId, parentId, author, body, tags: null, ct);
+			if (!result.Applied)
+				return await LoadAsync(ct, "Could not add the comment — refresh and try again.");
+		}
+		catch (ArgumentException ex)
+		{
+			return await LoadAsync(ct, ex.Message);
+		}
+		return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey, board = Board });
+	}
+
+	// comments-ui-edit: edit a comment's body in place. `version` is the watermark baseline the
+	// form rendered with; a stale one (Applied:false) is surfaced as Error, not clobbered.
+	public async Task<IActionResult> OnPostCommentEditAsync(string id, string body, long version, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
+
+		try
+		{
+			var result = await _comments.EditAsync(ProjectKey, Board, id, body, tags: null, version, ct);
+			if (!result.Applied)
+				return await LoadAsync(ct, "This comment changed since the page was opened — refresh and redo your edit.");
+		}
+		catch (ArgumentException ex)
+		{
+			return await LoadAsync(ct, ex.Message);
+		}
+		return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey, board = Board });
+	}
+
+	// comments-ui-edit: soft-delete a comment. Rejected (InvalidOperationException) while it
+	// still has active replies — surfaced inline instead of a raw 500.
+	public async Task<IActionResult> OnPostCommentDeleteAsync(string id, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
+
+		try
+		{
+			await _comments.DeleteAsync(ProjectKey, Board, id, ct);
+		}
+		catch (InvalidOperationException ex)
+		{
+			return await LoadAsync(ct, ex.Message);
+		}
+		return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey, board = Board });
+	}
+
+	// Shared load for the GET and the comment-mutation error re-render: everything OnGetAsync
+	// used to do inline, now reusable so a rejected comment mutation can re-render the SAME
+	// board with Error set, instead of a bare redirect that drops the message.
+	async Task<IActionResult> LoadAsync(CancellationToken ct, string? error = null)
+	{
+		Error = error;
 		(Runtime, KindSlug) = await ResolveProcessAsync(ct);
 		KindName = Runtime.KindName(KindSlug);
 		ShowQuickAdd = Runtime.QuickAddAllowed(KindSlug);

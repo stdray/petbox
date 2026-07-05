@@ -1,33 +1,78 @@
 @model PetBox.Web.Pages.Shared.CommentThreadModel
-@* Read-only discussion thread under one plan node, DFS-flattened with an indent. Shared by
-   the board page and the node detail page. Writes still go through the comments_* MCP tools
-   (interactive UI is a separate task). Renders nothing when the thread is empty. *@
-@if (Model.Lines.Count > 0)
-{
-	<div class="mt-2 border-t border-base-300 pt-2 flex flex-col gap-1.5" data-testid="node-comments">
-		@foreach (var line in Model.Lines)
-		{
-			var c = line.Comment;
-			<div class="text-sm" data-testid="comment" data-comment-id="@c.Id" style="margin-left:@(line.Depth * 1.25)rem">
-				<div class="flex items-baseline gap-2 flex-wrap">
-					<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
-					@* Created time — UTC in the `datetime` attribute, localized client-side by
-					   ts/logs.ts (the site-wide `time.local-time` pass), same as every other
-					   timestamp. An edit bumps Updated past Created → a muted "(edited)" hint that
-					   carries the edit time in its title. Keeps the thread's chronology legible. *@
-					<time class="local-time text-xs opacity-50 font-mono" datetime="@c.Created.ToString("o")" data-testid="comment-time">@c.Created.ToString("yyyy-MM-dd HH:mm")</time>
-					@if (c.Updated > c.Created)
-					{
-						<span class="text-xs opacity-40 italic" data-testid="comment-edited" title="edited @c.Updated.ToString("yyyy-MM-dd HH:mm") UTC">(edited)</span>
-					}
-					@foreach (var tag in c.Tags)
-					{
-						var artifact = tag.StartsWith("artifact:", StringComparison.Ordinal);
-						<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
-					}
-				</div>
+@* Discussion thread under one plan node, DFS-flattened with an indent. Shared by the board
+   page and the node detail page. Read side + the add/reply/edit/delete mutations
+   (comments-ui-edit) all live here: the forms POST to the CURRENT page's own handlers
+   (CommentAdd/CommentEdit/CommentDelete — TaskBoardModel and TaskBoardNodeModel each expose
+   the same three, calling straight into ICommentService, the same door the comments_* MCP
+   tools use). The reply/edit forms start hidden (inline style, like the node title/body
+   editor) and are shown by ts/commentThread.ts (no inline JS) — works without JS too, since a
+   hidden form still submits if a client force-shows it. The add form is always visible so a
+   node with zero comments still offers to start the thread. *@
+<div class="mt-2 border-t border-base-300 pt-2 flex flex-col gap-1.5" data-testid="node-comments">
+	@foreach (var line in Model.Lines)
+	{
+		var c = line.Comment;
+		<div class="text-sm" data-testid="comment" data-comment-id="@c.Id" data-comment-version="@c.Version" style="margin-left:@(line.Depth * 1.25)rem">
+			<div class="flex items-baseline gap-2 flex-wrap">
+				<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
+				@* Created time — UTC in the `datetime` attribute, localized client-side by
+				   ts/logs.ts (the site-wide `time.local-time` pass), same as every other
+				   timestamp. An edit bumps Updated past Created → a muted "(edited)" hint that
+				   carries the edit time in its title. Keeps the thread's chronology legible. *@
+				<time class="local-time text-xs opacity-50 font-mono" datetime="@c.Created.ToString("o")" data-testid="comment-time">@c.Created.ToString("yyyy-MM-dd HH:mm")</time>
+				@if (c.Updated > c.Created)
+				{
+					<span class="text-xs opacity-40 italic" data-testid="comment-edited" title="edited @c.Updated.ToString("yyyy-MM-dd HH:mm") UTC">(edited)</span>
+				}
+				@foreach (var tag in c.Tags)
+				{
+					var artifact = tag.StartsWith("artifact:", StringComparison.Ordinal);
+					<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
+				}
+				<span class="ml-auto flex items-center gap-1 shrink-0">
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
+					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
+					<form method="post" asp-page-handler="CommentDelete" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first.">
+						<input type="hidden" name="id" value="@c.Id" />
+						<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="comment-delete-submit">delete</button>
+					</form>
+				</span>
+			</div>
+			<div data-testid="comment-read-body">
 				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs })" />
 			</div>
-		}
-	</div>
-}
+
+			@* Edit form — same comment, in place. `version` is the watermark baseline read on
+			   this render; a stale one comes back as a conflict (surfaced as the page Error),
+			   never a silent clobber, mirroring node edit-respects-guards. *@
+			<form method="post" asp-page-handler="CommentEdit" class="flex flex-col gap-1 mt-1" data-testid="comment-edit-form" style="display:none">
+				<input type="hidden" name="id" value="@c.Id" />
+				<input type="hidden" name="version" value="@c.Version" />
+				<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full font-mono" data-testid="comment-edit-body" aria-label="Edit comment">@c.Body</textarea>
+				<div class="flex items-center gap-2">
+					<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-edit-save">Save</button>
+					<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-edit-cancel">Cancel</button>
+				</div>
+			</form>
+
+			@* Reply form — a plain add scoped to this comment via the hidden parentId; the
+			   service rejects a parentId that isn't an active comment under the SAME node. *@
+			<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-1" data-testid="comment-reply-form" style="display:none">
+				<input type="hidden" name="nodeId" value="@Model.NodeId" />
+				<input type="hidden" name="parentId" value="@c.Id" />
+				<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Reply…" data-testid="comment-reply-body" aria-label="Reply"></textarea>
+				<div class="flex items-center gap-2">
+					<button type="submit" class="btn btn-xs btn-primary" data-testid="comment-reply-submit">Reply</button>
+					<button type="button" class="btn btn-xs btn-ghost" data-testid="comment-reply-cancel">Cancel</button>
+				</div>
+			</form>
+		</div>
+	}
+
+	@* Root add-comment form — always rendered, even on a thread with zero comments yet. *@
+	<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-1" data-testid="comment-add-form">
+		<input type="hidden" name="nodeId" value="@Model.NodeId" />
+		<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Add a comment…" data-testid="comment-add-body" aria-label="Add a comment"></textarea>
+		<button type="submit" class="btn btn-xs btn-primary self-start" data-testid="comment-add-submit">Comment</button>
+	</form>
+</div>

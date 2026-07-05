@@ -1,0 +1,63 @@
+// Comment thread interactivity (comments-ui-edit): the per-comment reply/edit toggles under
+// board nodes and the node detail page. Imperative (mirrors nodeEdit.ts / board.ts — no
+// inline JS in Razor): the reply/edit forms are server-rendered hidden (inline style) and
+// shown by toggling that style. There can be MANY thread containers on the board page (one
+// per node card) and MANY comments per thread, so this delegates ONE click listener per
+// thread container instead of binding a handler per button.
+export function initCommentThreads(): void {
+	const threads = document.querySelectorAll<HTMLElement>("[data-testid='node-comments']");
+	for (const root of Array.from(threads)) wireThread(root);
+}
+
+function setDisplay(el: Element | null, visible: boolean): void {
+	if (el instanceof HTMLElement) el.style.display = visible ? "" : "none";
+}
+
+function isHidden(el: Element | null): boolean {
+	return el instanceof HTMLElement && el.style.display === "none";
+}
+
+function wireThread(root: HTMLElement): void {
+	root.addEventListener("click", (evt) => {
+		const target = evt.target;
+		if (!(target instanceof HTMLElement)) return;
+
+		const replyToggle = target.closest<HTMLElement>("[data-testid='comment-reply-toggle']");
+		if (replyToggle) {
+			const comment = replyToggle.closest<HTMLElement>("[data-testid='comment']");
+			const form = comment?.querySelector("[data-testid='comment-reply-form']") ?? null;
+			setDisplay(form, isHidden(form));
+			return;
+		}
+
+		const replyCancel = target.closest<HTMLElement>("[data-testid='comment-reply-cancel']");
+		if (replyCancel) {
+			const form = replyCancel.closest<HTMLFormElement>("[data-testid='comment-reply-form']");
+			if (form) {
+				form.reset();
+				setDisplay(form, false);
+			}
+			return;
+		}
+
+		const editToggle = target.closest<HTMLElement>("[data-testid='comment-edit-toggle']");
+		if (editToggle) {
+			const comment = editToggle.closest<HTMLElement>("[data-testid='comment']");
+			const form = comment?.querySelector("[data-testid='comment-edit-form']") ?? null;
+			const readBody = comment?.querySelector("[data-testid='comment-read-body']") ?? null;
+			const opening = isHidden(form);
+			setDisplay(form, opening);
+			setDisplay(readBody, !opening);
+			return;
+		}
+
+		const editCancel = target.closest<HTMLElement>("[data-testid='comment-edit-cancel']");
+		if (editCancel) {
+			const comment = editCancel.closest<HTMLElement>("[data-testid='comment']");
+			const form = comment?.querySelector("[data-testid='comment-edit-form']") ?? null;
+			const readBody = comment?.querySelector("[data-testid='comment-read-body']") ?? null;
+			setDisplay(form, false);
+			setDisplay(readBody, true);
+		}
+	});
+}
