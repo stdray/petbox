@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Config.Contract;
 using PetBox.Config.Data;
+using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -123,8 +124,9 @@ public static class ConfigApi
 		return $"\"{Convert.ToHexStringLower(hash[..16])}\"";
 	}
 
-	static async Task<IResult> Create(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, ConfigBindingDto dto)
+	static async Task<IResult> Create(HttpContext context, PetBoxDb db, IConfigDbFactory configFactory, string workspaceKey, ConfigBindingDto dto)
 	{
+		if (!AuthorizeWorkspace(context, db, workspaceKey, out var forbid)) return forbid;
 		if (string.IsNullOrWhiteSpace(dto.Path))
 			return Results.BadRequest(new ErrorResponse("path is required"));
 		if (!dto.Tags.Contains($"ws:{workspaceKey}", StringComparison.OrdinalIgnoreCase))
@@ -153,8 +155,9 @@ public static class ConfigApi
 
 	// Soft-delete: mark IsDeleted=1, keep the row. Resolve filters it out.
 	// UI's history page can offer "Undelete" for the last deleted version.
-	static async Task<IResult> Delete(HttpContext context, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
+	static async Task<IResult> Delete(HttpContext context, PetBoxDb db, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
 	{
+		if (!AuthorizeWorkspace(context, db, workspaceKey, out var forbid)) return forbid;
 		var configDb = configFactory.GetConfigDb(workspaceKey);
 		var now = DateTime.UtcNow;
 		var deleted = await configDb.Bindings
@@ -167,5 +170,34 @@ public static class ConfigApi
 		return deleted > 0
 			? Results.Ok(new DeletedResponse(true))
 			: Results.NotFound(new ErrorResponse("binding not found"));
+	}
+
+	// A config:write key is project-scoped (like every other ApiKey), not workspace-scoped —
+	// the "ConfigWrite" ScopeRequirement policy only checks the scope is present, so without this
+	// the {workspaceKey} route segment was attacker-controlled: any config:write key from any
+	// project could write/soft-delete bindings in ANY workspace. Derive the caller's real
+	// workspace the same way Conf() does (project claim -> Project.WorkspaceKey) and require it
+	// to match the target route segment. A wildcard "*" project claim (cross-project key) is
+	// authorized for every workspace too, mirroring ProjectScope.Authorizes' treatment of "*" for
+	// every other project-scoped REST handler (LogApi/DataAuth's AuthorizeProject helpers).
+	static bool AuthorizeWorkspace(HttpContext context, PetBoxDb db, string workspaceKey, out IResult forbid)
+	{
+		var claim = context.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		if (string.IsNullOrEmpty(claim))
+		{
+			forbid = Results.Forbid();
+			return false;
+		}
+		if (claim != ProjectScope.AllProjects)
+		{
+			var project = db.Projects.FirstOrDefault(p => p.Key == claim);
+			if (project is null || !string.Equals(project.WorkspaceKey, workspaceKey, StringComparison.Ordinal))
+			{
+				forbid = Results.Forbid();
+				return false;
+			}
+		}
+		forbid = null!;
+		return true;
 	}
 }

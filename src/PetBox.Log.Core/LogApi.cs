@@ -213,6 +213,15 @@ public static class LogApi
 		IIngestionPipeline pipeline,
 		CancellationToken ct)
 	{
+		// The "ApiKey" policy only proves SOME api key authenticated — every OTHER handler in
+		// this file (CreateLogAsync/ListLogsAsync/DeleteLogAsync/QueryLogsAsync/GetServicesAsync/
+		// LiveTailAsync, plus SeqIngestPathAsync's manual checks below) additionally verifies the
+		// key's project claim authorizes THIS route's projectKey and carries the right scope; this
+		// handler was missing both, so any logs:* key from any project could ingest into any
+		// project's named log via the path-based CLEF route.
+		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (!HasScope(ctx, ApiKeyScopes.LogsIngest)) return Results.Forbid();
+
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(serviceKey))
 			return Results.BadRequest(new ErrorResponse("X-Service-Key header required"));

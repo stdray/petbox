@@ -55,7 +55,7 @@ public static class ApiKeyScopes
 		new(LlmInvoke,   "Invoke LLM router",      "Call embed/rerank/chat through the router via the MCP llm_embed/rerank/chat tools.", "LlmRouter"),
 		new(LlmAdmin,    "Manage LLM router",      "Read/write the router registry (endpoints, routes, api keys, cert pin) via the MCP llm.config_* tools.", "LlmRouter"),
 		new(DeployRead,  "Read deploy fleet",      "List nodes and deployments via the deploy UI.", "Deploy"),
-		new(DeployWrite, "Manage deploy fleet",    "Register nodes, mint node keys, create/move/start/stop deployments via the deploy UI.", "Deploy"),
+		new(DeployWrite, "Manage deploy fleet",    "NEAR-ROOT, FLEET-WIDE: no project/workspace scoping exists on the deploy control-plane — register nodes, mint node keys, create/move/start/stop deployments for ANY project via the deploy UI.", "Deploy"),
 		new(AgentPoll,   "Agent: poll desired state", "GET /agent/poll — a node-agent reads its assigned deployments. Issue only on node-scoped keys.", "Deploy"),
 		new(AgentHeartbeat, "Agent: report state", "POST /agent/heartbeat — a node-agent reports actual container state. Issue only on node-scoped keys.", "Deploy"),
 		new(AdminProvision, "Provision projects & keys", "ROOT-EQUIVALENT: mints API keys with ANY scopes for ANY project (including admin:provision itself), creates projects (project.*), sets config bindings (config.*). Issue deliberately; prefer short-lived keys for routine work.", "Admin"),
