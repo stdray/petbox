@@ -57,16 +57,28 @@ else
 						<p class="text-sm opacity-70 mb-2">@project.Description</p>
 					}
 
+					@* Counters target the project (user) zone read views any member can reach — no
+						jump to the admin zone. api keys live only on the workspace-admin page, so that
+						badge links there only for admins and degrades to a plain badge otherwise. *@
 					<div class="flex flex-wrap gap-1 mb-3" data-testid="dashboard-counts">
 						<a href="@Routes.ProjectLogs(Model.WorkspaceKey, project.Key)"
 							class="badge badge-sm badge-ghost gap-1" data-testid="count-logs">
 							@(Model.LogCount.GetValueOrDefault(project.Key)) logs</a>
-						<a href="@Routes.ProjectData(Model.WorkspaceKey, project.Key)"
+						<a href="@Routes.ProjectDatabases(Model.WorkspaceKey, project.Key)"
 							class="badge badge-sm badge-ghost gap-1" data-testid="count-dbs">
 							@(Model.DbCount.GetValueOrDefault(project.Key)) dbs</a>
-						<a href="@Routes.ProjectSettings(Model.WorkspaceKey, project.Key)"
-							class="badge badge-sm badge-ghost gap-1" data-testid="count-keys">
-							@(Model.KeyCount.GetValueOrDefault(project.Key)) keys</a>
+						@if (Model.CanAdminWorkspace)
+						{
+							<a href="@Routes.ProjectSettings(Model.WorkspaceKey, project.Key)"
+								class="badge badge-sm badge-ghost gap-1" data-testid="count-keys">
+								@(Model.KeyCount.GetValueOrDefault(project.Key)) keys</a>
+						}
+						else
+						{
+							<span class="badge badge-sm badge-ghost gap-1 opacity-60" data-testid="count-keys"
+								title="Managed in workspace admin">
+								@(Model.KeyCount.GetValueOrDefault(project.Key)) keys</span>
+						}
 					</div>
 
 					@if (rows.Count > 0)

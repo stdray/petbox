@@ -2,6 +2,7 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -31,10 +32,14 @@ public sealed class DatabasesModel : PageModel
 
 	public Core.Models.Project? Project { get; private set; }
 	public bool DataEnabled => _features.IsEnabled(Feature.Data);
+	// Databases are created in the workspace-admin Data page — only surface the create link to
+	// viewers who can actually reach it.
+	public bool CanAdminWorkspace { get; private set; }
 	public IReadOnlyList<DataDb> Dbs { get; private set; } = [];
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
+		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
 		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null || !DataEnabled) return;
 

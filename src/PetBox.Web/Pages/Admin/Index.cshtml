@@ -31,23 +31,46 @@
 		</div>
 	</a>
 
-	<div class="card bg-base-200 border border-base-300 opacity-60" data-testid="sys-card-defaults">
+	<a href="@Routes.SysAgentKeys()" class="card bg-base-200 border border-base-300 hover:border-primary transition-colors" data-testid="sys-card-agent-keys">
+		<div class="card-body p-4">
+			<div class="flex items-baseline justify-between">
+				<h2 class="card-title text-base">Agent keys</h2>
+				<span class="font-mono text-2xl opacity-80">@Model.AgentKeyCount</span>
+			</div>
+			<p class="text-xs opacity-60">DB-minted API keys across all projects. Review and revoke.</p>
+		</div>
+	</a>
+
+	@if (Model.DeployEnabled)
+	{
+		<a href="@Routes.SysDeploy()" class="card bg-base-200 border border-base-300 hover:border-primary transition-colors" data-testid="sys-card-deploy">
+			<div class="card-body p-4">
+				<div class="flex items-baseline justify-between">
+					<h2 class="card-title text-base">Deploy</h2>
+					<span class="font-mono text-2xl opacity-80">@Model.DeployNodeCount<span class="text-xs opacity-50"> nodes</span></span>
+				</div>
+				<p class="text-xs opacity-60">The fleet's nodes and desired-state deployments.</p>
+			</div>
+		</a>
+	}
+
+	<a href="@Routes.SysDefaults()" class="card bg-base-200 border border-base-300 hover:border-primary transition-colors" data-testid="sys-card-defaults">
 		<div class="card-body p-4">
 			<div class="flex items-baseline justify-between">
 				<h2 class="card-title text-base">Defaults</h2>
 				<span class="font-mono text-2xl opacity-80">@Model.SettingOverrideCount<span class="text-xs opacity-50"> system-set</span></span>
 			</div>
-			<p class="text-xs opacity-60">System-level setting defaults. Edit on the auto-generated Defaults page (Phase 23.4).</p>
+			<p class="text-xs opacity-60">System-level setting defaults for every workspace and project.</p>
 		</div>
-	</div>
+	</a>
 
-	<div class="card bg-base-200 border border-base-300 opacity-60" data-testid="sys-card-projects">
+	<a href="@Routes.SysWorkspaces()" class="card bg-base-200 border border-base-300 hover:border-primary transition-colors" data-testid="sys-card-projects">
 		<div class="card-body p-4">
 			<div class="flex items-baseline justify-between">
 				<h2 class="card-title text-base">Projects (all workspaces)</h2>
 				<span class="font-mono text-2xl">@Model.ProjectCount</span>
 			</div>
-			<p class="text-xs opacity-60">Manage projects within their workspace via the sidebar.</p>
+			<p class="text-xs opacity-60">Drill into a workspace to manage its projects.</p>
 		</div>
-	</div>
+	</a>
 </div>

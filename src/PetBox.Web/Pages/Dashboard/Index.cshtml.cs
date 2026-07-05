@@ -2,6 +2,7 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -28,6 +29,9 @@ public sealed class IndexModel : PageModel
 	public const string WorkspaceMemoryContainer = "$workspace";
 
 	public string WorkspaceKey { get; private set; } = "$system";
+	// Whether the viewer may reach the workspace-admin project pages (api keys). The per-project
+	// api-keys counter degrades to a plain badge for non-admins instead of a redirect-to-Login link.
+	public bool CanAdminWorkspace { get; private set; }
 	public IReadOnlyList<Project> Projects { get; private set; } = [];
 	public IReadOnlyDictionary<string, IReadOnlyList<HealthRow>> ByProject { get; private set; }
 		= new Dictionary<string, IReadOnlyList<HealthRow>>();
@@ -55,6 +59,7 @@ public sealed class IndexModel : PageModel
 		if (string.IsNullOrEmpty(routeKey) || !string.Equals(WorkspaceKey, routeKey, StringComparison.Ordinal))
 			return NotFound();
 
+		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
 		var wsKey = WorkspaceKey;
 		// "$workspace" is the reserved cross-project MEMORY container, not a user project —
 		// keep it out of the project grid (it has no logs/dbs/keys) and surface it as the
