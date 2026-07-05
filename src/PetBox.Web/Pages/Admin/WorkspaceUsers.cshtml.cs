@@ -67,12 +67,14 @@ public sealed class WorkspaceUsersModel : PageModel
 		if (!already)
 			await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = workspaceKey, Role = Role });
 
+		this.NotifySuccess("Member added.");
 		return RedirectToPage();
 	}
 
 	public async Task<IActionResult> OnPostRemoveAsync(string workspaceKey, long userId)
 	{
 		await _db.WorkspaceMembers.Where(m => m.UserId == userId && m.WorkspaceKey == workspaceKey).DeleteAsync();
+		this.NotifySuccess("Member removed.");
 		return RedirectToPage();
 	}
 }

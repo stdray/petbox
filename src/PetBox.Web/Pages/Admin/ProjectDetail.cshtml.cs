@@ -99,6 +99,7 @@ public sealed class ProjectDetailModel : PageModel
 		if (trimmed.Length == 0)
 		{
 			await _settings.ResetAsync<RepoSettings>(Scope.Project, ProjectKey, nameof(RepoSettings.CommitUrlTemplate));
+			this.NotifySuccess("Commit template cleared.");
 			return Self();
 		}
 
@@ -106,6 +107,7 @@ public sealed class ProjectDetailModel : PageModel
 		var userIdRaw = User.FindFirst(PetBox.Core.Auth.PetBoxClaims.UserId)?.Value;
 		long? userId = long.TryParse(userIdRaw, out var uid) ? uid : null;
 		await _settings.SetAsync(Scope.Project, ProjectKey, newSettings, oldSettings, userId);
+		this.NotifySuccess("Commit template saved.");
 		return Self();
 	}
 
@@ -113,6 +115,7 @@ public sealed class ProjectDetailModel : PageModel
 	public async Task<IActionResult> OnPostClearCommitTemplateAsync()
 	{
 		await _settings.ResetAsync<RepoSettings>(Scope.Project, ProjectKey, nameof(RepoSettings.CommitUrlTemplate));
+		this.NotifySuccess("Commit template cleared.");
 		return Self();
 	}
 
@@ -130,12 +133,14 @@ public sealed class ProjectDetailModel : PageModel
 		var userIdRaw = User.FindFirst(PetBox.Core.Auth.PetBoxClaims.UserId)?.Value;
 		long? userId = long.TryParse(userIdRaw, out var id) ? id : null;
 		await _settings.SetAsync(Scope.Project, ProjectKey, newSettings, oldSettings, userId);
+		this.NotifySuccess("Retention updated.");
 		return Self();
 	}
 
 	public async Task<IActionResult> OnPostClearRetentionAsync()
 	{
 		await _settings.ResetAsync<LogSettings>(Scope.Project, ProjectKey, nameof(LogSettings.RetentionDays));
+		this.NotifySuccess("Retention override cleared.");
 		return Self();
 	}
 
@@ -159,12 +164,14 @@ public sealed class ProjectDetailModel : PageModel
 			CreatedAt = DateTime.UtcNow,
 			CreatedBy = User.Identity?.Name,
 		});
+		this.NotifySuccess("Health endpoint added.");
 		return Self();
 	}
 
 	public async Task<IActionResult> OnPostDeleteHealthEndpointAsync(long id)
 	{
 		await _db.HealthEndpoints.Where(e => e.Id == id && e.ProjectKey == ProjectKey).DeleteAsync();
+		this.NotifySuccess("Health endpoint deleted.");
 		return Self();
 	}
 
@@ -212,6 +219,7 @@ public sealed class ProjectDetailModel : PageModel
 	public async Task<IActionResult> OnPostRevokeKeyAsync(string keyValue)
 	{
 		await _db.ApiKeys.Where(k => k.Key == keyValue && k.ProjectKey == ProjectKey).DeleteAsync();
+		this.NotifySuccess("API key revoked.");
 		return Self();
 	}
 
@@ -238,6 +246,7 @@ public sealed class ProjectDetailModel : PageModel
 			.Where(k => k.Key == keyValue && k.ProjectKey == ProjectKey)
 			.Set(k => k.Scopes, string.Join(",", valid))
 			.UpdateAsync();
+		this.NotifySuccess("Key scopes updated.");
 		return Self();
 	}
 

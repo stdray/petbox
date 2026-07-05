@@ -155,6 +155,58 @@ public sealed class MutationFeedbackPageTests : IDisposable
 		_db.ApiKeys.Count(k => k.ProjectKey == "proj").Should().Be(0);
 	}
 
+	// notice-tail: the remaining mutators that already Post/Redirect/Get now also carry a
+	// one-line success notice across the redirect. A representative few of them exercised here.
+	[Fact]
+	public async Task AgentKeys_revoke_redirects_clean_and_sets_success_notice()
+	{
+		_db.Insert(new ApiKey { Key = "yb_key_x", ProjectKey = "proj", Scopes = ApiKeyScopes.TasksRead, Name = "ci", CreatedAt = DateTime.UtcNow });
+		var page = new AgentKeysModel(_db);
+		Wire(page);
+
+		var result = await page.OnPostRevokeAsync("yb_key_x");
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		page.TempData[Notice.SuccessKey].Should().Be("API key revoked.");
+		_db.ApiKeys.Any(k => k.Key == "yb_key_x").Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task WorkspaceUsers_remove_redirects_clean_and_sets_success_notice()
+	{
+		var uid = await _db.InsertWithInt64IdentityAsync(
+			new User { Username = "bob", PasswordHash = "x", CreatedAt = DateTime.UtcNow });
+		_db.Insert(new WorkspaceMember { UserId = uid, WorkspaceKey = "ws", Role = WorkspaceRole.Member });
+		var page = new WorkspaceUsersModel(_db);
+		Wire(page);
+
+		var result = await page.OnPostRemoveAsync("ws", uid);
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		page.TempData[Notice.SuccessKey].Should().Be("Member removed.");
+		_db.WorkspaceMembers.Any(m => m.UserId == uid && m.WorkspaceKey == "ws").Should().BeFalse();
+	}
+
+	[Fact]
+	public async Task ProjectDetail_revoke_key_redirects_clean_and_sets_success_notice()
+	{
+		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
+		_db.Insert(new ApiKey { Key = "yb_key_z", ProjectKey = "proj", Scopes = ApiKeyScopes.TasksRead, Name = "ci", CreatedAt = DateTime.UtcNow });
+		var page = new ProjectDetailModel(_db, Features(), new NullSettingsResolver())
+		{
+			WorkspaceKey = "ws",
+			ProjectKey = "proj",
+		};
+		Wire(page);
+
+		var result = await page.OnPostRevokeKeyAsync("yb_key_z");
+
+		var redirect = result.Should().BeOfType<RedirectResult>().Subject;
+		redirect.Url.Should().NotContain("handler=", "PRG lands on the clean project URL");
+		page.TempData[Notice.SuccessKey].Should().Be("API key revoked.");
+		_db.ApiKeys.Any(k => k.Key == "yb_key_z").Should().BeFalse();
+	}
+
 	// TempData provider that neither loads nor persists — enough for unit tests that only read
 	// back what a handler just wrote into the in-memory bag.
 	sealed class NoopTempDataProvider : ITempDataProvider
