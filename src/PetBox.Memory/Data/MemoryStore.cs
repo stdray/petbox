@@ -36,11 +36,12 @@ public sealed partial class MemoryStore : IMemoryStore
 
 	// Stores that are machine plumbing rather than user knowledge — tagged IsSystem on
 	// creation (incl. the auto-vivify write path, so a store is marked even though nothing
-	// called CreateStoreAsync explicitly). Kept in sync with the M030/M032 backfills and
+	// called CreateStoreAsync explicitly). Kept in sync with the M030/M033 backfills and
 	// SessionDigestJob.Store (spec: memoverhaul store taxonomy). `autocaptured` and `canon`
-	// are agent plumbing too — must not be casually deleted. IsSystem gates ONLY whole-store
-	// deletion and the implicit search sweep, never entry writes, so canon curation via
-	// memory_upsert keeps working.
+	// are agent plumbing too — must not be casually deleted. IsSystem gates ONLY the system
+	// badge + whole-store delete-guard, never entry writes (so canon curation via memory_upsert
+	// keeps working) and — deliberately — NOT the implicit search sweep, so canon/autocaptured
+	// stay in default recall. Sweep-exclusion is a separate narrow set (MemoryService).
 	public static readonly IReadOnlySet<string> SystemStoreNames =
 		new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "session-digests", "autocaptured", "canon" };
 

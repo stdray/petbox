@@ -220,6 +220,24 @@ public sealed class MemoryVerbsTests : IDisposable
 			.Should().BeEquivalentTo(["session-digests"]);
 	}
 
+	// Sweep-exclusion is DECOUPLED from the IsSystem badge (card ui-memory-system-store-widen):
+	// `canon` and `autocaptured` are protected system stores but ARE knowledge, so the implicit
+	// all-stores sweep KEEPS returning them — only `session-digests` (a summary index) is excluded.
+	[Fact]
+	public async Task Search_AllStores_KeepsCanonAndAutocaptured_ExcludesOnlySessionDigests()
+	{
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "pelican fact for canon", store: "canon");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "pelican fact autocaptured", store: "autocaptured");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "pelican fact in notes", store: "notes");
+		await MemoryTools.RememberAsync(http, Flags(), _memory, "pelican fact digest", store: "session-digests");
+
+		var sweep = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "pelican");
+		var stores = sweep.Items.Select(h => h.Store).ToList();
+		stores.Should().Contain("canon").And.Contain("autocaptured").And.Contain("notes");
+		stores.Should().NotContain("session-digests");
+	}
+
 	// list = search without q (uniform-entity-verbs v2): the listing cascades the same
 	// containers as a query, labels rows by scope, and defaults to updated desc.
 	[Fact]

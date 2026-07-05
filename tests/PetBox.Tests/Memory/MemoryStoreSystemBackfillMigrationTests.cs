@@ -8,10 +8,10 @@ using PetBox.Core.Models;
 
 namespace PetBox.Tests.Memory;
 
-// M032 widens the system-store taxonomy: existing `autocaptured`/`canon` MemoryStores rows
+// M033 widens the system-store taxonomy: existing `autocaptured`/`canon` MemoryStores rows
 // (created before the widening with IsSystem=0) must be flipped to IsSystem=1 by the backfill.
-// Faithful test: migrate up to M031, seed legacy rows, then run M032 — the same wiring the
-// prod DB gets. Case-insensitive predicate mirrors how the flag is computed at creation.
+// Faithful test: migrate up to the pre-widening state, seed legacy rows, then run M033 — the
+// same wiring the prod DB gets. Case-insensitive predicate mirrors the creation flag.
 public sealed class MemoryStoreSystemBackfillMigrationTests : IDisposable
 {
 	readonly string _dir;
@@ -31,10 +31,10 @@ public sealed class MemoryStoreSystemBackfillMigrationTests : IDisposable
 	}
 
 	[Fact]
-	public void M032_BackfillsIsSystem_OnExistingAutocapturedAndCanon_CaseInsensitive_LeavesOthers()
+	public void M033_BackfillsIsSystem_OnExistingAutocapturedAndCanon_CaseInsensitive_LeavesOthers()
 	{
-		// 1) Old schema state: everything up to and including M031 (IsSystem column exists,
-		//    but the widening has not run yet).
+		// 1) Old schema state: everything up to M031 (IsSystem column exists from M030, but the
+		//    widening has not run yet). Targeting 31 is robust to the M032 that lands on main.
 		MigrateTo(31);
 
 		// 2) Legacy rows as they'd exist on prod: created before the widening, IsSystem=0.
@@ -50,7 +50,7 @@ public sealed class MemoryStoreSystemBackfillMigrationTests : IDisposable
 			""");
 
 		// 3) The widening migration runs.
-		MigrateTo(32);
+		MigrateTo(33);
 
 		using var db = new PetBoxDb(PetBoxDb.CreateOptions(_cs));
 		var byName = db.MemoryStores.Where(s => s.ProjectKey == "proj").ToDictionary(s => s.Name, s => s.IsSystem);

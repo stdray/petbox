@@ -8,8 +8,8 @@ namespace PetBox.Core.Data.Migrations;
 // protected from casual deletion. New stores with those names are tagged at creation by
 // MemoryStore.SystemStoreNames; backfill any pre-existing rows here. Case-insensitive to
 // match how the flag is computed at creation (OrdinalIgnoreCase set membership).
-[Migration(32, "Mark autocaptured + canon memory stores system (widen SystemStoreNames)")]
-public sealed class M032_WidenSystemStores : Migration
+[Migration(33, "Mark autocaptured + canon memory stores system (widen SystemStoreNames)")]
+public sealed class M033_WidenSystemStores : Migration
 {
 	public override void Up() =>
 		Execute.Sql(

@@ -103,12 +103,16 @@ public sealed class MemoryService : IMemoryService
 
 	// ---- unified read (list = search without a query; uniform-entity-verbs v2) ----
 
-	// Stores skipped by the implicit "every store" sweep of the unified read: sensitive
-	// operational stores that must never be auto-pulled into an agent's context (e.g. "ops"
-	// has held secrets), PLUS every IsSystem store (e.g. session-digests — machine plumbing,
-	// not knowledge). An explicit Filter.Store still reaches any of them — only the implicit
-	// sweep excludes (spec: memoverhaul store taxonomy).
-	static readonly HashSet<string> SweepExcludedStores = new(StringComparer.OrdinalIgnoreCase) { "ops" };
+	// Stores skipped by the implicit "every store" sweep of the unified read. DECOUPLED from
+	// IsSystem on purpose (card ui-memory-system-store-widen): sweep-exclusion is a NARROW recall
+	// policy, not the system-store badge. Members: "ops" (sensitive operational — has held secrets,
+	// must never auto-pull into an agent's context) and "session-digests" (the always-on digest
+	// index the digest job maintains — a summary layer that would double-count against the raw
+	// stores in default recall). Protected system stores that ARE knowledge — canon, autocaptured —
+	// stay in the sweep, so default memory_search still returns them. An explicit Filter.Store
+	// still reaches any store; only the implicit sweep excludes (spec: memoverhaul store taxonomy).
+	static readonly HashSet<string> SweepExcludedStores =
+		new(StringComparer.OrdinalIgnoreCase) { "ops", "session-digests" };
 
 	// The generic uniform-read seam (implemented EXPLICITLY — the contract is a shared shape,
 	// not a DI dispatch point): the plain envelope of the rich SearchEntriesAsync. Budget
@@ -133,7 +137,7 @@ public sealed class MemoryService : IMemoryService
 		// A named store missing from THIS container yields no hits, not an error — the
 		// adapter's scope cascade reads several containers and the store may live in one.
 		IReadOnlyList<string> stores = string.IsNullOrWhiteSpace(f.Store)
-			? (await _stores.ListAsync(projectKey, ct)).Where(s => !s.IsSystem && !SweepExcludedStores.Contains(s.Name)).Select(s => s.Name).ToList()
+			? (await _stores.ListAsync(projectKey, ct)).Where(s => !SweepExcludedStores.Contains(s.Name)).Select(s => s.Name).ToList()
 			: [f.Store!.Trim()];
 
 		// Each candidate carries its owning store, entry, the fused relevance Score (query mode),
