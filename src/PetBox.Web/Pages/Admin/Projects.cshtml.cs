@@ -7,7 +7,7 @@ using PetBox.Core.Models;
 
 namespace PetBox.Web.Pages.Admin;
 
-[Authorize]
+[Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectsModel : PageModel
 {
 	readonly PetBoxDb _db;
