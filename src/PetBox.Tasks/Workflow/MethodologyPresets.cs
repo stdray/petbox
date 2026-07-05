@@ -334,6 +334,20 @@ public static class MethodologyPresets
 		return null;
 	}
 
+	// The declared human display Name for a status slug across ALL presets (case-insensitive),
+	// or null if the slug isn't in any preset workflow. Presentation only — this is the label
+	// the badge/select show (e.g. `InProgress` → "In progress", `defined` → "Defined"); the
+	// stored slug is unchanged.
+	public static string? NameOfSlug(string slug)
+	{
+		foreach (var k in AllKinds)
+			foreach (var block in KindDef(k).Workflows)
+				foreach (var s in block.Statuses)
+					if (string.Equals(s.Slug, slug, StringComparison.OrdinalIgnoreCase))
+						return s.Name;
+		return null;
+	}
+
 	// A node is "closed" (hidden under active-only) if its status is terminal in some preset.
 	public static bool IsTerminalSlug(string slug) =>
 		KindOfSlug(slug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;

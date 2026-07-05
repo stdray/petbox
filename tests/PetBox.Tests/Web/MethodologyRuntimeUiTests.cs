@@ -131,6 +131,43 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 		runtime.QuickAddAllowed("spec").Should().BeFalse();
 	}
 
+	// ui-terminology-pass: StatusName is the ONE slug→label mapping the status badge and the
+	// status-change select render through, so PascalCase preset slugs and lowercase methodology
+	// slugs read consistently. Preset slugs resolve to their declared Name; a defined kind uses
+	// its OWN status Name; an out-of-vocab slug falls back to the slug verbatim.
+	[Fact]
+	public async Task StatusName_ResolvesDeclaredLabel_ForPreset_Defined_AndFallback()
+	{
+		var def = new MethodologyDefinition(
+			"acme-label",
+			[
+				new MethodologyKindDef("support", QuickAddAllowed: false,
+				[
+					new MethodologyWorkflowDef(["ticket"],
+						[
+							new WorkflowStatus("waiting", "Waiting on customer", StatusKind.Open),
+							new WorkflowStatus("closed", "Closed", StatusKind.TerminalOk),
+						],
+						[new MethodologyTransitionDef("waiting", "closed")]),
+				]),
+			]);
+		await _tasks.DefineMethodologyAsync(Proj, def, version: 0);
+		var runtime = await _tasks.GetRuntimeAsync(Proj);
+
+		// Preset labels: PascalCase → sentence case, lowercase quartet → capitalized, per the
+		// declared WorkflowStatus.Name — never the raw slug.
+		runtime.StatusName("simple", "InProgress").Should().Be("In progress");
+		runtime.StatusName("spec", "defined").Should().Be("Defined");
+		runtime.StatusName("intake", "wontfix").Should().Be("Won't fix");
+
+		// A defined kind uses its own declared Name (which may differ from the slug entirely).
+		runtime.StatusName("support", "waiting").Should().Be("Waiting on customer");
+		runtime.StatusName("support", "closed").Should().Be("Closed");
+
+		// An unknown / legacy slug is shown verbatim (never blanked).
+		runtime.StatusName("simple", "LegacyLimbo").Should().Be("LegacyLimbo");
+	}
+
 	// 3. The TaskBoard PageModel — the actual UI surface — renders a custom-kind board off the
 	//    runtime: the kind badge shows the custom slug, it is NOT the simple preset, and quick-add
 	//    is gated by the kind's own policy (all previously wrong under the preset fallback).

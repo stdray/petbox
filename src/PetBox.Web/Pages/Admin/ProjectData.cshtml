@@ -1,12 +1,12 @@
 @page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/data"
 @model PetBox.Web.Pages.Admin.ProjectDataModel
 @{
-	ViewData["Title"] = $"{Model.ProjectKey} — Data";
+	ViewData["Title"] = $"{Model.ProjectKey} — Databases";
 	Layout = "_AdminLayout";
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
-	<h1 class="text-2xl font-semibold">@Model.ProjectKey · data</h1>
+	<h1 class="text-2xl font-semibold">@Model.ProjectKey · databases</h1>
 	<span class="badge badge-ghost">@Model.DataDbs.Count DB(s)</span>
 </div>
 

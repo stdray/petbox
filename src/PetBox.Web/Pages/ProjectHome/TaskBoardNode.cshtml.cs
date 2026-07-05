@@ -134,8 +134,8 @@ public sealed class TaskBoardNodeModel : PageModel
 				// user knows WHAT changed instead of just "re-open and retry".
 				var reason = outcome.Result.Conflicts[0].Reason;
 				return await LoadAsync(ct, string.IsNullOrEmpty(reason)
-					? "Узел изменился с момента открытия страницы — обновите её и повторите правку."
-					: $"Узел изменился с момента открытия страницы ({reason}) — обновите её и повторите правку.");
+					? "This node changed since the page was opened — refresh and redo your edit."
+					: $"This node changed since the page was opened ({reason}) — refresh and redo your edit.");
 			}
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)

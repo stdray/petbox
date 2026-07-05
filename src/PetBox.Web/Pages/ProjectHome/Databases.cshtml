@@ -27,11 +27,11 @@
 		<span>No databases yet.</span>
 		@if (Model.CanAdminWorkspace)
 		{
-			<a href="@Routes.ProjectData(Model.WorkspaceKey, Model.ProjectKey)" class="link" data-testid="databases-create-link">Create one in the Data admin page.</a>
+			<a href="@Routes.ProjectData(Model.WorkspaceKey, Model.ProjectKey)" class="link" data-testid="databases-create-link">Create one in the Databases admin page.</a>
 		}
 		else
 		{
-			<span class="opacity-70">Ask a workspace admin to create one on the Data admin page.</span>
+			<span class="opacity-70">Ask a workspace admin to create one on the Databases admin page.</span>
 		}
 	</div>
 }
