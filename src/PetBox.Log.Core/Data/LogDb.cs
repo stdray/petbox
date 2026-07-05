@@ -1,6 +1,7 @@
 using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
+using PetBox.Log.Core.Metrics;
 using PetBox.Log.Core.Query;
 using PetBox.Log.Core.Tracing;
 
@@ -12,6 +13,7 @@ public sealed class LogDb : DataConnection
 
 	public ITable<LogEntryRecord> LogEntries => this.GetTable<LogEntryRecord>();
 	public ITable<SpanRecord> Spans => this.GetTable<SpanRecord>();
+	public ITable<MetricPointRecord> MetricPoints => this.GetTable<MetricPointRecord>();
 
 	public static DataOptions<LogDb> CreateOptions(string connectionString) =>
 		new(new DataOptions()
