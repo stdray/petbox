@@ -98,7 +98,11 @@ public sealed record MethodologyWorkflowDef(
 	// transition gates (approval/reason/precondition artifact) and the approval-gate mode.
 	public Workflow ToWorkflow(string type) =>
 		new(type, Statuses,
-			Transitions.Select(t => new WorkflowTransition(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact) { EnforceApproval = t.EnforceApproval }).ToList());
+			Transitions.Select(t => new WorkflowTransition(t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact)
+			{
+				EnforceApproval = t.EnforceApproval,
+				Checklist = t.Checklist,
+			}).ToList());
 }
 
 // A directed FSM edge. `PreconditionArtifact` names a comment-artifact tag (e.g.

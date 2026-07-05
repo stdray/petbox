@@ -289,6 +289,8 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("tasks_board_close", new { projectKey = ProjectKey, board = "no-such-board" }),
 			("tasks_board_reopen", new { projectKey = ProjectKey, board = "no-such-board" }),
 			("tasks_board_delete", new { projectKey = ProjectKey, board = "no-such-board" }),
+			// deleting a definition the project never had: a conformant {deleted:false} no-op.
+			("tasks_methodology_def_delete", new { projectKey = ProjectKey }),
 		};
 		foreach (var (tool, args) in edge)
 			await StrictOk(failures, tool, args);
@@ -313,7 +315,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 	static readonly string[] EdgeTools =
 	{
 		"session_delete", "memory_store_delete", "log_delete", "relations_delete", "comments_delete",
-		"tasks_board_close", "tasks_board_reopen", "tasks_board_delete",
+		"tasks_board_close", "tasks_board_reopen", "tasks_board_delete", "tasks_methodology_def_delete",
 	};
 
 	// ── assertion helpers ──────────────────────────────────────────────────────

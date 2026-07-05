@@ -42,11 +42,25 @@ public sealed class ProjectMethodologyModel : PageModel
 	[BindProperty(SupportsGet = true)]
 	public bool Saved { get; set; }
 
+	// Set by the post-delete redirect (?deleted=True) — renders the reverted-to-presets
+	// alert exactly once.
+	[BindProperty(SupportsGet = true)]
+	public bool Deleted { get; set; }
+
 	public bool ProjectNotFound { get; private set; }
 	public string? ErrorMessage { get; private set; }
 
 	// The stored definition + revision metadata; null = the project runs on builtin presets.
 	public MethodologyDefView? Stored { get; private set; }
+
+	// The project's ACTIVE boards — surfaced in the definition-less state so a methodology
+	// enabled from a preset (boards only, no stored document) is still VISIBLE here: the
+	// owner sees which kinds run and where their process actually comes from.
+	public IReadOnlyList<TaskBoardMeta> ActiveBoards { get; private set; } = [];
+
+	// The preset the "Load preset as template" control last loaded — echoed back so the
+	// select keeps the user's choice instead of snapping to the first option.
+	public string? SelectedPreset { get; private set; }
 
 	// Textarea contents: the stored definition rendered as the def_get document (prefill), a
 	// preset template, or the user's own JSON echoed back after a rejected save/preview.
@@ -69,13 +83,7 @@ public sealed class ProjectMethodologyModel : PageModel
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await LoadStateAsync(ct)) return Page();
-
-		if (Stored is not null)
-		{
-			DefinitionJson = MethodologyWire.ToJson(
-				MethodologyWire.ProjectDefinition(Stored.Definition, Stored.Version, Stored.Created, Stored.Updated));
-			PreviewJson = PreviewOf(Stored.Definition);
-		}
+		PrefillStored();
 		return Page();
 	}
 
@@ -89,6 +97,7 @@ public sealed class ProjectMethodologyModel : PageModel
 		try
 		{
 			var def = MethodologyPresets.RenderPresetDefinition(preset);
+			SelectedPreset = def.Name; // the resolved slug, so the select tracks what actually loaded
 			DefinitionJson = MethodologyWire.ToJson(
 				MethodologyWire.ProjectDefinition(def, version: 0, created: null, updated: null));
 			PreviewJson = PreviewOf(def);
@@ -144,13 +153,47 @@ public sealed class ProjectMethodologyModel : PageModel
 		return RedirectToPage(new { WorkspaceKey, ProjectKey, Saved = true });
 	}
 
+	// Delete the stored definition — revert the project to the builtin presets. The service
+	// door validates live nodes against the preset resolution first (an incompatible node
+	// rejects with a clear message) and applies the same version watermark as a save; any
+	// rejection rerenders with the stored state intact and the service's message.
+	public async Task<IActionResult> OnPostDeleteAsync(long version, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+
+		try
+		{
+			await _tasks.DeleteMethodologyAsync(ProjectKey, version, ct);
+		}
+		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+		{
+			if (!await LoadStateAsync(ct)) return Page();
+			PrefillStored();
+			ErrorMessage = ex.Message;
+			return Page();
+		}
+
+		return RedirectToPage(new { WorkspaceKey, ProjectKey, Deleted = true });
+	}
+
 	async Task<bool> LoadStateAsync(CancellationToken ct)
 	{
 		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return false; }
 		Stored = await _tasks.GetMethodologyDefinitionAsync(ProjectKey, ct);
 		Version = Stored?.Version ?? 0;
+		ActiveBoards = (await _tasks.ListBoardsAsync(ProjectKey, ct)).Where(b => b.ClosedAt == null).ToList();
 		return true;
+	}
+
+	// The stored definition rendered into the editor (document prefill + preview) — the GET
+	// state and the delete-rejected state show the same thing.
+	void PrefillStored()
+	{
+		if (Stored is null) return;
+		DefinitionJson = MethodologyWire.ToJson(
+			MethodologyWire.ProjectDefinition(Stored.Definition, Stored.Version, Stored.Created, Stored.Updated));
+		PreviewJson = PreviewOf(Stored.Definition);
 	}
 
 	// Echo the user's input back after a rejected save / a preview (the posted version wins
@@ -164,9 +207,13 @@ public sealed class ProjectMethodologyModel : PageModel
 
 	// Project the definition onto the workflow-graph doc array the SVG renderer consumes —
 	// per kind, per workflow block, through the SAME WorkflowGraphJson mapping the per-type
-	// workflow modal uses.
+	// workflow modal uses. Kind-level transition effects have no edge to live on, so each
+	// kind carries them as pre-phrased sentences (the guide's own phrasing) the preview
+	// renders as an annotation list under the kind's graphs.
 	static string PreviewOf(MethodologyDefinition def) =>
-		WorkflowGraphJson.SerializeMany(def.Kinds.Select(k => new BoardWorkflowView(
-			k.Kind,
-			[.. k.Workflows.Select(w => new WorkflowBlock(w.Types, w.ToWorkflow(w.Types.Count > 0 ? w.Types[0] : k.Kind)))])));
+		WorkflowGraphJson.SerializeMany(def.Kinds.Select(k => (
+			new BoardWorkflowView(
+				k.Kind,
+				[.. k.Workflows.Select(w => new WorkflowBlock(w.Types, w.ToWorkflow(w.Types.Count > 0 ? w.Types[0] : k.Kind)))]),
+			(IReadOnlyList<string>)[.. (k.Effects ?? []).Select(e => MethodologyGuide.EffectSentence(e))])));
 }

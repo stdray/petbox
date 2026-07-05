@@ -387,6 +387,12 @@ public sealed record WorkflowView(string Kind, IReadOnlyList<WorkflowGroupView> 
 // envelope names the current version), so this shape never carries conflicts.
 public sealed record MethodologyDefUpsertResult(long Version, bool Changed, int Migrated = 0);
 
+// tasks_methodology_def_delete ack: whether a definition was actually removed (false = the
+// project had none — an idempotent no-op) and the definition cursor after the delete (the
+// baseline should the caller re-create one). A version conflict or a live-node
+// incompatibility throws instead — nothing is partially deleted.
+public sealed record MethodologyDefDeleteResult(bool Deleted, long Version);
+
 // tasks_methodology_def_get answer. Defined=true → the stored definition (name/kinds) plus
 // its revision metadata. Defined=false → the project has no definition and runs on the
 // built-in preset named in `Preset` (the structured "not defined" shape, mirroring

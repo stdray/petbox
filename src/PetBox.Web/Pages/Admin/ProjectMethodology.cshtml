@@ -1,4 +1,5 @@
 @page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/methodology"
+@using PetBox.Web.Mcp
 @model PetBox.Web.Pages.Admin.ProjectMethodologyModel
 @{
 	ViewData["Title"] = $"{Model.ProjectKey} — Methodology";
@@ -19,6 +20,11 @@
 @if (Model.Saved)
 {
 	<div class="alert alert-success mb-3" data-testid="methodology-saved">Definition saved.</div>
+}
+
+@if (Model.Deleted)
+{
+	<div class="alert alert-success mb-3" data-testid="methodology-deleted">Definition deleted — the project now runs on the builtin presets.</div>
 }
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
@@ -43,10 +49,27 @@
 				}
 			</div>
 			<p class="text-xs opacity-60 mt-1">Updated @Model.Stored.Updated.ToString("yyyy-MM-dd HH:mm") UTC. The document below is exactly what <span class="font-mono">tasks_methodology_def_get</span> returns — it can be edited here or via MCP interchangeably.</p>
+			<div class="card-actions mt-2">
+				<form method="post" asp-page-handler="Delete" data-confirm="Delete this methodology definition and revert the project to the builtin presets? Boards and nodes are kept; live nodes must fit the presets or the delete is rejected." data-testid="methodology-delete-form">
+					@Html.AntiForgeryToken()
+					<input type="hidden" name="version" value="@Model.Stored.Version" />
+					<button type="submit" class="btn btn-xs btn-error btn-outline" data-testid="methodology-delete">Delete definition</button>
+				</form>
+			</div>
 		}
 		else
 		{
 			<p class="text-sm opacity-80" data-testid="methodology-state-presets">No stored definition — this project runs on the builtin presets. Load a preset below as a template, edit it, and save to install a custom methodology.</p>
+			@if (Model.ActiveBoards.Count > 0)
+			{
+				<p class="text-xs opacity-60 mt-1" data-testid="methodology-state-boards">
+					Active boards (each resolves its preset kind):
+					@foreach (var b in Model.ActiveBoards)
+					{
+						<span class="badge badge-ghost badge-sm font-mono mr-1">@b.Name (@b.Kind)</span>
+					}
+				</p>
+			}
 		}
 	</div>
 </div>
@@ -60,7 +83,7 @@
 		<select name="preset" class="select select-bordered select-sm font-mono" data-testid="methodology-template-select">
 			@foreach (var p in Model.Presets)
 			{
-				<option value="@p.Slug" title="@p.Description">@p.Slug</option>
+				<option value="@p.Slug" title="@p.Description" selected="@(p.Slug == Model.SelectedPreset)">@p.Slug</option>
 			}
 		</select>
 	</label>
@@ -73,14 +96,14 @@
 	<input type="hidden" name="version" value="@Model.Version" />
 	<label class="form-control">
 		<span class="label-text">Definition document (JSON)</span>
-		<textarea name="definitionJson" rows="24" spellcheck="false" wrap="off"
+		<textarea name="definitionJson" rows="24" spellcheck="false" wrap="off" data-json-highlight
 			class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
 			placeholder='{ "name": "custom", "kinds": [ { "kind": "job", "workflows": [ ... ] } ] }'
 			data-testid="methodology-json">@Model.DefinitionJson</textarea>
 	</label>
 	<label class="form-control mt-2">
 		<span class="label-text">Migration map (optional JSON) — <span class="opacity-60">per-kind {from,to} type/status repairs for live nodes an incompatible change would strand, e.g. <span class="font-mono">[{"kind":"work","statuses":[{"from":"Blocked","to":"Todo"}]}]</span></span></span>
-		<textarea name="migrationJson" rows="3" spellcheck="false"
+		<textarea name="migrationJson" rows="3" spellcheck="false" data-json-highlight
 			class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
 			data-testid="methodology-migration-json">@Model.MigrationJson</textarea>
 	</label>
@@ -90,6 +113,35 @@
 	</div>
 </form>
 
+@* Reference: the definition document's entities and fields, generated off the SAME wire
+   DTOs the parser reads (MethodologyReference) — collapsed by default. *@
+<details class="collapse collapse-arrow bg-base-200 border border-base-300 mt-6 max-w-4xl" data-testid="methodology-reference">
+	<summary class="collapse-title font-semibold">Definition reference</summary>
+	<div class="collapse-content overflow-x-auto">
+		<p class="text-xs opacity-70 mb-2">Every entity of the definition document (the JSON above). Field names are the wire names — the same vocabulary <span class="font-mono">tasks_methodology_def_upsert</span> accepts.</p>
+		@foreach (var entity in MethodologyReference.Entities)
+		{
+			<h3 class="font-mono font-semibold text-sm mt-3" data-testid="methodology-reference-entity">@entity.Name</h3>
+			<p class="text-xs opacity-70 mt-0.5">@entity.Summary</p>
+			<table class="table table-xs mt-1">
+				<thead>
+					<tr><th class="w-40">field</th><th class="w-40">type</th><th>description</th></tr>
+				</thead>
+				<tbody>
+					@foreach (var field in entity.Fields)
+					{
+						<tr>
+							<td class="font-mono">@field.Name</td>
+							<td class="font-mono opacity-70">@field.Type</td>
+							<td>@field.Description</td>
+						</tr>
+					}
+				</tbody>
+			</table>
+		}
+	</div>
+</details>
+
 @* FSM preview: one SVG per workflow block, per kind — rendered client-side by the same
    workflow-graph renderer the per-type board modal uses (ts/methodology-preview.ts). *@
 @if (!string.IsNullOrEmpty(Model.PreviewJson))
@@ -98,5 +150,20 @@
 		<h2 class="text-lg font-semibold mb-2">Workflow preview</h2>
 		<script type="application/json" data-testid="methodology-preview-data">@Html.Raw(Model.PreviewJson)</script>
 		<div data-testid="methodology-preview"></div>
+
+		@* Legend: what the graph's markers mean — gate labels are opaque to outsiders. *@
+		<div class="card bg-base-200 border border-base-300 mt-4" data-testid="methodology-preview-legend">
+			<div class="card-body p-4 text-sm">
+				<h3 class="font-semibold">Legend</h3>
+				<ul class="list-disc pl-5 space-y-1 mt-1">
+					<li><span class="font-semibold">Nodes:</span> a neutral box is an OPEN status; a green box is a delivered terminal (the node closes as done); a red box is a cancelled terminal. The <span class="font-mono">▶</span> marker flags the INITIAL status a new node starts in.</li>
+					<li><span class="font-mono">approve</span> — the transition is an approval gate: it belongs to the owner/maintainer (server-blocked when the definition sets <span class="font-mono">enforceApproval</span>, otherwise a binding convention).</li>
+					<li><span class="font-mono">reason</span> — the transition must carry a non-empty reason.</li>
+					<li><span class="font-mono">artifact:&lt;slug&gt;</span> — the node must carry an <span class="font-mono">artifact:&lt;slug&gt;</span> comment before the transition fires (e.g. <span class="font-mono">artifact:spec_plan</span> = a written plan comment gates the move). Enforced.</li>
+					<li><span class="font-mono">checklist</span> — the transition declares free-text conditions to confirm first (a convention, not server-enforced; the process guide lists the items).</li>
+					<li><span class="font-semibold">Effects:</span> cross-board automation a kind declares (e.g. work entering Done auto-closes the intake issues that spawned it) has no edge to draw — it is listed under the kind's graphs.</li>
+				</ul>
+			</div>
+		</div>
 	</section>
 }
