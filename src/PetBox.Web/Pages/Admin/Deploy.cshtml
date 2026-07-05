@@ -99,79 +99,109 @@ else
 <!-- ── Deployments ───────────────────────────────────────── -->
 <div class="card bg-base-200 mb-4">
 	<div class="card-body p-4">
-		<h2 class="text-base font-semibold mb-2">New deployment</h2>
-		<form method="post" asp-page-handler="NewDeployment" class="flex flex-wrap items-end gap-2">
-			<div>
-				<label class="text-xs opacity-60 block" for="d-service">Service</label>
-				<input id="d-service" name="service" class="input input-bordered input-sm font-mono" placeholder="bot" data-testid="dep-service" />
+		<h2 class="text-base font-semibold mb-3">New deployment</h2>
+		<form method="post" asp-page-handler="NewDeployment" class="space-y-4">
+
+			@* ── Identity: what to run, where, and how it's scheduled ── *@
+			<fieldset class="space-y-2" data-testid="dep-section-identity">
+				<legend class="text-xs opacity-50 uppercase tracking-wide">Identity</legend>
+				<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+					<label class="form-control w-full" for="d-service">
+						<span class="label-text text-xs opacity-60">Service</span>
+						<input id="d-service" name="service" class="input input-bordered input-sm font-mono w-full" placeholder="bot" data-testid="dep-service" />
+					</label>
+					<label class="form-control w-full" for="d-project">
+						<span class="label-text text-xs opacity-60">Project</span>
+						<input id="d-project" name="project" class="input input-bordered input-sm font-mono w-full" placeholder="yobapub" data-testid="dep-project" />
+					</label>
+					<label class="form-control w-full" for="d-node">
+						<span class="label-text text-xs opacity-60">Node</span>
+						<select id="d-node" name="nodeId" class="select select-bordered select-sm font-mono w-full" data-testid="dep-node">
+							@foreach (var n in Model.Nodes)
+							{
+								<option value="@n.Id">@n.Id</option>
+							}
+						</select>
+					</label>
+					<label class="form-control w-full sm:col-span-2 lg:col-span-1" for="d-image">
+						<span class="label-text text-xs opacity-60">Image</span>
+						<input id="d-image" name="imageDigest" class="input input-bordered input-sm font-mono w-full" placeholder="ghcr.io/...:tag" data-testid="dep-image" />
+					</label>
+					<label class="form-control w-full" for="d-req">
+						<span class="label-text text-xs opacity-60">Required tags</span>
+						<input id="d-req" name="requiredTags" class="input input-bordered input-sm font-mono w-full" placeholder="net.x" />
+					</label>
+					<label class="form-control w-full" for="d-cfg">
+						<span class="label-text text-xs opacity-60">Config tags</span>
+						<input id="d-cfg" name="configTags" class="input input-bordered input-sm font-mono w-full" placeholder="env:prod" />
+					</label>
+				</div>
+				<label class="label cursor-pointer justify-start gap-2 pl-0" title="May be auto-relocated to another matching node when this node goes stale.">
+					<input type="checkbox" name="relocatable" value="true" class="checkbox checkbox-sm" />
+					<span class="label-text text-xs">Relocatable</span>
+				</label>
+			</fieldset>
+
+			@* ── Networking: published ports, docker network, optional site domain ── *@
+			<fieldset class="space-y-2" data-testid="dep-section-networking">
+				<legend class="text-xs opacity-50 uppercase tracking-wide">Networking</legend>
+				<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+					<label class="form-control w-full" for="d-ports">
+						<span class="label-text text-xs opacity-60">Ports (csv)</span>
+						<input id="d-ports" name="ports" class="input input-bordered input-sm font-mono w-full" placeholder="127.0.0.1:8080:8080" data-testid="dep-ports" />
+					</label>
+					<label class="form-control w-full" for="d-network">
+						<span class="label-text text-xs opacity-60">Network</span>
+						<input id="d-network" name="network" class="input input-bordered input-sm font-mono w-full" placeholder="bridge" />
+					</label>
+					<label class="form-control w-full" for="d-domain" title="Makes this deployment a SITE: the node agent routes the domain to the loopback port (first ports entry) via the host reverse-proxy.">
+						<span class="label-text text-xs opacity-60">Site domain</span>
+						<input id="d-domain" name="domain" class="input input-bordered input-sm font-mono w-full" placeholder="app.example.com" data-testid="dep-domain" />
+					</label>
+				</div>
+			</fieldset>
+
+			@* ── Resources: container limits ── *@
+			<fieldset class="space-y-2" data-testid="dep-section-resources">
+				<legend class="text-xs opacity-50 uppercase tracking-wide">Resources</legend>
+				<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+					<label class="form-control w-full" for="d-memory">
+						<span class="label-text text-xs opacity-60">Memory</span>
+						<input id="d-memory" name="memory" class="input input-bordered input-sm font-mono w-full" placeholder="256m" data-testid="dep-memory" />
+					</label>
+					<label class="form-control w-full" for="d-cpus">
+						<span class="label-text text-xs opacity-60">Cpus</span>
+						<input id="d-cpus" name="cpus" class="input input-bordered input-sm font-mono w-full" placeholder="0.5" />
+					</label>
+				</div>
+			</fieldset>
+
+			@* ── Runtime: mounts and restart policy ── *@
+			<fieldset class="space-y-2" data-testid="dep-section-runtime">
+				<legend class="text-xs opacity-50 uppercase tracking-wide">Runtime</legend>
+				<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+					<label class="form-control w-full sm:col-span-2" for="d-volumes">
+						<span class="label-text text-xs opacity-60">Volumes (csv)</span>
+						<input id="d-volumes" name="volumes" class="input input-bordered input-sm font-mono w-full" placeholder="/opt/app/logs:/app/logs" data-testid="dep-volumes" />
+					</label>
+					<label class="form-control w-full" for="d-restart">
+						<span class="label-text text-xs opacity-60">Restart</span>
+						<select id="d-restart" name="restart" class="select select-bordered select-sm font-mono w-full" data-testid="dep-restart">
+							<option value="">(default)</option>
+							<option value="unless-stopped">unless-stopped</option>
+							<option value="always">always</option>
+							<option value="on-failure">on-failure</option>
+							<option value="no">no</option>
+						</select>
+					</label>
+				</div>
+			</fieldset>
+
+			<div class="flex items-center gap-2 pt-1">
+				<button type="submit" class="btn btn-primary btn-sm" data-testid="dep-add">Create</button>
+				<p class="text-xs opacity-50">Healthcheck, command override and labels are settable via MCP <code>deploy_upsert</code>.</p>
 			</div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-project">Project</label>
-				<input id="d-project" name="project" class="input input-bordered input-sm font-mono" placeholder="yobapub" data-testid="dep-project" />
-			</div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-node">Node</label>
-				<select id="d-node" name="nodeId" class="select select-bordered select-sm font-mono" data-testid="dep-node">
-					@foreach (var n in Model.Nodes)
-					{
-						<option value="@n.Id">@n.Id</option>
-					}
-				</select>
-			</div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-image">Image</label>
-				<input id="d-image" name="imageDigest" class="input input-bordered input-sm font-mono" placeholder="ghcr.io/...:tag" data-testid="dep-image" />
-			</div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-req">Required tags</label>
-				<input id="d-req" name="requiredTags" class="input input-bordered input-sm font-mono w-32" placeholder="net.x" />
-			</div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-cfg">Config tags</label>
-				<input id="d-cfg" name="configTags" class="input input-bordered input-sm font-mono w-32" placeholder="env:prod" />
-			</div>
-			<label class="label cursor-pointer gap-2 p-0 pb-1" title="May be auto-relocated to another matching node when this node goes stale.">
-				<input type="checkbox" name="relocatable" value="true" class="checkbox checkbox-sm" />
-				<span class="text-xs">Relocatable</span>
-			</label>
-			<div class="w-full"></div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-ports">Ports (csv)</label>
-				<input id="d-ports" name="ports" class="input input-bordered input-sm font-mono w-48" placeholder="127.0.0.1:8080:8080" data-testid="dep-ports" />
-			</div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-volumes">Volumes (csv)</label>
-				<input id="d-volumes" name="volumes" class="input input-bordered input-sm font-mono w-64" placeholder="/opt/app/logs:/app/logs" data-testid="dep-volumes" />
-			</div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-restart">Restart</label>
-				<select id="d-restart" name="restart" class="select select-bordered select-sm font-mono" data-testid="dep-restart">
-					<option value="">(default)</option>
-					<option value="unless-stopped">unless-stopped</option>
-					<option value="always">always</option>
-					<option value="on-failure">on-failure</option>
-					<option value="no">no</option>
-				</select>
-			</div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-memory">Memory</label>
-				<input id="d-memory" name="memory" class="input input-bordered input-sm font-mono w-20" placeholder="256m" data-testid="dep-memory" />
-			</div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-cpus">Cpus</label>
-				<input id="d-cpus" name="cpus" class="input input-bordered input-sm font-mono w-16" placeholder="0.5" />
-			</div>
-			<div>
-				<label class="text-xs opacity-60 block" for="d-network">Network</label>
-				<input id="d-network" name="network" class="input input-bordered input-sm font-mono w-24" placeholder="bridge" />
-			</div>
-			<div title="Makes this deployment a SITE: the node agent routes the domain to the loopback port (first ports entry) via the host reverse-proxy.">
-				<label class="text-xs opacity-60 block" for="d-domain">Site domain</label>
-				<input id="d-domain" name="domain" class="input input-bordered input-sm font-mono w-44" placeholder="app.example.com" data-testid="dep-domain" />
-			</div>
-			<button type="submit" class="btn btn-primary btn-sm" data-testid="dep-add">Create</button>
 		</form>
-		<p class="text-xs opacity-50 mt-1">Healthcheck, command override and labels are settable via MCP <code>deploy_upsert</code>.</p>
 	</div>
 </div>
 
