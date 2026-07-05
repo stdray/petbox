@@ -628,7 +628,9 @@ public sealed partial class TasksService : ITasksService
 				Tags: tagsByNode[n.NodeId].OrderBy(t => t, StringComparer.Ordinal).ToList(),
 				// Canonical slug-URL: prefix ends with "/tasks/", append "{board}/{slug}"
 				// (node-slug-addressable). board/key are validated slugs → URL-safe.
-				Url: urlPrefix is null ? null : urlPrefix + board + "/" + n.Key));
+				Url: urlPrefix is null ? null : urlPrefix + board + "/" + n.Key,
+				CreatedAt: n.Created,
+				UpdatedAt: n.Updated));
 		}
 		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.SpecBoard, nodes);
 	}

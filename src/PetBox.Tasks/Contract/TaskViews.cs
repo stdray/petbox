@@ -19,7 +19,11 @@ public sealed record PlanNodeView(
 	string Status, string Type, string Title, string Body, IReadOnlyList<string> Commits, long Priority, long Version,
 	string? Delivery, IReadOnlyList<LinkDto>? Spec, IReadOnlyList<LinkDto>? BlockedBy,
 	IReadOnlyList<LinkDto>? LinkedTasks, IReadOnlyList<LinkDto>? Supersedes, IReadOnlyList<string> RenamedFrom, IReadOnlyList<string> Tags,
-	string? Url = null);
+	string? Url = null,
+	// The active revision's own Created/Updated (board-sort-impl): free on this read — GetAsync
+	// already loads the PlanNode row these come from — so the board's client-side sort toggle
+	// (created|updated, alongside priority|title) has real data instead of a NodeId proxy.
+	DateTime? CreatedAt = null, DateTime? UpdatedAt = null);
 
 // A board's active plan nodes (flat list; the tree is the part_of projection via
 // ParentNodeId/Depth), plus the board's kind and (work boards) its spec board. This is

@@ -38,5 +38,8 @@
 		"rootDir": "ts"
 	},
 	"include": ["ts/**/*.ts"],
-	"exclude": ["node_modules", "dist"]
+	// *.test.ts files run under node:test/bun:test (type-stripped at runtime, no tsc needed —
+	// same convention as src/clients-ts/petbox-wire's tests) and import "node:*" modules this
+	// browser-lib (DOM only, no @types/node) project doesn't type-check against.
+	"exclude": ["node_modules", "dist", "ts/**/*.test.ts"]
 }
