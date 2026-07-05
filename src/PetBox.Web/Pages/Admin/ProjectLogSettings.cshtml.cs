@@ -13,10 +13,11 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectLogSettingsModel : PageModel
 {
-	[BindProperty(SupportsGet = true)]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")]
 	public string WorkspaceKey { get; set; } = string.Empty;
 
-	[BindProperty(SupportsGet = true)]
+	[FromRoute(Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
 	public IActionResult OnGet() => Redirect(Routes.ProjectSettings(WorkspaceKey, ProjectKey));

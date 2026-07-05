@@ -12,7 +12,7 @@ using PetBox.Core.Models;
 
 namespace PetBox.Web.Pages.Config;
 
-[Authorize]
+[Authorize(Policy = "WorkspaceAdmin")]
 public sealed class IndexModel : PageModel
 {
 	readonly IConfigDbFactory _configFactory;
@@ -34,12 +34,15 @@ public sealed class IndexModel : PageModel
 
 	public IReadOnlyList<SavedConfigFilter> SavedFilters { get; private set; } = [];
 
-	[BindProperty(SupportsGet = true)]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why. Both
+	// route templates (Program.cs AddPageRoute) carry {workspaceKey}; the project-scoped one also
+	// carries {projectKey}, absent (null) on the workspace-only template.
+	[FromRoute(Name = "workspaceKey")]
 	public string? WorkspaceKey { get; set; }
 
 	// Set when the page is mounted under /ui/{ws}/{projectKey}/config — auto-filters bindings
 	// whose Tags include "project:{projectKey}".
-	[BindProperty(SupportsGet = true)]
+	[FromRoute(Name = "projectKey")]
 	public string? ProjectKey { get; set; }
 
 	public string EffectiveWorkspaceKey { get; private set; } = "$system";

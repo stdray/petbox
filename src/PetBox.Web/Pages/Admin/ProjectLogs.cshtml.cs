@@ -25,10 +25,11 @@ public sealed class ProjectLogsModel : PageModel
 		_store = store;
 	}
 
-	[BindProperty(SupportsGet = true)]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")]
 	public string WorkspaceKey { get; set; } = string.Empty;
 
-	[BindProperty(SupportsGet = true)]
+	[FromRoute(Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
 	public List<LogMeta> Logs { get; private set; } = [];

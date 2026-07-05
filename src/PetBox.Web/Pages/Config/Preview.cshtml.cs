@@ -7,14 +7,15 @@ using PetBox.Core.Auth;
 
 namespace PetBox.Web.Pages.Config;
 
-[Authorize]
+[Authorize(Policy = "WorkspaceAdmin")]
 public sealed class PreviewModel : PageModel
 {
 	readonly IConfigDbFactory _configFactory;
 
 	public PreviewModel(IConfigDbFactory configFactory) => _configFactory = configFactory;
 
-	[BindProperty(SupportsGet = true)]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	[FromRoute(Name = "workspaceKey")]
 	public string? WorkspaceKey { get; set; }
 
 	[BindProperty]

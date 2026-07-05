@@ -12,7 +12,7 @@ using PetBox.Log.Core.Query;
 
 namespace PetBox.Web.Pages.Logs;
 
-[Authorize]
+[Authorize(Policy = "WorkspaceMember")]
 public sealed class IndexModel : PageModel
 {
 	readonly ILogStore _logStore;
@@ -37,10 +37,14 @@ public sealed class IndexModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "event")]
 	public long? EventRowId { get; set; }
 
-	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
+	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
+	// ProjectKeyRoute in particular is the SavedQuery write scope (OnPostSaveAsync /
+	// OnPostDeleteAsync below) — a form-supplied override would let a same-workspace member
+	// write/delete another project's saved queries.
+	[FromRoute(Name = "workspaceKey")]
 	public string? WorkspaceKey { get; set; }
 
-	[BindProperty(SupportsGet = true, Name = "projectKey")]
+	[FromRoute(Name = "projectKey")]
 	public string? ProjectKeyRoute { get; set; }
 
 	[BindProperty(SupportsGet = true, Name = "logName")]
@@ -280,9 +284,14 @@ public sealed class IndexModel : PageModel
 		[FromForm(Name = "savedId")] long savedId,
 		CancellationToken ct)
 	{
+		// Defense in depth: scope the delete to the ROUTE project too, not just the id — even
+		// with ProjectKeyRoute now route-locked, an id alone spans every project in every
+		// workspace, so without this filter a same-workspace member could delete another
+		// project's saved query by guessing/enumerating its id.
+		var pk = ProjectKeyRoute;
 #pragma warning disable CA2016
 		await _db.SavedQueries
-			.Where(q => q.Id == savedId)
+			.Where(q => q.Id == savedId && q.ProjectKey == pk)
 			.DeleteAsync();
 #pragma warning restore CA2016
 
