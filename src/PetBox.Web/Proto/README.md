@@ -21,7 +21,10 @@ OTLP Logs + Traces ingestion (Phase F + H.2):
 - `trace/v1/trace.proto` — `Span` (OTLP wire shape; maps to our `YobaLog.Core.Tracing.Span`), `ResourceSpans`, `ScopeSpans`, `Status`.
 - `collector/trace/v1/trace_service.proto` — `ExportTraceServiceRequest`, `ExportTraceServiceResponse`.
 
-OTLP Metrics is explicitly out of scope (decision-log 2026-04-21 — yobalog is logs + traces, metrics are Prometheus territory).
+OTLP Metrics ingestion:
+
+- `metrics/v1/metrics.proto` — `Metric`, `ResourceMetrics`, `ScopeMetrics`, the point types (`NumberDataPoint`, `HistogramDataPoint`, `ExponentialHistogramDataPoint`, `SummaryDataPoint`), aggregations (`Gauge`, `Sum`, `Histogram`, `ExponentialHistogram`, `Summary`), `AggregationTemporality`, `DataPointFlags`, `Exemplar`.
+- `collector/metrics/v1/metrics_service.proto` — `ExportMetricsServiceRequest`, `ExportMetricsServiceResponse`.
 
 ## How to update
 
@@ -32,7 +35,8 @@ V=1.6.0  # target version
 B=https://raw.githubusercontent.com/open-telemetry/opentelemetry-proto/v$V/opentelemetry/proto
 for p in common/v1/common resource/v1/resource \
          logs/v1/logs collector/logs/v1/logs_service \
-         trace/v1/trace collector/trace/v1/trace_service; do
+         trace/v1/trace collector/trace/v1/trace_service \
+         metrics/v1/metrics collector/metrics/v1/metrics_service; do
   curl -sSfo "src/YobaLog.Web/Proto/opentelemetry/proto/$p.proto" "$B/$p.proto"
 done
 ```
