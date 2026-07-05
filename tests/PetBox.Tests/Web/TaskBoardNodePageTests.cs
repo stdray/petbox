@@ -325,6 +325,7 @@ public sealed class TaskBoardNodePageTests : IDisposable
 		var detail = await _tasks.GetNodeBySlugAsync(Proj, "client-issues", key);
 		detail!.Node.Key.Should().Be(key);
 		detail.Node.Title.Should().Be("Something is broken");
+		detail.Node.Priority.Should().Be(0); // untriaged per the 0..100 priority-scale convention
 	}
 
 	// `node` is reserved as a board name so /tasks/node/{nodeId} can't collide with the slug
