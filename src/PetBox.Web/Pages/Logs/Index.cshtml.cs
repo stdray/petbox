@@ -268,6 +268,7 @@ public sealed class IndexModel : PageModel
 #pragma warning restore CA2016
 		}
 
+		this.NotifySuccess("Saved query saved.");
 		return RedirectToProject(name.Trim());
 	}
 
@@ -281,6 +282,7 @@ public sealed class IndexModel : PageModel
 			.DeleteAsync();
 #pragma warning restore CA2016
 
+		this.NotifySuccess("Saved query deleted.");
 		return RedirectToProject();
 	}
 

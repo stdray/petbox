@@ -97,6 +97,7 @@ public sealed class DeployModel : PageModel
 	public async Task<IActionResult> OnPostDeleteDeploymentAsync(string id)
 	{
 		await _svc.DeleteDeploymentAsync(id);
+		this.NotifySuccess("Deployment removed.");
 		return RedirectToPage();
 	}
 

@@ -82,6 +82,7 @@ public sealed class ProjectMemoryModel : PageModel
 		}
 
 		await _memory.DeleteStoreAsync(ProjectKey, name);
+		this.NotifySuccess($"Store '{name}' deleted.");
 		return RedirectToPage();
 	}
 }

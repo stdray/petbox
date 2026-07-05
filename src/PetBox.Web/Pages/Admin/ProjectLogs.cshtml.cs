@@ -80,6 +80,7 @@ public sealed class ProjectLogsModel : PageModel
 		}
 
 		await _store.DeleteAsync(ProjectKey, name);
+		this.NotifySuccess($"Log '{name}' deleted.");
 		return RedirectToPage();
 	}
 }

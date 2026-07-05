@@ -109,6 +109,7 @@ public sealed class ProjectTasksModel : PageModel
 			return Page();
 		}
 
+		this.NotifySuccess("Methodology enabled.");
 		return RedirectToPage();
 	}
 

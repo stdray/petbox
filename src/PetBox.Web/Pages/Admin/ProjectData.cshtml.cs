@@ -100,6 +100,7 @@ public sealed class ProjectDataModel : PageModel
 
 		await _db.DataDbs.Where(d => d.ProjectKey == ProjectKey && d.Name == name).DeleteAsync();
 		_factory.TryDelete(ProjectKey, name);
+		this.NotifySuccess($"DataDb '{name}' deleted.");
 		return RedirectToPage();
 	}
 }

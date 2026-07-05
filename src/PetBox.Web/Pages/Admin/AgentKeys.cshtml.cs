@@ -36,6 +36,7 @@ public sealed class AgentKeysModel : PageModel
 	public async Task<IActionResult> OnPostRevokeAsync(string key)
 	{
 		await _db.ApiKeys.Where(k => k.Key == key).DeleteAsync();
+		this.NotifySuccess("API key revoked.");
 		return RedirectToPage();
 	}
 }
