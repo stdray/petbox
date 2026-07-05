@@ -324,3 +324,29 @@
 		</div>
 	</form>
 </section>
+
+@if (!PetBox.Core.Data.ProjectDeletion.IsReserved(Model.Project.Key))
+{
+	<div class="divider"></div>
+
+	<section class="mb-6 max-w-3xl" data-testid="project-danger-section">
+		<h2 class="text-lg font-semibold text-error mb-3">Danger zone</h2>
+		<div class="card bg-base-200 border border-error/40" data-testid="project-delete-card">
+			<div class="card-body p-4">
+				<h3 class="card-title text-sm">Delete this project</h3>
+				<p class="text-xs opacity-70">
+					Permanently deletes <code class="font-mono">@Model.Project.Key</code> and everything it owns:
+					API keys, health endpoints, databases, saved queries, share links, logs, task boards,
+					memory stores, relations and settings. This cannot be undone.
+				</p>
+				<div class="card-actions mt-3">
+					<form method="post" asp-page-handler="Delete"
+						onsubmit="return confirm('Delete project @Model.Project.Key and ALL its API keys, databases, logs, task boards, memory stores and settings? This cannot be undone.')">
+						@Html.AntiForgeryToken()
+						<button type="submit" class="btn btn-sm btn-error" data-testid="project-delete">Delete project</button>
+					</form>
+				</div>
+			</div>
+		</div>
+	</section>
+}

@@ -52,7 +52,7 @@ else
 							@if (w.Key != "$system")
 							{
 								<form method="post" asp-page-handler="Delete" asp-route-key="@w.Key"
-									onsubmit="return confirm('Delete workspace @w.Key?')" style="display:inline">
+									onsubmit="return confirm('Delete workspace @w.Key and remove all its memberships? A workspace that still has projects cannot be deleted — move or delete them first.')" style="display:inline">
 									@Html.AntiForgeryToken()
 									<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="admin-workspace-delete">Delete</button>
 								</form>

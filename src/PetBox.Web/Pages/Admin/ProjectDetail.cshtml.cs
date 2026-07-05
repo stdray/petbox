@@ -235,4 +235,27 @@ public sealed class ProjectDetailModel : PageModel
 			.UpdateAsync();
 		return Self();
 	}
+
+	// Delete the project and everything it owns in the Core DB (keys, health endpoints,
+	// data/log/board/memory metadata, relations, settings). See ProjectDeletion for the
+	// exact cascade + the file-level scope boundary. Reserved built-ins refuse deletion.
+	public async Task<IActionResult> OnPostDeleteAsync()
+	{
+		if (ProjectDeletion.IsReserved(ProjectKey))
+		{
+			ErrorMessage = $"Cannot delete the reserved project '{ProjectKey}'.";
+			await OnGetAsync();
+			return Page();
+		}
+
+		var deleted = await ProjectDeletion.DeleteAsync(_db, ProjectKey);
+		if (!deleted)
+		{
+			ErrorMessage = "Project not found.";
+			await OnGetAsync();
+			return Page();
+		}
+
+		return Redirect(Routes.WorkspaceAdminProjects(WorkspaceKey));
+	}
 }
