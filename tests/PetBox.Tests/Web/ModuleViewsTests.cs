@@ -40,6 +40,7 @@ public sealed class ModuleViewsFixture : IAsyncLifetime
 						["ConnectionStrings:PetBox"] = $"Data Source={dbPath};Cache=Shared",
 						["Features:Tasks"] = "true",
 						["Features:Memory"] = "true",
+						["Features:Data"] = "true",
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = TestPasswordHash,
 					});
@@ -656,5 +657,66 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("doc-onboarding");
 		html.Should().Contain("PETBOX_"); // per-project env-var step
 		html.Should().Contain("specRef"); // spec-link step content
+	}
+
+	// ── ui-dashboard-zone-jumps ──────────────────────────────────────────────
+	// The project dashboard's counter cards all point at the project (user) zone
+	// /ui/{ws}/{key}/… read views (no jump to /ui/admin/…), the config card shows a
+	// real number instead of the "cfg" literal, and the Tasks card is present.
+	[Fact]
+	public async Task ProjectDashboard_CountersTargetUserZone_ConfigIsNumber_TasksCardPresent()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/$system");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		// logs / databases / config counters resolve to the user zone.
+		html.Should().MatchRegex("""<a href="/ui/\$system/\$system/logs"[^>]*data-testid="count-logs""");
+		html.Should().MatchRegex("""<a href="/ui/\$system/\$system/databases"[^>]*data-testid="count-dbs""");
+		html.Should().MatchRegex("""<a href="/ui/\$system/\$system/config"[^>]*data-testid="count-config""");
+		// The databases counter must NOT jump to the admin data page.
+		html.Should().NotContain("/ui/admin/ws/$system/projects/$system/data");
+		// Config card shows a number, not the old "cfg" literal.
+		html.Should().NotContain(">cfg<");
+		// Tasks card is present (Tasks feature is on in this fixture).
+		html.Should().Contain("data-testid=\"count-tasks\"");
+	}
+
+	// Databases (user zone) empty state offers a real create link for an admin viewer,
+	// not a dead-end sentence.
+	[Fact]
+	public async Task Databases_EmptyState_HasCreateLink()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/$system/databases");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"databases-empty\"");
+		html.Should().MatchRegex(
+			"""<a href="/ui/admin/ws/\$system/projects/\$system/data"[^>]*data-testid="databases-create-link""");
+	}
+
+	// The workspace status dashboard's per-project db badge targets the user-zone
+	// /databases read view, not the admin data page.
+	[Fact]
+	public async Task WorkspaceDashboard_DbBadge_TargetsUserZone_NotAdmin()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().MatchRegex("""<a href="/ui/\$system/\$system/databases"[^>]*data-testid="count-dbs""");
+		html.Should().NotContain("/ui/admin/ws/$system/projects/$system/data");
+	}
+
+	// The sys dashboard: the Agent keys card is present, and the Defaults / Projects
+	// cards are real links (were non-clickable divs).
+	[Fact]
+	public async Task SysDashboard_AgentKeysCard_And_DefaultsProjectsClickable()
+	{
+		using var resp = await GetAuthedAsync("/ui/admin/sys");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().MatchRegex("""<a href="/ui/admin/sys/agent-keys"[^>]*data-testid="sys-card-agent-keys""");
+		html.Should().MatchRegex("""<a href="/ui/admin/sys/defaults"[^>]*data-testid="sys-card-defaults""");
+		html.Should().MatchRegex("""<a href="/ui/admin/sys/workspaces"[^>]*data-testid="sys-card-projects""");
 	}
 }

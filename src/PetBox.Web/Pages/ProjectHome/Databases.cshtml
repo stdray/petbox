@@ -23,7 +23,17 @@
 
 @if (Model.Dbs.Count == 0)
 {
-	<div class="alert" data-testid="databases-empty">No databases yet. Create one in admin (gear → project → Data).</div>
+	<div class="alert" data-testid="databases-empty">
+		<span>No databases yet.</span>
+		@if (Model.CanAdminWorkspace)
+		{
+			<a href="@Routes.ProjectData(Model.WorkspaceKey, Model.ProjectKey)" class="link" data-testid="databases-create-link">Create one in the Data admin page.</a>
+		}
+		else
+		{
+			<span class="opacity-70">Ask a workspace admin to create one on the Data admin page.</span>
+		}
+	</div>
 }
 else
 {

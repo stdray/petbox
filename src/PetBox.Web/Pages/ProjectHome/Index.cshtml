@@ -24,31 +24,56 @@
 	<p class="text-sm opacity-70 mb-4">@Model.Project.Description</p>
 }
 
-<div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6" data-testid="project-dashboard-counts">
+@* Counter cards all target the project (user) zone /ui/{ws}/{key}/… read views any member
+	can reach — no jump to the admin zone. The one exception is api keys, which exist only on
+	the workspace-admin project page: that card links there only for workspace admins and
+	degrades to a plain badge otherwise (see count-keys). *@
+<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-6" data-testid="project-dashboard-counts">
 	<a href="@Routes.ProjectLogs(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-logs">
 		<div class="card-body p-4">
 			<div class="text-2xl font-semibold">@Model.LogCount</div>
 			<div class="text-xs opacity-60">logs</div>
 		</div>
 	</a>
-	<a href="@Routes.ProjectData(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-dbs">
+	<a href="@Routes.ProjectDatabases(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-dbs">
 		<div class="card-body p-4">
 			<div class="text-2xl font-semibold">@Model.DbCount</div>
 			<div class="text-xs opacity-60">databases</div>
 		</div>
 	</a>
+	@if (Model.TasksEnabled)
+	{
+		<a href="@Routes.ProjectTasks(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-tasks">
+			<div class="card-body p-4">
+				<div class="text-2xl font-semibold">@Model.TaskBoardCount</div>
+				<div class="text-xs opacity-60">task boards</div>
+			</div>
+		</a>
+	}
 	<a href="@Routes.ProjectConfig(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-config">
 		<div class="card-body p-4">
-			<div class="text-2xl font-semibold">cfg</div>
+			<div class="text-2xl font-semibold">@Model.ConfigCount</div>
 			<div class="text-xs opacity-60">config</div>
 		</div>
 	</a>
-	<a href="@Routes.ProjectSettings(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-keys">
-		<div class="card-body p-4">
-			<div class="text-2xl font-semibold">@Model.KeyCount</div>
-			<div class="text-xs opacity-60">api keys</div>
+	@if (Model.CanAdminWorkspace)
+	{
+		<a href="@Routes.ProjectSettings(ws, key)" class="card bg-base-200 border border-base-300 hover:border-primary" data-testid="count-keys">
+			<div class="card-body p-4">
+				<div class="text-2xl font-semibold">@Model.KeyCount</div>
+				<div class="text-xs opacity-60">api keys</div>
+			</div>
+		</a>
+	}
+	else
+	{
+		<div class="card bg-base-200 border border-base-300 opacity-60" data-testid="count-keys" title="Managed in workspace admin">
+			<div class="card-body p-4">
+				<div class="text-2xl font-semibold">@Model.KeyCount</div>
+				<div class="text-xs opacity-60">api keys</div>
+			</div>
 		</div>
-	</a>
+	}
 </div>
 
 <h2 class="text-lg font-semibold mb-2">Health</h2>

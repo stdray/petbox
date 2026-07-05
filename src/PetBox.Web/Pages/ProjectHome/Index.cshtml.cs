@@ -2,9 +2,13 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Config.Data;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
+using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Tasks.Contract;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -15,11 +19,22 @@ public sealed class IndexModel : PageModel
 {
 	readonly PetBoxDb _db;
 	readonly ISettingsResolver _settings;
+	readonly IConfigDbFactory _configFactory;
+	readonly ITasksService _tasks;
+	readonly FeatureFlags _features;
 
-	public IndexModel(PetBoxDb db, ISettingsResolver settings)
+	public IndexModel(
+		PetBoxDb db,
+		ISettingsResolver settings,
+		IConfigDbFactory configFactory,
+		ITasksService tasks,
+		FeatureFlags features)
 	{
 		_db = db;
 		_settings = settings;
+		_configFactory = configFactory;
+		_tasks = tasks;
+		_features = features;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -32,6 +47,13 @@ public sealed class IndexModel : PageModel
 	public int LogCount { get; private set; }
 	public int DbCount { get; private set; }
 	public int KeyCount { get; private set; }
+	public int ConfigCount { get; private set; }
+	public int TaskBoardCount { get; private set; }
+	public bool TasksEnabled => _features.IsEnabled(Feature.Tasks);
+	public bool ConfigEnabled => _features.IsEnabled(Feature.Config);
+	// Whether the viewer may reach the workspace-admin project pages (api keys, data admin).
+	// Counters that only exist in the admin zone degrade to a plain badge for non-admins.
+	public bool CanAdminWorkspace { get; private set; }
 	public int StaleSeconds { get; private set; } = 300;
 	public IReadOnlyList<HealthRow> Health { get; private set; } = [];
 
@@ -47,6 +69,13 @@ public sealed class IndexModel : PageModel
 		LogCount = await _db.Logs.CountAsync(l => l.ProjectKey == ProjectKey, ct);
 		DbCount = await _db.DataDbs.CountAsync(d => d.ProjectKey == ProjectKey, ct);
 		KeyCount = await _db.ApiKeys.CountAsync(k => k.ProjectKey == ProjectKey, ct);
+		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
+
+		if (ConfigEnabled)
+			ConfigCount = CountProjectConfigBindings();
+
+		if (TasksEnabled)
+			TaskBoardCount = (await _tasks.ListBoardsAsync(ProjectKey, ct)).Count;
 
 		var dash = await _settings.GetAsync<DashboardSettings>(Scope.System, "$", ct);
 		StaleSeconds = dash.StaleSeconds;
@@ -69,5 +98,25 @@ public sealed class IndexModel : PageModel
 			rows.Add(new HealthRow(r.Svc, r.Name, other, r.Version, r.Sha, r.Status, r.ReceivedAt));
 		}
 		Health = rows.OrderBy(h => h.Svc, StringComparer.Ordinal).ToList();
+	}
+
+	// Non-deleted config bindings tagged for this project ("project:{key}") in the workspace
+	// config DB. Mirrors the project-scope filter the /config page applies (Config.IndexModel).
+	int CountProjectConfigBindings()
+	{
+		var projectTag = $"project:{ProjectKey}";
+		var configDb = _configFactory.GetConfigDb(WorkspaceKey);
+		return configDb.Bindings
+			.Where(b => !b.IsDeleted)
+			.AsEnumerable()
+			.Count(b => HasTag(b.Tags, projectTag));
+	}
+
+	static bool HasTag(string tags, string tag)
+	{
+		foreach (var t in tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+			if (string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))
+				return true;
+		return false;
 	}
 }
