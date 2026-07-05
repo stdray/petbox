@@ -1,4 +1,5 @@
 using LinqToDB;
+using LinqToDB.Async;
 using LinqToDB.Data;
 using PetBox.Core.Contract;
 using PetBox.Core.Data.Temporal;
@@ -451,6 +452,25 @@ public sealed class MemoryService : IMemoryService
 	{
 		var ctx = _stores.GetContext(projectKey, store);
 		return ctx.Entries.Where(e => e.ActiveTo == null).OrderBy(e => e.Key).ToList();
+	}
+
+	public async Task<MemoryEntryPage> ListActiveEntriesPageAsync(string projectKey, string store, string? search, int pageNum, int pageSize, CancellationToken ct = default)
+	{
+		var ctx = _stores.GetContext(projectKey, store);
+		var q = ctx.Entries.Where(e => e.ActiveTo == null);
+		if (!string.IsNullOrWhiteSpace(search))
+		{
+			var term = search.Trim();
+			q = q.Where(e => e.Key.Contains(term) || e.Description.Contains(term) || e.Body.Contains(term) || e.Tags.Contains(term));
+		}
+
+		var total = await q.CountAsync(ct);
+		var offset = Math.Max(0, pageNum) * pageSize;
+		// One extra row is a cheap HasNext probe.
+		var rows = await q.OrderBy(e => e.Key).Skip(offset).Take(pageSize + 1).ToListAsync(ct);
+		var hasNext = rows.Count > pageSize;
+		if (hasNext) rows.RemoveAt(rows.Count - 1);
+		return new MemoryEntryPage(rows, hasNext, total);
 	}
 
 	public async Task<IReadOnlyDictionary<string, MemoryUsageView>> GetUsageAsync(string projectKey, string store,

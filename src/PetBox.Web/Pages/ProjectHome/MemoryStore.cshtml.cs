@@ -31,7 +31,19 @@ public sealed class MemoryStoreModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "store")]
 	public string Store { get; set; } = string.Empty;
 
+	// The paging arg is 'pageNum', not 'page' — 'page' is a reserved route-key in Razor
+	// Pages, so a ?page=N value never binds (see the Data-module table view lesson).
+	[BindProperty(SupportsGet = true, Name = "pageNum")]
+	public int PageNum { get; set; }
+
+	[BindProperty(SupportsGet = true, Name = "q")]
+	public string? Query { get; set; }
+
+	const int PageSize = 40;
+
 	public IReadOnlyList<MemoryEntry> Entries { get; private set; } = [];
+	public int Total { get; private set; }
+	public bool HasNext { get; private set; }
 
 	// Usage counters per key (spec: memory-usage-observability). Viewing this page is
 	// curation, not usage — it reads the counters and never increments them.
@@ -47,8 +59,16 @@ public sealed class MemoryStoreModel : PageModel
 		if (!_features.IsEnabled(Feature.Memory)) return NotFound();
 		if (!await _memory.StoreExistsAsync(ProjectKey, Store, ct)) return NotFound();
 
-		Entries = await _memory.ListActiveEntriesAsync(ProjectKey, Store, ct);
-		Usage = await _memory.GetUsageAsync(ProjectKey, Store, ct: ct);
+		if (PageNum < 0) PageNum = 0;
+		var page = await _memory.ListActiveEntriesPageAsync(ProjectKey, Store, Query, PageNum, PageSize, ct);
+		Entries = page.Entries;
+		HasNext = page.HasNext;
+		Total = page.Total;
+		// Only load the usage counters for the keys actually rendered on this page.
+		var keys = Entries.Select(e => e.Key).ToList();
+		Usage = keys.Count == 0
+			? new Dictionary<string, MemoryUsageView>()
+			: await _memory.GetUsageAsync(ProjectKey, Store, keys, ct);
 		Aggregate = await _memory.GetUsageAggregateAsync(ProjectKey, Store, ct: ct);
 		return Page();
 	}

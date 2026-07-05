@@ -2,11 +2,18 @@
 @model PetBox.Web.Pages.ProjectHome.SessionsModel
 @{
 	ViewData["Title"] = $"Sessions — {Model.Project?.Name ?? Model.ProjectKey}";
+
+	string PageHref(int pageNum)
+	{
+		var href = $"{Routes.ProjectSessions(Model.WorkspaceKey, Model.ProjectKey)}?pageNum={pageNum}";
+		if (!string.IsNullOrWhiteSpace(Model.Query)) href += $"&q={Uri.EscapeDataString(Model.Query)}";
+		return href;
+	}
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
 	<h1 class="text-2xl font-semibold" data-testid="sessions-title">@(Model.Project?.Name ?? Model.ProjectKey) · sessions</h1>
-	<span class="badge badge-ghost">@Model.Sessions.Count</span>
+	<span class="badge badge-ghost" data-testid="sessions-total">@Model.Total</span>
 </div>
 
 @if (Model.Project is null)
@@ -21,9 +28,21 @@
 	return;
 }
 
+<form method="get" class="mb-4 flex items-center gap-2" data-testid="sessions-search-form">
+	<input type="search" name="q" value="@Model.Query" placeholder="Search by id or agent…"
+		class="input input-bordered input-sm flex-1 max-w-md" data-testid="sessions-search-input" />
+	<button type="submit" class="btn btn-sm btn-primary" data-testid="sessions-search-submit">Search</button>
+	@if (!string.IsNullOrWhiteSpace(Model.Query))
+	{
+		<a href="@Routes.ProjectSessions(Model.WorkspaceKey, Model.ProjectKey)" class="btn btn-sm btn-ghost" data-testid="sessions-search-clear">Clear</a>
+	}
+</form>
+
 @if (Model.Sessions.Count == 0)
 {
-	<div class="alert" data-testid="sessions-empty">No sessions yet. Agents record them via the session MCP tools.</div>
+	<div class="alert" data-testid="sessions-empty">
+		@(string.IsNullOrWhiteSpace(Model.Query) ? "No sessions yet. Agents record them via the session MCP tools." : "No sessions match this search.")
+	</div>
 }
 else
 {
@@ -43,4 +62,26 @@ else
 			</a>
 		}
 	</section>
+
+	<div class="flex items-center justify-between mt-4 text-sm">
+		<span class="opacity-60" data-testid="sessions-page-info">page @(Model.PageNum + 1) · @Model.Sessions.Count of @Model.Total</span>
+		<div class="join">
+			@if (Model.PageNum > 0)
+			{
+				<a href="@PageHref(Model.PageNum - 1)" class="btn btn-sm join-item" data-testid="sessions-prev">‹ Prev</a>
+			}
+			else
+			{
+				<button class="btn btn-sm join-item btn-disabled" disabled>‹ Prev</button>
+			}
+			@if (Model.HasNext)
+			{
+				<a href="@PageHref(Model.PageNum + 1)" class="btn btn-sm join-item" data-testid="sessions-next">Next ›</a>
+			}
+			else
+			{
+				<button class="btn btn-sm join-item btn-disabled" disabled>Next ›</button>
+			}
+		</div>
+	</div>
 }

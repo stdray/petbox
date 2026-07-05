@@ -13,6 +13,9 @@ public interface ISessionStore
 {
 	SessionsDb GetContext(string projectKey);
 	Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default);
+	// Server-paged header slice, optionally filtered by a substring over SessionId/Agent
+	// (case-insensitive LIKE). OFFSET/LIMIT at the query — never loads the whole set to page.
+	Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize, CancellationToken ct = default);
 	Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
 	Task UpsertAsync(string projectKey, SessionRow row, CancellationToken ct = default);
 	Task<bool> DeleteAsync(string projectKey, string sessionId, CancellationToken ct = default);
@@ -40,6 +43,33 @@ public sealed class SessionStore : ISessionStore
 			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated })
 			.ToListAsync(ct);
 		return rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated)).ToList();
+	}
+
+	public async Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize, CancellationToken ct = default)
+	{
+		var db = _factory.GetDb(projectKey);
+		var q = db.Sessions.Where(s => !s.IsDeleted);
+		if (!string.IsNullOrWhiteSpace(search))
+		{
+			var term = search.Trim();
+			q = q.Where(s => s.SessionId.Contains(term) || s.Agent.Contains(term));
+		}
+
+		var total = await q.CountAsync(ct);
+		var offset = Math.Max(0, pageNum) * pageSize;
+		// Project only the header columns (never the ContentZ blob); take one extra row as a
+		// cheap HasNext probe.
+		var rows = await q
+			.OrderBy(s => s.SessionId)
+			.Skip(offset)
+			.Take(pageSize + 1)
+			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated })
+			.ToListAsync(ct);
+
+		var hasNext = rows.Count > pageSize;
+		if (hasNext) rows.RemoveAt(rows.Count - 1);
+		var headers = rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated)).ToList();
+		return new SessionHeaderPage(headers, hasNext, total);
 	}
 
 	public async Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default)

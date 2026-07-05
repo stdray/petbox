@@ -34,15 +34,31 @@ public sealed class SessionsModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
+	// The paging arg is 'pageNum', not 'page' — 'page' is a reserved route-key in Razor
+	// Pages, so a ?page=N value never binds (see the Data-module table view lesson).
+	[BindProperty(SupportsGet = true, Name = "pageNum")]
+	public int PageNum { get; set; }
+
+	[BindProperty(SupportsGet = true, Name = "q")]
+	public string? Query { get; set; }
+
+	const int PageSize = 30;
+
 	public Project? Project { get; private set; }
 	public bool SessionsEnabled => _features.IsEnabled(Feature.Tasks);
 	public IReadOnlyList<SessionHeader> Sessions { get; private set; } = [];
+	public int Total { get; private set; }
+	public bool HasNext { get; private set; }
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
 		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null || !SessionsEnabled) return;
 
-		Sessions = await _store.ListAsync(ProjectKey, ct);
+		if (PageNum < 0) PageNum = 0;
+		var page = await _store.ListPageAsync(ProjectKey, Query, PageNum, PageSize, ct);
+		Sessions = page.Headers;
+		HasNext = page.HasNext;
+		Total = page.Total;
 	}
 }

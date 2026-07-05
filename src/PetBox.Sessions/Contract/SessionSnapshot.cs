@@ -18,3 +18,8 @@ public sealed record SessionSnapshot(
 
 // A lightweight list entry — no message bodies, so listing never decompresses a blob.
 public sealed record SessionHeader(string SessionId, string Agent, long Version, DateTime Updated);
+
+// One server-paged slice of a project's session headers: the page rows, whether a further
+// page exists (probe row), and the total matching the current search. Keeps the UI's OFFSET/
+// LIMIT paging off the full set (spec ui-list-pagination).
+public sealed record SessionHeaderPage(IReadOnlyList<SessionHeader> Headers, bool HasNext, int Total);
