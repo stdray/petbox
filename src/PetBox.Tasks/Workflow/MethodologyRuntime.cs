@@ -183,6 +183,20 @@ public sealed class MethodologyRuntime
 	public bool IsTerminalStatus(string? kindSlug, string statusSlug) =>
 		StatusKindOf(kindSlug, statusSlug) is StatusKind.TerminalOk or StatusKind.TerminalCancel;
 
+	// The human display Name for a status on a board — the ONE place the UI turns a stored slug
+	// into a label (status badge + status-change select), so PascalCase work statuses and
+	// lowercase methodology statuses read consistently ("In progress", "Defined"). A DEFINED kind
+	// uses its own declared status Name; a preset kind uses the preset Name; an out-of-vocab legacy
+	// slug falls back to the slug verbatim. Presentation only — storage/transitions use the slug.
+	public string StatusName(string? kindSlug, string statusSlug)
+	{
+		if (kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind))
+			foreach (var block in kind.Workflows)
+				if (StatusOf(block, statusSlug) is { } s)
+					return s.Name;
+		return MethodologyPresets.NameOfSlug(statusSlug) ?? statusSlug;
+	}
+
 	// All workflow BLOCKS of a kind (the tasks_workflow discovery shape). One block per
 	// workflow declaration, for defined and preset kinds alike — the preset data is
 	// already grouped by shared FSM (feature=bug=chore is one block, and Simple's block

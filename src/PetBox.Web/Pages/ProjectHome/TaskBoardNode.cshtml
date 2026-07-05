@@ -63,7 +63,7 @@
 						<select name="status" class="select select-bordered select-xs" data-testid="node-status-select" aria-label="Change status">
 							@foreach (var s in Model.NextStatuses)
 							{
-								<option value="@s">@s</option>
+								<option value="@s">@Model.Runtime.StatusName(Model.Detail.Kind, s)</option>
 							}
 						</select>
 						<button type="submit" class="btn btn-xs" data-testid="node-status-submit" title="change status">→</button>

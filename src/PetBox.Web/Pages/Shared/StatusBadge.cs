@@ -16,6 +16,11 @@ public sealed record StatusBadgeModel(MethodologyRuntime Runtime, string? KindSl
 	public bool Show =>
 		Runtime.PresetKind(KindSlug) != BoardKind.Spec || Runtime.IsTerminalStatus(KindSlug, Status);
 
+	// Human label for the badge — the stored slug resolved to its declared status Name via the
+	// runtime (e.g. `InProgress` → "In progress", `defined` → "Defined"). Slug is unchanged; the
+	// board card's data-status attribute still carries the slug for the client filter.
+	public string Display => Runtime.StatusName(KindSlug, Status);
+
 	// StatusKind → daisyUI badge class. The kind is resolved through the runtime per the board's
 	// effective kind, so a definition-declared custom status colours right.
 	public string CssClass => Classify(Runtime.StatusKindOf(KindSlug, Status));

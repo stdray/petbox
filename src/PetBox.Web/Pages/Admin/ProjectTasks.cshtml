@@ -6,7 +6,7 @@
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
-	<h1 class="text-2xl font-semibold">@Model.ProjectKey · task boards</h1>
+	<h1 class="text-2xl font-semibold">@Model.ProjectKey · tasks</h1>
 	<span class="badge badge-ghost">@Model.Boards.Count board(s)</span>
 </div>
 
@@ -24,7 +24,7 @@
 <section class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6" data-testid="boards-list">
 	@if (Model.Boards.Count == 0)
 	{
-		<div class="text-xs opacity-60 italic" data-testid="boards-empty">No task boards yet. Create one below.</div>
+		<div class="text-xs opacity-60 italic" data-testid="boards-empty">No boards yet. Create one below.</div>
 	}
 	else
 	{

@@ -226,8 +226,9 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-node-key=\"reqa\"");
 		html.Should().Contain("data-node-key=\"reqb\"");
 		// The default `defined` gets NO status badge; the non-default `deprecated` still gets one.
+		// The badge shows the declared human Name (`deprecated` → "Deprecated"); the slug is unchanged.
 		html.Should().NotContain("data-testid=\"node-status\">defined");
-		html.Should().Contain("data-testid=\"node-status\">deprecated");
+		html.Should().Contain("data-testid=\"node-status\">Deprecated");
 	}
 
 	// ui-spec-status-board-node-mismatch: the node DETAIL page must apply the SAME spec-board status
@@ -266,15 +267,17 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		defHtml.Should().Contain("data-testid=\"node-name\""); // the detail page did render
 		defHtml.Should().NotContain("data-testid=\"node-status\""); // …but no status badge
 
-		// Spec node, terminal `deprecated`: the status badge shows (as on the board).
+		// Spec node, terminal `deprecated`: the status badge shows (as on the board), with the
+		// declared human Name.
 		using var depResp = await GetAuthedAsync($"/ui/$system/$system/tasks/{spec}/sdep");
 		var depHtml = await depResp.Content.ReadAsStringAsync();
-		depHtml.Should().Contain("data-testid=\"node-status\">deprecated");
+		depHtml.Should().Contain("data-testid=\"node-status\">Deprecated");
 
-		// Work (non-spec) board node: the status badge always shows — behaviour unchanged.
+		// Work (non-spec) board node: the status badge always shows — behaviour unchanged. The
+		// PascalCase slug `InProgress` renders as the human Name "In progress".
 		using var workResp = await GetAuthedAsync($"/ui/$system/$system/tasks/{work}/wtask");
 		var workHtml = await workResp.Content.ReadAsStringAsync();
-		workHtml.Should().Contain("data-testid=\"node-status\">InProgress");
+		workHtml.Should().Contain("data-testid=\"node-status\">In progress");
 	}
 
 	// server-md-render / reader-view: a node body is markdown rendered to HTML on the SERVER inside
@@ -409,8 +412,9 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-kind=\"support\"");
 		html.Should().NotContain("data-kind=\"simple\"");
 		// The custom statuses render, classified by the DEFINITION: open → info, terminal → success.
-		html.Should().Contain("badge-info badge-sm\" data-testid=\"node-status\">new");
-		html.Should().Contain("badge-success badge-sm\" data-testid=\"node-status\">closed");
+		// The badge shows each status's declared Name ("New"/"Closed"); the slugs stay new/closed.
+		html.Should().Contain("badge-info badge-sm\" data-testid=\"node-status\">New");
+		html.Should().Contain("badge-success badge-sm\" data-testid=\"node-status\">Closed");
 		// The custom terminal is CLOSED (hidden under active-only); the open node is not.
 		html.Should().MatchRegex("data-node-key=\"t2\"[^>]*data-closed=\"true\"");
 		html.Should().MatchRegex("data-node-key=\"t1\"[^>]*data-closed=\"false\"");
