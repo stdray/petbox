@@ -49,6 +49,36 @@ public static class KqlSchema
 		new ColumnSymbol("PropertiesJson", ScalarTypes.String),
 		new ColumnSymbol("Properties", ScalarTypes.Dynamic));
 
+	// The Metrics table root: the same KQL subset over a named log's MetricPoints table. Time/StartTime
+	// are wall-clock instants (datetime), MetricType carries both the numeric discriminator and a computed
+	// name form (TypeName — the metric analog of Kind/KindName). Value is the unified numeric value; the
+	// wide optional scalars (Count/Sum/Min/Max/…) are nullable. Attributes are addressed via the
+	// Properties dynamic bag (the AttributesJson analog of PropertiesJson).
+	public static readonly TableSymbol Metrics = new(
+		KqlTransformer.MetricsTable,
+		new ColumnSymbol("MetricName", ScalarTypes.String),
+		new ColumnSymbol("MetricType", ScalarTypes.Int),
+		new ColumnSymbol("TypeName", ScalarTypes.String),
+		new ColumnSymbol("Unit", ScalarTypes.String),
+		new ColumnSymbol("Description", ScalarTypes.String),
+		new ColumnSymbol("Time", ScalarTypes.DateTime),
+		new ColumnSymbol("StartTime", ScalarTypes.DateTime),
+		new ColumnSymbol("Value", ScalarTypes.Real),
+		new ColumnSymbol("ValueDouble", ScalarTypes.Real),
+		new ColumnSymbol("ValueLong", ScalarTypes.Long),
+		new ColumnSymbol("Count", ScalarTypes.Long),
+		new ColumnSymbol("Sum", ScalarTypes.Real),
+		new ColumnSymbol("Min", ScalarTypes.Real),
+		new ColumnSymbol("Max", ScalarTypes.Real),
+		new ColumnSymbol("Temporality", ScalarTypes.Int),
+		new ColumnSymbol("IsMonotonic", ScalarTypes.Bool),
+		new ColumnSymbol("Scale", ScalarTypes.Int),
+		new ColumnSymbol("ZeroCount", ScalarTypes.Long),
+		new ColumnSymbol("Flags", ScalarTypes.Int),
+		// The raw JSON bag under its streamed-row name (AttributesJson content — see LogSchema).
+		new ColumnSymbol("PropertiesJson", ScalarTypes.String),
+		new ColumnSymbol("Properties", ScalarTypes.Dynamic));
+
 	public static readonly GlobalState Globals = GlobalState.Default
-		.WithDatabase(new DatabaseSymbol(DatabaseName, Events, Spans));
+		.WithDatabase(new DatabaseSymbol(DatabaseName, Events, Spans, Metrics));
 }

@@ -973,4 +973,47 @@ public sealed class LogPipelineTests : IClassFixture<LogPipelineFixture>
 		events.Status.Should().Be(HttpStatusCode.BadRequest);
 		spans.Body.Should().Be(events.Body); // structural-error parity across roots on the same surface
 	}
+
+	// --- the `metrics` table root over the REST surface: the same endpoint routes the metrics root
+	// through LogQueryService (also the MCP log_query path), yielding a table with the metric columns ---
+
+	async Task InsertMetricAsync(string metricName, int metricType, double? valueDouble, long? valueLong, int timeSec, string attrs)
+	{
+		using var scope = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+			.CreateScope(_factory.Services);
+		var store = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
+			.GetRequiredService<PetBox.Log.Core.Data.ILogStore>(scope.ServiceProvider);
+		using var db = store.NewContext("$system", "default");
+		var timeNs = new DateTimeOffset(2026, 4, 19, 10, 0, timeSec, TimeSpan.Zero).ToUnixTimeMilliseconds() * 1_000_000L;
+		await db.InsertAsync(new PetBox.Log.Core.Metrics.MetricPointRecord
+		{
+			MetricName = metricName,
+			MetricType = metricType,
+			TimeUnixNs = timeNs,
+			ValueDouble = valueDouble,
+			ValueLong = valueLong,
+			AttributesJson = attrs,
+		});
+	}
+
+	[Fact]
+	public async Task MetricsQuery_OverRest_ReturnsTableWithMetricColumns()
+	{
+		var metricName = "kql.metric." + Guid.NewGuid().ToString("N")[..8];
+		await InsertMetricAsync(metricName, metricType: 0, valueDouble: 0.7, valueLong: null, timeSec: 5, attrs: """{"host":"eu"}""");
+		await InsertMetricAsync(metricName, metricType: 1, valueDouble: null, valueLong: 42, timeSec: 6, attrs: """{"host":"us"}""");
+
+		var doc = await QueryAsync(
+			$"metrics | where MetricName == '{metricName}' | project MetricName, TypeName, Value, host | order by Value asc");
+		var cols = doc.RootElement.GetProperty("columns").EnumerateArray().Select(c => c.GetString()).ToList();
+		cols.Should().ContainInOrder("MetricName", "TypeName", "Value", "host");
+		var rows = doc.RootElement.GetProperty("rows");
+		rows.GetArrayLength().Should().Be(2);
+		// order by Value asc → Gauge(0.7) then Sum(42, via unified Value).
+		rows[0][1].GetString().Should().Be("Gauge");
+		rows[0][2].GetDouble().Should().Be(0.7);
+		rows[0][3].GetString().Should().Be("eu");
+		rows[1][1].GetString().Should().Be("Sum");
+		rows[1][2].GetDouble().Should().Be(42);
+	}
 }

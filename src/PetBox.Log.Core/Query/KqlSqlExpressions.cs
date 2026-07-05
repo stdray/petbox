@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.RegularExpressions;
 using LinqToDB;
 using LinqToDB.SqlQuery;
+using PetBox.Log.Core.Metrics;
 using PetBox.Log.Core.Models;
 using PetBox.Log.Core.Tracing;
 
@@ -349,5 +350,20 @@ public static class KqlSqlExpressions
 
 	[Sql.Expression("(CASE {0} WHEN 0 THEN 'Unset' WHEN 1 THEN 'Ok' WHEN 2 THEN 'Error' ELSE 'Unknown' END)", ServerSideOnly = true)]
 	public static string SpanStatusName(int code) => SpanStatusNames.ToName(code);
+
+	// MetricTypeName (metrics): the CASE-mapped discriminator name (0=Gauge … 4=Summary) — the metrics
+	// analog of SpanKindName/SpanStatusName, keeping a pre-split `where TypeName == 'Histogram'` /
+	// `order by TypeName` SQL-translatable; the C# body delegates to the same canonical map the streamed
+	// row shape uses so the SQL and in-memory paths agree exactly.
+	[Sql.Expression("(CASE {0} WHEN 0 THEN 'Gauge' WHEN 1 THEN 'Sum' WHEN 2 THEN 'Histogram' WHEN 3 THEN 'ExponentialHistogram' WHEN 4 THEN 'Summary' ELSE 'Unknown' END)", ServerSideOnly = true)]
+	public static string MetricTypeName(int type) => MetricPointTypeNames.ToName(type);
+
+	// The unified metric Value: COALESCE(ValueDouble, ValueLong) as a nullable double, so a Gauge/Sum
+	// point exposes ONE numeric column regardless of which arm (double / int64) carried the value. NULL
+	// when neither arm is set (a histogram/summary point). CAST the long arm to REAL so both arms share
+	// the double result type on the SQL side, matching the double? the streamed row and C# body produce.
+	[Sql.Expression("COALESCE({0}, CAST({1} AS REAL))", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? MetricValue(double? valueDouble, long? valueLong) =>
+		valueDouble ?? (valueLong.HasValue ? valueLong.Value : (double?)null);
 }
 

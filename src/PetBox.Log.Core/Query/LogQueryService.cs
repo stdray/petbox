@@ -98,9 +98,20 @@ public sealed class LogQueryService(ILogStore store) : ILogQueryService
 				spanSignal);
 		}
 
+		// The `metrics` root: same treatment as spans — a plain metrics query has no LogEntry-shaped
+		// result, so it ALWAYS yields the streamed metric column shape (a Table).
+		if (string.Equals(root, KqlTransformer.MetricsTable, StringComparison.Ordinal))
+		{
+			var metricTable = BuildTable(() => KqlTransformer.ExecuteMetrics(logDb.MetricPoints, code), kql);
+			var metricSignal = new TruncationSignal();
+			return new LogQueryResult.Table(
+				metricTable with { Rows = LimitRows(WrapExecutionErrors(metricTable.Rows, kql, ct), limit, metricSignal, ct) },
+				metricSignal);
+		}
+
 		// An unknown root fails HERE with the full supported-table list: the events-only engine entries
 		// below (Execute/Apply) are entitled to claim only 'events', which would be wrong on this
-		// surface, where `spans` works too.
+		// surface, where `spans` and `metrics` work too.
 		if (root is not null && !string.Equals(root, KqlTransformer.EventsTable, StringComparison.Ordinal))
 			throw new UnsupportedKqlException(KqlTransformer.UnknownTableMessage(root));
 

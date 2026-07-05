@@ -4,6 +4,7 @@ using Kusto.Language;
 using Kusto.Language.Syntax;
 using LinqToDB;
 using PetBox.Log.Core.Data;
+using PetBox.Log.Core.Metrics;
 using PetBox.Log.Core.Models;
 using PetBox.Log.Core.Tracing;
 using Expr = System.Linq.Expressions.Expression;
@@ -15,6 +16,7 @@ public static class KqlTransformer
 {
 	public const string EventsTable = "events";
 	public const string SpansTable = "spans";
+	public const string MetricsTable = "metrics";
 
 	public static readonly IReadOnlyList<KqlColumn> EventRecordColumns =
 	[
@@ -50,6 +52,38 @@ public static class KqlTransformer
 		new("PropertiesJson", typeof(string)),
 	];
 
+	// The streamed `metrics` row shape. Time/StartTime are epoch-ms-derived instants (like events'
+	// Timestamp and spans' Start), MetricType carries a name form (TypeName — the metric analog of
+	// Level/LevelName and Kind/KindName), and Value is the unified COALESCE(ValueDouble, ValueLong).
+	// The wide optional scalars stay nullable (an unset arm is null, not 0). The final column is named
+	// "PropertiesJson" (carrying the point's AttributesJson) so the shared post-split machinery —
+	// RowScalarContext's bare-name/Properties fallback, summarize/distinct/join/mv-expand — locates the
+	// JSON bag unchanged, exactly as the spans root does. The histogram/summary array-shaped tails
+	// (ExplicitBoundsJson/BucketCountsJson/…) stay JSON-addressable via the bag, not first-class columns.
+	public static readonly IReadOnlyList<KqlColumn> MetricPointRecordColumns =
+	[
+		new("MetricName", typeof(string)),
+		new("MetricType", typeof(int)),
+		new("TypeName", typeof(string)),
+		new("Unit", typeof(string)),
+		new("Description", typeof(string)),
+		new("Time", typeof(DateTime)),
+		new("StartTime", typeof(DateTime?)),
+		new("Value", typeof(double?)),
+		new("ValueDouble", typeof(double?)),
+		new("ValueLong", typeof(long?)),
+		new("Count", typeof(long?)),
+		new("Sum", typeof(double?)),
+		new("Min", typeof(double?)),
+		new("Max", typeof(double?)),
+		new("Temporality", typeof(int?)),
+		new("IsMonotonic", typeof(bool?)),
+		new("Scale", typeof(int?)),
+		new("ZeroCount", typeof(long?)),
+		new("Flags", typeof(int?)),
+		new("PropertiesJson", typeof(string)),
+	];
+
 	// A table root: its name, streamed column shape, the SQL/record ScalarContext factory for the
 	// pre-split `where`/`order`/`top` path, and how one record materializes into a streamed row. This is
 	// the ONLY thing that varies between the `events` and `spans` roots; the whole pipeline (pre-split SQL,
@@ -71,6 +105,12 @@ public static class KqlTransformer
 		SpanRecordColumns,
 		row => new SpanRecordScalarContext(row) { UtcNow = now },
 		SpanToRow);
+
+	static RootSpec<MetricPointRecord> MetricsSpec(DateTime now) => new(
+		MetricsTable,
+		MetricPointRecordColumns,
+		row => new MetricRecordScalarContext(row) { UtcNow = now },
+		MetricToRow);
 
 	static object?[] EventToRow(LogEntryRecord r) =>
 	[
@@ -102,11 +142,38 @@ public static class KqlTransformer
 		s.AttributesJson,
 	];
 
+	static object?[] MetricToRow(MetricPointRecord m) =>
+	[
+		m.MetricName,
+		m.MetricType,
+		MetricPointTypeNames.ToName(m.MetricType),
+		m.Unit,
+		m.Description,
+		DateTimeOffset.FromUnixTimeMilliseconds(m.TimeUnixNs / 1_000_000).UtcDateTime,
+		m.StartUnixNs is { } startNs
+			? DateTimeOffset.FromUnixTimeMilliseconds(startNs / 1_000_000).UtcDateTime
+			: (DateTime?)null,
+		// Unified value: the double arm, else the int64 arm widened to double, else null (histogram/summary).
+		m.ValueDouble ?? (m.ValueLong is { } vl ? vl : (double?)null),
+		m.ValueDouble,
+		m.ValueLong,
+		m.Count,
+		m.Sum,
+		m.Min,
+		m.Max,
+		m.AggregationTemporality,
+		m.IsMonotonic,
+		m.Scale,
+		m.ZeroCount,
+		m.Flags,
+		m.AttributesJson,
+	];
+
 	// The teaching error for an unknown table root. Only surfaces that actually route BOTH roots
 	// (LogQueryService for MCP/REST, the Logs UI page) may emit it; events-only surfaces (Apply — the
 	// share pages) claim only 'events' instead, so the message is true wherever it appears.
 	public static string UnknownTableMessage(string got) =>
-		$"unknown table '{got}'; supported tables: {EventsTable}, {SpansTable}";
+		$"unknown table '{got}'; supported tables: {EventsTable}, {SpansTable}, {MetricsTable}";
 
 	// The leading table reference of a query ('events' / 'spans' / other), or null when there is none.
 	// LogQueryService and the Logs UI page route on this to pick the record type and to reject unknown
@@ -136,6 +203,15 @@ public static class KqlTransformer
 	{
 		var now = ParseAndClock(code, clock);
 		return ExecutePipeline(source, code.Syntax, now, SpansSpec(now));
+	}
+
+	// The `metrics` root: the SAME KQL subset over a named log's MetricPoints table. Like spans, a plain
+	// metrics query has no LogEntry-shaped result, so this ALWAYS yields the streamed metric column shape
+	// (a Table); LogQueryService routes to it on the `metrics` root.
+	public static KqlResult ExecuteMetrics(IQueryable<MetricPointRecord> source, KustoCode code, TimeProvider? clock = null)
+	{
+		var now = ParseAndClock(code, clock);
+		return ExecutePipeline(source, code.Syntax, now, MetricsSpec(now));
 	}
 
 	// Guards parse diagnostics and resolves the single now()/ago() instant for the whole query.

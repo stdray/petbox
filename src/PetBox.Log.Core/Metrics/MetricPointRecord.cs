@@ -14,6 +14,22 @@ public enum MetricPointType
 	Summary = 4,
 }
 
+// Numeric-discriminator → name mapping for the KQL engine's computed TypeName column — the metrics
+// analog of SpanKindNames/SpanStatusNames (Kind/KindName on spans) and LogLevelNames (Level/LevelName
+// on events). An out-of-range discriminator renders as "Unknown" rather than a bare number.
+public static class MetricPointTypeNames
+{
+	public static string ToName(int type) => type switch
+	{
+		0 => "Gauge",
+		1 => "Sum",
+		2 => "Histogram",
+		3 => "ExponentialHistogram",
+		4 => "Summary",
+		_ => "Unknown",
+	};
+}
+
 // One OTLP metric data point, flattened into the per-log SQLite DB alongside Spans/LogEntries (single
 // context — enables cross-signal KQL joins). Mirrors SpanRecord: wide, mostly-nullable scalar columns are
 // effectively free in SQLite (unset trailing columns store at ~1 byte) and are directly KQL-addressable;

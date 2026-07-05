@@ -139,17 +139,19 @@ public sealed class IndexModel : PageModel
 		IsShapeChanged = KqlTransformer.HasShapeChangingOps(userCode);
 		var root = KqlTransformer.GetRootTableName(userCode);
 		var isSpans = string.Equals(root, KqlTransformer.SpansTable, StringComparison.Ordinal);
-		// This page routes BOTH roots (like LogQueryService), so an unknown root gets the full
+		var isMetrics = string.Equals(root, KqlTransformer.MetricsTable, StringComparison.Ordinal);
+		// This page routes ALL roots (like LogQueryService), so an unknown root gets the full
 		// supported-table list rather than the events-only message the engine entries would emit.
-		if (root is not null && !isSpans && !string.Equals(root, KqlTransformer.EventsTable, StringComparison.Ordinal))
+		if (root is not null && !isSpans && !isMetrics
+			&& !string.Equals(root, KqlTransformer.EventsTable, StringComparison.Ordinal))
 		{
 			KqlError = KqlTransformer.UnknownTableMessage(root);
 			return Page();
 		}
-		// A spans query always yields the streamed span column shape (there is no LogEntry row form for
-		// a span), so it renders through the same table branch as shape-changed events queries and skips
-		// the events cursor paging (Timestamp/Id ordering doesn't apply to spans).
-		if (isSpans)
+		// A spans/metrics query always yields the streamed column shape (there is no LogEntry row form for
+		// a span/metric point), so it renders through the same table branch as shape-changed events
+		// queries and skips the events cursor paging (Timestamp/Id ordering doesn't apply to them).
+		if (isSpans || isMetrics)
 			IsShapeChanged = true;
 		var effectiveKql = IsShapeChanged ? UserKql : AppendPageLimits(UserKql);
 
@@ -178,7 +180,9 @@ public sealed class IndexModel : PageModel
 			{
 				KqlResult = isSpans
 					? KqlTransformer.ExecuteSpans(logDb.Spans, code)
-					: KqlTransformer.Execute(logDb.LogEntries, code);
+					: isMetrics
+						? KqlTransformer.ExecuteMetrics(logDb.MetricPoints, code)
+						: KqlTransformer.Execute(logDb.LogEntries, code);
 				await foreach (var row in KqlResult.Rows.WithCancellation(ct))
 				{
 					if (KqlRows.Count >= KqlLimits.MaxTake)

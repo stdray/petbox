@@ -1,6 +1,7 @@
 using System.Reflection;
 using Kusto.Language.Syntax;
 using PetBox.Log.Core.Data;
+using PetBox.Log.Core.Metrics;
 using PetBox.Log.Core.Models;
 using PetBox.Log.Core.Tracing;
 using Expr = System.Linq.Expressions.Expression;
@@ -172,6 +173,15 @@ abstract class SqlRecordScalarContext : ScalarContext
 	{
 		if (!KqlScalar.IsComparison(op))
 			return null;
+		// The fast path builds a DIRECT Expr.Equal/GreaterThan over the column access, which requires both
+		// operands share the type and yields a non-null bool. A NULLABLE value-type column (metrics' wide
+		// optional scalars — Value/Count/Sum/StartTime/…) satisfies neither: the operand types wouldn't
+		// match a plain long/int/double literal, and the result would be a bool? the pre-split `where`
+		// rejects. Fall through so the general comparison path unifies nullability and null-guards to a
+		// bool (Kusto null-excluding semantics). Non-nullable columns (events/spans, and metrics' int/
+		// string columns) keep the fast path unchanged.
+		if (KqlScalar.IsNullable(access.Type))
+			return null;
 		// Coerce against the RESOLVED canonical name: the user may have typed `start` / `timestamp`
 		// (bound case-insensitively by ResolveColumn), and the special-column check must agree with
 		// that binding, not with the raw spelling.
@@ -337,6 +347,80 @@ sealed class SpanRecordScalarContext(ParamExpr row) : SqlRecordScalarContext
 			if (literal.LiteralValue is not TimeSpan ts)
 				throw new UnsupportedKqlException("Duration comparison requires a timespan literal");
 			return Expr.Constant(ts.Ticks);
+		}
+		return null;
+	}
+}
+
+// Leaves resolve to MetricPointRecord property accesses → the tree is SQL-translatable. The `metrics`
+// root's counterpart to RecordScalarContext/SpanRecordScalarContext: instants stay epoch-ms (long) in
+// the SQL domain (Time / StartTime derived from the stored unix-ns columns, matching events' Timestamp
+// convention). MetricType exposes a name form (TypeName) like Level/LevelName; Value is the unified
+// COALESCE(ValueDouble, ValueLong); the wide optional scalars stay nullable (a null-capable metric
+// column is filtered via the general nullable-comparison path, not the fast path). Attributes resolve
+// through AttributesJson (the PropertiesJson analog).
+sealed class MetricRecordScalarContext(ParamExpr row) : SqlRecordScalarContext
+{
+	static readonly string[] Columns =
+	[
+		"MetricName", "MetricType", "TypeName", "Unit", "Description", "Time", "StartTime",
+		"Value", "ValueDouble", "ValueLong", "Count", "Sum", "Min", "Max",
+		"Temporality", "IsMonotonic", "Scale", "ZeroCount", "Flags", "PropertiesJson",
+	];
+
+	protected override IReadOnlyList<string> KnownColumns => Columns;
+
+	protected override Expr JsonBag => Expr.Property(row, nameof(MetricPointRecord.AttributesJson));
+
+	protected override Expr KnownColumnAccess(string canonical) => canonical switch
+	{
+		"MetricName" => Expr.Property(row, nameof(MetricPointRecord.MetricName)),
+		"MetricType" => Expr.Property(row, nameof(MetricPointRecord.MetricType)),
+		// Computed name column via the CASE-mapped KqlSqlExpressions helper — SQL-translatable in a
+		// pre-split where/order, exactly like events' LevelName and spans' KindName.
+		"TypeName" => Expr.Call(
+			typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.MetricTypeName))!,
+			Expr.Property(row, nameof(MetricPointRecord.MetricType))),
+		"Unit" => Expr.Property(row, nameof(MetricPointRecord.Unit)),
+		"Description" => Expr.Property(row, nameof(MetricPointRecord.Description)),
+		// Time / StartTime are stored as unix-ns; the SQL instant domain is epoch-ms (long), matching
+		// events' TimestampMs (epoch-ms = unix-ns / 1_000_000, integer division → ms precision).
+		// StartTime is nullable (StartUnixNs is optional), so its epoch-ms form is long?.
+		"Time" => Expr.Divide(Expr.Property(row, nameof(MetricPointRecord.TimeUnixNs)), Expr.Constant(1_000_000L)),
+		"StartTime" => Expr.Divide(
+			Expr.Property(row, nameof(MetricPointRecord.StartUnixNs)), Expr.Constant((long?)1_000_000L, typeof(long?))),
+		// The unified value: COALESCE(ValueDouble, ValueLong) as a nullable double.
+		"Value" => Expr.Call(
+			typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.MetricValue))!,
+			Expr.Property(row, nameof(MetricPointRecord.ValueDouble)),
+			Expr.Property(row, nameof(MetricPointRecord.ValueLong))),
+		"ValueDouble" => Expr.Property(row, nameof(MetricPointRecord.ValueDouble)),
+		"ValueLong" => Expr.Property(row, nameof(MetricPointRecord.ValueLong)),
+		"Count" => Expr.Property(row, nameof(MetricPointRecord.Count)),
+		"Sum" => Expr.Property(row, nameof(MetricPointRecord.Sum)),
+		"Min" => Expr.Property(row, nameof(MetricPointRecord.Min)),
+		"Max" => Expr.Property(row, nameof(MetricPointRecord.Max)),
+		"Temporality" => Expr.Property(row, nameof(MetricPointRecord.AggregationTemporality)),
+		"IsMonotonic" => Expr.Property(row, nameof(MetricPointRecord.IsMonotonic)),
+		"Scale" => Expr.Property(row, nameof(MetricPointRecord.Scale)),
+		"ZeroCount" => Expr.Property(row, nameof(MetricPointRecord.ZeroCount)),
+		"Flags" => Expr.Property(row, nameof(MetricPointRecord.Flags)),
+		// The streamed metric row names its JSON bag "PropertiesJson" (carrying AttributesJson, see
+		// KqlTransformer.MetricPointRecordColumns) — the pre-split binding must agree.
+		"PropertiesJson" => Expr.Property(row, nameof(MetricPointRecord.AttributesJson)),
+		_ => throw new UnsupportedKqlException($"unknown column '{canonical}'"), // unreachable
+	};
+
+	// Time / StartTime compare against a datetime() literal (→ epoch-ms). Time is non-nullable so it uses
+	// the fast path (this coercion); StartTime is nullable so it falls through to the general path, where
+	// the datetime literal is normalized to epoch-ms instead — this arm is kept for parity/robustness.
+	protected override Expr? CoerceSpecialLiteral(string canonical, LiteralExpression literal)
+	{
+		if (canonical is "Time" or "StartTime")
+		{
+			if (literal.LiteralValue is not DateTime dt)
+				throw new UnsupportedKqlException($"{canonical} comparison requires a datetime() literal");
+			return Expr.Constant(KqlSqlExpressions.ToUnixMs(dt));
 		}
 		return null;
 	}
