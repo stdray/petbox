@@ -74,9 +74,11 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 	}
 
 	// GET the page (login if needed), scrape its antiforgery token, POST the handler form.
+	// The token page is the EDITOR step — the only state guaranteed to render a form on
+	// every project (the create CTA is a link-only screen).
 	async Task<HttpResponseMessage> PostAuthedAsync(string url, string handler, Dictionary<string, string> fields)
 	{
-		using var page = await GetAuthedAsync(url);
+		using var page = await GetAuthedAsync($"{url}?step=edit");
 		var html = await page.Content.ReadAsStringAsync();
 		var form = new Dictionary<string, string>(fields)
 		{
@@ -105,8 +107,10 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		return WebUtility.HtmlDecode(html[contentStart..end]);
 	}
 
+	// Entry for a definition-less project: the create CTA, not a bare textarea (wizard
+	// commit); the honest presets banner stays.
 	[Fact]
-	public async Task Get_ProjectOnPresets_RendersBannerEmptyTextareaAndTemplateControl()
+	public async Task Get_ProjectOnPresets_RendersBannerAndCreateCta()
 	{
 		using var resp = await GetAuthedAsync(SystemUrl);
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
@@ -114,12 +118,24 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 
 		html.Should().Contain("data-testid=\"methodology-state-presets\"");
 		html.Should().Contain("runs on the builtin presets");
+		html.Should().Contain("data-testid=\"methodology-create-cta\"", "creation is an explicit action");
+		html.Should().NotContain("data-testid=\"methodology-json\"", "the bare textarea no longer greets a definition-less project");
+	}
+
+	// The editor step still offers the empty textarea + template control (the raw path).
+	[Fact]
+	public async Task Get_StepEdit_ProjectOnPresets_RendersEmptyEditorAndTemplateControl()
+	{
+		using var resp = await GetAuthedAsync($"{SystemUrl}?step=edit");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
 		html.Should().Contain("data-testid=\"methodology-json\"");
 		Textarea(html).Trim().Should().BeEmpty("no stored definition → nothing to prefill");
 		html.Should().Contain("data-testid=\"methodology-template-select\"");
 		html.Should().Contain("value=\"quartet\"");
 		html.Should().Contain("value=\"classic\"");
-		html.Should().Contain("data-testid=\"methodology-save\"");
+		html.Should().Contain("data-testid=\"methodology-confirm-btn\"", "the editor leads to the confirm step");
 	}
 
 	[Fact]
@@ -188,8 +204,10 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		html.Should().Contain("data-testid=\"methodology-state-name\"");
 		html.Should().Contain("custom");
 		html.Should().Contain("data-testid=\"methodology-state-kind\"");
-		Textarea(html).Should().Contain("\"job\"", "the stored definition prefills the textarea");
 		html.Should().Contain("data-testid=\"methodology-preview-data\"");
+
+		using var edit = await GetAuthedAsync($"{url}?step=edit");
+		Textarea(await edit.Content.ReadAsStringAsync()).Should().Contain("\"job\"", "the stored definition prefills the editor");
 	}
 
 	// Creates the project row when missing (each write-y test uses its own key so $system
@@ -204,9 +222,10 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 
 	// The owner-reported lifecycle repro: a definition created FROM A PRESET is saved
 	// through the service door, then the page is rendered — the stored state must surface
-	// (banner + prefill + the Delete affordance), not the presets-only banner.
+	// in VIEW mode (summary + preview + explicit Edit / Delete), and ?step=edit prefills
+	// the editor with the document.
 	[Fact]
-	public async Task Get_AfterQuartetPresetDefinitionSaved_RendersStoredState()
+	public async Task Get_AfterQuartetPresetDefinitionSaved_RendersViewMode_AndEditPrefills()
 	{
 		const string project = "medlifecycle";
 		await EnsureProjectAsync(project);
@@ -222,8 +241,15 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"methodology-state-name\"", "the stored definition must surface");
 		html.Should().Contain("quartet");
+		html.Should().Contain("data-testid=\"methodology-view\"", "an existing definition opens in view mode");
+		html.Should().Contain("data-testid=\"methodology-edit-link\"", "editing is an explicit action");
 		html.Should().Contain("data-testid=\"methodology-delete\"", "a stored definition must be deletable");
-		Textarea(html).Should().Contain("\"work\"", "the stored definition prefills the textarea");
+		html.Should().Contain("data-testid=\"methodology-preview-data\"", "view mode previews the workflows");
+		html.Should().NotContain("data-testid=\"methodology-json\"", "view mode shows a summary, not the raw editor");
+
+		using var edit = await GetAuthedAsync($"{url}?step=edit");
+		var editHtml = await edit.Content.ReadAsStringAsync();
+		Textarea(editHtml).Should().Contain("\"work\"", "the stored definition prefills the editor");
 	}
 
 	// Finding 1: statuses[]/transitions[] elements render on ONE line each; the layout is
@@ -285,7 +311,7 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		var html = await after.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"methodology-deleted\"", "the delete renders its success alert");
 		html.Should().Contain("data-testid=\"methodology-state-presets\"", "the project reverts to the presets state");
-		Textarea(html).Trim().Should().BeEmpty("no stored definition → nothing to prefill");
+		html.Should().Contain("data-testid=\"methodology-create-cta\"", "a definition-less project offers creation again");
 
 		using var scope = _factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
@@ -359,7 +385,7 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 	[Fact]
 	public async Task Get_RendersDefinitionReference()
 	{
-		using var resp = await GetAuthedAsync(SystemUrl);
+		using var resp = await GetAuthedAsync($"{SystemUrl}?step=edit");
 		var html = await resp.Content.ReadAsStringAsync();
 
 		html.Should().Contain("data-testid=\"methodology-reference\"");
@@ -399,7 +425,8 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		after.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await after.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"methodology-state-name\"", "the stored definition must surface");
-		Textarea(html).Should().Contain($"\"{preset}\"");
+		html.Should().Contain("data-testid=\"methodology-view\"", "the saved definition opens in view mode");
+		html.Should().Contain(preset);
 	}
 
 	static string Between(string html, string start, string end)
@@ -409,6 +436,104 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		s += start.Length;
 		var e = html.IndexOf(end, s, StringComparison.Ordinal);
 		return e < 0 ? html[s..] : html[s..e];
+	}
+
+	// ── creation wizard (commit 2) ─────────────────────────────────────────────
+
+	// Step 1: the base picker lists the builtin provisioning presets AND user definitions
+	// from other projects, each wired to a per-card SVG preview via the bases island.
+	[Fact]
+	public async Task Get_StepBase_ListsPresetAndUserDefinitionBases()
+	{
+		const string source = "medbasesrc";
+		await EnsureProjectAsync(source);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
+			if (await tasks.GetMethodologyDefinitionAsync(source) is null)
+				await tasks.DefineMethodologyAsync(source, MethodologyPresets.RenderPresetDefinition("classic"), 0);
+		}
+
+		using var resp = await GetAuthedAsync($"{SystemUrl}?step=base");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"methodology-base-picker\"");
+		html.Should().Contain("value=\"preset:quartet\"");
+		html.Should().Contain("value=\"preset:classic\"");
+		html.Should().Contain($"value=\"def:{source}\"", "another project's stored definition is offered as a base");
+		html.Should().Contain("data-testid=\"methodology-base-previews-data\"", "each base carries its SVG preview docs");
+		html.Should().Contain($"data-base-preview=\"def:{source}\"");
+	}
+
+	// Step 1 → 2: choosing a base opens the editor prefilled with it (preset and
+	// user-definition variants).
+	[Fact]
+	public async Task PostStartEdit_PresetBase_PrefillsEditor()
+	{
+		using var resp = await PostAuthedAsync(SystemUrl, "StartEdit", new() { ["baseRef"] = "preset:classic" });
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		var doc = Textarea(html);
+		doc.Should().Contain("\"name\": \"classic\"");
+		html.Should().Contain("data-testid=\"methodology-preview-data\"", "the chosen base previews immediately");
+	}
+
+	[Fact]
+	public async Task PostStartEdit_UserDefinitionBase_PrefillsEditor()
+	{
+		const string source = "medbasesrc2";
+		await EnsureProjectAsync(source);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
+			if (await tasks.GetMethodologyDefinitionAsync(source) is null)
+				await tasks.DefineMethodologyAsync(source, MethodologyPresets.RenderPresetDefinition("quartet"), 0);
+		}
+
+		using var resp = await PostAuthedAsync(SystemUrl, "StartEdit", new() { ["baseRef"] = $"def:{source}" });
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		Textarea(await resp.Content.ReadAsStringAsync()).Should().Contain("\"name\": \"quartet\"",
+			"the other project's definition is copied into the editor");
+	}
+
+	// Step 2 → 3: the confirm summary digests the parsed document (counts + gates) and
+	// carries the JSON in hidden fields for the final Save; bad JSON falls back to the
+	// editor with the message.
+	[Fact]
+	public async Task PostConfirm_RendersSummary_WithHiddenDocument()
+	{
+		using var resp = await PostAuthedAsync(SystemUrl, "Confirm",
+			new() { ["definitionJson"] = SmallDefinition, ["version"] = "0" });
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"methodology-confirm\"");
+		html.Should().Contain("data-testid=\"methodology-confirm-kind\"");
+		html.Should().Contain("job");
+		html.Should().Contain("3 status(es)");
+		html.Should().Contain("2 transition(s)");
+		html.Should().Contain("name=\"definitionJson\"", "the confirm form carries the document to Save");
+		html.Should().Contain("data-testid=\"methodology-save\"");
+		html.Should().Contain("data-testid=\"methodology-confirm-back\"");
+
+		using var scope = _factory.Services.CreateScope();
+		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
+		(await tasks.GetMethodologyDefinitionAsync("$system")).Should().BeNull("confirm never writes");
+	}
+
+	[Fact]
+	public async Task PostConfirm_InvalidJson_FallsBackToEditorWithError()
+	{
+		using var resp = await PostAuthedAsync(SystemUrl, "Confirm",
+			new() { ["definitionJson"] = "{ nope", ["version"] = "0" });
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"methodology-errors\"");
+		html.Should().Contain("invalid JSON");
+		Textarea(html).Should().Contain("{ nope", "the editor echoes the user's JSON back");
 	}
 
 	[Fact]

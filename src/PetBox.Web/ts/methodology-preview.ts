@@ -15,7 +15,39 @@ interface PreviewDoc {
 	readonly effectNotes?: ReadonlyArray<string>;
 }
 
+// One wizard base option's preview payload: the base's ref (preset:<slug> / def:<project>)
+// plus its kinds as the same PreviewDoc array the main preview renders.
+interface BasePreviewDoc {
+	readonly ref: string;
+	readonly docs: ReadonlyArray<PreviewDoc>;
+}
+
 export function initMethodologyPreview(): void {
+	renderEditorPreview();
+	renderBasePreviews();
+}
+
+// The creation wizard's base-picker cards: one island carries every base's graph docs;
+// each card hosts a [data-base-preview='<ref>'] container the graphs render into.
+function renderBasePreviews(): void {
+	const island = document.querySelector<HTMLScriptElement>("[data-testid='methodology-base-previews-data']");
+	if (!island) return;
+
+	let bases: ReadonlyArray<BasePreviewDoc>;
+	try {
+		bases = JSON.parse(island.textContent ?? "[]") as ReadonlyArray<BasePreviewDoc>;
+	} catch {
+		return;
+	}
+
+	const containers = Array.from(document.querySelectorAll<HTMLElement>("[data-base-preview]"));
+	for (const base of bases) {
+		const host = containers.find((c) => c.dataset["basePreview"] === base.ref);
+		if (host) renderDocs(host, base.docs);
+	}
+}
+
+function renderEditorPreview(): void {
 	const island = document.querySelector<HTMLScriptElement>("[data-testid='methodology-preview-data']");
 	const host = document.querySelector<HTMLElement>("[data-testid='methodology-preview']");
 	if (!island || !host) return;
@@ -27,6 +59,10 @@ export function initMethodologyPreview(): void {
 		return;
 	}
 
+	renderDocs(host, docs);
+}
+
+function renderDocs(host: HTMLElement, docs: ReadonlyArray<PreviewDoc>): void {
 	host.replaceChildren();
 	for (const doc of docs) {
 		const heading = document.createElement("h3");

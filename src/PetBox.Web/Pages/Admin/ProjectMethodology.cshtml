@@ -1,5 +1,6 @@
 @page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/methodology"
 @using PetBox.Web.Mcp
+@using static PetBox.Web.Pages.Admin.ProjectMethodologyModel
 @model PetBox.Web.Pages.Admin.ProjectMethodologyModel
 @{
 	ViewData["Title"] = $"{Model.ProjectKey} — Methodology";
@@ -33,118 +34,274 @@
 }
 
 @* Current state: the stored definition's identity, or the honest presets-only state. *@
-<div class="card bg-base-200 border border-base-300 mb-4 max-w-4xl" data-testid="methodology-state">
-	<div class="card-body p-4">
-		@if (Model.Stored is not null)
-		{
-			<div class="flex items-baseline gap-2 flex-wrap">
-				<span class="font-semibold">Stored definition</span>
-				<span class="font-mono" data-testid="methodology-state-name">@Model.Stored.Definition.Name</span>
-				<span class="badge badge-ghost badge-sm font-mono" data-testid="methodology-state-version">version @Model.Stored.Version</span>
-			</div>
-			<div class="flex gap-1 mt-1 flex-wrap">
-				@foreach (var k in Model.Stored.Definition.Kinds)
+@if (Model.Mode is EditorMode.View or EditorMode.Cta or EditorMode.Edit)
+{
+	<div class="card bg-base-200 border border-base-300 mb-4 max-w-4xl" data-testid="methodology-state">
+		<div class="card-body p-4">
+			@if (Model.Stored is not null)
+			{
+				<div class="flex items-baseline gap-2 flex-wrap">
+					<span class="font-semibold">Stored definition</span>
+					<span class="font-mono" data-testid="methodology-state-name">@Model.Stored.Definition.Name</span>
+					<span class="badge badge-ghost badge-sm font-mono" data-testid="methodology-state-version">version @Model.Stored.Version</span>
+				</div>
+				<div class="flex gap-1 mt-1 flex-wrap">
+					@foreach (var k in Model.Stored.Definition.Kinds)
+					{
+						<span class="badge badge-neutral badge-sm font-mono" data-testid="methodology-state-kind">@k.Kind</span>
+					}
+				</div>
+				<p class="text-xs opacity-60 mt-1">Updated @Model.Stored.Updated.ToString("yyyy-MM-dd HH:mm") UTC. The document is exactly what <span class="font-mono">tasks_methodology_def_get</span> returns — it can be edited here or via MCP interchangeably.</p>
+				@if (Model.Mode == EditorMode.View)
 				{
-					<span class="badge badge-neutral badge-sm font-mono" data-testid="methodology-state-kind">@k.Kind</span>
+					<div class="card-actions mt-2 items-center">
+						<a href="?step=edit" class="btn btn-xs btn-primary" data-testid="methodology-edit-link">Edit definition</a>
+						<form method="post" asp-page-handler="Delete" data-confirm="Delete this methodology definition and revert the project to the builtin presets? Boards and nodes are kept; live nodes must fit the presets or the delete is rejected." data-testid="methodology-delete-form">
+							@Html.AntiForgeryToken()
+							<input type="hidden" name="version" value="@Model.Stored.Version" />
+							<button type="submit" class="btn btn-xs btn-error btn-outline" data-testid="methodology-delete">Delete definition</button>
+						</form>
+					</div>
+				}
+			}
+			else
+			{
+				<p class="text-sm opacity-80" data-testid="methodology-state-presets">No stored definition — this project runs on the builtin presets. Create a methodology to declare the project's own kinds, statuses and gates.</p>
+				@if (Model.ActiveBoards.Count > 0)
+				{
+					<p class="text-xs opacity-60 mt-1" data-testid="methodology-state-boards">
+						Active boards (each resolves its preset kind):
+						@foreach (var b in Model.ActiveBoards)
+						{
+							<span class="badge badge-ghost badge-sm font-mono mr-1">@b.Name (@b.Kind)</span>
+						}
+					</p>
+				}
+			}
+		</div>
+	</div>
+}
+
+@switch (Model.Mode)
+{
+	case EditorMode.Cta:
+		@* Entry for a definition-less project: creation is an explicit action. *@
+		<div class="card bg-base-200 border border-base-300 max-w-4xl" data-testid="methodology-cta-card">
+			<div class="card-body p-6">
+				<h2 class="card-title text-lg">Create methodology</h2>
+				<p class="text-sm opacity-80">Pick a base — a builtin preset or a definition you already authored in another project — edit it, review the summary, save. The installed definition overrides the presets per kind and is fully editable and deletable afterwards.</p>
+				<div class="card-actions mt-3 items-center">
+					<a href="?step=base" class="btn btn-primary btn-sm" data-testid="methodology-create-cta">Create methodology</a>
+					<a href="?step=edit" class="link link-hover text-sm opacity-70" data-testid="methodology-raw-editor-link">or open the raw JSON editor</a>
+				</div>
+			</div>
+		</div>
+		break;
+
+	case EditorMode.View:
+		@* Existing definition: a rendered summary + preview; editing is an explicit action. *@
+		<section class="max-w-4xl" data-testid="methodology-view">
+			<h2 class="text-lg font-semibold mb-2">Definition summary</h2>
+			@foreach (var kind in Model.Summary)
+			{
+				<div class="card bg-base-200 border border-base-300 mb-2" data-testid="methodology-view-kind">
+					<div class="card-body p-4">
+						<div class="flex items-baseline gap-2 flex-wrap">
+							<span class="font-mono font-semibold">@kind.Kind</span>
+							<span class="text-xs opacity-70">@kind.TypeCount type(s) · @kind.StatusCount status(es) · @kind.TransitionCount transition(s)</span>
+						</div>
+						@if (kind.Gates.Count > 0)
+						{
+							<div class="text-xs mt-1">
+								<span class="font-semibold">Gates:</span>
+								<ul class="list-disc pl-5">
+									@foreach (var g in kind.Gates)
+									{
+										<li class="font-mono">@g</li>
+									}
+								</ul>
+							</div>
+						}
+						@if (kind.Effects.Count > 0)
+						{
+							<div class="text-xs mt-1">
+								<span class="font-semibold">Effects:</span>
+								<ul class="list-disc pl-5">
+									@foreach (var e in kind.Effects)
+									{
+										<li>@e</li>
+									}
+								</ul>
+							</div>
+						}
+					</div>
+				</div>
+			}
+		</section>
+		break;
+
+	case EditorMode.Base:
+		@* Wizard step 1: choose a base. *@
+		<section class="max-w-4xl" data-testid="methodology-base-picker">
+			<h2 class="text-lg font-semibold mb-1">Create methodology — choose a base</h2>
+			<p class="text-sm opacity-70 mb-3">Start from a builtin preset or copy a definition you already authored in another project. The next step opens it in the editor.</p>
+			<script type="application/json" data-testid="methodology-base-previews-data">@Html.Raw(Model.BasePreviewsJson)</script>
+			<div class="grid grid-cols-1 gap-3">
+				@foreach (var b in Model.Bases)
+				{
+					<div class="card bg-base-200 border border-base-300" data-testid="methodology-base-card">
+						<div class="card-body p-4">
+							<div class="flex items-baseline justify-between gap-2 flex-wrap">
+								<span class="font-semibold">@b.Title</span>
+								<form method="post" asp-page-handler="StartEdit">
+									@Html.AntiForgeryToken()
+									<input type="hidden" name="baseRef" value="@b.Ref" />
+									<button type="submit" class="btn btn-sm btn-primary" data-testid="methodology-base-use">Use this base</button>
+								</form>
+							</div>
+							<p class="text-sm opacity-80">@b.Description</p>
+							<div class="max-h-96 overflow-y-auto" data-base-preview="@b.Ref"></div>
+						</div>
+					</div>
 				}
 			</div>
-			<p class="text-xs opacity-60 mt-1">Updated @Model.Stored.Updated.ToString("yyyy-MM-dd HH:mm") UTC. The document below is exactly what <span class="font-mono">tasks_methodology_def_get</span> returns — it can be edited here or via MCP interchangeably.</p>
-			<div class="card-actions mt-2">
-				<form method="post" asp-page-handler="Delete" data-confirm="Delete this methodology definition and revert the project to the builtin presets? Boards and nodes are kept; live nodes must fit the presets or the delete is rejected." data-testid="methodology-delete-form">
-					@Html.AntiForgeryToken()
-					<input type="hidden" name="version" value="@Model.Stored.Version" />
-					<button type="submit" class="btn btn-xs btn-error btn-outline" data-testid="methodology-delete">Delete definition</button>
-				</form>
+			<div class="mt-3">
+				<a href="?" class="link link-hover text-sm opacity-70" data-testid="methodology-base-back">Back</a>
 			</div>
-		}
-		else
-		{
-			<p class="text-sm opacity-80" data-testid="methodology-state-presets">No stored definition — this project runs on the builtin presets. Load a preset below as a template, edit it, and save to install a custom methodology.</p>
-			@if (Model.ActiveBoards.Count > 0)
-			{
-				<p class="text-xs opacity-60 mt-1" data-testid="methodology-state-boards">
-					Active boards (each resolves its preset kind):
-					@foreach (var b in Model.ActiveBoards)
+		</section>
+		break;
+
+	case EditorMode.Edit:
+		@* Wizard step 2 (also the direct editor for an existing definition). *@
+		@* Template loader: fills the textarea with a builtin preset rendered as a definition
+		   document (server round-trip; replaces the current textarea contents). *@
+		<form method="post" asp-page-handler="LoadPreset" class="mb-3 flex items-end gap-2" data-testid="methodology-template-form">
+			@Html.AntiForgeryToken()
+			<label class="form-control">
+				<span class="label-text text-xs">Preset template</span>
+				<select name="preset" class="select select-bordered select-sm font-mono" data-testid="methodology-template-select">
+					@foreach (var p in Model.Presets)
 					{
-						<span class="badge badge-ghost badge-sm font-mono mr-1">@b.Name (@b.Kind)</span>
+						<option value="@p.Slug" title="@p.Description" selected="@(p.Slug == Model.SelectedPreset)">@p.Slug</option>
 					}
-				</p>
-			}
-		}
-	</div>
-</div>
+				</select>
+			</label>
+			<button type="submit" class="btn btn-sm" data-testid="methodology-template-load">Load preset as template</button>
+		</form>
 
-@* Template loader: fills the textarea with a builtin preset rendered as a definition
-   document (server round-trip; replaces the current textarea contents). *@
-<form method="post" asp-page-handler="LoadPreset" class="mb-3 flex items-end gap-2" data-testid="methodology-template-form">
-	@Html.AntiForgeryToken()
-	<label class="form-control">
-		<span class="label-text text-xs">Preset template</span>
-		<select name="preset" class="select select-bordered select-sm font-mono" data-testid="methodology-template-select">
-			@foreach (var p in Model.Presets)
+		@* The document editor: same JSON shape as tasks_methodology_def_get / def_upsert. *@
+		<form method="post" class="max-w-4xl" data-testid="methodology-form">
+			@Html.AntiForgeryToken()
+			<input type="hidden" name="version" value="@Model.Version" />
+			<label class="form-control">
+				<span class="label-text">Definition document (JSON)</span>
+				<textarea name="definitionJson" rows="24" spellcheck="false" wrap="off" data-json-highlight
+					class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
+					placeholder='{ "name": "custom", "kinds": [ { "kind": "job", "workflows": [ ... ] } ] }'
+					data-testid="methodology-json">@Model.DefinitionJson</textarea>
+			</label>
+			<label class="form-control mt-2">
+				<span class="label-text">Migration map (optional JSON) — <span class="opacity-60">per-kind {from,to} type/status repairs for live nodes an incompatible change would strand, e.g. <span class="font-mono">[{"kind":"work","statuses":[{"from":"Blocked","to":"Todo"}]}]</span></span></span>
+				<textarea name="migrationJson" rows="3" spellcheck="false" data-json-highlight
+					class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
+					data-testid="methodology-migration-json">@Model.MigrationJson</textarea>
+			</label>
+			<div class="mt-3 flex gap-2 items-center">
+				<button type="submit" asp-page-handler="Confirm" class="btn btn-sm btn-primary" data-testid="methodology-confirm-btn">Review &amp; save</button>
+				<button type="submit" asp-page-handler="Preview" class="btn btn-sm btn-ghost" data-testid="methodology-preview-btn">Preview workflows</button>
+				<a href="?" class="link link-hover text-sm opacity-70" data-testid="methodology-edit-cancel">Cancel</a>
+			</div>
+		</form>
+
+		@* Reference: the definition document's entities and fields, generated off the SAME wire
+		   DTOs the parser reads (MethodologyReference) — collapsed by default. *@
+		<details class="collapse collapse-arrow bg-base-200 border border-base-300 mt-6 max-w-4xl" data-testid="methodology-reference">
+			<summary class="collapse-title font-semibold">Definition reference</summary>
+			<div class="collapse-content overflow-x-auto">
+				<p class="text-xs opacity-70 mb-2">Every entity of the definition document (the JSON above). Field names are the wire names — the same vocabulary <span class="font-mono">tasks_methodology_def_upsert</span> accepts.</p>
+				@foreach (var entity in MethodologyReference.Entities)
+				{
+					<h3 class="font-mono font-semibold text-sm mt-3" data-testid="methodology-reference-entity">@entity.Name</h3>
+					<p class="text-xs opacity-70 mt-0.5">@entity.Summary</p>
+					<table class="table table-xs mt-1">
+						<thead>
+							<tr><th class="w-40">field</th><th class="w-40">type</th><th>description</th></tr>
+						</thead>
+						<tbody>
+							@foreach (var field in entity.Fields)
+							{
+								<tr>
+									<td class="font-mono">@field.Name</td>
+									<td class="font-mono opacity-70">@field.Type</td>
+									<td>@field.Description</td>
+								</tr>
+							}
+						</tbody>
+					</table>
+				}
+			</div>
+		</details>
+		break;
+
+	case EditorMode.Confirm:
+		@* Wizard step 3: the parsed document's digest; Save posts the carried JSON. *@
+		<section class="max-w-4xl" data-testid="methodology-confirm">
+			<h2 class="text-lg font-semibold mb-1">Confirm — <span class="font-mono">@Model.ConfirmName</span></h2>
+			<p class="text-sm opacity-70 mb-3">Review the summary, then save. Saving still validates the whole document and its compatibility with live nodes — an incompatible change is rejected with the reason.</p>
+			@foreach (var kind in Model.Summary)
 			{
-				<option value="@p.Slug" title="@p.Description" selected="@(p.Slug == Model.SelectedPreset)">@p.Slug</option>
+				<div class="card bg-base-200 border border-base-300 mb-2" data-testid="methodology-confirm-kind">
+					<div class="card-body p-4">
+						<div class="flex items-baseline gap-2 flex-wrap">
+							<span class="font-mono font-semibold">@kind.Kind</span>
+							<span class="text-xs opacity-70">@kind.TypeCount type(s) · @kind.StatusCount status(es) · @kind.TransitionCount transition(s)</span>
+						</div>
+						@if (kind.Gates.Count > 0)
+						{
+							<div class="text-xs mt-1">
+								<span class="font-semibold">Gates:</span>
+								<ul class="list-disc pl-5">
+									@foreach (var g in kind.Gates)
+									{
+										<li class="font-mono">@g</li>
+									}
+								</ul>
+							</div>
+						}
+						@if (kind.Effects.Count > 0)
+						{
+							<div class="text-xs mt-1">
+								<span class="font-semibold">Effects:</span>
+								<ul class="list-disc pl-5">
+									@foreach (var e in kind.Effects)
+									{
+										<li>@e</li>
+									}
+								</ul>
+							</div>
+						}
+					</div>
+				</div>
 			}
-		</select>
-	</label>
-	<button type="submit" class="btn btn-sm" data-testid="methodology-template-load">Load preset as template</button>
-</form>
-
-@* The document editor: same JSON shape as tasks_methodology_def_get / def_upsert. *@
-<form method="post" class="max-w-4xl" data-testid="methodology-form">
-	@Html.AntiForgeryToken()
-	<input type="hidden" name="version" value="@Model.Version" />
-	<label class="form-control">
-		<span class="label-text">Definition document (JSON)</span>
-		<textarea name="definitionJson" rows="24" spellcheck="false" wrap="off" data-json-highlight
-			class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
-			placeholder='{ "name": "custom", "kinds": [ { "kind": "job", "workflows": [ ... ] } ] }'
-			data-testid="methodology-json">@Model.DefinitionJson</textarea>
-	</label>
-	<label class="form-control mt-2">
-		<span class="label-text">Migration map (optional JSON) — <span class="opacity-60">per-kind {from,to} type/status repairs for live nodes an incompatible change would strand, e.g. <span class="font-mono">[{"kind":"work","statuses":[{"from":"Blocked","to":"Todo"}]}]</span></span></span>
-		<textarea name="migrationJson" rows="3" spellcheck="false" data-json-highlight
-			class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
-			data-testid="methodology-migration-json">@Model.MigrationJson</textarea>
-	</label>
-	<div class="mt-3 flex gap-2">
-		<button type="submit" asp-page-handler="Save" class="btn btn-sm btn-primary" data-testid="methodology-save">Save definition</button>
-		<button type="submit" asp-page-handler="Preview" class="btn btn-sm btn-ghost" data-testid="methodology-preview-btn">Preview workflows</button>
-	</div>
-</form>
-
-@* Reference: the definition document's entities and fields, generated off the SAME wire
-   DTOs the parser reads (MethodologyReference) — collapsed by default. *@
-<details class="collapse collapse-arrow bg-base-200 border border-base-300 mt-6 max-w-4xl" data-testid="methodology-reference">
-	<summary class="collapse-title font-semibold">Definition reference</summary>
-	<div class="collapse-content overflow-x-auto">
-		<p class="text-xs opacity-70 mb-2">Every entity of the definition document (the JSON above). Field names are the wire names — the same vocabulary <span class="font-mono">tasks_methodology_def_upsert</span> accepts.</p>
-		@foreach (var entity in MethodologyReference.Entities)
-		{
-			<h3 class="font-mono font-semibold text-sm mt-3" data-testid="methodology-reference-entity">@entity.Name</h3>
-			<p class="text-xs opacity-70 mt-0.5">@entity.Summary</p>
-			<table class="table table-xs mt-1">
-				<thead>
-					<tr><th class="w-40">field</th><th class="w-40">type</th><th>description</th></tr>
-				</thead>
-				<tbody>
-					@foreach (var field in entity.Fields)
-					{
-						<tr>
-							<td class="font-mono">@field.Name</td>
-							<td class="font-mono opacity-70">@field.Type</td>
-							<td>@field.Description</td>
-						</tr>
-					}
-				</tbody>
-			</table>
-		}
-	</div>
-</details>
+			@if (!string.IsNullOrWhiteSpace(Model.MigrationJson))
+			{
+				<p class="text-xs opacity-70 mb-2" data-testid="methodology-confirm-migration">A migration map is attached — live-node repairs apply where the change would strand a value.</p>
+			}
+			<form method="post" class="flex gap-2 items-center" data-testid="methodology-confirm-form">
+				@Html.AntiForgeryToken()
+				<input type="hidden" name="version" value="@Model.Version" />
+				<input type="hidden" name="definitionJson" value="@Model.DefinitionJson" />
+				<input type="hidden" name="migrationJson" value="@Model.MigrationJson" />
+				<button type="submit" asp-page-handler="Save" class="btn btn-sm btn-primary" data-testid="methodology-save">Save definition</button>
+				<button type="submit" asp-page-handler="Preview" class="btn btn-sm btn-ghost" data-testid="methodology-confirm-back">Back to edit</button>
+			</form>
+		</section>
+		break;
+}
 
 @* FSM preview: one SVG per workflow block, per kind — rendered client-side by the same
    workflow-graph renderer the per-type board modal uses (ts/methodology-preview.ts). *@
-@if (!string.IsNullOrEmpty(Model.PreviewJson))
+@if (!string.IsNullOrEmpty(Model.PreviewJson) && Model.Mode is EditorMode.View or EditorMode.Edit)
 {
 	<section class="mt-6 max-w-4xl">
 		<h2 class="text-lg font-semibold mb-2">Workflow preview</h2>

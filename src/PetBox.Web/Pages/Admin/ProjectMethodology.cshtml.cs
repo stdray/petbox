@@ -12,15 +12,27 @@ using PetBox.Web.Pages.ProjectHome;
 
 namespace PetBox.Web.Pages.Admin;
 
-// Create / edit the project's METHODOLOGY DEFINITION as a JSON document — the human-facing
-// equivalent of the MCP tasks_methodology_def_get / def_upsert pair, and the SAME wire shape
-// (MethodologyWire), so a document moves freely between this textarea and the MCP tools.
-// All writes go through ITasksService.DefineMethodologyAsync — full validation + live-node
-// compatibility, optimistic concurrency on `version`; rejections render verbatim in the
-// errors block with the user's JSON preserved (never a silent overwrite).
+// Create / view / edit / delete the project's METHODOLOGY DEFINITION — the human-facing
+// equivalent of the MCP tasks_methodology_def_* tools, sharing their wire shape
+// (MethodologyWire), so a document moves freely between this page and MCP.
+//
+// The page is a small state machine (Mode), NOT a SPA — plain Razor handlers + a `step`
+// query param for deep links:
+//   - stored definition → VIEW mode (summary + preview; explicit Edit / Delete), ?step=edit
+//     opens the editor prefilled;
+//   - no definition → a "Create methodology" call-to-action, ?step=base the base picker
+//     (builtin provisioning presets + user definitions from other projects, each with an
+//     SVG preview), then the editor, then a confirm summary → save;
+//   - POST-rendered states (template loaded, preview, confirm, rejected save/delete) set
+//     Mode directly.
+// All writes go through ITasksService (full validation + live-node compatibility,
+// optimistic concurrency on `version`); rejections render verbatim in the errors block
+// with the user's JSON preserved (never a silent overwrite).
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectMethodologyModel : PageModel
 {
+	public enum EditorMode { View, Cta, Base, Edit, Confirm }
+
 	readonly PetBoxDb _db;
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
@@ -47,6 +59,15 @@ public sealed class ProjectMethodologyModel : PageModel
 	[BindProperty(SupportsGet = true)]
 	public bool Deleted { get; set; }
 
+	// The wizard step a GET deep-links into: "base" (choose a base) or "edit" (the editor);
+	// anything else falls back to the state's default (view mode / the create CTA).
+	[BindProperty(SupportsGet = true)]
+	public string? Step { get; set; }
+
+	// What the page renders — derived from the stored state + Step on GET, set directly by
+	// the POST handlers.
+	public EditorMode Mode { get; private set; } = EditorMode.Edit;
+
 	public bool ProjectNotFound { get; private set; }
 	public string? ErrorMessage { get; private set; }
 
@@ -71,8 +92,30 @@ public sealed class ProjectMethodologyModel : PageModel
 	public long Version { get; private set; }
 
 	// JSON island for the SVG preview (ts/methodology-preview.ts → renderWorkflow): an array
-	// of {kind, blocks} docs, one per definition kind. Empty = nothing to preview.
+	// of {kind, blocks, effectNotes} docs, one per definition kind. Empty = nothing to preview.
 	public string PreviewJson { get; private set; } = string.Empty;
+
+	// ── wizard state ──────────────────────────────────────────────────────────
+
+	// One base the creation wizard offers: a builtin provisioning preset (`preset:<slug>`)
+	// or another project's stored definition (`def:<projectKey>`).
+	public sealed record BaseOption(string Ref, string Title, string Description);
+
+	public IReadOnlyList<BaseOption> Bases { get; private set; } = [];
+
+	// JSON island for the base picker's per-card SVG previews ([{ref, docs}]).
+	public string BasePreviewsJson { get; private set; } = string.Empty;
+
+	// Per-kind digest for the confirm step and the view mode: counts + the gate lines +
+	// the effect sentences (MethodologyGuide phrasing).
+	public sealed record KindSummary(
+		string Kind, int TypeCount, int StatusCount, int TransitionCount,
+		IReadOnlyList<string> Gates, IReadOnlyList<string> Effects);
+
+	public IReadOnlyList<KindSummary> Summary { get; private set; } = [];
+
+	// The parsed document's name shown on the confirm step (view mode reads Stored instead).
+	public string? ConfirmName { get; private set; }
 
 	// Preset templates offered by the "Load preset as template" control — read straight off
 	// the registry (quartet, classic today), so a new preset appears without touching the page.
@@ -83,7 +126,52 @@ public sealed class ProjectMethodologyModel : PageModel
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await LoadStateAsync(ct)) return Page();
-		PrefillStored();
+
+		var step = Step?.Trim().ToLowerInvariant();
+		if (Stored is not null)
+		{
+			// Existing definition: view mode by default; ?step=edit opens the editor.
+			Mode = step == "edit" ? EditorMode.Edit : EditorMode.View;
+			PrefillStored();
+			if (Mode == EditorMode.View) Summary = SummaryOf(Stored.Definition);
+		}
+		else if (step == "base")
+		{
+			Mode = EditorMode.Base;
+			await LoadBasesAsync(ct);
+		}
+		else if (step == "edit")
+		{
+			Mode = EditorMode.Edit; // paste-JSON path (empty editor)
+		}
+		else
+		{
+			Mode = EditorMode.Cta; // creation is an explicit action, not a bare textarea
+		}
+		return Page();
+	}
+
+	// Wizard step 1 → 2: resolve the chosen base (builtin preset or another project's
+	// definition) and open the editor prefilled with it.
+	public async Task<IActionResult> OnPostStartEditAsync(string? baseRef, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		if (!await LoadStateAsync(ct)) return Page();
+
+		try
+		{
+			var def = await ResolveBaseAsync(baseRef, ct);
+			Mode = EditorMode.Edit;
+			DefinitionJson = MethodologyWire.ToJson(
+				MethodologyWire.ProjectDefinition(def, version: 0, created: null, updated: null));
+			PreviewJson = PreviewOf(def);
+		}
+		catch (ArgumentException ex)
+		{
+			Mode = EditorMode.Base;
+			await LoadBasesAsync(ct);
+			ErrorMessage = ex.Message;
+		}
 		return Page();
 	}
 
@@ -93,6 +181,7 @@ public sealed class ProjectMethodologyModel : PageModel
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await LoadStateAsync(ct)) return Page();
+		Mode = EditorMode.Edit;
 
 		try
 		{
@@ -116,6 +205,7 @@ public sealed class ProjectMethodologyModel : PageModel
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await LoadStateAsync(ct)) return Page();
 		KeepInput(definitionJson, migrationJson, version);
+		Mode = EditorMode.Edit;
 
 		try
 		{
@@ -123,6 +213,32 @@ public sealed class ProjectMethodologyModel : PageModel
 		}
 		catch (ArgumentException ex)
 		{
+			ErrorMessage = ex.Message;
+		}
+		return Page();
+	}
+
+	// Wizard step 2 → 3: parse the document and render the confirm summary (kinds/statuses/
+	// transitions counts, the gates, the effects) with the JSON carried in hidden fields.
+	// Parse failures fall back to the editor with the message; the DEEP validation
+	// (integrity + live-node compatibility) still happens in the service on Save.
+	public async Task<IActionResult> OnPostConfirmAsync(string? definitionJson, string? migrationJson, long version, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		if (!await LoadStateAsync(ct)) return Page();
+		KeepInput(definitionJson, migrationJson, version);
+
+		try
+		{
+			var def = MethodologyWire.ParseDocument(definitionJson);
+			MethodologyWire.ParseMigrationDocument(migrationJson); // surface bad migration JSON now, not on save
+			Mode = EditorMode.Confirm;
+			ConfirmName = def.Name;
+			Summary = SummaryOf(def);
+		}
+		catch (ArgumentException ex)
+		{
+			Mode = EditorMode.Edit;
 			ErrorMessage = ex.Message;
 		}
 		return Page();
@@ -146,6 +262,7 @@ public sealed class ProjectMethodologyModel : PageModel
 		{
 			if (!await LoadStateAsync(ct)) return Page();
 			KeepInput(definitionJson, migrationJson, version);
+			Mode = EditorMode.Edit;
 			ErrorMessage = ex.Message;
 			return Page();
 		}
@@ -156,7 +273,7 @@ public sealed class ProjectMethodologyModel : PageModel
 	// Delete the stored definition — revert the project to the builtin presets. The service
 	// door validates live nodes against the preset resolution first (an incompatible node
 	// rejects with a clear message) and applies the same version watermark as a save; any
-	// rejection rerenders with the stored state intact and the service's message.
+	// rejection rerenders the view mode with the stored state intact and the service's message.
 	public async Task<IActionResult> OnPostDeleteAsync(long version, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
@@ -168,7 +285,9 @@ public sealed class ProjectMethodologyModel : PageModel
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{
 			if (!await LoadStateAsync(ct)) return Page();
+			Mode = Stored is not null ? EditorMode.View : EditorMode.Cta;
 			PrefillStored();
+			if (Stored is not null) Summary = SummaryOf(Stored.Definition);
 			ErrorMessage = ex.Message;
 			return Page();
 		}
@@ -187,7 +306,7 @@ public sealed class ProjectMethodologyModel : PageModel
 	}
 
 	// The stored definition rendered into the editor (document prefill + preview) — the GET
-	// state and the delete-rejected state show the same thing.
+	// states and the delete-rejected state show the same thing.
 	void PrefillStored()
 	{
 		if (Stored is null) return;
@@ -205,15 +324,89 @@ public sealed class ProjectMethodologyModel : PageModel
 		Version = version;
 	}
 
+	// The base picker's options: every builtin provisioning preset, then every OTHER
+	// project's stored definition (the admin reuses a methodology already authored
+	// elsewhere) — each with its graph docs for the per-card SVG preview.
+	async Task LoadBasesAsync(CancellationToken ct)
+	{
+		var options = new List<BaseOption>();
+		var previews = new List<(string Ref, IEnumerable<(BoardWorkflowView View, IReadOnlyList<string> EffectNotes)> Views)>();
+
+		foreach (var p in MethodologyPresets.ProvisioningPresets)
+		{
+			var slug = $"preset:{p.Slug}";
+			options.Add(new(slug, $"{p.DisplayName} — builtin preset", p.Description));
+			previews.Add((slug, GraphViews(MethodologyPresets.RenderPresetDefinition(p.Slug))));
+		}
+
+		var projects = await _db.Projects.Where((Project p) => p.Key != ProjectKey)
+			.OrderBy(p => p.Key).ToListAsync(ct);
+		foreach (var p in projects)
+		{
+			var view = await _tasks.GetMethodologyDefinitionAsync(p.Key, ct);
+			if (view is null) continue;
+			var slug = $"def:{p.Key}";
+			options.Add(new(slug,
+				$"{view.Definition.Name} — definition of project {p.Key}",
+				$"User definition (version {view.Version}) — kinds: {string.Join(", ", view.Definition.Kinds.Select(k => k.Kind))}."));
+			previews.Add((slug, GraphViews(view.Definition)));
+		}
+
+		Bases = options;
+		BasePreviewsJson = WorkflowGraphJson.SerializeBases(previews);
+	}
+
+	// Resolve a base picker choice: `preset:<slug>` renders the builtin preset as a
+	// document; `def:<projectKey>` copies that project's stored definition.
+	async Task<MethodologyDefinition> ResolveBaseAsync(string? baseRef, CancellationToken ct)
+	{
+		var slug = (baseRef ?? string.Empty).Trim();
+		if (slug.StartsWith("preset:", StringComparison.Ordinal))
+			return MethodologyPresets.RenderPresetDefinition(slug["preset:".Length..]);
+		if (slug.StartsWith("def:", StringComparison.Ordinal))
+		{
+			var projectKey = slug["def:".Length..];
+			var view = await _tasks.GetMethodologyDefinitionAsync(projectKey, ct);
+			return view?.Definition
+				?? throw new ArgumentException($"project '{projectKey}' has no stored methodology definition");
+		}
+		throw new ArgumentException("pick a base to start from (a builtin preset or an existing definition)");
+	}
+
 	// Project the definition onto the workflow-graph doc array the SVG renderer consumes —
 	// per kind, per workflow block, through the SAME WorkflowGraphJson mapping the per-type
 	// workflow modal uses. Kind-level transition effects have no edge to live on, so each
 	// kind carries them as pre-phrased sentences (the guide's own phrasing) the preview
 	// renders as an annotation list under the kind's graphs.
 	static string PreviewOf(MethodologyDefinition def) =>
-		WorkflowGraphJson.SerializeMany(def.Kinds.Select(k => (
+		WorkflowGraphJson.SerializeMany(GraphViews(def));
+
+	static IEnumerable<(BoardWorkflowView View, IReadOnlyList<string> EffectNotes)> GraphViews(MethodologyDefinition def) =>
+		def.Kinds.Select(k => (
 			new BoardWorkflowView(
 				k.Kind,
 				[.. k.Workflows.Select(w => new WorkflowBlock(w.Types, w.ToWorkflow(w.Types.Count > 0 ? w.Types[0] : k.Kind)))]),
-			(IReadOnlyList<string>)[.. (k.Effects ?? []).Select(e => MethodologyGuide.EffectSentence(e))])));
+			(IReadOnlyList<string>)[.. (k.Effects ?? []).Select(e => MethodologyGuide.EffectSentence(e))]));
+
+	// The confirm/view digest: per kind, the counts plus every gated transition as one
+	// compact line and every effect as the guide sentence.
+	static IReadOnlyList<KindSummary> SummaryOf(MethodologyDefinition def) =>
+		[.. def.Kinds.Select(k => new KindSummary(
+			k.Kind,
+			k.Workflows.Sum(w => w.Types.Count),
+			k.Workflows.Sum(w => w.Statuses.Count),
+			k.Workflows.Sum(w => w.Transitions.Count),
+			[.. k.Workflows.SelectMany(w => w.Transitions).SelectMany(GateLines)],
+			[.. (k.Effects ?? []).Select(e => MethodologyGuide.EffectSentence(e))]))];
+
+	static IEnumerable<string> GateLines(MethodologyTransitionDef t)
+	{
+		var gates = new List<string>();
+		if (t.RequiresApproval) gates.Add(t.EnforceApproval ? "approve (enforced)" : "approve");
+		if (t.RequiresReason) gates.Add("reason");
+		if (t.PreconditionArtifact is not null) gates.Add($"artifact:{t.PreconditionArtifact}");
+		if (t.Checklist is { Count: > 0 }) gates.Add($"checklist ({t.Checklist.Count})");
+		if (gates.Count > 0)
+			yield return $"{t.From} → {t.To}: {string.Join(", ", gates)}";
+	}
 }
