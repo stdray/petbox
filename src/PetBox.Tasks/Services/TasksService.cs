@@ -2253,7 +2253,7 @@ public sealed partial class TasksService : ITasksService
 			// an empty NodeId and the /tasks/{board}/{slug} permalink 404s (slug→NodeId→GetNode).
 			// The issues board is a `simple` board → its preset vocab (Todo|InProgress|…), not the
 			// intake `reported`. Type `issue` is in the simple type set.
-			new PlanNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = "Todo", Type = "issue", Name = title.Trim(), Body = body, Priority = 50 },
+			new PlanNode { Board = board, Key = key, NodeId = Guid.NewGuid().ToString("N"), Version = 0, Status = "Todo", Type = "issue", Name = title.Trim(), Body = body, Priority = 0 },
 		}, partition: n => n.Board == board, ct: ct);
 		if (r.Applied) await _boards.TouchAsync(project, board, ct);
 		return key;
