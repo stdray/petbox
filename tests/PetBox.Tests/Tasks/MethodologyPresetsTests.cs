@@ -219,7 +219,8 @@ public sealed class MethodologyPresetsTests
 	];
 
 	// The full classic edge set: free among the open statuses, explicit closes (a reason
-	// into Cancelled/Duplicate), reopen-to-Todo from every terminal.
+	// only into Duplicate — Done and Cancelled are ungated), reopen-to-Todo from every
+	// terminal.
 	static IReadOnlyList<(string From, string To, bool Reason)> ClassicEdges()
 	{
 		var open = ClassicStatuses.Where(s => s.Kind == StatusKind.Open).Select(s => s.Slug).ToList();
@@ -230,7 +231,7 @@ public sealed class MethodologyPresetsTests
 		foreach (var from in open)
 		{
 			edges.Add((from, "Done", false));
-			edges.Add((from, "Cancelled", true));
+			edges.Add((from, "Cancelled", false));
 			edges.Add((from, "Duplicate", true));
 		}
 		foreach (var terminal in new[] { "Done", "Cancelled", "Duplicate" })
@@ -241,8 +242,8 @@ public sealed class MethodologyPresetsTests
 	[Fact]
 	public void ClassicPreset_Snapshot_Statuses_Transitions_Gates()
 	{
-		// Every type resolves the same status vocabulary and edge set (the checklist is the
-		// bug block's only difference, and it lives on the DEFINITION data, not the FSM).
+		// Every type resolves the SAME status vocabulary and edge set — type is a label
+		// over one FSM, not a branch.
 		foreach (var type in new[] { "task", "feature", "bug" })
 		{
 			var wf = Runtime.For("classic", type)!;
@@ -250,6 +251,9 @@ public sealed class MethodologyPresetsTests
 			wf.Initial.Should().Be("Backlog");
 			wf.Transitions.Select(t => (t.From, t.To, t.RequiresReason))
 				.Should().BeEquivalentTo(ClassicEdges(), $"classic/{type} edges are the snapshot");
+			// Duplicate is the ONE reason-gated target (a duplicate without a pointer to
+			// the original is useless; Cancelled closes reason-free, the GitHub way).
+			wf.Transitions.Where(t => t.RequiresReason).Should().OnlyContain(t => t.To == "Duplicate");
 			// No approval gates at all, no precondition artifacts — low-ceremony by design.
 			wf.Transitions.Should().OnlyContain(t =>
 				!t.RequiresApproval && !t.EnforceApproval && t.PreconditionArtifact == null);
@@ -258,41 +262,46 @@ public sealed class MethodologyPresetsTests
 	}
 
 	[Fact]
-	public void ClassicPreset_TypeSelectsBlock_UnknownTypeRejected_UntypedDefaults()
+	public void ClassicPreset_SingleBlock_TypeIsLabel_UnknownTypeRejected()
 	{
-		// Untyped resolves the first block's default type (quick-add contract)...
+		// Untyped resolves the default type (quick-add contract)...
 		var untyped = Runtime.For("classic", null)!;
 		untyped.Type.Should().Be("task");
 		untyped.Initial.Should().Be("Backlog");
-		// ...but a NON-EMPTY unknown type is ambiguous across the two blocks → null,
-		// the same "type required" posture as work (the engine names the valid types).
+		// ...and the type VOCABULARY is still a door: an out-of-vocab type yields null —
+		// classic is strict like work (the engine names the valid types), even though the
+		// single block would fit any label.
 		Runtime.For("classic", "banana").Should().BeNull();
-		// Two blocks: task|feature share one FSM, bug carries its own (for the checklist).
-		Runtime.Blocks("classic").Should().HaveCount(2);
+		// ONE block: task|feature|bug are labels over the same FSM (owner review: identical
+		// per-type state machines are one state machine).
+		var block = Runtime.Blocks("classic").Should().ContainSingle().Subject;
+		block.Types.Should().Equal("task", "feature", "bug");
 		MethodologyPresets.ParseKind("classic").Should().Be(BoardKind.Classic);
 	}
 
-	const string BugReproChecklistItem =
-		"Есть воспроизведение бага, или зафиксирована причина, почему воспроизведения нет";
-
 	[Fact]
-	public void ClassicPreset_BugChecklist_OnStartOfWorkEdgesOnly()
+	public void ClassicPreset_NoChecklists_AnywhereInTheKind()
 	{
+		// The former bug-only repro checklist is GONE from the preset (its semantics moved
+		// to a deliberation idea) — no classic transition carries checklist data, so the
+		// task and bug renderings are identical by construction.
 		var kind = MethodologyPresets.KindDef(BoardKind.Classic);
 		kind.QuickAddAllowed.Should().BeTrue();
+		kind.Workflows.Should().ContainSingle().Which.Transitions
+			.Should().OnlyContain(t => t.Checklist == null || t.Checklist.Count == 0);
+	}
 
-		// The bug block carries the repro checklist on the start-of-work edges ONLY
-		// (Backlog|Todo → InProgress); the rework return (InReview → InProgress) is free.
-		var bug = kind.Workflows.Single(b => b.Types.Contains("bug"));
-		var checklisted = bug.Transitions.Where(t => t.Checklist is { Count: > 0 }).ToList();
-		checklisted.Select(t => (t.From, t.To))
-			.Should().BeEquivalentTo(new[] { ("Backlog", "InProgress"), ("Todo", "InProgress") });
-		checklisted.Should().OnlyContain(t => t.Checklist.Count == 1 && t.Checklist[0] == BugReproChecklistItem);
-
-		// task|feature share the other block, with NO checklist anywhere.
-		var taskBlock = kind.Workflows.Single(b => b.Types.Contains("task"));
-		taskBlock.Types.Should().Equal("task", "feature");
-		taskBlock.Transitions.Should().OnlyContain(t => t.Checklist == null || t.Checklist.Count == 0);
+	[Fact]
+	public void ClassicPreset_LiveBoards_EveryPreReworkStatusStillResolves()
+	{
+		// Rework guarantee: the status vocabulary is unchanged, so a live node parked in
+		// ANY status — from either former block — stays valid under the single block.
+		foreach (var type in new[] { "task", "feature", "bug" })
+		{
+			var wf = Runtime.For("classic", type)!;
+			foreach (var slug in new[] { "Backlog", "Todo", "InProgress", "InReview", "Done", "Cancelled", "Duplicate" })
+				wf.Statuses.Should().Contain(s => s.Slug == slug, $"a live {type} in {slug} must stay valid");
+		}
 	}
 
 	[Fact]
@@ -539,8 +548,8 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 	}
 
 	// The classic preset end-to-end through the service: standalone (non-singleton) board
-	// creation, the quick-add default, free open-status movement, the reason gate into the
-	// not-delivered terminals, the type-vocabulary door, the reopen edge.
+	// creation, the quick-add default, free open-status movement, the ungated Cancelled,
+	// the reason gate into Duplicate, the type-vocabulary door, the reopen edge.
 	[Fact]
 	public async Task Classic_Board_EndToEnd_QuickAdd_ReasonGate_TypeDoor()
 	{
@@ -557,12 +566,10 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		// Open statuses move freely (Backlog → InProgress skips Todo, no gate).
 		await Upsert("backlog", new NodePatch { Key = node.Key, Status = "InProgress", Version = node.Version });
 
-		// Cancelled demands a reason: a body-less status change is refused...
+		// Cancelled is UNGATED — a body-less status change applies (GitHub closes
+		// "not planned" without a mandatory reason).
 		var v1 = (await _tasks.GetAsync(Proj, "backlog")).Nodes.Single().Version;
-		var noReason = () => Upsert("backlog", new NodePatch { Key = node.Key, Status = "Cancelled", Version = v1 });
-		(await noReason.Should().ThrowAsync<ArgumentException>()).WithMessage("*requires a reason*");
-		// ...and the reason in the body lets the same transition apply.
-		await Upsert("backlog", new NodePatch { Key = node.Key, Status = "Cancelled", Version = v1, Body = "obsolete — superseded by the v2 flow" });
+		await Upsert("backlog", new NodePatch { Key = node.Key, Status = "Cancelled", Version = v1 });
 		(await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes.Single().Status.Should().Be("Cancelled");
 
 		// A closed node reopens to Todo — but ONLY to Todo (terminals are not free).
@@ -572,8 +579,16 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		await Upsert("backlog", new NodePatch { Key = node.Key, Status = "Todo", Version = v2 });
 		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single().Status.Should().Be("Todo");
 
-		// The type door: bug is a first-class type (its own block), an unknown type is
-		// refused naming the vocabulary (multi-block kinds are strict like work).
+		// Duplicate is the ONE reason-gated terminal (a duplicate without a pointer to the
+		// original is useless): refused body-less, applied with the reason in the body.
+		var v3 = (await _tasks.GetAsync(Proj, "backlog")).Nodes.Single().Version;
+		var noReason = () => Upsert("backlog", new NodePatch { Key = node.Key, Status = "Duplicate", Version = v3 });
+		(await noReason.Should().ThrowAsync<ArgumentException>()).WithMessage("*requires a reason*");
+		await Upsert("backlog", new NodePatch { Key = node.Key, Status = "Duplicate", Version = v3, Body = "duplicate of the v2-flow card on backlog2" });
+		(await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes.Single().Status.Should().Be("Duplicate");
+
+		// The type door: bug is a label in the ONE shared block, an unknown type is
+		// refused naming the vocabulary (classic is strict like work).
 		await Upsert("backlog", new NodePatch { Key = "b", Type = "bug", Title = "B", Body = "x" });
 		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single(n => n.Key == "b").Status.Should().Be("Backlog");
 		var badType = () => Upsert("backlog", new NodePatch { Key = "z", Type = "banana", Title = "Z", Body = "x" });
@@ -582,6 +597,27 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		// Free-form tags, like simple (classic declares no axes).
 		await Upsert("backlog", new NodePatch { Key = "t", Title = "T", Body = "x", Tags = ["severity:high", "urgent"] });
 		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single(n => n.Key == "t").Tags.Should().Equal("severity:high", "tag:urgent");
+	}
+
+	// Rework guarantee for LIVE boards: the status vocabulary did not change, so a node in
+	// every status — task or bug, from either former block — still writes and reads back
+	// through the service under the single-block classic.
+	[Fact]
+	public async Task Classic_NodeInEveryStatus_StillValid_UnderSingleBlock()
+	{
+		await _tasks.CreateBoardAsync(Proj, "backlog", "classic", null, null);
+		var statuses = new[] { "Backlog", "Todo", "InProgress", "InReview", "Done", "Cancelled", "Duplicate" };
+		foreach (var (status, i) in statuses.Select((s, i) => (s, i)))
+			await Upsert("backlog", new NodePatch
+			{
+				Key = $"n{i}",
+				Type = i % 2 == 0 ? "task" : "bug",
+				Status = status,
+				Title = status,
+				Body = "kept — the body doubles as the Duplicate reason",
+			});
+		(await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes
+			.Select(n => n.Status).Should().BeEquivalentTo(statuses);
 	}
 
 	[Fact]

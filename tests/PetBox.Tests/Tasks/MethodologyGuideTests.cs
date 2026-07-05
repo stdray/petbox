@@ -134,15 +134,18 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		// Simple's all-pairs block collapses instead of listing 20 edges.
 		md.Should().Contain("Transitions: free — any status may move to any other (Todo | InProgress | Blocked | Done | Cancelled)");
 
-		// classic (preset-classic): both blocks render (task|feature shared FSM, bug on its
-		// own for the checklist), the reason gates into the not-delivered terminals, and the
-		// bug repro checklist as a convention block.
-		md.Should().Contain("### Workflow: task | feature");
-		md.Should().Contain("### Workflow: bug");
+		// classic (preset-classic, reworked): ONE workflow section for all types — task,
+		// feature and bug are labels over the same FSM, so the task and bug renderings
+		// can't diverge. The reason gate exists only INTO Duplicate (Cancelled closes
+		// reason-free, the GitHub way) and no checklist renders anywhere (the bug repro
+		// checklist left the preset for a deliberation idea).
+		md.Should().Contain("### Workflow: task | feature | bug");
+		md.Should().NotContain("### Workflow: bug");
 		md.Should().Contain("- Types: task (default), feature, bug");
-		md.Should().Contain("InProgress -> Cancelled requires a reason");
-		md.Should().Contain("Before Todo -> InProgress confirm (convention — the server does not check these):");
-		md.Should().Contain("Есть воспроизведение бага, или зафиксирована причина, почему воспроизведения нет");
+		md.Should().Contain("InProgress -> Duplicate requires a reason");
+		md.Should().NotContain("Cancelled requires a reason");
+		md.Should().NotContain("convention — the server does not check these");
+		md.Should().NotContain("Есть воспроизведение бага, или зафиксирована причина, почему воспроизведения нет");
 
 		var inv = Invariants(guide);
 		inv.Should().Contain(("work", "approval_gate", "Review -> Done"));
@@ -156,13 +159,13 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		inv.Should().Contain(("work", "tag_axes", "area|concern"));
 		inv.Should().NotContain(i => i.Kind == "simple" && i.Rule == "tag_axes", "simple declares no axes");
 
-		// classic's gates, machine-readable: reason gates + the bug checklist; no axes, no
-		// approval gate anywhere in the kind.
-		inv.Should().Contain(("classic", "reason_required", "Todo -> Cancelled"));
+		// classic's gates, machine-readable: the Duplicate reason gate ONLY — no Cancelled
+		// reasons, no checklist, no axes, no approval gate anywhere in the kind.
+		inv.Should().Contain(("classic", "reason_required", "Todo -> Duplicate"));
 		inv.Should().Contain(("classic", "reason_required", "InReview -> Duplicate"));
-		inv.Should().Contain(("classic", "checklist",
-			"Todo -> InProgress: Есть воспроизведение бага, или зафиксирована причина, почему воспроизведения нет"));
-		inv.Should().NotContain(i => i.Kind == "classic" && (i.Rule == "tag_axes" || i.Rule.StartsWith("approval_gate")));
+		inv.Should().NotContain(i => i.Kind == "classic" && i.Rule == "reason_required" && i.Detail.EndsWith("Cancelled"));
+		inv.Should().NotContain(i => i.Kind == "classic" &&
+			(i.Rule == "checklist" || i.Rule == "tag_axes" || i.Rule.StartsWith("approval_gate")));
 	}
 
 	// (b) a definition kind renders its gates/constraints/axes from DATA — the same renderer,

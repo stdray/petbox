@@ -60,9 +60,11 @@ public static class MethodologyPresets
 	// "not planned"/"duplicate", Linear's Canceled/Duplicate). Transitions are FREE among
 	// the OPEN statuses (Jira's default workflow allows all transitions; Linear/GitHub
 	// don't gate status moves — low ceremony wins); terminals are reached EXPLICITLY, with
-	// a reason required into Cancelled/Duplicate, and a closed node reopens to Todo (the
-	// GitHub reopen). No approval gates anywhere, no link constraints, no effects, free-form
-	// tags — and NO quartet semantics (no singleton rule, no auto-wire), same as `simple`.
+	// a reason required only INTO Duplicate (a duplicate without a pointer to the original
+	// is useless; Cancelled needs none — GitHub closes "not planned" without a mandatory
+	// reason), and a closed node reopens to Todo (the GitHub reopen). No approval gates
+	// anywhere, no link constraints, no effects, no checklists, free-form tags — and NO
+	// quartet semantics (no singleton rule, no auto-wire), same as `simple`.
 	static readonly WorkflowStatus[] ClassicStatuses =
 	[
 		new("Backlog", "Backlog", StatusKind.Open),
@@ -74,33 +76,20 @@ public static class MethodologyPresets
 		new("Duplicate", "Duplicate", StatusKind.TerminalCancel),
 	];
 
-	// The bug-only start-of-work checklist (guide-level convention — the server does not
-	// enforce checklists): a bug needs a reproduction before work starts, or a recorded
-	// reason why none exists.
-	const string BugReproChecklistItem =
-		"Есть воспроизведение бага, или зафиксирована причина, почему воспроизведения нет";
-
 	// Classic's edge set: all ordered pairs among the OPEN statuses (free movement), every
-	// open status may close explicitly (Done ungated; Cancelled/Duplicate demand a reason),
-	// and each terminal reopens to Todo. `bugChecklist` attaches the repro checklist to the
-	// start-of-work edges (Backlog|Todo → InProgress) — the bug block's only difference.
-	// InReview → InProgress carries no checklist even for bugs: it is the rework return,
-	// the reproduction question was already settled when work first started.
-	static List<MethodologyTransitionDef> ClassicTransitions(bool bugChecklist)
+	// open status may close explicitly (Done and Cancelled ungated; Duplicate demands a
+	// reason — the pointer to the original), and each terminal reopens to Todo.
+	static List<MethodologyTransitionDef> ClassicTransitions()
 	{
 		var open = ClassicStatuses.Where(s => s.Kind == StatusKind.Open).Select(s => s.Slug).ToList();
 		var edges = new List<MethodologyTransitionDef>();
 		foreach (var from in open)
 			foreach (var to in open.Where(t => t != from))
-				edges.Add(new(from, to)
-				{
-					Checklist = bugChecklist && to == "InProgress" && from is "Backlog" or "Todo"
-						? [BugReproChecklistItem] : [],
-				});
+				edges.Add(new(from, to));
 		foreach (var from in open)
 		{
 			edges.Add(new(from, "Done"));
-			edges.Add(new(from, "Cancelled", RequiresReason: true));
+			edges.Add(new(from, "Cancelled"));
 			edges.Add(new(from, "Duplicate", RequiresReason: true));
 		}
 		foreach (var terminal in new[] { "Done", "Cancelled", "Duplicate" })
@@ -108,13 +97,13 @@ public static class MethodologyPresets
 		return edges;
 	}
 
-	// task|feature share one block; `bug` is its OWN block with the same statuses/edges
-	// because the checklist is per-transition data — on the shared block it would bind
-	// every type. Block order matters: task is first ⇒ the quick-add/untyped default.
+	// ONE block for every type: task|feature|bug are labels over the same FSM (owner
+	// review: two identical state machines are one state machine — the former bug-only
+	// repro checklist left the preset for a deliberation idea, and with it the only reason
+	// to split). Type order matters: task is first ⇒ the quick-add/untyped default.
 	static readonly MethodologyKindDef ClassicKind = new("classic", QuickAddAllowed: true,
 	[
-		new MethodologyWorkflowDef(["task", "feature"], ClassicStatuses, ClassicTransitions(bugChecklist: false)),
-		new MethodologyWorkflowDef(["bug"], ClassicStatuses, ClassicTransitions(bugChecklist: true)),
+		new MethodologyWorkflowDef(["task", "feature", "bug"], ClassicStatuses, ClassicTransitions()),
 	]);
 
 	// WORK reuses the EXISTING status vocabulary (Pending/InProgress/Done/Blocked/
@@ -291,10 +280,13 @@ public static class MethodologyPresets
 	// hosts one state machine — type is a label, not a branch, so any/empty type resolves
 	// the one FSM (the historical catalog semantics: an untyped or oddly-typed node on a
 	// spec/ideas/intake/simple board still resolves its kind's workflow; simple's type
-	// VOCABULARY is enforced separately at the write door). A MULTI-BLOCK non-Work kind
-	// (classic) is lenient only for the EMPTY type (→ the first block's default type); a
-	// non-empty type must select its block — an unknown type is ambiguous across blocks,
-	// so it yields null like Work does.
+	// VOCABULARY is enforced separately at the write door). Classic is single-block too,
+	// but its type vocabulary is enforced HERE: empty resolves the default type, an
+	// out-of-vocab type yields null naming the valid ones — strict like Work, without a
+	// second write-door case. A MULTI-BLOCK non-Work kind (none among the presets today;
+	// the resolution stays preset-agnostic) is lenient only for the EMPTY type (→ the
+	// first block's default type); a non-empty type must select its block — an unknown
+	// type is ambiguous across blocks, so it yields null like Work does.
 	public static Workflow? For(BoardKind kind, string? type)
 	{
 		var def = KindDef(kind);
@@ -303,7 +295,8 @@ public static class MethodologyPresets
 		var label = type.ToLowerInvariant();
 		var block = def.Workflows.FirstOrDefault(b => b.Types.Contains(label, StringComparer.OrdinalIgnoreCase));
 		if (block is not null) return block.ToWorkflow(label);
-		return kind != BoardKind.Work && def.Workflows.Count == 1 ? def.Workflows[0].ToWorkflow(label) : null;
+		return kind is not BoardKind.Work and not BoardKind.Classic && def.Workflows.Count == 1
+			? def.Workflows[0].ToWorkflow(label) : null;
 	}
 
 	// All workflows hosted by a kind, one per type slug (status-filter validation).
