@@ -10,13 +10,14 @@ namespace PetBox.Core.Data;
 //   CASCADED (rows removed here): ApiKeys, HealthEndpoints, DataDbs, DataTables,
 //     SavedQueries, ShareLinks, Logs (LogMeta), TaskBoards (meta), MemoryStores (meta),
 //     Relations, project-scoped Settings, and the Project row itself.
-//   NOT cascaded (per-project *files* on disk): DataDb and Log files are reclaimed by the
-//     existing orphan-cleanup background services once their metadata rows are gone
-//     (PetBox.Data.OrphanCleanupService / PetBox.Log.Core.LogOrphanCleanupService). Task
-//     board / memory store / session `.db` files have NO such reclaimer and are left in
-//     place — a follow-up may add file cleanup. HealthReports (tag-based, no ProjectKey
-//     column) and ConfigBindings (tag-based, per-workspace file) are not FK'd to a project
-//     and are not touched here.
+//   NOT cascaded here (per-project *files* on disk): every module reclaims its own files
+//     eventually-consistently via a background orphan-cleanup service once the owning rows/
+//     project are gone — DataDb (PetBox.Data.OrphanCleanupService), Log
+//     (PetBox.Log.Core.LogOrphanCleanupService), and task-board / memory-store / session
+//     `.db` files (PetBox.Tasks/Memory/Sessions *OrphanCleanupService, via
+//     ProjectFileOrphans — card ui-project-delete-orphan-files). HealthReports (tag-based,
+//     no ProjectKey column) and ConfigBindings (tag-based, per-workspace file) are not FK'd
+//     to a project and are not touched here.
 public static class ProjectDeletion
 {
 	// Reserved built-in projects that must never be deleted. Mirrors the "$system" guard

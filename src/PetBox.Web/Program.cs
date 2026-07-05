@@ -205,6 +205,15 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Deploy.Contract.IDeployService, PetBox.Deploy.Services.DeployService>();
 		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Deploy))
 			builder.Services.AddHostedService<PetBox.Deploy.Services.DeployFailoverSweeper>();
+		// Orphan file reclamation for the per-project temporal stores (tasks / memory /
+		// sessions). ProjectDeletion cascades away a deleted project's Core-DB metadata but
+		// leaves its on-disk `.db` files behind; these mop them up eventually-consistently,
+		// mirroring the Data/Log orphan services. Unconditional data hygiene (like
+		// BackupService) — the factories above are unconditional, and a file can outlive a
+		// since-disabled feature.
+		builder.Services.AddHostedService<PetBox.Tasks.Data.TaskBoardOrphanCleanupService>();
+		builder.Services.AddHostedService<PetBox.Memory.Data.MemoryOrphanCleanupService>();
+		builder.Services.AddHostedService<PetBox.Sessions.Data.SessionOrphanCleanupService>();
 		// Periodic VACUUM INTO snapshots of every internal db; unconditional (data
 		// safety is cross-cutting, not feature-gated).
 		builder.Services.AddHostedService(sp => new PetBox.Core.Data.BackupService(
@@ -496,27 +505,27 @@ public partial class Program
 
 		MigrationRunner.Run(connectionString);
 
-			// Deploy: single fleet-wide db (data/deploy.db). Ensure its schema once at
-			// startup (the per-project stores ensure lazily via their factories instead).
-			PetBox.Deploy.Data.DeploySchema.Ensure($"Data Source={Path.Combine(dataDir, "deploy.db")};Cache=Shared");
+		// Deploy: single fleet-wide db (data/deploy.db). Ensure its schema once at
+		// startup (the per-project stores ensure lazily via their factories instead).
+		PetBox.Deploy.Data.DeploySchema.Ensure($"Data Source={Path.Combine(dataDir, "deploy.db")};Cache=Shared");
 
-			// One-time, idempotent: fold legacy per-board task files (tasks/<proj>/<board>.db)
-			// into the per-project file (tasks/<proj>.db). Keeps originals (renamed .migrated)
-			// and reconciles row counts; the pre-migration snapshot above is the safety net.
-			var tasksFactory = app.Services.GetRequiredService<IScopedDbFactory<PetBox.Tasks.Data.TasksDb>>();
-			var tasksMigLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.LegacyMigration");
-			// Returns the count migrated; the migrator logs each board itself, so ignore it here.
-			new PetBox.Tasks.Data.LegacyTaskFileMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, tasksMigLog).Migrate();
+		// One-time, idempotent: fold legacy per-board task files (tasks/<proj>/<board>.db)
+		// into the per-project file (tasks/<proj>.db). Keeps originals (renamed .migrated)
+		// and reconciles row counts; the pre-migration snapshot above is the safety net.
+		var tasksFactory = app.Services.GetRequiredService<IScopedDbFactory<PetBox.Tasks.Data.TasksDb>>();
+		var tasksMigLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.LegacyMigration");
+		// Returns the count migrated; the migrator logs each board itself, so ignore it here.
+		new PetBox.Tasks.Data.LegacyTaskFileMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, tasksMigLog).Migrate();
 
-			// One-time, idempotent (spec-flat-tags): convert legacy path-keyed nodes to flat
-			// slugs + synthesize part_of edges. Runs after the legacy fold so every board is in
-			// its per-project file; needs PetBoxDb for the part_of edges (in petbox.db).
-			using (var flatScope = app.Services.CreateScope())
-			{
-				var relations = new PetBox.Tasks.Data.RelationStore(flatScope.ServiceProvider.GetRequiredService<PetBoxDb>());
-				var flatLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.FlatNodeMigration");
-				new PetBox.Tasks.Data.FlatNodePartOfMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, relations, flatLog).Migrate();
-			}
+		// One-time, idempotent (spec-flat-tags): convert legacy path-keyed nodes to flat
+		// slugs + synthesize part_of edges. Runs after the legacy fold so every board is in
+		// its per-project file; needs PetBoxDb for the part_of edges (in petbox.db).
+		using (var flatScope = app.Services.CreateScope())
+		{
+			var relations = new PetBox.Tasks.Data.RelationStore(flatScope.ServiceProvider.GetRequiredService<PetBoxDb>());
+			var flatLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.FlatNodeMigration");
+			new PetBox.Tasks.Data.FlatNodePartOfMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, relations, flatLog).Migrate();
+		}
 
 
 		using (var scope = app.Services.CreateScope())

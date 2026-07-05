@@ -52,4 +52,18 @@ public static class ScopedDbFiles
 			.Select(n => n!)
 			.ToList();
 	}
+
+	// Enumerates the scope keys of top-level `{baseDir}/{scopeKey}.db` files — the
+	// single-file-per-scope layout (name == null) used by the tasks/sessions modules.
+	// The scope key is the file name without extension; sidecars (.db-wal/.db-shm)
+	// don't match `*.db` and are skipped.
+	public static IReadOnlyList<string> ListRootScopeKeys(string baseDir)
+	{
+		if (!Directory.Exists(baseDir)) return [];
+		return Directory.GetFiles(baseDir, "*.db")
+			.Select(Path.GetFileNameWithoutExtension)
+			.Where(n => !string.IsNullOrEmpty(n))
+			.Select(n => n!)
+			.ToList();
+	}
 }
