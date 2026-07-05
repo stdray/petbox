@@ -164,21 +164,44 @@ public sealed partial class TasksService : ITasksService
 	// Pipeline order of the quartet kinds.
 	static readonly BoardKind[] Quartet = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work];
 
-	public async Task<MethodologyView> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default)
+	public async Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default)
 	{
 		// The preset selects WHICH board kinds to provision (default = the quartet, behavior
 		// unchanged); an unknown slug is rejected before any board is created.
-		var kinds = MethodologyPresets.ResolveProvisioningPreset(preset).Kinds;
+		var provisioning = MethodologyPresets.ResolveProvisioningPreset(preset);
 		var boards = await _boards.ListAsync(projectKey, ct);
-		foreach (var kind in kinds)
+		var createdKinds = new HashSet<BoardKind>();
+		foreach (var kind in provisioning.Kinds)
 		{
 			if (boards.Any(b => b.ClosedAt == null && MethodologyPresets.ParseKind(b.Kind) == kind)) continue;
 			var name = kind.ToString().ToLowerInvariant();
 			if (await _boards.ExistsAsync(projectKey, name, ct)) continue; // name taken by another board; leave it
 			await CreateBoardAsync(projectKey, name, name, $"methodology {name}", null, ct);
+			createdKinds.Add(kind);
 		}
 		await AutoWireSpecAsync(projectKey, ct);
-		return await GetMethodologyAsync(projectKey, ct: ct);
+
+		// Describe what THIS preset provisioned (methodology-enable-response-scope): the
+		// preset's own board(s) + workflow, re-read fresh so a name-taken skip reports Name:
+		// null honestly — NOT the quartet dump (GetMethodologyAsync's job; a non-quartet
+		// preset like `classic` has nothing to do with those four boards).
+		var runtime = await RuntimeAsync(projectKey, ct);
+		var after = await _boards.ListAsync(projectKey, ct);
+		var report = new List<MethodologyEnableBoard>(provisioning.Kinds.Count);
+		foreach (var kind in provisioning.Kinds)
+		{
+			var kindSlug = kind.ToString().ToLowerInvariant();
+			var board = after.FirstOrDefault(b => b.ClosedAt == null && MethodologyPresets.ParseKind(b.Kind) == kind);
+			var counts = EmptyCounts;
+			if (board is not null)
+			{
+				var view = await GetAsync(projectKey, board.Name, includeClosed: false, ct: ct);
+				counts = view.Nodes.GroupBy(n => n.Status, StringComparer.Ordinal)
+					.ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+			}
+			report.Add(new MethodologyEnableBoard(kindSlug, board?.Name, createdKinds.Contains(kind), counts, runtime.Blocks(kindSlug)));
+		}
+		return new MethodologyEnableResult(provisioning.Slug, report);
 	}
 
 	public Task<string?> ResolveWorkspaceAsync(string projectKey, CancellationToken ct = default) =>
@@ -1687,9 +1710,19 @@ public sealed partial class TasksService : ITasksService
 			type ??= "task";
 			if (!MethodologyPresets.SimpleTypes.Contains(type))
 				throw new ArgumentException($"invalid type '{type}' for a simple board; valid: {MethodologyPresets.ValidTypes(BoardKind.Simple)}");
-			node = node with { Type = type };
 		}
 		var wf = runtime.For(kindSlug, type);
+		// Materialize the resolved default type at WRITE time (spec quick-add-stores-default-
+		// type): a single-FSM kind (every preset kind but Work — ideas/spec/intake/classic)
+		// treats an empty type as its declared default for RESOLUTION (`wf` is non-null here
+		// even though `type` is still null), but until now only READS re-derived that default
+		// (RequireDefinitionLinks, below) — the STORED row (and so the UI) kept the empty
+		// string the caller sent. Persist the same default the resolution already uses, so the
+		// store/UI agree with it. Work and a definition-declared kind still demand an explicit
+		// type (`wf` stays null on an empty type there — WorkflowEngine.Validate rejects the
+		// write below, unchanged).
+		if (type is null && wf is not null) type = runtime.DefaultType(kindSlug);
+		if (type is not null) node = node with { Type = type };
 		var n = node.Status.Length > 0 ? node : node with { Status = wf?.Initial ?? "Pending" };
 
 		var current = prior.GetValueOrDefault(n.Key);
