@@ -438,6 +438,9 @@ public partial class Program
 		// Server-side markdown renderer for read surfaces (reader-view detectability). Singleton:
 		// the Markdig pipeline + HtmlSanitizer are built once and are thread-safe to reuse.
 		builder.Services.AddSingleton<PetBox.Web.Rendering.IMarkdownRenderer, PetBox.Web.Rendering.MarkdownRenderer>();
+		// Loads the public /doc page bodies from their markdown canon (Pages/Doc/content/*.md),
+		// the single source those pages render through the shared renderer. Stateless — singleton.
+		builder.Services.AddSingleton<PetBox.Web.Pages.Doc.DocContent>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.

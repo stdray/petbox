@@ -52,6 +52,13 @@
 		<InternalsVisibleTo Include="PetBox.Tests" />
 	</ItemGroup>
 
+	<!-- The public /doc pages render from these markdown files at runtime (their single source —
+	     no hand-synced HTML duplicate). They MUST ship with the app so the pages resolve them
+	     under ContentRootPath in the published container; copy them to the output/publish tree. -->
+	<ItemGroup>
+		<Content Include="Pages\Doc\content\*.md" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+	</ItemGroup>
+
 	<!-- OTLP HTTP/Protobuf ingestion. `OpenTelemetry.Proto` NuGet doesn't exist; vendored
 	     opentelemetry-proto v1.5.0 files under Proto/ are compiled by Grpc.Tools at build.
 	     GrpcServices=None — we only need message types, not service stubs. -->

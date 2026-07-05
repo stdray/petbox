@@ -4,103 +4,11 @@
 	ViewData["Title"] = "Methodology cheatsheet — PetBox";
 	Layout = "_PublicLayout";
 }
-	<main class="prose prose-sm max-w-3xl mx-auto p-6" data-testid="doc-methodology">
+	@* Thin shell: the prose is the markdown canon Pages/Doc/content/methodology.md, rendered on the
+	   server through the shared IMarkdownRenderer (via _MdBody). No HTML duplication to hand-sync. *@
+	<main class="max-w-3xl mx-auto p-6" data-testid="doc-methodology">
 		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a></p>
-		<h1>Methodology cheatsheet (agent)</h1>
-		<p>
-			How to drive the spec / work / idea rails. This is the <strong>operational contract</strong>;
-			the reasoning behind it is on the <a href="@Routes.DocPhilosophy()">philosophy page</a>.
-			Call <code>tasks_workflow(projectKey, board)</code> any time to get the live statuses/transitions
-			for a board.
-		</p>
-
-		<h2>Boards have a <code>kind</code></h2>
-		<p>
-			Set <code>kind</code> on <code>tasks_board_create</code> (it can't be changed later). The kind drives
-			which task types, statuses, transitions and invariants apply. Default is <code>simple</code>.
-		</p>
-		<ul>
-			<li><strong><code>spec</code></strong> — the requirement tree (only DEFINED requirements). Node status <code>draft|defined|deprecated</code>. Each node also carries a COMPUTED <code>delivery</code> (see below).</li>
-			<li><strong><code>work</code></strong> — technical tasks, type <code>feature|bug|chore</code>. Status <code>Pending→InProgress→Review→Done</code> (+ <code>Blocked|Deferred|Cancelled</code>). A feature/bug MUST link a spec node (see spec-link); <code>chore</code> — internal engineering hygiene (tests, flakes, refactoring, infra) — shares the FSM but needs no spec link.</li>
-			<li><strong><code>ideas</code></strong> — deliberation, type <code>idea</code>. Status <code>raw→exploring→{rejected|deferred|accepted}</code>.</li>
-			<li><strong><code>intake</code></strong> — raw issues, type <code>issue</code>. Status <code>reported→triage→{confirmed|duplicate|wontfix}→done</code>.</li>
-			<li><strong><code>simple</code></strong> — a lightweight preset for ad-hoc/scratch work: type <code>task|bug|feature|chore|issue</code>, status <code>Todo→InProgress→Done</code> (+ <code>Blocked|Cancelled</code>) with FREE transitions (any valid status → any, no gates), and free-form tags. No spec/idea governance.</li>
-		</ul>
-		<p>
-			<strong>Standard boards.</strong> A project uses one board of each kind, named for its kind:
-			<code>ideas</code>, <code>spec</code>, <code>work</code>, <code>intake</code> (+ <code>simple</code>
-			scratch). Use those names so every agent and session finds the same boards.
-		</p>
-		<p>
-			<strong>The flow starts in <code>ideas</code>.</strong> A piece of work begins as a raw idea;
-			deliberating it (raw→exploring→accepted) is what <em>produces</em> the spec entries — the accepted
-			idea's conclusions become <code>spec</code> nodes, and <code>work</code> features implement those.
-			Don't invent spec out of thin air; let it fall out of an idea. (Capturing the deliberation itself —
-			raw idea / worked-out statement+decisions / spec-update plan — as a discussion thread on the idea is
-			coming; for now keep it in the idea's <code>body</code>.)
-		</p>
-
-		<h2>Addressing a node</h2>
-		<p>
-			Every node has a <strong>flat slug</strong> <code>key</code>
-			(<code>^[a-z][a-z0-9_-]{0,99}$</code>, board-unique). Hierarchy is the <code>partOf</code> field
-			(a parent slug or nodeId); cross-cutting grouping is <code>tags</code>. The slug is a stable anchor
-			you cite (it survives content edits; rename via <code>prevKey</code>). Give each node a short
-			<code>title</code> and a markdown <code>body</code>.
-		</p>
-		<pre><code>tasks_upsert board="spec" projectKey="&lt;proj&gt;" nodes=[
-  { "key":"auth", "status":"defined", "title":"Auth" },
-  { "key":"login", "partOf":"auth", "status":"defined", "title":"Login flow" }
-]</code></pre>
-
-		<h2>Links (relations)</h2>
-		<p>Edges bind to the stable <code>nodeId</code> (in every upsert/read response), so they survive renames. They are temporal — soft-closed, not deleted (history kept; <code>relations_list ... includeHistory=true</code>). <code>tasks_search</code> surfaces them inline per node: <code>spec</code> (what a task implements), <code>blockedBy</code>, and on spec nodes <code>linkedTasks</code> — each resolved to its board + slug + title.</p>
-		<p><strong>Finding the spec board:</strong> set it once per work board with <code>tasks_board_set_spec</code> (or <code>specBoard</code> on <code>board_create</code>); then <code>tasks_search</code>/<code>board_list</code> report it as <code>specBoard</code> and <code>specRef</code> is validated to point at that board. No mapping = the agent picks any <code>kind=spec</code> board and links by nodeId.</p>
-		<ul>
-			<li><strong><code>task_spec</code></strong> — set <code>specRef</code> (a spec node slug or nodeId) on a work feature/bug: links it to the spec node it implements. <strong>Required</strong> for a new work feature/bug (spec-link invariant — no work without a spec node); <code>chore</code> is exempt. The target is validated: it must be an existing node on a spec board (and on the board's <code>specBoard</code> if set).</li>
-			<li><strong><code>blocks</code></strong> — set <code>blockedBy</code> (a nodeId) on a work task you move to <code>Blocked</code>. A Blocked task MUST name a blocker.</li>
-			<li><strong><code>issue_task</code></strong> — a confirmed intake issue spawns a work task; link them so the issue auto-closes when the task is done.</li>
-			<li><strong><code>idea_spec</code></strong> — an accepted idea produced this spec node/version.</li>
-		</ul>
-
-		<h2>Effects (run automatically)</h2>
-		<ul>
-			<li>A work task → <code>Done</code> auto-closes any intake issue linked via <code>issue_task</code>.</li>
-			<li>A blocker → <code>Done</code> closes its <code>blocks</code> edges; a blocked task with no remaining blockers auto-moves <code>Blocked → InProgress</code>.</li>
-			<li>A spec node's <code>delivery</code> is COMPUTED from the tasks linked to it and its subtree: <code>not_started</code> (no feature tasks) / <code>in_progress</code> (some feature not Done) / <code>done</code> (all features Done, no open bug) / <code>done_with_defects</code> (all Done but an open bug). You never set <code>delivery</code> by hand.</li>
-		</ul>
-
-		<h2>Approve gate (convention)</h2>
-		<p>
-			An agent's ceiling on a work item is <strong><code>Review</code></strong> — mark a finished item
-			<code>Review</code>, never <code>Done</code>. Only the maintainer confirms <code>Done</code>.
-			(Enforced by convention today; the engine models it.)
-		</p>
-
-		<h2>What goes where</h2>
-		<ul>
-			<li><strong>idea</strong> (ideas board) — thinking in flux, an outcome to reach. Fast capture, no spec link.</li>
-			<li><strong>spec</strong> (spec board) — a DEFINED requirement. Changing a requirement = a new idea → a new spec version.</li>
-			<li><strong>work</strong> (work board) — a technical unit that implements a spec node (feature/bug, always links spec) or internal engineering hygiene (chore, no spec link).</li>
-			<li><strong>issue</strong> (intake board) — a raw report; triage to confirmed, then spawn work.</li>
-		</ul>
-		<p class="text-sm opacity-70">Fast capture lives on ideas/intake (no spec link); committed work lives on the work board (spec-linked). That separation is the point — see the <a href="@Routes.DocPhilosophy()">philosophy</a>.</p>
-
-		<h2>Right-size the rails</h2>
-		<p>Match the structure to the work — the full rails pay off on a long-lived, multi-agent project where the spec is the asset; don't over-ceremony a small one-off.</p>
-		<ul>
-			<li><strong>Scratch / spike / throwaway</strong> → one <code>simple</code> board. No idea, no spec, lightweight statuses. Use when the work is exploratory or won't be maintained.</li>
-			<li><strong>Small self-contained build</strong> (a small game, a script, a single feature) → start with a <em>short</em> idea on <code>ideas</code>, let it settle into a few <em>thin</em> <code>spec</code> leaves (acceptance criteria, one line each), then <code>work</code> features linked (<code>specBoard</code> set). Skip <code>intake</code> until reports actually arrive.</li>
-			<li><strong>Ongoing / multi-session / multi-agent project</strong> → the full rails: <code>ideas</code> → <code>spec</code> → <code>work</code> + <code>intake</code>, with deeper deliberation and a real requirement tree.</li>
-		</ul>
-		<p class="text-sm opacity-70">A tier scales <em>how deep</em> the idea and how thick the spec are — not whether you start from an idea. Only pure throwaway scratch skips the idea entirely (a <code>simple</code> board). The spec-link invariant on <code>work</code> holds at every tier — it's the forcing function.</p>
-
-		<h2>Tools</h2>
-		<ul>
-			<li><code>tasks_board_create(kind?, specBoard?) / board_list / board_delete / board_set_spec / board_close / board_reopen</code> — boards (all report kind, specBoard, closed).</li>
-			<li><code>tasks_search / node_get / upsert / delta</code> — nodes (key, nodeId, parentSlug, depth, status, type, title, body, priority, version; plus surfaced links and on spec boards <code>delivery</code>). <code>search</code> is the one read verb: without <code>q</code> a deterministic listing (board-scoped responses carry the board <code>kind</code>), with <code>q</code> a hybrid relevance search; both modes take <code>status</code>/<code>keys</code>/<code>under</code> filters and <code>sort</code>. It hides terminal nodes by default — pass <code>includeClosed=true</code>. <strong>Partial update:</strong> a field omitted from <code>upsert</code> keeps its prior value, so a status change needs only the key + <code>version</code> + <code>status</code>.</li>
-			<li><code>tasks_workflow</code> — the live statuses/transitions for a board's kind.</li>
-			<li><code>relations_create / list / delete</code> — typed edges (task_spec|issue_task|idea_spec|blocks|nfr|dup).</li>
-			<li><code>report_issue</code> — file a PetBox bug/issue to the maintainer's intake.</li>
-		</ul>
+		<article>
+			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = Model.Markdown, TestId = "doc-methodology-body" })" />
+		</article>
 	</main>
