@@ -24,6 +24,36 @@ Net: the client SDK collapses to **one thin core** (`PetBox.Client` — auth + t
 for the no-standard Data surface) plus the existing **MEC provider** (`PetBox.Client.Config`). There
 is no "uniform multi-language SDK" to build — that framing is retired.
 
+## OTLP ingest — the endpoints (no bespoke client)
+
+Because logs/traces/metrics target OTLP, any stock OTLP/HTTP exporter (protobuf body) ships them —
+PetBox writes no ingest client. Two endpoint families, both in `src/PetBox.Web/Ingestion/OtlpEndpoints.cs`:
+
+- **Path-based** — the destination log is explicit in the URL, one POST per signal:
+  ```
+  POST /v1/logs/{projectKey}/{logName}       (OTLP logs   → events)
+  POST /v1/traces/{projectKey}/{logName}     (OTLP traces → spans)
+  POST /v1/metrics/{projectKey}/{logName}    (OTLP metrics → metric points)
+  ```
+  Auth: the **ApiKey** policy (`X-Api-Key`, or `Authorization: Token|Bearer`), same key as CLEF ingest.
+  **Logs** additionally require an **`X-Service-Key`** header (a free string that tags the emitter — no
+  Service entity). **Traces and metrics do NOT require `X-Service-Key`** — the metrics form matches
+  traces here. The target `{logName}` must already exist (no auto-vivify → `404`); a malformed protobuf
+  body is `400`.
+- **Bare self-export** — for PetBox's OWN telemetry, where a stock OTLP exporter posts to the standard
+  paths with no project in the URL:
+  ```
+  POST /v1/logs      POST /v1/traces      POST /v1/metrics
+  ```
+  Auth: **`X-Seq-ApiKey`** (validated against `Seq:SelfLog:ApiKey`, mirroring the Seq self-log endpoint);
+  routes to the `$system` self-log. This is the endpoint the deploy-guide OTEL wiring targets
+  (`{endpoint}/v1/traces`, `/v1/metrics`, …).
+
+Ingested signals are then queryable via KQL over three tabular roots — `events` (logs), `spans`
+(traces), and **`metrics`** (metric points) — through REST `/api/logs/{projectKey}/query`, MCP
+`log_query`, and the logs UI. The `metrics` root exposes the same subset of the KQL surface as
+`events`/`spans`.
+
 ## Why config is differentiated (we did NOT adopt a config standard wholesale)
 
 Two config standards were evaluated as backend compat-endpoints and **both deferred**:

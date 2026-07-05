@@ -72,6 +72,14 @@ External URL без sentinel'а. Auth по-прежнему через `yb_key_s
 
 Для первого деплоя рекомендую **Option C** (минимум moving parts), потом **Option A** (`OTEL_ENDPOINT=self`) когда подтвердишь стабильность.
 
+**OTel metrics** (ingest-only): PetBox принимает OTLP **метрики** на `/v1/metrics/{projectKey}/{logName}`
+(ApiKey, как traces — `X-Service-Key` не нужен) и на bare `/v1/metrics` self-export (`X-Seq-ApiKey`),
+складывает в per-log MetricPoints и делает их queryable через KQL-корень `metrics`. Это приёмная
+сторона — любой pet со стоковым OTLP-metrics-экспортёром может слать метрики в PetBox, указав
+`{endpoint}/v1/metrics`. Сам **petbox-web метрики о себе НЕ экспортирует**: его self-export (`PETBOX_OTEL_*`
+выше) настроен только на traces (`.WithTracing`, без `.WithMetrics`), поэтому OTel-переменные деплоя
+по-прежнему касаются только спанов.
+
 ## Step 2 — сгенерировать admin password hash
 
 Локально (нужен .NET 10 SDK):
