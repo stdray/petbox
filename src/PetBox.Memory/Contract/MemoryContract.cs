@@ -31,6 +31,12 @@ public sealed record MemoryDelete(string Key, long Version);
 // storage form into the array the surface speaks).
 public sealed record MemoryEntryView(string Key, string Type, string Description, string Body, IReadOnlyList<string> Tags, long Version, string Metadata);
 
+// One server-paged slice of a store's active raw entries for the store detail page: the page
+// rows (ordered by Key), whether a further page exists, and the total matching the current
+// search. OFFSET/LIMIT at the query so the 200+-entry stores never load whole (spec
+// ui-list-pagination) — reaches the dead-tail keys by paging, not a title attribute.
+public sealed record MemoryEntryPage(IReadOnlyList<MemoryEntry> Entries, bool HasNext, int Total);
+
 // The raw temporal upsert/delta result, ready for an adapter to serialize.
 public sealed record MemoryUpsertOutcome(TemporalUpsertResult<MemoryEntry> Result);
 

@@ -63,6 +63,10 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 
 	// --- UI helper (store page renders the raw active entries) ---
 	Task<IReadOnlyList<MemoryEntry>> ListActiveEntriesAsync(string projectKey, string store, CancellationToken ct = default);
+	// Server-paged raw active entries for the store detail page, optionally narrowed by a
+	// substring over Key/Description/Body/Tags (case-insensitive LIKE). OFFSET/LIMIT at the
+	// query — the 200+-entry stores are reachable by paging, never loaded whole.
+	Task<MemoryEntryPage> ListActiveEntriesPageAsync(string projectKey, string store, string? search, int pageNum, int pageSize, CancellationToken ct = default);
 
 	// --- usage telemetry, read side (the writer is IMemoryUsageRecorder) ---
 	// Usage counters for the given keys (null = the whole store), keyed by entry key;

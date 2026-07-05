@@ -30,10 +30,23 @@ public sealed class TracesModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "log")]
 	public string? LogName { get; set; }
 
+	// Error-level filter: only traces whose worst span status is Error (StatusCode 2).
+	[BindProperty(SupportsGet = true, Name = "errorsOnly")]
+	public bool ErrorsOnly { get; set; }
+
+	// The paging arg is 'pageNum', not 'page' — 'page' is a reserved route-key in Razor
+	// Pages, so a ?page=N value never binds (see the Data-module table view lesson).
+	[BindProperty(SupportsGet = true, Name = "pageNum")]
+	public int PageNum { get; set; }
+
+	const int PageSize = 50;
+
 	public string EffectiveProjectKey { get; private set; } = "";
 	public string? SelectedLog { get; private set; }
 	public string? ProjectName { get; private set; }
+	public IReadOnlyList<string> AvailableLogs { get; private set; } = [];
 	public IReadOnlyList<TraceSummary> Traces { get; private set; } = [];
+	public bool HasNext { get; private set; }
 	public bool SchemaMissing { get; private set; }
 
 	public sealed record TraceSummary(string TraceId, string RootName, DateTime StartTime, TimeSpan Duration, int SpanCount, int WorstStatus);
@@ -47,15 +60,17 @@ public sealed class TracesModel : PageModel
 		ProjectName = project?.Name;
 
 		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
+		AvailableLogs = logs;
 		SelectedLog = !string.IsNullOrWhiteSpace(LogName) && logs.Contains(LogName, StringComparer.Ordinal)
 			? LogName
 			: logs.Contains(LogNames.Default, StringComparer.Ordinal) ? LogNames.Default : logs.FirstOrDefault();
 		if (SelectedLog is null) { SchemaMissing = true; return; }
 
+		if (PageNum < 0) PageNum = 0;
 		var logDb = _logStore.GetContext(EffectiveProjectKey, SelectedLog);
 		try
 		{
-			var grouped = await logDb.Spans
+			var q = logDb.Spans
 				.GroupBy(s => s.TraceId)
 				.Select(g => new
 				{
@@ -64,10 +79,20 @@ public sealed class TracesModel : PageModel
 					MaxEnd = g.Max(s => s.EndUnixNs),
 					Count = g.Count(),
 					WorstStatus = g.Max(s => s.StatusCode),
-				})
+				});
+			// Error filter runs at the query (a HAVING over the per-trace worst status), so
+			// paging counts filtered traces — never a client-side cull of a full page.
+			if (ErrorsOnly) q = q.Where(g => g.WorstStatus == 2);
+
+			var offset = PageNum * PageSize;
+			var grouped = await q
 				.OrderByDescending(g => g.MinStart)
-				.Take(100)
+				.Skip(offset)
+				.Take(PageSize + 1)
 				.ToListAsync(ct);
+
+			HasNext = grouped.Count > PageSize;
+			if (HasNext) grouped.RemoveAt(grouped.Count - 1);
 
 			var traceIds = grouped.Select(g => g.TraceId).ToList();
 			var roots = await logDb.Spans

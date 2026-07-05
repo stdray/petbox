@@ -88,6 +88,46 @@ public sealed class SessionStoreTests : IDisposable
 		(await _store.DeleteAsync("proj", "s1")).Should().BeFalse(); // idempotent
 	}
 
+	// spec ui-list-pagination: the sessions list pages server-side (OFFSET/LIMIT) and
+	// filters by a substring over SessionId/Agent — never loading the whole set to page.
+	[Fact]
+	public async Task ListPage_AppliesOffset_AndReportsHasNext()
+	{
+		for (var i = 1; i <= 12; i++)
+			await _store.UpsertAsync("proj", Row($"s{i:00}", "body"));
+
+		var p0 = await _store.ListPageAsync("proj", null, pageNum: 0, pageSize: 5);
+		p0.Total.Should().Be(12);
+		p0.HasNext.Should().BeTrue();
+		p0.Headers.Select(h => h.SessionId).Should().Equal("s01", "s02", "s03", "s04", "s05");
+
+		var p1 = await _store.ListPageAsync("proj", null, pageNum: 1, pageSize: 5);
+		p1.HasNext.Should().BeTrue();
+		p1.Headers.Select(h => h.SessionId).Should().Equal("s06", "s07", "s08", "s09", "s10");
+		// The second page is a different slice — the OFFSET actually moved.
+		p1.Headers.Should().NotContain(h => h.SessionId == "s01");
+
+		var p2 = await _store.ListPageAsync("proj", null, pageNum: 2, pageSize: 5);
+		p2.HasNext.Should().BeFalse(); // last (partial) page
+		p2.Headers.Select(h => h.SessionId).Should().Equal("s11", "s12");
+	}
+
+	[Fact]
+	public async Task ListPage_Search_NarrowsBySessionIdOrAgent()
+	{
+		await _store.UpsertAsync("proj", Row("alpha-1", "body"));
+		await _store.UpsertAsync("proj", Row("alpha-2", "body"));
+		await _store.UpsertAsync("proj", Row("beta-1", "body"));
+
+		var hit = await _store.ListPageAsync("proj", "alpha", pageNum: 0, pageSize: 25);
+		hit.Total.Should().Be(2);
+		hit.Headers.Select(h => h.SessionId).Should().Equal("alpha-1", "alpha-2");
+
+		// The Agent column is searchable too ("claude-code" on every seeded row).
+		var byAgent = await _store.ListPageAsync("proj", "claude", pageNum: 0, pageSize: 25);
+		byAgent.Total.Should().Be(3);
+	}
+
 	[Fact]
 	public async Task Upsert_AfterDelete_Resurrects()
 	{

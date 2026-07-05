@@ -2,13 +2,20 @@
 @model PetBox.Web.Pages.ProjectHome.MemoryStoreModel
 @{
 	ViewData["Title"] = $"{Model.Store} — Memory";
+
+	string PageHref(int pageNum)
+	{
+		var href = $"{Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, Model.Store)}?pageNum={pageNum}";
+		if (!string.IsNullOrWhiteSpace(Model.Query)) href += $"&q={Uri.EscapeDataString(Model.Query)}";
+		return href;
+	}
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
 	<a href="@Routes.ProjectMemory(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover opacity-70" data-testid="store-breadcrumb">memory</a>
 	<span class="opacity-40">/</span>
 	<h1 class="text-2xl font-semibold font-mono" data-testid="store-title">@Model.Store</h1>
-	<span class="badge badge-ghost">@Model.Entries.Count entr@(Model.Entries.Count == 1 ? "y" : "ies")</span>
+	<span class="badge badge-ghost" data-testid="store-total">@Model.Total entr@(Model.Total == 1 ? "y" : "ies")</span>
 </div>
 
 @if (Model.Aggregate is { TotalEntries: > 0 } agg)
@@ -39,9 +46,21 @@
 	</div>
 }
 
+<form method="get" class="mb-4 flex items-center gap-2" data-testid="store-search-form">
+	<input type="search" name="q" value="@Model.Query" placeholder="Search key, description, body or tags…"
+		class="input input-bordered input-sm flex-1 max-w-md" data-testid="store-search-input" />
+	<button type="submit" class="btn btn-sm btn-primary" data-testid="store-search-submit">Search</button>
+	@if (!string.IsNullOrWhiteSpace(Model.Query))
+	{
+		<a href="@Routes.ProjectMemoryStore(Model.WorkspaceKey, Model.ProjectKey, Model.Store)" class="btn btn-sm btn-ghost" data-testid="store-search-clear">Clear</a>
+	}
+</form>
+
 @if (Model.Entries.Count == 0)
 {
-	<div class="alert" data-testid="store-empty">This store has no active entries.</div>
+	<div class="alert" data-testid="store-empty">
+		@(string.IsNullOrWhiteSpace(Model.Query) ? "This store has no active entries." : "No entries match this search.")
+	</div>
 }
 else
 {
@@ -81,4 +100,26 @@ else
 			</li>
 		}
 	</ul>
+
+	<div class="flex items-center justify-between mt-4 text-sm">
+		<span class="opacity-60" data-testid="store-page-info">page @(Model.PageNum + 1) · @Model.Entries.Count of @Model.Total</span>
+		<div class="join">
+			@if (Model.PageNum > 0)
+			{
+				<a href="@PageHref(Model.PageNum - 1)" class="btn btn-sm join-item" data-testid="store-prev">‹ Prev</a>
+			}
+			else
+			{
+				<button class="btn btn-sm join-item btn-disabled" disabled>‹ Prev</button>
+			}
+			@if (Model.HasNext)
+			{
+				<a href="@PageHref(Model.PageNum + 1)" class="btn btn-sm join-item" data-testid="store-next">Next ›</a>
+			}
+			else
+			{
+				<button class="btn btn-sm join-item btn-disabled" disabled>Next ›</button>
+			}
+		</div>
+	</div>
 }

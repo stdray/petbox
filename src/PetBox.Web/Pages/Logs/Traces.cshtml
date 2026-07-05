@@ -2,6 +2,14 @@
 @model PetBox.Web.Pages.Logs.TracesModel
 @{
 	ViewData["Title"] = $"Traces — {Model.ProjectName ?? Model.EffectiveProjectKey}";
+
+	string PageHref(int pageNum)
+	{
+		var href = $"{Routes.ProjectTraces(Model.WorkspaceKey!, Model.EffectiveProjectKey)}?pageNum={pageNum}";
+		if (!string.IsNullOrWhiteSpace(Model.SelectedLog)) href += $"&log={Uri.EscapeDataString(Model.SelectedLog)}";
+		if (Model.ErrorsOnly) href += "&errorsOnly=true";
+		return href;
+	}
 }
 
 <div class="mb-2 flex items-baseline gap-3 flex-wrap">
@@ -9,6 +17,33 @@
 	<span class="text-sm opacity-60">Traces</span>
 </div>
 
+@if (Model.AvailableLogs.Count > 0)
+{
+	<form method="get" class="mb-3 flex items-center gap-3 flex-wrap" data-testid="traces-filter-form">
+		<label class="flex items-center gap-2 text-sm">
+			<span class="opacity-60">Log</span>
+			<select name="log" class="select select-bordered select-sm" data-testid="traces-log-select">
+				@foreach (var log in Model.AvailableLogs)
+				{
+					if (log == Model.SelectedLog)
+					{
+						<option value="@log" selected>@log</option>
+					}
+					else
+					{
+						<option value="@log">@log</option>
+					}
+				}
+			</select>
+		</label>
+		<label class="flex items-center gap-2 text-sm cursor-pointer">
+			<input type="checkbox" name="errorsOnly" value="true" class="checkbox checkbox-sm" data-testid="traces-errors-only"
+				@(Model.ErrorsOnly ? "checked" : "") />
+			<span>Errors only</span>
+		</label>
+		<button type="submit" class="btn btn-sm" data-testid="traces-filter-submit">Apply</button>
+	</form>
+}
 
 @if (Model.SchemaMissing)
 {
@@ -16,7 +51,7 @@
 }
 else if (Model.Traces.Count == 0)
 {
-	<div class="alert" data-testid="traces-empty">No traces.</div>
+	<div class="alert" data-testid="traces-empty">@(Model.ErrorsOnly ? "No error traces." : "No traces.")</div>
 }
 else
 {
@@ -56,5 +91,27 @@ else
 				}
 			</tbody>
 		</table>
+	</div>
+
+	<div class="flex items-center justify-between mt-3 text-sm">
+		<span class="opacity-60" data-testid="traces-page-info">page @(Model.PageNum + 1) · @Model.Traces.Count traces</span>
+		<div class="join">
+			@if (Model.PageNum > 0)
+			{
+				<a href="@PageHref(Model.PageNum - 1)" class="btn btn-sm join-item" data-testid="traces-prev">‹ Prev</a>
+			}
+			else
+			{
+				<button class="btn btn-sm join-item btn-disabled" disabled>‹ Prev</button>
+			}
+			@if (Model.HasNext)
+			{
+				<a href="@PageHref(Model.PageNum + 1)" class="btn btn-sm join-item" data-testid="traces-next">Next ›</a>
+			}
+			else
+			{
+				<button class="btn btn-sm join-item btn-disabled" disabled>Next ›</button>
+			}
+		</div>
 	</div>
 }
