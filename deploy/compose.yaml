@@ -1,0 +1,65 @@
+# PetBox prod deployment: the app + an offsite-backup sidecar.
+# Rendered/driven by the CI `deploy` job (see .github/workflows/ci.yml), which
+# supplies every ${VAR} from GitHub Actions secrets via the deploy shell env.
+# Bring up manually with:  docker compose -f deploy/compose.yaml up -d --build
+name: petbox
+
+services:
+  petbox:
+    image: ${PETBOX_IMAGE}
+    container_name: petbox
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8083:8080"   # loopback only — central Caddy terminates TLS
+    volumes:
+      - /opt/petbox/data:/app/data
+    environment:
+      Admin__Username: ${ADMIN_USER}
+      Admin__PasswordHash: ${ADMIN_PASS_HASH}
+      PETBOX_MASTER_KEY: ${MASTER_KEY}
+      Features__Config: "true"
+      Features__Logging: "true"
+      Features__Data: "true"
+      Features__Dashboard: "true"
+      Seq__SelfLog__Enabled: "true"
+      OpenTelemetry__Enabled: ${OTEL_ENABLED}
+      OpenTelemetry__OtlpEndpoint: ${OTEL_ENDPOINT}
+
+  # Offsite backup. Reads the data volume read-only; pushes restic repos to two
+  # S3 backends (compact->R2, full->FirstVDS). Independent of the petbox process
+  # health — a petbox crash-loop does not stop backups.
+  petbox-backup:
+    build:
+      context: ./backup
+    image: petbox-backup:local
+    container_name: petbox-backup
+    restart: unless-stopped
+    depends_on:
+      - petbox
+    volumes:
+      - /opt/petbox/data:/data:ro
+      - petbox-backup-state:/state
+    environment:
+      DATA_DIR: /data
+      RESTIC_PASSWORD: ${RESTIC_PASSWORD}
+      BACKUP_CRON: ${BACKUP_CRON:-17 */6 * * *}
+      RESTIC_KEEP_DAILY: ${RESTIC_KEEP_DAILY:-7}
+      RESTIC_KEEP_WEEKLY: ${RESTIC_KEEP_WEEKLY:-4}
+      # compact -> Cloudflare R2
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
+      R2_S3_ENDPOINT: ${R2_S3_ENDPOINT}
+      R2_BUCKET: ${R2_BUCKET}
+      # full -> FirstVDS S3
+      FVDS_ACCESS_KEY_ID: ${FVDS_ACCESS_KEY_ID}
+      FVDS_SECRET_ACCESS_KEY: ${FVDS_SECRET_ACCESS_KEY}
+      FVDS_S3_ENDPOINT: ${FVDS_S3_ENDPOINT}
+      FVDS_BUCKET: ${FVDS_BUCKET}
+      # optional: failure alert + success heartbeat (all no-ops if unset)
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
+      HEALTHCHECK_URL: ${HEALTHCHECK_URL:-}
+      ALERT_REPEAT_HOURS: ${ALERT_REPEAT_HOURS:-24}
+
+volumes:
+  petbox-backup-state:

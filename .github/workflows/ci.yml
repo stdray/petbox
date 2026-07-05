@@ -121,6 +121,20 @@ jobs:
     needs: [publish, test]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
+
+      # Deploy files land in the deploy user's HOME (/opt/petbox is root-owned —
+      # deploy can write /opt/petbox/data via the bind mount, but not the compose
+      # files themselves), at /home/deploy/petbox-src/deploy/...
+      - name: Copy deploy files to host
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USERNAME }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: "deploy"
+          target: "/home/deploy/petbox-src"
+
       # Secrets go through appleboy/ssh-action's `envs:` passthrough, not through
       # inline `${{ secrets.X }}` expansion inside the script body. Inline expansion
       # trips bash variable expansion on any `$` in the secret value — PBKDF2 hash
@@ -130,54 +144,49 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         env:
+          PETBOX_IMAGE: ghcr.io/${{ github.repository }}:${{ needs.publish.outputs.dockerTag }}
           ADMIN_USER: ${{ secrets.PETBOX_ADMIN_USERNAME }}
           ADMIN_PASS_HASH: ${{ secrets.PETBOX_ADMIN_PASSWORD_HASH }}
           MASTER_KEY: ${{ secrets.PETBOX_MASTER_KEY }}
           OTEL_ENABLED: ${{ secrets.PETBOX_OTEL_ENABLED }}
           OTEL_ENDPOINT: ${{ secrets.PETBOX_OTEL_ENDPOINT }}
+          RESTIC_PASSWORD: ${{ secrets.RESTIC_PASSWORD }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_S3_ENDPOINT: ${{ secrets.R2_S3_ENDPOINT }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+          FVDS_ACCESS_KEY_ID: ${{ secrets.FVDS_ACCESS_KEY_ID }}
+          FVDS_SECRET_ACCESS_KEY: ${{ secrets.FVDS_SECRET_ACCESS_KEY }}
+          FVDS_S3_ENDPOINT: ${{ secrets.FVDS_S3_ENDPOINT }}
+          FVDS_BUCKET: ${{ secrets.FVDS_BUCKET }}
+          BACKUP_CRON: ${{ vars.BACKUP_CRON }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          HEALTHCHECK_URL: ${{ secrets.HEALTHCHECK_URL }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USERNAME }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
-          envs: ADMIN_USER,ADMIN_PASS_HASH,MASTER_KEY,OTEL_ENABLED,OTEL_ENDPOINT
+          envs: PETBOX_IMAGE,ADMIN_USER,ADMIN_PASS_HASH,MASTER_KEY,OTEL_ENABLED,OTEL_ENDPOINT,RESTIC_PASSWORD,R2_ACCESS_KEY_ID,R2_SECRET_ACCESS_KEY,R2_S3_ENDPOINT,R2_BUCKET,FVDS_ACCESS_KEY_ID,FVDS_SECRET_ACCESS_KEY,FVDS_S3_ENDPOINT,FVDS_BUCKET,BACKUP_CRON,TELEGRAM_BOT_TOKEN,TELEGRAM_CHAT_ID,HEALTHCHECK_URL
           script: |
             set -euo pipefail
-            IMAGE="ghcr.io/${{ github.repository }}:${{ needs.publish.outputs.dockerTag }}"
-            CONTAINER_NAME="petbox"
-            # DEPLOY_USERNAME is in the `docker` group → no sudo for docker commands.
-            # /opt/petbox/data is pre-created during host bootstrap with chown 1654:1654
-            # (chiseled `app` UID) so the container can write its SQLite file on mount.
-            # Public GHCR package → docker pull is anonymous.
-            docker pull "$IMAGE"
-            docker stop "$CONTAINER_NAME" || true
-            docker rm "$CONTAINER_NAME" || true
+            cd /home/deploy/petbox-src/deploy
+
             # Resolve OTEL_ENDPOINT "self" sentinel → container's own OTLP traces endpoint.
             # Internal API key (yb_key_system_internal, seeded by migration M004) handles auth.
             if [ "$OTEL_ENDPOINT" = "self" ]; then
               OTEL_ENDPOINT="http://localhost:8080/v1/traces"
             fi
-            # Host port 8083 per the shared-host convention (yobaconf=8081, yobalog=8082, petbox=8083).
-            # Only loopback bind — central Caddy terminates TLS and reverse-proxies.
-            #
-            # Self-log: in-process via SystemLogger (Phase 22.2) — writes directly through
-            # IngestionPipeline. No HTTP, no API key. `Seq__SelfLog__Enabled=true` is the
-            # only switch; ServerUrl/ApiKey from appsettings are ignored at runtime.
-            docker run -d \
-              --name "$CONTAINER_NAME" \
-              --restart unless-stopped \
-              -p 127.0.0.1:8083:8080 \
-              -v /opt/petbox/data:/app/data \
-              -e Admin__Username="$ADMIN_USER" \
-              -e Admin__PasswordHash="$ADMIN_PASS_HASH" \
-              -e PETBOX_MASTER_KEY="$MASTER_KEY" \
-              -e Features__Config=true \
-              -e Features__Logging=true \
-              -e Features__Data=true \
-              -e Features__Dashboard=true \
-              -e Seq__SelfLog__Enabled=true \
-              -e OpenTelemetry__Enabled="$OTEL_ENABLED" \
-              -e OpenTelemetry__OtlpEndpoint="$OTEL_ENDPOINT" \
-              "$IMAGE"
+            # compose.yaml reads ${VAR} substitutions straight from the shell env below —
+            # no .env file is written to disk.
+            export OTEL_ENDPOINT
+            export PETBOX_IMAGE
+
+            # One-time migration off the legacy standalone `docker run` container.
+            docker rm -f petbox 2>/dev/null || true
+
+            docker compose pull petbox
+            docker compose up -d --build
 
             # Post-deploy live smoke: the freshly started prod container must answer 200
             # on /health (same probe the CI image smoke uses, but against the running
@@ -194,7 +203,7 @@ jobs:
             done
             if [ "$healthy" != "true" ]; then
               echo "post-deploy health check FAILED — dumping last 100 log lines"
-              docker logs --tail 100 "$CONTAINER_NAME" || true
+              docker compose logs --tail 100 petbox || true
               exit 1
             fi
             docker system prune -a -f
