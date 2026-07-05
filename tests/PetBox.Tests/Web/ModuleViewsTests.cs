@@ -312,6 +312,48 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().NotContain("data-md=");
 	}
 
+	// ui-comments-presentation: a comment on the node detail page renders its body through the
+	// SAME shared _MdBody / IMarkdownRenderer as the node body (so `**bold**` becomes <strong>,
+	// not literal asterisks), and carries a created timestamp — a `time.local-time` element whose
+	// server text is the yyyy-MM-dd HH:mm convention used elsewhere, localized client-side.
+	[Fact]
+	public async Task NodeDetail_CommentBody_RendersMarkdown_AndCarriesTimestamp()
+	{
+		const string board = "commentmd";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "comment md");
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode
+				{
+					Board = board, Key = "cm", NodeId = "id-cm", Version = 0, Status = "Pending",
+					Name = "Comment host", Body = "", Priority = 1,
+				},
+			}, partition: n => n.Board == board);
+
+			var comments = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ICommentService>();
+			var added = await comments.AddAsync("$system", board, "id-cm", null, "alice",
+				"a **bold** remark", null);
+			added.Applied.Should().BeTrue();
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}/cm");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		// Body rendered as GFM via the shared renderer, not plain text.
+		html.Should().Contain("data-testid=\"comment-body\"");
+		html.Should().Contain("<strong>bold</strong>");
+		html.Should().NotContain("a **bold** remark");
+		// Created timestamp is present as a localizable `time.local-time` element.
+		html.Should().MatchRegex(
+			"<time class=\"local-time[^\"]*\"[^>]*data-testid=\"comment-time\"");
+	}
+
 	// Installs a methodology DEFINITION declaring the custom kind `support` (own statuses,
 	// custom terminal `closed`, quick-add DISABLED) and creates a board of that kind with
 	// one open + one closed node. Seeds through the store/TemporalStore like the other
