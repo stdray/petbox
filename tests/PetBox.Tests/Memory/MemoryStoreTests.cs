@@ -4,7 +4,9 @@ using PetBox.Core.Data;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
+using PetBox.Memory.Services;
 
 namespace PetBox.Tests.Memory;
 
@@ -69,6 +71,39 @@ public sealed class MemoryStoreTests : IDisposable
 		var stores = await _store.ListAsync("proj");
 		stores.Single(s => s.Name == "session-digests").IsSystem.Should().BeTrue();
 		stores.Single(s => s.Name == "notes").IsSystem.Should().BeFalse();
+	}
+
+	// Widening the taxonomy (card ui-memory-system-store-widen): `autocaptured` and `canon`
+	// are agent plumbing and must be tagged IsSystem at creation, like session-digests.
+	[Theory]
+	[InlineData("autocaptured")]
+	[InlineData("canon")]
+	public async Task Create_CanonAndAutocaptured_AreMarkedSystem(string name)
+	{
+		await _store.CreateAsync("proj", name, null);
+
+		var stores = await _store.ListAsync("proj");
+		stores.Single(s => s.Name == name).IsSystem.Should().BeTrue();
+	}
+
+	// SAFETY: IsSystem gates only whole-store deletion, never entry writes. Curating `canon`
+	// via the upsert path (memory_upsert) MUST keep working even though the store is IsSystem.
+	[Fact]
+	public async Task UpsertEntry_IntoSystemStore_Canon_Succeeds()
+	{
+		var memory = new MemoryService(_store);
+		await _store.CreateAsync("proj", "canon", null);
+		(await _store.ListAsync("proj")).Single(s => s.Name == "canon").IsSystem.Should().BeTrue();
+
+		var outcome = await memory.UpsertAsync("proj", "canon",
+			[new MemoryEntryInput { Key = "index", Type = "reference", Description = "canon index", Body = "pointers" }],
+			[]);
+
+		outcome.Result.Applied.Should().BeTrue();
+		var ctx = _store.GetContext("proj", "canon");
+		var active = ctx.Entries.Where(e => e.ActiveTo == null).ToList();
+		active.Should().ContainSingle();
+		active[0].Body.Should().Be("pointers");
 	}
 
 	[Fact]
