@@ -366,8 +366,10 @@ public sealed record WorkflowStatusView(string Slug, string Name, string Kind);
 
 // `PreconditionArtifact` names a comment-artifact tag the node must carry before the
 // transition fires — filled for definition-resolved kinds, null (omitted by the
-// serializer) for the catalog presets.
-public sealed record WorkflowTransitionView(string From, string To, bool RequiresApproval, bool RequiresReason, string? PreconditionArtifact = null);
+// serializer) for the catalog presets. `EnforceApproval` is the approval-gate MODE: true
+// means the server BLOCKS the transition unless the actor can approve; false keeps
+// owner-only by convention (the builtin presets never enforce).
+public sealed record WorkflowTransitionView(string From, string To, bool RequiresApproval, bool RequiresReason, bool EnforceApproval, string? PreconditionArtifact = null);
 
 // One state machine shared by every type slug in `Types` — types with an identical FSM are
 // grouped into a single block (feature=bug=chore on a work board is ONE block, not three
