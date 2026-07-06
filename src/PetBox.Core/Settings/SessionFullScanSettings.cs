@@ -19,7 +19,7 @@ public sealed record SessionFullScanSettings
 		Description = "System-wide switch for the session-search full-scan escape hatch. Off by default; both this AND the project's own switch must be on.")]
 	public bool SystemEnabled { get; init; } = false;
 
-	[Setting(TopLevel = Scope.Project, Key = "search.sessions.fullscan.enabled",
+	[Setting(TopLevel = Scope.Project, HasMinScope = true, MinScope = Scope.Project, Key = "search.sessions.fullscan.enabled",
 		Description = "Per-project opt-in for the session-search full-scan escape hatch (requires the system switch too).")]
 	public bool ProjectEnabled { get; init; } = false;
 }

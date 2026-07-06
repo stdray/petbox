@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Reflection;
+using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Settings;
 
@@ -17,7 +18,14 @@ public static class SettingsFormBinder
 	public static T BuildFrom<T>(IFormCollection form, T current) where T : notnull
 	{
 		var props = typeof(T).GetProperties(BindingFlags.Public | BindingFlags.Instance);
-		object result = current;
+
+		// T is a `record` (reference type): `object result = current` would alias the SAME
+		// instance, and SetProperty's reflection-based `prop.SetValue` mutates in place — which
+		// would silently corrupt the caller's "old value" snapshot too (they'd become the same
+		// object), making every SettingsResolver.SetAsync change-detection compare equal and
+		// write nothing. Clone via a JSON round-trip first (records have no public parameterless
+		// constructor to `new T()` into) so `current` is left untouched.
+		object result = JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(current))!;
 
 		foreach (var prop in props)
 		{
