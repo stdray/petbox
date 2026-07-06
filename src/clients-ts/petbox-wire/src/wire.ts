@@ -21,7 +21,9 @@
 //                                             Claude-compatible skills discovery path)
 //        - .factory/skills/petbox/SKILL.md   (Factory Droid skill)
 //    8. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files);
-//       all links point at the stable copy (~/.petbox/wire/)
+//       all links point at the stable copy (~/.petbox/wire/). (--prompt-rag) additionally installs
+//       the OPT-IN Claude Code UserPromptSubmit prompt-RAG hook (off by default; safe exact-match
+//       context injection — see prompt-rag.ts).
 //    9. (--cleanup-legacy) remove the project's old per-project hook/plugin copies
 //   10. self-smoke: POST a tiny session and assert the server applied it
 //
@@ -50,11 +52,14 @@ type Args = {
   key?: string;
   workspace?: string;
   cleanupLegacy: boolean;
+  // OPT-IN, off by default: install the Claude Code UserPromptSubmit prompt-RAG hook (safe
+  // exact-match context injection). Absence of the flag never removes an already-installed one.
+  promptRag: boolean;
 };
 
 function usage(): never {
   console.error(
-    "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]",
+    "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy] [--prompt-rag]",
   );
   process.exit(2);
 }
@@ -65,19 +70,21 @@ function parseArgs(argv: string[]): Args {
   let key: string | undefined;
   let workspace: string | undefined;
   let cleanupLegacy = false;
+  let promptRag = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--env") env = argv[++i];
     else if (a === "--key") key = argv[++i];
     else if (a === "--workspace") workspace = argv[++i];
     else if (a === "--cleanup-legacy") cleanupLegacy = true;
+    else if (a === "--prompt-rag") promptRag = true;
     else if (a.startsWith("--")) {
       console.error(`unknown flag: ${a}`);
       usage();
     } else positionals.push(a);
   }
   if (positionals.length < 2) usage();
-  return { dir: positionals[0], projectKey: positionals[1], env, key, workspace, cleanupLegacy };
+  return { dir: positionals[0], projectKey: positionals[1], env, key, workspace, cleanupLegacy, promptRag };
 }
 
 // ---- small helpers ---------------------------------------------------------
@@ -370,9 +377,10 @@ function pruneStaleKitHooks(hooksObj: any, validCmds: Set<string>): number {
   return removed;
 }
 
-function installGlobalHooks(): void {
+function installGlobalHooks(promptRag: boolean): void {
   const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
+  const promptRagCmd = `node "${join(STABLE, "prompt-rag.ts")}"`;
   const droidPushCmd = `node "${join(STABLE, "droid-push-session.ts")}"`;
   const droidPullCmd = `node "${join(STABLE, "droid-pull-memory.ts")}"`;
   // Every kit hook command this run considers current — the prune keeps these, drops the rest.
@@ -401,6 +409,16 @@ function installGlobalHooks(): void {
 
   ensureHook("Stop", pushCmd);
   ensureHook("SessionStart", pullCmd);
+  // OPT-IN prompt-RAG (Claude Code only in v1): install the UserPromptSubmit exact-match context
+  // injector only when --prompt-rag is passed. It is intentionally NOT in KIT_HOOK_SUFFIXES, so a
+  // later plain re-run (without the flag) leaves an enabled hook untouched rather than pruning it —
+  // enabling is sticky, and the default install never touches this event. UserPromptSubmit takes no
+  // matcher (CC docs), so the group shape { hooks: [...] } is correct as-is.
+  if (promptRag) {
+    ensureHook("UserPromptSubmit", promptRagCmd);
+  } else {
+    log(`[8/10] claude hook UserPromptSubmit (prompt-rag) not requested — skipped (opt-in via --prompt-rag).`);
+  }
   writeJson(settingsPath, settings);
   log(`[8/10] merged hooks into ${settingsPath}`);
 
@@ -595,7 +613,7 @@ async function main(): Promise<void> {
   writeProjectFiles(dir, project, envVar, workspace);
 
   // 8. global install
-  installGlobalHooks();
+  installGlobalHooks(args.promptRag);
 
   // 9. cleanup legacy
   if (args.cleanupLegacy) cleanupLegacy(dir);
