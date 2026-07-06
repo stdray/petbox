@@ -37,6 +37,8 @@ This project is wired to PetBox (project \`${project}\`) over the connected \`pe
 
 In your FIRST response this session, open with exactly this line (so it's visible the protocol is active):
 \`🧠 PetBox memory active\`
+Then, on the next line, introduce yourself so it's on record who is driving — emit exactly:
+\`<your model name> · orchestrator\` — followed by one sentence naming the working rules you'll hold to this session (search-before-rework, capture-as-you-go, respect the gates). This SessionStart banner reaches only the main loop, so the role is always \`orchestrator\`; when you spawn workers, write their own self-intro line into the spawn brief (they never see this banner).
 
 PetBox remembers a LOT about this project — the curated facts AND the full session history (imported + auto-pushed). Start reasoning about anything past from a SEARCH, not from assumption.
 
