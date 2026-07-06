@@ -79,23 +79,29 @@ public sealed class SessionSearchService
 		sessions = Math.Clamp(sessions <= 0 ? DefaultSessions : sessions, 1, MaxSessions);
 		hitsPerSession = Math.Clamp(hitsPerSession <= 0 ? DefaultHitsPerSession : hitsPerSession, 1, MaxHitsPerSession);
 
-		// No digest store yet = distillation hasn't reached this project; say so instead
-		// of failing (the store auto-vivifies on the first distilled session). `reason`
-		// gives callers a machine-readable code, not just a bare bool.
-		if (!await _memory.StoreExistsAsync(projectKey, SessionDigestJob.Store, ct))
-			return new SessionSearchOutcome(false, "no-digest-store", [], new SearchRetrievers(false, false, false));
-
 		// DISCOVERY leg 1: the digest store's own hybrid (lexical ⊕ semantic, RRF-fused) search,
 		// keeping the raw re-ranking signals (per-hit fused score, freshness, lexical-confirmation
 		// provenance, vector) — the outer fusion below treats this leg's ORDER as one ranking.
-		var discovery = await _memory.SearchScoredAsync(projectKey, SessionDigestJob.Store, query, type: null, ct: ct);
-		var digestRanking = new List<string>(discovery.Hits.Count);
+		//
+		// No digest store yet = distillation hasn't reached this project. We report that honestly
+		// (Distilled=false + Reason) but do NOT bail: the verbatim term leg is the DECLARED lower
+		// bound of recall (spec: session-discovery-verbatim) and must run even with no digest —
+		// "distillation hasn't run" ≠ "nothing to find". The digest leg is simply skipped (empty
+		// ranking); SearchScoredAsync THROWS on a missing store, so it is gated behind the check.
+		var distilled = await _memory.StoreExistsAsync(projectKey, SessionDigestJob.Store, ct);
+		var digestRanking = new List<string>();
 		var bySession = new Dictionary<string, MemoryScoredHit>(StringComparer.Ordinal);
-		foreach (var hit in discovery.Hits)
+		var digestRetrievers = new SearchRetrievers(false, false, false);
+		if (distilled)
 		{
-			var (sessionId, _) = Provenance(hit.Entry);
-			digestRanking.Add(sessionId);
-			bySession.TryAdd(sessionId, hit); // the best (first) digest hit per session wins the metadata
+			var discovery = await _memory.SearchScoredAsync(projectKey, SessionDigestJob.Store, query, type: null, ct: ct);
+			digestRetrievers = discovery.Retrievers;
+			foreach (var hit in discovery.Hits)
+			{
+				var (sessionId, _) = Provenance(hit.Entry);
+				digestRanking.Add(sessionId);
+				bySession.TryAdd(sessionId, hit); // the best (first) digest hit per session wins the metadata
+			}
 		}
 
 		// DISCOVERY leg 2: verbatim term-FTS over the raw transcript (spec: session-discovery-verbatim).
@@ -182,11 +188,13 @@ public sealed class SessionSearchService
 			candidates.Add(new SessionSearchCandidate(sessionId, agent, digest.Entry.Description, inner.Hits, inner.Retrievers, sources));
 		}
 
-		// Discovery retrievers: OR the term/fullscan legs' lexical confirmation into the
-		// aggregate — a verbatim-only match is still a LEXICAL discovery signal, just from a
-		// different index.
-		var retrievers = discovery.Retrievers with { Lexical = discovery.Retrievers.Lexical || termRanking.Count > 0 || scanRanking.Count > 0 };
-		return new SessionSearchOutcome(true, null, candidates, retrievers,
+		// Discovery retrievers: OR the term/fullscan legs' lexical confirmation into the digest
+		// leg's provenance — a verbatim-only match is still a LEXICAL discovery signal, just from
+		// a different index (and the whole digest provenance is off when distillation never ran).
+		var retrievers = digestRetrievers with { Lexical = digestRetrievers.Lexical || termRanking.Count > 0 || scanRanking.Count > 0 };
+		// Distilled/Reason stay an HONEST informational signal — but candidates are no longer
+		// gated on it: the term (and opt-in fullscan) legs answer regardless of the digest store.
+		return new SessionSearchOutcome(distilled, distilled ? null : "no-digest-store", candidates, retrievers,
 			fullScanRequested, fullScanRan, fullScanReason, fullScanCapped);
 	}
 

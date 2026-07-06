@@ -154,6 +154,29 @@ public sealed class SessionSearchServiceTests : IDisposable
 		hit.Sources.Should().NotContain("digest"); // the digest search alone never surfaced it
 	}
 
+	[Fact]
+	public async Task VerbatimTermIndex_IsTheRecallFloor_EvenWithNoDigestStore()
+	{
+		// The DECLARED lower bound of recall (spec session-discovery-verbatim): the term leg must
+		// answer even when distillation has NEVER run and there is no digest store at all. Only a
+		// session push + a term-index drain — no SessionDigestJob anywhere in this test.
+		const string Term = "шарманкаzz42";
+		await _sessions.UpsertAsync(Proj, "s-nodigest", "claude-code",
+			Msgs($"единственная зацепка — {Term} в трейсе, дистилляция ещё не прогонялась"));
+
+		(await _memory.StoreExistsAsync(Proj, SessionDigestJob.Store)).Should().BeFalse(); // no digest store
+		(await _termIndex.DrainAllAsync(CancellationToken.None)).Should().Be(1);            // term index populated
+
+		var res = await _search.SearchAsync(Proj, Term);
+
+		res.Distilled.Should().BeFalse();               // honest informational signal…
+		res.Reason.Should().Be("no-digest-store");      // …but NOT a reason to return empty
+		res.Candidates.Select(c => c.SessionId).Should().Contain("s-nodigest");
+		var hit = res.Candidates.Single(c => c.SessionId == "s-nodigest");
+		hit.Sources.Should().Equal("term");             // the term leg alone carried it
+		hit.Agent.Should().Be("claude-code");           // agent recovered from the session header
+	}
+
 	// ---- W2 acceptance tests: full-scan opt-in (spec session-fullscan-optin) ----
 
 	// A substring sitting INSIDE a longer token: term-FTS (whole-token prefix matching)
