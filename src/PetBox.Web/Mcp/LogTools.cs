@@ -23,6 +23,11 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class LogTools
 {
+	// Property values are serialized for a tool result an agent reads: the default encoder
+	// escapes every non-ASCII char (Cyrillic -> \uXXXX), making the properties unreadable.
+	// The shared relaxed encoder keeps human text as-is while HTML-sensitive chars stay escaped.
+	static readonly JsonSerializerOptions PropertyJson = new() { Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed };
+
 	[McpServerTool(Name = "log_query", Title = "Run KQL query against a named log", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LogQueryResultView))]
 	[Description("Executes a KQL (Kusto Query Language) query against one named log in a project. Returns either { kind: 'events', events: [...] } for plain queries or { kind: 'table', columns: [...], rows: [[...]] } for shape-changing pipelines (summarize, project, etc.). Responses are row-capped: no explicit take/top applies a default limit (1000 rows), an explicit one is bounded by a hard max (100k); a cut result carries truncated: true — add/tighten take (or aggregate) to bound the query deliberately. Requires logs:query scope.")]
 	public static async Task<LogQueryResultView> QueryAsync(
@@ -66,7 +71,7 @@ public static class LogTools
 				Message: e.Message,
 				MessageTemplate: e.MessageTemplate,
 				Exception: e.Exception,
-				Properties: e.GetProperties().ToDictionary(kv => kv.Key, kv => (object?)JsonSerializer.Serialize(kv.Value)))).ToList();
+				Properties: e.GetProperties().ToDictionary(kv => kv.Key, kv => (object?)JsonSerializer.Serialize(kv.Value, PropertyJson)))).ToList();
 			return new LogQueryResultView("events", Count: events.Count, Events: events,
 				Truncated: eventsResult.Truncated ? true : null);
 		}

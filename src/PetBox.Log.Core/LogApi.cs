@@ -22,6 +22,11 @@ namespace PetBox.Log.Core;
 
 public static class LogApi
 {
+	// Property values land in a REST response body a human/client reads: the default encoder
+	// escapes every non-ASCII char (Cyrillic -> \uXXXX). The shared relaxed encoder keeps human
+	// text as-is while HTML-sensitive chars stay escaped (parity with the log_query MCP tool).
+	static readonly JsonSerializerOptions PropertyJson = new() { Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed };
+
 	public static void MapLogEndpoints(this IEndpointRouteBuilder app)
 	{
 		// Ingestion. Path-based carries the destination log explicitly so one
@@ -305,7 +310,7 @@ public static class LogApi
 				e.Message,
 				e.MessageTemplate,
 				e.Exception,
-				e.GetProperties().ToDictionary(kv => kv.Key, kv => JsonSerializer.Serialize(kv.Value)))).ToList();
+				e.GetProperties().ToDictionary(kv => kv.Key, kv => JsonSerializer.Serialize(kv.Value, PropertyJson)))).ToList();
 			return Results.Json(new LogEventsResponse(dtos.Count, dtos, eventsResult.Truncated));
 		}
 		catch (UnsupportedKqlException ex)

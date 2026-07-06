@@ -112,7 +112,8 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 					Level = PetBox.Log.Core.Models.LogLevel.Error,
 					Message = "Boom",
 					MessageTemplate = "Boom",
-					Properties = "{}",
+					// Cyrillic property value: the tool result must carry it literally, not \uXXXX.
+					Properties = "{\"city\":\"Москва\"}",
 				},
 			};
 			await pipeline.IngestAsync(TestProjectKey, LogNames.Default, records, default);
@@ -204,6 +205,28 @@ public sealed class McpLogToolsTests : IClassFixture<McpLogToolsFixture>, IAsync
 			.And.Contain("\"ServiceKey\":").And.Contain("\"MessageTemplate\":");
 		text.Should().NotContain("\"timestamp\":").And.NotContain("\"serviceKey\":")
 			.And.NotContain("\"messageTemplate\":");
+	}
+
+	// Regression: event Properties are double-serialized (inner value → string, then the outer
+	// MCP result). The inner Serialize once used the default encoder, so a Cyrillic property
+	// value baked \uXXXX into the string that the (relaxed) outer serializer then echoed
+	// verbatim — an agent read gibberish. The inner serializer now uses the relaxed encoder too.
+	[Fact]
+	public async Task LogQuery_CyrillicProperty_IsHumanReadable_NotUnicodeEscaped()
+	{
+		var tool = (await _mcp.ListToolsAsync()).First(t => t.Name == "log_query");
+
+		var result = await tool.CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = TestProjectKey,
+			["logName"] = LogNames.Default,
+			["kql"] = "events | where Message == 'Boom'",
+		});
+
+		result.IsError.Should().NotBe(true);
+		var text = result.Content.OfType<ModelContextProtocol.Protocol.TextContentBlock>().First().Text;
+		text.Should().Contain("Москва", "the Cyrillic property value must survive as real text");
+		text.Should().NotContain("\\u04", "no Cyrillic left escaped as \\uXXXX in the tool result");
 	}
 
 	[Fact]

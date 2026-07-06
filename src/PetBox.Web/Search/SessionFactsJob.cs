@@ -29,6 +29,11 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	public const string Tag = "autocaptured";
 	const string CuratedStore = "notes";
 
+	// The candidate/neighbour facts are serialized INTO the LLM judge prompt. PetBox content is
+	// largely Cyrillic; the default encoder would escape it to \uXXXX and hand the model gibberish.
+	// The shared relaxed encoder passes Cyrillic through so the judge reads the actual fact text.
+	static readonly JsonSerializerOptions PromptJson = new() { Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed };
+
 	public static readonly TimeSpan DefaultQuietPeriod = TimeSpan.FromMinutes(3);
 
 	internal const int MaxCandidatesPerSession = 8;
@@ -338,10 +343,10 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	{
 		var sb = new StringBuilder();
 		sb.AppendLine("CANDIDATE:");
-		sb.AppendLine(JsonSerializer.Serialize(candidate));
+		sb.AppendLine(JsonSerializer.Serialize(candidate, PromptJson));
 		sb.AppendLine();
 		sb.AppendLine("EXISTING:");
-		sb.AppendLine(JsonSerializer.Serialize(neighbors));
+		sb.AppendLine(JsonSerializer.Serialize(neighbors, PromptJson));
 		var raw = await ChatAsync(project, JudgePrompt, sb.ToString(), ct);
 		try
 		{

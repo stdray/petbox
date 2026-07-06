@@ -27,6 +27,11 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 	const string QuarantineStore = SessionFactsJob.Store;
 	const string CuratedStore = "notes";
 	const string CursorIndex = "behavior-mining";
+
+	// Facts are serialized INTO the LLM mining prompt. PetBox content is largely Cyrillic; the
+	// default encoder escapes it to \uXXXX (unreadable to the model). The shared relaxed encoder
+	// passes Cyrillic through so the prompt carries the actual fact text.
+	static readonly JsonSerializerOptions PromptJson = new() { Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed };
 	// PERIODIC durable marker for the pre-existing-duplicate collapse: it stores the UNIX
 	// SECONDS of the last sweep (co-located with the store, like every other cursor). 0 = never
 	// swept. The sweep re-runs once the marker is older than RecollapseIntervalDays — machine
@@ -159,11 +164,11 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 		var sb = new StringBuilder();
 		sb.AppendLine("FEEDBACK FACTS:");
 		foreach (var e in feedback.Where(e => SourcesOf(e).Count == 0))
-			sb.AppendLine(JsonSerializer.Serialize(new { e.Key, e.Description, Body = Clip(e.Body), sessionIds = ObservedIn(e) }));
+			sb.AppendLine(JsonSerializer.Serialize(new { e.Key, e.Description, Body = Clip(e.Body), sessionIds = ObservedIn(e) }, PromptJson));
 		sb.AppendLine();
 		sb.AppendLine("EXISTING PATTERNS:");
 		foreach (var e in existingPatterns)
-			sb.AppendLine(JsonSerializer.Serialize(new { e.Key, e.Description, Body = Clip(e.Body), sources = SourcesOf(e) }));
+			sb.AppendLine(JsonSerializer.Serialize(new { e.Key, e.Description, Body = Clip(e.Body), sources = SourcesOf(e) }, PromptJson));
 		sb.AppendLine();
 		sb.AppendLine("SESSION DIGESTS:");
 		foreach (var d in digests)

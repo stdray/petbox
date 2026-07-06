@@ -153,6 +153,20 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		html.Should().Contain("data-testid=\"methodology-preview-data\"");
 	}
 
+	// Regression: the display formatter (MethodologyJsonFormat) once serialized leaf values
+	// with the default HTML-safe encoder, so an apostrophe in a status name surfaced as the
+	// literal escape `Won't fix` in the editor textarea. Leaves now use relaxed escaping.
+	[Fact]
+	public async Task PostLoadPreset_Quartet_RendersHumanReadableApostrophe_NotUnicodeEscape()
+	{
+		using var resp = await PostAuthedAsync(SystemUrl, "LoadPreset", new() { ["preset"] = "quartet" });
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var doc = Textarea(await resp.Content.ReadAsStringAsync());
+
+		doc.Should().Contain("\"name\": \"Won't fix\"", "human text renders with a real apostrophe");
+		doc.Should().NotContain("\\u0027", "no leftover HTML-escape dirt in the display JSON");
+	}
+
 	[Fact]
 	public async Task PostSave_InvalidJson_RendersErrorsBlock_AndPreservesTextarea()
 	{

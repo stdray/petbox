@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 
@@ -10,13 +11,19 @@ namespace PetBox.Web.Mcp;
 //   { "slug": "reported", "name": "Reported", "kind": "open" }
 // — so a workflow block reads like the table it is instead of a wall of one-field lines.
 // System.Text.Json has no per-node indentation policy, so this is a small hand-rolled
-// pretty-printer over JsonNode. Layout only: the VALUE stream is exactly what the wire
-// serializer produced (escaping included, via ToJsonString on leaves), parsing accepts any
-// valid JSON, and the MCP def_get/def_upsert wire is untouched.
+// pretty-printer over JsonNode. Layout only: parsing accepts any valid JSON and the MCP
+// def_get/def_upsert wire is untouched. Leaves render with RELAXED escaping (see LeafOptions)
+// so human text stays readable ("Won't fix", not "Won't fix").
 static class MethodologyJsonFormat
 {
 	// Property names whose ARRAY ELEMENTS are laid out one-per-line, compact.
 	static readonly HashSet<string> InlineElementArrays = new(StringComparer.Ordinal) { "statuses", "transitions" };
+
+	// Leaf-value escaping for DISPLAY: JsonNode.ToJsonString() with no options uses the default
+	// HTML-safe encoder, which escapes ' < > & to \uXXXX — that surfaced as `Won't fix` in
+	// the editor textarea. This output lands in a Razor <textarea> (HTML-encoded at the output
+	// boundary), so relaxed escaping is safe and reads cleanly. Display-only; the wire is unchanged.
+	static readonly JsonSerializerOptions LeafOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
 	const string IndentUnit = "  ";
 
@@ -39,7 +46,7 @@ static class MethodologyJsonFormat
 				WriteArray(arr, sb, depth, inlineElements: false);
 				break;
 			default:
-				sb.Append(node?.ToJsonString() ?? "null");
+				sb.Append(node?.ToJsonString(LeafOptions) ?? "null");
 				break;
 		}
 	}
@@ -120,14 +127,14 @@ static class MethodologyJsonFormat
 				sb.Append(']');
 				break;
 			default:
-				sb.Append(node?.ToJsonString() ?? "null");
+				sb.Append(node?.ToJsonString(LeafOptions) ?? "null");
 				break;
 		}
 	}
 
 	static void WritePropertyName(string name, StringBuilder sb)
 	{
-		sb.Append(JsonValue.Create(name).ToJsonString());
+		sb.Append(JsonValue.Create(name).ToJsonString(LeafOptions));
 		sb.Append(": ");
 	}
 

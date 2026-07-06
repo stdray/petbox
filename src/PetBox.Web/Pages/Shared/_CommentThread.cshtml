@@ -8,11 +8,17 @@
    editor) and are shown by ts/commentThread.ts (no inline JS) — works without JS too, since a
    hidden form still submits if a client force-shows it. The add form is always visible so a
    node with zero comments still offers to start the thread. *@
-<div class="mt-2 border-t border-base-300 pt-2 flex flex-col gap-1.5" data-testid="node-comments">
+<div class="mt-4 border-t border-base-300 pt-3 flex flex-col gap-1" data-testid="node-comments">
+	<div class="text-xs font-semibold uppercase tracking-wide opacity-50 mb-0.5" data-testid="comments-heading">
+		@(Model.Lines.Count == 0 ? "Comments" : $"Comments · {Model.Lines.Count}")
+	</div>
 	@foreach (var line in Model.Lines)
 	{
 		var c = line.Comment;
-		<div class="text-sm" data-testid="comment" data-comment-id="@c.Id" data-comment-version="@c.Version" style="margin-left:@(line.Depth * 1.25)rem">
+		@* `group` + per-comment left rail: the action buttons (reply/edit/delete) stay invisible
+		   until the comment is hovered or holds focus (comment-action-buttons-hover) — kills the
+		   visual noise of a full button row on every comment. *@
+		<div class="group/cmt text-sm border-l-2 border-base-300/60 pl-2 py-0.5 rounded-sm hover:bg-base-300/30" data-testid="comment" data-comment-id="@c.Id" data-comment-version="@c.Version" style="margin-left:@(line.Depth * 1.25)rem">
 			<div class="flex items-baseline gap-2 flex-wrap">
 				<span class="font-semibold opacity-70" data-testid="comment-author">@c.Author</span>
 				@* Created time — UTC in the `datetime` attribute, localized client-side by
@@ -29,7 +35,7 @@
 					var artifact = tag.StartsWith("artifact:", StringComparison.Ordinal);
 					<span class="badge badge-xs @(artifact ? "badge-warning" : "badge-ghost")">@tag</span>
 				}
-				<span class="ml-auto flex items-center gap-1 shrink-0">
+				<span class="ml-auto flex items-center gap-1 shrink-0 opacity-0 group-hover/cmt:opacity-100 focus-within:opacity-100 transition-opacity" data-testid="comment-actions">
 					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-reply-toggle">reply</button>
 					<button type="button" class="btn btn-ghost btn-xs" data-testid="comment-edit-toggle">edit</button>
 					<form method="post" asp-page-handler="CommentDelete" class="inline" data-testid="comment-delete-form" data-confirm="Delete this comment? Replies must be deleted first.">
