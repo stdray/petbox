@@ -26,6 +26,7 @@
 import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
 import { connectMcp } from "./mcp-client.ts";
+import { droidPetboxTool, mcpPetboxTool, type ToolNamer } from "./protocol.ts";
 import { PROMPT_RAG_DEFAULTS, type PromptRagConfig, resolveProject } from "./registry.ts";
 
 const FETCH_TIMEOUT_MS = 6000;
@@ -111,11 +112,17 @@ function clip(s: string, n: number): string {
 // Render the injection block from resolved hits. Returns "" when there are none (→ inject nothing).
 // Pointers only: one line per node = a heading (board/key + title + status) plus the exact command
 // to expand it. Never the body.
-export function renderInjection(hits: TaskHit[], toolPrefix = "mcp__petbox__"): string {
+//
+// `tool` is the agent's ToolNamer (protocol.ts): it maps the bare verb `tasks_node_get` to that
+// agent's fully-qualified MCP tool name in the emitted `expand:` command — `mcp__petbox__…` for
+// Claude Code (default, byte-identical to the original), `petbox___…` (triple underscore) for
+// Factory Droid, `petbox_…` for opencode. The pointer text is otherwise agent-neutral.
+export function renderInjection(hits: TaskHit[], tool: ToolNamer = mcpPetboxTool): string {
   if (hits.length === 0) return "";
+  const expandTool = tool("tasks_node_get");
   const lines = hits.map((h) => {
     const t = h.type ? ` ${h.type}` : "";
-    return `- ${h.board}/${h.key} — "${clip(h.title, 120)}" [${h.status}${t}] · expand: ${toolPrefix}tasks_node_get(board="${h.board}", node="${h.key}")`;
+    return `- ${h.board}/${h.key} — "${clip(h.title, 120)}" [${h.status}${t}] · expand: ${expandTool}(board="${h.board}", node="${h.key}")`;
   });
   return (
     "PetBox exact-match pointers (deterministic: these identifiers from your prompt are real task nodes). " +
@@ -141,6 +148,7 @@ export async function buildInjectionDetailed(
   prompt: string,
   resolve: Resolver,
   opts: ExtractOpts = {},
+  tool: ToolNamer = mcpPetboxTool,
 ): Promise<InjectionResult> {
   const candidates = extractCandidates(prompt, opts.cap, opts.requireHyphen);
   if (candidates.length === 0) return { text: "", hits: [], candidateCount: 0 };
@@ -159,16 +167,18 @@ export async function buildInjectionDetailed(
     seenNodes.add(dedupeKey);
     hits.push(hit);
   }
-  return { text: renderInjection(hits), hits, candidateCount: candidates.length };
+  return { text: renderInjection(hits, tool), hits, candidateCount: candidates.length };
 }
 
-// Thin back-compat wrapper: the injection text only (unchanged signature/behavior).
+// Thin back-compat wrapper: the injection text only (unchanged signature/behavior; the `tool`
+// param defaults to the CC namer so existing callers stay byte-identical).
 export async function buildInjection(
   prompt: string,
   resolve: Resolver,
   opts: ExtractOpts = {},
+  tool: ToolNamer = mcpPetboxTool,
 ): Promise<string> {
-  return (await buildInjectionDetailed(prompt, resolve, opts)).text;
+  return (await buildInjectionDetailed(prompt, resolve, opts, tool)).text;
 }
 
 // Resolve the effective extraction tolerances from a project's prompt-RAG config, filling any
@@ -187,9 +197,29 @@ export async function buildInjectionForProject(
   prompt: string,
   promptRag: PromptRagConfig | undefined,
   resolve: Resolver,
+  tool: ToolNamer = mcpPetboxTool,
 ): Promise<string> {
   if (!promptRag?.enabled) return "";
-  return buildInjection(prompt, resolve, tolerancesOf(promptRag));
+  return buildInjection(prompt, resolve, tolerancesOf(promptRag), tool);
+}
+
+// ---- agent selection (CLI --agent) ---------------------------------------------------------
+
+// Map an `--agent` value to the ToolNamer used in the emitted pointer's `expand:` command.
+// `droid` → droidPetboxTool (`petbox___tasks_node_get`, triple underscore — how Factory Droid
+// exposes MCP tools); anything else (incl. undefined / the default `cc`) → mcpPetboxTool
+// (`mcp__petbox__tasks_node_get`, byte-identical to the original CC hook). The prompt-context
+// contract (per-project gate, exact-join, self-log audit) is agent-neutral — only the tool name
+// varies, so the SAME hook binary serves both agents, selected by this one flag.
+export function namerForAgent(agent: string | undefined): ToolNamer {
+  return agent === "droid" ? droidPetboxTool : mcpPetboxTool;
+}
+
+// Narrow parser for the hook's only CLI flag: `--agent <value>`. Returns the value or undefined
+// (→ cc default). Deliberately minimal — the hook takes no other args, so anything else is ignored.
+export function agentFromArgv(args: string[]): string | undefined {
+  const i = args.indexOf("--agent");
+  return i >= 0 && i + 1 < args.length ? args[i + 1] : undefined;
 }
 
 // ---- self-audit (best-effort) --------------------------------------------------------------
@@ -319,6 +349,10 @@ function sessionIdOf(j: HookInput): string | undefined {
 
 async function main(): Promise<void> {
   try {
+    // Agent selection from the install-time CLI flag (`--agent cc|droid`, default cc). Picks the
+    // ToolNamer for the emitted pointer; everything else (gate, exact-join, audit) is agent-neutral.
+    const tool = namerForAgent(agentFromArgv(argv.slice(2)));
+
     const raw = await readStdin();
     let j: HookInput;
     try {
@@ -374,7 +408,7 @@ async function main(): Promise<void> {
 
     // Compute pointers → print to stdout FIRST → THEN best-effort audit. Order is load-bearing: the
     // audit must never precede or gate the injected output.
-    const result = await buildInjectionDetailed(prompt, resolver, opts);
+    const result = await buildInjectionDetailed(prompt, resolver, opts, tool);
     if (result.text) process.stdout.write(result.text);
     await postAudit(
       auditTarget,

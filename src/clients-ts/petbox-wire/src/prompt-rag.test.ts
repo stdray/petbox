@@ -7,17 +7,20 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  agentFromArgv,
   auditToClefLine,
   buildAuditRecord,
   buildInjection,
   buildInjectionDetailed,
   buildInjectionForProject,
   extractCandidates,
+  namerForAgent,
   renderInjection,
   tolerancesOf,
   type Resolver,
   type TaskHit,
 } from "./prompt-rag.ts";
+import { droidPetboxTool, mcpPetboxTool } from "./protocol.ts";
 
 // ---- extractCandidates: deterministic identifier extraction --------------------------------
 
@@ -63,6 +66,65 @@ test("renderInjection emits a pointer line with an expand command, no body", () 
 
 test("renderInjection returns empty string for no hits (→ inject nothing)", () => {
   assert.equal(renderInjection([]), "");
+});
+
+// ---- ToolNamer parameterization: cc (default) vs droid pointer naming ----------------------
+
+const NAMER_HIT: TaskHit = {
+  key: "prompt-rag-opencode-droid",
+  board: "work",
+  status: "InProgress",
+  type: "feature",
+  title: "prompt-RAG port",
+};
+
+test("renderInjection: default namer (cc) emits mcp__petbox__tasks_node_get", () => {
+  const out = renderInjection([NAMER_HIT]);
+  assert.match(out, /expand: mcp__petbox__tasks_node_get\(board="work", node="prompt-rag-opencode-droid"\)/);
+  assert.ok(!out.includes("petbox___"), "cc namer never emits the droid triple-underscore form");
+});
+
+test("renderInjection: droid namer emits petbox___tasks_node_get (triple underscore)", () => {
+  const out = renderInjection([NAMER_HIT], droidPetboxTool);
+  assert.match(out, /expand: petbox___tasks_node_get\(board="work", node="prompt-rag-opencode-droid"\)/);
+  assert.ok(!out.includes("mcp__petbox__"), "droid namer never emits the cc form");
+});
+
+test("renderInjection: explicit cc namer equals the default output (byte-identical)", () => {
+  assert.equal(renderInjection([NAMER_HIT], mcpPetboxTool), renderInjection([NAMER_HIT]));
+});
+
+// ---- namerForAgent / agentFromArgv: install-time --agent selection --------------------------
+
+test("namerForAgent: 'droid' → droid namer; cc/undefined/other → cc namer", () => {
+  assert.equal(namerForAgent("droid")("tasks_node_get"), "petbox___tasks_node_get");
+  assert.equal(namerForAgent("cc")("tasks_node_get"), "mcp__petbox__tasks_node_get");
+  assert.equal(namerForAgent(undefined)("tasks_node_get"), "mcp__petbox__tasks_node_get");
+  assert.equal(namerForAgent("bogus")("tasks_node_get"), "mcp__petbox__tasks_node_get");
+});
+
+test("agentFromArgv: reads --agent value, defaults undefined", () => {
+  assert.equal(agentFromArgv(["--agent", "droid"]), "droid");
+  assert.equal(agentFromArgv(["--agent", "cc"]), "cc");
+  assert.equal(agentFromArgv([]), undefined);
+  assert.equal(agentFromArgv(["--agent"]), undefined, "trailing --agent with no value → undefined");
+  assert.equal(agentFromArgv(["--other", "x"]), undefined);
+});
+
+test("buildInjection: droid namer threads through to the pointer", async () => {
+  const out = await buildInjection("work on telemetry-wire-toggle please", stubResolver, {}, droidPetboxTool);
+  assert.match(out, /work\/telemetry-wire-toggle/);
+  assert.match(out, /expand: petbox___tasks_node_get/);
+});
+
+test("buildInjectionForProject: droid namer threads through the gate", async () => {
+  const out = await buildInjectionForProject(
+    "work on telemetry-wire-toggle",
+    { enabled: true },
+    stubResolver,
+    droidPetboxTool,
+  );
+  assert.match(out, /expand: petbox___tasks_node_get/);
 });
 
 // ---- buildInjection: exact-join orchestration ----------------------------------------------

@@ -569,6 +569,10 @@ function installGlobalHooks(promptRag: boolean): void {
   const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
   const promptRagCmd = `node "${join(STABLE, "prompt-rag.ts")}"`;
+  // Droid reuses the SAME prompt-rag.ts hook (its UserPromptSubmit contract is CC-compatible:
+  // stdin JSON carries cwd+prompt, stdout on exit 0 is injected as context). Only the emitted
+  // pointer's tool name differs — `--agent droid` selects droidPetboxTool (`petbox___…`).
+  const droidPromptRagCmd = `node "${join(STABLE, "prompt-rag.ts")}" --agent droid`;
   const droidPushCmd = `node "${join(STABLE, "droid-push-session.ts")}"`;
   const droidPullCmd = `node "${join(STABLE, "droid-pull-memory.ts")}"`;
   // Every kit hook command this run considers current — the prune keeps these, drops the rest.
@@ -639,6 +643,18 @@ function installGlobalHooks(promptRag: boolean): void {
 
   ensureDroidHook("Stop", droidPushCmd);
   ensureDroidHook("SessionStart", droidPullCmd);
+  // prompt-RAG for Droid: same GLOBAL, per-project-self-gating model as the CC hook. Droid's
+  // UserPromptSubmit is CC-compatible, so we install the shared prompt-rag.ts with `--agent droid`
+  // (only the pointer's tool name differs). Installed on --prompt-rag (enable); like the CC hook it
+  // is intentionally NOT in KIT_HOOK_SUFFIXES, so a plain re-run / --no-prompt-rag / a wire of a
+  // different project leaves it untouched (per-project disable is the registry flag, not removal).
+  // Its command differs from the CC promptRagCmd (the `--agent droid` suffix), so ensureDroidHook's
+  // exact-command dedup keeps the two hooks independent and idempotent.
+  if (promptRag) {
+    ensureDroidHook("UserPromptSubmit", droidPromptRagCmd);
+  } else {
+    log(`[8/10] droid hook UserPromptSubmit (prompt-rag) — leaving any installed global hook as-is (per-project gate lives in the registry).`);
+  }
   writeJson(droidSettingsPath, droidSettings);
   log(`[8/10] merged droid hooks into ${droidSettingsPath}`);
 
