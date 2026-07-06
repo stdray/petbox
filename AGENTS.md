@@ -51,7 +51,14 @@ records**, not the working plan — do not treat them as current state.
    (intake issue → promoted task, or accepted idea → spec → work). Create/move the
    card BEFORE editing code.
 2. **Worktree before edits:** never edit the primary checkout; create a git worktree
-   for the change.
+   for the change. Put every agent's worktree under `.claude/worktrees/<branch-slug>` —
+   one dir for CC/opencode/droid alike: it is INSIDE the repo (so opencode, which can only
+   work within the project folder, is happy) yet gitignored (so it never dirties
+   `git status`), and it is where Claude Code's own worktree tool already lands. Take a
+   fresh base without touching the primary: `git fetch origin` + `git worktree add <abs-dir>
+   -b <branch> origin/main` — NOT `git pull` in the primary checkout (it is shared state,
+   often parked on another session's feature branch with uncommitted edits). Pass an
+   ABSOLUTE path to `git worktree add` (a relative path resolves against the cwd).
 3. **Tests:** run via Cake (`./build.ps1 -Target Test`, or `./build.sh --target=Test`)
    or a filtered `dotnet test`; pipe output to `.tmp/test-run.log` and read the log
    instead of scrolling the console. For readable FAILURE detail (a quiet log drops the
