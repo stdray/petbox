@@ -23,7 +23,7 @@ namespace PetBox.Web.Search;
 // Same enrichment-tick worker pattern as SessionDigestJob: per-session cursor (in the
 // session store's cursor table), quiet period, chat-down → no-op pass that backfills on
 // recovery (spec: write-never-blocks-on-enrich / durable-backfill).
-public sealed class SessionFactsJob : IVectorizationJob
+public sealed class SessionFactsJob : IBackgroundIndexJob
 {
 	public const string Store = "autocaptured";
 	public const string Tag = "autocaptured";

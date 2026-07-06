@@ -11,7 +11,7 @@ namespace PetBox.Web.Search;
 // file gets its own cursor (one vector index per file), so a fresh embedder backfills only what
 // changed; on first run the cursor is 0 → full re-embed. A down embedder dead-letters per item
 // without head-of-line blocking (AsyncVectorizationWorker). No embedder wired → no-op.
-public sealed class MemoryVectorizationJob : IVectorizationJob
+public sealed class MemoryVectorizationJob : IBackgroundIndexJob
 {
 	// Must match MemoryService.VectorDim — the read path and the worker must store/query the same dim.
 	const int VectorDim = 1024;

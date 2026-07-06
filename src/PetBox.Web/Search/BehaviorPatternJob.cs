@@ -21,7 +21,7 @@ namespace PetBox.Web.Search;
 // patterns (with keys) and answers create-or-update — no separate judge round. Runs after
 // SessionFactsJob on the same enrichment tick, same quarantine, same degradation
 // disciplines (chat down → no-op, cursor holds, backfills on recovery).
-public sealed class BehaviorPatternJob : IVectorizationJob
+public sealed class BehaviorPatternJob : IBackgroundIndexJob
 {
 	public const string PatternTag = "behavior:pattern";
 	const string QuarantineStore = SessionFactsJob.Store;

@@ -6,21 +6,24 @@ using PetBox.Core.Observability;
 
 namespace PetBox.Web.Search;
 
-// Background drain of Class-B (vector) indexes: the write path enqueues nothing and never blocks on
-// embedding; this service periodically pulls each registered IVectorizationJob's delta and
-// materializes vectors (spec: write-never-blocks / durable-backfill). One drain pass per interval;
-// a failure is logged and retried next tick (the worker holds the cursor so nothing is lost). The
-// 30s initial delay also keeps it inert during build-time OpenAPI generation, where the host is
+// Background enrichment tick: the write path enqueues nothing and never blocks on enrichment;
+// this service periodically pulls each registered IBackgroundIndexJob's delta and materializes
+// its background index (spec: write-never-blocks / durable-backfill). Most jobs embed vectors,
+// but not all — SessionTermIndexJob only tokenizes a lexical FTS index, SessionDigestJob
+// distills text — hence "enrichment", not "vectorization" (the old SearchVectorizationService
+// name was as much a misnomer as IVectorizationJob). One drain pass per interval; a failure is
+// logged and retried next tick (the worker holds the cursor so nothing is lost). The 30s
+// initial delay also keeps it inert during build-time OpenAPI generation, where the host is
 // started through StartAsync and stopped before the first tick (m-d3b39b66).
-public sealed partial class SearchVectorizationService : BackgroundService
+public sealed partial class SearchEnrichmentService : BackgroundService
 {
 	public static readonly TimeSpan Interval = TimeSpan.FromSeconds(60);
 	static readonly TimeSpan InitialDelay = TimeSpan.FromSeconds(30);
 
 	readonly IServiceProvider _services;
-	readonly ILogger<SearchVectorizationService> _logger;
+	readonly ILogger<SearchEnrichmentService> _logger;
 
-	public SearchVectorizationService(IServiceProvider services, ILogger<SearchVectorizationService> logger)
+	public SearchEnrichmentService(IServiceProvider services, ILogger<SearchEnrichmentService> logger)
 	{
 		_services = services;
 		_logger = logger;
@@ -45,12 +48,14 @@ public sealed partial class SearchVectorizationService : BackgroundService
 	internal async Task RunOncePassAsync(CancellationToken ct)
 	{
 		using var scope = _services.CreateScope();
-		foreach (var job in scope.ServiceProvider.GetServices<IVectorizationJob>())
+		foreach (var job in scope.ServiceProvider.GetServices<IBackgroundIndexJob>())
 		{
 			if (ct.IsCancellationRequested) return;
 			// One span per job drain (a root trace — there is no inbound request); embed HTTP
 			// calls attach as client children. An idle pass is unrecorded — a span per empty
-			// tick would flood the trace store (spec: trace-operation-granularity).
+			// tick would flood the trace store (spec: trace-operation-granularity). Span op name
+			// and log templates are kept VERBATIM across the rename (observable — dashboards/log
+			// queries key off them): this is a pure identifier rename, zero behavior change.
 			using var span = PetBoxActivitySources.Search.StartActivity("search.vectorize");
 			span?.SetTag("petbox.job", job.GetType().Name);
 			var indexed = await job.DrainAllAsync(ct);

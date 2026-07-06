@@ -29,7 +29,7 @@ public sealed class MemoryQuarantineGcClock
 	public DateTime LastScan { get; set; } = DateTime.MinValue;
 }
 
-public sealed class MemoryQuarantineGcJob : IVectorizationJob
+public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 {
 	// The one store this GC may touch — the machine-write quarantine (kept in sync with
 	// SessionFactsJob.Store). notes/ops/system stores are curated and never swept here.

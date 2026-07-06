@@ -138,13 +138,14 @@ public partial class Program
 		// Usage telemetry intake (spec: memory-usage-observability): singleton queue+drain;
 		// called ONLY by the MCP/UI adapters, so internal machine traffic never counts.
 		builder.Services.AddSingleton<PetBox.Memory.Contract.IMemoryUsageRecorder, PetBox.Memory.Services.MemoryUsageRecorder>();
-		// Background materialization of Class-B (vector) search indexes — the entity write path
-		// never blocks on embedding; this drains the temporal log into vectors out-of-band. Each
-		// module contributes an IVectorizationJob; memory's is registered here, tasks' in the
-		// follow-up. Unconditional like the stores it serves.
-		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.MemoryVectorizationJob>();
-		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.TasksVectorizationJob>();
-		builder.Services.AddHostedService<PetBox.Web.Search.SearchVectorizationService>();
+		// Background enrichment of search indexes — the entity write path never blocks on
+		// embedding/tokenization; this drains the temporal log out-of-band. Each module
+		// contributes an IBackgroundIndexJob (most materialize vectors, but not all — see
+		// SessionTermIndexJob); memory's is registered here, tasks' in the follow-up.
+		// Unconditional like the stores it serves.
+		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.MemoryVectorizationJob>();
+		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.TasksVectorizationJob>();
+		builder.Services.AddHostedService<PetBox.Web.Search.SearchEnrichmentService>();
 		// LLM router: neutral ILlmClient (embed/rerank/chat) + ILlmRegistryAdmin over a
 		// config-stored endpoint/route registry. Unconditional DI; Feature.LlmRouter gates
 		// the MCP surface, not registration.
@@ -155,31 +156,31 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Sessions.Data.ISessionStore, PetBox.Sessions.Data.SessionStore>();
 		builder.Services.AddScoped<PetBox.Sessions.Contract.ISessionService, PetBox.Sessions.Services.SessionService>();
 		// Verbatim per-session term index (spec: session-discovery-verbatim): chat-free, so it
-		// is registered as its own IVectorizationJob (SessionTermIndexJob) rather than folded
+		// is registered as its own IBackgroundIndexJob (SessionTermIndexJob) rather than folded
 		// into the digest job's LLM/quiet-period gates — a plain tokenization pass has no
 		// reason to wait on either.
 		builder.Services.AddScoped<PetBox.Sessions.Search.SessionTermIndex>();
 		builder.Services.AddScoped<PetBox.Sessions.Search.ISessionTermIndex>(sp => sp.GetRequiredService<PetBox.Sessions.Search.SessionTermIndex>());
-		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionTermIndexJob>();
+		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.SessionTermIndexJob>();
 		// Session discovery digests: distills each session's transcript into the project's
 		// `session-digests` memory store off the write path — rides the same enrichment tick
 		// as the vector jobs. Registered after sessions/memory/llm, which it consumes.
-		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionDigestJob>();
+		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.SessionDigestJob>();
 		// Autocapture: distills durable typed facts from settled sessions into the
 		// quarantined `autocaptured` memory store (dedup via hybrid neighbors + LLM judge).
 		// Dedup thresholds + periodic re-collapse interval are config-tunable (spec: memoverhaul).
 		builder.Services.Configure<PetBox.Web.Search.AutocaptureDedupOptions>(
 			builder.Configuration.GetSection("AutocaptureDedup"));
-		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionFactsJob>();
+		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.SessionFactsJob>();
 		// Cross-session behavior-pattern mining over the accumulated distillates —
 		// registered AFTER the facts job so a tick mines the freshest observations.
-		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.BehaviorPatternJob>();
+		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.BehaviorPatternJob>();
 		// Quarantine self-cleaning: retires aged autocaptured facts that never earned a
 		// deliberate reach. Report-only by default (structured log of candidates); enforce is
 		// opt-in via config. MinAge default 30d. Rides the enrichment tick, self-throttled via
 		// a singleton clock (the job itself is scoped — a fresh instance per tick).
 		builder.Services.AddSingleton<PetBox.Web.Search.MemoryQuarantineGcClock>();
-		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob>(sp => new PetBox.Web.Search.MemoryQuarantineGcJob(
+		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob>(sp => new PetBox.Web.Search.MemoryQuarantineGcJob(
 			sp.GetRequiredService<IScopedDbFactory<PetBox.Memory.Data.MemoryDb>>(),
 			sp.GetRequiredService<PetBox.Memory.Contract.IMemoryService>(),
 			sp.GetService<Microsoft.Extensions.Logging.ILogger<PetBox.Web.Search.MemoryQuarantineGcJob>>(),

@@ -13,7 +13,7 @@ namespace PetBox.Web.Search;
 // and within each the distinct boards — boards are temporal PARTITIONS, so each board drains with
 // its OWN cursor (IndexName = board) over its partition's delta. A down embedder dead-letters per
 // item without head-of-line blocking. No embedder wired → no-op.
-public sealed class TasksVectorizationJob : IVectorizationJob
+public sealed class TasksVectorizationJob : IBackgroundIndexJob
 {
 	// Must match TasksService.VectorDim.
 	const int VectorDim = 1024;

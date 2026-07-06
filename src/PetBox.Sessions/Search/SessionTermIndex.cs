@@ -17,7 +17,7 @@ namespace PetBox.Sessions.Search;
 // tracking the last indexed Version per session. DDL: M005_SessionTermIndex.
 //
 // Population is chat-free and runs off the SAME background tick as digest distillation
-// (registered as its own IVectorizationJob in PetBox.Web — SessionTermIndexJob) but does
+// (registered as its own IBackgroundIndexJob in PetBox.Web — SessionTermIndexJob) but does
 // NOT share the digest's quiet-period/LLM gates: a plain tokenization pass has no reason to
 // wait for an idle session or an available chat model, so old sessions backfill on the very
 // first pass (their cursor starts at 0, below any real Version).

@@ -16,7 +16,7 @@ namespace PetBox.Web.Search;
 // Distillation is asynchronous enrichment off the write path (spec:
 // write-never-blocks-on-enrich); no chat capability → the pass is a no-op and the
 // un-advanced cursor backfills when chat recovers (spec: durable-backfill).
-public sealed class SessionDigestJob : IVectorizationJob
+public sealed class SessionDigestJob : IBackgroundIndexJob
 {
 	public const string Store = "session-digests";
 	public const string Tag = "session-digest";
