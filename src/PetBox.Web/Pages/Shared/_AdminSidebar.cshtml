@@ -134,6 +134,9 @@
 																					<a href="@Routes.ProjectMemoryAdmin(w.Key, p.Key)" class="@(At(Routes.ProjectMemoryAdmin(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-memory">Memory</a>
 																				</li>
 																			}
+																			<li>
+																				<a href="@Routes.ProjectSettingsAdmin(w.Key, p.Key)" class="@(At(Routes.ProjectSettingsAdmin(w.Key, p.Key)) ? "active" : "")" data-testid="admin-side-proj-settings">Settings</a>
+																			</li>
 																			@if (Features.IsEnabled(Feature.Tasks) || Features.IsEnabled(Feature.Memory))
 																			{
 																				<li>

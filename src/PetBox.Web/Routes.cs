@@ -92,6 +92,12 @@ public static class Routes
 	public static string ProjectConnect(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/connect";
 	public static string ProjectSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/info";
 	public static string ProjectLogSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/log";
+	// Generic Project-scope settings page (mirrors SysDefaults/WorkspaceDefaults, at Scope.Project) —
+	// distinct from ProjectSettings() above, which is the bespoke project Info/detail page (route
+	// segment /info) and stays the owner of RepoSettings.CommitUrlTemplate + the log-retention
+	// override. This page is the generic-record carrier for settings whose TopLevel reaches Project
+	// (currently SessionFullScanSettings.ProjectEnabled).
+	public static string ProjectSettingsAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/settings";
 
 
 	// Account / self-service — separate _AccountLayout, deliberately NOT under /ui/admin/.

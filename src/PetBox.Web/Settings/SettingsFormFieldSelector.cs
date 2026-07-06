@@ -25,7 +25,9 @@ public static class SettingsFormFieldSelector
 	public static IReadOnlyList<(PropertyInfo Property, SettingAttribute Attribute)> GetEditable(Type recordType, Scope currentScope) =>
 		recordType.GetProperties(BindingFlags.Public | BindingFlags.Instance)
 			.Select(p => (Property: p, Attribute: p.GetCustomAttribute<SettingAttribute>()))
-			.Where(x => x.Attribute is not null && (int)currentScope <= (int)x.Attribute.TopLevel)
+			.Where(x => x.Attribute is not null
+				&& (int)currentScope <= (int)x.Attribute.TopLevel
+				&& (!x.Attribute.HasMinScope || currentScope == x.Attribute.MinScope))
 			.Select(x => (x.Property, x.Attribute!))
 			.ToList();
 }

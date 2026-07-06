@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
+using PetBox.Core.Settings;
 
 namespace PetBox.Tests.Web;
 
@@ -56,8 +57,13 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 	const string TestPassword = "test123";
 
 	readonly HttpClient _client;
+	readonly WebApplicationFactory<Program> _factory;
 
-	public SettingsFormScopePagesTests(SettingsFormScopePagesFixture fx) => _client = fx.Client;
+	public SettingsFormScopePagesTests(SettingsFormScopePagesFixture fx)
+	{
+		_client = fx.Client;
+		_factory = fx.Factory;
+	}
 
 	[Fact]
 	public async Task SysDefaults_ShowsAllThreeLogSettingsFields()
@@ -73,6 +79,20 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 		html.Should().Contain("data-testid=\"setting-input-SystemRetainDays\"");
 		html.Should().Contain("data-testid=\"setting-input-RunIntervalSeconds\"");
 		html.Should().NotContain("sys-defaults-empty");
+	}
+
+	[Fact]
+	public async Task SysDefaults_ShowsSessionFullScanSystemToggle_NotProjectToggle()
+	{
+		var jar = new CookieJar();
+		await LogInAsync(jar);
+
+		var resp = await GetAsync("/ui/admin/sys/defaults", jar);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"setting-input-SystemEnabled\"");
+		html.Should().NotContain("data-testid=\"setting-input-ProjectEnabled\"");
 	}
 
 	[Fact]
@@ -104,6 +124,46 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 		html.Should().Contain("data-testid=\"setting-input-Theme\"");
 		html.Should().Contain("data-testid=\"me-preferences-form-submit\"");
 		html.Should().NotContain("me-preferences-form-empty");
+	}
+
+	[Fact]
+	public async Task ProjectSettingsAdmin_ShowsProjectFullScanToggle_NotSystemToggle()
+	{
+		var jar = new CookieJar();
+		await LogInAsync(jar);
+
+		var resp = await GetAsync("/ui/admin/ws/$system/projects/$system/settings", jar);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"setting-input-ProjectEnabled\"");
+		html.Should().NotContain("data-testid=\"setting-input-SystemEnabled\"");
+		html.Should().NotContain("proj-settings-empty");
+	}
+
+	[Fact]
+	public async Task ProjectSettingsAdmin_Save_PersistsProjectEnabled_ReadableAtProjectScope()
+	{
+		var jar = new CookieJar();
+		await LogInAsync(jar);
+
+		var getResp = await GetAsync("/ui/admin/ws/$system/projects/$system/settings", jar);
+		var token = ExtractToken(await getResp.Content.ReadAsStringAsync());
+
+		var postResp = await PostAsync("/ui/admin/ws/$system/projects/$system/settings?handler=Save", jar, new()
+		{
+			["recordType"] = "SessionFullScanSettings",
+			["ProjectEnabled"] = "true",
+			["__RequestVerificationToken"] = token,
+		});
+		postResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await postResp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"proj-settings-success\"");
+
+		using var scope = _factory.Services.CreateScope();
+		var resolver = scope.ServiceProvider.GetRequiredService<ISettingsResolver>();
+		var resolved = await resolver.GetAsync<SessionFullScanSettings>(Scope.Project, "$system");
+		resolved.ProjectEnabled.Should().BeTrue();
 	}
 
 	[Fact]
