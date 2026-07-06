@@ -46,7 +46,7 @@ public sealed class ConfigApiWorkspaceAuthzFixture : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
-						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
+						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Features:Config"] = "true",
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = TestPasswordHash,

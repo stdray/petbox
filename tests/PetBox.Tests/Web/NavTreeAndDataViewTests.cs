@@ -22,7 +22,6 @@ public sealed class NavTreeAndDataViewFixture : IAsyncLifetime
 	public NavTreeAndDataViewFixture()
 	{
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
-		var dbPath = Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db");
 		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
@@ -31,7 +30,7 @@ public sealed class NavTreeAndDataViewFixture : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
-						["ConnectionStrings:PetBox"] = $"Data Source={dbPath};Cache=Shared",
+						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Features:Logging"] = "true",
 						["Features:Data"] = "true",
 						["Admin:Username"] = "admin",

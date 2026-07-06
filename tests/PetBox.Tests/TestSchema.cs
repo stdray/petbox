@@ -44,4 +44,27 @@ public static class TestSchema
 		if (File.Exists(target)) return;
 		File.Copy(CoreTemplate.Value, target);
 	}
+
+	// A `Data Source=...;Cache=Shared` connection string for a WebApplicationFactory
+	// test's Core db, rooted in a FRESH per-call directory — not a bare filename dropped
+	// directly in Path.GetTempPath(). Program.cs derives every scoped module's storage
+	// root (logs/config/tasks/memory/db) from Path.GetDirectoryName(this connection
+	// string's DataSource); a unique FILENAME with a shared bare-temp-root DIRECTORY still
+	// collapses onto ONE physical folder across every test host that uses this idiom, so
+	// unrelated test classes' WebApplicationFactory instances all end up racing
+	// uncoordinated schema-create + writes against the exact same physical SQLite files —
+	// most commonly logs/$system/petbox.db (the self-log, auto-created at startup whenever
+	// Features:Logging is on, which is the Testing-environment default) and, for the
+	// log-pipeline tests, logs/$system/default.db. That's the mechanism behind the
+	// intermittent "no such table" log-pipeline flake and (suspected on Linux CI, where
+	// SQLite's POSIX advisory locking is weaker than Windows' mandatory locking) the
+	// LogPipelineTests exit-134 SIGABRT: concurrent, uncoordinated DDL/writes to one file
+	// from many independent ScopedDbFactory instances. Giving each call its own directory
+	// isolates every derived module directory per test host, same as the Core db file itself.
+	public static string NewTempConnectionString(string prefix = "petbox-test")
+	{
+		var dir = Path.Combine(Path.GetTempPath(), $"{prefix}-{Guid.NewGuid():N}");
+		Directory.CreateDirectory(dir);
+		return $"Data Source={Path.Combine(dir, "petbox.db")};Cache=Shared";
+	}
 }

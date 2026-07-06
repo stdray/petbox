@@ -37,7 +37,7 @@ public sealed class LoginAuthFixture : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
-						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
+						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = PasswordHash,
 					});

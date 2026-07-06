@@ -69,7 +69,7 @@ public sealed class McpOutputSchemaConformanceFixture : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
-						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
+						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						// Enable every feature so a covered read is never an isError just because
 						// its subsystem was toggled off.
 						["Features:Tasks"] = "true",
