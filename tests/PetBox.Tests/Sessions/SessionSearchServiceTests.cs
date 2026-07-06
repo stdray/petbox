@@ -8,6 +8,7 @@ using PetBox.Memory.Services;
 using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
 using PetBox.Sessions.Episodic;
+using PetBox.Sessions.Search;
 using PetBox.Sessions.Services;
 using PetBox.Web.Search;
 
@@ -29,6 +30,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 	readonly SessionService _sessions;
 	readonly MemoryService _memory;
 	readonly DuckDbSessionEpisodicIndex _episodic;
+	readonly SessionTermIndex _termIndex;
 	readonly SessionSearchService _search;
 
 	public SessionSearchServiceTests()
@@ -46,7 +48,8 @@ public sealed class SessionSearchServiceTests : IDisposable
 		_sessions = new SessionService(new SessionStore(_sessionsFactory));
 		_memory = new MemoryService(new MemoryStore(_db, _memoryFactory), llm: null);
 		_episodic = new DuckDbSessionEpisodicIndex(_sessionsFactory);
-		_search = new SessionSearchService(_memory, _episodic);
+		_termIndex = new SessionTermIndex(_sessionsFactory, _sessions);
+		_search = new SessionSearchService(_memory, _episodic, _termIndex, _sessions);
 	}
 
 	public void Dispose()
@@ -111,6 +114,55 @@ public sealed class SessionSearchServiceTests : IDisposable
 
 		res.Distilled.Should().BeTrue();
 		res.Candidates.Should().BeEmpty(); // discovered but unhydratable — skipped, not an error
+	}
+
+	// ---- W1 acceptance test: verbatim term-index recall with the digest leg OFF (spec
+	// session-discovery-verbatim) ----
+
+	[Fact]
+	public async Task VerbatimTermIndex_FindsSessionByBodyTermTheDigestDropped()
+	{
+		// FixedDigestChat's digest names "topic A" only, regardless of the transcript — it
+		// models a real LLM summary that judged the identifier non-essential and dropped it.
+		// Query TermB against the digest store ALONE (the pre-existing behavior) must find
+		// NOTHING: that is the OFF-recall baseline the verbatim term leg fixes.
+		const string TermB = "xk9917cafeface";
+		await _sessions.UpsertAsync(Proj, "s-verbatim", "claude-code",
+			Msgs($"обсуждали тему А, отдельно всплыл идентификатор {TermB} в логах ошибки"));
+
+		var distilled = await new SessionDigestJob(_sessionsFactory, _sessions, _memory, new FixedDigestChat(),
+			logger: null, quietPeriod: NoQuiet).DrainAllAsync(CancellationToken.None);
+		distilled.Should().Be(1);
+
+		var digestOnly = await _memory.SearchAsync(Proj, SessionDigestJob.Store, TermB, type: null);
+		digestOnly.Hits.Should().BeEmpty("the digest never mentions the verbatim term — the OFF baseline");
+
+		(await _termIndex.DrainAllAsync(CancellationToken.None)).Should().Be(1); // backfill the term index
+
+		var res = await _search.SearchAsync(Proj, TermB);
+
+		res.Distilled.Should().BeTrue();
+		res.Candidates.Select(c => c.SessionId).Should().Contain("s-verbatim");
+		var hit = res.Candidates.Single(c => c.SessionId == "s-verbatim");
+		hit.Sources.Should().Contain("term");
+		hit.Sources.Should().NotContain("digest"); // the digest search alone never surfaced it
+	}
+
+	// Chat fake whose digest is a FIXED summary naming only "topic A" — it never echoes the
+	// transcript, so any distinctive term in the body is guaranteed absent from the digest
+	// (models a real LLM dropping a detail it judged non-essential to the summary).
+	sealed class FixedDigestChat : ILlmClient
+	{
+		public Task<ChatResult> ChatAsync(string projectKey, ChatRequest request, CancellationToken ct = default) =>
+			Task.FromResult(new ChatResult("Сессия про тему А\n- обсуждали тему А, ничего примечательного",
+				new ModelIdentity("fake-chat", 0), new ServedBy("fake", "fake-chat", 1, Degraded: false)));
+
+		public Task<bool> IsAvailableAsync(string projectKey, LlmCapability capability, CancellationToken ct = default) =>
+			Task.FromResult(true);
+		public Task<EmbedResult> EmbedAsync(string projectKey, EmbedRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+		public Task<RerankResult> RerankAsync(string projectKey, RerankRequest request, CancellationToken ct = default) =>
+			throw new NotSupportedException();
 	}
 
 	// Chat fake whose digest echoes the distilled messages, so the digest carries the

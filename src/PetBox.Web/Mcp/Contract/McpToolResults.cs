@@ -263,13 +263,18 @@ public sealed record SessionSearchHitView(long Message, string Role, string Snip
 //   query row   → SessionId/Agent + Description (the digest), episodic `Hits` and the
 //                 per-session `Retrievers` (Version null — a discovery is digest-based).
 // Null fields are omitted on the wire, so each mode serializes without the other's arm.
+// `Sources` (query mode only) names which stage-1 discovery leg(s) raised this session:
+// "digest" (the LLM summary), "term" (verbatim full-text over the raw transcript, spec
+// session-discovery-verbatim), "fullscan" (opt-in raw-substring scan, spec
+// session-fullscan-optin) — a session can carry more than one when several legs agree.
 public sealed record SessionSearchItemView(
 	string SessionId,
 	string Agent,
 	long? Version = null,
 	string? Description = null,
 	IReadOnlyList<SessionSearchHitView>? Hits = null,
-	RetrieverInfo? Retrievers = null);
+	RetrieverInfo? Retrievers = null,
+	IReadOnlyList<string>? Sources = null);
 
 // The session_search result — ONE shape for both modes (SearchEnvelope form): `Items` in
 // final order plus the response-budget markers (null = complete). With a query it also

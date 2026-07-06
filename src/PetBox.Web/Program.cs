@@ -154,6 +154,13 @@ public partial class Program
 				cs => new PetBox.Sessions.Data.SessionsDb(PetBox.Sessions.Data.SessionsDb.CreateOptions(cs)), PetBox.Sessions.Data.SessionsSchema.Ensure));
 		builder.Services.AddScoped<PetBox.Sessions.Data.ISessionStore, PetBox.Sessions.Data.SessionStore>();
 		builder.Services.AddScoped<PetBox.Sessions.Contract.ISessionService, PetBox.Sessions.Services.SessionService>();
+		// Verbatim per-session term index (spec: session-discovery-verbatim): chat-free, so it
+		// is registered as its own IVectorizationJob (SessionTermIndexJob) rather than folded
+		// into the digest job's LLM/quiet-period gates — a plain tokenization pass has no
+		// reason to wait on either.
+		builder.Services.AddScoped<PetBox.Sessions.Search.SessionTermIndex>();
+		builder.Services.AddScoped<PetBox.Sessions.Search.ISessionTermIndex>(sp => sp.GetRequiredService<PetBox.Sessions.Search.SessionTermIndex>());
+		builder.Services.AddScoped<PetBox.Web.Search.IVectorizationJob, PetBox.Web.Search.SessionTermIndexJob>();
 		// Session discovery digests: distills each session's transcript into the project's
 		// `session-digests` memory store off the write path — rides the same enrichment tick
 		// as the vector jobs. Registered after sessions/memory/llm, which it consumes.
@@ -185,7 +192,13 @@ public partial class Program
 		// `Search:Sessions:*` (conservative default when absent — spec search-fair-fusion).
 		builder.Services.AddSingleton(
 			builder.Configuration.GetSection("Search:Sessions").Get<PetBox.Web.Search.SessionSearchOptions>() ?? new PetBox.Web.Search.SessionSearchOptions());
-		builder.Services.AddScoped<PetBox.Web.Search.SessionSearchService>();
+		builder.Services.AddScoped<PetBox.Web.Search.SessionSearchService>(sp => new PetBox.Web.Search.SessionSearchService(
+			sp.GetRequiredService<PetBox.Memory.Contract.IMemoryService>(),
+			sp.GetRequiredService<PetBox.Sessions.Contract.ISessionEpisodicIndex>(),
+			sp.GetRequiredService<PetBox.Sessions.Search.ISessionTermIndex>(),
+			sp.GetRequiredService<PetBox.Sessions.Contract.ISessionService>(),
+			sp.GetRequiredService<PetBox.Core.Search.SearchRerankOptions>(),
+			sp.GetRequiredService<PetBox.Web.Search.SessionSearchOptions>()));
 		// Episodic tier: transient per-session DuckDB index, hydrated on demand and aged
 		// out by idleness. Singleton — it IS the hydration cache. The stage-2 in-session
 		// fair-fusion knobs (junk-exclusion min length + semantic-noise floor, spec

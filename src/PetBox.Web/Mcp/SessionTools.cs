@@ -148,14 +148,17 @@ public static class SessionTools
 		Without `q`: a deterministic LISTING of the project's active sessions — compact rows
 		{ sessionId, agent, version }. Requires tasks:read.
 
-		With `q`: a two-stage search over the session archive. Stage 1 DISCOVERY: hybrid
-		(lexical FTS ⊕ semantic vectors, RRF-fused) over per-session facts digests — the
-		`session-digests` memory store that background distillation maintains. Stage 2
+		With `q`: a two-stage search over the session archive. Stage 1 DISCOVERY fuses TWO
+		legs (RRF) over per-session state, no hydration: the `session-digests` memory store
+		(an LLM-composed summary, hybrid lexical FTS ⊕ semantic vectors) and a VERBATIM
+		term index (full-text BM25 over the raw transcript) — a distinctive term the digest
+		summary dropped still surfaces the session through the term leg alone. Stage 2
 		EPISODIC: the top `sessions` candidates are lazily hydrated (transient in-memory
 		index: russian-stem FTS + vectors) and searched INSIDE, up to `hitsPerSession`
 		messages each. Every hit carries the message ordinal — the provenance bridge: jump
 		to the verbatim source with session_get. Items then carry { sessionId, agent,
-		description, hits[], retrievers } and the response the stage-1 `retrievers`;
+		description, hits[], retrievers, sources } — `sources` names which stage-1 leg(s)
+		raised the session ("digest"/"term") — and the response the stage-1 `retrievers`;
 		`distilled:false` means the project has no digest store yet (distillation runs in
 		the background, ~minutes after a session settles) — not "no matches"; `reason`
 		then carries a machine-readable code (currently "no-digest-store"). The two-stage
@@ -198,7 +201,8 @@ public static class SessionTools
 			c.SessionId, c.Agent,
 			Description: c.Description,
 			Hits: c.Hits.Select(h => new SessionSearchHitView(h.Message, h.Role, h.Snippet, h.Score, h.Retriever)).ToList(),
-			Retrievers: new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded))).ToList();
+			Retrievers: new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded),
+			Sources: c.Sources)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(items);
 		return new SessionSearchResultView(
 			kept,
