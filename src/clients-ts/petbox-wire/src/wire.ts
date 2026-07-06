@@ -27,7 +27,9 @@
 //                                             Claude-compatible skills discovery path)
 //        - .factory/skills/petbox/SKILL.md   (Factory Droid skill)
 //    8. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files);
-//       all links point at the stable copy (~/.petbox/wire/)
+//       all links point at the stable copy (~/.petbox/wire/). (--prompt-rag) additionally installs
+//       the OPT-IN Claude Code UserPromptSubmit prompt-RAG hook (off by default; safe exact-match
+//       context injection — see prompt-rag.ts).
 //    9. (--cleanup-legacy) remove the project's old per-project hook/plugin copies
 //   10. self-smoke: POST a tiny session and assert the server applied it
 //
@@ -58,6 +60,9 @@ type Args = {
   cleanupLegacy: boolean;
   telemetry: boolean;
   telemetryLog: string;
+  // OPT-IN, off by default: install the Claude Code UserPromptSubmit prompt-RAG hook (safe
+  // exact-match context injection). Absence of the flag never removes an already-installed one.
+  promptRag: boolean;
 };
 
 const DEFAULT_TELEMETRY_LOG = "cc-telemetry";
@@ -65,7 +70,7 @@ const DEFAULT_TELEMETRY_LOG = "cc-telemetry";
 function usage(): never {
   console.error(
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
-      "                       [--telemetry] [--telemetry-log <name>]",
+      "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag]",
   );
   process.exit(2);
 }
@@ -78,6 +83,7 @@ function parseArgs(argv: string[]): Args {
   let cleanupLegacy = false;
   let telemetry = false;
   let telemetryLog = DEFAULT_TELEMETRY_LOG;
+  let promptRag = false;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--env") env = argv[++i];
@@ -86,6 +92,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--cleanup-legacy") cleanupLegacy = true;
     else if (a === "--telemetry") telemetry = true;
     else if (a === "--telemetry-log") telemetryLog = argv[++i];
+    else if (a === "--prompt-rag") promptRag = true;
     else if (a.startsWith("--")) {
       console.error(`unknown flag: ${a}`);
       usage();
@@ -105,6 +112,7 @@ function parseArgs(argv: string[]): Args {
     cleanupLegacy,
     telemetry,
     telemetryLog: telemetryLog.trim(),
+    promptRag,
   };
 }
 
@@ -398,43 +406,51 @@ async function ensureTelemetryLog(
   process.exit(1);
 }
 
-// Persist the OTLP export env into the project's .claude/settings.json `env` block (per-project,
-// NOT machine-scope: machine env would make EVERY Claude Code session on the box export). Merge —
-// preserve any other settings.json keys and any pre-existing env entries; only our OTEL_* / CLAUDE_*
-// keys are (re)written. Endpoints carry the full path the ingest routes expect.
-//
-// The API key is referenced as `${<envVar>}` (the SAME real env var wire persists for MCP via
-// persistKeyForAgents) so the secret stays off disk. NOTE (empirically verified 2026-07-06):
-// Claude Code does NOT expand `${VAR}` inside settings.json `env` values (unlike `.mcp.json`),
-// so with this reference form the ingest sees the literal string and returns 401 — telemetry
-// export will not authenticate until the real key reaches the exporter by another route. This is
-// deliberate (no plaintext secret committed to a shared settings file); the orchestrator decides
-// how to inject the key (e.g. a machine-local settings.local.json, or an env override).
+// Persist the OTLP export env for Claude Code, SPLIT by secrecy (per-project, NOT machine-scope:
+// machine env would make EVERY CC session on the box export):
+//  - non-secret vars (endpoints, protocol, exporters, interval) → .claude/settings.json `env`;
+//  - the API-key-bearing OTEL_EXPORTER_OTLP_HEADERS → .claude/settings.local.json `env` (the CC
+//    local-override file, conventionally gitignored) — the raw key lands there, never in the
+//    shareable settings.json.
+// Why the raw key and not `${envVar}`: Claude Code does NOT expand `${VAR}` inside settings.json
+// `env` values (unlike `.mcp.json`) — empirically verified 2026-07-06 — so a reference form sends
+// the literal string and the ingest returns 401. The key already lives plaintext in
+// ~/.petbox/keys.json; settings.local.json (gitignored) is the same trust boundary, per-project.
+// Both files are merged (other keys/env entries preserved); only our OTEL_* / CLAUDE_* keys change.
 function writeTelemetrySettings(
   dir: string,
   project: string,
-  envVar: string,
+  key: string,
   logName: string,
 ): void {
   const metricsEndpoint = `${DEFAULT_BASE_URL}/v1/metrics/${project}/${logName}`;
   const logsEndpoint = `${DEFAULT_BASE_URL}/v1/logs/${project}/${logName}`;
-  const telemetryEnv: Record<string, string> = {
+  // Non-secret export config → committable settings.json.
+  const publicEnv: Record<string, string> = {
     CLAUDE_CODE_ENABLE_TELEMETRY: "1",
     OTEL_METRICS_EXPORTER: "otlp",
     OTEL_LOGS_EXPORTER: "otlp",
     OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
     OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: metricsEndpoint,
     OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: logsEndpoint,
-    OTEL_EXPORTER_OTLP_HEADERS: `X-Api-Key=\${${envVar}},X-Service-Key=claude-code`,
     OTEL_METRIC_EXPORT_INTERVAL: "5000",
   };
+  mergeEnvIntoSettings(join(dir, ".claude", "settings.json"), publicEnv);
+  log(`[telemetry] merged OTLP export config into .claude/settings.json (log '${logName}').`);
 
-  const settingsPath = join(dir, ".claude", "settings.json");
+  // Secret header (carries the API key) → gitignored settings.local.json.
+  mergeEnvIntoSettings(join(dir, ".claude", "settings.local.json"), {
+    OTEL_EXPORTER_OTLP_HEADERS: `X-Api-Key=${key},X-Service-Key=claude-code`,
+  });
+  log(`[telemetry] wrote OTLP auth header into .claude/settings.local.json (gitignored — keep it out of git).`);
+}
+
+// Merge an env map into a Claude Code settings file's `env` block, preserving all other keys/entries.
+function mergeEnvIntoSettings(settingsPath: string, envMap: Record<string, string>): void {
   const settings = readJson(settingsPath) ?? {};
   if (!settings.env || typeof settings.env !== "object") settings.env = {};
-  for (const [k, v] of Object.entries(telemetryEnv)) settings.env[k] = v;
+  for (const [k, v] of Object.entries(envMap)) settings.env[k] = v;
   writeJson(settingsPath, settings);
-  log(`[telemetry] merged OTLP export env into ${settingsPath} (log '${logName}').`);
 }
 
 // ---- step 8: global install ------------------------------------------------
@@ -471,9 +487,10 @@ function pruneStaleKitHooks(hooksObj: any, validCmds: Set<string>): number {
   return removed;
 }
 
-function installGlobalHooks(): void {
+function installGlobalHooks(promptRag: boolean): void {
   const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
+  const promptRagCmd = `node "${join(STABLE, "prompt-rag.ts")}"`;
   const droidPushCmd = `node "${join(STABLE, "droid-push-session.ts")}"`;
   const droidPullCmd = `node "${join(STABLE, "droid-pull-memory.ts")}"`;
   // Every kit hook command this run considers current — the prune keeps these, drops the rest.
@@ -502,6 +519,16 @@ function installGlobalHooks(): void {
 
   ensureHook("Stop", pushCmd);
   ensureHook("SessionStart", pullCmd);
+  // OPT-IN prompt-RAG (Claude Code only in v1): install the UserPromptSubmit exact-match context
+  // injector only when --prompt-rag is passed. It is intentionally NOT in KIT_HOOK_SUFFIXES, so a
+  // later plain re-run (without the flag) leaves an enabled hook untouched rather than pruning it —
+  // enabling is sticky, and the default install never touches this event. UserPromptSubmit takes no
+  // matcher (CC docs), so the group shape { hooks: [...] } is correct as-is.
+  if (promptRag) {
+    ensureHook("UserPromptSubmit", promptRagCmd);
+  } else {
+    log(`[8/10] claude hook UserPromptSubmit (prompt-rag) not requested — skipped (opt-in via --prompt-rag).`);
+  }
   writeJson(settingsPath, settings);
   log(`[8/10] merged hooks into ${settingsPath}`);
 
@@ -701,13 +728,13 @@ async function main(): Promise<void> {
   // base endpoint and cannot carry the project/log path PetBox's ingest requires — CC-only.
   if (args.telemetry) {
     await ensureTelemetryLog(baseUrl, project, key, args.telemetryLog);
-    writeTelemetrySettings(dir, project, envVar, args.telemetryLog);
+    writeTelemetrySettings(dir, project, key, args.telemetryLog);
   } else {
     log(`[telemetry] not requested — skipped (pass --telemetry to enable Claude Code OTLP export).`);
   }
 
   // 8. global install
-  installGlobalHooks();
+  installGlobalHooks(args.promptRag);
 
   // 9. cleanup legacy
   if (args.cleanupLegacy) cleanupLegacy(dir);
