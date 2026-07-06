@@ -32,11 +32,22 @@ const FETCH_TIMEOUT_MS = 6000;
 const MAX_CANDIDATES = PROMPT_RAG_DEFAULTS.cap; // default per-prompt lookup cap; tunable via per-project config
 const REQUIRE_HYPHEN = PROMPT_RAG_DEFAULTS.requireHyphen; // default: identifiers must contain a hyphen
 
+// Self-audit (best-effort). A dedicated petbox named log receives ONE record per ENABLED-project
+// invocation so injection-rate (= injected / all enabled invocations) and precision can be
+// measured. The write happens AFTER the pointer stdout, has its OWN short timeout, and swallows
+// EVERY failure — so it can never change the injected output, the exit code, or hang the turn.
+const AUDIT_LOG = "prompt-rag-audit";
+const AUDIT_TIMEOUT_MS = 1500; // short + independent of FETCH_TIMEOUT_MS: bounds the worst-case tail
+const AUDIT_SERVICE_KEY = "prompt-rag-hook"; // X-Service-Key emitter tag on the audit records
+
 type HookInput = {
   cwd?: string;
   prompt?: unknown;
   prompt_text?: unknown;
   user_prompt?: unknown;
+  // CC's UserPromptSubmit stdin carries a session marker; spelling has varied, accept both.
+  session_id?: unknown;
+  sessionId?: unknown;
 };
 
 // A resolved task-node pointer — headings/keys only, never the body.
@@ -117,13 +128,22 @@ export function renderInjection(hits: TaskHit[], toolPrefix = "mcp__petbox__"): 
 // the injected `resolve` fn, so it is unit-testable without any network. Never throws.
 export type ExtractOpts = { cap?: number; requireHyphen?: boolean };
 
-export async function buildInjection(
+// The full result of a resolve pass: the rendered pointer text PLUS the raw signals the audit
+// record needs (how many identifiers were extracted, which nodes matched). `text` is byte-for-byte
+// what buildInjection returns, so callers that only want the injection are unaffected.
+export type InjectionResult = {
+  text: string;
+  hits: TaskHit[];
+  candidateCount: number;
+};
+
+export async function buildInjectionDetailed(
   prompt: string,
   resolve: Resolver,
   opts: ExtractOpts = {},
-): Promise<string> {
+): Promise<InjectionResult> {
   const candidates = extractCandidates(prompt, opts.cap, opts.requireHyphen);
-  if (candidates.length === 0) return "";
+  if (candidates.length === 0) return { text: "", hits: [], candidateCount: 0 };
   const hits: TaskHit[] = [];
   const seenNodes = new Set<string>();
   for (const tok of candidates) {
@@ -139,7 +159,16 @@ export async function buildInjection(
     seenNodes.add(dedupeKey);
     hits.push(hit);
   }
-  return renderInjection(hits);
+  return { text: renderInjection(hits), hits, candidateCount: candidates.length };
+}
+
+// Thin back-compat wrapper: the injection text only (unchanged signature/behavior).
+export async function buildInjection(
+  prompt: string,
+  resolve: Resolver,
+  opts: ExtractOpts = {},
+): Promise<string> {
+  return (await buildInjectionDetailed(prompt, resolve, opts)).text;
 }
 
 // Resolve the effective extraction tolerances from a project's prompt-RAG config, filling any
@@ -161,6 +190,87 @@ export async function buildInjectionForProject(
 ): Promise<string> {
   if (!promptRag?.enabled) return "";
   return buildInjection(prompt, resolve, tolerancesOf(promptRag));
+}
+
+// ---- self-audit (best-effort) --------------------------------------------------------------
+
+// The structured audit record — ONE per enabled-project invocation. `injected` and `matchCount`
+// are redundant by construction (injected === matchCount > 0), but the eval reads both directly:
+// injection-rate = count(injected=true) / count(all records); precision = sample `matched`, judge.
+export type AuditRecord = {
+  injected: boolean;
+  candidateCount: number;
+  matchCount: number;
+  matched: string[]; // `board/key` of each injected node
+  promptLen: number;
+  sessionId?: string;
+  timestamp: string; // ISO 8601
+};
+
+// PURE builder (no I/O): hook input + resolved nodes → the audit object. Unit-testable directly.
+export function buildAuditRecord(
+  prompt: string,
+  candidateCount: number,
+  hits: TaskHit[],
+  sessionId?: string,
+  now: Date = new Date(),
+): AuditRecord {
+  const rec: AuditRecord = {
+    injected: hits.length > 0,
+    candidateCount,
+    matchCount: hits.length,
+    matched: hits.map((h) => `${h.board}/${h.key}`),
+    promptLen: typeof prompt === "string" ? prompt.length : 0,
+    timestamp: now.toISOString(),
+  };
+  if (sessionId) rec.sessionId = sessionId;
+  return rec;
+}
+
+// Serialize an audit record to ONE CLEF (Seq/Serilog compact) NDJSON line: `@t` timestamp (the one
+// field the server's CLEF parser requires — CleFParser.cs:29), a rendered `@m` message, and every
+// audit field as a top-level structured property (queryable via KQL). Pure/deterministic.
+export function auditToClefLine(rec: AuditRecord): string {
+  const clef: Record<string, unknown> = {
+    "@t": rec.timestamp,
+    "@m": `prompt-rag: injected=${rec.injected} candidates=${rec.candidateCount} matches=${rec.matchCount}`,
+    "@l": "Information",
+    injected: rec.injected,
+    candidateCount: rec.candidateCount,
+    matchCount: rec.matchCount,
+    matched: rec.matched,
+    promptLen: rec.promptLen,
+  };
+  if (rec.sessionId) clef.sessionId = rec.sessionId;
+  return JSON.stringify(clef);
+}
+
+// Fire-and-forget audit POST to the path-based CLEF ingest route (POST
+// /api/ingest/{project}/{log}/clef — LogApi.cs:30; reuses the hook's X-Api-Key, X-Service-Key tags
+// the emitter). TOTAL: any failure (network, 404 missing log, 403 scope, timeout, 5xx) is swallowed
+// and the response is never inspected — a SINGLE bounded attempt, so it can neither 404-loop nor
+// hang. Callers MUST invoke this only AFTER writing the pointer stdout, so a failed/slow audit can
+// never change the injected output or the exit code.
+async function postAudit(
+  target: { baseUrl: string; apiKey: string; project: string },
+  logName: string,
+  rec: AuditRecord,
+): Promise<void> {
+  try {
+    const url = `${target.baseUrl}/api/ingest/${target.project}/${logName}/clef`;
+    await fetch(url, {
+      method: "POST",
+      headers: {
+        "X-Api-Key": target.apiKey,
+        "X-Service-Key": AUDIT_SERVICE_KEY,
+        "Content-Type": "application/vnd.serilog.clef",
+      },
+      body: auditToClefLine(rec),
+      signal: AbortSignal.timeout(AUDIT_TIMEOUT_MS),
+    });
+  } catch {
+    // best-effort: swallow EVERYTHING (a global prompt hook must never surface an audit failure).
+  }
 }
 
 // Pull the first node out of a tasks_search structuredContent payload ({ nodes: [...] }), mapped
@@ -198,6 +308,15 @@ function promptOf(j: HookInput): string {
   return "";
 }
 
+// Best-effort session marker from the hook stdin (undefined when absent) — a precision-audit
+// grouping key, never required for the record to be valid.
+function sessionIdOf(j: HookInput): string | undefined {
+  for (const v of [j.session_id, j.sessionId]) {
+    if (typeof v === "string" && v.length > 0) return v;
+  }
+  return undefined;
+}
+
 async function main(): Promise<void> {
   try {
     const raw = await readStdin();
@@ -221,15 +340,26 @@ async function main(): Promise<void> {
     const opts = tolerancesOf(resolved.promptRag);
 
     const prompt = promptOf(j);
-    // Cheap pre-check: no identifier-shaped tokens → emit nothing WITHOUT any network call.
-    if (extractCandidates(prompt, opts.cap, opts.requireHyphen).length === 0) return;
+    const sessionId = sessionIdOf(j);
+    const auditTarget = { baseUrl: resolved.baseUrl, apiKey: resolved.apiKey, project: resolved.project };
+
+    // Cheap pre-check: no identifier-shaped tokens → nothing to inject and NO MCP call. This is an
+    // enabled-project invocation nonetheless, so it still belongs in the denominator: emit a
+    // zero-match audit (best-effort, after the — empty — stdout) then return. stdout stays empty,
+    // byte-identical to today.
+    if (extractCandidates(prompt, opts.cap, opts.requireHyphen).length === 0) {
+      await postAudit(auditTarget, AUDIT_LOG, buildAuditRecord(prompt, 0, [], sessionId));
+      return;
+    }
 
     const client = await connectMcp({
       baseUrl: resolved.baseUrl,
       apiKey: resolved.apiKey,
       timeoutMs: FETCH_TIMEOUT_MS,
     });
-    if (!client) return; // petbox unreachable → silence
+    // petbox unreachable → no pointers, and the audit POST (same host) could only fail; skip it so
+    // we don't add the audit timeout to a turn where petbox is already down. Silence, as today.
+    if (!client) return;
 
     const resolver: Resolver = async (token) => {
       // Exact-join: `keys` resolves a slug OR a 32-hex NodeId to a single node (terminal nodes
@@ -242,8 +372,15 @@ async function main(): Promise<void> {
       return firstNode(sc);
     };
 
-    const out = await buildInjection(prompt, resolver, opts);
-    if (out) process.stdout.write(out);
+    // Compute pointers → print to stdout FIRST → THEN best-effort audit. Order is load-bearing: the
+    // audit must never precede or gate the injected output.
+    const result = await buildInjectionDetailed(prompt, resolver, opts);
+    if (result.text) process.stdout.write(result.text);
+    await postAudit(
+      auditTarget,
+      AUDIT_LOG,
+      buildAuditRecord(prompt, result.candidateCount, result.hits, sessionId),
+    );
   } catch {
     // best-effort: never break the user's prompt
   }

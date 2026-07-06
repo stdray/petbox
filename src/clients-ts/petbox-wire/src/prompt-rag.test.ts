@@ -7,7 +7,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  auditToClefLine,
+  buildAuditRecord,
   buildInjection,
+  buildInjectionDetailed,
   buildInjectionForProject,
   extractCandidates,
   renderInjection,
@@ -198,4 +201,79 @@ test("tolerances flow through the gate: requireHyphen=false lets a single-word k
   assert.equal(off, "", "default (hyphen required) → 'toggle' is not even a candidate");
   const on = await buildInjectionForProject("please check toggle", { enabled: true, requireHyphen: false }, single);
   assert.match(on, /telemetry-wire-toggle/, "requireHyphen:false → single word resolves to a pointer");
+});
+
+// ---- buildInjectionDetailed: text stays identical, exposes audit signals -------------------
+
+test("buildInjectionDetailed: text equals buildInjection, plus hits + candidateCount", async () => {
+  const prompt = "work on telemetry-wire-toggle and no-such-slug please";
+  const detailed = await buildInjectionDetailed(prompt, stubResolver);
+  const text = await buildInjection(prompt, stubResolver);
+  assert.equal(detailed.text, text, "text is byte-identical to buildInjection");
+  assert.equal(detailed.candidateCount, 2, "both hyphenated identifiers are candidates");
+  assert.equal(detailed.hits.length, 1, "only the real node resolves to a hit");
+  assert.equal(detailed.hits[0].key, "telemetry-wire-toggle");
+});
+
+test("buildInjectionDetailed: no candidates → empty text, zero counts", async () => {
+  const detailed = await buildInjectionDetailed("just ordinary words", stubResolver);
+  assert.deepEqual(detailed, { text: "", hits: [], candidateCount: 0 });
+});
+
+// ---- buildAuditRecord: pure record builder -------------------------------------------------
+
+const FIXED_NOW = new Date("2026-07-06T12:00:00.000Z");
+
+test("buildAuditRecord: a match → injected=true, counts + matched board/key, promptLen, session", () => {
+  const hit = KNOWN["telemetry-wire-toggle"];
+  const rec = buildAuditRecord("prompt with telemetry-wire-toggle", 3, [hit], "sess-123", FIXED_NOW);
+  assert.equal(rec.injected, true);
+  assert.equal(rec.candidateCount, 3);
+  assert.equal(rec.matchCount, 1);
+  assert.deepEqual(rec.matched, ["work/telemetry-wire-toggle"]);
+  assert.equal(rec.promptLen, "prompt with telemetry-wire-toggle".length);
+  assert.equal(rec.sessionId, "sess-123");
+  assert.equal(rec.timestamp, "2026-07-06T12:00:00.000Z");
+});
+
+test("buildAuditRecord: no matches → injected=false, matchCount 0, empty matched, no sessionId key", () => {
+  const rec = buildAuditRecord("ordinary prompt", 0, [], undefined, FIXED_NOW);
+  assert.equal(rec.injected, false);
+  assert.equal(rec.matchCount, 0);
+  assert.deepEqual(rec.matched, []);
+  assert.equal(rec.promptLen, "ordinary prompt".length);
+  assert.ok(!("sessionId" in rec), "absent session marker is omitted, not null");
+});
+
+test("buildAuditRecord: injected === (matchCount > 0), multiple matches dedupe-agnostic", () => {
+  const a = KNOWN["telemetry-wire-toggle"];
+  const b: TaskHit = { key: "other-node", board: "work", status: "Done", title: "other" };
+  const rec = buildAuditRecord("p", 5, [a, b], undefined, FIXED_NOW);
+  assert.equal(rec.matchCount, 2);
+  assert.equal(rec.injected, rec.matchCount > 0);
+  assert.deepEqual(rec.matched, ["work/telemetry-wire-toggle", "work/other-node"]);
+});
+
+// ---- auditToClefLine: one valid CLEF line, @t + structured props ---------------------------
+
+test("auditToClefLine: emits a single-line valid CLEF JSON with @t and every field as a property", () => {
+  const rec = buildAuditRecord("hello telemetry-wire-toggle", 2, [KNOWN["telemetry-wire-toggle"]], "sess-9", FIXED_NOW);
+  const line = auditToClefLine(rec);
+  assert.ok(!line.includes("\n"), "CLEF is a single NDJSON line");
+  const o = JSON.parse(line);
+  assert.equal(o["@t"], "2026-07-06T12:00:00.000Z", "@t is the ISO timestamp (the only required field)");
+  assert.equal(typeof o["@m"], "string");
+  assert.equal(o.injected, true);
+  assert.equal(o.candidateCount, 2);
+  assert.equal(o.matchCount, 1);
+  assert.deepEqual(o.matched, ["work/telemetry-wire-toggle"]);
+  assert.equal(o.promptLen, "hello telemetry-wire-toggle".length);
+  assert.equal(o.sessionId, "sess-9");
+});
+
+test("auditToClefLine: omits sessionId when absent (no null property leaks)", () => {
+  const o = JSON.parse(auditToClefLine(buildAuditRecord("p", 0, [], undefined, FIXED_NOW)));
+  assert.ok(!("sessionId" in o), "no sessionId key when the marker was absent");
+  assert.equal(o.injected, false);
+  assert.deepEqual(o.matched, []);
 });

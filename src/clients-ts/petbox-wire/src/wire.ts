@@ -447,6 +447,43 @@ async function ensureTelemetryLog(
   process.exit(1);
 }
 
+// prompt-RAG self-audit log — the UserPromptSubmit hook (prompt-rag.ts) ships ONE CLEF record per
+// enabled-project invocation to this named log for injection-rate + precision eval. Path-based CLEF
+// ingest 404s if the log is absent, so create it when ENABLING prompt-RAG. Idempotent (409 =
+// already exists = success). Non-fatal by design: a failure (e.g. the wired key lacks logs:admin)
+// only means the first audits 404 until the log is created out-of-band — never a broken wiring — so
+// WARN and continue rather than abort (unlike ensureTelemetryLog, whose absence breaks OTLP export).
+const PROMPT_RAG_AUDIT_LOG = "prompt-rag-audit";
+
+async function ensurePromptRagAuditLog(baseUrl: string, project: string, key: string): Promise<void> {
+  const uri = `${baseUrl}/api/logs/${project}/logs`;
+  try {
+    const resp = await fetch(uri, {
+      method: "POST",
+      headers: { "X-Api-Key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: PROMPT_RAG_AUDIT_LOG,
+        description:
+          "prompt-RAG hook self-audit (injection-rate + precision) — one record per enabled-project UserPromptSubmit invocation.",
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    if (resp.ok || resp.status === 409) {
+      log(`[prompt-rag] audit log '${PROMPT_RAG_AUDIT_LOG}' ready in project '${project}' (HTTP ${resp.status}).`);
+      return;
+    }
+    const text = await resp.text().catch(() => "");
+    console.error(
+      `[prompt-rag] WARN could not ensure audit log '${PROMPT_RAG_AUDIT_LOG}' — HTTP ${resp.status} ${text}. ` +
+        `The hook still runs; audits 404 (silently) until the log exists (create it via mcp__petbox__log_create).`,
+    );
+  } catch (e) {
+    console.error(
+      `[prompt-rag] WARN could not reach ${uri} — ${(e as Error).message}. Audit log not ensured; the hook still runs.`,
+    );
+  }
+}
+
 // Persist the OTLP export env for Claude Code, SPLIT by secrecy (per-project, NOT machine-scope:
 // machine env would make EVERY CC session on the box export):
 //  - non-secret vars (endpoints, protocol, exporters, interval) → .claude/settings.json `env`;
@@ -778,6 +815,12 @@ async function main(): Promise<void> {
     writeTelemetrySettings(dir, project, key, args.telemetryLog);
   } else {
     log(`[telemetry] not requested — skipped (pass --telemetry to enable Claude Code OTLP export).`);
+  }
+
+  // 7c. prompt-RAG audit log (only when ENABLING): the hook's best-effort ingest 404s until
+  // `prompt-rag-audit` exists. Idempotent + non-fatal.
+  if (args.promptRag === true) {
+    await ensurePromptRagAuditLog(baseUrl, project, key);
   }
 
   // 8. global install — install the global prompt-RAG hook only when ENABLING (--prompt-rag);
