@@ -26,10 +26,11 @@
 import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
 import { connectMcp } from "./mcp-client.ts";
-import { resolveProject } from "./registry.ts";
+import { PROMPT_RAG_DEFAULTS, type PromptRagConfig, resolveProject } from "./registry.ts";
 
 const FETCH_TIMEOUT_MS = 6000;
-const MAX_CANDIDATES = 8; // bound the per-prompt lookups; extra identifiers are ignored
+const MAX_CANDIDATES = PROMPT_RAG_DEFAULTS.cap; // default per-prompt lookup cap; tunable via per-project config
+const REQUIRE_HYPHEN = PROMPT_RAG_DEFAULTS.requireHyphen; // default: identifiers must contain a hyphen
 
 type HookInput = {
   cwd?: string;
@@ -57,11 +58,21 @@ export type Resolver = (token: string) => Promise<TaskHit | null>;
 //   - node slug: lowercase, MUST contain a hyphen (petbox slugs are multi-segment, e.g.
 //     `prompt-rag-hook`). Requiring a hyphen skips ordinary prose words.
 //   - NodeId: exactly 32 lowercase hex chars.
-const SLUG_RE = /\b[a-z][a-z0-9]*(?:-[a-z0-9]+)+\b/g;
+// requireHyphen=true (default): a slug MUST contain a hyphen (skips ordinary prose words). The
+// relaxed variant (requireHyphen=false) additionally accepts single-segment lowercase tokens, for
+// projects whose node keys are single words — at the cost of more (still exact-join) lookups.
+const SLUG_RE_HYPHEN = /\b[a-z][a-z0-9]*(?:-[a-z0-9]+)+\b/g;
+const SLUG_RE_ANY = /\b[a-z][a-z0-9]*(?:-[a-z0-9]+)*\b/g;
 const NODEID_RE = /\b[0-9a-f]{32}\b/g;
 
-// Extract deduped identifier candidates from a prompt, capped at MAX_CANDIDATES. Pure/deterministic.
-export function extractCandidates(prompt: string): string[] {
+// Extract deduped identifier candidates from a prompt, capped at `cap`. Pure/deterministic.
+// `cap` and `requireHyphen` come from per-project config (registry), defaulting to the module
+// constants so existing callers keep the original behavior.
+export function extractCandidates(
+  prompt: string,
+  cap: number = MAX_CANDIDATES,
+  requireHyphen: boolean = REQUIRE_HYPHEN,
+): string[] {
   if (typeof prompt !== "string" || prompt.length === 0) return [];
   const seen = new Set<string>();
   const out: string[] = [];
@@ -71,11 +82,14 @@ export function extractCandidates(prompt: string): string[] {
       out.push(tok);
     }
   };
-  // NodeIds first (most specific), then slugs. A 32-hex NodeId also matches SLUG_RE only if it
-  // contained a hyphen, which it can't — so the two sets are disjoint.
+  const slugRe = requireHyphen ? SLUG_RE_HYPHEN : SLUG_RE_ANY;
+  // NodeIds first (most specific), then slugs. A 32-hex NodeId matches the hyphen-required slug RE
+  // only if it contained a hyphen, which it can't; under the relaxed RE a NodeId would match, but
+  // it is already deduped in via NODEID_RE first, so the two sets stay disjoint either way.
   for (const m of prompt.matchAll(NODEID_RE)) push(m[0]);
-  for (const m of prompt.matchAll(SLUG_RE)) push(m[0]);
-  return out.slice(0, MAX_CANDIDATES);
+  for (const m of prompt.matchAll(slugRe)) push(m[0]);
+  const n = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : MAX_CANDIDATES;
+  return out.slice(0, n);
 }
 
 function clip(s: string, n: number): string {
@@ -101,8 +115,14 @@ export function renderInjection(hits: TaskHit[], toolPrefix = "mcp__petbox__"): 
 
 // Orchestrate: extract candidates → resolve each exactly → dedupe by node → render. Pure w.r.t.
 // the injected `resolve` fn, so it is unit-testable without any network. Never throws.
-export async function buildInjection(prompt: string, resolve: Resolver): Promise<string> {
-  const candidates = extractCandidates(prompt);
+export type ExtractOpts = { cap?: number; requireHyphen?: boolean };
+
+export async function buildInjection(
+  prompt: string,
+  resolve: Resolver,
+  opts: ExtractOpts = {},
+): Promise<string> {
+  const candidates = extractCandidates(prompt, opts.cap, opts.requireHyphen);
   if (candidates.length === 0) return "";
   const hits: TaskHit[] = [];
   const seenNodes = new Set<string>();
@@ -120,6 +140,27 @@ export async function buildInjection(prompt: string, resolve: Resolver): Promise
     hits.push(hit);
   }
   return renderInjection(hits);
+}
+
+// Resolve the effective extraction tolerances from a project's prompt-RAG config, filling any
+// unset field from the module defaults (the same defaults wire.ts writes on --prompt-rag).
+export function tolerancesOf(promptRag?: PromptRagConfig): ExtractOpts {
+  return {
+    cap: promptRag?.cap ?? MAX_CANDIDATES,
+    requireHyphen: promptRag?.requireHyphen ?? REQUIRE_HYPHEN,
+  };
+}
+
+// Per-project gate + build in one testable step: when the project's prompt-RAG is absent/disabled,
+// inject NOTHING ("") regardless of the prompt; when enabled, extract+resolve using the project's
+// tolerances. This is exactly what the hook's main() does around the network call.
+export async function buildInjectionForProject(
+  prompt: string,
+  promptRag: PromptRagConfig | undefined,
+  resolve: Resolver,
+): Promise<string> {
+  if (!promptRag?.enabled) return "";
+  return buildInjection(prompt, resolve, tolerancesOf(promptRag));
 }
 
 // Pull the first node out of a tasks_search structuredContent payload ({ nodes: [...] }), mapped
@@ -171,9 +212,17 @@ async function main(): Promise<void> {
     const resolved = resolveProject(typeof j.cwd === "string" ? j.cwd : "");
     if (!resolved) return;
 
+    // SECOND guard: per-project registry gate. The global hook fires for EVERY registered project;
+    // prompt-RAG only runs where it was explicitly enabled (`wire <proj> --prompt-rag`). Absent or
+    // disabled config → silent no-op: no output, no network. (step 1: client-side registry gate.)
+    if (!resolved.promptRag?.enabled) return;
+
+    // Per-project tolerances, defaulting to PROMPT_RAG_DEFAULTS when a field is unset in config.
+    const opts = tolerancesOf(resolved.promptRag);
+
     const prompt = promptOf(j);
     // Cheap pre-check: no identifier-shaped tokens → emit nothing WITHOUT any network call.
-    if (extractCandidates(prompt).length === 0) return;
+    if (extractCandidates(prompt, opts.cap, opts.requireHyphen).length === 0) return;
 
     const client = await connectMcp({
       baseUrl: resolved.baseUrl,
@@ -193,7 +242,7 @@ async function main(): Promise<void> {
       return firstNode(sc);
     };
 
-    const out = await buildInjection(prompt, resolver);
+    const out = await buildInjection(prompt, resolver, opts);
     if (out) process.stdout.write(out);
   } catch {
     // best-effort: never break the user's prompt
