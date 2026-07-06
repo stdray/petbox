@@ -39,7 +39,7 @@ public sealed class ShareApiAuthzFixture : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
-						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
+						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Features:Logging"] = "true",
 						["Admin:Username"] = "admin",
 						["Admin:PasswordHash"] = TestPasswordHash,

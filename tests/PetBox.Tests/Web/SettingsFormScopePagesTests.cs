@@ -23,14 +23,13 @@ public sealed class SettingsFormScopePagesFixture : IAsyncLifetime
 	public SettingsFormScopePagesFixture()
 	{
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
-		var dbPath = Path.Combine(Path.GetTempPath(), $"petbox-settingsform-{Guid.NewGuid():N}.db");
 		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
 				b.UseEnvironment("Testing");
 				b.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>
 				{
-					["ConnectionStrings:PetBox"] = $"Data Source={dbPath};Cache=Shared",
+					["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 					["Admin:Username"] = "admin",
 					["Admin:PasswordHash"] = TestPasswordHash,
 				}));

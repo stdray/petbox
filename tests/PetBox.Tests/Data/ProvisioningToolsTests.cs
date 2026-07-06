@@ -43,7 +43,7 @@ public sealed class ProvisioningToolsFixture : IAsyncLifetime
 						// In-memory config (not the CONNECTIONSTRINGS__PETBOX env var): a
 						// process-wide env write with a per-class value would leak into any
 						// host booting concurrently now that classes run in parallel.
-						["ConnectionStrings:PetBox"] = $"Data Source={Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db")};Cache=Shared",
+						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Features:Config"] = "true",
 					});
 				});

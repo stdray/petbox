@@ -32,7 +32,6 @@ public sealed class LogPipelineFixture : IAsyncLifetime
 		// Production, appsettings.Testing.json never loads, Features:Logging is
 		// false at ConfigureServices time, and IIngestionPipeline isn't registered.
 		Environment.SetEnvironmentVariable("ASPNETCORE_ENVIRONMENT", "Testing");
-		var dbPath = Path.Combine(Path.GetTempPath(), $"petbox-test-{Guid.NewGuid():N}.db");
 		Factory = new WebApplicationFactory<Program>()
 			.WithWebHostBuilder(b =>
 			{
@@ -41,7 +40,16 @@ public sealed class LogPipelineFixture : IAsyncLifetime
 				{
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
-						["ConnectionStrings:PetBox"] = $"Data Source={dbPath};Cache=Shared",
+						// A fresh, uniquely-DIRECTORIED Core db per fixture instance — not just a
+						// unique filename dropped in the bare OS temp root. Program.cs derives every
+						// scoped module's storage dir (logs/config/tasks/memory/db) from
+						// Path.GetDirectoryName(this connection string), so a shared bare-temp-root
+						// directory collapsed EVERY WebApplicationFactory test host in the suite onto
+						// the SAME physical logs/$system/petbox.db (self-log, auto-created at startup
+						// since Features:Logging defaults true) and logs/$system/default.db (this
+						// fixture's own log) — unrelated test classes' hosts raced uncoordinated
+						// schema-create + writes on those files concurrently. See TestSchema for detail.
+						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Features:Logging"] = "true",
 						["Seq:SelfLog:Enabled"] = "true",
 						["Admin:Username"] = "admin",
