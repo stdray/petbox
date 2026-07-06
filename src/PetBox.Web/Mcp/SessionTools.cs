@@ -148,21 +148,27 @@ public static class SessionTools
 		Without `q`: a deterministic LISTING of the project's active sessions — compact rows
 		{ sessionId, agent, version }. Requires tasks:read.
 
-		With `q`: a two-stage search over the session archive. Stage 1 DISCOVERY fuses TWO
-		legs (RRF) over per-session state, no hydration: the `session-digests` memory store
-		(an LLM-composed summary, hybrid lexical FTS ⊕ semantic vectors) and a VERBATIM
-		term index (full-text BM25 over the raw transcript) — a distinctive term the digest
-		summary dropped still surfaces the session through the term leg alone. Stage 2
-		EPISODIC: the top `sessions` candidates are lazily hydrated (transient in-memory
-		index: russian-stem FTS + vectors) and searched INSIDE, up to `hitsPerSession`
-		messages each. Every hit carries the message ordinal — the provenance bridge: jump
-		to the verbatim source with session_get. Items then carry { sessionId, agent,
-		description, hits[], retrievers, sources } — `sources` names which stage-1 leg(s)
-		raised the session ("digest"/"term") — and the response the stage-1 `retrievers`;
+		With `q`: a two-stage search over the session archive. Stage 1 DISCOVERY fuses up to
+		THREE legs (RRF) over per-session state, no hydration: the `session-digests` memory
+		store (an LLM-composed summary, hybrid lexical FTS ⊕ semantic vectors), a VERBATIM
+		term index (full-text BM25 over the raw transcript — a distinctive term the digest
+		summary dropped still surfaces the session through this leg alone), and — ONLY when
+		`fullScan:true` is passed AND the deployment's two-key permission setting allows it
+		(never on by default, never automatic) — a raw substring/phrase scan over every
+		session (capped; see `fullScanCapped`). Stage 2 EPISODIC: the top `sessions`
+		candidates are lazily hydrated (transient in-memory index: russian-stem FTS +
+		vectors) and searched INSIDE, up to `hitsPerSession` messages each. Every hit
+		carries the message ordinal — the provenance bridge: jump to the verbatim source
+		with session_get. Items then carry { sessionId, agent, description, hits[],
+		retrievers, sources } — `sources` names which stage-1 leg(s) raised the session
+		("digest"/"term"/"fullscan") — and the response the stage-1 `retrievers`;
 		`distilled:false` means the project has no digest store yet (distillation runs in
 		the background, ~minutes after a session settles) — not "no matches"; `reason`
-		then carries a machine-readable code (currently "no-digest-store"). The two-stage
-		pipeline needs memory too: requires tasks:read + memory:read.
+		then carries a machine-readable code (currently "no-digest-store"). Requesting
+		`fullScan:true` when it is not allowed does NOT silently ignore the flag: the
+		response carries `fullScanRequested:true`, `fullScanRan:false` and
+		`fullScanReason:"not-allowed"`. The two-stage pipeline needs memory too: requires
+		tasks:read + memory:read.
 
 		Both modes share one envelope: `items` plus the HARD OUTPUT BUDGET markers (~30k
 		serialized chars; overflowing items are prefix-cut and flagged `truncated:true` +
@@ -174,6 +180,7 @@ public static class SessionTools
 		[Description("Search query. Omit for a deterministic listing of the project's sessions (list = search without q).")] string? q = null,
 		[Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
 		[Description("With q: max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
+		[Description("With q: opt into the full-scan escape hatch (raw substring scan over every session). Only actually runs if the deployment's permission setting also allows it — see fullScanRan/fullScanReason in the response. Default false: never on automatically.")] bool fullScan = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -196,7 +203,7 @@ public static class SessionTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
-		var o = await search.SearchAsync(projectKey, q, sessions, hitsPerSession, ct);
+		var o = await search.SearchAsync(projectKey, q, sessions, hitsPerSession, fullScan, ct);
 		var items = o.Candidates.Select(c => new SessionSearchItemView(
 			c.SessionId, c.Agent,
 			Description: c.Description,
@@ -211,7 +218,11 @@ public static class SessionTools
 			Retrievers: new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded),
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
-			Hint: omitted > 0 ? SearchBudgetHint : null);
+			Hint: omitted > 0 ? SearchBudgetHint : null,
+			FullScanRequested: o.FullScanRequested,
+			FullScanRan: o.FullScanRan,
+			FullScanReason: o.FullScanReason,
+			FullScanCapped: o.FullScanCapped);
 	}
 
 	// Surfaced on SessionSearchResultView.Hint when listing rows were cut by the budget.

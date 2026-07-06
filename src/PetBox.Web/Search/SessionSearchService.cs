@@ -1,5 +1,6 @@
 using System.Text.Json;
 using PetBox.Core.Search;
+using PetBox.Core.Settings;
 using PetBox.Memory.Contract;
 using PetBox.Sessions.Contract;
 using PetBox.Sessions.Search;
@@ -7,18 +8,25 @@ using PetBox.Sessions.Search;
 namespace PetBox.Web.Search;
 
 // The two-stage session search (spec: session-provenance-bridge):
-//   1. DISCOVERY — TWO fused legs over the always-on per-session state, no hydration,
-//      sublinear to archive size (the K each leg returns is constant):
-//        - digest  — hybrid (lexical ⊕ semantic, RRF) over the `session-digests` memory
+//   1. DISCOVERY — UP TO THREE fused legs over the always-on per-session state, no
+//      hydration, sublinear to archive size (the K each leg returns is constant):
+//        - digest   — hybrid (lexical ⊕ semantic, RRF) over the `session-digests` memory
 //          store SessionDigestJob maintains (an LLM-composed summary);
-//        - term    — verbatim BM25 over the FULL stemmed token stream of the session's raw
+//        - term     — verbatim BM25 over the FULL stemmed token stream of the session's raw
 //          content (ISessionTermIndex, spec: session-discovery-verbatim). A distinctive term
-//          the digest's LLM summary dropped still surfaces a session through this leg alone.
-//      The two legs' ranked session-id lists are fused by the SAME RRF primitive
-//      (HybridMerge) the rest of the system uses, one level up (session identity instead of
-//      entity identity) — a session found by term alone gets a fair RRF score, not a
-//      last-place tack-on. The fused pool then runs through the SHARED re-ranking policy
-//      (semantic floor, freshness decay, MMR diversity) exactly as before.
+//          the digest's LLM summary dropped still surfaces a session through this leg alone;
+//        - fullscan — OPT-IN ONLY (spec: session-fullscan-optin): a raw, untokenized
+//          substring/phrase scan over every session's content, gated behind an explicit
+//          per-call `fullScan:true` AND a two-key permission setting
+//          (SessionFullScanSettings: system AND project must both allow it). Never runs by
+//          default, never automatically. Catches what term-FTS structurally cannot (a
+//          substring straddling token boundaries) at the cost of a full hydration scan —
+//          capped, and the cap is reported, never silent.
+//      Every leg's ranked session-id list is fused by the SAME RRF primitive (HybridMerge)
+//      the rest of the system uses, one level up (session identity instead of entity
+//      identity) — a session found by only one leg gets a fair RRF score, not a last-place
+//      tack-on. The fused pool then runs through the SHARED re-ranking policy (semantic
+//      floor, freshness decay, MMR diversity) exactly as before.
 //   2. EPISODIC — the top-K candidate sessions are lazily hydrated and searched INSIDE
 //      (ISessionEpisodicIndex), each hit carrying the message ordinal: the provenance
 //      bridge from found-by-meaning to the verbatim source (session_get).
@@ -41,6 +49,8 @@ public sealed class SessionSearchService
 	readonly IMemoryService _memory;
 	readonly ISessionEpisodicIndex _episodic;
 	readonly ISessionTermIndex _termIndex;
+	readonly ISessionFullScanIndex _fullScanIndex;
+	readonly ISettingsResolver _settings;
 	readonly ISessionService _sessionsSvc;
 	// Discovery re-ranking policy. `_rerank` is the SHARED freshness+diversity policy (config
 	// `Search:Recency`/`Search:Diversity`) — session discovery has the same semantics as memory
@@ -50,19 +60,21 @@ public sealed class SessionSearchService
 	readonly SessionSearchOptions _floor;
 
 	public SessionSearchService(IMemoryService memory, ISessionEpisodicIndex episodic,
-		ISessionTermIndex termIndex, ISessionService sessionsSvc,
-		SearchRerankOptions? rerank = null, SessionSearchOptions? options = null)
+		ISessionTermIndex termIndex, ISessionFullScanIndex fullScanIndex, ISettingsResolver settings,
+		ISessionService sessionsSvc, SearchRerankOptions? rerank = null, SessionSearchOptions? options = null)
 	{
 		_memory = memory;
 		_episodic = episodic;
 		_termIndex = termIndex;
+		_fullScanIndex = fullScanIndex;
+		_settings = settings;
 		_sessionsSvc = sessionsSvc;
 		_rerank = rerank ?? new SearchRerankOptions();
 		_floor = options ?? new SessionSearchOptions();
 	}
 
 	public async Task<SessionSearchOutcome> SearchAsync(string projectKey, string query,
-		int sessions = 0, int hitsPerSession = 0, CancellationToken ct = default)
+		int sessions = 0, int hitsPerSession = 0, bool fullScan = false, CancellationToken ct = default)
 	{
 		sessions = Math.Clamp(sessions <= 0 ? DefaultSessions : sessions, 1, MaxSessions);
 		hitsPerSession = Math.Clamp(hitsPerSession <= 0 ? DefaultHitsPerSession : hitsPerSession, 1, MaxHitsPerSession);
@@ -91,12 +103,36 @@ public sealed class SessionSearchService
 		var termRanking = await _termIndex.SearchAsync(projectKey, query, termPool, ct);
 		var termSet = new HashSet<string>(termRanking, StringComparer.Ordinal);
 
-		// Fuse the two session-id rankings by the SAME RRF primitive the rest of the system uses,
-		// one level up (session identity, not entity identity) — a session found ONLY by the term
-		// leg gets a fair rank-based score, not a last-place tack-on.
-		var fused = HybridMerge.RrfScored(digestRanking, termRanking);
+		// DISCOVERY leg 3: the full-scan escape hatch (spec: session-fullscan-optin) — OPT-IN
+		// ONLY. Requested is honest about what the caller asked; Ran/Reason/Capped report what
+		// actually happened (denied ≠ silently ignored).
+		var scanRanking = (IReadOnlyList<string>)[];
+		bool? fullScanRequested = null, fullScanRan = null, fullScanCapped = null;
+		string? fullScanReason = null;
+		if (fullScan)
+		{
+			fullScanRequested = true;
+			var allowed = await FullScanAllowedAsync(projectKey, ct);
+			fullScanRan = allowed;
+			if (!allowed)
+			{
+				fullScanReason = "not-allowed";
+			}
+			else
+			{
+				var scan = await _fullScanIndex.ScanAsync(projectKey, query, ct);
+				scanRanking = scan.SessionIds;
+				fullScanCapped = scan.Capped;
+			}
+		}
+		var scanSet = new HashSet<string>(scanRanking, StringComparer.Ordinal);
 
-		// A session the term leg alone surfaced has no digest entry yet — its freshness/agent
+		// Fuse every leg's session-id ranking by the SAME RRF primitive the rest of the system
+		// uses, one level up (session identity, not entity identity) — a session found by only
+		// ONE leg gets a fair rank-based score, not a last-place tack-on.
+		var fused = HybridMerge.RrfScored(digestRanking, termRanking, scanRanking);
+
+		// A session found ONLY by term/fullscan has no digest entry yet — its freshness/agent
 		// come from the session header instead. Looked up once, only if such a session exists.
 		Dictionary<string, SessionHeader>? headers = null;
 		if (fused.Any(f => !bySession.ContainsKey(f.Key)))
@@ -108,23 +144,25 @@ public sealed class SessionSearchService
 		{
 			var inDigest = bySession.TryGetValue(sessionId, out var digestHit);
 			var inTerm = termSet.Contains(sessionId);
-			var sources = new List<string>(2);
+			var inScan = scanSet.Contains(sessionId);
+			var sources = new List<string>(3);
 			if (inDigest) sources.Add("digest");
 			if (inTerm) sources.Add("term");
+			if (inScan) sources.Add("fullscan");
 			sourcesBySession[sessionId] = sources;
 
 			if (inDigest)
 			{
-				// A term-leg confirmation is ALSO a lexical (verbatim) confirmation — it must
-				// never be floored as semantic-only noise, even if the digest's own hybrid
+				// A term/fullscan confirmation is ALSO a lexical (verbatim) confirmation — it
+				// must never be floored as semantic-only noise, even if the digest's own hybrid
 				// search only found it through the vector leg.
-				pool.Add(digestHit! with { Score = score, LexicalConfirmed = digestHit.LexicalConfirmed || inTerm });
+				pool.Add(digestHit! with { Score = score, LexicalConfirmed = digestHit.LexicalConfirmed || inTerm || inScan });
 			}
 			else
 			{
 				headers!.TryGetValue(sessionId, out var header);
 				var entry = new MemoryEntryView(sessionId, "Reference", "", "", [], 0, "");
-				// Term-FTS is lexical by construction — never floored.
+				// Term-FTS and full-scan are both lexical (verbatim) by construction — never floored.
 				pool.Add(new MemoryScoredHit(entry, header?.Updated ?? DateTime.UtcNow, score, LexicalConfirmed: true, Vector: null));
 			}
 		}
@@ -137,17 +175,30 @@ public sealed class SessionSearchService
 			ct.ThrowIfCancellationRequested();
 			var (sessionId, agent) = Provenance(digest.Entry);
 			if (agent.Length == 0 && headers is not null && headers.TryGetValue(sessionId, out var hdr))
-				agent = hdr.Agent; // term-only candidate — the digest metadata never carried an agent
+				agent = hdr.Agent; // term/fullscan-only candidate — the digest metadata never carried an agent
 			var inner = await _episodic.SearchAsync(projectKey, sessionId, query, hitsPerSession, ct);
 			if (inner is null) continue; // session deleted after distillation — stale digest
 			var sources = sourcesBySession.GetValueOrDefault(sessionId, (IReadOnlyList<string>)["digest"]);
 			candidates.Add(new SessionSearchCandidate(sessionId, agent, digest.Entry.Description, inner.Hits, inner.Retrievers, sources));
 		}
 
-		// Discovery retrievers: OR the term leg's lexical confirmation into the aggregate — a
-		// verbatim-only match is still a LEXICAL discovery signal, just from a different index.
-		var retrievers = discovery.Retrievers with { Lexical = discovery.Retrievers.Lexical || termRanking.Count > 0 };
-		return new SessionSearchOutcome(true, null, candidates, retrievers);
+		// Discovery retrievers: OR the term/fullscan legs' lexical confirmation into the
+		// aggregate — a verbatim-only match is still a LEXICAL discovery signal, just from a
+		// different index.
+		var retrievers = discovery.Retrievers with { Lexical = discovery.Retrievers.Lexical || termRanking.Count > 0 || scanRanking.Count > 0 };
+		return new SessionSearchOutcome(true, null, candidates, retrievers,
+			fullScanRequested, fullScanRan, fullScanReason, fullScanCapped);
+	}
+
+	// allowed = system.SystemEnabled AND project.ProjectEnabled — TWO independent switches
+	// (spec: session-fullscan-optin), read via two separate resolver calls so each property
+	// resolves against its own TopLevel scope (mirrors LogSettings' System/Project pair).
+	async Task<bool> FullScanAllowedAsync(string projectKey, CancellationToken ct)
+	{
+		var system = await _settings.GetAsync<SessionFullScanSettings>(Scope.System, "$", ct);
+		if (!system.SystemEnabled) return false;
+		var project = await _settings.GetAsync<SessionFullScanSettings>(Scope.Project, projectKey, ct);
+		return project.ProjectEnabled;
 	}
 
 	// The discovery re-ranking policy, applied to the raw digest pool BEFORE the session cut:
@@ -232,8 +283,20 @@ public sealed record SessionSearchOptions
 // Distilled=false → the project has no digest store yet (background distillation
 // hasn't run); an honest "not indexed yet", distinct from "nothing matched". `Reason`
 // is a machine-readable code for that state (e.g. "no-digest-store"), null when distilled.
+//
+// FullScan* (spec: session-fullscan-optin) are all null when `fullScan` was never passed
+// (not requested — the common case). Once requested, `FullScanRequested=true` always, and:
+//   FullScanRan=false, FullScanReason="not-allowed" — asked, but the two-key permission
+//     setting denies it (system and/or project switch off). The scan never ran — honestly
+//     reported, not silently ignored.
+//   FullScanRan=true  — the scan ran; `FullScanCapped=true` means the project holds more
+//     sessions than the scan cap, so some were never looked at (also logged, never silent).
 public sealed record SessionSearchOutcome(
 	bool Distilled,
 	string? Reason,
 	IReadOnlyList<SessionSearchCandidate> Candidates,
-	SearchRetrievers Discovery);
+	SearchRetrievers Discovery,
+	bool? FullScanRequested = null,
+	bool? FullScanRan = null,
+	string? FullScanReason = null,
+	bool? FullScanCapped = null);

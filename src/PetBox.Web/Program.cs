@@ -192,10 +192,18 @@ public partial class Program
 		// `Search:Sessions:*` (conservative default when absent — spec search-fair-fusion).
 		builder.Services.AddSingleton(
 			builder.Configuration.GetSection("Search:Sessions").Get<PetBox.Web.Search.SessionSearchOptions>() ?? new PetBox.Web.Search.SessionSearchOptions());
+		// Full-scan escape hatch (spec: session-fullscan-optin): opt-in only, permission-gated
+		// (SessionFullScanSettings, resolved via ISettingsResolver — system AND project must
+		// both allow it). The scan cap binds from `Search:Sessions:FullScan:*`.
+		builder.Services.AddSingleton(
+			builder.Configuration.GetSection("Search:Sessions:FullScan").Get<PetBox.Sessions.Search.SessionFullScanOptions>() ?? new PetBox.Sessions.Search.SessionFullScanOptions());
+		builder.Services.AddScoped<PetBox.Sessions.Search.ISessionFullScanIndex, PetBox.Sessions.Search.SessionFullScanIndex>();
 		builder.Services.AddScoped<PetBox.Web.Search.SessionSearchService>(sp => new PetBox.Web.Search.SessionSearchService(
 			sp.GetRequiredService<PetBox.Memory.Contract.IMemoryService>(),
 			sp.GetRequiredService<PetBox.Sessions.Contract.ISessionEpisodicIndex>(),
 			sp.GetRequiredService<PetBox.Sessions.Search.ISessionTermIndex>(),
+			sp.GetRequiredService<PetBox.Sessions.Search.ISessionFullScanIndex>(),
+			sp.GetRequiredService<PetBox.Core.Settings.ISettingsResolver>(),
 			sp.GetRequiredService<PetBox.Sessions.Contract.ISessionService>(),
 			sp.GetRequiredService<PetBox.Core.Search.SearchRerankOptions>(),
 			sp.GetRequiredService<PetBox.Web.Search.SessionSearchOptions>()));

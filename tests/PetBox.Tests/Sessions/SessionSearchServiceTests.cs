@@ -1,4 +1,5 @@
 using LinqToDB;
+using PetBox.Config;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -11,6 +12,7 @@ using PetBox.Sessions.Episodic;
 using PetBox.Sessions.Search;
 using PetBox.Sessions.Services;
 using PetBox.Web.Search;
+using PetBox.Web.Settings;
 
 namespace PetBox.Tests.Sessions;
 
@@ -31,6 +33,8 @@ public sealed class SessionSearchServiceTests : IDisposable
 	readonly MemoryService _memory;
 	readonly DuckDbSessionEpisodicIndex _episodic;
 	readonly SessionTermIndex _termIndex;
+	readonly SessionFullScanIndex _fullScanIndex;
+	readonly ISettingsResolver _settingsResolver;
 	readonly SessionSearchService _search;
 
 	public SessionSearchServiceTests()
@@ -49,7 +53,9 @@ public sealed class SessionSearchServiceTests : IDisposable
 		_memory = new MemoryService(new MemoryStore(_db, _memoryFactory), llm: null);
 		_episodic = new DuckDbSessionEpisodicIndex(_sessionsFactory);
 		_termIndex = new SessionTermIndex(_sessionsFactory, _sessions);
-		_search = new SessionSearchService(_memory, _episodic, _termIndex, _sessions);
+		_fullScanIndex = new SessionFullScanIndex(_sessions);
+		_settingsResolver = new SettingsResolver(_db, new NoSecrets());
+		_search = new SessionSearchService(_memory, _episodic, _termIndex, _fullScanIndex, _settingsResolver, _sessions);
 	}
 
 	public void Dispose()
@@ -146,6 +152,96 @@ public sealed class SessionSearchServiceTests : IDisposable
 		var hit = res.Candidates.Single(c => c.SessionId == "s-verbatim");
 		hit.Sources.Should().Contain("term");
 		hit.Sources.Should().NotContain("digest"); // the digest search alone never surfaced it
+	}
+
+	// ---- W2 acceptance tests: full-scan opt-in (spec session-fullscan-optin) ----
+
+	// A substring sitting INSIDE a longer token: term-FTS (whole-token prefix matching)
+	// structurally cannot find it — the indexed token is "errorcode{X}trailing", which does
+	// not START WITH the query token. Only a raw substring scan can, which is exactly the
+	// escape hatch this leg exists for.
+	const string FullScanSubstring = "XK77CAFE";
+
+	async Task SeedFullScanTargetAsync()
+	{
+		// A baseline session gives the project a digest store (required to clear the
+		// SearchAsync "no digest store" guard) without ever mentioning the substring, and is
+		// distilled BEFORE the target session exists so the target is never picked up by it.
+		await _sessions.UpsertAsync(Proj, "s-baseline", "claude-code",
+			Msgs("обсуждали общие вопросы производительности системы без конкретных деталей"));
+		await Distill();
+
+		await _sessions.UpsertAsync(Proj, "s-fullscan-only", "claude-code",
+			Msgs($"залогирован код ошибки errorcode{FullScanSubstring}trailing без дополнительных деталей"));
+	}
+
+	[Fact]
+	public async Task FullScan_NotRequested_NeverRunsAutomatically()
+	{
+		await SeedFullScanTargetAsync();
+
+		var res = await _search.SearchAsync(Proj, FullScanSubstring); // fullScan defaults to false
+
+		res.FullScanRequested.Should().BeNull();
+		res.FullScanRan.Should().BeNull();
+		res.Candidates.Select(c => c.SessionId).Should().NotContain("s-fullscan-only");
+	}
+
+	[Fact]
+	public async Task FullScan_RequestedButNotAllowed_DoesNotRun()
+	{
+		await SeedFullScanTargetAsync();
+		// Neither switch was ever turned on — both default OFF.
+
+		var res = await _search.SearchAsync(Proj, FullScanSubstring, fullScan: true);
+
+		res.FullScanRequested.Should().BeTrue();
+		res.FullScanRan.Should().BeFalse();
+		res.FullScanReason.Should().Be("not-allowed");
+		res.Candidates.Select(c => c.SessionId).Should().NotContain("s-fullscan-only");
+	}
+
+	[Fact]
+	public async Task FullScan_SystemSwitchAlone_StillDenied_AndSemantics()
+	{
+		await SeedFullScanTargetAsync();
+		await _settingsResolver.SetAsync(Scope.System, "$",
+			new SessionFullScanSettings { SystemEnabled = true }, new SessionFullScanSettings(), updatedBy: null);
+		// Project switch left OFF.
+
+		var res = await _search.SearchAsync(Proj, FullScanSubstring, fullScan: true);
+
+		res.FullScanRequested.Should().BeTrue();
+		res.FullScanRan.Should().BeFalse("the system switch alone is not enough — AND semantics");
+		res.FullScanReason.Should().Be("not-allowed");
+	}
+
+	[Fact]
+	public async Task FullScan_SystemAndProjectAllowed_RunsAndFindsBySubstring()
+	{
+		await SeedFullScanTargetAsync();
+		await _settingsResolver.SetAsync(Scope.System, "$",
+			new SessionFullScanSettings { SystemEnabled = true }, new SessionFullScanSettings(), updatedBy: null);
+		await _settingsResolver.SetAsync(Scope.Project, Proj,
+			new SessionFullScanSettings { ProjectEnabled = true }, new SessionFullScanSettings(), updatedBy: null);
+
+		var res = await _search.SearchAsync(Proj, FullScanSubstring, fullScan: true);
+
+		res.FullScanRequested.Should().BeTrue();
+		res.FullScanRan.Should().BeTrue();
+		res.FullScanReason.Should().BeNull();
+		res.Candidates.Select(c => c.SessionId).Should().Contain("s-fullscan-only");
+		var hit = res.Candidates.Single(c => c.SessionId == "s-fullscan-only");
+		hit.Sources.Should().Contain("fullscan");
+	}
+
+	// No-op secret encryptor: the settings exercised here have no [Setting(IsSecret=true)]
+	// properties, so encryption is never reached — only present to satisfy the constructor.
+	sealed class NoSecrets : ISecretEncryptor
+	{
+		public bool IsAvailable => false;
+		public SecretBundle Encrypt(string plaintext) => throw new NotSupportedException();
+		public string Decrypt(string ciphertextB64, string ivB64, string authTagB64) => throw new NotSupportedException();
 	}
 
 	// Chat fake whose digest is a FIXED summary naming only "topic A" — it never echoes the

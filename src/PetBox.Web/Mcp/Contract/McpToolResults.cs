@@ -282,6 +282,12 @@ public sealed record SessionSearchItemView(
 // each item) and `Distilled`/`Reason` — false + a machine-readable code (e.g.
 // "no-digest-store") when the project has no digest store yet (not "no matches"); all
 // three are null/omitted in listing mode.
+//
+// FullScan* (spec: session-fullscan-optin) are null unless `fullScan:true` was passed.
+// Once requested: FullScanRan=false + FullScanReason="not-allowed" means the two-key
+// permission setting denied it (asked, but not run — never silent); FullScanRan=true +
+// FullScanCapped=true means it ran but the project holds more sessions than the scan cap
+// (also logged server-side).
 public sealed record SessionSearchResultView(
 	IReadOnlyList<SessionSearchItemView> Items,
 	bool? Distilled = null,
@@ -289,7 +295,11 @@ public sealed record SessionSearchResultView(
 	RetrieverInfo? Retrievers = null,
 	bool? Truncated = null,
 	int? Omitted = null,
-	string? Hint = null);
+	string? Hint = null,
+	bool? FullScanRequested = null,
+	bool? FullScanRan = null,
+	string? FullScanReason = null,
+	bool? FullScanCapped = null);
 
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 
