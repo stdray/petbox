@@ -2,7 +2,13 @@
 // (`npx petbox-wire <dir> <projectKey> …`), so a project can be wired without cloning the repo.
 //
 //   npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]
+//                                      [--telemetry] [--telemetry-log <name>]
 //   (dev, from a checkout: node <pkg>/src/wire.ts <dir> <projectKey> …)
+//
+// --telemetry (opt-in, off by default) wires Claude Code to export its loop telemetry (OTLP
+// metrics + log-events) into the project's petbox named log (default `cc-telemetry`): it ensures
+// the log exists and merges the OTEL_* export env into the project's .claude/settings.json.
+// CC-only — opencode/droid OTLP exporters can't carry the project/log path in the endpoint.
 //
 // Idempotently wires a project to PetBox:
 //    1. derive the env-var name for the API key
@@ -50,11 +56,16 @@ type Args = {
   key?: string;
   workspace?: string;
   cleanupLegacy: boolean;
+  telemetry: boolean;
+  telemetryLog: string;
 };
+
+const DEFAULT_TELEMETRY_LOG = "cc-telemetry";
 
 function usage(): never {
   console.error(
-    "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]",
+    "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
+      "                       [--telemetry] [--telemetry-log <name>]",
   );
   process.exit(2);
 }
@@ -65,19 +76,36 @@ function parseArgs(argv: string[]): Args {
   let key: string | undefined;
   let workspace: string | undefined;
   let cleanupLegacy = false;
+  let telemetry = false;
+  let telemetryLog = DEFAULT_TELEMETRY_LOG;
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--env") env = argv[++i];
     else if (a === "--key") key = argv[++i];
     else if (a === "--workspace") workspace = argv[++i];
     else if (a === "--cleanup-legacy") cleanupLegacy = true;
+    else if (a === "--telemetry") telemetry = true;
+    else if (a === "--telemetry-log") telemetryLog = argv[++i];
     else if (a.startsWith("--")) {
       console.error(`unknown flag: ${a}`);
       usage();
     } else positionals.push(a);
   }
   if (positionals.length < 2) usage();
-  return { dir: positionals[0], projectKey: positionals[1], env, key, workspace, cleanupLegacy };
+  if (!telemetryLog || !telemetryLog.trim()) {
+    console.error("--telemetry-log requires a non-empty log name");
+    usage();
+  }
+  return {
+    dir: positionals[0],
+    projectKey: positionals[1],
+    env,
+    key,
+    workspace,
+    cleanupLegacy,
+    telemetry,
+    telemetryLog: telemetryLog.trim(),
+  };
 }
 
 // ---- small helpers ---------------------------------------------------------
@@ -334,6 +362,79 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
     writeFileSync(skillPath, skill, "utf8");
     log(`[7/10] wrote ${skillPath}`);
   }
+}
+
+// ---- step 7b: telemetry (opt-in, --telemetry) ------------------------------
+
+// Ensure the target named log exists. PetBox OTLP ingest is project+log-scoped in the PATH
+// (`/v1/{metrics,logs}/{project}/{log}`) and returns 404 if the log is absent, so the log MUST
+// pre-exist before Claude Code starts exporting. Idempotent: a 409 ("already exists") is success.
+async function ensureTelemetryLog(
+  baseUrl: string,
+  project: string,
+  key: string,
+  logName: string,
+): Promise<void> {
+  const uri = `${baseUrl}/api/logs/${project}/logs`;
+  let resp: Response;
+  try {
+    resp = await fetch(uri, {
+      method: "POST",
+      headers: { "X-Api-Key": key, "Content-Type": "application/json" },
+      body: JSON.stringify({ name: logName }),
+      signal: AbortSignal.timeout(12000),
+    });
+  } catch (e) {
+    console.error(`[telemetry] could not reach ${uri} — ${(e as Error).message}. Aborting.`);
+    process.exit(1);
+  }
+  if (resp.ok || resp.status === 409) {
+    // 201 Created (fresh) or 409 Conflict (already exists) — both mean the log is ready.
+    log(`[telemetry] log '${logName}' ready in project '${project}' (HTTP ${resp.status}).`);
+    return;
+  }
+  const text = await resp.text().catch(() => "");
+  console.error(`[telemetry] failed to ensure log '${logName}' — HTTP ${resp.status} ${text}. Aborting.`);
+  process.exit(1);
+}
+
+// Persist the OTLP export env into the project's .claude/settings.json `env` block (per-project,
+// NOT machine-scope: machine env would make EVERY Claude Code session on the box export). Merge —
+// preserve any other settings.json keys and any pre-existing env entries; only our OTEL_* / CLAUDE_*
+// keys are (re)written. Endpoints carry the full path the ingest routes expect.
+//
+// The API key is referenced as `${<envVar>}` (the SAME real env var wire persists for MCP via
+// persistKeyForAgents) so the secret stays off disk. NOTE (empirically verified 2026-07-06):
+// Claude Code does NOT expand `${VAR}` inside settings.json `env` values (unlike `.mcp.json`),
+// so with this reference form the ingest sees the literal string and returns 401 — telemetry
+// export will not authenticate until the real key reaches the exporter by another route. This is
+// deliberate (no plaintext secret committed to a shared settings file); the orchestrator decides
+// how to inject the key (e.g. a machine-local settings.local.json, or an env override).
+function writeTelemetrySettings(
+  dir: string,
+  project: string,
+  envVar: string,
+  logName: string,
+): void {
+  const metricsEndpoint = `${DEFAULT_BASE_URL}/v1/metrics/${project}/${logName}`;
+  const logsEndpoint = `${DEFAULT_BASE_URL}/v1/logs/${project}/${logName}`;
+  const telemetryEnv: Record<string, string> = {
+    CLAUDE_CODE_ENABLE_TELEMETRY: "1",
+    OTEL_METRICS_EXPORTER: "otlp",
+    OTEL_LOGS_EXPORTER: "otlp",
+    OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
+    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: metricsEndpoint,
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: logsEndpoint,
+    OTEL_EXPORTER_OTLP_HEADERS: `X-Api-Key=\${${envVar}},X-Service-Key=claude-code`,
+    OTEL_METRIC_EXPORT_INTERVAL: "5000",
+  };
+
+  const settingsPath = join(dir, ".claude", "settings.json");
+  const settings = readJson(settingsPath) ?? {};
+  if (!settings.env || typeof settings.env !== "object") settings.env = {};
+  for (const [k, v] of Object.entries(telemetryEnv)) settings.env[k] = v;
+  writeJson(settingsPath, settings);
+  log(`[telemetry] merged OTLP export env into ${settingsPath} (log '${logName}').`);
 }
 
 // ---- step 8: global install ------------------------------------------------
@@ -593,6 +694,17 @@ async function main(): Promise<void> {
 
   // 7. project files
   writeProjectFiles(dir, project, envVar, workspace);
+
+  // 7b. telemetry (opt-in): ensure the target log exists, then persist the OTLP export env into
+  // the project's .claude/settings.json. Off by default — only when --telemetry is passed.
+  // opencode/droid are intentionally NOT wired: their OTLP exporters append `/v1/{signal}` to a
+  // base endpoint and cannot carry the project/log path PetBox's ingest requires — CC-only.
+  if (args.telemetry) {
+    await ensureTelemetryLog(baseUrl, project, key, args.telemetryLog);
+    writeTelemetrySettings(dir, project, envVar, args.telemetryLog);
+  } else {
+    log(`[telemetry] not requested — skipped (pass --telemetry to enable Claude Code OTLP export).`);
+  }
 
   // 8. global install
   installGlobalHooks();
