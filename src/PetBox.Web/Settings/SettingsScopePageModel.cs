@@ -1,5 +1,4 @@
 using System.Globalization;
-using System.Reflection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
@@ -18,10 +17,11 @@ namespace PetBox.Web.Settings;
 // bind for workspace/project keys is a deliberate authz-bypass-project-create guard (see the
 // subclasses).
 //
-// Section threshold: a record shows when it has at least one [Setting] whose TopLevel is at or
-// above (numerically >=) this page's Scope — i.e. the record is configurable at this scope or a
-// deeper one. The leaf form renderer (_SettingsFormFields via SettingsFormFieldSelector) then
-// hides the individual properties that don't belong at this scope.
+// Section threshold: a record shows when SettingsScopePolicy.IsRecordVisibleAt says at least one of
+// its [Setting] properties is editable at this page's Scope (INTERIM decision B — see
+// SettingsScopePolicy for what that means and why it's concentrated there). The leaf form renderer
+// (_SettingsFormFields via SettingsFormFieldSelector) then hides the individual properties that
+// don't belong at this scope (e.g. a HasMinScope-pinned sibling property).
 public abstract class SettingsScopePageModel : PageModel
 {
 	readonly ISettingsResolver _resolver;
@@ -35,7 +35,9 @@ public abstract class SettingsScopePageModel : PageModel
 	// Project → route ProjectKey).
 	protected abstract string ScopeKey { get; }
 
-	// Records this page may expose, subject to the per-record TopLevel >= Scope threshold below.
+	// Records this page may expose, subject to the SettingsScopePolicy.IsRecordVisibleAt threshold
+	// below. All three concrete pages return the same SettingsScopePolicy.Records list (INTERIM
+	// decision B: uniform across System/Workspace/Project).
 	protected abstract IReadOnlyList<Type> Records { get; }
 
 	public IReadOnlyList<RecordSection> Sections { get; private set; } = [];
@@ -77,10 +79,7 @@ public abstract class SettingsScopePageModel : PageModel
 		var sections = new List<RecordSection>();
 		foreach (var type in Records)
 		{
-			var configurableHere = type.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-				.Select(p => p.GetCustomAttribute<SettingAttribute>())
-				.Any(a => a is not null && (int)a.TopLevel >= (int)Scope);
-			if (!configurableHere) continue;
+			if (!SettingsScopePolicy.IsRecordVisibleAt(type, Scope)) continue;
 
 			var current = await ResolveAsync(type);
 			sections.Add(new RecordSection(type, current));

@@ -12,13 +12,8 @@ public sealed class SysDefaultsModel : SettingsScopePageModel
 	protected override Scope Scope => Scope.System;
 	protected override string ScopeKey => "$";
 
-	// Any record with at least one [Setting] whose TopLevel >= System belongs here; the form
-	// renderer hides properties whose TopLevel < System.
-	protected override IReadOnlyList<Type> Records =>
-	[
-		typeof(LogSettings),
-		typeof(IngestionSettings),
-		typeof(DashboardSettings),
-		typeof(SessionFullScanSettings),
-	];
+	// Uniform registry (INTERIM decision B — see SettingsScopePolicy): same list on all three
+	// generic scope pages. SettingsScopePolicy.IsRecordVisibleAt/IsEditableAt decide what's
+	// actually shown at this page's scope.
+	protected override IReadOnlyList<Type> Records => SettingsScopePolicy.Records;
 }

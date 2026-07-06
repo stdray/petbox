@@ -27,8 +27,10 @@ public sealed class ProjectSettingsAdminModel : SettingsScopePageModel
 	protected override Scope Scope => Scope.Project;
 	protected override string ScopeKey => ProjectKey;
 
-	// Deliberately NOT RepoSettings — CommitUrlTemplate has its own bespoke control on
-	// ProjectDetail.cshtml (project Info page); duplicating it here would give it two disagreeing
-	// edit surfaces.
-	protected override IReadOnlyList<Type> Records => [typeof(SessionFullScanSettings)];
+	// Uniform registry (INTERIM decision B — see SettingsScopePolicy): same list on all three
+	// generic scope pages. SettingsScopePolicy.IsRecordVisibleAt/IsEditableAt decide what's
+	// actually shown at this page's scope. Deliberately NOT RepoSettings — CommitUrlTemplate has
+	// its own bespoke control on ProjectDetail.cshtml (project Info page); duplicating it here
+	// would give it two disagreeing edit surfaces (that exclusion lives in the shared registry).
+	protected override IReadOnlyList<Type> Records => SettingsScopePolicy.Records;
 }

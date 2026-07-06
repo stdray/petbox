@@ -96,8 +96,13 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 	}
 
 	[Fact]
-	public async Task WorkspaceDefaults_ShowsOnlyRetentionDays_NotSystemOnlyFields()
+	public async Task WorkspaceDefaults_ShowsAllLogIngestionDashboardFields_UnderInterimB()
 	{
+		// INTERIM decision B (SettingsScopePolicy): TopLevel is no longer a write-depth ceiling for
+		// System/Workspace/Project, so System-only-TopLevel fields (SystemRetainDays,
+		// RunIntervalSeconds, and the whole of IngestionSettings/DashboardSettings) are now
+		// project/workspace-overridable and show here too. SessionFullScanSettings stays excluded —
+		// both its fields are HasMinScope-pinned away from Workspace.
 		var jar = new CookieJar();
 		await LogInAsync(jar);
 
@@ -106,8 +111,16 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 		var html = await resp.Content.ReadAsStringAsync();
 
 		html.Should().Contain("data-testid=\"setting-input-RetentionDays\"");
-		html.Should().NotContain("data-testid=\"setting-input-SystemRetainDays\"");
-		html.Should().NotContain("data-testid=\"setting-input-RunIntervalSeconds\"");
+		html.Should().Contain("data-testid=\"setting-input-SystemRetainDays\"");
+		html.Should().Contain("data-testid=\"setting-input-RunIntervalSeconds\"");
+		html.Should().Contain("data-testid=\"setting-input-ChannelCapacity\"");
+		html.Should().Contain("data-testid=\"setting-input-MaxBatchSize\"");
+		html.Should().Contain("data-testid=\"setting-input-HealthPollIntervalSeconds\"");
+		html.Should().Contain("data-testid=\"setting-input-RequestTimeoutSeconds\"");
+		html.Should().Contain("data-testid=\"setting-input-StaleSeconds\"");
+		html.Should().Contain("data-testid=\"setting-input-HealthRetentionDays\"");
+		html.Should().NotContain("data-testid=\"setting-input-SystemEnabled\"");
+		html.Should().NotContain("data-testid=\"setting-input-ProjectEnabled\"");
 		html.Should().NotContain("ws-defaults-empty");
 	}
 
@@ -142,6 +155,74 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 	}
 
 	[Fact]
+	public async Task ProjectSettingsAdmin_AlsoShowsLogIngestionDashboardFields_UnderInterimB()
+	{
+		// INTERIM decision B: the uniform Records registry (SettingsScopePolicy.Records) means the
+		// project-scope page is no longer limited to SessionFullScanSettings.ProjectEnabled — every
+		// generic record now offers itself down to Project scope too.
+		var jar = new CookieJar();
+		await LogInAsync(jar);
+
+		var resp = await GetAsync("/ui/admin/ws/$system/projects/$system/settings", jar);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain("data-testid=\"setting-input-RetentionDays\"");
+		html.Should().Contain("data-testid=\"setting-input-SystemRetainDays\"");
+		html.Should().Contain("data-testid=\"setting-input-RunIntervalSeconds\"");
+		html.Should().Contain("data-testid=\"setting-input-ChannelCapacity\"");
+		html.Should().Contain("data-testid=\"setting-input-MaxBatchSize\"");
+		html.Should().Contain("data-testid=\"setting-input-HealthPollIntervalSeconds\"");
+		html.Should().Contain("data-testid=\"setting-input-RequestTimeoutSeconds\"");
+		html.Should().Contain("data-testid=\"setting-input-StaleSeconds\"");
+		html.Should().Contain("data-testid=\"setting-input-HealthRetentionDays\"");
+	}
+
+	[Fact]
+	public async Task AllThreeScopePages_ShowIdenticalUniformFieldSet()
+	{
+		// The generic-page requirement: System/Workspace/Project all present the SAME
+		// Log/Ingestion/Dashboard field catalog (SettingsScopePolicy.Records driving all three).
+		// SessionFullScanSettings is deliberately excluded from this comparison — its two fields
+		// stay HasMinScope-pinned to their own single scope, by design.
+		var jar = new CookieJar();
+		await LogInAsync(jar);
+
+		var sysHtml = await (await GetAsync("/ui/admin/sys/defaults", jar)).Content.ReadAsStringAsync();
+		var wsHtml = await (await GetAsync("/ui/admin/ws/$system/defaults", jar)).Content.ReadAsStringAsync();
+		var projHtml = await (await GetAsync("/ui/admin/ws/$system/projects/$system/settings", jar)).Content.ReadAsStringAsync();
+
+		var sysFields = UniformFieldTestIds(sysHtml);
+		var wsFields = UniformFieldTestIds(wsHtml);
+		var projFields = UniformFieldTestIds(projHtml);
+
+		sysFields.Should().NotBeEmpty();
+		wsFields.Should().BeEquivalentTo(sysFields);
+		projFields.Should().BeEquivalentTo(sysFields);
+	}
+
+	static readonly string[] FullScanFieldNames = ["SystemEnabled", "ProjectEnabled"];
+
+	static HashSet<string> UniformFieldTestIds(string html)
+	{
+		var found = new HashSet<string>(StringComparer.Ordinal);
+		const string marker = "data-testid=\"setting-input-";
+		var idx = 0;
+		while (true)
+		{
+			idx = html.IndexOf(marker, idx, StringComparison.Ordinal);
+			if (idx < 0) break;
+			var start = idx + marker.Length;
+			var end = html.IndexOf('"', start);
+			var name = html[start..end];
+			if (Array.IndexOf(FullScanFieldNames, name) < 0)
+				found.Add(name);
+			idx = end;
+		}
+		return found;
+	}
+
+	[Fact]
 	public async Task ProjectSettingsAdmin_Save_PersistsProjectEnabled_ReadableAtProjectScope()
 	{
 		var jar = new CookieJar();
@@ -164,6 +245,46 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 		var resolver = scope.ServiceProvider.GetRequiredService<ISettingsResolver>();
 		var resolved = await resolver.GetAsync<SessionFullScanSettings>(Scope.Project, "$system");
 		resolved.ProjectEnabled.Should().BeTrue();
+	}
+
+	[Fact]
+	public async Task ProjectSettingsAdmin_Save_DashboardTimeout_OverridesWorkspaceAndSystem_DeeperWins()
+	{
+		// The core B guarantee: a System-TopLevel setting (DashboardSettings.RequestTimeoutSeconds),
+		// now project-overridable under SettingsScopePolicy, still resolves deeper-wins once
+		// overridden at each level — this exercises SettingsResolver's (untouched) cascade, proving
+		// the policy widening actually composes with it.
+		using (var seed = _factory.Services.CreateScope())
+		{
+			var resolver = seed.ServiceProvider.GetRequiredService<ISettingsResolver>();
+			var sysOld = await resolver.GetAsync<DashboardSettings>(Scope.System, "$");
+			await resolver.SetAsync(Scope.System, "$", sysOld with { RequestTimeoutSeconds = 11 }, sysOld, updatedBy: null);
+			var wsOld = await resolver.GetAsync<DashboardSettings>(Scope.Workspace, "$system");
+			await resolver.SetAsync(Scope.Workspace, "$system", wsOld with { RequestTimeoutSeconds = 22 }, wsOld, updatedBy: null);
+		}
+
+		var jar = new CookieJar();
+		await LogInAsync(jar);
+
+		var getResp = await GetAsync("/ui/admin/ws/$system/projects/$system/settings", jar);
+		var token = ExtractToken(await getResp.Content.ReadAsStringAsync());
+
+		var postResp = await PostAsync("/ui/admin/ws/$system/projects/$system/settings?handler=Save", jar, new()
+		{
+			["recordType"] = "DashboardSettings",
+			["RequestTimeoutSeconds"] = "33",
+			["__RequestVerificationToken"] = token,
+		});
+		postResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await postResp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"proj-settings-success\"");
+
+		using var verify = _factory.Services.CreateScope();
+		var verifyResolver = verify.ServiceProvider.GetRequiredService<ISettingsResolver>();
+
+		(await verifyResolver.GetAsync<DashboardSettings>(Scope.Project, "$system")).RequestTimeoutSeconds.Should().Be(33);
+		(await verifyResolver.GetAsync<DashboardSettings>(Scope.Workspace, "$system")).RequestTimeoutSeconds.Should().Be(22);
+		(await verifyResolver.GetAsync<DashboardSettings>(Scope.System, "$")).RequestTimeoutSeconds.Should().Be(11);
 	}
 
 	[Fact]

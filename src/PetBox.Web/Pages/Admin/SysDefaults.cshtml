@@ -9,7 +9,7 @@
 
 <div class="mb-4">
 	<h1 class="text-2xl font-semibold" data-testid="sys-defaults-title">System settings</h1>
-	<p class="text-sm opacity-60">Settings with TopLevel = System. These apply to any workspace/project/service that hasn't set its own value.</p>
+	<p class="text-sm opacity-60">Instance-wide defaults. Any workspace/project can override these (interim: overrides apply down to project scope).</p>
 </div>
 
 @if (!string.IsNullOrEmpty(Model.SuccessMessage))

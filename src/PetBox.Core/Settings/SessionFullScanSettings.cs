@@ -15,7 +15,7 @@ namespace PetBox.Core.Settings;
 // allowed = system.SystemEnabled && project.ProjectEnabled.
 public sealed record SessionFullScanSettings
 {
-	[Setting(TopLevel = Scope.System, Key = "search.sessions.fullscan.systemEnabled",
+	[Setting(TopLevel = Scope.System, HasMinScope = true, MinScope = Scope.System, Key = "search.sessions.fullscan.systemEnabled",
 		Description = "System-wide switch for the session-search full-scan escape hatch. Off by default; both this AND the project's own switch must be on.")]
 	public bool SystemEnabled { get; init; } = false;
 

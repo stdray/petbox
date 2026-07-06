@@ -9,7 +9,7 @@
 
 <div class="mb-4">
 	<h1 class="text-2xl font-semibold" data-testid="proj-settings-title">@Model.ProjectKey project settings</h1>
-	<p class="text-sm opacity-60">Settings with TopLevel = Project. Owned here; higher scopes (workspace/system) fall back to their own Defaults pages when this project hasn't set its own value.</p>
+	<p class="text-sm opacity-60">Project-level overrides (interim: any instance/workspace setting can be overridden here). Falls back to workspace/system defaults when unset.</p>
 </div>
 
 @if (!string.IsNullOrEmpty(Model.SuccessMessage))

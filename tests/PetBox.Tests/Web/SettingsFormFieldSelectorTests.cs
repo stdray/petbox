@@ -3,36 +3,46 @@ using PetBox.Web.Settings;
 
 namespace PetBox.Tests.Web;
 
-// Card project-log-settings-empty-form. Root cause: _SettingsForm.cshtml / _SettingsFormFields.cshtml
-// filtered fields with `if ((int)Model.CurrentScope > (int)attr.TopLevel) continue;` — a WRITE-DEPTH
-// read of a field meant as a CASCADE-READ ceiling. On the project-scope /log page (Scope.Project = 2)
-// this filtered out every LogSettings property (all TopLevel <= Workspace), so the page rendered with
-// zero fields but still kept a bare Save button. That specific page was already fixed in commit
-// 9b0d4cd by removing project-scope LogSettings from the generic form entirely (a bespoke control on
-// the project Info page instead). This test locks the SHARED filtering logic itself — now extracted
-// into SettingsFormFieldSelector.GetEditable so both partials can't drift — and the historical
-// project-scope repro is kept here as a regression lock even though no live page exercises it anymore.
+// Card project-log-settings-empty-form + INTERIM decision B (idea settings-leaf-override-uniform,
+// spec settings-uniform-override): all B policy lives in SettingsScopePolicy — GetEditable here is
+// just the reflection walk that delegates to SettingsScopePolicy.IsEditableAt per property. B lifts
+// the old "TopLevel is a write-depth ceiling" rule for System/Workspace/Project (every field of a
+// non-HasMinScope record is now editable at any of the three), while Service/User/Membership
+// (Preferences is the only live page there) keep the original ceiling untouched, and HasMinScope
+// pins (SessionFullScanSettings) still win over everything.
 public sealed class SettingsFormFieldSelectorTests
 {
 	[Fact]
-	public void LogSettings_AtProjectScope_HasNoEditableFields_TheHistoricalRepro()
+	public void LogSettings_AtProjectScope_NowEditable_UnderInterimB()
 	{
-		// This is the exact combination that used to render an empty _SettingsForm with a bare
-		// Save button on /ui/admin/ws/{ws}/projects/{key}/log before commit 9b0d4cd. No current page
-		// calls GetEditable(LogSettings, Project) directly, but the filtering primitive must still
-		// report "empty" here — any FUTURE caller that hits this combination needs its emptiness
-		// surfaced (as an explanatory empty state), not hidden behind a lone Save button.
+		// Before INTERIM decision B this combination used to render an empty _SettingsForm with a
+		// bare Save button on /ui/admin/ws/{ws}/projects/{key}/log (fixed in commit 9b0d4cd by
+		// dropping project-scope LogSettings from the generic form entirely). B's ceiling-lift now
+		// makes every LogSettings field editable at Project scope too — ProjectSettingsAdmin relies
+		// on exactly this to include LogSettings in its uniform Records set.
 		var visible = SettingsFormFieldSelector.GetEditable(typeof(LogSettings), Scope.Project);
 
-		visible.Should().BeEmpty();
+		visible.Select(v => v.Property.Name).Should().BeEquivalentTo(
+		[
+			nameof(LogSettings.RetentionDays),
+			nameof(LogSettings.SystemRetainDays),
+			nameof(LogSettings.RunIntervalSeconds),
+		]);
 	}
 
 	[Fact]
-	public void LogSettings_AtWorkspaceScope_ShowsOnlyRetentionDays()
+	public void LogSettings_AtWorkspaceScope_ShowsAllThreeFields_UnderInterimB()
 	{
+		// Pre-B this only showed RetentionDays (TopLevel=Workspace); B lifts the ceiling for
+		// System/Workspace/Project uniformly, so the System-only fields now show here too.
 		var visible = SettingsFormFieldSelector.GetEditable(typeof(LogSettings), Scope.Workspace);
 
-		visible.Select(v => v.Property.Name).Should().BeEquivalentTo([nameof(LogSettings.RetentionDays)]);
+		visible.Select(v => v.Property.Name).Should().BeEquivalentTo(
+		[
+			nameof(LogSettings.RetentionDays),
+			nameof(LogSettings.SystemRetainDays),
+			nameof(LogSettings.RunIntervalSeconds),
+		]);
 	}
 
 	[Fact]
@@ -52,17 +62,38 @@ public sealed class SettingsFormFieldSelectorTests
 	public void UiSettings_AtUserScope_ShowsTheme_TheOnlyLive_SettingsForm_Caller()
 	{
 		// Pages/Me/Preferences.cshtml is the only current caller of _SettingsForm (full form incl.
-		// Save button) — this must stay non-empty or Preferences would hit the same bug class.
+		// Save button), at Scope.User — outside B's System/Workspace/Project range, so this keeps the
+		// original TopLevel-ceiling behavior untouched.
 		var visible = SettingsFormFieldSelector.GetEditable(typeof(UiSettings), Scope.User);
 
 		visible.Select(v => v.Property.Name).Should().BeEquivalentTo([nameof(UiSettings.Theme)]);
 	}
 
 	[Fact]
-	public void IngestionSettings_And_DashboardSettings_AtSystemScope_AreNonEmpty()
+	public void IngestionSettings_And_DashboardSettings_AreNonEmpty_AtEveryUniformScope()
 	{
-		// The other two records shown on the Sys Defaults page — must stay populated at System scope.
-		SettingsFormFieldSelector.GetEditable(typeof(IngestionSettings), Scope.System).Should().NotBeEmpty();
-		SettingsFormFieldSelector.GetEditable(typeof(DashboardSettings), Scope.System).Should().NotBeEmpty();
+		// Under B these System-only-TopLevel records are now editable (hence project-overridable) at
+		// all three generic scope pages.
+		foreach (var scope in new[] { Scope.System, Scope.Workspace, Scope.Project })
+		{
+			SettingsFormFieldSelector.GetEditable(typeof(IngestionSettings), scope).Should().NotBeEmpty();
+			SettingsFormFieldSelector.GetEditable(typeof(DashboardSettings), scope).Should().NotBeEmpty();
+		}
+	}
+
+	[Fact]
+	public void SessionFullScanSettings_HasMinScope_PinsEachFieldToItsOwnScope_EvenUnderInterimB()
+	{
+		// The one exception B still honors: two independent, non-cascading switches, each pinned to
+		// exactly one scope (see SettingAttribute.HasMinScope) — B's uniform ceiling-lift must not
+		// resurrect the dead-write bug this pin exists to prevent.
+		SettingsFormFieldSelector.GetEditable(typeof(SessionFullScanSettings), Scope.System)
+			.Select(v => v.Property.Name).Should().BeEquivalentTo([nameof(SessionFullScanSettings.SystemEnabled)]);
+
+		SettingsFormFieldSelector.GetEditable(typeof(SessionFullScanSettings), Scope.Project)
+			.Select(v => v.Property.Name).Should().BeEquivalentTo([nameof(SessionFullScanSettings.ProjectEnabled)]);
+
+		SettingsFormFieldSelector.GetEditable(typeof(SessionFullScanSettings), Scope.Workspace)
+			.Should().BeEmpty();
 	}
 }

@@ -17,7 +17,8 @@ public sealed class WorkspaceDefaultsModel : SettingsScopePageModel
 	protected override Scope Scope => Scope.Workspace;
 	protected override string ScopeKey => WorkspaceKey;
 
-	// Any record with at least one property TopLevel >= Workspace appears (System-only props are
-	// hidden by the form renderer at workspace scope).
-	protected override IReadOnlyList<Type> Records => [typeof(LogSettings)];
+	// Uniform registry (INTERIM decision B — see SettingsScopePolicy): same list on all three
+	// generic scope pages. SettingsScopePolicy.IsRecordVisibleAt/IsEditableAt decide what's
+	// actually shown at this page's scope.
+	protected override IReadOnlyList<Type> Records => SettingsScopePolicy.Records;
 }
