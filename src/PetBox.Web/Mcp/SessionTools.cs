@@ -88,17 +88,22 @@ public static class SessionTools
 
 	[McpServerTool(Name = "session_get", Title = "Get a session", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionGetResult))]
 	[Description("""
-		Get the active session blob by id. A missing/unknown id is a not-found ERROR (never
-		a bare null: a declared outputSchema demands structured content, so a null result is
-		rejected by strict MCP clients — the error rides the isError channel instead). The
-		blob can be read INCREMENTALLY (spec bounded-result-sets): pass `tail` for the last N
-		chars, or `offset`+`limit` for a window; with none, the full blob is returned.
-		`length` (total chars) is ALWAYS returned so a caller can poll for growth and then
-		read only the new tail. Requires tasks:read.
+		Get the active session blob by id. `sessionId` may be the full id OR a unique PREFIX of
+		one (the short form digests and session_search snippets use — e.g. the first block of the
+		UUID); the exact id wins when both match, and a prefix that collides with 2+ sessions is
+		an ERROR that lists the candidates rather than guessing. A missing/unknown id is a
+		not-found ERROR (never a bare null: a declared outputSchema demands structured content, so
+		a null result is rejected by strict MCP clients — the error rides the isError channel
+		instead). The returned `sessionId` is always the resolved full id. The blob can be read
+		INCREMENTALLY (spec bounded-result-sets): pass `tail` for the last N chars, or
+		`offset`+`limit` for a window; with none, the full blob is returned. `length` (total
+		chars) is ALWAYS returned so a caller can poll for growth and then read only the new tail.
+		Requires tasks:read.
 		""")]
 	public static async Task<SessionGetResult> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
-		string projectKey, string sessionId,
+		string projectKey,
+		[Description("Full session id or a unique prefix of one (e.g. the first UUID block).")] string sessionId,
 		[Description("Return only the last N chars of the blob (0 = off). Takes precedence over offset/limit.")] int tail = 0,
 		[Description("Start reading at this char offset (default 0).")] int offset = 0,
 		[Description("Max chars returned from offset (0 = to end).")] int limit = 0,
@@ -107,10 +112,25 @@ public static class SessionTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		var s = await sessions.GetAsync(projectKey, sessionId, ct);
+		var resolvedId = await ResolveOrThrowAsync(sessions, projectKey, sessionId, ct);
+		var s = resolvedId is null ? null : await sessions.GetAsync(projectKey, resolvedId, ct);
 		if (s is null) throw new InvalidOperationException($"session '{sessionId}' not found in project '{projectKey}'");
 		var full = s.Content;
 		return new SessionGetResult(s.SessionId, s.Agent, Window(full, tail, offset, limit), full.Length, s.Version);
+	}
+
+	// Resolve a full-or-prefix session id to its stored full id. Returns null on a miss (the
+	// caller renders its own not-found / idempotent-false), and THROWS on an ambiguous prefix so
+	// the collision surfaces as a clear error listing the candidates — never a silent wrong pick.
+	static async Task<string?> ResolveOrThrowAsync(
+		ISessionService sessions, string projectKey, string sessionId, CancellationToken ct)
+	{
+		var r = await sessions.ResolveIdAsync(projectKey, sessionId, ct);
+		if (r.Ambiguous.Count > 0)
+			throw new InvalidOperationException(
+				$"session id '{sessionId}' is ambiguous — it prefixes {r.Ambiguous.Count} sessions " +
+				$"({string.Join(", ", r.Ambiguous)}). Pass more characters, or the full id.");
+		return r.Match;
 	}
 
 	// Incremental read of a plan blob: `tail` (last N chars) wins; else the [offset, offset+limit)
@@ -127,17 +147,26 @@ public static class SessionTools
 	[McpServerTool(Name = "session_delete", Title = "Delete a session", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionDeletedResult))]
 	[Description("""
 		Soft-delete a session: it disappears from session_search/session_get but the row is kept;
-		a later session_upsert (or REST push) of the same sessionId resurrects it. Idempotent —
-		deleting a missing or already-deleted session returns { deleted: false }. Requires tasks:write.
+		a later session_upsert (or REST push) of the same sessionId resurrects it. `sessionId` may
+		be the full id or a unique PREFIX of one; an ambiguous prefix (2+ matches) is an ERROR that
+		lists the candidates rather than deleting the wrong session. Idempotent — deleting a
+		missing or already-deleted session returns { deleted: false }; on success `sessionId`
+		echoes the resolved full id. Requires tasks:write.
 		""")]
 	public static async Task<SessionDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
-		string projectKey, string sessionId, CancellationToken ct = default)
+		string projectKey,
+		[Description("Full session id or a unique prefix of one.")] string sessionId,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return new SessionDeletedResult(await sessions.DeleteAsync(projectKey, sessionId, ct), sessionId);
+		// Resolve (throws on ambiguity) so a prefix can never delete the wrong session; a miss
+		// stays the idempotent { deleted: false }.
+		var resolvedId = await ResolveOrThrowAsync(sessions, projectKey, sessionId, ct);
+		var deleted = resolvedId is not null && await sessions.DeleteAsync(projectKey, resolvedId, ct);
+		return new SessionDeletedResult(deleted, resolvedId ?? sessionId);
 	}
 
 	[McpServerTool(Name = "session_search", Title = "Read the session archive (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionSearchResultView))]

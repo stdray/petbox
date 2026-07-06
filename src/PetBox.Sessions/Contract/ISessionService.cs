@@ -25,6 +25,13 @@ public interface ISessionService
 	Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
 	Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default);
 
+	// Resolve a possibly-shortened session id (a unique PREFIX of a full id) to the stored full
+	// id, so a human/agent can address a session by its first few chars — the short form that
+	// digests and session_search snippets use — instead of pasting the whole UUID. Read/delete
+	// convenience only; the write path (Upsert/Append) keeps addressing by the exact id it is
+	// given (a prefix there would silently create a new session). See SessionIdResolution.
+	Task<SessionIdResolution> ResolveIdAsync(string projectKey, string idOrPrefix, CancellationToken ct = default);
+
 	// Messages with Version greater than the cursor — the incremental delta a Class-B index
 	// consumes without the store retaining any history (the snapshot is cumulative). Empty if none.
 	Task<IReadOnlyList<SessionMessage>> DeltaAsync(string projectKey, string sessionId, long sinceVersion, CancellationToken ct = default);
@@ -43,3 +50,16 @@ public sealed record SessionUpsertOutcome(string SessionId, long Version, int Me
 // carries the new cursor; Appended counts the messages actually written (0 = full overlap,
 // the idempotent no-op).
 public sealed record SessionAppendOutcome(string SessionId, bool Applied, long LastOrdinal, int Appended);
+
+// The outcome of resolving a (possibly shortened) session id against the active sessions:
+//   - Match set, Ambiguous empty  → exactly one session matched (an EXACT id always wins, even
+//                                    when it is also a prefix of a longer id);
+//   - Match null,  Ambiguous []   → no active session matched (a miss);
+//   - Match null,  Ambiguous [..] → the prefix collided with 2+ sessions (capped list of the
+//                                    colliding full ids) — the caller reports it and asks for
+//                                    more characters rather than guessing.
+public sealed record SessionIdResolution(string? Match, IReadOnlyList<string> Ambiguous)
+{
+	public static readonly SessionIdResolution None = new(null, Array.Empty<string>());
+	public static SessionIdResolution One(string id) => new(id, Array.Empty<string>());
+}

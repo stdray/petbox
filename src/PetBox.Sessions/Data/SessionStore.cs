@@ -17,6 +17,10 @@ public interface ISessionStore
 	// (case-insensitive LIKE). OFFSET/LIMIT at the query — never loads the whole set to page.
 	Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize, CancellationToken ct = default);
 	Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
+	// Resolve a possibly-shortened id (a unique prefix of a full session id) to the stored full
+	// id — see SessionIdResolution. Exact matches win; a prefix that collides with 2+ active
+	// sessions is reported ambiguous rather than guessed.
+	Task<SessionIdResolution> ResolveIdAsync(string projectKey, string idOrPrefix, CancellationToken ct = default);
 	Task UpsertAsync(string projectKey, SessionRow row, CancellationToken ct = default);
 	Task<bool> DeleteAsync(string projectKey, string sessionId, CancellationToken ct = default);
 }
@@ -81,6 +85,42 @@ public sealed class SessionStore : ISessionStore
 		return row is null
 			? null
 			: new SessionSnapshot(row.SessionId, row.Agent, SessionContent.Decode(row.ContentZ), row.Version, row.Updated);
+	}
+
+	// How many colliding ids to surface on an ambiguous prefix — enough to show the collision
+	// (and let the caller list them), never the whole project.
+	const int AmbiguityProbe = 10;
+
+	public async Task<SessionIdResolution> ResolveIdAsync(string projectKey, string idOrPrefix, CancellationToken ct = default)
+	{
+		var id = (idOrPrefix ?? string.Empty).Trim();
+		if (id.Length == 0) return SessionIdResolution.None;
+
+		var db = _factory.GetDb(projectKey);
+
+		// An exact id always wins — even when it is also a prefix of a longer id — so a full id
+		// keeps resolving to itself and never reads as "ambiguous".
+		var exact = await db.Sessions
+			.Where(s => s.SessionId == id && !s.IsDeleted)
+			.Select(s => s.SessionId)
+			.FirstOrDefaultAsync(ct);
+		if (exact is not null) return SessionIdResolution.One(exact);
+
+		// Otherwise treat the argument as a prefix (StartsWith → LIKE 'id%', hits the SessionId
+		// primary-key index). 0 → miss; 1 → resolved; 2+ → ambiguous, surfaced for the caller.
+		var matches = await db.Sessions
+			.Where(s => !s.IsDeleted && s.SessionId.StartsWith(id))
+			.OrderBy(s => s.SessionId)
+			.Select(s => s.SessionId)
+			.Take(AmbiguityProbe)
+			.ToListAsync(ct);
+
+		return matches.Count switch
+		{
+			0 => SessionIdResolution.None,
+			1 => SessionIdResolution.One(matches[0]),
+			_ => new SessionIdResolution(null, matches),
+		};
 	}
 
 	public async Task UpsertAsync(string projectKey, SessionRow row, CancellationToken ct = default)

@@ -183,6 +183,69 @@ public sealed class SessionServiceTests : IDisposable
 		delta.Select(m => m.Content).Should().Equal("b", "c");
 	}
 
+	// ---- ResolveIdAsync: short-id (unique prefix) resolution for read/delete paths ----------
+
+	[Fact]
+	public async Task Resolve_ExactId_ReturnsItself()
+	{
+		await _svc.UpsertAsync("proj", "607cc3ad-347d-45b8-9558-f7dbc605d722", "claude-code", Msgs(("session", "x")));
+
+		var r = await _svc.ResolveIdAsync("proj", "607cc3ad-347d-45b8-9558-f7dbc605d722");
+		r.Match.Should().Be("607cc3ad-347d-45b8-9558-f7dbc605d722");
+		r.Ambiguous.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task Resolve_UniquePrefix_ResolvesToFullId()
+	{
+		await _svc.UpsertAsync("proj", "607cc3ad-347d-45b8-9558-f7dbc605d722", "claude-code", Msgs(("session", "x")));
+		await _svc.UpsertAsync("proj", "aa9b3d0b-4c90-46f2-b309-36178cc3d8b1", "claude-code", Msgs(("session", "y")));
+
+		var r = await _svc.ResolveIdAsync("proj", "607cc3ad");
+		r.Match.Should().Be("607cc3ad-347d-45b8-9558-f7dbc605d722");
+		r.Ambiguous.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task Resolve_AmbiguousPrefix_ReturnsCandidates_NoMatch()
+	{
+		await _svc.UpsertAsync("proj", "abc111", "claude-code", Msgs(("session", "x")));
+		await _svc.UpsertAsync("proj", "abc222", "claude-code", Msgs(("session", "y")));
+
+		var r = await _svc.ResolveIdAsync("proj", "abc");
+		r.Match.Should().BeNull();
+		r.Ambiguous.Should().BeEquivalentTo(new[] { "abc111", "abc222" });
+	}
+
+	[Fact]
+	public async Task Resolve_ExactId_WinsOverBeingAPrefixOfAnother()
+	{
+		// "abc" is itself a session AND a prefix of "abcdef" — the exact id must win, not ambiguate.
+		await _svc.UpsertAsync("proj", "abc", "claude-code", Msgs(("session", "x")));
+		await _svc.UpsertAsync("proj", "abcdef", "claude-code", Msgs(("session", "y")));
+
+		(await _svc.ResolveIdAsync("proj", "abc")).Match.Should().Be("abc");
+	}
+
+	[Fact]
+	public async Task Resolve_Miss_And_Empty_ReturnNone()
+	{
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("session", "x")));
+
+		(await _svc.ResolveIdAsync("proj", "no-such")).Match.Should().BeNull();
+		(await _svc.ResolveIdAsync("proj", "no-such")).Ambiguous.Should().BeEmpty();
+		(await _svc.ResolveIdAsync("proj", "   ")).Match.Should().BeNull();
+	}
+
+	[Fact]
+	public async Task Resolve_SkipsDeletedSessions()
+	{
+		await _svc.UpsertAsync("proj", "dead-beef", "claude-code", Msgs(("session", "x")));
+		await _svc.DeleteAsync("proj", "dead-beef");
+
+		(await _svc.ResolveIdAsync("proj", "dead")).Match.Should().BeNull("a soft-deleted session must not resolve");
+	}
+
 	[Fact]
 	public async Task Delete_ThroughService_HidesEverywhere_ThenUpsertResurrects()
 	{

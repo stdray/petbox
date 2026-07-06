@@ -81,6 +81,11 @@ public sealed class SessionService : ISessionService
 	public Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default) =>
 		_sessions.ListAsync(projectKey, ct);
 
+	// Prefix resolution is a pure read — delegate straight to the store. The write path
+	// (Upsert/Append) deliberately does NOT call this: it addresses by the exact id it's given.
+	public Task<SessionIdResolution> ResolveIdAsync(string projectKey, string idOrPrefix, CancellationToken ct = default) =>
+		_sessions.ResolveIdAsync(projectKey, idOrPrefix, ct);
+
 	public async Task<IReadOnlyList<SessionMessage>> DeltaAsync(string projectKey, string sessionId, long sinceVersion, CancellationToken ct = default)
 	{
 		var snap = await _sessions.GetAsync(projectKey, sessionId, ct);

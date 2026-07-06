@@ -36,6 +36,12 @@ public sealed class SessionModel : PageModel
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
+		// Accept a full id or a unique prefix (the short form used in digests/search snippets);
+		// a miss or an ambiguous prefix has no single page to show → NotFound.
+		var resolved = await _store.ResolveIdAsync(ProjectKey, SessionId, ct);
+		if (resolved.Match is null) return NotFound();
+		SessionId = resolved.Match; // canonicalize for display/links
+
 		Session = await _store.GetAsync(ProjectKey, SessionId, ct);
 		if (Session is null) return NotFound();
 		return Page();
