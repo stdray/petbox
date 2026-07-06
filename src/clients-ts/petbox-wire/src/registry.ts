@@ -15,11 +15,26 @@ import { join } from "node:path";
 
 const DEFAULT_BASE_URL = "https://petbox.3po.su";
 
+// Per-project prompt-RAG config (step 1, client-side registry gate). Stored on the matched
+// registry entry and read by the global UserPromptSubmit hook (prompt-rag.ts), which self-gates
+// per project: `enabled:false` (or absent) → the hook is a silent no-op for that project. The
+// tolerances are optional; the hook falls back to PROMPT_RAG_DEFAULTS when a field is absent.
+export type PromptRagConfig = {
+  enabled: boolean;
+  cap?: number;
+  requireHyphen?: boolean;
+};
+
+// Single source of truth for the prompt-RAG tolerance defaults, shared by wire.ts (what it writes
+// on --prompt-rag) and prompt-rag.ts (what it falls back to when a field is missing from config).
+export const PROMPT_RAG_DEFAULTS = { cap: 8, requireHyphen: true } as const;
+
 export type RegistryEntry = {
   prefix: string;
   project: string;
   envVar: string;
   baseUrl?: string;
+  promptRag?: PromptRagConfig;
 };
 
 export type ResolvedProject = {
@@ -27,6 +42,7 @@ export type ResolvedProject = {
   apiKey: string;
   baseUrl: string;
   envVar: string;
+  promptRag?: PromptRagConfig;
 };
 
 export function registryPath(): string {
@@ -106,7 +122,18 @@ export function resolveProject(dir: string): ResolvedProject | null {
     if (!apiKey || apiKey.trim().length === 0) return null;
 
     const baseUrl = (best.baseUrl && best.baseUrl.trim()) || DEFAULT_BASE_URL;
-    return { project: best.project, apiKey, baseUrl: baseUrl.replace(/\/+$/, ""), envVar: best.envVar };
+    // Pass the matched entry's per-project prompt-RAG config through unchanged (absent = undefined,
+    // back-compat). Only surface it when it is a real object, so a malformed value degrades to
+    // "no config" (→ the hook self-gates off) rather than a truthy junk value.
+    const promptRag =
+      best.promptRag && typeof best.promptRag === "object" ? best.promptRag : undefined;
+    return {
+      project: best.project,
+      apiKey,
+      baseUrl: baseUrl.replace(/\/+$/, ""),
+      envVar: best.envVar,
+      promptRag,
+    };
   } catch {
     return null;
   }

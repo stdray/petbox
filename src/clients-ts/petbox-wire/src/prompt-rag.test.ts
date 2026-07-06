@@ -6,7 +6,15 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { buildInjection, extractCandidates, renderInjection, type Resolver, type TaskHit } from "./prompt-rag.ts";
+import {
+  buildInjection,
+  buildInjectionForProject,
+  extractCandidates,
+  renderInjection,
+  tolerancesOf,
+  type Resolver,
+  type TaskHit,
+} from "./prompt-rag.ts";
 
 // ---- extractCandidates: deterministic identifier extraction --------------------------------
 
@@ -115,4 +123,79 @@ test("buildInjection: a resolver that throws on one token doesn't abort the rest
   };
   const out = await buildInjection("bad-token and telemetry-wire-toggle", flaky);
   assert.match(out, /telemetry-wire-toggle/, "the good match still lands despite the thrown lookup");
+});
+
+// ---- tolerances: cap + requireHyphen actually read from config -----------------------------
+
+test("extractCandidates: cap param bounds the candidate count", () => {
+  const many = Array.from({ length: 20 }, (_, i) => `slug-${i}`).join(" ");
+  assert.equal(extractCandidates(many, 3).length, 3, "cap=3 keeps only 3");
+  assert.equal(extractCandidates(many, 1).length, 1, "cap=1 keeps only 1");
+  // A non-positive / bogus cap falls back to the default (8), never 0 or negative.
+  assert.equal(extractCandidates(many, 0).length, 8, "cap=0 → default");
+  assert.equal(extractCandidates(many, -5).length, 8, "negative cap → default");
+});
+
+test("extractCandidates: requireHyphen=false admits single-word tokens; true rejects them", () => {
+  assert.deepEqual(extractCandidates("fix the toggle now", 8, true), [], "hyphen required → no single words");
+  const relaxed = extractCandidates("fix the toggle now", 8, false);
+  assert.ok(relaxed.includes("toggle"), "relaxed mode accepts a plain word");
+  assert.ok(relaxed.includes("fix") && relaxed.includes("now"));
+});
+
+test("tolerancesOf: fills defaults, honors overrides", () => {
+  assert.deepEqual(tolerancesOf(undefined), { cap: 8, requireHyphen: true });
+  assert.deepEqual(tolerancesOf({ enabled: true }), { cap: 8, requireHyphen: true });
+  assert.deepEqual(tolerancesOf({ enabled: true, cap: 3, requireHyphen: false }), { cap: 3, requireHyphen: false });
+});
+
+// ---- buildInjectionForProject: per-project gate (enabled) + tolerances ---------------------
+
+test("gate: disabled config → empty output EVEN WITH a matching identifier (no injection)", async () => {
+  const out = await buildInjectionForProject("work on telemetry-wire-toggle", { enabled: false }, stubResolver);
+  assert.equal(out, "", "enabled:false suppresses the pointer entirely");
+});
+
+test("gate: absent config → empty output (back-compat: unconfigured project stays silent)", async () => {
+  const out = await buildInjectionForProject("work on telemetry-wire-toggle", undefined, stubResolver);
+  assert.equal(out, "");
+});
+
+test("gate: enabled config → a pointer is produced for a matching identifier", async () => {
+  const out = await buildInjectionForProject("work on telemetry-wire-toggle", { enabled: true }, stubResolver);
+  assert.match(out, /work\/telemetry-wire-toggle/);
+  assert.match(out, /expand: mcp__petbox__tasks_node_get/);
+});
+
+test("gate: enabled but disabled resolver never runs when config is disabled (zero network)", async () => {
+  let calls = 0;
+  const counting: Resolver = async (t) => {
+    calls++;
+    return stubResolver(t);
+  };
+  await buildInjectionForProject("telemetry-wire-toggle", { enabled: false }, counting);
+  assert.equal(calls, 0, "disabled → no resolver calls (no network)");
+});
+
+test("tolerances flow through the gate: cap from config bounds lookups", async () => {
+  let calls = 0;
+  const counting: Resolver = async (t) => {
+    calls++;
+    return KNOWN[t] ?? null;
+  };
+  // Two distinct identifiers in the prompt, but cap:1 → only the first is ever looked up.
+  await buildInjectionForProject(
+    "telemetry-wire-toggle and another-real-slug",
+    { enabled: true, cap: 1 },
+    counting,
+  );
+  assert.equal(calls, 1, "cap:1 from config → exactly one lookup");
+});
+
+test("tolerances flow through the gate: requireHyphen=false lets a single-word key match", async () => {
+  const single: Resolver = async (t) => (t === "toggle" ? KNOWN["telemetry-wire-toggle"] : null);
+  const off = await buildInjectionForProject("please check toggle", { enabled: true, requireHyphen: true }, single);
+  assert.equal(off, "", "default (hyphen required) → 'toggle' is not even a candidate");
+  const on = await buildInjectionForProject("please check toggle", { enabled: true, requireHyphen: false }, single);
+  assert.match(on, /telemetry-wire-toggle/, "requireHyphen:false → single word resolves to a pointer");
 });

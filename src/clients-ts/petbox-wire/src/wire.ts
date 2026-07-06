@@ -41,6 +41,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
+import { PROMPT_RAG_DEFAULTS, type PromptRagConfig } from "./registry.ts";
 
 const DEFAULT_BASE_URL = "https://petbox.3po.su";
 // Where THIS run's kit lives (npx cache or a checkout's src dir).
@@ -60,9 +61,13 @@ type Args = {
   cleanupLegacy: boolean;
   telemetry: boolean;
   telemetryLog: string;
-  // OPT-IN, off by default: install the Claude Code UserPromptSubmit prompt-RAG hook (safe
-  // exact-match context injection). Absence of the flag never removes an already-installed one.
-  promptRag: boolean;
+  // Per-project prompt-RAG gate (step 1, registry-gated). Tri-state via two flags:
+  //   --prompt-rag    → promptRag=true  (enable on THIS project + install/keep the global hook)
+  //   --no-prompt-rag → promptRag=false (disable on THIS project; the global hook stays, self-gates)
+  //   neither         → promptRag=undefined = STICKY (leave the project's existing state untouched)
+  // The global UserPromptSubmit hook fires for every registered project and self-gates per project
+  // from ~/.petbox/projects.json, so enabling is per-project even though the hook is global.
+  promptRag: boolean | undefined;
 };
 
 const DEFAULT_TELEMETRY_LOG = "cc-telemetry";
@@ -70,7 +75,7 @@ const DEFAULT_TELEMETRY_LOG = "cc-telemetry";
 function usage(): never {
   console.error(
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
-      "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag]",
+      "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag | --no-prompt-rag]",
   );
   process.exit(2);
 }
@@ -83,7 +88,7 @@ function parseArgs(argv: string[]): Args {
   let cleanupLegacy = false;
   let telemetry = false;
   let telemetryLog = DEFAULT_TELEMETRY_LOG;
-  let promptRag = false;
+  let promptRag: boolean | undefined = undefined; // undefined = STICKY (neither flag passed)
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--env") env = argv[++i];
@@ -93,6 +98,7 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--telemetry") telemetry = true;
     else if (a === "--telemetry-log") telemetryLog = argv[++i];
     else if (a === "--prompt-rag") promptRag = true;
+    else if (a === "--no-prompt-rag") promptRag = false;
     else if (a.startsWith("--")) {
       console.error(`unknown flag: ${a}`);
       usage();
@@ -282,18 +288,53 @@ function registryEnvVar(prefix: string): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
-function upsertRegistry(prefix: string, project: string, envVar: string, baseUrl: string): void {
+// Merge a prompt-RAG update onto the entry's existing config.
+//   update === undefined → STICKY: return the existing config unchanged (may be undefined).
+//   update = { enabled }  → flip enabled, but PRESERVE any already-tuned tolerances (fall back to
+//                           PROMPT_RAG_DEFAULTS when neither the update nor the existing set them).
+// This is what keeps `promptRag` from being dropped on a plain re-run (sticky) and what lets
+// --prompt-rag / --no-prompt-rag toggle enablement without clobbering custom cap/requireHyphen.
+function mergePromptRag(
+  existing: PromptRagConfig | undefined,
+  update: PromptRagConfig | undefined,
+): PromptRagConfig | undefined {
+  if (!update) return existing;
+  return {
+    enabled: update.enabled,
+    cap: update.cap ?? existing?.cap ?? PROMPT_RAG_DEFAULTS.cap,
+    requireHyphen: update.requireHyphen ?? existing?.requireHyphen ?? PROMPT_RAG_DEFAULTS.requireHyphen,
+  };
+}
+
+// Upsert the registry entry for `prefix`. `promptRag` is the requested per-project prompt-RAG
+// update (undefined = leave the existing state as-is). The prior entry's `promptRag` is read back
+// and merged so a plain re-run never drops it, and neither prefix/project/envVar/baseUrl nor a
+// tuned promptRag is lost.
+function upsertRegistry(
+  prefix: string,
+  project: string,
+  envVar: string,
+  baseUrl: string,
+  promptRag?: PromptRagConfig,
+): void {
   const path = join(homedir(), ".petbox", "projects.json");
   const data = readJson(path) ?? {};
   const entries: any[] = Array.isArray(data.entries) ? data.entries : [];
   const norm = (p: string) => p.replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();
   const np = norm(prefix);
+  const prior = entries.find((e) => norm(String(e?.prefix ?? "")) === np);
   const next = entries.filter((e) => norm(String(e?.prefix ?? "")) !== np);
   const entry: any = { prefix, project, envVar };
   if (baseUrl !== DEFAULT_BASE_URL) entry.baseUrl = baseUrl;
+  const mergedRag = mergePromptRag(
+    prior && typeof prior.promptRag === "object" ? prior.promptRag : undefined,
+    promptRag,
+  );
+  if (mergedRag) entry.promptRag = mergedRag;
   next.push(entry);
   writeJson(path, { entries: next });
-  log(`[6/10] registry: upserted ${prefix} → ${project} (${envVar}) in ${path}`);
+  const ragNote = mergedRag ? ` [prompt-rag: ${mergedRag.enabled ? "on" : "off"}]` : "";
+  log(`[6/10] registry: upserted ${prefix} → ${project} (${envVar})${ragNote} in ${path}`);
 }
 
 // ---- step 7: per-project files --------------------------------------------
@@ -519,15 +560,17 @@ function installGlobalHooks(promptRag: boolean): void {
 
   ensureHook("Stop", pushCmd);
   ensureHook("SessionStart", pullCmd);
-  // OPT-IN prompt-RAG (Claude Code only in v1): install the UserPromptSubmit exact-match context
-  // injector only when --prompt-rag is passed. It is intentionally NOT in KIT_HOOK_SUFFIXES, so a
-  // later plain re-run (without the flag) leaves an enabled hook untouched rather than pruning it —
-  // enabling is sticky, and the default install never touches this event. UserPromptSubmit takes no
-  // matcher (CC docs), so the group shape { hooks: [...] } is correct as-is.
+  // prompt-RAG (Claude Code only in v1): the UserPromptSubmit exact-match context injector is a
+  // GLOBAL hook that self-gates per project from ~/.petbox/projects.json (prompt-rag.ts reads the
+  // matched entry's promptRag.enabled). We install it once, on --prompt-rag (enable). It is
+  // intentionally NOT in KIT_HOOK_SUFFIXES, so a later plain re-run, --no-prompt-rag, or a wire of
+  // a DIFFERENT project leaves the installed global hook untouched (never pruned) — per-project
+  // disable is a registry flag, not hook removal. UserPromptSubmit takes no matcher (CC docs), so
+  // the group shape { hooks: [...] } is correct as-is.
   if (promptRag) {
     ensureHook("UserPromptSubmit", promptRagCmd);
   } else {
-    log(`[8/10] claude hook UserPromptSubmit (prompt-rag) not requested — skipped (opt-in via --prompt-rag).`);
+    log(`[8/10] claude hook UserPromptSubmit (prompt-rag) — leaving any installed global hook as-is (per-project gate lives in the registry).`);
   }
   writeJson(settingsPath, settings);
   log(`[8/10] merged hooks into ${settingsPath}`);
@@ -716,8 +759,12 @@ async function main(): Promise<void> {
   // 5. stable kit copy
   copyKitToStable();
 
-  // 6. registry
-  upsertRegistry(dir, project, envVar, baseUrl);
+  // 6. registry — carry the per-project prompt-RAG update (undefined = sticky). --prompt-rag writes
+  // { enabled:true, +default tolerances }; --no-prompt-rag writes { enabled:false } (keeping any
+  // tuned tolerances); neither leaves the project's existing promptRag untouched.
+  const promptRagUpdate: PromptRagConfig | undefined =
+    args.promptRag === undefined ? undefined : { enabled: args.promptRag };
+  upsertRegistry(dir, project, envVar, baseUrl, promptRagUpdate);
 
   // 7. project files
   writeProjectFiles(dir, project, envVar, workspace);
@@ -733,8 +780,9 @@ async function main(): Promise<void> {
     log(`[telemetry] not requested — skipped (pass --telemetry to enable Claude Code OTLP export).`);
   }
 
-  // 8. global install
-  installGlobalHooks(args.promptRag);
+  // 8. global install — install the global prompt-RAG hook only when ENABLING (--prompt-rag);
+  // disable/sticky never add or remove it (it self-gates from the registry).
+  installGlobalHooks(args.promptRag === true);
 
   // 9. cleanup legacy
   if (args.cleanupLegacy) cleanupLegacy(dir);
