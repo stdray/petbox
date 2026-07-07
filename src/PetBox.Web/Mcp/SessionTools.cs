@@ -169,8 +169,53 @@ public static class SessionTools
 		return new SessionDeletedResult(deleted, resolvedId ?? sessionId);
 	}
 
+	[McpServerTool(Name = "session_delta", Title = "Session archive delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionDeltaResult))]
+	[Description("Return sessions changed since `sinceVersion` (no writes) — the sessions family's catch-up surface, completing the uniform-entity-verbs matrix. Sessions are last-write-wins blobs with NO store-wide version watermark (each session's `version` is only its own message ordinal), so the cursor is the newest session's Updated time as Unix epoch MILLISECONDS: this returns active sessions with Updated-ms > sinceVersion (rows { sessionId, agent, version }, freshest first) and `currentVersion` = the max Updated-ms — pass it back as the next `sinceVersion` (0 = the whole archive). LIMITATIONS (documented): a soft-delete is NOT surfaced (a removed session just drops out — use session_search for the current set), and same-millisecond writes after your read may be missed until their next change (timestamp-cursor granularity). Hard ~30k-char output budget. Requires tasks:read.")]
+	public static async Task<SessionDeltaResult> DeltaAsync(
+		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
+		string projectKey,
+		[Description("The Unix-epoch-millisecond cursor from a prior session_delta `currentVersion` (0 = the whole archive).")] long sinceVersion,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+
+		// Sessions have no store-wide monotonic version — `Updated` (bumped to UtcNow on every
+		// upsert/append) is the real monotonic field, so the cursor is Updated-as-unix-ms. A pure
+		// adapter over ListAsync (all active headers): compute the max cursor, keep the ones that
+		// moved past `sinceVersion`, freshest first, budget-enveloped.
+		var headers = await sessions.ListAsync(projectKey, ct);
+		var current = headers.Count == 0 ? 0L : headers.Max(h => UpdatedMs(h.Updated));
+		var changed = headers
+			.Where(h => UpdatedMs(h.Updated) > sinceVersion)
+			.OrderByDescending(h => UpdatedMs(h.Updated))
+			.Select(h => new SessionSearchItemView(h.SessionId, h.Agent, h.Version))
+			.ToList();
+		var (kept, omitted) = new ResponseBudget().Take(changed);
+		return omitted == 0
+			? new SessionDeltaResult(current, kept)
+			: new SessionDeltaResult(current, kept, Truncated: true, Omitted: omitted, Hint: DeltaBudgetHint);
+	}
+
+	// The session-archive cursor: a session's `Updated` time as Unix epoch milliseconds. Stored
+	// UtcNow reads back with an unspecified Kind, so pin it to UTC before converting.
+	static long UpdatedMs(DateTime updated) =>
+		new DateTimeOffset(DateTime.SpecifyKind(updated, DateTimeKind.Utc)).ToUnixTimeMilliseconds();
+
+	// Surfaced on SessionDeltaResult.Hint when the changed rows were cut by the response budget.
+	const string DeltaBudgetHint =
+		"Output budget exceeded: changed-session rows were truncated (see truncated/omitted). Advance " +
+		"`sinceVersion` toward `currentVersion` and page, or read one session with session_get.";
+
 	[McpServerTool(Name = "session_search", Title = "Read the session archive (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(SessionSearchResultView))]
 	[Description("""
+		THE session read verb — LISTING (no `q`) of the project's sessions, or a two-stage
+		SEARCH (`q`) over the archive (digest ⊕ verbatim-term discovery, then in-session episodic
+		hits with message ordinals for session_get). `fullScan` is gated by deployment permission
+		(never automatic). Listing needs tasks:read; search also needs memory:read. Hard ~30k-char
+		output budget.
+		[[full]]
 		THE session read verb — one tool for both LISTING and SEARCH (list = search without
 		`q`; replaces the former session.list).
 

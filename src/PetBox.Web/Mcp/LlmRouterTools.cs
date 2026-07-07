@@ -40,7 +40,7 @@ public static class LlmRouterTools
 		return await admin.GetAsync(projectKey, ct);
 	}
 
-	[McpServerTool(Name = "llm_config_set", Title = "Set LLM router registry", UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigSetResult))]
+	[McpServerTool(Name = "llm_config_upsert", Title = "Upsert LLM router registry", UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigSetResult))]
 	[Description("""
 		Replace the project's LLM router registry. Requires llm:admin.
 		`config` is a JSON object:
@@ -49,7 +49,7 @@ public static class LlmRouterTools
 		    "apiKeys":   { "<endpointName>": "<apiKey>" }?  // write-only, stored encrypted; omit to keep existing }
 		Validated before save (unknown endpoint in a route, bad URL, etc. -> error).
 		""")]
-	public static async Task<LlmConfigSetResult> ConfigSetAsync(
+	public static async Task<LlmConfigSetResult> ConfigUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryAdmin admin,
 		string projectKey,
 		[Description("JSON object { endpoints[], routes[], apiKeys? }")] JsonElement config,

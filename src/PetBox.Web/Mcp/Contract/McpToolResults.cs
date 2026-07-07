@@ -27,17 +27,61 @@ public sealed record WhoAmIResult(string? Project, IReadOnlyList<string> Scopes)
 public sealed record CommentsListResult(IReadOnlyList<CommentView> Comments,
 	bool? Truncated = null, int? Omitted = null, string? Hint = null);
 
+// comments_upsert / comments_delta echo — mirrors the tasks_upsert ack ({applied, currentVersion,
+// added/updated/removed, conflicts}). `Applied` is the single source of truth (false ⇒ nothing
+// written, `Conflicts` explains each rejected id). `Removed` is used by comments_delta (empty on
+// an upsert — deletes go through comments_delete). CommentView/CommentConflict come from the Tasks
+// contract (reused, like memory reuses its own views).
+public sealed record CommentsUpsertResult(
+	bool Applied,
+	long CurrentVersion,
+	IReadOnlyList<CommentView> Added,
+	IReadOnlyList<CommentView> Updated,
+	IReadOnlyList<string> Removed,
+	IReadOnlyList<CommentConflict> Conflicts);
+
+// comments_search answer (list = search without a query). `Retrievers` is present only in query
+// mode (the lexical floor — semantic isn't wired for comments yet). Truncated/Omitted/Hint are the
+// response-budget markers (null/omitted on an in-budget answer).
+public sealed record CommentsSearchResult(
+	IReadOnlyList<CommentView> Items,
+	RetrieverInfo? Retrievers = null,
+	bool? Truncated = null, int? Omitted = null, string? Hint = null);
+
 public sealed record CommentDeleteResult(bool Deleted);
 
 // ---- config.* ------------------------------------------------------------------------
 
-// `Superseded` = ids of previously-active bindings with the identical (path, normalized
-// tagset) that this upsert soft-closed (PUT-by-(path,tagset) semantics; empty = plain create).
-public sealed record ConfigBindingUpsertResult(long Id, string Path, string Tags, string Kind, IReadOnlyList<long> Superseded);
-
 public sealed record ConfigBindingRow(long Id, string Path, string Tags, string Kind);
 
-public sealed record ConfigBindingsListResult(IReadOnlyList<ConfigBindingRow> Bindings);
+// config_binding_upsert / config_binding_delta echo — the uniform-entity-verbs batch envelope,
+// adapted to the config store's model. NOTE the deliberate deviations from the tasks/memory/comments
+// envelope (config bindings are NOT temporally watermarked — see the tool docs):
+//   • `CurrentVersion` is the store's MAX binding Id (the auto-increment identity is the store-wide
+//     monotonic cursor; there is no per-row Version watermark — Version is always 1). Pass it to
+//     config_binding_delta as `sinceVersion`.
+//   • A write is PUT-by-(path, tagset): `Added` = items that created a fresh (path, tagset);
+//     `Updated` = items that superseded an active twin (a NEW immutable row replaced it).
+//   • `Superseded` = the soft-closed twin ids (kept for the PUT-by semantics visibility).
+//   • `Conflicts` exists only for shape parity — a PUT-by-key never has a CAS conflict, so it is
+//     ALWAYS empty (a validation failure throws and aborts the whole atomic batch instead).
+public sealed record ConfigBindingsUpsertResult(
+	bool Applied,
+	long CurrentVersion,
+	IReadOnlyList<ConfigBindingRow> Added,
+	IReadOnlyList<ConfigBindingRow> Updated,
+	IReadOnlyList<long> Superseded,
+	IReadOnlyList<string> Conflicts);
+
+// config_binding_search answer (list = search without a query). `Retrievers` is present only in
+// query mode — config has no FTS/vector index, so a query is a server-side substring match over
+// path/tags/plaintext-value and reports the lexical floor (semantic:false, degraded:false). Secret
+// values are never returned (rows carry id/path/tags/kind only), so there is no body/bodyLen knob;
+// the output budget still applies (Truncated/Omitted/Hint when the rows overflow).
+public sealed record ConfigBindingsSearchResult(
+	IReadOnlyList<ConfigBindingRow> Bindings,
+	RetrieverInfo? Retrievers = null,
+	bool? Truncated = null, int? Omitted = null, string? Hint = null);
 
 public sealed record ConfigBindingDeletedResult(bool Deleted, long Id);
 
@@ -301,6 +345,22 @@ public sealed record SessionSearchResultView(
 	string? FullScanReason = null,
 	bool? FullScanCapped = null);
 
+// session_delta echo — the sessions family's catch-up surface, kept uniform with the other _delta
+// verbs (a store cursor + the rows changed since it + the response-budget markers). Sessions are
+// last-write-wins BLOBS with no store-wide version watermark, so:
+//   • `CurrentVersion` is the newest session's `Updated` time as Unix epoch MILLISECONDS — the real
+//     monotonic field the archive tracks (each per-session `Version` is only that session's message
+//     ordinal, not a global cursor). Pass it back as the next `sinceVersion`.
+//   • `Items` = the active sessions whose Updated-ms > sinceVersion (LWW blobs → a flat "changed
+//     since" list; no added/updated split, and a soft-DELETE is not surfaced as removed).
+// `Items` reuses SessionSearchItemView (SessionId/Agent/Version — the listing arm) for family shape.
+public sealed record SessionDeltaResult(
+	long CurrentVersion,
+	IReadOnlyList<SessionSearchItemView> Items,
+	bool? Truncated = null,
+	int? Omitted = null,
+	string? Hint = null);
+
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 
 public sealed record BoardCreatedResult(string ProjectKey, string Name, string Kind, string? Description, string? SpecBoard, DateTime CreatedAt);
@@ -467,3 +527,15 @@ public sealed record MethodologyWorkflowBlockView(
 public sealed record MethodologyTransitionView(
 	string From, string To, bool RequiresApproval, bool RequiresReason, string? PreconditionArtifact = null,
 	bool EnforceApproval = false, IReadOnlyList<string>? Checklist = null);
+
+// ---- tool_describe (spec tool-description-economy) -----------------------------------
+
+// The addressed FULL read of a tool's description: tools/list serves a compact head for heavy
+// tools, this returns the complete prose (sentinel merged out) plus the tool's in/out JSON schema.
+// `OutputSchema` is null (omitted) for tools that advertise none.
+public sealed record ToolDescribeResult(
+	string Name,
+	string? Title,
+	string? Description,
+	System.Text.Json.JsonElement InputSchema,
+	System.Text.Json.JsonElement? OutputSchema);

@@ -107,8 +107,8 @@ public sealed class TaskBoardNodeModel : PageModel
 	}
 
 	// comments-ui-edit: add a comment (or, when parentId is set, a reply) under this node. Goes
-	// through ICommentService.AddAsync — the SAME door the comments_create MCP tool uses — so
-	// the reply-parent / same-thread guard applies identically here. `nodeId` rides along on the
+	// through ICommentService.AddAsync — the low-ceremony single-write door; the comments_upsert
+	// MCP batch verb shares the SAME reply-parent / same-thread guards. `nodeId` rides along on the
 	// form as a hidden field (shared markup with the board page) but is ignored here: the node
 	// is always the one this page already resolves itself, never client-supplied.
 	public async Task<IActionResult> OnPostCommentAddAsync(string? parentId, string body, CancellationToken ct)

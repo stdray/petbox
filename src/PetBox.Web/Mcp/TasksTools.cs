@@ -378,6 +378,12 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_search", Title = "Read plan nodes (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(TaskSearchResultView))]
 	[Description("""
+		THE read verb for plan nodes — one tool for LISTING (no `q`) and hybrid SEARCH (`q`).
+		Nodes are FLAT (a single slug `key`); hierarchy is the part_of edge (parentSlug/`depth`).
+		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
+		tasks_node_get); a row's `version` is the CAS baseline for a later upsert. Hard ~30k-char
+		output budget — overflow rows are prefix-cut + flagged. Requires tasks:read.
+		[[full]]
 		THE read verb for plan nodes — one tool for both LISTING and SEARCH (list = search
 		without `q`; replaces the former tasks.get). Nodes are FLAT (a single slug `key`);
 		hierarchy is the part_of edge, surfaced as parentNodeId/parentSlug and a computed
@@ -570,6 +576,12 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_upsert", Title = "Upsert plan nodes", UseStructuredContent = true, OutputSchemaType = typeof(UpsertResultView))]
 	[Description("""
+		Declarative temporal PATCH-upsert of plan nodes (omitted field = unchanged; tags:[] clears;
+		delete via {key, deleted:true}). Each node has a FLAT slug `key` and nests via `partOf`.
+		`body` is GFM markdown — `##` headings and REAL newlines, NOT literal `\n`, NOT `==headings==`.
+		`version` is a WATERMARK baseline (board `currentVersion` OR the node's own version; 0 = new);
+		`applied` is the SINGLE source of truth — false = nothing written, see conflicts[]. tasks:write.
+		[[full]]
 		Declarative PATCH per node (omitted field = unchanged; tags: [] clears, omit leaves
 		as-is) — a temporal upsert of plan nodes. Requires tasks:write.
 

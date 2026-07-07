@@ -219,6 +219,11 @@ public static class MemoryTools
 
 	[McpServerTool(Name = "memory_remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
 	[Description("""
+		CREATE one durable fact verbatim (always a NEW entry; edits go via memory_upsert).
+		`scope`: project (default) | workspace (cross-project shared). `type` taxonomy
+		(User|Feedback|Project|Reference) — pick explicitly. Store durable facts not derivable
+		from code/git/config; actionable work goes to a task board. Requires memory:write.
+		[[full]]
 		CREATE one durable fact, verbatim (always a new entry; edits go via memory_upsert).
 		The low-ceremony way to store a learning.
 		`text` (required) is the fact. `scope` picks the container: project (default —
@@ -257,6 +262,12 @@ public static class MemoryTools
 
 	[McpServerTool(Name = "memory_search", Title = "Read memory entries (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemorySearchResultView))]
 	[Description("""
+		THE memory read verb — one tool for LISTING (no `q`) and hybrid SEARCH (`q`).
+		Omit `scope` to CASCADE project ⊕ workspace (or pass project | workspace for one).
+		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
+		memory_get); each row's `version` is the CAS baseline for memory_upsert. Hard ~30k-char
+		output budget. Requires memory:read.
+		[[full]]
 		THE memory read verb — one tool for both LISTING and SEARCH (list = search without
 		`q`; replaces the former memory.list + memory.recall).
 

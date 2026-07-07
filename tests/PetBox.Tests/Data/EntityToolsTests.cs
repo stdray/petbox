@@ -236,21 +236,16 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = "test",
-			["path"] = "svc/url",
-			["value"] = "https://x",
-			["tags"] = "ws:test",
+			["items"] = new[] { new { path = "svc/url", value = "https://x", tags = "ws:test" } },
 		})).Should().NotContain("\"error\"");
 
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = "test",
-			["path"] = "svc/key",
-			["value"] = "topsecret",
-			["tags"] = "ws:test",
-			["kind"] = "Secret",
+			["items"] = new[] { new { path = "svc/key", value = "topsecret", tags = "ws:test", kind = "Secret" } },
 		})).Should().NotContain("\"error\"");
 
-		var list = await ToolAsync("config_binding_list");
+		var list = await ToolAsync("config_binding_search");
 		var listed = Text(await list.CallAsync(new Dictionary<string, object?> { ["workspaceKey"] = "test" }));
 		listed.Should().Contain("svc/url");
 		listed.Should().Contain("svc/key");
@@ -280,18 +275,14 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = "test",
-			["path"] = path,
-			["value"] = "v1",
-			["tags"] = "ws:test,svc:a",
+			["items"] = new[] { new { path, value = "v1", tags = "ws:test,svc:a" } },
 		})).Should().NotContain("\"error\"");
 
 		// Same path + same tagset (different order/case/whitespace) -> supersedes, reported in the result.
 		var second = Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = "test",
-			["path"] = path,
-			["value"] = "v2",
-			["tags"] = " SVC:A , ws:test ",
+			["items"] = new[] { new { path, value = "v2", tags = " SVC:A , ws:test " } },
 		}));
 		second.Should().NotContain("\"error\"");
 		second.Should().Contain("superseded");
@@ -311,9 +302,7 @@ public sealed class EntityToolsTests : IClassFixture<EntityToolsFixture>
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
 			["workspaceKey"] = "test",
-			["path"] = path,
-			["value"] = "v3",
-			["tags"] = "ws:test,svc:a,env:prod",
+			["items"] = new[] { new { path, value = "v3", tags = "ws:test,svc:a,env:prod" } },
 		})).Should().NotContain("\"error\"");
 
 		using (var scope = _factory.Services.CreateScope())

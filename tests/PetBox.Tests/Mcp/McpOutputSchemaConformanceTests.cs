@@ -158,8 +158,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		["tasks_board_set_spec"] = "pending: needs a spec board seeded",
 		["tasks_methodology_enable"] = "pending: mutates board setup mid-battery",
 		["tasks_methodology_def_upsert"] = "pending: full methodology-definition JSON",
-		["config_binding_upsert"] = "pending: binding args not yet wired",
-		["config_binding_delete"] = "pending: binding args not yet wired",
+		["config_binding_delete"] = "pending: destructive; needs a seeded binding threaded mid-battery",
 		["db_create"] = "pending: Data chain (create→schema→exec→query→describe)",
 		["db_delete"] = "pending: Data chain",
 		["db_describe"] = "pending: Data chain (needs a db+schema)",
@@ -176,7 +175,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		["apikey_create"] = "pending: mint args not yet wired",
 		["apikey_delete"] = "pending: needs a minted key",
 		["report_issue"] = "pending: issue args not yet wired",
-		["llm_config_set"] = "pending: registry payload not yet wired",
+		["llm_config_upsert"] = "pending: registry payload not yet wired",
 	};
 
 	// 1. COVERAGE GATE — nothing escapes. Every tool that declares an outputSchema is either
@@ -220,14 +219,29 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		await Ok(failures, "session_upsert", new { projectKey = ProjectKey, sessionId = "s1", agent = "claude-code", content = "# plan" });
 		await Ok(failures, "log_create", new { projectKey = ProjectKey, name = "audit" });
 
-		// comments need a node id + a version threaded through create→edit→list.
-		var created = await Call("comments_create", new { projectKey = ProjectKey, board = "work", nodeId = "a", author = "tester", body = "first" });
-		Conforms(failures, "comments_create", created);
-		var cid = created.StructuredContent?.GetProperty("id").GetString();
+		// comments_upsert batch: a create item, then thread its id + currentVersion into a patch,
+		// a get, a search and a delta (uniform-entity-verbs matrix).
+		var created = await Call("comments_upsert", new { projectKey = ProjectKey, board = "work", items = new[] { new { nodeId = "a", author = "tester", body = "first" } } });
+		Conforms(failures, "comments_upsert", created);
+		var addedArr = created.StructuredContent?.GetProperty("added");
+		var cid = addedArr is { ValueKind: JsonValueKind.Array } a && a.GetArrayLength() > 0 ? a[0].GetProperty("id").GetString() : null;
 		var cver = created.StructuredContent?.GetProperty("currentVersion").GetInt64() ?? 0;
 		if (cid is not null)
-			await Ok(failures, "comments_edit", new { projectKey = ProjectKey, board = "work", id = cid, body = "edited", version = cver });
-		await Ok(failures, "comments_list", new { projectKey = ProjectKey, board = "work", nodeId = "a" });
+		{
+			await Ok(failures, "comments_upsert", new { projectKey = ProjectKey, board = "work", items = new[] { new { id = cid, body = "edited", version = cver } } });
+			await Ok(failures, "comments_get", new { projectKey = ProjectKey, id = cid });
+		}
+		await Ok(failures, "comments_search", new { projectKey = ProjectKey, board = "work", nodeId = "a" });
+		await Ok(failures, "comments_delta", new { projectKey = ProjectKey, board = "work", sinceVersion = 0 });
+
+		// config_binding_upsert batch (PUT-by-(path,tagset), no version watermark): seed one binding,
+		// then thread its id into a get (search + delta run in the reads array below).
+		var cfg = await Call("config_binding_upsert", new { workspaceKey = "test", items = new[] { new { path = "conf/x", tags = "ws:test", value = "v" } } });
+		Conforms(failures, "config_binding_upsert", cfg);
+		var cfgAdded = cfg.StructuredContent?.GetProperty("added");
+		var bid = cfgAdded is { ValueKind: JsonValueKind.Array } ba && ba.GetArrayLength() > 0 ? ba[0].GetProperty("id").GetInt64() : (long?)null;
+		if (bid is not null)
+			await Ok(failures, "config_binding_get", new { workspaceKey = "test", id = bid.Value });
 
 		// ── reads / lists / gets (present shapes) ──
 		var reads = new (string Tool, object Args)[]
@@ -246,7 +260,9 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("memory_get", new { projectKey = ProjectKey, store = "notes", key = "k" }),
 			("session_search", new { projectKey = ProjectKey }),
 			("session_get", new { projectKey = ProjectKey, sessionId = "s1" }),
-			("config_binding_list", new { workspaceKey = "test" }),
+			("session_delta", new { projectKey = ProjectKey, sinceVersion = 0 }),
+			("config_binding_search", new { workspaceKey = "test" }),
+			("config_binding_delta", new { workspaceKey = "test", sinceVersion = 0 }),
 			("log_list", new { projectKey = ProjectKey }),
 			("log_query", new { projectKey = ProjectKey, logName = "audit", kql = "events | take 10" }),
 			("health_search", new { projectKey = ProjectKey }),
@@ -258,6 +274,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("apikey_list", new { projectKey = ProjectKey }),
 			("db_list", new { projectKey = ProjectKey }),
 			("whoami", new { }),
+			("tool_describe", new { name = "tasks_upsert" }),
 		};
 		foreach (var (tool, args) in reads)
 			await Ok(failures, tool, args);
@@ -302,13 +319,14 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 	static readonly string[] SuccessTools =
 	{
 		"tasks_board_create", "tasks_upsert", "memory_upsert", "memory_store_create", "memory_remember",
-		"session_upsert", "log_create", "comments_create", "comments_edit", "comments_list",
+		"session_upsert", "log_create", "comments_upsert", "comments_search", "comments_get", "comments_delta",
 		"tasks_search", "tasks_board_list", "tasks_workflow", "tasks_delta", "tasks_node_get",
 		"tasks_methodology_get", "tasks_methodology_guide", "tasks_methodology_def_get",
 		"memory_search", "memory_store_list", "memory_delta", "memory_get",
-		"session_search", "session_get", "config_binding_list", "log_list", "log_query",
+		"session_search", "session_get", "session_delta", "config_binding_upsert", "config_binding_search",
+		"config_binding_delta", "config_binding_get", "log_list", "log_query",
 		"health_search", "deploy_list", "deploy_node_list", "project_list", "relations_list",
-		"llm_config_get", "apikey_list", "db_list", "whoami",
+		"llm_config_get", "apikey_list", "db_list", "whoami", "tool_describe",
 	};
 
 	// Names exercised for edge branches (delete-missing + not-found).

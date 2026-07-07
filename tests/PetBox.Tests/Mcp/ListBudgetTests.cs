@@ -21,7 +21,7 @@ using PetBox.Web.Mcp;
 namespace PetBox.Tests.Mcp;
 
 // The response budget on the remaining list-shaped reads (spec bounded-result-sets, the
-// shared ResponseBudget helper): memory_search / session_search / comments_list are prefix-cut
+// shared ResponseBudget helper): memory_search / session_search / comments_search are prefix-cut
 // on the wire form of their rows when they outgrow the output budget and marked structurally
 // (truncated:true + omitted + a narrowing hint) — never silently; an in-budget list
 // serializes byte-identical to the old shape (the marker fields are null and omitted).
@@ -188,17 +188,20 @@ public sealed class ListBudgetTests : IDisposable
 		res.Hint.Should().ContainAll("q", "session_get");
 	}
 
-	// ---- comments_list ----
+	// ---- comments_search (listing mode — the former comments_list) ----
+
+	static PetBox.Web.Mcp.Contract.CommentItemInput NewComment(string node, string body) =>
+		new() { NodeId = node, Author = "alice", Body = body };
 
 	[Fact]
 	public async Task CommentsList_Small_NoMarkers()
 	{
 		var node = Guid.NewGuid().ToString("N");
-		await CommentTools.CreateAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node, "alice", "short body");
+		await CommentTools.UpsertAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", [NewComment(node, "short body")]);
 
-		var res = await CommentTools.ListAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node);
+		var res = await CommentTools.SearchAsync(Http(), Flags(), _comments, _tasks, Proj, board: "ideas", nodeId: node);
 
-		res.Comments.Should().ContainSingle();
+		res.Items.Should().ContainSingle();
 		res.Truncated.Should().BeNull();
 		JsonSerializer.Serialize(res, Wire).Should().NotContainAny("truncated", "omitted", "hint");
 	}
@@ -209,16 +212,16 @@ public sealed class ListBudgetTests : IDisposable
 		var node = Guid.NewGuid().ToString("N");
 		const int total = 20;
 		var body = new string('c', 2500); // ~50k chars of bodies > the 30k budget
-		var firstId = (await CommentTools.CreateAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node, "alice", body)).Id!;
+		var firstId = (await CommentTools.UpsertAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", [NewComment(node, body)])).Added[0].Id;
 		for (var i = 1; i < total; i++)
-			await CommentTools.CreateAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node, "alice", body);
+			await CommentTools.UpsertAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", [NewComment(node, body)]);
 
-		var res = await CommentTools.ListAsync(Http(), Flags(), _comments, _tasks, Proj, "ideas", node);
+		var res = await CommentTools.SearchAsync(Http(), Flags(), _comments, _tasks, Proj, board: "ideas", nodeId: node);
 
-		res.Comments.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
-		res.Comments[0].Id.Should().Be(firstId); // chronological head kept (prefix cut)
+		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
+		res.Items[0].Id.Should().Be(firstId); // chronological head kept (prefix cut)
 		res.Truncated.Should().BeTrue();
-		res.Omitted.Should().Be(total - res.Comments.Count);
+		res.Omitted.Should().Be(total - res.Items.Count);
 		res.Hint.Should().NotBeNull();
 	}
 }

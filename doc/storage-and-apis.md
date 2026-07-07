@@ -44,6 +44,23 @@ logs/, db/, keys/, backups/   ← logs, infra, secrets, pre-migration snapshots
 
 **Navigation into a project (UI):** log in → land on a workspace → pick a project → its module pages (`tasks`, `sessions`, `memory`, `config`, `logs`). The workspace is switched via `POST /api/ui/workspace`; routes are built in `Routes.cs` (`Project(ws,key)`, `ProjectSession(...)`, …).
 
+### 3b. The uniform-entity-verbs matrix (MCP) — and the two delete shapes
+
+Every content family exposes the same verb cells over `/mcp`: `*_upsert` (write), `*_search`
+(list = search without `q`), `*_get` (addressed single read), `*_delta` (catch-up since a
+cursor), plus a delete. The **delete cell is satisfied by TWO intentional shapes**, chosen by
+the family's write mechanics — both are correct:
+
+- families with a **batch temporal upsert** (tasks, memory) express delete as a `{deleted:true}`
+  marker item *inside* `*_upsert` — a soft temporal-close, batched alongside the writes;
+- families **without** batch-temporal semantics (sessions, comments, config, and relations —
+  the latter immutable) use a **dedicated `*_delete` verb**.
+
+The shape follows the family's write mechanics, not one mandated signature. (Consistently,
+`*_delta` reads each family's REAL monotonic field — a version watermark for tasks/memory/
+comments, config's auto-increment binding id, the session `Updated` timestamp — never a faked
+one; where a field can't express a clean watermark the limitation is documented on the tool.)
+
 ## 4. Memory — **MCP only** (no REST)
 
 Storage: `memory/{projectKey}/{store}.db`. A project has named **stores**; a store holds temporal (SCD-2) entries with a taxonomy `type ∈ User|Feedback|Project|Reference`, tags (surface = string ARRAY; stored as a CSV column), FTS5 search, free-form `Metadata`.

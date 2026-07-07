@@ -207,6 +207,34 @@ public sealed record SessionMessageDto
 	public string? Content { get; init; }
 }
 
+// One item of a config_binding_upsert batch (typed array, like PlanNodeInput/CommentItemInput).
+// A binding is identified by (path, normalized tag SET) within the workspace — a PUT: an active
+// twin with the same (path, tagset) is superseded. There is NO version watermark (config rows are
+// immutable, keyed by an auto-increment id; a change mints a new row), so this DTO carries no
+// `version`/`id`. `kind`: 'Plain' (default) or 'Secret' (value stored encrypted, never returned).
+public sealed record ConfigBindingItemInput
+{
+	public string? Path { get; init; }
+	public string? Tags { get; init; }
+	public string? Value { get; init; }
+	public string? Kind { get; init; }
+}
+
+// One item of a comments_upsert batch (typed array, like PlanNodeInput/MemoryEntryInputDto).
+// `id` null/absent ⇒ CREATE (needs `nodeId` slug|NodeId + `author`; `parentId` = a COMMENT id
+// makes it a reply); `id` present ⇒ PATCH `body`/`tags` of that comment under the `version`
+// watermark. `tags`: null = leave as-is on an edit, [] clears, a list replaces the set.
+public sealed record CommentItemInput
+{
+	public string? Id { get; init; }
+	public string? NodeId { get; init; }
+	public string? ParentId { get; init; }
+	public string? Author { get; init; }
+	public string? Body { get; init; }
+	public IReadOnlyList<string>? Tags { get; init; }
+	public long Version { get; init; }
+}
+
 // An entry as submitted to memory_upsert. Mirrors EXACTLY the fields the old JsonElement parser
 // (MemoryTools.ParseEntries) accepted, including the `deleted:true` soft-delete marker.
 public sealed record MemoryEntryInputDto

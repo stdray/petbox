@@ -135,7 +135,7 @@ public sealed class TaskBoardModel : PageModel
 	// comments-ui-edit: add a comment (or, when parentId is set, a reply) under `nodeId` — a
 	// hidden form field, since this page renders MANY node cards (unlike the node detail page,
 	// which resolves its one node from the bound route). Goes through ICommentService.AddAsync,
-	// the same door comments_create (MCP) uses.
+	// the low-ceremony UI door (the comments_upsert MCP verb shares the same guards).
 	public async Task<IActionResult> OnPostCommentAddAsync(string nodeId, string? parentId, string body, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
