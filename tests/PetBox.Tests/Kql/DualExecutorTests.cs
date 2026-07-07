@@ -240,14 +240,11 @@ public sealed class DualExecutorTests
 		await DualExecutor.AssertSameTableAsync(kql, GroupData);
 	}
 
-	// QUARANTINED by the real-SQLite harness cutover (kql-single-path-impl): a NUMERIC bin() as a
-	// summarize group KEY (`by Bucket = bin(Id, N)`) throws "The LINQ expression 'x.Key' could not be
-	// converted to SQL" from linq2db — ComposeSummarize does NOT fall back (it accepts the key) yet emits
-	// a GROUP BY projection linq2db can't translate. Time-bin group keys (`by bin(Timestamp, ..)`) DO
-	// translate (SummarizeByTimeBin passes), and a numeric bin in extend/project also works (KqlResult
-	// Tests.Extend_BinNumeric), so this is a targeted GAP in the numeric-bin summarize-GROUP-KEY path,
-	// masked until now by EnumerableQuery. Owner: the summarize-migration author. Un-skip once translated.
-	[Theory(Skip = "numeric bin() as a summarize group key fails linq2db translation ('x.Key' not convertible) in ComposeSummarize; needs a fix in the summarize migration")]
+	// A NUMERIC bin() as a summarize group KEY (`by Bucket = bin(Id, N)`) now translates to SQL: bin's
+	// numeric path routes through KqlSqlExpressions.BinLong/BinDouble ([Sql.Expression] arithmetic) instead
+	// of the old in-memory-only helper, so the GROUP BY key is server-translatable (was untranslatable —
+	// 'x.Key' could not be converted — and masked by EnumerableQuery until the harness cutover).
+	[Theory]
 	[InlineData("events | summarize Cnt = count() by Bucket = bin(Id, 2)")]
 	[InlineData("events | summarize Cnt = count() by Bucket = bin(Id, 3)")]
 	[InlineData("events | summarize Sm = sum(Id) by Bucket = bin(Id, 2)")]
@@ -431,14 +428,11 @@ public sealed class DualExecutorTests
 		await DualExecutor.AssertSameTableAsync(kql, JoinData);
 	}
 
-	// QUARANTINED by the real-SQLite harness cutover (kql-single-path-impl): innerunique de-dups the LEFT
-	// side by key keeping ONE row per key. The migrated ComposeJoin does that with GroupBy(key).First()
-	// (DedupByKey), which keeps first-in-INPUT-order over EnumerableQuery — but over real SQLite the ROW_
-	// NUMBER/first has NO deterministic ORDER BY tie-break, so it keeps an ARBITRARY row per key and the
-	// left Id diverges from KustoLoco's first-in-order pick. This is a genuine determinism GAP in the join
-	// migration (masked until now by the in-memory provider), NOT a test artifact — fixing it means adding
-	// a stable order to the left dedup, which belongs to the join-migration owner. Un-skip once fixed.
-	[Theory(Skip = "innerunique left-dedup is non-deterministic over real SQLite (no ORDER BY tie-break in ComposeJoin's DedupByKey); needs a stable-order fix in the join migration")]
+	// innerunique de-dups the LEFT side by key keeping the FIRST left row per key (Kusto table order).
+	// ComposeJoin's DedupByKey now tie-breaks ascending by the left identity column (= insertion order),
+	// so linq2db's ROW_NUMBER dedup and KustoLoco agree byte-identically over real SQLite (was arbitrary
+	// before the tie-break — the harness cutover surfaced it).
+	[Theory]
 	[InlineData("events | join (events | where Level == 4) on ServiceKey | project Id, Id1")]
 	[InlineData("events | join kind=innerunique (events | where Level >= 3) on ServiceKey | project Id, Id1")]
 	public async Task Join_InnerUnique_MatchesReference(string kql)

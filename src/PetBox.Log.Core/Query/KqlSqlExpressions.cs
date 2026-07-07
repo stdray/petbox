@@ -255,6 +255,36 @@ public static class KqlSqlExpressions
 	public static long BinDateTimeMs(long ms, long stepTicks) =>
 		((ms * TimeSpan.TicksPerMillisecond + UnixEpochTicks) / stepTicks * stepTicks - UnixEpochTicks) / TimeSpan.TicksPerMillisecond;
 
+	// bin(value, step) for INTEGER values: floor(value/step)*step toward NEGATIVE INFINITY (Kusto/KQL
+	// semantics, NOT trunc-toward-zero). Expressed via SQLite's non-negative-remainder identity
+	// `value - ((value % step + step) % step)` — a single translatable arithmetic expression that agrees
+	// on both providers even for negatives (SQLite `%`/`/` truncate toward zero). Unlike the old private
+	// in-memory-only helper, this translates to SQL so it works as a `summarize … by bin(col, n)` GROUP BY
+	// key (not just a client-evaluated projection). `step > 0` is the caller's contract (a positive literal
+	// in practice); over SQLite a non-positive step yields NULL rather than throwing, so the C# body keeps
+	// the loud guard for the in-memory path.
+	[Sql.Expression("({0} - ((({0} % {1}) + {1}) % {1}))", ServerSideOnly = true)]
+	public static long BinLong(long value, long step)
+	{
+		if (step <= 0)
+			throw new UnsupportedKqlException("bin() step must be positive");
+		var q = value / step;
+		if (value % step != 0 && value < 0)
+			q--; // floor toward negative infinity, not truncate toward zero
+		return q * step;
+	}
+
+	// bin(value, step) for REAL values: floor(value/step)*step. SQLite CAST(real AS INTEGER) truncates
+	// toward zero, so the floor is `trunc(q) - (q<0 AND q not integral ? 1 : 0)`; multiplied back by step.
+	// Same SQL-translatable / dual-body rationale as BinLong.
+	[Sql.Expression("((CAST({0} / {1} AS INTEGER) - (CASE WHEN {0} / {1} < 0 AND {0} / {1} <> CAST({0} / {1} AS INTEGER) THEN 1 ELSE 0 END)) * {1})", ServerSideOnly = true)]
+	public static double BinDouble(double value, double step)
+	{
+		if (step <= 0)
+			throw new UnsupportedKqlException("bin() step must be positive");
+		return Math.Floor(value / step) * step;
+	}
+
 	// --- startof* on epoch-ms. SQLite via strftime(...,'unixepoch',...); the C# body mirrors it for
 	// the in-memory path. Week starts Sunday (Kusto): start-of-day minus the day-of-week (%w, 0=Sun). ---
 

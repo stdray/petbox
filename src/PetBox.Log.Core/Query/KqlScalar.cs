@@ -1092,9 +1092,13 @@ static class KqlScalarFunctions
 		if (KqlScalar.IsNumericType(value.Type) && KqlScalar.IsNumericType(step.Type))
 		{
 			var t = KqlScalar.CommonValueType([value.Type, step.Type]);
+			// Route through the SQL-translatable KqlSqlExpressions.BinLong/BinDouble (not an in-memory-only
+			// helper) so numeric bin works as a `summarize … by bin(col, n)` GROUP BY key too, not only as a
+			// client-evaluated projection. The C# bodies preserve the exact floor-toward-negative-infinity
+			// semantics for the in-memory path.
 			return t == typeof(long)
-				? Expr.Call(Method(nameof(BinLong)), KqlScalar.ConvertToValue(value, typeof(long)), KqlScalar.ConvertToValue(step, typeof(long)))
-				: Expr.Call(Method(nameof(BinDouble)), KqlScalar.ConvertToValue(value, typeof(double)), KqlScalar.ConvertToValue(step, typeof(double)));
+				? Expr.Call(SqlM(nameof(KqlSqlExpressions.BinLong)), KqlScalar.ConvertToValue(value, typeof(long)), KqlScalar.ConvertToValue(step, typeof(long)))
+				: Expr.Call(SqlM(nameof(KqlSqlExpressions.BinDouble)), KqlScalar.ConvertToValue(value, typeof(double)), KqlScalar.ConvertToValue(step, typeof(double)));
 		}
 
 		throw new UnsupportedKqlException(
@@ -1376,20 +1380,4 @@ static class KqlScalarFunctions
 		return new DateTime(floored, v.Kind);
 	}
 
-	static long BinLong(long v, long step)
-	{
-		if (step <= 0)
-			throw new UnsupportedKqlException("bin() step must be positive");
-		var q = v / step;
-		if (v % step != 0 && v < 0)
-			q--; // floor toward negative infinity, not truncate toward zero
-		return q * step;
-	}
-
-	static double BinDouble(double v, double step)
-	{
-		if (step <= 0)
-			throw new UnsupportedKqlException("bin() step must be positive");
-		return Math.Floor(v / step) * step;
-	}
 }

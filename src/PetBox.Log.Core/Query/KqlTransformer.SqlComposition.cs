@@ -530,9 +530,10 @@ public static partial class KqlTransformer
 	}
 
 	// inner (dedupLeft=false) or innerunique (dedupLeft=true — dedup the LEFT by key, keeping the first row
-	// per key, via GroupBy(key).Select(g => First()); linq2db translates that to a ROW_NUMBER window dedup
-	// and EnumerableQuery keeps the first-in-input-order row, so both providers agree, matching today's
-	// StreamJoinRows innerunique).
+	// per key, via GroupBy(key).Select(g => OrderBy(identity).First()); linq2db translates that to a
+	// ROW_NUMBER() OVER (PARTITION BY key ORDER BY identity)=1 dedup and EnumerableQuery keeps the same
+	// first-in-input-order row, so both providers agree, matching today's StreamJoinRows innerunique. The
+	// explicit identity order is REQUIRED — a bare First() picks arbitrarily over real SQLite, see DedupByKey).
 	static SqlStage? BuildInnerJoin(SqlStage left, SqlStage right, JoinOnClause onClause, string opName, DateTime now, bool dedupLeft)
 	{
 		var lParam = Expr.Parameter(left.ElementType, "l");
@@ -553,7 +554,14 @@ public static partial class KqlTransformer
 		var rightKey = Expr.Lambda(KeyInit(keyType, keys.Select(k => k.R)), rParam);
 
 		if (dedupLeft)
-			leftQ = DedupByKey(leftQ, left.ElementType, keyType, leftKey);
+		{
+			// innerunique keeps ONE left row per key. Tie-break ascending by the left's identity/first
+			// column (= insertion order for the seeded record, so it matches Kusto's first-encountered
+			// per key) to make the pick DETERMINISTIC on both providers — a bare First() over SQLite is
+			// otherwise an arbitrary row per key.
+			var tieBreak = Expr.Lambda(lctx.ResolveColumn(left.Columns[0].Name), lParam);
+			leftQ = DedupByKey(leftQ, left.ElementType, keyType, leftKey, tieBreak);
+		}
 
 		var outCols = BuildJoinColumns(left, lctx, lParam, right, rctx, rParam, new HashSet<int>(), rightNullable: false);
 		var resultType = EmitRowType(outCols.Select((c, i) => ($"C{i}", c.Storage.Type)).ToList());
@@ -727,15 +735,31 @@ public static partial class KqlTransformer
 			outer.Expression, Expr.Constant(inner), Expr.Quote(outerKey), Expr.Quote(innerKey), Expr.Quote(resultSel)));
 	}
 
-	// innerunique left dedup: GroupBy(key).Select(g => g.First()) — one row per key (first in input order).
-	static IQueryable DedupByKey(IQueryable query, Type elementType, Type keyType, LambdaExpr keySelector)
+	// innerunique left dedup: GroupBy(key).Select(g => g.OrderBy(tieBreak).First()) — one row per key,
+	// keeping the FIRST in `tieBreak` order. The explicit order is essential over real SQLite: a bare
+	// g.First() has no ORDER BY, so linq2db's ROW_NUMBER window (and SQLite's scan) pick an ARBITRARY row
+	// per key, diverging from Kusto/KustoLoco. Ordering ascending by the input's identity/first column
+	// (= insertion order for the seeded record) makes both providers keep Kusto's first-encountered left
+	// row per key. linq2db translates this to ROW_NUMBER() OVER (PARTITION BY key ORDER BY tieBreak)=1.
+	static IQueryable DedupByKey(IQueryable query, Type elementType, Type keyType, LambdaExpr keySelector, LambdaExpr tieBreak)
 	{
 		var grouped = DynGroupBy(query, elementType, keyType, keySelector);
 		var groupingType = typeof(IGrouping<,>).MakeGenericType(keyType, elementType);
 		var g = Expr.Parameter(groupingType, "g");
-		var first = Expr.Lambda(Expr.Call(EnumM("First", 1, elementType), g), g);
+		// g.OrderBy(tieBreak) — Enumerable.OrderBy over the grouping (IEnumerable<elementType>), then First().
+		var ordered = Expr.Call(EnumOrderBy(elementType, tieBreak.Body.Type), g, tieBreak);
+		var first = Expr.Lambda(Expr.Call(EnumM("First", 1, elementType), ordered), g);
 		return DynSelect(grouped, groupingType, elementType, first);
 	}
+
+	// Enumerable.OrderBy<TSource, TKey>(IEnumerable<TSource>, Func<TSource, TKey>) — the 2-arg (no-comparer)
+	// overload; the inner selector rides as a Func lambda (these run inside a Queryable GROUP BY projection,
+	// so linq2db translates them and EnumerableQuery evaluates them in-memory).
+	static MethodInfo EnumOrderBy(Type source, Type key) =>
+		typeof(Enumerable).GetMethods()
+			.Single(m => m.Name == "OrderBy" && m.IsGenericMethodDefinition && m.GetGenericArguments().Length == 2
+				&& m.GetParameters().Length == 2)
+			.MakeGenericMethod(source, key);
 
 	static IQueryable DynGroupJoin(IQueryable outer, IQueryable inner, Type outerT, Type innerT, Type keyT, Type resultT,
 		LambdaExpr outerKey, LambdaExpr innerKey, LambdaExpr resultSel)
