@@ -759,7 +759,7 @@ public sealed partial class TasksService : ITasksService
 	}
 
 	// Uniform slug-or-NodeId resolution for bare node refs (relations_create/list,
-	// comments_create/list) — uniform-node-refs. 32-hex = NodeId, passed through untouched
+	// comments_upsert/search) — uniform-node-refs. 32-hex = NodeId, passed through untouched
 	// (existing NodeId behavior preserved). A slug resolves over the ACTIVE nodes: scoped to
 	// `board` when given (slugs are board-unique, so at most one hit), else across EVERY
 	// board — the project file holds all boards' nodes. Ambiguity (same slug on 2+ boards)
@@ -787,7 +787,7 @@ public sealed partial class TasksService : ITasksService
 	}
 
 	// Miss-tolerant sibling of ResolveNodeRefAsync for SOFT single-node reads (relations_list,
-	// comments_list): returns null when the ref matches no active node (the caller then returns an
+	// comments_search): returns null when the ref matches no active node (the caller then returns an
 	// empty result instead of an error), while an ambiguous cross-board slug is STILL a clear error
 	// (it genuinely can't address one node). NodeId form passes through unchecked, like the strict
 	// resolver. Use this where "a node that isn't there" reads naturally as an empty answer, not a

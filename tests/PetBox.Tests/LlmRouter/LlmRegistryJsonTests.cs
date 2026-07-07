@@ -4,7 +4,7 @@ using PetBox.LlmRouter.Contract;
 namespace PetBox.Tests.LlmRouter;
 
 // The registry round-trips through Web-default JSON in two places (config binding storage and
-// the llm_config_set/get MCP surface); `thinking` must survive both and parse from the
+// the llm_config_upsert/get MCP surface); `thinking` must survive both and parse from the
 // lowercase wire form (llm-route-reasoning-mode).
 public sealed class LlmRegistryJsonTests
 {

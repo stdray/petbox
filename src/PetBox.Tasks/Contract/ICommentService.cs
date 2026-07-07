@@ -7,8 +7,36 @@ namespace PetBox.Tasks.Contract;
 // page) depends only on this interface (TasksBoundaryTests forbids touching the store/db).
 public interface ICommentService
 {
+	// Batch declarative upsert of comments on a board (uniform-entity-verbs, mirrors
+	// tasks_upsert). Each item with a null/empty Id is a CREATE (needs a RESOLVED NodeId +
+	// author; ParentId optional = reply); an item with an Id is a PATCH of body/tags under a
+	// `version` WATERMARK. One atomic batch: any conflict aborts it, none is written. NodeId
+	// is the already-resolved 32-hex owner (the adapter resolves a slug on `board`).
+	Task<CommentBatchResult> UpsertAsync(
+		string projectKey, string board, IReadOnlyList<CommentItem> items, CancellationToken ct = default);
+
+	// THE comment read verb (list = search without a query). Without `query`: a deterministic
+	// chronological listing of the active comments (optionally scoped to one `board` and/or one
+	// owner `nodeId` — both already resolved). With `query`: a lexical FTS relevance selection
+	// over comment bodies in the same scope. Semantic retrieval is not wired for comments yet,
+	// so a query degrades to the lexical floor (Retrievers reports semantic=false, degraded=false).
+	Task<CommentSearchResult> SearchAsync(
+		string projectKey, string? board, string? nodeId, string? query, int limit, CancellationToken ct = default);
+
+	// Comments added/updated/removed on a board since a `sinceVersion` cursor (no writes) —
+	// mirrors ITasksService.DeltaAsync. The comment version cursor is per-board (the upsert
+	// batch partitions by Board), so a caller passes the board's comment `currentVersion`.
+	Task<CommentDelta> DeltaAsync(
+		string projectKey, string board, long sinceVersion, CancellationToken ct = default);
+
+	// One active comment by its (project-unique) id, or null when it is missing/deleted — the
+	// addressed single read that completes the uniform-entity matrix (mirrors memory_get).
+	Task<CommentView?> GetAsync(string projectKey, string id, CancellationToken ct = default);
+
 	// Add a comment under a node. parentId (a comment Key) makes it a reply; it must be an
 	// active comment under the SAME (board, nodeId), else the call is rejected. New Key.
+	// Retained as the low-ceremony single-write door the board UI uses (comments_upsert is the
+	// MCP batch verb); the UI inline editor calls this + EditAsync directly.
 	Task<CommentUpsertResult> AddAsync(
 		string projectKey, string board, string nodeId, string? parentId, string author, string body,
 		IReadOnlyList<string>? tags, CancellationToken ct = default);
@@ -54,3 +82,40 @@ public sealed record CommentUpsertResult(
 	IReadOnlyList<CommentConflict> Conflicts);
 
 public sealed record CommentConflict(string Id, string Kind, long BaselineVersion, long? ActiveVersion, string? Reason = null);
+
+// One item of a comments_upsert batch. Id null/empty ⇒ CREATE (NodeId is the RESOLVED 32-hex
+// owner, Author required, ParentId optional = reply); Id present ⇒ PATCH body/tags of that
+// comment under the `Version` watermark. Tags: null = leave as-is on an edit (a create with
+// null tags starts empty), a non-null list REPLACES the set.
+public sealed record CommentItem(
+	string? Id,
+	string? NodeId,
+	string? ParentId,
+	string? Author,
+	string Body,
+	IReadOnlyList<string>? Tags,
+	long Version);
+
+// Outcome of a comments_upsert batch, mirroring the tasks_upsert ack: `Applied` is the single
+// source of truth (false ⇒ nothing written, `Conflicts` explains every rejected id); on success
+// `Added`/`Updated` carry the created/edited comments (with their tags + assigned version).
+public sealed record CommentBatchResult(
+	bool Applied,
+	long CurrentVersion,
+	IReadOnlyList<CommentView> Added,
+	IReadOnlyList<CommentView> Updated,
+	IReadOnlyList<CommentConflict> Conflicts);
+
+// A comments_search answer: the selected comments plus honest retrieval provenance (null in a
+// deterministic listing; in query mode it reports the lexical floor — semantic is not wired yet).
+public sealed record CommentSearchResult(
+	IReadOnlyList<CommentView> Items,
+	PetBox.Core.Search.SearchRetrievers? Retrievers = null);
+
+// A comments_delta answer: the comments added/updated/removed on a board since a version cursor,
+// plus the board's current comment cursor to advance to (mirrors the tasks delta split).
+public sealed record CommentDelta(
+	long CurrentVersion,
+	IReadOnlyList<CommentView> Added,
+	IReadOnlyList<CommentView> Updated,
+	IReadOnlyList<string> Removed);

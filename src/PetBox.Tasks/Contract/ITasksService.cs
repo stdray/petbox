@@ -118,7 +118,7 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// is an error naming the boards (pass the NodeId); a miss is a clear error, never null.
 	Task<string> ResolveNodeRefAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default);
 
-	// Miss-tolerant sibling for SOFT single-node reads (relations_list/comments_list): null on a
+	// Miss-tolerant sibling for SOFT single-node reads (relations_list/comments_search): null on a
 	// no-match (caller returns an empty result), ambiguous cross-board slug still throws. NodeId
 	// form passes through unchecked.
 	Task<string?> ResolveNodeRefOrNullAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default);

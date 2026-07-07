@@ -36,8 +36,8 @@ gone). The provisioning tools (`project_*`, `apikey_*`, `config_*`) require the
 |---|---|
 | `project_create({ workspaceKey, key, name, description? })` | Create the pet's project. |
 | `apikey_create({ name, scopes, projectKey?, expiresInSeconds?, allProjects? })` | Mint the pet's **production** key. Returns the raw key once — hand it to the pet. Omit `expiresInSeconds` for a non-expiring key. `allProjects:true` (omit `projectKey`) mints a cross-project `*` key. |
-| `config_binding_upsert({ workspaceKey, path, value, tags })` | Seed config (PUT by (path, tagset) — an identical twin is superseded). `tags` must include `ws:{workspaceKey}`. |
-| `project_list` / `apikey_list` / `apikey_delete` / `config_binding_list` / `config_binding_delete` | List / remove. `project` has no delete. |
+| `config_binding_upsert({ workspaceKey, items:[{ path, value, tags, kind? }] })` | Seed config — a BATCH of PUT-by-(path, tagset) bindings (an identical twin is superseded). Each item's `tags` must include `ws:{workspaceKey}`. |
+| `project_list` / `apikey_list` / `apikey_delete` / `config_binding_search` / `config_binding_delete` | List / remove. `config_binding_search` (list = search without `q`) replaced `config_binding_list`; `project` has no delete. |
 
 Project-scoped types `db` and `log` (created with the minted key, gated on
 `data:schema` / `logs:admin`) plus the operational tools `data_schema_apply`,
@@ -49,7 +49,7 @@ Project-scoped types `db` and `log` (created with the minted key, gated on
 2. `apikey_create({ projectKey: "kpvotes", name: "kpvotes-ts prod", scopes: "config:read,data:read,data:write,data:schema" })` → **save the returned key**
 3. `db_create({ projectKey: "kpvotes", name: "kpvotes-cache" })` (using the minted key)
 4. `data_schema_apply({ projectKey: "kpvotes", dbName: "kpvotes-cache", name: "M001_votes", sql: "CREATE TABLE votes (...)" })`
-5. `config_binding_upsert({ workspaceKey: "myws", path: "kpvotes.kp-uri", value: "...", tags: "ws:myws,project:kpvotes" })`
+5. `config_binding_upsert({ workspaceKey: "myws", items:[{ path: "kpvotes.kp-uri", value: "...", tags: "ws:myws,project:kpvotes" }] })`
 6. Give the pet its production key + endpoint; the agent key expires on its own.
 
 ## Errors

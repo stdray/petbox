@@ -18,6 +18,172 @@ public sealed class CommentService : ICommentService
 	readonly IScopedDbFactory<TasksDb> _factory;
 	public CommentService(IScopedDbFactory<TasksDb> factory) => _factory = factory;
 
+	// ── uniform-entity verbs (comments_upsert / _search / _delta / _get) ───────────────
+
+	public async Task<CommentBatchResult> UpsertAsync(
+		string projectKey, string board, IReadOnlyList<CommentItem> items, CancellationToken ct = default)
+	{
+		var ctx = _factory.GetDb(projectKey);
+
+		// Load the active rows the EDIT items address (identity/parent/author/nodeId are carried
+		// forward; only body changes, exactly like EditAsync). A missing id is a clear error.
+		var editIds = items.Where(i => !string.IsNullOrEmpty(i.Id)).Select(i => i.Id!).Distinct().ToList();
+		var currentById = editIds.Count == 0
+			? new Dictionary<string, CommentRow>(StringComparer.Ordinal)
+			: (await ctx.GetTable<CommentRow>()
+					.Where(c => editIds.Contains(c.Key) && c.Board == board && c.ActiveTo == null).ToListAsync(ct))
+				.ToDictionary(c => c.Key, StringComparer.Ordinal);
+
+		var desired = new List<CommentRow>(items.Count);
+		var itemByKey = new Dictionary<string, CommentItem>(StringComparer.Ordinal);
+		foreach (var it in items)
+		{
+			if (string.IsNullOrWhiteSpace(it.Body)) throw new ArgumentException("comment body is required");
+			if (string.IsNullOrEmpty(it.Id))
+			{
+				// CREATE
+				if (string.IsNullOrWhiteSpace(it.NodeId)) throw new ArgumentException("nodeId is required to create a comment");
+				if (string.IsNullOrWhiteSpace(it.Author)) throw new ArgumentException("author is required to create a comment");
+				if (!string.IsNullOrEmpty(it.ParentId))
+				{
+					// A reply must hang under an active comment of the SAME thread (board+node). An
+					// intra-batch parent (a reply to another item created in the same call) is not
+					// supported — the parent must already exist.
+					var parent = await ctx.GetTable<CommentRow>()
+						.FirstOrDefaultAsync(c => c.Key == it.ParentId && c.ActiveTo == null, ct);
+					if (parent is null || parent.Board != board || parent.NodeId != it.NodeId)
+						throw new ArgumentException($"parentId '{it.ParentId}' is not an active comment under this node");
+				}
+				var id = Guid.NewGuid().ToString("N");
+				desired.Add(new CommentRow
+				{
+					Key = id, Version = it.Version, Board = board, NodeId = it.NodeId!,
+					ParentId = string.IsNullOrEmpty(it.ParentId) ? null : it.ParentId,
+					Author = it.Author ?? string.Empty, Body = it.Body,
+				});
+				itemByKey[id] = it;
+			}
+			else
+			{
+				// PATCH
+				if (!currentById.TryGetValue(it.Id!, out var cur))
+					throw new ArgumentException($"comment '{it.Id}' not found or already deleted");
+				desired.Add(cur with { Version = it.Version, Body = it.Body });
+				itemByKey[it.Id!] = it;
+			}
+		}
+
+		// One atomic temporal batch (partitioned by board, so `currentVersion` is the board's
+		// comment cursor). FTS is re-indexed inside the tx — the same Class-A discipline as Add/Edit.
+		var fts = new SqliteFtsIndex(() => ctx);
+		var r = await TemporalStore.UpsertAsync(ctx, desired, partition: x => x.Board == board,
+			onWithinTx: async (tx, upserted, _, c) =>
+			{
+				foreach (var u in upserted)
+					await fts.IndexAsync(tx, TasksSearchDocs.CommentToDoc(u, projectKey), c);
+			}, ct: ct);
+
+		// r.Added/r.Updated are the delta since sinceVersion (0 here → the whole board's active
+		// comments). The ECHO must cover ONLY this call (like tasks_upsert/memory_upsert): keep just
+		// the rows whose key is in THIS batch, and — when the batch was REJECTED — nothing at all
+		// (applied:false ⇒ nothing written, added/updated empty).
+		var mineAdded = r.Applied ? r.Added.Where(x => itemByKey.ContainsKey(x.Key)).ToList() : [];
+		var mineUpdated = r.Applied ? r.Updated.Where(x => itemByKey.ContainsKey(x.Key)).ToList() : [];
+		if (r.Applied)
+		{
+			// Tags: a create always writes its set (null → none); an edit only when tags != null
+			// (PATCH — omitted leaves the set as-is), matching AddAsync/EditAsync.
+			foreach (var row in mineAdded)
+				await SetTagsAsync(ctx, row.Key, board, itemByKey[row.Key].Tags, ct);
+			foreach (var row in mineUpdated)
+				if (itemByKey[row.Key].Tags is { } tags)
+					await SetTagsAsync(ctx, row.Key, board, tags, ct);
+		}
+
+		var tagLookup = await TagsForAsync(ctx, board, ct);
+		return new CommentBatchResult(
+			r.Applied, r.CurrentVersion,
+			mineAdded.Select(x => ToView(x, tagLookup)).ToList(),
+			mineUpdated.Select(x => ToView(x, tagLookup)).ToList(),
+			r.Conflicts.Select(c => new CommentConflict(c.Key, c.Kind.ToString(), c.BaselineVersion, c.ActiveVersion, c.Reason)).ToList());
+	}
+
+	public async Task<CommentSearchResult> SearchAsync(
+		string projectKey, string? board, string? nodeId, string? query, int limit, CancellationToken ct = default)
+	{
+		var ctx = _factory.GetDb(projectKey);
+		var q = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
+		var tags = await TagsForAsync(ctx, board, ct);
+
+		if (q is null)
+		{
+			// LIST: deterministic chronological listing (the former comments_list, now optionally
+			// project-wide or board-scoped, and optionally narrowed to one owner node).
+			var listQ = ctx.GetTable<CommentRow>().Where(c => c.ActiveTo == null);
+			if (board is not null) listQ = listQ.Where(c => c.Board == board);
+			if (nodeId is not null) listQ = listQ.Where(c => c.NodeId == nodeId);
+			var rows = await listQ.ToListAsync(ct);
+			IEnumerable<CommentView> views = rows.OrderBy(r => r.Created).Select(r => ToView(r, tags));
+			if (limit > 0) views = views.Take(limit);
+			return new CommentSearchResult(views.ToList());
+		}
+
+		// QUERY: the lexical floor only (semantic is a later Class-B item for comments). Reads open
+		// a FRESH connection (SqliteFtsIndex disposes it) — never the cached request context.
+		var indexes = new List<ISearchIndex> { new SqliteFtsIndex(() => _factory.NewConnection(projectKey)) };
+		var k = limit > 0 ? Math.Max(limit * 3, 50) : 200;
+		var resp = await new SearchService(indexes).SearchAsync(projectKey, q, new SearchFilter(board), k, ct);
+
+		// The FTS covers node docs AND comment docs in the same (scope, board) partition — keep
+		// only comment hits ("c:"+key), in fused-rank order, dedup by key.
+		var hitKeys = new List<string>();
+		var seen = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var h in resp.Hits)
+		{
+			if (!h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal)) continue;
+			var key = h.Id[TasksSearchDocs.CommentIdPrefix.Length..];
+			if (seen.Add(key)) hitKeys.Add(key);
+		}
+		if (hitKeys.Count == 0) return new CommentSearchResult([], resp.Retrievers);
+
+		var rowsById = (await ctx.GetTable<CommentRow>()
+				.Where(c => hitKeys.Contains(c.Key) && c.ActiveTo == null).ToListAsync(ct))
+			.ToDictionary(c => c.Key, StringComparer.Ordinal);
+		IEnumerable<CommentView> ordered = hitKeys
+			.Where(rowsById.ContainsKey)
+			.Select(key => rowsById[key])
+			.Where(r => nodeId is null || r.NodeId == nodeId)
+			.Select(r => ToView(r, tags));
+		if (limit > 0) ordered = ordered.Take(limit);
+		return new CommentSearchResult(ordered.ToList(), resp.Retrievers);
+	}
+
+	public async Task<CommentDelta> DeltaAsync(
+		string projectKey, string board, long sinceVersion, CancellationToken ct = default)
+	{
+		var ctx = _factory.GetDb(projectKey);
+		var (added, updated, removed, current) =
+			await TemporalStore.ChangesSinceAsync<CommentRow>(ctx, sinceVersion, partition: x => x.Board == board, ct: ct);
+		var tags = await TagsForAsync(ctx, board, ct);
+		return new CommentDelta(
+			current,
+			added.Select(x => ToView(x, tags)).ToList(),
+			updated.Select(x => ToView(x, tags)).ToList(),
+			removed.ToList());
+	}
+
+	public async Task<CommentView?> GetAsync(string projectKey, string id, CancellationToken ct = default)
+	{
+		var ctx = _factory.GetDb(projectKey);
+		var row = await ctx.GetTable<CommentRow>()
+			.FirstOrDefaultAsync(c => c.Key == id && c.ActiveTo == null, ct);
+		if (row is null) return null;
+		var tags = await TagsForAsync(ctx, row.Board, ct);
+		return ToView(row, tags);
+	}
+
+	// ── low-ceremony single-write door (board UI) ──────────────────────────────────────
+
 	public async Task<CommentUpsertResult> AddAsync(
 		string projectKey, string board, string nodeId, string? parentId, string author, string body,
 		IReadOnlyList<string>? tags, CancellationToken ct = default)
@@ -140,13 +306,13 @@ public sealed class CommentService : ICommentService
 
 	// ── helpers ──────────────────────────────────────────────────────────────
 
-	// Active tags of every comment on a board, as commentId -> tags (one query, grouped in
-	// memory) — mirrors TagStore.BoardTagsAsync.
-	static async Task<ILookup<string, string>> TagsForAsync(TasksDb ctx, string board, CancellationToken ct)
+	// Active tags of every comment on a board (or the whole project when `board` is null, for a
+	// project-wide comments_search listing), as commentId -> tags — mirrors TagStore.BoardTagsAsync.
+	static async Task<ILookup<string, string>> TagsForAsync(TasksDb ctx, string? board, CancellationToken ct)
 	{
-		var rows = await ctx.GetTable<CommentTag>()
-			.Where(t => t.Board == board && t.ValidTo == null)
-			.Select(t => new { t.CommentId, t.Tag }).ToListAsync(ct);
+		var q = ctx.GetTable<CommentTag>().Where(t => t.ValidTo == null);
+		if (board is not null) q = q.Where(t => t.Board == board);
+		var rows = await q.Select(t => new { t.CommentId, t.Tag }).ToListAsync(ct);
 		return rows.ToLookup(t => t.CommentId, t => t.Tag, StringComparer.Ordinal);
 	}
 

@@ -23,6 +23,19 @@ static class McpToolScopeFilter
 			var result = await next(request, ct);
 			try
 			{
+				// spec tool-description-economy — serve the COMPACT HEAD for tools that opted in
+				// with a sentinel (full prose stays fetchable via tool_describe). Runs at this same
+				// tools/list layer, BEFORE the scope trim, so every early-return path below still
+				// hands back compacted descriptions. Clones (never mutates) sentinel tools, so the
+				// server's canonical ToolCollection keeps the full text.
+				result.Tools = result.Tools.Select(McpToolDescriptions.Compact).ToList();
+			}
+			catch
+			{
+				// fail open — never break tools/list because of compaction
+			}
+			try
+			{
 				var granted = ScopesOf(request.User);
 				if (granted.Count == 0) return result;                          // no claim → show all
 				if (granted.Contains(ApiKeyScopes.AdminProvision)) return result; // provision key → show all

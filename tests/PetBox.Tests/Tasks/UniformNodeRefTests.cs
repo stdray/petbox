@@ -10,6 +10,7 @@ using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Web.Mcp;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Tasks;
 
@@ -17,7 +18,7 @@ namespace PetBox.Tests.Tasks;
 // format. blockedBy (tasks_upsert) resolves a slug on the same board and the `blocks` edge
 // always carries a NodeId; relations_create/list resolve slugs across ALL boards (no board
 // param) with an "ambiguous slug … boards: […]" error when a slug lives on 2+ boards;
-// comments_create/list resolve a slug on their `board` param. 32-hex values are always NodeIds
+// comments_upsert/search resolve a slug on their `board` param. 32-hex values are always NodeIds
 // (passthrough — the pre-existing NodeId paths are the regression baseline).
 public sealed class UniformNodeRefTests : IDisposable
 {
@@ -198,7 +199,10 @@ public sealed class UniformNodeRefTests : IDisposable
 		bySlug.Relations.Single().FromNodeId.Should().Be(ids["one"]);
 	}
 
-	// ---- comments_create/list: slug resolves on the `board` param ----
+	// ---- comments_upsert/search: slug resolves on the `board` param ----
+
+	static CommentItemInput NewComment(string node, string author, string body) =>
+		new() { NodeId = node, Author = author, Body = body };
 
 	[Fact]
 	public async Task CommentsCreate_And_List_BySlug()
@@ -206,14 +210,14 @@ public sealed class UniformNodeRefTests : IDisposable
 		var http = Http();
 		var ids = await Seed(http, "b", """[{"key":"talky","status":"Todo","title":"T"}]""");
 
-		var add = await CommentTools.CreateAsync(http, Flags(), _comments, _tasks, Proj, "b", "talky", "alice", "hello");
+		var add = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, "b", [NewComment("talky", "alice", "hello")]);
 		add.Applied.Should().BeTrue();
 
 		// The thread binds the node's stable NodeId; slug and NodeId list the same thread.
-		var bySlug = await CommentTools.ListAsync(http, Flags(), _comments, _tasks, Proj, "b", "talky");
-		bySlug.Comments.Single().NodeId.Should().Be(ids["talky"]);
-		var byId = await CommentTools.ListAsync(http, Flags(), _comments, _tasks, Proj, "b", ids["talky"]);
-		byId.Comments.Should().BeEquivalentTo(bySlug.Comments);
+		var bySlug = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: "b", nodeId: "talky");
+		bySlug.Items.Single().NodeId.Should().Be(ids["talky"]);
+		var byId = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: "b", nodeId: ids["talky"]);
+		byId.Items.Should().BeEquivalentTo(bySlug.Items);
 	}
 
 	[Fact]
@@ -222,15 +226,15 @@ public sealed class UniformNodeRefTests : IDisposable
 		var http = Http();
 		await Seed(http, "b", """[{"key":"real","status":"Todo","title":"R"}]""");
 
-		var act = () => CommentTools.CreateAsync(http, Flags(), _comments, _tasks, Proj, "b", "ghost", "alice", "hi");
+		var act = () => CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, "b", [NewComment("ghost", "alice", "hi")]);
 		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*node 'ghost' does not match any active node on board 'b'*");
 
 		// A slug that lives on ANOTHER board doesn't leak in — comments are board-scoped: a node
-		// not on this board yields an EMPTY thread (soft read), not an error.
+		// not on this board yields an EMPTY result (soft read), not an error.
 		await Seed(http, "other", """[{"key":"elsewhere","status":"Todo","title":"E"}]""");
-		var wrongBoard = await CommentTools.ListAsync(http, Flags(), _comments, _tasks, Proj, "b", "elsewhere");
-		wrongBoard.Comments.Should().BeEmpty();
+		var wrongBoard = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: "b", nodeId: "elsewhere");
+		wrongBoard.Items.Should().BeEmpty();
 	}
 
 	// ---- WATERMARK over the MCP surface: an echoed currentVersion is the next call's baseline ----
@@ -260,23 +264,26 @@ public sealed class UniformNodeRefTests : IDisposable
 		future.Conflicts.Should().ContainSingle(c => c.Kind == "FutureBaseline");
 	}
 
-	// comments_edit: same watermark over the thread cursor.
+	// comments_upsert (PATCH): same watermark over the thread cursor.
 	[Fact]
 	public async Task CommentEdit_ThreadCurrentVersion_IsValidNextBaseline_FutureRejected()
 	{
 		var http = Http();
 		await Seed(http, "b", """[{"key":"talky","status":"Todo","title":"T"}]""");
-		var c1 = await CommentTools.CreateAsync(http, Flags(), _comments, _tasks, Proj, "b", "talky", "alice", "first");  // v1
-		var c2 = await CommentTools.CreateAsync(http, Flags(), _comments, _tasks, Proj, "b", "talky", "bob", "second");   // v2 -> thread cursor
+		var c1 = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, "b", [NewComment("talky", "alice", "first")]);  // v1
+		var c2 = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, "b", [NewComment("talky", "bob", "second")]);   // v2 -> thread cursor
+		var c1Id = c1.Added.Single().Id;
 		var cursor = c2.CurrentVersion;
 
 		// Edit c1 (own version 1) with the thread cursor as baseline — accepted.
-		var edit = await CommentTools.EditAsync(http, Flags(), _comments, Proj, "b", c1.Id!, "first-edited", cursor);
+		var edit = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, "b",
+			[new CommentItemInput { Id = c1Id, Body = "first-edited", Version = cursor }]);
 		edit.Applied.Should().BeTrue();
 		edit.Conflicts.Should().BeEmpty();
 
 		// Above the thread cursor -> FutureBaseline, teaching Reason surfaced.
-		var future = await CommentTools.EditAsync(http, Flags(), _comments, Proj, "b", c1.Id!, "x", cursor + 500);
+		var future = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, "b",
+			[new CommentItemInput { Id = c1Id, Body = "x", Version = cursor + 500 }]);
 		future.Applied.Should().BeFalse();
 		var conflict = future.Conflicts.Single();
 		conflict.Kind.Should().Be("FutureBaseline");

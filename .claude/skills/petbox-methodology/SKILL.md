@@ -17,7 +17,7 @@ How to run work on PetBox itself through its own methodology. The canonical writ
 tool calls, and the gotchas that bite).
 
 **Tool naming:** in opencode these MCP tools are `petbox_<verb>` (e.g. `petbox_tasks_upsert`,
-`petbox_comments_add`); in Claude Code they are `mcp__petbox__<verb>`. The verbs written below
+`petbox_comments_upsert`); in Claude Code they are `mcp__petbox__<verb>`. The verbs written below
 are the logical names — prefix them per runtime.
 
 State lives on the `$system` project — query it,
@@ -39,7 +39,7 @@ spec change), and a work task reaches **Done** only by the maintainer.
 - **The agent's ceiling is `review`, NOT `accepted`.** Drive an idea up to `review` and STOP
   for the maintainer.
 - **GATE: `exploring → review` is REJECTED without an `artifact:spec_plan` comment** on the
-  idea — a `comments.add` with `tags:["artifact:spec_plan"]` stating the concrete spec
+  idea — a `comments_upsert` with `tags:["artifact:spec_plan"]` stating the concrete spec
   changes (which nodes, the requirement text, and the implementation sketch that will go to
   work). No plan, no review.
 - The **maintainer** does `review → accepted`. That accept = approval of the spec change-set.
@@ -47,7 +47,7 @@ spec change), and a work task reaches **Done** only by the maintainer.
 Driving an idea to review (the agent's job):
 ```
 tasks_upsert($system, ideas, [{key, type:"idea", status:"exploring", title, body}])      # or raw→exploring
-comments_add($system, ideas, <idea nodeId>, author, <the plan>, tags:["artifact:spec_plan"])
+comments_upsert($system, ideas, items:[{nodeId:<idea nodeId>, author, body:<the plan>, tags:["artifact:spec_plan"]}])
 tasks_upsert($system, ideas, [{key, version:<v>, status:"review"}])                       # guard checks the spec_plan
 # STOP — ask the maintainer to accept (or send back). Give them the idea's `url`
 # (include_url:true) so they can open it directly — don't hand over a bare slug.
@@ -154,8 +154,10 @@ tasks_upsert($system, spec, [
   and show the returned `url` as a clickable markdown link on the node title — never hand over
   a bare slug. The maintainer acts from the UI; a direct link is the shortest path to the
   thing they must decide on.
-- `comments_add|list|edit|delete` — the deliberation thread under any node; `artifact:<slug>`
-  tags mark key artifacts (`artifact:spec_plan` is the gate precondition).
+- `comments_upsert|search|get|delta|delete` — the deliberation thread under any node (upsert is
+  a batch of {id?, nodeId?, parentId?, author?, body, tags?, version?} items; id-null = create,
+  id-set = patch under a version watermark); `artifact:<slug>` tags mark key artifacts
+  (`artifact:spec_plan` is the gate precondition).
 - `relations_create|list|delete` — kinds `idea_spec | task_spec | issue_task | blocks |
   part_of | supersedes`.
 
