@@ -232,8 +232,9 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		messages.Should().BeEquivalentTo(["login"]);
 	}
 
-	// --- string ops over real SQLite: substr-based startswith/endswith, lower(), and the
-	// registered scalar functions kql_has / kql_matches_regex / kql_extract ---
+	// --- string ops over real SQLite: substr-based startswith/endswith, lower(), and the native
+	// sqlean regexp_like / regexp_substr SQL (has / matches regex / extract) — no registered scalar
+	// functions remain ---
 
 	[Fact]
 	public async Task StartsWith_TranslatesToSql()

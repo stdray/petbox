@@ -347,13 +347,24 @@ public static class KqlSqlExpressions
 
 	// todatetime parses an ISO-8601 string to epoch-MILLISECONDS (UTC — the SQL/record instant
 	// representation). Assumes UTC for an unspecified offset and normalizes to UTC, matching how
-	// timestamps are stored. SQLite's unixepoch(text,'subsec') yields fractional epoch SECONDS or NULL on
-	// non-ISO-8601 input, and NULL propagates through the round/CAST (SQLite 3.50.4 in-bundle supports
-	// 'subsec'). DuckDB: epoch_ms(TRY_CAST({0} AS TIMESTAMPTZ)) — ⚠ this REQUIRES `SET TimeZone='UTC'` at
-	// the DuckDB connection init so unspecified-offset strings read as UTC (matching the SQLite/AssumeUtc
-	// contract). DuckDB is not wired/active yet; when the future DuckDB wave wires connection init, that
-	// TimeZone pragma MUST be set for this expression to honor the UTC contract.
-	[Sql.Expression(ProviderName.SQLite, "CAST(round(unixepoch({0}, 'subsec') * 1000) AS INTEGER)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	// timestamps are stored. SQLite's unixepoch(text,'subsec') does NOT reject non-ISO input — it
+	// silently returns a WRONG non-null instant for many malformed strings (e.g. bare numbers) — so a
+	// sqlean regexp_like well-formedness gate (regexp_* loaded per connection by
+	// LoadSqleanRegexpInterceptor) restricts input to the ISO-8601 subset (date-only, optional T/space
+	// time separator, optional seconds/fractional, optional Z or ±HH[:]MM offset) and yields NULL for
+	// anything else; unixepoch then computes epoch SECONDS at 'subsec' (MILLISECOND) precision on the gated
+	// input (unspecified offset = UTC) — it ROUNDS to the ms internally — scaled to ms and CAST-truncated to
+	// INTEGER (the CAST only guards float representation drift below the ms; SQLite 3.50.4 in-bundle supports
+	// 'subsec'). A shaped-but-impossible date like
+	// '2024-13-45' passes the regex but unixepoch returns NULL for it — fine. DuckDB:
+	// epoch_ms(TRY_CAST({0} AS TIMESTAMPTZ)) — ⚠ this REQUIRES `SET TimeZone='UTC'` at the DuckDB
+	// connection init so unspecified-offset strings read as UTC (matching the SQLite/AssumeUtc contract).
+	// DuckDB is not wired/active yet; when the future DuckDB wave wires connection init, that TimeZone
+	// pragma MUST be set for this expression to honor the UTC contract.
+	// NB: the regex spells its digit counts as literal \d repetitions (\d\d\d\d not \d{4}) — linq2db's
+	// [Sql.Expression] treats `{N}` in the template as an ARGUMENT placeholder, so a `{4}` quantifier would
+	// be mis-parsed at query build; \d\d\d\d is the brace-free equivalent.
+	[Sql.Expression(ProviderName.SQLite, @"(CASE WHEN regexp_like({0}, '^\s*\d\d\d\d-\d\d-\d\d([ T]\d\d:\d\d(:\d\d(\.\d+)?)?)?(Z|[+-]\d\d:?\d\d)?\s*$') THEN CAST(unixepoch({0}, 'subsec') * 1000 AS INTEGER) ELSE NULL END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
 	[Sql.Expression(ProviderName.DuckDB, "epoch_ms(TRY_CAST({0} AS TIMESTAMPTZ))", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
 	public static long? ParseDateTimeMs(string? s) =>
 		throw new NotSupportedException("KqlSqlExpressions.ParseDateTimeMs is SQL-only (native per-dialect typed conversion)");

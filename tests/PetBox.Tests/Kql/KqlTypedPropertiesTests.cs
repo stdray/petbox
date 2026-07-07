@@ -149,6 +149,43 @@ public sealed class KqlTypedPropertiesTests
 		rows[0][3].Should().BeNull();
 	}
 
+	// todatetime well-formedness GATE (F1): SQLite's unixepoch does NOT reject non-ISO input — it silently
+	// returns a wrong non-null instant for many malformed strings. A sqlean regexp_like ISO-8601-subset gate
+	// now precedes unixepoch, so non-ISO spellings become null instead of garbage. These pin the ACTUAL
+	// gated behavior; the well-formed cases prove the gate didn't break valid parsing.
+	static long EpochMs(object? v) => new DateTimeOffset((DateTime)v!, TimeSpan.Zero).ToUnixTimeMilliseconds();
+
+	[Fact]
+	public async Task Todatetime_GatesToIso8601Subset_RejectsNonIsoToNull()
+	{
+		var data = new[]
+		{
+			Rec(1, """{"v":"now"}"""),
+			Rec(2, """{"v":"12345"}"""),
+			Rec(3, """{"v":"20240102"}"""),
+			Rec(4, """{"v":"12:34:56"}"""),
+			Rec(5, """{"v":"2024-01-02T03:04:05Z"}"""),
+			Rec(6, """{"v":"2024-01-02"}"""),
+			Rec(7, """{"v":"2024-01-02T03:04:05.6789Z"}"""),
+		};
+		var rows = await Table("events | project Id, W = todatetime(Properties.v)", data);
+		var by = rows.ToDictionary(r => (long)r[0]!, r => r[1]);
+
+		// non-ISO forms the sqlean regexp_like gate REJECTS → null (previously silent garbage instants)
+		by[1].Should().BeNull(); // 'now'      — bare keyword
+		by[2].Should().BeNull(); // '12345'    — bare number
+		by[3].Should().BeNull(); // '20240102' — compact date, no separators
+		by[4].Should().BeNull(); // '12:34:56' — time-only
+
+		// well-formed ISO still parses to the correct UTC instant (epoch-ms in the SQL layer)
+		EpochMs(by[5]).Should().Be(1704164645000L); // 2024-01-02T03:04:05Z
+		EpochMs(by[6]).Should().Be(1704153600000L); // date-only = UTC midnight
+		// >3 fractional digits: SQLite's unixepoch(...,'subsec') ROUNDS to millisecond precision internally
+		// (.6789 s → .679 s) BEFORE the *1000/CAST, so the exposed value is already ms-rounded; the CAST
+		// (truncate) only guards float representation drift below the ms. Observed: 679.
+		EpochMs(by[7]).Should().Be(1704164645679L);
+	}
+
 	// int64 overflow in tolong: the digits pass the well-formedness regex, then SQLite's CAST(... AS
 	// INTEGER) SATURATES an out-of-range integer literal to int64 max (it does NOT null or wrap). Pinned
 	// as the observed SQLite behavior; DuckDB's TRY_CAST would instead yield null on the future wave.

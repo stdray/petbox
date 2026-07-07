@@ -373,8 +373,8 @@ public sealed class LogPipelineTests : IClassFixture<LogPipelineFixture>
 	public async Task Query_ExecutionError_ReturnsStructuredJson500()
 	{
 		// Valid syntax, passes the transformer (matches regex is supported), but the PATTERN is
-		// malformed — the failure happens at EXECUTION (inside the registered kql_matches_regex scalar
-		// function during materialization), not at parse. That used to escape as the HTML /Error page;
+		// malformed — the failure happens at EXECUTION (inside the native sqlean regexp_like invocation
+		// during materialization), not at parse. That used to escape as the HTML /Error page;
 		// an API caller must get structured JSON with the failure type and message. (This test used to
 		// ride on `where LevelName == ...` being untranslatable; LevelName now translates via a CASE
 		// mapping — the spans-review fix 1 — so a malformed regex is the execution-fault vehicle.)
