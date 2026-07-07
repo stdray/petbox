@@ -528,8 +528,8 @@ public static partial class KqlTransformer
 
 		// OUTPUT columns: the exploded scalar (Elem) REPLACES the array column in-place, or APPENDS after all
 		// passthrough columns. Passthrough carries its sub storage type + original logical type; Elem is string.
-		const string elemSql =
-			"CASE je.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' WHEN 'null' THEN NULL ELSE CAST(je.value AS TEXT) END";
+		// The element expression is per-dialect (SQLite json_each je.type/je.value vs DuckDB je.value).
+		var elemSql = dialect.ElementSql("je");
 		var outCols = new List<(string Name, Type Logical, Type Storage, string Sql)>();
 		for (var i = 0; i < stage.Columns.Count; i++)
 			outCols.Add(i == targetIndex

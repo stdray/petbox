@@ -28,8 +28,18 @@ public abstract class KqlDialect
 	// table alias, the FROM fragment that explodes it one row per element. Consumed by ComposeMvExpand.
 	public abstract string ArrayExplodeFrom(string jsonColumnRef, string tableAlias);
 
+	// The per-element SCALAR expression over an explode alias — the value each exploded row yields.
+	// SQLite's json_each exposes je.type/je.value (bool/null rendered EXACT, numbers canonicalized via
+	// CAST(... AS TEXT)); DuckDB's unnest(from_json(...)) AS <alias>(value) already yields the element's
+	// canonical text in <alias>.value. Consumed by ComposeMvExpand alongside ArrayExplodeFrom.
+	public abstract string ElementSql(string tableAlias);
+
 	// The active backend for the per-project log store. The behavior-preserving default everywhere.
 	public static KqlDialect Sqlite { get; } = new SqliteDialect();
+
+	// The DuckDb backend (a dedicated smoke test targets it directly; still OUT of KqlBackendConfig.Active
+	// until the flip wave). Now REAL: scalar shims + mv-expand seam wired below.
+	public static KqlDialect DuckDb { get; } = new DuckDbDialect();
 }
 
 // The LIVE backend. Preserves today's SQLite translation exactly: the scalar shims remain the
@@ -45,19 +55,27 @@ public sealed class SqliteDialect : KqlDialect
 
 	public override string ArrayExplodeFrom(string jsonColumnRef, string tableAlias) =>
 		$"json_each({jsonColumnRef}) {tableAlias}";
+
+	public override string ElementSql(string tableAlias) =>
+		$"CASE {tableAlias}.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' WHEN 'null' THEN NULL ELSE CAST({tableAlias}.value AS TEXT) END";
 }
 
-// SCAFFOLD — a second-backend seam, deliberately NOT wired as a live log store. Its array-explode form is
-// the `unnest(from_json(...))` shape the DuckDB research probe (DuckDbLinq2DbProbeTests.P4) proved linq2db
-// emits; the scalar-shim set is not yet ported, so ScalarShims throws until a DuckDB wave implements it.
+// The DuckDb backend. Its array-explode form is the `unnest(from_json(...))` shape the DuckDB research
+// probe (DuckDbLinq2DbProbeTests.P4) proved linq2db emits, aliased AS <alias>(value) so the element ref
+// is <alias>.value (a comma/lateral join, spike-confirmed). The scalar-shim set is the SHARED
+// KqlSqlExpressions host — linq2db resolves the concrete SQL per provider off the [Sql.Expression]
+// ProviderName.DuckDB arms there, so the same Type serves both dialects; the dialect merely NAMES the set.
 public sealed class DuckDbDialect : KqlDialect
 {
 	public override string Name => "duckdb";
 
-	public override Type ScalarShims =>
-		throw new NotSupportedException(
-			"DuckDbDialect is a scaffold: DuckDB scalar shims are not implemented yet (SQLite is the live backend).");
+	// The shared shim host: linq2db resolves each method's DuckDB SQL from its [Sql.Expression(ProviderName.DuckDB, …)]
+	// arm at query-build time, so this is the SAME Type SqliteDialect names — the per-dialect divergence lives in
+	// the attributes, not in a separate host type.
+	public override Type ScalarShims => typeof(KqlSqlExpressions);
 
 	public override string ArrayExplodeFrom(string jsonColumnRef, string tableAlias) =>
-		$"unnest(from_json({jsonColumnRef}, '[\"VARCHAR\"]')) {tableAlias}";
+		$"unnest(from_json({jsonColumnRef}, '[\"VARCHAR\"]')) AS {tableAlias}(value)";
+
+	public override string ElementSql(string tableAlias) => $"{tableAlias}.value";
 }

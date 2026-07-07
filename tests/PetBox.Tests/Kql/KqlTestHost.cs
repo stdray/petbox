@@ -2,15 +2,17 @@ using Kusto.Language;
 using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.Data.Sqlite;
+using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Metrics;
+using PetBox.Log.Core.Query;
 using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Tests.Kql;
 
 // The KQL execution backends the production engine can target. Only Sqlite is a LIVE log store today;
-// DuckDb is wired as a real switch arm (KqlLogHost ctor) but its dialect (KqlDialect.DuckDbDialect) is
-// still a stub, so it is deliberately kept OUT of KqlBackendConfig.Active — the whole test suite runs
-// Sqlite-only until a DuckDB wave flips it on.
+// DuckDb is now a REAL switch arm (KqlLogHost ctor) with a real dialect (KqlDialect.DuckDb), but it is
+// still deliberately kept OUT of KqlBackendConfig.Active — the shared differential suite runs Sqlite-only
+// until the flip wave. A dedicated KqlDuckDbSmokeTests targets KqlBackend.DuckDb directly in the meantime.
 public enum KqlBackend
 {
 	Sqlite,
@@ -22,7 +24,7 @@ public static class KqlBackendConfig
 	// The backends every KQL test runs its production side over. Adding DuckDb here (once its dialect is
 	// real) is the ONE switch that turns the whole suite into a multi-backend differential — no per-test
 	// change needed; each shared-helper caller already loops this list.
-	public static readonly IReadOnlyList<KqlBackend> Active = [KqlBackend.Sqlite];
+	public static readonly IReadOnlyList<KqlBackend> Active = [KqlBackend.Sqlite, KqlBackend.DuckDb];
 }
 
 // The SHARED real-backend seed/run harness. Seeds a fresh in-memory log store with a dataset on the
@@ -41,37 +43,49 @@ public sealed class KqlLogHost : IDisposable
 	// LogDb interceptor); the shared cache means they all see the seeded rows. LogSchema.Ensure creates ALL
 	// THREE tables (LogEntries + Spans + MetricPoints) exactly as production does, so every seeder maps to
 	// the real column shape.
-	readonly SqliteConnection _keepAlive;
+	// SQLite keeps a shared-cache in-memory DB alive for the host's lifetime; DuckDb needs no keep-alive —
+	// its single LogDb connection IS the (per-connection) `:memory:` database, so it lives as long as _db.
+	readonly SqliteConnection? _keepAlive;
 	readonly LogDb _db;
+	readonly KqlBackend _backend;
 
 	KqlLogHost(KqlBackend backend)
 	{
+		_backend = backend;
 		switch (backend)
 		{
 			case KqlBackend.Sqlite:
+			{
+				var connectionString =
+					$"Data Source=file:petbox-kql-{Guid.NewGuid():N}?mode=memory&cache=shared";
+				_keepAlive = new SqliteConnection(connectionString);
+				_keepAlive.Open();
+				LogSchema.Ensure(connectionString);
+				_db = new LogDb(LogDb.CreateOptions(connectionString));
 				break;
-			// Real arm, intentionally unreachable while Active excludes DuckDb: the DuckDB log store isn't
-			// wired (DuckDbDialect is a scaffold). Flipping it live is a later wave, not a test concern.
+			}
+			// Real DuckDb store: one LogDb over DuckDB's per-connection `:memory:` DB. linq2db holds the
+			// single connection open for the DataConnection's lifetime, so the schema created by
+			// LogSchemaDuckDb.Ensure and the rows seeded by BulkCopy(KeepIds) survive to the queries.
 			case KqlBackend.DuckDb:
-				throw new NotSupportedException(
-					"DuckDb is not a live KQL log store yet (DuckDbDialect is a stub); keep it out of KqlBackendConfig.Active.");
+			{
+				_db = new LogDb(LogDb.CreateDuckDbOptions("DataSource=:memory:"));
+				LogSchemaDuckDb.Ensure(_db);
+				break;
+			}
 			default:
 				throw new ArgumentOutOfRangeException(nameof(backend));
 		}
-
-		var connectionString =
-			$"Data Source=file:petbox-kql-{Guid.NewGuid():N}?mode=memory&cache=shared";
-
-		_keepAlive = new SqliteConnection(connectionString);
-		_keepAlive.Open();
-		LogSchema.Ensure(connectionString);
-
-		_db = new LogDb(LogDb.CreateOptions(connectionString));
 	}
 
 	public IQueryable<LogEntryRecord> LogEntries => _db.LogEntries;
 	public IQueryable<SpanRecord> Spans => _db.Spans;
 	public IQueryable<MetricPointRecord> MetricPoints => _db.MetricPoints;
+
+	// The dialect / translation options this host's backend compiles against — so a test seeding DuckDb
+	// runs its production pipeline with Dialect=DuckDb (SQLite hosts stay on the default SQLite dialect).
+	public KqlDialect Dialect => _backend == KqlBackend.DuckDb ? KqlDialect.DuckDb : KqlDialect.Sqlite;
+	public KqlTranslationOptions Options => new() { Dialect = Dialect };
 
 	// KeepIdentity so a dataset's explicit Ids survive (an [Identity] Id would otherwise be re-assigned by
 	// AUTOINCREMENT, breaking every Id-based assertion / KustoLoco Id comparison); harmless for a natural
@@ -105,7 +119,7 @@ public sealed class KqlLogHost : IDisposable
 	public void Dispose()
 	{
 		_db.Dispose();
-		_keepAlive.Dispose();
+		_keepAlive?.Dispose();
 	}
 }
 
@@ -119,7 +133,7 @@ public static class KqlTestHost
 	// synchronously from KqlTransformer.Execute, as they do in production.
 	public static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> ExecuteAsync(
 		IReadOnlyList<LogEntryRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null, KqlTranslationOptions? options = null) =>
-		DrainAsync(KqlLogHost.Seed(records, backend), h => KqlTransformer.Execute(h.LogEntries, code, clock, options));
+		DrainAsync(KqlLogHost.Seed(records, backend), h => KqlTransformer.Execute(h.LogEntries, code, clock, ForBackend(h, options)));
 
 	// events Apply: the events-shaped subset over `records` (where/order/take, no shape change), returning
 	// the produced records.
@@ -132,13 +146,24 @@ public static class KqlTestHost
 
 	// spans Execute: run a `spans` pipeline over `records` (KqlTransformer.ExecuteSpans), fully materialized.
 	public static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> ExecuteSpansAsync(
-		IReadOnlyList<SpanRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null) =>
-		DrainAsync(KqlLogHost.SeedSpans(records, backend), h => KqlTransformer.ExecuteSpans(h.Spans, code, clock));
+		IReadOnlyList<SpanRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null, KqlTranslationOptions? options = null) =>
+		DrainAsync(KqlLogHost.SeedSpans(records, backend), h => KqlTransformer.ExecuteSpans(h.Spans, code, clock, ForBackend(h, options)));
 
 	// metrics Execute: run a `metrics` pipeline over `records` (KqlTransformer.ExecuteMetrics), fully materialized.
 	public static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> ExecuteMetricsAsync(
-		IReadOnlyList<MetricPointRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null) =>
-		DrainAsync(KqlLogHost.SeedMetrics(records, backend), h => KqlTransformer.ExecuteMetrics(h.MetricPoints, code, clock));
+		IReadOnlyList<MetricPointRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null, KqlTranslationOptions? options = null) =>
+		DrainAsync(KqlLogHost.SeedMetrics(records, backend), h => KqlTransformer.ExecuteMetrics(h.MetricPoints, code, clock, ForBackend(h, options)));
+
+	// Force the translation Dialect to the host's ACTUAL backend so the query compiles for the store it runs
+	// on (esp. the mv-expand seam: SQLite json_each vs DuckDB — the one op that reads options.Dialect rather
+	// than linq2db's provider-driven [Sql.Expression] arms). Any other caller-supplied knob (DefaultJoinKind)
+	// is preserved; only Dialect is pinned, because it is a function of the backend, not a free choice.
+	static KqlTranslationOptions ForBackend(KqlLogHost host, KqlTranslationOptions? caller) =>
+		new()
+		{
+			Dialect = host.Dialect,
+			DefaultJoinKind = (caller ?? KqlTranslationOptions.Default).DefaultJoinKind,
+		};
 
 	// Builds the KqlResult (eager unsupported-op throws propagate here) then drains every row, disposing the
 	// host only after materialization — so the in-memory DB outlives the streamed enumeration.

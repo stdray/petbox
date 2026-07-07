@@ -36,7 +36,11 @@ public static class KqlSqlExpressions
 	// fixes numbers; booleans need json_type() to render 'true'/'false' exactly like GetRawText().
 	// The C# body parses the same two path forms the engine emits (quoted label / plain '$.key') and
 	// does the identical flat lookup for the in-memory differential path.
+	// DuckDB: json_extract_string yields the same VALUE REPRESENTATION as the SQLite CASE — canonical
+	// numbers (2.50→2.5, 1e3→1000.0), bool→'true'/'false', null/missing→NULL — natively, so no CASE needed.
+	// (The generic arm below stays the SQLite translation; the DuckDB-specific arm wins for DuckDB.)
 	[Sql.Expression("(CASE json_type({0}, {1}) WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' ELSE CAST(json_extract({0}, {1}) AS TEXT) END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "json_extract_string({0}, {1})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
 	public static string? JsonExtract(string? json, string path) =>
 		InMemoryJsonExtract(json, path);
 
@@ -159,10 +163,13 @@ public static class KqlSqlExpressions
 	// .NET Substring exactly; out-of-range is clamped to the empty string. Negative start/length —
 	// KQL clamps them to 0, NOT SQLite's count-from-the-end — so the SQL translation clamps with
 	// max(...,0) to agree with the C# body (SubstringImpl) on either pipeline path.
+	// DuckDB `max` is aggregate-only → use `greatest` for the element-wise clamp (same semantics).
 	[Sql.Expression("substr({0}, max({1}, 0) + 1)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "substr({0}, greatest({1}, 0) + 1)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
 	public static string? Substring2(string? s, long start) => SubstringImpl(s, start, null);
 
 	[Sql.Expression("substr({0}, max({1}, 0) + 1, max({2}, 0))", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "substr({0}, greatest({1}, 0) + 1, greatest({2}, 0))", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
 	public static string? Substring3(string? s, long start, long length) => SubstringImpl(s, start, length);
 
 	static string? SubstringImpl(string? s, long start, long? length)
@@ -225,7 +232,10 @@ public static class KqlSqlExpressions
 	// with Kusto. Input/output are epoch-ms (long, logical DateTime — converted once at materialization).
 	// The caller (KqlScalar.Bin) guarantees stepTicks > 0 and a whole-millisecond step, so the epoch-ms
 	// round-trip is lossless (E and floored are both multiples of TicksPerMillisecond).
+	// DuckDB `/` is FLOAT division → use `//` (integer div) so the epoch-ms result stays BIGINT; formula
+	// is otherwise identical to the SQLite arm (whose `/` is integer div on integers).
 	[Sql.Expression("((({0} * 10000 + 621355968000000000) / {1}) * {1} - 621355968000000000) / 10000", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.DuckDB, "((({0} * 10000 + 621355968000000000) // {1}) * {1} - 621355968000000000) // 10000", ServerSideOnly = true)]
 	public static long BinDateTimeMs(long ms, long stepTicks) =>
 		((ms * TimeSpan.TicksPerMillisecond + UnixEpochTicks) / stepTicks * stepTicks - UnixEpochTicks) / TimeSpan.TicksPerMillisecond;
 
@@ -251,7 +261,10 @@ public static class KqlSqlExpressions
 	// bin(value, step) for REAL values: floor(value/step)*step. SQLite CAST(real AS INTEGER) truncates
 	// toward zero, so the floor is `trunc(q) - (q<0 AND q not integral ? 1 : 0)`; multiplied back by step.
 	// Same SQL-translatable / dual-body rationale as BinLong.
+	// DuckDB CAST(real AS INTEGER) ROUNDS (not truncates), so the SQLite trunc-based floor doesn't port —
+	// use floor() directly for the toward-negative-infinity bucket.
 	[Sql.Expression("((CAST({0} / {1} AS INTEGER) - (CASE WHEN {0} / {1} < 0 AND {0} / {1} <> CAST({0} / {1} AS INTEGER) THEN 1 ELSE 0 END)) * {1})", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.DuckDB, "(floor({0} / {1}) * {1})", ServerSideOnly = true)]
 	public static double BinDouble(double value, double step)
 	{
 		if (step <= 0)
@@ -267,8 +280,13 @@ public static class KqlSqlExpressions
 	// SQL-only (mv-expand runs entirely in SQL); the C# body is never invoked in-memory.
 	// `value` is object? (not string?) so a mv-expand of ANY column type binds — json_valid/json_type
 	// inspect whatever affinity the value has (a non-array number/object → '[]' → 0 rows), no C# cast needed.
+	// DuckDB: TRY_CAST({0} AS JSON) is NULL on malformed input → json_type(NULL)=NULL → COALESCE '[]', so the
+	// whole thing is malformed-SAFE without SQLite's json_valid gate. Only an actual JSON ARRAY passes through.
 	[Sql.Expression(
 		"(CASE WHEN json_valid({0}) THEN (CASE WHEN json_type({0}) = 'array' THEN {0} ELSE '[]' END) ELSE '[]' END)",
+		ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	[Sql.Expression(ProviderName.DuckDB,
+		"COALESCE((CASE WHEN json_type(TRY_CAST({0} AS JSON)) = 'ARRAY' THEN CAST({0} AS VARCHAR) ELSE '[]' END), '[]')",
 		ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
 	public static string JsonArrayText(object? value) =>
 		throw new NotSupportedException("KqlSqlExpressions.JsonArrayText is SQL-only (mv-expand array explode)");
@@ -276,14 +294,18 @@ public static class KqlSqlExpressions
 	// --- startof* on epoch-ms. SQLite via strftime(...,'unixepoch',...); the C# body mirrors it for
 	// the in-memory path. Week starts Sunday (Kusto): start-of-day minus the day-of-week (%w, 0=Sun). ---
 
+	// DuckDB: date_trunc over the instant (epoch_ms(ms) → TIMESTAMP), back to epoch-ms via epoch_ms(TIMESTAMP).
 	[Sql.Expression("(CAST(strftime('%s', {0} / 1000, 'unixepoch', 'start of day') AS INTEGER) * 1000)", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.DuckDB, "epoch_ms(date_trunc('day', epoch_ms({0})))", ServerSideOnly = true)]
 	public static long StartOfDayMs(long ms)
 	{
 		var d = FromUnixMs(ms);
 		return ToUnixMs(new DateTime(d.Year, d.Month, d.Day, 0, 0, 0, DateTimeKind.Utc));
 	}
 
+	// DuckDB: start-of-day minus dayofweek days (Kusto week = Sunday start; DuckDB dayofweek Sunday=0).
 	[Sql.Expression("(CAST(strftime('%s', {0} / 1000, 'unixepoch', 'start of day', '-' || strftime('%w', {0} / 1000, 'unixepoch') || ' days') AS INTEGER) * 1000)", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.DuckDB, "epoch_ms(date_trunc('day', epoch_ms({0})) - to_days(CAST(dayofweek(epoch_ms({0})) AS INTEGER)))", ServerSideOnly = true)]
 	public static long StartOfWeekMs(long ms)
 	{
 		var d = FromUnixMs(ms);
@@ -292,6 +314,7 @@ public static class KqlSqlExpressions
 	}
 
 	[Sql.Expression("(CAST(strftime('%s', {0} / 1000, 'unixepoch', 'start of month') AS INTEGER) * 1000)", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.DuckDB, "epoch_ms(date_trunc('month', epoch_ms({0})))", ServerSideOnly = true)]
 	public static long StartOfMonthMs(long ms)
 	{
 		var d = FromUnixMs(ms);
@@ -299,6 +322,7 @@ public static class KqlSqlExpressions
 	}
 
 	[Sql.Expression("(CAST(strftime('%s', {0} / 1000, 'unixepoch', 'start of year') AS INTEGER) * 1000)", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.DuckDB, "epoch_ms(date_trunc('year', epoch_ms({0})))", ServerSideOnly = true)]
 	public static long StartOfYearMs(long ms)
 	{
 		var d = FromUnixMs(ms);
@@ -307,9 +331,11 @@ public static class KqlSqlExpressions
 
 	// Calendar-field extraction for datetime_diff's calendar parts (year/quarter/month).
 	[Sql.Expression("CAST(strftime('%Y', {0} / 1000, 'unixepoch') AS INTEGER)", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.DuckDB, "CAST(year(epoch_ms({0})) AS BIGINT)", ServerSideOnly = true)]
 	public static long YearOfMs(long ms) => FromUnixMs(ms).Year;
 
 	[Sql.Expression("CAST(strftime('%m', {0} / 1000, 'unixepoch') AS INTEGER)", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.DuckDB, "CAST(month(epoch_ms({0})) AS BIGINT)", ServerSideOnly = true)]
 	public static long MonthOfMs(long ms) => FromUnixMs(ms).Month;
 
 	// --- typed conversions: tostring / toint|tolong / todouble / tobool / todatetime. Malformed or
@@ -414,9 +440,11 @@ public static class KqlSqlExpressions
 
 	// The unified metric Value: COALESCE(ValueDouble, ValueLong) as a nullable double, so a Gauge/Sum
 	// point exposes ONE numeric column regardless of which arm (double / int64) carried the value. NULL
-	// when neither arm is set (a histogram/summary point). CAST the long arm to REAL so both arms share
+	// when neither arm is set (a histogram/summary point). CAST the long arm to DOUBLE so both arms share
 	// the double result type on the SQL side, matching the double? the streamed row and C# body produce.
-	[Sql.Expression("COALESCE({0}, CAST({1} AS REAL))", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	// DOUBLE is portable: SQLite maps DOUBLE→REAL affinity (zero-diff), while on DuckDB REAL is float32 and
+	// would lose precision — DOUBLE is float64 there, matching the CLR double.
+	[Sql.Expression("COALESCE({0}, CAST({1} AS DOUBLE))", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
 	public static double? MetricValue(double? valueDouble, long? valueLong) =>
 		valueDouble ?? (valueLong.HasValue ? valueLong.Value : (double?)null);
 }
