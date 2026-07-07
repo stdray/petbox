@@ -2,15 +2,17 @@ using Kusto.Language;
 using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.Data.Sqlite;
+using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Metrics;
+using PetBox.Log.Core.Query;
 using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Tests.Kql;
 
 // The KQL execution backends the production engine can target. Only Sqlite is a LIVE log store today;
-// DuckDb is wired as a real switch arm (KqlLogHost ctor) but its dialect (KqlDialect.DuckDbDialect) is
-// still a stub, so it is deliberately kept OUT of KqlBackendConfig.Active — the whole test suite runs
-// Sqlite-only until a DuckDB wave flips it on.
+// DuckDb is now a REAL switch arm (KqlLogHost ctor) with a real dialect (KqlDialect.DuckDb), but it is
+// still deliberately kept OUT of KqlBackendConfig.Active — the shared differential suite runs Sqlite-only
+// until the flip wave. A dedicated KqlDuckDbSmokeTests targets KqlBackend.DuckDb directly in the meantime.
 public enum KqlBackend
 {
 	Sqlite,
@@ -41,37 +43,49 @@ public sealed class KqlLogHost : IDisposable
 	// LogDb interceptor); the shared cache means they all see the seeded rows. LogSchema.Ensure creates ALL
 	// THREE tables (LogEntries + Spans + MetricPoints) exactly as production does, so every seeder maps to
 	// the real column shape.
-	readonly SqliteConnection _keepAlive;
+	// SQLite keeps a shared-cache in-memory DB alive for the host's lifetime; DuckDb needs no keep-alive —
+	// its single LogDb connection IS the (per-connection) `:memory:` database, so it lives as long as _db.
+	readonly SqliteConnection? _keepAlive;
 	readonly LogDb _db;
+	readonly KqlBackend _backend;
 
 	KqlLogHost(KqlBackend backend)
 	{
+		_backend = backend;
 		switch (backend)
 		{
 			case KqlBackend.Sqlite:
+			{
+				var connectionString =
+					$"Data Source=file:petbox-kql-{Guid.NewGuid():N}?mode=memory&cache=shared";
+				_keepAlive = new SqliteConnection(connectionString);
+				_keepAlive.Open();
+				LogSchema.Ensure(connectionString);
+				_db = new LogDb(LogDb.CreateOptions(connectionString));
 				break;
-			// Real arm, intentionally unreachable while Active excludes DuckDb: the DuckDB log store isn't
-			// wired (DuckDbDialect is a scaffold). Flipping it live is a later wave, not a test concern.
+			}
+			// Real DuckDb store: one LogDb over DuckDB's per-connection `:memory:` DB. linq2db holds the
+			// single connection open for the DataConnection's lifetime, so the schema created by
+			// LogSchemaDuckDb.Ensure and the rows seeded by BulkCopy(KeepIds) survive to the queries.
 			case KqlBackend.DuckDb:
-				throw new NotSupportedException(
-					"DuckDb is not a live KQL log store yet (DuckDbDialect is a stub); keep it out of KqlBackendConfig.Active.");
+			{
+				_db = new LogDb(LogDb.CreateDuckDbOptions("DataSource=:memory:"));
+				LogSchemaDuckDb.Ensure(_db);
+				break;
+			}
 			default:
 				throw new ArgumentOutOfRangeException(nameof(backend));
 		}
-
-		var connectionString =
-			$"Data Source=file:petbox-kql-{Guid.NewGuid():N}?mode=memory&cache=shared";
-
-		_keepAlive = new SqliteConnection(connectionString);
-		_keepAlive.Open();
-		LogSchema.Ensure(connectionString);
-
-		_db = new LogDb(LogDb.CreateOptions(connectionString));
 	}
 
 	public IQueryable<LogEntryRecord> LogEntries => _db.LogEntries;
 	public IQueryable<SpanRecord> Spans => _db.Spans;
 	public IQueryable<MetricPointRecord> MetricPoints => _db.MetricPoints;
+
+	// The dialect / translation options this host's backend compiles against — so a test seeding DuckDb
+	// runs its production pipeline with Dialect=DuckDb (SQLite hosts stay on the default SQLite dialect).
+	public KqlDialect Dialect => _backend == KqlBackend.DuckDb ? KqlDialect.DuckDb : KqlDialect.Sqlite;
+	public KqlTranslationOptions Options => new() { Dialect = Dialect };
 
 	// KeepIdentity so a dataset's explicit Ids survive (an [Identity] Id would otherwise be re-assigned by
 	// AUTOINCREMENT, breaking every Id-based assertion / KustoLoco Id comparison); harmless for a natural
@@ -105,7 +119,7 @@ public sealed class KqlLogHost : IDisposable
 	public void Dispose()
 	{
 		_db.Dispose();
-		_keepAlive.Dispose();
+		_keepAlive?.Dispose();
 	}
 }
 
