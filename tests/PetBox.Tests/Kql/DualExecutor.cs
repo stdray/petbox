@@ -50,21 +50,28 @@ public sealed record TestEvent(
 
 static class DualExecutor
 {
-	public static async Task AssertSameAsync(string kql, IReadOnlyList<TestEvent> dataset, bool ordered = false)
+	// The differential compares each ACTIVE backend's production result against the ONE KustoLoco
+	// reference run (per KqlBackendConfig.Active — Sqlite today; DuckDb once its dialect is live). A
+	// per-call `exclude` drops a backend that genuinely can't serve the query (none needed while the
+	// suite is Sqlite-only); the harness runs the production side over real SQL, not EnumerableQuery.
+	public static async Task AssertSameAsync(string kql, IReadOnlyList<TestEvent> dataset, bool ordered = false,
+		params KqlBackend[] exclude)
 	{
 		var refIds = await RunReferenceAsync(kql, dataset);
-		var prodIds = RunProduction(kql, dataset);
-
-		if (ordered)
+		foreach (var backend in KqlBackendConfig.Active.Except(exclude))
 		{
-			prodIds.Should().ContainInOrder(refIds,
-				$"production and reference must agree on order for {kql}");
-			prodIds.Count.Should().Be(refIds.Count);
-		}
-		else
-		{
-			prodIds.Should().BeEquivalentTo(refIds,
-				$"production and reference executors must agree on {kql}");
+			var prodIds = RunProduction(kql, dataset, backend);
+			if (ordered)
+			{
+				prodIds.Should().ContainInOrder(refIds,
+					$"production ({backend}) and reference must agree on order for {kql}");
+				prodIds.Count.Should().Be(refIds.Count);
+			}
+			else
+			{
+				prodIds.Should().BeEquivalentTo(refIds,
+					$"production ({backend}) and reference executors must agree on {kql}");
+			}
 		}
 	}
 
@@ -72,19 +79,23 @@ static class DualExecutor
 	// value), not just Ids. Needed for computed columns (extend / project) where the interesting
 	// output is the computed value. End such queries with a `project` so both engines expose the
 	// same named columns (KustoLoco's event shape differs from ours). Row order is not asserted.
-	public static async Task AssertSameTableAsync(string kql, IReadOnlyList<TestEvent> dataset, bool ordered = false)
+	public static async Task AssertSameTableAsync(string kql, IReadOnlyList<TestEvent> dataset, bool ordered = false,
+		params KqlBackend[] exclude)
 	{
 		var (refCols, refRows) = await RunReferenceTableAsync(kql, dataset);
-		var (prodCols, prodRows) = await RunProductionTableAsync(kql, dataset);
+		foreach (var backend in KqlBackendConfig.Active.Except(exclude))
+		{
+			var (prodCols, prodRows) = await RunProductionTableAsync(kql, dataset, backend);
 
-		prodCols.Should().BeEquivalentTo(refCols,
-			$"production and reference must produce the same columns for {kql}");
-		if (ordered)
-			prodRows.Should().BeEquivalentTo(refRows, o => o.WithStrictOrdering(),
-				$"production and reference must produce the same rows in order for {kql}");
-		else
-			prodRows.Should().BeEquivalentTo(refRows,
-				$"production and reference must produce the same rows for {kql}");
+			prodCols.Should().BeEquivalentTo(refCols,
+				$"production ({backend}) and reference must produce the same columns for {kql}");
+			if (ordered)
+				prodRows.Should().BeEquivalentTo(refRows, o => o.WithStrictOrdering(),
+					$"production ({backend}) and reference must produce the same rows in order for {kql}");
+			else
+				prodRows.Should().BeEquivalentTo(refRows,
+					$"production ({backend}) and reference must produce the same rows for {kql}");
+		}
 	}
 
 	static async Task<(IReadOnlyList<string> Columns, IReadOnlyList<Dictionary<string, object?>> Rows)>
@@ -104,16 +115,16 @@ static class DualExecutor
 	}
 
 	static async Task<(IReadOnlyList<string> Columns, IReadOnlyList<Dictionary<string, object?>> Rows)>
-		RunProductionTableAsync(string kql, IReadOnlyList<TestEvent> dataset)
+		RunProductionTableAsync(string kql, IReadOnlyList<TestEvent> dataset, KqlBackend backend)
 	{
 		var records = dataset.Select(ToRecord).ToList();
 		var code = KustoCode.Parse(kql);
-		var result = KqlTransformer.Execute(records.AsQueryable(), code);
+		var (resultCols, resultRows) = await KqlTestHost.ExecuteAsync(records, code, backend);
 
-		var cols = result.Columns.Select(c => c.Name).ToList();
-		var rows = new List<Dictionary<string, object?>>();
-		await foreach (var r in result.Rows)
-			rows.Add(cols.Select((c, i) => (c, Norm(r[i]))).ToDictionary(t => t.c, t => t.Item2));
+		var cols = resultCols.Select(c => c.Name).ToList();
+		var rows = resultRows
+			.Select(r => cols.Select((c, i) => (c, Norm(r[i]))).ToDictionary(t => t.c, t => t.Item2))
+			.ToList();
 		return (cols, rows);
 	}
 
@@ -145,11 +156,11 @@ static class DualExecutor
 		return result.EnumerateRows().Select(r => Convert.ToInt64(r[idCol])).ToList();
 	}
 
-	static IReadOnlyList<long> RunProduction(string kql, IReadOnlyList<TestEvent> dataset)
+	static IReadOnlyList<long> RunProduction(string kql, IReadOnlyList<TestEvent> dataset, KqlBackend backend)
 	{
 		var records = dataset.Select(ToRecord).ToList();
 		var code = KustoCode.Parse(kql);
-		var result = KqlTransformer.Apply(records.AsQueryable(), code).ToList();
+		var result = KqlTestHost.Apply(records, code, backend);
 		return result.Select(r => r.Id).ToList();
 	}
 

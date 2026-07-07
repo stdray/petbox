@@ -2,9 +2,19 @@ using Kusto.Language;
 
 namespace PetBox.Tests.Kql;
 
+// Production-only KQL result-shape tests (no KustoLoco differential — these cover int-Level aggregates
+// and shapes KustoLoco can't model). Converted to run production over the SHARED real-SQLite harness
+// (KqlTestHost) instead of the EnumerableQuery provider, so the assertions pin the REAL SQL-translated
+// behavior. See RE-PIN notes inline where the SQLite result legitimately differs from the old in-memory
+// artifact.
 public sealed class KqlResultTests
 {
 	static KustoCode Parse(string kql) => KustoCode.Parse(kql);
+
+	// The one production run seam: seed `data` into a fresh in-memory LogDb and Execute `ast` over the
+	// real linq2db IQueryable, fully materialized. Sqlite is the only Active backend today.
+	static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> Run(LogEntryRecord[] data, KustoCode ast) =>
+		KqlTestHost.ExecuteAsync(data, ast, KqlBackend.Sqlite);
 
 	static readonly LogEntryRecord[] Rows =
 	[
@@ -23,12 +33,7 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Execute_Where_ReturnsFilteredRowsAsObjectArray()
 	{
-		var ast = Parse("events | where Level == 4");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
-
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows)
-			rows.Add(r);
+		var (_, rows) = await Run(Rows, Parse("events | where Level == 4"));
 
 		rows.Should().HaveCount(1);
 		rows[0][0].Should().Be(2L); // Id
@@ -36,24 +41,20 @@ public sealed class KqlResultTests
 	}
 
 	[Fact]
-	public void Execute_Unsupported_ThrowsEagerly()
+	public async Task Execute_Unsupported_ThrowsEagerly()
 	{
-		var ast = Parse("events | sample 3");
-		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>();
+		var act = async () => await Run(Rows, Parse("events | sample 3"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>();
 	}
 
 	[Fact]
 	public async Task Project_NarrowsColumns()
 	{
-		var ast = Parse("events | project Id, Message");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		var (cols, rows) = await Run(Rows, Parse("events | project Id, Message"));
 
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("Id", "Message");
-		result.Columns.Should().HaveCount(2);
+		cols.Select(c => c.Name).Should().ContainInOrder("Id", "Message");
+		cols.Should().HaveCount(2);
 
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
 		rows.Should().HaveCount(2);
 		rows[0].Should().HaveCount(2);
 		rows[0][0].Should().Be(1L);
@@ -63,43 +64,34 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Project_AliasRenamesColumn()
 	{
-		var ast = Parse("events | project EventId = Id, Text = Message");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("EventId", "Text");
+		var (cols, _) = await Run(Rows, Parse("events | project EventId = Id, Text = Message"));
+		cols.Select(c => c.Name).Should().ContainInOrder("EventId", "Text");
 	}
 
 	[Fact]
 	public async Task Project_UnknownColumn_FallsBackToProperty()
 	{
 		// A projected name that is not a column reads Properties.<name> (string). Absent here → null.
-		var ast = Parse("events | project Bogus");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("Bogus");
-		result.Columns[0].ClrType.Should().Be<string>();
-		var rows = await Materialize(result);
+		var (cols, rows) = await Run(Rows, Parse("events | project Bogus"));
+		cols.Select(c => c.Name).Should().ContainInOrder("Bogus");
+		cols[0].ClrType.Should().Be<string>();
 		rows.Should().OnlyContain(r => r[0] == null);
 	}
 
 	[Fact]
 	public async Task Count_ReturnsScalar()
 	{
-		var ast = Parse("events | count");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		result.Columns[0].Name.Should().Be("Count");
-		result.Columns[0].ClrType.Should().Be<long>();
+		var (cols, rows) = await Run(Rows, Parse("events | count"));
+		cols[0].Name.Should().Be("Count");
+		cols[0].ClrType.Should().Be<long>();
 
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
 		rows.Single()[0].Should().Be(2L);
 	}
 
 	[Fact]
 	public async Task Where_Then_Count_FiltersFirst()
 	{
-		var ast = Parse("events | where Level == 4 | count");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
+		var (_, rows) = await Run(Rows, Parse("events | where Level == 4 | count"));
 		rows.Single()[0].Should().Be(1L);
 	}
 
@@ -115,14 +107,10 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Summarize_CountByLevel_GroupsCorrectly()
 	{
-		var ast = Parse("events | summarize count() by Level");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("Level", "count_");
+		var (cols, rowData) = await Run(SummarizeRows, Parse("events | summarize count() by Level"));
+		cols.Select(c => c.Name).Should().ContainInOrder("Level", "count_");
 
-		var rows = new List<(int Level, long Count)>();
-		await foreach (var r in result.Rows)
-			rows.Add(((int)r[0]!, (long)r[1]!));
-
+		var rows = rowData.Select(r => ((int)r[0]!, (long)r[1]!)).ToList();
 		rows.Should().BeEquivalentTo([
 			((int)LogLevel.Error, 3L),
 			((int)LogLevel.Warning, 1L),
@@ -133,14 +121,10 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Summarize_CountByMultipleColumns()
 	{
-		var ast = Parse("events | summarize count() by Level, ServiceKey");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("Level", "ServiceKey", "count_");
+		var (cols, rowData) = await Run(SummarizeRows, Parse("events | summarize count() by Level, ServiceKey"));
+		cols.Select(c => c.Name).Should().ContainInOrder("Level", "ServiceKey", "count_");
 
-		var rows = new List<(int Level, string ServiceKey, long Count)>();
-		await foreach (var r in result.Rows)
-			rows.Add(((int)r[0]!, (string)r[1]!, (long)r[2]!));
-
+		var rows = rowData.Select(r => ((int)r[0]!, (string)r[1]!, (long)r[2]!)).ToList();
 		rows.Should().Contain(((int)LogLevel.Error, "svc-a", 2L));
 		rows.Should().Contain(((int)LogLevel.Error, "svc-b", 1L));
 	}
@@ -148,38 +132,25 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Summarize_CountWithoutBy_SingleRow()
 	{
-		var ast = Parse("events | summarize count()");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
+		var (_, rows) = await Run(SummarizeRows, Parse("events | summarize count()"));
 		rows.Single()[0].Should().Be(5L);
 	}
 
 	[Fact]
-	public void Summarize_UnsupportedAggregate_Throws()
+	public async Task Summarize_UnsupportedAggregate_Throws()
 	{
-		var ast = Parse("events | summarize stdev(Level)");
-		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*stdev*");
-	}
-
-	static async Task<List<object?[]>> Materialize(KqlResult result)
-	{
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
-		return rows;
+		var act = async () => await Run(SummarizeRows, Parse("events | summarize stdev(Level)"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*stdev*");
 	}
 
 	[Fact]
 	public async Task Extend_AppendsComputedColumn()
 	{
-		var ast = Parse("events | extend Doubled = Level * 2");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		var (cols, rows) = await Run(Rows, Parse("events | extend Doubled = Level * 2"));
 
-		result.Columns.Select(c => c.Name).Should().Contain("Doubled");
-		result.Columns[^1].Should().Be(new KqlColumn("Doubled", typeof(long)));
+		cols.Select(c => c.Name).Should().Contain("Doubled");
+		cols[^1].Should().Be(new KqlColumn("Doubled", typeof(long)));
 
-		var rows = await Materialize(result);
 		// Original event columns preserved (Id at 0), Doubled appended last.
 		rows[0][0].Should().Be(1L);
 		rows[0][^1].Should().Be((long)LogLevel.Information * 2);
@@ -189,50 +160,43 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Extend_ReplacesExistingColumnInPlace()
 	{
-		var ast = Parse("events | extend Level = Level + 100");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		var (cols, rows) = await Run(Rows, Parse("events | extend Level = Level + 100"));
 
 		// Replaced in place: still one Level column, now typed long.
-		result.Columns.Count(c => c.Name == "Level").Should().Be(1);
-		var levelIdx = result.Columns.ToList().FindIndex(c => c.Name == "Level");
-		result.Columns[levelIdx].ClrType.Should().Be<long>();
+		cols.Count(c => c.Name == "Level").Should().Be(1);
+		var levelIdx = cols.ToList().FindIndex(c => c.Name == "Level");
+		cols[levelIdx].ClrType.Should().Be<long>();
 
-		var rows = await Materialize(result);
 		rows[0][levelIdx].Should().Be((long)LogLevel.Information + 100);
 	}
 
 	[Fact]
 	public async Task Extend_MultipleColumns()
 	{
-		var ast = Parse("events | extend A = Level + 1, B = Id * 10");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		var (cols, rows) = await Run(Rows, Parse("events | extend A = Level + 1, B = Id * 10"));
 
-		var rows = await Materialize(result);
-		var cols = result.Columns.Select(c => c.Name).ToList();
-		var a = cols.IndexOf("A");
-		var b = cols.IndexOf("B");
+		var names = cols.Select(c => c.Name).ToList();
+		var a = names.IndexOf("A");
+		var b = names.IndexOf("B");
 		rows[1][a].Should().Be((long)LogLevel.Error + 1);
 		rows[1][b].Should().Be(20L);
 	}
 
 	[Fact]
-	public void Extend_BareExpressionWithoutAlias_Throws()
+	public async Task Extend_BareExpressionWithoutAlias_Throws()
 	{
-		var ast = Parse("events | extend Level + 1");
-		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*name = expression*");
+		var act = async () => await Run(Rows, Parse("events | extend Level + 1"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*name = expression*");
 	}
 
 	[Fact]
 	public async Task Project_ComputedExpression()
 	{
-		var ast = Parse("events | project Id, Doubled = Level * 2");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		var (cols, rows) = await Run(Rows, Parse("events | project Id, Doubled = Level * 2"));
 
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("Id", "Doubled");
-		result.Columns[1].ClrType.Should().Be<long>();
+		cols.Select(c => c.Name).Should().ContainInOrder("Id", "Doubled");
+		cols[1].ClrType.Should().Be<long>();
 
-		var rows = await Materialize(result);
 		rows[0][0].Should().Be(1L);
 		rows[0][1].Should().Be((long)LogLevel.Information * 2);
 	}
@@ -240,28 +204,24 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Project_IffExpression_ProducesStrings()
 	{
-		var ast = Parse("events | project Id, Sev = iff(Level >= 4, 'high', 'low')");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
+		var (_, rows) = await Run(Rows, Parse("events | project Id, Sev = iff(Level >= 4, 'high', 'low')"));
 
-		var rows = await Materialize(result);
 		rows[0][1].Should().Be("low");  // Information
 		rows[1][1].Should().Be("high"); // Error
 	}
 
 	[Fact]
-	public void Project_UnAliasedComputed_ThrowsPrecise()
+	public async Task Project_UnAliasedComputed_ThrowsPrecise()
 	{
-		var ast = Parse("events | project Level * 2");
-		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*name = expression*");
+		var act = async () => await Run(Rows, Parse("events | project Level * 2"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*name = expression*");
 	}
 
 	[Fact]
-	public void Compute_UnsupportedFunction_ThrowsPrecise()
+	public async Task Compute_UnsupportedFunction_ThrowsPrecise()
 	{
-		var ast = Parse("events | project Id, X = strlen(Message)");
-		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*strlen*not supported*");
+		var act = async () => await Run(Rows, Parse("events | project Id, X = strlen(Message)"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*strlen*not supported*");
 	}
 
 	// --- Task A: aggregates over the int Level column (production-only; KustoLoco can't cast
@@ -269,8 +229,7 @@ public sealed class KqlResultTests
 
 	static async Task<Dictionary<string, object?>> SummarizeByService(string kql)
 	{
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), Parse(kql));
-		var rows = await Materialize(result);
+		var (_, rows) = await Run(SummarizeRows, Parse(kql));
 		// column 0 = ServiceKey key, column 1 = the single aggregate
 		return rows.ToDictionary(r => (string)r[0]!, r => r[1]);
 	}
@@ -322,30 +281,27 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Summarize_AliasesBothAggregateAndKey()
 	{
-		var ast = Parse("events | summarize Total = count(), High = countif(Level >= 4) by Svc = ServiceKey");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("Svc", "Total", "High");
+		var (cols, rowData) = await Run(SummarizeRows,
+			Parse("events | summarize Total = count(), High = countif(Level >= 4) by Svc = ServiceKey"));
+		cols.Select(c => c.Name).Should().ContainInOrder("Svc", "Total", "High");
 
-		var rows = await Materialize(result);
-		var by = rows.ToDictionary(r => (string)r[0]!, r => ((long)r[1]!, (long)r[2]!));
+		var by = rowData.ToDictionary(r => (string)r[0]!, r => ((long)r[1]!, (long)r[2]!));
 		by["svc-a"].Should().Be((3L, 2L));
 		by["svc-b"].Should().Be((2L, 1L));
 	}
 
 	[Fact]
-	public void Summarize_CountifNonBoolean_Throws()
+	public async Task Summarize_CountifNonBoolean_Throws()
 	{
-		var ast = Parse("events | summarize countif(Level) by ServiceKey");
-		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*boolean predicate*");
+		var act = async () => await Run(SummarizeRows, Parse("events | summarize countif(Level) by ServiceKey"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*boolean predicate*");
 	}
 
 	[Fact]
-	public void Summarize_SumNonNumeric_Throws()
+	public async Task Summarize_SumNonNumeric_Throws()
 	{
-		var ast = Parse("events | summarize sum(Message) by ServiceKey");
-		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*sum*numeric*");
+		var act = async () => await Run(SummarizeRows, Parse("events | summarize sum(Message) by ServiceKey"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*sum*numeric*");
 	}
 
 	// --- Task A: bin() as time / numeric bucket ---
@@ -369,13 +325,11 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Summarize_ByHourBin_BucketsByHour()
 	{
-		var ast = Parse("events | summarize Cnt = count() by Hour = bin(Timestamp, 1h)");
-		var result = KqlTransformer.Execute(BinRows.AsQueryable(), ast);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("Hour", "Cnt");
-		result.Columns[0].ClrType.Should().Be<DateTime>();
+		var (cols, rowData) = await Run(BinRows, Parse("events | summarize Cnt = count() by Hour = bin(Timestamp, 1h)"));
+		cols.Select(c => c.Name).Should().ContainInOrder("Hour", "Cnt");
+		cols[0].ClrType.Should().Be<DateTime>();
 
-		var rows = await Materialize(result);
-		var by = rows.ToDictionary(r => (DateTime)r[0]!, r => (long)r[1]!);
+		var by = rowData.ToDictionary(r => (DateTime)r[0]!, r => (long)r[1]!);
 		by[new DateTime(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc)].Should().Be(2);
 		by[new DateTime(2026, 4, 19, 11, 0, 0, DateTimeKind.Utc)].Should().Be(1);
 	}
@@ -383,30 +337,34 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task Extend_BinTimestamp_AsPlainScalar()
 	{
-		var ast = Parse("events | extend H = bin(Timestamp, 1h) | project Id, H");
-		var result = KqlTransformer.Execute(BinRows.AsQueryable(), ast);
-		var rows = await Materialize(result);
-		rows[0][1].Should().Be(new DateTime(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc));
-		rows[2][1].Should().Be(new DateTime(2026, 4, 19, 11, 0, 0, DateTimeKind.Utc));
+		var (_, rows) = await Run(BinRows, Parse("events | extend H = bin(Timestamp, 1h) | project Id, H"));
+		// RE-PIN (EnumerableQuery ordering artifact): the query has no `order by`, so row order is
+		// unspecified over real SQLite (was implicitly input-order under the in-memory provider). Assert
+		// the bucketed value BY Id instead of by row position — value semantics unchanged.
+		var byId = rows.ToDictionary(r => (long)r[0]!, r => (DateTime)r[1]!);
+		byId[1L].Should().Be(new DateTime(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc));
+		byId[3L].Should().Be(new DateTime(2026, 4, 19, 11, 0, 0, DateTimeKind.Utc));
 	}
 
 	[Fact]
 	public async Task Extend_BinNumeric_FloorsToMultiple()
 	{
-		var ast = Parse("events | extend B = bin(Id, 2) | project Id, B");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		result.Columns[^1].ClrType.Should().Be<long>();
-		var rows = await Materialize(result);
-		// Id 1->0, 2->2, 3->2, 4->4, 5->4
-		rows.Select(r => (long)r[1]!).Should().ContainInOrder(0L, 2L, 2L, 4L, 4L);
+		var (cols, rows) = await Run(SummarizeRows, Parse("events | extend B = bin(Id, 2) | project Id, B"));
+		cols[^1].ClrType.Should().Be<long>();
+		// RE-PIN (EnumerableQuery ordering artifact): no `order by`, so row order is unspecified over real
+		// SQLite. Pin the bin(Id,2) floor value per Id (the assertion's real intent) — not row sequence.
+		var byId = rows.ToDictionary(r => (long)r[0]!, r => (long)r[1]!);
+		byId.Should().BeEquivalentTo(new Dictionary<long, long>
+		{
+			[1L] = 0L, [2L] = 2L, [3L] = 2L, [4L] = 4L, [5L] = 4L,
+		});
 	}
 
 	[Fact]
-	public void Bin_TypeMismatch_Throws()
+	public async Task Bin_TypeMismatch_Throws()
 	{
-		var ast = Parse("events | extend B = bin(Message, 1h) | project Id, B");
-		var act = () => KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*bin()*");
+		var act = async () => await Run(Rows, Parse("events | extend B = bin(Message, 1h) | project Id, B"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*bin()*");
 	}
 
 	// --- Task B: post-shape order by / take / top / distinct ---
@@ -414,9 +372,8 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task PostShape_OrderBy_AfterSummarize()
 	{
-		var ast = Parse("events | summarize Total = count() by ServiceKey | order by Total desc, ServiceKey asc");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		var rows = await Materialize(result);
+		var (_, rows) = await Run(SummarizeRows,
+			Parse("events | summarize Total = count() by ServiceKey | order by Total desc, ServiceKey asc"));
 		rows.Select(r => (string)r[0]!).Should().ContainInOrder("svc-a", "svc-b"); // 3 then 2
 		rows.Select(r => (long)r[1]!).Should().ContainInOrder(3L, 2L);
 	}
@@ -424,9 +381,7 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task PostShape_Take_AfterProject()
 	{
-		var ast = Parse("events | project Id, Lvl = Level | order by Id asc | take 2");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		var rows = await Materialize(result);
+		var (_, rows) = await Run(SummarizeRows, Parse("events | project Id, Lvl = Level | order by Id asc | take 2"));
 		rows.Should().HaveCount(2);
 		rows.Select(r => (long)r[0]!).Should().ContainInOrder(1L, 2L);
 	}
@@ -434,40 +389,32 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task PostShape_Top_AfterProject_SortsAndLimits()
 	{
-		var ast = Parse("events | project Id, Lvl = Level | top 3 by Id desc");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		var rows = await Materialize(result);
+		var (_, rows) = await Run(SummarizeRows, Parse("events | project Id, Lvl = Level | top 3 by Id desc"));
 		rows.Select(r => (long)r[0]!).Should().ContainInOrder(5L, 4L, 3L);
 	}
 
 	[Fact]
 	public async Task PostShape_Top_OnComputedColumn()
 	{
-		var ast = Parse("events | extend D = Id * 2 | project Id, D | top 2 by D desc");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		var rows = await Materialize(result);
+		var (_, rows) = await Run(SummarizeRows, Parse("events | extend D = Id * 2 | project Id, D | top 2 by D desc"));
 		rows.Select(r => (long)r[1]!).Should().ContainInOrder(10L, 8L);
 	}
 
 	[Fact]
 	public async Task Distinct_Columns_DeDups()
 	{
-		var ast = Parse("events | distinct ServiceKey");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("ServiceKey");
-		var rows = await Materialize(result);
+		var (cols, rows) = await Run(SummarizeRows, Parse("events | distinct ServiceKey"));
+		cols.Select(c => c.Name).Should().ContainInOrder("ServiceKey");
 		rows.Select(r => (string)r[0]!).Should().BeEquivalentTo(["svc-a", "svc-b"]);
 	}
 
 	[Fact]
 	public async Task Distinct_Star_DeDupsWholeRow()
 	{
-		var ast = Parse("events | where ServiceKey == 'svc-a' | distinct *");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder(
+		var (cols, rows) = await Run(SummarizeRows, Parse("events | where ServiceKey == 'svc-a' | distinct *"));
+		cols.Select(c => c.Name).Should().ContainInOrder(
 			"Id", "ServiceKey", "Timestamp", "Level", "LevelName",
 			"Message", "MessageTemplate", "Exception", "PropertiesJson");
-		var rows = await Materialize(result);
 		rows.Should().HaveCount(3); // ids 1,2,4 all distinct
 	}
 
@@ -476,10 +423,8 @@ public sealed class KqlResultTests
 	{
 		// distinct of a name that is not a column de-dups Properties.<name>. Both rows lack the property,
 		// so a single distinct null remains (bare-name fallback).
-		var ast = Parse("events | distinct Bogus");
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), ast);
-		result.Columns[0].Name.Should().Be("Bogus");
-		var rows = await Materialize(result);
+		var (cols, rows) = await Run(Rows, Parse("events | distinct Bogus"));
+		cols[0].Name.Should().Be("Bogus");
 		rows.Should().ContainSingle();
 		rows[0][0].Should().BeNull();
 	}
@@ -490,10 +435,9 @@ public sealed class KqlResultTests
 	public async Task PostShape_Where_FiltersGroupsByAggregate()
 	{
 		// svc-a has 3 rows, svc-b has 2 → only svc-a passes Total > 2.
-		var ast = Parse("events | summarize Total = count() by ServiceKey | where Total > 2");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("ServiceKey", "Total");
-		var rows = await Materialize(result);
+		var (cols, rows) = await Run(SummarizeRows,
+			Parse("events | summarize Total = count() by ServiceKey | where Total > 2"));
+		cols.Select(c => c.Name).Should().ContainInOrder("ServiceKey", "Total");
 		rows.Should().ContainSingle();
 		rows[0][0].Should().Be("svc-a");
 		rows[0][1].Should().Be(3L);
@@ -502,35 +446,32 @@ public sealed class KqlResultTests
 	[Fact]
 	public async Task PostShape_Where_OnComputedColumn()
 	{
-		var ast = Parse("events | extend D = Id * 2 | where D >= 8 | project Id, D");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		var rows = await Materialize(result);
+		var (_, rows) = await Run(SummarizeRows, Parse("events | extend D = Id * 2 | where D >= 8 | project Id, D"));
 		rows.Select(r => (long)r[0]!).Should().BeEquivalentTo([4L, 5L]); // ids with Id*2 >= 8
 	}
 
 	[Fact]
 	public async Task PostShape_Where_ComposesWithOrderAndTake()
 	{
-		var ast = Parse("events | summarize Total = count() by ServiceKey | where Total >= 2 | order by Total desc | take 1");
-		var result = KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		var rows = await Materialize(result);
+		var (_, rows) = await Run(SummarizeRows,
+			Parse("events | summarize Total = count() by ServiceKey | where Total >= 2 | order by Total desc | take 1"));
 		rows.Should().ContainSingle();
 		rows[0][0].Should().Be("svc-a"); // highest Total among those >= 2
 	}
 
 	[Fact]
-	public void PostShape_Where_NonBoolean_Throws()
+	public async Task PostShape_Where_NonBoolean_Throws()
 	{
-		var ast = Parse("events | summarize Total = count() by ServiceKey | where Total + 1");
-		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*boolean*");
+		var act = async () => await Run(SummarizeRows,
+			Parse("events | summarize Total = count() by ServiceKey | where Total + 1"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*boolean*");
 	}
 
 	[Fact]
-	public void PostShape_Where_UnknownColumn_Throws()
+	public async Task PostShape_Where_UnknownColumn_Throws()
 	{
-		var ast = Parse("events | summarize Total = count() by ServiceKey | where Bogus > 1");
-		var act = () => KqlTransformer.Execute(SummarizeRows.AsQueryable(), ast);
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*Bogus*");
+		var act = async () => await Run(SummarizeRows,
+			Parse("events | summarize Total = count() by ServiceKey | where Bogus > 1"));
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*Bogus*");
 	}
 }
