@@ -40,4 +40,19 @@ public static class KqlAggregateExpressions
 	[Sql.Extension(ProviderName.DuckDB, "to_json(list(DISTINCT {source} ORDER BY {source}) FILTER (WHERE {source} IS NOT NULL))", IsAggregate = true, ServerSideOnly = true)]
 	public static string MakeSet<T>([ExprParameter] this IEnumerable<T> source) =>
 		throw new NotSupportedException("KqlAggregateExpressions.MakeSet is SQL-only (native per-dialect json array aggregate)");
+
+	// percentile(x, P) — DuckDB's exact discrete quantile: quantile_disc(x, p) returns the element at the
+	// 1-based nearest rank MAX(1, ceil(n·p)) of the group's non-null values sorted ascending, EXACTLY the
+	// engine's nearest-rank contract (spec kql-percentile: exact nearest-rank, NOT KustoLoco's type-5
+	// interpolation — spike-verified equal to the MAX(1, ceil(n·P/100)) formula on every group). NULLs are
+	// ignored natively; an empty/all-null group yields NULL. DuckDB-only: SQLite has no quantile primitive,
+	// so the transformer routes SQLite percentile through a ROW_NUMBER/COUNT window pre-stage instead.
+	// InlineParameters renders the fraction as a LITERAL (the quantile must be a constant); the CAST AS
+	// DOUBLE is ESSENTIAL: linq2db prints the double G17 (e.g. 0.90000000000000002), which DuckDB would
+	// otherwise type DECIMAL(18,17) and quantile over the EXACT decimal — one rank above the intended
+	// fraction (probe-pinned: quantile_disc(v, 0.90000000000000002) → rank ceil(9.000…2)=10, while
+	// CAST(… AS DOUBLE) restores the original double 0.9 → rank 9, the nearest-rank contract).
+	[Sql.Extension(ProviderName.DuckDB, "quantile_disc({source}, CAST({p} AS DOUBLE))", IsAggregate = true, ServerSideOnly = true, InlineParameters = true)]
+	public static T QuantileDisc<T>([ExprParameter] this IEnumerable<T> source, [ExprParameter] double p) =>
+		throw new NotSupportedException("KqlAggregateExpressions.QuantileDisc is SQL-only (DuckDB quantile_disc)");
 }

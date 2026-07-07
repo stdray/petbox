@@ -123,6 +123,23 @@ public sealed class KqlAggregateTests
 		rows[0][1].Should().Be("[]");
 	}
 
+	// int (Int32) columns like Level ARE allowed (integers render as integer JSON text, byte-identical
+	// across backends) — value-ascending, set-deduped, same as long.
+	[Theory]
+	[InlineData(KqlBackend.Sqlite)]
+	[InlineData(KqlBackend.DuckDb)]
+	public async Task MakeListSet_IntArg_Works(KqlBackend backend)
+	{
+		var data = new[] { Rec(1, 3, "m"), Rec(2, 1, "m"), Rec(3, 2, "m"), Rec(4, 2, "m") };
+		var code = KustoCode.Parse("events | summarize L = make_list(Level), S = make_set(Level)");
+
+		var (_, rows) = await KqlTestHost.ExecuteAsync(data, code, backend);
+
+		rows.Should().HaveCount(1);
+		rows[0][0].Should().Be("[1,2,2,3]");
+		rows[0][1].Should().Be("[1,2,3]");
+	}
+
 	// v1 arg-type restriction: a datetime selector (stored epoch-ms, would diverge across backends) is
 	// rejected up front rather than silently producing backend-divergent numbers.
 	[Fact]
