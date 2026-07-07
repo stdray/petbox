@@ -254,7 +254,7 @@ public static partial class KqlTransformer
 		SqlSubqueryRunner sqlRunSub = null!;
 		sqlRunSub = (rightExpr, opName) => TryComposeSubqueryStage(rightExpr, source, now, opName, spec, options, sqlRunSub);
 
-		var (stage, composed, counted) = ComposeLoop(RecordStage(preResult, spec), postOps, now, sqlRunSub, options.Dialect);
+		var (stage, composed, counted) = ComposeLoop(RecordStage(preResult, spec), postOps, now, sqlRunSub, options);
 
 		if (composed < postOps.Count)
 			throw new UnsupportedKqlException(
@@ -348,9 +348,9 @@ public static partial class KqlTransformer
 
 	enum JoinKind { InnerUnique, Inner, LeftOuter }
 
-	static JoinKind ParseJoinKind(SyntaxList<NamedParameter> parameters, string opName)
+	static JoinKind ParseJoinKind(SyntaxList<NamedParameter> parameters, string opName, JoinKind defaultKind)
 	{
-		var kind = JoinKind.InnerUnique;
+		var kind = defaultKind;
 		for (var i = 0; i < parameters.Count; i++)
 		{
 			var p = parameters[i];

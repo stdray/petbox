@@ -64,10 +64,28 @@ public sealed class KqlCorrelationTests
 	}
 
 	[Fact]
-	public async Task Join_Default_IsInnerUnique_DedupsLeftKeepingFirst()
+	public async Task Join_Default_IsInner_NoLeftDedup()
 	{
-		// default kind = innerunique: left de-duplicated by ServiceKey, first row per key wins.
+		// default kind = inner (spec kql-join-default-inner, deviating from Kusto's innerunique): a plain
+		// equi-join with NO left dedup — every left row emits one output per matching right key.
 		var (cols, rows) = await Exec(JoinRows, "events | join (events | where Level == 4) on ServiceKey");
+		var id = Col(cols, "Id");
+		var id1 = Col(cols, "Id1");
+		var pairs = rows.Select(r => ((long)r[id]!, (long)r[id1]!)).ToList();
+		// right Level==4 = Id2(svc-a),Id4(svc-b),Id5(svc-c). Left svc-a={Id1,Id2}, svc-b={Id3,Id4}, svc-c={Id5}.
+		pairs.Should().BeEquivalentTo([(1L, 2L), (2L, 2L), (3L, 4L), (4L, 4L), (5L, 5L)]);
+	}
+
+	[Fact]
+	public async Task Join_DefaultJoinKindOption_InnerUnique_RestoresLeftDedup()
+	{
+		// The KqlTranslationOptions.DefaultJoinKind knob flips a bare join back to Kusto's innerunique
+		// default: the SAME bare-join query now de-duplicates the left by key (first row per key wins),
+		// reproducing the explicit kind=innerunique result.
+		var opts = new KqlTranslationOptions { DefaultJoinKind = KqlJoinDefault.InnerUnique };
+		var (cols, rows) = await KqlTestHost.ExecuteAsync(
+			JoinRows.ToArray(), Parse("events | join (events | where Level == 4) on ServiceKey"),
+			KqlBackend.Sqlite, options: opts);
 		var id = Col(cols, "Id");
 		var id1 = Col(cols, "Id1");
 		var pairs = rows.Select(r => ((long)r[id]!, (long)r[id1]!)).ToList();

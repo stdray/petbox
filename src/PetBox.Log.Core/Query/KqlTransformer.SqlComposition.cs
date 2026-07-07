@@ -72,8 +72,9 @@ public static partial class KqlTransformer
 	// composed stage, how many ops composed, and a count-terminal if hit. Used by the top-level pipeline
 	// AND by a join/lookup right subquery (so a right side composes as a SQL subquery too).
 	static (SqlStage Stage, int Composed, KqlResult? Counted) ComposeLoop(
-		SqlStage initial, IReadOnlyList<SyntaxNode> postOps, DateTime now, SqlSubqueryRunner sqlRunSub, KqlDialect dialect)
+		SqlStage initial, IReadOnlyList<SyntaxNode> postOps, DateTime now, SqlSubqueryRunner sqlRunSub, KqlTranslationOptions options)
 	{
+		var dialect = options.Dialect;
 		var stage = initial;
 		var composed = 0;
 		KqlResult? counted = null;
@@ -103,7 +104,7 @@ public static partial class KqlTransformer
 				ExtendOperator extend => ComposeExtend(stage, extend, now),
 				SummarizeOperator summarize => ComposeSummarize(stage, summarize, now),
 				ParseOperator parse => ComposeParse(stage, parse, now),
-				JoinOperator join => ComposeJoin(stage, join, now, sqlRunSub),
+				JoinOperator join => ComposeJoin(stage, join, now, sqlRunSub, options.DefaultJoinKind),
 				LookupOperator lookup => ComposeLookup(stage, lookup, now, sqlRunSub),
 				SortOperator sort => ComposeOrder(stage, sort, now),
 				TakeOperator take => ComposeTake(stage, take),
@@ -139,7 +140,7 @@ public static partial class KqlTransformer
 			: (pipeline.Take(splitAt).ToList(), pipeline.Skip(splitAt).ToList());
 
 		var preResult = ApplyPipeline(source, preOps, spec.MakeContext);
-		var (stage, composed, counted) = ComposeLoop(RecordStage(preResult, spec), postOps, now, sqlRunSub, options.Dialect);
+		var (stage, composed, counted) = ComposeLoop(RecordStage(preResult, spec), postOps, now, sqlRunSub, options);
 		if (counted is not null || composed < postOps.Count)
 			return null; // right side isn't fully SQL → whole join falls back to in-memory
 		return stage;
@@ -605,15 +606,17 @@ public static partial class KqlTransformer
 	}
 
 	// ---- join (SQL): reproduces ApplyJoin/StreamJoinRows semantics as a SQL join on the composable
-	// SqlStage. Migrates kind=inner (Queryable.Join) and kind=leftouter (GroupJoin+SelectMany+DefaultIfEmpty);
-	// innerunique (window-dedup) is not yet migrated → return null (in-memory fallback). The right side is
-	// compiled to a SqlStage via sqlRunSub; if it isn't fully SQL, the whole join falls back. Null join keys
-	// never match (KQL): inner pre-filters BOTH sides' null keys (also aligns EnumerableQuery with SQL, which
-	// would otherwise match null==null); leftouter filters ONLY the right (left null-key rows survive via
-	// DefaultIfEmpty, never matching a filtered right). ----
-	static SqlStage? ComposeJoin(SqlStage left, JoinOperator op, DateTime now, SqlSubqueryRunner sqlRunSub)
+	// SqlStage. All kinds compose in SQL: kind=inner (Queryable.Join, no dedup), kind=innerunique (left
+	// window-dedup then inner join), kind=leftouter (GroupJoin+SelectMany+DefaultIfEmpty). A bare join (no
+	// kind=) resolves to `defaultKind` — Inner by default (spec kql-join-default-inner), a deliberate
+	// deviation from Kusto's innerunique default; the knob rides through KqlTranslationOptions.DefaultJoinKind.
+	// The right side is compiled to a SqlStage via sqlRunSub; if it isn't fully SQL, the whole join falls
+	// back. Null join keys never match (KQL): inner pre-filters BOTH sides' null keys (also aligns
+	// EnumerableQuery with SQL, which would otherwise match null==null); leftouter filters ONLY the right
+	// (left null-key rows survive via DefaultIfEmpty, never matching a filtered right). ----
+	static SqlStage? ComposeJoin(SqlStage left, JoinOperator op, DateTime now, SqlSubqueryRunner sqlRunSub, KqlJoinDefault defaultJoinKind)
 	{
-		var kind = ParseJoinKind(op.Parameters, "join");
+		var kind = ParseJoinKind(op.Parameters, "join", MapJoinDefault(defaultJoinKind));
 		if (op.ConditionClause is not JoinOnClause onClause)
 			throw new UnsupportedKqlException("join requires an 'on' clause with equality key(s)");
 		var right = sqlRunSub(op.Expression, "join");
@@ -621,13 +624,17 @@ public static partial class KqlTransformer
 			return null;
 		return kind switch
 		{
-			// innerunique (Kusto DEFAULT): dedup the LEFT by key first, then inner join.
+			// innerunique (Kusto's default, but requestable here): dedup the LEFT by key first, then inner join.
 			JoinKind.InnerUnique => BuildInnerJoin(left, right, onClause, "join", now, dedupLeft: true),
 			JoinKind.Inner => BuildInnerJoin(left, right, onClause, "join", now, dedupLeft: false),
 			JoinKind.LeftOuter => BuildLeftOuterJoin(left, right, onClause, "join", excludeRightKeys: false, now),
 			_ => null,
 		};
 	}
+
+	// Maps the public join-default knob to the internal JoinKind used for a bare (kind-less) join.
+	static JoinKind MapJoinDefault(KqlJoinDefault d) =>
+		d == KqlJoinDefault.InnerUnique ? JoinKind.InnerUnique : JoinKind.Inner;
 
 	// lookup = leftouter enrichment with the right KEY columns dropped from the output (they equal the left
 	// keys). Reuses the leftouter machinery with excludeRightKeys=true.

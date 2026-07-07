@@ -118,8 +118,8 @@ public static class KqlTestHost
 	// KqlResult columns plus every row drained. Eager pipeline-build errors (unsupported ops) surface
 	// synchronously from KqlTransformer.Execute, as they do in production.
 	public static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> ExecuteAsync(
-		IReadOnlyList<LogEntryRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null) =>
-		DrainAsync(KqlLogHost.Seed(records, backend), h => KqlTransformer.Execute(h.LogEntries, code, clock));
+		IReadOnlyList<LogEntryRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null, KqlTranslationOptions? options = null) =>
+		DrainAsync(KqlLogHost.Seed(records, backend), h => KqlTransformer.Execute(h.LogEntries, code, clock, options));
 
 	// events Apply: the events-shaped subset over `records` (where/order/take, no shape change), returning
 	// the produced records.

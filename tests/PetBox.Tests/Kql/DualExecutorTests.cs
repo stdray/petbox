@@ -431,9 +431,10 @@ public sealed class DualExecutorTests
 	// innerunique de-dups the LEFT side by key keeping the FIRST left row per key (Kusto table order).
 	// ComposeJoin's DedupByKey now tie-breaks ascending by the left identity column (= insertion order),
 	// so linq2db's ROW_NUMBER dedup and KustoLoco agree byte-identically over real SQLite (was arbitrary
-	// before the tie-break — the harness cutover surfaced it).
+	// before the tie-break — the harness cutover surfaced it). Only the EXPLICIT kind=innerunique form is
+	// differential: a bare join now defaults to inner here (spec kql-join-default-inner) while KustoLoco
+	// still defaults to innerunique, so a kind-less query cannot be compared from the same string.
 	[Theory]
-	[InlineData("events | join (events | where Level == 4) on ServiceKey | project Id, Id1")]
 	[InlineData("events | join kind=innerunique (events | where Level >= 3) on ServiceKey | project Id, Id1")]
 	public async Task Join_InnerUnique_MatchesReference(string kql)
 	{
