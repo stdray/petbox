@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
 using ModelContextProtocol.Server;
 using PetBox.Core.Observability;
@@ -15,7 +16,7 @@ namespace PetBox.Web.Mcp;
 // SHAPERS so the hot path can be audited (frequency × latency × volume × call character)
 // without reading bodies. PRIVACY CONTRACT: we log only FORMS and SIZES — never parameter
 // VALUES and never request/response bodies (spec: telemetry-no-payloads).
-static class McpTracingFilter
+static partial class McpTracingFilter
 {
 	// Match the server's tool serializer (relaxed encoder, same as McpErrorEnvelopeFilter)
 	// so a measured size tracks the wire form. Used only to MEASURE length — the serialized
@@ -25,14 +26,34 @@ static class McpTracingFilter
 		Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed,
 	};
 
+	// Category MUST start with the SystemLogger prefix ("PetBox") so the self-log captures it —
+	// see SystemLoggerOptions.CategoryPrefix. This is the always-on economy metric: one
+	// Information event per CallTool (spec: economy-measurable), independent of whether a trace
+	// listener is active or the OTel self-export chain is up.
+	const string ToolCallLogCategory = "PetBox.Mcp.ToolCalls";
+
+	// The streamable-HTTP MCP session id can be null on a non-stateful transport; keep the
+	// KQL column present with a stable, groupable placeholder rather than a missing property.
+	const string NoSession = "-";
+
 	public static void Register(IMcpRequestFilterBuilder filters) =>
 		filters.AddCallToolFilter(next => async (request, ct) =>
 		{
-			using var span = StartToolSpan(request.Params?.Name);
+			// One logger + the request-side measurements resolved ONCE per call, used by BOTH
+			// the (conditional) span tags and the (unconditional) self-log event. The request
+			// size is serialized exactly once here and reused — no double-serialize.
+			var logger = request.Services!.GetRequiredService<ILoggerFactory>()
+				.CreateLogger(ToolCallLogCategory);
+			var tool = request.Params?.Name;
+			var session = request.Server.SessionId ?? NoSession;
+			var reqChars = SerializedLength(request.Params?.Arguments);
+
+			using var span = StartToolSpan(tool);
 			if (span is not null)
 			{
 				var args = request.Params?.Arguments;
-				span.SetTag("petbox.request_chars", SerializedLength(args));
+				span.SetTag("petbox.request_chars", reqChars);
+				span.SetTag("petbox.session_id", request.Server.SessionId);
 				foreach (var (key, value) in ExtractArgShapers(args))
 					span.SetTag(key, value);
 			}
@@ -40,18 +61,34 @@ static class McpTracingFilter
 			{
 				var result = await next(request, ct);
 				// content + structuredContent = the payload a client receives (spec wording).
-				span?.SetTag("petbox.response_chars",
-					SerializedLength(new { result.Content, result.StructuredContent }));
+				var respChars = SerializedLength(new { result.Content, result.StructuredContent });
+				span?.SetTag("petbox.response_chars", respChars);
+				// The inner McpErrorEnvelopeFilter converts tool-body exceptions into an
+				// IsError result BEFORE this (outer) filter sees them, so attribute the outcome
+				// from the result, not only the catch below.
+				var outcome = result.IsError == true ? "error" : "ok";
 				if (result.IsError == true)
 					span?.SetStatus(ActivityStatusCode.Error);
+				LogToolCall(logger, tool, session, reqChars, respChars, outcome);
 				return result;
 			}
 			catch (Exception ex)
 			{
 				span?.SetStatus(ActivityStatusCode.Error, ex.Message);
+				// No result to measure on a genuine throw → RespChars 0, Outcome error, then
+				// rethrow to preserve the error-status behavior for callers up the stack.
+				LogToolCall(logger, tool, session, reqChars, 0, "error");
 				throw;
 			}
 		});
+
+	// Source-generated, allocation-free self-log write (CA1873-clean). The template placeholder
+	// names (Tool/Session/ReqChars/RespChars/Outcome) become KQL-addressable Properties.<Name>
+	// once SystemLogger lifts the named args. Message starts with "mcp tool " — the query anchor.
+	[LoggerMessage(EventId = 600, Level = LogLevel.Information,
+		Message = "mcp tool {Tool} session {Session} req {ReqChars} resp {RespChars} outcome {Outcome}")]
+	static partial void LogToolCall(
+		ILogger logger, string? tool, string session, int reqChars, int respChars, string outcome);
 
 	internal static Activity? StartToolSpan(string? toolName)
 	{
