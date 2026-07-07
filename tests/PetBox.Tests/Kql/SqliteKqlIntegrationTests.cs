@@ -432,8 +432,8 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 
 	// --- typed Properties over real SQLite, ingested through the real CLEF parser: the bare-name
 	// fallback (`where DeviceId == ...`) resolves as a Properties lookup and translates to json_extract,
-	// and `toint(Properties.Status)` compares NUMERICALLY via the registered kql_tolong function (a
-	// plain CAST would read '99' as bigger than '500' textually / '0' for garbage). ---
+	// and `toint(Properties.Status)` compares NUMERICALLY via the native regexp_like-gated CAST (a
+	// plain unguarded CAST would read '99' as bigger than '500' textually / '0' for garbage). ---
 
 	[Fact]
 	public async Task TypedProperties_BareFallbackAndNumericConversion_OverSqlite()
@@ -503,7 +503,7 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 			ToRecord(Mk(45, LogLevel.Information, "on", "svc-b", Props("""{"Enabled":true}"""))),
 			ToRecord(Mk(46, LogLevel.Information, "off", "svc-b", Props("""{"Enabled":false}"""))),
 		]);
-		// SQLite json_extract yields INTEGER 1/0 for a JSON boolean; kql_tobool must accept it.
+		// SQLite json_extract yields INTEGER 1/0 for a JSON boolean; the tobool CASE accepts '1'/'0'.
 		(await RunAsync("events | where ServiceKey == 'svc-b' and tobool(Properties.Enabled) == true"))
 			.Should().BeEquivalentTo(["on"]);
 		(await RunAsync("events | where ServiceKey == 'svc-b' and tobool(Properties.Enabled) == false"))

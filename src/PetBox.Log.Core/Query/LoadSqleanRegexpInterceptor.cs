@@ -6,12 +6,13 @@ using Microsoft.Data.Sqlite;
 namespace PetBox.Log.Core.Query;
 
 // Loads the vendored sqlean `regexp` SQLite extension (nalgeon/sqlean 0.28.3) on every SQLite
-// connection linq2db opens for a LogDb, mirroring RegisterKqlFunctionsInterceptor's per-connection
-// shape. SQLite loadable extensions are per-connection, so we (re)load on ConnectionOpened.
+// connection linq2db opens for a LogDb. SQLite loadable extensions are per-connection, so we (re)load
+// on ConnectionOpened.
 //
 // This makes sqlean's `regexp_*` SQL functions available so the KQL translator can map `matches regex`,
-// `extract` and the lowered `has`/`has_cs` straight to native SQL (regexp_like / regexp_capture — see
-// KqlSqlExpressions). Both interceptors are attached to LogDb.
+// `extract`, the lowered `has`/`has_cs`, and the well-formedness gates of the typed conversions
+// (tolong/todouble) straight to native SQL (regexp_like / regexp_capture — see KqlSqlExpressions). This
+// is the ONLY interceptor attached to LogDb — no .NET scalar UDFs remain in the KQL path.
 //
 // The binary is vendored per-RID and copied to the output under `sqlean/<rid>/regexp.<ext>` (see
 // PetBox.Log.Core.csproj). We resolve the absolute path off AppContext.BaseDirectory by current OS and

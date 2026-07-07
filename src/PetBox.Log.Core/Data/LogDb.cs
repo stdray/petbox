@@ -18,8 +18,8 @@ public sealed class LogDb : DataConnection
 	public static DataOptions<LogDb> CreateOptions(string connectionString) =>
 		new(new DataOptions()
 			.UseSQLite(connectionString)
-			.UseInterceptor(RegisterKqlFunctionsInterceptor.Instance)
 			// Loads the vendored sqlean `regexp` extension per connection so its regexp_* SQL functions are
-			// available: the KQL translator maps `matches regex`/`extract`/`has`/`has_cs` to native SQL over them.
+			// available: the KQL translator maps `matches regex`/`extract`/`has`/`has_cs` and the well-formedness
+			// gates of the typed conversions (tolong/todouble) to native SQL over them.
 			.UseInterceptor(LoadSqleanRegexpInterceptor.Instance));
 }

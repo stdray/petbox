@@ -5,13 +5,13 @@ using PetBox.Log.Core.Data;
 namespace PetBox.Tests.Kql;
 
 // INFRA PROBE — proves the vendored sqlean `regexp` extension (nalgeon/sqlean 0.28.3) is loaded on every
-// SQLite connection a LogDb opens, via LoadSqleanRegexpInterceptor (wired in LogDb.CreateOptions next to
-// RegisterKqlFunctionsInterceptor). This exercises the REAL prod connection path: we build a LogDb through
-// LogDb.CreateOptions and run raw scalar SQL over its linq2db connection, so if the interceptor did not
-// load sqlean these `regexp_*` calls would throw "no such function".
+// SQLite connection a LogDb opens, via LoadSqleanRegexpInterceptor (wired in LogDb.CreateOptions). This
+// exercises the REAL prod connection path: we build a LogDb through LogDb.CreateOptions and run raw
+// scalar SQL over its linq2db connection, so if the interceptor did not load sqlean these `regexp_*`
+// calls would throw "no such function".
 //
-// The KQL translator does NOT use sqlean yet (the .NET UDFs remain the live regex path); this test only
-// guards the substrate so the later mapping swap has a proven, loaded foundation. Sqlite-backend only.
+// The KQL translator maps `matches regex`/`extract`/`has`/`has_cs` and the tolong/todouble well-formedness
+// gates onto these native functions; this test guards the loaded substrate they ride. Sqlite-backend only.
 public sealed class SqleanRegexpProbeTests : IDisposable
 {
 	readonly SqliteConnection _keepAlive;

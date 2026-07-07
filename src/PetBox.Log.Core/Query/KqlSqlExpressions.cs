@@ -8,19 +8,18 @@ using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Log.Core.Query;
 
-// [Sql.Expression]/[Sql.Function]-mapped helpers backing the KQL string and datetime functions.
+// [Sql.Expression]-mapped helpers backing the KQL string and datetime functions.
 // Every method carries BOTH a SQLite translation (the attribute) and a real C# body: linq2db uses the
 // attribute when the query runs as SQLite SQL (record/`where` context), while the in-memory paths
 // (row context / LINQ-to-Objects differential) invoke the body directly as a plain method — outside
 // linq2db entirely. Every mapping is ServerSideOnly = true: translation must happen ON the server or
 // fail loudly — ServerSideOnly=false would let linq2db silently fall back to CLIENT-side evaluation,
 // materializing the whole table to run the expression in memory. The typed string→value conversions
-// (tolong/todouble/tobool/todatetime) that SQLite's CAST cannot express faithfully are [Sql.Function]s
-// bound to per-connection scalar functions registered by RegisterKqlFunctionsInterceptor; their C# body
-// is the single source of truth both the registered SQLite function and the in-memory path call. The
-// regex surfaces (`matches regex`, `extract`, and the lowered `has`/`has_cs`) instead map to NATIVE
-// per-dialect SQL via [Sql.Expression] — sqlean's regexp_* on SQLite (loaded per connection by
-// LoadSqleanRegexpInterceptor), DuckDB's regexp_* — so those bodies never run in-memory and throw.
+// (tolong/todouble/tobool/todatetime) that SQLite's CAST cannot express faithfully, and the regex
+// surfaces (`matches regex`, `extract`, and the lowered `has`/`has_cs`), map to NATIVE per-dialect SQL
+// via [Sql.Expression] — sqlean's regexp_* on SQLite (loaded per connection by LoadSqleanRegexpInterceptor),
+// DuckDB's regexp_*/TRY_CAST — so those bodies never run in-memory and throw. No .NET scalar UDFs remain
+// in the KQL path.
 public static class KqlSqlExpressions
 {
 	// Bag lookup via SQLite's BUILTIN json functions. The path is always a compile-time constant built
@@ -315,46 +314,49 @@ public static class KqlSqlExpressions
 
 	// --- typed conversions: tostring / toint|tolong / todouble / tobool / todatetime. Malformed or
 	// missing input yields NULL (Kusto's conversion semantics), so the string-parse helpers return
-	// nullable value types. They are registered SQLite scalar functions (see RegisterKqlFunctions-
-	// Interceptor) rather than a bare CAST because SQLite's CAST is NOT faithful here: CAST('abc' AS
-	// INTEGER) is 0 (not NULL) and CAST('12x' AS INTEGER) is 12. Each C# body is the single source of
-	// truth the registered SQLite function and the in-memory differential path both call, so a
-	// `where toint(Properties.Status) >= 500` compares numerically and identically on either path.
-	// Numeric-to-numeric conversions (e.g. toint(Level)) don't need a function — a direct
-	// Expr.Convert translates to a CAST that agrees with the C# truncating cast — so only the
-	// string-input parse lives here. ---
+	// nullable value types. They map to NATIVE per-dialect SQL via [Sql.Expression] rather than a bare
+	// CAST because SQLite's CAST is NOT faithful here: CAST('abc' AS INTEGER) is 0 (not NULL) and
+	// CAST('12x' AS INTEGER) is 12. SQLite gates a plain CAST behind a sqlean regexp_like well-formedness
+	// check (regexp_* loaded per connection by LoadSqleanRegexpInterceptor); DuckDB uses TRY_CAST /
+	// TRY_CAST-to-timestamp, which return NULL on malformed input natively. The portable contract
+	// deliberately DROPS .NET-specific parsing (thousands separators, non-ISO datetime forms) for
+	// cross-dialect parity. Numeric-to-numeric conversions (e.g. toint(Level)) don't need a function — a
+	// direct Expr.Convert translates to a CAST that agrees with the C# truncating cast — so only the
+	// string-input parse lives here. SQL-only: the bodies never run in-memory (single-SQL-path engine)
+	// and throw if invoked. ---
 
-	[Sql.Function("kql_tolong", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.SQLite, @"(CASE WHEN regexp_like({0}, '^\s*[+-]?[0-9]+\s*$') THEN CAST({0} AS INTEGER) ELSE NULL END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "TRY_CAST(trim({0}) AS BIGINT)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
 	public static long? ParseLong(string? s) =>
-		long.TryParse(s, NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
+		throw new NotSupportedException("KqlSqlExpressions.ParseLong is SQL-only (native per-dialect typed conversion)");
 
-	[Sql.Function("kql_todouble", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.SQLite, @"(CASE WHEN regexp_like({0}, '^\s*[+-]?([0-9]+(\.[0-9]*)?|\.[0-9]+)([eE][+-]?[0-9]+)?\s*$') THEN CAST({0} AS REAL) ELSE NULL END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "TRY_CAST({0} AS DOUBLE)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
 	public static double? ParseDouble(string? s) =>
-		double.TryParse(s, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var v)
-			? v
-			: null;
+		throw new NotSupportedException("KqlSqlExpressions.ParseDouble is SQL-only (native per-dialect typed conversion)");
 
 	// Accepts the textual forms "true"/"false" (from the in-memory json_extract, which renders a JSON
 	// boolean as its raw text) AND "1"/"0" (from SQLite's json_extract, which yields INTEGER 1/0 for a
-	// JSON boolean). Handling both keeps `tobool(Properties.X)` identical whether the predicate runs as
-	// SQLite SQL (pre-split `where`) or in-memory (post-split), which otherwise disagree by pipeline
-	// position — the SQL path fed "1"/"0" and rejected it, the in-memory path saw "true"/"false".
-	[Sql.Function("kql_tobool", ServerSideOnly = true)]
-	public static bool? ParseBool(string? s)
-	{
-		if (bool.TryParse(s, out var v))
-			return v;
-		return s switch { "1" => true, "0" => false, _ => (bool?)null };
-	}
+	// JSON boolean). Handling both keeps `tobool(Properties.X)` identical whether the value arrived as
+	// "1"/"0" or "true"/"false" — the CI true/false plus the '1'/'0' json_extract-integer-boolean bridge
+	// documented above and preserved in the CASE below.
+	[Sql.Expression(ProviderName.SQLite, "(CASE lower(trim({0})) WHEN 'true' THEN 1 WHEN '1' THEN 1 WHEN 'false' THEN 0 WHEN '0' THEN 0 ELSE NULL END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "(CASE lower(trim({0})) WHEN 'true' THEN TRUE WHEN '1' THEN TRUE WHEN 'false' THEN FALSE WHEN '0' THEN FALSE ELSE NULL END)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static bool? ParseBool(string? s) =>
+		throw new NotSupportedException("KqlSqlExpressions.ParseBool is SQL-only (native per-dialect typed conversion)");
 
-	// todatetime parses an ISO-8601 string to epoch-ms (the SQL/record instant representation).
-	// Assumes UTC for an unspecified offset and normalizes to UTC, matching how timestamps are stored.
-	[Sql.Function("kql_todatetime", ServerSideOnly = true)]
+	// todatetime parses an ISO-8601 string to epoch-MILLISECONDS (UTC — the SQL/record instant
+	// representation). Assumes UTC for an unspecified offset and normalizes to UTC, matching how
+	// timestamps are stored. SQLite's unixepoch(text,'subsec') yields fractional epoch SECONDS or NULL on
+	// non-ISO-8601 input, and NULL propagates through the round/CAST (SQLite 3.50.4 in-bundle supports
+	// 'subsec'). DuckDB: epoch_ms(TRY_CAST({0} AS TIMESTAMPTZ)) — ⚠ this REQUIRES `SET TimeZone='UTC'` at
+	// the DuckDB connection init so unspecified-offset strings read as UTC (matching the SQLite/AssumeUtc
+	// contract). DuckDB is not wired/active yet; when the future DuckDB wave wires connection init, that
+	// TimeZone pragma MUST be set for this expression to honor the UTC contract.
+	[Sql.Expression(ProviderName.SQLite, "CAST(round(unixepoch({0}, 'subsec') * 1000) AS INTEGER)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "epoch_ms(TRY_CAST({0} AS TIMESTAMPTZ))", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
 	public static long? ParseDateTimeMs(string? s) =>
-		DateTime.TryParse(s, CultureInfo.InvariantCulture,
-			DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal, out var dt)
-			? ToUnixMs(dt)
-			: null;
+		throw new NotSupportedException("KqlSqlExpressions.ParseDateTimeMs is SQL-only (native per-dialect typed conversion)");
 
 	// tostring for integer/boolean scalars — a faithful CAST/CASE on the SQL side mirrored by the C#
 	// body. (String arguments pass through unchanged in the compiler and never reach here.)

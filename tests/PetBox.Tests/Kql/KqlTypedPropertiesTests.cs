@@ -127,6 +127,39 @@ public sealed class KqlTypedPropertiesTests
 			.Should().BeEquivalentTo([1L]);
 	}
 
+	// CONTRACT DEVIATION (portable-parity): the typed conversions now run as native per-dialect SQL, NOT
+	// .NET's culture-aware TryParse. .NET-specific spellings that CAST/unixepoch do not accept therefore
+	// become null. These pins nail the TRUE post-swap behavior so the parity contract is explicit.
+	[Fact]
+	public async Task Conversions_DropDotNetSpecificForms_ToNull()
+	{
+		var data = new[]
+		{
+			Rec(1, """{"thou":"1,000","us":"01/02/2024","mon":"Jan 2, 2024"}"""),
+		};
+		var rows = await Table(
+			"events | project Id, D = todouble(Properties.thou), U = todatetime(Properties.us), M = todatetime(Properties.mon)",
+			data);
+		// todouble('1,000'): the thousands separator is NOT accepted by the SQLite well-formedness regex
+		// (was 1000 under .NET NumberStyles.AllowThousands) → null.
+		rows[0][1].Should().BeNull();
+		// todatetime('01/02/2024') and a month-name form: neither is ISO-8601, so SQLite unixepoch returns
+		// NULL (both were parsed by .NET DateTime.TryParse before) → null.
+		rows[0][2].Should().BeNull();
+		rows[0][3].Should().BeNull();
+	}
+
+	// int64 overflow in tolong: the digits pass the well-formedness regex, then SQLite's CAST(... AS
+	// INTEGER) SATURATES an out-of-range integer literal to int64 max (it does NOT null or wrap). Pinned
+	// as the observed SQLite behavior; DuckDB's TRY_CAST would instead yield null on the future wave.
+	[Fact]
+	public async Task Tolong_Int64Overflow_SaturatesToMax_OnSqlite()
+	{
+		var data = new[] { Rec(1, """{"big":"99999999999999999999"}""") };
+		var rows = await Table("events | project Id, V = tolong(Properties.big)", data);
+		rows[0][1].Should().Be(9223372036854775807L);
+	}
+
 	[Fact]
 	public async Task Conversions_OverScalarColumns()
 	{

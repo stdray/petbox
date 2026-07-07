@@ -17,7 +17,7 @@ public abstract class KqlDialect
 	// Stable identifier for the backend (diagnostics / future routing).
 	public abstract string Name { get; }
 
-	// The type carrying THIS dialect's [Sql.Expression]/[Sql.Function] scalar shims. linq2db reads the
+	// The type carrying THIS dialect's [Sql.Expression] scalar shims. linq2db reads the
 	// per-method SQL translation off these attribute-bound methods at query-build time, so the shim set
 	// is inherently per-dialect. For SQLite this IS today's KqlSqlExpressions (unmoved — the attributes
 	// stay where linq2db already resolves them; the dialect merely NAMES the set, which is all the seam
