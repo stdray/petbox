@@ -780,6 +780,21 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 	}
 
 	[Fact]
+	public async Task PostSplitWhere_ComposesInSql()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(20, LogLevel.Information, "s200", "svc-pw", Props("""{"Status":200}"""))),
+			ToRecord(Mk(21, LogLevel.Information, "s500", "svc-pw", Props("""{"Status":500}"""))),
+		]);
+		// A `where` AFTER a shape change (extend) over a bag value: composes to SQL (json_extract in the
+		// predicate), byte-identical to the pre-split path — never the in-memory StreamWhere tail.
+		var (_, rows, sql) = await ExecTable(
+			"events | where ServiceKey == 'svc-pw' | extend one = 1 | where Properties.Status == '500' | project Message");
+		rows.Select(r => (string?)r[0]).Should().BeEquivalentTo(["s500"]);
+		sql.Should().Contain("json_extract"); // the bag predicate translated server-side
+	}
+
+	[Fact]
 	public async Task MvExpand_ExplodeThenSummarize_ComposesInSql()
 	{
 		await _logDb.LogEntries.BulkCopyAsync([

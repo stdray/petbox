@@ -548,6 +548,14 @@ sealed class EmittedStorageScalarContext : SqlRecordScalarContext
 
 	protected override Expr? CoerceSpecialLiteral(string canonical, LiteralExpression literal)
 	{
+		// A bag value (Properties.<key> in a post-shape `where`) reaches here with `canonical` = the bag KEY,
+		// which is NOT an emitted column — so there is no special datetime/timespan coercion (exactly as the
+		// record context only special-cases its known Timestamp column, and returns null otherwise). Without
+		// this guard Col(canonical) throws "sequence contains no matching element" and the bag comparison —
+		// which must be byte-identical to the pre-split path — crashes instead of falling through to the
+		// general string/int literal handling.
+		if (!IsKnownColumn(canonical))
+			return null;
 		var nn = KqlScalar.NonNullable(Col(canonical).LogicalType);
 		if (nn == typeof(DateTime))
 		{

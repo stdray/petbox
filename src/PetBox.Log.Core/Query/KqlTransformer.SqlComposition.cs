@@ -109,6 +109,7 @@ public static partial class KqlTransformer
 				TakeOperator take => ComposeTake(stage, take),
 				TopOperator top => ComposeTop(stage, top, now),
 				MvExpandOperator mvExpand => ComposeMvExpand(stage, mvExpand, dialect, now),
+				FilterOperator filter => ComposeWhere(stage, filter, now),
 				_ => null,
 			};
 			if (next is null)
@@ -318,6 +319,24 @@ public static partial class KqlTransformer
 		for (var i = 0; i < keys.Count; i++)
 			ordered = DynOrderBy(ordered, stage.ElementType, Expr.Lambda(keys[i].Key, param), keys[i].Key.Type, keys[i].Desc, isThen: i > 0);
 		return WithQuery(stage, ordered);
+	}
+
+	// ---- where (post shape-change): a WHERE over the composed stage. The predicate compiles over the stage
+	// context (EmittedStorageScalarContext resolves the columns/bag the upstream produced), IDENTICALLY to the
+	// pre-split ApplyWhere — a bag lookup rides the SAME JsonExtract the pre-split path emits (the emitted
+	// stage carries the original PropertiesJson storage), so a `where Properties.<k> == …` is byte-identical
+	// pre- and post-split. A non-boolean condition throws (like ApplyWhere/ApplyPostWhere); a not-yet-SQL-
+	// translatable predicate returns null (transient in-memory, matching order/project — fires for zero
+	// expressions in the suite). Shape is unchanged. ----
+	static SqlStage? ComposeWhere(SqlStage stage, FilterOperator filter, DateTime now)
+	{
+		var param = Expr.Parameter(stage.ElementType, "e");
+		var ctx = stage.MakeContext(param);
+		if (!TryCompileStorage(filter.Condition, ctx, out var body))
+			return null;
+		if (body.Type != typeof(bool))
+			throw new UnsupportedKqlException($"where condition must be boolean, got {body.Type.Name}");
+		return WithQuery(stage, DynWhere(stage.Query, stage.ElementType, Expr.Lambda(body, param)));
 	}
 
 	// ---- take / limit: pure truncation. ----

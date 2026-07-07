@@ -161,25 +161,31 @@ public sealed class KqlReviewFixesTests
 		Ids("events | where toint(Properties.Status) !between (100 .. 300)", StatusData).Should().BeEquivalentTo([2L]);
 	}
 
-	// ---- F4: join build side is capped ----
+	// ---- F4: join build side cap (now moot for a fully-SQL right side) ----
 
+	// RE-PIN (kql-single-path-impl post-split-where migration, NOT a value divergence): this used to force
+	// the in-memory hash join — a right side `project … | where …` fell back because post-split `where` was
+	// the last un-migrated op, and the in-memory build side hit the JoinBuildSideCap (teaching error). Post-
+	// split `where` now composes in SQL (ComposeWhere), so the right side is FULLY SQL and the WHOLE join runs
+	// in the DB; the in-memory build side — and its cap — is never reached. With the cap forced to 2 and a
+	// 5-row right side, NO teaching error is thrown; the join composes and returns the full inner product.
+	// This is the direct confirmation that post-split `where` no longer falls back. The cap code is RETAINED
+	// (guards any residual in-memory fallback) until the Stream* tail is deleted (a later pass).
 	[Fact]
-	public async Task F4_JoinBuildSide_ExceedingCap_ThrowsTeachingError()
+	public async Task F4_JoinRightSideWithPostSplitWhere_ComposesInSql_CapNotReached()
 	{
 		KqlTransformer.JoinBuildSideCapOverride = 2;
 		try
 		{
-			// Right side has 5 rows > cap of 2 → fail fast with a teaching message.
-			// NOTE (kql-single-path-impl): ALL join kinds now compile to SQL when the right side is fully
-			// SQL-composable, so the in-memory build-side cap is MOOT for those (the DB does the join). It is
-			// still reachable — and pinned here — when the right side FALLS BACK to the in-memory hash join,
-			// which a post-split `where` (not yet migrated) forces: `project … | where …`. RESULT is
-			// unchanged. The cap code stays until the whole in-memory tail is deleted (every op migrated).
-			var act = async () => await KqlTestHost.ExecuteAsync(JoinRows,
+			var (_, rows) = await KqlTestHost.ExecuteAsync(JoinRows,
 				Parse("events | join kind=inner (events | project ServiceKey, Id | where Id >= 1) on ServiceKey | project Id, Id1"),
 				KqlBackend.Sqlite);
-			(await act.Should().ThrowAsync<UnsupportedKqlException>())
-				.WithMessage("*join right side exceeded 2 rows*narrow it with where/take*");
+			// inner product on ServiceKey — svc-a {1,2}², svc-b {3,4}², svc-c {5} → 9 rows; the cap of 2 is
+			// NOT hit because the SQL join never materializes an in-memory build side.
+			rows.Select(r => ((long)r[0]!, (long)r[1]!)).Should().BeEquivalentTo(new[]
+			{
+				(1L, 1L), (1L, 2L), (2L, 1L), (2L, 2L), (3L, 3L), (3L, 4L), (4L, 3L), (4L, 4L), (5L, 5L),
+			});
 		}
 		finally
 		{
