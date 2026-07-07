@@ -168,11 +168,12 @@ public sealed class NodeGetTests : IDisposable
 	}
 
 	[Fact]
-	public async Task TasksGet_UnknownStatusSlug_Rejected()
+	public async Task TasksGet_UnknownStatusSlug_SilentlyDropped()
 	{
 		await _tasks.UpsertAsync(Proj, "b", new[] { new NodePatch { Key = "n", Title = "N", Body = "" } });
 
-		var act = () => _tasks.GetAsync(Proj, "b", status: ["bogus"]);
-		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*bogus*not a status*");
+		// An unknown status is silently dropped (soft filter); an all-unknown set → an empty result.
+		var res = await _tasks.GetAsync(Proj, "b", status: ["bogus"]);
+		res.Nodes.Should().BeEmpty();
 	}
 }

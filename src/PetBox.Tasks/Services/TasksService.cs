@@ -269,21 +269,24 @@ public sealed partial class TasksService : ITasksService
 		return body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
 	}
 
-	// Map include_boards (quartet kind names) to a BoardKind set; null/empty = all. An
-	// unknown name is rejected (it would otherwise silently return nothing).
+	// Map include_boards (quartet kind names) to a BoardKind set; null/empty = all (no filter). A
+	// SOFT filter: an unknown name is silently dropped (not an error) — but if names were PROVIDED
+	// and none are quartet boards, the set is EMPTY (→ an empty result at the caller's `!want.Contains`
+	// guard), distinct from "none given" (→ null, all boards).
 	static HashSet<BoardKind>? ResolveBoardFilter(string[]? includeBoards)
 	{
 		if (includeBoards is null || includeBoards.Length == 0) return null;
 		var set = new HashSet<BoardKind>();
+		var anyProvided = false;
 		foreach (var raw in includeBoards)
 		{
 			var name = (raw ?? "").Trim();
+			if (name.Length == 0) continue;
+			anyProvided = true;
 			var match = Quartet.Cast<BoardKind?>().FirstOrDefault(k => k!.Value.ToString().Equals(name, StringComparison.OrdinalIgnoreCase));
-			if (match is null)
-				throw new ArgumentException($"includeBoards: '{raw}' is not a quartet board (valid: {string.Join("|", Quartet.Select(k => k.ToString().ToLowerInvariant()))})");
-			set.Add(match.Value);
+			if (match is not null) set.Add(match.Value); // unknown board name → silently dropped (soft filter)
 		}
-		return set;
+		return anyProvided ? set : null;
 	}
 
 	// ---- user-defined methodology definition (storage; resolved live via RuntimeAsync) ----
@@ -783,6 +786,31 @@ public sealed partial class TasksService : ITasksService
 		};
 	}
 
+	// Miss-tolerant sibling of ResolveNodeRefAsync for SOFT single-node reads (relations_list,
+	// comments_list): returns null when the ref matches no active node (the caller then returns an
+	// empty result instead of an error), while an ambiguous cross-board slug is STILL a clear error
+	// (it genuinely can't address one node). NodeId form passes through unchecked, like the strict
+	// resolver. Use this where "a node that isn't there" reads naturally as an empty answer, not a
+	// failure; keep ResolveNodeRefAsync for write-addressing and tasks_node_get.
+	public Task<string?> ResolveNodeRefOrNullAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default)
+	{
+		var v = (nodeRef ?? "").Trim();
+		if (v.Length == 0) return Task.FromResult<string?>(null);
+		if (LooksLikeNodeId(v)) return Task.FromResult<string?>(v);
+		var slug = v.ToLowerInvariant();
+		var ctx = _boards.GetContext(projectKey);
+		var q = ctx.PlanNodes.Where(n => n.ActiveTo == null && n.Key == slug);
+		if (board is not null) q = q.Where(n => n.Board == board);
+		var matches = q.ToList().Where(n => n.NodeId.Length > 0).ToList();
+		return matches.Count switch
+		{
+			0 => Task.FromResult<string?>(null),
+			1 => Task.FromResult<string?>(matches[0].NodeId),
+			_ => throw new ArgumentException(
+				$"ambiguous slug '{nodeRef}' — found on boards: [{string.Join(", ", matches.Select(m => m.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the node's NodeId instead"),
+		};
+	}
+
 	// Batch `[[slug]]` mention resolution (node-ref-autolink). Resolves each requested slug over
 	// the project's ACTIVE nodes to its current (Board, Key, NodeId, Title), matching current keys
 	// AND former keys (PrevKey lineage — mentions survive renames). A current key wins over a
@@ -905,25 +933,26 @@ public sealed partial class TasksService : ITasksService
 		return k;
 	}
 
-	// Normalize/validate a status filter against the board kind's known slugs (across its
-	// hosted types, preset- or definition-resolved), case-insensitive; null/empty = no
-	// filter. An unknown slug is rejected — it would otherwise silently return nothing
-	// (mirrors ResolveBoardFilter).
+	// Normalize a status filter against the board kind's known slugs (across its hosted types,
+	// preset- or definition-resolved), case-insensitive; null/empty = no filter. A SOFT filter:
+	// an unknown slug is silently DROPPED (not an error) — but if slugs were PROVIDED and none are
+	// known, the filter is an EMPTY set (→ an empty result), distinct from "no status given"
+	// (→ null). Mirrors ResolveBoardFilter / ResolveStatusFilterAcross.
 	static HashSet<string>? ResolveStatusFilter(string[]? status, MethodologyRuntime runtime, string? kindSlug)
 	{
 		if (status is null || status.Length == 0) return null;
 		var known = runtime.Types(kindSlug).SelectMany(w => w.Statuses).Select(s => s.Slug)
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var anyProvided = false;
 		foreach (var raw in status)
 		{
 			var s = (raw ?? "").Trim();
 			if (s.Length == 0) continue;
-			if (!known.Contains(s))
-				throw new ArgumentException($"status '{raw}' is not a status of this board's kind (valid: {string.Join("|", known.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))})");
-			set.Add(s);
+			anyProvided = true;
+			if (known.Contains(s)) set.Add(s); // unknown status slug → silently dropped (soft filter)
 		}
-		return set.Count == 0 ? null : set;
+		return anyProvided ? set : null;
 	}
 
 	// nodeId -> its active part_of parent nodeId (single parent). One query, project-wide.
@@ -1381,18 +1410,35 @@ public sealed partial class TasksService : ITasksService
 		if (boardFilter is not null)
 			boardsMeta = boardsMeta.Where(b => string.Equals(b.Name, boardFilter, StringComparison.Ordinal)).ToList();
 
-		// Predicates shared by both modes. keys = explicit addressing (slug|NodeId mixed,
-		// resolved like tasks_node_get — a miss/ambiguity is a clear error, never an empty
-		// answer); under = a part_of subtree root (slug resolves cross-board when no board).
+		// Predicates shared by both modes. keys = a SOFT filter (slug|NodeId mixed), resolved via the
+		// miss-tolerant exact-identifier path (ExactIdentifierHitsAsync), NOT strict addressing: a key
+		// that matches nothing contributes nothing (never throws), and an ambiguous slug (same slug on
+		// 2+ boards) contributes ALL its matches (each hit carries its board). So a not-found/ambiguous
+		// ref is never an error here — a fully-missing keys set just yields an empty result (an empty
+		// keyIds filters to nothing at :hits below). Strict addressing (a typo MUST be a loud error)
+		// stays in ResolveNodeRefAsync — used by tasks_node_get. `under` is likewise a SOFT filter
+		// here: a subtree root that matches nothing scopes to an EMPTY result (not an error, and not
+		// "no filter" — that distinction is why under-not-given → null, but under-given-but-missed →
+		// an empty root set → no node passes); an ambiguous slug contributes ALL its matches as roots.
 		HashSet<string>? keyIds = null;
 		if (f.Keys is { Count: > 0 })
 		{
 			keyIds = new HashSet<string>(StringComparer.Ordinal);
 			foreach (var k in f.Keys)
-				keyIds.Add(await ResolveNodeRefAsync(projectKey, k, boardFilter, ct));
+				foreach (var hit in await ExactIdentifierHitsAsync(projectKey, k, boardFilter, ct: ct))
+					keyIds.Add(hit.Node.NodeId);
 		}
-		var underId = string.IsNullOrWhiteSpace(f.Under) ? null : await ResolveNodeRefAsync(projectKey, f.Under, boardFilter, ct);
-		var parentOf = underId is null ? null : await ParentMapAsync(projectKey, ct);
+		// under = a part_of subtree root (soft): null when not given (no filter), else a set of root
+		// NodeIds (possibly EMPTY when the ref matched nothing → an empty result). Multi-board slug →
+		// all matches as roots. A node passes if it is in the subtree of ANY root.
+		HashSet<string>? underRoots = null;
+		if (!string.IsNullOrWhiteSpace(f.Under))
+		{
+			underRoots = new HashSet<string>(StringComparer.Ordinal);
+			foreach (var hit in await ExactIdentifierHitsAsync(projectKey, f.Under, boardFilter, ct: ct))
+				underRoots.Add(hit.Node.NodeId);
+		}
+		var parentOf = underRoots is null ? null : await ParentMapAsync(projectKey, ct);
 		var runtime = await RuntimeAsync(projectKey, ct);
 		var statusFilter = ResolveStatusFilterAcross(f.Status, runtime, boardsMeta.Select(b => b.Kind));
 
@@ -1435,7 +1481,7 @@ public sealed partial class TasksService : ITasksService
 			hits.InsertRange(0, freshExact);
 		}
 
-		if (underId is not null) hits = hits.Where(h => InSubtree(h.Node.NodeId, underId, parentOf!)).ToList();
+		if (underRoots is not null) hits = hits.Where(h => underRoots.Any(root => InSubtree(h.Node.NodeId, root, parentOf!))).ToList();
 		if (statusFilter is not null) hits = hits.Where(h => statusFilter.Contains(h.Node.Status)).ToList();
 		if (keyIds is not null) hits = hits.Where(h => keyIds.Contains(h.Node.NodeId)).ToList();
 		// Reverse commit lookup (node-commits-impl): keep only nodes carrying the commit
@@ -1585,10 +1631,12 @@ public sealed partial class TasksService : ITasksService
 			.ToDictionary(n => n.NodeId, n => (n.Created, n.Updated), StringComparer.Ordinal);
 	}
 
-	// Status-filter validation for a read that may span boards of several kinds: a slug is
-	// valid if ANY board kind in scope knows it (a single-board read therefore validates
-	// against exactly that kind, like GetAsync). Unknown slugs are rejected — they would
-	// otherwise silently return nothing. Kinds are slugs (preset- or definition-resolved).
+	// Status-filter for a read that may span boards of several kinds: a slug is valid if ANY board
+	// kind in scope knows it (a single-board read therefore validates against exactly that kind,
+	// like GetAsync). A SOFT filter: an unknown status slug is silently DROPPED (not an error) — but
+	// if status slugs were PROVIDED and none are known, the filter is an EMPTY set (→ an empty
+	// result), distinct from "no status given" (→ null, no filter). Kinds are slugs (preset- or
+	// definition-resolved).
 	static HashSet<string>? ResolveStatusFilterAcross(IReadOnlyList<string>? status, MethodologyRuntime runtime, IEnumerable<string> kindSlugs)
 	{
 		if (status is null || status.Count == 0) return null;
@@ -1596,15 +1644,15 @@ public sealed partial class TasksService : ITasksService
 			.SelectMany(runtime.Types).SelectMany(w => w.Statuses).Select(s => s.Slug)
 			.ToHashSet(StringComparer.OrdinalIgnoreCase);
 		var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		var anyProvided = false;
 		foreach (var raw in status)
 		{
 			var s = (raw ?? "").Trim();
 			if (s.Length == 0) continue;
-			if (!known.Contains(s))
-				throw new ArgumentException($"status '{raw}' is not a status of any board in scope (valid: {string.Join("|", known.OrderBy(k => k, StringComparer.OrdinalIgnoreCase))})");
-			set.Add(s);
+			anyProvided = true;
+			if (known.Contains(s)) set.Add(s); // unknown status slug → silently dropped (soft filter)
 		}
-		return set.Count == 0 ? null : set;
+		return anyProvided ? set : null; // provided-but-all-unknown → empty set (empty result); none real → no filter
 	}
 
 	// READ snippet: bodyLen <= 0 -> the full body; otherwise the first N chars with "…"

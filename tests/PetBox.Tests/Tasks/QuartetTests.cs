@@ -309,13 +309,13 @@ public sealed class QuartetTests : IDisposable
 	}
 
 	[Fact]
-	public async Task MethodologyGet_InvalidIncludeBoards_Rejected()
+	public async Task MethodologyGet_InvalidIncludeBoards_SilentlyDropped()
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
-		// The MCP tool wraps errors via GuardAsync, so assert the message on the service directly.
-		var act = () => _tasks.GetMethodologyAsync(Proj, includeBoards: ["bogus"]);
-		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*not a quartet board*");
+		// An unknown board kind is silently dropped (soft filter); an all-unknown set → no boards.
+		var res = await _tasks.GetMethodologyAsync(Proj, includeBoards: ["bogus"]);
+		res.Boards.Should().BeEmpty();
 	}
 
 	static IHttpContextAccessor Http(string scopes)

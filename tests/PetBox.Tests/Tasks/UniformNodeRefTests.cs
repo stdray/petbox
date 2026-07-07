@@ -226,11 +226,11 @@ public sealed class UniformNodeRefTests : IDisposable
 		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*node 'ghost' does not match any active node on board 'b'*");
 
-		// A slug that lives on ANOTHER board doesn't leak in — comments are board-scoped.
+		// A slug that lives on ANOTHER board doesn't leak in — comments are board-scoped: a node
+		// not on this board yields an EMPTY thread (soft read), not an error.
 		await Seed(http, "other", """[{"key":"elsewhere","status":"Todo","title":"E"}]""");
-		var wrongBoard = () => CommentTools.ListAsync(http, Flags(), _comments, _tasks, Proj, "b", "elsewhere");
-		(await wrongBoard.Should().ThrowAsync<ArgumentException>())
-			.WithMessage("*node 'elsewhere' does not match any active node on board 'b'*");
+		var wrongBoard = await CommentTools.ListAsync(http, Flags(), _comments, _tasks, Proj, "b", "elsewhere");
+		wrongBoard.Comments.Should().BeEmpty();
 	}
 
 	// ---- WATERMARK over the MCP surface: an echoed currentVersion is the next call's baseline ----

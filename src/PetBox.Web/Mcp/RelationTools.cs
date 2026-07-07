@@ -41,7 +41,7 @@ public static class RelationTools
 	}
 
 	[McpServerTool(Name = "relations_list", Title = "List relations", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationsListResult))]
-	[Description("List relations touching a node. nodeId takes a slug or NodeId (32-hex = the stable PlanNode.NodeId; a slug resolves across ALL the project's boards and must be unambiguous — else pass the NodeId). direction ∈ from|to|both (default both). Use direction=to to find edges pointing AT a node (reverse traversal, e.g. which tasks implement a spec node). includeHistory=true also returns soft-closed edges (with closedAt). Requires tasks:read.")]
+	[Description("List relations touching a node. nodeId takes a slug or NodeId (32-hex = the stable PlanNode.NodeId; a slug resolves across ALL the project's boards). A nodeId that matches no node → an empty list (not an error); an ambiguous cross-board slug still needs a NodeId. direction ∈ from|to|both (default both). Use direction=to to find edges pointing AT a node (reverse traversal, e.g. which tasks implement a spec node). includeHistory=true also returns soft-closed edges (with closedAt). Requires tasks:read.")]
 	public static async Task<RelationsListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
 		string projectKey,
@@ -52,7 +52,8 @@ public static class RelationTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		var id = await tasks.ResolveNodeRefAsync(projectKey, nodeId, ct: ct);
+		var id = await tasks.ResolveNodeRefOrNullAsync(projectKey, nodeId, ct: ct);
+		if (id is null) return new RelationsListResult([]); // a node that isn't there → no edges (soft read), never an error
 		var list = await relations.ListAsync(projectKey, id, direction ?? "both", includeHistory, ct);
 		return new RelationsListResult(list.Select(r => new RelationRow(r.Id, r.Kind, r.FromNodeId, r.ToNodeId, r.CreatedAt, r.ClosedAt)).ToList());
 	}
