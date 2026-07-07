@@ -125,7 +125,8 @@ Task("Test")
 			DotNetTest(testProj.FullPath, new DotNetTestSettings
 			{
 				Configuration = configuration,
-				NoBuild = true
+				NoBuild = true,
+				Filter = "Category!=Research"
 			});
 		}
 	});

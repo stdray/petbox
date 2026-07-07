@@ -322,7 +322,8 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 	[Fact]
 	public async Task Distinct_StreamsFromSqlPreFilter()
 	{
-		// `where` (SQL) runs pre-split; `distinct` (shape-changing) de-dups in memory.
+		// `where` (SQL) runs pre-split; a leading `distinct` now also compiles to SQL (SELECT DISTINCT) —
+		// the whole query is one SQL round-trip (kql-single-path-impl wave 1).
 		var code = KustoCode.Parse("events | where Level == 4 | distinct ServiceKey");
 		var result = KqlTransformer.Execute(_logDb.LogEntries, code);
 		result.Columns.Select(c => c.Name).Should().ContainInOrder("ServiceKey");
@@ -331,6 +332,40 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		await foreach (var row in result.Rows)
 			values.Add(row[0] as string);
 		values.Should().BeEquivalentTo(["svc-b", "svc-c"]); // the two Error rows
+	}
+
+	[Fact]
+	public async Task Parse_LiteralCaptures_OverRealSqlite()
+	{
+		// parse compiles to SQL substr/instr against real SQLite (kql-single-path-impl). Seed message
+		// "crash on Earth" (Id4) matches `"crash on " Where` → "Earth"; the non-matching rows are RETAINED
+		// with a null capture (Kusto `parse`, not `parse-where`). Thin net (no KustoLoco differential for
+		// parse), so this pins the real-SQLite behavior directly.
+		var code = KustoCode.Parse("events | parse Message with \"crash on \" Where | project Id, Where");
+		var result = KqlTransformer.Execute(_logDb.LogEntries, code);
+		result.Columns.Select(c => c.Name).Should().ContainInOrder("Id", "Where");
+		result.Columns.Single(c => c.Name == "Where").ClrType.Should().Be<string>();
+
+		var byId = new Dictionary<long, string?>();
+		await foreach (var row in result.Rows)
+			byId[(long)row[0]!] = row[1] as string;
+
+		byId.Should().HaveCount(5);          // every row retained
+		byId[4L].Should().Be("Earth");       // "crash on Earth" → trailing capture takes the rest
+		byId[1L].Should().BeNull();          // "hello world" does not match → null capture
+	}
+
+	[Fact]
+	public async Task Parse_BetweenLiterals_OverRealSqlite()
+	{
+		// A capture delimited on both sides: `"crash " Verb " Earth"` over "crash on Earth" → Verb = "on".
+		var code = KustoCode.Parse("events | parse Message with \"crash \" Verb \" Earth\" | project Id, Verb");
+		var result = KqlTransformer.Execute(_logDb.LogEntries, code);
+		var byId = new Dictionary<long, string?>();
+		await foreach (var row in result.Rows)
+			byId[(long)row[0]!] = row[1] as string;
+		byId[4L].Should().Be("on");
+		byId[2L].Should().BeNull(); // "boom" has no "crash " prefix
 	}
 
 	[Fact]

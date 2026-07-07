@@ -56,8 +56,13 @@ public sealed class KqlParseException(IReadOnlyList<string> details)
 public sealed class KqlExecutionException(string kql, Exception inner)
 	: Exception($"KQL execution failed for '{kql}': {inner.Message}", inner);
 
-public sealed class LogQueryService(ILogStore store) : ILogQueryService
+public sealed class LogQueryService(ILogStore store, KqlTranslationOptions? translationOptions = null) : ILogQueryService
 {
+	// The translation seam threaded into the transformer. Defaults to KqlTranslationOptions.Default
+	// (SQLite dialect, no semantic deviations) so behavior is unchanged until a backend/knob is supplied.
+	// DI honors the optional parameter's default value, so the existing single-arg registration is intact.
+	readonly KqlTranslationOptions _translation = translationOptions ?? KqlTranslationOptions.Default;
+
 	public async Task<LogQueryResult> QueryAsync(string projectKey, string logName, string kql, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(kql)) throw new ArgumentException("kql is required");
@@ -91,7 +96,7 @@ public sealed class LogQueryService(ILogStore store) : ILogQueryService
 		// enumeration is wrapped just like the events Table path.
 		if (string.Equals(root, KqlTransformer.SpansTable, StringComparison.Ordinal))
 		{
-			var spanTable = BuildTable(() => KqlTransformer.ExecuteSpans(logDb.Spans, code), kql);
+			var spanTable = BuildTable(() => KqlTransformer.ExecuteSpans(logDb.Spans, code, options: _translation), kql);
 			var spanSignal = new TruncationSignal();
 			return new LogQueryResult.Table(
 				spanTable with { Rows = LimitRows(WrapExecutionErrors(spanTable.Rows, kql, ct), limit, spanSignal, ct) },
@@ -102,7 +107,7 @@ public sealed class LogQueryService(ILogStore store) : ILogQueryService
 		// result, so it ALWAYS yields the streamed metric column shape (a Table).
 		if (string.Equals(root, KqlTransformer.MetricsTable, StringComparison.Ordinal))
 		{
-			var metricTable = BuildTable(() => KqlTransformer.ExecuteMetrics(logDb.MetricPoints, code), kql);
+			var metricTable = BuildTable(() => KqlTransformer.ExecuteMetrics(logDb.MetricPoints, code, options: _translation), kql);
 			var metricSignal = new TruncationSignal();
 			return new LogQueryResult.Table(
 				metricTable with { Rows = LimitRows(WrapExecutionErrors(metricTable.Rows, kql, ct), limit, metricSignal, ct) },
@@ -120,7 +125,7 @@ public sealed class LogQueryService(ILogStore store) : ILogQueryService
 			// Execute throws UnsupportedKqlException synchronously while building the
 			// pipeline (user error); actual row streaming is lazy and enumerated by the
 			// ADAPTER, so engine failures there must be translated at the source.
-			var table = BuildTable(() => KqlTransformer.Execute(logDb.LogEntries, code), kql);
+			var table = BuildTable(() => KqlTransformer.Execute(logDb.LogEntries, code, options: _translation), kql);
 			var signal = new TruncationSignal();
 			return new LogQueryResult.Table(
 				table with { Rows = LimitRows(WrapExecutionErrors(table.Rows, kql, ct), limit, signal, ct) },
@@ -131,6 +136,9 @@ public sealed class LogQueryService(ILogStore store) : ILogQueryService
 		{
 			// Take(limit + 1) rides the SQL LIMIT (composing with any explicit take as a min), so a
 			// plain `events` never materializes the whole table — the OOM vector this capping closes.
+			// The plain (no shape-changing op) events path is a straight IQueryable passthrough with no
+			// dialect-varying translation, so _translation is not threaded here yet — it flows into the
+			// shape-changing Execute*/Table paths above, which is where the SQL-compilation seam lives.
 			var records = await KqlTransformer.Apply(logDb.LogEntries, code).Take(limit + 1).ToListAsync(ct);
 			var truncated = records.Count > limit;
 			if (truncated)
