@@ -285,6 +285,20 @@ public static class KqlSqlExpressions
 		return Math.Floor(value / step) * step;
 	}
 
+	// mv-expand array source: the JSON-array TEXT of `value` (a bag-extracted value or a whole column), or
+	// '[]' when it is NOT a JSON array (null / missing / a scalar / an object). Fed to json_each, so '[]'
+	// explodes to ZERO rows — the exact Kusto drop semantics for a non-array/absent value. Malformed-SAFE:
+	// json_valid GATES json_type via a nested CASE (SQLite's AND is not short-circuit, and json_type on a
+	// non-JSON scalar like a plain string raises 'malformed JSON'), so json_type only ever sees valid JSON.
+	// SQL-only (mv-expand runs entirely in SQL); the C# body is never invoked in-memory.
+	// `value` is object? (not string?) so a mv-expand of ANY column type binds — json_valid/json_type
+	// inspect whatever affinity the value has (a non-array number/object → '[]' → 0 rows), no C# cast needed.
+	[Sql.Expression(
+		"(CASE WHEN json_valid({0}) THEN (CASE WHEN json_type({0}) = 'array' THEN {0} ELSE '[]' END) ELSE '[]' END)",
+		ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static string JsonArrayText(object? value) =>
+		throw new NotSupportedException("KqlSqlExpressions.JsonArrayText is SQL-only (mv-expand array explode)");
+
 	// --- startof* on epoch-ms. SQLite via strftime(...,'unixepoch',...); the C# body mirrors it for
 	// the in-memory path. Week starts Sunday (Kusto): start-of-day minus the day-of-week (%w, 0=Sun). ---
 

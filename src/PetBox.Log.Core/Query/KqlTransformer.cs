@@ -264,7 +264,7 @@ public static partial class KqlTransformer
 		// linq2db IQueryable as ONE chained SQL query via the storage→logical mapping layer. At the first op
 		// NOT yet migrated, or a transient fallback, the stage materializes (logical-typed) and the remainder
 		// runs on the existing in-memory Stream* path.
-		var (stage, composed, counted) = ComposeLoop(RecordStage(preResult, spec), postOps, now, sqlRunSub);
+		var (stage, composed, counted) = ComposeLoop(RecordStage(preResult, spec), postOps, now, sqlRunSub, options.Dialect);
 
 		if (composed == 0 && counted is null)
 		{

@@ -766,4 +766,74 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 			"events | where ServiceKey == 'svc-j' | extend one = 1 | order by fruit asc | project Message");
 		post[0].Should().Be("row-Banana"); // ordinal comparer matches BINARY — same winner
 	}
+
+	// --- mv-expand over REAL SQLite (kql-single-path-impl): PURE SQL via FromSql + json_each (no in-memory
+	// fallback). These pin the drop/rendering matrix AND that downstream summarize/order compose IN the DB. ---
+
+	async Task<(IReadOnlyList<KqlColumn> Cols, List<object?[]> Rows, string Sql)> ExecTable(string kql)
+	{
+		var result = KqlTransformer.Execute(_logDb.LogEntries, KustoCode.Parse(kql));
+		var rows = new List<object?[]>();
+		await foreach (var row in result.Rows)
+			rows.Add(row);
+		return (result.Columns, rows, _logDb.LastQuery ?? "");
+	}
+
+	[Fact]
+	public async Task MvExpand_ExplodeThenSummarize_ComposesInSql()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(10, LogLevel.Information, "a", "svc-mv", Props("""{"Tags":["x","y","x"]}"""))),
+			ToRecord(Mk(11, LogLevel.Information, "b", "svc-mv", Props("""{"Tags":["y","z"]}"""))),
+		]);
+
+		var (cols, rows, sql) = await ExecTable(
+			"events | where ServiceKey == 'svc-mv' | mv-expand Properties.Tags | summarize c = count() by Tags | order by Tags asc");
+
+		cols.Select(c => c.Name).Should().ContainInOrder("Tags", "c");
+		rows.Select(r => ((string?)r[0], (long)r[1]!)).Should().ContainInOrder(("x", 2L), ("y", 2L), ("z", 1L));
+		// PURE SQL proof: the explode is server-side json_each nested as a derived table under the GROUP BY —
+		// ONE query, never the in-memory StreamMvExpand path.
+		sql.Should().Contain("json_each");
+		sql.ToUpperInvariant().Should().Contain("GROUP BY");
+	}
+
+	[Fact]
+	public async Task MvExpand_ExplodeThenOrder_ComposesInSql()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(12, LogLevel.Information, "row", "svc-mvo", Props("""{"Tags":["m","a","z"]}"""))),
+		]);
+		var (_, rows, sql) = await ExecTable(
+			"events | where ServiceKey == 'svc-mvo' | mv-expand Properties.Tags | project Id, Tags | order by Tags desc");
+		rows.Select(r => (string?)r[1]).Should().ContainInOrder("z", "m", "a");
+		sql.Should().Contain("json_each");
+	}
+
+	[Fact]
+	public async Task MvExpand_DropMatrix_ZeroRows_OverRealSqlite()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(13, LogLevel.Information, "empty", "svc-drop", Props("""{"Tags":[]}"""))),        // empty
+			ToRecord(Mk(14, LogLevel.Information, "missing", "svc-drop", Props("""{"Other":"x"}"""))),    // missing key
+			ToRecord(Mk(15, LogLevel.Information, "scalar", "svc-drop", Props("""{"Tags":"notarray"}"""))), // scalar string
+			ToRecord(Mk(16, LogLevel.Information, "number", "svc-drop", Props("""{"Tags":5}"""))),         // scalar number
+			ToRecord(Mk(17, LogLevel.Information, "object", "svc-drop", Props("""{"Tags":{"a":1}}"""))),   // object
+			ToRecord(Mk(18, LogLevel.Information, "nullbag", "svc-drop")),                                  // null/{} bag
+		]);
+		var (_, rows, _) = await ExecTable("events | where ServiceKey == 'svc-drop' | mv-expand Properties.Tags | project Id, Tags");
+		rows.Should().BeEmpty(); // every non-array / absent value → 0 rows (Kusto drop)
+	}
+
+	[Fact]
+	public async Task MvExpand_ElementRendering_BoolNullNumber_OverRealSqlite()
+	{
+		await _logDb.LogEntries.BulkCopyAsync([
+			ToRecord(Mk(19, LogLevel.Information, "mix", "svc-mix", Props("""{"Mix":[true,false,null,10,2.5,"s"]}"""))),
+		]);
+		var (cols, rows, _) = await ExecTable("events | where ServiceKey == 'svc-mix' | mv-expand Mix | project Id, Mix");
+		cols.Single(c => c.Name == "Mix").ClrType.Should().Be<string>();
+		// bool/null EXACT via je.type; numbers canonicalize via SQLite CAST (accepted kql-numeric-semantics).
+		rows.Select(r => (string?)r[1]).Should().ContainInOrder("true", "false", null, "10", "2.5", "s");
+	}
 }

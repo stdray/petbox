@@ -10,9 +10,9 @@ namespace PetBox.Tests.Kql;
 // not implement `parse`).
 //
 // Converted to run production over the SHARED real-SQLite harness (KqlTestHost) instead of the
-// EnumerableQuery provider. NOTE: mv-expand is NOT yet SQL-migrated — the SQL prefix runs on SQLite and
-// falls back to the in-memory mv-expand tail; results agree with the old in-memory behavior (verified
-// below), no re-pin was required for the mv-expand cases.
+// EnumerableQuery provider. NOTE: mv-expand is now PURE SQL (FromSql + json_each; ComposeMvExpand), so
+// these cases explode and compose entirely in SQLite with no in-memory StreamMvExpand tail; results agree
+// with the old in-memory behavior (verified below), no re-pin was required for the mv-expand cases.
 public sealed class KqlCorrelationTests
 {
 	static KustoCode Parse(string kql) => KustoCode.Parse(kql);

@@ -72,7 +72,7 @@ public static partial class KqlTransformer
 	// composed stage, how many ops composed, and a count-terminal if hit. Used by the top-level pipeline
 	// AND by a join/lookup right subquery (so a right side composes as a SQL subquery too).
 	static (SqlStage Stage, int Composed, KqlResult? Counted) ComposeLoop(
-		SqlStage initial, IReadOnlyList<SyntaxNode> postOps, DateTime now, SqlSubqueryRunner sqlRunSub)
+		SqlStage initial, IReadOnlyList<SyntaxNode> postOps, DateTime now, SqlSubqueryRunner sqlRunSub, KqlDialect dialect)
 	{
 		var stage = initial;
 		var composed = 0;
@@ -108,6 +108,7 @@ public static partial class KqlTransformer
 				SortOperator sort => ComposeOrder(stage, sort, now),
 				TakeOperator take => ComposeTake(stage, take),
 				TopOperator top => ComposeTop(stage, top, now),
+				MvExpandOperator mvExpand => ComposeMvExpand(stage, mvExpand, dialect, now),
 				_ => null,
 			};
 			if (next is null)
@@ -137,7 +138,7 @@ public static partial class KqlTransformer
 			: (pipeline.Take(splitAt).ToList(), pipeline.Skip(splitAt).ToList());
 
 		var preResult = ApplyPipeline(source, preOps, spec.MakeContext);
-		var (stage, composed, counted) = ComposeLoop(RecordStage(preResult, spec), postOps, now, sqlRunSub);
+		var (stage, composed, counted) = ComposeLoop(RecordStage(preResult, spec), postOps, now, sqlRunSub, options.Dialect);
 		if (counted is not null || composed < postOps.Count)
 			return null; // right side isn't fully SQL → whole join falls back to in-memory
 		return stage;
@@ -450,6 +451,139 @@ public static partial class KqlTransformer
 	static Expr SubstrLen(Expr s, Expr start, Expr len) => Expr.Call(Substr3, s, start, len);
 	static Expr SubstrRest(Expr s, Expr start) => Expr.Call(Substr2, s, start);
 	static Expr InstrCall(Expr s, Expr needle) => Expr.Call(InstrM, s, needle);
+
+	// ---- mv-expand (PURE SQL, no in-memory fallback): explodes a JSON-array value to one row per element
+	// via SQLite's json_each, spliced in as a raw FromSql (SQLite has no linq2db-native lateral/comma-join —
+	// IsApplyJoinSupported=false). Mechanism (spec: kql-single-path-impl, fable-hardened):
+	//   1. Wrap the upstream stage into a pre-explode projection whose LAST column is the guarded array text
+	//      (JsonArrayText → '[]' for null/missing/scalar/object, so json_each yields 0 rows = Kusto drop).
+	//   2. Render that projection to SQL+params via the PUBLIC LinqExtensions.ToSqlQuery.
+	//   3. Remap the engine's OWN parameter tokens (@name → {i}, longest-first — never a value-regex; SQL
+	//      literals are always parameterized, so no user content is rewritten) and pass the DataParameter
+	//      instances straight to FromSql (linq2db owns DbParameter creation/typing).
+	//   4. Splice via a CTE that RENAMES columns positionally — `WITH sub(C0..Cn) AS (upstream)` — immune to
+	//      linq2db's non-deterministic inner aliases, so `sub.C{arrayOrdinal}` is deterministic. The whole
+	//      thing is SELF-PARENTHESIZED: linq2db appends the FromSql body after FROM WITHOUT wrapping it, and a
+	//      bare leading WITH there is a syntax error — `( WITH … )` is a valid SQLite subquery and composes.
+	//   5. json_each over the array; each element renders via je.type (bool/null EXACT; numbers canonicalize
+	//      through CAST(je.value AS TEXT) per the accepted kql-numeric-semantics promise). The exploded scalar
+	//      REPLACES the array column in-place (bare-column target) or APPENDS a new column (Properties target),
+	//      matching ApplyMvExpand's output shape. Wrapped via MakeEmittedStage so it composes downstream IN SQL
+	//      (mv-expand | summarize/order/project stays one query — linq2db nests the FromSql as a derived table).
+	// NEVER returns null for a supported target (mv-expand is pure SQL everywhere now); unsupported forms
+	// (multi-column / to typeof / row limit / parameters) throw exactly like ApplyMvExpand.
+	static SqlStage ComposeMvExpand(SqlStage stage, MvExpandOperator op, KqlDialect dialect, DateTime now)
+	{
+		if (op.Parameters.Count > 0)
+			throw new UnsupportedKqlException("mv-expand parameters (bagexpansion / with_itemindex) not supported");
+		if (op.RowLimitClause is not null)
+			throw new UnsupportedKqlException("mv-expand row limit not supported");
+		if (op.Expressions.Count != 1)
+			throw new UnsupportedKqlException("mv-expand supports exactly one column");
+		if (op.Expressions[0].Element is not MvExpandExpression mve)
+			throw new UnsupportedKqlException("mv-expand supports a column or Properties.<key>");
+		if (mve.ToTypeOf is not null)
+			throw new UnsupportedKqlException("mv-expand 'to typeof(...)' not supported (elements are string-typed)");
+
+		var param = Expr.Parameter(stage.ElementType, "e");
+		var ctx = stage.MakeContext(param);
+		var (outName, targetIndex, valueExpr) = ResolveMvArraySource(stage, ctx, mve.Expression);
+
+		// pre-explode projection: every stage column (passthrough, C0..C{n-1}) + the guarded array text
+		// (C{n}). The extra column is the ONLY json_each source; it is always '[]' or a valid JSON array.
+		var arrExpr = Expr.Call(JsonArrayTextMethod, Expr.Convert(valueExpr, typeof(object)));
+		var subCols = stage.Columns
+			.Select(c => new SqlCol(c.Name, c.ClrType, ctx.ResolveColumn(c.Name)))
+			.Append(new SqlCol("__mvarr", typeof(string), arrExpr))
+			.ToList();
+		var pre = BuildEmittedStage(stage.Query, stage.ElementType, param, subCols, distinct: false, now);
+		var arrayOrdinal = stage.Columns.Count; // the guarded array text is the last projected column
+
+		// upstream SQL + params (PUBLIC ToSqlQuery, reflective over the runtime emitted row type).
+		var qsql = ToSqlQueryReflective(pre.Query);
+		var upstreamSql = qsql.Sql;
+		var pars = qsql.Parameters;
+		foreach (var i in Enumerable.Range(0, pars.Count).OrderByDescending(i => ParamToken(pars[i]).Length))
+			upstreamSql = upstreamSql.Replace(ParamToken(pars[i]), "{" + i + "}");
+
+		// OUTPUT columns: the exploded scalar (Elem) REPLACES the array column in-place, or APPENDS after all
+		// passthrough columns. Passthrough carries its sub storage type + original logical type; Elem is string.
+		const string elemSql =
+			"CASE je.type WHEN 'true' THEN 'true' WHEN 'false' THEN 'false' WHEN 'null' THEN NULL ELSE CAST(je.value AS TEXT) END";
+		var outCols = new List<(string Name, Type Logical, Type Storage, string Sql)>();
+		for (var i = 0; i < stage.Columns.Count; i++)
+			outCols.Add(i == targetIndex
+				? (outName, typeof(string), typeof(string), elemSql)
+				: (stage.Columns[i].Name, stage.Columns[i].ClrType, subCols[i].Storage.Type, $"sub.C{i}"));
+		if (targetIndex < 0)
+			outCols.Add((outName, typeof(string), typeof(string), elemSql));
+
+		var cteCols = string.Join(", ", Enumerable.Range(0, subCols.Count).Select(i => "C" + i));
+		var selectList = string.Join(", ", outCols.Select((c, j) => $"{c.Sql} AS C{j}"));
+		var explodeFrom = dialect.ArrayExplodeFrom($"sub.C{arrayOrdinal}", "je");
+		var mvSql = $"( WITH sub({cteCols}) AS ( {upstreamSql} ) SELECT {selectList} FROM sub, {explodeFrom} )";
+
+		var outRowType = EmitRowType(outCols.Select((c, j) => ($"C{j}", c.Storage)).ToList());
+		var dc = ((LinqToDB.Internal.Linq.IExpressionQuery)pre.Query).DataContext;
+		var query = FromSqlReflective(outRowType, dc, mvSql, pars);
+		return MakeEmittedStage(query, outRowType, outCols.Select(c => (c.Name, c.Logical)).ToList(), now);
+	}
+
+	// Resolves the mv-expand target to (output name, existing-column index or -1, array-value storage expr) —
+	// the SQL analog of ResolveMvColumn: a bare name that IS a column explodes it in place; otherwise (and the
+	// Properties.<key> / Properties["key"] forms) it reads the property and appends a new column named after the leaf.
+	static (string OutName, int TargetIndex, Expr Value) ResolveMvArraySource(SqlStage stage, ScalarContext ctx, Expression expr)
+	{
+		switch (expr)
+		{
+			case NameReference n:
+				{
+					var idx = ResolveColumnIndexCI(stage.Columns, n.SimpleName);
+					return idx >= 0
+						? (stage.Columns[idx].Name, idx, ctx.ResolveColumn(n.SimpleName))
+						: (n.SimpleName, -1, ctx.ResolveProperties(n.SimpleName));
+				}
+			case PathExpression p when IsPropertiesPath(p, out var key):
+				return (key, -1, ctx.ResolveProperties(key));
+			case ElementExpression el when IsPropertiesIndex(el, out var idxKey):
+				return (idxKey, -1, ctx.ResolveProperties(idxKey));
+			default:
+				throw new UnsupportedKqlException("mv-expand supports a column, Properties.<key>, or Properties[\"key\"]");
+		}
+	}
+
+	// The SQL parameter TOKEN for a DataParameter — linq2db names them without the '@' marker in the metadata
+	// but WITH it in the SQL text, so the replaceable token is '@' + Name (unless already prefixed).
+	static string ParamToken(LinqToDB.Data.DataParameter p) =>
+		p.Name!.StartsWith('@') ? p.Name! : "@" + p.Name;
+
+	static readonly MethodInfo JsonArrayTextMethod =
+		typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.JsonArrayText))!;
+
+	// PUBLIC LinqExtensions.ToSqlQuery<T>(IQueryable<T>, SqlGenerationOptions) — invoked reflectively because
+	// the pre-explode element type is a runtime-emitted DynRow (no compile-time T).
+	static readonly MethodInfo ToSqlQueryOpen = typeof(LinqExtensions).GetMethods()
+		.Single(m => m.Name == nameof(LinqExtensions.ToSqlQuery) && m.IsGenericMethodDefinition
+			&& m.GetGenericArguments().Length == 1 && m.GetParameters().Length == 2
+			&& m.GetParameters()[0].ParameterType.IsGenericType
+			&& m.GetParameters()[0].ParameterType.GetGenericTypeDefinition() == typeof(IQueryable<>));
+
+	static LinqToDB.QuerySql ToSqlQueryReflective(IQueryable query) =>
+		(LinqToDB.QuerySql)ToSqlQueryOpen.MakeGenericMethod(query.ElementType).Invoke(null, [query, null])!;
+
+	// PUBLIC DataExtensions.FromSql<TEntity>(IDataContext, RawSqlString, params object?[]) — reflective over
+	// the runtime output row type; the DataParameter instances ride the params array so linq2db owns typing.
+	static readonly MethodInfo FromSqlOpen = typeof(DataExtensions).GetMethods()
+		.Single(m => m.Name == nameof(DataExtensions.FromSql) && m.IsGenericMethodDefinition
+			&& m.GetGenericArguments().Length == 1 && m.GetParameters().Length == 3
+			&& m.GetParameters()[1].ParameterType == typeof(RawSqlString));
+
+	static IQueryable FromSqlReflective(Type rowType, LinqToDB.IDataContext dc, string sql, IReadOnlyList<LinqToDB.Data.DataParameter> pars)
+	{
+		RawSqlString raw = sql;
+		var args = pars.Cast<object?>().ToArray();
+		return (IQueryable)FromSqlOpen.MakeGenericMethod(rowType).Invoke(null, [dc, raw, args])!;
+	}
 
 	// ---- join (SQL): reproduces ApplyJoin/StreamJoinRows semantics as a SQL join on the composable
 	// SqlStage. Migrates kind=inner (Queryable.Join) and kind=leftouter (GroupJoin+SelectMany+DefaultIfEmpty);
