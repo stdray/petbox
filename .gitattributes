@@ -35,3 +35,8 @@ Dockerfile  text eol=lf
 *.db        binary
 bun.lock    text eol=lf
 *.lockb     binary
+
+# Vendored native libraries (e.g. sqlean regexp under src/PetBox.Log.Core/native)
+*.dll       binary
+*.so        binary
+*.dylib     binary

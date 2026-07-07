@@ -18,5 +18,9 @@ public sealed class LogDb : DataConnection
 	public static DataOptions<LogDb> CreateOptions(string connectionString) =>
 		new(new DataOptions()
 			.UseSQLite(connectionString)
-			.UseInterceptor(RegisterKqlFunctionsInterceptor.Instance));
+			.UseInterceptor(RegisterKqlFunctionsInterceptor.Instance)
+			// Infra-only: loads the vendored sqlean `regexp` extension per connection so its regexp_* SQL
+			// functions are AVAILABLE. The KQL translator does not use them yet — the .NET UDFs above stay
+			// the live regex path; the mapping swap is a later task.
+			.UseInterceptor(LoadSqleanRegexpInterceptor.Instance));
 }

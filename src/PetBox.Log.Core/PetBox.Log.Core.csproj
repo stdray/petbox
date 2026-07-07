@@ -28,4 +28,23 @@
 		<Using Include="LinqToDB.Async" />
 	</ItemGroup>
 
+	<!--
+		Vendored sqlean `regexp` extension (nalgeon/sqlean 0.28.3), loaded per SQLite connection by
+		LoadSqleanRegexpInterceptor. We copy BOTH RID binaries into the output under `sqlean/<rid>/`
+		(win-x64/regexp.dll + linux-x64/regexp.so) regardless of build RID — that keeps the MSBuild
+		simple and RID-agnostic: a plain dev/test build on win-x64 gets win-x64 (used), a
+		`-r linux-x64` self-contained publish gets linux-x64 (used). The extra other-OS file is a
+		harmless few hundred KB that never loads. The interceptor's path resolver picks the right one at
+		runtime by OS (AppContext.BaseDirectory + `sqlean/<rid>/regexp.<ext>`). Prebuilt binaries are
+		glibc-only (no musl asset); prod runtime is Ubuntu-noble-chiseled (glibc), so this loads there.
+	-->
+	<ItemGroup>
+		<None Include="native\sqlean-regexp\win-x64\regexp.dll" Link="sqlean\win-x64\regexp.dll">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+		<None Include="native\sqlean-regexp\linux-x64\regexp.so" Link="sqlean\linux-x64\regexp.so">
+			<CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+		</None>
+	</ItemGroup>
+
 </Project>
