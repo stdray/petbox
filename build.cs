@@ -125,7 +125,11 @@ Task("Test")
 			DotNetTest(testProj.FullPath, new DotNetTestSettings
 			{
 				Configuration = configuration,
-				NoBuild = true
+				NoBuild = true,
+				// `research`-category tests are excluded from the default/CI run
+				// (they may hit the network, e.g. DuckDB `INSTALL fts`); run them
+				// explicitly with `dotnet test --filter Category=Research`.
+				Filter = "Category!=Research"
 			});
 		}
 	});

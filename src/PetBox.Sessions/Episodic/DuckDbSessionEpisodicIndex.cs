@@ -1,8 +1,9 @@
 using System.Security.Cryptography;
 using System.Text;
-using DuckDB.NET.Data;
 using LinqToDB;
 using LinqToDB.Data;
+using LinqToDB.DataProvider.DuckDB;
+using LinqToDB.Mapping;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
 using PetBox.Core.Search;
@@ -169,34 +170,33 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		return entry;
 	}
 
-	static DuckDBConnection BuildFts(IReadOnlyList<SessionMessage> messages)
+	[Table("messages")]
+	sealed class MessageRow
 	{
-		var db = new DuckDBConnection("DataSource=:memory:");
+		[Column] public long Version { get; set; }
+		[Column] public string Content { get; set; } = "";
+	}
+
+	static DataConnection BuildFts(IReadOnlyList<SessionMessage> messages)
+	{
+		// DuckDBTools.CreateDataConnection opens the underlying connection lazily and keeps
+		// it open until Dispose — the ":memory:" DB's content survives across the separate
+		// Execute/Insert/FromSql calls below exactly like the raw DuckDBConnection field did
+		// (verified by DuckDbLinq2DbFtsProbeTests, the migration spike).
+		var db = DuckDBTools.CreateDataConnection("DataSource=:memory:");
 		try
 		{
-			db.Open();
-			Execute(db, "INSTALL fts; LOAD fts;");
-			Execute(db, "CREATE TABLE messages (version BIGINT PRIMARY KEY, content VARCHAR)");
-			using (var tx = db.BeginTransaction())
+			db.Execute("INSTALL fts; LOAD fts;");
+			db.Execute("CREATE TABLE messages (version BIGINT PRIMARY KEY, content VARCHAR)");
+			using (db.BeginTransaction())
 			{
-				using var insert = db.CreateCommand();
-				insert.Transaction = tx;
-				insert.CommandText = "INSERT INTO messages VALUES (?, ?)";
-				var pVersion = new DuckDBParameter();
-				var pContent = new DuckDBParameter();
-				insert.Parameters.Add(pVersion);
-				insert.Parameters.Add(pContent);
 				foreach (var m in messages)
-				{
-					pVersion.Value = m.Version;
-					pContent.Value = m.Content;
-					insert.ExecuteNonQuery();
-				}
-				tx.Commit();
+					db.Insert(new MessageRow { Version = m.Version, Content = m.Content });
+				db.CommitTransaction();
 			}
 			// The whole point of DuckDB here: snowball stemming makes Russian wordforms
 			// match (запустили ~ запустила); SQLite FTS5 has no russian stemmer.
-			Execute(db, "PRAGMA create_fts_index('messages', 'version', 'content', stemmer='russian')");
+			db.Execute("PRAGMA create_fts_index('messages', 'version', 'content', stemmer='russian')");
 			return db;
 		}
 		catch
@@ -345,19 +345,12 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		return snippet;
 	}
 
-	static void Execute(DuckDBConnection db, string sql)
-	{
-		using var cmd = db.CreateCommand();
-		cmd.CommandText = sql;
-		cmd.ExecuteNonQuery();
-	}
-
 	sealed class Hydrated(string sessionId, long sessionVersion, IReadOnlyList<SessionMessage> messages) : IDisposable
 	{
 		public string SessionId { get; } = sessionId;
 		public long SessionVersion { get; } = sessionVersion;
 		public IReadOnlyList<SessionMessage> Messages { get; } = messages;
-		public DuckDBConnection? Fts { get; set; }
+		public DataConnection? Fts { get; set; }
 		// Materialized lazily by the first semantic query (per embedder model); backed by
 		// the persistent message_vec cache, so a re-hydration rarely re-embeds.
 		public float[][]? Vectors { get; set; }
@@ -370,7 +363,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 	// The lexical leg as a standard ISearchIndex so SearchService fuses + reports
 	// provenance exactly like every other index. Read-only: writes never come through
 	// the facade for an Eventual index.
-	sealed class FtsLeg(DuckDBConnection db) : ISearchIndex
+	sealed class FtsLeg(DataConnection db) : ISearchIndex
 	{
 		public SearchConsistency ConsistencyClass => SearchConsistency.Eventual;
 		public SearchCapability Capability => SearchCapability.Lexical;
@@ -380,20 +373,23 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		public Task DeleteAsync(DataConnection? tx, string scope, string type, string id, CancellationToken ct = default) =>
 			throw new NotSupportedException("episodic index is hydrated, not written");
 
+		sealed class BmRow
+		{
+			public long Version { get; set; }
+			public double Score { get; set; }
+		}
+
 		public Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default)
 		{
-			using var cmd = db.CreateCommand();
-			cmd.CommandText = """
+			// match_bm25/create_fts_index are DuckDB-specific SQL the linq2db expression tree
+			// cannot model — hand-written SQL text run THROUGH linq2db (FromSql, interpolated
+			// values become DbParameters), not raw ADO.
+			var rows = db.FromSql<BmRow>($"""
 				SELECT version, score FROM (
-					SELECT version, fts_main_messages.match_bm25(version, ?) AS score FROM messages
-				) WHERE score IS NOT NULL ORDER BY score DESC LIMIT ?
-				""";
-			cmd.Parameters.Add(new DuckDBParameter { Value = query });
-			cmd.Parameters.Add(new DuckDBParameter { Value = k });
-			var hits = new List<Hit>();
-			using var reader = cmd.ExecuteReader();
-			while (reader.Read())
-				hits.Add(new Hit("message", reader.GetInt64(0).ToString(), reader.GetDouble(1), "lexical"));
+					SELECT version, fts_main_messages.match_bm25(version, {query}) AS score FROM messages
+				) WHERE score IS NOT NULL ORDER BY score DESC LIMIT {k}
+				""").ToList();
+			var hits = rows.Select(r => new Hit("message", r.Version.ToString(), r.Score, "lexical")).ToList();
 			return Task.FromResult<IReadOnlyList<Hit>>(hits);
 		}
 	}
