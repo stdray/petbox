@@ -8,6 +8,10 @@ namespace PetBox.Tests.Kql;
 // root routing, span column addressing (incl. Duration / Kind-Status name forms / Start-End as
 // datetime), attribute access, a where/project/summarize/top pipeline, and structural-error parity with
 // the events root. SQLite pushdown parity lives in SpanSqliteKqlIntegrationTests.
+//
+// Converted to run production over the SHARED real-SQLite harness (KqlTestHost) instead of the
+// EnumerableQuery provider, so the assertions pin the REAL SQL-translated behavior. See RE-PIN notes
+// inline where the SQLite result legitimately differs from the old in-memory artifact.
 public sealed class SpanKqlTests
 {
 	static KustoCode Parse(string kql) => KustoCode.Parse(kql);
@@ -38,22 +42,16 @@ public sealed class SpanKqlTests
 		Span("s3", "t2", "GET /b", SpanKind.Server, Base.AddSeconds(2), TimeSpan.FromMilliseconds(50), SpanStatusCode.Ok, attrs: """{"status_code":200,"peer":"us"}"""),
 	];
 
-	static IQueryable<SpanRecord> Src() => Spans.AsQueryable();
+	// The one production run seam: seed Spans into a fresh in-memory LogDb and ExecuteSpans `ast` over the
+	// real linq2db IQueryable, fully materialized. Sqlite is the only Active backend today.
+	static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> Run(string kql) =>
+		KqlTestHost.ExecuteSpansAsync(Spans, Parse(kql), KqlBackend.Sqlite);
 
-	static KqlResult Exec(string kql) => KqlTransformer.ExecuteSpans(Src(), Parse(kql));
-
-	static async Task<List<object?[]>> Materialize(KqlResult result)
+	static int Col(IReadOnlyList<KqlColumn> cols, string name)
 	{
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
-		return rows;
-	}
-
-	static int Col(KqlResult r, string name)
-	{
-		for (var i = 0; i < r.Columns.Count; i++)
-			if (r.Columns[i].Name == name) return i;
-		throw new Xunit.Sdk.XunitException($"column '{name}' not found in [{string.Join(", ", r.Columns.Select(c => c.Name))}]");
+		for (var i = 0; i < cols.Count; i++)
+			if (cols[i].Name == name) return i;
+		throw new Xunit.Sdk.XunitException($"column '{name}' not found in [{string.Join(", ", cols.Select(c => c.Name))}]");
 	}
 
 	// --- root routing + column shape ---
@@ -69,11 +67,10 @@ public sealed class SpanKqlTests
 	[Fact]
 	public async Task BareSpans_YieldsFullSpanColumnShape()
 	{
-		var result = Exec("spans");
-		result.Columns.Select(c => c.Name).Should().ContainInOrder(
+		var (cols, rows) = await Run("spans");
+		cols.Select(c => c.Name).Should().ContainInOrder(
 			"SpanId", "TraceId", "ParentSpanId", "Name", "Kind", "KindName",
 			"Start", "End", "Duration", "Status", "StatusName", "StatusDescription", "PropertiesJson");
-		var rows = await Materialize(result);
 		rows.Should().HaveCount(3);
 	}
 
@@ -89,66 +86,64 @@ public sealed class SpanKqlTests
 	[Fact]
 	public async Task Project_AddressesAllTypedColumns()
 	{
-		var result = Exec("spans | where SpanId == 's2' | project TraceId, Name, Kind, KindName, Start, End, Duration, Status, StatusName");
-		var rows = await Materialize(result);
+		var (cols, rows) = await Run("spans | where SpanId == 's2' | project TraceId, Name, Kind, KindName, Start, End, Duration, Status, StatusName");
 		rows.Should().ContainSingle();
 		var r = rows[0];
-		r[Col(result, "TraceId")].Should().Be("t1");
-		r[Col(result, "Name")].Should().Be("db.query");
-		r[Col(result, "Kind")].Should().Be((int)SpanKind.Client);
-		r[Col(result, "KindName")].Should().Be("Client");
-		r[Col(result, "Start")].Should().Be(Base.AddSeconds(1));
-		r[Col(result, "End")].Should().Be(Base.AddSeconds(1).AddMilliseconds(400));
-		r[Col(result, "Duration")].Should().Be(TimeSpan.FromMilliseconds(400));
-		r[Col(result, "Status")].Should().Be((int)SpanStatusCode.Error);
-		r[Col(result, "StatusName")].Should().Be("Error");
+		r[Col(cols, "TraceId")].Should().Be("t1");
+		r[Col(cols, "Name")].Should().Be("db.query");
+		r[Col(cols, "Kind")].Should().Be((int)SpanKind.Client);
+		r[Col(cols, "KindName")].Should().Be("Client");
+		r[Col(cols, "Start")].Should().Be(Base.AddSeconds(1));
+		r[Col(cols, "End")].Should().Be(Base.AddSeconds(1).AddMilliseconds(400));
+		r[Col(cols, "Duration")].Should().Be(TimeSpan.FromMilliseconds(400));
+		r[Col(cols, "Status")].Should().Be((int)SpanStatusCode.Error);
+		r[Col(cols, "StatusName")].Should().Be("Error");
 	}
 
 	[Fact]
-	public void Project_ColumnTypes_MatchSchema()
+	public async Task Project_ColumnTypes_MatchSchema()
 	{
-		var result = Exec("spans | project Start, Duration, Kind, KindName");
-		result.Columns[Col(result, "Start")].ClrType.Should().Be<DateTime>();
-		result.Columns[Col(result, "Duration")].ClrType.Should().Be<TimeSpan>();
-		result.Columns[Col(result, "Kind")].ClrType.Should().Be<int>();
-		result.Columns[Col(result, "KindName")].ClrType.Should().Be<string>();
+		var (cols, _) = await Run("spans | project Start, Duration, Kind, KindName");
+		cols[Col(cols, "Start")].ClrType.Should().Be<DateTime>();
+		cols[Col(cols, "Duration")].ClrType.Should().Be<TimeSpan>();
+		cols[Col(cols, "Kind")].ClrType.Should().Be<int>();
+		cols[Col(cols, "KindName")].ClrType.Should().Be<string>();
 	}
 
-	// --- where over span columns (pre-split; runs over the in-memory IQueryable here, real SQL in the
-	// integration suite) ---
+	// --- where over span columns (now runs the real SQL translation over SQLite) ---
 
 	[Fact]
 	public async Task Where_KindEquals_Filters()
 	{
-		var rows = await Materialize(Exec("spans | where Kind == 1")); // Server
+		var (_, rows) = await Run("spans | where Kind == 1"); // Server
 		rows.Select(r => r[0]).Should().BeEquivalentTo(["s1", "s3"]);
 	}
 
 	[Fact]
 	public async Task Where_NameEquals_Filters()
 	{
-		var rows = await Materialize(Exec("spans | where Name == 'db.query'"));
+		var (_, rows) = await Run("spans | where Name == 'db.query'");
 		rows.Select(r => r[0]).Should().BeEquivalentTo(["s2"]);
 	}
 
 	[Fact]
 	public async Task Where_StartAsDatetime_Filters()
 	{
-		var rows = await Materialize(Exec("spans | where Start >= datetime(2026-04-19T10:00:01Z)"));
+		var (_, rows) = await Run("spans | where Start >= datetime(2026-04-19T10:00:01Z)");
 		rows.Select(r => r[0]).Should().BeEquivalentTo(["s2", "s3"]);
 	}
 
 	[Fact]
 	public async Task Where_DurationAsTimespan_Filters()
 	{
-		var rows = await Materialize(Exec("spans | where Duration > 200ms"));
+		var (_, rows) = await Run("spans | where Duration > 200ms");
 		rows.Select(r => r[0]).Should().BeEquivalentTo(["s2"]);
 	}
 
 	[Fact]
 	public async Task Where_StatusName_Filters()
 	{
-		var rows = await Materialize(Exec("spans | where StatusName == 'Error'"));
+		var (_, rows) = await Run("spans | where StatusName == 'Error'");
 		rows.Select(r => r[0]).Should().BeEquivalentTo(["s2"]);
 	}
 
@@ -157,24 +152,23 @@ public sealed class SpanKqlTests
 	[Fact]
 	public async Task Attributes_PropertiesPathAndBareFallback()
 	{
-		(await Materialize(Exec("spans | where Properties.peer == 'us'"))).Select(r => r[0])
+		(await Run("spans | where Properties.peer == 'us'")).Rows.Select(r => r[0])
 			.Should().BeEquivalentTo(["s3"]);
-		(await Materialize(Exec("spans | where peer == 'eu'"))).Select(r => r[0])
+		(await Run("spans | where peer == 'eu'")).Rows.Select(r => r[0])
 			.Should().BeEquivalentTo(["s1", "s2"]);
 	}
 
 	[Fact]
 	public async Task Attributes_TypedConversion_ComparesNumerically()
 	{
-		var rows = await Materialize(Exec("spans | where toint(Properties.status_code) >= 500"));
+		var (_, rows) = await Run("spans | where toint(Properties.status_code) >= 500");
 		rows.Select(r => r[0]).Should().BeEquivalentTo(["s2"]);
 	}
 
 	[Fact]
 	public async Task Project_AttributeValue_ViaProperties()
 	{
-		var result = Exec("spans | where SpanId == 's1' | project Peer = Properties.peer");
-		var rows = await Materialize(result);
+		var (_, rows) = await Run("spans | where SpanId == 's1' | project Peer = Properties.peer");
 		rows[0][0].Should().Be("eu");
 	}
 
@@ -183,9 +177,8 @@ public sealed class SpanKqlTests
 	[Fact]
 	public async Task Summarize_CountByKindName()
 	{
-		var result = Exec("spans | summarize Cnt = count() by KindName");
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("KindName", "Cnt");
-		var rows = await Materialize(result);
+		var (cols, rows) = await Run("spans | summarize Cnt = count() by KindName");
+		cols.Select(c => c.Name).Should().ContainInOrder("KindName", "Cnt");
 		var by = rows.ToDictionary(r => (string)r[0]!, r => (long)r[1]!);
 		by["Server"].Should().Be(2);
 		by["Client"].Should().Be(1);
@@ -195,28 +188,25 @@ public sealed class SpanKqlTests
 	public async Task WhereProjectSummarizeTop_Pipeline()
 	{
 		// error+ok spans grouped by trace, keep the busiest trace.
-		var result = Exec(
+		var (cols, rows) = await Run(
 			"spans | where Kind == 1 or Kind == 2 | project TraceId, Duration " +
 			"| summarize Total = count() by TraceId | top 1 by Total desc");
-		var rows = await Materialize(result);
 		rows.Should().ContainSingle();
-		rows[0][Col(result, "TraceId")].Should().Be("t1"); // t1 has s1+s2, t2 has s3
-		rows[0][Col(result, "Total")].Should().Be(2L);
+		rows[0][Col(cols, "TraceId")].Should().Be("t1"); // t1 has s1+s2, t2 has s3
+		rows[0][Col(cols, "Total")].Should().Be(2L);
 	}
 
 	[Fact]
 	public async Task Top_ByDuration_SortsDescending()
 	{
-		var result = Exec("spans | project SpanId, Duration | top 2 by Duration desc");
-		var rows = await Materialize(result);
-		rows.Select(r => r[Col(result, "SpanId")]).Should().ContainInOrder("s2", "s1");
+		var (cols, rows) = await Run("spans | project SpanId, Duration | top 2 by Duration desc");
+		rows.Select(r => r[Col(cols, "SpanId")]).Should().ContainInOrder("s2", "s1");
 	}
 
 	[Fact]
 	public async Task Extend_ComputedColumn_OverSpans()
 	{
-		var result = Exec("spans | extend Slow = Duration > 200ms | where SpanId == 's2' | project Slow");
-		var rows = await Materialize(result);
+		var (_, rows) = await Run("spans | extend Slow = Duration > 200ms | where SpanId == 's2' | project Slow");
 		rows[0][0].Should().Be(true);
 	}
 
@@ -227,39 +217,40 @@ public sealed class SpanKqlTests
 	public async Task Join_SameSpansRoot_OnTraceId()
 	{
 		// pair each server span with client spans in the same trace.
-		var result = Exec(
+		var (cols, rows) = await Run(
 			"spans | where Kind == 1 | join kind=inner (spans | where Kind == 2) on TraceId | project SpanId, SpanId1");
-		var rows = await Materialize(result);
 		rows.Should().ContainSingle(); // only t1 has both a server (s1) and client (s2) span
-		rows[0][Col(result, "SpanId")].Should().Be("s1");
-		rows[0][Col(result, "SpanId1")].Should().Be("s2");
+		rows[0][Col(cols, "SpanId")].Should().Be("s1");
+		rows[0][Col(cols, "SpanId1")].Should().Be("s2");
 	}
 
 	// --- structural-error parity: an unsupported construct over spans errors the same way as over events ---
 
 	[Fact]
-	public void UnsupportedOperator_OverSpans_ThrowsSameAsEvents()
+	public async Task UnsupportedOperator_OverSpans_ThrowsSameAsEvents()
 	{
-		var spanAct = () => KqlTransformer.ExecuteSpans(Src(), Parse("spans | sample 3"));
-		var eventAct = () => KqlTransformer.Execute(Array.Empty<LogEntryRecord>().AsQueryable(), Parse("events | sample 3"));
+		var spanAct = async () => await Run("spans | sample 3");
+		var eventAct = async () => await KqlTestHost.ExecuteAsync(
+			Array.Empty<LogEntryRecord>(), Parse("events | sample 3"), KqlBackend.Sqlite);
 
-		var spanEx = spanAct.Should().Throw<UnsupportedKqlException>().Which;
-		var eventEx = eventAct.Should().Throw<UnsupportedKqlException>().Which;
+		var spanEx = (await spanAct.Should().ThrowAsync<UnsupportedKqlException>()).Which;
+		var eventEx = (await eventAct.Should().ThrowAsync<UnsupportedKqlException>()).Which;
 		spanEx.Message.Should().Be(eventEx.Message); // same structural error text
 	}
 
 	[Fact]
-	public void UnsupportedFunction_OverSpans_ThrowsPrecise()
+	public async Task UnsupportedFunction_OverSpans_ThrowsPrecise()
 	{
-		var act = () => KqlTransformer.ExecuteSpans(Src(), Parse("spans | project X = strlen(Name)"));
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*strlen*not supported*");
+		var act = async () => await Run("spans | project X = strlen(Name)");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*strlen*not supported*");
 	}
 
 	[Fact]
-	public void UnknownTable_ListsBothRoots()
+	public async Task UnknownTable_ListsBothRoots()
 	{
-		var act = () => KqlTransformer.Execute(Array.Empty<LogEntryRecord>().AsQueryable(), Parse("bogus | take 1"));
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*events*spans*");
+		var act = async () => await KqlTestHost.ExecuteAsync(
+			Array.Empty<LogEntryRecord>(), Parse("bogus | take 1"), KqlBackend.Sqlite);
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*events*spans*");
 	}
 
 	// Apply is the events-ONLY engine entry (the share surfaces); its message must not claim spans
@@ -267,7 +258,7 @@ public sealed class SpanKqlTests
 	[Fact]
 	public void Apply_NonEventsRoot_ClaimsEventsOnly()
 	{
-		var act = () => KqlTransformer.Apply(Array.Empty<LogEntryRecord>().AsQueryable(), Parse("spans | take 1")).ToList();
+		var act = () => KqlTestHost.Apply(Array.Empty<LogEntryRecord>(), Parse("spans | take 1"), KqlBackend.Sqlite);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*only 'events'*");
 	}
 
@@ -277,8 +268,8 @@ public sealed class SpanKqlTests
 	[Fact]
 	public async Task DurationBetween_PreAndPostSplit_Agree()
 	{
-		var pre = await Materialize(Exec("spans | where Duration between (50ms .. 100ms) | project SpanId"));
-		var post = await Materialize(Exec("spans | extend X = 1 | where Duration between (50ms .. 100ms) | project SpanId"));
+		var (_, pre) = await Run("spans | where Duration between (50ms .. 100ms) | project SpanId");
+		var (_, post) = await Run("spans | extend X = 1 | where Duration between (50ms .. 100ms) | project SpanId");
 		pre.Select(r => r[0]).Should().BeEquivalentTo(["s1", "s3"]);
 		post.Select(r => r[0]).Should().BeEquivalentTo(pre.Select(r => r[0]));
 	}
@@ -286,8 +277,8 @@ public sealed class SpanKqlTests
 	[Fact]
 	public async Task DurationIn_PreAndPostSplit_Agree()
 	{
-		var pre = await Materialize(Exec("spans | where Duration in (400ms) | project SpanId"));
-		var post = await Materialize(Exec("spans | extend X = 1 | where Duration in (400ms) | project SpanId"));
+		var (_, pre) = await Run("spans | where Duration in (400ms) | project SpanId");
+		var (_, post) = await Run("spans | extend X = 1 | where Duration in (400ms) | project SpanId");
 		pre.Select(r => r[0]).Should().BeEquivalentTo(["s2"]);
 		post.Select(r => r[0]).Should().BeEquivalentTo(pre.Select(r => r[0]));
 	}
@@ -297,9 +288,9 @@ public sealed class SpanKqlTests
 	[Fact]
 	public async Task LowercaseStartAndDuration_BindToSpecialColumns()
 	{
-		(await Materialize(Exec("spans | where start >= datetime(2026-04-19T10:00:01Z)"))).Select(r => r[0])
+		(await Run("spans | where start >= datetime(2026-04-19T10:00:01Z)")).Rows.Select(r => r[0])
 			.Should().BeEquivalentTo(["s2", "s3"]);
-		(await Materialize(Exec("spans | where duration > 200ms"))).Select(r => r[0])
+		(await Run("spans | where duration > 200ms")).Rows.Select(r => r[0])
 			.Should().BeEquivalentTo(["s2"]);
 	}
 }
