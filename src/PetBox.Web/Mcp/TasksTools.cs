@@ -398,13 +398,16 @@ public static class TasksTools
 		max(3×limit, 50). Default order: relevance; the response carries `retrievers`
 		{lexical, semantic, degraded}.
 
-		FILTERS (predicates in BOTH modes): `under` = a part_of subtree root (slug or
-		NodeId; a slug resolves on `board`, or project-wide when board is omitted);
-		`status` = keep only these slugs (case-insensitive; naming a TERMINAL status
-		returns its nodes even without includeClosed — an explicit ask; an unknown slug is
-		rejected); `keys` = address specific nodes (slug|NodeId mixed, resolved like
-		tasks_node_get — a miss or an ambiguous cross-board slug is a clear error, and an
-		addressed terminal node is returned without includeClosed); `commit` = keep only nodes carrying that commit SHA (exact, or a >=7-hex prefix resolving a stored full sha).
+		FILTERS (predicates in BOTH modes, all SOFT — an unresolved filter value scopes to an
+		empty result, never an error): `under` = a part_of subtree root (slug or NodeId; a slug
+		resolves on `board`, or project-wide when board is omitted; a root that matches nothing →
+		an empty result, an ambiguous slug → the union of its subtrees); `status` = keep only
+		these slugs (case-insensitive; naming a TERMINAL status returns its nodes even without
+		includeClosed — an explicit ask; an unknown slug is silently dropped, and an all-unknown
+		set → an empty result); `keys` = a SOFT node filter (slug|NodeId mixed) — a ref that matches nothing
+		is silently dropped (NOT an error), an ambiguous cross-board slug contributes ALL its
+		matches, terminal nodes are included, and an all-missing keys set yields an empty result;
+		`commit` = keep only nodes carrying that commit SHA (exact, or a >=7-hex prefix resolving a stored full sha).
 
 		SORT: `sort` = {by: priority|created|updated|title|relevance, desc?}. Without `q`
 		the default is priority (asking for relevance is an error); with `q` the default is
@@ -447,9 +450,9 @@ public static class TasksTools
 		string projectKey,
 		[Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
 		[Description("Scope to one board (listing then carries kind/specBoard/currentVersion). Omit = the whole project; each row names its board.")] string? board = null,
-		[Description("Restrict to the part_of subtree under this node (slug or 32-hex NodeId).")] string? under = null,
-		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false.")] string[]? status = null,
-		[Description("Address specific nodes: slugs and/or 32-hex NodeIds, mixed (resolved like tasks_node_get; terminal nodes included).")] string[]? keys = null,
+		[Description("Restrict to the part_of subtree under this node (slug or 32-hex NodeId). A root that matches nothing scopes to an empty result (not an error); an ambiguous slug uses the union of its subtrees.")] string? under = null,
+		[Description("Keep only these status slugs (case-insensitive). A terminal status listed here is returned even when includeClosed=false. An unknown slug is silently dropped; an all-unknown set yields an empty result (not an error).")] string[]? status = null,
+		[Description("Soft node filter: slugs and/or 32-hex NodeIds, mixed. A ref that matches nothing is silently dropped (never an error), an ambiguous cross-board slug contributes all its matches, terminal nodes included; an all-missing set yields an empty result.")] string[]? keys = null,
 		[Description("Include terminal/closed nodes in a listing (search covers the open set only).")] bool includeClosed = false,
 		[Description("Sort order: {by: priority|created|updated|title|relevance, desc?}. Default: priority (listing) / relevance (with q).")] SortInput? sort = null,
 		[Description("Tag PROJECTION instead of rows: an ordered, comma-separated list of tag namespaces (e.g. \"area,concern\"). Needs board; not with q.")] string? groupBy = null,

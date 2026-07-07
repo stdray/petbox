@@ -134,7 +134,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 			.Should().BeEquivalentTo("open-one", "done-one");
 	}
 
-	// ---- keys: explicit addressing, slug|NodeId mixed ----
+	// ---- keys: a SOFT node filter (miss-tolerant), slug|NodeId mixed ----
 
 	[Fact]
 	public async Task Keys_MixedSlugAndNodeId_TerminalNodeReturnedWithoutIncludeClosed()
@@ -152,13 +152,13 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		res.Nodes.Select(n => n.Key).Should().BeEquivalentTo("alpha", "beta");
 		res.Nodes.Single(n => n.Key == "beta").Status.Should().Be("Done");
 
-		// A miss is a clear error, never a silently empty answer.
-		var miss = () => Search(board: "b", keys: ["ghost"]);
-		(await miss.Should().ThrowAsync<ArgumentException>()).WithMessage("*ghost*");
+		// A miss is silently dropped (keys is a soft filter), never an error → empty result.
+		var miss = await Search(board: "b", keys: ["ghost"]);
+		miss.Nodes.Should().BeEmpty();
 	}
 
 	[Fact]
-	public async Task Keys_SlugAcrossBoards_ResolvesProjectWide_AmbiguityRejected()
+	public async Task Keys_SlugAcrossBoards_ResolvesProjectWide_AmbiguitySurfacesAllMatches()
 	{
 		await Seed("a", """[{"key":"unique-slug","status":"Todo","title":"U","body":"x"}]""");
 		await Seed("a", """[{"key":"twin","status":"Todo","title":"T","body":"x"}]""");
@@ -168,9 +168,10 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		var res = await Search(keys: ["unique-slug"]);
 		res.Nodes.Single().Board.Should().Be("a");
 
-		// ...an ambiguous one names the boards and demands a NodeId.
-		var dup = () => Search(keys: ["twin"]);
-		(await dup.Should().ThrowAsync<ArgumentException>()).WithMessage("*ambiguous*twin*");
+		// ...an ambiguous one (same slug on 2+ boards) surfaces ALL its matches — keys is a soft
+		// filter, so a multi-board slug is not an error; each hit carries its own board.
+		var dup = await Search(keys: ["twin"]);
+		dup.Nodes.Select(n => n.Board).Should().BeEquivalentTo("a", "b");
 	}
 
 	// ---- status filter ----
@@ -184,8 +185,9 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		var res = await Search(board: "b", status: ["Done"]);
 		res.Nodes.Select(n => n.Key).Should().Equal("d");
 
-		var bogus = () => Search(board: "b", status: ["bogus"]);
-		(await bogus.Should().ThrowAsync<ArgumentException>()).WithMessage("*bogus*not a status*");
+		// An unknown status is silently dropped (soft filter); an all-unknown set → an empty result.
+		var bogus = await Search(board: "b", status: ["bogus"]);
+		bogus.Nodes.Should().BeEmpty();
 	}
 
 	// ---- query mode (q) ----

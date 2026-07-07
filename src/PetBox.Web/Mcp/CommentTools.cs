@@ -41,7 +41,7 @@ public static class CommentTools
 	}
 
 	[McpServerTool(Name = "comments_list", Title = "List a node's comments", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(CommentsListResult))]
-	[Description("List the comment thread under a node: a FLAT list of active comments, each with parentId (build the tree from it), author, body, tags, version, timestamps. Chronological. nodeId takes a slug or NodeId (32-hex = the stable PlanNode.NodeId; a slug is the node's key on `board`). Bodies follow the uniform bodyLen knob (omitted = full — the discussion; 0 = no body; N>0 = the first N chars, \"…\" when cut; -1 = full). The response has a HARD OUTPUT BUDGET (~30k serialized chars): an over-budget thread is prefix-cut (the chronological head is kept) and flagged with `truncated:true` + `omitted` (comments dropped) plus a `hint`; no markers = the complete thread. Requires tasks:read.")]
+	[Description("List the comment thread under a node: a FLAT list of active comments, each with parentId (build the tree from it), author, body, tags, version, timestamps. Chronological. nodeId takes a slug or NodeId (32-hex = the stable PlanNode.NodeId; a slug is the node's key on `board`). A nodeId that matches no node on `board` → an empty thread (not an error). Bodies follow the uniform bodyLen knob (omitted = full — the discussion; 0 = no body; N>0 = the first N chars, \"…\" when cut; -1 = full). The response has a HARD OUTPUT BUDGET (~30k serialized chars): an over-budget thread is prefix-cut (the chronological head is kept) and flagged with `truncated:true` + `omitted` (comments dropped) plus a `hint`; no markers = the complete thread. Requires tasks:read.")]
 	public static async Task<CommentsListResult> ListAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey, string board,
@@ -52,7 +52,8 @@ public static class CommentTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		var id = await tasks.ResolveNodeRefAsync(projectKey, nodeId, board, ct);
+		var id = await tasks.ResolveNodeRefOrNullAsync(projectKey, nodeId, board, ct);
+		if (id is null) return new CommentsListResult([]); // no such node on this board → an empty thread (soft read), never an error
 		var raw = await comments.ListForNodeAsync(projectKey, board, id, ct);
 		// Uniform bodyLen contract, default FULL; shape each wire body BEFORE the budget so it
 		// measures the real payload (spec bodylen-uniform-contract).

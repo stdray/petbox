@@ -117,6 +117,11 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// across EVERY board in the project — unambiguous resolves; the same slug on 2+ boards
 	// is an error naming the boards (pass the NodeId); a miss is a clear error, never null.
 	Task<string> ResolveNodeRefAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default);
+
+	// Miss-tolerant sibling for SOFT single-node reads (relations_list/comments_list): null on a
+	// no-match (caller returns an empty result), ambiguous cross-board slug still throws. NodeId
+	// form passes through unchecked.
+	Task<string?> ResolveNodeRefOrNullAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default);
 	// Batch-resolve `[[slug]]` node mentions for the read surfaces (node-ref-autolink). Each
 	// input slug resolves over the project's ACTIVE nodes to its current location, matching BOTH
 	// current keys AND former keys (rename history via PrevKey lineage) so a mention survives a
