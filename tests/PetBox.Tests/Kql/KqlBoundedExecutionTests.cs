@@ -11,8 +11,11 @@ namespace PetBox.Tests.Kql;
 
 // Bounded execution (spec log-query-response-cap + log-query-memory-bound): the log_query
 // service caps every response arm — a query with no explicit take/top gets KqlLimits.DefaultTake,
-// one with an explicit limit is bounded by MaxTake — and flags the cut; the in-memory post-split
-// operators refuse to buffer more rows than the scan cap (the JoinBuildSideCap sibling).
+// one with an explicit limit is bounded by MaxTake — and flags the cut. Since the whole pipeline now
+// composes to a single SQL query (kql-single-path-impl), the "don't OOM" intent of log-query-memory-bound
+// is satisfied by the DB + this OUTPUT cap — there is no in-memory buffering, so the former in-memory
+// scan caps (InMemoryBufferCap / JoinBuildSideCap teaching-errors) are gone; the post-shape tests below
+// assert the query COMPOSES and is bounded by KqlLimits instead.
 public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 {
 	readonly string _tempDir;
@@ -159,52 +162,35 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 		KqlTransformer.HasExplicitRowLimit(KustoCode.Parse(kql)).Should().Be(expected);
 	}
 
-	// ---- scan caps: the in-memory buffers refuse to grow past the cap (teaching error, not OOM) ----
+	// ---- post-shape pipelines compose to SQL and are bounded by the DB (no in-memory scan buffering) ----
 
 	static readonly IReadOnlyList<LogEntryRecord> ManyRows =
 		Enumerable.Range(1, 20).Select(i => Rec(i)).ToList();
 
-	static Func<Task> Enumerating(string kql) =>
-		() => KqlTestHost.ExecuteAsync(ManyRows, KustoCode.Parse(kql), KqlBackend.Sqlite);
-
-	// NOTE (kql-single-path-impl): ops migrated to SQL no longer buffer in memory, so the InMemoryBufferCap
-	// is MOOT for them (result unchanged; the final row count is still bounded by KqlLimits at the response
-	// boundary). Progressively removed as ops migrated: `distinct` (SQL DISTINCT), `extend | order by` (SQL
-	// ORDER BY), `summarize count() by Message` and no-`by` `dcount` (SQL GROUP BY / bare aggregate), and now
-	// string min/max (SQL MIN/MAX). The in-memory GuardBufferCap MECHANISM still guards the FALLBACK path (an
-	// aggregate not SQL-translatable) — `min()`/`max()` of a NON-orderable-in-SQL type (here a bool predicate)
-	// still returns false → in-memory summarize, so the distinct-groups cap is still exercised here.
-	// RE-PIN: was `min(Message)` (string min/max used to force the fallback); string min/max now composes in
-	// SQL, so the trigger moved to `min(Level >= 4)` (bool), which is what still falls back.
-	[Theory]
-	[InlineData("events | summarize m = min(Level >= 4) by Message", "summarize (distinct groups)")]
-	public async Task InMemoryBuffer_ExceedingScanCap_ThrowsTeachingError(string kql, string opName)
+	// RE-PIN (kql-single-path-impl: in-memory tail deleted): this used to force the in-memory summarize
+	// group table and assert the InMemoryBufferCap teaching-error. Every op now composes to SQL (a bool
+	// min/max orders natively on the 0/1 storage), so the group-by runs in the DB — no in-memory buffer, no
+	// cap. Re-pinned to assert the query COMPOSES and returns the expected groups (bounded by the DB; the
+	// response-row cap is the KqlLimits tests above). The "don't OOM" intent is satisfied by SQL execution.
+	[Fact]
+	public async Task PostShapeSummarize_ComposesInSql_NoInMemoryBuffering()
 	{
-		KqlTransformer.InMemoryBufferCapOverride = 10;
-		try
-		{
-			var act = Enumerating(kql);
-			(await act.Should().ThrowAsync<UnsupportedKqlException>())
-				.WithMessage($"*{opName} buffered more than 10 rows*narrow the query*");
-		}
-		finally
-		{
-			KqlTransformer.InMemoryBufferCapOverride = null;
-		}
+		// 20 distinct messages (m1..m20) → 20 groups; min(Level >= 4) is a bool aggregate composed as SQL MIN.
+		var (cols, rows) = await KqlTestHost.ExecuteAsync(ManyRows,
+			KustoCode.Parse("events | summarize m = min(Level >= 4) by Message"), KqlBackend.Sqlite);
+		cols.Select(c => c.Name).Should().ContainInOrder("Message", "m");
+		rows.Should().HaveCount(20);
+		rows.Should().OnlyContain(r => Equals(r[1], false)); // Level is Information → Level >= 4 is false
 	}
 
 	[Fact]
-	public async Task InMemoryBuffer_WithinScanCap_Succeeds()
+	public async Task PostShapeExtendOrderSummarize_ComposesInSql()
 	{
-		KqlTransformer.InMemoryBufferCapOverride = 100;
-		try
-		{
-			var act = Enumerating("events | extend one = 1 | order by Message | summarize dcount(Message)");
-			await act.Should().NotThrowAsync();
-		}
-		finally
-		{
-			KqlTransformer.InMemoryBufferCapOverride = null;
-		}
+		// extend | order by | summarize dcount — a chain that used to buffer in memory; now one SQL query.
+		var (_, rows) = await KqlTestHost.ExecuteAsync(ManyRows,
+			KustoCode.Parse("events | extend one = 1 | order by Message | summarize d = dcount(Message)"),
+			KqlBackend.Sqlite);
+		rows.Should().ContainSingle();
+		rows[0][0].Should().Be(20L); // 20 distinct messages
 	}
 }

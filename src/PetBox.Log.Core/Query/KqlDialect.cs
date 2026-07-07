@@ -9,10 +9,9 @@ namespace PetBox.Log.Core.Query;
 //       `unnest(from_json(...))`, a divergence the research probes (SqliteJsonEachProbeTests /
 //       DuckDbLinq2DbProbeTests) pinned empirically.
 //
-// SCAFFOLD-ONLY at this stage: nothing in the translation pipeline consumes the dialect's SQL fragments
-// yet (that lands with the ApplyShapeChanges rewrite). The type exists so KqlTranslationOptions can carry
-// it and the transformer can thread it, with SqliteDialect preserving today's behavior exactly. DuckDB is
-// NOT wired as a live log backend here.
+// ArrayExplodeFrom is consumed by ComposeMvExpand (the mv-expand json_each splice); ScalarShims names the
+// per-dialect [Sql.Expression] set. KqlTranslationOptions carries the dialect and the transformer threads
+// it, with SqliteDialect the only LIVE backend (DuckDB is a scaffold, not wired as a live log store).
 public abstract class KqlDialect
 {
 	// Stable identifier for the backend (diagnostics / future routing).
@@ -26,9 +25,7 @@ public abstract class KqlDialect
 	public abstract Type ScalarShims { get; }
 
 	// The mv-expand array-explode table source: given the SQL reference of a JSON-array column and a
-	// table alias, the FROM fragment that explodes it one row per element. Consumed by the ApplyMvExpand
-	// rewrite (next phase); declared now so the seam is complete and the proven per-dialect forms have a
-	// home.
+	// table alias, the FROM fragment that explodes it one row per element. Consumed by ComposeMvExpand.
 	public abstract string ArrayExplodeFrom(string jsonColumnRef, string tableAlias);
 
 	// The active backend for the per-project log store. The behavior-preserving default everywhere.

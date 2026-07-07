@@ -645,7 +645,7 @@ public static partial class KqlTransformer
 
 	// Resolves the on-clause into per-key (left expr over lParam, right expr over rKeyParam, right column
 	// index). Same forms as ResolveJoinKeys: `on Col` and `on $left.A == $right.B`. Numeric keys widen to a
-	// common type (NormalizeKeyValue); an incompatible cross-kind pair → null (fall back rather than mis-join).
+	// common type; an incompatible cross-kind pair → null (never matches, per Kusto's same-typed-key rule).
 	static List<(Expr L, Expr R, int RightCol)>? ResolveJoinKeysSql(
 		JoinOnClause onClause, SqlStage left, ScalarContext lctx, SqlStage right, ScalarContext rctx, string opName)
 	{
@@ -835,7 +835,7 @@ public static partial class KqlTransformer
 		t.IsValueType && !KqlScalar.IsNullable(t) ? typeof(Nullable<>).MakeGenericType(t) : t;
 
 	// A common CLR type for a left/right key pair, or null when incompatible (cross-kind → never matches).
-	// Same type passes through; numerics widen (integral→long, real→double), matching NormalizeKeyValue.
+	// Same type passes through; numerics widen (integral→long, real→double) so equal keys match cross-CLR-type.
 	static Type? UnifyKeyType(Type l, Type r)
 	{
 		if (l == r)
@@ -937,21 +937,15 @@ public static partial class KqlTransformer
 	// One output column of a SQL-composed stage: logical name/type + the SQL STORAGE expression.
 	readonly record struct SqlCol(string Name, Type LogicalType, Expr Storage);
 
-	// record-context compile guarded for the transient migration bridge and computed-key coverage: an
-	// expression not yet SQL-translatable throws UnsupportedKqlException here → the caller runs in-memory
-	// FOR NOW. Any other exception propagates (a real fault, not a coverage gap).
+	// Compiles a scalar expression to its SQL storage form. Single-path: the compose loop is the ONLY
+	// execution route, so an expression that is not SQL-translatable — or that is a genuine user error
+	// (unknown column/function, bad arg count/type) — throws UnsupportedKqlException, which propagates as the
+	// precise error (there is no in-memory fallback to re-route it through). Always returns true or throws;
+	// the bool/out shape is retained so the call sites read uniformly.
 	static bool TryCompileStorage(Expression exprSyntax, ScalarContext ctx, out Expr storage)
 	{
-		try
-		{
-			storage = KqlScalar.Compile(exprSyntax, ctx);
-			return true;
-		}
-		catch (UnsupportedKqlException)
-		{
-			storage = null!;
-			return false;
-		}
+		storage = KqlScalar.Compile(exprSyntax, ctx);
+		return true;
 	}
 
 	// Emits a storage-typed DynRow, projects (optionally DISTINCT) into it, and wraps the result as a
@@ -1232,17 +1226,16 @@ public static partial class KqlTransformer
 						return false;
 					var argLogical = KqlScalar.Compile(args[0].Element, new RowScalarContext(rowParam, stage.Columns) { UtcNow = now }).Type;
 					var nnLogical = KqlScalar.NonNullable(argLogical);
-					// Numeric / datetime / timespan min-max: storage is a numeric/long, ordered natively. STRING
-					// min/max now composes in SQL too, via the plain (NO IComparer) g.Min()/g.Max() selector
-					// overload → SQLite MIN/MAX = BINARY collation = codepoint order. That is the PORTABLE engine
-					// promise (per the accepted "reference = Kusto + portability, not .NET" principle; KustoLoco
-					// does not implement string min/max, so .NET-ordinal was never a promise). The old IComparer
-					// blocker is gone because the selector overload carries no comparer, and the two-provider
-					// culture reconciliation is moot now that every test runs over real SQLite. Any OTHER type
-					// (e.g. bool) still returns false → in-memory fallback.
-					if (nnLogical != typeof(string)
+					// min/max composes in SQL for every orderable storage type: numeric / datetime (epoch-ms) /
+					// timespan (ticks) order natively; STRING via the plain (NO IComparer) g.Min()/g.Max() selector
+					// overload → SQLite MIN/MAX = BINARY collation = codepoint order (the PORTABLE engine promise —
+					// KustoLoco doesn't implement string min/max, so .NET-ordinal was never a promise); BOOL is
+					// stored 0/1 so MIN/MAX order natively too (logical result bool). No type falls back — every
+					// min/max is SQL. A genuinely non-orderable arg (e.g. dynamic) would throw at Compile, which
+					// propagates as the precise user error.
+					if (nnLogical != typeof(string) && nnLogical != typeof(bool)
 						&& !KqlScalar.IsNumericType(nnLogical) && nnLogical != typeof(DateTime) && nnLogical != typeof(TimeSpan))
-						return false;
+						throw new UnsupportedKqlException($"{fn}() does not support {nnLogical.Name}");
 					var mm = fn == "min" ? "Min" : "Max";
 					var storageResT = Nullable(arg.Type);
 					var sel = Expr.Lambda(Expr.Convert(arg, storageResT), x);
