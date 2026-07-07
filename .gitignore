@@ -33,8 +33,10 @@ TestResults/
 # BenchmarkDotNet artifacts
 BenchmarkDotNet.Artifacts/
 
-# Cake
-tools/
+# Cake (tool restore) — but keep the tracked KqlBench research harness
+tools/*
+!tools/KqlBench/
+tools/KqlBench/bench-results.jsonl
 .cake/
 
 # NuGet
