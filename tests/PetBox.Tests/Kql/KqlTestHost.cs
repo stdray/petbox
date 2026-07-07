@@ -24,7 +24,7 @@ public static class KqlBackendConfig
 	// The backends every KQL test runs its production side over. Adding DuckDb here (once its dialect is
 	// real) is the ONE switch that turns the whole suite into a multi-backend differential — no per-test
 	// change needed; each shared-helper caller already loops this list.
-	public static readonly IReadOnlyList<KqlBackend> Active = [KqlBackend.Sqlite];
+	public static readonly IReadOnlyList<KqlBackend> Active = [KqlBackend.Sqlite, KqlBackend.DuckDb];
 }
 
 // The SHARED real-backend seed/run harness. Seeds a fresh in-memory log store with a dataset on the
@@ -133,7 +133,7 @@ public static class KqlTestHost
 	// synchronously from KqlTransformer.Execute, as they do in production.
 	public static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> ExecuteAsync(
 		IReadOnlyList<LogEntryRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null, KqlTranslationOptions? options = null) =>
-		DrainAsync(KqlLogHost.Seed(records, backend), h => KqlTransformer.Execute(h.LogEntries, code, clock, options));
+		DrainAsync(KqlLogHost.Seed(records, backend), h => KqlTransformer.Execute(h.LogEntries, code, clock, ForBackend(h, options)));
 
 	// events Apply: the events-shaped subset over `records` (where/order/take, no shape change), returning
 	// the produced records.
@@ -146,13 +146,24 @@ public static class KqlTestHost
 
 	// spans Execute: run a `spans` pipeline over `records` (KqlTransformer.ExecuteSpans), fully materialized.
 	public static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> ExecuteSpansAsync(
-		IReadOnlyList<SpanRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null) =>
-		DrainAsync(KqlLogHost.SeedSpans(records, backend), h => KqlTransformer.ExecuteSpans(h.Spans, code, clock));
+		IReadOnlyList<SpanRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null, KqlTranslationOptions? options = null) =>
+		DrainAsync(KqlLogHost.SeedSpans(records, backend), h => KqlTransformer.ExecuteSpans(h.Spans, code, clock, ForBackend(h, options)));
 
 	// metrics Execute: run a `metrics` pipeline over `records` (KqlTransformer.ExecuteMetrics), fully materialized.
 	public static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> ExecuteMetricsAsync(
-		IReadOnlyList<MetricPointRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null) =>
-		DrainAsync(KqlLogHost.SeedMetrics(records, backend), h => KqlTransformer.ExecuteMetrics(h.MetricPoints, code, clock));
+		IReadOnlyList<MetricPointRecord> records, KustoCode code, KqlBackend backend, TimeProvider? clock = null, KqlTranslationOptions? options = null) =>
+		DrainAsync(KqlLogHost.SeedMetrics(records, backend), h => KqlTransformer.ExecuteMetrics(h.MetricPoints, code, clock, ForBackend(h, options)));
+
+	// Force the translation Dialect to the host's ACTUAL backend so the query compiles for the store it runs
+	// on (esp. the mv-expand seam: SQLite json_each vs DuckDB — the one op that reads options.Dialect rather
+	// than linq2db's provider-driven [Sql.Expression] arms). Any other caller-supplied knob (DefaultJoinKind)
+	// is preserved; only Dialect is pinned, because it is a function of the backend, not a free choice.
+	static KqlTranslationOptions ForBackend(KqlLogHost host, KqlTranslationOptions? caller) =>
+		new()
+		{
+			Dialect = host.Dialect,
+			DefaultJoinKind = (caller ?? KqlTranslationOptions.Default).DefaultJoinKind,
+		};
 
 	// Builds the KqlResult (eager unsupported-op throws propagate here) then drains every row, disposing the
 	// host only after materialization — so the in-memory DB outlives the streamed enumeration.
