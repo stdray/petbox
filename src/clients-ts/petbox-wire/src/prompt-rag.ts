@@ -477,6 +477,21 @@ function writeSessionCache(sessionId: string | undefined, keys: Set<string>): vo
   }
 }
 
+// Overwrite a one-line marker (`<sessionId>.last`) with the NEWEST injection's refs, read by the
+// statusline script to show a live "RAG: …" segment in the TUI — the only reliable way to surface
+// injections, since CC does not render `systemMessage` for UserPromptSubmit. Best-effort; only
+// written when something fresh was actually injected, so it reflects the last real RAG action.
+function writeStatusMarker(sessionId: string | undefined, freshKeys: string[]): void {
+  if (!sessionId || freshKeys.length === 0) return;
+  try {
+    const p = join(homedir(), ".petbox", "cache", "prompt-rag", `${sessionId}.last`);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, freshKeys.join(", "));
+  } catch {
+    // best-effort
+  }
+}
+
 async function main(): Promise<void> {
   try {
     // Agent selection from the install-time CLI flag (`--agent cc|droid`, default cc). Picks the
@@ -538,12 +553,13 @@ async function main(): Promise<void> {
     // FIRST, then persist the cache, then best-effort audit — order is load-bearing (the injected
     // output must never be gated by a cache write or the audit).
     const seenKeys = readSessionCache(sessionId);
-    const { fresh } = partitionFreshHits(result.hits, seenKeys);
+    const { fresh, freshKeys } = partitionFreshHits(result.hits, seenKeys);
     const stdout = buildHookStdout(renderInjection(fresh, tool), fresh);
     if (stdout) process.stdout.write(stdout);
     if (fresh.length > 0) {
-      for (const h of fresh) seenKeys.add(`${h.board}/${h.key}`);
+      for (const k of freshKeys) seenKeys.add(k);
       writeSessionCache(sessionId, seenKeys);
+      writeStatusMarker(sessionId, freshKeys); // live statusline segment (systemMessage isn't rendered)
     }
     // Audit reflects what was ACTUALLY injected this turn (fresh hits): a repeat suppressed by the
     // session cache records injected=false, which is correct — nothing was added to context this turn.
