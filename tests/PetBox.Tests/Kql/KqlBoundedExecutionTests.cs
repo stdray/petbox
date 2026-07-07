@@ -164,11 +164,8 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 	static readonly IReadOnlyList<LogEntryRecord> ManyRows =
 		Enumerable.Range(1, 20).Select(i => Rec(i)).ToList();
 
-	static async Task<Func<Task>> Enumerating(string kql)
-	{
-		var result = KqlTransformer.Execute(ManyRows.AsQueryable(), KustoCode.Parse(kql));
-		return async () => { await foreach (var _ in result.Rows) { } };
-	}
+	static Func<Task> Enumerating(string kql) =>
+		() => KqlTestHost.ExecuteAsync(ManyRows, KustoCode.Parse(kql), KqlBackend.Sqlite);
 
 	// NOTE (kql-single-path-impl): ops migrated to SQL no longer buffer in memory, so the InMemoryBufferCap
 	// is MOOT for them (result unchanged; the final row count is still bounded by KqlLimits at the response
@@ -184,7 +181,7 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 		KqlTransformer.InMemoryBufferCapOverride = 10;
 		try
 		{
-			var act = await Enumerating(kql);
+			var act = Enumerating(kql);
 			(await act.Should().ThrowAsync<UnsupportedKqlException>())
 				.WithMessage($"*{opName} buffered more than 10 rows*narrow the query*");
 		}
@@ -200,7 +197,7 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 		KqlTransformer.InMemoryBufferCapOverride = 100;
 		try
 		{
-			var act = await Enumerating("events | extend one = 1 | order by Message | summarize dcount(Message)");
+			var act = Enumerating("events | extend one = 1 | order by Message | summarize dcount(Message)");
 			await act.Should().NotThrowAsync();
 		}
 		finally

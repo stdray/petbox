@@ -39,13 +39,11 @@ public sealed class KqlDateTimeTests
 	];
 
 	static IReadOnlyList<long> WhereIds(string kql) =>
-		KqlTransformer.Apply(Rows.AsQueryable(), Parse(kql), Clock).ToList().Select(r => r.Id).ToList();
+		KqlTestHost.Apply(Rows, Parse(kql), KqlBackend.Sqlite, Clock).Select(r => r.Id).ToList();
 
 	static async Task<List<object?[]>> Table(string kql, IReadOnlyList<LogEntryRecord>? data = null)
 	{
-		var result = KqlTransformer.Execute((data ?? Rows).AsQueryable(), Parse(kql), Clock);
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
+		var (_, rows) = await KqlTestHost.ExecuteAsync(data ?? Rows, Parse(kql), KqlBackend.Sqlite, Clock);
 		return rows;
 	}
 
@@ -146,7 +144,8 @@ public sealed class KqlDateTimeTests
 	{
 		var act = () =>
 		{
-			var result = KqlTransformer.Execute(Rows.AsQueryable(), Parse(kql), Clock);
+			using var host = KqlLogHost.Seed(Rows, KqlBackend.Sqlite);
+			var result = KqlTransformer.Execute(host.LogEntries, Parse(kql), Clock);
 			_ = result.Columns;
 		};
 		act.Should().Throw<UnsupportedKqlException>().WithMessage(message);

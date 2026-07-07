@@ -120,10 +120,11 @@ public sealed class KqlPropertyKeysTests
 		// End-to-end: the RAW spelling is queryable — search-side normalization meets the stored form.
 		var record = LogEntryRecord.FromCandidate(candidate, 0);
 		record.Id = 1;
-		var ids = KqlTransformer.Apply(
-				new[] { record }.AsQueryable(),
-				KustoCode.Parse("events | where Properties[\"we\\\"ird.key\"] == '42'"))
-			.ToList().Select(r => r.Id).ToList();
+		var ids = KqlTestHost.Apply(
+				[record],
+				KustoCode.Parse("events | where Properties[\"we\\\"ird.key\"] == '42'"),
+				KqlBackend.Sqlite)
+			.Select(r => r.Id).ToList();
 		ids.Should().BeEquivalentTo([1L]);
 	}
 }
