@@ -25,7 +25,8 @@ public static class WorkspaceSwitchEndpoint
 	static async Task<IResult> Switch(
 		HttpContext ctx,
 		PetBoxDb db,
-		[FromForm] string? ws)
+		[FromForm] string? ws,
+		[FromForm] string? zone)
 	{
 		// `ws` is nullable on the binding so an empty-form POST surfaces as
 		// a clean 400, not an unhandled BadHttpRequestException with stack
@@ -58,6 +59,12 @@ public static class WorkspaceSwitchEndpoint
 		// workspaceKey in the path (`/ui/{ws}/...`, `/ui/admin/ws/{ws}/...`),
 		// and the cookie-sync middleware would immediately revert the cookie
 		// back to the URL's workspace — undoing the switch.
-		return Results.LocalRedirect(Routes.Workspace(ws));
+		//
+		// Zone-preserving: from the admin sidebar land on the workspace admin
+		// Overview; otherwise the /ui workspace landing page.
+		var target = string.Equals(zone, "admin", StringComparison.Ordinal)
+			? Routes.WorkspaceAdmin(ws)
+			: Routes.Workspace(ws);
+		return Results.LocalRedirect(target);
 	}
 }

@@ -31,11 +31,14 @@ public sealed class NavigationContext(
 	PetBox.Core.Features.FeatureFlags features) : INavigationContext
 {
 	const string WorkspaceCookie = "yb_ws";
+	const string ProjectCookie = "yb_project";
 
 	IReadOnlyList<WorkspaceOption>? _workspaces;
 	IReadOnlyList<Project>? _projects;
 	IReadOnlyDictionary<string, IReadOnlyList<Project>>? _projectsByWs;
 	string? _resolvedWorkspace;
+	string? _resolvedProject;
+	bool _projectResolved;
 
 	HttpContext? Http => accessor.HttpContext;
 
@@ -49,15 +52,47 @@ public sealed class NavigationContext(
 
 	public string CurrentWorkspaceKey => _resolvedWorkspace ??= ResolveWorkspace();
 
+	// Resolution order (mirrors ResolveWorkspace): explicit URL segment → yb_project cookie
+	// (validated against the current workspace) → first available project. The cookie fallback
+	// lets the sidebar's project selector stay populated on pages that carry no project in the
+	// URL (workspace Status, Shared config, etc.). Returns null only when the workspace has no
+	// projects at all.
 	public string? CurrentProjectKey
 	{
 		get
 		{
-			var fromProjectKey = Http?.GetRouteValue("projectKey")?.ToString();
-			if (!string.IsNullOrEmpty(fromProjectKey)) return fromProjectKey;
-			var fromKey = Http?.GetRouteValue("key")?.ToString();
-			return !string.IsNullOrEmpty(fromKey) && IsProjectRoute() ? fromKey : null;
+			if (_projectResolved) return _resolvedProject;
+			_resolvedProject = ResolveProject();
+			_projectResolved = true;
+			return _resolvedProject;
 		}
+	}
+
+	string? ResolveProject()
+	{
+		// 1. Explicit URL segment wins (page scoped to a concrete project).
+		var fromProjectKey = Http?.GetRouteValue("projectKey")?.ToString();
+		if (!string.IsNullOrEmpty(fromProjectKey)) return fromProjectKey;
+		var fromKey = Http?.GetRouteValue("key")?.ToString();
+		if (!string.IsNullOrEmpty(fromKey) && IsProjectRoute()) return fromKey;
+
+		if (!IsAuthenticated) return null;
+
+		var projects = ProjectsInCurrentWorkspace;
+		if (projects.Count == 0) return null;
+
+		// 2. Cookie — only honoured if the project actually lives in the current workspace,
+		//    otherwise a stale cross-workspace value would point at a phantom section list.
+		if (Http?.Request.Cookies.TryGetValue(ProjectCookie, out var cookieProj) == true
+			&& !string.IsNullOrEmpty(cookieProj))
+		{
+			foreach (var p in projects)
+				if (string.Equals(p.Key, cookieProj, StringComparison.Ordinal))
+					return cookieProj;
+		}
+
+		// 3. First available project.
+		return projects[0].Key;
 	}
 
 	bool IsProjectRoute() => Http?.GetRouteValue("projectKey") is not null;

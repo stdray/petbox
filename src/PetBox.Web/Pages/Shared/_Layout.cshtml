@@ -4,33 +4,12 @@
 @{
 	var currentWs = Nav.CurrentWorkspaceKey;
 	var currentProject = Nav.CurrentProjectKey;
-	var fewProjects = Nav.ProjectsInCurrentWorkspace.Count < 3;
 	// Boards are surfaced as Tasks sub-nav ONLY for the project in context (no global
 	// fan-out): one cheap metadata read, and only when Tasks is on and a project is active.
 	IReadOnlyList<PetBox.Core.Models.TaskBoardMeta> currentProjectBoards = [];
 	if (Nav.TasksEnabled && !string.IsNullOrEmpty(currentProject))
 	{
 		currentProjectBoards = await Tasks.ListBoardsAsync(currentProject, Context.RequestAborted);
-	}
-	// Tree expand state is persisted client-side in the petbox.sidebar.tree cookie
-	// (see ts/sidebar.ts) so we can render <details open> up front — no JS reflow
-	// after paint. Only project nodes are tracked here; lazy log/db nodes auto-open
-	// solely for the active page (deep-link), never from persisted state.
-	var openTree = new HashSet<string>(StringComparer.Ordinal);
-	{
-		var openTreeRaw = Context.Request.Cookies["petbox.sidebar.tree"];
-		if (!string.IsNullOrEmpty(openTreeRaw))
-		{
-			try
-			{
-				var decoded = System.Net.WebUtility.UrlDecode(openTreeRaw);
-				foreach (var k in System.Text.Json.JsonSerializer.Deserialize<string[]>(decoded) ?? Array.Empty<string>())
-				{
-					openTree.Add(k);
-				}
-			}
-			catch (System.Text.Json.JsonException) { }
-		}
 	}
 	var path = Context.Request.Path.Value ?? string.Empty;
 	bool IsActive(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
@@ -118,18 +97,7 @@
 				{
 					<div class="hidden" data-testid="nav-current-ws">@currentWs</div>
 
-					<div class="px-2 pt-2 flex items-center gap-1">
-						<form method="post" action="/api/ui/workspace" data-testid="nav-workspace-switch" class="flex-1">
-							<select name="ws" onchange="this.form.submit()" aria-label="Switch workspace" title="Switch workspace"
-								class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-workspace-select">
-								@foreach (var w in Nav.AvailableWorkspaces)
-								{
-									<option value="@w.Key" selected="@(string.Equals(w.Key, currentWs, StringComparison.Ordinal))">@w.Key</option>
-								}
-							</select>
-						</form>
-						<partial name="_SidebarPin" />
-					</div>
+					<partial name="_ZoneSelectors" />
 
 					<ul class="menu w-full p-2 gap-1">
 						<li>
@@ -163,104 +131,88 @@
 					</ul>
 
 					<div class="px-3 py-2 mt-2 border-t border-base-300">
-						<div class="text-xs opacity-50 uppercase tracking-wide">Projects</div>
+						<div class="text-xs opacity-50 uppercase tracking-wide">Project</div>
 					</div>
 
+					@* Flat, single-project section list: the project is chosen by the selector above,
+					   so there is no per-project disclosure tree here — only the sections of the
+					   project currently in context. *@
 					<ul class="menu menu-sm w-full p-2 gap-0.5 flex-1 overflow-y-auto" data-testid="nav-sidebar-projects">
-						@if (Nav.ProjectsInCurrentWorkspace.Count == 0)
+						@if (string.IsNullOrEmpty(currentProject))
 						{
 							<li class="text-xs opacity-50 px-3 py-2 italic" data-testid="nav-no-projects">No projects in this workspace.</li>
 						}
 						else
 						{
-							@foreach (var project in Nav.ProjectsInCurrentWorkspace)
+							var pDash = Routes.Project(currentWs, currentProject);
+							var pLogs = Routes.ProjectLogs(currentWs, currentProject);
+							var pTraces = Routes.ProjectTraces(currentWs, currentProject);
+							var pConfig = Routes.ProjectConfig(currentWs, currentProject);
+							var pData = Routes.ProjectDatabases(currentWs, currentProject);
+							var pTasks = Routes.ProjectTasks(currentWs, currentProject);
+							var pMemory = Routes.ProjectMemory(currentWs, currentProject);
+							var pSessions = Routes.ProjectSessions(currentWs, currentProject);
+							var pLlm = Routes.ProjectLlmRouter(currentWs, currentProject);
+							<li class="hidden" data-testid="nav-project" data-project-key="@currentProject"></li>
+							<li><a href="@pDash" class="@(IsExactly(pDash) ? "active" : "")" data-testid="nav-proj-dashboard">Dashboard</a></li>
+							<li data-testid="nav-proj-logs-node">
+								<details hx-get="/ui/_nav/tree?handler=Logs&project=@currentProject" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
+									<summary class="@(IsActive(pLogs) ? "active" : "")"><a href="@pLogs" data-testid="nav-proj-logs">Logs</a></summary>
+									<ul class="tree-lazy"><li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-logs-loading">loading…</li></ul>
+								</details>
+							</li>
+							<li><a href="@pTraces" class="@(IsActive(pTraces) ? "active" : "")" data-testid="nav-proj-traces">Traces</a></li>
+							@if (Nav.DataEnabled)
 							{
-								var isCurrent = string.Equals(currentProject, project.Key, StringComparison.Ordinal);
-								var pDash = Routes.Project(currentWs, project.Key);
-								var pLogs = Routes.ProjectLogs(currentWs, project.Key);
-								var pTraces = Routes.ProjectTraces(currentWs, project.Key);
-								var pConfig = Routes.ProjectConfig(currentWs, project.Key);
-								var pData = Routes.ProjectDatabases(currentWs, project.Key);
-								var pTasks = Routes.ProjectTasks(currentWs, project.Key);
-								var pMemory = Routes.ProjectMemory(currentWs, project.Key);
-								var pSessions = Routes.ProjectSessions(currentWs, project.Key);
-								var pLlm = Routes.ProjectLlmRouter(currentWs, project.Key);
-								<li data-testid="nav-project" data-project-key="@project.Key">
-									<details data-tree-key="proj:@project.Key" open="@(isCurrent || fewProjects || openTree.Contains($"proj:{project.Key}"))">
-										<summary class="@(isCurrent ? "active font-semibold" : "")">
-											<svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-												<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-											</svg>
-											<span class="font-mono text-xs truncate">@project.Key</span>
-											@if (project.Key == "$system")
-											{
-												<span class="badge badge-ghost badge-xs">sys</span>
-											}
-										</summary>
-										<ul>
-											<li><a href="@pDash" class="@(IsExactly(pDash) ? "active" : "")" data-testid="nav-proj-dashboard">Dashboard</a></li>
-											<li data-testid="nav-proj-logs-node">
-												<details hx-get="/ui/_nav/tree?handler=Logs&project=@project.Key" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
-													<summary class="@(IsActive(pLogs) ? "active" : "")"><a href="@pLogs" data-testid="nav-proj-logs">Logs</a></summary>
-													<ul class="tree-lazy"><li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-logs-loading">loading…</li></ul>
-												</details>
-											</li>
-											<li><a href="@pTraces" class="@(IsActive(pTraces) ? "active" : "")" data-testid="nav-proj-traces">Traces</a></li>
-											@if (Nav.DataEnabled)
-											{
-												<li data-testid="nav-proj-data-node">
-													<details hx-get="/ui/_nav/tree?handler=Databases&project=@project.Key" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
-														<summary class="@(IsActive(pData) ? "active" : "")"><a href="@pData" data-testid="nav-proj-data">Databases</a></summary>
-														<ul class="tree-lazy"><li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-dbs-loading">loading…</li></ul>
-													</details>
-												</li>
-											}
-											<li><a href="@pConfig" class="@(IsActive(pConfig) ? "active" : "")" data-testid="nav-proj-config">Config</a></li>
-												@if (Nav.LlmRouterEnabled)
-												{
-													<li><a href="@pLlm" class="@(IsActive(pLlm) ? "active" : "")" data-testid="nav-proj-llm">LLM router</a></li>
-												}
-											@if (Nav.TasksEnabled)
-											{
-												@if (isCurrent && currentProjectBoards.Count > 0)
-												{
-													<li data-testid="nav-proj-tasks-node">
-														<details open="@(IsActive(pTasks))">
-															<summary class="@(IsExactly(pTasks) ? "active" : "")"><a href="@pTasks" data-testid="nav-proj-tasks">Tasks</a></summary>
-															<ul>
-																@foreach (var board in currentProjectBoards)
-																{
-																	var pBoard = Routes.ProjectTaskBoard(currentWs, project.Key, board.Name);
-																	<li data-testid="nav-proj-task-board-node" data-board-name="@board.Name">
-																		<a href="@pBoard" class="@(IsUnder(pBoard) ? "active" : "")" data-testid="nav-proj-task-board">
-																			<span class="font-mono text-xs truncate">@board.Name</span>
-																			@if (board.ClosedAt is not null)
-																			{
-																				<span class="badge badge-ghost badge-xs">closed</span>
-																			}
-																		</a>
-																	</li>
-																}
-															</ul>
-														</details>
-													</li>
-												}
-												else
-												{
-													<li><a href="@pTasks" class="@(IsActive(pTasks) ? "active" : "")" data-testid="nav-proj-tasks">Tasks</a></li>
-												}
-											}
-											@if (Nav.MemoryEnabled)
-											{
-												<li><a href="@pMemory" class="@(IsActive(pMemory) ? "active" : "")" data-testid="nav-proj-memory">Memory</a></li>
-											}
-											@if (Nav.TasksEnabled)
-											{
-												<li><a href="@pSessions" class="@(IsActive(pSessions) ? "active" : "")" data-testid="nav-proj-agent">Sessions</a></li>
-											}
-										</ul>
+								<li data-testid="nav-proj-data-node">
+									<details hx-get="/ui/_nav/tree?handler=Databases&project=@currentProject" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
+										<summary class="@(IsActive(pData) ? "active" : "")"><a href="@pData" data-testid="nav-proj-data">Databases</a></summary>
+										<ul class="tree-lazy"><li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-dbs-loading">loading…</li></ul>
 									</details>
 								</li>
+							}
+							<li><a href="@pConfig" class="@(IsActive(pConfig) ? "active" : "")" data-testid="nav-proj-config">Config</a></li>
+							@if (Nav.LlmRouterEnabled)
+							{
+								<li><a href="@pLlm" class="@(IsActive(pLlm) ? "active" : "")" data-testid="nav-proj-llm">LLM router</a></li>
+							}
+							@if (Nav.TasksEnabled)
+							{
+								@if (currentProjectBoards.Count > 0)
+								{
+									<li data-testid="nav-proj-tasks-node">
+										<details open="@(IsActive(pTasks))">
+											<summary class="@(IsExactly(pTasks) ? "active" : "")"><a href="@pTasks" data-testid="nav-proj-tasks">Tasks</a></summary>
+											<ul>
+												@foreach (var board in currentProjectBoards)
+												{
+													var pBoard = Routes.ProjectTaskBoard(currentWs, currentProject, board.Name);
+													<li data-testid="nav-proj-task-board-node" data-board-name="@board.Name">
+														<a href="@pBoard" class="@(IsUnder(pBoard) ? "active" : "")" data-testid="nav-proj-task-board">
+															<span class="font-mono text-xs truncate">@board.Name</span>
+															@if (board.ClosedAt is not null)
+															{
+																<span class="badge badge-ghost badge-xs">closed</span>
+															}
+														</a>
+													</li>
+												}
+											</ul>
+										</details>
+									</li>
+								}
+								else
+								{
+									<li><a href="@pTasks" class="@(IsActive(pTasks) ? "active" : "")" data-testid="nav-proj-tasks">Tasks</a></li>
+								}
+							}
+							@if (Nav.MemoryEnabled)
+							{
+								<li><a href="@pMemory" class="@(IsActive(pMemory) ? "active" : "")" data-testid="nav-proj-memory">Memory</a></li>
+							}
+							@if (Nav.TasksEnabled)
+							{
+								<li><a href="@pSessions" class="@(IsActive(pSessions) ? "active" : "")" data-testid="nav-proj-agent">Sessions</a></li>
 							}
 						}
 					</ul>

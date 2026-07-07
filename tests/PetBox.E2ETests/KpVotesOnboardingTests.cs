@@ -39,8 +39,8 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 
 		// Sidebar reflects the new project.
 		await _page!.GotoAsync($"/ui/{Ws}");
-		var projectLink = _page.GetByTestId("nav-project").Filter(new() { HasText = Pet });
-		await Expect(projectLink).ToBeVisibleAsync();
+		var projectOption = _page.GetByTestId("nav-project-select").Locator($"option[value=\"{Pet}\"]");
+		await Expect(projectOption).ToHaveCountAsync(1);
 
 		// Status page lists the project card.
 		var card = _page.GetByTestId("dashboard-project-card").Filter(new() { HasText = Pet });
@@ -175,7 +175,7 @@ public sealed class KpVotesOnboardingTests(WebAppFixture app, ITestOutputHelper 
 	{
 		await TestWorkspace.EnsureAsync(_page!);
 		await _page!.GotoAsync($"/ui/{Ws}");
-		var existing = _page.GetByTestId("nav-project").Filter(new() { HasText = Pet });
+		var existing = _page.GetByTestId("nav-project-select").Locator($"option[value=\"{Pet}\"]");
 		if (await existing.CountAsync() > 0) return;
 
 		await _page.GotoAsync($"/ui/admin/ws/{Ws}/projects");

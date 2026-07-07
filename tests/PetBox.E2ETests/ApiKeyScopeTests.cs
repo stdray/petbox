@@ -28,7 +28,7 @@ public sealed class ApiKeyScopeTests(WebAppFixture app, ITestOutputHelper output
 	{
 		await TestWorkspace.EnsureAsync(_page!);
 		await _page!.GotoAsync($"/ui/{TestWorkspace.Key}");
-		var hasKpvotes = await _page.GetByTestId("nav-project").Filter(new() { HasText = "kpvotes" }).CountAsync();
+		var hasKpvotes = await _page.GetByTestId("nav-project-select").Locator("option[value=\"kpvotes\"]").CountAsync();
 		if (hasKpvotes == 0)
 		{
 			await _page.GotoAsync($"/ui/admin/ws/{TestWorkspace.Key}/projects");

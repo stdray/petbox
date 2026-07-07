@@ -634,6 +634,33 @@ public partial class Program
 			await next();
 		});
 
+		// Same URL→cookie persistence for the active project. Visiting a project page
+		// (/ui/{ws}/{key}/... or the admin project pages — both carry a `projectKey`
+		// route value) refreshes yb_project so the sidebar selector stays in sync when
+		// the next page has no project in its URL (e.g. workspace Status).
+		// Membership/ownership is validated downstream in NavigationContext + the switch
+		// endpoint, so an unconditional write on a routed projectKey is safe.
+		app.Use(async (ctx, next) =>
+		{
+			var routeProject = ctx.GetRouteValue("projectKey")?.ToString();
+			if (!string.IsNullOrEmpty(routeProject) && ctx.User.Identity?.IsAuthenticated == true)
+			{
+				var cookie = ctx.Request.Cookies[ProjectSwitchEndpoint.CookieName];
+				if (!string.Equals(cookie, routeProject, StringComparison.Ordinal))
+				{
+					ctx.Response.Cookies.Append(ProjectSwitchEndpoint.CookieName, routeProject, new CookieOptions
+					{
+						HttpOnly = false,
+						SameSite = SameSiteMode.Lax,
+						Expires = DateTimeOffset.UtcNow.AddDays(365),
+						IsEssential = true,
+						Path = "/",
+					});
+				}
+			}
+			await next();
+		});
+
 		// Serve the OpenAPI document (/openapi/v1.json) only in Development. Production exposes
 		// no spec endpoint; the committed doc/api/PetBox.Web.json is the published contract.
 		if (app.Environment.IsDevelopment())
@@ -658,6 +685,7 @@ public partial class Program
 
 		app.MapAuthEndpoints();
 		app.MapWorkspaceSwitch();
+		app.MapProjectSwitch();
 		app.MapRazorPages();
 
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Config))
