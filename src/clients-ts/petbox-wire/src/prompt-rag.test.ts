@@ -13,9 +13,11 @@ import {
   buildInjection,
   buildInjectionDetailed,
   buildInjectionForProject,
+  buildHookStdout,
   extractCandidates,
   namerForAgent,
   renderInjection,
+  renderSystemMessage,
   tolerancesOf,
   type Resolver,
   type TaskHit,
@@ -338,4 +340,38 @@ test("auditToClefLine: omits sessionId when absent (no null property leaks)", ()
   assert.ok(!("sessionId" in o), "no sessionId key when the marker was absent");
   assert.equal(o.injected, false);
   assert.deepEqual(o.matched, []);
+});
+
+// ---- renderSystemMessage + buildHookStdout: the VISIBLE-in-TUI output path ------------------
+// The pointer block still travels silently to the model (additionalContext, byte-identical to the
+// old plain-stdout injection); a short systemMessage surfaces it visibly in the CC TUI. A zero-hit
+// turn must stay byte-silent (return "") to honor the zero-per-turn-noise contract.
+
+test("renderSystemMessage: names each injected node; empty for no hits", () => {
+  assert.equal(renderSystemMessage([]), "", "no hits → no visible line");
+  const one = KNOWN["telemetry-wire-toggle"];
+  const s1 = renderSystemMessage([one]);
+  assert.match(s1, /injected 1 exact-match pointer\b/, "singular (no trailing 's')");
+  assert.ok(!/pointers/.test(s1), "singular form has no 'pointers'");
+  assert.match(s1, /work\/telemetry-wire-toggle/);
+  const two: TaskHit = { key: "other-node", board: "spec", status: "Done", title: "o" };
+  const s2 = renderSystemMessage([one, two]);
+  assert.match(s2, /injected 2 exact-match pointers/, "plural");
+  assert.match(s2, /work\/telemetry-wire-toggle, spec\/other-node/, "both refs, comma-joined in order");
+});
+
+test("buildHookStdout: hits → valid JSON with additionalContext + systemMessage", () => {
+  const hit = KNOWN["telemetry-wire-toggle"];
+  const text = renderInjection([hit]);
+  const o = JSON.parse(buildHookStdout(text, [hit]));
+  assert.equal(o.hookSpecificOutput.hookEventName, "UserPromptSubmit");
+  assert.equal(o.hookSpecificOutput.additionalContext, text, "pointer block travels verbatim in additionalContext");
+  assert.equal(o.systemMessage, renderSystemMessage([hit]), "systemMessage is the visible one-liner");
+});
+
+test("buildHookStdout: no hits (or empty text) → empty string (byte-silent turn)", () => {
+  assert.equal(buildHookStdout("", []), "", "no hits → nothing at all");
+  assert.equal(buildHookStdout(renderInjection([]), []), "", "empty render → nothing");
+  // defensive: empty text with hits present must still stay silent (never emit empty additionalContext).
+  assert.equal(buildHookStdout("", [KNOWN["telemetry-wire-toggle"]]), "");
 });

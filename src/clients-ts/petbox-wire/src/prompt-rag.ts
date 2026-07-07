@@ -13,10 +13,15 @@
 //   3. If nothing matches confidently → it prints NOTHING and exits 0 (the prompt is unchanged).
 //
 // UserPromptSubmit contract (CC docs: hooks-guide.md / hooks.md): the hook reads a JSON object on
-// stdin carrying the user's prompt + cwd; on exit 0, whatever it prints to STDOUT is added to the
-// model's context for that turn (this event is one of the few where stdout becomes context). We
-// use plain-stdout injection (same pattern as the SessionStart pull-memory hook). The prompt field
-// name has varied across CC versions, so we read it defensively (`prompt` | `prompt_text` | …).
+// stdin carrying the user's prompt + cwd. On exit 0 we emit a STRUCTURED JSON object on stdout
+// (same shape the SessionStart droid-pull-memory hook uses): the pointer block travels silently to
+// the model in `hookSpecificOutput.additionalContext`, and a SHORT top-level `systemMessage` line
+// surfaces VISIBLY in the CC TUI so the user can SEE what was injected this turn (previously the
+// injection was plain stdout, recorded only in the session .jsonl / Ctrl-R transcript — invisible
+// in the main scroll). We emit this ONLY when there is at least one confident match; a zero-match
+// turn prints NOTHING at all (no JSON, no systemMessage), preserving the zero-per-turn-noise
+// contract above. The prompt field name has varied across CC versions, so we read it defensively
+// (`prompt` | `prompt_text` | …).
 //
 // Best-effort and TOTAL: any failure (not a registered project, petbox unreachable, bad stdin)
 // degrades to silence and we ALWAYS exit 0 — a context hook must never break the user's prompt.
@@ -129,6 +134,32 @@ export function renderInjection(hits: TaskHit[], tool: ToolNamer = mcpPetboxTool
     "Pointers only — pull the full body of whichever is relevant, ignore the rest:\n" +
     lines.join("\n")
   );
+}
+
+// Short, VISIBLE one-liner for the CC TUI (the hook's `systemMessage`). Names exactly which nodes
+// were injected so the user can SEE the RAG action, without dumping the pointer block twice (that
+// lives in additionalContext). Returns "" for no hits (caller then emits nothing at all). Pure.
+export function renderSystemMessage(hits: TaskHit[]): string {
+  if (hits.length === 0) return "";
+  const refs = hits.map((h) => `${h.board}/${h.key}`).join(", ");
+  const n = hits.length;
+  return `🔎 prompt-rag: injected ${n} exact-match pointer${n === 1 ? "" : "s"} → ${refs}`;
+}
+
+// Assemble the hook's stdout. When there is at least one hit, emit the documented structured shape:
+// the pointer block goes to the model via `hookSpecificOutput.additionalContext` (silent, exactly
+// what plain stdout did before), and `systemMessage` carries the visible one-liner. With no hits
+// (or empty text) we return "" so the caller writes NOTHING — a zero-match turn stays byte-silent,
+// honoring the zero-per-turn-noise contract. Pure/deterministic; JSON.stringify never throws here.
+export function buildHookStdout(text: string, hits: TaskHit[]): string {
+  if (hits.length === 0 || !text) return "";
+  return JSON.stringify({
+    hookSpecificOutput: {
+      hookEventName: "UserPromptSubmit",
+      additionalContext: text,
+    },
+    systemMessage: renderSystemMessage(hits),
+  });
 }
 
 // Orchestrate: extract candidates → resolve each exactly → dedupe by node → render. Pure w.r.t.
@@ -409,7 +440,8 @@ async function main(): Promise<void> {
     // Compute pointers → print to stdout FIRST → THEN best-effort audit. Order is load-bearing: the
     // audit must never precede or gate the injected output.
     const result = await buildInjectionDetailed(prompt, resolver, opts, tool);
-    if (result.text) process.stdout.write(result.text);
+    const stdout = buildHookStdout(result.text, result.hits);
+    if (stdout) process.stdout.write(stdout);
     await postAudit(
       auditTarget,
       AUDIT_LOG,
