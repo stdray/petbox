@@ -16,6 +16,7 @@ import {
   buildHookStdout,
   extractCandidates,
   namerForAgent,
+  partitionFreshHits,
   renderInjection,
   renderSystemMessage,
   tolerancesOf,
@@ -38,10 +39,20 @@ test("extractCandidates requires a hyphen (single words are NOT candidates)", ()
   assert.deepEqual(extractCandidates("fix the telemetry and the toggle"), []);
 });
 
-test("extractCandidates dedupes and caps at 8", () => {
+test("extractCandidates dedupes and caps at the default (32)", () => {
   assert.deepEqual(extractCandidates("a-b a-b a-b"), ["a-b"]);
-  const many = Array.from({ length: 20 }, (_, i) => `slug-${i}`).join(" ");
-  assert.equal(extractCandidates(many).length, 8);
+  const many = Array.from({ length: 40 }, (_, i) => `slug-${i}`).join(" ");
+  assert.equal(extractCandidates(many).length, 32);
+});
+
+test("extractCandidates ranks slugs by specificity so a real multi-segment slug survives a small cap", () => {
+  // Two 1-segment slugs appear before a 3-segment one; cap=1 must keep the most node-like (3-seg).
+  assert.deepEqual(extractCandidates("a-b c-d recall-toggles-usage-audit", 1), ["recall-toggles-usage-audit"]);
+  // NodeIds are maximally specific and always rank ahead of any slug.
+  assert.deepEqual(
+    extractCandidates("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa multi-seg-real-slug", 1),
+    ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+  );
 });
 
 test("extractCandidates is empty for empty / non-string input", () => {
@@ -195,12 +206,22 @@ test("buildInjection: a resolver that throws on one token doesn't abort the rest
 // ---- tolerances: cap + requireHyphen actually read from config -----------------------------
 
 test("extractCandidates: cap param bounds the candidate count", () => {
-  const many = Array.from({ length: 20 }, (_, i) => `slug-${i}`).join(" ");
+  const many = Array.from({ length: 40 }, (_, i) => `slug-${i}`).join(" ");
   assert.equal(extractCandidates(many, 3).length, 3, "cap=3 keeps only 3");
   assert.equal(extractCandidates(many, 1).length, 1, "cap=1 keeps only 1");
-  // A non-positive / bogus cap falls back to the default (8), never 0 or negative.
-  assert.equal(extractCandidates(many, 0).length, 8, "cap=0 → default");
-  assert.equal(extractCandidates(many, -5).length, 8, "negative cap → default");
+  // A non-positive / bogus cap falls back to the default (32), never 0 or negative.
+  assert.equal(extractCandidates(many, 0).length, 32, "cap=0 → default");
+  assert.equal(extractCandidates(many, -5).length, 32, "negative cap → default");
+});
+
+test("partitionFreshHits: drops already-injected board/key, keeps the fresh (per-session dedup)", () => {
+  const a = KNOWN["telemetry-wire-toggle"]; // board/key = work/telemetry-wire-toggle
+  const b: TaskHit = { key: "other-node", board: "work", status: "Done", title: "o" };
+  const p = partitionFreshHits([a, b], new Set(["work/telemetry-wire-toggle"]));
+  assert.deepEqual(p.fresh.map((h) => h.key), ["other-node"], "an already-injected node is suppressed");
+  assert.deepEqual(p.freshKeys, ["work/other-node"]);
+  // empty cache → everything is fresh
+  assert.equal(partitionFreshHits([a, b], new Set()).fresh.length, 2);
 });
 
 test("extractCandidates: requireHyphen=false admits single-word tokens; true rejects them", () => {
@@ -211,8 +232,8 @@ test("extractCandidates: requireHyphen=false admits single-word tokens; true rej
 });
 
 test("tolerancesOf: fills defaults, honors overrides", () => {
-  assert.deepEqual(tolerancesOf(undefined), { cap: 8, requireHyphen: true });
-  assert.deepEqual(tolerancesOf({ enabled: true }), { cap: 8, requireHyphen: true });
+  assert.deepEqual(tolerancesOf(undefined), { cap: 32, requireHyphen: true });
+  assert.deepEqual(tolerancesOf({ enabled: true }), { cap: 32, requireHyphen: true });
   assert.deepEqual(tolerancesOf({ enabled: true, cap: 3, requireHyphen: false }), { cap: 3, requireHyphen: false });
 });
 

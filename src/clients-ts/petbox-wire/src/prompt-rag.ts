@@ -28,9 +28,12 @@
 //
 // Plain TS for native node type-stripping: no enum/namespace/parameter-properties, zero deps.
 
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join } from "node:path";
 import { argv } from "node:process";
 import { pathToFileURL } from "node:url";
-import { connectMcp } from "./mcp-client.ts";
+import { connectMcp, type McpClient } from "./mcp-client.ts";
 import { droidPetboxTool, mcpPetboxTool, type ToolNamer } from "./protocol.ts";
 import { PROMPT_RAG_DEFAULTS, type PromptRagConfig, resolveProject } from "./registry.ts";
 
@@ -92,21 +95,31 @@ export function extractCandidates(
 ): string[] {
   if (typeof prompt !== "string" || prompt.length === 0) return [];
   const seen = new Set<string>();
-  const out: string[] = [];
-  const push = (tok: string) => {
+  const nodeIds: string[] = [];
+  const slugs: string[] = [];
+  const pushTo = (arr: string[], tok: string) => {
     if (!seen.has(tok)) {
       seen.add(tok);
-      out.push(tok);
+      arr.push(tok);
     }
   };
   const slugRe = requireHyphen ? SLUG_RE_HYPHEN : SLUG_RE_ANY;
-  // NodeIds first (most specific), then slugs. A 32-hex NodeId matches the hyphen-required slug RE
-  // only if it contained a hyphen, which it can't; under the relaxed RE a NodeId would match, but
-  // it is already deduped in via NODEID_RE first, so the two sets stay disjoint either way.
-  for (const m of prompt.matchAll(NODEID_RE)) push(m[0]);
-  for (const m of prompt.matchAll(slugRe)) push(m[0]);
+  // NodeIds first (most specific). A 32-hex NodeId matches the hyphen-required slug RE only if it
+  // contained a hyphen, which it can't; under the relaxed RE a NodeId would match, but it is already
+  // deduped into `nodeIds` via NODEID_RE first (shared `seen` set), so the two sets stay disjoint.
+  for (const m of prompt.matchAll(NODEID_RE)) pushTo(nodeIds, m[0]);
+  for (const m of prompt.matchAll(slugRe)) pushTo(slugs, m[0]);
+  // Rank slugs by SPECIFICITY (hyphen-segment count, desc; stable within ties = document order) so a
+  // real multi-segment node slug (`recall-toggles-usage-audit`) survives the cap even when it appears
+  // LATE in a big prompt behind generic hyphenated prose (`exact-match`, `two-phase`, file names).
+  // Fixes the observed crowd-out: the OLD code truncated in document order, evicting late real slugs.
+  const segCount = (s: string) => (s.match(/-/g) || []).length;
+  const rankedSlugs = slugs
+    .map((s, i) => ({ s, i, seg: segCount(s) }))
+    .sort((a, b) => b.seg - a.seg || a.i - b.i)
+    .map((x) => x.s);
   const n = Number.isFinite(cap) && cap > 0 ? Math.floor(cap) : MAX_CANDIDATES;
-  return out.slice(0, n);
+  return [...nodeIds, ...rankedSlugs].slice(0, n);
 }
 
 function clip(s: string, n: number): string {
@@ -136,9 +149,12 @@ export function renderInjection(hits: TaskHit[], tool: ToolNamer = mcpPetboxTool
   );
 }
 
-// Short, VISIBLE one-liner for the CC TUI (the hook's `systemMessage`). Names exactly which nodes
-// were injected so the user can SEE the RAG action, without dumping the pointer block twice (that
-// lives in additionalContext). Returns "" for no hits (caller then emits nothing at all). Pure.
+// A SHORT one-liner naming the injected nodes, emitted as the hook's top-level `systemMessage`.
+// NOTE: Claude Code does NOT currently render `systemMessage` for UserPromptSubmit (a documented
+// exception, alongside SessionStart/UserPromptExpansion), so it is NOT yet visible in the main TUI
+// scroll — it only lands in the session .jsonl / Ctrl-R transcript. Kept for that transcript record
+// and forward-compat (a future CC may surface it); a live-visible channel is tracked separately.
+// Returns "" for no hits (caller then emits nothing at all). Pure.
 export function renderSystemMessage(hits: TaskHit[]): string {
   if (hits.length === 0) return "";
   const refs = hits.map((h) => `${h.board}/${h.key}`).join(", ");
@@ -160,6 +176,26 @@ export function buildHookStdout(text: string, hits: TaskHit[]): string {
     },
     systemMessage: renderSystemMessage(hits),
   });
+}
+
+// Partition resolved hits into the ones NOT YET injected THIS session (fresh) vs already-seen, keyed
+// by `board/key`. Injecting a node's pointer once per session is enough: after the first turn the
+// pointer already lives in the session's context, so re-emitting it on every later turn that mentions
+// the same slug is pure repeat-noise (the owner's anti-noise contract — "don't re-shout the same
+// pointer while we discuss one topic for a while"). Pure/deterministic; input order preserved.
+export function partitionFreshHits(
+  hits: TaskHit[],
+  alreadyInjected: Set<string>,
+): { fresh: TaskHit[]; freshKeys: string[] } {
+  const fresh: TaskHit[] = [];
+  const freshKeys: string[] = [];
+  for (const h of hits) {
+    const k = `${h.board}/${h.key}`;
+    if (alreadyInjected.has(k)) continue;
+    fresh.push(h);
+    freshKeys.push(k);
+  }
+  return { fresh, freshKeys };
 }
 
 // Orchestrate: extract candidates → resolve each exactly → dedupe by node → render. Pure w.r.t.
@@ -378,6 +414,69 @@ function sessionIdOf(j: HookInput): string | undefined {
   return undefined;
 }
 
+// Resolve every candidate CONCURRENTLY into a token→node map, bounded by a small worker pool. Each
+// lookup is an independent MCP `tasks_search(keys:[tok])`; a miss/ambiguous ref maps to null
+// (connectMcp) and is simply absent from the map. This REPLACES the old serial await-loop whose
+// worst case was (2+N)×FETCH_TIMEOUT_MS — parallel collapses the tail toward ~1×timeout, so a higher
+// cap no longer risks a minute-long hung prompt. The client is concurrency-safe (independent
+// fetches, unique JSON-RPC ids); the pool bounds server fan-out on a pathological prompt.
+// TODO(after server commit 36f4133 — miss-tolerant `keys` — is DEPLOYED): collapse this into ONE
+// `tasks_search(keys:[...all])` batch call. Can't today: the live server still throws on the first
+// non-node key, and prompt candidates are mostly non-nodes.
+const RESOLVE_CONCURRENCY = 8;
+async function prefetchNodes(
+  client: McpClient,
+  project: string,
+  tokens: string[],
+  concurrency: number = RESOLVE_CONCURRENCY,
+): Promise<Map<string, TaskHit>> {
+  const map = new Map<string, TaskHit>();
+  let idx = 0;
+  const worker = async (): Promise<void> => {
+    while (idx < tokens.length) {
+      const tok = tokens[idx++];
+      try {
+        const sc = await client.call("tasks_search", { projectKey: project, keys: [tok], bodyLen: 0 });
+        const hit = firstNode(sc);
+        if (hit) map.set(tok, hit);
+      } catch {
+        // a single lookup failure must not abort the rest
+      }
+    }
+  };
+  const pool = Math.max(1, Math.min(concurrency, tokens.length));
+  await Promise.all(Array.from({ length: pool }, () => worker()));
+  return map;
+}
+
+// ---- per-session injection cache (best-effort) ---------------------------------------------
+// One tiny JSON file per session records the `board/key`s already injected, so a node's pointer is
+// emitted only the FIRST time it matches in a session (see partitionFreshHits). All I/O is TOTAL:
+// any failure degrades to "nothing cached" (→ inject as normal) and never throws.
+function sessionCachePath(sessionId: string): string {
+  return join(homedir(), ".petbox", "cache", "prompt-rag", `${sessionId}.json`);
+}
+function readSessionCache(sessionId: string | undefined): Set<string> {
+  if (!sessionId) return new Set();
+  try {
+    const parsed = JSON.parse(readFileSync(sessionCachePath(sessionId), "utf8"));
+    const keys = parsed && Array.isArray(parsed.keys) ? parsed.keys : [];
+    return new Set(keys.filter((x: unknown): x is string => typeof x === "string"));
+  } catch {
+    return new Set(); // no cache file / bad JSON → treat everything as fresh
+  }
+}
+function writeSessionCache(sessionId: string | undefined, keys: Set<string>): void {
+  if (!sessionId) return;
+  try {
+    const p = sessionCachePath(sessionId);
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, JSON.stringify({ keys: [...keys] }));
+  } catch {
+    // best-effort: never break the user's prompt over a cache write
+  }
+}
+
 async function main(): Promise<void> {
   try {
     // Agent selection from the install-time CLI flag (`--agent cc|droid`, default cc). Picks the
@@ -426,26 +525,32 @@ async function main(): Promise<void> {
     // we don't add the audit timeout to a turn where petbox is already down. Silence, as today.
     if (!client) return;
 
-    const resolver: Resolver = async (token) => {
-      // Exact-join: `keys` resolves a slug OR a 32-hex NodeId to a single node (terminal nodes
-      // included), and returns a tool error on a miss/ambiguous ref → connectMcp maps that to null.
-      const sc = await client.call("tasks_search", {
-        projectKey: resolved.project,
-        keys: [token],
-        bodyLen: 0,
-      });
-      return firstNode(sc);
-    };
+    // Resolve ALL candidates CONCURRENTLY up front (bounded pool), then hand buildInjectionDetailed a
+    // synchronous map lookup — the pure core (and its tests) stay unchanged; only the I/O is batched.
+    const candidates = extractCandidates(prompt, opts.cap, opts.requireHyphen);
+    const nodeMap = await prefetchNodes(client, resolved.project, candidates);
+    const resolver: Resolver = async (token) => nodeMap.get(token) ?? null;
 
-    // Compute pointers → print to stdout FIRST → THEN best-effort audit. Order is load-bearing: the
-    // audit must never precede or gate the injected output.
     const result = await buildInjectionDetailed(prompt, resolver, opts, tool);
-    const stdout = buildHookStdout(result.text, result.hits);
+
+    // Per-session dedup: inject each node's pointer only the FIRST time it matches in a session, so a
+    // long conversation about one topic doesn't re-shout the same pointer every turn. Print to stdout
+    // FIRST, then persist the cache, then best-effort audit — order is load-bearing (the injected
+    // output must never be gated by a cache write or the audit).
+    const seenKeys = readSessionCache(sessionId);
+    const { fresh } = partitionFreshHits(result.hits, seenKeys);
+    const stdout = buildHookStdout(renderInjection(fresh, tool), fresh);
     if (stdout) process.stdout.write(stdout);
+    if (fresh.length > 0) {
+      for (const h of fresh) seenKeys.add(`${h.board}/${h.key}`);
+      writeSessionCache(sessionId, seenKeys);
+    }
+    // Audit reflects what was ACTUALLY injected this turn (fresh hits): a repeat suppressed by the
+    // session cache records injected=false, which is correct — nothing was added to context this turn.
     await postAudit(
       auditTarget,
       AUDIT_LOG,
-      buildAuditRecord(prompt, result.candidateCount, result.hits, sessionId),
+      buildAuditRecord(prompt, result.candidateCount, fresh, sessionId),
     );
   } catch {
     // best-effort: never break the user's prompt

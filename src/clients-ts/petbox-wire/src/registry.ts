@@ -27,7 +27,11 @@ export type PromptRagConfig = {
 
 // Single source of truth for the prompt-RAG tolerance defaults, shared by wire.ts (what it writes
 // on --prompt-rag) and prompt-rag.ts (what it falls back to when a field is missing from config).
-export const PROMPT_RAG_DEFAULTS = { cap: 8, requireHyphen: true } as const;
+// `cap` is a PAYLOAD guard (bounds the per-prompt lookup fan-out against a pathological prompt), NOT
+// an anti-noise knob — noise is held by the exact-match gate + requireHyphen. Raised 8→32 once the
+// resolver went concurrent (a higher cap no longer means a slow prompt) and candidates are
+// specificity-ranked (real multi-segment slugs survive the cap even in a big prompt).
+export const PROMPT_RAG_DEFAULTS = { cap: 32, requireHyphen: true } as const;
 
 export type RegistryEntry = {
   prefix: string;
