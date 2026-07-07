@@ -96,7 +96,8 @@ public sealed class KqlSyntaxKindAllowlistTests
 
 		SupportedOperators.Should().BeEquivalentTo(applyExamples.Keys.Concat(executeExamples.Keys));
 
-		var source = Array.Empty<LogEntryRecord>().AsQueryable();
+		using var host = KqlLogHost.Seed(Array.Empty<LogEntryRecord>(), KqlBackend.Sqlite);
+		var source = host.LogEntries;
 
 		foreach (var (kind, query) in applyExamples)
 		{
