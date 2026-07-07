@@ -484,6 +484,87 @@ sealed class RowScalarContext(ParamExpr rowArray, IReadOnlyList<KqlColumn> colum
 		Expr.Call(typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.FromUnixMsN))!, epochMsNullable);
 }
 
+// A layered scalar context for compiling project/extend output expressions in the SQL/record domain
+// (kql-single-path-impl). A bare name resolves FIRST through `lookup` (an earlier same-stage computed
+// column — sequential refs like `extend A = …, B = f(A)`), else through the base record context. Instants,
+// Properties and now() delegate to the base, so the storage representation is identical to a pre-split
+// where (epoch-ms long for datetime). TryColumnLiteralComparison is intentionally NOT overridden — it
+// inherits the null default, matching RowScalarContext, so a computed comparison takes the general
+// compile-both-sides path on either pipeline position.
+sealed class DerivedColumnContext(ScalarContext baseCtx, Func<string, Expr?> lookup) : ScalarContext
+{
+	public override Expr ResolveColumn(string name) => lookup(name) ?? baseCtx.ResolveColumn(name);
+	public override Expr ResolveProperties(string key) => baseCtx.ResolveProperties(key);
+	public override Expr CurrentInstant() => baseCtx.CurrentInstant();
+	public override Expr CoerceInstant(Expr e) => baseCtx.CoerceInstant(e);
+	public override Expr NullableInstant(Expr epochMsNullable) => baseCtx.NullableInstant(epochMsNullable);
+}
+
+// One column of an emitted storage-typed row: its logical name/type (what the user sees) and the emitted
+// property holding its STORAGE value (epoch-ms long for datetime, ticks long for timespan, else logical).
+readonly record struct EmittedCol(string Name, Type LogicalType, string StorageProp);
+
+// A scalar context over an EMITTED storage-typed row — the output of an upstream SQL project/extend/
+// distinct — so a downstream stage (order/take/top, or a further project/extend) resolves the columns the
+// upstream produced (kql-single-path-impl composable state). The storage domain matches the record
+// contexts (epoch-ms long for datetime, ticks long for timespan), so a compiled tree stays SQL-translatable
+// and internally consistent across chained stages; the single storage→logical conversion still happens
+// once at the final materialization.
+sealed class EmittedStorageScalarContext : SqlRecordScalarContext
+{
+	readonly ParamExpr _row;
+	readonly IReadOnlyList<EmittedCol> _schema;
+	readonly string[] _names;
+
+	public EmittedStorageScalarContext(ParamExpr row, IReadOnlyList<EmittedCol> schema)
+	{
+		_row = row;
+		_schema = schema;
+		_names = schema.Select(s => s.Name).ToArray();
+	}
+
+	EmittedCol Col(string canonical) => _schema.First(s => string.Equals(s.Name, canonical, StringComparison.Ordinal));
+	bool HasBag => _schema.Any(s => string.Equals(s.Name, nameof(LogEntryRecord.PropertiesJson), StringComparison.Ordinal));
+
+	protected override IReadOnlyList<string> KnownColumns => _names;
+	protected override Expr KnownColumnAccess(string canonical) => Expr.Property(_row, Col(canonical).StorageProp);
+
+	protected override Expr JsonBag => HasBag
+		? Expr.Property(_row, Col(nameof(LogEntryRecord.PropertiesJson)).StorageProp)
+		: throw new UnsupportedKqlException("Properties.<key>: input has no PropertiesJson column");
+
+	// Mirror RowScalarContext's post-split semantics: an unknown name is a Properties fallback only while
+	// the shape still carries PropertiesJson; otherwise it is the precise "unknown column" error (not the
+	// bag-missing one), so error parity holds against the in-memory path after a project dropped the bag.
+	public override Expr ResolveColumn(string name)
+	{
+		var canonical = ResolveKnownName(name);
+		if (IsKnownColumn(canonical))
+			return KnownColumnAccess(canonical);
+		if (!HasBag)
+			throw new UnsupportedKqlException($"unknown column '{name}'");
+		return ResolveProperties(canonical);
+	}
+
+	protected override Expr? CoerceSpecialLiteral(string canonical, LiteralExpression literal)
+	{
+		var nn = KqlScalar.NonNullable(Col(canonical).LogicalType);
+		if (nn == typeof(DateTime))
+		{
+			if (literal.LiteralValue is not DateTime dt)
+				throw new UnsupportedKqlException($"{canonical} comparison requires a datetime() literal");
+			return Expr.Constant(KqlSqlExpressions.ToUnixMs(dt));
+		}
+		if (nn == typeof(TimeSpan))
+		{
+			if (literal.LiteralValue is not TimeSpan ts)
+				throw new UnsupportedKqlException($"{canonical} comparison requires a timespan literal");
+			return Expr.Constant(ts.Ticks);
+		}
+		return null;
+	}
+}
+
 static class KqlScalar
 {
 	public static Expr Compile(Expression node, ScalarContext ctx) => node switch
@@ -991,6 +1072,22 @@ static class KqlScalarFunctions
 
 		if (value.Type == typeof(DateTime) && step.Type == typeof(TimeSpan))
 			return Expr.Call(Method(nameof(BinDateTime)), value, step);
+
+		// SQL/record domain: a datetime is epoch-ms `long` and the timespan step is a constant literal.
+		// Bucket by absolute ticks (BinDateTimeMs) to match the in-memory BinDateTime exactly. A non-constant
+		// step or a sub-millisecond step (which the ms-precision epoch-ms round-trip cannot represent
+		// losslessly) throws → the transient bridge runs that stage in-memory (both are unreachable in
+		// practice — timespan literals are whole-ms constants).
+		if (value.Type == typeof(long) && step.Type == typeof(TimeSpan))
+		{
+			if (step is not System.Linq.Expressions.ConstantExpression { Value: TimeSpan ts })
+				throw new UnsupportedKqlException("bin() with a datetime value requires a constant timespan step");
+			if (ts.Ticks <= 0)
+				throw new UnsupportedKqlException("bin() step must be a positive timespan");
+			if (ts.Ticks % TimeSpan.TicksPerMillisecond != 0)
+				throw new UnsupportedKqlException("bin() with a datetime value requires a whole-millisecond timespan step");
+			return Expr.Call(SqlM(nameof(KqlSqlExpressions.BinDateTimeMs)), value, Expr.Constant(ts.Ticks));
+		}
 
 		if (KqlScalar.IsNumericType(value.Type) && KqlScalar.IsNumericType(step.Type))
 		{

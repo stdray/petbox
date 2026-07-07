@@ -220,6 +220,14 @@ public static class KqlSqlExpressions
 		return g.Success ? g.Value : "";
 	}
 
+	// 1-based index of the first ORDINAL occurrence of `needle` in `s` (0 when absent or `s` is null),
+	// matching SQLite's builtin instr. Backs the SQL translation of `parse` (the star-free literal/position
+	// matcher — KqlTransformer.BuildParseCaptures reproduces MatchParse's IndexOf via this + substr). C#
+	// body mirrors the builtin exactly (IFNULL(...,0) folds the null arg so both pipeline positions agree).
+	[Sql.Expression("IFNULL(instr({0}, {1}), 0)", ServerSideOnly = true)]
+	public static long Instr(string? s, string needle) =>
+		s is null ? 0 : s.IndexOf(needle, StringComparison.Ordinal) + 1;
+
 	// --- datetime instant conversion. A wall-clock instant is stored/compared as epoch-ms (long) in
 	// the SQL/record context and as DateTime in the in-memory/row context; these bridge the two. ---
 
@@ -232,6 +240,20 @@ public static class KqlSqlExpressions
 	}
 
 	public static DateTime FromUnixMs(long ms) => DateTimeOffset.FromUnixTimeMilliseconds(ms).UtcDateTime;
+
+	// .NET tick of the unix epoch (1970-01-01 UTC). bin(datetime) buckets are anchored at .NET tick 0
+	// (year 1), NOT the epoch, so the epoch offset is folded in to match the in-memory BinDateTime exactly.
+	const long UnixEpochTicks = 621355968000000000L;
+
+	// bin(datetime, timespan) in the epoch-ms/SQL domain: floor the instant to a bucket of `stepTicks`
+	// ABSOLUTE .NET ticks — identical to the in-memory BinDateTime (`v.Ticks / step.Ticks * step.Ticks`),
+	// whose buckets are anchored at tick 0, so a step that does not divide the epoch offset still agrees
+	// with Kusto. Input/output are epoch-ms (long, logical DateTime — converted once at materialization).
+	// The caller (KqlScalar.Bin) guarantees stepTicks > 0 and a whole-millisecond step, so the epoch-ms
+	// round-trip is lossless (E and floored are both multiples of TicksPerMillisecond).
+	[Sql.Expression("((({0} * 10000 + 621355968000000000) / {1}) * {1} - 621355968000000000) / 10000", ServerSideOnly = true)]
+	public static long BinDateTimeMs(long ms, long stepTicks) =>
+		((ms * TimeSpan.TicksPerMillisecond + UnixEpochTicks) / stepTicks * stepTicks - UnixEpochTicks) / TimeSpan.TicksPerMillisecond;
 
 	// --- startof* on epoch-ms. SQLite via strftime(...,'unixepoch',...); the C# body mirrors it for
 	// the in-memory path. Week starts Sunday (Kusto): start-of-day minus the day-of-week (%w, 0=Sun). ---

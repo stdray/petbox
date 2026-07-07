@@ -170,11 +170,15 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 		return async () => { await foreach (var _ in result.Rows) { } };
 	}
 
+	// NOTE (kql-single-path-impl): ops migrated to SQL no longer buffer in memory, so the InMemoryBufferCap
+	// is MOOT for them (result unchanged; the final row count is still bounded by KqlLimits at the response
+	// boundary). Progressively removed as ops migrated: `distinct` (SQL DISTINCT), `extend | order by` (SQL
+	// ORDER BY), `summarize count() by Message` and no-`by` `dcount` (SQL GROUP BY / bare aggregate). The
+	// in-memory GuardBufferCap MECHANISM still guards the FALLBACK path (an op not yet SQL-translatable) — a
+	// `summarize min(<string>) by …` forces that fallback (string min/max stays in-memory: linq2db can't
+	// carry an ordinal comparer), so the distinct-groups cap is still exercised here.
 	[Theory]
-	[InlineData("events | extend one = 1 | order by Message", "order by/top")]
-	[InlineData("events | distinct Message", "distinct")]
-	[InlineData("events | summarize count() by Message", "summarize (distinct groups)")]
-	[InlineData("events | summarize dcount(Message)", "dcount (distinct values)")]
+	[InlineData("events | summarize m = min(Message) by Message", "summarize (distinct groups)")]
 	public async Task InMemoryBuffer_ExceedingScanCap_ThrowsTeachingError(string kql, string opName)
 	{
 		KqlTransformer.InMemoryBufferCapOverride = 10;

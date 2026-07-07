@@ -258,6 +258,18 @@ public sealed class DualExecutorTests
 		await DualExecutor.AssertSameTableAsync(kql, GroupData);
 	}
 
+	// bin(datetime, timespan) in a project/extend runs through the SQL translation (BinDateTimeMs, epoch-ms
+	// bucketing) — distinct from the summarize-by-bin cases above (in-memory). Pins the bucketed DateTime
+	// value AND logical ClrType byte-identical to the reference engine.
+	[Theory]
+	[InlineData("events | project Id, Hour = bin(Timestamp, 1h)")]
+	[InlineData("events | extend Bucket = bin(Timestamp, 5m) | project Id, Bucket")]
+	[InlineData("events | project Id, Day = bin(Timestamp, 1d)")]
+	public async Task ProjectExtendTimeBin_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData);
+	}
+
 	[Theory]
 	[InlineData("events | project Id, Lvl = Level | order by Id desc")]
 	[InlineData("events | project Id, Lvl = Level | order by Lvl asc, Id desc")]

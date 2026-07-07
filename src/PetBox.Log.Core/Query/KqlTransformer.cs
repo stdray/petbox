@@ -12,7 +12,7 @@ using ParamExpr = System.Linq.Expressions.ParameterExpression;
 
 namespace PetBox.Log.Core.Query;
 
-public static class KqlTransformer
+public static partial class KqlTransformer
 {
 	public const string EventsTable = "events";
 	public const string SpansTable = "spans";
@@ -190,28 +190,28 @@ public static class KqlTransformer
 	// stays record-type-agnostic.
 	delegate KqlResult SubqueryRunner(Expression rightExpr, string opName);
 
-	public static KqlResult Execute(IQueryable<LogEntryRecord> source, KustoCode code, TimeProvider? clock = null)
+	public static KqlResult Execute(IQueryable<LogEntryRecord> source, KustoCode code, TimeProvider? clock = null, KqlTranslationOptions? options = null)
 	{
 		var now = ParseAndClock(code, clock);
-		return ExecutePipeline(source, code.Syntax, now, EventsSpec(now));
+		return ExecutePipeline(source, code.Syntax, now, EventsSpec(now), options ?? KqlTranslationOptions.Default);
 	}
 
 	// The `spans` root: the SAME KQL subset over a named log's Spans table. Unlike events, a plain
 	// (non-shape-changing) spans query has no LogEntry-shaped result, so this ALWAYS yields the streamed
 	// span column shape (a Table); LogQueryService routes to it on the `spans` root.
-	public static KqlResult ExecuteSpans(IQueryable<SpanRecord> source, KustoCode code, TimeProvider? clock = null)
+	public static KqlResult ExecuteSpans(IQueryable<SpanRecord> source, KustoCode code, TimeProvider? clock = null, KqlTranslationOptions? options = null)
 	{
 		var now = ParseAndClock(code, clock);
-		return ExecutePipeline(source, code.Syntax, now, SpansSpec(now));
+		return ExecutePipeline(source, code.Syntax, now, SpansSpec(now), options ?? KqlTranslationOptions.Default);
 	}
 
 	// The `metrics` root: the SAME KQL subset over a named log's MetricPoints table. Like spans, a plain
 	// metrics query has no LogEntry-shaped result, so this ALWAYS yields the streamed metric column shape
 	// (a Table); LogQueryService routes to it on the `metrics` root.
-	public static KqlResult ExecuteMetrics(IQueryable<MetricPointRecord> source, KustoCode code, TimeProvider? clock = null)
+	public static KqlResult ExecuteMetrics(IQueryable<MetricPointRecord> source, KustoCode code, TimeProvider? clock = null, KqlTranslationOptions? options = null)
 	{
 		var now = ParseAndClock(code, clock);
-		return ExecutePipeline(source, code.Syntax, now, MetricsSpec(now));
+		return ExecutePipeline(source, code.Syntax, now, MetricsSpec(now), options ?? KqlTranslationOptions.Default);
 	}
 
 	// Guards parse diagnostics and resolves the single now()/ago() instant for the whole query.
@@ -228,7 +228,7 @@ public static class KqlTransformer
 	// the shape-changing suffix runs in-memory. Recursion (a join/lookup whose right side is itself a
 	// pipeline) reuses the SAME compiler against the SAME log source. Generic over the record type: the
 	// `spec` supplies the only root-specific pieces (name, column shape, SQL context, row projector).
-	static KqlResult ExecutePipeline<T>(IQueryable<T> source, SyntaxNode root, DateTime now, RootSpec<T> spec)
+	static KqlResult ExecutePipeline<T>(IQueryable<T> source, SyntaxNode root, DateTime now, RootSpec<T> spec, KqlTranslationOptions options)
 	{
 		var operators = FlattenPipeline(root).ToList();
 		if (operators.Count == 0)
@@ -247,13 +247,36 @@ public static class KqlTransformer
 			: (pipeline.Take(splitAt).ToList(), pipeline.Skip(splitAt).ToList());
 
 		var preResult = ApplyPipeline(source, preOps, spec.MakeContext);
-		var recordShape = new KqlResult(spec.Columns, StreamRecordRows(preResult, spec.ToRow));
 
 		if (postOps.Count == 0)
-			return recordShape;
+			return new KqlResult(spec.Columns, StreamRecordRows(preResult, spec.ToRow));
 
-		SubqueryRunner runSub = (rightExpr, opName) => RunCorrelationSubquery(rightExpr, source, now, opName, spec);
-		return ApplyShapeChanges(recordShape, postOps, now, runSub);
+		// The in-memory correlation-subquery runner (join/lookup right side → materialized KqlResult), used
+		// when a join falls back to the in-memory hash join.
+		SubqueryRunner runSub = (rightExpr, opName) => RunCorrelationSubquery(rightExpr, source, now, opName, spec, options);
+		// The SQL correlation-subquery runner: compiles a join/lookup right side to a composable SqlStage
+		// (null when the right side is not fully SQL-composable → the whole join falls back). Self-referential
+		// so a nested join's right side reuses the same runner.
+		SqlSubqueryRunner sqlRunSub = null!;
+		sqlRunSub = (rightExpr, opName) => TryComposeSubqueryStage(rightExpr, source, now, opName, spec, options, sqlRunSub);
+
+		// HYBRID single-SQL migration: compose a LEADING run of migrated ops directly on the pre-split
+		// linq2db IQueryable as ONE chained SQL query via the storage→logical mapping layer. At the first op
+		// NOT yet migrated, or a transient fallback, the stage materializes (logical-typed) and the remainder
+		// runs on the existing in-memory Stream* path.
+		var (stage, composed, counted) = ComposeLoop(RecordStage(preResult, spec), postOps, now, sqlRunSub);
+
+		if (composed == 0 && counted is null)
+		{
+			// The leading op is not migrated (or fell back) — exact pre-migration behavior.
+			var recordShape = new KqlResult(spec.Columns, StreamRecordRows(preResult, spec.ToRow));
+			return ApplyShapeChanges(recordShape, postOps, now, runSub);
+		}
+
+		var head = counted ?? Materialize(stage);
+		return composed >= postOps.Count
+			? head
+			: ApplyShapeChanges(head, postOps.Skip(composed).ToList(), now, runSub);
 	}
 
 	// An operator whose output is no longer the event shape. `distinct` reduces to its chosen
@@ -1146,7 +1169,7 @@ public static class KqlTransformer
 	// addressing is out of scope, so the leading table reference must match the current root (`events` or
 	// `spans`) — anything else gets a precise "must be the same log" error rather than a generic
 	// unknown-table one.
-	static KqlResult RunCorrelationSubquery<T>(Expression rightExpr, IQueryable<T> source, DateTime now, string opName, RootSpec<T> spec)
+	static KqlResult RunCorrelationSubquery<T>(Expression rightExpr, IQueryable<T> source, DateTime now, string opName, RootSpec<T> spec, KqlTranslationOptions options)
 	{
 		var ops = FlattenPipeline(rightExpr).ToList();
 		if (ops.Count == 0 || ops[0] is not NameReference tbl)
@@ -1154,7 +1177,7 @@ public static class KqlTransformer
 		if (!string.Equals(tbl.SimpleName, spec.TableName, StringComparison.Ordinal))
 			throw new UnsupportedKqlException(
 				$"{opName} right side must be the same log ('{spec.TableName}'); cross-log/table joins are not supported (got '{tbl.SimpleName}')");
-		return ExecutePipeline(source, rightExpr, now, spec);
+		return ExecutePipeline(source, rightExpr, now, spec, options);
 	}
 
 	// Resolves the on-clause into per-side key value-extractors. Two accepted forms (both equality):

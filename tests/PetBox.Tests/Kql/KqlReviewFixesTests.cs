@@ -179,9 +179,14 @@ public sealed class KqlReviewFixesTests
 		KqlTransformer.JoinBuildSideCapOverride = 2;
 		try
 		{
-			// Right side (events) has 5 rows > cap of 2 → fail fast with a teaching message.
+			// Right side has 5 rows > cap of 2 → fail fast with a teaching message.
+			// NOTE (kql-single-path-impl): ALL join kinds now compile to SQL when the right side is fully
+			// SQL-composable, so the in-memory build-side cap is MOOT for those (the DB does the join). It is
+			// still reachable — and pinned here — when the right side FALLS BACK to the in-memory hash join,
+			// which a post-split `where` (not yet migrated) forces: `project … | where …`. RESULT is
+			// unchanged. The cap code stays until the whole in-memory tail is deleted (every op migrated).
 			var result = KqlTransformer.Execute(JoinRows.AsQueryable(),
-				Parse("events | join kind=inner (events) on ServiceKey | project Id, Id1"));
+				Parse("events | join kind=inner (events | project ServiceKey, Id | where Id >= 1) on ServiceKey | project Id, Id1"));
 			var act = async () => await TableFrom(result);
 			(await act.Should().ThrowAsync<UnsupportedKqlException>())
 				.WithMessage("*join right side exceeded 2 rows*narrow it with where/take*");
