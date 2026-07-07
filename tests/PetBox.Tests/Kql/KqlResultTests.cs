@@ -270,6 +270,22 @@ public sealed class KqlResultTests
 		by["svc-b"].Should().Be(2L); // {Warning, Error}
 	}
 
+	// string min/max composes in SQL now (SQLite MIN/MAX = BINARY = codepoint order, the portable engine
+	// promise). Production-only: KustoLoco does not implement string min/max, so there is no differential.
+	// SummarizeRows messages a..e are ASCII, where BINARY == ordinal, so the pick is unambiguous.
+	[Fact]
+	public async Task Summarize_StringMinMax_ByService_ComposesInSql()
+	{
+		var (cols, rowData) = await Run(SummarizeRows,
+			Parse("events | summarize Lo = min(Message), Hi = max(Message) by ServiceKey"));
+		cols.Select(c => c.Name).Should().ContainInOrder("ServiceKey", "Lo", "Hi");
+		cols[1].ClrType.Should().Be<string>();
+
+		var by = rowData.ToDictionary(r => (string)r[0]!, r => ((string?)r[1], (string?)r[2]));
+		by["svc-a"].Should().Be(("a", "d")); // ids 1,2,4 → messages a,b,d
+		by["svc-b"].Should().Be(("c", "e")); // ids 3,5   → messages c,e
+	}
+
 	[Fact]
 	public async Task Summarize_Countif_ByService()
 	{

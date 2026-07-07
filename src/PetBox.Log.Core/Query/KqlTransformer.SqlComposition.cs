@@ -1079,12 +1079,16 @@ public static partial class KqlTransformer
 						return false;
 					var argLogical = KqlScalar.Compile(args[0].Element, new RowScalarContext(rowParam, stage.Columns) { UtcNow = now }).Type;
 					var nnLogical = KqlScalar.NonNullable(argLogical);
-					// Numeric / datetime / timespan min-max: storage is a numeric/long, ordered natively. String
-					// min/max stays IN-MEMORY (return false): linq2db's Min/Max cannot carry an IComparer (it
-					// throws InvalidCastException), so the ordinal collation can't be forced on both providers —
-					// see the reported blocker. Other types also stay in-memory.
-					if (nnLogical == typeof(string)
-						|| (!KqlScalar.IsNumericType(nnLogical) && nnLogical != typeof(DateTime) && nnLogical != typeof(TimeSpan)))
+					// Numeric / datetime / timespan min-max: storage is a numeric/long, ordered natively. STRING
+					// min/max now composes in SQL too, via the plain (NO IComparer) g.Min()/g.Max() selector
+					// overload → SQLite MIN/MAX = BINARY collation = codepoint order. That is the PORTABLE engine
+					// promise (per the accepted "reference = Kusto + portability, not .NET" principle; KustoLoco
+					// does not implement string min/max, so .NET-ordinal was never a promise). The old IComparer
+					// blocker is gone because the selector overload carries no comparer, and the two-provider
+					// culture reconciliation is moot now that every test runs over real SQLite. Any OTHER type
+					// (e.g. bool) still returns false → in-memory fallback.
+					if (nnLogical != typeof(string)
+						&& !KqlScalar.IsNumericType(nnLogical) && nnLogical != typeof(DateTime) && nnLogical != typeof(TimeSpan))
 						return false;
 					var mm = fn == "min" ? "Min" : "Max";
 					var storageResT = Nullable(arg.Type);

@@ -170,12 +170,14 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 	// NOTE (kql-single-path-impl): ops migrated to SQL no longer buffer in memory, so the InMemoryBufferCap
 	// is MOOT for them (result unchanged; the final row count is still bounded by KqlLimits at the response
 	// boundary). Progressively removed as ops migrated: `distinct` (SQL DISTINCT), `extend | order by` (SQL
-	// ORDER BY), `summarize count() by Message` and no-`by` `dcount` (SQL GROUP BY / bare aggregate). The
-	// in-memory GuardBufferCap MECHANISM still guards the FALLBACK path (an op not yet SQL-translatable) — a
-	// `summarize min(<string>) by …` forces that fallback (string min/max stays in-memory: linq2db can't
-	// carry an ordinal comparer), so the distinct-groups cap is still exercised here.
+	// ORDER BY), `summarize count() by Message` and no-`by` `dcount` (SQL GROUP BY / bare aggregate), and now
+	// string min/max (SQL MIN/MAX). The in-memory GuardBufferCap MECHANISM still guards the FALLBACK path (an
+	// aggregate not SQL-translatable) — `min()`/`max()` of a NON-orderable-in-SQL type (here a bool predicate)
+	// still returns false → in-memory summarize, so the distinct-groups cap is still exercised here.
+	// RE-PIN: was `min(Message)` (string min/max used to force the fallback); string min/max now composes in
+	// SQL, so the trigger moved to `min(Level >= 4)` (bool), which is what still falls back.
 	[Theory]
-	[InlineData("events | summarize m = min(Message) by Message", "summarize (distinct groups)")]
+	[InlineData("events | summarize m = min(Level >= 4) by Message", "summarize (distinct groups)")]
 	public async Task InMemoryBuffer_ExceedingScanCap_ThrowsTeachingError(string kql, string opName)
 	{
 		KqlTransformer.InMemoryBufferCapOverride = 10;
