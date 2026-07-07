@@ -626,16 +626,16 @@ static class KqlScalar
 			or SyntaxKind.MultiplyExpression
 			or SyntaxKind.DivideExpression
 			or SyntaxKind.ModuloExpression => Arithmetic(b, ctx),
-		// contains = substring; has = whole-term (see KqlSqlExpressions.Has). startswith/endswith and
-		// the case-sensitive _cs variants translate to fixed-length substring compares.
+		// contains = substring; has = whole-term (lowered to a boundary regex, see HasFn). startswith/
+		// endswith and the case-sensitive _cs variants translate to fixed-length substring compares.
 		SyntaxKind.ContainsExpression => StringMatch(b, ctx, caseSensitive: false),
 		SyntaxKind.ContainsCsExpression => StringMatch(b, ctx, caseSensitive: true),
 		SyntaxKind.StartsWithExpression => StringFn(b, ctx, "startswith", nameof(KqlSqlExpressions.StartsWithI)),
 		SyntaxKind.StartsWithCsExpression => StringFn(b, ctx, "startswith_cs", nameof(KqlSqlExpressions.StartsWithCs)),
 		SyntaxKind.EndsWithExpression => StringFn(b, ctx, "endswith", nameof(KqlSqlExpressions.EndsWithI)),
 		SyntaxKind.EndsWithCsExpression => StringFn(b, ctx, "endswith_cs", nameof(KqlSqlExpressions.EndsWithCs)),
-		SyntaxKind.HasExpression => StringFn(b, ctx, "has", nameof(KqlSqlExpressions.Has)),
-		SyntaxKind.HasCsExpression => StringFn(b, ctx, "has_cs", nameof(KqlSqlExpressions.HasCs)),
+		SyntaxKind.HasExpression => HasFn(b, ctx, "has", caseInsensitive: true),
+		SyntaxKind.HasCsExpression => HasFn(b, ctx, "has_cs", caseInsensitive: false),
 		SyntaxKind.MatchesRegexExpression => StringFn(b, ctx, "matches regex", nameof(KqlSqlExpressions.MatchesRegex)),
 		_ when IsComparison(b.Kind) => Comparison(b, ctx),
 		_ => throw new UnsupportedKqlException($"binary '{b.Kind}' not supported"),
@@ -653,6 +653,44 @@ static class KqlScalar
 			throw new UnsupportedKqlException($"'{opName}' requires a string literal on the right");
 		var mi = typeof(KqlSqlExpressions).GetMethod(method)!;
 		return Expr.Call(mi, access, Expr.Constant(needle));
+	}
+
+	// `has` / `has_cs`: NO dedicated function — lower to a boundary regex over the SAME regexp shim
+	// `matches regex` uses (KqlSqlExpressions.MatchesRegex), so it rides that native per-dialect SQL on
+	// both dialects. The term is a required string literal, so the whole pattern is built at COMPILE time.
+	// `[^\p{L}\p{N}]` boundaries reproduce KQL's term-char rule (letters/digits are term chars, everything
+	// else — INCLUDING underscore — is a delimiter, which is why a plain `\b` would be wrong); `(?i)` gives
+	// `has` its case-insensitivity, `has_cs` omits it. An empty term matches nothing (Kusto semantics).
+	static Expr HasFn(BinaryExpression b, ScalarContext ctx, string opName, bool caseInsensitive)
+	{
+		var access = Compile(b.Left, ctx);
+		if (access.Type != typeof(string))
+			throw new UnsupportedKqlException($"'{opName}' requires a string operand on the left, got {access.Type.Name}");
+		if (b.Right is not LiteralExpression { LiteralValue: string term })
+			throw new UnsupportedKqlException($"'{opName}' requires a string literal on the right");
+		if (term.Length == 0)
+			return Expr.Constant(false);
+		var pattern = (caseInsensitive ? "(?i)" : "")
+			+ "(^|[^\\p{L}\\p{N}])" + Re2Escape(term) + "([^\\p{L}\\p{N}]|$)";
+		var mi = typeof(KqlSqlExpressions).GetMethod(nameof(KqlSqlExpressions.MatchesRegex))!;
+		return Expr.Call(mi, access, Expr.Constant(pattern));
+	}
+
+	// Backslash-escape the RE2/PCRE2 metacharacters so a literal `has`/`has_cs` term matches literally
+	// inside the generated boundary regex (a term like `a.b` or `a|b` must not act as a pattern). Covers
+	// the full metachar set `. ^ $ * + ? ( ) [ ] { } | \` — the chars that would otherwise carry special
+	// meaning on both sqlean (PCRE2) and DuckDB (RE2).
+	static string Re2Escape(string term)
+	{
+		const string meta = ".^$*+?()[]{}|\\";
+		var sb = new System.Text.StringBuilder(term.Length + 8);
+		foreach (var c in term)
+		{
+			if (meta.Contains(c))
+				sb.Append('\\');
+			sb.Append(c);
+		}
+		return sb.ToString();
 	}
 
 	static Expr Arithmetic(BinaryExpression b, ScalarContext ctx)

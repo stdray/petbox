@@ -4,11 +4,13 @@ using Microsoft.Data.Sqlite;
 
 namespace PetBox.Log.Core.Query;
 
-// Registers the KQL scalar functions that SQLite has no built-in for (token `has`/`has_cs`, regex
-// `matches regex`/`extract`) on every SQLite connection linq2db opens for a LogDb. Microsoft.Data.
-// Sqlite scalar functions are per-connection, so we (re)register on ConnectionOpened. The function
-// bodies are the same C# methods the in-memory path calls (KqlSqlExpressions), so a `where` running
-// as SQL and the same predicate running in-memory are guaranteed to agree.
+// Registers the KQL typed string→value conversion functions that SQLite's CAST cannot express
+// faithfully (tolong/todouble/tobool/todatetime — CAST('abc' AS INTEGER) is 0, not NULL) on every
+// SQLite connection linq2db opens for a LogDb. Microsoft.Data.Sqlite scalar functions are
+// per-connection, so we (re)register on ConnectionOpened. The function bodies are the same C# methods
+// the in-memory path calls (KqlSqlExpressions), so a `where` running as SQL and the same predicate
+// running in-memory agree. (The regex surfaces `matches regex`/`extract`/`has`/`has_cs` no longer live
+// here: they map to native per-dialect regexp_* SQL via [Sql.Expression] — see KqlSqlExpressions.)
 sealed class RegisterKqlFunctionsInterceptor : ConnectionInterceptor
 {
 	public static readonly RegisterKqlFunctionsInterceptor Instance = new();
@@ -30,10 +32,6 @@ sealed class RegisterKqlFunctionsInterceptor : ConnectionInterceptor
 	{
 		if (connection is not SqliteConnection c)
 			return;
-		c.CreateFunction<string?, string, bool>("kql_has", KqlSqlExpressions.Has, isDeterministic: true);
-		c.CreateFunction<string?, string, bool>("kql_has_cs", KqlSqlExpressions.HasCs, isDeterministic: true);
-		c.CreateFunction<string?, string, bool>("kql_matches_regex", KqlSqlExpressions.MatchesRegex, isDeterministic: true);
-		c.CreateFunction<string?, long, string?, string>("kql_extract", KqlSqlExpressions.Extract, isDeterministic: true);
 		// typed conversions: string → nullable value, NULL on malformed input (Kusto semantics)
 		c.CreateFunction<string?, long?>("kql_tolong", KqlSqlExpressions.ParseLong, isDeterministic: true);
 		c.CreateFunction<string?, double?>("kql_todouble", KqlSqlExpressions.ParseDouble, isDeterministic: true);

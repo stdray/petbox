@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using LinqToDB;
 using LinqToDB.SqlQuery;
 using PetBox.Log.Core.Metrics;
@@ -15,10 +14,13 @@ namespace PetBox.Log.Core.Query;
 // (row context / LINQ-to-Objects differential) invoke the body directly as a plain method — outside
 // linq2db entirely. Every mapping is ServerSideOnly = true: translation must happen ON the server or
 // fail loudly — ServerSideOnly=false would let linq2db silently fall back to CLIENT-side evaluation,
-// materializing the whole table to run the expression in memory. Functions that SQLite cannot express
-// with built-ins (token `has`, regex) are [Sql.Function]s bound to per-connection scalar functions
-// registered by RegisterKqlFunctionsInterceptor; their C# body is the single source of truth that
-// both the registered SQLite function and the in-memory path call.
+// materializing the whole table to run the expression in memory. The typed string→value conversions
+// (tolong/todouble/tobool/todatetime) that SQLite's CAST cannot express faithfully are [Sql.Function]s
+// bound to per-connection scalar functions registered by RegisterKqlFunctionsInterceptor; their C# body
+// is the single source of truth both the registered SQLite function and the in-memory path call. The
+// regex surfaces (`matches regex`, `extract`, and the lowered `has`/`has_cs`) instead map to NATIVE
+// per-dialect SQL via [Sql.Expression] — sqlean's regexp_* on SQLite (loaded per connection by
+// LoadSqleanRegexpInterceptor), DuckDB's regexp_* — so those bodies never run in-memory and throw.
 public static class KqlSqlExpressions
 {
 	// Bag lookup via SQLite's BUILTIN json functions. The path is always a compile-time constant built
@@ -131,47 +133,22 @@ public static class KqlSqlExpressions
 	public static bool EndsWithCs(string? s, string needle) =>
 		s != null && s.EndsWith(needle, StringComparison.Ordinal);
 
-	// --- honest token `has` / `has_cs` and `matches regex`. SQLite has no term-splitting or regex
-	// built in, so these are [Sql.Function]s bound to per-connection scalar functions (see
-	// RegisterKqlFunctionsInterceptor) whose implementation IS the body below; the differential
-	// (in-memory) path invokes the same body. `has` matches a whole term delimited by non-
-	// alphanumeric characters (or string ends), NOT a substring. ---
+	// --- `matches regex` (+ the lowered `has`/`has_cs`). SQLite has no built-in regex, so this maps to
+	// NATIVE per-dialect regex: sqlean's regexp_like on SQLite (loaded per connection by
+	// LoadSqleanRegexpInterceptor), DuckDB's regexp_matches. Both take (subject, pattern) and return a
+	// boolean; a NULL subject already yields 0/FALSE and the IFNULL/COALESCE pins that belt-and-suspenders.
+	// `has`/`has_cs` carry NO dedicated function — KqlScalar.HasFn lowers them at COMPILE time to a
+	// boundary regex over THIS shim (`(^|[^\p{L}\p{N}])term([^\p{L}\p{N}]|$)`, `(?i)` for the
+	// case-insensitive `has`), so they ride this native SQL on both dialects. SQL-only: the body never
+	// runs in-memory (single-SQL-path engine) and throws if invoked. ---
 
-	[Sql.Function("kql_has", ServerSideOnly = true)]
-	public static bool Has(string? s, string term) => HasTerm(s, term, caseSensitive: false);
-
-	[Sql.Function("kql_has_cs", ServerSideOnly = true)]
-	public static bool HasCs(string? s, string term) => HasTerm(s, term, caseSensitive: true);
-
-	[Sql.Function("kql_matches_regex", ServerSideOnly = true)]
+	[Sql.Expression(ProviderName.SQLite, "IFNULL(regexp_like({0}, {1}), 0)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	[Sql.Expression(ProviderName.DuckDB, "COALESCE(regexp_matches({0}, {1}), FALSE)", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
 	public static bool MatchesRegex(string? s, string pattern) =>
-		s != null && Regex.IsMatch(s, pattern);
-
-	static bool HasTerm(string? haystack, string term, bool caseSensitive)
-	{
-		if (string.IsNullOrEmpty(haystack) || string.IsNullOrEmpty(term))
-			return false;
-		var cmp = caseSensitive ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
-		var from = 0;
-		while (from <= haystack.Length - term.Length)
-		{
-			var idx = haystack.IndexOf(term, from, cmp);
-			if (idx < 0)
-				return false;
-			var leftBoundary = idx == 0 || !IsTermChar(haystack[idx - 1]);
-			var end = idx + term.Length;
-			var rightBoundary = end == haystack.Length || !IsTermChar(haystack[end]);
-			if (leftBoundary && rightBoundary)
-				return true;
-			from = idx + 1;
-		}
-		return false;
-	}
-
-	static bool IsTermChar(char c) => char.IsLetterOrDigit(c);
+		throw new NotSupportedException("KqlSqlExpressions.MatchesRegex is SQL-only (native per-dialect regexp_like/regexp_matches)");
 
 	// --- string transforms: tolower / toupper / substring / strcat / extract. lower/upper/substr/||
-	// map straight to SQLite; extract needs regex → a registered scalar function (kql_extract). ---
+	// map straight to SQLite; extract maps to native per-dialect regex capture (see Extract). ---
 
 	[Sql.Expression("lower({0})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.IfAnyParameterNullable)]
 	public static string? ToLower(string? s) => s?.ToLowerInvariant();
@@ -206,19 +183,17 @@ public static class KqlSqlExpressions
 	[Sql.Expression("(IFNULL({0}, '') || IFNULL({1}, ''))", ServerSideOnly = true)]
 	public static string StrCat2(string? a, string? b) => (a ?? "") + (b ?? "");
 
-	// extract(regex, captureGroup, source) → the captured group's text, or "" when the regex does
-	// not match or the group did not participate (Kusto returns empty string, not null).
-	[Sql.Function("kql_extract", ServerSideOnly = true)]
-	public static string Extract(string? pattern, long captureGroup, string? source)
-	{
-		if (source is null || pattern is null)
-			return "";
-		var m = Regex.Match(source, pattern);
-		if (!m.Success || captureGroup < 0 || captureGroup >= m.Groups.Count)
-			return "";
-		var g = m.Groups[(int)captureGroup];
-		return g.Success ? g.Value : "";
-	}
+	// extract(regex, captureGroup, source) → the captured group's text, or "" when the regex does not
+	// match or the group did not participate (Kusto returns empty string, not null). NATIVE per-dialect
+	// regex capture — sqlean's regexp_capture(source, pattern, group) and DuckDB's
+	// regexp_extract(source, pattern, group): NOTE the source-FIRST arg order, so the template maps
+	// {2}=source, {0}=pattern, {1}=group. sqlean returns NULL on no-match → IFNULL(...,'') restores
+	// Kusto's empty string; DuckDB returns '' natively (group 0 = whole match). SQL-only body: never runs
+	// in-memory and throws if invoked.
+	[Sql.Expression(ProviderName.SQLite, "IFNULL(regexp_capture({2}, {0}, {1}), '')", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	[Sql.Expression(ProviderName.DuckDB, "regexp_extract({2}, {0}, {1})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.NotNullable)]
+	public static string Extract(string? pattern, long captureGroup, string? source) =>
+		throw new NotSupportedException("KqlSqlExpressions.Extract is SQL-only (native per-dialect regexp_capture/regexp_extract)");
 
 	// 1-based index of the first ORDINAL occurrence of `needle` in `s` (0 when absent or `s` is null),
 	// matching SQLite's builtin instr. Backs the SQL translation of `parse` (the star-free literal/position

@@ -9,9 +9,9 @@ namespace PetBox.Log.Core.Query;
 // connection linq2db opens for a LogDb, mirroring RegisterKqlFunctionsInterceptor's per-connection
 // shape. SQLite loadable extensions are per-connection, so we (re)load on ConnectionOpened.
 //
-// INFRA ONLY: this makes sqlean's `regexp_*` SQL functions available but the KQL translator does not
-// use them yet — the .NET-backed kql_matches_regex / kql_extract UDFs (RegisterKqlFunctionsInterceptor)
-// remain the live path. The mapping swap is a later task. Both interceptors are attached to LogDb.
+// This makes sqlean's `regexp_*` SQL functions available so the KQL translator can map `matches regex`,
+// `extract` and the lowered `has`/`has_cs` straight to native SQL (regexp_like / regexp_capture — see
+// KqlSqlExpressions). Both interceptors are attached to LogDb.
 //
 // The binary is vendored per-RID and copied to the output under `sqlean/<rid>/regexp.<ext>` (see
 // PetBox.Log.Core.csproj). We resolve the absolute path off AppContext.BaseDirectory by current OS and
