@@ -12,13 +12,16 @@ public sealed class KqlTransformerTests
 		new() { Id = 4, TimestampMs = 400, Level = (int)LogLevel.Error, Message = "crash", ServiceKey = "svc-c" },
 	];
 
-	static IQueryable<LogEntryRecord> Src() => Rows.AsQueryable();
+	// The one production run seam: seed Rows into a fresh in-memory LogDb and Apply `ast` over the real
+	// linq2db IQueryable. Sqlite is the only Active backend today.
+	static List<LogEntryRecord> Apply(Kusto.Language.KustoCode ast) =>
+		KqlTestHost.Apply(Rows, ast, KqlBackend.Sqlite);
 
 	[Fact]
 	public void Where_LevelEqualsInt_FiltersByRank()
 	{
 		var ast = Parse("events | where Level == 4");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
 	}
 
@@ -26,7 +29,7 @@ public sealed class KqlTransformerTests
 	public void Where_LevelOrdering_Works()
 	{
 		var ast = Parse("events | where Level >= 3");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 3L, 4L]);
 	}
 
@@ -34,7 +37,7 @@ public sealed class KqlTransformerTests
 	public void Where_LevelNameEquals_FiltersByName()
 	{
 		var ast = Parse("events | where LevelName == 'Error'");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
 	}
 
@@ -42,7 +45,7 @@ public sealed class KqlTransformerTests
 	public void Where_ServiceKeyEquals_Filters()
 	{
 		var ast = Parse("events | where ServiceKey == 'svc-a'");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().BeEquivalentTo([1L, 3L]);
 	}
 
@@ -50,7 +53,7 @@ public sealed class KqlTransformerTests
 	public void Where_MessageEquals_Filters()
 	{
 		var ast = Parse("events | where Message == 'boom'");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Single().Id.Should().Be(2);
 	}
 
@@ -58,7 +61,7 @@ public sealed class KqlTransformerTests
 	public void Take_LimitsRows()
 	{
 		var ast = Parse("events | take 2");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Should().HaveCount(2);
 	}
 
@@ -66,7 +69,7 @@ public sealed class KqlTransformerTests
 	public void Where_Then_Take_Composes()
 	{
 		var ast = Parse("events | where Level == 4 | take 1");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Should().HaveCount(1);
 		result.Single().Level.Should().Be((int)LogLevel.Error);
 	}
@@ -75,7 +78,7 @@ public sealed class KqlTransformerTests
 	public void UnknownTable_Throws()
 	{
 		var ast = Parse("WrongTable | where Level == 4");
-		var act = () => KqlTransformer.Apply(Src(), ast).ToList();
+		var act = () => Apply(ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*WrongTable*");
 	}
 
@@ -83,7 +86,7 @@ public sealed class KqlTransformerTests
 	public void UnknownOperator_Throws()
 	{
 		var ast = Parse("events | summarize count()");
-		var act = () => KqlTransformer.Apply(Src(), ast).ToList();
+		var act = () => Apply(ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*not supported*");
 	}
 
@@ -94,14 +97,14 @@ public sealed class KqlTransformerTests
 		// fallback). The property is absent here, so the predicate simply matches nothing — rather than
 		// raising "column not supported". Known columns still win (covered by the Level/Message tests).
 		var ast = Parse("events | where Nonexistent == 'x'");
-		KqlTransformer.Apply(Src(), ast).ToList().Should().BeEmpty();
+		Apply(ast).Should().BeEmpty();
 	}
 
 	[Fact]
 	public void LevelWithStringLiteral_Throws()
 	{
 		var ast = Parse("events | where Level == 'Error'");
-		var act = () => KqlTransformer.Apply(Src(), ast).ToList();
+		var act = () => Apply(ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*integer literal*");
 	}
 
@@ -109,7 +112,7 @@ public sealed class KqlTransformerTests
 	public void OrderBy_DefaultDescending()
 	{
 		var ast = Parse("events | order by Id");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().ContainInOrder(4L, 3L, 2L, 1L);
 	}
 
@@ -117,7 +120,7 @@ public sealed class KqlTransformerTests
 	public void OrderBy_AscendingExplicit()
 	{
 		var ast = Parse("events | order by Id asc");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().ContainInOrder(1L, 2L, 3L, 4L);
 	}
 
@@ -125,7 +128,7 @@ public sealed class KqlTransformerTests
 	public void OrderBy_MultipleColumns_ThenBy()
 	{
 		var ast = Parse("events | order by Level asc, Id desc");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().ContainInOrder(1L, 3L, 4L, 2L);
 	}
 
@@ -133,7 +136,7 @@ public sealed class KqlTransformerTests
 	public void Top_OrdersDescendingAndLimits()
 	{
 		var ast = Parse("events | top 2 by Id desc");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().ContainInOrder(4L, 3L);
 	}
 
@@ -141,7 +144,7 @@ public sealed class KqlTransformerTests
 	public void Top_Ascending()
 	{
 		var ast = Parse("events | top 2 by Id asc");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().ContainInOrder(1L, 2L);
 	}
 
@@ -149,7 +152,7 @@ public sealed class KqlTransformerTests
 	public void Top_DefaultDescending()
 	{
 		var ast = Parse("events | top 1 by Id");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Single().Id.Should().Be(4);
 	}
 
@@ -157,7 +160,7 @@ public sealed class KqlTransformerTests
 	public void WhereThenTop_Composes()
 	{
 		var ast = Parse("events | where Level == 4 | top 1 by Id asc");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Single().Id.Should().Be(2);
 	}
 
@@ -165,7 +168,7 @@ public sealed class KqlTransformerTests
 	public void ParseError_Throws()
 	{
 		var ast = Parse("events | where Level ==");
-		var act = () => KqlTransformer.Apply(Src(), ast).ToList();
+		var act = () => Apply(ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*parse error*");
 	}
 
@@ -173,7 +176,7 @@ public sealed class KqlTransformerTests
 	public void Where_In_FiltersBySet()
 	{
 		var ast = Parse("events | where Level in (3, 4)");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 3L, 4L]);
 	}
 
@@ -181,7 +184,7 @@ public sealed class KqlTransformerTests
 	public void Where_NotIn_FiltersBySet()
 	{
 		var ast = Parse("events | where Level !in (4)");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().BeEquivalentTo([1L, 3L]);
 	}
 
@@ -189,7 +192,7 @@ public sealed class KqlTransformerTests
 	public void Where_Between_FiltersRange()
 	{
 		var ast = Parse("events | where Level between (3 .. 4)");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 3L, 4L]);
 	}
 
@@ -197,7 +200,7 @@ public sealed class KqlTransformerTests
 	public void Where_Arithmetic_Filters()
 	{
 		var ast = Parse("events | where Level + 1 == 5");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
 	}
 
@@ -205,7 +208,7 @@ public sealed class KqlTransformerTests
 	public void Where_Modulo_Filters()
 	{
 		var ast = Parse("events | where Id % 2 == 0");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
 	}
 
@@ -213,7 +216,7 @@ public sealed class KqlTransformerTests
 	public void Where_Iff_Filters()
 	{
 		var ast = Parse("events | where iff(Level == 4, 1, 0) == 1");
-		var result = KqlTransformer.Apply(Src(), ast).ToList();
+		var result = Apply(ast);
 		result.Select(r => r.Id).Should().BeEquivalentTo([2L, 4L]);
 	}
 
@@ -221,7 +224,7 @@ public sealed class KqlTransformerTests
 	public void Where_UnsupportedFunction_ThrowsPrecise()
 	{
 		var ast = Parse("events | where strlen(Message) == 5");
-		var act = () => KqlTransformer.Apply(Src(), ast).ToList();
+		var act = () => Apply(ast);
 		act.Should().Throw<UnsupportedKqlException>().WithMessage("*strlen*not supported*");
 	}
 }

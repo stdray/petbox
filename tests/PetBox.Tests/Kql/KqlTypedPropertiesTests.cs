@@ -29,14 +29,14 @@ public sealed class KqlTypedPropertiesTests
 		PropertiesJson = props,
 	};
 
+	// The one production run seam: seed `data` into a fresh in-memory LogDb and Apply/Execute `kql` over the
+	// real linq2db IQueryable. Sqlite is the only Active backend today.
 	static IReadOnlyList<long> Ids(string kql, IReadOnlyList<LogEntryRecord> data) =>
-		KqlTransformer.Apply(data.AsQueryable(), Parse(kql)).ToList().Select(r => r.Id).ToList();
+		KqlTestHost.Apply(data, Parse(kql), KqlBackend.Sqlite).Select(r => r.Id).ToList();
 
 	static async Task<List<object?[]>> Table(string kql, IReadOnlyList<LogEntryRecord> data)
 	{
-		var result = KqlTransformer.Execute(data.AsQueryable(), Parse(kql));
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
+		var (_, rows) = await KqlTestHost.ExecuteAsync(data, Parse(kql), KqlBackend.Sqlite);
 		return rows;
 	}
 
@@ -183,16 +183,12 @@ public sealed class KqlTypedPropertiesTests
 	}
 
 	[Fact]
-	public void BareName_AfterShapeChangeWithoutProperties_KeepsPreciseError()
+	public async Task BareName_AfterShapeChangeWithoutProperties_KeepsPreciseError()
 	{
 		// summarize drops PropertiesJson, so an unknown name post-split is a real error, not a fallback.
-		var act = () =>
-		{
-			var result = KqlTransformer.Execute(FallbackData.AsQueryable(),
-				Parse("events | summarize C = count() by ServiceKey | where NotAColumn == 'x'"));
-			return result.Rows.ToBlockingEnumerable().ToList();
-		};
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*unknown column 'NotAColumn'*");
+		var act = async () => await KqlTestHost.ExecuteAsync(FallbackData,
+			Parse("events | summarize C = count() by ServiceKey | where NotAColumn == 'x'"), KqlBackend.Sqlite);
+		(await act.Should().ThrowAsync<UnsupportedKqlException>()).WithMessage("*unknown column 'NotAColumn'*");
 	}
 
 	// ---- precise errors preserved ----
@@ -204,14 +200,10 @@ public sealed class KqlTypedPropertiesTests
 	[InlineData("events | project X = tobool(Level)", "*tobool()*bool*")]
 	[InlineData("events | project X = todatetime(Level)", "*todatetime()*string or datetime*")]
 	[InlineData("events | project X = tostring(Timestamp)", "*tostring()*string, integer, and boolean*")]
-	public void InvalidConversionCalls_ThrowPrecise(string kql, string message)
+	public async Task InvalidConversionCalls_ThrowPrecise(string kql, string message)
 	{
 		var data = new[] { Rec(1, "{}") };
-		var act = () =>
-		{
-			var result = KqlTransformer.Execute(data.AsQueryable(), Parse(kql));
-			_ = result.Columns;
-		};
-		act.Should().Throw<UnsupportedKqlException>().WithMessage(message);
+		var act = async () => await KqlTestHost.ExecuteAsync(data, Parse(kql), KqlBackend.Sqlite);
+		(await act.Should().ThrowAsync<UnsupportedKqlException>()).WithMessage(message);
 	}
 }

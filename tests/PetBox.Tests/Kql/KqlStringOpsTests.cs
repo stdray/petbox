@@ -18,14 +18,14 @@ public sealed class KqlStringOpsTests
 		new() { Id = 4, Level = (int)LogLevel.Information, Message = "BOOM normalized", ServiceKey = "svc-c" },
 	];
 
+	// The one production run seam: seed Rows into a fresh in-memory LogDb and Apply/Execute `kql` over the
+	// real linq2db IQueryable. Sqlite is the only Active backend today.
 	static IReadOnlyList<long> Ids(string kql) =>
-		KqlTransformer.Apply(Rows.AsQueryable(), Parse(kql)).ToList().Select(r => r.Id).ToList();
+		KqlTestHost.Apply(Rows, Parse(kql), KqlBackend.Sqlite).Select(r => r.Id).ToList();
 
 	static async Task<List<object?[]>> Table(string kql)
 	{
-		var result = KqlTransformer.Execute(Rows.AsQueryable(), Parse(kql));
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
+		var (_, rows) = await KqlTestHost.ExecuteAsync(Rows, Parse(kql), KqlBackend.Sqlite);
 		return rows;
 	}
 
@@ -119,14 +119,11 @@ public sealed class KqlStringOpsTests
 	[InlineData("events | project X = extract('re', 1)", "*extract*3 arguments*")]
 	[InlineData("events | project X = strcat(Message, Level)", "*strcat*string*")]
 	[InlineData("events | where tolower(Level) == 'x'", "*tolower*string*")]
-	public void InvalidStringCalls_ThrowPrecise(string kql, string message)
+	public async Task InvalidStringCalls_ThrowPrecise(string kql, string message)
 	{
-		var act = () =>
-		{
-			var result = KqlTransformer.Execute(Rows.AsQueryable(), Parse(kql));
-			// force pipeline construction for both Apply-shaped and Execute-shaped queries
-			_ = result.Columns;
-		};
-		act.Should().Throw<UnsupportedKqlException>().WithMessage(message);
+		// force pipeline construction for both Apply-shaped and Execute-shaped queries; ExecuteAsync
+		// surfaces the eager pipeline-build throw once awaited.
+		var act = async () => await KqlTestHost.ExecuteAsync(Rows, Parse(kql), KqlBackend.Sqlite);
+		(await act.Should().ThrowAsync<UnsupportedKqlException>()).WithMessage(message);
 	}
 }

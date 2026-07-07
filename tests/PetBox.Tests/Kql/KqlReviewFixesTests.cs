@@ -26,29 +26,22 @@ public sealed class KqlReviewFixesTests
 			PropertiesJson = props,
 		};
 
+	// The one production run seam: seed `data` into a fresh in-memory LogDb and Apply/Execute `kql` over the
+	// real linq2db IQueryable. Sqlite is the only Active backend today.
 	static IReadOnlyList<long> Ids(string kql, IReadOnlyList<LogEntryRecord> data) =>
-		KqlTransformer.Apply(data.AsQueryable(), Parse(kql)).ToList().Select(r => r.Id).ToList();
+		KqlTestHost.Apply(data, Parse(kql), KqlBackend.Sqlite).Select(r => r.Id).ToList();
 
 	static async Task<List<object?[]>> Table(string kql, IReadOnlyList<LogEntryRecord> data)
 	{
-		var result = KqlTransformer.Execute(data.AsQueryable(), Parse(kql));
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
+		var (_, rows) = await KqlTestHost.ExecuteAsync(data, Parse(kql), KqlBackend.Sqlite);
 		return rows;
 	}
 
-	static async Task<List<object?[]>> TableFrom(KqlResult result)
+	static int Col(IReadOnlyList<KqlColumn> columns, string name)
 	{
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
-		return rows;
-	}
-
-	static int Col(KqlResult r, string name)
-	{
-		for (var i = 0; i < r.Columns.Count; i++)
-			if (r.Columns[i].Name == name) return i;
-		throw new Xunit.Sdk.XunitException($"column '{name}' not in [{string.Join(", ", r.Columns.Select(c => c.Name))}]");
+		for (var i = 0; i < columns.Count; i++)
+			if (columns[i].Name == name) return i;
+		throw new Xunit.Sdk.XunitException($"column '{name}' not in [{string.Join(", ", columns.Select(c => c.Name))}]");
 	}
 
 	// ---- F1: null unboxing — leftouter/lookup unmatched right columns and all-null aggregates ----
@@ -67,18 +60,17 @@ public sealed class KqlReviewFixesTests
 	{
 		// Right side is empty (Level == 99), so every left row is unmatched → Id1 is null. A `where Id1 > 0`
 		// must unbox the (now nullable) Id1 cell as null → excluded, NOT NRE-crash on an object→long unbox.
-		var result = KqlTransformer.Execute(JoinRows.AsQueryable(),
-			Parse("events | join kind=leftouter (events | where Level == 99) on ServiceKey | where Id1 > 0"));
-		(await TableFrom(result)).Should().BeEmpty();
+		var (_, rows) = await KqlTestHost.ExecuteAsync(JoinRows,
+			Parse("events | join kind=leftouter (events | where Level == 99) on ServiceKey | where Id1 > 0"), KqlBackend.Sqlite);
+		rows.Should().BeEmpty();
 	}
 
 	[Fact]
 	public async Task F1_LeftOuter_MatchedNullableRightColumn_StillComparesByValue()
 	{
 		// A matched leftouter row keeps a real Id1 value even though the column is now nullable.
-		var result = KqlTransformer.Execute(JoinRows.AsQueryable(),
-			Parse("events | join kind=leftouter (events | where Id == 2) on ServiceKey | where Id1 == 2 | project Id"));
-		var rows = await TableFrom(result);
+		var (_, rows) = await KqlTestHost.ExecuteAsync(JoinRows,
+			Parse("events | join kind=leftouter (events | where Id == 2) on ServiceKey | where Id1 == 2 | project Id"), KqlBackend.Sqlite);
 		rows.Select(r => (long)r[0]!).Should().BeEquivalentTo([1L, 2L]); // both svc-a left rows matched right Id2
 	}
 
@@ -93,12 +85,11 @@ public sealed class KqlReviewFixesTests
 			Rec(4, "{}", svc: "svc-b"),               // missing → null arg
 		};
 		// svc-b's avg is over all-null args → null result. `| where A > 0` must not crash and must drop it.
-		var result = KqlTransformer.Execute(data.AsQueryable(),
-			Parse("events | summarize A = avg(toint(Properties.X)) by ServiceKey | where A > 0"));
-		var rows = await TableFrom(result);
+		var (cols, rows) = await KqlTestHost.ExecuteAsync(data,
+			Parse("events | summarize A = avg(toint(Properties.X)) by ServiceKey | where A > 0"), KqlBackend.Sqlite);
 		rows.Should().ContainSingle();
-		rows[0][Col(result, "ServiceKey")].Should().Be("svc-a");
-		((double)rows[0][Col(result, "A")]!).Should().Be(6.0);
+		rows[0][Col(cols, "ServiceKey")].Should().Be("svc-a");
+		((double)rows[0][Col(cols, "A")]!).Should().Be(6.0);
 
 		// Without the downstream where, the null group still materializes (no crash), with A = null.
 		var all = await Table("events | summarize A = avg(toint(Properties.X)) by ServiceKey", data);
@@ -111,9 +102,9 @@ public sealed class KqlReviewFixesTests
 	{
 		var data = new[] { Rec(1, svc: "svc-a", level: (int)LogLevel.Error) };
 		// min/max declare nullable result types; filtering them by a computed predicate must not crash.
-		var result = KqlTransformer.Execute(data.AsQueryable(),
-			Parse("events | where Level == 99 | summarize M = min(Id) by ServiceKey | where M > 0"));
-		(await TableFrom(result)).Should().BeEmpty();
+		var (_, rows) = await KqlTestHost.ExecuteAsync(data,
+			Parse("events | where Level == 99 | summarize M = min(Id) by ServiceKey | where M > 0"), KqlBackend.Sqlite);
+		rows.Should().BeEmpty();
 	}
 
 	// ---- F2: join keys compare by value across int/long ----
@@ -123,11 +114,10 @@ public sealed class KqlReviewFixesTests
 	{
 		// Left key K is a toint()-computed long; right key Level is a raw int. Before the normalization
 		// fix, GroupKey's boxed Equals(4L, 4) was false, so the join silently produced NOTHING.
-		var result = KqlTransformer.Execute(JoinRows.AsQueryable(),
-			Parse("events | extend K = toint(Level) | join kind=inner (events) on $left.K == $right.Level | project Id, Id1"));
-		var rows = await TableFrom(result);
-		var id = Col(result, "Id");
-		var id1 = Col(result, "Id1");
+		var (cols, rows) = await KqlTestHost.ExecuteAsync(JoinRows,
+			Parse("events | extend K = toint(Level) | join kind=inner (events) on $left.K == $right.Level | project Id, Id1"), KqlBackend.Sqlite);
+		var id = Col(cols, "Id");
+		var id1 = Col(cols, "Id1");
 		rows.Select(r => ((long)r[id]!, (long)r[id1]!)).Should().BeEquivalentTo(
 			[(1L, 1L), (2L, 2L), (2L, 4L), (2L, 5L), (3L, 3L),
 			 (4L, 2L), (4L, 4L), (4L, 5L), (5L, 2L), (5L, 4L), (5L, 5L)]);
@@ -185,9 +175,9 @@ public sealed class KqlReviewFixesTests
 			// still reachable — and pinned here — when the right side FALLS BACK to the in-memory hash join,
 			// which a post-split `where` (not yet migrated) forces: `project … | where …`. RESULT is
 			// unchanged. The cap code stays until the whole in-memory tail is deleted (every op migrated).
-			var result = KqlTransformer.Execute(JoinRows.AsQueryable(),
-				Parse("events | join kind=inner (events | project ServiceKey, Id | where Id >= 1) on ServiceKey | project Id, Id1"));
-			var act = async () => await TableFrom(result);
+			var act = async () => await KqlTestHost.ExecuteAsync(JoinRows,
+				Parse("events | join kind=inner (events | project ServiceKey, Id | where Id >= 1) on ServiceKey | project Id, Id1"),
+				KqlBackend.Sqlite);
 			(await act.Should().ThrowAsync<UnsupportedKqlException>())
 				.WithMessage("*join right side exceeded 2 rows*narrow it with where/take*");
 		}
@@ -203,9 +193,9 @@ public sealed class KqlReviewFixesTests
 		KqlTransformer.JoinBuildSideCapOverride = 100;
 		try
 		{
-			var result = KqlTransformer.Execute(JoinRows.AsQueryable(),
-				Parse("events | join kind=inner (events) on Id | project Id, Id1"));
-			(await TableFrom(result)).Should().HaveCount(5);
+			var (_, rows) = await KqlTestHost.ExecuteAsync(JoinRows,
+				Parse("events | join kind=inner (events) on Id | project Id, Id1"), KqlBackend.Sqlite);
+			rows.Should().HaveCount(5);
 		}
 		finally
 		{
