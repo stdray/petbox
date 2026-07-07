@@ -8,6 +8,11 @@ namespace PetBox.Tests.Kql;
 // diverges: innerunique dedup choice, collision-suffix scheme, empty/leftouter-null shapes, and the
 // whole of mv-expand and parse (the reference executor can't expand Properties-JSON arrays and does
 // not implement `parse`).
+//
+// Converted to run production over the SHARED real-SQLite harness (KqlTestHost) instead of the
+// EnumerableQuery provider. NOTE: mv-expand is NOT yet SQL-migrated — the SQL prefix runs on SQLite and
+// falls back to the in-memory mv-expand tail; results agree with the old in-memory behavior (verified
+// below), no re-pin was required for the mv-expand cases.
 public sealed class KqlCorrelationTests
 {
 	static KustoCode Parse(string kql) => KustoCode.Parse(kql);
@@ -23,22 +28,17 @@ public sealed class KqlCorrelationTests
 		PropertiesJson = props,
 	};
 
-	static async Task<List<object?[]>> Materialize(KqlResult result)
-	{
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
-		return rows;
-	}
+	// The one production run seam: seed `rows` into a fresh in-memory LogDb and Execute `kql` over the
+	// real linq2db IQueryable, fully materialized. Sqlite is the only Active backend today.
+	static Task<(IReadOnlyList<KqlColumn> Columns, List<object?[]> Rows)> Exec(IEnumerable<LogEntryRecord> rows, string kql) =>
+		KqlTestHost.ExecuteAsync(rows.ToArray(), Parse(kql), KqlBackend.Sqlite);
 
-	static int Col(KqlResult r, string name)
+	static int Col(IReadOnlyList<KqlColumn> cols, string name)
 	{
-		for (var i = 0; i < r.Columns.Count; i++)
-			if (r.Columns[i].Name == name) return i;
-		throw new Xunit.Sdk.XunitException($"column '{name}' not found in [{string.Join(", ", r.Columns.Select(c => c.Name))}]");
+		for (var i = 0; i < cols.Count; i++)
+			if (cols[i].Name == name) return i;
+		throw new Xunit.Sdk.XunitException($"column '{name}' not found in [{string.Join(", ", cols.Select(c => c.Name))}]");
 	}
-
-	static KqlResult Exec(IEnumerable<LogEntryRecord> rows, string kql) =>
-		KqlTransformer.Execute(rows.ToArray().AsQueryable(), Parse(kql));
 
 	// --- join ---
 
@@ -55,10 +55,9 @@ public sealed class KqlCorrelationTests
 	public async Task Join_Inner_EmitsEveryMatch()
 	{
 		// Error rows (Level==4) = Id2(svc-a), Id4(svc-b), Id5(svc-c); right Level>=3 = Id2,Id3,Id4,Id5.
-		var result = Exec(JoinRows, "events | where Level == 4 | join kind=inner (events | where Level >= 3) on ServiceKey");
-		var rows = await Materialize(result);
-		var id = Col(result, "Id");
-		var id1 = Col(result, "Id1");
+		var (cols, rows) = await Exec(JoinRows, "events | where Level == 4 | join kind=inner (events | where Level >= 3) on ServiceKey");
+		var id = Col(cols, "Id");
+		var id1 = Col(cols, "Id1");
 		var pairs = rows.Select(r => ((long)r[id]!, (long)r[id1]!)).ToList();
 		// svc-a right = {Id2}; svc-b right = {Id3,Id4}; svc-c right = {Id5}.
 		pairs.Should().BeEquivalentTo([(2L, 2L), (4L, 3L), (4L, 4L), (5L, 5L)]);
@@ -68,10 +67,9 @@ public sealed class KqlCorrelationTests
 	public async Task Join_Default_IsInnerUnique_DedupsLeftKeepingFirst()
 	{
 		// default kind = innerunique: left de-duplicated by ServiceKey, first row per key wins.
-		var result = Exec(JoinRows, "events | join (events | where Level == 4) on ServiceKey");
-		var rows = await Materialize(result);
-		var id = Col(result, "Id");
-		var id1 = Col(result, "Id1");
+		var (cols, rows) = await Exec(JoinRows, "events | join (events | where Level == 4) on ServiceKey");
+		var id = Col(cols, "Id");
+		var id1 = Col(cols, "Id1");
 		var pairs = rows.Select(r => ((long)r[id]!, (long)r[id1]!)).ToList();
 		// left deduped: svc-a→Id1, svc-b→Id3, svc-c→Id5. right Level==4 = Id2(svc-a),Id4(svc-b),Id5(svc-c).
 		pairs.Should().BeEquivalentTo([(1L, 2L), (3L, 4L), (5L, 5L)]);
@@ -81,10 +79,9 @@ public sealed class KqlCorrelationTests
 	public async Task Join_InnerUnique_KeepsFirstLeftRow_ByInputOrder()
 	{
 		// Explicit innerunique against a right that has two svc-a rows: left svc-a deduped to Id1.
-		var result = Exec(JoinRows, "events | join kind=innerunique (events | where ServiceKey == 'svc-a') on ServiceKey");
-		var rows = await Materialize(result);
-		var id = Col(result, "Id");
-		var id1 = Col(result, "Id1");
+		var (cols, rows) = await Exec(JoinRows, "events | join kind=innerunique (events | where ServiceKey == 'svc-a') on ServiceKey");
+		var id = Col(cols, "Id");
+		var id1 = Col(cols, "Id1");
 		var pairs = rows.Select(r => ((long)r[id]!, (long)r[id1]!)).ToList();
 		// left svc-a rows {1,2} → dedup keeps Id1; joined to right svc-a rows {1,2}.
 		pairs.Should().BeEquivalentTo([(1L, 1L), (1L, 2L)]);
@@ -94,10 +91,9 @@ public sealed class KqlCorrelationTests
 	public async Task Join_LeftOuter_KeepsUnmatchedLeftWithNullRight()
 	{
 		// right = only Id2 (svc-a), so svc-b and svc-c left rows are unmatched → null right Id.
-		var result = Exec(JoinRows, "events | join kind=leftouter (events | where Id == 2) on ServiceKey");
-		var rows = await Materialize(result);
-		var id = Col(result, "Id");
-		var id1 = Col(result, "Id1");
+		var (cols, rows) = await Exec(JoinRows, "events | join kind=leftouter (events | where Id == 2) on ServiceKey");
+		var id = Col(cols, "Id");
+		var id1 = Col(cols, "Id1");
 		var byLeft = rows.GroupBy(r => (long)r[id]!).ToDictionary(g => g.Key, g => g.Select(r => r[id1]).ToList());
 		byLeft[1L].Should().BeEquivalentTo([2L]); // svc-a → right Id2
 		byLeft[2L].Should().BeEquivalentTo([2L]); // svc-a → right Id2
@@ -108,10 +104,9 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task Join_MultiKey_MatchesOnAllKeys()
 	{
-		var result = Exec(JoinRows, "events | join kind=inner (events) on ServiceKey, Level");
-		var rows = await Materialize(result);
-		var id = Col(result, "Id");
-		var id1 = Col(result, "Id1");
+		var (cols, rows) = await Exec(JoinRows, "events | join kind=inner (events) on ServiceKey, Level");
+		var id = Col(cols, "Id");
+		var id1 = Col(cols, "Id1");
 		// (ServiceKey,Level) is unique per row here, so a self-join matches each row to itself only.
 		rows.Select(r => ((long)r[id]!, (long)r[id1]!)).Should().BeEquivalentTo(
 			[(1L, 1L), (2L, 2L), (3L, 3L), (4L, 4L), (5L, 5L)]);
@@ -120,18 +115,17 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task Join_ExplicitLeftRightEquality_Works()
 	{
-		var result = Exec(JoinRows, "events | where Id == 2 | join kind=inner (events | where Level >= 3) on $left.ServiceKey == $right.ServiceKey");
-		var rows = await Materialize(result);
-		var id = Col(result, "Id");
-		var id1 = Col(result, "Id1");
+		var (cols, rows) = await Exec(JoinRows, "events | where Id == 2 | join kind=inner (events | where Level >= 3) on $left.ServiceKey == $right.ServiceKey");
+		var id = Col(cols, "Id");
+		var id1 = Col(cols, "Id1");
 		rows.Select(r => ((long)r[id]!, (long)r[id1]!)).Should().BeEquivalentTo([(2L, 2L)]); // svc-a right Level>=3 = Id2
 	}
 
 	[Fact]
 	public async Task Join_SelfJoin_SuffixesCollidingRightColumns()
 	{
-		var result = Exec(JoinRows, "events | join kind=inner (events) on Id");
-		var names = result.Columns.Select(c => c.Name).ToList();
+		var (cols, _) = await Exec(JoinRows, "events | join kind=inner (events) on Id");
+		var names = cols.Select(c => c.Name).ToList();
 		// left keeps its names; every right column collides and is suffixed with 1.
 		names.Should().ContainInOrder("Id", "ServiceKey", "Message", "Id1", "ServiceKey1", "Message1");
 		names.Count(n => n == "Id").Should().Be(1);
@@ -142,13 +136,12 @@ public sealed class KqlCorrelationTests
 	public async Task Join_CollisionSuffix_SkipsAlreadyTakenSuffix()
 	{
 		// left already carries an 'Id1' column (from extend), so the right Id must land on 'Id2'.
-		var result = Exec(JoinRows, "events | extend Id1 = Level | join kind=inner (events) on Id");
-		var names = result.Columns.Select(c => c.Name).ToList();
+		var (cols, rows) = await Exec(JoinRows, "events | extend Id1 = Level | join kind=inner (events) on Id");
+		var names = cols.Select(c => c.Name).ToList();
 		names.Should().Contain("Id1");  // the extend column
 		names.Should().Contain("Id2");  // the right Id, bumped past the taken Id1
-		var rows = await Materialize(result);
-		var id = Col(result, "Id");
-		var id2 = Col(result, "Id2");
+		var id = Col(cols, "Id");
+		var id2 = Col(cols, "Id2");
 		// self-join on Id → each row matched to itself; right Id equals left Id.
 		rows.Should().OnlyContain(r => (long)r[id]! == (long)r[id2]!);
 	}
@@ -156,46 +149,45 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task Join_EmptyRight_Inner_ProducesNothing()
 	{
-		var result = Exec(JoinRows, "events | join kind=inner (events | where Level == 99) on ServiceKey");
-		(await Materialize(result)).Should().BeEmpty();
+		var (_, rows) = await Exec(JoinRows, "events | join kind=inner (events | where Level == 99) on ServiceKey");
+		rows.Should().BeEmpty();
 	}
 
 	[Fact]
 	public async Task Join_EmptyRight_LeftOuter_KeepsAllLeftWithNulls()
 	{
-		var result = Exec(JoinRows, "events | join kind=leftouter (events | where Level == 99) on ServiceKey");
-		var rows = await Materialize(result);
-		var id1 = Col(result, "Id1");
+		var (cols, rows) = await Exec(JoinRows, "events | join kind=leftouter (events | where Level == 99) on ServiceKey");
+		var id1 = Col(cols, "Id1");
 		rows.Should().HaveCount(5);
 		rows.Should().OnlyContain(r => r[id1] == null);
 	}
 
 	[Fact]
-	public void Join_UnsupportedKind_ThrowsPrecise()
+	public async Task Join_UnsupportedKind_ThrowsPrecise()
 	{
-		var act = () => Exec(JoinRows, "events | join kind=fullouter (events) on ServiceKey");
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*fullouter*");
+		var act = async () => await Exec(JoinRows, "events | join kind=fullouter (events) on ServiceKey");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*fullouter*");
 	}
 
 	[Fact]
-	public void Join_CrossTableRightSide_ThrowsSameLog()
+	public async Task Join_CrossTableRightSide_ThrowsSameLog()
 	{
-		var act = () => Exec(JoinRows, "events | join kind=inner (systemlog | where Level > 3) on ServiceKey");
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*same log*");
+		var act = async () => await Exec(JoinRows, "events | join kind=inner (systemlog | where Level > 3) on ServiceKey");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*same log*");
 	}
 
 	[Fact]
-	public void Join_NonEqualityOnClause_Throws()
+	public async Task Join_NonEqualityOnClause_Throws()
 	{
-		var act = () => Exec(JoinRows, "events | join kind=inner (events) on $left.Level < $right.Level");
-		act.Should().Throw<UnsupportedKqlException>();
+		var act = async () => await Exec(JoinRows, "events | join kind=inner (events) on $left.Level < $right.Level");
+		await act.Should().ThrowAsync<UnsupportedKqlException>();
 	}
 
 	[Fact]
-	public void Join_HalfDollarEquality_ThrowsPrecise()
+	public async Task Join_HalfDollarEquality_ThrowsPrecise()
 	{
-		var act = () => Exec(JoinRows, "events | join kind=inner (events) on $left.ServiceKey == ServiceKey");
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*$left.col == $right.col*");
+		var act = async () => await Exec(JoinRows, "events | join kind=inner (events) on $left.ServiceKey == ServiceKey");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*$left.col == $right.col*");
 	}
 
 	[Fact]
@@ -208,9 +200,8 @@ public sealed class KqlCorrelationTests
 			Rec(3, LogLevel.Warning, "c", "svc-c", """{"Region":"us"}"""),
 		};
 		// join on the bare 'Region' name → Properties.Region on both sides.
-		var result = Exec(rows, "events | where Id == 1 | join kind=inner (events) on Region");
-		var mat = await Materialize(result);
-		var id1 = Col(result, "Id1");
+		var (cols, mat) = await Exec(rows, "events | where Id == 1 | join kind=inner (events) on Region");
+		var id1 = Col(cols, "Id1");
 		mat.Select(r => (long)r[id1]!).Should().BeEquivalentTo([1L, 2L]); // both eu rows
 	}
 
@@ -219,14 +210,13 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task Lookup_DropsRightKeyColumn_AndEmitsEveryMatch()
 	{
-		var result = Exec(JoinRows, "events | where Id == 1 | lookup (events) on ServiceKey");
-		var names = result.Columns.Select(c => c.Name).ToList();
+		var (cols, rows) = await Exec(JoinRows, "events | where Id == 1 | lookup (events) on ServiceKey");
+		var names = cols.Select(c => c.Name).ToList();
 		// right ServiceKey (the key) is dropped: there is exactly one ServiceKey column and no ServiceKey1.
 		names.Count(n => n == "ServiceKey").Should().Be(1);
 		names.Should().NotContain("ServiceKey1");
 		names.Should().Contain("Message1"); // non-key right columns survive, suffixed
-		var rows = await Materialize(result);
-		var msg1 = Col(result, "Message1");
+		var msg1 = Col(cols, "Message1");
 		// left Id1 (svc-a) matches both svc-a right rows (Id1 "a", Id2 "b") — leftouter, all matches.
 		rows.Select(r => (string?)r[msg1]).Should().BeEquivalentTo(["a", "b"]);
 	}
@@ -234,11 +224,12 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task Lookup_Unmatched_KeepsLeftRowWithNulls()
 	{
-		var rows = new[] { Rec(1, LogLevel.Information, "a", "lonely") };
-		var result = Exec(JoinRows.Concat(rows), "events | where ServiceKey == 'lonely' | lookup (events | where ServiceKey == 'svc-a') on ServiceKey");
-		var mat = await Materialize(result);
+		// Id 6 (not 1): JoinRows already occupies Ids 1-5, and the real-SQLite harness enforces the
+		// LogEntries PK, unlike the old EnumerableQuery provider which never checked for collisions.
+		var rows = new[] { Rec(6, LogLevel.Information, "a", "lonely") };
+		var (cols, mat) = await Exec(JoinRows.Concat(rows), "events | where ServiceKey == 'lonely' | lookup (events | where ServiceKey == 'svc-a') on ServiceKey");
 		mat.Should().ContainSingle();
-		mat[0][Col(result, "Message1")].Should().BeNull();
+		mat[0][Col(cols, "Message1")].Should().BeNull();
 	}
 
 	// --- mv-expand ---
@@ -255,9 +246,8 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task MvExpand_Property_OneRowPerElement()
 	{
-		var result = Exec(MvRows, "events | mv-expand Properties.Tags | project Id, Tags");
-		var rows = await Materialize(result);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("Id", "Tags");
+		var (cols, rows) = await Exec(MvRows, "events | mv-expand Properties.Tags | project Id, Tags");
+		cols.Select(c => c.Name).Should().ContainInOrder("Id", "Tags");
 		// only Id1 has a real array of 3; the empty/missing/non-array rows are dropped.
 		rows.Select(r => ((long)r[0]!, (string?)r[1])).Should().BeEquivalentTo(
 			[(1L, "x"), (1L, "y"), (1L, "z")]);
@@ -266,8 +256,7 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task MvExpand_BareName_FallsBackToProperty()
 	{
-		var result = Exec(MvRows, "events | mv-expand Tags | project Id, Tags");
-		var rows = await Materialize(result);
+		var (_, rows) = await Exec(MvRows, "events | mv-expand Tags | project Id, Tags");
 		rows.Select(r => ((long)r[0]!, (string?)r[1])).Should().BeEquivalentTo(
 			[(1L, "x"), (1L, "y"), (1L, "z")]);
 	}
@@ -275,9 +264,8 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task MvExpand_NumericElements_AreStringTyped()
 	{
-		var result = Exec(MvRows, "events | mv-expand Nums | project Id, Nums");
-		var rows = await Materialize(result);
-		result.Columns[Col(result, "Nums")].ClrType.Should().Be<string>();
+		var (cols, rows) = await Exec(MvRows, "events | mv-expand Nums | project Id, Nums");
+		cols[Col(cols, "Nums")].ClrType.Should().Be<string>();
 		rows.Select(r => ((long)r[0]!, (string?)r[1])).Should().BeEquivalentTo(
 			[(5L, "10"), (5L, "20")]);
 	}
@@ -285,23 +273,22 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task MvExpand_MissingAndEmptyAndNonArray_DropRows()
 	{
-		var result = Exec(MvRows, "events | mv-expand Tags | project Id");
-		var rows = await Materialize(result);
+		var (_, rows) = await Exec(MvRows, "events | mv-expand Tags | project Id");
 		rows.Select(r => (long)r[0]!).Should().OnlyContain(id => id == 1L); // only the real array survives
 	}
 
 	[Fact]
-	public void MvExpand_MultipleColumns_Throws()
+	public async Task MvExpand_MultipleColumns_Throws()
 	{
-		var act = () => Exec(MvRows, "events | mv-expand Tags, Nums");
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*exactly one*");
+		var act = async () => await Exec(MvRows, "events | mv-expand Tags, Nums");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*exactly one*");
 	}
 
 	[Fact]
-	public void MvExpand_ToTypeOf_Throws()
+	public async Task MvExpand_ToTypeOf_Throws()
 	{
-		var act = () => Exec(MvRows, "events | mv-expand Tags to typeof(string)");
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*typeof*");
+		var act = async () => await Exec(MvRows, "events | mv-expand Tags to typeof(string)");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*typeof*");
 	}
 
 	// --- parse ---
@@ -316,10 +303,9 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task Parse_ExtractsCaptures_BetweenLiterals()
 	{
-		var result = Exec(ParseRows, "events | parse Message with \"user \" User \" from \" Region | project Id, User, Region");
-		var rows = await Materialize(result);
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("Id", "User", "Region");
-		result.Columns[Col(result, "User")].ClrType.Should().Be<string>();
+		var (cols, rows) = await Exec(ParseRows, "events | parse Message with \"user \" User \" from \" Region | project Id, User, Region");
+		cols.Select(c => c.Name).Should().ContainInOrder("Id", "User", "Region");
+		cols[Col(cols, "User")].ClrType.Should().Be<string>();
 		var byId = rows.ToDictionary(r => (long)r[0]!, r => ((string?)r[1], (string?)r[2]));
 		byId[1L].Should().Be(("alice", "eu"));
 		byId[3L].Should().Be(("bob", "us"));
@@ -328,8 +314,7 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task Parse_NonMatchingRow_IsRetainedWithNullCaptures()
 	{
-		var result = Exec(ParseRows, "events | parse Message with \"user \" User \" from \" Region | project Id, User");
-		var rows = await Materialize(result);
+		var (_, rows) = await Exec(ParseRows, "events | parse Message with \"user \" User \" from \" Region | project Id, User");
 		rows.Should().HaveCount(3); // the non-matching row is kept (Kusto `parse`, not `parse-where`)
 		rows.Single(r => (long)r[0]! == 2L)[1].Should().BeNull();
 	}
@@ -337,8 +322,7 @@ public sealed class KqlCorrelationTests
 	[Fact]
 	public async Task Parse_TrailingCapture_TakesRestOfString()
 	{
-		var result = Exec(ParseRows, "events | parse Message with \"user \" Rest | project Id, Rest");
-		var rows = await Materialize(result);
+		var (_, rows) = await Exec(ParseRows, "events | parse Message with \"user \" Rest | project Id, Rest");
 		var byId = rows.ToDictionary(r => (long)r[0]!, r => (string?)r[1]);
 		byId[1L].Should().Be("alice from eu");
 		byId[2L].Should().BeNull(); // doesn't start with "user "
@@ -348,30 +332,29 @@ public sealed class KqlCorrelationTests
 	public async Task Parse_FromPropertyBareName()
 	{
 		var rows = new[] { Rec(1, LogLevel.Information, "m", "svc", """{"Path":"/api/v1/users"}""") };
-		var result = Exec(rows, "events | parse Path with \"/api/\" Version \"/\" Resource | project Id, Version, Resource");
-		var mat = await Materialize(result);
-		mat[0][Col(result, "Version")].Should().Be("v1");
-		mat[0][Col(result, "Resource")].Should().Be("users");
+		var (cols, mat) = await Exec(rows, "events | parse Path with \"/api/\" Version \"/\" Resource | project Id, Version, Resource");
+		mat[0][Col(cols, "Version")].Should().Be("v1");
+		mat[0][Col(cols, "Resource")].Should().Be("users");
 	}
 
 	[Fact]
-	public void Parse_TypedCapture_Throws()
+	public async Task Parse_TypedCapture_Throws()
 	{
-		var act = () => Exec(ParseRows, "events | parse Message with \"user \" User:string");
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*typed capture*");
+		var act = async () => await Exec(ParseRows, "events | parse Message with \"user \" User:string");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*typed capture*");
 	}
 
 	[Fact]
-	public void Parse_RegexKind_Throws()
+	public async Task Parse_RegexKind_Throws()
 	{
-		var act = () => Exec(ParseRows, "events | parse kind=regex Message with \"user \" User");
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*simple*");
+		var act = async () => await Exec(ParseRows, "events | parse kind=regex Message with \"user \" User");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*simple*");
 	}
 
 	[Fact]
-	public void Parse_NonStringSource_Throws()
+	public async Task Parse_NonStringSource_Throws()
 	{
-		var act = () => Exec(ParseRows, "events | parse Level with \"x\" A");
-		act.Should().Throw<UnsupportedKqlException>().WithMessage("*string*");
+		var act = async () => await Exec(ParseRows, "events | parse Level with \"x\" A");
+		await act.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*string*");
 	}
 }

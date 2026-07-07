@@ -15,6 +15,9 @@ namespace PetBox.Tests.Kql;
 // conversions over indexed values, missing-key null semantics, dotted-path flattening
 // (Properties.petbox.tool ≡ Properties["petbox.tool"]), and the structural error for a non-literal
 // selector. SQLite pushdown parity lives in SqliteKqlIntegrationTests / SpanSqliteKqlIntegrationTests.
+//
+// Converted to run production over the SHARED real-SQLite harness (KqlTestHost) instead of the
+// EnumerableQuery provider, so the assertions pin the REAL SQL-translated behavior.
 public sealed class KqlBracketIndexTests
 {
 	static KustoCode Parse(string kql) => KustoCode.Parse(kql);
@@ -43,13 +46,20 @@ public sealed class KqlBracketIndexTests
 	];
 
 	static IReadOnlyList<long> Ids(string kql) =>
-		KqlTransformer.Apply(Events.AsQueryable(), Parse(kql)).ToList().Select(r => r.Id).ToList();
+		IdsOver(Events, kql);
+
+	static IReadOnlyList<long> IdsOver(IReadOnlyList<LogEntryRecord> records, string kql) =>
+		KqlTestHost.Apply(records, Parse(kql), KqlBackend.Sqlite).Select(r => r.Id).ToList();
 
 	static async Task<List<object?[]>> Table(string kql)
 	{
-		var result = KqlTransformer.Execute(Events.AsQueryable(), Parse(kql));
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
+		var (_, rows) = await KqlTestHost.ExecuteAsync(Events, Parse(kql), KqlBackend.Sqlite);
+		return rows;
+	}
+
+	static async Task<List<object?[]>> TableOver(IReadOnlyList<LogEntryRecord> records, string kql)
+	{
+		var (_, rows) = await KqlTestHost.ExecuteAsync(records, Parse(kql), KqlBackend.Sqlite);
 		return rows;
 	}
 
@@ -99,10 +109,8 @@ public sealed class KqlBracketIndexTests
 	[Fact]
 	public async Task Distinct_IndexedKey_DeDups()
 	{
-		var result = KqlTransformer.Execute(Events.AsQueryable(), Parse("""events | distinct Properties["region.code"]"""));
-		result.Columns[0].Name.Should().Be("Properties.region.code");
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
+		var (cols, rows) = await KqlTestHost.ExecuteAsync(Events, Parse("""events | distinct Properties["region.code"]"""), KqlBackend.Sqlite);
+		cols[0].Name.Should().Be("Properties.region.code");
 		rows.Select(r => r[0]).Should().BeEquivalentTo(["eu", "us", null]);
 	}
 
@@ -133,13 +141,13 @@ public sealed class KqlBracketIndexTests
 	}
 
 	[Fact]
-	public void NonLiteralSelector_ThrowsStructuralError()
+	public async Task NonLiteralSelector_ThrowsStructuralError()
 	{
-		var inWhere = () => KqlTransformer.Apply(Events.AsQueryable(), Parse("events | where Properties[Message] == 'x'")).ToList();
+		var inWhere = () => KqlTestHost.Apply(Events, Parse("events | where Properties[Message] == 'x'"), KqlBackend.Sqlite);
 		inWhere.Should().Throw<UnsupportedKqlException>().WithMessage("*string literal*");
 
-		var inProject = () => KqlTransformer.Execute(Events.AsQueryable(), Parse("events | project X = Properties[Message]"));
-		inProject.Should().Throw<UnsupportedKqlException>().WithMessage("*string literal*");
+		var inProject = async () => await KqlTestHost.ExecuteAsync(Events, Parse("events | project X = Properties[Message]"), KqlBackend.Sqlite);
+		await inProject.Should().ThrowAsync<UnsupportedKqlException>().WithMessage("*string literal*");
 	}
 
 	[Fact]
@@ -148,8 +156,7 @@ public sealed class KqlBracketIndexTests
 		// The write boundary stores `we"ird.key` as `we_ird.key` (KqlPropertyKeys); the search boundary
 		// applies the same rule to the requested key, so the RAW spelling finds the normalized row.
 		var rows = new[] { Rec(9, """{"we_ird.key":"v1"}""") };
-		var ids = KqlTransformer.Apply(rows.AsQueryable(), Parse("events | where Properties[\"we\\\"ird.key\"] == 'v1'"))
-			.ToList().Select(r => r.Id).ToList();
+		var ids = IdsOver(rows, "events | where Properties[\"we\\\"ird.key\"] == 'v1'");
 		ids.Should().BeEquivalentTo([9L]);
 	}
 
@@ -159,7 +166,7 @@ public sealed class KqlBracketIndexTests
 		// `Properties["k"] == 200` (int literal against the text bag) must not error into a trap: the
 		// message steers to the string form (which WORKS — text parity pre/post split) and to
 		// toint()/todouble() for numeric comparison.
-		var act = () => KqlTransformer.Apply(Events.AsQueryable(), Parse("""events | where Properties["http.status_code"] == 500""")).ToList();
+		var act = () => KqlTestHost.Apply(Events, Parse("""events | where Properties["http.status_code"] == 500"""), KqlBackend.Sqlite);
 		act.Should().Throw<UnsupportedKqlException>()
 			.WithMessage("*string literal*").WithMessage("*toint()*");
 	}
@@ -186,15 +193,12 @@ public sealed class KqlBracketIndexTests
 			Rec(11, """{"flag.on":true}"""),
 			Rec(12, """{"flag.on":false}"""),
 		};
-		var pre = KqlTransformer.Apply(rows.AsQueryable(), Parse("""events | where Properties["flag.on"] == "true" """))
-			.ToList().Select(r => r.Id).ToList();
+		var pre = IdsOver(rows, """events | where Properties["flag.on"] == "true" """);
 		pre.Should().BeEquivalentTo([11L]);
 
-		var result = KqlTransformer.Execute(rows.AsQueryable(),
-			Parse("""events | extend one = 1 | where Properties["flag.on"] == "true" | project Id"""));
-		var post = new List<object?[]>();
-		await foreach (var r in result.Rows) post.Add(r);
-		post.Select(r => (long)r[0]!).Should().BeEquivalentTo(pre);
+		var post = (await TableOver(rows, """events | extend one = 1 | where Properties["flag.on"] == "true" | project Id"""))
+			.Select(r => (long)r[0]!).ToList();
+		post.Should().BeEquivalentTo(pre);
 	}
 
 	// --- spans root ---
@@ -221,9 +225,7 @@ public sealed class KqlBracketIndexTests
 
 	static async Task<List<object?[]>> SpanTable(string kql)
 	{
-		var result = KqlTransformer.ExecuteSpans(Spans.AsQueryable(), Parse(kql));
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
+		var (_, rows) = await KqlTestHost.ExecuteSpansAsync(Spans, Parse(kql), KqlBackend.Sqlite);
 		return rows;
 	}
 
@@ -257,15 +259,13 @@ public sealed class KqlBracketIndexTests
 	[Fact]
 	public async Task Spans_ReportedRegressionQuery_Works()
 	{
-		var result = KqlTransformer.ExecuteSpans(Spans.AsQueryable(), Parse(
+		var (cols, rows) = await KqlTestHost.ExecuteSpansAsync(Spans, Parse(
 			"""
 			spans | where Name == "mcp.tool tasks_search" | top 3 by Start desc
 			| project Start, Name, Duration, req=todouble(Properties["petbox.request_chars"]), resp=todouble(Properties["petbox.response_chars"])
-			"""));
-		result.Columns.Select(c => c.Name).Should().ContainInOrder("Start", "Name", "Duration", "req", "resp");
+			"""), KqlBackend.Sqlite);
+		cols.Select(c => c.Name).Should().ContainInOrder("Start", "Name", "Duration", "req", "resp");
 
-		var rows = new List<object?[]>();
-		await foreach (var r in result.Rows) rows.Add(r);
 		rows.Should().HaveCount(3); // s4, s2, s1 by Start desc (s3 is a different tool)
 		rows.Select(r => (string)r[1]!).Should().OnlyContain(n => n == "mcp.tool tasks_search");
 		rows.Select(r => (double?)r[3]).Should().ContainInOrder(77d, 100d, 250d); // Start desc: s4, s2, s1
