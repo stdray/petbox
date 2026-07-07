@@ -240,6 +240,23 @@ public sealed class DualExecutorTests
 		await DualExecutor.AssertSameTableAsync(kql, GroupData);
 	}
 
+	// make_list / make_set: production yields COMPACT value-ascending JSON; KustoLoco yields a JsonArray in
+	// encounter order. DualExecutor.Norm reduces every JSON-array cell to a SORTED MULTISET, so these assert
+	// the SAME ELEMENTS (null-skipped; deduped for make_set) regardless of order/representation. Selectors
+	// are string (ServiceKey/Message) and long (Id) — the v1 supported set; ServiceKey has duplicates so
+	// make_set genuinely dedups where make_list does not.
+	[Theory]
+	[InlineData("events | summarize L = make_list(ServiceKey)")]
+	[InlineData("events | summarize S = make_set(ServiceKey)")]
+	[InlineData("events | summarize L = make_list(Message) by ServiceKey")]
+	[InlineData("events | summarize L = make_list(Id) by ServiceKey")]
+	[InlineData("events | summarize S = make_set(Id) by ServiceKey")]
+	[InlineData("events | summarize S = make_set(ServiceKey) by Level")]
+	public async Task SummarizeMakeListSet_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, GroupData);
+	}
+
 	// A NUMERIC bin() as a summarize group KEY (`by Bucket = bin(Id, N)`) now translates to SQL: bin's
 	// numeric path routes through KqlSqlExpressions.BinLong/BinDouble ([Sql.Expression] arithmetic) instead
 	// of the old in-memory-only helper, so the GROUP BY key is server-translatable (was untranslatable —
