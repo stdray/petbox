@@ -24,12 +24,15 @@ namespace PetBox.Web.Mcp;
 public static class MemoryTools
 {
 	[McpServerTool(Name = "memory_store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]
-	[Description("CREATE a named memory store in a project (fails if it already exists). Requires memory:write.")]
+	[Description("CREATE a named memory store. `scope`: project (default) | workspace. Requires memory:write.")]
 	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
-		string projectKey, string store, string? description = null, CancellationToken ct = default)
+		string projectKey, string store, string? description = null,
+		[Description("project | workspace (default project).")] string? scope = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
+		projectKey = ResolveScope(http, projectKey, scope).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var meta = await memory.CreateStoreAsync(projectKey, store, description, ct);
@@ -38,7 +41,7 @@ public static class MemoryTools
 
 	[McpServerTool(Name = "memory_store_list", Title = "List memory stores", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreListResult))]
 	[Description("""
-		List memory stores in a project. Requires memory:read.
+		List memory stores. `scope`: project (default) | workspace. Requires memory:read.
 		`includeUsage` (default false) attaches a per-store usage aggregate: totalEntries,
 		surfacedAtLeastOnce/openedAtLeastOnce (+ fractions over the active set), medianLastHitAt
 		(the median last-hit of the surfaced entries — "recency"), and the dead tail
@@ -47,11 +50,13 @@ public static class MemoryTools
 		""")]
 	public static async Task<MemoryStoreListResult> StoreListAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
-		string projectKey,
+		string? projectKey = null,
 		[Description("Attach a per-store usage aggregate (coverage, median recency, dead tail) (default false).")] bool includeUsage = false,
+		[Description("project | workspace (default project).")] string? scope = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
+		projectKey = ResolveScope(http, projectKey, scope).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var list = await memory.ListStoresAsync(projectKey, ct);
@@ -71,12 +76,15 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory_store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreDeletedResult))]
-	[Description("Delete a memory store and its entries. Requires memory:write.")]
+	[Description("Delete a memory store and its entries. `scope`: project (default) | workspace. Requires memory:write.")]
 	public static async Task<MemoryStoreDeletedResult> StoreDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
-		string projectKey, string store, CancellationToken ct = default)
+		string projectKey, string store,
+		[Description("project | workspace (default project).")] string? scope = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
+		projectKey = ResolveScope(http, projectKey, scope).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
@@ -167,17 +175,19 @@ public static class MemoryTools
 		(never other writers' history — there is no cursor parameter on a write) and carry
 		key/type/description/version; `body` follows the uniform bodyLen knob (omitted here = NO
 		body, a compact ack; 0 = no body; N>0 = the first N chars, "…" when cut; -1 = full body).
-			`currentVersion` is the store-wide cursor: for a full delta since a cursor,
-		call memory_delta with it as `sinceVersion`.
+			`scope`: project (default) | workspace. `currentVersion` is the store-wide cursor:
+		for a full delta since a cursor, call memory_delta with it as `sinceVersion`.
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string projectKey, string store,
 		[Description("Array of entry objects: { key, type, description, body, tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[Description("project | workspace (default project).")] string? scope = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
+		projectKey = ResolveScope(http, projectKey, scope).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var (upserts, deletes) = ParseEntries(entries);
@@ -185,14 +195,16 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
-	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface (a memory_upsert ack echoes only its own call; pass its `currentVersion` here for the full store delta). Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
+	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface. `scope`: project (default) | workspace. Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
 		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[Description("project | workspace (default project).")] string? scope = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
+		projectKey = ResolveScope(http, projectKey, scope).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		return Serialize(await memory.DeltaAsync(projectKey, store, sinceVersion, ct), bodyLen);
@@ -465,12 +477,16 @@ public static class MemoryTools
 		return (by, sort.Desc);
 	}
 
-	// Resolve a single explicit scope to its container projectKey (for remember).
+	// Resolve a single explicit scope to its container projectKey.
 	// project → the key's project (authorized via the claim); workspace → the reserved
-	// shared container (gated only by the memory scope already asserted).
+	// shared container (gated only by the memory scope already asserted). When projectKey
+	// is already the workspace container and scope is omitted, treat as workspace (callers
+	// may address $workspace directly as projectKey).
 	static (string Scope, string Key) ResolveScope(IHttpContextAccessor http, string? projectKey, string? scope) =>
 		(scope?.Trim().ToLowerInvariant()) switch
 		{
+			null or "" or "project" when string.Equals(projectKey, WorkspaceContainer, StringComparison.Ordinal)
+				=> ("workspace", WorkspaceContainer),
 			null or "" or "project" => ("project", ModuleMcp.ResolveProject(http, projectKey)),
 			"workspace" => ("workspace", WorkspaceContainer),
 			var s => throw new ArgumentException($"invalid scope '{s}' (project|workspace)"),
