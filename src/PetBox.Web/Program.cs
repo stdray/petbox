@@ -495,7 +495,7 @@ public partial class Program
 	// Path prefixes for programmatic (non-browser) surfaces that must keep their raw status
 	// codes + JSON/empty bodies rather than the HTML /Error re-execute. Ordinal, case-insensitive.
 	static readonly string[] ProgrammaticPathPrefixes =
-		["/api", "/mcp", "/v1", "/health", "/version", "/agent", "/openapi"];
+		["/api", "/mcp", "/v1", "/health", "/version", "/agent", "/openapi", "/.well-known"];
 
 	static bool IsProgrammaticPath(PathString path)
 	{
@@ -681,6 +681,31 @@ public partial class Program
 			Environment.GetEnvironmentVariable("GIT_COMMIT_DATE") ?? string.Empty)))
 			.Produces<VersionResponse>()
 			.AllowAnonymous();
+
+		// MCP OAuth discovery probes — RELIABILITY FIX (bug mcp-oauth-discovery-html-404).
+		// Claude Code (and other MCP SDK clients) register an OAuth auth provider for EVERY http MCP
+		// server (`hasAuthProvider:true` in the transport). PetBox authenticates /mcp with an API key
+		// (X-Api-Key), NOT OAuth, so it publishes no OAuth metadata. But on a 401 — e.g. a reconnect
+		// after a server restart — the client PROBES these RFC 9728 / RFC 8414 well-known paths. With
+		// no handler they fell through to the SPA's HTML 404 page; the client then does
+		// `JSON.parse('<!DOCTYPE html>…')` and throws
+		//   "SDK auth failed: HTTP 404: Invalid OAuth error response: Unrecognized token '<'"
+		// which aborts the WHOLE reconnect (the symptom users saw as a dead /mcp). Answer the probes
+		// with a clean JSON 404 (application/json) so discovery fails GRACEFULLY and the client falls
+		// back to the X-Api-Key header the transport always sends — a fresh connect already works that
+		// way. Anonymous (discovery precedes auth); exact + catch-all (spec appends the resource path,
+		// e.g. /.well-known/oauth-protected-resource/mcp).
+		var oauthDiscoveryBody = new
+		{
+			error = "not_found",
+			error_description = "PetBox authenticates /mcp with an API key (X-Api-Key header); no OAuth authorization is published.",
+		};
+		IResult OAuthDiscoveryProbe() => Results.Json(oauthDiscoveryBody, statusCode: StatusCodes.Status404NotFound);
+		foreach (var wk in new[] { "oauth-protected-resource", "oauth-authorization-server", "openid-configuration" })
+		{
+			app.MapGet($"/.well-known/{wk}", OAuthDiscoveryProbe).AllowAnonymous();
+			app.MapGet($"/.well-known/{wk}/{{*rest}}", OAuthDiscoveryProbe).AllowAnonymous();
+		}
 
 		app.MapPost("/api/auth/logout", async (HttpContext ctx) =>
 		{

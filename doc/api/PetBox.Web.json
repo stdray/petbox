@@ -77,6 +77,78 @@
         }
       }
     },
+    "/.well-known/oauth-protected-resource": {
+      "get": {
+        "tags": [
+          "PetBox.Web"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/.well-known/oauth-protected-resource/{rest}": {
+      "get": {
+        "tags": [
+          "PetBox.Web"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/.well-known/oauth-authorization-server": {
+      "get": {
+        "tags": [
+          "PetBox.Web"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/.well-known/oauth-authorization-server/{rest}": {
+      "get": {
+        "tags": [
+          "PetBox.Web"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/.well-known/openid-configuration": {
+      "get": {
+        "tags": [
+          "PetBox.Web"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
+    "/.well-known/openid-configuration/{rest}": {
+      "get": {
+        "tags": [
+          "PetBox.Web"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/auth/logout": {
       "post": {
         "tags": [
