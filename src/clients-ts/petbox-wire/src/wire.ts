@@ -42,6 +42,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { PROMPT_RAG_DEFAULTS, type PromptRagConfig } from "./registry.ts";
+import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 
 const DEFAULT_BASE_URL = "https://petbox.3po.su";
 // Where THIS run's kit lives (npx cache or a checkout's src dir).
@@ -494,32 +495,23 @@ async function ensurePromptRagAuditLog(baseUrl: string, project: string, key: st
 // `env` values (unlike `.mcp.json`) — empirically verified 2026-07-06 — so a reference form sends
 // the literal string and the ingest returns 401. The key already lives plaintext in
 // ~/.petbox/keys.json; settings.local.json (gitignored) is the same trust boundary, per-project.
-// Both files are merged (other keys/env entries preserved); only our OTEL_* / CLAUDE_* keys change.
+// A literal key PINS the value: if the project api key rotates the header goes stale — re-run wire
+// (--telemetry) to re-provision. The header shape/name is built in buildTelemetryOtlpEnv (which the
+// unit test covers); this function only merges the result into the two files, preserving other
+// keys/env entries — only our OTEL_* / CLAUDE_* keys change.
 function writeTelemetrySettings(
   dir: string,
   project: string,
   key: string,
   logName: string,
 ): void {
-  const metricsEndpoint = `${DEFAULT_BASE_URL}/v1/metrics/${project}/${logName}`;
-  const logsEndpoint = `${DEFAULT_BASE_URL}/v1/logs/${project}/${logName}`;
+  const { publicEnv, secretEnv } = buildTelemetryOtlpEnv(DEFAULT_BASE_URL, project, key, logName);
   // Non-secret export config → committable settings.json.
-  const publicEnv: Record<string, string> = {
-    CLAUDE_CODE_ENABLE_TELEMETRY: "1",
-    OTEL_METRICS_EXPORTER: "otlp",
-    OTEL_LOGS_EXPORTER: "otlp",
-    OTEL_EXPORTER_OTLP_PROTOCOL: "http/protobuf",
-    OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: metricsEndpoint,
-    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: logsEndpoint,
-    OTEL_METRIC_EXPORT_INTERVAL: "5000",
-  };
   mergeEnvIntoSettings(join(dir, ".claude", "settings.json"), publicEnv);
   log(`[telemetry] merged OTLP export config into .claude/settings.json (log '${logName}').`);
 
   // Secret header (carries the API key) → gitignored settings.local.json.
-  mergeEnvIntoSettings(join(dir, ".claude", "settings.local.json"), {
-    OTEL_EXPORTER_OTLP_HEADERS: `X-Api-Key=${key},X-Service-Key=claude-code`,
-  });
+  mergeEnvIntoSettings(join(dir, ".claude", "settings.local.json"), secretEnv);
   log(`[telemetry] wrote OTLP auth header into .claude/settings.local.json (gitignored — keep it out of git).`);
 }
 
