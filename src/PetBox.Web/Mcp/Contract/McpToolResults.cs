@@ -180,7 +180,7 @@ public sealed record LogQueryResultView(
 
 public sealed record MemoryStoreCreatedResult(string ProjectKey, string Name, string? Description, DateTime CreatedAt);
 
-public sealed record MemoryStoreRow(string Name, string? Description, DateTime CreatedAt, MemoryStoreUsageRow? Usage = null);
+public sealed record MemoryStoreRow(string Scope, string Name, string? Description, DateTime CreatedAt, MemoryStoreUsageRow? Usage = null);
 
 // Per-store usage aggregate on the wire (memory_store_list includeUsage:true; null when
 // the flag is off). Flattens MemoryUsageAggregate.DeadTail into DeadCount + DeadTailKeys —
