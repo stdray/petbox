@@ -281,7 +281,7 @@ public partial class Program
 			Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed,
 		};
 		builder.Services.AddMcpServer()
-			.WithHttpTransport()
+			.WithHttpTransport(o => o.Stateless = true)
 			// Schema-honest registration: nullable record properties are NOT marked
 			// `required` in the generated in/out schemas, so our null-omitting serializer
 			// (WhenWritingNull, incl. the bodyLen contract) stays conformant for strict
