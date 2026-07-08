@@ -1057,7 +1057,7 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 - **Core SDK** (свой, нужен): `PetBox.Client` (.NET) / `@stdray-npm/petbox-client` (TS) / `petbox-client` (Python, future) — auth (ApiKey), HTTP transport, raw methods для Data API (`QueryAsync`, `ExecAsync`), Config API (`ResolveAsync`), и Log ingestion (`IngestAsync` через `/api/ingest/clef`)
 - **Framework integrations** (свои, нужны где экосистемы нет):
   - `PetBox.Client.Config` — MEC integration (порт `YobaConf.Client` — exposes config через стандартный `IConfigurationProvider`)
-  - `PetBox.Client.Data.Linq2Db` — linq2db custom provider (Wave 5+ из Phase 16; reference: `LinqToDB.Remote.HttpClient.Server`)
+  - `PetBox.Client.Data.Linq2Db` — linq2db custom provider **[shipped]** (reference: `LinqToDB.Remote.HttpClient.Server`)
   - `@stdray-npm/petbox-client-drizzle` — Drizzle integration (TS Data)
 - **НЕ делаем** (используется существующая экосистема через Seq protocol):
   - **Logging .NET** — pets настраивают `Serilog.Sinks.Seq` или `Seq.Extensions.Logging` с URL=petbox + ApiKey. PetBox `/api/ingest/clef` accepts Seq protocol. Свои adapter'ы не пишем.
@@ -1083,7 +1083,7 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 
 #### 26.3 — Core SDK extension (Config + Data raw)
 
-- [ ] `PetBox.Client` (.NET) — extract auth+HTTP transport из `PetBox.Client.Config` в общий core. Add `Data` namespace: `QueryAsync`, `ExecAsync` (для `/query` + `/exec` Data API). Add `Log` namespace: `IngestAsync` через `/api/ingest/clef` для use cases где Seq sink не подходит (rare).
+- [x] `PetBox.Client` (.NET) — extract auth+HTTP transport из `PetBox.Client.Config` в общий core. Add `Data` namespace: `QueryAsync`, `ExecAsync` (для `/query` + `/exec` Data API) — **shipped** (плюс `CreateDbAsync`/`ApplySchemaAsync`). `Log` namespace (`IngestAsync` через `/api/ingest/clef`) — всё ещё deferred (Seq sink покрывает основной путь).
 - [ ] `@stdray-npm/petbox-client` (TS) — то же: extract core auth+fetch, add `data` module. Log опциональный raw `ingest()` — основной путь у TS pet'а через `@datalust/winston-seq` напрямую.
 - [ ] Existing `Config` сохраняется как specialized provider (MEC), но core SDK даёт raw `ResolveConfigAsync` для use cases без MEC
 
@@ -1099,7 +1099,7 @@ Goal: перенести client libraries yobaconf'а (`YobaConf.Client` .NET + 
 - [x] `GitVersion.yml` уже в petbox repo идентичен yobaconf (continuous delivery, label=ci on main)
 - [x] `.github/workflows/ci.yml` — added `nuget-publish` (triggered на `refs/tags/nuget`) и `npm-publish` (triggered на `refs/tags/npm`) jobs. Existing `publish` (docker) job gated to skip on those tags. Both jobs auth via `GITHUB_TOKEN` + `GITHUB_REPOSITORY_OWNER` (set automatically by GH Actions).
 - [x] Verify (CI alias) extended to include TsSdkLint+Typecheck+Test — PR validation теперь покрывает оба языка.
-- [ ] Документировать в `doc/clients.md` как pet добавляет dependency: `dotnet add package PetBox.Client.Config --version 0.x.y-ci.N --source https://nuget.pkg.github.com/{owner}/index.json` / scoped npm registry config. (follow-up — нет блокера для первого publish)
+- [ ] Документировать в `doc/clients.md` как pet добавляет dependency: `dotnet add package PetBox.Client.Config` (nuget.org — public, default source) / npm `@stdray-npm/petbox-client` (npmjs.org). (follow-up — нет блокера для первого publish)
 - [x] Debug стадия: GitHub Packages (npm.pkg.github.com + nuget.pkg.github.com) с `0.x.y-ci.N` версиями.
 
 #### 26.6 — kpvotes-ts migration (overlaps с Phase 27 dogfooding)
@@ -1134,7 +1134,7 @@ petbox/
 │   ├── clients-net/              ← NEW (renamed from src/clients/ implied earlier)
 │   │   ├── PetBox.Client/        — core SDK (auth, HTTP, Data raw, Config raw, Log raw)
 │   │   ├── PetBox.Client.Config/ — MEC IConfigurationProvider (порт YobaConf.Client)
-│   │   └── PetBox.Client.Data.Linq2Db/ — Wave 5+ from Phase 16
+│   │   └── PetBox.Client.Data.Linq2Db/ — shipped (linq2db provider)
 │   ├── clients-ts/               ← NEW
 │   │   ├── petbox-client/        — core SDK (TS, bun workspace member)
 │   │   └── petbox-client-drizzle/ — Drizzle integration (Wave 5+)

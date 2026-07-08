@@ -24,7 +24,7 @@
 		"@biomejs/biome": "1.9.4",
 		"typescript": "5.7.3"
 	},
-	"keywords": ["petbox", "configuration", "config"],
+	"keywords": ["petbox", "configuration", "config", "data", "sql"],
 	"license": "MIT",
 	"sideEffects": false,
 	"repository": {

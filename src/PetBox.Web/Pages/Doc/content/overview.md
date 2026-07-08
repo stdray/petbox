@@ -20,7 +20,7 @@ Auth is an **API key** (`X-Api-Key`) scoped to a project, with enumerable scopes
 
 ## Client libraries (published)
 
-Today the published SDKs cover the **config** surface (ETag-aware polling into your app's native config); data/log SDK surfaces are planned. Everything else is reachable directly over REST/MCP.
+Today the published SDKs cover the **config** surface (ETag-aware polling into your app's native config) and the **Data** module (raw parameterized SQL — `query`/`exec` — plus DataDb provisioning) in all three languages (.NET / TypeScript / Python); the **Log** SDK surface is still planned. Everything else is reachable directly over REST/MCP.
 
 ### TypeScript — `@stdray-npm/petbox-client` (npm)
 
@@ -32,7 +32,7 @@ npm i @stdray-npm/petbox-client
 import { PetBoxConfigClient } from "@stdray-npm/petbox-client";
 
 const cfg = new PetBoxConfigClient({
-  baseUrl: "{{origin}}",
+  endpoint: "{{origin}}",
   apiKey: process.env.PETBOX_API_KEY!,
   tags: { project: "kpvotes", service: "bot" },
 });
@@ -41,18 +41,45 @@ cfg.on("change", next => { /* hot-reload */ });
 // one-shot (no polling): fetchConfig({ ... })
 ```
 
-### .NET — `PetBox.Client.Config` (NuGet, GitHub Packages)
+Data module (raw parameterized SQL + DataDb provisioning):
+
+```ts
+import { PetBoxDataClient } from "@stdray-npm/petbox-client";
+
+const data = new PetBoxDataClient({ endpoint: "{{origin}}", apiKey: process.env.PETBOX_API_KEY! });
+await data.createDb("kpvotes", "cache");
+await data.exec("kpvotes", "cache", "INSERT INTO votes (id, film) VALUES (@id, @film)",
+  [{ name: "@id", value: 1 }, { name: "@film", value: "Matrix" }]);
+const rows = await data.query("kpvotes", "cache", "SELECT * FROM votes");
+```
+
+### .NET — `PetBox.Client.Config` (NuGet, nuget.org)
 
 ```csharp
 builder.Configuration.AddPetBoxConfig(o =>
 {
     o.BaseUrl = "{{origin}}";
     o.ApiKey  = builder.Configuration["PETBOX_API_KEY"]!;
-    o.Tags    = new() { ["project"] = "kpvotes", ["service"] = "bot" };
+    o.WithTag("project", "kpvotes")
+     .WithTag("service", "bot");
     o.CacheDirectory = "/var/cache/petbox"; // last-known-good on disk (mount a volume)
 });
 // resolved config flows into IConfiguration; ETag polling hot-reloads it.
 // CacheDirectory: boots on the last good config after a restart even if petbox is down.
+```
+
+Data module (from the `PetBox.Client` package — `.Data` on `PetBoxClient`):
+
+```csharp
+using var client = new PetBoxClient(new PetBoxClientOptions
+{
+    Endpoint = "{{origin}}",
+    ApiKey   = builder.Configuration["PETBOX_API_KEY"]!,
+});
+await client.Data.CreateDbAsync("kpvotes", "cache");
+await client.Data.ExecAsync("kpvotes", "cache", "INSERT INTO votes (id) VALUES (@id)",
+    new[] { new PetBoxSqlParam("@id", 1) });
+var rows = await client.Data.QueryAsync("kpvotes", "cache", "SELECT * FROM votes");
 ```
 
 ### Python — `petbox-client` (PyPI)
@@ -73,6 +100,18 @@ client = PetBoxConfigClient(PetBoxConfigClientOptions(
 config = client.start()                  # first fetch + background ETag polling
 client.on("change", lambda cfg: ...)     # hot-reload
 # one-shot (no polling): fetch_config(...)
+```
+
+Data module (raw parameterized SQL + DataDb provisioning):
+
+```python
+from petbox_client import PetBoxDataClient, PetBoxSqlParam
+
+data = PetBoxDataClient(endpoint="{{origin}}", api_key=os.environ["PETBOX_API_KEY"])
+data.create_db("kpvotes", "cache")
+data.exec("kpvotes", "cache", "INSERT INTO votes (id, film) VALUES (@id, @film)",
+          [PetBoxSqlParam("@id", 1), PetBoxSqlParam("@film", "Matrix")])
+rows = data.query("kpvotes", "cache", "SELECT * FROM votes")
 ```
 
 ## Building on PetBox (for agents)

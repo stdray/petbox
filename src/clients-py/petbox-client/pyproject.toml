@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "stdray" }]
-keywords = ["petbox", "configuration", "config"]
+keywords = ["petbox", "configuration", "config", "data", "sql"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
