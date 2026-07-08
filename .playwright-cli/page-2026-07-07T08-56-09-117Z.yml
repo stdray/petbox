@@ -1,0 +1,481 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "Back to $system" [ref=e6] [cursor=pointer]:
+          - /url: /ui/$system
+          - img [ref=e7]
+          - generic [ref=e9]: Back to $system
+        - generic [ref=e10]:
+          - img [ref=e11]
+          - text: Admin mode
+        - generic [ref=e13]: $system workspace administration
+      - generic [ref=e14]:
+        - link "admin" [ref=e15] [cursor=pointer]:
+          - /url: /ui/me/account
+        - button "Sign out" [ref=e17] [cursor=pointer]:
+          - img [ref=e18]
+    - main [ref=e20]:
+      - generic [ref=e21]:
+        - heading "System" [level=1] [ref=e22]
+        - generic [ref=e23]: $system
+      - generic [ref=e24]:
+        - generic [ref=e25]:
+          - heading "Health endpoints" [level=2] [ref=e26]
+          - generic [ref=e27]: "0"
+        - paragraph [ref=e28]:
+          - text: "Pull sources: petbox periodically GETs each URL and expects a status structure ("
+          - code [ref=e29]: "{ svc, tags, version, status }"
+          - text: ). Services can also
+          - strong [ref=e30]: push
+          - text: to
+          - code [ref=e31]: POST /api/health
+          - text: with a
+          - code [ref=e32]: health:write
+          - text: key — no row needed here.
+        - table [ref=e34]:
+          - rowgroup [ref=e35]:
+            - row "URL Interval" [ref=e36]:
+              - columnheader "URL" [ref=e37]
+              - columnheader "Interval" [ref=e38]
+              - columnheader [ref=e39]
+          - rowgroup [ref=e40]:
+            - row "No pull endpoints. Add one below or push to /api/health." [ref=e41]:
+              - cell "No pull endpoints. Add one below or push to /api/health." [ref=e42]
+        - generic [ref=e44]:
+          - heading "New pull endpoint" [level=3] [ref=e45]
+          - generic [ref=e46]:
+            - generic [ref=e47]:
+              - generic [ref=e48]: URL
+              - textbox "URL" [ref=e49]:
+                - /placeholder: https://my-service/health
+            - generic [ref=e50]:
+              - generic [ref=e51]: Interval (s)
+              - spinbutton "Interval (s)" [ref=e52]: "60"
+          - button "Add endpoint" [ref=e54] [cursor=pointer]
+      - generic [ref=e56]:
+        - generic [ref=e57]:
+          - heading "API keys" [level=2] [ref=e58]
+          - generic [ref=e59]: "6"
+        - table [ref=e61]:
+          - rowgroup [ref=e62]:
+            - row "Name Key (prefix) Scopes Created" [ref=e63]:
+              - columnheader "Name" [ref=e64]
+              - columnheader "Key (prefix)" [ref=e65]
+              - columnheader "Scopes" [ref=e66]
+              - columnheader "Created" [ref=e67]
+              - columnheader [ref=e68]
+          - rowgroup [ref=e69]:
+            - row "agent yb_key_91cbc... tasks:read tasks:write memory:read memory:write agent:heartbeat 2026-07-04 Revoke" [ref=e70]:
+              - cell "agent" [ref=e71]
+              - cell "yb_key_91cbc..." [ref=e72]
+              - cell "tasks:read tasks:write memory:read memory:write agent:heartbeat" [ref=e73]:
+                - generic [ref=e74]:
+                  - generic [ref=e75]: tasks:read
+                  - generic [ref=e76]: tasks:write
+                  - generic [ref=e77]: memory:read
+                  - generic [ref=e78]: memory:write
+                  - generic [ref=e79]: agent:heartbeat
+                - group [ref=e80]:
+                  - generic "edit scopes" [ref=e81] [cursor=pointer]
+              - cell "2026-07-04" [ref=e82]
+              - cell "Revoke" [ref=e83]:
+                - button "Revoke" [ref=e85] [cursor=pointer]
+            - row "eval-digest-models-embed yb_key_d3712... llm:invoke 2026-06-11 Revoke" [ref=e86]:
+              - cell "eval-digest-models-embed" [ref=e87]
+              - cell "yb_key_d3712..." [ref=e88]
+              - cell "llm:invoke" [ref=e89]:
+                - generic [ref=e91]: llm:invoke
+                - group [ref=e92]:
+                  - generic "edit scopes" [ref=e93] [cursor=pointer]
+              - cell "2026-06-11" [ref=e94]
+              - cell "Revoke" [ref=e95]:
+                - button "Revoke" [ref=e97] [cursor=pointer]
+            - row "fleet-ops yb_key_ab668... deploy:read deploy:write 2026-06-10 Revoke" [ref=e98]:
+              - cell "fleet-ops" [ref=e99]
+              - cell "yb_key_ab668..." [ref=e100]
+              - cell "deploy:read deploy:write" [ref=e101]:
+                - generic [ref=e102]:
+                  - generic [ref=e103]: deploy:read
+                  - generic [ref=e104]: deploy:write
+                - group [ref=e105]:
+                  - generic "edit scopes" [ref=e106] [cursor=pointer]
+              - cell "2026-06-10" [ref=e107]
+              - cell "Revoke" [ref=e108]:
+                - button "Revoke" [ref=e110] [cursor=pointer]
+            - row "agent-deploy yb_key_75d3c... deploy:read deploy:write logs:ingest logs:query logs:admin tasks:read tasks:write memory:read memory:write llm:invoke llm:admin admin:provision 2026-06-10 Revoke" [ref=e111]:
+              - cell "agent-deploy" [ref=e112]
+              - cell "yb_key_75d3c..." [ref=e113]
+              - cell "deploy:read deploy:write logs:ingest logs:query logs:admin tasks:read tasks:write memory:read memory:write llm:invoke llm:admin admin:provision" [ref=e114]:
+                - generic [ref=e115]:
+                  - generic [ref=e116]: deploy:read
+                  - generic [ref=e117]: deploy:write
+                  - generic [ref=e118]: logs:ingest
+                  - generic [ref=e119]: logs:query
+                  - generic [ref=e120]: logs:admin
+                  - generic [ref=e121]: tasks:read
+                  - generic [ref=e122]: tasks:write
+                  - generic [ref=e123]: memory:read
+                  - generic [ref=e124]: memory:write
+                  - generic [ref=e125]: llm:invoke
+                  - generic [ref=e126]: llm:admin
+                  - generic [ref=e127]: admin:provision
+                - group [ref=e128]:
+                  - generic "edit scopes" [ref=e129] [cursor=pointer]
+              - cell "2026-06-10" [ref=e130]
+              - cell "Revoke" [ref=e131]:
+                - button "Revoke" [ref=e133] [cursor=pointer]
+            - row "agent yb_key_33a84... config:read config:write logs:ingest logs:query logs:admin health:write data:read data:write data:schema tasks:read tasks:write memory:read memory:write llm:invoke llm:admin deploy:read deploy:write agent:poll agent:heartbeat admin:provision 2026-05-31 Revoke" [ref=e134]:
+              - cell "agent" [ref=e135]
+              - cell "yb_key_33a84..." [ref=e136]
+              - cell "config:read config:write logs:ingest logs:query logs:admin health:write data:read data:write data:schema tasks:read tasks:write memory:read memory:write llm:invoke llm:admin deploy:read deploy:write agent:poll agent:heartbeat admin:provision" [ref=e137]:
+                - generic [ref=e138]:
+                  - generic [ref=e139]: config:read
+                  - generic [ref=e140]: config:write
+                  - generic [ref=e141]: logs:ingest
+                  - generic [ref=e142]: logs:query
+                  - generic [ref=e143]: logs:admin
+                  - generic [ref=e144]: health:write
+                  - generic [ref=e145]: data:read
+                  - generic [ref=e146]: data:write
+                  - generic [ref=e147]: data:schema
+                  - generic [ref=e148]: tasks:read
+                  - generic [ref=e149]: tasks:write
+                  - generic [ref=e150]: memory:read
+                  - generic [ref=e151]: memory:write
+                  - generic [ref=e152]: llm:invoke
+                  - generic [ref=e153]: llm:admin
+                  - generic [ref=e154]: deploy:read
+                  - generic [ref=e155]: deploy:write
+                  - generic [ref=e156]: agent:poll
+                  - generic [ref=e157]: agent:heartbeat
+                  - generic [ref=e158]: admin:provision
+                - group [ref=e159]:
+                  - generic "edit scopes" [ref=e160] [cursor=pointer]
+              - cell "2026-05-31" [ref=e161]
+              - cell "Revoke" [ref=e162]:
+                - button "Revoke" [ref=e164] [cursor=pointer]
+            - row "system-internal yb_key_syste... logs:ingest logs:query config:read 2026-05-29 Revoke" [ref=e165]:
+              - cell "system-internal" [ref=e166]
+              - cell "yb_key_syste..." [ref=e167]
+              - cell "logs:ingest logs:query config:read" [ref=e168]:
+                - generic [ref=e169]:
+                  - generic [ref=e170]: logs:ingest
+                  - generic [ref=e171]: logs:query
+                  - generic [ref=e172]: config:read
+                - group [ref=e173]:
+                  - generic "edit scopes" [ref=e174] [cursor=pointer]
+              - cell "2026-05-29" [ref=e175]
+              - cell "Revoke" [ref=e176]:
+                - button "Revoke" [ref=e178] [cursor=pointer]
+        - generic [ref=e180]:
+          - heading "New API key" [level=3] [ref=e181]
+          - generic [ref=e182]:
+            - generic [ref=e183]: Name (what is this key for?)
+            - textbox "Name (what is this key for?)" [ref=e184]:
+              - /placeholder: ci pipeline · claude code dev · ...
+          - generic [ref=e185]:
+            - generic [ref=e186]:
+              - generic [ref=e187]: Scopes
+              - generic [ref=e188]: Click checkboxes — typed input is not supported.
+            - generic [ref=e189]:
+              - generic [ref=e190]: Config
+              - generic [ref=e191]:
+                - generic [ref=e192] [cursor=pointer]:
+                  - checkbox "Read shared config config:read GET /v1/conf (resolved config bundle)." [ref=e193]
+                  - generic [ref=e194]:
+                    - generic [ref=e195]:
+                      - text: Read shared config
+                      - code [ref=e196]: config:read
+                    - generic [ref=e197]: GET /v1/conf (resolved config bundle).
+                - generic [ref=e198] [cursor=pointer]:
+                  - checkbox "Write shared config config:write POST/PATCH bindings; create new bindings; edit secrets." [ref=e199]
+                  - generic [ref=e200]:
+                    - generic [ref=e201]:
+                      - text: Write shared config
+                      - code [ref=e202]: config:write
+                    - generic [ref=e203]: POST/PATCH bindings; create new bindings; edit secrets.
+            - generic [ref=e204]:
+              - generic [ref=e205]: Logs
+              - generic [ref=e206]:
+                - generic [ref=e207] [cursor=pointer]:
+                  - 'checkbox "Ingest log events logs:ingest POST /api/ingest/{p}/{log}/clef (CLEF JSON lines). Used by pets to ship log lines." [ref=e208]'
+                  - generic [ref=e209]:
+                    - generic [ref=e210]:
+                      - text: Ingest log events
+                      - code [ref=e211]: logs:ingest
+                    - generic [ref=e212]: "POST /api/ingest/{p}/{log}/clef (CLEF JSON lines). Used by pets to ship log lines."
+                - generic [ref=e213] [cursor=pointer]:
+                  - 'checkbox "Query logs (KQL) logs:query KQL search via /api/logs/{p}/{log}/query and the MCP `log_query` tool; list logs." [ref=e214]'
+                  - generic [ref=e215]:
+                    - generic [ref=e216]:
+                      - text: Query logs (KQL)
+                      - code [ref=e217]: logs:query
+                    - generic [ref=e218]: "KQL search via /api/logs/{p}/{log}/query and the MCP `log_query` tool; list logs."
+                - generic [ref=e219] [cursor=pointer]:
+                  - 'checkbox "Manage logs logs:admin Create and delete named logs via /api/logs/{p}/logs." [ref=e220]'
+                  - generic [ref=e221]:
+                    - generic [ref=e222]:
+                      - text: Manage logs
+                      - code [ref=e223]: logs:admin
+                    - generic [ref=e224]: "Create and delete named logs via /api/logs/{p}/logs."
+            - generic [ref=e225]:
+              - generic [ref=e226]: Health
+              - generic [ref=e227]:
+                - generic [ref=e228] [cursor=pointer]:
+                  - checkbox "Push health/status health:write POST /api/health — push a service status report (svc + tags + version/status)." [ref=e229]
+                  - generic [ref=e230]:
+                    - generic [ref=e231]:
+                      - text: Push health/status
+                      - code [ref=e232]: health:write
+                    - generic [ref=e233]: POST /api/health — push a service status report (svc + tags + version/status).
+                - generic [ref=e234] [cursor=pointer]:
+                  - checkbox "Read health/status health:read Read the latest health report per service (+ optional history) via the MCP health_search tool." [ref=e235]
+                  - generic [ref=e236]:
+                    - generic [ref=e237]:
+                      - text: Read health/status
+                      - code [ref=e238]: health:read
+                    - generic [ref=e239]: Read the latest health report per service (+ optional history) via the MCP health_search tool.
+            - generic [ref=e240]:
+              - generic [ref=e241]: Data
+              - generic [ref=e242]:
+                - generic [ref=e243] [cursor=pointer]:
+                  - 'checkbox "Read DataDbs data:read List DataDbs, SELECT via /api/data/{p}/{db}/query, describe schemas." [ref=e244]'
+                  - generic [ref=e245]:
+                    - generic [ref=e246]:
+                      - text: Read DataDbs
+                      - code [ref=e247]: data:read
+                    - generic [ref=e248]: "List DataDbs, SELECT via /api/data/{p}/{db}/query, describe schemas."
+                - generic [ref=e249] [cursor=pointer]:
+                  - 'checkbox "Write DataDb rows data:write INSERT/UPDATE/DELETE via /api/data/{p}/{db}/exec." [ref=e250]'
+                  - generic [ref=e251]:
+                    - generic [ref=e252]:
+                      - text: Write DataDb rows
+                      - code [ref=e253]: data:write
+                    - generic [ref=e254]: "INSERT/UPDATE/DELETE via /api/data/{p}/{db}/exec."
+                - generic [ref=e255] [cursor=pointer]:
+                  - checkbox "Schema apply / lifecycle data:schema CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs." [ref=e256]
+                  - generic [ref=e257]:
+                    - generic [ref=e258]:
+                      - text: Schema apply / lifecycle
+                      - code [ref=e259]: data:schema
+                    - generic [ref=e260]: CREATE/DROP tables, apply DbUp migrations, create/delete DataDbs.
+            - generic [ref=e261]:
+              - generic [ref=e262]: Tasks
+              - generic [ref=e263]:
+                - generic [ref=e264] [cursor=pointer]:
+                  - checkbox "Read tasks tasks:read List/read task boards and plan nodes (and sessions) via the MCP tasks.*/session.* tools." [ref=e265]
+                  - generic [ref=e266]:
+                    - generic [ref=e267]:
+                      - text: Read tasks
+                      - code [ref=e268]: tasks:read
+                    - generic [ref=e269]: List/read task boards and plan nodes (and sessions) via the MCP tasks.*/session.* tools.
+                - generic [ref=e270] [cursor=pointer]:
+                  - checkbox "Write tasks tasks:write Create boards and upsert plan nodes / append sessions via the MCP tasks.*/session.* tools." [ref=e271]
+                  - generic [ref=e272]:
+                    - generic [ref=e273]:
+                      - text: Write tasks
+                      - code [ref=e274]: tasks:write
+                    - generic [ref=e275]: Create boards and upsert plan nodes / append sessions via the MCP tasks.*/session.* tools.
+                - generic [ref=e276] [cursor=pointer]:
+                  - checkbox "Approve tasks tasks:approve Perform approval-gated workflow transitions the methodology ENFORCES (enforceApproval) — the maintainer capability. Meaningless without tasks:write." [ref=e277]
+                  - generic [ref=e278]:
+                    - generic [ref=e279]:
+                      - text: Approve tasks
+                      - code [ref=e280]: tasks:approve
+                    - generic [ref=e281]: Perform approval-gated workflow transitions the methodology ENFORCES (enforceApproval) — the maintainer capability. Meaningless without tasks:write.
+            - generic [ref=e282]:
+              - generic [ref=e283]: Memory
+              - generic [ref=e284]:
+                - generic [ref=e285] [cursor=pointer]:
+                  - checkbox "Read memory memory:read List/read memory stores and entries via the MCP memory.* tools." [ref=e286]
+                  - generic [ref=e287]:
+                    - generic [ref=e288]:
+                      - text: Read memory
+                      - code [ref=e289]: memory:read
+                    - generic [ref=e290]: List/read memory stores and entries via the MCP memory.* tools.
+                - generic [ref=e291] [cursor=pointer]:
+                  - checkbox "Write memory memory:write Create stores and upsert entries via the MCP memory.* tools." [ref=e292]
+                  - generic [ref=e293]:
+                    - generic [ref=e294]:
+                      - text: Write memory
+                      - code [ref=e295]: memory:write
+                    - generic [ref=e296]: Create stores and upsert entries via the MCP memory.* tools.
+            - generic [ref=e297]:
+              - generic [ref=e298]: LlmRouter
+              - generic [ref=e299]:
+                - generic [ref=e300] [cursor=pointer]:
+                  - checkbox "Invoke LLM router llm:invoke Call embed/rerank/chat through the router via the MCP llm_embed/rerank/chat tools." [ref=e301]
+                  - generic [ref=e302]:
+                    - generic [ref=e303]:
+                      - text: Invoke LLM router
+                      - code [ref=e304]: llm:invoke
+                    - generic [ref=e305]: Call embed/rerank/chat through the router via the MCP llm_embed/rerank/chat tools.
+                - generic [ref=e306] [cursor=pointer]:
+                  - checkbox "Manage LLM router llm:admin Read/write the router registry (endpoints, routes, api keys, cert pin) via the MCP llm.config_* tools." [ref=e307]
+                  - generic [ref=e308]:
+                    - generic [ref=e309]:
+                      - text: Manage LLM router
+                      - code [ref=e310]: llm:admin
+                    - generic [ref=e311]: Read/write the router registry (endpoints, routes, api keys, cert pin) via the MCP llm.config_* tools.
+            - generic [ref=e312]:
+              - generic [ref=e313]: Deploy
+              - generic [ref=e314]:
+                - generic [ref=e315] [cursor=pointer]:
+                  - checkbox "Read deploy fleet deploy:read List nodes and deployments via the deploy UI." [ref=e316]
+                  - generic [ref=e317]:
+                    - generic [ref=e318]:
+                      - text: Read deploy fleet
+                      - code [ref=e319]: deploy:read
+                    - generic [ref=e320]: List nodes and deployments via the deploy UI.
+                - generic [ref=e321] [cursor=pointer]:
+                  - 'checkbox "Manage deploy fleet deploy:write NEAR-ROOT, FLEET-WIDE: no project/workspace scoping exists on the deploy control-plane — register nodes, mint node keys, create/move/start/stop deployments for ANY project via the deploy UI." [ref=e322]'
+                  - generic [ref=e323]:
+                    - generic [ref=e324]:
+                      - text: Manage deploy fleet
+                      - code [ref=e325]: deploy:write
+                    - generic [ref=e326]: "NEAR-ROOT, FLEET-WIDE: no project/workspace scoping exists on the deploy control-plane — register nodes, mint node keys, create/move/start/stop deployments for ANY project via the deploy UI."
+                - generic [ref=e327] [cursor=pointer]:
+                  - 'checkbox "Agent: poll desired state agent:poll GET /agent/poll — a node-agent reads its assigned deployments. Issue only on node-scoped keys." [ref=e328]'
+                  - generic [ref=e329]:
+                    - generic [ref=e330]:
+                      - text: "Agent: poll desired state"
+                      - code [ref=e331]: agent:poll
+                    - generic [ref=e332]: GET /agent/poll — a node-agent reads its assigned deployments. Issue only on node-scoped keys.
+                - generic [ref=e333] [cursor=pointer]:
+                  - 'checkbox "Agent: report state agent:heartbeat POST /agent/heartbeat — a node-agent reports actual container state. Issue only on node-scoped keys." [ref=e334]'
+                  - generic [ref=e335]:
+                    - generic [ref=e336]:
+                      - text: "Agent: report state"
+                      - code [ref=e337]: agent:heartbeat
+                    - generic [ref=e338]: POST /agent/heartbeat — a node-agent reports actual container state. Issue only on node-scoped keys.
+            - generic [ref=e339]:
+              - generic [ref=e340]: Admin
+              - generic [ref=e342] [cursor=pointer]:
+                - 'checkbox "Provision projects & keys admin:provision ROOT-EQUIVALENT: mints API keys with ANY scopes for ANY project (including admin:provision itself), creates projects (project.*), sets config bindings (config.*). Issue deliberately; prefer short-lived keys for routine work." [ref=e343]'
+                - generic [ref=e344]:
+                  - generic [ref=e345]:
+                    - text: Provision projects & keys
+                    - code [ref=e346]: admin:provision
+                  - generic [ref=e347]: "ROOT-EQUIVALENT: mints API keys with ANY scopes for ANY project (including admin:provision itself), creates projects (project.*), sets config bindings (config.*). Issue deliberately; prefer short-lived keys for routine work."
+          - button "Issue key" [ref=e349] [cursor=pointer]
+      - generic [ref=e351]:
+        - generic [ref=e352]:
+          - heading "Log retention" [level=2] [ref=e353]
+          - generic [ref=e354]: "default: 30 days"
+        - paragraph [ref=e355]:
+          - text: How long to keep log entries before the hourly sweep deletes them. Without an override, this project uses the
+          - link "system default" [ref=e356] [cursor=pointer]:
+            - /url: /ui/admin/sys
+          - text: (30 days).
+        - generic [ref=e358]:
+          - generic [ref=e359]:
+            - generic [ref=e360]: Retain for (days)
+            - spinbutton "Retain for (days)" [ref=e361]: "30"
+          - button "Set override" [ref=e363] [cursor=pointer]
+      - generic [ref=e365]:
+        - generic [ref=e366]:
+          - heading "Commit links" [level=2] [ref=e367]
+          - generic [ref=e368]: set
+        - paragraph [ref=e369]:
+          - text: Commit-view URL template with a literal
+          - code [ref=e370]: "{sha}"
+          - text: placeholder, e.g.
+          - code [ref=e371]: "https://github.com/user/repo/commit/{sha}"
+          - text: . When set, commit refs on task cards and commit hashes in node/comment bodies become links. Leave empty to keep plain text.
+        - generic [ref=e373]:
+          - generic [ref=e374]:
+            - generic [ref=e375]: Commit URL template
+            - textbox "Commit URL template" [ref=e376]:
+              - /placeholder: "https://github.com/user/repo/commit/{sha}"
+              - text: "https://github.com/stdray/petbox/commit/{sha}"
+          - generic [ref=e377]:
+            - button "Save" [ref=e378] [cursor=pointer]
+            - button "Clear" [ref=e379] [cursor=pointer]
+    - contentinfo [ref=e380]:
+      - text: v0.1.0-ci.726 · 11cb152 ·
+      - generic [ref=e381]: config logging data dashboard tasks memory llmrouter deploy
+  - generic [ref=e382]:
+    - generic "close sidebar"
+    - complementary [ref=e383]:
+      - generic [ref=e384]:
+        - generic [ref=e385]:
+          - combobox "Switch workspace" [ref=e387] [cursor=pointer]:
+            - option "$system" [selected]
+            - option "stdray"
+          - button "Pin sidebar open" [pressed] [ref=e388] [cursor=pointer]:
+            - img [ref=e389]
+        - combobox "Switch project" [ref=e392] [cursor=pointer]:
+          - option "$system"
+          - option "classic-demo" [selected]
+      - list [ref=e393]:
+        - listitem [ref=e394]:
+          - generic [ref=e395]: $system
+        - listitem [ref=e396]:
+          - link "Overview" [ref=e397] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system
+        - listitem [ref=e398]:
+          - link "Members" [ref=e399] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/members
+        - listitem [ref=e400]:
+          - link "Shared config" [ref=e401] [cursor=pointer]:
+            - /url: /ui/$system/config
+        - listitem [ref=e402]:
+          - link "Settings" [ref=e403] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/defaults
+        - listitem [ref=e404]:
+          - link "Info" [ref=e405] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/info
+        - listitem [ref=e406]:
+          - link "Projects" [ref=e407] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/projects
+        - listitem [ref=e408]:
+          - generic [ref=e409]: Project
+        - listitem [ref=e410]:
+          - link "Info" [ref=e411] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/projects/$system/info
+        - listitem [ref=e412]:
+          - link "Logs" [ref=e413] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/projects/$system/logs
+        - listitem [ref=e414]:
+          - link "Databases" [ref=e415] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/projects/$system/data
+        - listitem [ref=e416]:
+          - link "Tasks" [ref=e417] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/projects/$system/tasks
+        - listitem [ref=e418]:
+          - link "Methodology" [ref=e419] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/projects/$system/methodology
+        - listitem [ref=e420]:
+          - link "Memory" [ref=e421] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/projects/$system/memory
+        - listitem [ref=e422]:
+          - link "Settings" [ref=e423] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/projects/$system/settings
+        - listitem [ref=e424]:
+          - link "Connect agent" [ref=e425] [cursor=pointer]:
+            - /url: /ui/admin/ws/$system/projects/$system/connect
+        - listitem [ref=e426]:
+          - group [ref=e427]:
+            - generic "Server administration" [ref=e428]:
+              - img [ref=e429]
+              - generic [ref=e432]: Server administration
+            - list [ref=e433]:
+              - listitem [ref=e434]:
+                - link "Overview" [ref=e435] [cursor=pointer]:
+                  - /url: /ui/admin/sys
+              - listitem [ref=e436]:
+                - link "Workspaces" [ref=e437] [cursor=pointer]:
+                  - /url: /ui/admin/sys/workspaces
+              - listitem [ref=e438]:
+                - link "Users" [ref=e439] [cursor=pointer]:
+                  - /url: /ui/admin/sys/users
+              - listitem [ref=e440]:
+                - link "Agent keys" [ref=e441] [cursor=pointer]:
+                  - /url: /ui/admin/sys/agent-keys
+              - listitem [ref=e442]:
+                - link "Deploy" [ref=e443] [cursor=pointer]:
+                  - /url: /ui/admin/sys/deploy
+              - listitem [ref=e444]:
+                - link "Settings" [ref=e445] [cursor=pointer]:
+                  - /url: /ui/admin/sys/defaults

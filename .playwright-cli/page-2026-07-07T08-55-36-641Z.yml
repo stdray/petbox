@@ -1,0 +1,123 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic "Toggle sidebar" [ref=e6] [cursor=pointer]:
+        - img [ref=e7]
+      - generic [ref=e9]:
+        - link "PetBox" [ref=e10] [cursor=pointer]:
+          - /url: /ui/$system
+        - textbox "Find a task by slug, NodeId, or text — searches every workspace and project you can access" [ref=e12]:
+          - /placeholder: Find a task…
+      - generic [ref=e13]:
+        - link "admin" [ref=e14] [cursor=pointer]:
+          - /url: /ui/me/account
+        - link "System administration" [ref=e15] [cursor=pointer]:
+          - /url: /ui/admin/sys
+          - img [ref=e16]
+        - button "Sign out" [ref=e20] [cursor=pointer]:
+          - img [ref=e21]
+    - main [ref=e23]:
+      - generic [ref=e24]:
+        - heading "Status" [level=1] [ref=e25]
+        - generic [ref=e26]: $system
+      - link "Shared memory Shared cross-project memory — facts that span projects or are about the user." [ref=e27] [cursor=pointer]:
+        - /url: /ui/$system/$workspace/memory
+        - generic [ref=e28]:
+          - img [ref=e29]
+          - generic [ref=e31]:
+            - generic [ref=e32]: Shared memory
+            - paragraph [ref=e33]: Shared cross-project memory — facts that span projects or are about the user.
+      - generic [ref=e34]:
+        - generic [ref=e36]:
+          - generic [ref=e37]:
+            - link "System" [ref=e38] [cursor=pointer]:
+              - /url: /ui/$system/$system
+            - generic [ref=e39]: system
+          - paragraph [ref=e40]: Built-in system project
+          - generic [ref=e41]:
+            - link "3 logs" [ref=e42] [cursor=pointer]:
+              - /url: /ui/$system/$system/logs
+            - link "0 dbs" [ref=e43] [cursor=pointer]:
+              - /url: /ui/$system/$system/databases
+            - link "6 keys" [ref=e44] [cursor=pointer]:
+              - /url: /ui/admin/ws/$system/projects/$system/info
+          - paragraph [ref=e45]: No health reports.
+        - generic [ref=e47]:
+          - link "Classic demo" [ref=e49] [cursor=pointer]:
+            - /url: /ui/$system/classic-demo
+          - paragraph [ref=e50]: Демо классического пресета методологии для внешних пользователей (пилот идеи methodology-authoring, 2026-07-04)
+          - generic [ref=e51]:
+            - link "0 logs" [ref=e52] [cursor=pointer]:
+              - /url: /ui/$system/classic-demo/logs
+            - link "0 dbs" [ref=e53] [cursor=pointer]:
+              - /url: /ui/$system/classic-demo/databases
+            - link "0 keys" [ref=e54] [cursor=pointer]:
+              - /url: /ui/admin/ws/$system/projects/classic-demo/info
+          - paragraph [ref=e55]: No health reports.
+    - contentinfo [ref=e56]:
+      - text: v0.1.0-ci.726 · 11cb152 ·
+      - generic [ref=e57]: config logging data dashboard tasks memory llmrouter deploy
+  - generic [ref=e58]:
+    - generic "close sidebar"
+    - complementary [ref=e59]:
+      - generic [ref=e60]:
+        - generic [ref=e61]:
+          - combobox "Switch workspace" [ref=e63] [cursor=pointer]:
+            - option "$system" [selected]
+            - option "stdray"
+          - button "Pin sidebar open" [pressed] [ref=e64] [cursor=pointer]:
+            - img [ref=e65]
+        - combobox "Switch project" [ref=e68] [cursor=pointer]:
+          - option "$system"
+          - option "classic-demo" [selected]
+      - list [ref=e69]:
+        - listitem [ref=e70]:
+          - link "Status" [ref=e71] [cursor=pointer]:
+            - /url: /ui/$system
+            - img [ref=e72]
+            - text: Status
+        - listitem [ref=e74]:
+          - link "Shared memory" [ref=e75] [cursor=pointer]:
+            - /url: /ui/$system/$workspace/memory
+            - img [ref=e76]
+            - text: Shared memory
+        - listitem [ref=e78]:
+          - link "Shared config" [ref=e79] [cursor=pointer]:
+            - /url: /ui/$system/config
+            - img [ref=e80]
+            - text: Shared config
+      - generic [ref=e84]: Project
+      - list [ref=e85]:
+        - listitem [ref=e86]:
+          - link "Dashboard" [ref=e87] [cursor=pointer]:
+            - /url: /ui/$system/$system
+        - listitem [ref=e88]:
+          - group [ref=e89]:
+            - generic "Logs" [ref=e90]:
+              - link "Logs" [ref=e91] [cursor=pointer]:
+                - /url: /ui/$system/$system/logs
+        - listitem [ref=e92]:
+          - link "Traces" [ref=e93] [cursor=pointer]:
+            - /url: /ui/$system/$system/traces
+        - listitem [ref=e94]:
+          - group [ref=e95]:
+            - generic "Databases" [ref=e96]:
+              - link "Databases" [ref=e97] [cursor=pointer]:
+                - /url: /ui/$system/$system/databases
+        - listitem [ref=e98]:
+          - link "Config" [ref=e99] [cursor=pointer]:
+            - /url: /ui/$system/$system/config
+        - listitem [ref=e100]:
+          - link "LLM router" [ref=e101] [cursor=pointer]:
+            - /url: /ui/$system/$system/llm
+        - listitem [ref=e102]:
+          - group [ref=e103]:
+            - generic "Tasks" [ref=e104]:
+              - link "Tasks" [ref=e105] [cursor=pointer]:
+                - /url: /ui/$system/$system/tasks
+        - listitem [ref=e106]:
+          - link "Memory" [ref=e107] [cursor=pointer]:
+            - /url: /ui/$system/$system/memory
+        - listitem [ref=e108]:
+          - link "Sessions" [ref=e109] [cursor=pointer]:
+            - /url: /ui/$system/$system/sessions

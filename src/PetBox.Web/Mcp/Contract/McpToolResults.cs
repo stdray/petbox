@@ -532,10 +532,14 @@ public sealed record MethodologyTransitionView(
 
 // The addressed FULL read of a tool's description: tools/list serves a compact head for heavy
 // tools, this returns the complete prose (sentinel merged out) plus the tool's in/out JSON schema.
+// `InputSchema`/`OutputSchema` are the raw JSON schema TEXT (serialized), not a nested JsonElement:
+// a JsonElement field exports as the boolean schema `true` ("any"), and strict MCP clients (Claude
+// Code's Zod validator) reject a `true`-valued property in outputSchema — which broke the WHOLE
+// tools/list. As a string the property exports as {"type":"string"} and the caller JSON-parses it.
 // `OutputSchema` is null (omitted) for tools that advertise none.
 public sealed record ToolDescribeResult(
 	string Name,
 	string? Title,
 	string? Description,
-	System.Text.Json.JsonElement InputSchema,
-	System.Text.Json.JsonElement? OutputSchema);
+	string InputSchema,
+	string? OutputSchema);

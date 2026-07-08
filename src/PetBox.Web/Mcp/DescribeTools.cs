@@ -29,7 +29,9 @@ public static class DescribeTools
 			pt.Name,
 			pt.Title,
 			McpToolDescriptions.Full(pt.Description),
-			pt.InputSchema,
-			pt.OutputSchema);
+			// raw JSON schema TEXT — NOT a JsonElement (which exports as `true` and breaks strict
+			// clients' outputSchema validation); the caller JSON-parses these strings.
+			pt.InputSchema.GetRawText(),
+			pt.OutputSchema?.GetRawText());
 	}
 }
