@@ -41,7 +41,8 @@ public static class MemoryTools
 
 	[McpServerTool(Name = "memory_store_list", Title = "List memory stores", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreListResult))]
 	[Description("""
-		List memory stores. `scope`: project (default) | workspace. Requires memory:read.
+		List memory stores. `scope`: project (default) | workspace. Omit to CASCADE project
+		⊕ workspace (rows labelled by scope, project first) — same as memory_search.
 		`includeUsage` (default false) attaches a per-store usage aggregate: totalEntries,
 		surfacedAtLeastOnce/openedAtLeastOnce (+ fractions over the active set), medianLastHitAt
 		(the median last-hit of the surfaced entries — "recency"), and the dead tail
@@ -52,25 +53,29 @@ public static class MemoryTools
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string? projectKey = null,
 		[Description("Attach a per-store usage aggregate (coverage, median recency, dead tail) (default false).")] bool includeUsage = false,
-		[Description("project | workspace (default project).")] string? scope = null,
+		[Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		projectKey = ResolveScope(http, projectKey, scope).Key;
-		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		var list = await memory.ListStoresAsync(projectKey, ct);
-		var rows = new List<MemoryStoreRow>(list.Count);
-		foreach (var s in list)
+		var rows = new List<MemoryStoreRow>();
+		foreach (var (scopeName, container) in SearchContainers(http, projectKey, scope))
 		{
-			MemoryStoreUsageRow? usage = null;
-			if (includeUsage)
+			ct.ThrowIfCancellationRequested();
+			try { await AssertMemoryProjectAsync(http, db, container, ct); }
+			catch (UnauthorizedAccessException) { continue; }
+			var list = await memory.ListStoresAsync(container, ct);
+			foreach (var s in list)
 			{
-				var a = await memory.GetUsageAggregateAsync(projectKey, s.Name, ct: ct);
-				usage = new MemoryStoreUsageRow(a.TotalEntries, a.SurfacedAtLeastOnce, a.OpenedAtLeastOnce,
-					a.SurfacedFraction, a.OpenedFraction, a.MedianLastHitAt, a.DeadTail.Count, a.DeadTail.TopKeys);
+				MemoryStoreUsageRow? usage = null;
+				if (includeUsage)
+				{
+					var a = await memory.GetUsageAggregateAsync(container, s.Name, ct: ct);
+					usage = new MemoryStoreUsageRow(a.TotalEntries, a.SurfacedAtLeastOnce, a.OpenedAtLeastOnce,
+						a.SurfacedFraction, a.OpenedFraction, a.MedianLastHitAt, a.DeadTail.Count, a.DeadTail.TopKeys);
+				}
+				rows.Add(new MemoryStoreRow(scopeName, s.Name, s.Description, s.CreatedAt, usage));
 			}
-			rows.Add(new MemoryStoreRow(s.Name, s.Description, s.CreatedAt, usage));
 		}
 		return new MemoryStoreListResult(rows);
 	}
@@ -195,19 +200,41 @@ public static class MemoryTools
 	}
 
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
-	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface. `scope`: project (default) | workspace. Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
+	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface. `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search. Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
 		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
-		[Description("project | workspace (default project).")] string? scope = null,
+		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		projectKey = ResolveScope(http, projectKey, scope).Key;
-		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		return Serialize(await memory.DeltaAsync(projectKey, store, sinceVersion, ct), bodyLen);
+
+		// Cascade: explicit scope → one container; no scope → project first, then workspace.
+		var containers = new List<(string Scope, string Container)>();
+		if (scope is not null)
+		{
+			containers.Add(ResolveScope(http, projectKey, scope));
+		}
+		else
+		{
+			try { containers.Add(("project", ModuleMcp.ResolveProject(http, projectKey))); }
+			catch (ArgumentException) { }
+			catch (UnauthorizedAccessException) { }
+			if (!containers.Any(c => c.Container == WorkspaceContainer))
+				containers.Add(("workspace", WorkspaceContainer));
+		}
+
+		foreach (var (scopeName, container) in containers)
+		{
+			ct.ThrowIfCancellationRequested();
+			try { await AssertMemoryProjectAsync(http, db, container, ct); }
+			catch (UnauthorizedAccessException) { continue; }
+			return Serialize(await memory.DeltaAsync(container, store, sinceVersion, ct), bodyLen);
+		}
+
+		throw new InvalidOperationException($"store '{store}' not found (scope: {(scope ?? "cascade project+workspace")})");
 	}
 
 	// ---- read + capture verbs: search / remember ----
