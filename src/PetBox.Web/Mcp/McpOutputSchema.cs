@@ -38,24 +38,45 @@ static class McpOutputSchema
 	{
 		TransformSchemaNode = static (ctx, node) =>
 		{
-			if (node is JsonObject obj
-				&& obj["required"] is JsonArray required
-				&& obj["properties"] is JsonObject properties)
+			if (node is JsonObject obj)
 			{
-				for (var i = required.Count - 1; i >= 0; i--)
-				{
-					if (required[i]?.GetValue<string>() is { } name
-						&& properties[name] is JsonObject propSchema
-						&& AllowsNull(propSchema))
-					{
-						required.RemoveAt(i);
-					}
-				}
-				if (required.Count == 0) obj.Remove("required");
+				PruneNullableRequired(obj);
+				StripDateTimeFormat(obj);
 			}
 			return node;
 		},
 	};
+
+	// Prune from an object node's `required` array any property whose own schema admits null,
+	// so our WhenWritingNull omission of a null value stays schema-conformant.
+	static void PruneNullableRequired(JsonObject obj)
+	{
+		if (obj["required"] is not JsonArray required || obj["properties"] is not JsonObject properties)
+			return;
+		for (var i = required.Count - 1; i >= 0; i--)
+		{
+			if (required[i]?.GetValue<string>() is { } name
+				&& properties[name] is JsonObject propSchema
+				&& AllowsNull(propSchema))
+			{
+				required.RemoveAt(i);
+			}
+		}
+		if (required.Count == 0) obj.Remove("required");
+	}
+
+	// Drop a `format:"date-time"` annotation from a property schema. Timestamps come from SQLite as
+	// DateTimeKind.Unspecified and serialize zone-less ("2026-07-04T12:58:10.238") — NOT a valid
+	// RFC 3339 date-time — so strict clients (Factory Droid / opencode, ajv, which ENFORCE format)
+	// reject every tool that returns a timestamp with -32602 "must match format date-time". In draft
+	// 2020-12 `format` is an annotation, not an assertion (Claude Code's Zod already ignores it), so
+	// dropping it keeps the field validated as a plain string and unbreaks the strict clients without
+	// touching values or nullability. Applied per-node on the same schema walk.
+	public static void StripDateTimeFormat(JsonObject obj)
+	{
+		if (obj["format"]?.GetValue<string>() == "date-time")
+			obj.Remove("format");
+	}
 
 	// A property schema admits null iff its `type` is an array containing "null"
 	// (how STJ/MEAI renders a nullable T — scalar, array, or complex object all
