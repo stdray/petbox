@@ -436,6 +436,11 @@ public partial class Program
 				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
 				p.AddRequirements(new ScopeRequirement(ApiKeyScopes.DataSchema));
 			})
+			.AddPolicy("LlmInvoke", p =>
+			{
+				p.AddAuthenticationSchemes(ApiKeyAuthenticationHandler.SchemeName);
+				p.AddRequirements(new ScopeRequirement(ApiKeyScopes.LlmInvoke));
+			})
 			.AddPolicy("WorkspaceAdmin", p =>
 			{
 				p.AddAuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme);
@@ -711,6 +716,9 @@ public partial class Program
 		// Agent memory canon read surface (the wiring hooks pull it at session start).
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Memory))
 			PetBox.Web.Memory.MemoryApi.MapMemoryEndpoints(app);
+
+		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.LlmRouter))
+			PetBox.Web.LlmRouter.LlmRouterApi.MapLlmRouterEndpoints(app);
 
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Dashboard))
 		{

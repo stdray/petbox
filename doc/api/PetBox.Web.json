@@ -1361,6 +1361,18 @@
         }
       }
     },
+    "/v1/chat/completions": {
+      "post": {
+        "tags": [
+          "LlmRouterApi"
+        ],
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      }
+    },
     "/api/health": {
       "post": {
         "tags": [
@@ -3299,6 +3311,9 @@
     },
     {
       "name": "MemoryApi"
+    },
+    {
+      "name": "LlmRouterApi"
     },
     {
       "name": "HealthApi"
