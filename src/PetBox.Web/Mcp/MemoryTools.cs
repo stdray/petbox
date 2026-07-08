@@ -86,19 +86,54 @@ public static class MemoryTools
 	[Description("""
 		Get the active entry by key. A missing/unknown key is a not-found ERROR (never a bare
 		null: a declared outputSchema demands structured content, so a null result is rejected
-		by strict MCP clients — the error rides the isError channel instead). Requires memory:read.
+		by strict MCP clients — the error rides the isError channel instead).
+		`scope`: project (default) | workspace. Omit to CASCADE project first, then workspace —
+		the same cascade contract as memory_search. Requires memory:read.
 		""")]
 	public static async Task<MemoryEntryView> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory, IMemoryUsageRecorder usage,
-		string projectKey, string store, string key, CancellationToken ct = default)
+		string projectKey, string store, string key,
+		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
-		var entry = await memory.GetAsync(projectKey, store, key, ct)
-			?? throw new InvalidOperationException($"memory entry '{key}' not found in store '{store}' of project '{projectKey}'");
-		usage.Opened(projectKey, store, key); // engagement: the entry was deliberately opened
-		return entry;
+
+		// Build the cascade list: explicit scope → one container; no scope → project
+		// first, then workspace (same contract as memory_search). The project leg is
+		// best-effort — skip it when the key can't resolve it (cross-project key without
+		// explicit projectKey, or passed projectKey doesn't match the claim — callers
+		// may address $workspace directly as projectKey).
+		var containers = new List<(string Scope, string Container)>();
+		if (scope is not null)
+		{
+			containers.Add(ResolveScope(http, projectKey, scope));
+		}
+		else
+		{
+			try { containers.Add(("project", ModuleMcp.ResolveProject(http, projectKey))); }
+			catch (ArgumentException) { /* cross-project key without explicit projectKey */ }
+			catch (UnauthorizedAccessException) { /* projectKey doesn't match claim */ }
+			if (!containers.Any(c => c.Container == WorkspaceContainer))
+				containers.Add(("workspace", WorkspaceContainer));
+		}
+
+		foreach (var (scopeName, container) in containers)
+		{
+			ct.ThrowIfCancellationRequested();
+			// Best-effort: skip a container the key can't reach (the workspace leg
+			// may be unreachable for a project-scoped key from a different workspace).
+			try { await AssertMemoryProjectAsync(http, db, container, ct); }
+			catch (UnauthorizedAccessException) { continue; }
+			var entry = await memory.GetAsync(container, store, key, ct);
+			if (entry is not null)
+			{
+				usage.Opened(container, store, key);
+				return entry;
+			}
+		}
+
+		throw new InvalidOperationException($"memory entry '{key}' not found in store '{store}' (scope: {(scope ?? "cascade project+workspace")})");
 	}
 
 	[McpServerTool(Name = "memory_upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
