@@ -250,7 +250,7 @@ public static class SessionTools
 		""")]
 	public static async Task<SessionSearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessionSvc, PetBox.Web.Search.SessionSearchService search,
-		string projectKey,
+		string? projectKey = null,
 		[Description("Search query. Omit for a deterministic listing of the project's sessions (list = search without q).")] string? q = null,
 		[Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
 		[Description("With q: max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
@@ -258,6 +258,7 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		projectKey = ModuleMcp.ResolveProject(http, projectKey);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
