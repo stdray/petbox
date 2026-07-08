@@ -36,7 +36,7 @@
 // Unlike the hooks, this is a CLI: step failures surface loudly (no silent swallow).
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -73,12 +73,18 @@ type Args = {
 
 const DEFAULT_TELEMETRY_LOG = "cc-telemetry";
 
-function usage(): never {
-  console.error(
+// Print the usage banner and exit. `--help`/`-h` request it explicitly → stdout + exit 0; every
+// error path (unknown flag, too few positionals) → stderr + exit 2. Same text either way.
+function usage(exitCode: number = 2): never {
+  const text =
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
-      "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag | --no-prompt-rag]",
-  );
-  process.exit(2);
+    "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag | --no-prompt-rag]\n" +
+    "       npx petbox-wire --help\n" +
+    "\n" +
+    "Wire a project to PetBox: global hooks, MCP configs and skills. prompt-RAG is OFF by default\n" +
+    "(opt in per project with --prompt-rag; --no-prompt-rag or a plain re-run removes the global hook).";
+  (exitCode === 0 ? console.log : console.error)(text);
+  process.exit(exitCode);
 }
 
 function parseArgs(argv: string[]): Args {
@@ -92,7 +98,8 @@ function parseArgs(argv: string[]): Args {
   let promptRag: boolean | undefined = undefined; // undefined = STICKY (neither flag passed)
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--env") env = argv[++i];
+    if (a === "--help" || a === "-h") usage(0);
+    else if (a === "--env") env = argv[++i];
     else if (a === "--key") key = argv[++i];
     else if (a === "--workspace") workspace = argv[++i];
     else if (a === "--cleanup-legacy") cleanupLegacy = true;
@@ -272,6 +279,19 @@ function copyKitToStable(): void {
     return;
   }
   mkdirSync(STABLE, { recursive: true });
+  // Orphan cleanup — STABLE must be an EXACT MIRROR of HERE, never a UNION. cpSync overwrites but
+  // never DELETES, so a downgrade (e.g. an older npm package whose src lacks prompt-rag.ts) would
+  // leave a NEWER orphan file standing next to OLDER peers → version skew: prompt-rag.ts kept from a
+  // prior install importing `PROMPT_RAG_DEFAULTS` from a registry.ts the downgrade just reverted,
+  // which no longer exports it → SyntaxError on every prompt. Remove every top-level STABLE entry
+  // absent from HERE before copying, so the install can only ever match the shipped kit.
+  const hereEntries = new Set(readdirSync(HERE));
+  for (const name of readdirSync(STABLE)) {
+    if (!hereEntries.has(name)) {
+      rmSync(join(STABLE, name), { recursive: true, force: true });
+      log(`[5/10] orphan cleanup: removed ${name} from ${STABLE} (not shipped by this kit).`);
+    }
+  }
   cpSync(HERE, STABLE, { recursive: true, force: true });
   log(`[5/10] stable copy: kit installed to ${STABLE} (from ${HERE}).`);
 }
@@ -557,6 +577,29 @@ function pruneStaleKitHooks(hooksObj: any, validCmds: Set<string>): number {
   return removed;
 }
 
+// Remove EVERY hook (across all events) whose command targets the given STABLE kit file, then drop
+// now-empty groups. Mutates hooksObj in place; returns the count pruned. Commands quote the path
+// (`node "<...>/prompt-rag.ts"`, optionally ` --agent droid`), so matching the quoted basename
+// catches both the Claude Code and Droid variants. Used to keep prompt-RAG OFF by default and to
+// self-heal a version-skewed install where the kit no longer ships the referenced file.
+function pruneHooksTargeting(hooksObj: any, fileBasename: string): number {
+  let removed = 0;
+  const needle = `${fileBasename}"`;
+  for (const event of Object.keys(hooksObj)) {
+    const groups: any[] = Array.isArray(hooksObj[event]) ? hooksObj[event] : [];
+    for (const g of groups) {
+      if (!g || !Array.isArray(g.hooks)) continue;
+      const before = g.hooks.length;
+      g.hooks = g.hooks.filter(
+        (h: any) => !(typeof h?.command === "string" && h.command.includes(needle)),
+      );
+      removed += before - g.hooks.length;
+    }
+    hooksObj[event] = groups.filter((g) => !(g && Array.isArray(g.hooks) && g.hooks.length === 0));
+  }
+  return removed;
+}
+
 function installGlobalHooks(promptRag: boolean): void {
   const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
@@ -569,6 +612,14 @@ function installGlobalHooks(promptRag: boolean): void {
   const droidPullCmd = `node "${join(STABLE, "droid-pull-memory.ts")}"`;
   // Every kit hook command this run considers current — the prune keeps these, drops the rest.
   const validCmds = new Set([pushCmd, pullCmd, droidPushCmd, droidPullCmd]);
+  // Version-skew guard: only ever wire prompt-RAG when this run enables it AND the kit actually
+  // ships the hook file. A downgraded kit (published package behind canon) that lacks prompt-rag.ts
+  // must NOT leave a hook pointing at a missing/mismatched file — it self-heals to pruned instead.
+  const stableHasPromptRag = existsSync(join(STABLE, "prompt-rag.ts"));
+  if (promptRag && !stableHasPromptRag) {
+    log(`[8/10] prompt-rag requested but ${join(STABLE, "prompt-rag.ts")} is not shipped by this kit — skipping install (version-skew guard).`);
+  }
+  const wantPromptRag = promptRag && stableHasPromptRag;
 
   const settingsPath = join(homedir(), ".claude", "settings.json");
   const settings = readJson(settingsPath) ?? {};
@@ -594,16 +645,18 @@ function installGlobalHooks(promptRag: boolean): void {
   ensureHook("Stop", pushCmd);
   ensureHook("SessionStart", pullCmd);
   // prompt-RAG (Claude Code only in v1): the UserPromptSubmit exact-match context injector is a
-  // GLOBAL hook that self-gates per project from ~/.petbox/projects.json (prompt-rag.ts reads the
-  // matched entry's promptRag.enabled). We install it once, on --prompt-rag (enable). It is
-  // intentionally NOT in KIT_HOOK_SUFFIXES, so a later plain re-run, --no-prompt-rag, or a wire of
-  // a DIFFERENT project leaves the installed global hook untouched (never pruned) — per-project
-  // disable is a registry flag, not hook removal. UserPromptSubmit takes no matcher (CC docs), so
-  // the group shape { hooks: [...] } is correct as-is.
-  if (promptRag) {
+  // GLOBAL hook, but OFF BY DEFAULT. It is installed ONLY when this run both requests it
+  // (--prompt-rag) and ships the file (wantPromptRag); otherwise any previously-installed prompt-rag
+  // hook is PRUNED. So a plain re-run, --no-prompt-rag, or a downgraded kit that lacks prompt-rag.ts
+  // all converge on "no prompt-rag hook" — the recurring version-skew crash can't survive a wire.
+  // (The per-project registry flag still gates injection at runtime; this is the install-time gate.)
+  // UserPromptSubmit takes no matcher (CC docs), so the group shape { hooks: [...] } is correct.
+  if (wantPromptRag) {
     ensureHook("UserPromptSubmit", promptRagCmd);
   } else {
-    log(`[8/10] claude hook UserPromptSubmit (prompt-rag) — leaving any installed global hook as-is (per-project gate lives in the registry).`);
+    const pruned = pruneHooksTargeting(settings.hooks, "prompt-rag.ts");
+    if (pruned > 0) log(`[8/10] pruned ${pruned} claude prompt-rag UserPromptSubmit hook(s) — prompt-RAG off (default / --no-prompt-rag / kit lacks the file).`);
+    else log(`[8/10] claude hook UserPromptSubmit (prompt-rag) — off by default; not installed.`);
   }
   writeJson(settingsPath, settings);
   log(`[8/10] merged hooks into ${settingsPath}`);
@@ -642,10 +695,12 @@ function installGlobalHooks(promptRag: boolean): void {
   // different project leaves it untouched (per-project disable is the registry flag, not removal).
   // Its command differs from the CC promptRagCmd (the `--agent droid` suffix), so ensureDroidHook's
   // exact-command dedup keeps the two hooks independent and idempotent.
-  if (promptRag) {
+  if (wantPromptRag) {
     ensureDroidHook("UserPromptSubmit", droidPromptRagCmd);
   } else {
-    log(`[8/10] droid hook UserPromptSubmit (prompt-rag) — leaving any installed global hook as-is (per-project gate lives in the registry).`);
+    const prunedRag = pruneHooksTargeting(droidSettings.hooks, "prompt-rag.ts");
+    if (prunedRag > 0) log(`[8/10] pruned ${prunedRag} droid prompt-rag UserPromptSubmit hook(s) — prompt-RAG off (default / --no-prompt-rag / kit lacks the file).`);
+    else log(`[8/10] droid hook UserPromptSubmit (prompt-rag) — off by default; not installed.`);
   }
   writeJson(droidSettingsPath, droidSettings);
   log(`[8/10] merged droid hooks into ${droidSettingsPath}`);
