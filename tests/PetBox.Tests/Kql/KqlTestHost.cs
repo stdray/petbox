@@ -163,6 +163,7 @@ public static class KqlTestHost
 		{
 			Dialect = host.Dialect,
 			DefaultJoinKind = (caller ?? KqlTranslationOptions.Default).DefaultJoinKind,
+			DCountMode = (caller ?? KqlTranslationOptions.Default).DCountMode,
 		};
 
 	// Builds the KqlResult (eager unsupported-op throws propagate here) then drains every row, disposing the

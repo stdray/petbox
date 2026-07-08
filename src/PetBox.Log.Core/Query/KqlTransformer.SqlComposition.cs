@@ -90,7 +90,7 @@ public static partial class KqlTransformer
 			// (Kusto's empty-input one-default-row rule). Returns null → in-memory fallback.
 			if (postOps[composed] is SummarizeOperator { ByClause: null } noBy)
 			{
-				var r = SqlSummarizeNoBy(stage, noBy, now);
+				var r = SqlSummarizeNoBy(stage, noBy, now, options);
 				if (r is null)
 					break;
 				counted = r;
@@ -102,7 +102,7 @@ public static partial class KqlTransformer
 				DistinctOperator distinct => ComposeDistinct(stage, distinct, now),
 				ProjectOperator project => ComposeProject(stage, project, now),
 				ExtendOperator extend => ComposeExtend(stage, extend, now),
-				SummarizeOperator summarize => ComposeSummarize(stage, summarize, now),
+				SummarizeOperator summarize => ComposeSummarize(stage, summarize, now, options),
 				ParseOperator parse => ComposeParse(stage, parse, now),
 				JoinOperator join => ComposeJoin(stage, join, now, sqlRunSub, options.DefaultJoinKind),
 				LookupOperator lookup => ComposeLookup(stage, lookup, now, sqlRunSub),
@@ -1006,7 +1006,7 @@ public static partial class KqlTransformer
 	// no-`by` summarize (bounded to one row incl. the Kusto empty-input default-row rule) stays in-memory
 	// for now — returned as null. Any key/aggregate not yet SQL-translatable (or a deferred case: string
 	// min/max collation) also returns null → the whole summarize runs in-memory unchanged. ----
-	static SqlStage? ComposeSummarize(SqlStage stage, SummarizeOperator op, DateTime now)
+	static SqlStage? ComposeSummarize(SqlStage stage, SummarizeOperator op, DateTime now, KqlTranslationOptions options)
 	{
 		if (op.ByClause is null)
 			return null;
@@ -1024,11 +1024,23 @@ public static partial class KqlTransformer
 			keys.Add(key);
 		}
 
+		// SQLite percentile: no native quantile, so any percentile() aggregate routes the WHOLE summarize
+		// through a windowed pre-stage (ROW_NUMBER/COUNT OVER PARTITION BY the keys) — the stage/keys/param/
+		// context are REBOUND over the windowed row, and each percentile becomes a conditional MAX over the
+		// nearest-rank row (see ApplyPercentileWindowStage). DuckDB needs none of this (native quantile_disc).
+		Dictionary<string, PercentileSlot>? pctlSlots = null;
+		if (options.Dialect is SqliteDialect)
+		{
+			var pcts = CollectPercentileArgs(op, ctx, rowParam, stage, now);
+			if (pcts.Count > 0)
+				(stage, keys, pctlSlots, x, ctx) = ApplyPercentileWindowStage(stage, keys, pcts, x, ctx, now);
+		}
+
 		// aggregates → (name, result logical type, builder producing the aggregate expr over the grouping)
 		var aggs = new List<(string Name, Type Logical, Func<ParamExpr, Expr> Build)>();
 		foreach (var element in op.Aggregates)
 		{
-			if (!TrySummarizeAgg(element.Element, ctx, x, rowParam, stage, now, out var agg))
+			if (!TrySummarizeAgg(element.Element, ctx, x, rowParam, stage, now, options, pctlSlots, out var agg))
 				return null;
 			aggs.Add(agg);
 		}
@@ -1063,23 +1075,37 @@ public static partial class KqlTransformer
 	// over empty; Kusto requires ONE default row over empty (count()→0, sum/avg/min/max→null, dcount/countif
 	// →0), so a 0-row result synthesizes the per-aggregate defaults. Terminal (returns a KqlResult, not a
 	// composable stage). Any aggregate not SQL-translatable → null (in-memory fallback).
-	static KqlResult? SqlSummarizeNoBy(SqlStage stage, SummarizeOperator op, DateTime now)
+	static KqlResult? SqlSummarizeNoBy(SqlStage stage, SummarizeOperator op, DateTime now, KqlTranslationOptions options)
 	{
 		var x = Expr.Parameter(stage.ElementType, "x");
 		var ctx = stage.MakeContext(x);
 		var rowParam = Expr.Parameter(typeof(object?[]), "row");
 
+		// SQLite percentile in a no-`by` summarize: the same windowed pre-stage as ComposeSummarize, with an
+		// EMPTY partition (ROW_NUMBER() OVER (ORDER BY …) / COUNT(x) OVER () span the whole input). Empty
+		// input yields 0 windowed rows → 0 group rows → the null default below (Kusto: percentile over empty → null).
+		Dictionary<string, PercentileSlot>? pctlSlots = null;
+		if (options.Dialect is SqliteDialect)
+		{
+			var pcts = CollectPercentileArgs(op, ctx, rowParam, stage, now);
+			if (pcts.Count > 0)
+				(stage, _, pctlSlots, x, ctx) = ApplyPercentileWindowStage(stage, [], pcts, x, ctx, now);
+		}
+
 		var aggs = new List<(string Name, Type Logical, Func<ParamExpr, Expr> Build, object? Default)>();
 		foreach (var element in op.Aggregates)
 		{
-			if (!TrySummarizeAgg(element.Element, ctx, x, rowParam, stage, now, out var agg))
+			if (!TrySummarizeAgg(element.Element, ctx, x, rowParam, stage, now, options, pctlSlots, out var agg))
 				return null;
 			// Empty-group default: a non-nullable value-type result (count/countif/dcount → long) defaults to
 			// its zero (0); a nullable/ref result (sum/avg/min/max) defaults to null. Matches StreamSummarize's
-			// fresh-accumulator fold.
+			// fresh-accumulator fold. make_list/make_set are the exception: their ref-type (string) result is a
+			// JSON array, and Kusto yields an EMPTY array over empty input — the literal "[]", not null.
 			var def = KqlScalar.IsNullable(agg.Logical) || !agg.Logical.IsValueType
 				? null
 				: Activator.CreateInstance(agg.Logical);
+			if (AggFnName(element.Element) is "make_list" or "make_set")
+				def = "[]";
 			aggs.Add((agg.Name, agg.Logical, agg.Build, def));
 		}
 
@@ -1094,6 +1120,13 @@ public static partial class KqlTransformer
 				binds.Select((e, i) => (MemberBinding)Expr.Bind(resultType.GetProperty($"C{i}")!, e)).ToArray()),
 			g);
 		var projected = DynSelect(grouped, groupingType, resultType, resultSel);
+		// Cap to a single row. A standard SQL aggregate over the constant group already yields ≤1 row, so
+		// this is a no-op for count/sum/min/max/avg/dcount(exact). But a CUSTOM aggregate (make_list/make_set,
+		// dcount approx) renders as a CORRELATED SUBQUERY whose outer, over a constant group key, linq2db does
+		// NOT collapse — it emits `SELECT (…agg…) FROM <all rows>`, one identical whole-table-aggregate row per
+		// input row. Take(1) collapses that to the ONE Kusto result row; empty input still yields 0 rows, so the
+		// NoByRows default synthesis (count→0, make_list/make_set→"[]", others→null) is untouched.
+		projected = DynTake(projected, resultType, 1);
 
 		var inner = MakeEmittedStage(projected, resultType, aggs.Select(a => (a.Name, a.Logical)).ToList(), now);
 		return new KqlResult(inner.Columns, NoByRows(Materialize(inner), aggs.Select(a => a.Default).ToArray()));
@@ -1157,7 +1190,17 @@ public static partial class KqlTransformer
 		return true;
 	}
 
+	// The aggregate function's simple name (unwrapping an `alias = fn(...)`), or null for a non-call element.
+	// Used by SqlSummarizeNoBy to pick the empty-input default (make_list/make_set → "[]").
+	static string? AggFnName(SyntaxNode element) => element switch
+	{
+		FunctionCallExpression f => f.Name.SimpleName,
+		SimpleNamedExpression { Expression: FunctionCallExpression f } => f.Name.SimpleName,
+		_ => null,
+	};
+
 	static bool TrySummarizeAgg(SyntaxNode element, ScalarContext ctx, ParamExpr x, ParamExpr rowParam, SqlStage stage, DateTime now,
+		KqlTranslationOptions options, IReadOnlyDictionary<string, PercentileSlot>? pctlSlots,
 		out (string Name, Type Logical, Func<ParamExpr, Expr> Build) agg)
 	{
 		agg = default;
@@ -1256,6 +1299,19 @@ public static partial class KqlTransformer
 						return false;
 					var argT = arg.Type;
 					var sel = Expr.Lambda(arg, x);
+					// Approx mode on DuckDB → native approx_count_distinct (HyperLogLog; skips NULLs like exact
+					// COUNT(DISTINCT)). Anything else — Exact mode, OR Approx on a backend without an approximate
+					// primitive (SQLite) — DEGRADES to the existing exact COUNT(DISTINCT) (spec kql-semantic-options:
+					// degrade, not error). Result type stays `long` either way.
+					if (options.DCountMode == KqlDCountMode.Approx && options.Dialect is DuckDbDialect)
+					{
+						agg = (name, typeof(long), g =>
+						{
+							Expr selected = Expr.Call(SelectM(source, argT), g, sel);
+							return Expr.Call(AggExtM(nameof(KqlAggregateExpressions.ApproxCountDistinct), argT), selected);
+						});
+						return true;
+					}
 					var nullable = !argT.IsValueType || KqlScalar.IsNullable(argT);
 					agg = (name, typeof(long), g =>
 					{
@@ -1272,11 +1328,279 @@ public static partial class KqlTransformer
 					return true;
 				}
 
+			case "make_list":
+			case "make_set":
+				{
+					if (!Arg(fn, out var arg))
+						return false;
+					// Restrict by LOGICAL type (NOT the storage .Type — a datetime's storage is epoch-ms `long`,
+					// which we must NOT admit): only string/int/long/double aggregate identically across backends
+					// (integers render as integer text, doubles as canonical JSON numbers, on both). bool (0/1 vs
+					// true/false) and datetime/timespan (epoch-ms/ticks number) diverge → reject (v1).
+					var argLogical = KqlScalar.NonNullable(
+						KqlScalar.Compile(args[0].Element, new RowScalarContext(rowParam, stage.Columns) { UtcNow = now }).Type);
+					if (argLogical != typeof(string) && argLogical != typeof(int) && argLogical != typeof(long) && argLogical != typeof(double))
+						throw new UnsupportedKqlException(
+							$"{fn}() supports only string, int, long, or double arguments (got {argLogical.Name})");
+					var argT = arg.Type;
+					var sel = Expr.Lambda(arg, x);
+					var method = fn == "make_list"
+						? nameof(KqlAggregateExpressions.MakeList)
+						: nameof(KqlAggregateExpressions.MakeSet);
+					// Result is JSON-array TEXT (typeof(string)); null-skip + value-ascending order + set-dedup all
+					// live in the per-dialect [Sql.Extension] template. Empty no-`by` input → "[]" (SqlSummarizeNoBy).
+					agg = (name, typeof(string), g =>
+					{
+						Expr selected = Expr.Call(SelectM(source, argT), g, sel);
+						return Expr.Call(AggExtM(method, argT), selected);
+					});
+					return true;
+				}
+
+			case "percentile":
+				{
+					// percentile(expr, P) — EXACT NEAREST-RANK (spec kql-percentile; owner decision — NOT
+					// KustoLoco's type-5 interpolation): over a group's non-null values sorted ascending
+					// v[1..n], rank r = MAX(1, ceil(n·P/100)), result = v[r]. P=0 → min, P=100 → max; nulls
+					// ignored; empty/all-null group → null. The result is an ACTUAL stored value, so datetime/
+					// timespan work — the picked epoch-ms/ticks value round-trips through StorageToLogical.
+					if (args.Count != 2)
+						throw new UnsupportedKqlException($"percentile() takes exactly 2 arguments (expr, percentile), got {args.Count}");
+					var p = PercentileLiteral(args[1].Element);
+					var argLogical = KqlScalar.Compile(args[0].Element, new RowScalarContext(rowParam, stage.Columns) { UtcNow = now }).Type;
+					var nnLogical = KqlScalar.NonNullable(argLogical);
+					if (!KqlScalar.IsNumericType(nnLogical) && nnLogical != typeof(DateTime) && nnLogical != typeof(TimeSpan))
+						throw new UnsupportedKqlException(
+							$"percentile() supports numeric, datetime, or timespan arguments (got {nnLogical.Name})");
+
+					// SQLite: the summarize was rebound over the windowed pre-stage (ApplyPercentileWindowStage);
+					// the aggregate is a conditional MAX picking the value at the nearest-rank row:
+					// MAX(CASE WHEN __rn = MAX(1, ceil(cnt·P/100)) THEN arg END). Exactly one row per group
+					// matches (ROW_NUMBER is unique in the partition); an all-null group matches rn=1 whose
+					// value is NULL (nulls sort last, and all values are null) → MAX(NULL) = null.
+					if (pctlSlots is not null)
+					{
+						var slot = pctlSlots[PercentileArgKey(args[0].Element)];
+						var nsT = Nullable(slot.StorageType);
+						var rn = Expr.Property(x, slot.RnProp);
+						var cnt = Expr.Property(x, slot.CntProp);
+						var sel = Expr.Lambda(
+							Expr.Condition(Expr.Equal(rn, NearestRankExpr(cnt, p)),
+								Expr.Convert(Expr.Property(x, slot.ArgProp), nsT),
+								Expr.Constant(null, nsT)),
+							x);
+						agg = (name, Nullable(argLogical), g => Expr.Call(MinMaxSelM("Max", source, nsT), g, sel));
+						return true;
+					}
+
+					// DuckDB: native quantile_disc(x, P/100) — spike-verified equal to the nearest-rank formula
+					// on every group (nulls ignored; empty/all-null → NULL). Composed like the other custom
+					// aggregates: g.Select(x => arg).QuantileDisc(p).
+					if (!TryCompileStorage(args[0].Element, ctx, out var argStorage))
+						return false;
+					var qT = Nullable(argStorage.Type);
+					var qSel = Expr.Lambda(Expr.Convert(argStorage, qT), x);
+					agg = (name, Nullable(argLogical), g =>
+					{
+						Expr selected = Expr.Call(SelectM(source, qT), g, qSel);
+						return Expr.Call(AggExtM(nameof(KqlAggregateExpressions.QuantileDisc), qT), selected, Expr.Constant(p / 100.0));
+					});
+					return true;
+				}
+
+			case "percentiles":
+				throw new UnsupportedKqlException(
+					"percentiles() (multi-value) is not supported; use one percentile(expr, P) per value");
+
 			default:
 				throw new UnsupportedKqlException(
-					$"aggregate '{fn}' not supported (supported: count, countif, sum, min, max, avg, dcount)");
+					$"aggregate '{fn}' not supported (supported: count, countif, sum, min, max, avg, dcount, make_list, make_set, percentile)");
 		}
 	}
+
+	// One SQLite percentile window slot: the pre-stage row properties carrying the percentile ARG value and
+	// its per-partition ROW_NUMBER (nulls-last, value-ascending) and non-null COUNT — shared by every
+	// percentile over the same argument expression.
+	sealed record PercentileSlot(string ArgProp, string RnProp, string CntProp, Type StorageType);
+
+	// The constant percentile literal P of percentile(expr, P): a numeric literal in [0,100] (anything else —
+	// a column ref, a computed expression, out-of-range — is an eager UnsupportedKqlException).
+	static double PercentileLiteral(Expression e)
+	{
+		var v = e switch
+		{
+			LiteralExpression { LiteralValue: long l } => (double)l,
+			LiteralExpression { LiteralValue: int i } => i,
+			LiteralExpression { LiteralValue: double d } => d,
+			LiteralExpression { LiteralValue: decimal m } => (double)m,
+			_ => throw new UnsupportedKqlException("percentile() requires a constant numeric literal percentile in [0,100]"),
+		};
+		if (double.IsNaN(v) || v < 0 || v > 100)
+			throw new UnsupportedKqlException($"percentile() percentile must be in [0,100], got {v}");
+		return v;
+	}
+
+	// The slot key for a percentile argument — the argument's source text, so every percentile over the
+	// SAME expression shares ONE window (arg/rn/cnt) in the pre-stage.
+	static string PercentileArgKey(Expression e) => e.ToString().Trim();
+
+	// The nearest-rank expression over the group's non-null count: MAX(1, ceil(cnt·P/100)) in pure INTEGER
+	// arithmetic (SQLite `/` on integers is integer division; no ceil()/max() scalar needed). P is a
+	// compile-time constant, so the clamp resolves statically: P=0 → the constant rank 1 (the min); for
+	// P>0 and cnt≥1 the ceiling form (cnt·PN + D−1) / D is already ≥ 1, and for cnt=0 (all-null group) the
+	// unclamped rank matches NO ROW_NUMBER — but rank 1 then picks a NULL value anyway, so both clamp arms
+	// yield null identically. Integral P uses the exact (cnt·P + 99)/100; a fractional P scales by 10^6
+	// ((cnt·P·10^6 + 10^8−1) / 10^8), exact for any literal with ≤6 fractional digits.
+	static Expr NearestRankExpr(Expr cnt, double p)
+	{
+		if (p == 0)
+			return Expr.Constant(1L);
+		if (p == Math.Floor(p))
+			return Expr.Divide(
+				Expr.Add(Expr.Multiply(cnt, Expr.Constant((long)p)), Expr.Constant(99L)),
+				Expr.Constant(100L));
+		var pn = (long)Math.Round(p * 1_000_000);
+		const long d = 100_000_000;
+		return Expr.Divide(
+			Expr.Add(Expr.Multiply(cnt, Expr.Constant(pn)), Expr.Constant(d - 1)),
+			Expr.Constant(d));
+	}
+
+	// Collects the DISTINCT percentile() argument expressions of a summarize (keyed by source text), each
+	// compiled to its storage form over the CURRENT stage — the inputs ApplyPercentileWindowStage turns into
+	// windowed arg/rn/cnt columns. Validates arity/P here too, so a bad percentile errors eagerly even
+	// before the pre-stage is built. Empty when the summarize has no percentile aggregate.
+	static List<(string Key, Expr Storage)> CollectPercentileArgs(
+		SummarizeOperator op, ScalarContext ctx, ParamExpr rowParam, SqlStage stage, DateTime now)
+	{
+		var result = new List<(string Key, Expr Storage)>();
+		var seen = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var element in op.Aggregates)
+		{
+			var call = element.Element switch
+			{
+				FunctionCallExpression f => f,
+				SimpleNamedExpression { Expression: FunctionCallExpression f } => f,
+				_ => null,
+			};
+			if (call is null || call.Name.SimpleName != "percentile")
+				continue;
+			var args = call.ArgumentList.Expressions;
+			if (args.Count != 2)
+				throw new UnsupportedKqlException($"percentile() takes exactly 2 arguments (expr, percentile), got {args.Count}");
+			PercentileLiteral(args[1].Element);
+			var key = PercentileArgKey(args[0].Element);
+			if (!seen.Add(key))
+				continue;
+			if (!TryCompileStorage(args[0].Element, ctx, out var storage))
+				continue; // unreachable (TryCompileStorage throws or succeeds); keeps the call-shape uniform
+			result.Add((key, storage));
+		}
+		return result;
+	}
+
+	// SQLite percentile pre-stage (the raw FromSql window splice, the same proven mechanism as mv-expand):
+	// wraps the summarize input into ONE windowed subquery that carries, per distinct percentile argument,
+	//   __rn  = ROW_NUMBER() OVER (PARTITION BY <group keys> ORDER BY (arg IS NULL), arg)   — nulls LAST
+	//   __cnt = COUNT(arg)   OVER (PARTITION BY <group keys>)                               — nulls EXCLUDED
+	// so the summarize's percentile aggregates reduce to a plain conditional MAX over the group (nearest-rank
+	// row pick, see TrySummarizeAgg). Mechanism: project every stage column (passthrough — other aggregates
+	// recompile over the emitted stage unchanged) + the KEY storage exprs + the ARG storage exprs; render that
+	// projection to SQL via ToSqlQuery; remap the engine's own parameter tokens; splice as a self-parenthesized
+	// `( WITH sub(C0..Cn) AS (upstream) SELECT …, windows FROM sub )` CTE (positional renaming — immune to
+	// linq2db's inner aliases). PARTITION BY uses the EMITTED key columns and the rebound GROUP BY keys read
+	// those SAME columns (Expr.Property), so the window partition and the group are exactly the same sets.
+	// A no-`by` summarize passes ZERO keys: ROW_NUMBER() OVER (ORDER BY …) / COUNT(x) OVER () span the input.
+	// Why raw SQL and not Sql.Ext.RowNumber().Over(): the linq2db window-function API resists composing over
+	// runtime-emitted row types inside a downstream GroupBy; the raw splice is the mechanism mv-expand already
+	// proved end-to-end (nesting, parameters, downstream composition in SQL).
+	static (SqlStage Stage, List<SqlCol> Keys, Dictionary<string, PercentileSlot> Slots, ParamExpr X, ScalarContext Ctx)
+		ApplyPercentileWindowStage(SqlStage stage, List<SqlCol> keys, List<(string Key, Expr Storage)> pcts,
+			ParamExpr x, ScalarContext ctx, DateTime now)
+	{
+		var n = stage.Columns.Count;
+
+		// pre projection: passthrough C0..C{n-1}, then the key/arg storage exprs. A key/arg that is the SAME
+		// expression as an existing projected column REUSES that ordinal instead of appending a duplicate —
+		// linq2db DEDUPLICATES identical select expressions (a duplicate would shrink the emitted column list
+		// under the positional CTE rename and break `sub(C0..Cn)`). Expression identity = the compiled tree's
+		// ToString (all exprs compile over the same param/context, so equal trees print equally); a MISSED
+		// match fails loudly (column-count mismatch), never silently.
+		var subCols = stage.Columns
+			.Select(c => new SqlCol(c.Name, c.ClrType, ctx.ResolveColumn(c.Name)))
+			.ToList();
+		var byExpr = new Dictionary<string, int>(StringComparer.Ordinal);
+		for (var i = 0; i < subCols.Count; i++)
+			byExpr.TryAdd(subCols[i].Storage.ToString(), i);
+
+		int AddOrReuse(string name, Type logical, Expr storage)
+		{
+			var k = storage.ToString();
+			if (byExpr.TryGetValue(k, out var ord))
+				return ord;
+			subCols.Add(new SqlCol(name, logical, storage));
+			byExpr[k] = subCols.Count - 1;
+			return subCols.Count - 1;
+		}
+
+		var keyOrds = keys.Select((key, j) => AddOrReuse("__pk" + j, key.LogicalType, key.Storage)).ToList();
+		var argOrds = pcts.Select((p, k) => AddOrReuse("__pa" + k, p.Storage.Type, p.Storage)).ToList();
+		var pre = BuildEmittedStage(stage.Query, stage.ElementType, x, subCols, distinct: false, now);
+
+		// upstream SQL + params (identical to the mv-expand splice: PUBLIC ToSqlQuery, token remap).
+		var qsql = ToSqlQueryReflective(pre.Query);
+		var upstreamSql = qsql.Sql;
+		var pars = qsql.Parameters;
+		foreach (var i in Enumerable.Range(0, pars.Count).OrderByDescending(i => ParamToken(pars[i]).Length))
+			upstreamSql = upstreamSql.Replace(ParamToken(pars[i]), "{" + i + "}");
+
+		var m = subCols.Count;
+		var partition = keys.Count == 0
+			? ""
+			: "PARTITION BY " + string.Join(", ", keyOrds.Select(o => $"sub.C{o}"));
+		var selects = Enumerable.Range(0, m).Select(i => $"sub.C{i} AS C{i}").ToList();
+		var outFields = subCols.Select((c, i) => ($"C{i}", c.Storage.Type)).ToList();
+		var outCols = subCols.Select(c => (c.Name, c.LogicalType)).ToList();
+		var slots = new Dictionary<string, PercentileSlot>(StringComparer.Ordinal);
+		for (var k = 0; k < pcts.Count; k++)
+		{
+			var a = argOrds[k];   // the arg column's ordinal
+			var rnOrd = m + 2 * k;
+			var cntOrd = m + 2 * k + 1;
+			var sep = partition.Length == 0 ? "" : " ";
+			selects.Add($"ROW_NUMBER() OVER ({partition}{sep}ORDER BY (sub.C{a} IS NULL), sub.C{a}) AS C{rnOrd}");
+			selects.Add($"COUNT(sub.C{a}) OVER ({partition}) AS C{cntOrd}");
+			outFields.Add(($"C{rnOrd}", typeof(long)));
+			outFields.Add(($"C{cntOrd}", typeof(long)));
+			outCols.Add(($"__prn{k}", typeof(long)));
+			outCols.Add(($"__pcnt{k}", typeof(long)));
+			slots[pcts[k].Key] = new PercentileSlot($"C{a}", $"C{rnOrd}", $"C{cntOrd}", subCols[a].Storage.Type);
+		}
+
+		var cteCols = string.Join(", ", Enumerable.Range(0, m).Select(i => "C" + i));
+		var sql = $"( WITH sub({cteCols}) AS ( {upstreamSql} ) SELECT {string.Join(", ", selects)} FROM sub )";
+
+		var outRowType = EmitRowType(outFields);
+		var dc = ((LinqToDB.Internal.Linq.IExpressionQuery)pre.Query).DataContext;
+		var query = FromSqlReflective(outRowType, dc, sql, pars);
+		var newStage = MakeEmittedStage(query, outRowType, outCols, now);
+
+		// Rebind: the caller's param/context move to the windowed row; the GROUP BY keys become plain reads
+		// of the emitted key columns (the very columns the window partitioned by).
+		var newX = Expr.Parameter(outRowType, "x");
+		var newCtx = newStage.MakeContext(newX);
+		var newKeys = keys
+			.Select((key, j) => new SqlCol(key.Name, key.LogicalType, Expr.Property(newX, $"C{keyOrds[j]}")))
+			.ToList();
+		return (newStage, newKeys, slots, newX, newCtx);
+	}
+
+	// Resolves a KqlAggregateExpressions custom-aggregate ([Sql.Extension] IsAggregate) method for the
+	// element type. The method is an extension over IEnumerable<T> ({source} = the ExprParameter element),
+	// so the transformer invokes it as a static one-arg call over `g.Select(x => selector)`.
+	static MethodInfo AggExtM(string name, Type elem) =>
+		typeof(KqlAggregateExpressions).GetMethod(name, BindingFlags.Public | BindingFlags.Static)!
+			.MakeGenericMethod(elem);
 
 	// --- Enumerable/Queryable aggregate method resolvers (the aggregate exprs sit inside the GROUP BY
 	// Select projection, on the IGrouping, so linq2db translates them to COUNT/SUM/MIN/MAX/AVG/COUNT DISTINCT
