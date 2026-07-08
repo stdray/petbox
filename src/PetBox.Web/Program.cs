@@ -280,6 +280,11 @@ public partial class Program
 		{
 			Encoder = PetBox.Core.Json.PetBoxJsonEncoder.Relaxed,
 		};
+		// Emit every DateTime as RFC 3339 WITH a 'Z'. Stores write UtcNow but SQLite returns
+		// Unspecified-kind values, which STJ serializes zone-less ("…:10.238") — not a valid
+		// format:"date-time", so strict clients (Droid/opencode ajv) reject tool output with
+		// -32602 "must match format date-time". Normalizing here fixes all date-time fields at once.
+		mcpJson.Converters.Add(new PetBox.Core.Json.McpUtcDateTimeConverter());
 		builder.Services.AddMcpServer()
 			.WithHttpTransport()
 			// Schema-honest registration: nullable record properties are NOT marked
