@@ -127,6 +127,9 @@ public sealed class AsyncVectorizationWorkerTests
 			return Task.CompletedTask;
 		}
 
+		public Task DeleteByTypeAsync(DataConnection? tx, string scope, string type, CancellationToken ct = default) =>
+			Task.CompletedTask;
+
 		public Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default) =>
 			Task.FromResult<IReadOnlyList<Hit>>([]);
 	}

@@ -84,6 +84,18 @@ public sealed class VectorSearchIndex : ISearchIndex
 		finally { if (own) db.Dispose(); }
 	}
 
+	public async Task DeleteByTypeAsync(DataConnection? tx, string scope, string type, CancellationToken ct = default)
+	{
+		var (db, own) = Open(tx);
+		try
+		{
+			await db.GetTable<Row>()
+				.Where(r => r.Scope == scope && r.Type == type)
+				.DeleteAsync(ct);
+		}
+		finally { if (own) db.Dispose(); }
+	}
+
 	public async Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default)
 	{
 		var qb = await _embedder.EmbedAsync([query], ct);

@@ -62,6 +62,11 @@ public sealed class SqliteFtsIndex : ISearchIndex
 			.Where(r => r.Scope == scope && r.Type == type && r.Id == id)
 			.DeleteAsync(ct);
 
+	public Task DeleteByTypeAsync(DataConnection? tx, string scope, string type, CancellationToken ct = default) =>
+		Tx(tx).GetTable<Row>()
+			.Where(r => r.Scope == scope && r.Type == type)
+			.DeleteAsync(ct);
+
 	public async Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default)
 	{
 		var match = FtsQuery.BuildMatch(query);

@@ -156,6 +156,9 @@ public sealed class FtsStemmingEvalTests : IDisposable
 		public Task DeleteAsync(DataConnection? tx, string scope, string type, string id, CancellationToken ct = default) =>
 			throw new NotSupportedException();
 
+		public Task DeleteByTypeAsync(DataConnection? tx, string scope, string type, CancellationToken ct = default) =>
+			throw new NotSupportedException();
+
 		public async Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default)
 		{
 			var match = string.Join(' ', FtsQuery.Tokens(query).Select(t => t + "*"));

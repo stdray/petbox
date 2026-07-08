@@ -154,6 +154,7 @@ public sealed class SearchServiceTests : IDisposable
 		public SearchCapability Capability => SearchCapability.Vector;
 		public Task IndexAsync(DataConnection? tx, SearchDoc doc, CancellationToken ct = default) => Task.CompletedTask;
 		public Task DeleteAsync(DataConnection? tx, string scope, string type, string id, CancellationToken ct = default) => Task.CompletedTask;
+		public Task DeleteByTypeAsync(DataConnection? tx, string scope, string type, CancellationToken ct = default) => Task.CompletedTask;
 		public Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default) =>
 			throw new InvalidOperationException("vector index down");
 	}

@@ -55,5 +55,8 @@ public interface ISearchIndex
 
 	Task IndexAsync(DataConnection? tx, SearchDoc doc, CancellationToken ct = default);
 	Task DeleteAsync(DataConnection? tx, string scope, string type, string id, CancellationToken ct = default);
+	// Board/type-wide purge: remove EVERY doc under (scope, type) in one shot. Used when a whole
+	// container (e.g. a task board) is dropped and its per-id docs would otherwise be orphaned.
+	Task DeleteByTypeAsync(DataConnection? tx, string scope, string type, CancellationToken ct = default);
 	Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default);
 }

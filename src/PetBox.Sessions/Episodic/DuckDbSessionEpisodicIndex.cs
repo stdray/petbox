@@ -372,6 +372,8 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 			throw new NotSupportedException("episodic index is hydrated, not written");
 		public Task DeleteAsync(DataConnection? tx, string scope, string type, string id, CancellationToken ct = default) =>
 			throw new NotSupportedException("episodic index is hydrated, not written");
+		public Task DeleteByTypeAsync(DataConnection? tx, string scope, string type, CancellationToken ct = default) =>
+			throw new NotSupportedException("episodic index is hydrated, not written");
 
 		sealed class BmRow
 		{
@@ -405,6 +407,8 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		public Task IndexAsync(DataConnection? tx, SearchDoc doc, CancellationToken ct = default) =>
 			throw new NotSupportedException("episodic index is hydrated, not written");
 		public Task DeleteAsync(DataConnection? tx, string scope, string type, string id, CancellationToken ct = default) =>
+			throw new NotSupportedException("episodic index is hydrated, not written");
+		public Task DeleteByTypeAsync(DataConnection? tx, string scope, string type, CancellationToken ct = default) =>
 			throw new NotSupportedException("episodic index is hydrated, not written");
 
 		public async Task<IReadOnlyList<Hit>> SearchAsync(string scope, string query, SearchFilter filter, int k, CancellationToken ct = default)

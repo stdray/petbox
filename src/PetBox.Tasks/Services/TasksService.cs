@@ -138,8 +138,34 @@ public sealed partial class TasksService : ITasksService
 	public Task<IReadOnlyList<TaskBoardMeta>> ListBoardsAsync(string projectKey, CancellationToken ct = default) =>
 		_boards.ListAsync(projectKey, ct);
 
-	public Task<bool> DeleteBoardAsync(string projectKey, string board, CancellationToken ct = default) =>
-		_boards.DeleteAsync(projectKey, board, ct);
+	public async Task<bool> DeleteBoardAsync(string projectKey, string board, CancellationToken ct = default)
+	{
+		if (!await _boards.DeleteAsync(projectKey, board, ct)) return false;
+
+		// The board's rows are gone, but its search docs are not: _boards.DeleteAsync bulk-deletes
+		// the PlanNodes rows without the per-node FTS/vector hygiene the upsert path runs, so every
+		// search_fts/search_vec doc keyed (Scope=project, Type=board) is now orphaned. Left behind,
+		// those docs keep matching queries and then crash HybridCandidatesAsync (GetAsync on the
+		// vanished board). Purge them board-wide. Vector docs only exist when an embedder was
+		// configured — the same `_llm is not null` gate the search path uses.
+		var ctx = _boards.GetContext(projectKey);
+		var fts = new SqliteFtsIndex(() => ctx);
+		using var tx = await ctx.BeginTransactionAsync(ct);
+		try
+		{
+			await fts.DeleteByTypeAsync(ctx, projectKey, board, ct);
+			if (_llm is not null)
+				await new VectorSearchIndex(() => ctx, new LlmClientEmbedder(_llm, projectKey), VectorDim)
+					.DeleteByTypeAsync(ctx, projectKey, board, ct);
+			await tx.CommitAsync(ct);
+		}
+		catch
+		{
+			await tx.RollbackAsync(ct);
+			throw;
+		}
+		return true;
+	}
 
 	public Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default) =>
 		_boards.UpdateAsync(projectKey, board, m => m with { ClosedAt = closed ? DateTime.UtcNow : null }, ct);
@@ -1558,6 +1584,12 @@ public sealed partial class TasksService : ITasksService
 		var seen = new HashSet<(string Board, string Slug)>();
 		foreach (var g in floored.Select((h, rank) => (h, rank)).GroupBy(x => x.h.Type, StringComparer.Ordinal))
 		{
+			// A hit's Type is its owning board. A deleted board can still leave orphan search docs
+			// (the board-delete purge covers new deletes, but pre-fix orphans and delete/search
+			// races remain), so a group may name a board that no longer exists. GetAsync would throw
+			// InvalidOperationException — skip the stale group instead. Bounded and harmless, exactly
+			// like the dropped-comment-owner case below.
+			if (!await _boards.ExistsAsync(projectKey, g.Key, ct)) continue;
 			var view = await GetAsync(projectKey, g.Key, includeClosed: false, urlPrefix: urlPrefix, ct: ct);
 			var bySlug = view.Nodes.ToDictionary(n => n.Key, StringComparer.Ordinal);
 			var byNodeId = view.Nodes.ToDictionary(n => n.NodeId, StringComparer.Ordinal);

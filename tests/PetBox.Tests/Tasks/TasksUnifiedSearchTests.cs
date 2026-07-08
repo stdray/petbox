@@ -328,6 +328,26 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		res.Nodes[0].Retriever.Should().Be("lexical");
 	}
 
+	// Regression (orphan-search-docs 500): deleting a board bulk-drops its PlanNodes rows but must
+	// also purge its (Scope=project, Type=board) search docs. Pre-fix the orphan FTS doc kept
+	// matching, then HybridCandidatesAsync called GetAsync on the vanished board and threw
+	// InvalidOperationException ("task board '...' not found") — surfacing as a 500 on /ui/search.
+	[Fact]
+	public async Task DeleteBoard_PurgesSearchDocs_SearchDoesNotThrow()
+	{
+		await Seed("doomed", """[{"key":"n","status":"Todo","title":"zqxprovisionruntime marker","body":"zqxprovisionruntime body"}]""");
+
+		// Sanity: the node is indexed and the unique term selects it.
+		(await Search(q: "zqxprovisionruntime")).Nodes.Select(n => n.Key).Should().Equal("n");
+
+		// Drop the whole board — its rows AND its search docs must go.
+		(await _tasks.DeleteBoardAsync(Proj, "doomed")).Should().BeTrue();
+
+		// The regression: this search must NOT throw and must return no orphan hit.
+		var after = await Search(q: "zqxprovisionruntime");
+		after.Nodes.Should().BeEmpty();
+	}
+
 	// ---- sort ----
 
 	[Fact]
