@@ -26,10 +26,11 @@
 //        - .claude/skills/petbox/SKILL.md    (Claude Code skill; opencode reads it via its
 //                                             Claude-compatible skills discovery path)
 //        - .factory/skills/petbox/SKILL.md   (Factory Droid skill)
-//    8. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files);
-//       all links point at the stable copy (~/.petbox/wire/). (--prompt-rag) additionally installs
-//       the OPT-IN Claude Code UserPromptSubmit prompt-RAG hook (off by default; safe exact-match
-//       context injection — see prompt-rag.ts).
+//    8. install the global Claude + Droid hooks + opencode plugin + Grok SessionStart materialize
+//       (merge, never clobber live files); all links point at the stable copy (~/.petbox/wire/).
+//       Grok ignores SessionStart stdout — materialize writes .grok/rules (temp; not prompt-RAG).
+//       (--prompt-rag) additionally installs the OPT-IN Claude Code UserPromptSubmit prompt-RAG
+//       hook (off by default; safe exact-match context injection — see prompt-rag.ts).
 //    9. (--cleanup-legacy) remove the project's old per-project hook/plugin copies
 //   10. self-smoke: POST a tiny session and assert the server applied it
 //
@@ -40,6 +41,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rm
 import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { writeGrokBootstrapRules } from "./grok-rules-static.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { PROMPT_RAG_DEFAULTS, type PromptRagConfig } from "./registry.ts";
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
@@ -432,6 +434,13 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
     writeFileSync(skillPath, skill, "utf8");
     log(`[7/10] wrote ${skillPath}`);
   }
+
+  // Grok Build TEMP: project rules channel (SessionStart stdout is ignored by Grok).
+  // Bootstrap protocol lives under .grok/rules/; live canon is materialised to a gitignored
+  // sibling by ~/.grok/hooks → grok-materialize-rules.ts (see installGlobalHooks).
+  writeGrokBootstrapRules(dir, project);
+  log(`[7/10] wrote Grok bootstrap rules under ${join(dir, ".grok", "rules")}`);
+  ensureGitignoreLine(dir, ".grok/rules/petbox-session.local.md");
 }
 
 // ---- step 7b: telemetry (opt-in, --telemetry) ------------------------------
@@ -554,6 +563,7 @@ const KIT_HOOK_SUFFIXES = [
   'pull-memory.ts"',
   'droid-push-session.ts"',
   'droid-pull-memory.ts"',
+  'grok-materialize-rules.ts"',
 ];
 
 // Remove kit hook entries whose command is NOT one of the current stable commands (validCmds),
@@ -600,6 +610,26 @@ function pruneHooksTargeting(hooksObj: any, fileBasename: string): number {
   return removed;
 }
 
+// Append a single line to <dir>/.gitignore if missing (idempotent). Used for generated Grok
+// local rules so materialize output does not dirty git status.
+function ensureGitignoreLine(dir: string, line: string): void {
+  const gi = join(dir, ".gitignore");
+  let body = "";
+  try {
+    body = readFileSync(gi, "utf8");
+  } catch {
+    body = "";
+  }
+  const lines = body.split(/\r?\n/);
+  if (lines.some((l) => l.trim() === line)) {
+    log(`[7/10] .gitignore already has ${line}`);
+    return;
+  }
+  const needsNl = body.length > 0 && !body.endsWith("\n");
+  writeFileSync(gi, `${body}${needsNl ? "\n" : ""}\n# Grok Build PetBox session inject (wire kit)\n${line}\n`, "utf8");
+  log(`[7/10] appended ${line} to .gitignore`);
+}
+
 function installGlobalHooks(promptRag: boolean): void {
   const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
@@ -610,8 +640,10 @@ function installGlobalHooks(promptRag: boolean): void {
   const droidPromptRagCmd = `node "${join(STABLE, "prompt-rag.ts")}" --agent droid`;
   const droidPushCmd = `node "${join(STABLE, "droid-push-session.ts")}"`;
   const droidPullCmd = `node "${join(STABLE, "droid-pull-memory.ts")}"`;
+  // Grok Build: materialize protocol+canon into .grok/rules (stdout ignored on SessionStart).
+  const grokMaterializeCmd = `node "${join(STABLE, "grok-materialize-rules.ts")}"`;
   // Every kit hook command this run considers current — the prune keeps these, drops the rest.
-  const validCmds = new Set([pushCmd, pullCmd, droidPushCmd, droidPullCmd]);
+  const validCmds = new Set([pushCmd, pullCmd, droidPushCmd, droidPullCmd, grokMaterializeCmd]);
   // Version-skew guard: only ever wire prompt-RAG when this run enables it AND the kit actually
   // ships the hook file. A downgraded kit (published package behind canon) that lacks prompt-rag.ts
   // must NOT leave a hook pointing at a missing/mismatched file — it self-heals to pruned instead.
@@ -719,6 +751,30 @@ export { PetboxPlugin, default } from "${pluginUrl}";
 `;
   writeFileSync(shimPath, shim, "utf8");
   log(`[8/10] wrote global opencode plugin shim ${shimPath} → ${pluginUrl}`);
+
+  // Grok Build hooks live in ~/.grok/hooks/*.json (always trusted). Same event JSON shape as
+  // Claude; SessionStart stdout is IGNORED — grok-materialize-rules.ts writes project rules
+  // instead (temp channel until Grok supports context inject). Timeout 15s > canon fetch 8s.
+  const grokHooksDir = join(homedir(), ".grok", "hooks");
+  mkdirSync(grokHooksDir, { recursive: true });
+  const grokHookPath = join(grokHooksDir, "petbox.json");
+  const grokHookDoc = {
+    hooks: {
+      SessionStart: [
+        {
+          hooks: [
+            {
+              type: "command",
+              command: grokMaterializeCmd,
+              timeout: 15,
+            },
+          ],
+        },
+      ],
+    },
+  };
+  writeJson(grokHookPath, grokHookDoc);
+  log(`[8/10] wrote Grok SessionStart materialize hook ${grokHookPath}`);
 }
 
 // ---- step 9: cleanup legacy ------------------------------------------------

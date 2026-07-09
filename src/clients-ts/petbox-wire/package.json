@@ -1,7 +1,7 @@
 {
 	"name": "petbox-wire",
 	"version": "0.0.0",
-	"description": "Wire any project to PetBox (Claude Code, opencode, Factory Droid) — global hooks, MCP configs and skills — with a single npx command, no repo clone.",
+	"description": "Wire any project to PetBox (Claude Code, opencode, Factory Droid, Grok Build temp rules) — global hooks, MCP configs and skills — with a single npx command, no repo clone.",
 	"type": "module",
 	"bin": {
 		"petbox-wire": "bin/petbox-wire.js"

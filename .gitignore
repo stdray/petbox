@@ -87,6 +87,9 @@ desktop.ini
 .env.*.local
 secrets.local.env
 
+# Grok Build PetBox session inject (wire kit — live canon materialize)
+.grok/rules/petbox-session.local.md
+
 # Claude Code (personal)
 .claude/*
 # ...except the petbox-methodology skill canon — its content should be tracked/distributed

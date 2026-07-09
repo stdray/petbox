@@ -46,6 +46,9 @@ export type ResolvedProject = {
   apiKey: string;
   baseUrl: string;
   envVar: string;
+  // Absolute registered prefix (project root). Used by Grok materialize to write
+  // `.grok/rules/*` under the real project, not a worktree cwd when registry points at primary.
+  prefix: string;
   promptRag?: PromptRagConfig;
 };
 
@@ -136,6 +139,7 @@ export function resolveProject(dir: string): ResolvedProject | null {
       apiKey,
       baseUrl: baseUrl.replace(/\/+$/, ""),
       envVar: best.envVar,
+      prefix: best.prefix,
       promptRag,
     };
   } catch {

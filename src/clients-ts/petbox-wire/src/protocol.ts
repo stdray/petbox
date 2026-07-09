@@ -74,3 +74,7 @@ export const opencodePetboxTool: ToolNamer = (verb) => `petbox_${verb}`;
 // live in exec mode (session 7be9f6c2: `mcp__petbox__*` answers "not permitted in exec
 // mode"); the docs' `mcp__<server>__<tool>` form did not match the shipped CLI.
 export const droidPetboxTool: ToolNamer = (verb) => `petbox___${verb}`;
+
+// Grok Build MCP dispatcher uses qualified `server__tool` names (double underscore),
+// e.g. `petbox__memory_search` via use_tool — not the CC `mcp__petbox__*` form.
+export const grokPetboxTool: ToolNamer = (verb) => `petbox__${verb}`;
