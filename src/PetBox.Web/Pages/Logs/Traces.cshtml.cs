@@ -67,7 +67,7 @@ public sealed class TracesModel : PageModel
 		if (SelectedLog is null) { SchemaMissing = true; return; }
 
 		if (PageNum < 0) PageNum = 0;
-		using var logDb = _logStore.GetContext(EffectiveProjectKey, SelectedLog);
+		using var logDb = _logStore.NewEnsuredContext(EffectiveProjectKey, SelectedLog);
 		try
 		{
 			var q = logDb.Spans

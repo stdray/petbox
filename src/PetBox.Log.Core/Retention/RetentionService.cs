@@ -62,7 +62,7 @@ public sealed partial class RetentionService(
 			var cutoffMs = new DateTimeOffset(cutoff, TimeSpan.Zero).ToUnixTimeMilliseconds();
 			try
 			{
-				using var logDb = store.GetContext(log.ProjectKey, log.Name);
+				using var logDb = store.NewEnsuredContext(log.ProjectKey, log.Name);
 				var deleted = await logDb.LogEntries
 					.Where(e => e.TimestampMs < cutoffMs)
 					.DeleteAsync(token: ct);
