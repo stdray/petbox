@@ -177,7 +177,7 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 		// Boards share the project file, so delete just this board's rows (all revisions),
 		// not the file. Relations (in petbox.db) bind to NodeId and are left as-is — they
 		// resolve to "missing", same as when a board file used to be dropped.
-		using var db = _factory.NewConnection(projectKey);
+		using var db = _factory.NewEnsuredConnection(projectKey);
 		await db.PlanNodes.Where(n => n.Board == board).DeleteAsync(ct);
 		return true;
 	}

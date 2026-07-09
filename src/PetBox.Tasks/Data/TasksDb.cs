@@ -8,7 +8,7 @@ namespace PetBox.Tasks.Data;
 // project's boards share it, partitioned by PlanNode.Board.
 public sealed class TasksDb : DataConnection
 {
-	public TasksDb(DataOptions<TasksDb> options) : base(options.Options) { DisposeConnection = true; }
+	public TasksDb(DataOptions<TasksDb> options) : base(options.Options) { }
 
 	public ITable<PlanNode> PlanNodes => this.GetTable<PlanNode>();
 	public ITable<NodeTag> NodeTags => this.GetTable<NodeTag>();

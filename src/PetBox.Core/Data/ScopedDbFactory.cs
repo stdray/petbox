@@ -78,9 +78,11 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 		// both see "not migrated" and race on the FluentMigrator journal table. After the
 		// first caller runs the schema, every later caller skips the lock and creates a
 		// fresh connection lock-free. Removing the flag reintroduces the race.
+		// File.Exists guards against stale flags (file deleted without EvictAsync — e.g.
+		// race with background job drain loops + test ResetAsync).
 		lock (_lock)
 		{
-			if (!_ensured.TryGetValue(cacheKey, out _))
+			if (!_ensured.TryGetValue(cacheKey, out _) || !File.Exists(dbPath))
 			{
 				_ensureSchema(cs);
 				_ensured[cacheKey] = true;
@@ -97,10 +99,7 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 		{
 			_ensured.Remove(cacheKey);
 		}
-		// Release pooled SqliteConnections holding this file's handle so it can be
-		// deleted on Windows (a pooled connection keeps the file locked). Targeted,
-		// NOT ClearAllPools — that serializes the whole process (known footgun).
-		SqliteConnection.ClearPool($"Data Source={ScopedDbFiles.PathFor(_baseDir, scopeKey, name)}");
+		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={ScopedDbFiles.PathFor(_baseDir, scopeKey, name)}"));
 		await Task.CompletedTask;
 	}
 
