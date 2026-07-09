@@ -61,6 +61,9 @@ public sealed class LogsPageTests(WebAppFixture app, ITestOutputHelper output) :
 
 		await toggle.ClickAsync();
 		await Expect(toggle).ToHaveAttributeAsync("aria-pressed", "true");
+
+		// Clean up localStorage so sibling tests start from fresh default.
+		await E2EHelpers.ClearLocalStorageAsync(_page);
 	}
 
 	[Fact]

@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using PetBox.E2ETests.Infrastructure;
 
 namespace PetBox.E2ETests;
 
@@ -35,9 +36,19 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 		}
 	}
 
+	async Task PrepareAsync()
+	{
+		// Tests sharing a browser context must not leak localStorage state —
+		// a prior unpin test leaves `petbox.sidebar.pinned=0` which makes the
+		// server-rendered drawer-open blink away on load.
+		await E2EHelpers.ClearLocalStorageAsync(_page!);
+	}
+
 	[Fact]
 	public async Task Pin_Present_And_Pinned_By_Default_In_Every_Zone()
 	{
+		await PrepareAsync();
+
 		foreach (var (zone, url) in Zones)
 		{
 			await _page!.GotoAsync(url);
@@ -52,6 +63,7 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 	[Fact]
 	public async Task Pin_Toggle_Unpins_And_Persists_Across_Reload()
 	{
+		await PrepareAsync();
 		await _page!.GotoAsync("/ui/admin/sys/users");
 		var pin = _page.GetByTestId("nav-sidebar-pin");
 		await Expect(pin).ToHaveAttributeAsync("aria-pressed", "true");
@@ -65,5 +77,9 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 		await _page.ReloadAsync();
 		await Expect(_page.GetByTestId("nav-sidebar-pin")).ToHaveAttributeAsync("aria-pressed", "false");
 		await Expect(_page.Locator(".drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+
+		// Clean up so a sibling test in this class doesn't see unpinned state
+		// (xUnit test order within a class is non-deterministic).
+		await E2EHelpers.ClearLocalStorageAsync(_page);
 	}
 }

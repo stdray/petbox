@@ -48,9 +48,10 @@ public sealed class ThemeTests(WebAppFixture app, ITestOutputHelper output) : IA
 	async Task SetThemeAsync(string value)
 	{
 		await _page!.GotoAsync("/ui/me/preferences");
+		await Expect(_page.GetByTestId("setting-input-Theme")).ToBeVisibleAsync();
 		await _page.GetByTestId("setting-input-Theme").SelectOptionAsync(value);
 		await _page.GetByTestId("me-preferences-form-submit").ClickAsync();
-		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		await Expect(_page.GetByTestId("me-preferences-form-submit")).ToBeVisibleAsync();
 	}
 
 	[Fact]
@@ -81,6 +82,7 @@ public sealed class ThemeTests(WebAppFixture app, ITestOutputHelper output) : IA
 	{
 		// Any authenticated page loads the compiled app.css; measure against it.
 		await _page!.GotoAsync("/ui/$system");
+		await Expect(_page.GetByTestId("dashboard-title")).ToBeVisibleAsync();
 
 		// Reproduce exactly what _MdBody emits: node body straight on the surface, and comment
 		// body nested inside the _CommentThread `text-sm` metadata wrapper. The partial's explicit
