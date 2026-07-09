@@ -96,7 +96,7 @@ public sealed class TraceModel : PageModel
 		SelectedLog = selectedLog;
 		if (selectedLog is null) { TraceNotFound = true; return; }
 
-		using var logDb = _logStore.GetContext(EffectiveProjectKey, selectedLog);
+		using var logDb = _logStore.NewEnsuredContext(EffectiveProjectKey, selectedLog);
 
 		var spans = await logDb.Spans
 			.Where(s => s.TraceId == TraceId)

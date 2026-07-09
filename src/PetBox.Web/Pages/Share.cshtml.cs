@@ -61,7 +61,7 @@ public sealed class ShareModel : PageModel
 			kv => kv.Key, kv => kv.Value, StringComparer.Ordinal));
 		var masker = new ValueMasker(Convert.FromBase64String(share.SaltBase64));
 
-		using var logDb = _logStore.GetContext(share.ProjectKey, share.LogName);
+		using var logDb = _logStore.NewEnsuredContext(share.ProjectKey, share.LogName);
 		try
 		{
 			// Memory guard only (KqlLimits.MaxTake, no default take) — same bound as the TSV export.

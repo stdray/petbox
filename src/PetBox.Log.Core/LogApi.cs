@@ -364,7 +364,7 @@ public static class LogApi
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'"));
 
-		using var logDb = store.GetContext(projectKey, logName);
+		using var logDb = store.NewEnsuredContext(projectKey, logName);
 		var services = await logDb.LogEntries
 			.Select(e => e.ServiceKey)
 			.Distinct()

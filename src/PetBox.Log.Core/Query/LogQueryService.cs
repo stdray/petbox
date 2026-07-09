@@ -82,7 +82,10 @@ public sealed class LogQueryService(ILogStore store, KqlTranslationOptions? tran
 		catch (KqlParseException) { throw; }
 		catch (Exception ex) { throw new KqlParseException([ex.Message]); }
 
-		var logDb = store.GetContext(projectKey, logName);
+		// NOTE: NewContext without using var — the shape-changing paths return lazy
+		// IAsyncEnumerable rows that outlive this method; a using var would dispose
+		// the DataConnection before the caller enumerates them.
+		var logDb = store.NewEnsuredContext(projectKey, logName);
 		var root = KqlTransformer.GetRootTableName(code);
 
 		// Response capping (KqlLimits): no explicit take/top → DefaultTake, an explicit one is
