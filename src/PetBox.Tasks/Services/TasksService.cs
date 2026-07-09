@@ -14,6 +14,7 @@ using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services.NodeRef;
+using PetBox.Tasks.Services.Search;
 using PetBox.Tasks.Validation;
 using PetBox.Tasks.Workflow;
 
@@ -646,7 +647,7 @@ public sealed partial class TasksService : ITasksService
 		var underId = ResolveUnderNodeId(under, active);
 		// A status filter is an EXPLICIT ask: naming a terminal status returns its nodes even
 		// with includeClosed=false (widen the pool first, then keep only the named slugs).
-		var statusFilter = ResolveStatusFilter(status, runtime, meta.Kind);
+		var statusFilter = TaskSearchFilter.ResolveStatusForKind(status, runtime, meta.Kind);
 		var visible = statusFilter is null
 			? FilterVisible(active, includeClosed, underId, parentOf, runtime, meta.Kind)
 			: FilterVisible(active, includeClosed: true, underId, parentOf, runtime, meta.Kind)
@@ -835,28 +836,6 @@ public sealed partial class TasksService : ITasksService
 		return k;
 	}
 
-	// Normalize a status filter against the board kind's known slugs (across its hosted types,
-	// preset- or definition-resolved), case-insensitive; null/empty = no filter. A SOFT filter:
-	// an unknown slug is silently DROPPED (not an error) — but if slugs were PROVIDED and none are
-	// known, the filter is an EMPTY set (→ an empty result), distinct from "no status given"
-	// (→ null). Mirrors ResolveBoardFilter / ResolveStatusFilterAcross.
-	static HashSet<string>? ResolveStatusFilter(string[]? status, MethodologyRuntime runtime, string? kindSlug)
-	{
-		if (status is null || status.Length == 0) return null;
-		var known = runtime.Types(kindSlug).SelectMany(w => w.Statuses).Select(s => s.Slug)
-			.ToHashSet(StringComparer.OrdinalIgnoreCase);
-		var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		var anyProvided = false;
-		foreach (var raw in status)
-		{
-			var s = (raw ?? "").Trim();
-			if (s.Length == 0) continue;
-			anyProvided = true;
-			if (known.Contains(s)) set.Add(s); // unknown status slug → silently dropped (soft filter)
-		}
-		return anyProvided ? set : null;
-	}
-
 	// nodeId -> its active part_of parent nodeId (single parent). One query, project-wide.
 	async Task<Dictionary<string, string>> ParentMapAsync(string projectKey, CancellationToken ct) =>
 		(await _relations.ListByKindAsync(projectKey, "part_of", ct))
@@ -969,7 +948,7 @@ public sealed partial class TasksService : ITasksService
 	{
 		IEnumerable<PlanNode> scoped = active;
 		if (underId is not null)
-			scoped = active.Where(n => InSubtree(n.NodeId, underId, parentOf));
+			scoped = active.Where(n => TaskSearchFilter.InSubtree(n.NodeId, underId, parentOf));
 		var pool = scoped.ToList();
 		if (includeClosed) return pool;
 
@@ -981,18 +960,6 @@ public sealed partial class TasksService : ITasksService
 			while (parentOf.TryGetValue(cur, out var par) && guard++ < 1000) { keep.Add(par); cur = par; }
 		}
 		return pool.Where(n => keep.Contains(n.NodeId)).ToList();
-	}
-
-	// True if `nodeId` is `rootId` or a part_of descendant of it (walk parents up to root).
-	static bool InSubtree(string nodeId, string rootId, Dictionary<string, string> parentOf)
-	{
-		var cur = nodeId; var guard = 0;
-		while (true)
-		{
-			if (cur == rootId) return true;
-			if (!parentOf.TryGetValue(cur, out var par) || guard++ >= 1000) return false;
-			cur = par;
-		}
 	}
 
 	// A resolvable reference to a node anywhere in the project (links cross boards).
@@ -1312,46 +1279,55 @@ public sealed partial class TasksService : ITasksService
 		if (boardFilter is not null)
 			boardsMeta = boardsMeta.Where(b => string.Equals(b.Name, boardFilter, StringComparison.Ordinal)).ToList();
 
-		// Predicates shared by both modes. keys = a SOFT filter (slug|NodeId mixed), resolved via the
-		// miss-tolerant exact-identifier path (ExactIdentifierHitsAsync), NOT strict addressing: a key
-		// that matches nothing contributes nothing (never throws), and an ambiguous slug (same slug on
-		// 2+ boards) contributes ALL its matches (each hit carries its board). So a not-found/ambiguous
-		// ref is never an error here — a fully-missing keys set just yields an empty result (an empty
-		// keyIds filters to nothing at :hits below). Strict addressing (a typo MUST be a loud error)
-		// stays in ResolveNodeRefAsync — used by tasks_node_get. `under` is likewise a SOFT filter
-		// here: a subtree root that matches nothing scopes to an EMPTY result (not an error, and not
-		// "no filter" — that distinction is why under-not-given → null, but under-given-but-missed →
-		// an empty root set → no node passes); an ambiguous slug contributes ALL its matches as roots.
+		// Soft identifier filters (keys/under): miss-tolerant multi-hit NodeIds via the NodeRef
+		// MultiHit policy — NOT strict addressing (that stays on ResolveNodeRefAsync / tasks_node_get).
+		// A key that matches nothing contributes nothing; an ambiguous slug contributes ALL matches.
+		// under-not-given → null (no filter); under-given-but-missed → empty roots → no node passes.
 		HashSet<string>? keyIds = null;
 		if (f.Keys is { Count: > 0 })
 		{
 			keyIds = new HashSet<string>(StringComparer.Ordinal);
 			foreach (var k in f.Keys)
-				foreach (var hit in await ExactIdentifierHitsAsync(projectKey, k, boardFilter, ct: ct))
-					keyIds.Add(hit.Node.NodeId);
+				foreach (var id in _nodeRefs.ResolveMultiHitIds(projectKey, k, boardFilter))
+					keyIds.Add(id);
 		}
-		// under = a part_of subtree root (soft): null when not given (no filter), else a set of root
-		// NodeIds (possibly EMPTY when the ref matched nothing → an empty result). Multi-board slug →
-		// all matches as roots. A node passes if it is in the subtree of ANY root.
 		HashSet<string>? underRoots = null;
 		if (!string.IsNullOrWhiteSpace(f.Under))
 		{
 			underRoots = new HashSet<string>(StringComparer.Ordinal);
-			foreach (var hit in await ExactIdentifierHitsAsync(projectKey, f.Under, boardFilter, ct: ct))
-				underRoots.Add(hit.Node.NodeId);
+			foreach (var id in _nodeRefs.ResolveMultiHitIds(projectKey, f.Under, boardFilter))
+				underRoots.Add(id);
 		}
 		var parentOf = underRoots is null ? null : await ParentMapAsync(projectKey, ct);
 		var runtime = await RuntimeAsync(projectKey, ct);
-		var statusFilter = ResolveStatusFilterAcross(f.Status, runtime, boardsMeta.Select(b => b.Kind));
+		var statusFilter = TaskSearchFilter.ResolveStatusAcross(f.Status, runtime, boardsMeta.Select(b => b.Kind));
+
+		// Reverse commit lookup (node-commits-impl): NodeIds carrying the commit, resolved once
+		// into criteria so the post-select applicator stays pure.
+		HashSet<string>? commitNodeIds = null;
+		if (!string.IsNullOrWhiteSpace(f.Commit))
+		{
+			using var commitCtx = _boards.NewEnsuredConnection(projectKey);
+			commitNodeIds = await NodesCarryingCommitAsync(commitCtx, f.Commit, ct);
+		}
+
+		var criteria = new TaskSearchCriteria(
+			UnderRoots: underRoots,
+			ParentOf: parentOf,
+			StatusSlugs: statusFilter,
+			KeyNodeIds: keyIds,
+			CommitNodeIds: commitNodeIds);
 
 		List<TaskSearchHit> hits;
 		SearchRetrievers? retrievers = null;
 		long? currentVersion = null;
 		if (query is null)
 		{
-			// LISTING: per-board enriched views. A status filter or explicit keys are an
-			// EXPLICIT ask — widen the pool to terminal nodes first (mirrors GetAsync's own
-			// status handling), then the predicates below keep only what was asked for.
+			// LISTING: full PlanNodeView enrichment per board (links/delivery/parent/commits).
+			// MCP listing wire keeps the full row; lean projection would strip fields callers need.
+			// A status filter or explicit keys are an EXPLICIT ask — widen the pool to terminal
+			// nodes first (mirrors GetAsync's own status handling), then criteria keep only what
+			// was asked for.
 			var widen = f.IncludeClosed || statusFilter is not null || keyIds is not null;
 			hits = new List<TaskSearchHit>();
 			foreach (var b in boardsMeta)
@@ -1364,18 +1340,17 @@ public sealed partial class TasksService : ITasksService
 		else
 		{
 			// QUERY: hybrid selection over the OPEN set (terminal nodes are not indexed).
-			// The fused ranking supplies a bounded CANDIDATE POOL of max(3×limit, 50) — 3×
-			// leaves the post-fusion predicates (board is index-level; under/status/keys are
-			// not) room to drop candidates and still fill `limit`, and the 50 floor keeps
-			// recall sane for small limits; an unbounded ask (limit 0) gets the floor.
+			// Candidates are LEAN-projected (no per-node relation panel) — enough for sort + the
+			// MCP lean wire cut. The fused ranking supplies a bounded CANDIDATE POOL of
+			// max(3×limit, 50) — 3× leaves post-fusion predicates room to drop candidates and
+			// still fill `limit`; the 50 floor keeps recall sane for small limits.
 			(hits, retrievers) = await HybridCandidatesAsync(projectKey, query, boardFilter,
 				Math.Max(req.Limit * 3, 50), urlPrefix, runtime, ct);
 
 			// exact-identifier-search-surfacing (spec): a query that exactly matches a node's
-			// slug reads as an addressed ask in disguise - surface EVERY exact match (a slug can
-			// live on several boards; ambiguity is not an error in search) even when terminal
-			// (closed nodes aren't indexed for relevance), ahead of the fused ranking. Still
-			// subject to the under/status/keys predicates below like any other hit.
+			// slug reads as an addressed ask in disguise — surface EVERY exact match even when
+			// terminal (closed nodes aren't indexed for relevance), ahead of the fused ranking.
+			// Still subject to the criteria predicates below like any other hit.
 			var exactHits = await ExactIdentifierHitsAsync(projectKey, query, boardFilter, urlPrefix, ct);
 			// An addressed match has no fused score (Score stays null); it is confirmed by identity.
 			var freshExact = exactHits.Where(e => !hits.Any(h => h.Board == e.Board && h.Node.Key == e.Node.Key))
@@ -1383,17 +1358,7 @@ public sealed partial class TasksService : ITasksService
 			hits.InsertRange(0, freshExact);
 		}
 
-		if (underRoots is not null) hits = hits.Where(h => underRoots.Any(root => InSubtree(h.Node.NodeId, root, parentOf!))).ToList();
-		if (statusFilter is not null) hits = hits.Where(h => statusFilter.Contains(h.Node.Status)).ToList();
-		if (keyIds is not null) hits = hits.Where(h => keyIds.Contains(h.Node.NodeId)).ToList();
-		// Reverse commit lookup (node-commits-impl): keep only nodes carrying the commit
-		// (exact, or a >=7-hex prefix on a stored full sha). Project-wide over plan_node_commits.
-		if (!string.IsNullOrWhiteSpace(f.Commit))
-		{
-			using var commitCtx = _boards.NewEnsuredConnection(projectKey);
-			var carrying = await NodesCarryingCommitAsync(commitCtx, f.Commit, ct);
-			hits = hits.Where(h => carrying.Contains(h.Node.NodeId)).ToList();
-		}
+		hits = TaskSearchFilter.Apply(hits, criteria);
 
 		hits = SortHits(projectKey, hits, req.Sort, hasQuery: query is not null);
 		if (req.Limit > 0 && hits.Count > req.Limit) hits = hits.Take(req.Limit).ToList();
@@ -1452,24 +1417,19 @@ public sealed partial class TasksService : ITasksService
 				.ToDictionary(c => c.Key, c => c.NodeId, StringComparer.Ordinal);
 
 		// Hits carry Type=board, Id=slug (nodes) or "c:"+commentKey (comments) — group by board,
-		// build each owning board's enriched OPEN view once, resolve each hit to a node row and
-		// thread its fused score/retriever + a MatchedIn marker. Fused rank is the hit's index in
-		// `floored`; a group yields ascending rank, so the FIRST time a (board, slug) target
-		// appears WINS its rank — a node that surfaced both directly AND via its comment (or via
-		// several comments) dedupes to the better/earlier rank, keeping that hit's provenance.
+		// LEAN-project each owning board's OPEN nodes once (no relation panel — query wire is
+		// lean), resolve each hit to a node row and thread fused score/retriever + MatchedIn.
+		// Fused rank is the hit's index in `floored`; a group yields ascending rank, so the FIRST
+		// time a (board, slug) target appears WINS its rank.
 		var ranked = new List<(int Rank, TaskSearchHit Hit)>();
 		var seen = new HashSet<(string Board, string Slug)>();
 		foreach (var g in floored.Select((h, rank) => (h, rank)).GroupBy(x => x.h.Type, StringComparer.Ordinal))
 		{
 			// A hit's Type is its owning board. A deleted board can still leave orphan search docs
-			// (the board-delete purge covers new deletes, but pre-fix orphans and delete/search
-			// races remain), so a group may name a board that no longer exists. GetAsync would throw
-			// InvalidOperationException — skip the stale group instead. Bounded and harmless, exactly
-			// like the dropped-comment-owner case below.
-			if (!await _boards.ExistsAsync(projectKey, g.Key, ct)) continue;
-			var view = await GetAsync(projectKey, g.Key, includeClosed: false, urlPrefix: urlPrefix, ct: ct);
-			var bySlug = view.Nodes.ToDictionary(n => n.Key, StringComparer.Ordinal);
-			var byNodeId = view.Nodes.ToDictionary(n => n.NodeId, StringComparer.Ordinal);
+			// (pre-fix orphans / delete races) — skip the stale group instead of throwing.
+			var meta = await _boards.FindAsync(projectKey, g.Key, ct);
+			if (meta is null) continue;
+			var (bySlug, byNodeId) = await ProjectBoardLeanOpenAsync(projectKey, g.Key, meta.Kind, runtime, urlPrefix, ct);
 			foreach (var (h, rank) in g)
 			{
 				var isComment = h.Id.StartsWith(TasksSearchDocs.CommentIdPrefix, StringComparison.Ordinal);
@@ -1492,6 +1452,25 @@ public sealed partial class TasksService : ITasksService
 			}
 		}
 		return (ranked.OrderBy(x => x.Rank).Select(x => x.Hit).ToList(), resp.Retrievers);
+	}
+
+	// Lean OPEN-set projection for query-mode hit resolve: active non-terminal nodes + tags,
+	// no per-node relation ListAsync / delivery / lineage. Same open pool HybridCandidates
+	// previously took from GetAsync(includeClosed: false) minus the terminal-ancestor keep
+	// (query hits never address pure terminal ancestors via FTS).
+	async Task<(Dictionary<string, PlanNodeView> BySlug, Dictionary<string, PlanNodeView> ByNodeId)>
+		ProjectBoardLeanOpenAsync(
+			string projectKey, string board, string kindSlug, MethodologyRuntime runtime,
+			string? urlPrefix, CancellationToken ct)
+	{
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		var open = ctx.PlanNodes
+			.Where(n => n.Board == board && n.ActiveTo == null)
+			.ToList()
+			.Where(n => !runtime.IsTerminalStatus(kindSlug, n.Status))
+			.ToList();
+		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
+		return TaskSearchProjector.LeanIndex(board, open, tagsByNode, urlPrefix);
 	}
 
 	// Final ordering of the selected set. No sort: query mode keeps the fused relevance
@@ -1538,30 +1517,6 @@ public sealed partial class TasksService : ITasksService
 		return ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
 			.Where(n => n.NodeId.Length > 0)
 			.ToDictionary(n => n.NodeId, n => (n.Created, n.Updated), StringComparer.Ordinal);
-	}
-
-	// Status-filter for a read that may span boards of several kinds: a slug is valid if ANY board
-	// kind in scope knows it (a single-board read therefore validates against exactly that kind,
-	// like GetAsync). A SOFT filter: an unknown status slug is silently DROPPED (not an error) — but
-	// if status slugs were PROVIDED and none are known, the filter is an EMPTY set (→ an empty
-	// result), distinct from "no status given" (→ null, no filter). Kinds are slugs (preset- or
-	// definition-resolved).
-	static HashSet<string>? ResolveStatusFilterAcross(IReadOnlyList<string>? status, MethodologyRuntime runtime, IEnumerable<string> kindSlugs)
-	{
-		if (status is null || status.Count == 0) return null;
-		var known = kindSlugs.Select(runtime.KindName).Distinct(StringComparer.Ordinal)
-			.SelectMany(runtime.Types).SelectMany(w => w.Statuses).Select(s => s.Slug)
-			.ToHashSet(StringComparer.OrdinalIgnoreCase);
-		var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-		var anyProvided = false;
-		foreach (var raw in status)
-		{
-			var s = (raw ?? "").Trim();
-			if (s.Length == 0) continue;
-			anyProvided = true;
-			if (known.Contains(s)) set.Add(s); // unknown status slug → silently dropped (soft filter)
-		}
-		return anyProvided ? set : null; // provided-but-all-unknown → empty set (empty result); none real → no filter
 	}
 
 	// READ snippet: bodyLen <= 0 -> the full body; otherwise the first N chars with "…"
@@ -2054,7 +2009,7 @@ public sealed partial class TasksService : ITasksService
 			if (p.PartOf.Length == 0) continue; // detach only
 
 			var parentId = ResolveParentId(p.PartOf, slugToId, ctx);
-			if (InSubtree(parentId, childId, parentOf)) // parent is the child or its descendant → cycle
+			if (TaskSearchFilter.InSubtree(parentId, childId, parentOf)) // parent is the child or its descendant → cycle
 				throw new ArgumentException($"part_of would create a cycle (node '{p.Key}')");
 			await _relations.CreateAsync(projectKey, "part_of", childId, parentId, ct);
 			parentOf[childId] = parentId;
