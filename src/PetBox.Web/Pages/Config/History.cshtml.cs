@@ -27,7 +27,7 @@ public sealed class HistoryModel : PageModel
 	public void OnGet()
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+		using var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
 
 		var query = configDb.History.AsQueryable();
 		if (!string.IsNullOrWhiteSpace(PathFilter))

@@ -240,7 +240,7 @@ public sealed class MemoryFusionRerankTests : IDisposable
 	// path uses (mirrors MemoryHybridSearchTests / MemoryVectorizationJob for one store).
 	async Task DrainVectors(ILlmClient llm, string store)
 	{
-		DataConnection Connect() => _factory.NewConnection(Proj, store);
+		DataConnection Connect() => _factory.NewEnsuredConnection(Proj, store);
 		var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(llm, Proj));
 		var source = new MemorySearchSource(Connect, Proj);
 		var cursor = new SqliteIndexCursorStore(Connect);

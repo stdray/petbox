@@ -57,7 +57,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 	// guard matches). Mirrors TasksVectorizationJob for one board.
 	async Task<DrainResult> DrainVectors(ILlmClient llm, string board)
 	{
-		DataConnection Connect() => _factory.NewConnection(Proj);
+		DataConnection Connect() => _factory.NewEnsuredConnection(Proj);
 		var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(llm, Proj));
 		var source = new TasksSearchSource(Connect, Proj, board);
 		var cursor = new SqliteIndexCursorStore(Connect);

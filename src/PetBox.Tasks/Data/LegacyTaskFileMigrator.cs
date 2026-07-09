@@ -37,7 +37,7 @@ public sealed class LegacyTaskFileMigrator
 			var boardFiles = Directory.GetFiles(projectDir, "*.db");
 			if (boardFiles.Length == 0) continue;
 
-			var projectDb = _factory.GetDb(project); // ensures the per-project schema (M001..M005)
+			using var projectDb = _factory.GetDb(project); // ensures the per-project schema (M001..M005)
 			foreach (var boardFile in boardFiles)
 			{
 				var board = Path.GetFileNameWithoutExtension(boardFile);

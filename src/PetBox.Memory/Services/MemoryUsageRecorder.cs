@@ -77,9 +77,7 @@ public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 
 	void Apply(Hit hit)
 	{
-		// GetDb (not NewConnection): the migration that creates entry_usage must have run
-		// for this file before the raw upsert (reference: NewConnection ≠ migrations).
-		var db = _factory.GetDb(hit.Project, hit.Store);
+		using var db = _factory.GetDb(hit.Project, hit.Store);
 		db.Execute("""
 			INSERT INTO entry_usage (Key, SurfacedCount, DeliberateCount, OpenedCount, LastHitAt)
 			VALUES (@key, @surfaced, @deliberate, @opened, @at)

@@ -67,7 +67,7 @@ public sealed class MemoryService : IMemoryService
 	public async Task<IReadOnlyList<MemoryEntryView>> ListAsync(string projectKey, string store, string? type, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
-		var ctx = _stores.GetContext(projectKey, store);
+		using var ctx = _stores.GetContext(projectKey, store);
 		var typeFilter = type is null ? (MemoryType?)null : ParseType(type);
 		return ListActive(ctx, typeFilter).Select(View).ToList();
 	}
@@ -75,7 +75,7 @@ public sealed class MemoryService : IMemoryService
 	public async Task<MemoryEntryView?> GetAsync(string projectKey, string store, string key, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
-		var ctx = _stores.GetContext(projectKey, store);
+		using var ctx = _stores.GetContext(projectKey, store);
 		var e = ctx.Entries.Where(x => x.Key == key && x.ActiveTo == null).ToList().FirstOrDefault();
 		return e is null ? null : View(e);
 	}
@@ -152,7 +152,8 @@ public sealed class MemoryService : IMemoryService
 			if (query is null)
 			{
 				// LISTING: the active entries of the store (deterministic; ordered below).
-				selected.AddRange(ListActive(_stores.GetContext(projectKey, store), typeFilter)
+				using var listCtx = _stores.GetContext(projectKey, store);
+				selected.AddRange(ListActive(listCtx, typeFilter)
 					.Select(e => new Candidate(store, e, 0, null)));
 			}
 			else
@@ -272,7 +273,7 @@ public sealed class MemoryService : IMemoryService
 		if (keys.Count == 0) return map;
 		try
 		{
-			var ctx = _stores.GetContext(projectKey, store);
+			using var ctx = _stores.GetContext(projectKey, store);
 			var rows = ctx.GetTable<VecRow>()
 				.Where(r => r.Type == MemorySearchDocs.Type && keys.Contains(r.Id))
 				.Select(r => new { r.Id, r.Vec })
@@ -305,7 +306,7 @@ public sealed class MemoryService : IMemoryService
 		string projectKey, string store, string query, MemoryType? typeFilter, int k,
 		bool? lexical, bool? semantic, CancellationToken ct)
 	{
-		var ctx = _stores.GetContext(projectKey, store);
+		using var ctx = _stores.GetContext(projectKey, store);
 
 		// No searchable tokens (empty/punctuation query): degrade to a type-filtered listing —
 		// a filter-only query still returns a sensible set rather than nothing (preserved from
@@ -321,7 +322,7 @@ public sealed class MemoryService : IMemoryService
 
 		await EnsureLexicalBackfillAsync(ctx, projectKey, ct);
 
-		Func<DataConnection> connect = () => _stores.NewConnection(projectKey, store);
+		Func<DataConnection> connect = () => _stores.NewEnsuredConnection(projectKey, store);
 		var indexes = new List<ISearchIndex>();
 		if (lexical != false)
 			indexes.Add(new SqliteFtsIndex(connect));
@@ -364,7 +365,7 @@ public sealed class MemoryService : IMemoryService
 		EnforceCanonBudget(store, upserts); // reject an oversized canon body before we vivify the store
 
 		await _stores.EnsureAsync(projectKey, store, ct); // auto-vivify on first write
-		var ctx = _stores.GetContext(projectKey, store);
+		using var ctx = _stores.GetContext(projectKey, store);
 		var desired = MergePatches(ctx, upserts);
 		var dels = deletes.Select(d => (d.Key, d.Version)).ToArray();
 		var fts = new SqliteFtsIndex(() => ctx); // writes ride the tx below; connect unused
@@ -443,20 +444,20 @@ public sealed class MemoryService : IMemoryService
 	public async Task<MemoryUpsertOutcome> DeltaAsync(string projectKey, string store, long sinceVersion, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
-		var ctx = _stores.GetContext(projectKey, store);
+		using var ctx = _stores.GetContext(projectKey, store);
 		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<MemoryEntry>(), sinceVersion, ct: ct);
 		return new MemoryUpsertOutcome(r);
 	}
 
 	public async Task<IReadOnlyList<MemoryEntry>> ListActiveEntriesAsync(string projectKey, string store, CancellationToken ct = default)
 	{
-		var ctx = _stores.GetContext(projectKey, store);
+		using var ctx = _stores.GetContext(projectKey, store);
 		return ctx.Entries.Where(e => e.ActiveTo == null).OrderBy(e => e.Key).ToList();
 	}
 
 	public async Task<MemoryEntryPage> ListActiveEntriesPageAsync(string projectKey, string store, string? search, int pageNum, int pageSize, CancellationToken ct = default)
 	{
-		var ctx = _stores.GetContext(projectKey, store);
+		using var ctx = _stores.GetContext(projectKey, store);
 		var q = ctx.Entries.Where(e => e.ActiveTo == null);
 		if (!string.IsNullOrWhiteSpace(search))
 		{
@@ -477,7 +478,7 @@ public sealed class MemoryService : IMemoryService
 		IReadOnlyCollection<string>? keys = null, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
-		var ctx = _stores.GetContext(projectKey, store);
+		using var ctx = _stores.GetContext(projectKey, store);
 		var q = ctx.Usage.AsQueryable();
 		if (keys is not null) q = q.Where(u => keys.Contains(u.Key));
 		return q.ToList().ToDictionary(
@@ -490,7 +491,7 @@ public sealed class MemoryService : IMemoryService
 		int deadTailLimit = 10, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
-		var ctx = _stores.GetContext(projectKey, store);
+		using var ctx = _stores.GetContext(projectKey, store);
 
 		// Active entries are the denominator (usage rows can outlive a soft-deleted key, so we
 		// join FROM the active set, not the counter table). Key + Created is all the aggregate needs.

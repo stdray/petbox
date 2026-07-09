@@ -53,7 +53,7 @@ public sealed class FlatNodePartOfMigrator
 
 	async Task<bool> MigrateProject(string project)
 	{
-		var db = _factory.GetDb(project); // ensures schema (M001..M006)
+		using var db = _factory.GetDb(project); // ensures schema (M001..M006)
 		var active = db.PlanNodes.Where(n => n.ActiveTo == null).ToList();
 		var multi = active.Where(n => n.Key.Contains('/', StringComparison.Ordinal)).ToList();
 		if (multi.Count == 0) return false;

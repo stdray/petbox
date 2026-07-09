@@ -71,8 +71,8 @@ public sealed class FtsStemmingIntegrationTests : IDisposable
 		Directory.CreateDirectory(_dir);
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
-		_factory.GetDb("proj", "notes"); // creates the file + search_fts
-		_fts = new SqliteFtsIndex(() => _factory.NewConnection("proj", "notes"));
+		using var db = _factory.GetDb("proj", "notes"); // creates the file + search_fts
+		_fts = new SqliteFtsIndex(() => _factory.NewEnsuredConnection("proj", "notes"));
 	}
 
 	public void Dispose()

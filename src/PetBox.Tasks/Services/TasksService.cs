@@ -148,7 +148,7 @@ public sealed partial class TasksService : ITasksService
 		// those docs keep matching queries and then crash HybridCandidatesAsync (GetAsync on the
 		// vanished board). Purge them board-wide. Vector docs only exist when an embedder was
 		// configured — the same `_llm is not null` gate the search path uses.
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var fts = new SqliteFtsIndex(() => ctx);
 		using var tx = await ctx.BeginTransactionAsync(ct);
 		try
@@ -333,7 +333,7 @@ public sealed partial class TasksService : ITasksService
 		if (!result.IsValid)
 			throw new ArgumentException(result.Errors[0].ErrorMessage);
 
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var row = new MethodologyDefRow
 		{
 			Key = MethodologyDefRow.SingletonKey,
@@ -401,7 +401,7 @@ public sealed partial class TasksService : ITasksService
 		// `simple`). No `migration` on delete — an incompatible node REJECTS the call with a
 		// clear message and nothing is written (repair the definition/nodes first, or change
 		// the definition with a migration instead of deleting it).
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var boards = (await _boards.ListAsync(projectKey, ct)).Where(b => b.ClosedAt == null).ToList();
 		PlanDefinitionMigration(ctx, current.Definition, newDef: null, MethodologyRuntime.PresetsOnly, [], boards,
 			action: "delete (revert to builtin presets)", migrationHint: false);
@@ -579,7 +579,7 @@ public sealed partial class TasksService : ITasksService
 
 	public async Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default)
 	{
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var row = await ctx.GetTable<MethodologyDefRow>()
 			.FirstOrDefaultAsync(m => m.Key == MethodologyDefRow.SingletonKey && m.ActiveTo == null, ct);
 		if (row is null) return null;
@@ -624,7 +624,7 @@ public sealed partial class TasksService : ITasksService
 	{
 		await EnsureBoard(projectKey, board, ct);
 
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var all = ctx.PlanNodes.Where(n => n.Board == board).ToList();
 		var lineage = BuildLineage(all);
 		var active = all.Where(n => n.ActiveTo == null).OrderBy(n => n.Priority).ThenBy(n => n.Key).ToList();
@@ -797,7 +797,7 @@ public sealed partial class TasksService : ITasksService
 			throw new ArgumentException("node reference is required — a node slug or a 32-hex NodeId");
 		if (LooksLikeNodeId(v)) return Task.FromResult(v);
 		var slug = v.ToLowerInvariant();
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var q = ctx.PlanNodes.Where(n => n.ActiveTo == null && n.Key == slug);
 		if (board is not null) q = q.Where(n => n.Board == board);
 		var matches = q.ToList().Where(n => n.NodeId.Length > 0).ToList();
@@ -824,7 +824,7 @@ public sealed partial class TasksService : ITasksService
 		if (v.Length == 0) return Task.FromResult<string?>(null);
 		if (LooksLikeNodeId(v)) return Task.FromResult<string?>(v);
 		var slug = v.ToLowerInvariant();
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var q = ctx.PlanNodes.Where(n => n.ActiveTo == null && n.Key == slug);
 		if (board is not null) q = q.Where(n => n.Board == board);
 		var matches = q.ToList().Where(n => n.NodeId.Length > 0).ToList();
@@ -855,7 +855,7 @@ public sealed partial class TasksService : ITasksService
 
 		// All revisions across every board (history is needed to trace former slugs). A minimal
 		// projection keeps the read cheap; ordering/grouping is done in memory.
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var rows = ctx.PlanNodes
 			.Select(n => new { n.Board, n.Key, n.NodeId, n.Name, n.PrevKey, n.Version, n.ActiveTo })
 			.ToList();
@@ -936,7 +936,7 @@ public sealed partial class TasksService : ITasksService
 		}
 
 		var slug = v.ToLowerInvariant();
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var q = ctx.PlanNodes.Where(n => n.ActiveTo == null && n.Key == slug);
 		if (board is not null) q = q.Where(n => n.Board == board);
 		foreach (var m in q.ToList().Where(n => n.NodeId.Length > 0).ToList())
@@ -1028,7 +1028,7 @@ public sealed partial class TasksService : ITasksService
 			if (!allowed.Contains(ns))
 				throw new ArgumentException($"groupBy must be tag namespaces ({string.Join("|", allowed)}); got '{ns}'");
 
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
 		var delivery = runtime.PresetKind(meta.Kind) == BoardKind.Spec
@@ -1081,7 +1081,7 @@ public sealed partial class TasksService : ITasksService
 
 	public Task<IReadOnlyList<PlanNode>> ListActiveNodesAsync(string projectKey, string board, CancellationToken ct = default)
 	{
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		IReadOnlyList<PlanNode> active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
 		return Task.FromResult(active);
 	}
@@ -1127,7 +1127,7 @@ public sealed partial class TasksService : ITasksService
 	async Task<Dictionary<string, NodeRef>> BuildNodeIndexAsync(string projectKey, CancellationToken ct)
 	{
 		var index = new Dictionary<string, NodeRef>(StringComparer.Ordinal);
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		foreach (var b in await _boards.ListAsync(projectKey, ct))
 			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
 				if (n.NodeId.Length > 0)
@@ -1147,7 +1147,7 @@ public sealed partial class TasksService : ITasksService
 	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(string projectKey, IReadOnlyList<PlanNode> specNodes, Dictionary<string, string> parentOf, MethodologyRuntime runtime, CancellationToken ct)
 	{
 		var byNodeId = new Dictionary<string, (string Type, string Status)>(StringComparer.Ordinal);
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		foreach (var b in await _boards.ListAsync(projectKey, ct))
 			foreach (var n in ctx.PlanNodes.Where(x => x.Board == b.Name && x.ActiveTo == null).ToList())
 				if (n.NodeId.Length > 0) byNodeId[n.NodeId] = (n.Type, n.Status);
@@ -1214,7 +1214,7 @@ public sealed partial class TasksService : ITasksService
 		var runtime = await RuntimeAsync(projectKey, ct);
 		var kindSlug = meta.Kind;
 		var presetKind = runtime.PresetKind(kindSlug); // null = definition-resolved kind
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var prior = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
 
@@ -1396,7 +1396,7 @@ public sealed partial class TasksService : ITasksService
 	{
 		await EnsureBoard(projectKey, board, ct);
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var r = await TemporalStore.UpsertAsync(ctx, Array.Empty<PlanNode>(), sinceVersion, partition: n => n.Board == board, ct: ct);
 		r = r with
 		{
@@ -1514,7 +1514,8 @@ public sealed partial class TasksService : ITasksService
 		// (exact, or a >=7-hex prefix on a stored full sha). Project-wide over plan_node_commits.
 		if (!string.IsNullOrWhiteSpace(f.Commit))
 		{
-			var carrying = await NodesCarryingCommitAsync(_boards.GetContext(projectKey), f.Commit, ct);
+			using var commitCtx = _boards.GetContext(projectKey);
+			var carrying = await NodesCarryingCommitAsync(commitCtx, f.Commit, ct);
 			hits = hits.Where(h => carrying.Contains(h.Node.NodeId)).ToList();
 		}
 
@@ -1541,10 +1542,10 @@ public sealed partial class TasksService : ITasksService
 	async Task<(List<TaskSearchHit> Hits, SearchRetrievers Retrievers)> HybridCandidatesAsync(
 		string projectKey, string query, string? boardFilter, int k, string? urlPrefix, MethodologyRuntime runtime, CancellationToken ct)
 	{
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		await EnsureLexicalBackfillAsync(ctx, projectKey, runtime, ct);
 
-		Func<DataConnection> connect = () => _boards.NewConnection(projectKey);
+		Func<DataConnection> connect = () => _boards.NewEnsuredConnection(projectKey);
 		var indexes = new List<ISearchIndex> { new SqliteFtsIndex(connect) };
 		if (_llm is not null)
 			indexes.Add(new VectorSearchIndex(connect, new LlmClientEmbedder(_llm, projectKey), VectorDim));
@@ -1657,7 +1658,7 @@ public sealed partial class TasksService : ITasksService
 	// the view rows don't carry (loaded only when a created/updated sort asks for it).
 	Dictionary<string, (DateTime Created, DateTime Updated)> NodeTimes(string projectKey)
 	{
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		return ctx.PlanNodes.Where(n => n.ActiveTo == null).ToList()
 			.Where(n => n.NodeId.Length > 0)
 			.ToDictionary(n => n.NodeId, n => (n.Created, n.Updated), StringComparer.Ordinal);
@@ -1841,7 +1842,7 @@ public sealed partial class TasksService : ITasksService
 	Dictionary<string, string> ResolveSpecRefs(string projectKey, TaskBoardMeta board, Dictionary<string, string> specRefs)
 	{
 		if (specRefs.Count == 0) return specRefs;
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		foreach (var (key, raw) in specRefs.ToList())
 		{
 			var v = raw.Trim();
@@ -1988,7 +1989,7 @@ public sealed partial class TasksService : ITasksService
 		var childIds = (await _relations.ListAsync(projectKey, nodeId, "to", ct: ct))
 			.Where(e => e.Kind == "part_of").Select(e => e.FromNodeId).ToList();
 		if (childIds.Count == 0) return [];
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		return childIds.Where(id => ctx.PlanNodes.Any(n => n.ActiveTo == null && n.NodeId == id)).ToList();
 	}
 
@@ -2025,7 +2026,7 @@ public sealed partial class TasksService : ITasksService
 	{
 		// NodeId is unique across the project, so find the active row directly in the one
 		// project file; its Board tells us which partition to write back into.
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var node = ctx.PlanNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
 		if (node is null) return;
 		var meta = await _boards.FindAsync(projectKey, node.Board, ct);
@@ -2160,7 +2161,7 @@ public sealed partial class TasksService : ITasksService
 	{
 		if (!patches.Any(p => p.PartOf is not null)) return;
 		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		// Slug -> nodeId for parent resolution on this board: active rows overlaid with this batch.
 		var slugToId = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.Where(n => n.NodeId.Length > 0).ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
@@ -2195,7 +2196,7 @@ public sealed partial class TasksService : ITasksService
 	{
 		if (!patches.Any(p => !string.IsNullOrWhiteSpace(p.Supersedes))) return;
 		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		var slugToId = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.Where(n => n.NodeId.Length > 0).ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
 		foreach (var (k, nid) in byKey) slugToId[k] = nid;
@@ -2344,7 +2345,7 @@ public sealed partial class TasksService : ITasksService
 		var status = runtime.For(meta?.Kind, type)?.Initial ?? "Pending";
 
 		var key = GenKey(name);
-		var ctx = _boards.GetContext(projectKey);
+		using var ctx = _boards.GetContext(projectKey);
 		// Assign a stable NodeId so the node can be linked (relations/specRef) later.
 		await TemporalStore.UpsertAsync(ctx, new[]
 		{
@@ -2369,7 +2370,7 @@ public sealed partial class TasksService : ITasksService
 		if (string.IsNullOrWhiteSpace(title)) throw new ArgumentException("title is required");
 		var key = IssueSlug(title);
 		await _boards.EnsureAsync(project, board, ct); // auto-create the triage board on first report
-		var ctx = _boards.GetContext(project);
+		using var ctx = _boards.GetContext(project);
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{
 			// Assign a stable NodeId here: this path writes straight to TemporalStore and skips

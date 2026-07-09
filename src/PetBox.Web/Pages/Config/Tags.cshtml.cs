@@ -41,7 +41,7 @@ public sealed class TagsModel : PageModel
 			return Page();
 		}
 
-		var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+		using var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
 		var exists = configDb.Tags.Any(t => t.TagKey == TagKey);
 		if (!exists)
 		{
@@ -59,14 +59,14 @@ public sealed class TagsModel : PageModel
 	public async Task<IActionResult> OnPostRetireAsync(long id)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+		using var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
 		await configDb.Tags.Where(t => t.Id == id).DeleteAsync();
 		return RedirectToPage(new { workspaceKey = EffectiveWorkspaceKey });
 	}
 
 	void Load()
 	{
-		var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+		using var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
 		Declared = configDb.Tags.OrderBy(t => t.TagKey).ToList();
 
 		var bindings = configDb.Bindings.ToList();

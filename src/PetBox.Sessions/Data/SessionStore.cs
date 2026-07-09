@@ -39,7 +39,7 @@ public sealed class SessionStore : ISessionStore
 
 	public async Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default)
 	{
-		var db = _factory.GetDb(projectKey);
+		using var db = _factory.GetDb(projectKey);
 		// Project only the header columns — never load ContentZ blobs just to list.
 		var rows = await db.Sessions
 			.Where(s => !s.IsDeleted)
@@ -51,7 +51,7 @@ public sealed class SessionStore : ISessionStore
 
 	public async Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize, CancellationToken ct = default)
 	{
-		var db = _factory.GetDb(projectKey);
+		using var db = _factory.GetDb(projectKey);
 		var q = db.Sessions.Where(s => !s.IsDeleted);
 		if (!string.IsNullOrWhiteSpace(search))
 		{
@@ -78,7 +78,7 @@ public sealed class SessionStore : ISessionStore
 
 	public async Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default)
 	{
-		var db = _factory.GetDb(projectKey);
+		using var db = _factory.GetDb(projectKey);
 		var row = await db.Sessions
 			.Where(s => s.SessionId == sessionId && !s.IsDeleted)
 			.FirstOrDefaultAsync(ct);
@@ -96,7 +96,7 @@ public sealed class SessionStore : ISessionStore
 		var id = (idOrPrefix ?? string.Empty).Trim();
 		if (id.Length == 0) return SessionIdResolution.None;
 
-		var db = _factory.GetDb(projectKey);
+		using var db = _factory.GetDb(projectKey);
 
 		// An exact id always wins — even when it is also a prefix of a longer id — so a full id
 		// keeps resolving to itself and never reads as "ambiguous".
@@ -125,13 +125,13 @@ public sealed class SessionStore : ISessionStore
 
 	public async Task UpsertAsync(string projectKey, SessionRow row, CancellationToken ct = default)
 	{
-		var db = _factory.GetDb(projectKey);
+		using var db = _factory.GetDb(projectKey);
 		await db.InsertOrReplaceAsync(row, token: ct);
 	}
 
 	public async Task<bool> DeleteAsync(string projectKey, string sessionId, CancellationToken ct = default)
 	{
-		var db = _factory.GetDb(projectKey);
+		using var db = _factory.GetDb(projectKey);
 		// Idempotent: a second delete (or a miss) updates 0 rows and reports false.
 		var rows = await db.Sessions
 			.Where(s => s.SessionId == sessionId && !s.IsDeleted)

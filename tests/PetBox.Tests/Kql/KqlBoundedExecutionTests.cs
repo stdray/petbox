@@ -76,7 +76,7 @@ public sealed class KqlBoundedExecutionTests : IAsyncLifetime
 	sealed class FakeStore(LogDb db) : ILogStore
 	{
 		public LogDb GetContext(string projectKey, string logName) => db;
-		public LogDb NewContext(string projectKey, string logName) => db;
+		public LogDb NewEnsuredContext(string projectKey, string logName) => db;
 		public Task<bool> ExistsAsync(string projectKey, string logName, CancellationToken ct = default) => Task.FromResult(true);
 		public Task<IReadOnlyList<LogMeta>> ListAsync(string projectKey, CancellationToken ct = default) => throw new NotSupportedException();
 		public Task<LogMeta> CreateAsync(string projectKey, string logName, string? description, CancellationToken ct = default) => throw new NotSupportedException();

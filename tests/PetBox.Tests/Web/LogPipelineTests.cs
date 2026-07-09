@@ -922,7 +922,7 @@ public sealed class LogPipelineTests : IClassFixture<LogPipelineFixture>
 			.CreateScope(_factory.Services);
 		var store = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
 			.GetRequiredService<PetBox.Log.Core.Data.ILogStore>(scope.ServiceProvider);
-		using var db = store.NewContext("$system", "default");
+		using var db = store.NewEnsuredContext("$system", "default");
 		var startNs = new DateTimeOffset(2026, 4, 19, 10, 0, 0, TimeSpan.Zero).ToUnixTimeMilliseconds() * 1_000_000L;
 		await db.InsertAsync(new PetBox.Log.Core.Tracing.SpanRecord
 		{
@@ -991,7 +991,7 @@ public sealed class LogPipelineTests : IClassFixture<LogPipelineFixture>
 			.CreateScope(_factory.Services);
 		var store = Microsoft.Extensions.DependencyInjection.ServiceProviderServiceExtensions
 			.GetRequiredService<PetBox.Log.Core.Data.ILogStore>(scope.ServiceProvider);
-		using var db = store.NewContext("$system", "default");
+		using var db = store.NewEnsuredContext("$system", "default");
 		var timeNs = new DateTimeOffset(2026, 4, 19, 10, 0, timeSec, TimeSpan.Zero).ToUnixTimeMilliseconds() * 1_000_000L;
 		await db.InsertAsync(new PetBox.Log.Core.Metrics.MetricPointRecord
 		{

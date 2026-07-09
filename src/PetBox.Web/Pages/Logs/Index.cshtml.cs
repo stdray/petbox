@@ -176,7 +176,7 @@ public sealed class IndexModel : PageModel
 			return Page();
 		}
 
-		var logDb = _logStore.GetContext(ProjectKey, SelectedLog);
+		using var logDb = _logStore.GetContext(ProjectKey, SelectedLog);
 
 		try
 		{

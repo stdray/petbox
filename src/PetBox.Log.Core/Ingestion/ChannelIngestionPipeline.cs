@@ -82,13 +82,8 @@ public sealed class ChannelIngestionPipeline : IIngestionPipeline, IHostedServic
 				foreach (var c in batch)
 					records.Add(LogEntryRecord.FromCandidate(c, LogEntryRecord.ComputeTemplateHash(c.MessageTemplate)));
 
-				// GetDb only ensures file+schema here (and re-creates after an evict); the
-				// write runs on a fresh loop-owned connection. The cached GetDb context is
-				// shared across threads (queries, retention, request handlers) and
-				// DataConnection is not thread-safe — sharing it is what blew up with
-				// ObjectDisposedException on sqlite3_stmt under concurrency.
-				_factory.GetDb(projectKey, logName);
-				using var logDb = _factory.NewConnection(projectKey, logName);
+				// Write runs on a fresh loop-owned connection.
+				using var logDb = _factory.NewEnsuredConnection(projectKey, logName);
 				await logDb.LogEntries.BulkCopyAsync(records, CancellationToken.None).ConfigureAwait(false);
 				_tail?.Publish(projectKey, logName, records);
 			}

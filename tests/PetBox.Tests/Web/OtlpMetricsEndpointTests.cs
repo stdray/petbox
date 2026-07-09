@@ -54,7 +54,7 @@ public sealed class OtlpMetricsEndpointTests : IClassFixture<LogPipelineFixture>
 	{
 		using var scope = _fx.Factory.Services.CreateScope();
 		var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
-		using var ctx = store.NewContext(projectKey, logName);
+		using var ctx = store.NewEnsuredContext(projectKey, logName);
 		return ctx.MetricPoints.Count(p => p.MetricName == metricName);
 	}
 

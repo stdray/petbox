@@ -97,10 +97,7 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 				if (!await _memory.StoreExistsAsync(project, QuarantineStore, ct)) continue;
 				if (!await _llm.IsAvailableAsync(project, LlmCapability.Chat, ct)) continue;
 
-				// GetDb runs the store migrations before the cursor's raw connections
-				// (reference: NewConnection ≠ migrations).
-				_factory.GetDb(project, QuarantineStore);
-				var cursors = new SqliteIndexCursorStore(() => _factory.NewConnection(project, QuarantineStore));
+				var cursors = new SqliteIndexCursorStore(() => _factory.NewEnsuredConnection(project, QuarantineStore));
 
 				// One embedding memo per project per pass, shared by the sweep and the miner's
 				// dedup guard (both compare against the whole store).

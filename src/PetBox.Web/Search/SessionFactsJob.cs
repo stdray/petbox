@@ -135,11 +135,9 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 			{
 				if (!await _llm.IsAvailableAsync(project, LlmCapability.Chat, ct)) continue;
 
-				// GetDb runs the session migrations; the cursor tables live in the same
-				// file and are ensured here (idempotent DDL) before any raw connection.
-				var db = _factory.GetDb(project);
-				SqliteIndexCursorStore.EnsureSchema(db);
-				var cursors = new SqliteIndexCursorStore(() => _factory.NewConnection(project));
+				using (var ensure = _factory.NewEnsuredConnection(project))
+					SqliteIndexCursorStore.EnsureSchema(ensure);
+				var cursors = new SqliteIndexCursorStore(() => _factory.NewEnsuredConnection(project));
 
 				var headers = await _sessions.ListAsync(project, ct);
 				var cutoff = DateTime.UtcNow - _quietPeriod;

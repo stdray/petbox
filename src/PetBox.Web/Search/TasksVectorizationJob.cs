@@ -43,15 +43,10 @@ public sealed class TasksVectorizationJob : IBackgroundIndexJob
 
 			try
 			{
-				// The drain runs on raw NewConnection()s, which skip _ensureSchema — a project
-				// file last opened before the search-tables migration has no search_cursor.
-				// GetDb runs the migrations (cached per file), so the drain sees current schema.
-				_factory.GetDb(project);
-
-				DataConnection Connect() => _factory.NewConnection(project);
+				DataConnection Connect() => _factory.NewEnsuredConnection(project);
 
 				List<string> boards;
-				using (var probe = _factory.NewConnection(project))
+				using (var probe = _factory.NewEnsuredConnection(project))
 					boards = probe.GetTable<PlanNode>().Where(n => n.ActiveTo == null)
 						.Select(n => n.Board).Distinct().ToList();
 

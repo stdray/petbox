@@ -35,14 +35,14 @@ public sealed class LlmRegistryStore : ILlmRegistryAdmin, ILlmRegistryResolver
 	public Task<LlmRegistry> GetAsync(string projectKey, CancellationToken ct = default)
 	{
 		var ws = ResolveWorkspace(projectKey);
-		var cfg = _configFactory.GetConfigDb(ws);
+		using var cfg = _configFactory.GetConfigDb(ws);
 		return Task.FromResult(ReadRegistry(cfg));
 	}
 
 	public async Task<ResolvedRegistry> ResolveAsync(string projectKey, CancellationToken ct = default)
 	{
 		var ws = ResolveWorkspace(projectKey);
-		var cfg = _configFactory.GetConfigDb(ws);
+		using var cfg = _configFactory.GetConfigDb(ws);
 		var registry = ReadRegistry(cfg);
 
 		var keys = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -66,7 +66,7 @@ public sealed class LlmRegistryStore : ILlmRegistryAdmin, ILlmRegistryResolver
 		if (!result.IsValid) throw new ValidationException(result.Errors);
 
 		var ws = ResolveWorkspace(projectKey);
-		var cfg = _configFactory.GetConfigDb(ws);
+		using var cfg = _configFactory.GetConfigDb(ws);
 
 		await UpsertBindingAsync(cfg, ws, RegistryPath, JsonSerializer.Serialize(registry, Json), BindingKind.Plain, null, ct);
 

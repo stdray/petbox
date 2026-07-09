@@ -23,7 +23,7 @@ public sealed class CommentService : ICommentService
 	public async Task<CommentBatchResult> UpsertAsync(
 		string projectKey, string board, IReadOnlyList<CommentItem> items, CancellationToken ct = default)
 	{
-		var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.GetDb(projectKey);
 
 		// Load the active rows the EDIT items address (identity/parent/author/nodeId are carried
 		// forward; only body changes, exactly like EditAsync). A missing id is a clear error.
@@ -111,7 +111,7 @@ public sealed class CommentService : ICommentService
 	public async Task<CommentSearchResult> SearchAsync(
 		string projectKey, string? board, string? nodeId, string? query, int limit, CancellationToken ct = default)
 	{
-		var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.GetDb(projectKey);
 		var q = string.IsNullOrWhiteSpace(query) ? null : query.Trim();
 		var tags = await TagsForAsync(ctx, board, ct);
 
@@ -130,7 +130,7 @@ public sealed class CommentService : ICommentService
 
 		// QUERY: the lexical floor only (semantic is a later Class-B item for comments). Reads open
 		// a FRESH connection (SqliteFtsIndex disposes it) — never the cached request context.
-		var indexes = new List<ISearchIndex> { new SqliteFtsIndex(() => _factory.NewConnection(projectKey)) };
+		var indexes = new List<ISearchIndex> { new SqliteFtsIndex(() => _factory.NewEnsuredConnection(projectKey)) };
 		var k = limit > 0 ? Math.Max(limit * 3, 50) : 200;
 		var resp = await new SearchService(indexes).SearchAsync(projectKey, q, new SearchFilter(board), k, ct);
 
@@ -161,7 +161,7 @@ public sealed class CommentService : ICommentService
 	public async Task<CommentDelta> DeltaAsync(
 		string projectKey, string board, long sinceVersion, CancellationToken ct = default)
 	{
-		var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.GetDb(projectKey);
 		var (added, updated, removed, current) =
 			await TemporalStore.ChangesSinceAsync<CommentRow>(ctx, sinceVersion, partition: x => x.Board == board, ct: ct);
 		var tags = await TagsForAsync(ctx, board, ct);
@@ -174,7 +174,7 @@ public sealed class CommentService : ICommentService
 
 	public async Task<CommentView?> GetAsync(string projectKey, string id, CancellationToken ct = default)
 	{
-		var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.GetDb(projectKey);
 		var row = await ctx.GetTable<CommentRow>()
 			.FirstOrDefaultAsync(c => c.Key == id && c.ActiveTo == null, ct);
 		if (row is null) return null;
@@ -191,7 +191,7 @@ public sealed class CommentService : ICommentService
 		if (string.IsNullOrWhiteSpace(nodeId)) throw new ArgumentException("nodeId is required");
 		if (string.IsNullOrWhiteSpace(body)) throw new ArgumentException("body is required");
 
-		var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.GetDb(projectKey);
 
 		if (!string.IsNullOrEmpty(parentId))
 		{
@@ -234,7 +234,7 @@ public sealed class CommentService : ICommentService
 	{
 		if (string.IsNullOrWhiteSpace(body)) throw new ArgumentException("body is required");
 
-		var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.GetDb(projectKey);
 		var current = await ctx.GetTable<CommentRow>()
 			.FirstOrDefaultAsync(c => c.Key == id && c.Board == board && c.ActiveTo == null, ct);
 		if (current is null) throw new ArgumentException($"comment '{id}' not found or already deleted");
@@ -257,7 +257,7 @@ public sealed class CommentService : ICommentService
 
 	public async Task<bool> DeleteAsync(string projectKey, string board, string id, CancellationToken ct = default)
 	{
-		var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.GetDb(projectKey);
 		var current = await ctx.GetTable<CommentRow>()
 			.FirstOrDefaultAsync(c => c.Key == id && c.Board == board && c.ActiveTo == null, ct);
 		if (current is null) return false; // already gone / not found — idempotent
@@ -287,7 +287,7 @@ public sealed class CommentService : ICommentService
 	public async Task<IReadOnlyList<CommentView>> ListForNodeAsync(
 		string projectKey, string board, string nodeId, CancellationToken ct = default)
 	{
-		var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.GetDb(projectKey);
 		var rows = await ctx.GetTable<CommentRow>()
 			.Where(c => c.Board == board && c.NodeId == nodeId && c.ActiveTo == null).ToListAsync(ct);
 		var tags = await TagsForAsync(ctx, board, ct);
@@ -297,7 +297,7 @@ public sealed class CommentService : ICommentService
 	public async Task<ILookup<string, CommentView>> ListForBoardAsync(
 		string projectKey, string board, CancellationToken ct = default)
 	{
-		var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.GetDb(projectKey);
 		var rows = await ctx.GetTable<CommentRow>()
 			.Where(c => c.Board == board && c.ActiveTo == null).ToListAsync(ct);
 		var tags = await TagsForAsync(ctx, board, ct);

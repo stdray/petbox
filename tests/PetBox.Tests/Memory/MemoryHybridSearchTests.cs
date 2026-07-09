@@ -51,7 +51,7 @@ public sealed class MemoryHybridSearchTests : IDisposable
 	// the model/dim guard matches). Mirrors MemoryVectorizationJob for one store.
 	async Task<DrainResult> DrainVectors(ILlmClient llm, string store)
 	{
-		DataConnection Connect() => _factory.NewConnection(Proj, store);
+		DataConnection Connect() => _factory.NewEnsuredConnection(Proj, store);
 		var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(llm, Proj));
 		var source = new MemorySearchSource(Connect, Proj);
 		var cursor = new SqliteIndexCursorStore(Connect);

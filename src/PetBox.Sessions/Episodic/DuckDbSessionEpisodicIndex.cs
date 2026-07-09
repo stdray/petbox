@@ -78,10 +78,6 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		{
 			EvictIdleLocked();
 
-			// GetDb first: the store reads must see a migrated schema even if this file
-			// was last opened before a migration (reference: NewConnection ≠ migrations).
-			_factory.GetDb(projectKey);
-
 			// Header-only staleness check — never decompress the blob for a warm hit.
 			var header = (await _store.ListAsync(projectKey, ct)).FirstOrDefault(h => h.SessionId == sessionId);
 			var key = projectKey + "\x1f" + sessionId;

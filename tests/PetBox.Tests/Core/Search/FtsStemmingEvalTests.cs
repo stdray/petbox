@@ -97,14 +97,14 @@ public sealed class FtsStemmingEvalTests : IDisposable
 	{
 		// Two identical corpora in two store files: A indexed raw (legacy), B through the
 		// shipped SqliteFtsIndex (shadow stems).
-		_factory.GetDb("proj", "base");
-		_factory.GetDb("proj", "stem");
-		var legacy = new LegacyFtsIndex(() => _factory.NewConnection("proj", "base"));
-		var shipped = new SqliteFtsIndex(() => _factory.NewConnection("proj", "stem"));
+		using var dbBase = _factory.GetDb("proj", "base");
+		using var dbStem = _factory.GetDb("proj", "stem");
+		var legacy = new LegacyFtsIndex(() => _factory.NewEnsuredConnection("proj", "base"));
+		var shipped = new SqliteFtsIndex(() => _factory.NewEnsuredConnection("proj", "stem"));
 		foreach (var (id, text) in Docs)
 		{
-			await legacy.IndexAsync(_factory.GetDb("proj", "base"), new SearchDoc("proj", "entry", id, text));
-			await shipped.IndexAsync(_factory.GetDb("proj", "stem"), new SearchDoc("proj", "entry", id, text));
+			await legacy.IndexAsync(dbBase, new SearchDoc("proj", "entry", id, text));
+			await shipped.IndexAsync(dbStem, new SearchDoc("proj", "entry", id, text));
 		}
 
 		var corpus = Queries

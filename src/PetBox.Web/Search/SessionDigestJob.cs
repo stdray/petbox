@@ -112,11 +112,6 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 			{
 				if (!await _llm.IsAvailableAsync(project, LlmCapability.Chat, ct)) continue;
 
-				// The drain reads through ISessionService, whose store may open raw
-				// connections; GetDb first runs the migrations so a file last opened
-				// before a schema change is current (reference: NewConnection ≠ migrations).
-				_factory.GetDb(project);
-
 				// Self-heal: purge junk digests older passes minted (empty / "no content to
 				// digest" / super-short) before distilling — a pass owns this machine store.
 				await CleanupJunkDigestsAsync(project, ct);

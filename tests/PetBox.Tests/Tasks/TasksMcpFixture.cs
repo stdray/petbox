@@ -57,9 +57,9 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 				{
 					var tasksFactory = svc.SingleOrDefault(d => d.ServiceType == typeof(IScopedDbFactory<TasksDb>));
 					if (tasksFactory is not null) svc.Remove(tasksFactory);
-					svc.AddSingleton<IScopedDbFactory<TasksDb>>(_ => new ScopedDbFactory<TasksDb>(
-						Path.Combine(_baseDir, "tasks"), PetBox.Core.Settings.Scope.Project,
-						cs => new TasksDb(TasksDb.CreateOptions(cs)), TasksSchema.Ensure));
+				svc.AddSingleton<IScopedDbFactory<TasksDb>>(_ => new ScopedDbFactory<TasksDb>(
+					Path.Combine(_baseDir, "tasks"), PetBox.Core.Settings.Scope.Project,
+					cs => new TasksDb(TasksDb.CreateOptions(cs)), TasksSchema.Ensure));
 				});
 			});
 	}
@@ -106,11 +106,24 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 		var tasksFactory = Factory.Services.GetRequiredService<IScopedDbFactory<TasksDb>>();
 		await tasksFactory.EvictAsync(ProjectKey);
 		var path = Path.Combine(_baseDir, "tasks", ProjectKey + ".db");
-		// Pool identity is the connection string; TasksDb.CreateOptions appends Foreign Keys=True.
-		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={path}"));
-		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={path};Foreign Keys=True"));
-		if (!ScopedDbFiles.TryDelete(path))
-			throw new InvalidOperationException($"per-test reset could not delete {path} (still locked)");
+		if (File.Exists(path))
+		{
+			using var conn = new SqliteConnection($"Data Source={path};Pooling=False");
+			conn.Open();
+			using var cmd = conn.CreateCommand();
+			cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;";
+			cmd.ExecuteNonQuery();
+		}
+		SqliteConnection.ClearAllPools();
+		for (var attempt = 0; attempt < 5; attempt++)
+		{
+			GC.Collect();
+			GC.WaitForPendingFinalizers();
+			if (ScopedDbFiles.TryDelete(path))
+				return;
+			Task.Delay(100).GetAwaiter().GetResult();
+		}
+		throw new InvalidOperationException($"per-test reset could not delete {path} (still locked)");
 	}
 
 	public async Task DisposeAsync()

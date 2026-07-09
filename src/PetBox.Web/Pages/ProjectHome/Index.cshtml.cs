@@ -105,7 +105,7 @@ public sealed class IndexModel : PageModel
 	int CountProjectConfigBindings()
 	{
 		var projectTag = $"project:{ProjectKey}";
-		var configDb = _configFactory.GetConfigDb(WorkspaceKey);
+		using var configDb = _configFactory.GetConfigDb(WorkspaceKey);
 		return configDb.Bindings
 			.Where(b => !b.IsDeleted)
 			.AsEnumerable()

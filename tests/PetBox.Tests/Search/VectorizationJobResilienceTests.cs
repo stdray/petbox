@@ -59,7 +59,7 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 
 		// Simulate a file untouched since before M006: search tables gone, journal row gone —
 		// exactly what NewConnection() (no _ensureSchema) sees on such a file.
-		using (var raw = factory.NewConnection(Proj, "a"))
+		using (var raw = factory.NewEnsuredConnection(Proj, "a"))
 		{
 			raw.Execute("DROP TABLE search_cursor");
 			raw.Execute("DELETE FROM VersionInfo WHERE Version = 6");
@@ -69,7 +69,7 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 		var job = new MemoryVectorizationJob(NewFactory(), new FakeLlmClient());
 		await job.DrainAllAsync(CancellationToken.None); // must not throw
 
-		using var check = factory.NewConnection(Proj, "a");
+		using var check = factory.NewEnsuredConnection(Proj, "a");
 		Assert.Equal(1, check.Execute<int>(
 			"SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='search_cursor'"));
 	}
@@ -83,14 +83,14 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 
 		// Break store "a" irreparably (migrations consider the file current, so ensure can't heal
 		// it): the drain on "a" throws and must be contained to that store.
-		using (var raw = factory.NewConnection(Proj, "a"))
+		using (var raw = factory.NewEnsuredConnection(Proj, "a"))
 			raw.Execute("DROP TABLE memory_entries");
 
 		var job = new MemoryVectorizationJob(NewFactory(), new FakeLlmClient());
 		await job.DrainAllAsync(CancellationToken.None); // must not throw
 
 		// The healthy store's cursor advanced — its drain ran despite "a" failing first.
-		using var check = factory.NewConnection(Proj, "b");
+		using var check = factory.NewEnsuredConnection(Proj, "b");
 		Assert.True(check.Execute<long>("SELECT coalesce(max(Version), 0) FROM search_cursor") > 0);
 	}
 }

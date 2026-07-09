@@ -40,12 +40,7 @@ public sealed class MemoryVectorizationJob : IBackgroundIndexJob
 				ct.ThrowIfCancellationRequested();
 				try
 				{
-					// The drain runs on raw NewConnection()s, which skip _ensureSchema — a store
-					// file last opened before the search-tables migration has no search_cursor.
-					// GetDb runs the migrations (cached per file), so the drain sees current schema.
-					_factory.GetDb(project, store);
-
-					Func<DataConnection> connect = () => _factory.NewConnection(project, store);
+					Func<DataConnection> connect = () => _factory.NewEnsuredConnection(project, store);
 					var target = new VectorSearchIndex(connect, new LlmClientEmbedder(_llm, project), VectorDim);
 					var source = new MemorySearchSource(connect, project);
 					var cursor = new SqliteIndexCursorStore(connect);

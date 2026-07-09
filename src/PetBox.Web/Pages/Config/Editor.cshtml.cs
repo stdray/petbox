@@ -58,7 +58,7 @@ public sealed class EditorModel : PageModel
 
 		if (BindingId is { } id and > 0)
 		{
-			var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+			using var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
 			var binding = configDb.Bindings.FirstOrDefault(b => b.Id == id);
 			if (binding is null)
 			{
@@ -115,7 +115,7 @@ public sealed class EditorModel : PageModel
 			return Page();
 		}
 
-		var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+		using var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
 		var now = DateTime.UtcNow;
 		var actor = User.Identity?.Name ?? "system";
 
