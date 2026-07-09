@@ -105,7 +105,7 @@ public static class ConfigTools
 		}
 
 		var now = DateTime.UtcNow;
-		using var configDb = configFactory.GetConfigDb(workspaceKey);
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var added = new List<ConfigBindingRow>();
 		var updated = new List<ConfigBindingRow>();
 		var supersededAll = new List<long>();
@@ -170,7 +170,7 @@ public static class ConfigTools
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
-		using var configDb = configFactory.GetConfigDb(workspaceKey);
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
 
 		// Project the enum raw (linq2db can't translate Enum.ToString()); the substring filters run
 		// in memory (config stores are small provisioning stores). `Value` is read ONLY to match a
@@ -216,7 +216,7 @@ public static class ConfigTools
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
-		using var configDb = configFactory.GetConfigDb(workspaceKey);
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var current = await MaxIdAsync(configDb, ct);
 		var rows = await configDb.Bindings
 			.Where(b => !b.IsDeleted && b.Id > sinceVersion)
@@ -237,7 +237,7 @@ public static class ConfigTools
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
-		using var configDb = configFactory.GetConfigDb(workspaceKey);
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var b = await configDb.Bindings
 			.Where(x => x.Id == id && !x.IsDeleted)
 			.Select(x => new { x.Id, x.Path, x.Tags, x.Kind })
@@ -256,7 +256,7 @@ public static class ConfigTools
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
-		using var configDb = configFactory.GetConfigDb(workspaceKey);
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var now = DateTime.UtcNow;
 		var updated = await configDb.Bindings
 			.Where(b => b.Id == id && !b.IsDeleted)

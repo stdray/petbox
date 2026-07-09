@@ -12,6 +12,7 @@ public sealed class ConfigPreviewNullInputTests
 	sealed class StubConfigDbFactory(string connectionString) : IConfigDbFactory
 	{
 		public ConfigDb GetConfigDb(string workspaceKey) => new(ConfigDb.CreateOptions(connectionString));
+		public ConfigDb NewConfigDb(string workspaceKey) => new(ConfigDb.CreateOptions(connectionString));
 	}
 
 	static PreviewModel NewModel()

@@ -39,7 +39,7 @@ public sealed class WorkspaceAdminModel : PageModel
 		ProjectCount = Projects.Count;
 		MemberCount = _db.WorkspaceMembers.Count(m => m.WorkspaceKey == WorkspaceKey);
 
-		using var configDb = _configFactory.GetConfigDb(WorkspaceKey);
+		using var configDb = _configFactory.NewConfigDb(WorkspaceKey);
 		BindingCount = configDb.Bindings.Count(b => !b.IsDeleted);
 	}
 }

@@ -65,8 +65,8 @@ public static class DeployApi
 		var tags = new List<string> { $"ws:{proj.WorkspaceKey}", $"project:{project}" };
 		tags.AddRange(configTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
-		using var cfg = configFactory.GetConfigDb(proj.WorkspaceKey);
-		var bindings = cfg.Bindings.ToList();
+		using var configDb = configFactory.NewConfigDb(proj.WorkspaceKey);
+		var bindings = configDb.Bindings.ToList();
 		try
 		{
 			foreach (var m in ResolvePipeline.ResolveAll(tags, bindings))
