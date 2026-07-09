@@ -97,6 +97,10 @@ public sealed class ScopedDbFactory<TContext> : IScopedDbFactory<TContext>
 		{
 			_ensured.Remove(cacheKey);
 		}
+		// Release pooled SqliteConnections holding this file's handle so it can be
+		// deleted on Windows (a pooled connection keeps the file locked). Targeted,
+		// NOT ClearAllPools — that serializes the whole process (known footgun).
+		SqliteConnection.ClearPool($"Data Source={ScopedDbFiles.PathFor(_baseDir, scopeKey, name)}");
 		await Task.CompletedTask;
 	}
 
