@@ -77,7 +77,7 @@ public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 
 	void Apply(Hit hit)
 	{
-		using var db = _factory.GetDb(hit.Project, hit.Store);
+		using var db = _factory.NewEnsuredConnection(hit.Project, hit.Store);
 		db.Execute("""
 			INSERT INTO entry_usage (Key, SurfacedCount, DeliberateCount, OpenedCount, LastHitAt)
 			VALUES (@key, @surfaced, @deliberate, @opened, @at)
