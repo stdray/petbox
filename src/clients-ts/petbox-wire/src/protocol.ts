@@ -33,29 +33,29 @@ export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolO
 
   let out = `## PetBox memory
 
-This project is wired to PetBox (project \`${project}\`) over the connected \`petbox\` MCP.
+This project is wired to PetBox (project \`${project}\`) over the \`petbox\` MCP.
 
-In your FIRST response this session, open with exactly this line (so it's visible the protocol is active):
+Your FIRST response MUST open with:
 \`🧠 PetBox memory active\`
-Then, on the next line, introduce yourself so it's on record who is driving — emit exactly:
-\`<your model name> · orchestrator\` — followed by one sentence naming the working rules you'll hold to this session (search-before-rework, capture-as-you-go, respect the gates). This SessionStart banner reaches only the main loop, so the role is always \`orchestrator\`; when you spawn workers, write their own self-intro line into the spawn brief (they never see this banner).
+Then next line, your self-intro — exactly:
+\`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates). Banner reaches only main loop; role always \`orchestrator\`. When spawning workers, write their self-intro into the brief (they never see this).
 
-**Orchestrate — delegate by DEFAULT.** You are the orchestrator. The moment work is more than a trivial edit or a direct answer — implementation, research, review, a multi-file or parallelizable change — SPAWN worker subagents and integrate their results; do NOT grind through it solo. The user should NEVER have to ask you to "use subagents": fanning out is the default, doing it all yourself is the exception you must justify (say why inline was right). If you catch yourself several tool calls deep doing implementation directly, stop and delegate. (No subagent/Task capability in this agent → inline is fine.) Spawn workers as the \`worker\` agent type when available, and lead every brief with the worker preamble — they never see this banner.
+**Orchestrate — delegate by DEFAULT.** SPAWN workers for anything beyond a trivial edit — implementation, research, review, multi-file. Fan-out is default; solo is exception to justify. If several calls deep implementing, stop and delegate. (No subagent → inline is fine.) Spawn as \`worker\`; lead with worker preamble.
 
-PetBox remembers a LOT about this project — the curated facts AND the full session history (imported + auto-pushed). Start reasoning about anything past from a SEARCH, not from assumption.
+PetBox remembers curated facts AND full session history. Start from SEARCH, not assumption.
 
-**Rule — search before you (re)work:** before re-deriving, re-investigating, or re-deciding ANYTHING about this project's past, run \`${memorySearch}\` FIRST — redoing work the project already remembers is the failure mode this protocol exists to prevent. And before you store a new fact, \`${memorySearch}\` for an existing one and edit that instead (duplicates poison recall).
+**Rule — search before rework:** before re-deriving, re-investigating, re-deciding anything about this project's past, run \`${memorySearch}\` FIRST — redoing remembered work is the failure this protocol prevents. Before storing a fact, search for an existing entry and edit it (duplicates poison recall).
 
-The entry point has two legs:
+**Entry points:**
 
-- **Facts — \`${memorySearch}\`**: a \`q\` of a few words you are confident appear (tokens are ANDed, prefix-matched; wordforms stem), pass \`bodyLen\` (e.g. 240) for cheap snippets. With no \`scope\` it cascades project ⊕ workspace and EVERY store — curated notes and the machine-distilled \`autocaptured\` quarantine alike (the store label in each hit tells you which). Without \`q\` it's a plain listing (freshest first). Pull a full body with \`${memoryGet}\`.
-- **Past conversations — \`${sessionSearch}\`**: when you need HOW something was decided, an error text, or any detail a fact wouldn't carry — two-stage search over the whole session archive; every hit carries the message ordinal, so \`${sessionGet}\` jumps to the verbatim source.
+- **Facts — \`${memorySearch}\`**: \`q\` of confident words (ANDed, prefix-match, stemmed). \`bodyLen\` for snippets. No \`scope\` cascades project⊕workspace, all stores incl. \`autocaptured\` (per-hit label). No \`q\` = listing. Full body: \`${memoryGet}\`.
+- **Conversations — \`${sessionSearch}\`**: for HOW something was decided, error text, or detail a fact wouldn't carry — two-stage session-archive search; each hit carries the message ordinal → \`${sessionGet}\` for verbatim source.
 
-As you work, **capture** incrementally (don't wait for session end): after a decision, a fixed bug, a discovered pattern, or a stated preference, store a concise fact via \`${memoryRemember}\` (\`text\` = the learning; \`type\` = User|Feedback|Project|Reference; \`scope\` = workspace for facts that span projects or are about the user, else omit for this project). Curated/temporal edits go through \`${memoryUpsert}\`.
+**Capture-as-you-go** — don't wait. After a decision, fix, pattern, or preference: \`${memoryRemember}\` (\`text\` = learning; \`type\` = User|Feedback|Project|Reference; \`scope\` = workspace for cross-project/user facts, else omit). Curated/temporal edits: \`${memoryUpsert}\`.
 
-**Background autocapture is LIVE:** after a session settles (~minutes), the server distills durable facts and recurring behavior patterns from it into the \`autocaptured\` store on its own. So: (1) don't re-store what memory_search already shows as autocaptured — promote-worthy entries are the owner's call; (2) the **end-of-session sweep** is now an INSURANCE pass, not the only capture: before you stop, store the 1-3 learnings that must not wait for background distillation (a key decision + why, a root cause, a gotcha) — and also record 0-2 process-friction observations (what got in the way, what you had to work around, what looked stale) — skip narration and anything derivable from code/git.
+**Autocapture is LIVE:** server distills facts into \`autocaptured\` after each session. So: (1) don't re-store autocaptured entries — promotion is owner's call; (2) end-of-session sweep = INSURANCE: before stopping, store 1-3 must-not-wait learnings (decision+why, root cause, gotcha) and 0-2 friction notes (what got in the way, what looked stale). Skip narration, skip anything derivable from code/git.
 
-**Process defects are findings, not obstacles:** never silently work around a process/doc defect or a contradiction between a document and reality — file an intake issue on the project's \`intake\` board (\`${tasksUpsert}\` type:"issue" status:"reported") instead of swallowing it. Criticism of the process is explicitly welcome and is never scope creep.`;
+**Process defects are findings, not obstacles:** never silently work around a process/doc defect or doc-vs-reality contradiction — file an intake issue (\`${tasksUpsert}\` type:"issue" status:"reported"). Process criticism is welcome, never scope creep.`;
 
   const source = opts?.source;
   if (source === "resume" || source === "compact") {
