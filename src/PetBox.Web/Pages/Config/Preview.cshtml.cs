@@ -51,7 +51,7 @@ public sealed class PreviewModel : PageModel
 			.Split([',', '\n', '\r', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 			.ToList();
 
-		using var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
 		var bindings = configDb.Bindings.ToList();
 
 		var results = new List<PreviewRow>();

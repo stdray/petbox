@@ -66,7 +66,7 @@ public static class ConfigApi
 			requestTags.Add($"{key}:{vals}");
 		}
 
-		using var configDb = configFactory.GetConfigDb(workspaceKey);
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var bindings = configDb.Bindings.ToList();
 
 		IReadOnlyList<ResolveMatch> matches;
@@ -146,7 +146,7 @@ public static class ConfigApi
 			UpdatedAt = now,
 		};
 
-		using var configDb = configFactory.GetConfigDb(workspaceKey);
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
 #pragma warning disable CA2016
 		var id = Convert.ToInt64(await configDb.InsertWithIdentityAsync(binding));
 #pragma warning restore CA2016
@@ -158,7 +158,7 @@ public static class ConfigApi
 	static async Task<IResult> Delete(HttpContext context, PetBoxDb db, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
 	{
 		if (!AuthorizeWorkspace(context, db, workspaceKey, out var forbid)) return forbid;
-		using var configDb = configFactory.GetConfigDb(workspaceKey);
+		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var now = DateTime.UtcNow;
 		var deleted = await configDb.Bindings
 			.Where(b => b.Path == path && b.Tags == tags && !b.IsDeleted)

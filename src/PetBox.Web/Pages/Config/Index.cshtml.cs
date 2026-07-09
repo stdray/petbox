@@ -86,7 +86,7 @@ public sealed class IndexModel : PageModel
 			.OrderBy(f => f.Name)
 			.ToList();
 
-		using var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
 		var all = configDb.Bindings.Where(b => !b.IsDeleted).OrderBy(b => b.Path).ToList();
 
 		var facetKeys = new SortedSet<string>(StringComparer.Ordinal);
@@ -135,7 +135,7 @@ public sealed class IndexModel : PageModel
 	public IActionResult OnPostDelete(long id)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		using var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
 
 		var existing = configDb.Bindings.FirstOrDefault(b => b.Id == id && !b.IsDeleted);
 		if (existing is not null)
@@ -224,7 +224,7 @@ public sealed class IndexModel : PageModel
 	public IActionResult OnPostReveal(long id)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		using var configDb = _configFactory.GetConfigDb(EffectiveWorkspaceKey);
+		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
 		var binding = configDb.Bindings.FirstOrDefault(b => b.Id == id);
 
 		if (binding is null) return NotFound();
