@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Config;
-using PetBox.Config.Data;
+using PetBox.Config.Contract;
 using PetBox.Core.Auth;
 
 namespace PetBox.Web.Pages.Config;
@@ -10,9 +10,9 @@ namespace PetBox.Web.Pages.Config;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class PreviewModel : PageModel
 {
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigService _configService;
 
-	public PreviewModel(IConfigDbFactory configFactory) => _configFactory = configFactory;
+	public PreviewModel(IConfigService configService) => _configService = configService;
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
 	[FromRoute(Name = "workspaceKey")]
@@ -35,7 +35,7 @@ public sealed class PreviewModel : PageModel
 		TagsInput = $"ws:{EffectiveWorkspaceKey}";
 	}
 
-	public void OnPost()
+	public async Task OnPostAsync(CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
 
@@ -51,15 +51,12 @@ public sealed class PreviewModel : PageModel
 			.Split([',', '\n', '\r', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 			.ToList();
 
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		var bindings = configDb.Bindings.ToList();
-
 		var results = new List<PreviewRow>();
 		foreach (var path in paths)
 		{
 			try
 			{
-				var match = ResolvePipeline.ResolveDetailed(path, tags, bindings);
+				var match = await _configService.ResolvePathAsync(EffectiveWorkspaceKey, path, tags, ct);
 				results.Add(match is null
 					? new PreviewRow(path, null, 0, null, null)
 					: new PreviewRow(path, match.Binding.Value, match.Specificity, match.Binding.Id, null));

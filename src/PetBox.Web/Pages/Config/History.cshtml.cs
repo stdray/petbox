@@ -1,7 +1,7 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Config.Contract;
 using PetBox.Config.Data;
 using PetBox.Core.Auth;
 
@@ -10,9 +10,9 @@ namespace PetBox.Web.Pages.Config;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class HistoryModel : PageModel
 {
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigService _configService;
 
-	public HistoryModel(IConfigDbFactory configFactory) => _configFactory = configFactory;
+	public HistoryModel(IConfigService configService) => _configService = configService;
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
 	[FromRoute(Name = "workspaceKey")]
@@ -24,18 +24,10 @@ public sealed class HistoryModel : PageModel
 	public string EffectiveWorkspaceKey { get; private set; } = "$system";
 	public IReadOnlyList<ConfigBindingHistoryEntry> Entries { get; private set; } = [];
 
-	public void OnGet()
+	public async Task OnGetAsync(CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-
-		var query = configDb.History.AsQueryable();
-		if (!string.IsNullOrWhiteSpace(PathFilter))
-		{
-			var p = PathFilter;
-			query = query.Where(h => h.Path.Contains(p));
-		}
-		Entries = query.OrderByDescending(h => h.At).Take(500).ToList();
+		Entries = await _configService.GetHistoryAsync(EffectiveWorkspaceKey, PathFilter, ct);
 	}
 
 	string ResolveWorkspace()

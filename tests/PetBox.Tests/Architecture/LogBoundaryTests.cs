@@ -32,4 +32,21 @@ public sealed class LogBoundaryTests
 			"the log_query tool must go through ILogQueryService; offenders: "
 			+ string.Join(", ", result.FailingTypeNames ?? []));
 	}
+
+	// Guard against Razor Pages reaching into Log's data layer directly.
+	// Admin pages (ProjectLogsModel) are excluded — they legitimately manage the log
+	// catalog (create/list/delete), the same way LogCatalogTools does in MCP.
+	[Fact]
+	public void WebPages_DoNotTouch_LogStoreOrContext()
+	{
+		var result = Types.InAssembly(Web)
+			.That().ResideInNamespace("PetBox.Web.Pages")
+			.And().DoNotResideInNamespace("PetBox.Web.Pages.Admin")
+			.Should().NotHaveDependencyOnAny(LogDoors)
+			.GetResult();
+
+		result.IsSuccessful.Should().BeTrue(
+			"Razor pages must not reach into Log data layer directly; offenders: "
+			+ string.Join(", ", result.FailingTypeNames ?? []));
+	}
 }

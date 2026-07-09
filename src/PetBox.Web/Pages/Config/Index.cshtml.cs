@@ -5,7 +5,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Caching.Memory;
 using PetBox.Config;
-using PetBox.Config.Data;
+using PetBox.Config.Contract;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -15,18 +15,18 @@ namespace PetBox.Web.Pages.Config;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class IndexModel : PageModel
 {
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigService _configService;
 	readonly ISecretEncryptor _encryptor;
 	readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _cache;
 	readonly PetBoxDb _db;
 
 	public IndexModel(
-		IConfigDbFactory configFactory,
+		IConfigService configService,
 		ISecretEncryptor encryptor,
 		Microsoft.Extensions.Caching.Memory.IMemoryCache cache,
 		PetBoxDb db)
 	{
-		_configFactory = configFactory;
+		_configService = configService;
 		_encryptor = encryptor;
 		_cache = cache;
 		_db = db;
@@ -76,7 +76,7 @@ public sealed class IndexModel : PageModel
 		return result;
 	}
 
-	public IActionResult OnGet(string? q)
+	public async Task<IActionResult> OnGetAsync(string? q, CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
 		KeyQuery = string.IsNullOrWhiteSpace(q) ? null : q.Trim();
@@ -86,8 +86,7 @@ public sealed class IndexModel : PageModel
 			.OrderBy(f => f.Name)
 			.ToList();
 
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		var all = configDb.Bindings.Where(b => !b.IsDeleted).OrderBy(b => b.Path).ToList();
+		var all = await _configService.GetActiveBindingsAsync(EffectiveWorkspaceKey, ct);
 
 		var facetKeys = new SortedSet<string>(StringComparer.Ordinal);
 		var facetValues = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
@@ -132,34 +131,12 @@ public sealed class IndexModel : PageModel
 		return false;
 	}
 
-	public IActionResult OnPostDelete(long id)
+	public async Task<IActionResult> OnPostDeleteAsync(long id, CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-
-		var existing = configDb.Bindings.FirstOrDefault(b => b.Id == id && !b.IsDeleted);
-		if (existing is not null)
-		{
-			var now = DateTime.UtcNow;
-			configDb.Insert(new ConfigBindingHistoryEntry
-			{
-				BindingId = existing.Id,
-				Action = "Delete",
-				Path = existing.Path,
-				Tags = existing.Tags,
-				Kind = existing.Kind,
-				OldValue = existing.Kind == Core.Models.BindingKind.Plain ? existing.Value : "(secret)",
-				NewValue = null,
-				Actor = User.Identity?.Name ?? "system",
-				At = now,
-			});
-			configDb.Bindings
-				.Where(b => b.Id == id)
-				.Set(b => b.IsDeleted, true)
-				.Set(b => b.DeletedAt, (DateTime?)now)
-				.Set(b => b.UpdatedAt, now)
-				.Update();
-		}
+		var actor = User.Identity?.Name ?? "system";
+		var now = DateTime.UtcNow;
+		await _configService.DeleteBindingAsync(EffectiveWorkspaceKey, id, actor, now, ct);
 
 		// PRG + shared success notice (carried in TempData across the redirect), replacing the
 		// old ?deleteSuccess=1 query flag. Build the redirect URL by hand (LocalRedirect) —
@@ -221,16 +198,13 @@ public sealed class IndexModel : PageModel
 		return LocalRedirect(query.Count > 0 ? $"{path}?{string.Join("&", query)}" : path);
 	}
 
-	public IActionResult OnPostReveal(long id)
+	public async Task<IActionResult> OnPostRevealAsync(long id, CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		var binding = configDb.Bindings.FirstOrDefault(b => b.Id == id);
 
+		var binding = await _configService.GetBindingAsync(EffectiveWorkspaceKey, id, ct);
 		if (binding is null) return NotFound();
 		if (binding.Kind != Core.Models.BindingKind.Secret) return BadRequest();
-		if (!_encryptor.IsAvailable || binding.Ciphertext is null || binding.Iv is null || binding.AuthTag is null)
-			return StatusCode(500);
 
 		var userName = User.Identity?.Name ?? "system";
 		var cacheKey = $"reveal-{EffectiveWorkspaceKey}-{id}-{userName}";
@@ -238,29 +212,10 @@ public sealed class IndexModel : PageModel
 		var plaintext = _cache.Get<string>(cacheKey);
 		if (plaintext is null)
 		{
-			try
-			{
-				plaintext = _encryptor.Decrypt(binding.Ciphertext, binding.Iv, binding.AuthTag);
-				_cache.Set<string>(cacheKey, plaintext, TimeSpan.FromSeconds(10));
-			}
-			catch
-			{
-				return StatusCode(500);
-			}
+			plaintext = await _configService.RevealSecretAsync(EffectiveWorkspaceKey, id, ct);
+			if (plaintext is null) return StatusCode(500);
+			_cache.Set<string>(cacheKey, plaintext, TimeSpan.FromSeconds(10));
 		}
-
-		configDb.Insert(new ConfigBindingHistoryEntry
-		{
-			BindingId = id,
-			Action = "Reveal",
-			Path = binding.Path,
-			Tags = binding.Tags,
-			Kind = binding.Kind,
-			OldValue = null,
-			NewValue = null,
-			Actor = userName,
-			At = DateTime.UtcNow,
-		});
 
 		return new JsonResult(new { plaintext });
 	}

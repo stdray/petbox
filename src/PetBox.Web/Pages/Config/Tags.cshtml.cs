@@ -1,7 +1,7 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Config.Contract;
 using PetBox.Config.Data;
 using PetBox.Core.Auth;
 
@@ -10,9 +10,9 @@ namespace PetBox.Web.Pages.Config;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class TagsModel : PageModel
 {
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigService _configService;
 
-	public TagsModel(IConfigDbFactory configFactory) => _configFactory = configFactory;
+	public TagsModel(IConfigService configService) => _configService = configService;
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
 	[FromRoute(Name = "workspaceKey")]
@@ -24,53 +24,35 @@ public sealed class TagsModel : PageModel
 		new Dictionary<string, IReadOnlyList<string>>();
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet()
+	public async Task OnGetAsync(CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		Load();
+		Declared = await _configService.GetTagsAsync(EffectiveWorkspaceKey, ct);
+		UsedKeyValues = await _configService.AggregateUsedTagValuesAsync(EffectiveWorkspaceKey, ct);
 	}
 
-	public async Task<IActionResult> OnPostDeclareAsync(string TagKey, string? Description)
+	public async Task<IActionResult> OnPostDeclareAsync(string TagKey, string? Description, CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
 
 		if (string.IsNullOrWhiteSpace(TagKey))
 		{
 			ErrorMessage = "Tag key is required.";
-			Load();
+			Declared = await _configService.GetTagsAsync(EffectiveWorkspaceKey, ct);
+			UsedKeyValues = await _configService.AggregateUsedTagValuesAsync(EffectiveWorkspaceKey, ct);
 			return Page();
 		}
 
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		var exists = configDb.Tags.Any(t => t.TagKey == TagKey);
-		if (!exists)
-		{
-			await configDb.InsertAsync(new TagVocabularyEntry
-			{
-				TagKey = TagKey.Trim(),
-				Description = Description?.Trim(),
-				CreatedAt = DateTime.UtcNow,
-			});
-		}
+		await _configService.AddTagAsync(EffectiveWorkspaceKey, TagKey, Description, ct);
 
 		return RedirectToPage(new { workspaceKey = EffectiveWorkspaceKey });
 	}
 
-	public async Task<IActionResult> OnPostRetireAsync(long id)
+	public async Task<IActionResult> OnPostRetireAsync(long id, CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		await configDb.Tags.Where(t => t.Id == id).DeleteAsync();
+		await _configService.RetireTagAsync(EffectiveWorkspaceKey, id, ct);
 		return RedirectToPage(new { workspaceKey = EffectiveWorkspaceKey });
-	}
-
-	void Load()
-	{
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		Declared = configDb.Tags.OrderBy(t => t.TagKey).ToList();
-
-		var bindings = configDb.Bindings.ToList();
-		UsedKeyValues = AggregateUsedValues(bindings.Select(b => b.Tags));
 	}
 
 	// Aggregates the distinct values seen per tag namespace across all binding tag strings.

@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Tracing;
 
@@ -13,12 +14,12 @@ namespace PetBox.Web.Pages.Logs;
 public sealed class TracesModel : PageModel
 {
 	readonly PetBoxDb _db;
-	readonly ILogStore _logStore;
+	readonly ILogService _logService;
 
-	public TracesModel(PetBoxDb db, ILogStore logStore)
+	public TracesModel(PetBoxDb db, ILogService logService)
 	{
 		_db = db;
-		_logStore = logStore;
+		_logService = logService;
 	}
 
 	[BindProperty(SupportsGet = true)]
@@ -59,7 +60,7 @@ public sealed class TracesModel : PageModel
 		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == EffectiveProjectKey, ct);
 		ProjectName = project?.Name;
 
-		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
+		var logs = (await _logService.ListLogNamesAsync(EffectiveProjectKey, ct)).ToList();
 		AvailableLogs = logs;
 		SelectedLog = !string.IsNullOrWhiteSpace(LogName) && logs.Contains(LogName, StringComparer.Ordinal)
 			? LogName
@@ -67,46 +68,27 @@ public sealed class TracesModel : PageModel
 		if (SelectedLog is null) { SchemaMissing = true; return; }
 
 		if (PageNum < 0) PageNum = 0;
-		using var logDb = _logStore.NewEnsuredContext(EffectiveProjectKey, SelectedLog);
 		try
 		{
-			var q = logDb.Spans
-				.GroupBy(s => s.TraceId)
-				.Select(g => new
-				{
-					TraceId = g.Key,
-					MinStart = g.Min(s => s.StartUnixNs),
-					MaxEnd = g.Max(s => s.EndUnixNs),
-					Count = g.Count(),
-					WorstStatus = g.Max(s => s.StatusCode),
-				});
-			// Error filter runs at the query (a HAVING over the per-trace worst status), so
-			// paging counts filtered traces — never a client-side cull of a full page.
-			if (ErrorsOnly) q = q.Where(g => g.WorstStatus == 2);
-
 			var offset = PageNum * PageSize;
-			var grouped = await q
-				.OrderByDescending(g => g.MinStart)
-				.Skip(offset)
-				.Take(PageSize + 1)
-				.ToListAsync(ct);
+			var summaries = await _logService.GetTraceGroupSummariesAsync(
+				EffectiveProjectKey, SelectedLog, ErrorsOnly, offset, PageSize + 1, ct);
 
-			HasNext = grouped.Count > PageSize;
-			if (HasNext) grouped.RemoveAt(grouped.Count - 1);
+			HasNext = summaries.Count > PageSize;
+			var pageItems = HasNext ? summaries.Take(PageSize).ToList() : summaries.ToList();
 
-			var traceIds = grouped.Select(g => g.TraceId).ToList();
-			var roots = await logDb.Spans
-				.Where(s => traceIds.Contains(s.TraceId) && s.ParentSpanId == null)
-				.ToListAsync(ct);
+			var traceIds = pageItems.Select(g => g.TraceId).ToList();
+			var roots = await _logService.GetRootSpansForTracesAsync(
+				EffectiveProjectKey, SelectedLog, traceIds, ct);
 			var rootByTrace = roots.ToDictionary(s => s.TraceId, s => s.Name);
 
-			Traces = grouped.Select(g => new TraceSummary(
+			Traces = pageItems.Select(g => new TraceSummary(
 				g.TraceId,
 				rootByTrace.GetValueOrDefault(g.TraceId, "(no root)"),
 				// unix-ns/100 = ticks SINCE THE UNIX EPOCH, not since year 1 — rebase explicitly.
-				DateTime.UnixEpoch.AddTicks(g.MinStart / 100),
-				TimeSpan.FromTicks((g.MaxEnd - g.MinStart) / 100),
-				g.Count,
+				DateTime.UnixEpoch.AddTicks(g.MinStartNs / 100),
+				TimeSpan.FromTicks((g.MaxEndNs - g.MinStartNs) / 100),
+				g.SpanCount,
 				g.WorstStatus)).ToList();
 		}
 		catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 1)

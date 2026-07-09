@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 
 namespace PetBox.Web.Pages.Admin;
@@ -16,13 +17,13 @@ public sealed class ProjectLogsModel : PageModel
 {
 	readonly PetBoxDb _db;
 	readonly FeatureFlags _features;
-	readonly ILogStore _store;
+	readonly ILogService _logService;
 
-	public ProjectLogsModel(PetBoxDb db, FeatureFlags features, ILogStore store)
+	public ProjectLogsModel(PetBoxDb db, FeatureFlags features, ILogService logService)
 	{
 		_db = db;
 		_features = features;
-		_store = store;
+		_logService = logService;
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -47,7 +48,7 @@ public sealed class ProjectLogsModel : PageModel
 		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
-		Logs = [.. await _store.ListAsync(ProjectKey)];
+		Logs = [.. await _logService.ListAsync(ProjectKey)];
 		return Page();
 	}
 
@@ -57,7 +58,7 @@ public sealed class ProjectLogsModel : PageModel
 
 		try
 		{
-			await _store.CreateAsync(ProjectKey, name?.Trim() ?? string.Empty, description);
+			await _logService.CreateAsync(ProjectKey, name?.Trim() ?? string.Empty, description);
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{
@@ -80,7 +81,7 @@ public sealed class ProjectLogsModel : PageModel
 			return Page();
 		}
 
-		await _store.DeleteAsync(ProjectKey, name);
+		await _logService.DeleteAsync(ProjectKey, name);
 		this.NotifySuccess($"Log '{name}' deleted.");
 		return RedirectToPage();
 	}

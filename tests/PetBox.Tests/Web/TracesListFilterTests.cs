@@ -2,7 +2,11 @@ using LinqToDB;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
+using PetBox.Log.Core.Models;
+using PetBox.Log.Core.Query;
+using PetBox.Log.Core.Services;
 using PetBox.Log.Core.Tracing;
 using PetBox.Web.Pages.Logs;
 
@@ -20,6 +24,7 @@ public sealed class TracesListFilterTests : IDisposable
 	readonly PetBoxDb _db;
 	readonly ScopedDbFactory<LogDb> _factory;
 	readonly LogStore _store;
+	readonly ILogService _logService;
 
 	public TracesListFilterTests()
 	{
@@ -32,6 +37,7 @@ public sealed class TracesListFilterTests : IDisposable
 		_factory = new ScopedDbFactory<LogDb>(Path.Combine(_dir, "logs"), Scope.Project,
 			c => new LogDb(LogDb.CreateOptions(c)), LogSchema.Ensure);
 		_store = new LogStore(_db, _factory);
+		_logService = new LogService(_store, new StubQueryService());
 	}
 
 	public void Dispose()
@@ -39,6 +45,12 @@ public sealed class TracesListFilterTests : IDisposable
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		TestDirs.CleanupOrDefer(_dir);
+	}
+
+	sealed class StubQueryService : ILogQueryService
+	{
+		public Task<LogQueryResult> QueryAsync(string projectKey, string logName, string kql, CancellationToken ct = default)
+			=> throw new NotSupportedException();
 	}
 
 	// One single-span trace: index drives ordering (higher = newer), status drives the filter.
@@ -57,7 +69,7 @@ public sealed class TracesListFilterTests : IDisposable
 		});
 	}
 
-	TracesModel NewModel() => new(_db, _store)
+	TracesModel NewModel() => new(_db, _logService)
 	{
 		WorkspaceKey = "ws",
 		ProjectKey = Proj,

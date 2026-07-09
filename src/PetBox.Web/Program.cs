@@ -104,10 +104,12 @@ public partial class Program
 				cs => new LogDb(LogDb.CreateOptions(cs)), LogSchema.Ensure));
 		builder.Services.AddScoped<ILogStore, LogStore>();
 		builder.Services.AddScoped<PetBox.Log.Core.Query.ILogQueryService, PetBox.Log.Core.Query.LogQueryService>();
+		builder.Services.AddScoped<PetBox.Log.Core.Contract.ILogService, PetBox.Log.Core.Services.LogService>();
 		builder.Services.AddSingleton<IScopedDbFactory<ConfigDb>>(sp => new ScopedDbFactory<ConfigDb>(
 				Path.Combine(ResolveDataDir(sp), "config"), PetBox.Core.Settings.Scope.Workspace,
 				cs => new ConfigDb(ConfigDb.CreateOptions(cs)), ConfigSchema.Ensure));
 		builder.Services.AddSingleton<IConfigDbFactory>(sp => new ConfigDbFactory(sp.GetRequiredService<IScopedDbFactory<ConfigDb>>()));
+		builder.Services.AddScoped<PetBox.Config.Contract.IConfigService, PetBox.Config.Services.ConfigService>();
 		builder.Services.AddSingleton<PetBox.Data.IDataDbFactory>(sp => new PetBox.Data.DataDbFactory(Path.Combine(ResolveDataDir(sp), "db")));
 		builder.Services.AddSingleton<PetBox.Data.Schema.SchemaRunner>();
 		builder.Services.AddScoped<PetBox.Data.Contract.IDataSqlService, PetBox.Data.Services.DataSqlService>();

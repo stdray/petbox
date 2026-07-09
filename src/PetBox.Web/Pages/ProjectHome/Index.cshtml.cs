@@ -2,7 +2,7 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Config.Data;
+using PetBox.Config.Contract;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
@@ -19,20 +19,20 @@ public sealed class IndexModel : PageModel
 {
 	readonly PetBoxDb _db;
 	readonly ISettingsResolver _settings;
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigService _configService;
 	readonly ITasksService _tasks;
 	readonly FeatureFlags _features;
 
 	public IndexModel(
 		PetBoxDb db,
 		ISettingsResolver settings,
-		IConfigDbFactory configFactory,
+		IConfigService configService,
 		ITasksService tasks,
 		FeatureFlags features)
 	{
 		_db = db;
 		_settings = settings;
-		_configFactory = configFactory;
+		_configService = configService;
 		_tasks = tasks;
 		_features = features;
 	}
@@ -72,7 +72,7 @@ public sealed class IndexModel : PageModel
 		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
 
 		if (ConfigEnabled)
-			ConfigCount = CountProjectConfigBindings();
+			ConfigCount = await _configService.CountBindingsAsync(WorkspaceKey, $"project:{ProjectKey}", ct);
 
 		if (TasksEnabled)
 			TaskBoardCount = (await _tasks.ListBoardsAsync(ProjectKey, ct)).Count;
@@ -98,25 +98,5 @@ public sealed class IndexModel : PageModel
 			rows.Add(new HealthRow(r.Svc, r.Name, other, r.Version, r.Sha, r.Status, r.ReceivedAt));
 		}
 		Health = rows.OrderBy(h => h.Svc, StringComparer.Ordinal).ToList();
-	}
-
-	// Non-deleted config bindings tagged for this project ("project:{key}") in the workspace
-	// config DB. Mirrors the project-scope filter the /config page applies (Config.IndexModel).
-	int CountProjectConfigBindings()
-	{
-		var projectTag = $"project:{ProjectKey}";
-		using var configDb = _configFactory.NewConfigDb(WorkspaceKey);
-		return configDb.Bindings
-			.Where(b => !b.IsDeleted)
-			.AsEnumerable()
-			.Count(b => HasTag(b.Tags, projectTag));
-	}
-
-	static bool HasTag(string tags, string tag)
-	{
-		foreach (var t in tags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
-			if (string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))
-				return true;
-		return false;
 	}
 }

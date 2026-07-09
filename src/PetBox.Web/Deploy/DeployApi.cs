@@ -3,7 +3,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Config;
-using PetBox.Config.Data;
+using PetBox.Config.Contract;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
@@ -38,7 +38,7 @@ public static class DeployApi
 			.RequireAuthorization("ApiKey");
 	}
 
-	static async Task<IResult> PollAsync(HttpContext ctx, IDeployService svc, PetBoxDb db, IConfigDbFactory configFactory, ISecretEncryptor encryptor, CancellationToken ct)
+	static async Task<IResult> PollAsync(HttpContext ctx, IDeployService svc, PetBoxDb db, IConfigService configService, CancellationToken ct)
 	{
 		if (!HasScope(ctx, ApiKeyScopes.AgentPoll)) return Results.Forbid();
 		var nodeId = Claim(ctx, "project");
@@ -47,44 +47,29 @@ public static class DeployApi
 		var poll = await svc.PollAsync(nodeId, ct);
 		// Resolve each deployment's env server-side (config-resolve over (Project, ConfigTags))
 		// so the node key needs no config:read and there is no project-claim mismatch.
-		var enriched = poll.Deployments
-			.Select(d => d with { Env = ResolveEnv(db, configFactory, encryptor, d.Project, d.ConfigTags) })
-			.ToList();
+		var enriched = new List<PollItem>(poll.Deployments.Count);
+		foreach (var d in poll.Deployments)
+			enriched.Add(d with { Env = await ResolveEnvAsync(db, configService, d.Project, d.ConfigTags, ct) });
 		return TypedResults.Ok(poll with { Deployments = enriched });
 	}
 
 	// Reuses the config-resolve pipeline (same as GET /v1/conf) to produce the container env
 	// for one deployment. Returns empty on unknown project or ambiguous config.
-	static Dictionary<string, string> ResolveEnv(
-		PetBoxDb db, IConfigDbFactory configFactory, ISecretEncryptor encryptor, string project, string configTags)
+	static async Task<Dictionary<string, string>> ResolveEnvAsync(
+		PetBoxDb db, IConfigService configService, string project, string configTags, CancellationToken ct)
 	{
-		var result = new Dictionary<string, string>(StringComparer.Ordinal);
 		var proj = db.Projects.FirstOrDefault(p => p.Key == project);
-		if (proj is null) return result;
+		if (proj is null) return new Dictionary<string, string>(StringComparer.Ordinal);
 
 		var tags = new List<string> { $"ws:{proj.WorkspaceKey}", $"project:{project}" };
 		tags.AddRange(configTags.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 
-		using var configDb = configFactory.NewConfigDb(proj.WorkspaceKey);
-		var bindings = configDb.Bindings.ToList();
 		try
 		{
-			foreach (var m in ResolvePipeline.ResolveAll(tags, bindings))
-				result[m.Binding.Path] = ResolveValue(m.Binding, encryptor);
+			var resolved = await configService.ResolveAsync(proj.WorkspaceKey, tags, ct);
+			return new Dictionary<string, string>(resolved, StringComparer.Ordinal);
 		}
-		catch (AmbiguousConfigException) { /* leave whatever resolved; ambiguity is a config bug to fix in UI */ }
-		return result;
-	}
-
-	static string ResolveValue(ConfigBinding b, ISecretEncryptor encryptor)
-	{
-		if (b.Kind == BindingKind.Secret && encryptor.IsAvailable
-			&& b.Ciphertext is not null && b.Iv is not null && b.AuthTag is not null)
-		{
-			try { return encryptor.Decrypt(b.Ciphertext, b.Iv, b.AuthTag); }
-			catch { return string.Empty; }
-		}
-		return b.Value;
+		catch (AmbiguousConfigException) { return new Dictionary<string, string>(StringComparer.Ordinal); }
 	}
 
 	static async Task<IResult> HeartbeatAsync(HttpContext ctx, IDeployService svc, HeartbeatReport req, CancellationToken ct)

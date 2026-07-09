@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Query;
 
@@ -15,12 +16,12 @@ namespace PetBox.Web.Pages.Logs;
 [Authorize(Policy = "WorkspaceMember")]
 public sealed class IndexModel : PageModel
 {
-	readonly ILogStore _logStore;
+	readonly ILogService _logService;
 	readonly PetBoxDb _db;
 
-	public IndexModel(ILogStore logStore, PetBoxDb db)
+	public IndexModel(ILogService logService, PetBoxDb db)
 	{
-		_logStore = logStore;
+		_logService = logService;
 		_db = db;
 	}
 
@@ -92,7 +93,7 @@ public sealed class IndexModel : PageModel
 
 		// Named logs available in this project; pick the requested one, else the
 		// conventional `default`, else the first alphabetically.
-		AvailableLogs = (await _logStore.ListAsync(ProjectKey, ct)).Select(l => l.Name).ToList();
+		AvailableLogs = (await _logService.ListLogNamesAsync(ProjectKey, ct)).ToList();
 		SelectedLog = ResolveSelectedLog();
 		if (SelectedLog is null)
 		{
@@ -176,41 +177,52 @@ public sealed class IndexModel : PageModel
 			return Page();
 		}
 
-		using var logDb = _logStore.NewEnsuredContext(ProjectKey, SelectedLog);
-
 		try
 		{
 			if (IsShapeChanged)
 			{
-				KqlResult = isSpans
-					? KqlTransformer.ExecuteSpans(logDb.Spans, code)
-					: isMetrics
-						? KqlTransformer.ExecuteMetrics(logDb.MetricPoints, code)
-						: KqlTransformer.Execute(logDb.LogEntries, code);
-				await foreach (var row in KqlResult.Rows.WithCancellation(ct))
+				var queryResult = await _logService.QueryAsync(ProjectKey, SelectedLog, effectiveKql, ct);
+				switch (queryResult)
 				{
-					if (KqlRows.Count >= KqlLimits.MaxTake)
-					{
-						KqlTruncated = true;
+					case LogQueryResult.Table table:
+						KqlResult = table.Result;
+						await foreach (var row in KqlResult.Rows.WithCancellation(ct))
+						{
+							if (KqlRows.Count >= KqlLimits.MaxTake)
+							{
+								KqlTruncated = true;
+								break;
+							}
+							KqlRows.Add(row);
+						}
+						if (!KqlTruncated)
+							KqlTruncated = table.Truncation.Truncated;
 						break;
-					}
-					KqlRows.Add(row);
+					case LogQueryResult.Events events:
+						foreach (var e in events.Items)
+							KqlRows.Add([e.Timestamp, e.Level, e.Message]);
+						KqlTruncated = events.Truncated;
+						break;
 				}
 			}
 			else
 			{
-				var query = KqlTransformer.Apply(logDb.LogEntries, code);
-				var list = await query.ToListAsync(ct);
-				foreach (var r in list)
+				var (records, truncated) = await _logService.ExecutePlainEventsQueryAsync(
+					ProjectKey, SelectedLog, effectiveKql, PageSize, ct);
+				foreach (var r in records)
 					Events.Add(LogEntryViewModel.FromRecord(r));
 
-				if (Events.Count > PageSize)
+				if (truncated)
 				{
-					Events.RemoveAt(Events.Count - 1);
 					var last = Events[^1];
 					NextCursor = EncodeCursor(last.Timestamp, last.Id);
 				}
 			}
+		}
+		catch (KqlExecutionException ex) when (ex.InnerException is Microsoft.Data.Sqlite.SqliteException sqEx && sqEx.SqliteErrorCode == 1)
+		{
+			SchemaMissing = true;
+			return Page();
 		}
 		catch (Microsoft.Data.Sqlite.SqliteException ex) when (ex.SqliteErrorCode == 1)
 		{
@@ -223,11 +235,7 @@ public sealed class IndexModel : PageModel
 			return Page();
 		}
 
-		Services = await logDb.LogEntries
-			.Select(e => e.ServiceKey)
-			.Distinct()
-			.OrderBy(s => s)
-			.ToListAsync(ct);
+		Services = (await _logService.GetDistinctServiceKeysAsync(ProjectKey, SelectedLog, ct)).ToList();
 
 		if (Request.Headers.ContainsKey("HX-Request") && !IsShapeChanged)
 			return Partial("_RowsFragment", this);

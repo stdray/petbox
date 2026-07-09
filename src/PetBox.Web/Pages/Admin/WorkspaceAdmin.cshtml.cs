@@ -2,7 +2,7 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Config.Data;
+using PetBox.Config.Contract;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 
@@ -12,12 +12,12 @@ namespace PetBox.Web.Pages.Admin;
 public sealed class WorkspaceAdminModel : PageModel
 {
 	readonly PetBoxDb _db;
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigService _configService;
 
-	public WorkspaceAdminModel(PetBoxDb db, IConfigDbFactory configFactory)
+	public WorkspaceAdminModel(PetBoxDb db, IConfigService configService)
 	{
 		_db = db;
-		_configFactory = configFactory;
+		_configService = configService;
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -30,16 +30,16 @@ public sealed class WorkspaceAdminModel : PageModel
 	public int ProjectCount { get; private set; }
 	public int BindingCount { get; private set; }
 
-	public void OnGet()
+	public async Task OnGetAsync(CancellationToken ct)
 	{
-		Workspace = _db.Workspaces.FirstOrDefault(w => w.Key == WorkspaceKey);
+		Workspace = await _db.Workspaces.FirstOrDefaultAsync(w => w.Key == WorkspaceKey, ct);
 		if (Workspace is null) return;
 
-		Projects = _db.Projects.Where(p => p.WorkspaceKey == WorkspaceKey).OrderBy(p => p.Key).ToList();
+		Projects = (await _db.Projects.Where(p => p.WorkspaceKey == WorkspaceKey).OrderBy(p => p.Key).ToListAsync(ct))
+			.AsReadOnly();
 		ProjectCount = Projects.Count;
-		MemberCount = _db.WorkspaceMembers.Count(m => m.WorkspaceKey == WorkspaceKey);
+		MemberCount = await _db.WorkspaceMembers.CountAsync(m => m.WorkspaceKey == WorkspaceKey, ct);
 
-		using var configDb = _configFactory.NewConfigDb(WorkspaceKey);
-		BindingCount = configDb.Bindings.Count(b => !b.IsDeleted);
+		BindingCount = await _configService.CountBindingsAsync(WorkspaceKey, ct: ct);
 	}
 }

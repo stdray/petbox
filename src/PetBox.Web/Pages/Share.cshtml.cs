@@ -1,13 +1,12 @@
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json;
-using Kusto.Language;
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Query;
 using PetBox.Log.Core.Sharing;
@@ -18,12 +17,12 @@ namespace PetBox.Web.Pages;
 public sealed class ShareModel : PageModel
 {
 	readonly PetBoxDb _db;
-	readonly ILogStore _logStore;
+	readonly ILogService _logService;
 
-	public ShareModel(PetBoxDb db, ILogStore logStore)
+	public ShareModel(PetBoxDb db, ILogService logService)
 	{
 		_db = db;
-		_logStore = logStore;
+		_logService = logService;
 	}
 
 	[BindProperty(SupportsGet = true)]
@@ -51,21 +50,17 @@ public sealed class ShareModel : PageModel
 			return;
 		}
 
-		KustoCode code;
-		try { code = KustoCode.Parse(share.Kql); }
-		catch (Exception ex) { Error = ex.Message; return; }
-
 		var columns = JsonSerializer.Deserialize<string[]>(share.ColumnsJson) ?? [];
 		var modesDict = JsonSerializer.Deserialize<Dictionary<string, MaskMode>>(share.ModesJson) ?? [];
 		var policy = new FieldMaskingPolicy(modesDict.ToImmutableDictionary(
 			kv => kv.Key, kv => kv.Value, StringComparer.Ordinal));
 		var masker = new ValueMasker(Convert.FromBase64String(share.SaltBase64));
 
-		using var logDb = _logStore.NewEnsuredContext(share.ProjectKey, share.LogName);
 		try
 		{
 			// Memory guard only (KqlLimits.MaxTake, no default take) — same bound as the TSV export.
-			var records = await KqlTransformer.Apply(logDb.LogEntries, code).Take(KqlLimits.MaxTake).ToListAsync(ct);
+			var (records, _) = await _logService.ExecutePlainEventsQueryAsync(
+				share.ProjectKey, share.LogName, share.Kql, KqlLimits.MaxTake, ct);
 			var visible = columns.Where(c => policy.ModeFor(c) != MaskMode.Hide).ToArray();
 			Columns = visible;
 

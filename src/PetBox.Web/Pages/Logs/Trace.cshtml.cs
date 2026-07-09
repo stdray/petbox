@@ -1,8 +1,8 @@
 using System.Text.Json;
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Tracing;
 
@@ -11,9 +11,9 @@ namespace PetBox.Web.Pages.Logs;
 [Authorize]
 public sealed class TraceModel : PageModel
 {
-	readonly ILogStore _logStore;
+	readonly ILogService _logService;
 
-	public TraceModel(ILogStore logStore) => _logStore = logStore;
+	public TraceModel(ILogService logService) => _logService = logService;
 
 	[BindProperty(SupportsGet = true)]
 	public string? WorkspaceKey { get; set; }
@@ -89,19 +89,14 @@ public sealed class TraceModel : PageModel
 		EffectiveProjectKey = ProjectKey ?? "";
 		if (string.IsNullOrEmpty(EffectiveProjectKey)) { TraceNotFound = true; return; }
 
-		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
+		var logs = (await _logService.ListLogNamesAsync(EffectiveProjectKey, ct)).ToList();
 		var selectedLog = !string.IsNullOrWhiteSpace(LogName) && logs.Contains(LogName, StringComparer.Ordinal)
 			? LogName
 			: logs.Contains(LogNames.Default, StringComparer.Ordinal) ? LogNames.Default : logs.FirstOrDefault();
 		SelectedLog = selectedLog;
 		if (selectedLog is null) { TraceNotFound = true; return; }
 
-		using var logDb = _logStore.NewEnsuredContext(EffectiveProjectKey, selectedLog);
-
-		var spans = await logDb.Spans
-			.Where(s => s.TraceId == TraceId)
-			.OrderBy(s => s.StartUnixNs)
-			.ToListAsync(ct);
+		var spans = await _logService.GetSpansByTraceIdAsync(EffectiveProjectKey, selectedLog, TraceId, ct);
 
 		if (spans.Count == 0)
 		{
