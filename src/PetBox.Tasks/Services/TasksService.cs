@@ -15,6 +15,7 @@ using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
 using PetBox.Tasks.Services.NodeRef;
 using PetBox.Tasks.Services.Search;
+using PetBox.Tasks.Services.Upsert;
 using PetBox.Tasks.Validation;
 using PetBox.Tasks.Workflow;
 
@@ -40,6 +41,9 @@ public sealed partial class TasksService : ITasksService
 	readonly SearchRerankOptions _rerank;
 	// Node identity (slug / NodeId) resolution — private collaborator, not DI-registered.
 	readonly NodeRefResolver _nodeRefs;
+	// Post-write stages for UpsertAsync (associations + FSM/delete effects).
+	readonly TaskTransitionEffects _effects;
+	readonly TaskUpsertAssociations _associations;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
@@ -57,6 +61,8 @@ public sealed partial class TasksService : ITasksService
 		_llm = llm;
 		_rerank = rerank ?? new SearchRerankOptions();
 		_nodeRefs = new NodeRefResolver(boards);
+		_effects = new TaskTransitionEffects(boards, relations, tags);
+		_associations = new TaskUpsertAssociations(boards, relations, tags, _effects);
 	}
 
 	// ---- board lifecycle ----
@@ -1167,8 +1173,8 @@ public sealed partial class TasksService : ITasksService
 				await LinkRefsAsync(projectKey, "blocks", desired, blockedBy, blockerIsFrom: true, ct);
 				await LinkRefsAsync(projectKey, "idea_spec", desired, ideaRefs, blockerIsFrom: true, ct);
 				await CloseBlocksOnLeaveAsync(projectKey, desired, prior, ct);
-				await RunTransitionEffectsAsync(projectKey, kindSlug, runtime, desired, prior, ct);
-				await RunDeleteEffectsAsync(projectKey, board, deletePatches, prior, runtime, ct);
+				await _effects.RunTransitionEffectsAsync(projectKey, kindSlug, runtime, desired, prior, ct);
+				await _effects.RunDeleteEffectsAsync(projectKey, board, deletePatches, prior, runtime, ct);
 			}
 		// Tags + part_of are node metadata, not a content revision — apply whenever the
 		// upsert did not conflict (so a pure tag/parent change on an unchanged node still
@@ -1176,10 +1182,10 @@ public sealed partial class TasksService : ITasksService
 		if (r.Conflicts.Count == 0)
 			using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.meta"))
 			{
-				await SetTagsAsync(projectKey, board, runtime, kindSlug, upsertPatches, desired, ct);
-				await SetCommitsAsync(ctx, board, upsertPatches, desired, ct);
-				await SetPartOfAsync(projectKey, board, upsertPatches, desired, ct);
-				await SetSupersedesAsync(projectKey, board, upsertPatches, desired, runtime, ct);
+				await _associations.SetTagsAsync(projectKey, board, runtime, kindSlug, upsertPatches, desired, ct);
+				await TaskUpsertAssociations.SetCommitsAsync(ctx, board, upsertPatches, desired, ct);
+				await _associations.SetPartOfAsync(projectKey, board, upsertPatches, desired, ct);
+				await _associations.SetSupersedesAsync(projectKey, board, upsertPatches, desired, runtime, ct);
 			}
 		// Refresh the FTS Tags column now that SetTagsAsync (above) has run: the in-tx index wrote
 		// content + pre-upsert tags transactionally; re-index this batch's open nodes with the
@@ -1759,55 +1765,6 @@ public sealed partial class TasksService : ITasksService
 		}
 	}
 
-	// DATA-DRIVEN transition effects (schema v2, was the Work-only RunDoneEffectsAsync):
-	// when a node ENTERS a status, its effective kind's declared Effects fire — for each
-	// effect matching the entered status, every node linked through `Link` in `Direction`
-	// (incoming = the linked node points at this one, outgoing = the reverse) is moved to
-	// `Set`, filtered by `OnlyFrom` when declared. System action, same audit trail as the
-	// old hardcode (a temporal revision via SetActiveNodeStatusAsync, no gate). Generic
-	// safety rules: an effect never reopens a node whose current status is terminal for its
-	// board, and `Set` must exist in the linked node's workflow (cross-kind statuses resolve
-	// here, at runtime — an unresolvable one skips the node, canonical slug casing applies).
-	// One builtin special: `blocks` is a GATING relation, so an effect traversing it
-	// CONSUMES the edge (temporal close) and applies only when the linked node has no other
-	// active blocker left — the historical Done-unblock semantics, now for any kind that
-	// declares a blocks effect.
-	async Task RunTransitionEffectsAsync(
-		string projectKey, string? kindSlug, MethodologyRuntime runtime,
-		PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
-	{
-		var effects = runtime.Effects(kindSlug);
-		if (effects.Count == 0) return;
-		foreach (var n in desired)
-		{
-			var cur = prior.GetValueOrDefault(n.Key) ?? (n.PrevKey is not null ? prior.GetValueOrDefault(n.PrevKey) : null);
-			var entered = cur is null || !string.Equals(cur.Status, n.Status, StringComparison.OrdinalIgnoreCase);
-			if (!entered || n.NodeId.Length == 0) continue;
-			foreach (var e in effects.Where(e => string.Equals(e.On, n.Status, StringComparison.OrdinalIgnoreCase)))
-			{
-				var incoming = string.Equals(e.Direction, "incoming", StringComparison.OrdinalIgnoreCase);
-				var edges = (await _relations.ListAsync(projectKey, n.NodeId, incoming ? "to" : "from", ct: ct))
-					.Where(x => string.Equals(x.Kind, e.Link, StringComparison.OrdinalIgnoreCase)).ToList();
-				foreach (var edge in edges)
-				{
-					var linkedId = incoming ? edge.FromNodeId : edge.ToNodeId;
-					if (string.Equals(e.Link, "blocks", StringComparison.OrdinalIgnoreCase))
-					{
-						// gating semantics: consume the edge; release only the last blocker
-						await _relations.CloseAsync(projectKey, "blocks", edge.FromNodeId, edge.ToNodeId, ct);
-						var stillBlocked = (await _relations.ListAsync(projectKey, linkedId, "to", ct: ct)).Any(x => x.Kind == "blocks");
-						if (stillBlocked) continue;
-					}
-					await SetActiveNodeStatusAsync(projectKey, linkedId, runtime,
-						(wf, node, isTerminal) =>
-							isTerminal ? null
-							: e.OnlyFrom is not null && !string.Equals(node.Status, e.OnlyFrom, StringComparison.OrdinalIgnoreCase) ? null
-							: wf?.Status(e.Set)?.Slug, ct);
-				}
-			}
-		}
-	}
-
 	// NodeIds of this node's part_of children whose own row is still active. Terminal-status
 	// children count too — they are active rows and would dangle just the same.
 	async Task<IReadOnlyList<string>> ActivePartOfChildrenAsync(string projectKey, string nodeId, CancellationToken ct)
@@ -1818,50 +1775,6 @@ public sealed partial class TasksService : ITasksService
 		if (childIds.Count == 0) return [];
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		return childIds.Where(id => ctx.PlanNodes.Any(n => n.ActiveTo == null && n.NodeId == id)).ToList();
-	}
-
-	// Delete effect: a temporal-closed node must not leave dangling structure behind — close
-	// every edge touching it (both directions, any kind) and its tags. Unblocking mirrors the
-	// Done effect: when the deleted node was a blocker, a target left with no blockers moves
-	// Blocked → InProgress. System action (no gate).
-	async Task RunDeleteEffectsAsync(string projectKey, string board, IReadOnlyList<NodePatch> deletePatches, Dictionary<string, PlanNode> prior, MethodologyRuntime runtime, CancellationToken ct)
-	{
-		foreach (var p in deletePatches)
-		{
-			if (!prior.TryGetValue(p.Key, out var row) || row.NodeId.Length == 0) continue;
-			foreach (var e in await _relations.ListAsync(projectKey, row.NodeId, "both", ct: ct))
-			{
-				await _relations.DeleteAsync(projectKey, e.Id, ct);
-				if (e.Kind == "blocks" && e.FromNodeId == row.NodeId)
-				{
-					var stillBlocked = (await _relations.ListAsync(projectKey, e.ToNodeId, "to", ct: ct)).Any(x => x.Kind == "blocks");
-					if (!stillBlocked)
-						await SetActiveNodeStatusAsync(projectKey, e.ToNodeId, runtime,
-							(_, node, _) => string.Equals(node.Status, "Blocked", StringComparison.OrdinalIgnoreCase) ? "InProgress" : null, ct);
-				}
-			}
-			// An empty list REPLACES the node's full tag set — i.e. soft-closes every active tag.
-			await _tags.SetAsync(projectKey, board, row.NodeId, [], ct: ct);
-		}
-	}
-
-	// Find the active node with this NodeId across the project's boards and move it to a
-	// target status chosen by `pick` (null = leave as-is). System action (no gate). The
-	// pick receives the target board's runtime-resolved workflow and whether the node's
-	// CURRENT status is terminal for its board (per-kind classification).
-	async Task SetActiveNodeStatusAsync(string projectKey, string nodeId, MethodologyRuntime runtime, Func<PetBox.Tasks.Workflow.Workflow?, PlanNode, bool, string?> pick, CancellationToken ct)
-	{
-		// NodeId is unique across the project, so find the active row directly in the one
-		// project file; its Board tells us which partition to write back into.
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var node = ctx.PlanNodes.Where(x => x.ActiveTo == null && x.NodeId == nodeId).ToList().FirstOrDefault();
-		if (node is null) return;
-		var meta = await _boards.FindAsync(projectKey, node.Board, ct);
-		var wf = runtime.For(meta?.Kind, node.Type.Length == 0 ? null : node.Type);
-		var target = pick(wf, node, runtime.IsTerminalStatus(meta?.Kind, node.Status));
-		if (target is null || string.Equals(target, node.Status, StringComparison.OrdinalIgnoreCase)) return;
-		await TemporalStore.UpsertAsync(ctx, new[] { node with { Status = target } }, partition: n => n.Board == node.Board, ct: ct);
-		await _boards.TouchAsync(projectKey, node.Board, ct);
 	}
 
 	// Create relation edges from a per-node field after the upsert applies. task_spec
@@ -1876,59 +1789,6 @@ public sealed partial class TasksService : ITasksService
 				var (from, to) = blockerIsFrom ? (other, nid) : (nid, other);
 				await _relations.CreateAsync(projectKey, kind, from, to, ct);
 			}
-	}
-
-	// Apply enforced tags after the upsert. A patch whose Tags is null OMITS tags (leave
-	// as-is); a non-null list (incl. empty) is the new full set for that node. Tags bind
-	// to the node's stable NodeId.
-	async Task SetTagsAsync(string projectKey, string board, MethodologyRuntime runtime, string? kindSlug, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
-	{
-		// ONE RULE for every kind (primitives-tag-axes): the kind's TAG AXES drive
-		// enforcement — none = free-form tags (any namespace + bare words), declared =
-		// enforced with the axes as the namespace allowlist (bare tags rejected). The
-		// quartet presets carry the builtin area/concern axes, `simple` carries none, and a
-		// definition-resolved kind follows the definition's axes — so "methodology boards
-		// enforce, simple doesn't" now flows from axes-emptiness, not a hardcoded pair.
-		var axes = runtime.TagAxes(kindSlug);
-		var enforceNs = axes.Count > 0;
-		var namespaces = enforceNs ? axes.Select(a => a.Namespace).ToList() : null;
-		var nodeIdOf = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		foreach (var p in patches)
-		{
-			if (p.Tags is null) continue;
-			if (nodeIdOf.TryGetValue(p.Key, out var nid) && nid.Length > 0)
-				await _tags.SetAsync(projectKey, board, nid, p.Tags, enforceNs, namespaces, ct);
-		}
-	}
-
-	// Apply attached commits after the upsert (node-commits-impl), mirroring SetTagsAsync +
-	// the SCD-2 tag write. A patch whose Commits is null OMITS them (leave as-is); a non-null
-	// list (incl. empty) is the node's new full commit set. Commits bind to the stable NodeId.
-	static async Task SetCommitsAsync(TasksDb ctx, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
-	{
-		if (!patches.Any(p => p.Commits is not null)) return;
-		var nodeIdOf = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		foreach (var p in patches)
-		{
-			if (p.Commits is null) continue;
-			if (!nodeIdOf.TryGetValue(p.Key, out var nid) || nid.Length == 0) continue;
-
-			var desiredSet = NormalizeCommits(p.Commits);
-			var active = await ctx.PlanNodeCommits.Where(c => c.NodeId == nid && c.ValidTo == null).ToListAsync(ct);
-			var activeShas = active.Select(c => c.Sha).ToHashSet(StringComparer.Ordinal);
-			var now = DateTime.UtcNow;
-
-			// Soft-close commits no longer desired.
-			foreach (var a in active.Where(a => !desiredSet.Contains(a.Sha)))
-				await ctx.PlanNodeCommits
-					.Where(c => c.NodeId == nid && c.Sha == a.Sha && c.ValidTo == null)
-					.Set(c => c.ValidTo, _ => (DateTime?)now)
-					.UpdateAsync(ct);
-
-			// Insert newly desired commits.
-			foreach (var sha in desiredSet.Where(s => !activeShas.Contains(s)))
-				await ctx.InsertAsync(new PlanNodeCommit { NodeId = nid, Board = board, Sha = sha, ValidFrom = now }, token: ct);
-		}
 	}
 
 	// Active (ValidTo == null) commits for a whole board, nodeId -> sorted sha list.
@@ -1949,24 +1809,6 @@ public sealed partial class TasksService : ITasksService
 		return nodes.Select(n => n with { Commits = byNode.TryGetValue(n.NodeId, out var cs) ? cs : [] }).ToList();
 	}
 
-	// Normalize a commit set: trim, lowercase, dedupe, drop empties; reject a value that is
-	// not hex or whose length is outside 7..40 (git short-sha floor .. full sha). Empty in →
-	// empty set (an explicit clear). Same validation-error shape as tag normalization.
-	static HashSet<string> NormalizeCommits(IReadOnlyList<string>? commits)
-	{
-		var set = new HashSet<string>(StringComparer.Ordinal);
-		if (commits is null) return set;
-		foreach (var raw in commits)
-		{
-			if (string.IsNullOrWhiteSpace(raw)) continue;
-			var sha = raw.Trim().ToLowerInvariant();
-			if (sha.Length is < 7 or > 40 || !sha.All(Uri.IsHexDigit))
-				throw new ArgumentException($"commit '{raw}' must be a hex commit id of 7..40 chars");
-			set.Add(sha);
-		}
-		return set;
-	}
-
 	// nodeId -> its active commit set (reverse lookup + attach helper), read on ctx.
 	static async Task<HashSet<string>> NodesCarryingCommitAsync(TasksDb ctx, string commit, CancellationToken ct)
 	{
@@ -1979,76 +1821,6 @@ public sealed partial class TasksService : ITasksService
 			.Where(c => c.ValidTo == null && (c.Sha == v || (prefixable && c.Sha.StartsWith(v))))
 			.Select(c => c.NodeId).ToListAsync(ct);
 		return rows.ToHashSet(StringComparer.Ordinal);
-	}
-
-	// Apply part_of (vertical decomposition) after the upsert. A patch whose PartOf is null
-	// OMITS it (leave as-is); "" DETACHES (make a root); otherwise sets the parent (a slug
-	// on this board or a NodeId). Enforces a single active parent and rejects cycles.
-	async Task SetPartOfAsync(string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
-	{
-		if (!patches.Any(p => p.PartOf is not null)) return;
-		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		// Slug -> nodeId for parent resolution on this board: active rows overlaid with this batch.
-		var slugToId = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
-			.Where(n => n.NodeId.Length > 0).ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		foreach (var (k, nid) in byKey) slugToId[k] = nid;
-		var parentOf = await ParentMapAsync(projectKey, ct);
-
-		foreach (var p in patches)
-		{
-			if (p.PartOf is null) continue;
-			if (!byKey.TryGetValue(p.Key, out var childId) || childId.Length == 0) continue;
-
-			// Single parent: close any existing part_of from this child first.
-			if (parentOf.TryGetValue(childId, out var oldParent))
-			{
-				await _relations.CloseAsync(projectKey, "part_of", childId, oldParent, ct);
-				parentOf.Remove(childId);
-			}
-			if (p.PartOf.Length == 0) continue; // detach only
-
-			var parentId = ResolveParentId(p.PartOf, slugToId, ctx);
-			if (TaskSearchFilter.InSubtree(parentId, childId, parentOf)) // parent is the child or its descendant → cycle
-				throw new ArgumentException($"part_of would create a cycle (node '{p.Key}')");
-			await _relations.CreateAsync(projectKey, "part_of", childId, parentId, ct);
-			parentOf[childId] = parentId;
-		}
-	}
-
-	// Apply supersedes after the upsert: the new node replaces another, which is moved to
-	// its kind's terminal-cancel (obsoleted). A system effect (no approve gate), like the
-	// Done effects. Self-supersede and a missing target are ignored.
-	async Task SetSupersedesAsync(string projectKey, string board, IReadOnlyList<NodePatch> patches, PlanNode[] desired, MethodologyRuntime runtime, CancellationToken ct)
-	{
-		if (!patches.Any(p => !string.IsNullOrWhiteSpace(p.Supersedes))) return;
-		var byKey = desired.ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var slugToId = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
-			.Where(n => n.NodeId.Length > 0).ToDictionary(n => n.Key, n => n.NodeId, StringComparer.Ordinal);
-		foreach (var (k, nid) in byKey) slugToId[k] = nid;
-
-		foreach (var p in patches)
-		{
-			if (string.IsNullOrWhiteSpace(p.Supersedes)) continue;
-			if (!byKey.TryGetValue(p.Key, out var newId) || newId.Length == 0) continue;
-			var targetId = ResolveParentId(p.Supersedes, slugToId, ctx);
-			if (targetId == newId) continue; // a node can't supersede itself
-			await _relations.CreateAsync(projectKey, "supersedes", newId, targetId, ct);
-			// Obsolete the superseded node: move it to its workflow's terminal-cancel status.
-			await SetActiveNodeStatusAsync(projectKey, targetId, runtime,
-				(wf, node, isTerminal) => isTerminal ? null : wf?.Statuses.FirstOrDefault(s => s.Kind == StatusKind.TerminalCancel)?.Slug, ct);
-		}
-	}
-
-	// Resolve a PartOf value to a parent NodeId: a slug on this board, else an existing
-	// NodeId (cross-board allowed — the project file holds every board's nodes).
-	static string ResolveParentId(string partOf, Dictionary<string, string> slugToId, TasksDb ctx)
-	{
-		var v = partOf.Trim();
-		if (slugToId.TryGetValue(v.ToLowerInvariant(), out var bySlug)) return bySlug;
-		if (ctx.PlanNodes.Any(n => n.ActiveTo == null && n.NodeId == v)) return v;
-		throw new ArgumentException($"part_of parent '{partOf}' is neither a node key on this board nor a known NodeId");
 	}
 
 	// Invariant: a work task in `Blocked` must name a blocker (blockedBy in this call, or
