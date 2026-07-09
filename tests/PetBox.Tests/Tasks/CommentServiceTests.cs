@@ -20,6 +20,9 @@ public sealed class CommentServiceTests : IDisposable
 		Directory.CreateDirectory(_dir);
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+		// Ensure the per-project tasks file exists + schema is applied before the
+		// comment-service tests hit NewConnection (mirrors CreateAsync in production).
+		_factory.GetDb("p");
 		_svc = new CommentService(_factory);
 	}
 

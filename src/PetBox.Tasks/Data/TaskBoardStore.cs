@@ -98,17 +98,23 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 			.Where(b => b.ProjectKey == projectKey && b.Name == board)
 			.FirstOrDefaultAsync(ct)!;
 
-	public Task<string?> FindBoardByNodeIdAsync(string projectKey, string nodeId, CancellationToken ct = default) =>
-		_factory.GetDb(projectKey).PlanNodes
+	public async Task<string?> FindBoardByNodeIdAsync(string projectKey, string nodeId, CancellationToken ct = default)
+	{
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
+		return await ctx.PlanNodes
 			.Where(n => n.NodeId == nodeId && n.ActiveTo == null)
 			.Select(n => n.Board)
 			.FirstOrDefaultAsync(ct)!;
+	}
 
-	public Task<string?> FindNodeIdBySlugAsync(string projectKey, string board, string slug, CancellationToken ct = default) =>
-		_factory.GetDb(projectKey).PlanNodes
+	public async Task<string?> FindNodeIdBySlugAsync(string projectKey, string board, string slug, CancellationToken ct = default)
+	{
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
+		return await ctx.PlanNodes
 			.Where(n => n.Board == board && n.Key == slug && n.ActiveTo == null)
 			.Select(n => n.NodeId)
 			.FirstOrDefaultAsync(ct)!;
+	}
 
 	public async Task<bool> UpdateAsync(string projectKey, string board, Func<TaskBoardMeta, TaskBoardMeta> mutate, CancellationToken ct = default)
 	{
@@ -171,7 +177,8 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 		// Boards share the project file, so delete just this board's rows (all revisions),
 		// not the file. Relations (in petbox.db) bind to NodeId and are left as-is — they
 		// resolve to "missing", same as when a board file used to be dropped.
-		await _factory.GetDb(projectKey).PlanNodes.Where(n => n.Board == board).DeleteAsync(ct);
+		using var db = _factory.NewConnection(projectKey);
+		await db.PlanNodes.Where(n => n.Board == board).DeleteAsync(ct);
 		return true;
 	}
 }

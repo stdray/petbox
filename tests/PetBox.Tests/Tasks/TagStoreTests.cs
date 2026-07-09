@@ -27,6 +27,9 @@ public sealed class TagStoreTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
+		// Ensure the per-project tasks file exists + schema is applied before the
+		// tag-store tests hit NewConnection (mirrors CreateAsync in production).
+		_factory.GetDb(Proj);
 		_tags = new TagStore(_factory);
 	}
 

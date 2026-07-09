@@ -39,7 +39,7 @@ public sealed class TagStore : ITagStore
 	{
 		if (string.IsNullOrWhiteSpace(nodeId)) throw new ArgumentException("nodeId is required");
 		var desired = Normalize(tags, enforceNamespaces, namespaces);
-		using var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
 
 		var active = ctx.GetTable<NodeTag>().Where(t => t.NodeId == nodeId && t.ValidTo == null).ToList();
 		var activeTags = active.Select(t => t.Tag).ToHashSet(StringComparer.Ordinal);
@@ -62,14 +62,14 @@ public sealed class TagStore : ITagStore
 
 	public async Task<IReadOnlyList<string>> ActiveTagsAsync(string projectKey, string nodeId, CancellationToken ct = default)
 	{
-		using var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
 		return (await ctx.GetTable<NodeTag>().Where(t => t.NodeId == nodeId && t.ValidTo == null).Select(t => t.Tag).ToListAsync(ct))
 			.OrderBy(t => t, StringComparer.Ordinal).ToList();
 	}
 
 	public async Task<ILookup<string, string>> BoardTagsAsync(string projectKey, string board, CancellationToken ct = default)
 	{
-		using var ctx = _factory.GetDb(projectKey);
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
 		var rows = await ctx.GetTable<NodeTag>().Where(t => t.Board == board && t.ValidTo == null).Select(t => new { t.NodeId, t.Tag }).ToListAsync(ct);
 		return rows.ToLookup(r => r.NodeId, r => r.Tag, StringComparer.Ordinal);
 	}
