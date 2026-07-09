@@ -13,6 +13,7 @@ using PetBox.Core.Search;
 using PetBox.LlmRouter.Contract;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Data;
+using PetBox.Tasks.Services.NodeRef;
 using PetBox.Tasks.Validation;
 using PetBox.Tasks.Workflow;
 
@@ -36,6 +37,8 @@ public sealed partial class TasksService : ITasksService
 	// construction (tests, other adapters) still gets the shipped flooring (same pattern as
 	// MemoryService).
 	readonly SearchRerankOptions _rerank;
+	// Node identity (slug / NodeId) resolution — private collaborator, not DI-registered.
+	readonly NodeRefResolver _nodeRefs;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
@@ -52,6 +55,7 @@ public sealed partial class TasksService : ITasksService
 		_comments = comments;
 		_llm = llm;
 		_rerank = rerank ?? new SearchRerankOptions();
+		_nodeRefs = new NodeRefResolver(boards);
 	}
 
 	// ---- board lifecycle ----
@@ -772,7 +776,7 @@ public sealed partial class TasksService : ITasksService
 		var v = (node ?? "").Trim();
 		if (v.Length == 0)
 			throw new ArgumentException("node is required — a slug key on the board, or a 32-hex NodeId");
-		var detail = LooksLikeNodeId(v)
+		var detail = NodeRefResolver.LooksLikeNodeId(v)
 			? await GetNodeAsync(projectKey, v, ct)
 			: await GetNodeBySlugAsync(projectKey, board, v.ToLowerInvariant(), ct);
 		if (detail is null)
@@ -784,141 +788,23 @@ public sealed partial class TasksService : ITasksService
 		return detail;
 	}
 
-	// Uniform slug-or-NodeId resolution for bare node refs (relations_create/list,
-	// comments_upsert/search) — uniform-node-refs. 32-hex = NodeId, passed through untouched
-	// (existing NodeId behavior preserved). A slug resolves over the ACTIVE nodes: scoped to
-	// `board` when given (slugs are board-unique, so at most one hit), else across EVERY
-	// board — the project file holds all boards' nodes. Ambiguity (same slug on 2+ boards)
-	// and a miss are clear errors, never a silent pass-through of a non-NodeId value.
-	public Task<string> ResolveNodeRefAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default)
-	{
-		var v = (nodeRef ?? "").Trim();
-		if (v.Length == 0)
-			throw new ArgumentException("node reference is required — a node slug or a 32-hex NodeId");
-		if (LooksLikeNodeId(v)) return Task.FromResult(v);
-		var slug = v.ToLowerInvariant();
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var q = ctx.PlanNodes.Where(n => n.ActiveTo == null && n.Key == slug);
-		if (board is not null) q = q.Where(n => n.Board == board);
-		var matches = q.ToList().Where(n => n.NodeId.Length > 0).ToList();
-		return matches.Count switch
-		{
-			1 => Task.FromResult(matches[0].NodeId),
-			0 => throw new ArgumentException(board is null
-				? $"node '{nodeRef}' does not match any active node in project '{projectKey}' — pass a node slug or a 32-hex NodeId"
-				: $"node '{nodeRef}' does not match any active node on board '{board}' in project '{projectKey}' — pass a slug on this board or a 32-hex NodeId"),
-			_ => throw new ArgumentException(
-				$"ambiguous slug '{nodeRef}' — found on boards: [{string.Join(", ", matches.Select(m => m.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the node's NodeId instead"),
-		};
-	}
+	// Uniform slug-or-NodeId resolution for bare node refs — NodeRefPolicy.Strict.
+	public Task<string> ResolveNodeRefAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default) =>
+		_nodeRefs.ResolveStrictAsync(projectKey, nodeRef, board, ct);
 
-	// Miss-tolerant sibling of ResolveNodeRefAsync for SOFT single-node reads (relations_list,
-	// comments_search): returns null when the ref matches no active node (the caller then returns an
-	// empty result instead of an error), while an ambiguous cross-board slug is STILL a clear error
-	// (it genuinely can't address one node). NodeId form passes through unchecked, like the strict
-	// resolver. Use this where "a node that isn't there" reads naturally as an empty answer, not a
-	// failure; keep ResolveNodeRefAsync for write-addressing and tasks_node_get.
-	public Task<string?> ResolveNodeRefOrNullAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default)
-	{
-		var v = (nodeRef ?? "").Trim();
-		if (v.Length == 0) return Task.FromResult<string?>(null);
-		if (LooksLikeNodeId(v)) return Task.FromResult<string?>(v);
-		var slug = v.ToLowerInvariant();
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var q = ctx.PlanNodes.Where(n => n.ActiveTo == null && n.Key == slug);
-		if (board is not null) q = q.Where(n => n.Board == board);
-		var matches = q.ToList().Where(n => n.NodeId.Length > 0).ToList();
-		return matches.Count switch
-		{
-			0 => Task.FromResult<string?>(null),
-			1 => Task.FromResult<string?>(matches[0].NodeId),
-			_ => throw new ArgumentException(
-				$"ambiguous slug '{nodeRef}' — found on boards: [{string.Join(", ", matches.Select(m => m.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the node's NodeId instead"),
-		};
-	}
+	// Soft single-node reads — NodeRefPolicy.SoftNull.
+	public Task<string?> ResolveNodeRefOrNullAsync(string projectKey, string nodeRef, string? board = null, CancellationToken ct = default) =>
+		_nodeRefs.ResolveSoftNullAsync(projectKey, nodeRef, board, ct);
 
-	// Batch `[[slug]]` mention resolution (node-ref-autolink). Resolves each requested slug over
-	// the project's ACTIVE nodes to its current (Board, Key, NodeId, Title), matching current keys
-	// AND former keys (PrevKey lineage — mentions survive renames). A current key wins over a
-	// former key of the same spelling; a slug resolving to 2+ boards (ambiguous) or to nothing is
-	// omitted. One read of the project's node history, resolved in memory (no per-slug loop).
-	public Task<IReadOnlyDictionary<string, NodeRefResolution>> ResolveSlugsAsync(string projectKey, IReadOnlyCollection<string> slugs, CancellationToken ct = default)
-	{
-		var wanted = new HashSet<string>(StringComparer.Ordinal);
-		foreach (var s in slugs)
-		{
-			var v = s?.Trim().ToLowerInvariant();
-			if (!string.IsNullOrEmpty(v)) wanted.Add(v);
-		}
-		var empty = (IReadOnlyDictionary<string, NodeRefResolution>)new Dictionary<string, NodeRefResolution>(StringComparer.Ordinal);
-		if (wanted.Count == 0) return Task.FromResult(empty);
+	// Batch `[[slug]]` mention resolution — NodeRefPolicy.BatchRename.
+	public Task<IReadOnlyDictionary<string, NodeRefResolution>> ResolveSlugsAsync(string projectKey, IReadOnlyCollection<string> slugs, CancellationToken ct = default) =>
+		_nodeRefs.ResolveBatchRenameAsync(projectKey, slugs, ct);
 
-		// All revisions across every board (history is needed to trace former slugs). A minimal
-		// projection keeps the read cheap; ordering/grouping is done in memory.
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var rows = ctx.PlanNodes
-			.Select(n => new { n.Board, n.Key, n.NodeId, n.Name, n.PrevKey, n.Version, n.ActiveTo })
-			.ToList();
-
-		// Per-(board,key) birth edge: the earliest revision's PrevKey (the slug it renamed FROM).
-		var edge = new Dictionary<(string Board, string Key), string>();
-		foreach (var g in rows.GroupBy(r => (r.Board, r.Key)))
-		{
-			var birth = g.OrderBy(r => r.Version).First();
-			if (!string.IsNullOrEmpty(birth.PrevKey))
-				edge[(g.Key.Board, g.Key.Key)] = birth.PrevKey!;
-		}
-
-		// A wanted slug matched as a CURRENT key beats the same spelling matched as a FORMER key
-		// (the live node is the natural target). Each map value is the list of matching active
-		// nodes; a >1 count means the slug is ambiguous across boards → dropped below.
-		var currentHits = new Dictionary<string, List<NodeRefResolution>>(StringComparer.Ordinal);
-		var formerHits = new Dictionary<string, List<NodeRefResolution>>(StringComparer.Ordinal);
-		static void AddHit(Dictionary<string, List<NodeRefResolution>> map, string slug, NodeRefResolution hit)
-		{
-			if (!map.TryGetValue(slug, out var list)) map[slug] = list = new List<NodeRefResolution>();
-			list.Add(hit);
-		}
-
-		foreach (var a in rows.Where(r => r.ActiveTo == null && r.NodeId.Length > 0))
-		{
-			var hit = new NodeRefResolution(a.Board, a.Key, a.NodeId, a.Name);
-			if (wanted.Contains(a.Key))
-				AddHit(currentHits, a.Key, hit);
-			// Walk this node's rename chain back through its former keys.
-			var cur = a.Key;
-			var guard = 0;
-			while (edge.TryGetValue((a.Board, cur), out var prev) && guard++ < 1000)
-			{
-				if (wanted.Contains(prev))
-					AddHit(formerHits, prev, hit);
-				cur = prev;
-			}
-		}
-
-		var result = new Dictionary<string, NodeRefResolution>(StringComparer.Ordinal);
-		foreach (var slug in wanted)
-		{
-			var hits = currentHits.TryGetValue(slug, out var c) ? c
-				: formerHits.TryGetValue(slug, out var f) ? f : null;
-			if (hits is { Count: 1 })
-				result[slug] = hits[0];
-		}
-		return Task.FromResult((IReadOnlyDictionary<string, NodeRefResolution>)result);
-	}
-
-	// exact-identifier-search-surfacing (spec): the exact-identifier escape hatch shared by the
-	// tasks_search query path and the UI cross-scope identifier leg. Mirrors ResolveNodeRefAsync's
-	// resolution (32-hex = NodeId, else a slug) but NEVER throws (a search is a soft ask, not an
-	// address) and returns ALL matches, not one: a slug living on several boards is not an error
-	// in search, so every match is surfaced (each hit carries its board, so the caller
-	// disambiguates). Each hit rides GetNodeAsync (includeClosed inside) so terminal/closed nodes
-	// surface like any other. Empty list on a miss; `board` narrows to one board.
+	// exact-identifier-search-surfacing (spec) — NodeRefPolicy.MultiHit: soft multi-hit ids from
+	// the resolver, then GetNodeAsync enrichment (includeClosed) so terminal nodes surface.
+	// Empty list on a miss; `board` narrows; multi-board slug returns ALL matches ordered by board.
 	public async Task<IReadOnlyList<TaskSearchHit>> ExactIdentifierHitsAsync(string projectKey, string identifier, string? board = null, string? urlPrefix = null, CancellationToken ct = default)
 	{
-		var v = (identifier ?? "").Trim();
-		if (v.Length == 0) return [];
-
 		TaskSearchHit? Enrich(NodeDetailView? detail)
 		{
 			if (detail is null) return null;
@@ -928,20 +814,10 @@ public sealed partial class TasksService : ITasksService
 		}
 
 		var hits = new List<TaskSearchHit>();
-		if (LooksLikeNodeId(v))
-		{
-			// A NodeId is globally unique — at most one node, no ambiguity.
-			if (Enrich(await GetNodeAsync(projectKey, v, ct)) is { } hit) hits.Add(hit);
-			return hits;
-		}
-
-		var slug = v.ToLowerInvariant();
-		using var ctx = _boards.NewEnsuredConnection(projectKey);
-		var q = ctx.PlanNodes.Where(n => n.ActiveTo == null && n.Key == slug);
-		if (board is not null) q = q.Where(n => n.Board == board);
-		foreach (var m in q.ToList().Where(n => n.NodeId.Length > 0).ToList())
-			if (Enrich(await GetNodeAsync(projectKey, m.NodeId, ct)) is { } hit) hits.Add(hit);
+		foreach (var id in _nodeRefs.ResolveMultiHitIds(projectKey, identifier, board))
+			if (Enrich(await GetNodeAsync(projectKey, id, ct)) is { } hit) hits.Add(hit);
 		// Deterministic order between exact matches (spec: by board) so a multi-board slug is stable.
+		// NodeId path is ≤1 hit — OrderBy is a no-op there (was an early return before).
 		return hits.OrderBy(h => h.Board, StringComparer.Ordinal).ToList();
 	}
 
@@ -1846,7 +1722,7 @@ public sealed partial class TasksService : ITasksService
 		foreach (var (key, raw) in specRefs.ToList())
 		{
 			var v = raw.Trim();
-			if (LooksLikeNodeId(v)) { specRefs[key] = v; continue; }
+			if (NodeRefResolver.LooksLikeNodeId(v)) { specRefs[key] = v; continue; }
 			if (board.SpecBoard is not { Length: > 0 } sb)
 				throw new ArgumentException($"specRef '{raw}' (node '{key}') is a slug, but this board has no linked spec board — provide the spec node's NodeId");
 			var slug = v.ToLowerInvariant();
@@ -1873,17 +1749,13 @@ public sealed partial class TasksService : ITasksService
 		foreach (var (key, raw) in blockedBy.ToList())
 		{
 			var v = raw.Trim();
-			if (LooksLikeNodeId(v)) { blockedBy[key] = v; continue; }
+			if (NodeRefResolver.LooksLikeNodeId(v)) { blockedBy[key] = v; continue; }
 			if (!slugToId.TryGetValue(v.ToLowerInvariant(), out var id))
 				throw new ArgumentException($"blockedBy '{raw}' (node '{key}') does not match any node on board '{board}' — a blocker's slug resolves on the same board; pass a NodeId to reference a node on another board");
 			blockedBy[key] = id;
 		}
 		return blockedBy;
 	}
-
-	// A NodeId is a 32-hex Guid ("N"); a slug starts [a-z] and can't be 32 hex chars in
-	// practice — the two are trivially distinguishable.
-	static bool LooksLikeNodeId(string v) => v.Length == 32 && v.All(Uri.IsHexDigit);
 
 	// DATA-DRIVEN link-target guard (schema v2, was ValidateSpecRefsAsync +
 	// RequireAcceptedIdeaForSpecAsync): every PROVIDED ref must resolve to a real node, and
