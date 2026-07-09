@@ -58,8 +58,7 @@ public sealed class SessionTermIndex : ISessionTermIndex
 			ct.ThrowIfCancellationRequested();
 			try
 			{
-				using var db = _factory.GetDb(project); // GetDb runs migrations — a file opened before
-												   // M005 needs the term tables before we touch them.
+				using var db = _factory.NewEnsuredConnection(project);
 				var headers = await _sessions.ListAsync(project, ct);
 				if (headers.Count == 0) continue;
 
