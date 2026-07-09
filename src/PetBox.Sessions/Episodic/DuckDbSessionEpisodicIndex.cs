@@ -261,7 +261,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 	{
 		if (entry.Vectors is not null && entry.VecModel == model) return;
 
-		var db = _factory.GetDb(projectKey);
+		using var db = _factory.NewEnsuredConnection(projectKey);
 		var cached = db.MessageVectors
 			.Where(v => v.SessionId == entry.SessionId)
 			.ToDictionary(v => v.Version);

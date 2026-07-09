@@ -40,7 +40,7 @@ public sealed class SessionTermIndex : ISessionTermIndex
 		var match = FtsQuery.BuildMatch(query);
 		if (match is null) return [];
 
-		using var db = _factory.GetDb(projectKey); // ensures migrations ran even for a file opened pre-M005
+		using var db = _factory.NewEnsuredConnection(projectKey);
 		var rows = await db.GetTable<FtsRow>()
 			.Where(r => Sql.Ext.SQLite().Match(r, match))
 			.OrderBy(r => Sql.Ext.SQLite().Rank(r))
@@ -58,8 +58,7 @@ public sealed class SessionTermIndex : ISessionTermIndex
 			ct.ThrowIfCancellationRequested();
 			try
 			{
-				using var db = _factory.GetDb(project); // GetDb runs migrations — a file opened before
-												   // M005 needs the term tables before we touch them.
+				using var db = _factory.NewEnsuredConnection(project);
 				var headers = await _sessions.ListAsync(project, ct);
 				if (headers.Count == 0) continue;
 
