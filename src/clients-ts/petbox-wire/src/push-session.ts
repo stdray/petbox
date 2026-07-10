@@ -15,6 +15,10 @@
 import { pushTranscript } from "./append.ts";
 import { resolveProject } from "./registry.ts";
 import { buildMessages, type Msg } from "./transcript.ts";
+// TODO(session-observed-binding): when Sessions append/push accepts optional client metadata
+// without a migration, stamp resolveObservedBinding("claude-code") from roles.ts
+// ({ profile, agent, roles:{role:model} }) onto the push. Helper is ready client-side;
+// server is NOT source of truth (binding-not-server-authoritative).
 
 const FETCH_TIMEOUT_MS = 12000;
 

@@ -59,6 +59,14 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { PROMPT_RAG_DEFAULTS, type PromptRagConfig } from "./registry.ts";
+import {
+  exportRolesBootstrap,
+  formatResolvedBinding,
+  isEmptyRoles,
+  loadRoles,
+  saveRoles,
+  useProfile,
+} from "./roles.ts";
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
 
 const DEFAULT_BASE_URL = "https://petbox.3po.su";
@@ -97,13 +105,22 @@ function usage(exitCode: number = 2): never {
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
     "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag | --no-prompt-rag]\n" +
     "       npx petbox-wire update\n" +
+    "       npx petbox-wire roles\n" +
+    "       npx petbox-wire roles export\n" +
+    "       npx petbox-wire profile use <name>\n" +
     "       npx petbox-wire --help\n" +
     "\n" +
     "Wire a project to PetBox: global hooks, MCP configs and skills. prompt-RAG is OFF by default\n" +
     "(opt in per project with --prompt-rag; --no-prompt-rag or a plain re-run removes the global hook).\n" +
     "\n" +
-    "update  Refresh ~/.petbox/wire only (protocol/scripts/templates) from this package. Does not\n" +
-    "        touch keys, registry, sticky prompt-rag/telemetry, or per-project MCP/skills.";
+    "update       Refresh ~/.petbox/wire only (protocol/scripts/templates) from this package. Does not\n" +
+    "             touch keys, registry, sticky prompt-rag/telemetry, or per-project MCP/skills.\n" +
+    "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
+    "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
+    "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
+    "             new machine). Offline.\n" +
+    "profile use  Set activeProfile in ~/.petbox/roles.json (creates an empty profile shell if missing).\n" +
+    "             Offline. Artifact rebuild is not done here — run apply when available.";
   (exitCode === 0 ? console.log : console.error)(text);
   process.exit(exitCode);
 }
@@ -154,6 +171,78 @@ function parseArgs(argv: string[]): Args {
 // True when argv is the safe kit-refresh subcommand (no project/key required).
 function isUpdateCommand(argv: string[]): boolean {
   return argv[0] === "update";
+}
+
+// Local role/profile subcommands (offline; no project/key).
+function isRolesCommand(argv: string[]): boolean {
+  return argv[0] === "roles";
+}
+
+function isProfileCommand(argv: string[]): boolean {
+  return argv[0] === "profile";
+}
+
+// Print active profile + agent/role/model tree from ~/.petbox/roles.json. Exit 0 when empty.
+function runRoles(argv: string[]): void {
+  // roles | roles export  (+ optional --help)
+  const sub = argv[1];
+  if (sub === "--help" || sub === "-h") usage(0);
+  if (sub === "export") {
+    for (let i = 2; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === "--help" || a === "-h") usage(0);
+      console.error(`roles export: unexpected argument: ${a}`);
+      usage();
+    }
+    const data = loadRoles();
+    // stdout only — bootstrap for a new machine (document in usage).
+    console.log(JSON.stringify(exportRolesBootstrap(data), null, 2));
+    return;
+  }
+  if (sub !== undefined) {
+    console.error(`roles: unexpected argument: ${sub}`);
+    usage();
+  }
+  const data = loadRoles();
+  if (isEmptyRoles(data) && !data.profiles[data.activeProfile]) {
+    log(
+      `roles: no bindings in ${join(homedir(), ".petbox", "roles.json")} (activeProfile would be "default").\n` +
+        `  Bindings are local — set models in that file or via a future apply path; nothing is invented.`,
+    );
+    return;
+  }
+  log(formatResolvedBinding(data));
+}
+
+// profile use <name> — set activeProfile; create empty shell if missing.
+function runProfile(argv: string[]): void {
+  const sub = argv[1];
+  if (sub === "--help" || sub === "-h") usage(0);
+  if (sub !== "use") {
+    console.error(`profile: expected "use <name>"${sub ? `, got "${sub}"` : ""}`);
+    usage();
+  }
+  const name = argv[2];
+  if (!name || name.startsWith("-")) {
+    console.error("profile use: requires a non-empty <name>");
+    usage();
+  }
+  for (let i = 3; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--help" || a === "-h") usage(0);
+    console.error(`profile use: unexpected argument: ${a}`);
+    usage();
+  }
+  const before = loadRoles();
+  const created = !before.profiles[name];
+  const next = useProfile(before, name);
+  saveRoles(next);
+  log(
+    `profile: activeProfile = "${next.activeProfile}"` +
+      (created ? " (created empty profile shell)" : "") +
+      `\n  wrote ${join(homedir(), ".petbox", "roles.json")}` +
+      `\n  run apply when available (artifact rebuild is not done by profile use).`,
+  );
 }
 
 // ---- small helpers ---------------------------------------------------------
@@ -897,10 +986,18 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  // Subcommand: safe kit-text refresh (no project/key). Must run before parseArgs, which
-  // requires <dir> <projectKey> positionals for the full wire path.
+  // Subcommands that need no project/key. Must run before parseArgs, which requires
+  // <dir> <projectKey> positionals for the full wire path.
   if (isUpdateCommand(argv)) {
     runUpdate(argv);
+    return;
+  }
+  if (isRolesCommand(argv)) {
+    runRoles(argv);
+    return;
+  }
+  if (isProfileCommand(argv)) {
+    runProfile(argv);
     return;
   }
 
