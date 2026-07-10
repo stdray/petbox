@@ -27,7 +27,7 @@ public interface ITaskBoardStore
 	// Bump UpdatedAt to now — called after a node upsert so the catalog reflects
 	// last activity (the nodes live in a separate file, not this meta row).
 	Task TouchAsync(string projectKey, string board, CancellationToken ct = default);
-	Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "simple", string? specBoard = null, CancellationToken ct = default);
+	Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "simple", string? specBoard = null, string? methodologyInstance = null, CancellationToken ct = default);
 	// The full metadata row (Kind, SpecBoard, ClosedAt, …), or null if the board doesn't exist.
 	Task<TaskBoardMeta?> FindAsync(string projectKey, string board, CancellationToken ct = default);
 	// The board owning a node's active revision (ActiveTo == null), or null if no active
@@ -124,7 +124,7 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 		return true;
 	}
 
-	public async Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "simple", string? specBoard = null, CancellationToken ct = default)
+	public async Task<TaskBoardMeta> CreateAsync(string projectKey, string board, string? description, string kind = "simple", string? specBoard = null, string? methodologyInstance = null, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(board))
 			throw new ArgumentException("board name is required", nameof(board));
@@ -156,6 +156,7 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 				? bk.ToString().ToLowerInvariant()
 				: kind.Trim().ToLowerInvariant(),
 			SpecBoard = string.IsNullOrWhiteSpace(specBoard) ? null : specBoard,
+			MethodologyInstance = string.IsNullOrWhiteSpace(methodologyInstance) ? null : methodologyInstance.Trim().ToLowerInvariant(),
 			CreatedAt = now,
 			UpdatedAt = now,
 		};

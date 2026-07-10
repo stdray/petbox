@@ -47,6 +47,8 @@ public sealed partial class TasksService : ITasksService
 	readonly MethodologyDefinitionService _methodologyDefs;
 	// Named methodology templates (independent of live process / instances).
 	readonly MethodologyTemplateService _methodologyTemplates;
+	// Named methodology instances (live process automata + board membership).
+	readonly MethodologyInstanceService _methodologyInstances;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
@@ -67,42 +69,87 @@ public sealed partial class TasksService : ITasksService
 		_effects = new TaskTransitionEffects(boards, relations, tags);
 		_associations = new TaskUpsertAssociations(boards, relations, tags, _effects);
 		_methodologyDefs = new MethodologyDefinitionService(boards);
-		_methodologyTemplates = new MethodologyTemplateService(boards, _methodologyDefs);
+		_methodologyTemplates = new MethodologyTemplateService(boards, _methodologyDefs, instanceRules: null);
+		// instance service needs template source resolution + optional counts for list/get.
+		_methodologyInstances = new MethodologyInstanceService(boards, _methodologyTemplates, CountActiveStatusesAsync);
+		// Wire instance snapshot source into templates after both exist (circular-safe via delegate).
+		_methodologyTemplates.BindInstanceRules(async (projectKey, instanceName, ct) =>
+			await _methodologyInstances.GetDefinitionAsync(projectKey, instanceName, allowClosed: true, ct));
+	}
+
+	// Status histogram for one board's active nodes (instance list/get summary).
+	Task<IReadOnlyDictionary<string, int>> CountActiveStatusesAsync(string projectKey, string board, CancellationToken ct)
+	{
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		var statuses = ctx.PlanNodes
+			.Where(n => n.Board == board && n.ActiveTo == null)
+			.Select(n => n.Status)
+			.ToList();
+		IReadOnlyDictionary<string, int> counts = statuses.GroupBy(s => s, StringComparer.Ordinal)
+			.ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+		return Task.FromResult(counts);
 	}
 
 	// ---- board lifecycle ----
 
-	// The methodology kinds are per-project singletons (the quartet); `simple` and
-	// `classic` are unlimited.
+	// Process-role kinds: ≤1 open board per kind INSIDE an instance (not project-wide).
 	static readonly BoardKind[] Methodological = [BoardKind.Spec, BoardKind.Ideas, BoardKind.Intake, BoardKind.Work];
 
-	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, CancellationToken ct = default)
+	public async Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, string? methodologyInstance = null, CancellationToken ct = default)
 	{
+		// Membership: required once the project has entered the instance world (any instance
+		// exists). Pre-instance projects keep the legacy null-membership path so enable/def
+		// and existing boards work until backfill; the MCP surface documents the requirement.
+		var instanceName = string.IsNullOrWhiteSpace(methodologyInstance)
+			? null
+			: methodologyInstance.Trim().ToLowerInvariant();
+		if (instanceName is null)
+		{
+			if (await _methodologyInstances.AnyAsync(projectKey, ct))
+				throw new ArgumentException(
+					"methodology instance is required — pass methodologyInstance (create one with tasks_methodology_create first); board_create without an instance is rejected once the project has any methodology instance");
+		}
+		else
+		{
+			var inst = await _methodologyInstances.GetAsync(projectKey, instanceName, ct)
+				?? throw new ArgumentException($"methodology instance '{instanceName}' not found in project '{projectKey}'");
+			if (inst.Closed)
+				throw new ArgumentException($"methodology instance '{instanceName}' is closed — cannot create boards on a closed instance");
+		}
+
 		var kindSlug = (kind ?? "simple").Trim().ToLowerInvariant();
-		var runtime = await RuntimeAsync(projectKey, ct);
+		// Prefer instance rules when membership is set; else project def / presets.
+		var runtime = instanceName is not null
+			? await RuntimeForInstanceAsync(projectKey, instanceName, ct)
+			: await RuntimeAsync(projectKey, ct);
 		string canonical;
 		if (runtime.IsDefinedKind(kindSlug))
 		{
-			// A definition-declared kind is stored VERBATIM (no singleton rule — that is
-			// quartet behavior; a definition kind is as unlimited as `simple`).
+			// A definition-declared kind is stored VERBATIM. Process-role singleton still
+			// applies when the kind maps onto a process-role BoardKind.
 			canonical = kindSlug;
+			if (Enum.TryParse<BoardKind>(kindSlug, ignoreCase: true, out var definedAs) && Methodological.Contains(definedAs))
+				await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, kindSlug, instanceName, ct: ct);
 		}
 		else if (Enum.TryParse<BoardKind>(kindSlug, ignoreCase: true, out var k))
 		{
 			canonical = k.ToString().ToLowerInvariant();
-			await AssertSingletonAsync(projectKey, k, ct);
+			await _methodologyInstances.AssertProcessRoleSingletonAsync(projectKey, canonical, instanceName, ct: ct);
 		}
 		else
 		{
 			throw new ArgumentException(
 				$"unknown board kind '{kind}' — valid kinds: {string.Join("|", runtime.KnownKinds())}" +
-				" (a custom kind must first be declared via tasks_methodology_def_upsert)");
+				" (a custom kind must first be declared via tasks_methodology_def_upsert or the instance's rules)");
 		}
 		await ValidateSpecBoardAsync(projectKey, canonical, specBoard, ct);
-		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, specBoard, ct);
+		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, specBoard, instanceName, ct);
 		await AutoWireSpecAsync(projectKey, ct); // a fresh spec or work board may complete the link
 		return meta;
 	}
+
+	public Task<TaskBoardMeta> AdoptBoardAsync(string projectKey, string board, string methodologyInstance, CancellationToken ct = default) =>
+		_methodologyInstances.AdoptBoardAsync(projectKey, board, methodologyInstance, ct);
 
 	// Load the project's methodology definition and wrap it as the FSM resolution seam —
 	// once per service call (no caching layer; SQLite is local), resolved BEFORE queries
@@ -114,37 +161,49 @@ public sealed partial class TasksService : ITasksService
 		return view is null ? MethodologyRuntime.PresetsOnly : new MethodologyRuntime(view.Definition);
 	}
 
+	// Board-scoped runtime: instance rules when the board has membership, else project def.
+	async Task<MethodologyRuntime> RuntimeForBoardAsync(string projectKey, TaskBoardMeta meta, CancellationToken ct)
+	{
+		if (!string.IsNullOrWhiteSpace(meta.MethodologyInstance))
+			return await RuntimeForInstanceAsync(projectKey, meta.MethodologyInstance, ct);
+		return await RuntimeAsync(projectKey, ct);
+	}
+
+	async Task<MethodologyRuntime> RuntimeForInstanceAsync(string projectKey, string instanceName, CancellationToken ct)
+	{
+		var def = await _methodologyInstances.GetDefinitionAsync(projectKey, instanceName, allowClosed: true, ct);
+		return def is null ? await RuntimeAsync(projectKey, ct) : new MethodologyRuntime(def);
+	}
+
 	// The public door to the resolution seam (same instance the private RuntimeAsync builds
 	// for every service call). UI pages hold it for a request to answer kind/terminality/
 	// quick-add/next-status the SAME way the MCP path does.
 	public Task<MethodologyRuntime> GetRuntimeAsync(string projectKey, CancellationToken ct = default) =>
 		RuntimeAsync(projectKey, ct);
 
-	// Reject a 2nd active board of a methodology kind (one-per-project). `free` is exempt.
-	async Task AssertSingletonAsync(string projectKey, BoardKind kind, CancellationToken ct)
-	{
-		if (!Methodological.Contains(kind)) return;
-		var existing = (await _boards.ListAsync(projectKey, ct))
-			.FirstOrDefault(b => b.ClosedAt == null && MethodologyPresets.ParseKind(b.Kind) == kind);
-		if (existing is not null)
-			throw new ArgumentException($"project '{projectKey}' already has an active {kind.ToString().ToLowerInvariant()} board ('{existing.Name}') — the methodology quartet is one-per-project; close it (tasks_board_close) or use a simple board");
-	}
-
 	// Data-driven SpecBoard auto-wire (primitives-enum-residual): for every kind that
 	// declares AutoWireSpecFrom, when exactly one active board of that kind and one of the
-	// target kind exist and SpecBoard is empty, wire them. The quartet work→spec rule is
-	// preset DATA on the work KindDef — no BoardKind special-case here.
+	// target kind exist WITHIN THE SAME INSTANCE membership bucket and SpecBoard is empty,
+	// wire them. The quartet work→spec rule is preset DATA on the work KindDef.
 	async Task AutoWireSpecAsync(string projectKey, CancellationToken ct)
 	{
-		var runtime = await RuntimeAsync(projectKey, ct);
-		var active = (await _boards.ListAsync(projectKey, ct)).Where(b => b.ClosedAt == null).ToList();
-		foreach (var kind in runtime.EffectiveKinds())
+		var all = (await _boards.ListAsync(projectKey, ct)).Where(b => b.ClosedAt == null).ToList();
+		// Group by membership (null = legacy unassigned bucket) so multi-instance projects
+		// never cross-wire work→spec across instances.
+		foreach (var group in all.GroupBy(b => b.MethodologyInstance ?? "", StringComparer.OrdinalIgnoreCase))
 		{
-			if (kind.AutoWireSpecFrom is not { Length: > 0 } fromKind) continue;
-			var self = active.Where(b => string.Equals(b.Kind, kind.Kind, StringComparison.OrdinalIgnoreCase)).ToList();
-			var target = active.Where(b => string.Equals(b.Kind, fromKind, StringComparison.OrdinalIgnoreCase)).ToList();
-			if (self.Count == 1 && target.Count == 1 && string.IsNullOrWhiteSpace(self[0].SpecBoard))
-				await _boards.UpdateAsync(projectKey, self[0].Name, m => m with { SpecBoard = target[0].Name }, ct);
+			var runtime = group.Key.Length > 0
+				? await RuntimeForInstanceAsync(projectKey, group.Key, ct)
+				: await RuntimeAsync(projectKey, ct);
+			var active = group.ToList();
+			foreach (var kind in runtime.EffectiveKinds())
+			{
+				if (kind.AutoWireSpecFrom is not { Length: > 0 } fromKind) continue;
+				var self = active.Where(b => string.Equals(b.Kind, kind.Kind, StringComparison.OrdinalIgnoreCase)).ToList();
+				var target = active.Where(b => string.Equals(b.Kind, fromKind, StringComparison.OrdinalIgnoreCase)).ToList();
+				if (self.Count == 1 && target.Count == 1 && string.IsNullOrWhiteSpace(self[0].SpecBoard))
+					await _boards.UpdateAsync(projectKey, self[0].Name, m => m with { SpecBoard = target[0].Name }, ct);
+			}
 		}
 	}
 
@@ -206,7 +265,7 @@ public sealed partial class TasksService : ITasksService
 	{
 		await EnsureBoard(projectKey, board, ct);
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
-		var runtime = await RuntimeAsync(projectKey, ct);
+		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
 		return new BoardWorkflowView(runtime.KindName(meta.Kind), runtime.Blocks(meta.Kind));
 	}
 
@@ -215,32 +274,62 @@ public sealed partial class TasksService : ITasksService
 
 	public async Task<MethodologyEnableResult> EnableMethodologyAsync(string projectKey, string preset = "quartet", CancellationToken ct = default)
 	{
-		// The preset selects WHICH board kinds to provision (default = the quartet, behavior
-		// unchanged); an unknown slug is rejected before any board is created.
+		// Compat layer (methodology-instance-core): enable still works for $system / legacy
+		// callers by ensuring a named instance from the builtin preset, then reporting the
+		// boards that instance owns. New code should prefer tasks_methodology_create.
+		// The preset selects WHICH board kinds to provision; an unknown slug is rejected
+		// before any board is created.
 		var provisioning = MethodologyPresets.ResolveProvisioningPreset(preset);
+		var instanceName = provisioning.Slug; // "quartet" | "classic"
+		if (!await _methodologyInstances.ExistsAsync(projectKey, instanceName, ct))
+		{
+			// One-act create: rules + boards for the preset kinds.
+			var ack = await _methodologyInstances.CreateAsync(projectKey, instanceName, MethodologyInstanceService.SourceBuiltin, provisioning.Slug, ct);
+			var runtimeNew = await RuntimeForInstanceAsync(projectKey, instanceName, ct);
+			var reportNew = new List<MethodologyEnableBoard>(provisioning.Kinds.Count);
+			foreach (var kind in provisioning.Kinds)
+			{
+				var kindSlug = kind.ToString().ToLowerInvariant();
+				var board = ack.Boards.FirstOrDefault(b => string.Equals(b.Kind, kindSlug, StringComparison.OrdinalIgnoreCase));
+				var counts = EmptyCounts;
+				if (board is not null)
+				{
+					var view = await GetAsync(projectKey, board.Name, includeClosed: false, ct: ct);
+					counts = view.Nodes.GroupBy(n => n.Status, StringComparer.Ordinal)
+						.ToDictionary(g => g.Key, g => g.Count(), StringComparer.Ordinal);
+				}
+				reportNew.Add(new MethodologyEnableBoard(kindSlug, board?.Name, Created: board is not null, counts, runtimeNew.Blocks(kindSlug)));
+			}
+			return new MethodologyEnableResult(provisioning.Slug, reportNew);
+		}
+
+		// Instance already exists: idempotent re-provision of any missing kinds into it.
 		var boards = await _boards.ListAsync(projectKey, ct);
 		var createdKinds = new HashSet<BoardKind>();
 		foreach (var kind in provisioning.Kinds)
 		{
-			if (boards.Any(b => b.ClosedAt == null && MethodologyPresets.ParseKind(b.Kind) == kind)) continue;
+			if (boards.Any(b => b.ClosedAt == null
+				&& MethodologyPresets.ParseKind(b.Kind) == kind
+				&& string.Equals(b.MethodologyInstance, instanceName, StringComparison.OrdinalIgnoreCase)))
+				continue;
 			var name = kind.ToString().ToLowerInvariant();
-			if (await _boards.ExistsAsync(projectKey, name, ct)) continue; // name taken by another board; leave it
-			await CreateBoardAsync(projectKey, name, name, $"methodology {name}", null, ct);
+			if (await _boards.ExistsAsync(projectKey, name, ct))
+				name = $"{instanceName}-{name}";
+			if (await _boards.ExistsAsync(projectKey, name, ct)) continue;
+			await CreateBoardAsync(projectKey, name, kind.ToString().ToLowerInvariant(), $"methodology {name}", null, instanceName, ct);
 			createdKinds.Add(kind);
 		}
 		await AutoWireSpecAsync(projectKey, ct);
 
-		// Describe what THIS preset provisioned (methodology-enable-response-scope): the
-		// preset's own board(s) + workflow, re-read fresh so a name-taken skip reports Name:
-		// null honestly — NOT the quartet dump (GetMethodologyAsync's job; a non-quartet
-		// preset like `classic` has nothing to do with those four boards).
-		var runtime = await RuntimeAsync(projectKey, ct);
+		var runtime = await RuntimeForInstanceAsync(projectKey, instanceName, ct);
 		var after = await _boards.ListAsync(projectKey, ct);
 		var report = new List<MethodologyEnableBoard>(provisioning.Kinds.Count);
 		foreach (var kind in provisioning.Kinds)
 		{
 			var kindSlug = kind.ToString().ToLowerInvariant();
-			var board = after.FirstOrDefault(b => b.ClosedAt == null && MethodologyPresets.ParseKind(b.Kind) == kind);
+			var board = after.FirstOrDefault(b => b.ClosedAt == null
+				&& MethodologyPresets.ParseKind(b.Kind) == kind
+				&& string.Equals(b.MethodologyInstance, instanceName, StringComparison.OrdinalIgnoreCase));
 			var counts = EmptyCounts;
 			if (board is not null)
 			{
@@ -373,6 +462,24 @@ public sealed partial class TasksService : ITasksService
 		string projectKey, string key, long version, string? from = null, CancellationToken ct = default) =>
 		_methodologyTemplates.SnapshotAsync(projectKey, key, version, from, ct);
 
+	// ---- methodology instances (named live process automata) ----
+
+	public Task<MethodologyInstanceAck> CreateMethodologyInstanceAsync(
+		string projectKey, string name, string source, string sourceKey, CancellationToken ct = default) =>
+		_methodologyInstances.CreateAsync(projectKey, name, source, sourceKey, ct);
+
+	public Task<IReadOnlyList<MethodologyInstanceView>> ListMethodologyInstancesAsync(
+		string projectKey, CancellationToken ct = default) =>
+		_methodologyInstances.ListAsync(projectKey, ct);
+
+	public Task<MethodologyInstanceView?> GetMethodologyInstanceAsync(
+		string projectKey, string name, CancellationToken ct = default) =>
+		_methodologyInstances.GetAsync(projectKey, name, ct);
+
+	public Task<MethodologyInstanceAck> CloseMethodologyInstanceAsync(
+		string projectKey, string name, CancellationToken ct = default) =>
+		_methodologyInstances.CloseAsync(projectKey, name, ct);
+
 	// Product surface over the stored definition — stays on TasksService (guide is derived
 	// presentation; definition I/O lives on the collaborator).
 	public async Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, CancellationToken ct = default)
@@ -418,7 +525,7 @@ public sealed partial class TasksService : ITasksService
 		var current = all.Count == 0 ? 0 : all.Max(n => n.Version);
 
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
-		var runtime = await RuntimeAsync(projectKey, ct);
+		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
 		var presetKind = runtime.PresetKind(meta.Kind); // null = definition-resolved kind
 		var parentOf = await ParentMapAsync(projectKey, ct);
 		// Delivery is gated by kind DATA (MethodologyDeliveryDef), not BoardKind.Spec.
@@ -848,7 +955,7 @@ public sealed partial class TasksService : ITasksService
 		if (meta.ClosedAt != null)
 			throw new InvalidOperationException($"board '{board}' is closed — reopen it (tasks_board_reopen) before writing");
 
-		var runtime = await RuntimeAsync(projectKey, ct);
+		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
 		var kindSlug = meta.Kind;
 		var presetKind = runtime.PresetKind(kindSlug); // null = definition-resolved kind
 		using var ctx = _boards.NewEnsuredConnection(projectKey);

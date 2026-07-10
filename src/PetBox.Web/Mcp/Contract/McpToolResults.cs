@@ -363,13 +363,15 @@ public sealed record SessionDeltaResult(
 
 // ---- tasks.* (board lifecycle + workflow; node-shaped results reuse Tasks.Contract) ---
 
-public sealed record BoardCreatedResult(string ProjectKey, string Name, string Kind, string? Description, string? SpecBoard, DateTime CreatedAt);
+public sealed record BoardCreatedResult(string ProjectKey, string Name, string Kind, string? Description, string? SpecBoard, DateTime CreatedAt, string? MethodologyInstance = null);
 
 public sealed record BoardSetSpecResult(bool Set, string? SpecBoard);
 
-public sealed record BoardRow(string Name, string Kind, string? Description, string? SpecBoard, DateTime CreatedAt, bool Closed);
+public sealed record BoardRow(string Name, string Kind, string? Description, string? SpecBoard, DateTime CreatedAt, bool Closed, string? MethodologyInstance = null);
 
 public sealed record BoardListResult(IReadOnlyList<BoardRow> Boards);
+
+public sealed record BoardAdoptResult(string Name, string Kind, string? MethodologyInstance);
 
 public sealed record BoardDeletedResult(bool Deleted);
 
@@ -521,6 +523,37 @@ public sealed record MethodologyTemplateListResult(IReadOnlyList<MethodologyTemp
 
 public sealed record MethodologyTemplateListItemView(
 	string Key, string Source, string Name, long Version, DateTime? Updated = null);
+
+// ---- methodology instances (methodology-instance-core) --------------------------------
+
+public sealed record MethodologyInstanceBoardView(string Name, string Kind, bool Closed, string? SpecBoard = null);
+
+public sealed record MethodologyInstanceViewResult(
+	string Name,
+	bool Closed,
+	long Version,
+	DateTime Created,
+	DateTime Updated,
+	DateTime? ClosedAt,
+	string DefinitionName,
+	IReadOnlyList<string> Kinds,
+	IReadOnlyList<MethodologyInstanceBoardView> Boards,
+	IReadOnlyDictionary<string, int> Counts);
+
+public sealed record MethodologyInstanceCreateResult(
+	string Name, bool Changed, bool Closed, long Version,
+	IReadOnlyList<MethodologyInstanceBoardView> Boards);
+
+public sealed record MethodologyInstanceCloseResult(
+	string Name, bool Changed, bool Closed, long Version,
+	IReadOnlyList<MethodologyInstanceBoardView> Boards);
+
+public sealed record MethodologyInstanceListResult(IReadOnlyList<MethodologyInstanceViewResult> Instances);
+
+public sealed record MethodologyInstanceGetResult(
+	bool Found,
+	string? Name = null,
+	MethodologyInstanceViewResult? Instance = null);
 
 // One kind of a stored methodology definition; workflow blocks reuse the tasks_workflow
 // status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the

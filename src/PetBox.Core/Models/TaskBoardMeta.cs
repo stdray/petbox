@@ -40,4 +40,10 @@ public sealed record TaskBoardMeta
 	// spec boards; specRef targets are validated against this board. Null = unset.
 	[Column, Nullable]
 	public string? SpecBoard { get; init; }
+
+	// Methodology instance this board belongs to (methodology-board-membership). Exactly
+	// one when set; null = legacy unassigned (pre-backfill). Process-role singleton and
+	// instance close apply within this membership.
+	[Column, Nullable]
+	public string? MethodologyInstance { get; init; }
 }

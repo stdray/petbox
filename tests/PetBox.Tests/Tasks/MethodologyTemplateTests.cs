@@ -160,9 +160,9 @@ public sealed class MethodologyTemplateTests : IDisposable
 		(await _tasks.GetMethodologyDefinitionAsync(Proj))!.Definition.Name.Should().Be("custom-live",
 			"snapshot must not mutate the live singleton definition");
 
-		// instance: reserved shape.
+		// instance:<key> requires a real instance (methodology-instance-core).
 		var inst = () => _tasks.SnapshotMethodologyTemplateAsync(Proj, "snap-d", 0, from: "instance:main");
-		(await inst.Should().ThrowAsync<ArgumentException>()).WithMessage("*instance*");
+		(await inst.Should().ThrowAsync<ArgumentException>()).WithMessage("*instance*not found*");
 
 		(await _tasks.ListBoardsAsync(Proj)).Should().BeEmpty("snapshot must not create boards");
 	}

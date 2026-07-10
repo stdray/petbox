@@ -257,6 +257,44 @@ public sealed record MethodologyTemplateListItem(
 	long Version,
 	DateTime? Updated);
 
+// ---- methodology instances (methodology-instance-core) --------------------------------
+// A named live process automaton (rules + boards + open/closed). "methodology" without
+// qualifier means instance. Process-role singleton (≤1 open board per process-role kind)
+// applies INSIDE the instance, not project-wide.
+
+// One board membership row on an instance index (no node bodies).
+public sealed record MethodologyInstanceBoard(
+	string Name, string Kind, bool Closed, string? SpecBoard = null);
+
+// Compact INDEX of one instance: identity, boards, status, computed summary — no node bodies
+// (spec methodology-instance-list-get). Counts = status histogram over open boards' active nodes.
+public sealed record MethodologyInstanceView(
+	string Name,
+	bool Closed,
+	long Version,
+	DateTime Created,
+	DateTime Updated,
+	DateTime? ClosedAt,
+	// Display name from the stored definition document (may differ from the instance key).
+	string DefinitionName,
+	IReadOnlyList<string> Kinds,
+	IReadOnlyList<MethodologyInstanceBoard> Boards,
+	// Active-node status histogram across the instance's open boards (empty when none).
+	IReadOnlyDictionary<string, int> Counts,
+	// How this instance was created (builtin|template|instance) — informational; may be null
+	// for rows written before the field was recorded.
+	string? Source = null,
+	string? SourceKey = null);
+
+// Ack of instance create/close: the instance name, whether this call changed state, and
+// the boards that were provisioned (create) or closed (close).
+public sealed record MethodologyInstanceAck(
+	string Name,
+	bool Changed,
+	bool Closed,
+	IReadOnlyList<MethodologyInstanceBoard> Boards,
+	long Version = 0);
+
 // The runtime-derived agent guide to a project's process (tasks_methodology_guide, spec
 // artifacts-from-definition): markdown prose + the structured invariants it was derived
 // from (the machine-readable form — no markdown re-parsing downstream). `Source` says

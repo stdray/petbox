@@ -40,6 +40,10 @@ public sealed partial class MethodologyTemplateService
 
 	readonly ITaskBoardStore _boards;
 	readonly MethodologyDefinitionService _defs;
+	// Optional instance-rules resolver (wired by TasksService after MethodologyInstanceService
+	// is constructed — breaks the circular collaborator dependency). Null until bound →
+	// instance:<key> snapshot still rejects with a clear message.
+	Func<string, string, CancellationToken, Task<MethodologyDefinition?>>? _instanceRules;
 
 	static readonly MethodologyDefinitionValidator DefinitionValidator = new();
 
@@ -52,11 +56,19 @@ public sealed partial class MethodologyTemplateService
 	[GeneratedRegex(@"^[a-z][a-z0-9_-]{0,99}$")]
 	private static partial Regex SlugRegex();
 
-	public MethodologyTemplateService(ITaskBoardStore boards, MethodologyDefinitionService defs)
+	public MethodologyTemplateService(
+		ITaskBoardStore boards,
+		MethodologyDefinitionService defs,
+		Func<string, string, CancellationToken, Task<MethodologyDefinition?>>? instanceRules = null)
 	{
 		_boards = boards;
 		_defs = defs;
+		_instanceRules = instanceRules;
 	}
+
+	// Late-bind the instance rules resolver (TasksService constructs templates first).
+	public void BindInstanceRules(Func<string, string, CancellationToken, Task<MethodologyDefinition?>> resolver) =>
+		_instanceRules = resolver;
 
 	public async Task<IReadOnlyList<MethodologyTemplateListItem>> ListAsync(string projectKey, CancellationToken ct = default)
 	{
@@ -199,12 +211,10 @@ public sealed partial class MethodologyTemplateService
 	}
 
 	// Snapshot current effective project rules (or an explicit source) into a named template.
-	// INTERIM (until methodology-instance-core): there is no instance entity yet, so
 	//   - from null / "effective" → singleton definition if present, else builtin "quartet"
-	//     (the default provisioning preset — stands in for "resolved preset rules")
 	//   - from "preset:<slug>" or a bare builtin slug → that builtin template document
-	//   - from "instance:<key>" → rejected until instance entity lands (API shape reserved)
-	// Never mutates the source (def / boards / future instance).
+	//   - from "instance:<key>" → the named instance's rules (methodology-instance-core)
+	// Never mutates the source (def / boards / instance).
 	public async Task<MethodologyTemplateAck> SnapshotAsync(
 		string projectKey, string key, long version, string? from = null, CancellationToken ct = default)
 	{
@@ -218,16 +228,23 @@ public sealed partial class MethodologyTemplateService
 		if (raw.Length == 0 || string.Equals(raw, "effective", StringComparison.OrdinalIgnoreCase))
 		{
 			// Effective project rules: stored singleton def wins; else the default
-			// provisioning preset as a copyable document (interim stand-in for "the process
-			// this project would enable" — not a merge of every preset kind).
+			// provisioning preset as a copyable document.
 			var legacy = await _defs.GetAsync(projectKey, ct);
 			return legacy?.Definition ?? MethodologyPresets.RenderBuiltinTemplate(MethodologyPresets.DefaultProvisioningPreset);
 		}
 
-		// instance:<key> reserved for methodology-instance-core — keep the wire shape stable.
+		// instance:<key> — snapshot the named instance's rules (closed instances allowed).
 		if (raw.StartsWith("instance:", StringComparison.OrdinalIgnoreCase))
-			throw new ArgumentException(
-				"snapshot from=instance:<key> is not available yet (methodology instance entity lands with methodology-instance-core); use from=effective (default) or from=preset:quartet|classic|simple");
+		{
+			var instKey = raw["instance:".Length..].Trim();
+			if (instKey.Length == 0)
+				throw new ArgumentException("snapshot from=instance:<key> requires a non-empty instance name");
+			if (_instanceRules is null)
+				throw new InvalidOperationException("instance rules resolver is not bound");
+			var def = await _instanceRules(projectKey, instKey, ct)
+				?? throw new ArgumentException($"methodology instance '{instKey}' not found — cannot snapshot");
+			return def;
+		}
 
 		// preset:<slug> or bare builtin slug.
 		var slug = raw.StartsWith("preset:", StringComparison.OrdinalIgnoreCase)
@@ -237,7 +254,7 @@ public sealed partial class MethodologyTemplateService
 			return MethodologyPresets.RenderBuiltinTemplate(slug);
 
 		throw new ArgumentException(
-			$"unknown methodology template snapshot source '{from}' — use effective (default), preset:quartet|classic|simple, or (later) instance:<key>");
+			$"unknown methodology template snapshot source '{from}' — use effective (default), preset:quartet|classic|simple, or instance:<key>");
 	}
 
 	static MethodologyDefinition Deserialize(string projectKey, MethodologyTemplateRow row) =>

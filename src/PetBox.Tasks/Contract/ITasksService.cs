@@ -21,7 +21,13 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// --- board lifecycle ---
 
 	// Create a board, validating the spec link first. Returns the new metadata row.
-	Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, CancellationToken ct = default);
+	// `methodologyInstance` is required when the project already has any methodology
+	// instance (board membership exactly-one); omitted only for legacy pre-instance
+	// projects. Process-role singleton is enforced inside the instance.
+	Task<TaskBoardMeta> CreateBoardAsync(string projectKey, string board, string? kind, string? description, string? specBoard, string? methodologyInstance = null, CancellationToken ct = default);
+	// Move/adopt a board into a (different) open methodology instance. Enforces
+	// process-role singleton inside the target instance.
+	Task<TaskBoardMeta> AdoptBoardAsync(string projectKey, string board, string methodologyInstance, CancellationToken ct = default);
 	// Set (or clear, when specBoard is null/empty) a work board's spec board. Returns
 	// whether the row changed and the normalized spec board value.
 	Task<(bool Set, string? SpecBoard)> SetSpecBoardAsync(string projectKey, string board, string? specBoard, CancellationToken ct = default);
@@ -104,9 +110,19 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	Task<IReadOnlyList<MethodologyTemplateListItem>> ListMethodologyTemplatesAsync(string projectKey, CancellationToken ct = default);
 	// Snapshot source rules into a named template (write-only of the template; source is
 	// never mutated). `from`: null/"effective" = singleton def if present else builtin
-	// quartet (interim until instance entity); "preset:quartet|classic|simple" (or bare
-	// builtin slug); "instance:<key>" reserved — rejected until methodology-instance-core.
+	// quartet; "preset:quartet|classic|simple" (or bare builtin slug); "instance:<key>" =
+	// snapshot the named instance's rules.
 	Task<MethodologyTemplateAck> SnapshotMethodologyTemplateAsync(string projectKey, string key, long version, string? from = null, CancellationToken ct = default);
+
+	// --- methodology instances (named live process automata) ---
+	// create from explicit source (builtin|template|instance) → rules + boards in one act.
+	// list/get = compact index (identity, boards, status, summary; no node bodies).
+	// close = close instance + all member boards (history readable, no new work).
+
+	Task<MethodologyInstanceAck> CreateMethodologyInstanceAsync(string projectKey, string name, string source, string sourceKey, CancellationToken ct = default);
+	Task<IReadOnlyList<MethodologyInstanceView>> ListMethodologyInstancesAsync(string projectKey, CancellationToken ct = default);
+	Task<MethodologyInstanceView?> GetMethodologyInstanceAsync(string projectKey, string name, CancellationToken ct = default);
+	Task<MethodologyInstanceAck> CloseMethodologyInstanceAsync(string projectKey, string name, CancellationToken ct = default);
 
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);

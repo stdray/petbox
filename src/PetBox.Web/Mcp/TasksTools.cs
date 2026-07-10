@@ -20,16 +20,33 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition declares via tasks_methodology_def_upsert). Does not store a methodology definition and does not provision a full preset (that is tasks_methodology_def_upsert / tasks_methodology_enable). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
+	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition / instance rules declare). Does not store a methodology definition and does not provision a full preset (that is tasks_methodology_create / tasks_methodology_enable). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the instance this board belongs to (required once the project has any methodology instance — board_create without an instance is then rejected). `specBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null, CancellationToken ct = default)
+		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null,
+		[Description("Methodology instance this board belongs to (required when the project has any instance).")] string? methodologyInstance = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, specBoard, ct);
-		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.SpecBoard, meta.CreatedAt);
+		var meta = await tasks.CreateBoardAsync(projectKey, board, kind, description, specBoard, methodologyInstance, ct);
+		return new BoardCreatedResult(meta.ProjectKey, meta.Name, meta.Kind, meta.Description, meta.SpecBoard, meta.CreatedAt, meta.MethodologyInstance);
+	}
+
+	[McpServerTool(Name = "tasks_board_adopt", Title = "Adopt/move a board into a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(BoardAdoptResult))]
+	[Description("Move (adopt) an existing board into a methodology instance. Enforces process-role singleton (≤1 open board per process-role kind) INSIDE the target instance. The target instance must be open. Requires tasks:write.")]
+	public static async Task<BoardAdoptResult> BoardAdoptAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, string board,
+		[Description("Target methodology instance name.")] string methodologyInstance,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var meta = await tasks.AdoptBoardAsync(projectKey, board, methodologyInstance, ct);
+		return new BoardAdoptResult(meta.Name, meta.Kind, meta.MethodologyInstance);
 	}
 
 	[McpServerTool(Name = "tasks_board_set_spec", Title = "Set a work board's spec board", UseStructuredContent = true, OutputSchemaType = typeof(BoardSetSpecResult))]
@@ -55,7 +72,7 @@ public static class TasksTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var list = await tasks.ListBoardsAsync(projectKey, ct);
-		return new BoardListResult(list.Select(b => new BoardRow(b.Name, b.Kind, b.Description, b.SpecBoard, b.CreatedAt, b.ClosedAt != null)).ToList());
+		return new BoardListResult(list.Select(b => new BoardRow(b.Name, b.Kind, b.Description, b.SpecBoard, b.CreatedAt, b.ClosedAt != null, b.MethodologyInstance)).ToList());
 	}
 
 	[McpServerTool(Name = "tasks_board_delete", Title = "Delete a task board", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(BoardDeletedResult))]
@@ -96,26 +113,15 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_methodology_enable", Title = "Enable a methodology preset", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyEnableResult))]
 	[Description("""
-		PROVISION a methodology PRESET AND its board(s) if missing (and, for quartet only,
-		auto-wire work->spec). This is the enable/provision step — it creates the boards the
-		preset needs. It is NOT tasks_methodology_def_upsert (that stores a user-defined
-		DEFINITION document only and creates no boards). `preset` selects which board kind(s)
-		to create (default "quartet" = intake/ideas/spec/work — one-per-project singletons;
-		"classic" = one standalone classic board (task|feature|bug), NOT a singleton — an
-		unknown slug is rejected naming the available presets). Idempotent for the quartet; a
-		rerun on a non-singleton preset leaves its existing board(s) alone (use
-		tasks_board_create with the preset's kind for another one). Opt-in — a project's
-		methodology lives on these boards, ad-hoc work stays on simple boards. Requires
-		tasks:write.
+		COMPAT: provision a methodology PRESET as a named INSTANCE (name = preset slug) AND
+		its board(s) if missing (and, for quartet, auto-wire work->spec within the instance).
+		Prefer tasks_methodology_create (explicit source, free instance name) for new work.
+		`preset` selects which board kind(s) to create (default "quartet"; "classic" = one
+		classic board). Idempotent. Requires tasks:write.
 
-		Returns what THIS CALL's preset provisioned — NOT the methodology quartet index
-		(call tasks_methodology_get for that; irrelevant when `preset` isn't "quartet"):
-		`preset` (the resolved slug) and `boards[]`, one row per kind the preset declares —
-		`kind`, `name` (the board now serving that kind; null only if another board already
-		owns that name and nothing could be provisioned), `created` (false on an idempotent
-		rerun, or when nothing was created), `counts` (a status histogram, like
-		tasks_methodology_get's board rows — no node dump), and `workflow` (the kind's FSM
-		blocks, the tasks_workflow shape) so the response is self-contained.
+		Returns what THIS CALL's preset provisioned — NOT the quartet index
+		(call tasks_methodology_get for that): `preset` and `boards[]` with kind/name/
+		created/counts/workflow.
 		""")]
 	public static async Task<MethodologyEnableResult> MethodologyEnableAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -128,6 +134,103 @@ public static class TasksTools
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return await tasks.EnableMethodologyAsync(projectKey, preset ?? MethodologyPresets.DefaultProvisioningPreset, ct);
 	}
+
+	// ---- methodology instances (named live process automata) ----
+	// Plan names: create / list / get / close. tasks_methodology_get stays the LEGACY
+	// quartet index (compat); instance get is tasks_methodology_instance_get (transitional
+	// name documented here — plan name is get(name)).
+
+	[McpServerTool(Name = "tasks_methodology_create", Title = "Create a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceCreateResult))]
+	[Description("""
+		Create a NAMED methodology INSTANCE in one act from an EXPLICIT source — no silent
+		quartet default. Sources: `builtin` (sourceKey = quartet|classic|simple), `template`
+		(sourceKey = stored/builtin template key), `instance` (sourceKey = existing instance
+		name — snapshot its rules). Provisions instance rules + one board per kind in the
+		source definition; process-role singleton applies INSIDE the new instance (a second
+		instance may reuse the same process-role kinds). Template write alone never creates
+		boards — only this call does. Requires tasks:write.
+		""")]
+	public static async Task<MethodologyInstanceCreateResult> MethodologyCreateAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Instance name (slug ^[a-z][a-z0-9_-]{0,99}$).")] string name,
+		[Description("Source kind: builtin | template | instance.")] string source,
+		[Description("Source key: builtin slug, template key, or source instance name.")] string sourceKey,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var ack = await tasks.CreateMethodologyInstanceAsync(projectKey, name, source, sourceKey, ct);
+		return new MethodologyInstanceCreateResult(
+			ack.Name, ack.Changed, ack.Closed, ack.Version,
+			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList());
+	}
+
+	[McpServerTool(Name = "tasks_methodology_list", Title = "List methodology instances", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceListResult))]
+	[Description("""
+		List methodology INSTANCES in the project as a compact INDEX: name, closed, kinds,
+		boards (name/kind/closed/specBoard), status histogram counts — no node bodies.
+		Requires tasks:read.
+		""")]
+	public static async Task<MethodologyInstanceListResult> MethodologyListAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var items = await tasks.ListMethodologyInstancesAsync(projectKey, ct);
+		return new MethodologyInstanceListResult(items.Select(ProjectInstance).ToList());
+	}
+
+	[McpServerTool(Name = "tasks_methodology_instance_get", Title = "Get a methodology instance", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceGetResult))]
+	[Description("""
+		Return ONE methodology INSTANCE by name as a compact INDEX (identity, boards,
+		status, computed summary — no node bodies). Plan name is get(name); this tool is
+		tasks_methodology_instance_get because tasks_methodology_get remains the legacy
+		quartet index. Found=false on miss (not an error). Requires tasks:read.
+		""")]
+	public static async Task<MethodologyInstanceGetResult> MethodologyInstanceGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Instance name (slug).")] string name,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var view = await tasks.GetMethodologyInstanceAsync(projectKey, name, ct);
+		if (view is null)
+			return new MethodologyInstanceGetResult(Found: false, Name: name);
+		return new MethodologyInstanceGetResult(Found: true, Instance: ProjectInstance(view));
+	}
+
+	[McpServerTool(Name = "tasks_methodology_close", Title = "Close a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceCloseResult))]
+	[Description("""
+		Close a NAMED methodology INSTANCE whole: marks the instance closed and closes every
+		member board. Closed boards stay readable (history/search) but reject new writes.
+		Idempotent when already closed. Requires tasks:write.
+		""")]
+	public static async Task<MethodologyInstanceCloseResult> MethodologyCloseAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Instance name (slug) to close.")] string name,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var ack = await tasks.CloseMethodologyInstanceAsync(projectKey, name, ct);
+		return new MethodologyInstanceCloseResult(
+			ack.Name, ack.Changed, ack.Closed, ack.Version,
+			ack.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList());
+	}
+
+	static MethodologyInstanceViewResult ProjectInstance(MethodologyInstanceView v) => new(
+		v.Name, v.Closed, v.Version, v.Created, v.Updated, v.ClosedAt, v.DefinitionName, v.Kinds,
+		v.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList(),
+		v.Counts);
 
 	[McpServerTool(Name = "tasks_methodology_get", Title = "Get the methodology quartet", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
 	[Description("""
@@ -425,22 +528,20 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_methodology_template_snapshot", Title = "Snapshot rules into a named methodology template", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateUpsertResult))]
 	[Description("""
-		Snapshot process rules into a NAMED TEMPLATE without mutating the source. INTERIM
-		(until methodology-instance-core lands instance entities): `from` defaults to
-		"effective" = the project's singleton methodology definition if present, else the
-		builtin quartet document (stand-in for resolved preset rules). Explicit sources:
-		"preset:quartet|classic|simple" (or the bare builtin slug); "instance:<key>" is
-		RESERVED for the future instance snapshot and currently rejected with a clear
-		message. Write is template-only — no boards created, no live nodes rewritten, no
-		methodology_defs mutation. `key`/`version` same watermark posture as template_upsert.
-		Requires tasks:write.
+		Snapshot process rules into a NAMED TEMPLATE without mutating the source. `from`
+		defaults to "effective" = the project's singleton methodology definition if present,
+		else the builtin quartet document. Explicit sources: "preset:quartet|classic|simple"
+		(or the bare builtin slug); "instance:<key>" = the named instance's rules
+		(methodology-instance-core). Write is template-only — no boards created, no live
+		nodes rewritten, no methodology_defs mutation. `key`/`version` same watermark
+		posture as template_upsert. Requires tasks:write.
 		""")]
 	public static async Task<MethodologyTemplateUpsertResult> MethodologyTemplateSnapshotAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("Destination template slug key (not a builtin name).")] string key,
 		[Description("Watermark baseline for the destination template; 0 = create.")] long version = 0,
-		[Description("Source: effective (default), preset:quartet|classic|simple, or (later) instance:<key>.")] string? from = null,
+		[Description("Source: effective (default), preset:quartet|classic|simple, or instance:<key>.")] string? from = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
