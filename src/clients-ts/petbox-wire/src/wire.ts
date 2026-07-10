@@ -291,15 +291,14 @@ function runDoctor(argv: string[]): void {
 }
 
 // apply — compile per-harness artifacts (distinct from update kit-copy).
-// Writes agent role files per harness under project root.
 // Definition source: server fetch when registry resolves cwd; else offline default.
 //
-// Per harness (definition-truthfulness + wiring-startup-symmetry):
-//   - violations → refuse writes for THAT harness only (loud), keep going for others
-//   - clean plan → write files
-// Exit 1 if any harness failed; exit 0 only when every known harness accepted the
-// definition. Offline still produces artifacts for harnesses the definition fits
-// (e.g. default roster writes CC+opencode; droid fails honestly).
+// Per role × harness (definition-truthfulness + wiring-startup-symmetry):
+//   - dirty roles → skip + report (never silent); clean roles still written
+// Exit codes (structured signal — do not conflate partial truthfulness block with crash):
+//   0 — full success: every known harness wrote all its roles, no skips
+//   2 — partial: at least one role/harness blocked by truthfulness; some files may be written
+//   1 — hard failure: invalid args / definition validation / unexpected error
 async function runApply(argv: string[]): Promise<void> {
   let definitionKey = DEFAULT_DEFINITION_KEY;
   let offline = false;
@@ -328,12 +327,18 @@ async function runApply(argv: string[]): Promise<void> {
   }
 
   const { root, via } = resolveApplyRoot(process.cwd());
-  const definition = await resolveApplyDefinition({
-    offline,
-    definitionKey,
-    cwd: process.cwd(),
-  });
-  validateAgentDefinition(definition);
+  let definition;
+  try {
+    definition = await resolveApplyDefinition({
+      offline,
+      definitionKey,
+      cwd: process.cwd(),
+    });
+    validateAgentDefinition(definition);
+  } catch (e) {
+    console.error(`apply: hard failure — ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(1);
+  }
 
   const rolesData = loadRoles();
   log(`apply: root=${root} (via ${via})`);
@@ -341,16 +346,12 @@ async function runApply(argv: string[]): Promise<void> {
 
   let written = 0;
   const writtenHarnesses: string[] = [];
-  const failedHarnesses: string[] = [];
+  const partialHarnesses: string[] = [];
+  const blockedHarnesses: string[] = [];
   for (const harness of HARNESS_IDS) {
-    // Canonical agent ids: claude-code, opencode, droid (roles.ts aliases resolve).
     const roleModels = resolveAgentRoles(rolesData, harness);
     const plan = planApply(definition, harness, roleModels);
-    if (plan.violations.length > 0) {
-      console.error(formatApplyBlocked(plan.violations, plan.harness));
-      failedHarnesses.push(plan.harness);
-      continue;
-    }
+
     for (const file of plan.files) {
       const abs = join(root, file.relativePath);
       mkdirSync(dirname(abs), { recursive: true });
@@ -358,22 +359,40 @@ async function runApply(argv: string[]): Promise<void> {
       log(`apply: wrote ${abs}`);
       written++;
     }
-    if (plan.files.length > 0) writtenHarnesses.push(plan.harness);
+
+    if (plan.violations.length > 0) {
+      console.error(formatApplyBlocked(plan.violations, plan.harness, plan.skippedRoles));
+      if (plan.files.length > 0) partialHarnesses.push(plan.harness);
+      else blockedHarnesses.push(plan.harness);
+    } else if (plan.files.length > 0) {
+      writtenHarnesses.push(plan.harness);
+    }
   }
 
+  // Structured summary (machine-readable-ish one line + human detail above).
+  const summary = {
+    writtenFiles: written,
+    writtenHarnesses,
+    partialHarnesses,
+    blockedHarnesses,
+  };
   log(
-    `apply: wrote ${written} agent file(s) for harness(es): ${writtenHarnesses.join(", ") || "(none)"}` +
-      (failedHarnesses.length
-        ? `; blocked: ${failedHarnesses.join(", ")}`
-        : ""),
+    `apply: result written=${written} ` +
+      `ok=[${writtenHarnesses.join(",")}] ` +
+      `partial=[${partialHarnesses.join(",")}] ` +
+      `blocked=[${blockedHarnesses.join(",")}]`,
   );
-  if (failedHarnesses.length > 0) {
-    console.error(
-      `apply: FAILED for harness(es): ${failedHarnesses.join(", ")} — definition not truth-clean there.`,
-    );
-    process.exit(1);
+
+  const hadTruthfulnessBlock = partialHarnesses.length > 0 || blockedHarnesses.length > 0;
+  if (!hadTruthfulnessBlock) {
+    log("apply: done — all known harnesses accepted every role.");
+    process.exit(0);
   }
-  log("apply: done — all known harnesses accepted the definition.");
+  // Exit 2 = expected truthfulness partial/full block (CI must not treat as hard crash).
+  console.error(
+    `apply: truthfulness partial — some roles/harnesses blocked (exit 2). ${JSON.stringify(summary)}`,
+  );
+  process.exit(2);
 }
 
 // Pick server definition when possible; always fall back to DEFAULT_AGENT_DEFINITION.
