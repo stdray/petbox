@@ -32,6 +32,8 @@
 //        - .claude/skills/petbox/SKILL.md    (Claude Code skill; opencode reads it via its
 //                                             Claude-compatible skills discovery path)
 //        - .factory/skills/petbox/SKILL.md   (Factory Droid skill)
+//        - .claude/skills/petbox-agent-factory/SKILL.md  (on-demand factory skill)
+//        - .factory/skills/petbox-agent-factory/SKILL.md
 //    8. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files);
 //       all links point at the stable copy (~/.petbox/wire/). (--prompt-rag) additionally installs
 //       the OPT-IN Claude Code UserPromptSubmit prompt-RAG hook (off by default; safe exact-match
@@ -540,7 +542,7 @@ type CopyKitResult = { before: string; after: string; skipped: boolean };
 // Copy the running kit (HERE — an npx cache dir or a checkout's src/) into the stable location
 // (~/.petbox/wire/), overwriting. Every global hook/plugin link is computed from STABLE, so the
 // wiring keeps working after npx evicts its cache or a checkout moves. Copies the whole src dir
-// (all .ts files + templates/SKILL.md). No-op when already running the installed copy.
+// (all .ts files + templates/). No-op when already running the installed copy.
 // `label` prefixes log lines (full wire uses "[5/10]"; `update` uses "update").
 function copyKitToStable(label: string = "[5/10]"): CopyKitResult {
   const before = kitFingerprint(STABLE);
@@ -730,6 +732,15 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
     const skillPath = join(dir, ...surface, "petbox", "SKILL.md");
     mkdirSync(dirname(skillPath), { recursive: true });
     writeFileSync(skillPath, skill, "utf8");
+    log(`[7/10] wrote ${skillPath}`);
+  }
+
+  // Agent-factory skill — on-demand procedure (no project placeholders). Same surfaces as petbox.
+  const factoryTpl = readFileSync(join(HERE, "templates", "agent-factory", "SKILL.md"), "utf8");
+  for (const surface of SKILL_SURFACES) {
+    const skillPath = join(dir, ...surface, "petbox-agent-factory", "SKILL.md");
+    mkdirSync(dirname(skillPath), { recursive: true });
+    writeFileSync(skillPath, factoryTpl, "utf8");
     log(`[7/10] wrote ${skillPath}`);
   }
 }
