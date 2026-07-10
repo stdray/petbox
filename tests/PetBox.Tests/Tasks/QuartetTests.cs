@@ -181,10 +181,11 @@ public sealed class QuartetTests : IDisposable
 	{
 		var http = Http("tasks:read,tasks:write");
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "spec", "spec");
-		// A 2nd spec board is rejected (one-per-project); GuardAsync is not on board_create,
+		// A 2nd open process-role board is rejected (one-per-instance; legacy unassigned
+		// boards share the null-membership bucket). GuardAsync is not on board_create,
 		// so the service throws — assert the message via the service directly.
 		var act = () => _tasks.CreateBoardAsync(Proj, "spec2", "spec", null, null);
-		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*one-per-project*");
+		(await act.Should().ThrowAsync<ArgumentException>()).WithMessage("*one-per-instance*");
 	}
 
 	[Fact]
