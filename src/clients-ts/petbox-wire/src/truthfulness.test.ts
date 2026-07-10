@@ -17,31 +17,36 @@ import {
 import { HARNESS_IDS, harnessCapabilities, hasCapability } from "./harness-capabilities.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 
-test("claude-code declares mcp_main_session and dynamic_model_at_spawn, not mcp_subagent", () => {
+test("claude-code declares role_files + spawn_subagents; still no mcp_subagent", () => {
   const caps = harnessCapabilities("claude-code");
   assert.equal(caps.has("mcp_main_session"), true);
   assert.equal(caps.has("dynamic_model_at_spawn"), true);
   assert.equal(caps.has("builtin_explore_inherits_model"), true);
   assert.equal(caps.has("hooks"), true);
+  assert.equal(caps.has("role_files"), true);
+  assert.equal(caps.has("spawn_subagents"), true);
   assert.equal(caps.has("mcp_subagent"), false);
-  assert.equal(caps.has("role_files"), false);
 });
 
-test("opencode declares role_files + mcp_subagent, not dynamic_model_at_spawn", () => {
+test("opencode declares role_files + mcp_subagent + spawn_subagents, not dynamic_model_at_spawn", () => {
   const caps = harnessCapabilities("opencode");
   assert.equal(caps.has("role_files"), true);
   assert.equal(caps.has("mcp_subagent"), true);
   assert.equal(caps.has("builtin_explore_inherits_model"), true);
+  assert.equal(caps.has("spawn_subagents"), true);
   assert.equal(caps.has("dynamic_model_at_spawn"), false);
 });
 
-test("droid declares hooks + mcp_main_session (gated surface)", () => {
+test("droid declares only hooks — no unconditional mcp_main_session", () => {
   assert.equal(hasCapability("droid", "hooks"), true);
-  assert.equal(hasCapability("droid", "mcp_main_session"), true);
+  assert.equal(hasCapability("droid", "mcp_main_session"), false);
+  assert.equal(hasCapability("droid", "spawn_subagents"), false);
   assert.equal(hasCapability("droid", "dynamic_model_at_spawn"), false);
+  const caps = harnessCapabilities("droid");
+  assert.deepEqual([...caps], ["hooks"]);
 });
 
-test("role requiring mcp_subagent on claude-code → violation", () => {
+test("constructed def requiring missing cap fails with role+capability+harness in message", () => {
   const def: AgentDefinition = {
     name: "t",
     roles: [
@@ -59,7 +64,31 @@ test("role requiring mcp_subagent on claude-code → violation", () => {
     capability: "mcp_subagent",
     harness: "claude-code",
   });
-  assert.match(formatViolations(v), /mcp_subagent/);
+  const msg = formatViolations(v);
+  assert.match(msg, /worker/);
+  assert.match(msg, /mcp_subagent/);
+  assert.match(msg, /claude-code/);
+});
+
+test("orchestrator spawn.allowed implies spawn_subagents violation on droid", () => {
+  const def: AgentDefinition = {
+    name: "t",
+    roles: [
+      {
+        slug: "orchestrator",
+        tier: "orchestrator",
+        // spawn.allowed alone is enough — spawn_subagents is implicit
+        requiredCapabilities: [],
+        spawn: { allowed: true, allowedRoles: ["worker"] },
+      },
+    ],
+  };
+  const v = checkTruthfulness(def, "droid");
+  assert.ok(v.some((x) => x.role === "orchestrator" && x.capability === "spawn_subagents"));
+  assert.match(formatViolations(v), /spawn_subagents/);
+  assert.match(formatViolations(v), /droid/);
+  // claude-code declares spawn_subagents → clean for this minimal def
+  assert.deepEqual(checkTruthfulness(def, "claude-code"), []);
 });
 
 test("role only needing declared caps → ok (empty violations)", () => {
@@ -74,15 +103,30 @@ test("role only needing declared caps → ok (empty violations)", () => {
     ],
   };
   assert.deepEqual(checkTruthfulness(def, "claude-code"), []);
-  assert.deepEqual(checkTruthfulness(def, "droid"), []);
+  // droid lacks mcp_main_session
+  const droidV = checkTruthfulness(def, "droid");
+  assert.ok(droidV.some((x) => x.capability === "mcp_main_session"));
 });
 
-test("default definition is truth-clean on every known harness", () => {
+test("default definition fails droid (no spawn_subagents / mcp_main_session) — intentional honesty", () => {
   validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
-  for (const h of HARNESS_IDS) {
+  // Harnesses with spawn + mcp (claude-code, opencode) pass.
+  for (const h of ["claude-code", "opencode"] as const) {
     const v = checkTruthfulness(DEFAULT_AGENT_DEFINITION, h);
-    assert.deepEqual(v, [], `default definition must pass on ${h}: ${formatViolations(v)}`);
+    assert.deepEqual(v, [], `default must pass on ${h}: ${formatViolations(v)}`);
   }
+  // droid lacks spawn_subagents and mcp_main_session → DEFAULT fails (not a silent pass).
+  const droidV = checkTruthfulness(DEFAULT_AGENT_DEFINITION, "droid");
+  assert.ok(droidV.length > 0, "default must fail truthfulness on droid");
+  assert.ok(
+    droidV.some((x) => x.capability === "spawn_subagents" && x.role === "orchestrator"),
+    `expected orchestrator/spawn_subagents on droid: ${formatViolations(droidV)}`,
+  );
+  assert.ok(
+    droidV.some((x) => x.capability === "mcp_main_session"),
+    `expected mcp_main_session violation on droid: ${formatViolations(droidV)}`,
+  );
+
   const explore = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "explore");
   assert.ok(explore, "default roster includes explore");
   assert.match(explore!.notes ?? "", /builtin_explore_inherits_model|inheritance/i);
@@ -90,6 +134,12 @@ test("default definition is truth-clean on every known harness", () => {
     !(explore!.notes ?? "").toLowerCase().includes("inheritance forbidden"),
     "explore notes must not claim inheritance forbidden",
   );
+
+  // Document: only harnesses missing spawn/mcp fail — not a blanket "all green" lie.
+  const failing = HARNESS_IDS.filter(
+    (h) => checkTruthfulness(DEFAULT_AGENT_DEFINITION, h).length > 0,
+  );
+  assert.deepEqual(failing, ["droid"]);
 });
 
 test("planOpencodeApply: bound model in frontmatter; unbound omits model", () => {
@@ -128,6 +178,8 @@ test("planOpencodeApply: violations block files and formatApplyBlocked is loud",
   const msg = formatApplyBlocked(plan.violations, "opencode");
   assert.match(msg, /refusing to write/);
   assert.match(msg, /dynamic_model_at_spawn/);
+  assert.match(msg, /worker/);
+  assert.match(msg, /opencode/);
 });
 
 test("renderOpencodeAgentMarkdown explore body does not forbid inheritance", () => {

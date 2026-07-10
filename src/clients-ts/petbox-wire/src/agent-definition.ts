@@ -45,8 +45,9 @@ export type AgentDefinition = {
  * Includes `explore` so the roster matches harnesses that ship a built-in explore
  * agent — with an explicit inheritance note (not a global "inheritance forbidden").
  *
- * requiredCapabilities stay minimal so the default passes the truthfulness gate on
- * every known harness; tighter caps belong on project-specific definitions.
+ * Caps are honest for the roles: orchestrator needs MCP + spawn_subagents.
+ * DEFAULT therefore fails truthfulness on harnesses that lack those (e.g. droid
+ * has neither mcp_main_session nor spawn_subagents) — intentional honesty, not a bug.
  */
 export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
   name: "default",
@@ -54,7 +55,7 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
     {
       slug: "orchestrator",
       tier: "orchestrator",
-      requiredCapabilities: ["mcp_main_session"],
+      requiredCapabilities: ["mcp_main_session", "spawn_subagents"],
       spawn: {
         allowed: true,
         allowedRoles: ["worker", "utility", "explore", "reserve"],

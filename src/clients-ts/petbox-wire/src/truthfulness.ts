@@ -8,7 +8,7 @@
 //
 // Plain TS for native node type-stripping: zero deps.
 
-import type { AgentDefinition } from "./agent-definition.ts";
+import type { AgentDefinition, AgentRole } from "./agent-definition.ts";
 import { harnessCapabilities } from "./harness-capabilities.ts";
 
 export type TruthfulnessViolation = {
@@ -16,6 +16,19 @@ export type TruthfulnessViolation = {
   readonly capability: string;
   readonly harness: string;
 };
+
+/**
+ * Effective required capabilities for a role.
+ * spawn.allowed === true implicitly requires spawn_subagents so spawn prose cannot
+ * bypass the capability gate by omitting it from requiredCapabilities.
+ */
+export function effectiveRequiredCapabilities(role: AgentRole): readonly string[] {
+  const caps = [...role.requiredCapabilities];
+  if (role.spawn?.allowed === true && !caps.includes("spawn_subagents")) {
+    caps.push("spawn_subagents");
+  }
+  return caps;
+}
 
 /**
  * Pure gate: definition + harness → violations (or empty).
@@ -28,7 +41,7 @@ export function checkTruthfulness(
   const caps = harnessCapabilities(harness);
   const out: TruthfulnessViolation[] = [];
   for (const role of definition.roles) {
-    for (const capability of role.requiredCapabilities) {
+    for (const capability of effectiveRequiredCapabilities(role)) {
       if (!caps.has(capability)) {
         out.push({ role: role.slug, capability, harness });
       }
