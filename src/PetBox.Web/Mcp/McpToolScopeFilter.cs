@@ -65,6 +65,7 @@ static class McpToolScopeFilter
 		: tool.StartsWith("log_", StringComparison.Ordinal) ? "logs"
 		: tool.StartsWith("data_", StringComparison.Ordinal) || tool.StartsWith("db_", StringComparison.Ordinal) ? "data"
 		: tool.StartsWith("deploy_", StringComparison.Ordinal) ? "deploy"
+		: tool.StartsWith("agent_def_", StringComparison.Ordinal) ? "agents"
 		: tool.StartsWith("config_", StringComparison.Ordinal) ? ApiKeyScopes.AdminProvision
 		: null; // project_* / apikey_* — provisioning-mixed (admin:provision shows ALL anyway), leave shown
 
