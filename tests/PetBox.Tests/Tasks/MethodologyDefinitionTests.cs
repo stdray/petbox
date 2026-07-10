@@ -4,11 +4,11 @@ using ModelContextProtocol.Protocol;
 
 namespace PetBox.Tests.Tasks;
 
-// The user-defined methodology DEFINITION surface (engine wave 1.1: storage + validation
-// + the tasks.methodology_def_* verbs), exercised end-to-end over MCP. The definition is
-// pure data in this slice — live boards still run the built-in presets —
-// so these tests cover the document round-trip, the optimistic-concurrency contract and
-// the whole-document integrity validation, not FSM behavior.
+// The methodology TEMPLATE surface (storage + validation + tasks_methodology_template_*),
+// exercised end-to-end over MCP. Templates are pure data — inert documents; live boards
+// come from tasks_methodology_create. These tests cover the document round-trip, the
+// optimistic-concurrency contract and the whole-document integrity validation, not FSM
+// behavior.
 public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefinitionFixture>, IAsyncLifetime
 {
 	const string ProjectKey = "mdef";
@@ -33,11 +33,13 @@ public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefini
 			.CallAsync(JsonSerializer.Deserialize<Dictionary<string, object?>>(JsonSerializer.Serialize(args))!
 				.ToDictionary(kv => kv.Key, kv => (object?)((JsonElement)kv.Value!)));
 
+	const string TemplateKey = "acme";
+
 	Task<CallToolResult> Upsert(object definition, long version = 0) =>
-		Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition, version });
+		Call("tasks_methodology_template_upsert", new { projectKey = ProjectKey, key = TemplateKey, definition, version });
 
 	Task<CallToolResult> Get() =>
-		Call("tasks_methodology_def_get", new { projectKey = ProjectKey });
+		Call("tasks_methodology_template_get", new { projectKey = ProjectKey, key = TemplateKey });
 
 	static string Text(CallToolResult r) =>
 		r.Content.OfType<TextContentBlock>().First().Text;
@@ -127,12 +129,11 @@ public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefini
 		var ack = Parse(up);
 		ack.GetProperty("version").GetInt64().Should().Be(1);
 		ack.GetProperty("changed").GetBoolean().Should().BeTrue();
-		// Surface honesty: def_upsert stores the document only — no boards yet → boardsOnKinds:0 + hint.
-		ack.GetProperty("boardsOnKinds").GetInt32().Should().Be(0);
-		ack.GetProperty("hint").GetString().Should().Contain("tasks_board_create");
+		ack.GetProperty("key").GetString().Should().Be(TemplateKey);
 
 		var got = Parse(await Get());
-		got.GetProperty("defined").GetBoolean().Should().BeTrue();
+		got.GetProperty("found").GetBoolean().Should().BeTrue();
+		got.GetProperty("source").GetString().Should().Be("stored");
 		got.GetProperty("name").GetString().Should().Be("acme-process");
 		got.GetProperty("version").GetInt64().Should().Be(1);
 
@@ -317,7 +318,7 @@ public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefini
 		resubmit.GetProperty("version").GetInt64().Should().Be(2);
 	}
 
-	// 3b. WATERMARK: test 3 already shows the `version` from methodology_def_get is the valid next
+	// 3b. WATERMARK: test 3 already shows the `version` from template_get is the valid next
 	// baseline. A baseline ABOVE the project's cursor is a FutureBaseline conflict whose message
 	// names BOTH version spaces — the classic symptom of a cursor carried from another project.
 	[Fact]
@@ -327,7 +328,7 @@ public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefini
 
 		var future = await Upsert(ValidDefinition(epicDoneName: "Delivered"), version: 99);
 		IsErr(future).Should().BeTrue(Text(future));
-		// The wire JSON escapes the apostrophe in "project's" as ' — assert around it.
+		// Template conflict names the template key + current cursor.
 		Text(future).Should().Contain("ahead of this project").And.Contain("cursor 1");
 	}
 
@@ -452,15 +453,14 @@ public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefini
 		Text(r).Should().Contain("is not a valid slug");
 	}
 
-	// 5. no definition stored → the structured "not defined" answer (built-in preset), not
-	// an error and not an empty object.
+	// 5. no template stored under this key → found:false (honest miss), not an error.
 	[Fact]
-	public async Task Get_NoDefinition_StructuredNotDefined()
+	public async Task Get_NoTemplate_FoundFalse()
 	{
 		var r = await Get();
 		IsErr(r).Should().BeFalse(Text(r));
 		var got = Parse(r);
-		got.GetProperty("defined").GetBoolean().Should().BeFalse();
-		got.GetProperty("preset").GetString().Should().Be("builtin-presets");
+		got.GetProperty("found").GetBoolean().Should().BeFalse();
+		got.GetProperty("key").GetString().Should().Be(TemplateKey);
 	}
 }

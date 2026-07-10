@@ -140,7 +140,7 @@ public sealed partial class TasksService : ITasksService
 		{
 			throw new ArgumentException(
 				$"unknown board kind '{kind}' — valid kinds: {string.Join("|", runtime.KnownKinds())}" +
-				" (a custom kind must first be declared via tasks_methodology_def_upsert or the instance's rules)");
+				" (a custom kind must first be declared on a methodology instance's rules — tasks_methodology_create or tasks_methodology_rules_upsert)");
 		}
 		await ValidateSpecBoardAsync(projectKey, canonical, specBoard, ct);
 		var meta = await _boards.CreateAsync(projectKey, board, description, canonical, specBoard, instanceName, ct);

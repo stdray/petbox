@@ -66,8 +66,8 @@ public sealed record PlanNodeInput
 	public bool Deleted { get; init; }
 }
 
-// The `definition` argument of tasks_methodology_def_upsert — the whole user-defined
-// methodology as a structured document (typed records, not a JSON string/blob, per the
+// The `definition` argument of tasks_methodology_template_upsert / rules_upsert — the whole
+// methodology document as a structured record (typed, not a JSON string/blob, per the
 // typed-surface convention). Mirrors MethodologyDefinition; the adapter maps it 1:1 and
 // the service validates integrity (slugs, per-block references, uniqueness).
 public sealed record MethodologyDefInput
@@ -174,7 +174,7 @@ public sealed record MethodologyTransitionInput
 	public string[]? Checklist { get; init; }
 }
 
-// One entry of the `migration` argument of tasks_methodology_def_upsert: declared value
+// One entry of the `migration` argument of tasks_methodology_rules_upsert: declared value
 // repairs for live nodes on boards of `kind` that a definition change would otherwise
 // strand. A mapping applies ONLY where a node's current value is invalid under the NEW
 // resolution — a valid value is never rewritten (declarative repair, not bulk rename).

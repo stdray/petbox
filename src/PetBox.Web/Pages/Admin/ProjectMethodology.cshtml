@@ -51,7 +51,7 @@
 						<span class="badge badge-neutral badge-sm font-mono" data-testid="methodology-state-kind">@k.Kind</span>
 					}
 				</div>
-				<p class="text-xs opacity-60 mt-1">Updated @Model.Stored.Updated.ToString("yyyy-MM-dd HH:mm") UTC. The document is exactly what <span class="font-mono">tasks_methodology_def_get</span> returns — it can be edited here or via MCP interchangeably.</p>
+				<p class="text-xs opacity-60 mt-1">Updated @Model.Stored.Updated.ToString("yyyy-MM-dd HH:mm") UTC. The document is the same shape as <span class="font-mono">tasks_methodology_template_get</span> / <span class="font-mono">tasks_methodology_rules_get</span> — it can be edited here or via MCP interchangeably.</p>
 				@if (Model.Mode == EditorMode.View)
 				{
 					<div class="card-actions mt-2 items-center">
@@ -189,7 +189,7 @@
 			<button type="submit" class="btn btn-sm" data-testid="methodology-template-load">Load preset as template</button>
 		</form>
 
-		@* The document editor: same JSON shape as tasks_methodology_def_get / def_upsert. *@
+		@* The document editor: same JSON shape as tasks_methodology_template_get / template_upsert. *@
 		<form method="post" class="max-w-4xl" data-testid="methodology-form">
 			@Html.AntiForgeryToken()
 			<input type="hidden" name="version" value="@Model.Version" />
@@ -218,7 +218,7 @@
 		<details class="collapse collapse-arrow bg-base-200 border border-base-300 mt-6 max-w-4xl" data-testid="methodology-reference">
 			<summary class="collapse-title font-semibold">Definition reference</summary>
 			<div class="collapse-content overflow-x-auto">
-				<p class="text-xs opacity-70 mb-2">Every entity of the definition document (the JSON above). Field names are the wire names — the same vocabulary <span class="font-mono">tasks_methodology_def_upsert</span> accepts.</p>
+				<p class="text-xs opacity-70 mb-2">Every entity of the methodology document (the JSON above). Field names are the wire names — the same vocabulary <span class="font-mono">tasks_methodology_template_upsert</span> / <span class="font-mono">tasks_methodology_rules_upsert</span> accept.</p>
 				@foreach (var entity in MethodologyReference.Entities)
 				{
 					<h3 class="font-mono font-semibold text-sm mt-3" data-testid="methodology-reference-entity">@entity.Name</h3>

@@ -422,11 +422,11 @@ public sealed class MethodologyInstanceTests : IDisposable
 		var list = await TasksTools.MethodologyListAsync(http, flags, _tasks, Proj);
 		list.Instances.Should().Contain(i => i.Name == "mcp-main");
 
-		var get = await TasksTools.MethodologyInstanceGetAsync(http, flags, _tasks, Proj, "mcp-main");
+		var get = await TasksTools.MethodologyGetAsync(http, flags, _tasks, Proj, "mcp-main");
 		get.Found.Should().BeTrue();
 		get.Instance!.Name.Should().Be("mcp-main");
 
-		var miss = await TasksTools.MethodologyInstanceGetAsync(http, flags, _tasks, Proj, "nope");
+		var miss = await TasksTools.MethodologyGetAsync(http, flags, _tasks, Proj, "nope");
 		miss.Found.Should().BeFalse();
 
 		var closed = await TasksTools.MethodologyCloseAsync(http, flags, _tasks, Proj, "mcp-main");

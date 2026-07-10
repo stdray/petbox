@@ -12,9 +12,11 @@ using PetBox.Web.Pages.ProjectHome;
 
 namespace PetBox.Web.Pages.Admin;
 
-// Create / view / edit / delete the project's METHODOLOGY DEFINITION — the human-facing
-// equivalent of the MCP tasks_methodology_def_* tools, sharing their wire shape
-// (MethodologyWire), so a document moves freely between this page and MCP.
+// Create / view / edit / delete the project's METHODOLOGY TEMPLATE document — the
+// human-facing editor for process rules (kinds/statuses/gates). Shares the wire shape
+// (MethodologyWire) with tasks_methodology_template_* / rules_* so a document moves
+// freely between this page and MCP. (Legacy path still loads the project singleton
+// definition; full retarget to named templates is deferred.)
 //
 // The page is a small state machine (Mode), NOT a SPA — plain Razor handlers + a `step`
 // query param for deep links:
@@ -84,7 +86,7 @@ public sealed class ProjectMethodologyModel : PageModel
 	// select keeps the user's choice instead of snapping to the first option.
 	public string? SelectedPreset { get; private set; }
 
-	// Textarea contents: the stored definition rendered as the def_get document (prefill), a
+	// Textarea contents: the stored definition rendered as the template document (prefill), a
 	// preset template, or the user's own JSON echoed back after a rejected save/preview.
 	public string DefinitionJson { get; private set; } = string.Empty;
 	public string MigrationJson { get; private set; } = string.Empty;
@@ -176,8 +178,8 @@ public sealed class ProjectMethodologyModel : PageModel
 		return Page();
 	}
 
-	// Fill the textarea with a builtin preset rendered as a definition document — the same
-	// template tasks_methodology_def_get returns for `preset:` — and preview it right away.
+	// Fill the textarea with a builtin template rendered as a definition document — the same
+	// document tasks_methodology_template_get returns for key=quartet|classic|simple — and preview it.
 	public async Task<IActionResult> OnPostLoadPresetAsync(string? preset, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();

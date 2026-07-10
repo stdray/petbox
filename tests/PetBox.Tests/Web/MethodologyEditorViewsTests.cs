@@ -26,7 +26,7 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 	const string TestPassword = "test123";
 	const string SystemUrl = "/ui/admin/ws/$system/projects/$system/methodology";
 
-	// A small valid definition document in the def_upsert wire shape (camelCase).
+	// A small valid methodology document in the template/rules wire shape (camelCase).
 	const string SmallDefinition =
 		"""
 		{"name":"custom","kinds":[{"kind":"job","quickAddAllowed":true,"workflows":[{

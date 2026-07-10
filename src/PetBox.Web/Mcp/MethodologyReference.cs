@@ -49,7 +49,7 @@ static class MethodologyReference
 	public static readonly IReadOnlyList<Entity> Entities =
 	[
 		Describe<MethodologyDefInput>(
-			"The document root — the same shape tasks_methodology_def_get returns and tasks_methodology_def_upsert accepts (extra envelope fields like defined/version are ignored on save).",
+			"The document root — the same shape tasks_methodology_template_get / tasks_methodology_rules_get return and template_upsert / rules_upsert accept (extra envelope fields like found/version are ignored on save).",
 			new()
 			{
 				["name"] = $"Methodology name, a {SlugSpec}.",

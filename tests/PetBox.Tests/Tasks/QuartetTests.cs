@@ -45,78 +45,54 @@ public sealed class QuartetTests : IDisposable
 	}
 
 	[Fact]
-	public async Task Enable_ProvisionsQuartet_AutoWires_AndIsIdempotent()
+	public async Task Create_BuiltinQuartet_ProvisionsBoards_AndAutoWires()
 	{
 		var http = Http("tasks:read,tasks:write");
-		var en = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
-		en.Preset.Should().Be("quartet");
+		var en = await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
+		en.Name.Should().Be("quartet");
+		en.Changed.Should().BeTrue();
 		en.Boards.Select(b => b.Kind)
 			.Should().Equal("intake", "ideas", "spec", "work"); // pipeline order
-		// methodology-enable-response-scope: the enable ack describes what THIS preset
-		// provisioned (created + its own workflow), not the quartet node dump.
-		en.Boards.Should().OnlyContain(b => b.Created && b.Name == b.Kind && b.Workflow.Count > 0);
+		en.Boards.Should().OnlyContain(b => b.Name == b.Kind && !b.Closed);
 
 		// work board auto-wired to the spec board.
 		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
 		var work = boards.Single(b => b.Kind == "work");
 		work.SpecBoard.Should().Be("spec");
+		work.MethodologyInstance.Should().Be("quartet");
 
-		// Idempotent: a rerun keeps exactly four methodology boards, and reports Created:false
-		// for every kind (already provisioned).
-		var again = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
-		again.Boards.Should().OnlyContain(b => !b.Created);
-		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards
-			.Count.Should().Be(4);
+		// Re-create of the same name is rejected (create is not enable-style idempotent).
+		var again = () => TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
+		(await again.Should().ThrowAsync<InvalidOperationException>()).WithMessage("*already exists*");
+		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(4);
 	}
 
-	// enable-preset-param: enable takes a `preset` (default "quartet"); passing the quartet
-	// explicitly provisions exactly what the default does.
+	// An unknown builtin sourceKey is rejected before any board is created.
 	[Fact]
-	public async Task Enable_ExplicitQuartetPreset_ProvisionsSameAsDefault()
+	public async Task Create_UnknownBuiltin_Rejected_ListingSlugs()
 	{
-		var http = Http("tasks:read,tasks:write");
-		var en = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "quartet");
-		en.Preset.Should().Be("quartet");
-		en.Boards.Select(b => b.Kind).Should().Equal("intake", "ideas", "spec", "work");
-	}
-
-	// An unknown preset slug is rejected before any board is created, naming the available
-	// slugs. (The MCP tool surfaces service errors, so assert the message on the service.)
-	[Fact]
-	public async Task Enable_UnknownPreset_Rejected_ListingSlugs()
-	{
-		var act = () => _tasks.EnableMethodologyAsync(Proj, "banana");
+		var act = () => _tasks.CreateMethodologyInstanceAsync(Proj, "x", "builtin", "banana");
 		(await act.Should().ThrowAsync<ArgumentException>())
-			.WithMessage("*unknown methodology preset 'banana'*")
-			.WithMessage("*quartet*");
+			.WithMessage("*banana*");
 	}
 
-	// preset-classic: enable with the `classic` preset provisions exactly one standalone
-	// classic board — no quartet, no auto-wire, and a rerun is idempotent.
+	// classic builtin: provisions exactly one standalone classic board — no quartet auto-wire.
 	[Fact]
-	public async Task Enable_ClassicPreset_ProvisionsOneClassicBoard()
+	public async Task Create_BuiltinClassic_ProvisionsOneClassicBoard()
 	{
 		var http = Http("tasks:read,tasks:write");
-		var en = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "classic");
-		// methodology-enable-response-scope: the ack names the CLASSIC board it provisioned +
-		// its workflow — not the (irrelevant, all-empty) quartet.
-		en.Preset.Should().Be("classic");
+		var en = await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "classic", "builtin", "classic");
+		en.Name.Should().Be("classic");
 		var reported = en.Boards.Should().ContainSingle().Subject;
 		reported.Kind.Should().Be("classic");
 		reported.Name.Should().Be("classic");
-		reported.Created.Should().BeTrue();
-		reported.Workflow.Should().ContainSingle().Which.Types.Should().Equal("task", "feature", "bug");
 
 		var boards = (await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards;
 		var classic = boards.Should().ContainSingle().Subject;
 		classic.Kind.Should().Be("classic");
 		classic.SpecBoard.Should().BeNull("classic is outside the spec/work auto-wire");
 
-		// Idempotent rerun; and classic is NOT a process-role singleton — more boards may be
-		// created on the same instance (membership required once any instance exists).
-		var again = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "classic");
-		again.Boards.Should().ContainSingle().Which.Created.Should().BeFalse("the classic kind is already provisioned");
-		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(1);
+		// classic is NOT a process-role singleton — more boards may be created on the same instance.
 		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "another", "classic",
 			methodologyInstance: "classic");
 		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(2);
@@ -133,7 +109,7 @@ public sealed class QuartetTests : IDisposable
 	public async Task Upsert_UntypedNode_MaterializesKindDefaultType(string preset, string board, string defaultType)
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: preset);
+		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, preset, "builtin", preset);
 		var nodes = McpInputs.NodesJson("""[{"key":"untyped-a","title":"A"}]"""); // no type, no status
 		var res = await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, board, nodes);
 
@@ -146,36 +122,35 @@ public sealed class QuartetTests : IDisposable
 		read.Node.Type.Should().Be(defaultType);
 	}
 
-	// Preset copy: def_get with `preset` renders the built-in preset as a COPYABLE definition
-	// template (Defined, version 0, no created/updated) in the SAME output shape as a stored
-	// definition — and that template is valid (installing it through the service, which runs
-	// MethodologyDefinitionValidator, succeeds).
+	// Builtin templates are copyable via template_get (source=builtin, version 0) and valid
+	// to install as a stored template (MethodologyDefinitionValidator via template_upsert).
 	[Fact]
-	public async Task MethodologyDefGet_PresetRender_IsValidCopyableTemplate()
+	public async Task MethodologyTemplateGet_Builtin_IsValidCopyableTemplate()
 	{
 		var http = Http("tasks:read,tasks:write");
 
-		var render = await TasksTools.MethodologyDefGetAsync(http, Flags(), _tasks, Proj, preset: "quartet");
-		render.Defined.Should().BeTrue();
+		var render = await TasksTools.MethodologyTemplateGetAsync(http, Flags(), _tasks, Proj, "quartet");
+		render.Found.Should().BeTrue();
+		render.Source.Should().Be("builtin");
 		render.Version.Should().Be(0);
 		render.Created.Should().BeNull();
 		render.Name.Should().Be("quartet");
 		render.Kinds!.Select(k => k.Kind).Should().Equal("intake", "ideas", "spec", "work");
 		render.TagAxes!.Select(a => a.Namespace).Should().Equal("area", "concern");
 
-		// The template is a VALID definition — install it via the service door (validates first).
-		var ack = await _tasks.DefineMethodologyAsync(Proj, MethodologyPresets.RenderPresetDefinition("quartet"), 0);
+		// The template is a VALID document — store a copy under a new key.
+		var ack = await _tasks.UpsertMethodologyTemplateAsync(Proj, "quartet-copy", MethodologyPresets.RenderPresetDefinition("quartet"), 0);
 		ack.Changed.Should().BeTrue();
 
-		// Without preset, def_get now reads the STORED definition (real version, not the template).
-		var stored = await TasksTools.MethodologyDefGetAsync(http, Flags(), _tasks, Proj);
-		stored.Defined.Should().BeTrue();
+		var stored = await TasksTools.MethodologyTemplateGetAsync(http, Flags(), _tasks, Proj, "quartet-copy");
+		stored.Found.Should().BeTrue();
+		stored.Source.Should().Be("stored");
 		stored.Name.Should().Be("quartet");
 		stored.Version.Should().BeGreaterThan(0);
 
-		// Unknown preset → clear error listing the available slugs.
-		var bad = () => TasksTools.MethodologyDefGetAsync(http, Flags(), _tasks, Proj, preset: "banana");
-		(await bad.Should().ThrowAsync<ArgumentException>()).WithMessage("*available presets*");
+		// Unknown key → found:false (not an error).
+		var miss = await TasksTools.MethodologyTemplateGetAsync(http, Flags(), _tasks, Proj, "banana");
+		miss.Found.Should().BeFalse();
 	}
 
 	[Fact]
@@ -200,11 +175,13 @@ public sealed class QuartetTests : IDisposable
 			.Count.Should().Be(2);
 	}
 
+	// Quartet compact index remains a service surface (GetMethodologyAsync); MCP
+	// tasks_methodology_get is now instance get(name). These tests pin the service index.
 	[Fact]
-	public async Task MethodologyGet_IsCompactIndex_WithBodyLen_AndBoardFilter()
+	public async Task QuartetIndex_IsCompact_WithBodyLen_AndBoardFilter()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 
 		var body = new string('x', 500);
 		var nodes = McpInputs.NodesJson(
@@ -213,7 +190,7 @@ public sealed class QuartetTests : IDisposable
 
 		// Default: an INDEX — the node carries tags/status/title but the body is sliced to null;
 		// the board exposes a status histogram.
-		var idx = await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj);
+		var idx = await _tasks.GetMethodologyAsync(Proj);
 		var ideas = idx.Boards.Single(b => b.Kind == "ideas");
 		ideas.Counts["raw"].Should().Be(1);
 		var nodeA = ideas.Nodes.Single(n => n.Key == "idea-a");
@@ -227,7 +204,7 @@ public sealed class QuartetTests : IDisposable
 		ideas.Omitted.Should().BeNull();
 
 		// bodyLen: the first N chars + "…" when cut.
-		var sliced = (await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, bodyLen: 300))
+		var sliced = (await _tasks.GetMethodologyAsync(Proj, bodyLen: 300))
 			.Boards.Single(b => b.Kind == "ideas")
 			.Nodes.Single(n => n.Key == "idea-a")
 			.Body!;
@@ -235,7 +212,7 @@ public sealed class QuartetTests : IDisposable
 		sliced.Should().EndWith("…");
 
 		// includeBoards: only the requested quartet boards, in pipeline order.
-		var only = await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, includeBoards: ["spec", "ideas"]);
+		var only = await _tasks.GetMethodologyAsync(Proj, includeBoards: ["spec", "ideas"]);
 		only.Boards.Select(b => b.Kind)
 			.Should().Equal("ideas", "spec");
 	}
@@ -244,10 +221,10 @@ public sealed class QuartetTests : IDisposable
 	// prefix-cut with STRUCTURAL markers (truncated/omitted per board + a narrowing hint on
 	// the view); the status histogram stays complete — the overview never lies about totals.
 	[Fact]
-	public async Task MethodologyGet_LargeBoard_CutsRowsWithMarkers_CountsStayComplete()
+	public async Task QuartetIndex_LargeBoard_CutsRowsWithMarkers_CountsStayComplete()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 
 		const int total = 150;
 		var title = new string('t', 200);
@@ -256,7 +233,7 @@ public sealed class QuartetTests : IDisposable
 			$$"""{"key":"idea-{{i}}","status":"raw","type":"idea","title":"{{title}}","body":"{{body}}"}"""));
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas", McpInputs.NodesJson($"[{rows}]"));
 
-		var idx = await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj);
+		var idx = await _tasks.GetMethodologyAsync(Proj);
 		var ideas = idx.Boards.Single(b => b.Kind == "ideas");
 
 		// Histogram is ALWAYS complete — the cheap essence of the overview.
@@ -273,7 +250,7 @@ public sealed class QuartetTests : IDisposable
 
 		// bodyLen keeps working under the budget: every INCLUDED row carries its slice
 		// ("…"-terminated), and fatter rows just mean fewer of them fit.
-		var sliced = (await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, bodyLen: 50))
+		var sliced = (await _tasks.GetMethodologyAsync(Proj, bodyLen: 50))
 			.Boards.Single(b => b.Kind == "ideas");
 		sliced.Truncated.Should().BeTrue();
 		sliced.Nodes.Should().OnlyContain(n => n.Body != null && n.Body.Length == 51 && n.Body.EndsWith('…'));
@@ -281,21 +258,21 @@ public sealed class QuartetTests : IDisposable
 	}
 
 	[Fact]
-	public async Task MethodologyGet_IncludeUrl_AddsAbsolutePermalink()
+	public async Task QuartetIndex_IncludeUrl_AddsAbsolutePermalink()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 		var nodes = McpInputs.NodesJson("""[{"key":"idea-u","status":"raw","type":"idea","title":"U"}]""");
 		await TasksTools.UpsertAsync(http, Flags(), _tasks, Proj, "ideas", nodes);
 
 		// off by default: url is null.
-		var off = (await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj))
+		var off = (await _tasks.GetMethodologyAsync(Proj))
 			.Boards.Single(b => b.Kind == "ideas")
 			.Nodes.Single(n => n.Key == "idea-u");
 		off.Url.Should().BeNull();
 
-		// includeUrl: canonical slug permalink = base + /ui/{ws}/{project}/tasks/{board}/{slug}.
-		var on = (await TasksTools.MethodologyGetAsync(http, Flags(), _tasks, Proj, includeUrl: true))
+		// includeUrl via urlPrefix: canonical slug permalink.
+		var on = (await _tasks.GetMethodologyAsync(Proj, urlPrefix: $"https://box.test/ui/ws/{Proj}/tasks/"))
 			.Boards.Single(b => b.Kind == "ideas")
 			.Nodes.Single(n => n.Key == "idea-u");
 		on.Url.Should().Be($"https://box.test/ui/ws/{Proj}/tasks/ideas/idea-u");
@@ -312,10 +289,10 @@ public sealed class QuartetTests : IDisposable
 	}
 
 	[Fact]
-	public async Task MethodologyGet_InvalidIncludeBoards_SilentlyDropped()
+	public async Task QuartetIndex_InvalidIncludeBoards_SilentlyDropped()
 	{
 		var http = Http("tasks:read,tasks:write");
-		await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj);
+		await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 		// An unknown board kind is silently dropped (soft filter); an all-unknown set → no boards.
 		var res = await _tasks.GetMethodologyAsync(Proj, includeBoards: ["bogus"]);
 		res.Boards.Should().BeEmpty();

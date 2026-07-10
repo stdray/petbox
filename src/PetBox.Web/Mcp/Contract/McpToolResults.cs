@@ -459,28 +459,15 @@ public sealed record WorkflowGroupView(
 
 public sealed record WorkflowView(string Kind, IReadOnlyList<WorkflowGroupView> Workflows);
 
-// tasks_methodology_def_upsert ack: the definition's current revision number (the baseline
-// for the next edit), whether this call created a new revision (false = an identical
-// resubmit collapsed to a no-op), and how many live nodes the declared `migration` rewrote
-// onto the new resolution (0 = nothing needed repair). A version conflict throws (the error
-// envelope names the current version), so this shape never carries conflicts.
-//
-// Additive surface honesty (def vs enable vs board_create): `BoardsOnKinds` counts open
-// boards whose kind is declared in this definition (0 = definition only — nothing provisioned
-// yet). `Hint` is non-null only when BoardsOnKinds is 0 (next-step guidance; null omitted).
+// Legacy singleton-definition wire shapes (admin editor dual-read + MethodologyWire
+// ProjectDefinition). Public MCP verbs for def_*/enable are gone — use template_* and
+// create/list/get/close + rules_* instead. These records remain for the dual-read path.
 public sealed record MethodologyDefUpsertResult(
 	long Version, bool Changed, int Migrated = 0, int BoardsOnKinds = 0, string? Hint = null);
 
-// tasks_methodology_def_delete ack: whether a definition was actually removed (false = the
-// project had none — an idempotent no-op) and the definition cursor after the delete (the
-// baseline should the caller re-create one). A version conflict or a live-node
-// incompatibility throws instead — nothing is partially deleted.
 public sealed record MethodologyDefDeleteResult(bool Deleted, long Version);
 
-// tasks_methodology_def_get answer. Defined=true → the stored definition (name/kinds) plus
-// its revision metadata. Defined=false → the project has no definition and runs on the
-// built-in preset named in `Preset` (the structured "not defined" shape, mirroring
-// session_search's distilled:false + reason — an honest state, not an error or a miss).
+// Wire document shape shared by MethodologyWire.ProjectDefinition (admin + dual-read).
 public sealed record MethodologyDefGetResult(
 	bool Defined,
 	string? Preset = null,
@@ -502,10 +489,9 @@ public sealed record MethodologyTemplateUpsertResult(string Key, long Version, b
 // tasks_methodology_template_delete ack (Deleted mirrors Changed for the delete verb).
 public sealed record MethodologyTemplateDeleteResult(string Key, bool Deleted, long Version);
 
-// tasks_methodology_template_get answer. Found=true → key/source + the definition document
-// (same kinds/workflows shape as def_get). Found=false → honest miss (not an error) for a
-// non-builtin key that has no stored template and is not the dual-read definition key.
-// Source ∈ stored|builtin|definition.
+// tasks_methodology_template_get answer. Found=true → key/source + the template document
+// (kinds/workflows). Found=false → honest miss (not an error) for a non-builtin key that has
+// no stored template and is not the dual-read legacy key. Source ∈ stored|builtin|definition.
 public sealed record MethodologyTemplateGetResult(
 	bool Found,
 	string? Key = null,
@@ -555,8 +541,8 @@ public sealed record MethodologyInstanceGetResult(
 	string? Name = null,
 	MethodologyInstanceViewResult? Instance = null);
 
-// tasks_methodology_instance_rules_get: Found=true → name + full rules document (same
-// kinds/workflows shape as def_get) + version baseline for rules_upsert. Found=false on miss.
+// tasks_methodology_rules_get: Found=true → name + full rules document (same kinds/workflows
+// shape as template_get) + version baseline for rules_upsert. Found=false on miss.
 public sealed record MethodologyInstanceRulesGetResult(
 	bool Found,
 	string? Name = null,
@@ -569,8 +555,8 @@ public sealed record MethodologyInstanceRulesGetResult(
 	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
 	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
 
-// tasks_methodology_instance_rules_upsert ack: version cursor, whether a revision was
-// written, and how many live member-board nodes the migration rewrote.
+// tasks_methodology_rules_upsert ack: version cursor, whether a revision was written, and
+// how many live member-board nodes the migration rewrote.
 public sealed record MethodologyInstanceRulesUpsertResult(
 	string Name, long Version, bool Changed, int Migrated = 0);
 

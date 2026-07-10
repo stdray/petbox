@@ -1,6 +1,10 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using PetBox.Tasks.Contract;
+using PetBox.Web.Mcp;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Tasks;
 
@@ -179,9 +183,8 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 	[Fact]
 	public async Task Definition_CustomKindRendersFromData_SourceReflectsIt()
 	{
-		var up = await Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition = SupportDefinition(), version = 0 });
-		IsErr(up).Should().BeFalse(Text(up));
-		var version = Parse(up).GetProperty("version").GetInt64();
+		// Guide still reads the project singleton definition (legacy dual-read); install via service.
+		var version = await InstallSupportDefinitionAsync();
 
 		var guide = await Guide();
 		guide.GetProperty("source").GetString().Should().Be("mixed", "the definition adds `support` but the preset kinds still serve");
@@ -212,12 +215,29 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 	[Fact]
 	public async Task Guide_IsDeterministic()
 	{
-		var up = await Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition = SupportDefinition(), version = 0 });
-		IsErr(up).Should().BeFalse(Text(up));
+		await InstallSupportDefinitionAsync();
 
 		var first = await Guide();
 		var second = await Guide();
 		second.GetProperty("markdown").GetString().Should().Be(first.GetProperty("markdown").GetString());
 		Invariants(second).Should().Equal(Invariants(first));
+	}
+
+	// Guide still derives from the project singleton definition (legacy); install via service
+	// until guide is retargeted to instances. MCP def_* tools are gone.
+	static readonly JsonSerializerOptions WireJson = new() { PropertyNameCaseInsensitive = true };
+
+	async Task<long> InstallSupportDefinitionAsync()
+	{
+		var json = JsonSerializer.Serialize(SupportDefinition());
+		var input = JsonSerializer.Deserialize<MethodologyDefInput>(json, WireJson)
+			?? throw new InvalidOperationException("failed to deserialize SupportDefinition");
+		var def = MethodologyWire.ParseDefinition(input);
+		def.Name.Should().NotBeNullOrEmpty("SupportDefinition must carry a methodology name");
+		using var scope = _fx.Factory.Services.CreateScope();
+		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
+		var ack = await tasks.DefineMethodologyAsync(ProjectKey, def, 0);
+		ack.Changed.Should().BeTrue();
+		return ack.Version;
 	}
 }

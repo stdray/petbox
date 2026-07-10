@@ -3,13 +3,15 @@ using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using PetBox.Tasks.Contract;
+using PetBox.Web.Mcp;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Tasks;
 
-// The DATA-DRIVEN FSM engine (wave 1.2): a kind declared in the project's methodology
-// definition resolves board creation, types, statuses, transitions, gates and terminal
-// semantics from the DEFINITION, while every other kind — in the same project — keeps the
-// built-in preset definitions exactly as before. Exercised end-to-end over MCP.
+// The DATA-DRIVEN FSM engine (wave 1.2): a kind declared on a methodology INSTANCE's rules
+// resolves board creation, types, statuses, transitions, gates and terminal semantics from
+// those rules, while every other kind — in the same project — keeps the built-in templates
+// exactly as before. Definition install via service (MCP def_* removed); board/node verbs over MCP.
 //
 // The custom kind under test: `support`, one workflow block shared by ticket|incident —
 //   New(open) → Open(open) → Resolved(terminalok) [preconditionArtifact resolution_note]
@@ -108,14 +110,27 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 		},
 	};
 
+	// Install the support definition on the project singleton (legacy dual-read still drives
+	// RuntimeAsync used by tasks_search kind + QuickAdd). MCP def_* tools are gone — service door.
+	static readonly JsonSerializerOptions WireJson = new() { PropertyNameCaseInsensitive = true };
+
 	async Task Define()
 	{
-		var r = await Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition = SupportDefinition(), version = 0 });
-		IsErr(r).Should().BeFalse(Text(r));
+		var json = JsonSerializer.Serialize(SupportDefinition());
+		var input = JsonSerializer.Deserialize<MethodologyDefInput>(json, WireJson)!;
+		var def = MethodologyWire.ParseDefinition(input);
+		using var scope = _fx.Factory.Services.CreateScope();
+		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
+		var ack = await tasks.DefineMethodologyAsync(ProjectKey, def, 0);
+		ack.Changed.Should().BeTrue();
 	}
 
 	Task<CallToolResult> Upsert(string board, params object[] nodes) =>
 		Call("tasks_upsert", new { projectKey = ProjectKey, board, nodes = Nodes(nodes) });
+
+	// Pre-instance path: no methodologyInstance (project has no instances yet).
+	Task<CallToolResult> CreateBoard(string board, string kind = "support") =>
+		Call("tasks_board_create", new { projectKey = ProjectKey, board, kind });
 
 	// ── scenarios ────────────────────────────────────────────────────────────
 
@@ -126,7 +141,7 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 	public async Task DefinedKind_BoardCreate_InitialStatus_TypeVocabulary()
 	{
 		await Define();
-		var created = await Call("tasks_board_create", new { projectKey = ProjectKey, board = "helpdesk", kind = "support" });
+		var created = await CreateBoard("helpdesk");
 		IsErr(created).Should().BeFalse(Text(created));
 		Text(created).Should().Contain("support");
 
@@ -148,14 +163,14 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 	public async Task DefinedKind_LegalTransitionOk_IllegalListsValidTargets()
 	{
 		await Define();
-		await Call("tasks_board_create", new { projectKey = ProjectKey, board = "flowb", kind = "support" });
-		await Upsert("flowb", new { key = "t", type = "ticket", title = "T", body = "x" });
+		IsErr(await CreateBoard("helpdesk")).Should().BeFalse();
+		await Upsert("helpdesk", new { key = "t", type = "ticket", title = "T", body = "x" });
 
-		var toOpen = await Upsert("flowb", new { key = "t", version = 1, status = "Open" });
+		var toOpen = await Upsert("helpdesk", new { key = "t", version = 1, status = "Open" });
 		IsErr(toOpen).Should().BeFalse(Text(toOpen));
 
 		// Open -> New is not a declared edge.
-		var back = await Upsert("flowb", new { key = "t", version = 2, status = "New" });
+		var back = await Upsert("helpdesk", new { key = "t", version = 2, status = "New" });
 		IsErr(back).Should().BeTrue(Text(back));
 		Text(back).Should().Contain("no transition");
 		Text(back).Should().Contain("Resolved"); // names the valid next statuses from Open
@@ -167,21 +182,21 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 	public async Task DefinedKind_RequiresReason_Enforced()
 	{
 		await Define();
-		await Call("tasks_board_create", new { projectKey = ProjectKey, board = "reasonb", kind = "support" });
+		IsErr(await CreateBoard("helpdesk")).Should().BeFalse();
 		// Title-only create (empty body) remains OK.
-		await Upsert("reasonb", new { key = "t", type = "ticket", title = "T" });
+		await Upsert("helpdesk", new { key = "t", type = "ticket", title = "T" });
 
-		var noReason = await Upsert("reasonb", new { key = "t", version = 1, status = "Rejected" });
+		var noReason = await Upsert("helpdesk", new { key = "t", version = 1, status = "Rejected" });
 		IsErr(noReason).Should().BeTrue(Text(noReason));
 		Text(noReason).Should().Contain("requires a reason");
 
 		// Body full + reason missing → still fails (reason is first-class, not the body).
-		var bodyOnly = await Upsert("reasonb", new { key = "t", version = 1, status = "Rejected", body = "duplicate of another ticket" });
+		var bodyOnly = await Upsert("helpdesk", new { key = "t", version = 1, status = "Rejected", body = "duplicate of another ticket" });
 		IsErr(bodyOnly).Should().BeTrue(Text(bodyOnly));
 		Text(bodyOnly).Should().Contain("requires a reason");
 
 		// Body empty + reason set → pass.
-		var withReason = await Upsert("reasonb", new { key = "t", version = 1, status = "Rejected", reason = "duplicate of another ticket" });
+		var withReason = await Upsert("helpdesk", new { key = "t", version = 1, status = "Rejected", reason = "duplicate of another ticket" });
 		IsErr(withReason).Should().BeFalse(Text(withReason));
 	}
 
@@ -192,25 +207,25 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 	public async Task DefinedKind_PreconditionArtifact_GatesUntilCommentExists()
 	{
 		await Define();
-		await Call("tasks_board_create", new { projectKey = ProjectKey, board = "gateb", kind = "support" });
-		var up = await Upsert("gateb", new { key = "t", type = "ticket", title = "T", body = "x" });
+		IsErr(await CreateBoard("helpdesk")).Should().BeFalse();
+		var up = await Upsert("helpdesk", new { key = "t", type = "ticket", title = "T", body = "x" });
 		var nodeId = NodeIdOf(up, "t");
-		await Upsert("gateb", new { key = "t", version = 1, status = "Open" });
+		await Upsert("helpdesk", new { key = "t", version = 1, status = "Open" });
 
-		var gated = await Upsert("gateb", new { key = "t", version = 2, status = "Resolved" });
+		var gated = await Upsert("helpdesk", new { key = "t", version = 2, status = "Resolved" });
 		IsErr(gated).Should().BeTrue(Text(gated));
 		Text(gated).Should().Contain("artifact:resolution_note", "the rejection names the missing artifact tag");
 		Text(gated).Should().Contain("Open"); // ...and the transition
 		Text(gated).Should().Contain("Resolved");
 
-		var cold = await Upsert("gateb", new { key = "cold", type = "ticket", status = "Resolved", title = "Cold", body = "x" });
+		var cold = await Upsert("helpdesk", new { key = "cold", type = "ticket", status = "Resolved", title = "Cold", body = "x" });
 		IsErr(cold).Should().BeTrue(Text(cold));
 		Text(cold).Should().Contain("directly");
 
-		var note = await Call("comments_upsert", new { projectKey = ProjectKey, board = "gateb", items = new[] { new { nodeId, author = "t", body = "fixed by rebooting", tags = new[] { "artifact:resolution_note" } } } });
+		var note = await Call("comments_upsert", new { projectKey = ProjectKey, board = "helpdesk", items = new[] { new { nodeId, author = "t", body = "fixed by rebooting", tags = new[] { "artifact:resolution_note" } } } });
 		IsErr(note).Should().BeFalse(Text(note));
 
-		var resolved = await Upsert("gateb", new { key = "t", version = 2, status = "Resolved" });
+		var resolved = await Upsert("helpdesk", new { key = "t", version = 2, status = "Resolved" });
 		IsErr(resolved).Should().BeFalse(Text(resolved));
 	}
 
@@ -221,8 +236,8 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 	public async Task DefinedKind_TerminalStatuses_HiddenByDefault()
 	{
 		await Define();
-		await Call("tasks_board_create", new { projectKey = ProjectKey, board = "termb", kind = "support" });
-		var up = await Upsert("termb",
+		IsErr(await CreateBoard("helpdesk")).Should().BeFalse();
+		var up = await Upsert("helpdesk",
 			new { key = "stays", type = "ticket", title = "Stays", body = "x" },
 			new { key = "fixed", type = "ticket", title = "Fixed", body = "x" },
 			new { key = "dup", type = "incident", title = "Dup", body = "x" });
@@ -230,21 +245,21 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 
 		// fixed: New → Open → (artifact) → Resolved; dup: New → Rejected (reason).
 		var fixedId = NodeIdOf(up, "fixed");
-		await Upsert("termb", new { key = "fixed", version = 1, status = "Open" });
-		await Call("comments_upsert", new { projectKey = ProjectKey, board = "termb", items = new[] { new { nodeId = fixedId, author = "t", body = "done", tags = new[] { "artifact:resolution_note" } } } });
-		IsErr(await Upsert("termb", new { key = "fixed", version = 2, status = "Resolved" })).Should().BeFalse();
-		IsErr(await Upsert("termb", new { key = "dup", version = 1, status = "Rejected", reason = "dup of fixed" })).Should().BeFalse();
+		await Upsert("helpdesk", new { key = "fixed", version = 1, status = "Open" });
+		await Call("comments_upsert", new { projectKey = ProjectKey, board = "helpdesk", items = new[] { new { nodeId = fixedId, author = "t", body = "done", tags = new[] { "artifact:resolution_note" } } } });
+		IsErr(await Upsert("helpdesk", new { key = "fixed", version = 2, status = "Resolved" })).Should().BeFalse();
+		IsErr(await Upsert("helpdesk", new { key = "dup", version = 1, status = "Rejected", reason = "dup of fixed" })).Should().BeFalse();
 
-		var def = await Call("tasks_search", new { projectKey = ProjectKey, board = "termb" });
+		var def = await Call("tasks_search", new { projectKey = ProjectKey, board = "helpdesk" });
 		Text(def).Should().Contain("stays");
 		Text(def).Should().NotContain("\"key\":\"fixed\"", "Resolved is terminalok in the definition");
 		Text(def).Should().NotContain("\"key\":\"dup\"", "Rejected is terminalcancel in the definition");
 
-		var all = await Call("tasks_search", new { projectKey = ProjectKey, board = "termb", includeClosed = true });
+		var all = await Call("tasks_search", new { projectKey = ProjectKey, board = "helpdesk", includeClosed = true });
 		Text(all).Should().Contain("\"key\":\"fixed\"");
 		Text(all).Should().Contain("\"key\":\"dup\"");
 
-		var filtered = await Call("tasks_search", new { projectKey = ProjectKey, board = "termb", status = new[] { "Resolved" } });
+		var filtered = await Call("tasks_search", new { projectKey = ProjectKey, board = "helpdesk", status = new[] { "Resolved" } });
 		Text(filtered).Should().Contain("\"key\":\"fixed\"", "an explicitly named terminal status is returned without includeClosed");
 		Text(filtered).Should().NotContain("\"key\":\"stays\"");
 	}
@@ -255,8 +270,8 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 	public async Task Workflow_DefinedKind_ReturnsDataDrivenBlocks()
 	{
 		await Define();
-		await Call("tasks_board_create", new { projectKey = ProjectKey, board = "wfb", kind = "support" });
-		var wf = await Call("tasks_workflow", new { projectKey = ProjectKey, board = "wfb" });
+		IsErr(await CreateBoard("helpdesk")).Should().BeFalse();
+		var wf = await Call("tasks_workflow", new { projectKey = ProjectKey, board = "helpdesk" });
 		IsErr(wf).Should().BeFalse(Text(wf));
 
 		using var doc = JsonDocument.Parse(Text(wf));
@@ -282,7 +297,7 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 	public async Task Fallback_PresetBoards_Unaffected_ByDefinition()
 	{
 		await Define();
-		await Call("tasks_board_create", new { projectKey = ProjectKey, board = "scratch" }); // simple
+		IsErr(await CreateBoard("scratch", "simple")).Should().BeFalse(); // simple
 		IsErr(await Upsert("scratch", new { key = "ok", status = "Todo", title = "OK", body = "x" })).Should().BeFalse();
 
 		var bad = await Upsert("scratch", new { key = "bad", status = "Frobnicate", title = "B", body = "x" });
@@ -304,7 +319,7 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 	public async Task BoardCreate_UndeclaredKind_RejectedListingValidKinds()
 	{
 		await Define();
-		var r = await Call("tasks_board_create", new { projectKey = ProjectKey, board = "nope", kind = "banana" });
+		var r = await CreateBoard("nope", "banana");
 		IsErr(r).Should().BeTrue(Text(r));
 		Text(r).Should().Contain("unknown board kind");
 		Text(r).Should().Contain("support"); // the defined kind is listed as valid
@@ -317,13 +332,13 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 	public async Task QuickAdd_DefinedKind_DefaultTypeAndInitialStatus()
 	{
 		await Define();
-		await Call("tasks_board_create", new { projectKey = ProjectKey, board = "qab", kind = "support" });
+		IsErr(await CreateBoard("helpdesk")).Should().BeFalse();
 
 		using var scope = _fx.Factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-		await tasks.QuickAddAsync(ProjectKey, "qab", "Printer on fire", null, 50);
+		await tasks.QuickAddAsync(ProjectKey, "helpdesk", "Printer on fire", null, 50);
 
-		var nodes = await tasks.ListActiveNodesAsync(ProjectKey, "qab");
+		var nodes = await tasks.ListActiveNodesAsync(ProjectKey, "helpdesk");
 		var node = nodes.Should().ContainSingle().Subject;
 		node.Type.Should().Be("ticket", "the first type of the first block is the quick-add default");
 		node.Status.Should().Be("New");

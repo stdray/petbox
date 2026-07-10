@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition / instance rules declare). Does not store a methodology definition and does not provision a full preset (that is tasks_methodology_create / tasks_methodology_enable). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the instance this board belongs to (required once the project has any methodology instance — board_create without an instance is then rejected). `specBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
+	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind a methodology instance's rules declare). Does not store a template and does not provision a full methodology (that is tasks_methodology_create). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `methodologyInstance` names the instance this board belongs to (required once the project has any methodology instance — board_create without an instance is then rejected). `specBoard` (work boards only) names the spec board this board's tasks link into. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null,
@@ -111,34 +111,9 @@ public static class TasksTools
 		return new BoardReopenedResult(await tasks.SetClosedAsync(projectKey, board, false, ct));
 	}
 
-	[McpServerTool(Name = "tasks_methodology_enable", Title = "Enable a methodology preset", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyEnableResult))]
-	[Description("""
-		COMPAT: provision a methodology PRESET as a named INSTANCE (name = preset slug) AND
-		its board(s) if missing (and, for quartet, auto-wire work->spec within the instance).
-		Prefer tasks_methodology_create (explicit source, free instance name) for new work.
-		`preset` selects which board kind(s) to create (default "quartet"; "classic" = one
-		classic board). Idempotent. Requires tasks:write.
-
-		Returns what THIS CALL's preset provisioned — NOT the quartet index
-		(call tasks_methodology_get for that): `preset` and `boards[]` with kind/name/
-		created/counts/workflow.
-		""")]
-	public static async Task<MethodologyEnableResult> MethodologyEnableAsync(
-		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey,
-		[Description("The methodology preset to provision (default \"quartet\" = intake/ideas/spec/work; \"classic\" = one standalone GitHub/Jira/Linear-level board). Unknown slug → a clear error listing the available presets.")] string? preset = null,
-		CancellationToken ct = default)
-	{
-		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return await tasks.EnableMethodologyAsync(projectKey, preset ?? MethodologyPresets.DefaultProvisioningPreset, ct);
-	}
-
 	// ---- methodology instances (named live process automata) ----
-	// Plan names: create / list / get / close. tasks_methodology_get stays the LEGACY
-	// quartet index (compat); instance get is tasks_methodology_instance_get (transitional
-	// name documented here — plan name is get(name)).
+	// Unified dictionary: template (inert document) + methodology (instance) verbs
+	// create / list / get / close, plus rules_get / rules_upsert for live rules edit.
 
 	[McpServerTool(Name = "tasks_methodology_create", Title = "Create a methodology instance", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceCreateResult))]
 	[Description("""
@@ -184,14 +159,13 @@ public static class TasksTools
 		return new MethodologyInstanceListResult(items.Select(ProjectInstance).ToList());
 	}
 
-	[McpServerTool(Name = "tasks_methodology_instance_get", Title = "Get a methodology instance", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceGetResult))]
+	[McpServerTool(Name = "tasks_methodology_get", Title = "Get a methodology instance", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceGetResult))]
 	[Description("""
-		Return ONE methodology INSTANCE by name as a compact INDEX (identity, boards,
-		status, computed summary — no node bodies). Plan name is get(name); this tool is
-		tasks_methodology_instance_get because tasks_methodology_get remains the legacy
-		quartet index. Found=false on miss (not an error). Requires tasks:read.
+		Return ONE methodology INSTANCE by `name` as a compact INDEX (identity, boards,
+		status histogram counts, computed summary — no node bodies). Found=false on miss
+		(not an error). For every instance use tasks_methodology_list. Requires tasks:read.
 		""")]
-	public static async Task<MethodologyInstanceGetResult> MethodologyInstanceGetAsync(
+	public static async Task<MethodologyInstanceGetResult> MethodologyGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("Instance name (slug).")] string name,
@@ -232,16 +206,16 @@ public static class TasksTools
 		v.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList(),
 		v.Counts);
 
-	[McpServerTool(Name = "tasks_methodology_instance_rules_get", Title = "Get a methodology instance's rules document", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesGetResult))]
+	[McpServerTool(Name = "tasks_methodology_rules_get", Title = "Get a methodology instance's rules document", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesGetResult))]
 	[Description("""
 		Return the RULES DOCUMENT of one methodology INSTANCE by name — the live process
-		definition (kinds/types/statuses/transitions) that member boards resolve against,
-		plus the version baseline for tasks_methodology_instance_rules_upsert. Same document
-		shape as tasks_methodology_def_get / template_get (kinds/workflows/linkKinds/tagAxes).
-		Found=false on miss (not an error). Closed instances still return their last rules
-		(read-only — rules_upsert rejects closed). Requires tasks:read.
+		document (kinds/types/statuses/transitions) that member boards resolve against,
+		plus the version baseline for tasks_methodology_rules_upsert. Same document shape as
+		tasks_methodology_template_get (kinds/workflows/linkKinds/tagAxes). Found=false on
+		miss (not an error). Closed instances still return their last rules (read-only —
+		rules_upsert rejects closed). Requires tasks:read.
 		""")]
-	public static async Task<MethodologyInstanceRulesGetResult> MethodologyInstanceRulesGetAsync(
+	public static async Task<MethodologyInstanceRulesGetResult> MethodologyRulesGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("Instance name (slug).")] string name,
@@ -267,28 +241,28 @@ public static class TasksTools
 			TagAxes: doc.TagAxes);
 	}
 
-	[McpServerTool(Name = "tasks_methodology_instance_rules_upsert", Title = "Edit a live methodology instance's rules (with migration)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesUpsertResult))]
+	[McpServerTool(Name = "tasks_methodology_rules_upsert", Title = "Edit a live methodology instance's rules (with migration)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesUpsertResult))]
 	[Description("""
 		Replace the RULES of a LIVE methodology INSTANCE with optimistic concurrency and
-		declarative live-node migration. Does NOT mutate templates, other instances, or the
-		project singleton definition (tasks_methodology_def_upsert). `name` addresses the
-		instance; `version` is the watermark baseline from tasks_methodology_instance_rules_get
-		(a stale/future baseline is a clear conflict). `definition` is the same document shape
-		as tasks_methodology_def_upsert. A CHANGE is validated against LIVE NODES on this
-		instance's open member boards only: every active node whose board kind the old or new
-		rules declare must fit the new resolution. An incompatible node that no mapping covers
-		REJECTS the whole call, naming board/node/value — nothing is written. `migration`
-		declares the repairs: [{ kind, types?:[{from,to}], statuses?:[{from,to}] }] — applied
-		ONLY where a node's current value is invalid under the new resolution (a valid value
-		is never rewritten). Closed instances reject the write. Returns { name, version,
-		changed, migrated }. Requires tasks:write.
+		declarative live-node migration. Does NOT mutate templates or other instances.
+		`name` addresses the instance; `version` is the watermark baseline from
+		tasks_methodology_rules_get (a stale/future baseline is a clear conflict).
+		`definition` is the same document shape as tasks_methodology_template_upsert. A CHANGE
+		is validated against LIVE NODES on this instance's open member boards only: every
+		active node whose board kind the old or new rules declare must fit the new resolution.
+		An incompatible node that no mapping covers REJECTS the whole call, naming
+		board/node/value — nothing is written. `migration` declares the repairs:
+		[{ kind, types?:[{from,to}], statuses?:[{from,to}] }] — applied ONLY where a node's
+		current value is invalid under the new resolution (a valid value is never rewritten).
+		Closed instances reject the write. Returns { name, version, changed, migrated }.
+		Requires tasks:write.
 		""")]
-	public static async Task<MethodologyInstanceRulesUpsertResult> MethodologyInstanceRulesUpsertAsync(
+	public static async Task<MethodologyInstanceRulesUpsertResult> MethodologyRulesUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("Instance name (slug) whose rules to replace.")] string name,
-		[Description("The whole methodology definition document (same shape as tasks_methodology_def_upsert).")] MethodologyDefInput definition,
-		[Description("Watermark baseline: the `version` from your last tasks_methodology_instance_rules_get.")] long version = 0,
+		[Description("The whole methodology rules document (same shape as tasks_methodology_template_upsert).")] MethodologyDefInput definition,
+		[Description("Watermark baseline: the `version` from your last tasks_methodology_rules_get.")] long version = 0,
 		[Description("Per-kind {from,to} type/status repairs for live nodes on this instance the change would strand.")] MethodologyMigrationInput[]? migration = null,
 		CancellationToken ct = default)
 	{
@@ -301,222 +275,26 @@ public static class TasksTools
 		return new MethodologyInstanceRulesUpsertResult(ack.Name, ack.Version, ack.Changed, ack.Migrated);
 	}
 
-	[McpServerTool(Name = "tasks_methodology_get", Title = "Get the methodology quartet", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
-	[Description("""
-		Return the project's methodology quartet as ONE compact INDEX in pipeline order:
-		intake → ideas → spec → work. Each board carries a status histogram (`counts`: status
-		slug -> active-node count) and its active nodes as INDEX rows — `key`, `nodeId`,
-		`parentSlug`/`depth` (part_of nav), `status`, `type`, `title`, `priority`, `tags`
-		(ALWAYS), links (`spec`/`blockedBy`/`linkedTasks`/`supersedes`) and the computed
-		`delivery` roll-up — but NO `body` by default (this is the orientation index, not a
-		dump; null fields are omitted). Pass `bodyLen` > 0 to include the first N chars of
-		each body (a snippet — the key line(s) without detail; "…" appended when cut; a large
-		N ≈ the full body). Pass `includeBoards` (e.g. ["spec","ideas"]) to return only those
-		quartet boards (kinds: intake|ideas|spec|work). The index has a HARD OUTPUT BUDGET:
-		`counts` per board is always complete, but node rows share a response-wide char budget
-		spent in pipeline order — when a board's rows no longer fit it is cut and flagged with
-		`truncated:true` + `omitted` (rows dropped), and the response carries a top-level
-		`hint` on how to narrow (includeBoards one board at a time, bodyLen:0, or tasks_search
-		with board + `under` for subtree detail). No markers = the complete index. For full
-		untruncated bodies or subtree drill-down, use tasks_search (the listing/detail
-		read verb). `enabled` is true ONLY when all four quartet singleton boards exist —
-		it does NOT mean a user-defined methodology definition is stored (that is
-		tasks_methodology_def_get). A definition alone (def_upsert) creates no boards and
-		leaves enabled=false until tasks_methodology_enable or tasks_board_create provisions
-		them. Requires tasks:read.
-		""")]
-	public static async Task<MethodologyView> MethodologyGetAsync(
-		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey,
-		[Description("Slice length (chars) of each node body to include; 0 = index only (no bodies). \"…\" is appended when a body is cut.")] int bodyLen = 0,
-		[Description("Restrict to these quartet boards by kind (intake|ideas|spec|work); empty/omitted = all four.")] string[]? includeBoards = null,
-		[Description("Include an absolute `url` permalink to each node's detail page (off by default).")] bool includeUrl = false,
-		CancellationToken ct = default)
-	{
-		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		var urlPrefix = await UrlPrefixAsync(http, tasks, projectKey, includeUrl, ct);
-		return await tasks.GetMethodologyAsync(projectKey, bodyLen, includeBoards, urlPrefix, ct);
-	}
-
-	[McpServerTool(Name = "tasks_methodology_def_upsert", Title = "Define the project's methodology (user-defined kinds/FSMs)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefUpsertResult))]
-	[Description("""
-		Store the project's USER-DEFINED METHODOLOGY DEFINITION ONLY — the document that
-		describes the project's own board kinds, task types, statuses and transitions as data.
-		Does NOT create boards, does NOT enable a methodology preset, and does NOT change
-		tasks_methodology_get's `enabled` flag. After a successful write, next step is either
-		tasks_methodology_enable(preset) to provision a preset's boards, OR
-		tasks_board_create(kind=…) for each declared kind you want live. (NOT the quartet
-		index: tasks_methodology_get reads the intake/ideas/spec/work BOARDS; this verb writes
-		the process DEFINITION.) One definition per project, versioned: `version` is the
-		WATERMARK baseline — pass the `version` from your last tasks_methodology_def_get
-		(0 = the project has none yet); a stale baseline (someone redefined since) or one ahead of
-		the project's cursor is a clear conflict error naming the current version — re-read with
-		tasks_methodology_def_get and resubmit. The definition is validated as a whole before
-		it is stored (name/kind/type slugs, ≥1 kind, ≥1 workflow block per kind, type unique
-		within its kind, statuses non-empty and unique per block, every transition between
-		statuses of ITS block, no duplicate edges). `definition` shape: { name, kinds:[{
-		kind, quickAddAllowed?, workflows:[{ types:[...], statuses:[{ slug, name?,
-		kind?: open|terminalok|terminalcancel }], transitions:[{ from, to,
-		requiresApproval?, enforceApproval?, requiresReason?, preconditionArtifact?,
-		checklist?:[...] }] }], linkConstraints?:[{ type, link, targetKind?,
-		targetStatuses? }], effects?:[{ on, link, direction, set, onlyFrom? }] }],
-		linkKinds?:[{ slug, description? }],
-		tagAxes?:[{ namespace, description? }] }; statuses[0] is
-		the initial status; `preconditionArtifact` names a comment-artifact tag (e.g.
-		"spec_plan") the node must carry before the transition (enforced: the upsert refuses
-		the transition until an `artifact:<slug>` comment exists on the node).
-		`enforceApproval` (only with requiresApproval:true) declares the approval gate as
-		server-blocked rather than owner-only by convention; `checklist` is free-text
-		conditions to confirm before the transition (guide-rendered, not enforced).
-		`linkConstraints` (per kind): "a NEW node of `type` must carry a `link` at creation"
-		— link ∈ task_spec|blocks|idea_spec (the kinds expressible in the upsert call as
-		specRef/blockedBy/ideaRef); edits don't re-require it; `targetKind`/`targetStatuses`
-		optionally declare what the link must point at (a node of that kind / in one of those
-		statuses — declaration only, runtime resolution lands with engine v2). `effects`
-		(per kind, declaration only — executed once engine v2 ships): on a node of this kind
-		ENTERING status `on`, linked nodes over relation `link` in `direction`
-		(incoming|outgoing) are set to `set`; `onlyFrom` restricts to linked nodes currently
-		in that status. `linkKinds` (project-wide):
-		additional relation kinds for relations_create (free semantic edges, no FSM effects;
-		must not collide with builtin kinds). `tagAxes` (project-wide): declared tag
-		namespaces — when present, tags on definition-resolved boards must be
-		`<namespace>:value` from this list (empty/omitted = free-form tags). The definition
-		is LIVE once boards exist for those kinds: a declared kind can be given to
-		tasks_board_create, its boards resolve types/statuses/transitions from this document
-		(tasks_workflow shows them), and any other kind keeps the built-in preset. A definition
-		CHANGE is validated against LIVE NODES: every active node on a board whose kind the old
-		or new definition declares must fit the new resolution (type resolves, status known to
-		its type's workflow). An incompatible node that no mapping covers REJECTS the whole
-		call, naming the board, node key(s) and offending type/status — nothing is written.
-		`migration` declares the repairs: [{ kind, types?:[{from,to}], statuses?:[{from,to}] }]
-		— applied ONLY where a node's current value is invalid under the new resolution (a
-		valid value is never rewritten); `to` must be valid under the new definition. When
-		everything is mapped, the definition commits first and the repaired nodes are then
-		rewritten as new temporal revisions per board, without FSM guards (the mapping is the
-		sanctioned transition) — not one transaction with the definition, so re-check the named
-		board if a concurrent-write error is thrown mid-rewrite. Returns { version (the new
-		baseline), changed (false = identical resubmit, no new revision — skips the live-node
-		check), migrated (nodes rewritten; 0 = none needed), boardsOnKinds (open boards whose
-		kind is declared in this definition; 0 = definition-only, nothing provisioned yet),
-		hint? (present only when boardsOnKinds is 0 — next-step guidance) }. Requires tasks:write.
-		""")]
-	public static async Task<MethodologyDefUpsertResult> MethodologyDefUpsertAsync(
-		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey,
-		[Description("The whole methodology definition (structured document; see the tool description for the shape).")] MethodologyDefInput definition,
-		[Description("Watermark baseline: the `version` from your last tasks_methodology_def_get; 0 = the project has no definition yet.")] long version = 0,
-		[Description("Per-kind {from,to} type/status repairs for live nodes the change would strand; applied only where the current value is invalid under the new resolution.")] MethodologyMigrationInput[]? migration = null,
-		CancellationToken ct = default)
-	{
-		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var def = MethodologyWire.ParseDefinition(definition);
-		var ack = await tasks.DefineMethodologyAsync(projectKey, def, version, MethodologyWire.ParseMigration(migration), ct);
-		// Surface honesty: def_upsert stores the document only. Count open boards already on
-		// declared kinds so the agent sees when a follow-up enable/board_create is still needed.
-		var declaredKinds = def.Kinds.Select(k => k.Kind).ToHashSet(StringComparer.OrdinalIgnoreCase);
-		var boards = await tasks.ListBoardsAsync(projectKey, ct);
-		var boardsOnKinds = boards.Count(b => b.ClosedAt is null && declaredKinds.Contains(b.Kind));
-		var hint = boardsOnKinds == 0
-			? "Definition stored only — no boards use these kinds yet. Next: tasks_methodology_enable(preset) to provision a preset's boards, OR tasks_board_create(kind=…) for each declared kind."
-			: null;
-		return new MethodologyDefUpsertResult(ack.Version, ack.Changed, ack.Migrated, boardsOnKinds, hint);
-	}
-
-	[McpServerTool(Name = "tasks_methodology_def_delete", Title = "Delete the project's methodology definition (revert to builtin presets)", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefDeleteResult))]
-	[Description("""
-		Delete the project's USER-DEFINED METHODOLOGY DEFINITION — every kind reverts to the
-		built-in presets (a declared quartet kind to its preset, a custom kind to `simple`).
-		`version` is the watermark baseline from your last tasks_methodology_def_get; a
-		stale/future baseline is a clear conflict error naming the current version — re-read
-		and retry. Validated against LIVE NODES before anything is written: every active node
-		on a board whose kind the definition declares must fit the preset resolution it falls
-		back to; an incompatible node REJECTS the whole call naming board/node/value (there is
-		no migration on delete — move/close the offenders first, or change the definition via
-		tasks_methodology_def_upsert with a migration instead). Deleting when no definition
-		exists is an idempotent no-op (deleted:false). The revision history is kept (temporal
-		soft-close) — the delete is itself a revision, not an erasure. Requires tasks:write.
-		""")]
-	public static async Task<MethodologyDefDeleteResult> MethodologyDefDeleteAsync(
-		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey,
-		[Description("Watermark baseline: the `version` from your last tasks_methodology_def_get; 0 = delete the current revision regardless.")] long version = 0,
-		CancellationToken ct = default)
-	{
-		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var ack = await tasks.DeleteMethodologyAsync(projectKey, version, ct);
-		return new MethodologyDefDeleteResult(ack.Changed, ack.Version);
-	}
-
-	[McpServerTool(Name = "tasks_methodology_def_get", Title = "Get the project's methodology definition", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefGetResult))]
-	[Description("""
-		Return the project's USER-DEFINED METHODOLOGY DEFINITION — the stored process
-		document (kinds/types/statuses/transitions as data), NOT the quartet board index
-		(that is tasks_methodology_get). Defined=true → { name, kinds:[{ kind,
-		quickAddAllowed, workflows:[{ types, initial, statuses:[{ slug, name, kind }],
-		transitions:[{ from, to, requiresApproval, requiresReason, preconditionArtifact?,
-		enforceApproval, checklist? }] }], linkConstraints?:[{ type, link, targetKind?,
-		targetStatuses? }], effects?:[{ on, link, direction, set, onlyFrom? }] }], version
-		(the baseline for
-		tasks_methodology_def_upsert), created, updated, linkKinds?:[{ slug, description? }],
-		tagAxes?:[{ namespace, description? }] } (the ?-marked lists are omitted when the
-		definition declares none). Defined=false → the project has no definition of its own
-		and runs on the built-in preset (`preset` names it) — an honest state, not an error.
-
-		Pass `preset` (e.g. "quartet") to get that BUILT-IN preset RENDERED as a definition
-		document (same shape, Defined=true, version 0, created/updated omitted) instead of the
-		project's stored definition — a copyable STARTING POINT for a custom methodology: edit
-		it, then install it via tasks_methodology_def_upsert (version 0). WARNING: this is a
-		template, not an equivalent of the built-in quartet. The quartet kinds
-		(intake/ideas/spec/work) declared in a DEFINITION LOSE their hardcoded BoardKind engine
-		semantics — spec delivery roll-up, the ideaRef guard on spec writes, intake auto-close,
-		and blocks auto-unblock are NOT reproduced from definition data (until engine v2). The
-		statuses/transitions/gates and tag axes carry over; the cross-board process automation
-		does not. Requires tasks:read.
-		""")]
-	public static async Task<MethodologyDefGetResult> MethodologyDefGetAsync(
-		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey,
-		[Description("Render this built-in preset (e.g. \"quartet\") as a definition document (read-only template) instead of the project's stored definition. Omit for the stored definition.")] string? preset = null,
-		CancellationToken ct = default)
-	{
-		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
-		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		// Preset copy: render the built-in preset as a definition template (version 0, no
-		// created/updated — it was never stored). Same output shape as the stored definition.
-		if (!string.IsNullOrWhiteSpace(preset))
-			return MethodologyWire.ProjectDefinition(MethodologyPresets.RenderPresetDefinition(preset), version: 0, created: null, updated: null);
-		var view = await tasks.GetMethodologyDefinitionAsync(projectKey, ct);
-		if (view is null)
-			return new MethodologyDefGetResult(Defined: false, Preset: BuiltinPreset);
-		return MethodologyWire.ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
-	}
-
-	// ---- named methodology templates (independent of live process / instances) ----
+	// ---- named methodology templates (inert process documents; builtins are templates) ----
 
 	[McpServerTool(Name = "tasks_methodology_template_upsert", Title = "Upsert a named methodology template", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateUpsertResult))]
 	[Description("""
 		Store a NAMED METHODOLOGY TEMPLATE — a reusable process document (kinds/types/
-		statuses/transitions) independent of the live project definition and of running
-		boards/instances. Does NOT create boards, does NOT mutate methodology_defs, and
-		does NOT rewrite live nodes (no migration planner — templates are inert documents).
-		`key` is the template slug; `version` is the watermark baseline from your last
-		template_get (0 = create). Builtin keys (quartet|classic|simple) are read-only and
-		rejected on write — copy into a new key instead. `definition` is the same document
-		shape as tasks_methodology_def_upsert. Returns { key, version, changed }. Requires
-		tasks:write.
+		statuses/transitions) independent of running methodology instances. Does NOT create
+		boards and does NOT rewrite live nodes (no migration planner — templates are inert
+		documents). `key` is the template slug; `version` is the watermark baseline from your
+		last template_get (0 = create). Builtin keys (quartet|classic|simple) are read-only
+		and rejected on write — copy into a new key instead. `definition` shape:
+		{ name, kinds:[{ kind, quickAddAllowed?, workflows:[{ types, statuses, transitions }],
+		linkConstraints?, effects? }], linkKinds?, tagAxes? }. To make a template LIVE, call
+		tasks_methodology_create(source="template", sourceKey=<key>). Returns
+		{ key, version, changed }. Requires tasks:write.
 		""")]
 	public static async Task<MethodologyTemplateUpsertResult> MethodologyTemplateUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
 		[Description("Template slug key (^[a-z][a-z0-9_-]{0,99}$; not a builtin name).")] string key,
-		[Description("The methodology definition document (same shape as tasks_methodology_def_upsert).")] MethodologyDefInput definition,
+		[Description("The methodology template document (kinds/workflows/linkKinds/tagAxes).")] MethodologyDefInput definition,
 		[Description("Watermark baseline: version from last template_get; 0 = create.")] long version = 0,
 		CancellationToken ct = default)
 	{
@@ -531,10 +309,9 @@ public static class TasksTools
 	[McpServerTool(Name = "tasks_methodology_template_delete", Title = "Delete a named methodology template", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateDeleteResult))]
 	[Description("""
 		Delete a STORED named methodology template (temporal soft-close). Builtin keys
-		(quartet|classic|simple) are read-only and rejected. Does NOT touch the live
-		project definition (methodology_defs), boards, or nodes. Missing key is an
-		idempotent no-op (deleted:false). `version` is the watermark baseline from
-		template_get. Requires tasks:write.
+		(quartet|classic|simple) are read-only and rejected. Does NOT touch methodology
+		instances, boards, or nodes. Missing key is an idempotent no-op (deleted:false).
+		`version` is the watermark baseline from template_get. Requires tasks:write.
 		""")]
 	public static async Task<MethodologyTemplateDeleteResult> MethodologyTemplateDeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -554,15 +331,14 @@ public static class TasksTools
 	[Description("""
 		Return ONE methodology template by `key`. Resolution order: stored template →
 		builtin (quartet|classic|simple, source="builtin", version 0) → dual-read of the
-		legacy project singleton definition under key "methodology" (source="definition",
-		compat until instance core) → found:false. Document body (name/kinds/…) matches
-		tasks_methodology_def_get so it is copyable into def_upsert or template_upsert.
-		Requires tasks:read.
+		legacy project singleton under key "methodology" (source="definition", compat) →
+		found:false. Document body (name/kinds/…) is copyable into template_upsert or
+		into tasks_methodology_rules_upsert for a live instance. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyTemplateGetResult> MethodologyTemplateGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey,
-		[Description("Template slug key (stored, builtin quartet|classic|simple, or methodology for dual-read of the singleton def).")] string key,
+		[Description("Template slug key (stored, builtin quartet|classic|simple, or methodology for dual-read of the legacy singleton).")] string key,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -578,9 +354,9 @@ public static class TasksTools
 	[Description("""
 		List methodology templates available to the project: always the builtins
 		(quartet|classic|simple, source="builtin"), then any stored templates
-		(source="stored"), plus a dual-read entry for the legacy singleton definition
-		under key "methodology" (source="definition") when present and not shadowed by a
-		stored template of that key. Compact rows (key/source/name/version/updated) — use
+		(source="stored"), plus a dual-read entry for the legacy singleton under key
+		"methodology" (source="definition") when present and not shadowed by a stored
+		template of that key. Compact rows (key/source/name/version/updated) — use
 		template_get for the full document. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyTemplateListResult> MethodologyTemplateListAsync(
@@ -598,12 +374,11 @@ public static class TasksTools
 	[McpServerTool(Name = "tasks_methodology_template_snapshot", Title = "Snapshot rules into a named methodology template", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateUpsertResult))]
 	[Description("""
 		Snapshot process rules into a NAMED TEMPLATE without mutating the source. `from`
-		defaults to "effective" = the project's singleton methodology definition if present,
-		else the builtin quartet document. Explicit sources: "preset:quartet|classic|simple"
-		(or the bare builtin slug); "instance:<key>" = the named instance's rules
-		(methodology-instance-core). Write is template-only — no boards created, no live
-		nodes rewritten, no methodology_defs mutation. `key`/`version` same watermark
-		posture as template_upsert. Requires tasks:write.
+		defaults to "effective" = the legacy project singleton if present, else the builtin
+		quartet document. Explicit sources: "preset:quartet|classic|simple" (or the bare
+		builtin slug); "instance:<key>" = the named methodology instance's rules. Write is
+		template-only — no boards created, no live nodes rewritten. `key`/`version` same
+		watermark posture as template_upsert. Requires tasks:write.
 		""")]
 	public static async Task<MethodologyTemplateUpsertResult> MethodologyTemplateSnapshotAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -623,24 +398,23 @@ public static class TasksTools
 	[McpServerTool(Name = "tasks_methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
 	[Description("""
 		Return the AGENT ONBOARDING GUIDE for this project's process — how to work its
-		boards — DERIVED AT RUNTIME from the project's methodology data: its own definition
-		where one declares a kind (tasks_methodology_def_upsert), the built-in presets
-		everywhere else. Call it when you start working a project's tasks and need the
-		process rules; it is the runtime-derived replacement for hardcoded process docs, so
-		it stays correct for user-defined kinds the docs never heard of. `markdown` covers,
-		per effective kind: types (quick-add default marked), statuses grouped
-		open/terminal, initial status, the transition map (collapsed to "free" when a block
-		allows every move), the GATES as behavioral invariants (owner-only transitions the
-		agent NEVER performs — marked enforced vs convention, reason-required moves,
-		artifact:<slug> comment preconditions, pre-transition checklists), creation link
-		requirements (specRef/blockedBy/ideaRef, incl. declared link targets), declared
-		transition effects, tag axes (or free-form),
-		and the relation-kind dictionary (process vs neutral vs project-declared).
-		`invariants` is the same derivation machine-readable: [{ kind, rule:
-		approval_gate|approval_gate_enforced|reason_required|precondition_artifact|
-		checklist|transition_effect|link_constraint|tag_axes,
-		detail }]. `source` = presets|definition|mixed; `definitionVersion` when a
-		definition exists. Bounded (a handful of kinds) — no truncation. Requires tasks:read.
+		boards — DERIVED AT RUNTIME from methodology data: templates made live via
+		tasks_methodology_create (and the effective process resolution), with builtin
+		templates (quartet|classic|simple) as the baseline where no custom rules apply.
+		Call it when you start working a project's tasks and need the process rules; it is
+		the runtime-derived replacement for hardcoded process docs. `markdown` covers, per
+		effective kind: types (quick-add default marked), statuses grouped open/terminal,
+		initial status, the transition map (collapsed to "free" when a block allows every
+		move), the GATES as behavioral invariants (owner-only transitions the agent NEVER
+		performs — marked enforced vs convention, reason-required moves, artifact:<slug>
+		comment preconditions, pre-transition checklists), creation link requirements
+		(specRef/blockedBy/ideaRef, incl. declared link targets), declared transition
+		effects, tag axes (or free-form), and the relation-kind dictionary (process vs
+		neutral vs project-declared). `invariants` is the same derivation machine-readable:
+		[{ kind, rule: approval_gate|approval_gate_enforced|reason_required|
+		precondition_artifact|checklist|transition_effect|link_constraint|tag_axes,
+		detail }]. `source` = presets|definition|mixed; `definitionVersion` when custom
+		rules exist. Bounded (a handful of kinds) — no truncation. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyGuideView> MethodologyGuideAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -652,13 +426,9 @@ public static class TasksTools
 		return await tasks.GetMethodologyGuideAsync(projectKey, ct);
 	}
 
-	// The `preset` a definition-less project runs on: the built-in preset definitions
-	// (simple + the methodology quartet kinds — MethodologyPresets).
-	const string BuiltinPreset = MethodologyPresets.Name;
-
 	// The definition wire mapping (ParseDefinition/ParseMigration/ProjectDefinition) lives in
 	// MethodologyWire — shared with the admin methodology-editor page, so the editor's JSON is
-	// shape-identical to the def_get/def_upsert documents.
+	// shape-identical to the template/rules documents.
 
 	[McpServerTool(Name = "tasks_node_get", Title = "Get one node in full", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(NodeDetailView))]
 	[Description("""
@@ -989,7 +759,7 @@ public static class TasksTools
 	}
 
 	[McpServerTool(Name = "tasks_workflow", Title = "Board workflow (kinds/statuses/transitions)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(WorkflowView))]
-	[Description("Return the workflow for a board: its kind plus `workflows` — one block per DISTINCT state machine, each carrying `types` (every type slug sharing that FSM; e.g. feature|bug|chore on a work board are one block), the initial status, statuses (slug, name, kind=open|terminalok|terminalcancel) and transitions (from, to, requiresApproval, requiresReason, enforceApproval [true = the server BLOCKS the transition unless the actor can approve; false = owner-only by convention], preconditionArtifact? — a comment-artifact tag the node must carry before the transition). A kind the project's methodology definition declares (tasks_methodology_def_upsert) resolves from the definition; other kinds report the built-in preset. Use this to learn the legal types/statuses before tasks_upsert. Requires tasks:read.")]
+	[Description("Return the workflow for a board: its kind plus `workflows` — one block per DISTINCT state machine, each carrying `types` (every type slug sharing that FSM; e.g. feature|bug|chore on a work board are one block), the initial status, statuses (slug, name, kind=open|terminalok|terminalcancel) and transitions (from, to, requiresApproval, requiresReason, enforceApproval [true = the server BLOCKS the transition unless the actor can approve; false = owner-only by convention], preconditionArtifact? — a comment-artifact tag the node must carry before the transition). A kind a methodology instance's rules declare resolves from those rules; other kinds report the built-in template. Use this to learn the legal types/statuses before tasks_upsert. Requires tasks:read.")]
 	public static async Task<WorkflowView> WorkflowAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, CancellationToken ct = default)

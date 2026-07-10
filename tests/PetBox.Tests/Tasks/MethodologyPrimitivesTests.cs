@@ -1,6 +1,10 @@
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using PetBox.Tasks.Contract;
+using PetBox.Web.Mcp;
+using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Tasks;
 
@@ -103,14 +107,25 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 		kinds = new object[] { new { kind = "support", quickAddAllowed = true, workflows = SupportWorkflows() } },
 	};
 
+	const string Tmpl = "support-tmpl";
+	static readonly JsonSerializerOptions WireJson = new() { PropertyNameCaseInsensitive = true };
+
+	// Install definition on the project singleton (service door — MCP def_* removed).
+	// Needed so RuntimeAsync (search/quickadd/relation validation) sees the kinds.
 	async Task Define(object definition)
 	{
-		var r = await Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition, version = 0 });
-		IsErr(r).Should().BeFalse(Text(r));
+		var json = JsonSerializer.Serialize(definition);
+		var input = JsonSerializer.Deserialize<MethodologyDefInput>(json, WireJson)!;
+		var def = MethodologyWire.ParseDefinition(input);
+		using var scope = _fx.Factory.Services.CreateScope();
+		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
+		var ack = await tasks.DefineMethodologyAsync(ProjectKey, def, 0);
+		ack.Changed.Should().BeTrue();
 	}
 
+	// Document-only write for validation-reject tests (template surface).
 	Task<CallToolResult> DefUpsert(object definition) =>
-		Call("tasks_methodology_def_upsert", new { projectKey = ProjectKey, definition, version = 0 });
+		Call("tasks_methodology_template_upsert", new { projectKey = ProjectKey, key = Tmpl, definition, version = 0 });
 
 	Task<CallToolResult> Upsert(string board, params object[] nodes) =>
 		Call("tasks_upsert", new { projectKey = ProjectKey, board, nodes = Nodes(nodes) });
@@ -369,16 +384,17 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 
 	// ── round-trip ───────────────────────────────────────────────────────────
 
-	// 7. def_upsert with all three primitives → def_get returns them intact (wire shapes:
-	// kinds[].linkConstraints[{type,link}], linkKinds[{slug,description}],
+	// 7. template_upsert with all three primitives → template_get returns them intact
+	// (wire shapes: kinds[].linkConstraints[{type,link}], linkKinds[{slug,description}],
 	// tagAxes[{namespace,description}]).
 	[Fact]
-	public async Task RoundTrip_AllThreePrimitives_SurviveDefGet()
+	public async Task RoundTrip_AllThreePrimitives_SurviveTemplateGet()
 	{
-		await Define(FullDefinition());
+		var up = await Call("tasks_methodology_template_upsert", new { projectKey = ProjectKey, key = Tmpl, definition = FullDefinition(), version = 0 });
+		IsErr(up).Should().BeFalse(Text(up));
 
-		var got = Parse(await Call("tasks_methodology_def_get", new { projectKey = ProjectKey }));
-		got.GetProperty("defined").GetBoolean().Should().BeTrue();
+		var got = Parse(await Call("tasks_methodology_template_get", new { projectKey = ProjectKey, key = Tmpl }));
+		got.GetProperty("found").GetBoolean().Should().BeTrue();
 
 		var kind = got.GetProperty("kinds").EnumerateArray().Single();
 		var constraint = kind.GetProperty("linkConstraints").EnumerateArray().Single();

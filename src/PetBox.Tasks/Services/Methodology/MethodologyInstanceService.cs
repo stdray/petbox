@@ -226,11 +226,11 @@ public sealed partial class MethodologyInstanceService
 			throw new InvalidOperationException(c.Kind switch
 			{
 				TemporalConflictKind.FutureBaseline =>
-					$"methodology instance '{key}' rules conflict: your baseline version {version} is ahead of this instance's cursor {c.ActiveVersion} — re-read with tasks_methodology_instance_rules_get and resubmit against the current version",
+					$"methodology instance '{key}' rules conflict: your baseline version {version} is ahead of this instance's cursor {c.ActiveVersion} — re-read with tasks_methodology_rules_get and resubmit against the current version",
 				TemporalConflictKind.Vanished =>
-					$"methodology instance '{key}' rules conflict: your baseline version {version} no longer exists (the instance was removed); re-read with tasks_methodology_instance_rules_get",
+					$"methodology instance '{key}' rules conflict: your baseline version {version} no longer exists (the instance was removed); re-read with tasks_methodology_rules_get",
 				_ =>
-					$"methodology instance '{key}' rules conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; pass the version from your last tasks_methodology_instance_rules_get",
+					$"methodology instance '{key}' rules conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; pass the version from your last tasks_methodology_rules_get",
 			});
 		}
 

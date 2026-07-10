@@ -124,14 +124,14 @@ public sealed class MethodologyInstanceRulesEditTests : IDisposable
 
 		// MCP door.
 		var http = Http("tasks:read");
-		var mcp = await TasksTools.MethodologyInstanceRulesGetAsync(http, Flags(), _tasks, Proj, "help");
+		var mcp = await TasksTools.MethodologyRulesGetAsync(http, Flags(), _tasks, Proj, "help");
 		mcp.Found.Should().BeTrue();
 		mcp.Name.Should().Be("help");
 		mcp.DefinitionName.Should().Be("support-process");
 		mcp.Version.Should().Be(rules.Version);
 		mcp.Kinds.Should().NotBeNull().And.ContainSingle(k => k.Kind == "support");
 
-		var miss = await TasksTools.MethodologyInstanceRulesGetAsync(http, Flags(), _tasks, Proj, "nope");
+		var miss = await TasksTools.MethodologyRulesGetAsync(http, Flags(), _tasks, Proj, "nope");
 		miss.Found.Should().BeFalse();
 	}
 
@@ -328,7 +328,7 @@ public sealed class MethodologyInstanceRulesEditTests : IDisposable
 			},
 		};
 
-		var result = await TasksTools.MethodologyInstanceRulesUpsertAsync(
+		var result = await TasksTools.MethodologyRulesUpsertAsync(
 			http, Flags(), _tasks, Proj, inst, defInput, rules!.Version, migration);
 		result.Changed.Should().BeTrue();
 		result.Migrated.Should().Be(1);

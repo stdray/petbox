@@ -5,9 +5,9 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
-// The methodology-definition WIRE SEAM shared by the MCP tools (tasks_methodology_def_get /
-// def_upsert) and the admin methodology-editor page: ONE domain→document projector and ONE
-// document→domain parser, so a JSON definition document moves freely between the editor
+// The methodology-document WIRE SEAM shared by the MCP tools (tasks_methodology_template_* /
+// rules_*) and the admin methodology-editor page: ONE domain→document projector and ONE
+// document→domain parser, so a JSON methodology document moves freely between the editor
 // textarea and the MCP tools — same shape, same serializer posture (the MCP SDK's
 // McpJsonUtilities.DefaultOptions: camelCase properties, nulls omitted).
 static class MethodologyWire
