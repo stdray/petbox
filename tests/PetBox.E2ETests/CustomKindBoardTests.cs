@@ -62,12 +62,21 @@ public sealed class CustomKindBoardTests(WebAppFixture app, ITestOutputHelper ou
 			await db.InsertAsync(new Project { Key = Proj, WorkspaceKey = Ws, Name = "Custom Kind" });
 
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-		// Definition FIRST (so `risk` is a known kind), then a board of that kind, then two nodes:
-		// one open (visible), one born directly in the custom terminal status (hidden under active-only).
-		await tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
+		// Live instance FIRST (so `risk` is a known kind via instance rules), then nodes on
+		// the provisioned board: one open (visible), one born in the custom terminal status.
+		if (await tasks.GetMethodologyInstanceAsync(Proj, "risks") is null)
+		{
+			await tasks.UpsertMethodologyTemplateAsync(Proj, "risk-tmpl", RiskDefinition(), 0);
+			await tasks.CreateMethodologyInstanceAsync(Proj, "risks", "template", "risk-tmpl");
+		}
+		// Single-kind instance names its board after the instance ("risks").
 		if (!await tasks.BoardExistsAsync(Proj, Board))
 		{
-			await tasks.CreateBoardAsync(Proj, Board, "risk", "custom kind fixture", null);
+			await tasks.CreateBoardAsync(Proj, Board, "risk", "custom kind fixture", null, "risks");
+		}
+		var existing = await tasks.GetAsync(Proj, Board, includeClosed: true);
+		if (existing.Nodes.Count == 0)
+		{
 			await tasks.UpsertAsync(Proj, Board,
 			[
 				new NodePatch { Key = "r-open", Type = "risk", Status = "Open", Title = "Open risk", Body = "x" },

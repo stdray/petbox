@@ -8,7 +8,7 @@
 }
 
 <div class="mb-4 flex items-baseline gap-3 flex-wrap">
-	<h1 class="text-2xl font-semibold">@Model.ProjectKey · methodology definition</h1>
+	<h1 class="text-2xl font-semibold">@Model.ProjectKey · methodology</h1>
 	<a href="@Routes.ProjectTasksAdmin(Model.WorkspaceKey, Model.ProjectKey)" class="link link-hover text-sm opacity-70" data-testid="methodology-back-to-tasks">task boards</a>
 </div>
 
@@ -20,12 +20,12 @@
 
 @if (Model.Saved)
 {
-	<div class="alert alert-success mb-3" data-testid="methodology-saved">Definition saved.</div>
+	<div class="alert alert-success mb-3" data-testid="methodology-saved">Instance rules saved.</div>
 }
 
 @if (Model.Deleted)
 {
-	<div class="alert alert-success mb-3" data-testid="methodology-deleted">Definition deleted — the project now runs on the builtin presets.</div>
+	<div class="alert alert-success mb-3" data-testid="methodology-deleted">Methodology instance closed — open instances drive process resolution.</div>
 }
 
 @if (!string.IsNullOrEmpty(Model.ErrorMessage))
@@ -33,7 +33,7 @@
 	<div class="alert alert-error mb-3 whitespace-pre-wrap font-mono text-sm" data-testid="methodology-errors">@Model.ErrorMessage</div>
 }
 
-@* Current state: the stored definition's identity, or the honest presets-only state. *@
+@* Current state: open instance rules, or the honest presets-only state. *@
 @if (Model.Mode is EditorMode.View or EditorMode.Cta or EditorMode.Edit)
 {
 	<div class="card bg-base-200 border border-base-300 mb-4 max-w-4xl" data-testid="methodology-state">
@@ -41,36 +41,49 @@
 			@if (Model.Stored is not null)
 			{
 				<div class="flex items-baseline gap-2 flex-wrap">
-					<span class="font-semibold">Stored definition</span>
+					<span class="font-semibold">Open instance</span>
+					<span class="font-mono" data-testid="methodology-state-instance">@Model.Stored.Name</span>
 					<span class="font-mono" data-testid="methodology-state-name">@Model.Stored.Definition.Name</span>
 					<span class="badge badge-ghost badge-sm font-mono" data-testid="methodology-state-version">version @Model.Stored.Version</span>
 				</div>
+				@if (Model.OpenInstances.Count > 1)
+				{
+					<div class="flex gap-1 mt-1 flex-wrap text-xs">
+						@foreach (var inst in Model.OpenInstances)
+						{
+							var href = $"?instance={Uri.EscapeDataString(inst.Name)}";
+							var active = string.Equals(inst.Name, Model.Stored.Name, StringComparison.OrdinalIgnoreCase);
+							<a href="@href" class="badge @(active ? "badge-primary" : "badge-ghost") badge-sm font-mono" data-testid="methodology-instance-pick">@inst.Name</a>
+						}
+					</div>
+				}
 				<div class="flex gap-1 mt-1 flex-wrap">
 					@foreach (var k in Model.Stored.Definition.Kinds)
 					{
 						<span class="badge badge-neutral badge-sm font-mono" data-testid="methodology-state-kind">@k.Kind</span>
 					}
 				</div>
-				<p class="text-xs opacity-60 mt-1">Updated @Model.Stored.Updated.ToString("yyyy-MM-dd HH:mm") UTC. The document is the same shape as <span class="font-mono">tasks_methodology_template_get</span> / <span class="font-mono">tasks_methodology_rules_get</span> — it can be edited here or via MCP interchangeably.</p>
+				<p class="text-xs opacity-60 mt-1">Updated @Model.Stored.Updated.ToString("yyyy-MM-dd HH:mm") UTC. Live process rules for this instance — same document shape as <span class="font-mono">tasks_methodology_rules_get</span> / template documents.</p>
 				@if (Model.Mode == EditorMode.View)
 				{
 					<div class="card-actions mt-2 items-center">
-						<a href="?step=edit" class="btn btn-xs btn-primary" data-testid="methodology-edit-link">Edit definition</a>
-						<form method="post" asp-page-handler="Delete" data-confirm="Delete this methodology definition and revert the project to the builtin presets? Boards and nodes are kept; live nodes must fit the presets or the delete is rejected." data-testid="methodology-delete-form">
+						<a href="?step=edit&amp;instance=@Uri.EscapeDataString(Model.Stored.Name)" class="btn btn-xs btn-primary" data-testid="methodology-edit-link">Edit rules</a>
+						<form method="post" asp-page-handler="Delete" data-confirm="Rules are not deleted independently — close the methodology instance instead (tasks_methodology_close). Continue to see the close guidance?" data-testid="methodology-delete-form">
 							@Html.AntiForgeryToken()
 							<input type="hidden" name="version" value="@Model.Stored.Version" />
-							<button type="submit" class="btn btn-xs btn-error btn-outline" data-testid="methodology-delete">Delete definition</button>
+							<input type="hidden" name="instance" value="@Model.Stored.Name" />
+							<button type="submit" class="btn btn-xs btn-error btn-outline" data-testid="methodology-delete">Close guidance</button>
 						</form>
 					</div>
 				}
 			}
 			else
 			{
-				<p class="text-sm opacity-80" data-testid="methodology-state-presets">No stored definition — this project runs on the builtin presets. Create a methodology to declare the project's own kinds, statuses and gates.</p>
+				<p class="text-sm opacity-80" data-testid="methodology-state-presets">No open methodology instance — this project runs on the builtin presets. Create a methodology to declare the project's own kinds, statuses and gates.</p>
 				@if (Model.ActiveBoards.Count > 0)
 				{
 					<p class="text-xs opacity-60 mt-1" data-testid="methodology-state-boards">
-						Active boards (each resolves its preset kind):
+						Active boards (each resolves its preset kind unless membership is set):
 						@foreach (var b in Model.ActiveBoards)
 						{
 							<span class="badge badge-ghost badge-sm font-mono mr-1">@b.Name (@b.Kind)</span>
@@ -85,11 +98,11 @@
 @switch (Model.Mode)
 {
 	case EditorMode.Cta:
-		@* Entry for a definition-less project: creation is an explicit action. *@
+		@* Entry when no open instance: creation is an explicit action. *@
 		<div class="card bg-base-200 border border-base-300 max-w-4xl" data-testid="methodology-cta-card">
 			<div class="card-body p-6">
 				<h2 class="card-title text-lg">Create methodology</h2>
-				<p class="text-sm opacity-80">Pick a base — a builtin preset or a definition you already authored in another project — edit it, review the summary, save. The installed definition overrides the presets per kind and is fully editable and deletable afterwards.</p>
+				<p class="text-sm opacity-80">Pick a base — a builtin preset, a template, or open instance rules from another project — edit it, review the summary, save. Save creates a named methodology instance with these rules (and boards for each kind).</p>
 				<div class="card-actions mt-3 items-center">
 					<a href="?step=base" class="btn btn-primary btn-sm" data-testid="methodology-create-cta">Create methodology</a>
 					<a href="?step=edit" class="link link-hover text-sm opacity-70" data-testid="methodology-raw-editor-link">or open the raw JSON editor</a>
@@ -99,9 +112,9 @@
 		break;
 
 	case EditorMode.View:
-		@* Existing definition: a rendered summary + preview; editing is an explicit action. *@
+		@* Existing open instance: a rendered summary + preview; editing is an explicit action. *@
 		<section class="max-w-4xl" data-testid="methodology-view">
-			<h2 class="text-lg font-semibold mb-2">Definition summary</h2>
+			<h2 class="text-lg font-semibold mb-2">Instance rules summary</h2>
 			@foreach (var kind in Model.Summary)
 			{
 				<div class="card bg-base-200 border border-base-300 mb-2" data-testid="methodology-view-kind">
@@ -144,7 +157,7 @@
 		@* Wizard step 1: choose a base. *@
 		<section class="max-w-4xl" data-testid="methodology-base-picker">
 			<h2 class="text-lg font-semibold mb-1">Create methodology — choose a base</h2>
-			<p class="text-sm opacity-70 mb-3">Start from a builtin preset or copy a definition you already authored in another project. The next step opens it in the editor.</p>
+			<p class="text-sm opacity-70 mb-3">Start from a builtin preset, a stored template, or open instance rules from another project. The next step opens it in the editor.</p>
 			<script type="application/json" data-testid="methodology-base-previews-data">@Html.Raw(Model.BasePreviewsJson)</script>
 			<div class="grid grid-cols-1 gap-3">
 				@foreach (var b in Model.Bases)
@@ -189,12 +202,13 @@
 			<button type="submit" class="btn btn-sm" data-testid="methodology-template-load">Load preset as template</button>
 		</form>
 
-		@* The document editor: same JSON shape as tasks_methodology_template_get / template_upsert. *@
+		@* The document editor: same JSON shape as tasks_methodology_template_get / rules_upsert. *@
 		<form method="post" class="max-w-4xl" data-testid="methodology-form">
 			@Html.AntiForgeryToken()
 			<input type="hidden" name="version" value="@Model.Version" />
+			<input type="hidden" name="instance" value="@Model.Instance" />
 			<label class="form-control">
-				<span class="label-text">Definition document (JSON)</span>
+				<span class="label-text">Rules document (JSON)</span>
 				<textarea name="definitionJson" rows="24" spellcheck="false" wrap="off" data-json-highlight
 					class="textarea textarea-bordered font-mono text-xs leading-snug w-full"
 					placeholder='{ "name": "custom", "kinds": [ { "kind": "job", "workflows": [ ... ] } ] }'
@@ -290,9 +304,10 @@
 			<form method="post" class="flex gap-2 items-center" data-testid="methodology-confirm-form">
 				@Html.AntiForgeryToken()
 				<input type="hidden" name="version" value="@Model.Version" />
+				<input type="hidden" name="instance" value="@Model.Instance" />
 				<input type="hidden" name="definitionJson" value="@Model.DefinitionJson" />
 				<input type="hidden" name="migrationJson" value="@Model.MigrationJson" />
-				<button type="submit" asp-page-handler="Save" class="btn btn-sm btn-primary" data-testid="methodology-save">Save definition</button>
+				<button type="submit" asp-page-handler="Save" class="btn btn-sm btn-primary" data-testid="methodology-save">Save instance rules</button>
 				<button type="submit" asp-page-handler="Preview" class="btn btn-sm btn-ghost" data-testid="methodology-confirm-back">Back to edit</button>
 			</form>
 		</section>

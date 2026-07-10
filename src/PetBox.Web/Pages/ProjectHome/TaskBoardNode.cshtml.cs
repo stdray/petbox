@@ -223,10 +223,10 @@ public sealed class TaskBoardNodeModel : PageModel
 		Detail = detail;
 		Error = error;
 
-		// Resolve the legal next statuses through the SAME runtime the MCP path uses, keyed by
-		// the board's resolved kind — so a definition-declared kind offers transitions from its
-		// OWN FSM instead of the `Simple` fallback ParseKind would collapse a custom slug to.
-		Runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);
+		// Resolve the legal next statuses through the SAME board-scoped runtime the MCP path
+		// uses, keyed by the board's resolved kind — so an instance-declared kind offers
+		// transitions from its OWN FSM instead of the `Simple` fallback ParseKind would collapse a custom slug to.
+		Runtime = await _tasks.GetRuntimeForBoardAsync(ProjectKey, detail.Board, ct);
 
 		// Project-scoped commit-view template (cascades to workspace/system); empty when unset.
 		CommitUrlTemplate = (await _settings.GetAsync<RepoSettings>(Scope.Project, ProjectKey, ct)).CommitUrlTemplate;

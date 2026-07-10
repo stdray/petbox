@@ -87,7 +87,7 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 	[Fact]
 	public async Task GetRuntime_DefinedKind_AnswersFromDefinition()
 	{
-		await _tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
+		await InstallRiskInstanceAsync();
 		var runtime = await _tasks.GetRuntimeAsync(Proj);
 
 		// Kind badge names the custom slug (not the `simple` fallback).
@@ -117,7 +117,7 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 	[Fact]
 	public async Task GetRuntime_PresetKinds_Unchanged()
 	{
-		await _tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
+		await InstallRiskInstanceAsync();
 		var runtime = await _tasks.GetRuntimeAsync(Proj);
 
 		runtime.KindName("simple").Should().Be("simple");
@@ -151,7 +151,8 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 						[new MethodologyTransitionDef("waiting", "closed")]),
 				]),
 			]);
-		await _tasks.DefineMethodologyAsync(Proj, def, version: 0);
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "label-tmpl", def, 0);
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "labels", "template", "label-tmpl");
 		var runtime = await _tasks.GetRuntimeAsync(Proj);
 
 		// Preset labels: PascalCase → sentence case, lowercase quartet → capitalized, per the
@@ -174,18 +175,19 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 	[Fact]
 	public async Task TaskBoardModel_DefinedKind_ResolvesThroughRuntime()
 	{
-		await _tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
-		await _store.CreateAsync(Proj, "risks", "risk board", "risk");
+		await InstallRiskInstanceAsync();
+		// Single-kind instance board is named after the instance ("risks").
+		var board = (await _tasks.ListBoardsAsync(Proj)).Single(b => b.Kind == "risk").Name;
 
 		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver())
-		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = "risks" };
+		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = board };
 		await model.OnGetAsync(default);
 
 		model.KindSlug.Should().Be("risk");
 		model.KindName.Should().Be("risk", "the badge names the custom kind, not `simple`");
 		model.Runtime.PresetKind(model.KindSlug).Should().BeNull("a defined kind has no preset process role");
 		model.ShowQuickAdd.Should().BeFalse("the custom kind sets quickAddAllowed:false");
-		// The wired runtime is the definition-aware one, so its per-board terminality is honored.
+		// The wired runtime is the instance-aware one, so its per-board terminality is honored.
 		model.Runtime.IsTerminalStatus(model.KindSlug, "Mitigated").Should().BeTrue();
 	}
 
@@ -194,15 +196,21 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 	[Fact]
 	public async Task TaskBoardModel_QuickAddPost_GatedByDefinedPolicy()
 	{
-		await _tasks.DefineMethodologyAsync(Proj, RiskDefinition(), version: 0);
-		await _store.CreateAsync(Proj, "risks", "risk board", "risk");
+		await InstallRiskInstanceAsync();
+		var board = (await _tasks.ListBoardsAsync(Proj)).Single(b => b.Kind == "risk").Name;
 
 		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver())
-		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = "risks" };
+		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = board };
 		var result = await model.OnPostCreateAsync("a risk", "body", 50, default);
 
 		result.Should().BeOfType<Microsoft.AspNetCore.Mvc.BadRequestResult>();
-		_store.GetContext(Proj).PlanNodes.Count(n => n.Board == "risks" && n.ActiveTo == null)
+		_store.GetContext(Proj).PlanNodes.Count(n => n.Board == board && n.ActiveTo == null)
 			.Should().Be(0, "quick-add is gated off for this kind — nothing written");
+	}
+
+	async Task InstallRiskInstanceAsync()
+	{
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "risk-tmpl", RiskDefinition(), 0);
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "risks", "template", "risk-tmpl");
 	}
 }

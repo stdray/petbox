@@ -110,9 +110,9 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 		},
 	};
 
-	// Install the support definition on the project singleton (legacy dual-read still drives
-	// RuntimeAsync used by tasks_search kind + QuickAdd). MCP def_* tools are gone — service door.
+	// Install support as a live methodology instance (drives RuntimeAsync / board FSM).
 	static readonly JsonSerializerOptions WireJson = new() { PropertyNameCaseInsensitive = true };
+	const string Inst = "support";
 
 	async Task Define()
 	{
@@ -121,16 +121,16 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 		var def = MethodologyWire.ParseDefinition(input);
 		using var scope = _fx.Factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-		var ack = await tasks.DefineMethodologyAsync(ProjectKey, def, 0);
-		ack.Changed.Should().BeTrue();
+		await tasks.UpsertMethodologyTemplateAsync(ProjectKey, "support-tmpl", def, 0);
+		await tasks.CreateMethodologyInstanceAsync(ProjectKey, Inst, "template", "support-tmpl");
 	}
 
 	Task<CallToolResult> Upsert(string board, params object[] nodes) =>
 		Call("tasks_upsert", new { projectKey = ProjectKey, board, nodes = Nodes(nodes) });
 
-	// Pre-instance path: no methodologyInstance (project has no instances yet).
+	// Instance membership required once the project has any methodology instance.
 	Task<CallToolResult> CreateBoard(string board, string kind = "support") =>
-		Call("tasks_board_create", new { projectKey = ProjectKey, board, kind });
+		Call("tasks_board_create", new { projectKey = ProjectKey, board, kind, methodologyInstance = Inst });
 
 	// ── scenarios ────────────────────────────────────────────────────────────
 

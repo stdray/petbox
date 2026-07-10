@@ -109,13 +109,13 @@ public sealed class EngineEnumResidualTests : IDisposable
 				AutoWireSpecFrom = "requirements",
 			},
 		]);
-		await _tasks.DefineMethodologyAsync(Proj, def, 0);
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "wire-tmpl", def, 0);
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "wire", "template", "wire-tmpl");
 
-		await _tasks.CreateBoardAsync(Proj, "reqs", "requirements", "r", null);
-		await _tasks.CreateBoardAsync(Proj, "deliv", "delivery", "d", null);
-
-		var deliv = (await _tasks.ListBoardsAsync(Proj)).Single(b => b.Name == "deliv");
-		deliv.SpecBoard.Should().Be("reqs", "AutoWireSpecFrom=requirements on the delivery kind");
+		// Create provisions boards named after kind slugs and auto-wires within the instance.
+		var deliv = (await _tasks.ListBoardsAsync(Proj)).Single(b => b.Kind == "delivery");
+		var reqs = (await _tasks.ListBoardsAsync(Proj)).Single(b => b.Kind == "requirements");
+		deliv.SpecBoard.Should().Be(reqs.Name, "AutoWireSpecFrom=requirements on the delivery kind");
 	}
 
 	[Fact]
@@ -186,10 +186,8 @@ public sealed class EngineEnumResidualTests : IDisposable
 				AutoWireSpecFrom = "spec",
 			},
 		]);
-		await _tasks.DefineMethodologyAsync(Proj, def, 0);
-		await _tasks.CreateBoardAsync(Proj, "ideas", "ideas", "i", null);
-		await _tasks.CreateBoardAsync(Proj, "spec", "spec", "s", null);
-		await _tasks.CreateBoardAsync(Proj, "work", "work", "w", null);
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "delivery-tmpl", def, 0);
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "delivery", "template", "delivery-tmpl");
 
 		await _tasks.UpsertAsync(Proj, "ideas", [new NodePatch { Key = "i1", Title = "I", Body = "x", Status = "accepted", Type = "idea" }]);
 		var ideaId = (await _tasks.GetAsync(Proj, "ideas", includeClosed: true)).Nodes.Single().NodeId;
@@ -220,10 +218,12 @@ public sealed class EngineEnumResidualTests : IDisposable
 			]),
 			// no Delivery, no LinkConstraints
 		]);
-		await _tasks.DefineMethodologyAsync(Proj, def, 0);
-		await _tasks.CreateBoardAsync(Proj, "spec", "spec", "s", null);
-		await _tasks.UpsertAsync(Proj, "spec", [new NodePatch { Key = "s1", Title = "S", Body = "x", Status = "defined", Type = "spec" }]);
-		(await _tasks.GetAsync(Proj, "spec")).Nodes.Single().Delivery.Should().BeNull("no Delivery config on the kind");
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "no-deliv-tmpl", def, 0);
+		var ack = await _tasks.CreateMethodologyInstanceAsync(Proj, "no-deliv", "template", "no-deliv-tmpl");
+		// Single-kind instance: board is named after the instance.
+		var board = ack.Boards.Single().Name;
+		await _tasks.UpsertAsync(Proj, board, [new NodePatch { Key = "s1", Title = "S", Body = "x", Status = "defined", Type = "spec" }]);
+		(await _tasks.GetAsync(Proj, board)).Nodes.Single().Delivery.Should().BeNull("no Delivery config on the kind");
 	}
 
 	// ── guide ────────────────────────────────────────────────────────────────

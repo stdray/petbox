@@ -178,16 +178,15 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 			(i.Rule == "checklist" || i.Rule == "tag_axes" || i.Rule.StartsWith("approval_gate")));
 	}
 
-	// (b) a definition kind renders its gates/constraints/axes from DATA — the same renderer,
+	// (b) an instance kind renders its gates/constraints/axes from DATA — the same renderer,
 	// nothing support-specific in code — and the preset kinds it doesn't override remain.
 	[Fact]
 	public async Task Definition_CustomKindRendersFromData_SourceReflectsIt()
 	{
-		// Guide still reads the project singleton definition (legacy dual-read); install via service.
-		var version = await InstallSupportDefinitionAsync();
+		var version = await InstallSupportInstanceAsync();
 
 		var guide = await Guide();
-		guide.GetProperty("source").GetString().Should().Be("mixed", "the definition adds `support` but the preset kinds still serve");
+		guide.GetProperty("source").GetString().Should().Be("instance", "one open instance drives the guide");
 		guide.GetProperty("definitionVersion").GetInt64().Should().Be(version);
 
 		var md = guide.GetProperty("markdown").GetString()!;
@@ -215,7 +214,7 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 	[Fact]
 	public async Task Guide_IsDeterministic()
 	{
-		await InstallSupportDefinitionAsync();
+		await InstallSupportInstanceAsync();
 
 		var first = await Guide();
 		var second = await Guide();
@@ -223,11 +222,10 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		Invariants(second).Should().Equal(Invariants(first));
 	}
 
-	// Guide still derives from the project singleton definition (legacy); install via service
-	// until guide is retargeted to instances. MCP def_* tools are gone.
+	// Guide derives from open methodology instance rules.
 	static readonly JsonSerializerOptions WireJson = new() { PropertyNameCaseInsensitive = true };
 
-	async Task<long> InstallSupportDefinitionAsync()
+	async Task<long> InstallSupportInstanceAsync()
 	{
 		var json = JsonSerializer.Serialize(SupportDefinition());
 		var input = JsonSerializer.Deserialize<MethodologyDefInput>(json, WireJson)
@@ -236,8 +234,10 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		def.Name.Should().NotBeNullOrEmpty("SupportDefinition must carry a methodology name");
 		using var scope = _fx.Factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-		var ack = await tasks.DefineMethodologyAsync(ProjectKey, def, 0);
-		ack.Changed.Should().BeTrue();
-		return ack.Version;
+		await tasks.UpsertMethodologyTemplateAsync(ProjectKey, "support-tmpl", def, 0);
+		await tasks.CreateMethodologyInstanceAsync(ProjectKey, "support", "template", "support-tmpl");
+		var rules = await tasks.GetMethodologyInstanceRulesAsync(ProjectKey, "support");
+		rules.Should().NotBeNull();
+		return rules!.Version;
 	}
 }

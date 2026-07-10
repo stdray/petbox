@@ -83,19 +83,20 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// The project's active methodology definition + its revision metadata, or null when
 	// the project has none (it is then on the built-in MethodologyPresets).
 	Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default);
-	// The agent-facing PROCESS GUIDE derived at runtime from the project's EFFECTIVE
-	// methodology (definition-declared kinds + preset kinds not overridden): markdown
-	// prose + the structured invariants behind it (spec artifacts-from-definition).
-	// Deterministic and bounded — a handful of kinds, no truncation machinery.
-	Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, CancellationToken ct = default);
+	// The agent-facing PROCESS GUIDE derived at runtime from OPEN methodology instances
+	// (instance rules + preset kinds not overridden): markdown prose + structured invariants.
+	// Optional `name` selects one instance; when null: 0 open→presets, 1 open→that instance,
+	// N open→merged kinds (first open by name wins on kind-slug conflict). Source is
+	// "presets" | "instance" | "instances". Deterministic and bounded — no truncation.
+	Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, string? name = null, CancellationToken ct = default);
 
 	// --- named methodology templates (independent of live process / instances) ---
 	// Templates are reusable MethodologyDefinition documents. Write NEVER provisions
-	// boards, never rewrites live nodes, and never mutates the singleton methodology_defs
-	// document (that remains def_upsert's job until instance core lands). Builtins
+	// boards, never rewrites live nodes, and never mutates live instance rules. Builtins
 	// (quartet|classic|simple) are readable via the same get/list contract (source=
-	// "builtin"); the legacy singleton def dual-reads as source="definition" under key
-	// "methodology" when no stored template owns that key.
+	// "builtin"); the legacy singleton methodology_defs dual-reads as source="definition"
+	// under key "methodology" when no stored template owns that key (history only — not
+	// the live process path).
 
 	// Upsert a named template. `version` is the watermark baseline (0 = create). Builtin
 	// keys are rejected. Validates the definition document; stores only.
@@ -185,10 +186,10 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// (task_spec|issue_task|idea_spec|blocks|part_of|supersedes), builtin neutral kinds
 	// (relates_to|depends_on|mirrors — free semantic edges, no FSM effects), and the kinds
 	// the board's methodology instance declares (linkKinds). When `fromNodeId` is omitted
-	// or the node/board has no instance membership, falls back to the project's legacy
-	// singleton definition (transitional dual-read). Returns the normalized (lowercased)
-	// kind; an unknown kind throws, listing every valid kind for that scope. RelationTools
-	// calls this after resolving the from-node (the store itself is not definition-aware).
+	// or the node/board has no instance membership, falls back to open-instance merge /
+	// presets (never methodology_defs). Returns the normalized (lowercased) kind; an
+	// unknown kind throws, listing every valid kind for that scope. RelationTools calls
+	// this after resolving the from-node (the store itself is not definition-aware).
 	Task<string> ValidateRelationKindAsync(string projectKey, string kind, string? fromNodeId = null, CancellationToken ct = default);
 	// Project a board by an ORDERED list of tag namespaces (e.g. [area, concern]): nodes
 	// bucketed by their tag value in each namespace ("(none)" for untagged), nested in
@@ -244,12 +245,15 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// before (identical FSMs collapsed into one block). Powers tasks_workflow.
 	Task<BoardWorkflowView> GetBoardWorkflowAsync(string projectKey, string board, CancellationToken ct = default);
 	// The project's data-driven FSM resolution seam — the SAME MethodologyRuntime the MCP
-	// tools resolve through (the project's methodology definition merged over the built-in
-	// presets). UI pages resolve kind name / quick-add / terminality / next-statuses off this
-	// (pass a board's stored kind slug OR its resolved KindName — they resolve identically) so
-	// a definition-declared custom kind behaves the same on UI, MCP and REST. The instance is
-	// immutable and cheap (built once per call), so a page may hold it for the whole request.
+	// tools resolve through: OPEN methodology instance rules (0→presets, 1→that instance,
+	// N→merge by kind-slug, first open by name wins) over the built-in presets. UI pages
+	// resolve kind name / quick-add / terminality / next-statuses off this so a custom kind
+	// behaves the same on UI, MCP and REST. Prefer GetRuntimeForBoardAsync when a board is
+	// known (instance membership). Immutable and cheap (built once per call).
 	Task<MethodologyRuntime> GetRuntimeAsync(string projectKey, CancellationToken ct = default);
+	// Board-scoped resolution: the board's methodology instance rules when membership is
+	// set, else the project open-instance merge (legacy unassigned boards).
+	Task<MethodologyRuntime> GetRuntimeForBoardAsync(string projectKey, string board, CancellationToken ct = default);
 
 	// --- UI helpers (board page renders the raw active nodes in its own tree order) ---
 

@@ -113,50 +113,56 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 		return (n.NodeId, n.Version, n.Status);
 	}
 
-	// ── 1. a definition-declared effect executes end-to-end through the service ──
+	// Live process = open methodology instance (not methodology_defs). Create provisions
+	// one board per kind named after the kind slug (ticket|job|case).
+	async Task InstallLive()
+	{
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "engine-tmpl", Def(), 0);
+		await _tasks.CreateMethodologyInstanceAsync(Proj, "main", "template", "engine-tmpl");
+	}
+
+	// ── 1. an instance-declared effect executes end-to-end through the service ──
 
 	[Fact]
 	public async Task Effect_OnDefinitionKind_ExecutesOnEnteringStatus_FilteredByOnlyFrom()
 	{
-		await _tasks.DefineMethodologyAsync(Proj, Def(), 0);
-		await _tasks.CreateBoardAsync(Proj, "tickets", "ticket", null, null);
-		await Upsert("tickets",
+		await InstallLive();
+		await Upsert("ticket",
 			new NodePatch { Key = "root", Type = "ticket", Status = "Open", Title = "R", Body = "x" },
 			new NodePatch { Key = "follower", Type = "ticket", Status = "Open", Title = "F", Body = "x" },
 			new NodePatch { Key = "parked", Type = "ticket", Status = "Waiting", Title = "P", Body = "x" });
-		var root = await NodeInfo("tickets", "root");
-		var follower = await NodeInfo("tickets", "follower");
-		var parked = await NodeInfo("tickets", "parked");
+		var root = await NodeInfo("ticket", "root");
+		var follower = await NodeInfo("ticket", "follower");
+		var parked = await NodeInfo("ticket", "parked");
 
 		// follower/parked point AT root: incoming edges relative to the transitioned node.
 		await _relations.CreateAsync(Proj, "spawned", follower.NodeId, root.NodeId);
 		await _relations.CreateAsync(Proj, "spawned", parked.NodeId, root.NodeId);
 
-		await Upsert("tickets", new NodePatch { Key = "root", Status = "Resolved", Version = root.Version });
+		await Upsert("ticket", new NodePatch { Key = "root", Status = "Resolved", Version = root.Version });
 
-		(await NodeInfo("tickets", "follower")).Status.Should().Be("Resolved",
+		(await NodeInfo("ticket", "follower")).Status.Should().Be("Resolved",
 			"the declared effect resolves incoming `spawned` tickets still in Open");
-		(await NodeInfo("tickets", "parked")).Status.Should().Be("Waiting",
+		(await NodeInfo("ticket", "parked")).Status.Should().Be("Waiting",
 			"OnlyFrom=Open excludes a Waiting ticket from the effect");
 	}
 
 	[Fact]
 	public async Task Effect_DoesNotRefire_WhenStatusUnchanged()
 	{
-		await _tasks.DefineMethodologyAsync(Proj, Def(), 0);
-		await _tasks.CreateBoardAsync(Proj, "tickets", "ticket", null, null);
-		await Upsert("tickets", new NodePatch { Key = "root", Type = "ticket", Status = "Open", Title = "R", Body = "x" });
-		var root = await NodeInfo("tickets", "root");
-		await Upsert("tickets", new NodePatch { Key = "root", Status = "Resolved", Version = root.Version });
+		await InstallLive();
+		await Upsert("ticket", new NodePatch { Key = "root", Type = "ticket", Status = "Open", Title = "R", Body = "x" });
+		var root = await NodeInfo("ticket", "root");
+		await Upsert("ticket", new NodePatch { Key = "root", Status = "Resolved", Version = root.Version });
 
 		// Linked AFTER the transition; an edit that does not re-enter the status fires nothing.
-		await Upsert("tickets", new NodePatch { Key = "late", Type = "ticket", Status = "Open", Title = "L", Body = "x" });
-		var late = await NodeInfo("tickets", "late");
+		await Upsert("ticket", new NodePatch { Key = "late", Type = "ticket", Status = "Open", Title = "L", Body = "x" });
+		var late = await NodeInfo("ticket", "late");
 		await _relations.CreateAsync(Proj, "spawned", late.NodeId, root.NodeId);
-		var resolved = await NodeInfo("tickets", "root");
-		await Upsert("tickets", new NodePatch { Key = "root", Status = "Resolved", Version = resolved.Version, Title = "R2" });
+		var resolved = await NodeInfo("ticket", "root");
+		await Upsert("ticket", new NodePatch { Key = "root", Status = "Resolved", Version = resolved.Version, Title = "R2" });
 
-		(await NodeInfo("tickets", "late")).Status.Should().Be("Open",
+		(await NodeInfo("ticket", "late")).Status.Should().Be("Open",
 			"effects fire on ENTERING the status, not on every edit of a node already in it");
 	}
 
@@ -165,15 +171,13 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 	[Fact]
 	public async Task LinkTargetGuard_AcceptsMatchingTarget_CreatesEdge()
 	{
-		await _tasks.DefineMethodologyAsync(Proj, Def(), 0);
-		await _tasks.CreateBoardAsync(Proj, "tickets", "ticket", null, null);
-		await _tasks.CreateBoardAsync(Proj, "jobs", "job", null, null);
-		await Upsert("tickets", new NodePatch { Key = "t", Type = "ticket", Status = "Open", Title = "T", Body = "x" });
-		var ticket = await NodeInfo("tickets", "t");
+		await InstallLive();
+		await Upsert("ticket", new NodePatch { Key = "t", Type = "ticket", Status = "Open", Title = "T", Body = "x" });
+		var ticket = await NodeInfo("ticket", "t");
 
-		await Upsert("jobs", new NodePatch { Key = "j", Type = "job", Status = "Todo", Title = "J", Body = "x", SpecRef = ticket.NodeId });
+		await Upsert("job", new NodePatch { Key = "j", Type = "job", Status = "Todo", Title = "J", Body = "x", SpecRef = ticket.NodeId });
 
-		var job = await NodeInfo("jobs", "j");
+		var job = await NodeInfo("job", "j");
 		(await _relations.ListAsync(Proj, ticket.NodeId, "to"))
 			.Should().ContainSingle(e => e.Kind == "task_spec" && e.FromNodeId == job.NodeId,
 				"the constrained link lands as a task_spec edge job -> ticket");
@@ -182,24 +186,22 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 	[Fact]
 	public async Task LinkTargetGuard_RejectsWrongKind_AndWrongStatus_AndMissingLink()
 	{
-		await _tasks.DefineMethodologyAsync(Proj, Def(), 0);
-		await _tasks.CreateBoardAsync(Proj, "tickets", "ticket", null, null);
-		await _tasks.CreateBoardAsync(Proj, "jobs", "job", null, null);
-		await _tasks.CreateBoardAsync(Proj, "misc", null, null, null); // simple
-		await Upsert("tickets", new NodePatch { Key = "t-res", Type = "ticket", Status = "Resolved", Title = "T", Body = "x" });
+		await InstallLive();
+		await _tasks.CreateBoardAsync(Proj, "misc", null, null, null, "main"); // simple on instance
+		await Upsert("ticket", new NodePatch { Key = "t-res", Type = "ticket", Status = "Resolved", Title = "T", Body = "x" });
 		await Upsert("misc", new NodePatch { Key = "m", Status = "Todo", Title = "M", Body = "x" });
 		var wrongKind = await NodeInfo("misc", "m");
-		var wrongStatus = await NodeInfo("tickets", "t-res");
+		var wrongStatus = await NodeInfo("ticket", "t-res");
 
-		var kind = () => Upsert("jobs", new NodePatch { Key = "j1", Type = "job", Status = "Todo", Title = "J", Body = "x", SpecRef = wrongKind.NodeId });
+		var kind = () => Upsert("job", new NodePatch { Key = "j1", Type = "job", Status = "Todo", Title = "J", Body = "x", SpecRef = wrongKind.NodeId });
 		(await kind.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*is not a ticket board*");
 
-		var status = () => Upsert("jobs", new NodePatch { Key = "j2", Type = "job", Status = "Todo", Title = "J", Body = "x", SpecRef = wrongStatus.NodeId });
+		var status = () => Upsert("job", new NodePatch { Key = "j2", Type = "job", Status = "Todo", Title = "J", Body = "x", SpecRef = wrongStatus.NodeId });
 		(await status.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*'Resolved', not Open*");
 
-		var missing = () => Upsert("jobs", new NodePatch { Key = "j3", Type = "job", Status = "Todo", Title = "J", Body = "x" });
+		var missing = () => Upsert("job", new NodePatch { Key = "j3", Type = "job", Status = "Todo", Title = "J", Body = "x" });
 		(await missing.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("a job job must link a ticket node — provide specRef (node 'j3')");
 	}
@@ -209,30 +211,29 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 	[Fact]
 	public async Task EnforcedApproval_McpDoor_RejectedWithoutApproveScope_AllowedWithIt()
 	{
-		await _tasks.DefineMethodologyAsync(Proj, Def(), 0);
-		await _tasks.CreateBoardAsync(Proj, "cases", "case", null, null);
+		await InstallLive();
 
 		var agent = Http("tasks:read,tasks:write");
-		await TasksTools.UpsertAsync(agent, Flags(), _tasks, Proj, "cases",
+		await TasksTools.UpsertAsync(agent, Flags(), _tasks, Proj, "case",
 			McpInputs.NodesJson("""[{"key":"c1","type":"case","status":"Open","title":"C","body":"x"}]"""));
 
 		// Without tasks:approve the ENFORCED gate blocks the transition...
-		var move = () => TasksTools.UpsertAsync(agent, Flags(), _tasks, Proj, "cases",
+		var move = () => TasksTools.UpsertAsync(agent, Flags(), _tasks, Proj, "case",
 			McpInputs.NodesJson("""[{"key":"c1","status":"Closed","version":1}]"""));
 		(await move.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*'Open' -> 'Closed' requires maintainer approval*");
 
 		// ...and birth straight into the gated status is an approval too.
-		var born = () => TasksTools.UpsertAsync(agent, Flags(), _tasks, Proj, "cases",
+		var born = () => TasksTools.UpsertAsync(agent, Flags(), _tasks, Proj, "case",
 			McpInputs.NodesJson("""[{"key":"c2","type":"case","status":"Closed","title":"C2","body":"x"}]"""));
 		(await born.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*only a maintainer can set status 'Closed'*");
 
 		// A key holding tasks:approve performs the same transition.
 		var approver = Http("tasks:read,tasks:write,tasks:approve");
-		await TasksTools.UpsertAsync(approver, Flags(), _tasks, Proj, "cases",
+		await TasksTools.UpsertAsync(approver, Flags(), _tasks, Proj, "case",
 			McpInputs.NodesJson("""[{"key":"c1","status":"Closed","version":1}]"""));
-		(await NodeInfo("cases", "c1")).Status.Should().Be("Closed");
+		(await NodeInfo("case", "c1")).Status.Should().Be("Closed");
 	}
 
 	// The UI door counts the cookie-authenticated owner as an approver — the page passes
@@ -240,16 +241,15 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 	[Fact]
 	public async Task EnforcedApproval_UiActor_Allowed_DefaultActorBlocked()
 	{
-		await _tasks.DefineMethodologyAsync(Proj, Def(), 0);
-		await _tasks.CreateBoardAsync(Proj, "cases", "case", null, null);
-		await Upsert("cases", new NodePatch { Key = "c1", Type = "case", Status = "Open", Title = "C", Body = "x" });
+		await InstallLive();
+		await Upsert("case", new NodePatch { Key = "c1", Type = "case", Status = "Open", Title = "C", Body = "x" });
 
-		var anonymous = () => _tasks.UpsertAsync(Proj, "cases", [new NodePatch { Key = "c1", Status = "Closed", Version = 1 }]);
+		var anonymous = () => _tasks.UpsertAsync(Proj, "case", [new NodePatch { Key = "c1", Status = "Closed", Version = 1 }]);
 		(await anonymous.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*requires maintainer approval*");
 
-		await _tasks.UpsertAsync(Proj, "cases", [new NodePatch { Key = "c1", Status = "Closed", Version = 1 }], TasksActor.Approver);
-		(await NodeInfo("cases", "c1")).Status.Should().Be("Closed");
+		await _tasks.UpsertAsync(Proj, "case", [new NodePatch { Key = "c1", Status = "Closed", Version = 1 }], TasksActor.Approver);
+		(await NodeInfo("case", "c1")).Status.Should().Be("Closed");
 	}
 
 	// Presets stay UNENFORCED: the work approve gate (Review -> Done) still passes for a

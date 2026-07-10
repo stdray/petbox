@@ -317,9 +317,10 @@ public sealed record MethodologyInstanceRulesAck(
 // The runtime-derived agent guide to a project's process (tasks_methodology_guide, spec
 // artifacts-from-definition): markdown prose + the structured invariants it was derived
 // from (the machine-readable form — no markdown re-parsing downstream). `Source` says
-// where the effective kinds came from: "presets" (no definition), "definition" (the
-// definition overrides every preset kind) or "mixed" (definition kinds + preset fallback).
-// DefinitionVersion is the definition's revision when one exists (null on pure presets).
+// where the effective kinds came from: "presets" (no open instance), "instance" (one open
+// instance, or a named instance via the optional `name` param), or "instances" (merged
+// open instances). DefinitionVersion is the instance rules revision when source is a
+// single instance (null on pure presets / multi-instance merge).
 public sealed record MethodologyGuideView(
 	string Markdown,
 	IReadOnlyList<MethodologyInvariant> Invariants,

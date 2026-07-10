@@ -40,17 +40,19 @@ public sealed class ProjectTasksModel : PageModel
 	public bool ProjectNotFound { get; private set; }
 	public string? ErrorMessage { get; private set; }
 
-	// The project's effective process (definition first, preset fallback) — kind badges
-	// resolve through this, so a definition-declared custom kind shows its own slug
-	// instead of the Simple fallback.
+	// Open methodology instance rules (merged) — kind badges resolve through this, so an
+	// instance-declared custom kind shows its own slug instead of the Simple fallback.
 	public MethodologyRuntime Runtime { get; private set; } = MethodologyRuntime.PresetsOnly;
 
-	// The four methodology kinds are per-project singletons. The UI offers EITHER enabling
-	// the whole quartet OR adding free boards — never individual methodology-kind boards.
+	// First open instance by name (used when creating a free board once instances exist).
+	public string? FirstOpenInstance { get; private set; }
+
+	// The four methodology kinds are per-instance singletons. The UI offers EITHER enabling
+	// a methodology preset (creates an instance) OR adding free boards.
 	static readonly string[] MethodologyKinds = ["spec", "ideas", "intake", "work"];
 	public bool MethodologyEnabled { get; private set; }
 
-	// The provisioning presets offered next to the Enable button (one today: the quartet).
+	// The provisioning presets offered next to the Enable button.
 	// Read straight off the registry, so a new preset appears here without touching the page.
 	public IReadOnlyList<MethodologyPresets.MethodologyProvisioningPreset> Presets { get; } =
 		MethodologyPresets.ProvisioningPresets;
@@ -63,22 +65,44 @@ public sealed class ProjectTasksModel : PageModel
 		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
-		Runtime = MethodologyRuntime.From((await _tasks.GetMethodologyDefinitionAsync(ProjectKey, ct))?.Definition);
+		Runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);
 		Boards = [.. await _tasks.ListBoardsAsync(ProjectKey, ct)];
 		var openKinds = Boards.Where(b => b.ClosedAt == null).Select(b => b.Kind).ToHashSet(StringComparer.Ordinal);
 		MethodologyEnabled = MethodologyKinds.All(openKinds.Contains);
+		var open = (await _tasks.ListMethodologyInstancesAsync(ProjectKey, ct))
+			.Where(i => !i.Closed)
+			.OrderBy(i => i.Name, StringComparer.Ordinal)
+			.ToList();
+		FirstOpenInstance = open.Count > 0 ? open[0].Name : null;
 		return Page();
 	}
 
 	// Add a FREE board (scratch / ad-hoc). Methodology-kind boards are not created here —
-	// they come as a quartet via Enable, so the singleton is never hit by hand.
+	// they come as a unit via Enable / tasks_methodology_create.
+	// Once the project has any open methodology instance, the board must join one (service
+	// rule); put it on the first open instance by name.
 	public async Task<IActionResult> OnPostCreateAsync(string name, string? description, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
 		try
 		{
-			await _tasks.CreateBoardAsync(ProjectKey, name?.Trim() ?? string.Empty, "simple", description, specBoard: null, methodologyInstance: null, ct);
+			var open = (await _tasks.ListMethodologyInstancesAsync(ProjectKey, ct))
+				.Where(i => !i.Closed)
+				.OrderBy(i => i.Name, StringComparer.Ordinal)
+				.ToList();
+			// Any instance (including closed) forces membership on board_create; when only
+			// closed ones exist, reject with a clear CTA rather than inventing membership.
+			var any = (await _tasks.ListMethodologyInstancesAsync(ProjectKey, ct)).Count > 0;
+			string? instance = null;
+			if (open.Count > 0)
+				instance = open[0].Name;
+			else if (any)
+				throw new ArgumentException(
+					"no open methodology instance — create or reopen one (Enable methodology / tasks_methodology_create) before adding a board");
+
+			await _tasks.CreateBoardAsync(ProjectKey, name?.Trim() ?? string.Empty, "simple", description,
+				specBoard: null, methodologyInstance: instance, ct);
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{
@@ -91,17 +115,37 @@ public sealed class ProjectTasksModel : PageModel
 		return RedirectToPage();
 	}
 
-	// Opt-in: provision the chosen preset's singleton methodology boards and auto-wire
-	// work->spec. Idempotent — adds only what's missing. An empty <select> value binds to null
-	// (Razor gotcha), so fall back to the default preset before delegating.
+	// Opt-in: create a named methodology instance from a builtin preset (one act: rules +
+	// boards). Idempotent when the instance already exists (EnableMethodologyAsync re-provisions
+	// missing kinds). An empty <select> value binds to null (Razor gotcha), so fall back to the
+	// default preset before delegating.
 	public async Task<IActionResult> OnPostEnableMethodologyAsync(string? preset, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
 		try
 		{
-			await _tasks.EnableMethodologyAsync(ProjectKey,
-				string.IsNullOrWhiteSpace(preset) ? MethodologyPresets.DefaultProvisioningPreset : preset, ct);
+			var slug = string.IsNullOrWhiteSpace(preset) ? MethodologyPresets.DefaultProvisioningPreset : preset.Trim();
+			// Prefer the explicit instance create door; fall back to EnableMethodologyAsync
+			// for its idempotent re-provision of missing kinds when the instance already exists.
+			var existing = await _tasks.GetMethodologyInstanceAsync(ProjectKey, slug, ct);
+			if (existing is null)
+			{
+				try
+				{
+					await _tasks.CreateMethodologyInstanceAsync(ProjectKey, slug, "builtin", slug, ct);
+				}
+				catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
+					&& ex.Message.Contains("already", StringComparison.OrdinalIgnoreCase))
+				{
+					// Race / already-exists: treat as enable's idempotent path.
+					await _tasks.EnableMethodologyAsync(ProjectKey, slug, ct);
+				}
+			}
+			else
+			{
+				await _tasks.EnableMethodologyAsync(ProjectKey, slug, ct);
+			}
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{

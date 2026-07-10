@@ -398,32 +398,35 @@ public static class TasksTools
 	[McpServerTool(Name = "tasks_methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
 	[Description("""
 		Return the AGENT ONBOARDING GUIDE for this project's process — how to work its
-		boards — DERIVED AT RUNTIME from methodology data: templates made live via
-		tasks_methodology_create (and the effective process resolution), with builtin
-		templates (quartet|classic|simple) as the baseline where no custom rules apply.
-		Call it when you start working a project's tasks and need the process rules; it is
-		the runtime-derived replacement for hardcoded process docs. `markdown` covers, per
-		effective kind: types (quick-add default marked), statuses grouped open/terminal,
-		initial status, the transition map (collapsed to "free" when a block allows every
-		move), the GATES as behavioral invariants (owner-only transitions the agent NEVER
-		performs — marked enforced vs convention, reason-required moves, artifact:<slug>
-		comment preconditions, pre-transition checklists), creation link requirements
-		(specRef/blockedBy/ideaRef, incl. declared link targets), declared transition
-		effects, tag axes (or free-form), and the relation-kind dictionary (process vs
-		neutral vs project-declared). `invariants` is the same derivation machine-readable:
-		[{ kind, rule: approval_gate|approval_gate_enforced|reason_required|
-		precondition_artifact|checklist|transition_effect|link_constraint|tag_axes,
-		detail }]. `source` = presets|definition|mixed; `definitionVersion` when custom
-		rules exist. Bounded (a handful of kinds) — no truncation. Requires tasks:read.
+		boards — DERIVED AT RUNTIME from OPEN methodology INSTANCE rules (tasks_methodology_create
+		/ tasks_methodology_rules_upsert), with builtin templates (quartet|classic|simple)
+		as the baseline where no open instance applies. Optional `name` selects one instance;
+		when omitted: 0 open→presets, 1 open→that instance, N open→merged kinds (first open
+		by name wins on kind-slug conflict). Call it when you start working a project's tasks
+		and need the process rules. `markdown` covers, per effective kind: types (quick-add
+		default marked), statuses grouped open/terminal, initial status, the transition map
+		(collapsed to "free" when a block allows every move), the GATES as behavioral
+		invariants (owner-only transitions the agent NEVER performs — marked enforced vs
+		convention, reason-required moves, artifact:<slug> comment preconditions,
+		pre-transition checklists), creation link requirements (specRef/blockedBy/ideaRef,
+		incl. declared link targets), declared transition effects, tag axes (or free-form),
+		and the relation-kind dictionary (process vs neutral vs instance-declared).
+		`invariants` is the same derivation machine-readable: [{ kind, rule: approval_gate|
+		approval_gate_enforced|reason_required|precondition_artifact|checklist|
+		transition_effect|link_constraint|tag_axes, detail }]. `source` =
+		presets|instance|instances; `definitionVersion` when a single instance is selected.
+		Bounded (a handful of kinds) — no truncation. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyGuideView> MethodologyGuideAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
-		string projectKey, CancellationToken ct = default)
+		string projectKey,
+		[Description("Optional methodology instance name; when omitted, open instances are merged.")] string? name = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
-		return await tasks.GetMethodologyGuideAsync(projectKey, ct);
+		return await tasks.GetMethodologyGuideAsync(projectKey, name, ct);
 	}
 
 	// The definition wire mapping (ParseDefinition/ParseMigration/ProjectDefinition) lives in

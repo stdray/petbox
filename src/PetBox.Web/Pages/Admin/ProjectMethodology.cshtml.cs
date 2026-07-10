@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -12,21 +13,20 @@ using PetBox.Web.Pages.ProjectHome;
 
 namespace PetBox.Web.Pages.Admin;
 
-// Create / view / edit / delete the project's METHODOLOGY TEMPLATE document — the
-// human-facing editor for process rules (kinds/statuses/gates). Shares the wire shape
-// (MethodologyWire) with tasks_methodology_template_* / rules_* so a document moves
-// freely between this page and MCP. (Legacy path still loads the project singleton
-// definition; full retarget to named templates is deferred.)
+// Create / view / edit live methodology INSTANCE rules — the human-facing editor for
+// process rules (kinds/statuses/gates). Shares the wire shape (MethodologyWire) with
+// tasks_methodology_template_* / rules_* so a document moves freely between this page and
+// MCP. Truth is open methodology instance rules (not the legacy methodology_defs singleton).
 //
 // The page is a small state machine (Mode), NOT a SPA — plain Razor handlers + a `step`
 // query param for deep links:
-//   - stored definition → VIEW mode (summary + preview; explicit Edit / Delete), ?step=edit
-//     opens the editor prefilled;
-//   - no definition → a "Create methodology" call-to-action, ?step=base the base picker
-//     (builtin provisioning presets + user definitions from other projects, each with an
-//     SVG preview), then the editor, then a confirm summary → save;
-//   - POST-rendered states (template loaded, preview, confirm, rejected save/delete) set
-//     Mode directly.
+//   - open instance rules → VIEW mode (summary + preview; explicit Edit), ?step=edit opens
+//     the editor prefilled; pick instance via ?instance=<name> (default: first open by name);
+//   - no open instance → a "Create methodology" call-to-action, ?step=base the base picker
+//     (builtin presets + templates / open instance rules from other projects), then the
+//     editor, then a confirm summary → save creates an instance from a template;
+//   - POST-rendered states (template loaded, preview, confirm, rejected save) set Mode
+//     directly.
 // All writes go through ITasksService (full validation + live-node compatibility,
 // optimistic concurrency on `version`); rejections render verbatim in the errors block
 // with the user's JSON preserved (never a silent overwrite).
@@ -57,8 +57,8 @@ public sealed class ProjectMethodologyModel : PageModel
 	[BindProperty(SupportsGet = true)]
 	public bool Saved { get; set; }
 
-	// Set by the post-delete redirect (?deleted=True) — renders the reverted-to-presets
-	// alert exactly once.
+	// Set by the post-delete redirect (?deleted=True) — kept for URL compatibility; delete
+	// of rules is rejected (close the instance instead).
 	[BindProperty(SupportsGet = true)]
 	public bool Deleted { get; set; }
 
@@ -67,6 +67,10 @@ public sealed class ProjectMethodologyModel : PageModel
 	[BindProperty(SupportsGet = true)]
 	public string? Step { get; set; }
 
+	// Selected methodology instance name (?instance=); default = first open by name.
+	[BindProperty(SupportsGet = true)]
+	public string? Instance { get; set; }
+
 	// What the page renders — derived from the stored state + Step on GET, set directly by
 	// the POST handlers.
 	public EditorMode Mode { get; private set; } = EditorMode.Edit;
@@ -74,24 +78,26 @@ public sealed class ProjectMethodologyModel : PageModel
 	public bool ProjectNotFound { get; private set; }
 	public string? ErrorMessage { get; private set; }
 
-	// The stored definition + revision metadata; null = the project runs on builtin presets.
-	public MethodologyDefView? Stored { get; private set; }
+	// The selected open instance's rules + revision metadata; null = no open instance.
+	public MethodologyInstanceRulesView? Stored { get; private set; }
 
-	// The project's ACTIVE boards — surfaced in the definition-less state so a methodology
-	// enabled from a preset (boards only, no stored document) is still VISIBLE here: the
-	// owner sees which kinds run and where their process actually comes from.
+	// Open instances for the instance switcher (name + definition display name).
+	public IReadOnlyList<MethodologyInstanceView> OpenInstances { get; private set; } = [];
+
+	// The project's ACTIVE boards — surfaced in the instance-less state so boards still
+	// show where process comes from.
 	public IReadOnlyList<TaskBoardMeta> ActiveBoards { get; private set; } = [];
 
 	// The preset the "Load preset as template" control last loaded — echoed back so the
 	// select keeps the user's choice instead of snapping to the first option.
 	public string? SelectedPreset { get; private set; }
 
-	// Textarea contents: the stored definition rendered as the template document (prefill), a
+	// Textarea contents: the stored rules rendered as the template document (prefill), a
 	// preset template, or the user's own JSON echoed back after a rejected save/preview.
 	public string DefinitionJson { get; private set; } = string.Empty;
 	public string MigrationJson { get; private set; } = string.Empty;
 
-	// Optimistic-concurrency baseline for the next save (0 = no definition yet).
+	// Optimistic-concurrency baseline for the next save (0 = no rules yet / create path).
 	public long Version { get; private set; }
 
 	// JSON island for the SVG preview (ts/methodology-preview.ts → renderWorkflow): an array
@@ -100,8 +106,9 @@ public sealed class ProjectMethodologyModel : PageModel
 
 	// ── wizard state ──────────────────────────────────────────────────────────
 
-	// One base the creation wizard offers: a builtin provisioning preset (`preset:<slug>`)
-	// or another project's stored definition (`def:<projectKey>`).
+	// One base the creation wizard offers: a builtin provisioning preset (`preset:<slug>`),
+	// another project's stored template (`template:<project>:<key>`), or another project's
+	// open instance rules (`instance:<project>:<name>`).
 	public sealed record BaseOption(string Ref, string Title, string Description);
 
 	public IReadOnlyList<BaseOption> Bases { get; private set; } = [];
@@ -133,7 +140,7 @@ public sealed class ProjectMethodologyModel : PageModel
 		var step = Step?.Trim().ToLowerInvariant();
 		if (Stored is not null)
 		{
-			// Existing definition: view mode by default; ?step=edit opens the editor.
+			// Existing open instance: view mode by default; ?step=edit opens the editor.
 			Mode = step == "edit" ? EditorMode.Edit : EditorMode.View;
 			PrefillStored();
 			if (Mode == EditorMode.View) Summary = SummaryOf(Stored.Definition);
@@ -154,8 +161,8 @@ public sealed class ProjectMethodologyModel : PageModel
 		return Page();
 	}
 
-	// Wizard step 1 → 2: resolve the chosen base (builtin preset or another project's
-	// definition) and open the editor prefilled with it.
+	// Wizard step 1 → 2: resolve the chosen base (builtin preset, template, or instance rules)
+	// and open the editor prefilled with it.
 	public async Task<IActionResult> OnPostStartEditAsync(string? baseRef, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
@@ -203,11 +210,11 @@ public sealed class ProjectMethodologyModel : PageModel
 
 	// Render the FSM preview for the document currently in the textarea — parse-only, nothing
 	// is written; parse failures land in the errors block with the JSON preserved.
-	public async Task<IActionResult> OnPostPreviewAsync(string? definitionJson, string? migrationJson, long version, CancellationToken ct)
+	public async Task<IActionResult> OnPostPreviewAsync(string? definitionJson, string? migrationJson, long version, string? instance, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await LoadStateAsync(ct)) return Page();
-		KeepInput(definitionJson, migrationJson, version);
+		KeepInput(definitionJson, migrationJson, version, instance);
 		Mode = EditorMode.Edit;
 
 		try
@@ -225,11 +232,11 @@ public sealed class ProjectMethodologyModel : PageModel
 	// transitions counts, the gates, the effects) with the JSON carried in hidden fields.
 	// Parse failures fall back to the editor with the message; the DEEP validation
 	// (integrity + live-node compatibility) still happens in the service on Save.
-	public async Task<IActionResult> OnPostConfirmAsync(string? definitionJson, string? migrationJson, long version, CancellationToken ct)
+	public async Task<IActionResult> OnPostConfirmAsync(string? definitionJson, string? migrationJson, long version, string? instance, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await LoadStateAsync(ct)) return Page();
-		KeepInput(definitionJson, migrationJson, version);
+		KeepInput(definitionJson, migrationJson, version, instance);
 
 		try
 		{
@@ -247,69 +254,117 @@ public sealed class ProjectMethodologyModel : PageModel
 		return Page();
 	}
 
-	// Install the document via the service door (validation + live-node compatibility +
-	// version watermark). Success redirects (fresh state + saved alert); any rejection —
-	// bad JSON, validation, incompatible live nodes, version conflict — rerenders with the
-	// service's message and the user's JSON intact.
-	public async Task<IActionResult> OnPostSaveAsync(string? definitionJson, string? migrationJson, long version, CancellationToken ct)
+	// Install/update instance rules via the service door. When an open instance is selected,
+	// rules_upsert; when none, create an instance from a snapshot template of the document.
+	// Success redirects (fresh state + saved alert); any rejection rerenders with the service's
+	// message and the user's JSON intact.
+	public async Task<IActionResult> OnPostSaveAsync(string? definitionJson, string? migrationJson, long version, string? instance, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
+		string? savedInstance;
 		try
 		{
 			var def = MethodologyWire.ParseDocument(definitionJson);
 			var migration = MethodologyWire.ParseMigrationDocument(migrationJson);
-			await _tasks.DefineMethodologyAsync(ProjectKey, def, version, migration, ct);
+			var instanceName = string.IsNullOrWhiteSpace(instance)
+				? null
+				: instance.Trim().ToLowerInvariant();
+
+			// Prefer the explicitly posted instance, else the loaded selection.
+			if (instanceName is null)
+			{
+				var open = (await _tasks.ListMethodologyInstancesAsync(ProjectKey, ct))
+					.Where(i => !i.Closed)
+					.OrderBy(i => i.Name, StringComparer.Ordinal)
+					.ToList();
+				if (open.Count > 0)
+					instanceName = open[0].Name;
+			}
+
+			if (instanceName is not null
+				&& await _tasks.GetMethodologyInstanceAsync(ProjectKey, instanceName, ct) is { Closed: false })
+			{
+				await _tasks.DefineMethodologyInstanceRulesAsync(ProjectKey, instanceName, def, version, migration, ct);
+				savedInstance = instanceName;
+			}
+			else
+			{
+				// Create path: snapshot the document as a template, then create an instance.
+				var name = InstanceSlug(def.Name);
+				var tmplKey = $"editor-{name}";
+				var existingTmpl = await _tasks.GetMethodologyTemplateAsync(ProjectKey, tmplKey, ct);
+				// Builtin dual-read returns version 0 — only use stored/definition baseline.
+				var tmplVersion = existingTmpl is { Source: "stored" } ? existingTmpl.Version : 0;
+				await _tasks.UpsertMethodologyTemplateAsync(ProjectKey, tmplKey, def, tmplVersion, ct);
+				if (await _tasks.GetMethodologyInstanceAsync(ProjectKey, name, ct) is not null)
+					throw new InvalidOperationException(
+						$"methodology instance '{name}' already exists — open it with ?instance={name} and edit its rules, or close it first");
+				await _tasks.CreateMethodologyInstanceAsync(ProjectKey, name, "template", tmplKey, ct);
+				savedInstance = name;
+			}
 		}
 		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 		{
 			if (!await LoadStateAsync(ct)) return Page();
-			KeepInput(definitionJson, migrationJson, version);
+			KeepInput(definitionJson, migrationJson, version, instance);
 			Mode = EditorMode.Edit;
 			ErrorMessage = ex.Message;
 			return Page();
 		}
 
-		return RedirectToPage(new { WorkspaceKey, ProjectKey, Saved = true });
+		return RedirectToPage(new { WorkspaceKey, ProjectKey, Saved = true, Instance = savedInstance });
 	}
 
-	// Delete the stored definition — revert the project to the builtin presets. The service
-	// door validates live nodes against the preset resolution first (an incompatible node
-	// rejects with a clear message) and applies the same version watermark as a save; any
-	// rejection rerenders the view mode with the stored state intact and the service's message.
-	public async Task<IActionResult> OnPostDeleteAsync(long version, CancellationToken ct)
+	// Rules are not deleted independently of the instance. Reject with a clear close CTA.
+	public async Task<IActionResult> OnPostDeleteAsync(long version, string? instance, CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		if (!await LoadStateAsync(ct)) return Page();
 
-		try
-		{
-			await _tasks.DeleteMethodologyAsync(ProjectKey, version, ct);
-		}
-		catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
-		{
-			if (!await LoadStateAsync(ct)) return Page();
-			Mode = Stored is not null ? EditorMode.View : EditorMode.Cta;
-			PrefillStored();
-			if (Stored is not null) Summary = SummaryOf(Stored.Definition);
-			ErrorMessage = ex.Message;
-			return Page();
-		}
-
-		return RedirectToPage(new { WorkspaceKey, ProjectKey, Deleted = true });
+		Mode = Stored is not null ? EditorMode.View : EditorMode.Cta;
+		PrefillStored();
+		if (Stored is not null) Summary = SummaryOf(Stored.Definition);
+		ErrorMessage =
+			"Close the methodology instance (tasks_methodology_close / admin boards) rather than deleting rules. "
+			+ "Instance history keeps the last rules for read; new work requires a new or reopened instance.";
+		return Page();
 	}
 
 	async Task<bool> LoadStateAsync(CancellationToken ct)
 	{
 		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return false; }
-		Stored = await _tasks.GetMethodologyDefinitionAsync(ProjectKey, ct);
+
+		OpenInstances = (await _tasks.ListMethodologyInstancesAsync(ProjectKey, ct))
+			.Where(i => !i.Closed)
+			.OrderBy(i => i.Name, StringComparer.Ordinal)
+			.ToList();
+
+		var pick = string.IsNullOrWhiteSpace(Instance)
+			? (OpenInstances.Count > 0 ? OpenInstances[0].Name : null)
+			: Instance.Trim().ToLowerInvariant();
+		if (pick is not null)
+		{
+			// If the named instance is closed/missing, fall back to first open.
+			Stored = await _tasks.GetMethodologyInstanceRulesAsync(ProjectKey, pick, ct);
+			if (Stored is { Closed: true })
+				Stored = null;
+			if (Stored is null && OpenInstances.Count > 0 && !string.Equals(pick, OpenInstances[0].Name, StringComparison.OrdinalIgnoreCase))
+			{
+				pick = OpenInstances[0].Name;
+				Stored = await _tasks.GetMethodologyInstanceRulesAsync(ProjectKey, pick, ct);
+			}
+			if (Stored is not null)
+				Instance = Stored.Name;
+		}
+
 		Version = Stored?.Version ?? 0;
 		ActiveBoards = (await _tasks.ListBoardsAsync(ProjectKey, ct)).Where(b => b.ClosedAt == null).ToList();
 		return true;
 	}
 
-	// The stored definition rendered into the editor (document prefill + preview) — the GET
-	// states and the delete-rejected state show the same thing.
+	// The stored instance rules rendered into the editor (document prefill + preview).
 	void PrefillStored()
 	{
 		if (Stored is null) return;
@@ -320,16 +375,17 @@ public sealed class ProjectMethodologyModel : PageModel
 
 	// Echo the user's input back after a rejected save / a preview (the posted version wins
 	// over the freshly-loaded one — the user decides how to resolve a conflict).
-	void KeepInput(string? definitionJson, string? migrationJson, long version)
+	void KeepInput(string? definitionJson, string? migrationJson, long version, string? instance)
 	{
 		DefinitionJson = definitionJson ?? string.Empty;
 		MigrationJson = migrationJson ?? string.Empty;
 		Version = version;
+		if (!string.IsNullOrWhiteSpace(instance))
+			Instance = instance.Trim().ToLowerInvariant();
 	}
 
-	// The base picker's options: every builtin provisioning preset, then every OTHER
-	// project's stored definition (the admin reuses a methodology already authored
-	// elsewhere) — each with its graph docs for the per-card SVG preview.
+	// The base picker's options: every builtin provisioning preset, then other projects'
+	// stored templates and open instance rules — each with graph docs for the per-card SVG preview.
 	async Task LoadBasesAsync(CancellationToken ct)
 	{
 		var options = new List<BaseOption>();
@@ -346,34 +402,77 @@ public sealed class ProjectMethodologyModel : PageModel
 			.OrderBy(p => p.Key).ToListAsync(ct);
 		foreach (var p in projects)
 		{
-			var view = await _tasks.GetMethodologyDefinitionAsync(p.Key, ct);
-			if (view is null) continue;
-			var slug = $"def:{p.Key}";
-			options.Add(new(slug,
-				$"{view.Definition.Name} — definition of project {p.Key}",
-				$"User definition (version {view.Version}) — kinds: {string.Join(", ", view.Definition.Kinds.Select(k => k.Kind))}."));
-			previews.Add((slug, GraphViews(view.Definition)));
+			var templates = await _tasks.ListMethodologyTemplatesAsync(p.Key, ct);
+			foreach (var t in templates.Where(t => t.Source == "stored"))
+			{
+				var view = await _tasks.GetMethodologyTemplateAsync(p.Key, t.Key, ct);
+				if (view is null) continue;
+				var slug = $"template:{p.Key}:{t.Key}";
+				options.Add(new(slug,
+					$"{view.Definition.Name} — template '{t.Key}' of project {p.Key}",
+					$"Stored template (version {view.Version}) — kinds: {string.Join(", ", view.Definition.Kinds.Select(k => k.Kind))}."));
+				previews.Add((slug, GraphViews(view.Definition)));
+			}
+
+			var open = (await _tasks.ListMethodologyInstancesAsync(p.Key, ct)).Where(i => !i.Closed);
+			foreach (var inst in open)
+			{
+				var rules = await _tasks.GetMethodologyInstanceRulesAsync(p.Key, inst.Name, ct);
+				if (rules is null) continue;
+				var slug = $"instance:{p.Key}:{inst.Name}";
+				options.Add(new(slug,
+					$"{rules.Definition.Name} — instance '{inst.Name}' of project {p.Key}",
+					$"Open instance rules (version {rules.Version}) — kinds: {string.Join(", ", rules.Definition.Kinds.Select(k => k.Kind))}."));
+				previews.Add((slug, GraphViews(rules.Definition)));
+			}
 		}
 
 		Bases = options;
 		BasePreviewsJson = WorkflowGraphJson.SerializeBases(previews);
 	}
 
-	// Resolve a base picker choice: `preset:<slug>` renders the builtin preset as a
-	// document; `def:<projectKey>` copies that project's stored definition.
+	// Resolve a base picker choice.
 	async Task<MethodologyDefinition> ResolveBaseAsync(string? baseRef, CancellationToken ct)
 	{
 		var slug = (baseRef ?? string.Empty).Trim();
 		if (slug.StartsWith("preset:", StringComparison.Ordinal))
 			return MethodologyPresets.RenderPresetDefinition(slug["preset:".Length..]);
+		if (slug.StartsWith("template:", StringComparison.Ordinal))
+		{
+			var rest = slug["template:".Length..];
+			var sep = rest.IndexOf(':');
+			if (sep <= 0) throw new ArgumentException("template base ref must be template:<project>:<key>");
+			var projectKey = rest[..sep];
+			var key = rest[(sep + 1)..];
+			var view = await _tasks.GetMethodologyTemplateAsync(projectKey, key, ct);
+			return view?.Definition
+				?? throw new ArgumentException($"project '{projectKey}' has no methodology template '{key}'");
+		}
+		if (slug.StartsWith("instance:", StringComparison.Ordinal))
+		{
+			var rest = slug["instance:".Length..];
+			var sep = rest.IndexOf(':');
+			if (sep <= 0) throw new ArgumentException("instance base ref must be instance:<project>:<name>");
+			var projectKey = rest[..sep];
+			var name = rest[(sep + 1)..];
+			var rules = await _tasks.GetMethodologyInstanceRulesAsync(projectKey, name, ct);
+			return rules?.Definition
+				?? throw new ArgumentException($"project '{projectKey}' has no methodology instance '{name}'");
+		}
+		// Legacy def: refs still accepted by resolving open instance / template of that project.
 		if (slug.StartsWith("def:", StringComparison.Ordinal))
 		{
 			var projectKey = slug["def:".Length..];
-			var view = await _tasks.GetMethodologyDefinitionAsync(projectKey, ct);
-			return view?.Definition
-				?? throw new ArgumentException($"project '{projectKey}' has no stored methodology definition");
+			var open = (await _tasks.ListMethodologyInstancesAsync(projectKey, ct))
+				.Where(i => !i.Closed).OrderBy(i => i.Name, StringComparer.Ordinal).FirstOrDefault();
+			if (open is not null)
+			{
+				var rules = await _tasks.GetMethodologyInstanceRulesAsync(projectKey, open.Name, ct);
+				if (rules is not null) return rules.Definition;
+			}
+			throw new ArgumentException($"project '{projectKey}' has no open methodology instance to copy");
 		}
-		throw new ArgumentException("pick a base to start from (a builtin preset or an existing definition)");
+		throw new ArgumentException("pick a base to start from (a builtin preset, template, or open instance)");
 	}
 
 	// Project the definition onto the workflow-graph doc array the SVG renderer consumes —
@@ -411,5 +510,14 @@ public sealed class ProjectMethodologyModel : PageModel
 		if (t.Checklist is { Count: > 0 }) gates.Add($"checklist ({t.Checklist.Count})");
 		if (gates.Count > 0)
 			yield return $"{t.From} → {t.To}: {string.Join(", ", gates)}";
+	}
+
+	// Instance name from a definition document name (slug rules match methodology instances).
+	static string InstanceSlug(string name)
+	{
+		var s = Regex.Replace((name ?? string.Empty).Trim().ToLowerInvariant(), @"[^a-z0-9_-]+", "-").Trim('-');
+		if (s.Length == 0 || !char.IsLetter(s[0])) s = "main";
+		if (s.Length > 100) s = s[..100].Trim('-');
+		return s;
 	}
 }

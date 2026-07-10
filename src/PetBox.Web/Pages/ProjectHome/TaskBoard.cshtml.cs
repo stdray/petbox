@@ -269,15 +269,16 @@ public sealed class TaskBoardModel : PageModel
 		return rows;
 	}
 
-	// The board's effective process context: the project's MethodologyRuntime (via the
-	// service door — the SAME instance construction every service call applies) plus this
-	// board's stored kind slug. ListBoardsAsync supplies the raw slug; ITasksService has
-	// no single-board metadata read and this page must not open the store directly.
+	// The board's effective process context: board-scoped MethodologyRuntime (instance
+	// rules when membership is set) plus this board's stored kind slug. ListBoardsAsync
+	// supplies the raw slug; this page must not open the store directly.
 	async Task<(MethodologyRuntime Runtime, string? KindSlug, DateTime? ClosedAt)> ResolveProcessAsync(CancellationToken ct)
 	{
-		var runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);
 		var meta = (await _tasks.ListBoardsAsync(ProjectKey, ct))
 			.FirstOrDefault(b => string.Equals(b.Name, Board, StringComparison.Ordinal));
+		var runtime = meta is null
+			? await _tasks.GetRuntimeAsync(ProjectKey, ct)
+			: await _tasks.GetRuntimeForBoardAsync(ProjectKey, Board, ct);
 		return (runtime, meta?.Kind, meta?.ClosedAt);
 	}
 

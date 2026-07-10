@@ -360,7 +360,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			"<time class=\"local-time[^\"]*\"[^>]*data-testid=\"comment-time\"");
 	}
 
-	// Installs a methodology DEFINITION declaring the custom kind `support` (own statuses,
+	// Installs a methodology INSTANCE declaring the custom kind `support` (own statuses,
 	// custom terminal `closed`, quick-add DISABLED) and creates a board of that kind with
 	// one open + one closed node. Seeds through the store/TemporalStore like the other
 	// board fixtures — this exercises the render path, not the write path.
@@ -368,10 +368,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	{
 		using var scope = _factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
-		// Shared per-class host: a definition may already exist from an earlier test in this
-		// class — baseline on the current version instead of assuming a fresh project (0).
-		var currentDef = await tasks.GetMethodologyDefinitionAsync("$system");
-		await tasks.DefineMethodologyAsync("$system", new PetBox.Tasks.Workflow.MethodologyDefinition("custom",
+		var def = new PetBox.Tasks.Workflow.MethodologyDefinition("custom",
 		[
 			new PetBox.Tasks.Workflow.MethodologyKindDef("support", QuickAddAllowed: false,
 			[
@@ -382,11 +379,23 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 					],
 					[new("new", "closed")]),
 			]),
-		]), version: currentDef?.Version ?? 0);
+		]);
+		// Shared per-class host: instance may already exist from an earlier test.
+		if (await tasks.GetMethodologyInstanceAsync("$system", "support-ui") is null)
+		{
+			await tasks.UpsertMethodologyTemplateAsync("$system", "support-ui-tmpl", def, 0);
+			await tasks.CreateMethodologyInstanceAsync("$system", "support-ui", "template", "support-ui-tmpl");
+		}
+		else
+		{
+			var rules = await tasks.GetMethodologyInstanceRulesAsync("$system", "support-ui");
+			if (rules is not null)
+				await tasks.DefineMethodologyInstanceRulesAsync("$system", "support-ui", def, rules.Version);
+		}
 
 		var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
 		if (!await boards.ExistsAsync("$system", board))
-			await boards.CreateAsync("$system", board, "support tickets", "support");
+			await boards.CreateAsync("$system", board, "support tickets", "support", methodologyInstance: "support-ui");
 		var ctx = boards.GetContext("$system");
 		await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 		{

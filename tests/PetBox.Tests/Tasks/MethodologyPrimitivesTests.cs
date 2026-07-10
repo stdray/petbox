@@ -110,8 +110,9 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 	const string Tmpl = "support-tmpl";
 	static readonly JsonSerializerOptions WireJson = new() { PropertyNameCaseInsensitive = true };
 
-	// Install definition on the project singleton (service door — MCP def_* removed).
-	// Needed so RuntimeAsync (search/quickadd/relation validation) sees the kinds.
+	// Install as a live methodology instance so RuntimeAsync / FSM validation sees the kinds.
+	const string Inst = "support";
+
 	async Task Define(object definition)
 	{
 		var json = JsonSerializer.Serialize(definition);
@@ -119,8 +120,18 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 		var def = MethodologyWire.ParseDefinition(input);
 		using var scope = _fx.Factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-		var ack = await tasks.DefineMethodologyAsync(ProjectKey, def, 0);
-		ack.Changed.Should().BeTrue();
+		// Re-define: if instance already exists (re-run), rules_upsert; else create.
+		var existing = await tasks.GetMethodologyInstanceAsync(ProjectKey, Inst);
+		if (existing is null)
+		{
+			await tasks.UpsertMethodologyTemplateAsync(ProjectKey, Tmpl, def, 0);
+			await tasks.CreateMethodologyInstanceAsync(ProjectKey, Inst, "template", Tmpl);
+		}
+		else
+		{
+			var rules = await tasks.GetMethodologyInstanceRulesAsync(ProjectKey, Inst);
+			await tasks.DefineMethodologyInstanceRulesAsync(ProjectKey, Inst, def, rules!.Version);
+		}
 	}
 
 	// Document-only write for validation-reject tests (template surface).
@@ -132,7 +143,7 @@ public sealed class MethodologyPrimitivesTests : IClassFixture<MethodologyPrimit
 
 	async Task CreateBoard(string board, string? kind = "support")
 	{
-		var r = await Call("tasks_board_create", new { projectKey = ProjectKey, board, kind });
+		var r = await Call("tasks_board_create", new { projectKey = ProjectKey, board, kind, methodologyInstance = Inst });
 		IsErr(r).Should().BeFalse(Text(r));
 	}
 

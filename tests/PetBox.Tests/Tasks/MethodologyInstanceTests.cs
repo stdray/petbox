@@ -364,12 +364,12 @@ public sealed class MethodologyInstanceTests : IDisposable
 		(await mcpCross.Should().ThrowAsync<ArgumentException>()).WithMessage("*escalates*");
 	}
 
-	// Transitional dual-read: boards without MethodologyInstance still use the project-
-	// singleton definition's tagAxes/linkKinds (project-global authority during backfill).
+	// Drop dual-read: methodology_defs no longer feed Runtime/tag axes for unassigned boards.
+	// With no open instances, unassigned boards resolve presets only (simple = free-form tags).
 	[Fact]
-	public async Task LegacyUnassignedBoard_StillUsesProjectSingletonAxes()
+	public async Task LegacyUnassignedBoard_IgnoresProjectSingletonAxes()
 	{
-		// No instances yet — board_create without membership is allowed.
+		// Defs may still be written for history, but must not drive live process resolution.
 		await _tasks.DefineMethodologyAsync(Proj, new MethodologyDefinition("legacy",
 		[
 			new MethodologyKindDef("simple", QuickAddAllowed: true,
@@ -391,22 +391,18 @@ public sealed class MethodologyInstanceTests : IDisposable
 		var board = await _tasks.CreateBoardAsync(Proj, "orphan", "simple", null, null);
 		board.MethodologyInstance.Should().BeNull();
 
+		// Free-form tags on simple (presets) — def axes are ignored.
 		var ok = await _tasks.UpsertAsync(Proj, board.Name,
 		[
 			new NodePatch { Key = "n1", Title = "N1", Type = "task", Status = "Todo", Body = "x",
-				Tags = ["legacyaxis:v"] },
+				Tags = ["severity:high"] },
 		]);
 		ok.Result.Applied.Should().BeTrue();
 
-		var bad = () => _tasks.UpsertAsync(Proj, board.Name,
-		[
-			new NodePatch { Key = "n2", Title = "N2", Type = "task", Status = "Todo", Body = "x",
-				Tags = ["severity:high"] },
-		]);
-		(await bad.Should().ThrowAsync<ArgumentException>()).WithMessage("*severity*");
-
 		var n1 = (await _tasks.GetAsync(Proj, board.Name)).Nodes.Single(n => n.Key == "n1");
-		(await _tasks.ValidateRelationKindAsync(Proj, "legacyedge", n1.NodeId)).Should().Be("legacyedge");
+		var legacyEdge = () => _tasks.ValidateRelationKindAsync(Proj, "legacyedge", n1.NodeId);
+		(await legacyEdge.Should().ThrowAsync<ArgumentException>()).WithMessage("*legacyedge*",
+			"def-declared link kinds are not live without an open instance");
 	}
 
 	[Fact]

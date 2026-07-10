@@ -182,7 +182,7 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 
 		using var scope = _factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-		(await tasks.GetMethodologyDefinitionAsync("$system")).Should().BeNull("nothing may be written on a rejected save");
+		(await tasks.ListMethodologyInstancesAsync("$system")).Should().BeEmpty("nothing may be written on a rejected save");
 	}
 
 	[Fact]
@@ -205,8 +205,8 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		using (var scope = _factory.Services.CreateScope())
 		{
 			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-			var stored = await tasks.GetMethodologyDefinitionAsync(project);
-			stored.Should().NotBeNull("the save must go through the service door");
+			var stored = await tasks.GetMethodologyInstanceRulesAsync(project, "custom");
+			stored.Should().NotBeNull("the save must create an open instance with these rules");
 			stored!.Definition.Name.Should().Be("custom");
 			stored.Definition.Kinds.Should().ContainSingle(k => k.Kind == "job");
 		}
@@ -220,8 +220,8 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		html.Should().Contain("data-testid=\"methodology-state-kind\"");
 		html.Should().Contain("data-testid=\"methodology-preview-data\"");
 
-		using var edit = await GetAuthedAsync($"{url}?step=edit");
-		Textarea(await edit.Content.ReadAsStringAsync()).Should().Contain("\"job\"", "the stored definition prefills the editor");
+		using var edit = await GetAuthedAsync($"{url}?step=edit&instance=custom");
+		Textarea(await edit.Content.ReadAsStringAsync()).Should().Contain("\"job\"", "the stored rules prefill the editor");
 	}
 
 	// Creates the project row when missing (each write-y test uses its own key so $system
@@ -234,10 +234,10 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 			await db.InsertAsync(new Project { Key = project, WorkspaceKey = "$system", Name = $"Methodology test target {project}" });
 	}
 
-	// The owner-reported lifecycle repro: a definition created FROM A PRESET is saved
+	// The owner-reported lifecycle repro: a methodology instance created FROM A PRESET
 	// through the service door, then the page is rendered — the stored state must surface
-	// in VIEW mode (summary + preview + explicit Edit / Delete), and ?step=edit prefills
-	// the editor with the document.
+	// in VIEW mode (summary + preview + explicit Edit / close guidance), and ?step=edit
+	// prefills the editor with the document.
 	[Fact]
 	public async Task Get_AfterQuartetPresetDefinitionSaved_RendersViewMode_AndEditPrefills()
 	{
@@ -246,24 +246,25 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		using (var scope = _factory.Services.CreateScope())
 		{
 			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-			await tasks.DefineMethodologyAsync(project, MethodologyPresets.RenderPresetDefinition("quartet"), 0);
+			if (await tasks.GetMethodologyInstanceAsync(project, "quartet") is null)
+				await tasks.CreateMethodologyInstanceAsync(project, "quartet", "builtin", "quartet");
 		}
 
 		var url = $"/ui/admin/ws/$system/projects/{project}/methodology";
 		using var resp = await GetAuthedAsync(url);
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("data-testid=\"methodology-state-name\"", "the stored definition must surface");
+		html.Should().Contain("data-testid=\"methodology-state-name\"", "the open instance rules must surface");
 		html.Should().Contain("quartet");
-		html.Should().Contain("data-testid=\"methodology-view\"", "an existing definition opens in view mode");
+		html.Should().Contain("data-testid=\"methodology-view\"", "an open instance opens in view mode");
 		html.Should().Contain("data-testid=\"methodology-edit-link\"", "editing is an explicit action");
-		html.Should().Contain("data-testid=\"methodology-delete\"", "a stored definition must be deletable");
+		html.Should().Contain("data-testid=\"methodology-delete\"", "close guidance is offered");
 		html.Should().Contain("data-testid=\"methodology-preview-data\"", "view mode previews the workflows");
 		html.Should().NotContain("data-testid=\"methodology-json\"", "view mode shows a summary, not the raw editor");
 
-		using var edit = await GetAuthedAsync($"{url}?step=edit");
+		using var edit = await GetAuthedAsync($"{url}?step=edit&instance=quartet");
 		var editHtml = await edit.Content.ReadAsStringAsync();
-		Textarea(editHtml).Should().Contain("\"work\"", "the stored definition prefills the editor");
+		Textarea(editHtml).Should().Contain("\"work\"", "the instance rules prefill the editor");
 	}
 
 	// Finding 1: statuses[]/transitions[] elements render on ONE line each; the layout is
@@ -301,9 +302,9 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		html.Should().NotMatchRegex("value=\"quartet\"[^>]*selected", "the first option must not steal the selection");
 	}
 
-	// Finding 4: the full stored-definition lifecycle — save, view, delete, back to presets.
+	// Finding 4: rules are not deleted independently — delete rejects with a close-instance CTA.
 	[Fact]
-	public async Task DeleteDefinition_RevertsProjectToPresets()
+	public async Task DeleteDefinition_RejectsWithCloseInstanceGuidance()
 	{
 		const string project = "meddelete";
 		await EnsureProjectAsync(project);
@@ -317,26 +318,22 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		var viewHtml = await view.Content.ReadAsStringAsync();
 		viewHtml.Should().Contain("data-testid=\"methodology-delete-form\"");
 
-		using var deleted = await PostAuthedAsync(url, "Delete", new() { ["version"] = "1" });
-		deleted.StatusCode.Should().Be(HttpStatusCode.Found, "a successful delete redirects");
-		deleted.Headers.Location!.ToString().Should().Contain("eleted");
-
-		using var after = await GetAuthedAsync(deleted.Headers.Location!.ToString());
-		var html = await after.Content.ReadAsStringAsync();
-		html.Should().Contain("data-testid=\"methodology-deleted\"", "the delete renders its success alert");
-		html.Should().Contain("data-testid=\"methodology-state-presets\"", "the project reverts to the presets state");
-		html.Should().Contain("data-testid=\"methodology-create-cta\"", "a definition-less project offers creation again");
+		using var deleted = await PostAuthedAsync(url, "Delete", new() { ["version"] = "1", ["instance"] = "custom" });
+		deleted.StatusCode.Should().Be(HttpStatusCode.OK, "delete of rules is rejected in place");
+		var html = await deleted.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"methodology-errors\"");
+		html.Should().Contain("Close the methodology instance");
+		html.Should().Contain("data-testid=\"methodology-state-name\"", "instance rules survive the rejected delete");
 
 		using var scope = _factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-		(await tasks.GetMethodologyDefinitionAsync(project)).Should().BeNull("the definition must be gone through the service door");
+		(await tasks.GetMethodologyInstanceRulesAsync(project, "custom")).Should().NotBeNull(
+			"rules stay until the instance is closed via tasks_methodology_close");
 	}
 
-	// Finding 4 (guard): deleting a definition whose live nodes the presets can't carry is
-	// rejected with a clear message and nothing is written; closing the offending board
-	// unblocks the delete.
+	// Finding 4 (guard): delete always rejects with close guidance (no silent def wipe).
 	[Fact]
-	public async Task DeleteDefinition_RejectedWhenLiveNodesIncompatible()
+	public async Task DeleteDefinition_AlwaysRejects_EvenWithLiveNodes()
 	{
 		const string project = "meddelreject";
 		await EnsureProjectAsync(project);
@@ -352,29 +349,25 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 						[new("verifying", "closed")]),
 				]),
 			]);
-			await tasks.DefineMethodologyAsync(project, def, 0);
-			await tasks.CreateBoardAsync(project, "flowboard", "flow", null, null);
-			await tasks.QuickAddAsync(project, "flowboard", "case one", null, 0);
+			await tasks.UpsertMethodologyTemplateAsync(project, "flow-tmpl", def, 0);
+			await tasks.CreateMethodologyInstanceAsync(project, "flowdef", "template", "flow-tmpl");
+			var board = (await tasks.ListBoardsAsync(project)).Single(b => b.Kind == "flow").Name;
+			await tasks.QuickAddAsync(project, board, "case one", null, 0);
 		}
 
 		var url = $"/ui/admin/ws/$system/projects/{project}/methodology";
-		using var rejected = await PostAuthedAsync(url, "Delete", new() { ["version"] = "1" });
-		rejected.StatusCode.Should().Be(HttpStatusCode.OK, "an incompatible delete rerenders with the error");
+		using var rejected = await PostAuthedAsync(url, "Delete", new() { ["version"] = "1", ["instance"] = "flowdef" });
+		rejected.StatusCode.Should().Be(HttpStatusCode.OK, "delete of rules is rejected with close guidance");
 		var html = await rejected.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"methodology-errors\"");
-		html.Should().Contain("incompatible with live nodes");
-		html.Should().Contain("data-testid=\"methodology-state-name\"", "the definition survives a rejected delete");
+		html.Should().Contain("Close the methodology instance");
+		html.Should().Contain("data-testid=\"methodology-state-name\"", "instance rules survive");
 
 		using (var scope = _factory.Services.CreateScope())
 		{
 			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-			(await tasks.GetMethodologyDefinitionAsync(project)).Should().NotBeNull("nothing may be written on a rejected delete");
-			// Closing the offending board removes the live-node obstacle.
-			await tasks.SetClosedAsync(project, "flowboard", true);
+			(await tasks.GetMethodologyInstanceRulesAsync(project, "flowdef")).Should().NotBeNull();
 		}
-
-		using var deleted = await PostAuthedAsync(url, "Delete", new() { ["version"] = "1" });
-		deleted.StatusCode.Should().Be(HttpStatusCode.Found, "the delete succeeds once the board is closed");
 	}
 
 	// Finding 5a+5c: the legend renders under the preview, and the quartet work kind's
@@ -454,8 +447,8 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 
 	// ── creation wizard (commit 2) ─────────────────────────────────────────────
 
-	// Step 1: the base picker lists the builtin provisioning presets AND user definitions
-	// from other projects, each wired to a per-card SVG preview via the bases island.
+	// Step 1: the base picker lists the builtin provisioning presets AND open instance
+	// rules from other projects, each wired to a per-card SVG preview via the bases island.
 	[Fact]
 	public async Task Get_StepBase_ListsPresetAndUserDefinitionBases()
 	{
@@ -464,8 +457,8 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		using (var scope = _factory.Services.CreateScope())
 		{
 			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-			if (await tasks.GetMethodologyDefinitionAsync(source) is null)
-				await tasks.DefineMethodologyAsync(source, MethodologyPresets.RenderPresetDefinition("classic"), 0);
+			if (await tasks.GetMethodologyInstanceAsync(source, "classic") is null)
+				await tasks.CreateMethodologyInstanceAsync(source, "classic", "builtin", "classic");
 		}
 
 		using var resp = await GetAuthedAsync($"{SystemUrl}?step=base");
@@ -475,9 +468,9 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		html.Should().Contain("data-testid=\"methodology-base-picker\"");
 		html.Should().Contain("value=\"preset:quartet\"");
 		html.Should().Contain("value=\"preset:classic\"");
-		html.Should().Contain($"value=\"def:{source}\"", "another project's stored definition is offered as a base");
+		html.Should().Contain($"value=\"instance:{source}:classic\"", "another project's open instance is offered as a base");
 		html.Should().Contain("data-testid=\"methodology-base-previews-data\"", "each base carries its SVG preview docs");
-		html.Should().Contain($"data-base-preview=\"def:{source}\"");
+		html.Should().Contain($"data-base-preview=\"instance:{source}:classic\"");
 	}
 
 	// Step 1 → 2: choosing a base opens the editor prefilled with it (preset and
@@ -502,14 +495,14 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 		using (var scope = _factory.Services.CreateScope())
 		{
 			var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-			if (await tasks.GetMethodologyDefinitionAsync(source) is null)
-				await tasks.DefineMethodologyAsync(source, MethodologyPresets.RenderPresetDefinition("quartet"), 0);
+			if (await tasks.GetMethodologyInstanceAsync(source, "quartet") is null)
+				await tasks.CreateMethodologyInstanceAsync(source, "quartet", "builtin", "quartet");
 		}
 
-		using var resp = await PostAuthedAsync(SystemUrl, "StartEdit", new() { ["baseRef"] = $"def:{source}" });
+		using var resp = await PostAuthedAsync(SystemUrl, "StartEdit", new() { ["baseRef"] = $"instance:{source}:quartet" });
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		Textarea(await resp.Content.ReadAsStringAsync()).Should().Contain("\"name\": \"quartet\"",
-			"the other project's definition is copied into the editor");
+			"the other project's open instance rules are copied into the editor");
 	}
 
 	// Step 2 → 3: the confirm summary digests the parsed document (counts + gates) and
@@ -534,7 +527,7 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 
 		using var scope = _factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-		(await tasks.GetMethodologyDefinitionAsync("$system")).Should().BeNull("confirm never writes");
+		(await tasks.ListMethodologyInstancesAsync("$system")).Should().BeEmpty("confirm never writes");
 	}
 
 	[Fact]
@@ -567,6 +560,6 @@ public sealed class MethodologyEditorViewsTests : IClassFixture<ModuleViewsFixtu
 
 		using var scope = _factory.Services.CreateScope();
 		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
-		(await tasks.GetMethodologyDefinitionAsync("$system")).Should().BeNull("preview never writes");
+		(await tasks.ListMethodologyInstancesAsync("$system")).Should().BeEmpty("preview never writes");
 	}
 }
