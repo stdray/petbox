@@ -45,6 +45,8 @@ public sealed partial class TasksService : ITasksService
 	readonly TaskUpsertAssociations _associations;
 	// Methodology definition storage + live schema migration — private collaborator.
 	readonly MethodologyDefinitionService _methodologyDefs;
+	// Named methodology templates (independent of live process / instances).
+	readonly MethodologyTemplateService _methodologyTemplates;
 
 	// Dependency-free declarative invariants (immutable NodeId/type). Static — no state.
 	static readonly PlanNodeChangeValidator ChangeValidator = new();
@@ -65,6 +67,7 @@ public sealed partial class TasksService : ITasksService
 		_effects = new TaskTransitionEffects(boards, relations, tags);
 		_associations = new TaskUpsertAssociations(boards, relations, tags, _effects);
 		_methodologyDefs = new MethodologyDefinitionService(boards);
+		_methodologyTemplates = new MethodologyTemplateService(boards, _methodologyDefs);
 	}
 
 	// ---- board lifecycle ----
@@ -340,6 +343,28 @@ public sealed partial class TasksService : ITasksService
 
 	public Task<MethodologyDefView?> GetMethodologyDefinitionAsync(string projectKey, CancellationToken ct = default) =>
 		_methodologyDefs.GetAsync(projectKey, ct);
+
+	// ---- named methodology templates (storage only — never boards / live nodes) ----
+
+	public Task<MethodologyTemplateAck> UpsertMethodologyTemplateAsync(
+		string projectKey, string key, MethodologyDefinition def, long version, CancellationToken ct = default) =>
+		_methodologyTemplates.UpsertAsync(projectKey, key, def, version, ct);
+
+	public Task<MethodologyTemplateAck> DeleteMethodologyTemplateAsync(
+		string projectKey, string key, long version, CancellationToken ct = default) =>
+		_methodologyTemplates.DeleteAsync(projectKey, key, version, ct);
+
+	public Task<MethodologyTemplateView?> GetMethodologyTemplateAsync(
+		string projectKey, string key, CancellationToken ct = default) =>
+		_methodologyTemplates.GetAsync(projectKey, key, ct);
+
+	public Task<IReadOnlyList<MethodologyTemplateListItem>> ListMethodologyTemplatesAsync(
+		string projectKey, CancellationToken ct = default) =>
+		_methodologyTemplates.ListAsync(projectKey, ct);
+
+	public Task<MethodologyTemplateAck> SnapshotMethodologyTemplateAsync(
+		string projectKey, string key, long version, string? from = null, CancellationToken ct = default) =>
+		_methodologyTemplates.SnapshotAsync(projectKey, key, version, from, ct);
 
 	// Product surface over the stored definition — stays on TasksService (guide is derived
 	// presentation; definition I/O lives on the collaborator).

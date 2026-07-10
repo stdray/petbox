@@ -53,5 +53,9 @@ public sealed class ChangedPayloadFieldsTests
 		var d = new MethodologyDefRow { Key = MethodologyDefRow.SingletonKey, Json = "{}" };
 		d.ChangedPayloadFields(d).Should().BeEmpty();
 		(d with { Json = "{\"a\":1}" }).ChangedPayloadFields(d).Should().Equal("definition");
+
+		var t = new MethodologyTemplateRow { Key = "my-tmpl", Json = "{}" };
+		t.ChangedPayloadFields(t).Should().BeEmpty();
+		(t with { Json = "{\"a\":1}" }).ChangedPayloadFields(t).Should().Equal("definition");
 	}
 }

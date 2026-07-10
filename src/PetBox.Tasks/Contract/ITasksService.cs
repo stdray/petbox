@@ -83,6 +83,31 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// Deterministic and bounded — a handful of kinds, no truncation machinery.
 	Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, CancellationToken ct = default);
 
+	// --- named methodology templates (independent of live process / instances) ---
+	// Templates are reusable MethodologyDefinition documents. Write NEVER provisions
+	// boards, never rewrites live nodes, and never mutates the singleton methodology_defs
+	// document (that remains def_upsert's job until instance core lands). Builtins
+	// (quartet|classic|simple) are readable via the same get/list contract (source=
+	// "builtin"); the legacy singleton def dual-reads as source="definition" under key
+	// "methodology" when no stored template owns that key.
+
+	// Upsert a named template. `version` is the watermark baseline (0 = create). Builtin
+	// keys are rejected. Validates the definition document; stores only.
+	Task<MethodologyTemplateAck> UpsertMethodologyTemplateAsync(string projectKey, string key, MethodologyDefinition def, long version, CancellationToken ct = default);
+	// Soft-delete a stored template (temporal close). Builtin keys rejected. Missing key
+	// is an idempotent no-op (Changed=false).
+	Task<MethodologyTemplateAck> DeleteMethodologyTemplateAsync(string projectKey, string key, long version, CancellationToken ct = default);
+	// Get one template by key: stored → builtin → dual-read definition (key "methodology"
+	// only) → null. Builtins always resolve.
+	Task<MethodologyTemplateView?> GetMethodologyTemplateAsync(string projectKey, string key, CancellationToken ct = default);
+	// List builtins + stored templates (+ dual-read definition entry when present).
+	Task<IReadOnlyList<MethodologyTemplateListItem>> ListMethodologyTemplatesAsync(string projectKey, CancellationToken ct = default);
+	// Snapshot source rules into a named template (write-only of the template; source is
+	// never mutated). `from`: null/"effective" = singleton def if present else builtin
+	// quartet (interim until instance entity); "preset:quartet|classic|simple" (or bare
+	// builtin slug); "instance:<key>" reserved — rejected until methodology-instance-core.
+	Task<MethodologyTemplateAck> SnapshotMethodologyTemplateAsync(string projectKey, string key, long version, string? from = null, CancellationToken ct = default);
+
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);
 	Task<bool> BoardExistsAsync(string projectKey, string board, CancellationToken ct = default);

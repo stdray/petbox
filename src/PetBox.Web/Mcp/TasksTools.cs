@@ -326,6 +326,130 @@ public static class TasksTools
 		return MethodologyWire.ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
 	}
 
+	// ---- named methodology templates (independent of live process / instances) ----
+
+	[McpServerTool(Name = "tasks_methodology_template_upsert", Title = "Upsert a named methodology template", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateUpsertResult))]
+	[Description("""
+		Store a NAMED METHODOLOGY TEMPLATE — a reusable process document (kinds/types/
+		statuses/transitions) independent of the live project definition and of running
+		boards/instances. Does NOT create boards, does NOT mutate methodology_defs, and
+		does NOT rewrite live nodes (no migration planner — templates are inert documents).
+		`key` is the template slug; `version` is the watermark baseline from your last
+		template_get (0 = create). Builtin keys (quartet|classic|simple) are read-only and
+		rejected on write — copy into a new key instead. `definition` is the same document
+		shape as tasks_methodology_def_upsert. Returns { key, version, changed }. Requires
+		tasks:write.
+		""")]
+	public static async Task<MethodologyTemplateUpsertResult> MethodologyTemplateUpsertAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Template slug key (^[a-z][a-z0-9_-]{0,99}$; not a builtin name).")] string key,
+		[Description("The methodology definition document (same shape as tasks_methodology_def_upsert).")] MethodologyDefInput definition,
+		[Description("Watermark baseline: version from last template_get; 0 = create.")] long version = 0,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var def = MethodologyWire.ParseDefinition(definition);
+		var ack = await tasks.UpsertMethodologyTemplateAsync(projectKey, key, def, version, ct);
+		return new MethodologyTemplateUpsertResult(ack.Key, ack.Version, ack.Changed);
+	}
+
+	[McpServerTool(Name = "tasks_methodology_template_delete", Title = "Delete a named methodology template", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateDeleteResult))]
+	[Description("""
+		Delete a STORED named methodology template (temporal soft-close). Builtin keys
+		(quartet|classic|simple) are read-only and rejected. Does NOT touch the live
+		project definition (methodology_defs), boards, or nodes. Missing key is an
+		idempotent no-op (deleted:false). `version` is the watermark baseline from
+		template_get. Requires tasks:write.
+		""")]
+	public static async Task<MethodologyTemplateDeleteResult> MethodologyTemplateDeleteAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Template slug key to delete.")] string key,
+		[Description("Watermark baseline from last template_get; 0 = delete current regardless.")] long version = 0,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var ack = await tasks.DeleteMethodologyTemplateAsync(projectKey, key, version, ct);
+		return new MethodologyTemplateDeleteResult(ack.Key, Deleted: ack.Changed, ack.Version);
+	}
+
+	[McpServerTool(Name = "tasks_methodology_template_get", Title = "Get a named methodology template", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateGetResult))]
+	[Description("""
+		Return ONE methodology template by `key`. Resolution order: stored template →
+		builtin (quartet|classic|simple, source="builtin", version 0) → dual-read of the
+		legacy project singleton definition under key "methodology" (source="definition",
+		compat until instance core) → found:false. Document body (name/kinds/…) matches
+		tasks_methodology_def_get so it is copyable into def_upsert or template_upsert.
+		Requires tasks:read.
+		""")]
+	public static async Task<MethodologyTemplateGetResult> MethodologyTemplateGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Template slug key (stored, builtin quartet|classic|simple, or methodology for dual-read of the singleton def).")] string key,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var view = await tasks.GetMethodologyTemplateAsync(projectKey, key, ct);
+		if (view is null)
+			return new MethodologyTemplateGetResult(Found: false, Key: key);
+		return MethodologyWire.ProjectTemplate(view.Key, view.Source, view.Definition, view.Version, view.Created, view.Updated);
+	}
+
+	[McpServerTool(Name = "tasks_methodology_template_list", Title = "List methodology templates", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateListResult))]
+	[Description("""
+		List methodology templates available to the project: always the builtins
+		(quartet|classic|simple, source="builtin"), then any stored templates
+		(source="stored"), plus a dual-read entry for the legacy singleton definition
+		under key "methodology" (source="definition") when present and not shadowed by a
+		stored template of that key. Compact rows (key/source/name/version/updated) — use
+		template_get for the full document. Requires tasks:read.
+		""")]
+	public static async Task<MethodologyTemplateListResult> MethodologyTemplateListAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey, CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var items = await tasks.ListMethodologyTemplatesAsync(projectKey, ct);
+		return new MethodologyTemplateListResult(
+			items.Select(i => new MethodologyTemplateListItemView(i.Key, i.Source, i.Name, i.Version, i.Updated)).ToList());
+	}
+
+	[McpServerTool(Name = "tasks_methodology_template_snapshot", Title = "Snapshot rules into a named methodology template", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyTemplateUpsertResult))]
+	[Description("""
+		Snapshot process rules into a NAMED TEMPLATE without mutating the source. INTERIM
+		(until methodology-instance-core lands instance entities): `from` defaults to
+		"effective" = the project's singleton methodology definition if present, else the
+		builtin quartet document (stand-in for resolved preset rules). Explicit sources:
+		"preset:quartet|classic|simple" (or the bare builtin slug); "instance:<key>" is
+		RESERVED for the future instance snapshot and currently rejected with a clear
+		message. Write is template-only — no boards created, no live nodes rewritten, no
+		methodology_defs mutation. `key`/`version` same watermark posture as template_upsert.
+		Requires tasks:write.
+		""")]
+	public static async Task<MethodologyTemplateUpsertResult> MethodologyTemplateSnapshotAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Destination template slug key (not a builtin name).")] string key,
+		[Description("Watermark baseline for the destination template; 0 = create.")] long version = 0,
+		[Description("Source: effective (default), preset:quartet|classic|simple, or (later) instance:<key>.")] string? from = null,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var ack = await tasks.SnapshotMethodologyTemplateAsync(projectKey, key, version, from, ct);
+		return new MethodologyTemplateUpsertResult(ack.Key, ack.Version, ack.Changed);
+	}
+
 	[McpServerTool(Name = "tasks_methodology_guide", Title = "How to work this project's process (runtime-derived guide)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyGuideView))]
 	[Description("""
 		Return the AGENT ONBOARDING GUIDE for this project's process — how to work its

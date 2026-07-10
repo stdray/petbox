@@ -399,4 +399,24 @@ public static class MethodologyPresets
 			TagAxes = preset.Kinds.SelectMany(TagAxes).DistinctBy(a => a.Namespace).ToList(),
 		};
 	}
+
+	// Builtin TEMPLATE keys (methodology-template-storage): the documents readable through
+	// tasks_methodology_template_get/list with source="builtin". Superset of provisioning
+	// presets — adds `simple` (a single-kind free-lifecycle board; not a provisioning unit
+	// because enable already defaults empty boards to simple via board_create).
+	public static readonly IReadOnlyList<string> BuiltinTemplateKeys = ["quartet", "classic", "simple"];
+
+	// Render a builtin template key as a MethodologyDefinition. quartet|classic go through
+	// RenderPresetDefinition; simple is the standalone SimpleKind document (no tag axes =
+	// free-form). Unknown key is a clear error listing the available keys.
+	public static MethodologyDefinition RenderBuiltinTemplate(string? slug)
+	{
+		var s = (slug ?? "").Trim().ToLowerInvariant();
+		if (s is "quartet" or "classic")
+			return RenderPresetDefinition(s);
+		if (s == "simple")
+			return new MethodologyDefinition("simple", [SimpleKind]);
+		throw new ArgumentException(
+			$"unknown methodology builtin template '{slug}' — available: {string.Join("|", BuiltinTemplateKeys)}");
+	}
 }
