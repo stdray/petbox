@@ -226,6 +226,23 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		await Ok(failures, "memory_remember", new { text = "a durable fact", projectKey = ProjectKey, store = "notes", type = "Project" });
 		await Ok(failures, "session_upsert", new { projectKey = ProjectKey, sessionId = "s1", agent = "claude-code", content = "# plan" });
 		await Ok(failures, "log_create", new { projectKey = ProjectKey, name = "audit" });
+		// Portable agent definitions (agent-definition-as-data) — seed + list/get.
+		await Ok(failures, "agent_def_upsert", new
+		{
+			projectKey = ProjectKey,
+			key = "default",
+			version = 0,
+			definition = new
+			{
+				name = "default",
+				roles = new[]
+				{
+					new { slug = "worker", tier = "worker", requiredCapabilities = Array.Empty<string>() },
+				},
+			},
+		});
+		await Ok(failures, "agent_def_list", new { projectKey = ProjectKey });
+		await Ok(failures, "agent_def_get", new { projectKey = ProjectKey, key = "default" });
 
 		// comments_upsert batch: a create item, then thread its id + currentVersion into a patch,
 		// a get, a search and a delta (uniform-entity-verbs matrix).
@@ -316,6 +333,9 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("tasks_board_delete", new { projectKey = ProjectKey, board = "no-such-board" }),
 			// deleting a template that never existed: conformant {deleted:false} no-op.
 			("tasks_methodology_template_delete", new { projectKey = ProjectKey, key = "no-such-tmpl" }),
+			// agent_def_get miss → Found:false (not isError); delete miss → deleted:false.
+			("agent_def_get", new { projectKey = ProjectKey, key = "no-such-def" }),
+			("agent_def_delete", new { projectKey = ProjectKey, key = "no-such-def" }),
 		};
 		foreach (var (tool, args) in edge)
 			await StrictOk(failures, tool, args);
@@ -336,6 +356,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		"config_binding_delta", "config_binding_get", "log_list", "log_query",
 		"health_search", "deploy_list", "deploy_node_list", "project_list", "relations_list",
 		"llm_config_get", "apikey_list", "db_list", "whoami", "tool_describe",
+		"agent_def_upsert", "agent_def_list", "agent_def_get",
 	};
 
 	// Names exercised for edge branches (delete-missing + not-found).
@@ -344,6 +365,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		"session_delete", "memory_store_delete", "log_delete", "relations_delete", "comments_delete",
 		"tasks_board_close", "tasks_board_reopen", "tasks_board_delete",
 		"tasks_methodology_template_delete",
+		"agent_def_get", "agent_def_delete",
 	};
 
 	// ── assertion helpers ──────────────────────────────────────────────────────
