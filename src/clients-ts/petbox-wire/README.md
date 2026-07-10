@@ -5,6 +5,7 @@ Wire any project to [PetBox](https://petbox.3po.su) for **Claude Code**, **openc
 
 ```bash
 npx petbox-wire <dir> <project> --key <KEY>
+npx petbox-wire update
 ```
 
 - `<dir>` — the project directory to wire (its cwd prefix is registered).
@@ -14,6 +15,7 @@ npx petbox-wire <dir> <project> --key <KEY>
 - `--env <VAR>` — override the env-var name (default `<PROJECT>_API_KEY`, uppercased).
 - `--workspace <WS>` — workspace for the SKILL.md permalink (default `stdray`).
 - `--cleanup-legacy` — remove a project's old per-project hook/plugin copies.
+- `update` — refresh only the stable kit under `~/.petbox/wire/` (see below).
 
 ## Requirements
 
@@ -47,5 +49,23 @@ npx petbox-wire <dir> <project> --key <KEY>
 
 ## Updating the kit
 
-Re-run `npx petbox-wire@latest <dir> <project> --key <KEY>` to refresh the stable copy in
-`~/.petbox/wire/` and the generated config. Runs are idempotent.
+**Safe kit-text refresh** (no project/key; preferred when only hook/protocol/script text changed):
+
+```bash
+npx petbox-wire@latest update
+```
+
+This mirrors the package's `src/` into `~/.petbox/wire/` with the same orphan cleanup as a full
+wire (exact mirror, never a union), prints a short content hash before → after, and **does not**:
+
+- rotate or require API keys / touch `~/.petbox/keys.json`
+- wipe or rewrite registry entries in `~/.petbox/projects.json`
+- reset sticky per-project prompt-RAG or telemetry flags
+- reinstall global hooks or rewrite per-project MCP configs / rendered `SKILL.md`
+
+v1 is **stable kit only**. To regenerate per-project MCP/skills after a template change, re-run
+the full wire (idempotent):
+
+```bash
+npx petbox-wire@latest <dir> <project> --key <KEY>
+```
