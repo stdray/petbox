@@ -715,18 +715,42 @@ public sealed partial class TasksService : ITasksService
 		return hits.OrderBy(h => h.Board, StringComparer.Ordinal).ToList();
 	}
 
-	// The project-aware relation-kind vocabulary check (primitives-link-kinds): builtin
-	// process + neutral kinds plus the definition-declared linkKinds. The store no longer
-	// validates the vocabulary itself — this is the one door for user-supplied kinds.
-	public async Task<string> ValidateRelationKindAsync(string projectKey, string kind, CancellationToken ct = default)
+	// Instance-scoped relation-kind vocabulary check (primitives-link-kinds +
+	// methodology-instance-scoped-axes): builtin process + neutral kinds plus the
+	// linkKinds declared on the FROM node's board instance. The store no longer validates
+	// the vocabulary itself — this is the one door for user-supplied kinds.
+	// Transitional: no fromNodeId / no board membership → project-singleton definition.
+	public async Task<string> ValidateRelationKindAsync(string projectKey, string kind, string? fromNodeId = null, CancellationToken ct = default)
 	{
 		var k = (kind ?? "").Trim().ToLowerInvariant();
-		var runtime = await RuntimeAsync(projectKey, ct);
+		var (runtime, scopeLabel) = await RuntimeForRelationAsync(projectKey, fromNodeId, ct);
 		if (!runtime.IsValidRelationKind(k))
 			throw new ArgumentException(
-				$"invalid relation kind '{kind}'; valid for this project: {string.Join("|", runtime.KnownRelationKinds())}" +
-				" (declare additional kinds via tasks_methodology_def_upsert linkKinds)");
+				$"invalid relation kind '{kind}'; valid for {scopeLabel}: {string.Join("|", runtime.KnownRelationKinds())}" +
+				" (declare additional kinds on the methodology instance's linkKinds)");
 		return k;
+	}
+
+	// Resolve the runtime that owns a relation's declared-kind vocabulary: the FROM
+	// node's board → its methodology instance when membership is set; else the project's
+	// legacy singleton definition (boards without MethodologyInstance still exist during
+	// the dual-read transition).
+	async Task<(MethodologyRuntime Runtime, string ScopeLabel)> RuntimeForRelationAsync(
+		string projectKey, string? fromNodeId, CancellationToken ct)
+	{
+		if (!string.IsNullOrWhiteSpace(fromNodeId))
+		{
+			var boardName = await _boards.FindBoardByNodeIdAsync(projectKey, fromNodeId, ct);
+			if (boardName is not null && await _boards.FindAsync(projectKey, boardName, ct) is { } meta)
+			{
+				var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
+				var label = !string.IsNullOrWhiteSpace(meta.MethodologyInstance)
+					? $"methodology instance '{meta.MethodologyInstance}'"
+					: "this project";
+				return (runtime, label);
+			}
+		}
+		return (await RuntimeAsync(projectKey, ct), "this project");
 	}
 
 	// nodeId -> its active part_of parent nodeId (single parent). One query, project-wide.
@@ -761,7 +785,9 @@ public sealed partial class TasksService : ITasksService
 	{
 		await EnsureBoard(projectKey, board, ct);
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
-		var runtime = await RuntimeAsync(projectKey, ct);
+		// Board → instance membership scopes tagAxes (methodology-instance-scoped-axes);
+		// unassigned boards fall back to the project-singleton definition.
+		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
 
 		// Grouping dimensions validate against the board kind's tag axes; an axis-less
 		// (free-form) kind keeps the builtin preset pair as its grouping namespaces —

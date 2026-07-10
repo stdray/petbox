@@ -82,13 +82,16 @@ public sealed class MethodologyRuntime
 
 	// Tag axes governing a board of this kind — ONE rule for everything: no axes =
 	// free-form tags, axes declared = enforced namespace allowlist. A definition-resolved
-	// kind runs on the definition's (project-wide) axes; a preset kind on the preset's
-	// (quartet = builtin area/concern, simple = none).
+	// kind runs on the definition's axes (the definition is instance-scoped when the
+	// board has MethodologyInstance membership; otherwise the project-singleton def —
+	// transitional dual-read). A preset kind uses the preset's axes (quartet = builtin
+	// area/concern, simple = none).
 	public IReadOnlyList<MethodologyTagAxisDef> TagAxes(string? kindSlug) =>
 		IsDefinedKind(kindSlug) ? _tagAxes : MethodologyPresets.TagAxes(MethodologyPresets.ParseKind(kindSlug));
 
-	// Every relation kind this project accepts: builtin process + neutral kinds plus the
-	// definition-declared ones (order = error-message order).
+	// Every relation kind this runtime accepts: builtin process + neutral kinds plus the
+	// definition-declared ones (order = error-message order). Scope = the instance (or
+	// legacy project singleton) that built this runtime.
 	public IEnumerable<string> KnownRelationKinds() =>
 		ProcessRelationKinds
 			.Concat(NeutralRelationKinds)
@@ -127,8 +130,9 @@ public sealed class MethodologyRuntime
 				.Select(MethodologyPresets.KindDef))
 			.ToList();
 
-	// Project-declared relation kinds with their descriptions (the guide's dictionary
-	// section; KnownRelationKinds flattens these to slugs).
+	// Definition-declared relation kinds with their descriptions (the guide's dictionary
+	// section; KnownRelationKinds flattens these to slugs). Instance-scoped when the
+	// runtime was built from an instance rules document.
 	public IReadOnlyList<MethodologyLinkKindDef> DeclaredLinkKinds => _linkKinds;
 
 	// Builtin + defined kind slugs (for board-create error messages).
