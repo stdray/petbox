@@ -91,14 +91,14 @@ public sealed class MemoryToolsContractTests : IDisposable
 		(await _store.ExistsAsync(Proj, "notes")).Should().BeTrue();
 
 		// Tags normalised: lowercased, trimmed, de-duped.
-		var all = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var all = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes");
 		var go = all.Items.Single(e => e.Key == "go-style");
 		go.Tags.Should().Equal("go", "style");
 		go.Type.Should().Be("Reference");
 
 		// Type filter narrows the listing.
-		var feedback = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var feedback = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", type: "feedback");
 		var keys = feedback.Items.Select(e => e.Key).ToList();
 		keys.Should().BeEquivalentTo(["prefers-tabs"]);
@@ -117,7 +117,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		});
 		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries);
 
-		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"scope", scope: "project", store: "notes");
 		var keys = res.Items.Select(e => e.Key).ToList();
 		keys.Should().Contain("auth-scopes");      // "scope*" prefix-matches "scopes"
@@ -151,7 +151,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		var res = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", del);
 		res.Removed.Should().Contain("temp");
 
-		var list = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var list = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes");
 		list.Items.Select(e => e.Key)
 			.Should().NotContain("temp");
@@ -272,12 +272,12 @@ public sealed class MemoryToolsContractTests : IDisposable
 		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries);
 
 		// listing: limit caps the count.
-		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		(await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", limit: 2))
 			.Items.Count.Should().Be(2);
 
 		// listing: bodyLen:100 snippets the body of entry 'a' (the long one, 306 chars).
-		var aBody = (await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var aBody = (await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", bodyLen: 100))
 			.Items.Single(e => e.Key == "a")
 			.Body!;
@@ -285,19 +285,19 @@ public sealed class MemoryToolsContractTests : IDisposable
 		aBody.Should().EndWith("…");
 
 		// listing default (omitted): a ~240-char snippet of the long body.
-		var aDefault = (await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var aDefault = (await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes")).Items.Single(e => e.Key == "a").Body!;
 		aDefault.Length.Should().Be(241);
 		aDefault.Should().EndWith("…");
 
 		// -1: the full body; 0: no body (omitted → null).
-		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		(await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", bodyLen: -1)).Items.Single(e => e.Key == "a").Body!.Length.Should().Be(306);
-		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		(await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", bodyLen: 0)).Items.Single(e => e.Key == "a").Body.Should().BeNull();
 
 		// with q: the same limit bounds an FTS sweep ("alpha" hits all three).
-		(await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		(await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"alpha", scope: "project", store: "notes", limit: 2))
 			.Items.Count.Should().Be(2);
 	}

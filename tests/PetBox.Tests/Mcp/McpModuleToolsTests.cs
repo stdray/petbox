@@ -174,7 +174,7 @@ public sealed class McpModuleToolsTests : IDisposable
 			}));
 
 		// memory_search is THE read verb (list = search without q; replaced list+recall).
-		var hits = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var hits = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"tabs", scope: "project", store: "notes");
 		hits.Items.Should().ContainSingle();
 	}

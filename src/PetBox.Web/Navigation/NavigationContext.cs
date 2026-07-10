@@ -147,10 +147,14 @@ public sealed class NavigationContext(
 		{
 			if (_projects is not null) return _projects;
 			var wsKey = CurrentWorkspaceKey;
-			// "$workspace" is the reserved cross-project memory container, not a user project —
-			// it has no logs/dbs/tasks, so it doesn't belong in the project tree. The workspace
-			// dashboard surfaces it as the dedicated "Workspace memory" entry instead.
-			_projects = [.. db.Projects.Where(p => p.WorkspaceKey == wsKey && p.Key != "$workspace").OrderBy(p => p.Key)];
+			// Workspace memory containers ($workspace / $ws-*) are not user projects — they have
+			// no logs/dbs/tasks, so they don't belong in the project tree. The workspace dashboard
+			// surfaces the current container as the dedicated "Shared memory" entry instead.
+			_projects = [.. db.Projects
+				.Where(p => p.WorkspaceKey == wsKey)
+				.ToList()
+				.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p.Key))
+				.OrderBy(p => p.Key)];
 			return _projects;
 		}
 	}
@@ -165,6 +169,7 @@ public sealed class NavigationContext(
 				.Where(p => wsKeys.Contains(p.WorkspaceKey))
 				.OrderBy(p => p.Key)
 				.ToList()
+				.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p.Key))
 				.GroupBy(p => p.WorkspaceKey, StringComparer.Ordinal)
 				.ToDictionary(g => g.Key, g => (IReadOnlyList<Project>)g.ToList(), StringComparer.Ordinal);
 			_projectsByWs = grouped;

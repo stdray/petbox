@@ -57,11 +57,11 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Remember_DefaultsToProjectScope_TypeProject_AndSearchFindsIt()
 	{
 		var http = Http("memory:read,memory:write");
-		var rem = await MemoryTools.RememberAsync(http, Flags(), _memory, "api keys carry enumerable scopes");
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "api keys carry enumerable scopes");
 		rem.Scope.Should().Be("project");
 		rem.Store.Should().Be("notes");
 
-		var rec = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "scopes");
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "scopes");
 		var hits = rec.Items.ToList();
 		hits.Should().ContainSingle();
 		hits[0].Scope.Should().Be("project");
@@ -73,9 +73,9 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Search_ReturnsVersion_ThatWorksAsUpsertBaseline()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "the deploy tag drives prod releases");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "the deploy tag drives prod releases");
 
-		var rec = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "releases");
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "releases");
 		var hit = rec.Items.Single();
 		var key = hit.Key;
 		var version = hit.Version;
@@ -102,9 +102,9 @@ public sealed class MemoryVerbsTests : IDisposable
 		// cause was ToEntry doing ParseType(i.Type) with no fallback to current?.Type, unlike the
 		// neighbouring description/body/tags/metadata which all PATCH-fall back.)
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "the deploy tag drives prod releases", type: "Reference");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "the deploy tag drives prod releases", type: "Reference");
 
-		var hit = (await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "releases")).Items.Single();
+		var hit = (await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "releases")).Items.Single();
 		hit.Type.Should().Be("Reference");
 
 		// PATCH the body only — the entry carries NO `type`. Must apply and keep type=Reference.
@@ -115,7 +115,7 @@ public sealed class MemoryVerbsTests : IDisposable
 		var res = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", entries);
 		res.Applied.Should().BeTrue();
 
-		var after = (await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "edited")).Items.Single();
+		var after = (await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "edited")).Items.Single();
 		after.Type.Should().Be("Reference"); // unchanged by the type-less PATCH
 		after.Body.Should().Contain("edited marker");
 	}
@@ -138,16 +138,16 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Remember_Workspace_IsCrossProject_NotVisibleToProjectScope()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "the user prefers tabs over spaces",
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "the user prefers tabs over spaces",
 			scope: "workspace", type: "User");
 
 		// Cascade recall surfaces it, labelled workspace.
-		var cascade = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs");
+		var cascade = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs");
 		var wsHit = cascade.Items.Single(h => h.Scope == "workspace");
 		wsHit.Type.Should().Be("User");
 
 		// Project-scoped recall must NOT see workspace memory.
-		var projOnly = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs", scope: "project");
+		var projOnly = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "tabs", scope: "project");
 		projOnly.Items.Should().BeEmpty();
 	}
 
@@ -155,10 +155,10 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Search_Cascade_ListsProjectBeforeWorkspace()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "deploy moves the deploy tag", scope: "project");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "deploy needs CI health gate", scope: "workspace");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "deploy moves the deploy tag", scope: "project");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "deploy needs CI health gate", scope: "workspace");
 
-		var rec = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy");
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy");
 		var scopes = rec.Items.Select(h => h.Scope).ToList();
 		scopes.Should().Equal("project", "workspace"); // project leg first
 	}
@@ -167,15 +167,15 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Search_SearchesEveryStoreByDefault()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "alpha lives in notes", store: "notes");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "alpha lives in journal", store: "journal");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "alpha lives in notes", store: "notes");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "alpha lives in journal", store: "journal");
 
-		var rec = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha");
+		var rec = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha");
 		var stores = rec.Items.Select(h => h.Store).ToList();
 		stores.Should().BeEquivalentTo(["notes", "journal"]);
 
 		// store narrows to one.
-		var narrowed = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha", store: "journal");
+		var narrowed = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "alpha", store: "journal");
 		narrowed.Items.Select(h => h.Store)
 			.Should().BeEquivalentTo(["journal"]);
 	}
@@ -184,16 +184,16 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Search_AllStores_SkipsSensitiveOps_ButExplicitStoreReaches()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "secret deploy token xyz", store: "ops");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "public deploy note", store: "notes");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "secret deploy token xyz", store: "ops");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "public deploy note", store: "notes");
 
 		// Implicit all-stores sweep must NOT surface the ops store.
-		var sweep = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy");
+		var sweep = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy");
 		sweep.Items.Select(h => h.Store)
 			.Should().NotContain("ops").And.Contain("notes");
 
 		// Explicit store:ops is a deliberate ask and still reaches it.
-		var explicitOps = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy", store: "ops");
+		var explicitOps = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "deploy", store: "ops");
 		explicitOps.Items.Select(h => h.Store)
 			.Should().BeEquivalentTo(["ops"]);
 	}
@@ -206,16 +206,16 @@ public sealed class MemoryVerbsTests : IDisposable
 		var http = Http("memory:read,memory:write");
 		// "session-digests" is a well-known system store (MemoryStore.SystemStoreNames) — the
 		// auto-vivify write path marks it IsSystem even though nothing called CreateStoreAsync.
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "digest of prior sessions", store: "session-digests");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "public note about sessions", store: "notes");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "digest of prior sessions", store: "session-digests");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "public note about sessions", store: "notes");
 
 		// Implicit all-stores sweep must NOT surface the system store.
-		var sweep = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "sessions");
+		var sweep = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "sessions");
 		sweep.Items.Select(h => h.Store)
 			.Should().NotContain("session-digests").And.Contain("notes");
 
 		// Explicit store:session-digests is a deliberate ask and still reaches it.
-		var explicitSys = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "sessions", store: "session-digests");
+		var explicitSys = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "sessions", store: "session-digests");
 		explicitSys.Items.Select(h => h.Store)
 			.Should().BeEquivalentTo(["session-digests"]);
 	}
@@ -227,12 +227,12 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Search_AllStores_KeepsCanonAndAutocaptured_ExcludesOnlySessionDigests()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "pelican fact for canon", store: "canon");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "pelican fact autocaptured", store: "autocaptured");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "pelican fact in notes", store: "notes");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "pelican fact digest", store: "session-digests");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "pelican fact for canon", store: "canon");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "pelican fact autocaptured", store: "autocaptured");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "pelican fact in notes", store: "notes");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "pelican fact digest", store: "session-digests");
 
-		var sweep = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "pelican");
+		var sweep = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(), "pelican");
 		var stores = sweep.Items.Select(h => h.Store).ToList();
 		stores.Should().Contain("canon").And.Contain("autocaptured").And.Contain("notes");
 		stores.Should().NotContain("session-digests");
@@ -244,12 +244,12 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Search_WithoutQ_ListsCascade_UpdatedDescDefault()
 	{
 		var http = Http("memory:read,memory:write");
-		var first = await MemoryTools.RememberAsync(http, Flags(), _memory, "older fact");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "workspace fact", scope: "workspace");
+		var first = await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "older fact");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "workspace fact", scope: "workspace");
 		await Task.Delay(30); // distinct Updated timestamps — the listing orders by them
-		var second = await MemoryTools.RememberAsync(http, Flags(), _memory, "newer fact");
+		var second = await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "newer fact");
 
-		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder());
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder());
 		res.Retrievers.Should().BeNull(); // no retriever runs in listing mode
 		res.Items.Select(h => h.Scope).Distinct().Should().BeEquivalentTo(["project", "workspace"]);
 
@@ -262,8 +262,8 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Search_SortRelevanceWithoutQ_IsRejected()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "any fact");
-		var act = () => MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "any fact");
+		var act = () => MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			sort: new PetBox.Web.Mcp.Contract.SortInput { By = "relevance" });
 		(await act.Should().ThrowAsync<ArgumentException>()).Which.Message.Should().Contain("relevance");
 	}
@@ -273,11 +273,11 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Search_WithQ_ExplicitSort_ReordersSelected()
 	{
 		var http = Http("memory:read,memory:write");
-		var a = await MemoryTools.RememberAsync(http, Flags(), _memory, "gamma fact one");
+		var a = await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "gamma fact one");
 		await Task.Delay(30); // distinct Created timestamps — the sort reads them
-		var b = await MemoryTools.RememberAsync(http, Flags(), _memory, "gamma fact two");
+		var b = await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "gamma fact two");
 
-		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"gamma", scope: "project", sort: new PetBox.Web.Mcp.Contract.SortInput { By = "created", Desc = true });
 		res.Retrievers.Should().NotBeNull();
 		var keys = res.Items.Select(h => h.Key).ToList();
@@ -289,14 +289,14 @@ public sealed class MemoryVerbsTests : IDisposable
 	public async Task Remember_InvalidScope_IsRejected()
 	{
 		var http = Http("memory:read,memory:write");
-		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.RememberAsync(http, Flags(), _memory, "x", scope: "galaxy"));
+		await Assert.ThrowsAsync<ArgumentException>(() => MemoryTools.RememberAsync(http, Flags(), _db, _memory, "x", scope: "galaxy"));
 	}
 
 	[Fact]
 	public async Task Remember_RequiresWriteScope()
 	{
 		var http = Http("memory:read");
-		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => MemoryTools.RememberAsync(http, Flags(), _memory, "x"));
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() => MemoryTools.RememberAsync(http, Flags(), _db, _memory, "x"));
 	}
 
 	// workspace-memory-authz-fix: the reserved $workspace container feeds every project's
@@ -369,6 +369,83 @@ public sealed class MemoryVerbsTests : IDisposable
 		var http = Http("memory:read,memory:write");
 		Assert.Throws<UnauthorizedAccessException>(() =>
 			ModuleMcp.AssertProject(http, MemoryTools.WorkspaceContainer));
+	}
+
+	// workspace-memory-isolation: remembering INTO the $system "$workspace" container is
+	// denied for a key whose project lives in a foreign workspace (same boundary as upsert).
+	[Fact]
+	public async Task Remember_Workspace_ForeignWorkspace_Denied()
+	{
+		var http = Http("memory:read,memory:write", OtherProj);
+		var ex = await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+			MemoryTools.RememberAsync(http, Flags(), _db, _memory, "foreign leak",
+				scope: "workspace", projectKey: MemoryTools.WorkspaceContainer));
+		ex.Message.Should().Contain("workspace");
+	}
+
+	// Two workspaces, two containers: cascade must use the caller's own workspace container
+	// — never a foreign one, and never a hard-coded global for a non-$system caller.
+	// Note: HttpContextAccessor uses a static AsyncLocal — create each accessor just before
+	// the call (never hold two live ones), or the second set overwrites the first claim.
+	[Fact]
+	public async Task Search_Cascade_UsesCallerWorkspace_NotForeignOrGlobal()
+	{
+		var sysRem = await MemoryTools.RememberAsync(Http("memory:read,memory:write", Proj), Flags(), _db, _memory,
+			"alpha isolation marker from system-ws", scope: "workspace");
+		var otherRem = await MemoryTools.RememberAsync(Http("memory:read,memory:write", OtherProj), Flags(), _db, _memory,
+			"beta isolation marker from other-ws", scope: "workspace");
+
+		// Ground truth: each caller's workspace container is distinct.
+		sysRem.Id.Should().StartWith(MemoryTools.WorkspaceContainer + "/");
+		otherRem.Id.Should().StartWith("$ws-other-ws/");
+		_db.Projects.Any(p => p.Key == "$ws-other-ws" && p.WorkspaceKey == "other-ws").Should().BeTrue();
+
+		var sysHits = (await MemoryTools.SearchAsync(Http("memory:read,memory:write", Proj), Flags(), _db, _memory,
+			new NoopUsageRecorder(), "isolation marker")).Items.ToList();
+		sysHits.Should().Contain(h => h.Body != null && h.Body.Contains("alpha"));
+		sysHits.Should().NotContain(h => h.Body != null && h.Body.Contains("beta"));
+
+		var otherHits = (await MemoryTools.SearchAsync(Http("memory:read,memory:write", OtherProj), Flags(), _db, _memory,
+			new NoopUsageRecorder(), "isolation marker")).Items.ToList();
+		otherHits.Should().Contain(h => h.Body != null && h.Body.Contains("beta"));
+		otherHits.Should().NotContain(h => h.Body != null && h.Body.Contains("alpha"));
+	}
+
+	// $system keeps the legacy "$workspace" container key (zero-migration for prod data).
+	[Fact]
+	public async Task Remember_Workspace_SystemWorkspace_UsesLegacyContainer()
+	{
+		var http = Http("memory:read,memory:write", Proj);
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _db, _memory,
+			"system workspace lands in legacy container", scope: "workspace");
+		rem.Id.Should().StartWith(MemoryTools.WorkspaceContainer + "/");
+	}
+
+	// Non-$system workspace resolves to the "$ws-" prefix and lazy-ensures the Projects row.
+	[Fact]
+	public async Task Remember_Workspace_NonSystem_ResolvesToWsPrefix()
+	{
+		var http = Http("memory:read,memory:write", OtherProj);
+		var rem = await MemoryTools.RememberAsync(http, Flags(), _db, _memory,
+			"non-system workspace container", scope: "workspace");
+		rem.Id.Should().StartWith("$ws-other-ws/");
+		var row = _db.Projects.First(p => p.Key == "$ws-other-ws");
+		row.WorkspaceKey.Should().Be("other-ws");
+	}
+
+	// Wildcard "*" may write the $system "$workspace" container; a foreign project-scoped
+	// key may not (covered by Upsert_WorkspaceContainer_ByForeignWorkspaceKey_IsRejected).
+	[Fact]
+	public async Task Upsert_WorkspaceContainer_ByWildcardKey_Succeeds()
+	{
+		var http = Http("memory:read,memory:write", "*");
+		var entries = McpInputs.Entries(new object[]
+		{
+			new { key = "star-index", type = "Project", description = "d", body = "wildcard write", version = 0 },
+		});
+		var res = await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, MemoryTools.WorkspaceContainer, "canon", entries);
+		res.Applied.Should().BeTrue();
+		res.Added.Select(e => e.Key).Should().Contain("star-index");
 	}
 
 	static IHttpContextAccessor Http(string scopes, string project = Proj)

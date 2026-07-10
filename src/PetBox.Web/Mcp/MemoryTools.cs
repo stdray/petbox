@@ -32,7 +32,7 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		projectKey = ResolveScope(http, projectKey, scope).Key;
+		projectKey = (await ResolveScopeAsync(http, db, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var meta = await memory.CreateStoreAsync(projectKey, store, description, ct);
@@ -59,7 +59,7 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var rows = new List<MemoryStoreRow>();
-		foreach (var (scopeName, container) in SearchContainers(http, projectKey, scope))
+		foreach (var (scopeName, container) in await SearchContainersAsync(http, db, projectKey, scope, ct))
 		{
 			ct.ThrowIfCancellationRequested();
 			try { await AssertMemoryProjectAsync(http, db, container, ct); }
@@ -89,7 +89,7 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		projectKey = ResolveScope(http, projectKey, scope).Key;
+		projectKey = (await ResolveScopeAsync(http, db, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
@@ -112,30 +112,12 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
-		// Build the cascade list: explicit scope → one container; no scope → project
-		// first, then workspace (same contract as memory_search). The project leg is
-		// best-effort — skip it when the key can't resolve it (cross-project key without
-		// explicit projectKey, or passed projectKey doesn't match the claim — callers
-		// may address $workspace directly as projectKey).
-		var containers = new List<(string Scope, string Container)>();
-		if (scope is not null)
-		{
-			containers.Add(ResolveScope(http, projectKey, scope));
-		}
-		else
-		{
-			try { containers.Add(("project", ModuleMcp.ResolveProject(http, projectKey))); }
-			catch (ArgumentException) { /* cross-project key without explicit projectKey */ }
-			catch (UnauthorizedAccessException) { /* projectKey doesn't match claim */ }
-			if (!containers.Any(c => c.Container == WorkspaceContainer))
-				containers.Add(("workspace", WorkspaceContainer));
-		}
-
-		foreach (var (scopeName, container) in containers)
+		// Cascade: explicit scope → one container; no scope → project first, then the
+		// caller's own workspace container (never a hardcoded global). Unauthorized
+		// cascade legs are skipped so a foreign container never surfaces.
+		foreach (var (scopeName, container) in await SearchContainersAsync(http, db, projectKey, scope, ct))
 		{
 			ct.ThrowIfCancellationRequested();
-			// Best-effort: skip a container the key can't reach (the workspace leg
-			// may be unreachable for a project-scoped key from a different workspace).
 			try { await AssertMemoryProjectAsync(http, db, container, ct); }
 			catch (UnauthorizedAccessException) { continue; }
 			var entry = await memory.GetAsync(container, store, key, ct);
@@ -192,7 +174,7 @@ public static class MemoryTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		projectKey = ResolveScope(http, projectKey, scope).Key;
+		projectKey = (await ResolveScopeAsync(http, db, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var (upserts, deletes) = ParseEntries(entries);
@@ -211,22 +193,7 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
-		// Cascade: explicit scope → one container; no scope → project first, then workspace.
-		var containers = new List<(string Scope, string Container)>();
-		if (scope is not null)
-		{
-			containers.Add(ResolveScope(http, projectKey, scope));
-		}
-		else
-		{
-			try { containers.Add(("project", ModuleMcp.ResolveProject(http, projectKey))); }
-			catch (ArgumentException) { }
-			catch (UnauthorizedAccessException) { }
-			if (!containers.Any(c => c.Container == WorkspaceContainer))
-				containers.Add(("workspace", WorkspaceContainer));
-		}
-
-		foreach (var (scopeName, container) in containers)
+		foreach (var (scopeName, container) in await SearchContainersAsync(http, db, projectKey, scope, ct))
 		{
 			ct.ThrowIfCancellationRequested();
 			try { await AssertMemoryProjectAsync(http, db, container, ct); }
@@ -244,35 +211,28 @@ public static class MemoryTools
 	// the low-ceremony capture verb. Both carry the `scope` dimension over the per-project
 	// store files —
 	//   project   → the key's own project  (default; the usual case)
-	//   workspace → the shared cross-project container ("$workspace") — facts that span
-	//               projects or are about the user live here, one place for everyone.
-	// `search` with no scope CASCADES both (project ⊕ workspace) and returns rows labelled
-	// by scope so precedence is visible (project first); when the key's project IS the
-	// shared container the two collapse and it's searched once. Any memory-scoped key of
-	// the container's own workspace may reach it (see AssertMemoryProjectAsync — key
-	// -addressed curation checks the same membership). Personal facts are carried by
-	// type=User, not a separate container. Curated/temporal writes go through memory_upsert.
+	//   workspace → the caller's workspace memory container (WorkspaceMemory.ContainerKeyFor)
+	//               — facts that span projects of ONE workspace. "$system" keeps the legacy
+	//               "$workspace" key; every other workspace gets "$ws-{wsKey}".
+	// `search` with no scope CASCADES both (project ⊕ caller's workspace) and returns rows
+	// labelled by scope so precedence is visible (project first). Personal facts are carried
+	// by type=User, not a separate container. Curated/temporal writes go through memory_upsert.
 
-	// Internal: MemoryApi's canon endpoint reads the workspace canon from this same container.
-	// The reserved "$workspace" project (seeded/ensured by M028/M031) is a container, not a
-	// user project — distinct from "$system" so a project's cascade doesn't inherit ALL of
-	// $system's memory as "workspace".
-	internal const string WorkspaceContainer = "$workspace";
+	// Legacy alias for the $system workspace container (seeded by M028/M031). Prefer
+	// WorkspaceMemory.ContainerKeyFor for new code.
+	internal const string WorkspaceContainer = WorkspaceMemory.SystemContainer;
 	const string DefaultStore = "notes";
 
-	// Authorize a KEY-ADDRESSED memory projectKey. The reserved shared container ($workspace)
-	// feeds every project's memory cascade, so key-addressed curation (memory_upsert/get/delta,
-	// memory_store_*) must address it directly too, mirroring how remember/search resolve
-	// scope:"workspace" — but only WITHIN the workspace that owns the container (multi-user
-	// intent: another workspace's keys must not reach this one's shared memory). A key
-	// qualifies when its project claim is the wildcard "*" or names a project in the same
-	// workspace as the $workspace Projects row (seeded by M028/M031; its WorkspaceKey is
-	// resolved from the DB, not hardcoded). The memory scope gate stays each tool's own
-	// AssertScope call. For every other target this is exactly AssertProject, so no
-	// non-memory module gains $workspace access.
+	// Authorize a KEY-ADDRESSED memory projectKey. Workspace containers ($workspace / $ws-*)
+	// feed every project's memory cascade within their OWN workspace, so key-addressed
+	// curation (memory_upsert/get/delta, memory_store_*, remember) may address them directly
+	// — but only within the workspace that owns the container. A key qualifies when its
+	// project claim is the wildcard "*" or names a project whose WorkspaceKey equals the
+	// container's WorkspaceKey. For every other target this is exactly AssertProject, so no
+	// non-memory module gains container access.
 	static async Task AssertMemoryProjectAsync(IHttpContextAccessor http, PetBoxDb db, string projectKey, CancellationToken ct)
 	{
-		if (projectKey != WorkspaceContainer)
+		if (!WorkspaceMemory.IsWorkspaceContainer(projectKey))
 		{
 			ModuleMcp.AssertProject(http, projectKey);
 			return;
@@ -281,10 +241,10 @@ public static class MemoryTools
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
 		if (claim == ProjectScope.AllProjects) return;
 		var rows = await db.Projects
-			.Where(p => p.Key == WorkspaceContainer || p.Key == claim)
+			.Where(p => p.Key == projectKey || p.Key == claim)
 			.Select(p => new { p.Key, p.WorkspaceKey })
 			.ToListAsync(ct);
-		var containerWs = rows.FirstOrDefault(p => p.Key == WorkspaceContainer)?.WorkspaceKey;
+		var containerWs = rows.FirstOrDefault(p => p.Key == projectKey)?.WorkspaceKey;
 		var callerWs = rows.FirstOrDefault(p => p.Key == claim)?.WorkspaceKey;
 		if (containerWs is null || callerWs is null || !string.Equals(callerWs, containerWs, StringComparison.Ordinal))
 			throw new UnauthorizedAccessException(
@@ -294,15 +254,16 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_remember", Title = "Remember a fact", UseStructuredContent = true, OutputSchemaType = typeof(MemoryRememberResult))]
 	[Description("""
 		CREATE one durable fact verbatim (always a NEW entry; edits go via memory_upsert).
-		`scope`: project (default) | workspace (cross-project shared). `type` taxonomy
-		(User|Feedback|Project|Reference) — pick explicitly. Store durable facts not derivable
-		from code/git/config; actionable work goes to a task board. Requires memory:write.
+		`scope`: project (default) | workspace (cross-project shared within the caller's
+		workspace). `type` taxonomy (User|Feedback|Project|Reference) — pick explicitly.
+		Store durable facts not derivable from code/git/config; actionable work goes to a
+		task board. Requires memory:write.
 		[[full]]
 		CREATE one durable fact, verbatim (always a new entry; edits go via memory_upsert).
 		The low-ceremony way to store a learning.
 		`text` (required) is the fact. `scope` picks the container: project (default —
-		the key's project) | workspace (cross-project shared). `store` groups entries
-		within a scope (default "notes"). `type` is the taxonomy
+		the key's project) | workspace (shared across projects of the caller's workspace).
+		`store` groups entries within a scope (default "notes"). `type` is the taxonomy
 		(User|Feedback|Project|Reference; default Project) — pick explicitly, no inference.
 		`tags` is an array of free-form tag strings; `description` an optional one-line
 		summary. A unique key is generated. Store durable facts not derivable from
@@ -310,7 +271,7 @@ public static class MemoryTools
 		Returns { id, scope, store, key }.
 		""")]
 	public static async Task<MemoryRememberResult> RememberAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string text, string? scope = null, string? projectKey = null, string? store = null,
 		string? type = null, string[]? tags = null, string? description = null,
 		CancellationToken ct = default)
@@ -318,7 +279,8 @@ public static class MemoryTools
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("text is required");
-		var container = ResolveScope(http, projectKey, scope);
+		var container = await ResolveScopeAsync(http, db, projectKey, scope, ct);
+		await AssertMemoryProjectAsync(http, db, container.Key, ct);
 		var st = NormalizeStore(store);
 		var key = "m-" + Guid.NewGuid().ToString("N");
 		var input = new MemoryEntryInput
@@ -382,7 +344,7 @@ public static class MemoryTools
 		hit below the relevance floor is dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows).
 		""")]
 	public static async Task<MemorySearchResultView> SearchAsync(
-		IHttpContextAccessor http, FeatureFlags features, IMemoryService memory, IMemoryUsageRecorder usage,
+		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory, IMemoryUsageRecorder usage,
 		[Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
 		[Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
 		string? projectKey = null,
@@ -410,9 +372,12 @@ public static class MemoryTools
 		// legs that ran; degraded = OR (any leg that wanted semantic but couldn't).
 		SearchRetrievers? retrievers = null;
 		var scopeRank = -1;
-		foreach (var (scopeName, container) in SearchContainers(http, projectKey, scope))
+		foreach (var (scopeName, container) in await SearchContainersAsync(http, db, projectKey, scope, ct))
 		{
 			ct.ThrowIfCancellationRequested();
+			// Skip containers the key cannot reach (foreign workspace container, etc.).
+			try { await AssertMemoryProjectAsync(http, db, container, ct); }
+			catch (UnauthorizedAccessException) { continue; }
 			scopeRank++;
 			// QUERY: give each scope the FULL cap so both pools compete on merit — the honest
 			// cross-scope merge (by score) below decides the winners, not a greedy first-scope
@@ -505,36 +470,72 @@ public static class MemoryTools
 	}
 
 	// Resolve a single explicit scope to its container projectKey.
-	// project → the key's project (authorized via the claim); workspace → the reserved
-	// shared container (gated only by the memory scope already asserted). When projectKey
-	// is already the workspace container and scope is omitted, treat as workspace (callers
-	// may address $workspace directly as projectKey).
-	static (string Scope, string Key) ResolveScope(IHttpContextAccessor http, string? projectKey, string? scope) =>
-		(scope?.Trim().ToLowerInvariant()) switch
+	// project → the key's project (authorized via the claim); workspace → the caller's
+	// workspace memory container (lazy-ensured). When projectKey is already a workspace
+	// container and scope is omitted/project, treat as workspace (callers may address
+	// $workspace / $ws-* directly as projectKey). A "*" key without projectKey cannot
+	// resolve a workspace and throws ArgumentException.
+	static async Task<(string Scope, string Key)> ResolveScopeAsync(
+		IHttpContextAccessor http, PetBoxDb db, string? projectKey, string? scope, CancellationToken ct)
+	{
+		var s = scope?.Trim().ToLowerInvariant();
+		if ((s is null or "" or "project")
+			&& projectKey is not null
+			&& WorkspaceMemory.IsWorkspaceContainer(projectKey))
+			return ("workspace", projectKey);
+
+		return s switch
 		{
-			null or "" or "project" when string.Equals(projectKey, WorkspaceContainer, StringComparison.Ordinal)
-				=> ("workspace", WorkspaceContainer),
 			null or "" or "project" => ("project", ModuleMcp.ResolveProject(http, projectKey)),
-			"workspace" => ("workspace", WorkspaceContainer),
-			var s => throw new ArgumentException($"invalid scope '{s}' (project|workspace)"),
+			"workspace" => ("workspace", await ResolveCallerWorkspaceContainerAsync(http, db, projectKey, ct)),
+			_ => throw new ArgumentException($"invalid scope '{s}' (project|workspace)"),
 		};
+	}
+
+	// Caller's project → WorkspaceKey → WorkspaceMemory.ContainerKeyFor, ensuring the row.
+	// Direct container projectKeys pass through (row must already exist for authz).
+	static async Task<string> ResolveCallerWorkspaceContainerAsync(
+		IHttpContextAccessor http, PetBoxDb db, string? projectKey, CancellationToken ct)
+	{
+		if (projectKey is not null && WorkspaceMemory.IsWorkspaceContainer(projectKey))
+			return projectKey;
+		// ResolveProject throws ArgumentException for "*" without projectKey — intentional.
+		var proj = ModuleMcp.ResolveProject(http, projectKey);
+		return await WorkspaceMemory.ResolveAndEnsureContainerAsync(db, proj, ct);
+	}
 
 	// The ordered list of (scope, container) memory_search reads. A single scope → that
-	// container; no scope → the full cascade, project first (most specific). The project
-	// container is best-effort: a cross-project ("*") key with no projectKey can't resolve
-	// a single project, so that leg is skipped rather than failing the whole read.
-	static List<(string Scope, string Key)> SearchContainers(IHttpContextAccessor http, string? projectKey, string? scope)
+	// container; no scope → the full cascade, project first (most specific) ⊕ the caller's
+	// workspace container. Never hardcodes bare "$workspace" unless that IS the caller's
+	// container. The project leg is best-effort on ArgumentException (a "*" key without
+	// projectKey); the workspace leg still needs a resolvable project and throws if not.
+	static async Task<List<(string Scope, string Key)>> SearchContainersAsync(
+		IHttpContextAccessor http, PetBoxDb db, string? projectKey, string? scope, CancellationToken ct)
 	{
 		var s = scope?.Trim().ToLowerInvariant();
 		if (!string.IsNullOrEmpty(s) && s != "all" && s != "cascade")
-			return [ResolveScope(http, projectKey, s)];
+			return [await ResolveScopeAsync(http, db, projectKey, s, ct)];
+
 		var list = new List<(string, string)>();
-		try { list.Add(("project", ModuleMcp.ResolveProject(http, projectKey))); }
-		catch (ArgumentException) { /* "*" key without an explicit projectKey — skip the project leg */ }
-		// Dedup: when the key's project IS the shared container, project and workspace
-		// collapse to one — don't search the same container (and re-list hits) twice.
-		if (!list.Any(c => c.Item2 == WorkspaceContainer))
-			list.Add(("workspace", WorkspaceContainer));
+		string? resolvedProject = null;
+		try { resolvedProject = ModuleMcp.ResolveProject(http, projectKey); list.Add(("project", resolvedProject)); }
+		catch (ArgumentException) { /* "*" key without projectKey — skip project leg */ }
+		catch (UnauthorizedAccessException) { /* projectKey doesn't match claim */ }
+
+		// Workspace leg: need a project to derive the caller's workspace. Prefer the
+		// resolved project; fall back to re-resolve (throws for "*" without projectKey).
+		var forWs = resolvedProject ?? projectKey;
+		if (forWs is not null && WorkspaceMemory.IsWorkspaceContainer(forWs))
+		{
+			if (!list.Any(c => c.Item2 == forWs))
+				list.Add(("workspace", forWs));
+			return list;
+		}
+		// When project leg was skipped (e.g. "*" without projectKey), still try resolve —
+		// ResolveProject throws ArgumentException which surfaces to the caller.
+		var wsContainer = await ResolveCallerWorkspaceContainerAsync(http, db, forWs, ct);
+		if (!list.Any(c => c.Item2 == wsContainer))
+			list.Add(("workspace", wsContainer));
 		return list;
 	}
 

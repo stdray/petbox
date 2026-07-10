@@ -18,7 +18,7 @@
 	// sibling that merely shares a name prefix (roadmap vs roadmap-v2).
 	bool IsUnder(string url) => IsExactly(url) || path.StartsWith(url + "/", StringComparison.OrdinalIgnoreCase);
 	var statusUrl = Routes.Workspace(currentWs);
-	var sharedMemoryUrl = Routes.SharedMemory();
+	var sharedMemoryUrl = Routes.SharedMemory(currentWs);
 	var sharedConfigUrl = Routes.SharedConfig(currentWs);
 
 	var (dataTheme, systemScript) = await PetBox.Web.Settings.ThemeHelper.ResolveForCurrentUserAsync(Nav, Settings, Context);

@@ -87,8 +87,10 @@ public sealed class MemoryCanonApiFixture : IAsyncLifetime
 
 		// The factory caches per (scope, store) — evict the canon store of both scopes so
 		// the cached contexts release their file handles before the deletes below.
+		// Test project lives in workspace "test" → container is "$ws-test" (not global $workspace).
 		var memFactory = Factory.Services.GetRequiredService<IScopedDbFactory<MemoryDb>>();
 		await memFactory.EvictAsync(TestProjectKey, "canon");
+		await memFactory.EvictAsync("$ws-test", "canon");
 		await memFactory.EvictAsync("$workspace", "canon");
 		if (!Directory.Exists(_baseDir)) return;
 		TestDirs.ClearPoolsUnder(_baseDir);
@@ -129,11 +131,20 @@ public sealed class MemoryCanonApiTests : IClassFixture<MemoryCanonApiFixture>, 
 	public Task DisposeAsync() => Task.CompletedTask; // the fixture owns host teardown
 
 	// Seed a canon entry of a scope through the service door (auto-vivifies the store).
-	// The workspace canon lives in the reserved `$workspace` container under key `index` —
+	// The workspace canon lives in the project's workspace container under key `index` —
 	// the same store/key as the project canon; the scope is the container, not a key suffix.
+	// For the fixture's workspace "test" that container is "$ws-test".
+	const string TestWorkspaceContainer = "$ws-test";
+
 	async Task WriteCanonAsync(string projectKey, string body, string key = "index")
 	{
 		using var scope = _factory.Services.CreateScope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		// MemoryStore.CreateAsync requires a Projects row; lazy-ensure workspace containers.
+		if (projectKey == TestWorkspaceContainer)
+			await WorkspaceMemory.EnsureContainerAsync(db, "test");
+		else if (projectKey == "$workspace")
+			await WorkspaceMemory.EnsureContainerAsync(db, "$system");
 		var memory = scope.ServiceProvider.GetRequiredService<IMemoryService>();
 		await memory.UpsertAsync(projectKey, "canon",
 			new[] { new MemoryEntryInput { Key = key, Version = 0, Type = "Reference", Description = "canon", Body = body } },
@@ -144,7 +155,7 @@ public sealed class MemoryCanonApiTests : IClassFixture<MemoryCanonApiFixture>, 
 	public async Task Canon_BothScopesPresent_ReturnsBothParts()
 	{
 		await WriteCanonAsync(TestProjectKey, "PROJECT canon index");
-		await WriteCanonAsync("$workspace", "WORKSPACE canon index");
+		await WriteCanonAsync(TestWorkspaceContainer, "WORKSPACE canon index");
 
 		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
 		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
@@ -157,6 +168,25 @@ public sealed class MemoryCanonApiTests : IClassFixture<MemoryCanonApiFixture>, 
 		body.Project.Version.Should().BeGreaterThan(0);
 		body.Workspace.Should().NotBeNull();
 		body.Workspace!.Body.Should().Be("WORKSPACE canon index");
+	}
+
+	// Isolation: a project in workspace "test" must NOT surface the global "$workspace"
+	// ($system) canon — only its own "$ws-test" container.
+	[Fact]
+	public async Task Canon_UsesProjectWorkspaceContainer_NotGlobalWorkspace()
+	{
+		await WriteCanonAsync("$workspace", "GLOBAL $workspace canon — must not leak");
+		await WriteCanonAsync(TestWorkspaceContainer, "per-workspace canon for test");
+
+		_client.DefaultRequestHeaders.Add("X-Api-Key", TestApiKey);
+		var resp = await _client.GetAsync($"/api/memory/{TestProjectKey}/canon");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+
+		var body = await resp.Content.ReadFromJsonAsync<CanonResponse>();
+		body.Should().NotBeNull();
+		body!.Workspace.Should().NotBeNull();
+		body.Workspace!.Body.Should().Be("per-workspace canon for test");
+		body.Workspace.Body.Should().NotContain("GLOBAL");
 	}
 
 	[Fact]

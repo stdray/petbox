@@ -10,9 +10,9 @@
 	<span class="badge badge-outline font-mono">@Model.WorkspaceKey</span>
 </div>
 
-@* Shared memory: the shared cross-project memory container ($workspace). A first-class
-	entry — it's not a project, so it's kept out of the grid below and surfaced here instead. *@
-<a href="@Routes.SharedMemory()"
+@* Shared memory: this workspace's cross-project memory container. A first-class entry —
+	it's not a project, so it's kept out of the grid below and surfaced here instead. *@
+<a href="@Routes.SharedMemory(Model.WorkspaceKey)"
 	class="card bg-base-200 border border-base-300 hover:border-primary transition-colors mb-4"
 	data-testid="dashboard-workspace-memory">
 	<div class="card-body p-4 flex-row items-center gap-3">

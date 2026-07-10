@@ -24,10 +24,6 @@ public sealed class IndexModel : PageModel
 		_settings = settings;
 	}
 
-	// The reserved cross-project memory container (a container project, not a user project).
-	// Its memory page is the fixed Routes.SharedMemory() address.
-	public const string WorkspaceMemoryContainer = "$workspace";
-
 	public string WorkspaceKey { get; private set; } = "$system";
 	// Whether the viewer may reach the workspace-admin project pages (api keys). The per-project
 	// api-keys counter degrades to a plain badge for non-admins instead of a redirect-to-Login link.
@@ -61,12 +57,14 @@ public sealed class IndexModel : PageModel
 
 		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
 		var wsKey = WorkspaceKey;
-		// "$workspace" is the reserved cross-project MEMORY container, not a user project —
-		// keep it out of the project grid (it has no logs/dbs/keys) and surface it as the
-		// dedicated "Workspace memory" entry the view renders instead.
-		Projects = await _db.Projects
-			.Where(p => p.WorkspaceKey == wsKey && p.Key != WorkspaceMemoryContainer)
-			.OrderBy(p => p.Key).ToListAsync(ct);
+		// Workspace memory containers ($workspace / $ws-*) are not user projects — keep them
+		// out of the project grid (no logs/dbs/keys) and surface the current one as the
+		// dedicated "Shared memory" entry the view renders instead.
+		Projects = (await _db.Projects
+				.Where(p => p.WorkspaceKey == wsKey)
+				.OrderBy(p => p.Key).ToListAsync(ct))
+			.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p.Key))
+			.ToList();
 		var projectKeys = Projects.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
 
 		var dash = await _settings.GetAsync<DashboardSettings>(Scope.System, "$", ct);

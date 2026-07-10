@@ -16,8 +16,8 @@ namespace PetBox.Core.Data;
 // catalog state — which is why memory is reclaimed here per-project rather than per-store
 // (individual store deletes already reclaim their file in MemoryStore.DeleteAsync).
 //
-// Reserved built-ins ($system / $workspace) are never swept: their files must survive
-// regardless of catalog drift.
+// Reserved built-ins ($system / $workspace / $ws-*) are never swept: their files must
+// survive regardless of catalog drift (see ProjectDeletion.IsReserved).
 public static class ProjectFileOrphans
 {
 	// Single-file-per-project layout ({baseDir}/{scopeKey}.db, name == null): tasks, sessions.

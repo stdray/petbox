@@ -1,7 +1,10 @@
+using LinqToDB;
+using LinqToDB.Async;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
+using PetBox.Core.Data;
 using PetBox.Memory.Contract;
 
 namespace PetBox.Web.Memory;
@@ -9,8 +12,8 @@ namespace PetBox.Web.Memory;
 // Non-MCP read surface for the agent memory canon (spec agent-wiring, memory-canon-storage).
 // The wiring hooks pull the curated canon index at session start over REST (a shell command
 // can't easily speak MCP), the same way the Stop hook pushes sessions via SessionApi. One
-// endpoint, project-scoped, returns BOTH the project's canon and the shared workspace canon
-// so a single call arms an agent's context.
+// endpoint, project-scoped, returns BOTH the project's canon and the caller's workspace
+// canon so a single call arms an agent's context.
 //   GET /api/memory/{projectKey}/canon
 // Auth mirrors SessionApi: RequireAuthorization("ApiKey"), then assert memory:read and that the
 // key's project claim authorizes {projectKey}. Missing canon → the corresponding part is null
@@ -19,9 +22,9 @@ public static class MemoryApi
 {
 	// The canon convention: store `canon`, entry `index` — the same in every container. The
 	// project canon is `index` in the project container; the shared cross-project canon is
-	// `index` in the workspace container (MemoryTools.WorkspaceContainer — the reserved
-	// `$workspace` project the MCP `workspace` memory scope resolves to). Two containers, one
-	// key: the scope is the container, not a key suffix.
+	// `index` in the project's workspace container (WorkspaceMemory.ContainerKeyFor — "$workspace"
+	// for $system, "$ws-{wsKey}" otherwise). Two containers, one key: the scope is the
+	// container, not a key suffix.
 	const string CanonStore = "canon";
 	const string CanonKey = "index";
 
@@ -33,7 +36,7 @@ public static class MemoryApi
 	}
 
 	static async Task<IResult> CanonAsync(
-		HttpContext ctx, string projectKey, IMemoryService memory, CancellationToken ct)
+		HttpContext ctx, string projectKey, IMemoryService memory, PetBoxDb db, CancellationToken ct)
 	{
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
 		if (!ProjectScope.Authorizes(claim, projectKey))
@@ -43,7 +46,19 @@ public static class MemoryApi
 			return TypedResults.Forbid();
 
 		var project = await ReadCanonAsync(memory, projectKey, CanonKey, ct);
-		var workspace = await ReadCanonAsync(memory, Mcp.MemoryTools.WorkspaceContainer, CanonKey, ct);
+
+		// Workspace leg = the project's own workspace container — never a hardcoded global.
+		CanonPart? workspace = null;
+		var wsKey = await db.Projects
+			.Where(p => p.Key == projectKey)
+			.Select(p => p.WorkspaceKey)
+			.FirstOrDefaultAsync(ct);
+		if (wsKey is not null)
+		{
+			var container = WorkspaceMemory.ContainerKeyFor(wsKey);
+			workspace = await ReadCanonAsync(memory, container, CanonKey, ct);
+		}
+
 		return TypedResults.Ok(new CanonResponse(project, workspace));
 	}
 
@@ -64,6 +79,6 @@ public static class MemoryApi
 // hook can cache and detect staleness. Null at the response level when the scope has no canon.
 public sealed record CanonPart(string Body, DateTime UpdatedAt, long Version);
 
-// GET /api/memory/{projectKey}/canon — the project's canon and the shared workspace canon;
+// GET /api/memory/{projectKey}/canon — the project's canon and its workspace's shared canon;
 // either part is null when that scope carries no canon index.
 public sealed record CanonResponse(CanonPart? Project, CanonPart? Workspace);

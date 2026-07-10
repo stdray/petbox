@@ -56,13 +56,13 @@ public sealed class MemoryProvenanceMergeTests : IDisposable
 	{
 		var http = Http("memory:read,memory:write");
 		// Project: two strong decoys bury the weak target at rank 2.
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "deploy deploy deploy release", scope: "project");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "deploy deploy pipeline", scope: "project");
-		var pWeak = await MemoryTools.RememberAsync(http, Flags(), _memory, "a note that mentions deploy once", scope: "project");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "deploy deploy deploy release", scope: "project");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "deploy deploy pipeline", scope: "project");
+		var pWeak = await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "a note that mentions deploy once", scope: "project");
 		// Workspace: a single top-ranked hit.
-		var wStrong = await MemoryTools.RememberAsync(http, Flags(), _memory, "deploy", scope: "workspace");
+		var wStrong = await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "deploy", scope: "workspace");
 
-		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new NoopUsageRecorder(), "deploy");
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), "deploy");
 		var keys = res.Items.Select(h => h.Key).ToList();
 
 		keys.Should().Contain(wStrong.Key).And.Contain(pWeak.Key);
@@ -77,10 +77,10 @@ public sealed class MemoryProvenanceMergeTests : IDisposable
 	public async Task CrossScope_EqualRelevance_ProjectWinsTie()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "kafka rebalance storm", scope: "project");
-		await MemoryTools.RememberAsync(http, Flags(), _memory, "kafka rebalance storm", scope: "workspace");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "kafka rebalance storm", scope: "project");
+		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "kafka rebalance storm", scope: "workspace");
 
-		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new NoopUsageRecorder(), "kafka");
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), "kafka");
 		res.Items.Select(h => h.Scope).Should().Equal("project", "workspace");
 	}
 
@@ -102,7 +102,7 @@ public sealed class MemoryProvenanceMergeTests : IDisposable
 			new { key = "plain", type = "project", description = "plain fact", body = "kubernetes plain note" },
 		}));
 
-		var res = await MemoryTools.SearchAsync(http, Flags(), _memory, new NoopUsageRecorder(), "kubernetes", scope: "project");
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), "kubernetes", scope: "project");
 		res.Items.Single(h => h.Key == "prov").SourcesCount.Should().Be(4);
 		res.Items.Single(h => h.Key == "plain").SourcesCount.Should().BeNull();
 	}

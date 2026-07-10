@@ -27,9 +27,10 @@ public static class Routes
 	public static string Workspace(string ws) => $"{UiPrefix}/{ws}";
 	public static string WorkspaceTasks(string ws) => $"{UiPrefix}/{ws}/tasks";
 
-	// Shared cross-project memory lives in the reserved "$workspace" container under the
-	// "$system" workspace (M028/M031) — a single fixed address for the whole instance.
-	public static string SharedMemory() => $"{UiPrefix}/$system/$workspace/memory";
+	// Shared cross-project memory for a workspace: "$workspace" under "$system" (M028/M031),
+	// or "$ws-{wsKey}" under any other workspace. See WorkspaceMemory.ContainerKeyFor.
+	public static string SharedMemory(string ws) =>
+		$"{UiPrefix}/{ws}/{PetBox.Core.Data.WorkspaceMemory.ContainerKeyFor(ws)}/memory";
 
 	public static string SharedConfig(string ws) => $"{UiPrefix}/{ws}/config";
 	public static string SharedConfigEditor(string ws) => $"{UiPrefix}/{ws}/config/editor";

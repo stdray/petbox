@@ -20,12 +20,13 @@ namespace PetBox.Core.Data;
 //     to a project and are not touched here.
 public static class ProjectDeletion
 {
-	// Reserved built-in projects that must never be deleted. Mirrors the "$system" guard
-	// used elsewhere; "$workspace" is the reserved cross-project memory container (M028/M031).
+	// Reserved built-in projects that must never be deleted. "$system" is the built-in
+	// project; "$workspace" / "$ws-*" are per-workspace memory containers (see WorkspaceMemory).
 	public static readonly IReadOnlySet<string> ReservedProjects =
-		new HashSet<string>(StringComparer.Ordinal) { "$system", "$workspace" };
+		new HashSet<string>(StringComparer.Ordinal) { "$system", WorkspaceMemory.SystemContainer };
 
-	public static bool IsReserved(string projectKey) => ReservedProjects.Contains(projectKey);
+	public static bool IsReserved(string projectKey) =>
+		ReservedProjects.Contains(projectKey) || WorkspaceMemory.IsWorkspaceContainer(projectKey);
 
 	// Deletes the project's owned Core-DB rows and the project itself. Returns false when the
 	// project does not exist. Callers are responsible for the reserved-entity guard.
