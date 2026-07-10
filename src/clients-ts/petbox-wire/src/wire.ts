@@ -75,6 +75,7 @@ import {
 } from "./apply-artifacts.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
+import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import {
   PROMPT_RAG_DEFAULTS,
   readRegistry,
@@ -122,9 +123,9 @@ type Args = {
 
 const DEFAULT_TELEMETRY_LOG = "cc-telemetry";
 
-// Print the usage banner and exit. `--help`/`-h` request it explicitly → stdout + exit 0; every
-// error path (unknown flag, too few positionals) → stderr + exit 2. Same text either way.
-function usage(exitCode: number = 2): never {
+// Print the usage banner and exit. `--help`/`-h` → stdout + exit 0; argument errors →
+// stderr + exit WIRE_EXIT.usage (2). Same text either way.
+function usage(exitCode: number = WIRE_EXIT.usage): never {
   const text =
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
     "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag | --no-prompt-rag]\n" +
@@ -146,14 +147,15 @@ function usage(exitCode: number = 2): never {
     "             role→model binding (~/.petbox/roles.json). Tries GET /api/{project}/agent-defs/{key}\n" +
     "             when cwd resolves via ~/.petbox/projects.json; falls back to the built-in default on\n" +
     "             network/404/auth miss or --offline. --definition <key> selects the server doc\n" +
-    "             (default key: default). Writes agent files for every known harness under the project\n" +
-    "             root (claude-code .claude/agents/, opencode .opencode/agent/, droid .factory/agents/).\n" +
-    "             model: frontmatter only when bound — never invents a model id. Truthfulness\n" +
-    "             failures on ANY harness exit 1 (loud) and write nothing.\n" +
+    "             (default key: default). Writes agent files under the project root:\n" +
+    "             claude-code .claude/agents/, opencode .opencode/agent/, droid .factory/droids/.\n" +
+    "             model: frontmatter only when bound (droid unbound → model: inherit) — never invents\n" +
+    "             a concrete model id. Clean roles are written; dirty roles are skipped and reported.\n" +
+    "             Exit codes: 0 full success; 1 hard failure (invalid definition/throw); 2 usage/args;\n" +
+    "             3 truthfulness partial/block (policy — distinct from usage).\n" +
     "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
     "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
-    "             violation; exit 1 on any violation. Offline. DEFAULT may fail harnesses that lack\n" +
-    "             required caps (honest gate — not a silent pass).\n" +
+    "             violation; exit 1 on any violation. Offline.\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
@@ -295,10 +297,11 @@ function runDoctor(argv: string[]): void {
 //
 // Per role × harness (definition-truthfulness + wiring-startup-symmetry):
 //   - dirty roles → skip + report (never silent); clean roles still written
-// Exit codes (structured signal — do not conflate partial truthfulness block with crash):
+// Exit codes (see WIRE_EXIT / classifyApplyExit — usage must stay distinct from truthfulness):
 //   0 — full success: every known harness wrote all its roles, no skips
-//   2 — partial: at least one role/harness blocked by truthfulness; some files may be written
-//   1 — hard failure: invalid args / definition validation / unexpected error
+//   1 — hard failure: invalid definition / unexpected throw (NOT bad args)
+//   2 — usage / bad arguments (via usage())
+//   3 — truthfulness: policy blocked some roles/harnesses (partial write possible)
 async function runApply(argv: string[]): Promise<void> {
   let definitionKey = DEFAULT_DEFINITION_KEY;
   let offline = false;
@@ -310,19 +313,19 @@ async function runApply(argv: string[]): Promise<void> {
       const v = argv[++i];
       if (!v || v.startsWith("--")) {
         console.error("apply: --definition requires a non-empty key");
-        usage();
+        usage(WIRE_EXIT.usage);
       }
       definitionKey = v.trim();
       if (!definitionKey) {
         console.error("apply: --definition requires a non-empty key");
-        usage();
+        usage(WIRE_EXIT.usage);
       }
     } else if (a.startsWith("--")) {
       console.error(`apply: unexpected argument: ${a}`);
-      usage();
+      usage(WIRE_EXIT.usage);
     } else {
       console.error(`apply: unexpected argument: ${a}`);
-      usage();
+      usage(WIRE_EXIT.usage);
     }
   }
 
@@ -337,7 +340,7 @@ async function runApply(argv: string[]): Promise<void> {
     validateAgentDefinition(definition);
   } catch (e) {
     console.error(`apply: hard failure — ${e instanceof Error ? e.message : String(e)}`);
-    process.exit(1);
+    process.exit(WIRE_EXIT.hard);
   }
 
   const rolesData = loadRoles();
@@ -384,15 +387,15 @@ async function runApply(argv: string[]): Promise<void> {
   );
 
   const hadTruthfulnessBlock = partialHarnesses.length > 0 || blockedHarnesses.length > 0;
-  if (!hadTruthfulnessBlock) {
+  const code = classifyApplyExit({ hadTruthfulnessBlock });
+  if (code === WIRE_EXIT.ok) {
     log("apply: done — all known harnesses accepted every role.");
-    process.exit(0);
+    process.exit(WIRE_EXIT.ok);
   }
-  // Exit 2 = expected truthfulness partial/full block (CI must not treat as hard crash).
   console.error(
-    `apply: truthfulness partial — some roles/harnesses blocked (exit 2). ${JSON.stringify(summary)}`,
+    `apply: truthfulness partial — some roles/harnesses blocked (exit ${WIRE_EXIT.truthfulness}). ${JSON.stringify(summary)}`,
   );
-  process.exit(2);
+  process.exit(WIRE_EXIT.truthfulness);
 }
 
 // Pick server definition when possible; always fall back to DEFAULT_AGENT_DEFINITION.
