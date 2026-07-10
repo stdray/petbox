@@ -7,7 +7,8 @@ namespace PetBox.Sessions.Contract;
 // (what the UI shows and session_get returns) — a single-message snapshot renders verbatim,
 // multi-message renders with `### role` headers (mirrors the old hook output).
 public sealed record SessionSnapshot(
-	string SessionId, string Agent, IReadOnlyList<SessionMessage> Messages, long Version, DateTime Updated)
+	string SessionId, string Agent, IReadOnlyList<SessionMessage> Messages, long Version, DateTime Updated,
+	string? MetaJson = null)
 {
 	public string Content => Messages.Count == 1
 		? Messages[0].Content
@@ -17,7 +18,8 @@ public sealed record SessionSnapshot(
 }
 
 // A lightweight list entry — no message bodies, so listing never decompresses a blob.
-public sealed record SessionHeader(string SessionId, string Agent, long Version, DateTime Updated);
+// MetaJson is the optional observed client stamp (cheap TEXT; not a ContentZ blob).
+public sealed record SessionHeader(string SessionId, string Agent, long Version, DateTime Updated, string? MetaJson = null);
 
 // One server-paged slice of a project's session headers: the page rows, whether a further
 // page exists (probe row), and the total matching the current search. Keeps the UI's OFFSET/
