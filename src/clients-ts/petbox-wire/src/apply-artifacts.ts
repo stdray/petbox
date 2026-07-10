@@ -1,16 +1,19 @@
 // Pure compile helpers for petbox-wire apply (per-harness-artifact).
 //
-// First slice: opencode role files only (.opencode/agent/<role>.md).
-// Claude Code / droid generators are non-goals for this slice.
-//
-// Body = role-specific text from the definition (spawn / escalation / caps /
-// notes). Shared protocol inject stays in protocol.ts — not duplicated here.
+// planApply produces agent role files for any known harness. Violations for that
+// harness → empty files + violations (never silent drop of required lines).
 // model: frontmatter only when a local binding supplies it (never invent).
+//
+// Paths:
+//   opencode     → .opencode/agent/<role>.md
+//   claude-code  → .claude/agents/<role>.md  (plural agents)
+//   droid        → .factory/agents/<role>.md
 //
 // Plain TS for native node type-stripping: zero deps.
 
 import { join } from "node:path";
 import type { AgentDefinition, AgentRole } from "./agent-definition.ts";
+import { isKnownHarness, type HarnessId } from "./harness-capabilities.ts";
 import { checkTruthfulness, formatViolations, type TruthfulnessViolation } from "./truthfulness.ts";
 
 export type PlannedFile = {
@@ -24,23 +27,20 @@ export type ApplyPlan = {
   readonly violations: readonly TruthfulnessViolation[];
 };
 
-/** Render one opencode agent markdown file (YAML frontmatter + body). */
-export function renderOpencodeAgentMarkdown(role: AgentRole, model?: string): string {
-  const frontLines: string[] = [];
-  if (model && model.trim()) {
-    frontLines.push(`model: ${model.trim()}`);
+/** Relative dir (posix) for agent role files per harness. */
+export function agentFilesDir(harness: HarnessId): string {
+  switch (harness) {
+    case "opencode":
+      return ".opencode/agent";
+    case "claude-code":
+      return ".claude/agents";
+    case "droid":
+      return ".factory/agents";
   }
-  // description helps opencode's agent picker; keep short and derived from tier/notes.
-  frontLines.push(`description: PetBox ${role.tier} role (${role.slug})`);
-
-  const body = buildRoleBody(role);
-  if (frontLines.length === 0) {
-    return body.endsWith("\n") ? body : body + "\n";
-  }
-  return `---\n${frontLines.join("\n")}\n---\n\n${body.endsWith("\n") ? body : body + "\n"}`;
 }
 
-function buildRoleBody(role: AgentRole): string {
+/** Shared role body (spawn / escalation / caps / notes). No protocol inject here. */
+export function buildRoleBody(role: AgentRole): string {
   const lines: string[] = [];
   lines.push(`# ${role.slug}`);
   lines.push("");
@@ -97,29 +97,76 @@ function buildRoleBody(role: AgentRole): string {
 }
 
 /**
- * Plan opencode artifact writes for a definition + optional role→model map.
+ * Render one agent markdown file (YAML frontmatter + body).
+ * model only when bound — never invent a model id.
+ */
+export function renderAgentMarkdown(role: AgentRole, model?: string): string {
+  const frontLines: string[] = [];
+  if (model && model.trim()) {
+    frontLines.push(`model: ${model.trim()}`);
+  }
+  // description helps harness agent pickers; keep short and derived from tier/notes.
+  frontLines.push(`description: PetBox ${role.tier} role (${role.slug})`);
+
+  const body = buildRoleBody(role);
+  if (frontLines.length === 0) {
+    return body.endsWith("\n") ? body : body + "\n";
+  }
+  return `---\n${frontLines.join("\n")}\n---\n\n${body.endsWith("\n") ? body : body + "\n"}`;
+}
+
+/** @deprecated alias — prefer renderAgentMarkdown */
+export function renderOpencodeAgentMarkdown(role: AgentRole, model?: string): string {
+  return renderAgentMarkdown(role, model);
+}
+
+/**
+ * Plan artifact writes for a definition + harness + optional role→model map.
  * Does not touch the filesystem. Violations are returned (never dropped);
  * callers must refuse to write when violations.length > 0.
  */
-export function planOpencodeApply(
+export function planApply(
   definition: AgentDefinition,
+  harness: string,
   roleModels: Readonly<Record<string, string>> = {},
 ): ApplyPlan {
-  const harness = "opencode";
+  if (!isKnownHarness(harness)) {
+    return {
+      harness,
+      files: [],
+      violations: definition.roles.flatMap((role) =>
+        role.requiredCapabilities.map((capability) => ({
+          role: role.slug,
+          capability: String(capability),
+          harness,
+        })),
+      ),
+    };
+  }
+
   const violations = checkTruthfulness(definition, harness);
   if (violations.length > 0) {
     return { harness, files: [], violations };
   }
 
+  const dir = agentFilesDir(harness);
   const files: PlannedFile[] = definition.roles.map((role) => {
     const model = roleModels[role.slug];
     return {
-      relativePath: join(".opencode", "agent", `${role.slug}.md`).replace(/\\/g, "/"),
-      content: renderOpencodeAgentMarkdown(role, model),
+      relativePath: join(dir, `${role.slug}.md`).replace(/\\/g, "/"),
+      content: renderAgentMarkdown(role, model),
     };
   });
 
   return { harness, files, violations: [] };
+}
+
+/** Thin wrapper: planApply(..., "opencode"). */
+export function planOpencodeApply(
+  definition: AgentDefinition,
+  roleModels: Readonly<Record<string, string>> = {},
+): ApplyPlan {
+  return planApply(definition, "opencode", roleModels);
 }
 
 /** Loud multi-line error for CLI when apply is blocked by the gate. */

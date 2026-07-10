@@ -70,7 +70,8 @@ import {
 } from "./agent-definition.ts";
 import {
   formatApplyBlocked,
-  planOpencodeApply,
+  planApply,
+  type ApplyPlan,
 } from "./apply-artifacts.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
@@ -145,12 +146,14 @@ function usage(exitCode: number = 2): never {
     "             role→model binding (~/.petbox/roles.json). Tries GET /api/{project}/agent-defs/{key}\n" +
     "             when cwd resolves via ~/.petbox/projects.json; falls back to the built-in default on\n" +
     "             network/404/auth miss or --offline. --definition <key> selects the server doc\n" +
-    "             (default key: default). First slice: writes .opencode/agent/<role>.md under cwd\n" +
-    "             (or registry project root). model: frontmatter only when bound — never invents a\n" +
-    "             model id. Truthfulness failures exit 1 (loud). Offline compile always succeeds.\n" +
+    "             (default key: default). Writes agent files for every known harness under the project\n" +
+    "             root (claude-code .claude/agents/, opencode .opencode/agent/, droid .factory/agents/).\n" +
+    "             model: frontmatter only when bound — never invents a model id. Truthfulness\n" +
+    "             failures on ANY harness exit 1 (loud) and write nothing.\n" +
     "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
     "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
-    "             violation; exit 1 on any violation. Offline.\n" +
+    "             violation; exit 1 on any violation. Offline. DEFAULT may fail harnesses that lack\n" +
+    "             required caps (honest gate — not a silent pass).\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
@@ -288,8 +291,9 @@ function runDoctor(argv: string[]): void {
 }
 
 // apply — compile per-harness artifacts (distinct from update kit-copy).
-// First slice: opencode .opencode/agent/<role>.md under project root.
+// Writes agent role files for every known harness under project root.
 // Definition source: server fetch when registry resolves cwd; else offline default.
+// Any harness with truthfulness violations → print all, write nothing, exit 1.
 async function runApply(argv: string[]): Promise<void> {
   let definitionKey = DEFAULT_DEFINITION_KEY;
   let offline = false;
@@ -326,29 +330,43 @@ async function runApply(argv: string[]): Promise<void> {
   validateAgentDefinition(definition);
 
   const rolesData = loadRoles();
-  const roleModels = resolveAgentRoles(rolesData, "opencode");
+  const plans: ApplyPlan[] = [];
+  let blocked = false;
+  for (const harness of HARNESS_IDS) {
+    // Canonical agent ids: claude-code, opencode, droid (roles.ts aliases resolve).
+    const roleModels = resolveAgentRoles(rolesData, harness);
+    const plan = planApply(definition, harness, roleModels);
+    plans.push(plan);
+    if (plan.violations.length > 0) blocked = true;
+  }
 
-  const plan = planOpencodeApply(definition, roleModels);
-  if (plan.violations.length > 0) {
-    console.error(formatApplyBlocked(plan.violations, plan.harness));
+  if (blocked) {
+    for (const plan of plans) {
+      if (plan.violations.length > 0) {
+        console.error(formatApplyBlocked(plan.violations, plan.harness));
+      }
+    }
     process.exit(1);
   }
 
   log(`apply: root=${root} (via ${via})`);
-  log(
-    `apply: definition="${definition.name}", harness=opencode, ` +
-      `boundRoles=${Object.keys(roleModels).length}`,
-  );
+  log(`apply: definition="${definition.name}", harnesses=${HARNESS_IDS.join(",")}`);
 
   let written = 0;
-  for (const file of plan.files) {
-    const abs = join(root, file.relativePath);
-    mkdirSync(dirname(abs), { recursive: true });
-    writeFileSync(abs, file.content, "utf8");
-    log(`apply: wrote ${abs}`);
-    written++;
+  const writtenHarnesses: string[] = [];
+  for (const plan of plans) {
+    for (const file of plan.files) {
+      const abs = join(root, file.relativePath);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, file.content, "utf8");
+      log(`apply: wrote ${abs}`);
+      written++;
+    }
+    if (plan.files.length > 0) writtenHarnesses.push(plan.harness);
   }
-  log(`apply: done — ${written} opencode agent file(s). (CC/droid generators: later slice.)`);
+  log(
+    `apply: done — ${written} agent file(s) for harness(es): ${writtenHarnesses.join(", ") || "(none)"}`,
+  );
 }
 
 // Pick server definition when possible; always fall back to DEFAULT_AGENT_DEFINITION.

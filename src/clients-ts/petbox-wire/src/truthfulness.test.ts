@@ -11,6 +11,7 @@ import {
 } from "./agent-definition.ts";
 import {
   formatApplyBlocked,
+  planApply,
   planOpencodeApply,
   renderOpencodeAgentMarkdown,
 } from "./apply-artifacts.ts";
@@ -140,6 +141,73 @@ test("default definition fails droid (no spawn_subagents / mcp_main_session) —
     (h) => checkTruthfulness(DEFAULT_AGENT_DEFINITION, h).length > 0,
   );
   assert.deepEqual(failing, ["droid"]);
+});
+
+test("planApply: paths for claude-code, opencode, droid", () => {
+  // Minimal def that is truth-clean on all three (no mcp/spawn requirements).
+  const portable: AgentDefinition = {
+    name: "portable",
+    roles: [
+      {
+        slug: "worker",
+        tier: "worker",
+        requiredCapabilities: [],
+        spawn: { allowed: false },
+      },
+    ],
+  };
+  const cc = planApply(portable, "claude-code", {});
+  assert.equal(cc.violations.length, 0);
+  assert.ok(cc.files.every((f) => f.relativePath.startsWith(".claude/agents/")));
+  assert.ok(cc.files.some((f) => f.relativePath === ".claude/agents/worker.md"));
+
+  const oc = planApply(portable, "opencode", {});
+  assert.equal(oc.violations.length, 0);
+  assert.ok(oc.files.every((f) => f.relativePath.startsWith(".opencode/agent/")));
+
+  const dr = planApply(portable, "droid", {});
+  assert.equal(dr.violations.length, 0);
+  assert.ok(dr.files.every((f) => f.relativePath.startsWith(".factory/agents/")));
+  assert.ok(dr.files.some((f) => f.relativePath === ".factory/agents/worker.md"));
+});
+
+test("planApply: bound model in claude-code frontmatter; unbound omits model", () => {
+  const portable: AgentDefinition = {
+    name: "p",
+    roles: [{ slug: "worker", tier: "worker", requiredCapabilities: [] }],
+  };
+  const withModel = planApply(portable, "claude-code", {
+    worker: "anthropic/claude-sonnet-4",
+  });
+  assert.equal(withModel.violations.length, 0);
+  const worker = withModel.files.find((f) => f.relativePath.endsWith("worker.md"));
+  assert.ok(worker);
+  assert.match(worker!.content, /^---\nmodel: anthropic\/claude-sonnet-4\n/m);
+
+  const unbound = planApply(portable, "claude-code", {});
+  const body = unbound.files[0]!.content;
+  assert.ok(!/^model:/m.test(body.split("---")[1] ?? ""), "no invented model");
+});
+
+test("planApply: violations block files and formatApplyBlocked is loud", () => {
+  const def: AgentDefinition = {
+    name: "bad",
+    roles: [
+      {
+        slug: "worker",
+        tier: "worker",
+        requiredCapabilities: ["dynamic_model_at_spawn"],
+      },
+    ],
+  };
+  const plan = planApply(def, "opencode", {});
+  assert.equal(plan.files.length, 0);
+  assert.equal(plan.violations.length, 1);
+  const msg = formatApplyBlocked(plan.violations, "opencode");
+  assert.match(msg, /refusing to write/);
+  assert.match(msg, /dynamic_model_at_spawn/);
+  assert.match(msg, /worker/);
+  assert.match(msg, /opencode/);
 });
 
 test("planOpencodeApply: bound model in frontmatter; unbound omits model", () => {
