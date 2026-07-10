@@ -11,49 +11,32 @@ hooks, protocol, or memory canon.
 
 ## Axis
 
-| What | Where | Notes |
-| --- | --- | --- |
-| Portable definition | PetBox (`agent_def_*` / REST agent-defs) | Roles, instructions, capabilities — **no models** |
-| Local binding | `~/.petbox/roles.json` (owner = `$HOME`) | Profile → role → **model** only lives here |
-| Compiled artifacts | Project harness dirs (e.g. `.opencode/agent/`) | Output of `apply` |
+| What | Where |
+| --- | --- |
+| Portable definition | PetBox (`agent_def_*` / REST agent-defs) — roles/capabilities, **no models** |
+| Local binding | `~/.petbox/roles.json` (owner = `$HOME`) — profile → role → **model** only |
+| Compiled artifacts | Per-harness agent files written by `apply` |
 
-Never invent a model id. If a role has no binding, leave model unset and report it —
-do not guess. Owner axis is `$HOME`; definitions are portable across machines, models are not.
-
-## When to run
-
-- After editing role→model bindings or switching `activeProfile`
-- After a definition change you intend to materialize into harness files
-- When doctor reports a truthfulness failure you just fixed
-
-Skip on ordinary coding sessions that only need PetBox tasks/memory/session tools.
+Never invent a model id. If a role has no binding, leave model unset and report it.
+Owner axis is `$HOME`; definitions are portable across machines, models are not.
 
 ## Procedure
 
-1. **Read local binding**
+1. Inspect / switch local binding as needed:
    ```bash
    npx petbox-wire roles
-   ```
-   Inspect `~/.petbox/roles.json` if you need the raw file. Empty store is OK — never invent defaults.
-
-2. **Switch profile** (optional)
-   ```bash
    npx petbox-wire profile use <name>
    ```
-   Creates an empty profile shell if missing. Does **not** compile artifacts.
-
-3. **Check truthfulness**
+2. Gate:
    ```bash
    npx petbox-wire doctor
    ```
-   Offline gate: definition capabilities vs each known harness. Exit 1 on violations — fix those before apply.
-
-4. **Compile artifacts**
+   Doctor reports truthfulness violations (role + capability + harness). Exit 1 on failure — fix before apply.
+3. Materialize:
    ```bash
    npx petbox-wire apply
    ```
-   Offline. Uses the built-in / portable definition + local binding. Writes per-harness agent
-   files (e.g. `.opencode/agent/<role>.md`). `model:` frontmatter only when bound.
+   Apply writes per-harness agent files from the definition + local binding; `model:` only when bound. Any harness violation blocks all writes.
 
 ## Do not confuse with `update`
 
@@ -70,3 +53,4 @@ skill template, re-run a **full wire** to reinstall skill files into the project
 - Factory procedure stays in this skill — not in `protocol.ts`, SessionStart canon, or AGENTS.md.
 - Portable defs ship without models; local `roles.json` is the only model source.
 - Prefer reporting missing bindings over inventing them.
+- Not canon; on-demand only.
