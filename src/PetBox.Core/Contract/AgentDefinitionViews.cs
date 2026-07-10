@@ -6,7 +6,8 @@ namespace PetBox.Core.Contract;
 // Portable agent-definition document (agent-definition-as-data). Server stores the
 // roster only — role → model binding and the owner ($HOME) axis are local, not columns.
 // JSON wire: camelCase. Unknown properties are ignored for forward-compat EXCEPT
-// role.model, which is rejected (portable definitions must not carry models).
+// any property named "model" anywhere in the JSON tree (root, roles, spawn, nested),
+// which is rejected (portable definitions must not carry models).
 
 public sealed record AgentDefinitionSpawn(
 	bool Allowed,
@@ -54,8 +55,8 @@ public static class AgentDefinitionJson
 		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
 	};
 
-	// Parse a definition document from JSON. Rejects role.model (portable roster only).
-	// Other unknown properties are ignored (forward-compat).
+	// Parse a definition document from JSON. Rejects any "model" property in the tree
+	// (portable roster only). Other unknown properties are ignored (forward-compat).
 	public static AgentDefinitionDoc Parse(string json)
 	{
 		using var doc = JsonDocument.Parse(json);
@@ -93,17 +94,31 @@ public static class AgentDefinitionJson
 	}
 
 	// Portable definitions MUST NOT carry model binding — that axis is local.
-	static void RejectModelField(JsonElement root)
+	// Walk the entire JSON tree and reject ANY property named "model" (root, role,
+	// spawn, escalation, nested objects/arrays).
+	static void RejectModelField(JsonElement el) => RejectModelField(el, path: "$");
+
+	static void RejectModelField(JsonElement el, string path)
 	{
-		if (root.ValueKind != JsonValueKind.Object) return;
-		if (root.TryGetProperty("roles", out var roles) && roles.ValueKind == JsonValueKind.Array)
+		switch (el.ValueKind)
 		{
-			foreach (var role in roles.EnumerateArray())
-			{
-				if (role.ValueKind == JsonValueKind.Object && role.TryGetProperty("model", out _))
-					throw new ArgumentException(
-						"role.model is not allowed on portable agent definitions — model binding is local, not part of the definition document");
-			}
+			case JsonValueKind.Object:
+				foreach (var prop in el.EnumerateObject())
+				{
+					if (prop.NameEquals("model"))
+						throw new ArgumentException(
+							$"property 'model' is not allowed on portable agent definitions (at {path}.model) — model binding is local, not part of the definition document");
+					RejectModelField(prop.Value, $"{path}.{prop.Name}");
+				}
+				break;
+			case JsonValueKind.Array:
+				var i = 0;
+				foreach (var item in el.EnumerateArray())
+				{
+					RejectModelField(item, $"{path}[{i}]");
+					i++;
+				}
+				break;
 		}
 	}
 }

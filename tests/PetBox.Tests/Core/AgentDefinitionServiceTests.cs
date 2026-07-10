@@ -144,6 +144,68 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 	}
 
 	[Fact]
+	public async Task Rejects_RootModel_OnJsonWire()
+	{
+		const string bad = """
+			{
+			  "name": "default",
+			  "model": "should-not-be-here",
+			  "roles": [
+			    {
+			      "slug": "worker",
+			      "tier": "worker",
+			      "requiredCapabilities": []
+			    }
+			  ]
+			}
+			""";
+		var act = () => _svc.UpsertJsonAsync(Proj, "default", bad, 0);
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*model*not allowed*");
+	}
+
+	[Fact]
+	public async Task Rejects_Model_UnderSpawn_OnJsonWire()
+	{
+		const string bad = """
+			{
+			  "name": "default",
+			  "roles": [
+			    {
+			      "slug": "orchestrator",
+			      "tier": "orchestrator",
+			      "requiredCapabilities": [],
+			      "spawn": { "allowed": true, "model": "nested-lie" }
+			    }
+			  ]
+			}
+			""";
+		var act = () => _svc.UpsertJsonAsync(Proj, "default", bad, 0);
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*model*not allowed*");
+	}
+
+	[Fact]
+	public void Parse_Rejects_Model_Anywhere_InTree()
+	{
+		const string nested = """
+			{
+			  "name": "default",
+			  "roles": [
+			    {
+			      "slug": "orchestrator",
+			      "tier": "orchestrator",
+			      "requiredCapabilities": [],
+			      "escalation": { "available": true, "targets": ["reserve"], "model": "deep" }
+			    }
+			  ]
+			}
+			""";
+		var act = () => AgentDefinitionJson.Parse(nested);
+		act.Should().Throw<ArgumentException>().WithMessage("*model*not allowed*");
+	}
+
+	[Fact]
 	public async Task Ignores_Unknown_ForwardCompat_Fields()
 	{
 		const string json = """
