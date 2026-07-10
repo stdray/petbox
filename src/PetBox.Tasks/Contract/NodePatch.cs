@@ -29,6 +29,10 @@ public sealed record NodePatch
 	public string? Type { get; init; }
 	public string? Title { get; init; }
 	public string? Body { get; init; }
+	// First-class reason for a RequiresReason status transition on THIS call. Not merged
+	// into the node body — when the transition demands a reason the service requires a
+	// non-empty value here and persists it as an `artifact:reason` comment.
+	public string? Reason { get; init; }
 	public long? Priority { get; init; }
 
 	// Attached commit SHAs (node-commits-impl). null = OMIT (leave the node's commits as-is);

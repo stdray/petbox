@@ -580,12 +580,27 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single().Status.Should().Be("Todo");
 
 		// Duplicate is the ONE reason-gated terminal (a duplicate without a pointer to the
-		// original is useless): refused body-less, applied with the reason in the body.
+		// original is useless): refused without the first-class `reason` field (a full body
+		// does NOT count), applied with reason set (body may stay empty).
 		var v3 = (await _tasks.GetAsync(Proj, "backlog")).Nodes.Single().Version;
 		var noReason = () => Upsert("backlog", new NodePatch { Key = node.Key, Status = "Duplicate", Version = v3 });
 		(await noReason.Should().ThrowAsync<ArgumentException>()).WithMessage("*requires a reason*");
-		await Upsert("backlog", new NodePatch { Key = node.Key, Status = "Duplicate", Version = v3, Body = "duplicate of the v2-flow card on backlog2" });
-		(await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes.Single().Status.Should().Be("Duplicate");
+		var bodyOnly = () => Upsert("backlog", new NodePatch
+		{
+			Key = node.Key, Status = "Duplicate", Version = v3,
+			Body = "a full body is not a reason — the reason field is required",
+		});
+		(await bodyOnly.Should().ThrowAsync<ArgumentException>()).WithMessage("*requires a reason*");
+		await Upsert("backlog", new NodePatch
+		{
+			Key = node.Key, Status = "Duplicate", Version = v3,
+			Reason = "duplicate of the v2-flow card on backlog2",
+		});
+		var closed = (await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes.Single();
+		closed.Status.Should().Be("Duplicate");
+		var reasons = await _comments.ListForNodeAsync(Proj, "backlog", closed.NodeId);
+		reasons.Should().ContainSingle(c => c.Tags.Contains("artifact:reason")
+			&& c.Body == "duplicate of the v2-flow card on backlog2");
 
 		// The type door: bug is a label in the ONE shared block, an unknown type is
 		// refused naming the vocabulary (classic is strict like work).
@@ -599,9 +614,23 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		(await _tasks.GetAsync(Proj, "backlog")).Nodes.Single(n => n.Key == "t").Tags.Should().Equal("severity:high", "tag:urgent");
 	}
 
+	// Title-only create (empty body) remains OK — the reason gate is a transition concern,
+	// not a create-time body requirement.
+	[Fact]
+	public async Task Classic_TitleOnlyCreate_Succeeds()
+	{
+		await _tasks.CreateBoardAsync(Proj, "backlog", "classic", null, null);
+		await Upsert("backlog", new NodePatch { Key = "title-only", Title = "Just a title" });
+		var n = (await _tasks.GetAsync(Proj, "backlog")).Nodes.Single();
+		n.Key.Should().Be("title-only");
+		n.Title.Should().Be("Just a title");
+		n.Body.Should().BeEmpty();
+	}
+
 	// Rework guarantee for LIVE boards: the status vocabulary did not change, so a node in
 	// every status — task or bug, from either former block — still writes and reads back
-	// through the service under the single-block classic.
+	// through the service under the single-block classic. Birth into Duplicate needs no
+	// reason (RequiresReason only fires on a status *transition*).
 	[Fact]
 	public async Task Classic_NodeInEveryStatus_StillValid_UnderSingleBlock()
 	{
@@ -614,7 +643,7 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 				Type = i % 2 == 0 ? "task" : "bug",
 				Status = status,
 				Title = status,
-				Body = "kept — the body doubles as the Duplicate reason",
+				Body = "kept",
 			});
 		(await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes
 			.Select(n => n.Status).Should().BeEquivalentTo(statuses);

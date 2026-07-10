@@ -161,19 +161,27 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 		Text(back).Should().Contain("Resolved"); // names the valid next statuses from Open
 	}
 
-	// 3. requiresReason from the definition: the transition demands a non-empty body.
+	// 3. requiresReason from the definition: the transition demands a non-empty `reason`
+	// field on THIS call — a full body does not satisfy the gate; empty body + reason does.
 	[Fact]
 	public async Task DefinedKind_RequiresReason_Enforced()
 	{
 		await Define();
 		await Call("tasks_board_create", new { projectKey = ProjectKey, board = "reasonb", kind = "support" });
-		await Upsert("reasonb", new { key = "t", type = "ticket", title = "T" }); // no body
+		// Title-only create (empty body) remains OK.
+		await Upsert("reasonb", new { key = "t", type = "ticket", title = "T" });
 
 		var noReason = await Upsert("reasonb", new { key = "t", version = 1, status = "Rejected" });
 		IsErr(noReason).Should().BeTrue(Text(noReason));
 		Text(noReason).Should().Contain("requires a reason");
 
-		var withReason = await Upsert("reasonb", new { key = "t", version = 1, status = "Rejected", body = "duplicate of another ticket" });
+		// Body full + reason missing → still fails (reason is first-class, not the body).
+		var bodyOnly = await Upsert("reasonb", new { key = "t", version = 1, status = "Rejected", body = "duplicate of another ticket" });
+		IsErr(bodyOnly).Should().BeTrue(Text(bodyOnly));
+		Text(bodyOnly).Should().Contain("requires a reason");
+
+		// Body empty + reason set → pass.
+		var withReason = await Upsert("reasonb", new { key = "t", version = 1, status = "Rejected", reason = "duplicate of another ticket" });
 		IsErr(withReason).Should().BeFalse(Text(withReason));
 	}
 
@@ -225,7 +233,7 @@ public sealed class MethodologyRuntimeTests : IClassFixture<MethodologyRuntimeFi
 		await Upsert("termb", new { key = "fixed", version = 1, status = "Open" });
 		await Call("comments_upsert", new { projectKey = ProjectKey, board = "termb", items = new[] { new { nodeId = fixedId, author = "t", body = "done", tags = new[] { "artifact:resolution_note" } } } });
 		IsErr(await Upsert("termb", new { key = "fixed", version = 2, status = "Resolved" })).Should().BeFalse();
-		IsErr(await Upsert("termb", new { key = "dup", version = 1, status = "Rejected", body = "dup of fixed" })).Should().BeFalse();
+		IsErr(await Upsert("termb", new { key = "dup", version = 1, status = "Rejected", reason = "dup of fixed" })).Should().BeFalse();
 
 		var def = await Call("tasks_search", new { projectKey = ProjectKey, board = "termb" });
 		Text(def).Should().Contain("stays");
