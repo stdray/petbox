@@ -108,9 +108,32 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
   ],
 };
 
+/**
+ * Recursively reject any property named `model` (portable roster — binding is local).
+ * Mirrors C# AgentDefinitionJson.RejectModelField (root, roles[], nested spawn/escalation).
+ */
+export function rejectModelFields(value: unknown, path = "$"): void {
+  if (value === null || value === undefined) return;
+  if (Array.isArray(value)) {
+    value.forEach((item, i) => rejectModelFields(item, `${path}[${i}]`));
+    return;
+  }
+  if (typeof value !== "object") return;
+  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+    if (k === "model") {
+      throw new Error(
+        `${path}.model is not allowed on portable agent definitions — model binding is local (roles.json)`,
+      );
+    }
+    rejectModelFields(v, `${path}.${k}`);
+  }
+}
+
 /** Light structural check; throws on invalid shape (loud, never silent). */
 export function validateAgentDefinition(def: AgentDefinition): void {
   if (!def || typeof def !== "object") throw new Error("agent definition is required");
+  // Recursive model ban before field checks (symmetry with server RejectModelField).
+  rejectModelFields(def, "definition");
   if (!def.name || !String(def.name).trim()) throw new Error("definition.name is required");
   if (!Array.isArray(def.roles) || def.roles.length === 0) {
     throw new Error("definition.roles must contain at least one role");
@@ -122,11 +145,6 @@ export function validateAgentDefinition(def: AgentDefinition): void {
     }
     if (!Array.isArray(role.requiredCapabilities)) {
       throw new Error(`role '${role.slug}': requiredCapabilities is required (may be empty)`);
-    }
-    if ("model" in (role as object)) {
-      throw new Error(
-        `role '${role.slug}': model is not allowed on portable agent definitions — binding is local (roles.json)`,
-      );
     }
   }
 }
