@@ -554,6 +554,17 @@ public partial class Program
 			new PetBox.Tasks.Data.FlatNodePartOfMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, relations, flatLog).Migrate();
 		}
 
+		// One-time, idempotent (methodology-instance-backfill): every existing TaskBoard gets
+		// exactly-one MethodologyInstance membership. Creates methodology_instances rows from
+		// project def / effective builtins; packs quartet process-role boards into one shared
+		// instance when possible. Runs after schema ensure + flat migration; needs PetBoxDb
+		// (membership) + per-project tasks files (instance documents).
+		using (var backfillScope = app.Services.CreateScope())
+		{
+			var coreDb = backfillScope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			var backfillLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.MethodologyInstanceBackfill");
+			new PetBox.Tasks.Data.MethodologyInstanceBackfill(coreDb, tasksFactory, backfillLog).Migrate();
+		}
 
 		using (var scope = app.Services.CreateScope())
 		{
