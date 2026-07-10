@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 public static class TasksTools
 {
 	[McpServerTool(Name = "tasks_board_create", Title = "Create a task board", UseStructuredContent = true, OutputSchemaType = typeof(BoardCreatedResult))]
-	[Description("CREATE a named task board in a project. `kind` sets the board role (simple|classic|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition declares via tasks_methodology_def_upsert) which drives the workflow — call tasks_workflow to see the valid types/statuses/transitions for a kind; an unknown kind is rejected naming the valid ones. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
+	[Description("CREATE one named task board in a project for a single `kind` (simple|classic|spec|ideas|intake|work, default simple — plus any kind the project's methodology definition declares via tasks_methodology_def_upsert). Does not store a methodology definition and does not provision a full preset (that is tasks_methodology_def_upsert / tasks_methodology_enable). `kind` drives the workflow — call tasks_workflow for valid types/statuses/transitions; an unknown kind is rejected naming the valid ones. `specBoard` (work boards only) names the spec board this board's tasks link into, so specRef targets are validated against it and the agent need not guess. Requires tasks:write.")]
 	public static async Task<BoardCreatedResult> BoardCreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
 		string projectKey, string board, string? kind = null, string? description = null, string? specBoard = null, CancellationToken ct = default)
@@ -96,14 +96,17 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_methodology_enable", Title = "Enable a methodology preset", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyEnableResult))]
 	[Description("""
-		Provision a methodology PRESET's board(s) if missing and (quartet only) auto-wire
-		work->spec. `preset` selects which board kind(s) to create (default "quartet" =
-		intake/ideas/spec/work — one-per-project singletons; "classic" = one standalone
-		classic board (task|feature|bug), NOT a singleton — an unknown slug is rejected
-		naming the available presets). Idempotent for the quartet; a rerun on a
-		non-singleton preset leaves its existing board(s) alone (use tasks_board_create with
-		the preset's kind for another one). Opt-in — a project's methodology lives on these
-		boards, ad-hoc work stays on simple boards. Requires tasks:write.
+		PROVISION a methodology PRESET AND its board(s) if missing (and, for quartet only,
+		auto-wire work->spec). This is the enable/provision step — it creates the boards the
+		preset needs. It is NOT tasks_methodology_def_upsert (that stores a user-defined
+		DEFINITION document only and creates no boards). `preset` selects which board kind(s)
+		to create (default "quartet" = intake/ideas/spec/work — one-per-project singletons;
+		"classic" = one standalone classic board (task|feature|bug), NOT a singleton — an
+		unknown slug is rejected naming the available presets). Idempotent for the quartet; a
+		rerun on a non-singleton preset leaves its existing board(s) alone (use
+		tasks_board_create with the preset's kind for another one). Opt-in — a project's
+		methodology lives on these boards, ad-hoc work stays on simple boards. Requires
+		tasks:write.
 
 		Returns what THIS CALL's preset provisioned — NOT the methodology quartet index
 		(call tasks_methodology_get for that; irrelevant when `preset` isn't "quartet"):
@@ -144,7 +147,11 @@ public static class TasksTools
 		`hint` on how to narrow (includeBoards one board at a time, bodyLen:0, or tasks_search
 		with board + `under` for subtree detail). No markers = the complete index. For full
 		untruncated bodies or subtree drill-down, use tasks_search (the listing/detail
-		read verb). `enabled` is true when all four singleton boards exist. Requires tasks:read.
+		read verb). `enabled` is true ONLY when all four quartet singleton boards exist —
+		it does NOT mean a user-defined methodology definition is stored (that is
+		tasks_methodology_def_get). A definition alone (def_upsert) creates no boards and
+		leaves enabled=false until tasks_methodology_enable or tasks_board_create provisions
+		them. Requires tasks:read.
 		""")]
 	public static async Task<MethodologyView> MethodologyGetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -163,11 +170,15 @@ public static class TasksTools
 
 	[McpServerTool(Name = "tasks_methodology_def_upsert", Title = "Define the project's methodology (user-defined kinds/FSMs)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefUpsertResult))]
 	[Description("""
-		Store the project's USER-DEFINED METHODOLOGY DEFINITION — the document that describes
-		the project's own board kinds, task types, statuses and transitions as data (NOT the
-		quartet index: tasks_methodology_get reads the intake/ideas/spec/work BOARDS; this
-		verb writes the process DEFINITION). One definition per project, versioned: `version`
-		is the WATERMARK baseline — pass the `version` from your last tasks_methodology_def_get
+		Store the project's USER-DEFINED METHODOLOGY DEFINITION ONLY — the document that
+		describes the project's own board kinds, task types, statuses and transitions as data.
+		Does NOT create boards, does NOT enable a methodology preset, and does NOT change
+		tasks_methodology_get's `enabled` flag. After a successful write, next step is either
+		tasks_methodology_enable(preset) to provision a preset's boards, OR
+		tasks_board_create(kind=…) for each declared kind you want live. (NOT the quartet
+		index: tasks_methodology_get reads the intake/ideas/spec/work BOARDS; this verb writes
+		the process DEFINITION.) One definition per project, versioned: `version` is the
+		WATERMARK baseline — pass the `version` from your last tasks_methodology_def_get
 		(0 = the project has none yet); a stale baseline (someone redefined since) or one ahead of
 		the project's cursor is a clear conflict error naming the current version — re-read with
 		tasks_methodology_def_get and resubmit. The definition is validated as a whole before
@@ -200,22 +211,24 @@ public static class TasksTools
 		must not collide with builtin kinds). `tagAxes` (project-wide): declared tag
 		namespaces — when present, tags on definition-resolved boards must be
 		`<namespace>:value` from this list (empty/omitted = free-form tags). The definition
-		is LIVE: a declared kind can be given to tasks_board_create, its boards resolve
-		types/statuses/transitions from this document (tasks_workflow shows them), and any
-		other kind keeps the built-in preset. A definition CHANGE is validated against LIVE
-		NODES: every active node on a board whose kind the old or new definition declares
-		must fit the new resolution (type resolves, status known to its type's workflow). An
-		incompatible node that no mapping covers REJECTS the whole call, naming the board,
-		node key(s) and offending type/status — nothing is written. `migration` declares the
-		repairs: [{ kind, types?:[{from,to}], statuses?:[{from,to}] }] — applied ONLY where a
-		node's current value is invalid under the new resolution (a valid value is never
-		rewritten); `to` must be valid under the new definition. When everything is mapped,
-		the definition commits first and the repaired nodes are then rewritten as new
-		temporal revisions per board, without FSM guards (the mapping is the sanctioned
-		transition) — not one transaction with the definition, so re-check the named board if
-		a concurrent-write error is thrown mid-rewrite. Returns { version (the new baseline),
-		changed (false = identical resubmit, no new revision — skips the live-node check),
-		migrated (nodes rewritten; 0 = none needed) }. Requires tasks:write.
+		is LIVE once boards exist for those kinds: a declared kind can be given to
+		tasks_board_create, its boards resolve types/statuses/transitions from this document
+		(tasks_workflow shows them), and any other kind keeps the built-in preset. A definition
+		CHANGE is validated against LIVE NODES: every active node on a board whose kind the old
+		or new definition declares must fit the new resolution (type resolves, status known to
+		its type's workflow). An incompatible node that no mapping covers REJECTS the whole
+		call, naming the board, node key(s) and offending type/status — nothing is written.
+		`migration` declares the repairs: [{ kind, types?:[{from,to}], statuses?:[{from,to}] }]
+		— applied ONLY where a node's current value is invalid under the new resolution (a
+		valid value is never rewritten); `to` must be valid under the new definition. When
+		everything is mapped, the definition commits first and the repaired nodes are then
+		rewritten as new temporal revisions per board, without FSM guards (the mapping is the
+		sanctioned transition) — not one transaction with the definition, so re-check the named
+		board if a concurrent-write error is thrown mid-rewrite. Returns { version (the new
+		baseline), changed (false = identical resubmit, no new revision — skips the live-node
+		check), migrated (nodes rewritten; 0 = none needed), boardsOnKinds (open boards whose
+		kind is declared in this definition; 0 = definition-only, nothing provisioned yet),
+		hint? (present only when boardsOnKinds is 0 — next-step guidance) }. Requires tasks:write.
 		""")]
 	public static async Task<MethodologyDefUpsertResult> MethodologyDefUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
@@ -228,8 +241,17 @@ public static class TasksTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		var ack = await tasks.DefineMethodologyAsync(projectKey, MethodologyWire.ParseDefinition(definition), version, MethodologyWire.ParseMigration(migration), ct);
-		return new MethodologyDefUpsertResult(ack.Version, ack.Changed, ack.Migrated);
+		var def = MethodologyWire.ParseDefinition(definition);
+		var ack = await tasks.DefineMethodologyAsync(projectKey, def, version, MethodologyWire.ParseMigration(migration), ct);
+		// Surface honesty: def_upsert stores the document only. Count open boards already on
+		// declared kinds so the agent sees when a follow-up enable/board_create is still needed.
+		var declaredKinds = def.Kinds.Select(k => k.Kind).ToHashSet(StringComparer.OrdinalIgnoreCase);
+		var boards = await tasks.ListBoardsAsync(projectKey, ct);
+		var boardsOnKinds = boards.Count(b => b.ClosedAt is null && declaredKinds.Contains(b.Kind));
+		var hint = boardsOnKinds == 0
+			? "Definition stored only — no boards use these kinds yet. Next: tasks_methodology_enable(preset) to provision a preset's boards, OR tasks_board_create(kind=…) for each declared kind."
+			: null;
+		return new MethodologyDefUpsertResult(ack.Version, ack.Changed, ack.Migrated, boardsOnKinds, hint);
 	}
 
 	[McpServerTool(Name = "tasks_methodology_def_delete", Title = "Delete the project's methodology definition (revert to builtin presets)", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyDefDeleteResult))]

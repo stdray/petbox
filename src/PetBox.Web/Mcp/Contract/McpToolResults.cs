@@ -462,7 +462,12 @@ public sealed record WorkflowView(string Kind, IReadOnlyList<WorkflowGroupView> 
 // resubmit collapsed to a no-op), and how many live nodes the declared `migration` rewrote
 // onto the new resolution (0 = nothing needed repair). A version conflict throws (the error
 // envelope names the current version), so this shape never carries conflicts.
-public sealed record MethodologyDefUpsertResult(long Version, bool Changed, int Migrated = 0);
+//
+// Additive surface honesty (def vs enable vs board_create): `BoardsOnKinds` counts open
+// boards whose kind is declared in this definition (0 = definition only — nothing provisioned
+// yet). `Hint` is non-null only when BoardsOnKinds is 0 (next-step guidance; null omitted).
+public sealed record MethodologyDefUpsertResult(
+	long Version, bool Changed, int Migrated = 0, int BoardsOnKinds = 0, string? Hint = null);
 
 // tasks_methodology_def_delete ack: whether a definition was actually removed (false = the
 // project had none — an idempotent no-op) and the definition cursor after the delete (the

@@ -127,6 +127,9 @@ public sealed class MethodologyDefinitionTests : IClassFixture<MethodologyDefini
 		var ack = Parse(up);
 		ack.GetProperty("version").GetInt64().Should().Be(1);
 		ack.GetProperty("changed").GetBoolean().Should().BeTrue();
+		// Surface honesty: def_upsert stores the document only — no boards yet → boardsOnKinds:0 + hint.
+		ack.GetProperty("boardsOnKinds").GetInt32().Should().Be(0);
+		ack.GetProperty("hint").GetString().Should().Contain("tasks_board_create");
 
 		var got = Parse(await Get());
 		got.GetProperty("defined").GetBoolean().Should().BeTrue();
