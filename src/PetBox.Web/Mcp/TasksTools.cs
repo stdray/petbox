@@ -232,6 +232,75 @@ public static class TasksTools
 		v.Boards.Select(b => new MethodologyInstanceBoardView(b.Name, b.Kind, b.Closed, b.SpecBoard)).ToList(),
 		v.Counts);
 
+	[McpServerTool(Name = "tasks_methodology_instance_rules_get", Title = "Get a methodology instance's rules document", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesGetResult))]
+	[Description("""
+		Return the RULES DOCUMENT of one methodology INSTANCE by name — the live process
+		definition (kinds/types/statuses/transitions) that member boards resolve against,
+		plus the version baseline for tasks_methodology_instance_rules_upsert. Same document
+		shape as tasks_methodology_def_get / template_get (kinds/workflows/linkKinds/tagAxes).
+		Found=false on miss (not an error). Closed instances still return their last rules
+		(read-only — rules_upsert rejects closed). Requires tasks:read.
+		""")]
+	public static async Task<MethodologyInstanceRulesGetResult> MethodologyInstanceRulesGetAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Instance name (slug).")] string name,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
+		var view = await tasks.GetMethodologyInstanceRulesAsync(projectKey, name, ct);
+		if (view is null)
+			return new MethodologyInstanceRulesGetResult(Found: false, Name: name);
+		var doc = MethodologyWire.ProjectDefinition(view.Definition, view.Version, view.Created, view.Updated);
+		return new MethodologyInstanceRulesGetResult(
+			Found: true,
+			Name: view.Name,
+			Closed: view.Closed,
+			DefinitionName: doc.Name,
+			Kinds: doc.Kinds,
+			Version: view.Version,
+			Created: view.Created,
+			Updated: view.Updated,
+			LinkKinds: doc.LinkKinds,
+			TagAxes: doc.TagAxes);
+	}
+
+	[McpServerTool(Name = "tasks_methodology_instance_rules_upsert", Title = "Edit a live methodology instance's rules (with migration)", UseStructuredContent = true, OutputSchemaType = typeof(MethodologyInstanceRulesUpsertResult))]
+	[Description("""
+		Replace the RULES of a LIVE methodology INSTANCE with optimistic concurrency and
+		declarative live-node migration. Does NOT mutate templates, other instances, or the
+		project singleton definition (tasks_methodology_def_upsert). `name` addresses the
+		instance; `version` is the watermark baseline from tasks_methodology_instance_rules_get
+		(a stale/future baseline is a clear conflict). `definition` is the same document shape
+		as tasks_methodology_def_upsert. A CHANGE is validated against LIVE NODES on this
+		instance's open member boards only: every active node whose board kind the old or new
+		rules declare must fit the new resolution. An incompatible node that no mapping covers
+		REJECTS the whole call, naming board/node/value — nothing is written. `migration`
+		declares the repairs: [{ kind, types?:[{from,to}], statuses?:[{from,to}] }] — applied
+		ONLY where a node's current value is invalid under the new resolution (a valid value
+		is never rewritten). Closed instances reject the write. Returns { name, version,
+		changed, migrated }. Requires tasks:write.
+		""")]
+	public static async Task<MethodologyInstanceRulesUpsertResult> MethodologyInstanceRulesUpsertAsync(
+		IHttpContextAccessor http, FeatureFlags features, ITasksService tasks,
+		string projectKey,
+		[Description("Instance name (slug) whose rules to replace.")] string name,
+		[Description("The whole methodology definition document (same shape as tasks_methodology_def_upsert).")] MethodologyDefInput definition,
+		[Description("Watermark baseline: the `version` from your last tasks_methodology_instance_rules_get.")] long version = 0,
+		[Description("Per-kind {from,to} type/status repairs for live nodes on this instance the change would strand.")] MethodologyMigrationInput[]? migration = null,
+		CancellationToken ct = default)
+	{
+		ModuleMcp.AssertFeature(features, Feature.Tasks);
+		ModuleMcp.AssertProject(http, projectKey);
+		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
+		var def = MethodologyWire.ParseDefinition(definition);
+		var ack = await tasks.DefineMethodologyInstanceRulesAsync(
+			projectKey, name, def, version, MethodologyWire.ParseMigration(migration), ct);
+		return new MethodologyInstanceRulesUpsertResult(ack.Name, ack.Version, ack.Changed, ack.Migrated);
+	}
+
 	[McpServerTool(Name = "tasks_methodology_get", Title = "Get the methodology quartet", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MethodologyView))]
 	[Description("""
 		Return the project's methodology quartet as ONE compact INDEX in pipeline order:

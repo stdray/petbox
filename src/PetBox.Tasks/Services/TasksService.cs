@@ -480,6 +480,15 @@ public sealed partial class TasksService : ITasksService
 		string projectKey, string name, CancellationToken ct = default) =>
 		_methodologyInstances.CloseAsync(projectKey, name, ct);
 
+	public Task<MethodologyInstanceRulesView?> GetMethodologyInstanceRulesAsync(
+		string projectKey, string name, CancellationToken ct = default) =>
+		_methodologyInstances.GetRulesAsync(projectKey, name, ct);
+
+	public Task<MethodologyInstanceRulesAck> DefineMethodologyInstanceRulesAsync(
+		string projectKey, string name, MethodologyDefinition def, long version,
+		IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default) =>
+		_methodologyInstances.DefineRulesAsync(projectKey, name, def, version, migration, ct);
+
 	// Product surface over the stored definition — stays on TasksService (guide is derived
 	// presentation; definition I/O lives on the collaborator).
 	public async Task<MethodologyGuideView> GetMethodologyGuideAsync(string projectKey, CancellationToken ct = default)

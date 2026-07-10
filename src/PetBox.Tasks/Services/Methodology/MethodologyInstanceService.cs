@@ -13,12 +13,14 @@ using PetBox.Tasks.Workflow;
 namespace PetBox.Tasks.Services.Methodology;
 
 // Named methodology INSTANCES — the live process automaton (rules + boards + open/closed).
-// Owns methodology_instances temporal rows and the create/list/get/close/adopt surface.
-// Board membership is stored on TaskBoards.MethodologyInstance (Core catalog).
+// Owns methodology_instances temporal rows and the create/list/get/close/adopt/rules-edit
+// surface. Board membership is stored on TaskBoards.MethodologyInstance (Core catalog).
 //
 // HARD INVARIANT: create is the ONLY path that provisions boards from a source template;
 // template writes never create boards (MethodologyTemplateService). Source is always
-// explicit (builtin|template|instance) — no silent quartet default.
+// explicit (builtin|template|instance) — no silent quartet default. Rules edit reuses
+// MethodologyLiveMigration (same declarative status/type repair as def_upsert) scoped to
+// THIS instance's member boards only — never mutates templates or other instances.
 //
 // Private collaborator of TasksService (not DI-registered) — same posture as
 // MethodologyDefinitionService / MethodologyTemplateService.
@@ -33,6 +35,7 @@ public sealed partial class MethodologyInstanceService
 
 	readonly ITaskBoardStore _boards;
 	readonly MethodologyTemplateService _templates;
+	readonly MethodologyLiveMigration _live;
 	// Optional count callback — TasksService supplies status histograms without a circular
 	// dependency on full GetAsync; null → empty counts on list/get.
 	readonly Func<string, string, CancellationToken, Task<IReadOnlyDictionary<string, int>>>? _countNodes;
@@ -54,6 +57,7 @@ public sealed partial class MethodologyInstanceService
 	{
 		_boards = boards;
 		_templates = templates;
+		_live = new MethodologyLiveMigration(boards);
 		_countNodes = countNodes;
 	}
 
@@ -150,6 +154,90 @@ public sealed partial class MethodologyInstanceService
 		var boards = await ProvisionBoardsAsync(projectKey, key, def, ct);
 		var version = await CurrentVersionAsync(projectKey, key, ct);
 		return new MethodologyInstanceAck(key, Changed: true, Closed: false, boards, version);
+	}
+
+	// ---- rules edit (live instance definition + declarative migration) ----
+
+	// Full rules document of one instance (baseline for rules_upsert). Null when missing.
+	public async Task<MethodologyInstanceRulesView?> GetRulesAsync(string projectKey, string name, CancellationToken ct = default)
+	{
+		var key = NormalizeName(name);
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		var row = await ctx.GetTable<MethodologyInstanceRow>()
+			.FirstOrDefaultAsync(r => r.Key == key && r.ActiveTo == null, ct);
+		if (row is null) return null;
+		return new MethodologyInstanceRulesView(
+			key, Deserialize(projectKey, row), row.Version, row.Created, row.Updated, row.ClosedAt is not null);
+	}
+
+	// Replace the instance's rules document with optimistic concurrency + live-node
+	// migration (spec methodology-instance-rules-edit). Scoped to THIS instance's open
+	// member boards only — never mutates templates, other instances, or the project
+	// singleton def. Closed instances reject the write. Unmapped stranded values reject
+	// the whole call (nothing written). `migration` shape identical to def_upsert.
+	public async Task<MethodologyInstanceRulesAck> DefineRulesAsync(
+		string projectKey, string name, MethodologyDefinition def, long version,
+		IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default)
+	{
+		var key = NormalizeName(name);
+		var result = DefinitionValidator.Validate(def);
+		if (!result.IsValid)
+			throw new ArgumentException(result.Errors[0].ErrorMessage);
+
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		var current = await ctx.GetTable<MethodologyInstanceRow>()
+			.FirstOrDefaultAsync(r => r.Key == key && r.ActiveTo == null, ct)
+			?? throw new InvalidOperationException($"methodology instance '{key}' not found in project '{projectKey}'");
+		if (current.ClosedAt is not null)
+			throw new InvalidOperationException(
+				$"methodology instance '{key}' is closed — rules cannot be edited on a closed instance; create a new instance from this one's rules if you need a revised process");
+
+		var json = JsonSerializer.Serialize(def, DefinitionJson);
+		var sameDefinition = string.Equals(current.Json, json, StringComparison.Ordinal);
+		var newRuntime = new MethodologyRuntime(def);
+		var rewrites = new List<(string Board, List<PlanNode> Nodes)>();
+		if (!sameDefinition)
+		{
+			// Scope: open boards that belong to THIS instance only. Other instances /
+			// legacy unassigned boards keep their own resolution.
+			var boards = (await _boards.ListAsync(projectKey, ct))
+				.Where(b => b.ClosedAt is null
+					&& string.Equals(b.MethodologyInstance, key, StringComparison.OrdinalIgnoreCase))
+				.ToList();
+			var oldDef = Deserialize(projectKey, current);
+			MethodologyLiveMigration.Validate(migration ?? [], newRuntime, boards);
+			rewrites = MethodologyLiveMigration.Plan(ctx, oldDef, def, newRuntime, migration ?? [], boards,
+				subject: $"methodology instance '{key}' rules change");
+		}
+
+		// Preserve ClosedAt (must stay null here — closed rejected above) so SamePayload
+		// only flips on the rules document.
+		var next = new MethodologyInstanceRow
+		{
+			Key = key,
+			Version = version,
+			Json = json,
+			ClosedAt = current.ClosedAt,
+		};
+		var r = await TemporalStore.UpsertAsync(ctx, new[] { next }, ct: ct);
+		if (!r.Applied)
+		{
+			var c = r.Conflicts[0];
+			throw new InvalidOperationException(c.Kind switch
+			{
+				TemporalConflictKind.FutureBaseline =>
+					$"methodology instance '{key}' rules conflict: your baseline version {version} is ahead of this instance's cursor {c.ActiveVersion} — re-read with tasks_methodology_instance_rules_get and resubmit against the current version",
+				TemporalConflictKind.Vanished =>
+					$"methodology instance '{key}' rules conflict: your baseline version {version} no longer exists (the instance was removed); re-read with tasks_methodology_instance_rules_get",
+				_ =>
+					$"methodology instance '{key}' rules conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; pass the version from your last tasks_methodology_instance_rules_get",
+			});
+		}
+
+		var migrated = 0;
+		foreach (var (board, nodes) in rewrites)
+			migrated += await _live.RewriteAsync(ctx, projectKey, board, nodes, newRuntime, ct);
+		return new MethodologyInstanceRulesAck(key, r.CurrentVersion, Changed: r.Inserted > 0, Migrated: migrated);
 	}
 
 	// ---- close (whole instance + member boards) ----

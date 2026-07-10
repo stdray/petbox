@@ -123,6 +123,15 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	Task<IReadOnlyList<MethodologyInstanceView>> ListMethodologyInstancesAsync(string projectKey, CancellationToken ct = default);
 	Task<MethodologyInstanceView?> GetMethodologyInstanceAsync(string projectKey, string name, CancellationToken ct = default);
 	Task<MethodologyInstanceAck> CloseMethodologyInstanceAsync(string projectKey, string name, CancellationToken ct = default);
+	// Full rules document of one instance (baseline for rules_upsert), or null when missing.
+	Task<MethodologyInstanceRulesView?> GetMethodologyInstanceRulesAsync(string projectKey, string name, CancellationToken ct = default);
+	// Replace a LIVE instance's rules with optimistic concurrency + declarative live-node
+	// migration (same `migration` map as DefineMethodologyAsync). Scoped to this instance's
+	// member boards only. Closed instances reject the write. Unmapped stranded values reject
+	// the whole call naming the offenders — nothing is written. Template edits never call this.
+	Task<MethodologyInstanceRulesAck> DefineMethodologyInstanceRulesAsync(
+		string projectKey, string name, MethodologyDefinition def, long version,
+		IReadOnlyList<MethodologyMigration>? migration = null, CancellationToken ct = default);
 
 	// Close (closed=true) or reopen (closed=false) a board.
 	Task<bool> SetClosedAsync(string projectKey, string board, bool closed, CancellationToken ct = default);

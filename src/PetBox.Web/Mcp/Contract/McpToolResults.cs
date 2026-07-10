@@ -555,6 +555,25 @@ public sealed record MethodologyInstanceGetResult(
 	string? Name = null,
 	MethodologyInstanceViewResult? Instance = null);
 
+// tasks_methodology_instance_rules_get: Found=true → name + full rules document (same
+// kinds/workflows shape as def_get) + version baseline for rules_upsert. Found=false on miss.
+public sealed record MethodologyInstanceRulesGetResult(
+	bool Found,
+	string? Name = null,
+	bool? Closed = null,
+	string? DefinitionName = null,
+	IReadOnlyList<MethodologyKindView>? Kinds = null,
+	long? Version = null,
+	DateTime? Created = null,
+	DateTime? Updated = null,
+	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
+	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
+
+// tasks_methodology_instance_rules_upsert ack: version cursor, whether a revision was
+// written, and how many live member-board nodes the migration rewrote.
+public sealed record MethodologyInstanceRulesUpsertResult(
+	string Name, long Version, bool Changed, int Migrated = 0);
+
 // One kind of a stored methodology definition; workflow blocks reuse the tasks_workflow
 // status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the
 // kind's per-type creation link requirements, Effects its declared transition effects

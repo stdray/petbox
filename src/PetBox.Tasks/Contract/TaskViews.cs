@@ -295,6 +295,25 @@ public sealed record MethodologyInstanceAck(
 	IReadOnlyList<MethodologyInstanceBoard> Boards,
 	long Version = 0);
 
+// Full rules document of one instance (tasks_methodology_instance_rules_get) — the
+// baseline for rules_upsert. Closed instances still return their last rules (read-only).
+public sealed record MethodologyInstanceRulesView(
+	string Name,
+	MethodologyDefinition Definition,
+	long Version,
+	DateTime Created,
+	DateTime Updated,
+	bool Closed);
+
+// Ack of instance rules edit: version cursor, whether a new revision was written, and
+// how many live nodes the declared `migration` rewrote (0 = none needed). Conflicts /
+// unmapped stranded values throw — nothing partially applied.
+public sealed record MethodologyInstanceRulesAck(
+	string Name,
+	long Version,
+	bool Changed,
+	int Migrated = 0);
+
 // The runtime-derived agent guide to a project's process (tasks_methodology_guide, spec
 // artifacts-from-definition): markdown prose + the structured invariants it was derived
 // from (the machine-readable form — no markdown re-parsing downstream). `Source` says
