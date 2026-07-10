@@ -13,10 +13,14 @@ namespace PetBox.Web.Sessions;
 //   POST /{sessionId}         — full-snapshot upsert, last-write-wins (repair/import path);
 //   POST /{sessionId}/append  — incremental against the server-authoritative cursor
 //                               (?fromOrdinal=N; the hook's steady-state path).
+// Optional header X-PetBox-Session-Meta: raw JSON object string, observed client metadata
+// (e.g. role binding stamp) — last-write-wins when present; omitted keeps existing MetaJson.
 // The server numbers the messages (ordinal) and stores the latest snapshot either way.
 // Mirrors session_upsert / session_append.
 public static class SessionApi
 {
+	const string MetaHeader = "X-PetBox-Session-Meta";
+
 	static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
 	public static void MapSessionEndpoints(this IEndpointRouteBuilder app)
@@ -43,7 +47,7 @@ public static class SessionApi
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
 			.RequireAuthorization("ApiKey");
 
-		// Headers only (id, agent, version, updated) — the upgrade-only guard of the
+		// Headers only (id, agent, version, updated, optional meta) — the upgrade-only guard of the
 		// history importer compares its local message count against `version` before
 		// pushing, so a stale file read can't roll back a fresher snapshot.
 		app.MapGet("/api/sessions/{projectKey}", ListAsync)
@@ -63,7 +67,7 @@ public static class SessionApi
 
 		var list = await sessions.ListAsync(projectKey, ct);
 		return TypedResults.Ok(new SessionListResponse(
-			list.Select(s => new SessionHeaderResponse(s.SessionId, s.Agent, s.Version, s.Updated)).ToList()));
+			list.Select(s => new SessionHeaderResponse(s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson)).ToList()));
 	}
 
 	static async Task<IResult> UpsertAsync(
@@ -77,6 +81,7 @@ public static class SessionApi
 			return TypedResults.Forbid();
 
 		var agent = ctx.Request.Query["agent"].FirstOrDefault() ?? "claude-code";
+		var metaJson = ctx.Request.Headers[MetaHeader].FirstOrDefault();
 
 		var (messages, parseError) = await ReadNdjsonAsync(ctx, ct);
 		if (parseError is not null)
@@ -84,8 +89,15 @@ public static class SessionApi
 		if (messages.Count == 0)
 			return TypedResults.BadRequest(new ErrorResponse("empty body"));
 
-		var o = await sessions.UpsertAsync(projectKey, sessionId, agent, messages, ct);
-		return TypedResults.Ok(new SessionUpsertResponse(o.SessionId, o.Version, o.MessageCount));
+		try
+		{
+			var o = await sessions.UpsertAsync(projectKey, sessionId, agent, messages, metaJson, ct);
+			return TypedResults.Ok(new SessionUpsertResponse(o.SessionId, o.Version, o.MessageCount));
+		}
+		catch (ArgumentException ex)
+		{
+			return TypedResults.BadRequest(new ErrorResponse(ex.Message));
+		}
 	}
 
 	// Incremental push: the body is the same ndjson message stream, `fromOrdinal` (query) is the
@@ -103,6 +115,7 @@ public static class SessionApi
 		var agent = ctx.Request.Query["agent"].FirstOrDefault() ?? "claude-code";
 		if (!long.TryParse(ctx.Request.Query["fromOrdinal"].FirstOrDefault(), out var fromOrdinal) || fromOrdinal < 1)
 			return TypedResults.BadRequest(new ErrorResponse("fromOrdinal (>= 1) query parameter required"));
+		var metaJson = ctx.Request.Headers[MetaHeader].FirstOrDefault();
 
 		var (messages, parseError) = await ReadNdjsonAsync(ctx, ct);
 		if (parseError is not null)
@@ -110,10 +123,17 @@ public static class SessionApi
 		if (messages.Count == 0)
 			return TypedResults.BadRequest(new ErrorResponse("empty body"));
 
-		var o = await sessions.AppendAsync(projectKey, sessionId, agent, fromOrdinal, messages, ct);
-		return o.Applied
-			? TypedResults.Ok(new SessionAppendResponse(o.SessionId, o.LastOrdinal, o.Appended))
-			: TypedResults.Conflict(new SessionAppendGapResponse("gap", o.LastOrdinal));
+		try
+		{
+			var o = await sessions.AppendAsync(projectKey, sessionId, agent, fromOrdinal, messages, metaJson, ct);
+			return o.Applied
+				? TypedResults.Ok(new SessionAppendResponse(o.SessionId, o.LastOrdinal, o.Appended))
+				: TypedResults.Conflict(new SessionAppendGapResponse("gap", o.LastOrdinal));
+		}
+		catch (ArgumentException ex)
+		{
+			return TypedResults.BadRequest(new ErrorResponse(ex.Message));
+		}
 	}
 
 	// The shared ndjson body reader: one {role, content} JSON object per line, blank lines and

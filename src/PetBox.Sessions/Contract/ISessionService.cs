@@ -9,7 +9,9 @@ public interface ISessionService
 	// Latest-snapshot write, last-write-wins: replace the session's content with these messages.
 	// The server numbers them (ordinal 1..N); the returned Version is the last message's ordinal.
 	// Kept as the full-snapshot PUT for repair/import; the incremental path is AppendAsync.
-	Task<SessionUpsertOutcome> UpsertAsync(string projectKey, string sessionId, string agent, IReadOnlyList<SessionMessageInput> messages, CancellationToken ct = default);
+	// `metaJson`: optional observed client metadata (must be a JSON object when non-empty).
+	// Non-null non-empty → store last-write-wins; null/absent/whitespace → keep existing MetaJson.
+	Task<SessionUpsertOutcome> UpsertAsync(string projectKey, string sessionId, string agent, IReadOnlyList<SessionMessageInput> messages, string? metaJson = null, CancellationToken ct = default);
 
 	// Server-authoritative incremental write (spec session-append-wire). The client claims its
 	// batch starts at ordinal `fromOrdinal`; the server compares against the snapshot's message
@@ -19,8 +21,10 @@ public interface ISessionService
 	//     IDEMPOTENTLY (existing messages win, nothing is rewritten), the tail is appended;
 	//   - fromOrdinal >  lastOrdinal+1 → gap: nothing is written, Applied=false, and LastOrdinal
 	//     tells the client where to resend from (LastOrdinal+1).
-	// Storage stays latest-snapshot (the blob is re-encoded); a full-overlap call writes nothing.
-	Task<SessionAppendOutcome> AppendAsync(string projectKey, string sessionId, string agent, long fromOrdinal, IReadOnlyList<SessionMessageInput> messages, CancellationToken ct = default);
+	// Storage stays latest-snapshot (the blob is re-encoded); a full-overlap call writes nothing
+	// unless `metaJson` is supplied (meta still last-write-wins on an accepted push).
+	// `metaJson` semantics match UpsertAsync (null keeps existing; gap rejects write nothing).
+	Task<SessionAppendOutcome> AppendAsync(string projectKey, string sessionId, string agent, long fromOrdinal, IReadOnlyList<SessionMessageInput> messages, string? metaJson = null, CancellationToken ct = default);
 
 	Task<SessionSnapshot?> GetAsync(string projectKey, string sessionId, CancellationToken ct = default);
 	Task<IReadOnlyList<SessionHeader>> ListAsync(string projectKey, CancellationToken ct = default);

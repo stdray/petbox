@@ -294,7 +294,8 @@ public sealed record SessionUpsertResult(string SessionId, long Version, int Mes
 // LastOrdinal is the server's cursor, the client resends the tail from LastOrdinal+1.
 public sealed record SessionAppendResult(string SessionId, bool Applied, long LastOrdinal, int Appended, string? Reason);
 
-public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version);
+// Meta is the optional observed client stamp (raw JSON object string) when present.
+public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version, string? Meta = null);
 
 public sealed record SessionDeletedResult(bool Deleted, string SessionId);
 
@@ -616,3 +617,30 @@ public sealed record ToolDescribeResult(
 	string? Description,
 	string InputSchema,
 	string? OutputSchema);
+
+// ---- agent_def_* (portable agent-definition store) -----------------------------------
+
+public sealed record AgentDefListResult(IReadOnlyList<AgentDefListItemView> Definitions);
+public sealed record AgentDefListItemView(string Key, string Name, long Version, DateTime Updated);
+
+public sealed record AgentDefGetResult(
+	bool Found,
+	string? Key = null,
+	string? Name = null,
+	IReadOnlyList<AgentDefRoleView>? Roles = null,
+	long? Version = null,
+	DateTime? Created = null,
+	DateTime? Updated = null);
+
+public sealed record AgentDefRoleView(
+	string Slug,
+	string Tier,
+	IReadOnlyList<string> RequiredCapabilities,
+	AgentDefSpawnView? Spawn = null,
+	AgentDefEscalationView? Escalation = null);
+
+public sealed record AgentDefSpawnView(bool Allowed, IReadOnlyList<string>? AllowedRoles = null);
+public sealed record AgentDefEscalationView(bool Available, IReadOnlyList<string>? Targets = null);
+
+public sealed record AgentDefUpsertResult(string Key, long Version, bool Changed);
+public sealed record AgentDefDeleteResult(string Key, bool Deleted, long Version);

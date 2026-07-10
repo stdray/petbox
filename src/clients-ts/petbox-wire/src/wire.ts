@@ -32,6 +32,8 @@
 //        - .claude/skills/petbox/SKILL.md    (Claude Code skill; opencode reads it via its
 //                                             Claude-compatible skills discovery path)
 //        - .factory/skills/petbox/SKILL.md   (Factory Droid skill)
+//        - .claude/skills/petbox-agent-factory/SKILL.md  (on-demand factory skill)
+//        - .factory/skills/petbox-agent-factory/SKILL.md
 //    8. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files);
 //       all links point at the stable copy (~/.petbox/wire/). (--prompt-rag) additionally installs
 //       the OPT-IN Claude Code UserPromptSubmit prompt-RAG hook (off by default; safe exact-match
@@ -57,9 +59,40 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  DEFAULT_DEFINITION_KEY,
+  resolveAgentDefinitionWithLkg,
+} from "./agent-def-fetch.ts";
+import {
+  DEFAULT_AGENT_DEFINITION,
+  validateAgentDefinition,
+  type AgentDefinition,
+} from "./agent-definition.ts";
+import {
+  formatApplyBlocked,
+  planApply,
+  type ApplyPlan,
+} from "./apply-artifacts.ts";
+import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
-import { PROMPT_RAG_DEFAULTS, type PromptRagConfig } from "./registry.ts";
+import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
+import {
+  PROMPT_RAG_DEFAULTS,
+  readRegistry,
+  resolveProject,
+  type PromptRagConfig,
+} from "./registry.ts";
+import {
+  exportRolesBootstrap,
+  formatResolvedBinding,
+  isEmptyRoles,
+  loadRoles,
+  resolveAgentRoles,
+  saveRoles,
+  useProfile,
+} from "./roles.ts";
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
+import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 
 const DEFAULT_BASE_URL = "https://petbox.3po.su";
 // Where THIS run's kit lives (npx cache or a checkout's src dir).
@@ -90,20 +123,47 @@ type Args = {
 
 const DEFAULT_TELEMETRY_LOG = "cc-telemetry";
 
-// Print the usage banner and exit. `--help`/`-h` request it explicitly → stdout + exit 0; every
-// error path (unknown flag, too few positionals) → stderr + exit 2. Same text either way.
-function usage(exitCode: number = 2): never {
+// Print the usage banner and exit. `--help`/`-h` → stdout + exit 0; argument errors →
+// stderr + exit WIRE_EXIT.usage (2). Same text either way.
+function usage(exitCode: number = WIRE_EXIT.usage): never {
   const text =
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
     "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag | --no-prompt-rag]\n" +
     "       npx petbox-wire update\n" +
+    "       npx petbox-wire apply [--definition <key>] [--offline]\n" +
+    "       npx petbox-wire doctor\n" +
+    "       npx petbox-wire roles\n" +
+    "       npx petbox-wire roles export\n" +
+    "       npx petbox-wire profile use <name>\n" +
     "       npx petbox-wire --help\n" +
     "\n" +
     "Wire a project to PetBox: global hooks, MCP configs and skills. prompt-RAG is OFF by default\n" +
     "(opt in per project with --prompt-rag; --no-prompt-rag or a plain re-run removes the global hook).\n" +
     "\n" +
-    "update  Refresh ~/.petbox/wire only (protocol/scripts/templates) from this package. Does not\n" +
-    "        touch keys, registry, sticky prompt-rag/telemetry, or per-project MCP/skills.";
+    "update       Refresh ~/.petbox/wire only (protocol/scripts/templates) from this package. Does not\n" +
+    "             touch keys, registry, sticky prompt-rag/telemetry, or per-project MCP/skills.\n" +
+    "             Kit-copy only — does NOT compile per-harness agent artifacts (use apply).\n" +
+    "apply        Compile per-harness startup artifacts from a portable agent definition + local\n" +
+    "             role→model binding (~/.petbox/roles.json). Tries GET /api/{project}/agent-defs/{key}\n" +
+    "             when cwd resolves via ~/.petbox/projects.json; on miss uses LKG cache\n" +
+    "             (~/.petbox/cache/<project>.agent-def.json) with a staleness mark, else built-in\n" +
+    "             DEFAULT only when no cache. --offline skips network (cache→DEFAULT). --definition\n" +
+    "             <key> selects the server doc (default: default). Writes under project root:\n" +
+    "             claude-code .claude/agents/, opencode .opencode/agent/, droid .factory/droids/.\n" +
+    "             model: frontmatter only when bound (droid unbound → model: inherit) — never invents\n" +
+    "             a concrete model id. Clean roles written; dirty skipped and reported.\n" +
+    "             Exit codes: 0 full success; 1 hard failure (invalid definition/throw); 2 usage/args;\n" +
+    "             3 truthfulness partial/block (policy — distinct from usage).\n" +
+    "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
+    "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
+    "             violation. Exit 0 all OK; 1 hard fail (invalid default def); 2 usage; 3 truthfulness\n" +
+    "             (same taxonomy as apply — policy block is not a hard crash). Offline.\n" +
+    "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
+    "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
+    "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
+    "             new machine). Offline.\n" +
+    "profile use  Set activeProfile in ~/.petbox/roles.json (creates an empty profile shell if missing).\n" +
+    "             Offline. Re-run apply to rebuild artifacts after changing the active profile.";
   (exitCode === 0 ? console.log : console.error)(text);
   process.exit(exitCode);
 }
@@ -154,6 +214,291 @@ function parseArgs(argv: string[]): Args {
 // True when argv is the safe kit-refresh subcommand (no project/key required).
 function isUpdateCommand(argv: string[]): boolean {
   return argv[0] === "update";
+}
+
+function isDoctorCommand(argv: string[]): boolean {
+  return argv[0] === "doctor";
+}
+
+function isApplyCommand(argv: string[]): boolean {
+  return argv[0] === "apply";
+}
+
+// Local role/profile subcommands (offline; no project/key).
+function isRolesCommand(argv: string[]): boolean {
+  return argv[0] === "roles";
+}
+
+function isProfileCommand(argv: string[]): boolean {
+  return argv[0] === "profile";
+}
+
+// Longest registry prefix that covers cwd (no API key required). Falls back to cwd.
+function resolveApplyRoot(cwd: string): { root: string; via: "registry" | "cwd" } {
+  try {
+    const entries = readRegistry();
+    const nd = cwd.replace(/[\\/]+/g, "/").replace(/\/+$/, "");
+    const ndCmp = process.platform === "win32" ? nd.toLowerCase() : nd;
+    let best: string | null = null;
+    let bestLen = -1;
+    for (const e of entries) {
+      let np = String(e.prefix).replace(/[\\/]+/g, "/").replace(/\/+$/, "");
+      const npCmp = process.platform === "win32" ? np.toLowerCase() : np;
+      const under = ndCmp === npCmp || ndCmp.startsWith(npCmp + "/");
+      if (under && npCmp.length > bestLen) {
+        best = e.prefix;
+        bestLen = npCmp.length;
+      }
+    }
+    if (best) return { root: best, via: "registry" };
+  } catch {
+    /* fall through */
+  }
+  return { root: cwd, via: "cwd" };
+}
+
+// doctor — truthfulness gate for each known harness vs default definition.
+// Exit codes match apply (WIRE_EXIT): 0 OK; 1 hard (invalid def); 2 usage; 3 truthfulness policy.
+function runDoctor(argv: string[]): void {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--help" || a === "-h") usage(0);
+    console.error(`doctor: unexpected argument: ${a}`);
+    usage(WIRE_EXIT.usage);
+  }
+
+  try {
+    validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
+  } catch (e) {
+    console.error(`doctor: hard failure — ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(WIRE_EXIT.hard);
+  }
+
+  const roles = loadRoles();
+  const bindingNote = isEmptyRoles(roles)
+    ? "local binding: (empty — not required for doctor)"
+    : `local binding: activeProfile=${roles.activeProfile} (observational; gate uses definition only)`;
+
+  log(`doctor: definition="${DEFAULT_AGENT_DEFINITION.name}" (${DEFAULT_AGENT_DEFINITION.roles.length} roles)`);
+  log(`doctor: ${bindingNote}`);
+
+  let hadTruthfulnessBlock = false;
+  for (const harness of HARNESS_IDS) {
+    const violations = checkTruthfulness(DEFAULT_AGENT_DEFINITION, harness);
+    if (violations.length === 0) {
+      log(`doctor: ${harness} — OK`);
+    } else {
+      hadTruthfulnessBlock = true;
+      console.error(`doctor: ${harness} — ${violations.length} violation(s):`);
+      console.error(formatViolations(violations));
+    }
+  }
+
+  const code = classifyApplyExit({ hadTruthfulnessBlock });
+  if (code === WIRE_EXIT.ok) {
+    log("doctor: all known harnesses OK.");
+    process.exit(WIRE_EXIT.ok);
+  }
+  console.error(
+    `doctor: FAILED — definition requires capability/ies a harness does not declare (exit ${WIRE_EXIT.truthfulness}).`,
+  );
+  process.exit(WIRE_EXIT.truthfulness);
+}
+
+// apply — compile per-harness artifacts (distinct from update kit-copy).
+// Definition source: server fetch when registry resolves cwd; else offline default.
+//
+// Per role × harness (definition-truthfulness + wiring-startup-symmetry):
+//   - dirty roles → skip + report (never silent); clean roles still written
+// Exit codes (see WIRE_EXIT / classifyApplyExit — usage must stay distinct from truthfulness):
+//   0 — full success: every known harness wrote all its roles, no skips
+//   1 — hard failure: invalid definition / unexpected throw (NOT bad args)
+//   2 — usage / bad arguments (via usage())
+//   3 — truthfulness: policy blocked some roles/harnesses (partial write possible)
+async function runApply(argv: string[]): Promise<void> {
+  let definitionKey = DEFAULT_DEFINITION_KEY;
+  let offline = false;
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--help" || a === "-h") usage(0);
+    else if (a === "--offline") offline = true;
+    else if (a === "--definition") {
+      const v = argv[++i];
+      if (!v || v.startsWith("--")) {
+        console.error("apply: --definition requires a non-empty key");
+        usage(WIRE_EXIT.usage);
+      }
+      definitionKey = v.trim();
+      if (!definitionKey) {
+        console.error("apply: --definition requires a non-empty key");
+        usage(WIRE_EXIT.usage);
+      }
+    } else if (a.startsWith("--")) {
+      console.error(`apply: unexpected argument: ${a}`);
+      usage(WIRE_EXIT.usage);
+    } else {
+      console.error(`apply: unexpected argument: ${a}`);
+      usage(WIRE_EXIT.usage);
+    }
+  }
+
+  const { root, via } = resolveApplyRoot(process.cwd());
+  let definition;
+  try {
+    definition = await resolveApplyDefinition({
+      offline,
+      definitionKey,
+      cwd: process.cwd(),
+    });
+    validateAgentDefinition(definition);
+  } catch (e) {
+    console.error(`apply: hard failure — ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(WIRE_EXIT.hard);
+  }
+
+  const rolesData = loadRoles();
+  log(`apply: root=${root} (via ${via})`);
+  log(`apply: definition="${definition.name}", harnesses=${HARNESS_IDS.join(",")}`);
+
+  let written = 0;
+  const writtenHarnesses: string[] = [];
+  const partialHarnesses: string[] = [];
+  const blockedHarnesses: string[] = [];
+  for (const harness of HARNESS_IDS) {
+    const roleModels = resolveAgentRoles(rolesData, harness);
+    const plan = planApply(definition, harness, roleModels);
+
+    for (const file of plan.files) {
+      const abs = join(root, file.relativePath);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, file.content, "utf8");
+      log(`apply: wrote ${abs}`);
+      written++;
+    }
+
+    if (plan.violations.length > 0) {
+      console.error(formatApplyBlocked(plan.violations, plan.harness, plan.skippedRoles));
+      if (plan.files.length > 0) partialHarnesses.push(plan.harness);
+      else blockedHarnesses.push(plan.harness);
+    } else if (plan.files.length > 0) {
+      writtenHarnesses.push(plan.harness);
+    }
+  }
+
+  // Structured summary (machine-readable-ish one line + human detail above).
+  const summary = {
+    writtenFiles: written,
+    writtenHarnesses,
+    partialHarnesses,
+    blockedHarnesses,
+  };
+  log(
+    `apply: result written=${written} ` +
+      `ok=[${writtenHarnesses.join(",")}] ` +
+      `partial=[${partialHarnesses.join(",")}] ` +
+      `blocked=[${blockedHarnesses.join(",")}]`,
+  );
+
+  const hadTruthfulnessBlock = partialHarnesses.length > 0 || blockedHarnesses.length > 0;
+  const code = classifyApplyExit({ hadTruthfulnessBlock });
+  if (code === WIRE_EXIT.ok) {
+    log("apply: done — all known harnesses accepted every role.");
+    process.exit(WIRE_EXIT.ok);
+  }
+  console.error(
+    `apply: truthfulness partial — some roles/harnesses blocked (exit ${WIRE_EXIT.truthfulness}). ${JSON.stringify(summary)}`,
+  );
+  process.exit(WIRE_EXIT.truthfulness);
+}
+
+// Server → LKG cache → built-in DEFAULT (definition-offline-lkg).
+// Server is authoritative; disk is LKG replica. roles.json polarity is separate (not here).
+async function resolveApplyDefinition(opts: {
+  offline: boolean;
+  definitionKey: string;
+  cwd: string;
+}): Promise<AgentDefinition> {
+  const resolved = resolveProject(opts.cwd);
+  const got = await resolveAgentDefinitionWithLkg({
+    offline: opts.offline,
+    definitionKey: opts.definitionKey,
+    projectKey: resolved?.project,
+    baseUrl: resolved?.baseUrl,
+    apiKey: resolved?.apiKey,
+  });
+
+  if (got.source === "server") {
+    log(`apply: using server definition ${got.key} v${got.version}`);
+  } else if (got.source === "lkg") {
+    log(`apply: ${got.staleMarker ?? "using LKG agent definition cache"}`);
+    log(`apply: using LKG definition ${got.key} v${got.version} (stale)`);
+  } else {
+    log("apply: offline default definition (no server, no LKG cache)");
+  }
+  return got.definition;
+}
+
+// Print active profile + agent/role/model tree from ~/.petbox/roles.json. Exit 0 when empty.
+function runRoles(argv: string[]): void {
+  // roles | roles export  (+ optional --help)
+  const sub = argv[1];
+  if (sub === "--help" || sub === "-h") usage(0);
+  if (sub === "export") {
+    for (let i = 2; i < argv.length; i++) {
+      const a = argv[i];
+      if (a === "--help" || a === "-h") usage(0);
+      console.error(`roles export: unexpected argument: ${a}`);
+      usage();
+    }
+    const data = loadRoles();
+    // stdout only — bootstrap for a new machine (document in usage).
+    console.log(JSON.stringify(exportRolesBootstrap(data), null, 2));
+    return;
+  }
+  if (sub !== undefined) {
+    console.error(`roles: unexpected argument: ${sub}`);
+    usage();
+  }
+  const data = loadRoles();
+  if (isEmptyRoles(data) && !data.profiles[data.activeProfile]) {
+    log(
+      `roles: no bindings in ${join(homedir(), ".petbox", "roles.json")} (activeProfile would be "default").\n` +
+        `  Bindings are local — set models in that file or via a future apply path; nothing is invented.`,
+    );
+    return;
+  }
+  log(formatResolvedBinding(data));
+}
+
+// profile use <name> — set activeProfile; create empty shell if missing.
+function runProfile(argv: string[]): void {
+  const sub = argv[1];
+  if (sub === "--help" || sub === "-h") usage(0);
+  if (sub !== "use") {
+    console.error(`profile: expected "use <name>"${sub ? `, got "${sub}"` : ""}`);
+    usage();
+  }
+  const name = argv[2];
+  if (!name || name.startsWith("-")) {
+    console.error("profile use: requires a non-empty <name>");
+    usage();
+  }
+  for (let i = 3; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--help" || a === "-h") usage(0);
+    console.error(`profile use: unexpected argument: ${a}`);
+    usage();
+  }
+  const before = loadRoles();
+  const created = !before.profiles[name];
+  const next = useProfile(before, name);
+  saveRoles(next);
+  log(
+    `profile: activeProfile = "${next.activeProfile}"` +
+      (created ? " (created empty profile shell)" : "") +
+      `\n  wrote ${join(homedir(), ".petbox", "roles.json")}` +
+      `\n  re-run apply to rebuild artifacts (profile use does not compile).`,
+  );
 }
 
 // ---- small helpers ---------------------------------------------------------
@@ -326,7 +671,7 @@ type CopyKitResult = { before: string; after: string; skipped: boolean };
 // Copy the running kit (HERE — an npx cache dir or a checkout's src/) into the stable location
 // (~/.petbox/wire/), overwriting. Every global hook/plugin link is computed from STABLE, so the
 // wiring keeps working after npx evicts its cache or a checkout moves. Copies the whole src dir
-// (all .ts files + templates/SKILL.md). No-op when already running the installed copy.
+// (all .ts files + templates/). No-op when already running the installed copy.
 // `label` prefixes log lines (full wire uses "[5/10]"; `update` uses "update").
 function copyKitToStable(label: string = "[5/10]"): CopyKitResult {
   const before = kitFingerprint(STABLE);
@@ -516,6 +861,15 @@ function writeProjectFiles(dir: string, project: string, envVar: string, workspa
     const skillPath = join(dir, ...surface, "petbox", "SKILL.md");
     mkdirSync(dirname(skillPath), { recursive: true });
     writeFileSync(skillPath, skill, "utf8");
+    log(`[7/10] wrote ${skillPath}`);
+  }
+
+  // Agent-factory skill — on-demand procedure (no project placeholders). Same surfaces as petbox.
+  const factoryTpl = readFileSync(join(HERE, "templates", "agent-factory", "SKILL.md"), "utf8");
+  for (const surface of SKILL_SURFACES) {
+    const skillPath = join(dir, ...surface, "petbox-agent-factory", "SKILL.md");
+    mkdirSync(dirname(skillPath), { recursive: true });
+    writeFileSync(skillPath, factoryTpl, "utf8");
     log(`[7/10] wrote ${skillPath}`);
   }
 }
@@ -897,10 +1251,26 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  // Subcommand: safe kit-text refresh (no project/key). Must run before parseArgs, which
-  // requires <dir> <projectKey> positionals for the full wire path.
+  // Subcommands that need no project/key. Must run before parseArgs, which requires
+  // <dir> <projectKey> positionals for the full wire path.
   if (isUpdateCommand(argv)) {
     runUpdate(argv);
+    return;
+  }
+  if (isDoctorCommand(argv)) {
+    runDoctor(argv);
+    return;
+  }
+  if (isApplyCommand(argv)) {
+    await runApply(argv);
+    return;
+  }
+  if (isRolesCommand(argv)) {
+    runRoles(argv);
+    return;
+  }
+  if (isProfileCommand(argv)) {
+    runProfile(argv);
     return;
   }
 

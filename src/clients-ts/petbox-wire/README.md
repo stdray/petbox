@@ -30,8 +30,10 @@ npx petbox-wire update
 - **A global opencode plugin** (`~/.config/opencode/plugins/petbox.ts`) with the same two
   behaviors.
 - **Per-project config** in `<dir>`: `.mcp.json` (Claude Code MCP), `.opencode/opencode.json`
-  (opencode MCP), `.factory/mcp.json` (Droid MCP, merged), and the rendered `SKILL.md` under
-  `.claude/skills/petbox/` and `.factory/skills/petbox/`.
+  (opencode MCP), `.factory/mcp.json` (Droid MCP, merged), the rendered `SKILL.md` under
+  `.claude/skills/petbox/` and `.factory/skills/petbox/`, and the on-demand
+  **agent-factory** skill under `.claude/skills/petbox-agent-factory/` and
+  `.factory/skills/petbox-agent-factory/` (`roles` / `profile` / `doctor` / `apply` — not every session).
 
 ## Where things live
 

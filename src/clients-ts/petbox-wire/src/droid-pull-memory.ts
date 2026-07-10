@@ -46,7 +46,7 @@ async function main(): Promise<void> {
   try {
     const resolved = resolveProject(cwd);
     if (!resolved) return; // not a registered project → no output
-    let context = buildProtocol(resolved.project, droidPetboxTool, { source });
+    let context = buildProtocol(resolved.project, droidPetboxTool, { source, harness: "droid" });
     // Append the curated memory canon when available (best-effort; degrades to nothing).
     const canon = await fetchCanonBlock(resolved);
     if (canon) context += `\n\n${canon}`;

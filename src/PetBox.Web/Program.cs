@@ -99,6 +99,8 @@ public partial class Program
 			new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(bootstrapCs).DataSource)!);
 
 		builder.Services.AddScoped(sp => new PetBoxDb(PetBoxDb.CreateOptions(ResolveCs(sp))));
+		// Portable agent-definition store (Core DB, always on — no feature flag).
+		builder.Services.AddScoped<PetBox.Core.Services.IAgentDefinitionService, PetBox.Core.Services.AgentDefinitionService>();
 		builder.Services.AddSingleton<IScopedDbFactory<LogDb>>(sp => new ScopedDbFactory<LogDb>(
 				Path.Combine(ResolveDataDir(sp), "logs"), PetBox.Core.Settings.Scope.Project,
 				cs => new LogDb(LogDb.CreateOptions(cs)), LogSchema.Ensure));
@@ -748,6 +750,9 @@ public partial class Program
 
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Tasks))
 			PetBox.Web.Sessions.SessionApi.MapSessionEndpoints(app);
+
+		// Portable agent-definition store (Core DB; always on — no feature flag).
+		PetBox.Web.AgentDefs.AgentDefsApi.MapAgentDefsEndpoints(app);
 
 		// Agent memory canon read surface (the wiring hooks pull it at session start).
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Memory))

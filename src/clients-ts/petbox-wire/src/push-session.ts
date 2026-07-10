@@ -15,6 +15,8 @@
 import { pushTranscript } from "./append.ts";
 import { resolveProject } from "./registry.ts";
 import { buildMessages, type Msg } from "./transcript.ts";
+// Observed role binding is stamped inside pushTranscript (X-PetBox-Session-Meta via
+// resolveObservedBinding) — server stores observation only; local roles.json is SoT.
 
 const FETCH_TIMEOUT_MS = 12000;
 

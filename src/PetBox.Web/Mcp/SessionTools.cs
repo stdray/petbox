@@ -40,6 +40,7 @@ public static class SessionTools
 	public static async Task<SessionUpsertResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessions,
 		string projectKey, string sessionId, string agent, string content,
+		[Description("Optional observed client metadata as a JSON object string (e.g. roleBinding stamp). Last-write-wins when set; omit to keep existing.")] string? meta = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -49,7 +50,7 @@ public static class SessionTools
 		// MCP is the degenerate single-blob writer; store it as one message. Latest-snapshot
 		// replaces any prior content for this sessionId.
 		var messages = new[] { new SessionMessageInput("session", content) };
-		var o = await sessions.UpsertAsync(projectKey, sessionId, agent, messages, ct);
+		var o = await sessions.UpsertAsync(projectKey, sessionId, agent, messages, meta, ct);
 		return new SessionUpsertResult(o.SessionId, o.Version, o.MessageCount);
 	}
 
@@ -71,6 +72,7 @@ public static class SessionTools
 		string projectKey, string sessionId, string agent,
 		[Description("Ordinal (1-based) of the first message in this batch.")] long fromOrdinal,
 		[Description("Array of {role, content} messages, in transcript order — the same shape session_get returns.")] SessionMessageDto[] messages,
+		[Description("Optional observed client metadata as a JSON object string (e.g. roleBinding stamp). Last-write-wins when set; omit to keep existing; not written on a gap reject.")] string? meta = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -82,7 +84,7 @@ public static class SessionTools
 			.Select(m => new SessionMessageInput(m.Role ?? "", m.Content!))
 			.ToList();
 
-		var o = await sessions.AppendAsync(projectKey, sessionId, agent, fromOrdinal, inputs, ct);
+		var o = await sessions.AppendAsync(projectKey, sessionId, agent, fromOrdinal, inputs, meta, ct);
 		return new SessionAppendResult(o.SessionId, o.Applied, o.LastOrdinal, o.Appended, o.Applied ? null : "gap");
 	}
 
@@ -116,7 +118,7 @@ public static class SessionTools
 		var s = resolvedId is null ? null : await sessions.GetAsync(projectKey, resolvedId, ct);
 		if (s is null) throw new InvalidOperationException($"session '{sessionId}' not found in project '{projectKey}'");
 		var full = s.Content;
-		return new SessionGetResult(s.SessionId, s.Agent, Window(full, tail, offset, limit), full.Length, s.Version);
+		return new SessionGetResult(s.SessionId, s.Agent, Window(full, tail, offset, limit), full.Length, s.Version, s.MetaJson);
 	}
 
 	// Resolve a full-or-prefix session id to its stored full id. Returns null on a miss (the

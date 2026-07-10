@@ -103,7 +103,7 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
     // Port of pull-memory — make the memory protocol part of the system prompt.
     "experimental.chat.system.transform": async (_input, output) => {
       if (!resolved) return;
-      output.system.push(buildProtocol(resolved.project, opencodePetboxTool));
+      output.system.push(buildProtocol(resolved.project, opencodePetboxTool, { harness: "opencode" }));
       // Append the curated memory canon when available (best-effort; degrades to nothing).
       const canon = await fetchCanonBlock(resolved);
       if (canon) output.system.push(canon);

@@ -1,0 +1,156 @@
+using System.Text.Json;
+using System.Text.RegularExpressions;
+using LinqToDB;
+using PetBox.Core.Contract;
+using PetBox.Core.Data;
+using PetBox.Core.Data.Temporal;
+
+namespace PetBox.Core.Services;
+
+// Project-scoped portable agent-definition store (agent-definition-as-data).
+// Temporal SCD-2 documents in the main Core DB (NOT the Tasks DB — no feature coupling).
+// Selection key note: server stores portable definitions only; owner ($HOME) and
+// active profile / role→model binding are out of scope here.
+public interface IAgentDefinitionService
+{
+	Task<IReadOnlyList<AgentDefinitionListItem>> ListAsync(string projectKey, CancellationToken ct = default);
+	Task<AgentDefinitionView?> GetAsync(string projectKey, string key, CancellationToken ct = default);
+	Task<AgentDefinitionAck> UpsertAsync(string projectKey, string key, AgentDefinitionDoc definition, long version, CancellationToken ct = default);
+	// Accepts raw JSON so the model-field reject runs on the wire shape (not only typed records).
+	Task<AgentDefinitionAck> UpsertJsonAsync(string projectKey, string key, string json, long version, CancellationToken ct = default);
+	Task<AgentDefinitionAck> DeleteAsync(string projectKey, string key, long version, CancellationToken ct = default);
+}
+
+public sealed partial class AgentDefinitionService : IAgentDefinitionService
+{
+	readonly PetBoxDb _db;
+
+	// Same slug shape as boards/nodes/methodology template keys.
+	[GeneratedRegex(@"^[a-z][a-z0-9_-]{0,99}$")]
+	private static partial Regex SlugRegex();
+
+	public AgentDefinitionService(PetBoxDb db) => _db = db;
+
+	public async Task<IReadOnlyList<AgentDefinitionListItem>> ListAsync(string projectKey, CancellationToken ct = default)
+	{
+		var pk = RequireProjectKey(projectKey);
+		var rows = await _db.AgentDefinitions
+			.Where(r => r.ProjectKey == pk && r.ActiveTo == null)
+			.OrderBy(r => r.Key)
+			.ToListAsync(ct);
+		return rows.Select(r =>
+		{
+			var def = Deserialize(pk, r);
+			return new AgentDefinitionListItem(r.Key, def.Name, r.Version, r.Updated);
+		}).ToList();
+	}
+
+	public async Task<AgentDefinitionView?> GetAsync(string projectKey, string key, CancellationToken ct = default)
+	{
+		var pk = RequireProjectKey(projectKey);
+		var k = NormalizeKey(key);
+		var row = await _db.AgentDefinitions
+			.FirstOrDefaultAsync(r => r.ProjectKey == pk && r.Key == k && r.ActiveTo == null, ct);
+		if (row is null) return null;
+		var def = Deserialize(pk, row);
+		return new AgentDefinitionView(k, def, row.Version, row.Created, row.Updated);
+	}
+
+	public Task<AgentDefinitionAck> UpsertAsync(
+		string projectKey, string key, AgentDefinitionDoc definition, long version, CancellationToken ct = default)
+	{
+		AgentDefinitionJson.Validate(definition);
+		return UpsertCoreAsync(projectKey, key, definition, version, ct);
+	}
+
+	public Task<AgentDefinitionAck> UpsertJsonAsync(
+		string projectKey, string key, string json, long version, CancellationToken ct = default)
+	{
+		var def = AgentDefinitionJson.Parse(json);
+		return UpsertCoreAsync(projectKey, key, def, version, ct);
+	}
+
+	async Task<AgentDefinitionAck> UpsertCoreAsync(
+		string projectKey, string key, AgentDefinitionDoc def, long version, CancellationToken ct)
+	{
+		var pk = RequireProjectKey(projectKey);
+		var k = NormalizeKey(key);
+		// Prefer the document's own name when present; fall back to the key slug.
+		if (string.IsNullOrWhiteSpace(def.Name))
+			def = def with { Name = k };
+
+		var row = new AgentDefinitionRow
+		{
+			ProjectKey = pk,
+			Key = k,
+			Version = version,
+			Json = AgentDefinitionJson.Serialize(def),
+		};
+
+		var r = await TemporalStore.UpsertAsync(_db, new[] { row }, partition: x => x.ProjectKey == pk, ct: ct);
+		if (!r.Applied)
+		{
+			var c = r.Conflicts[0];
+			throw new InvalidOperationException(c.Kind switch
+			{
+				TemporalConflictKind.FutureBaseline =>
+					$"agent definition '{k}' conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — re-read with agent_def_get and resubmit against the current version",
+				TemporalConflictKind.Vanished =>
+					$"agent definition '{k}' conflict: your baseline version {version} no longer exists (the definition was removed); re-read with agent_def_get and resubmit with version 0",
+				_ =>
+					$"agent definition '{k}' conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; pass the version from your last agent_def_get (0 = create)",
+			});
+		}
+		return new AgentDefinitionAck(k, r.CurrentVersion, Changed: r.Inserted > 0);
+	}
+
+	public async Task<AgentDefinitionAck> DeleteAsync(
+		string projectKey, string key, long version, CancellationToken ct = default)
+	{
+		var pk = RequireProjectKey(projectKey);
+		var k = NormalizeKey(key);
+
+		var current = await _db.AgentDefinitions
+			.FirstOrDefaultAsync(r => r.ProjectKey == pk && r.Key == k && r.ActiveTo == null, ct);
+		if (current is null)
+			return new AgentDefinitionAck(k, Version: 0, Changed: false); // idempotent
+
+		var r = await TemporalStore.UpsertAsync(_db, Array.Empty<AgentDefinitionRow>(),
+			[(k, version)], partition: x => x.ProjectKey == pk, ct: ct);
+		if (!r.Applied)
+		{
+			var c = r.Conflicts[0];
+			throw new InvalidOperationException(c.Kind switch
+			{
+				TemporalConflictKind.FutureBaseline =>
+					$"agent definition '{k}' conflict: your baseline version {version} is ahead of this project's cursor {c.ActiveVersion} — re-read with agent_def_get and retry the delete against the current version",
+				_ =>
+					$"agent definition '{k}' conflict: your baseline version {version} is stale — the current version is {c.ActiveVersion}; re-read with agent_def_get and retry the delete against the current version",
+			});
+		}
+		return new AgentDefinitionAck(k, r.CurrentVersion, Changed: r.Closed > 0);
+	}
+
+	static AgentDefinitionDoc Deserialize(string projectKey, AgentDefinitionRow row) =>
+		JsonSerializer.Deserialize<AgentDefinitionDoc>(row.Json, AgentDefinitionJson.Options)
+		?? throw new InvalidOperationException($"project '{projectKey}': stored agent definition '{row.Key}' failed to deserialize");
+
+	static string RequireProjectKey(string? projectKey)
+	{
+		var pk = projectKey?.Trim();
+		if (string.IsNullOrEmpty(pk))
+			throw new ArgumentException("projectKey is required", nameof(projectKey));
+		return pk;
+	}
+
+	static string NormalizeKey(string? key)
+	{
+		var k = key?.Trim().ToLowerInvariant();
+		if (string.IsNullOrEmpty(k))
+			throw new ArgumentException("an agent definition key (slug) is required", nameof(key));
+		if (!SlugRegex().IsMatch(k))
+			throw new ArgumentException(
+				$"'{key}' is not a valid agent definition key; must match ^[a-z][a-z0-9_-]{{0,99}}$", nameof(key));
+		return k;
+	}
+}

@@ -9,7 +9,7 @@ namespace PetBox.Core.Data;
 // Scope boundary (deliberate — see card ui-workspace-delete-cascade):
 //   CASCADED (rows removed here): ApiKeys, HealthEndpoints, DataDbs, DataTables,
 //     SavedQueries, ShareLinks, Logs (LogMeta), TaskBoards (meta), MemoryStores (meta),
-//     Relations, project-scoped Settings, and the Project row itself.
+//     Relations, AgentDefinitions, project-scoped Settings, and the Project row itself.
 //   NOT cascaded here (per-project *files* on disk): every module reclaims its own files
 //     eventually-consistently via a background orphan-cleanup service once the owning rows/
 //     project are gone — DataDb (PetBox.Data.OrphanCleanupService), Log
@@ -44,6 +44,7 @@ public static class ProjectDeletion
 		await db.TaskBoards.Where(b => b.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.MemoryStores.Where(m => m.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.Relations.Where(r => r.ProjectKey == projectKey).DeleteAsync(ct);
+		await db.AgentDefinitions.Where(a => a.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.Settings
 			.Where(s => s.Scope == nameof(Scope.Project) && s.ScopeKey == projectKey)
 			.DeleteAsync(ct);
