@@ -57,17 +57,25 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { DEFAULT_AGENT_DEFINITION, validateAgentDefinition } from "./agent-definition.ts";
+import {
+  formatApplyBlocked,
+  planOpencodeApply,
+} from "./apply-artifacts.ts";
+import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
-import { PROMPT_RAG_DEFAULTS, type PromptRagConfig } from "./registry.ts";
+import { PROMPT_RAG_DEFAULTS, readRegistry, type PromptRagConfig } from "./registry.ts";
 import {
   exportRolesBootstrap,
   formatResolvedBinding,
   isEmptyRoles,
   loadRoles,
+  resolveAgentRoles,
   saveRoles,
   useProfile,
 } from "./roles.ts";
 import { buildTelemetryOtlpEnv } from "./telemetry-settings.ts";
+import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 
 const DEFAULT_BASE_URL = "https://petbox.3po.su";
 // Where THIS run's kit lives (npx cache or a checkout's src dir).
@@ -105,6 +113,8 @@ function usage(exitCode: number = 2): never {
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
     "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag | --no-prompt-rag]\n" +
     "       npx petbox-wire update\n" +
+    "       npx petbox-wire apply\n" +
+    "       npx petbox-wire doctor\n" +
     "       npx petbox-wire roles\n" +
     "       npx petbox-wire roles export\n" +
     "       npx petbox-wire profile use <name>\n" +
@@ -115,12 +125,20 @@ function usage(exitCode: number = 2): never {
     "\n" +
     "update       Refresh ~/.petbox/wire only (protocol/scripts/templates) from this package. Does not\n" +
     "             touch keys, registry, sticky prompt-rag/telemetry, or per-project MCP/skills.\n" +
+    "             Kit-copy only — does NOT compile per-harness agent artifacts (use apply).\n" +
+    "apply        Compile per-harness startup artifacts from the built-in agent definition + local\n" +
+    "             role→model binding (~/.petbox/roles.json). Offline. First slice: writes\n" +
+    "             .opencode/agent/<role>.md under cwd (or registry project root). model: frontmatter\n" +
+    "             only when bound — never invents a model id. Truthfulness failures exit 1 (loud).\n" +
+    "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
+    "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
+    "             violation; exit 1 on any violation. Offline.\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
     "             new machine). Offline.\n" +
     "profile use  Set activeProfile in ~/.petbox/roles.json (creates an empty profile shell if missing).\n" +
-    "             Offline. Artifact rebuild is not done here — run apply when available.";
+    "             Offline. Re-run apply to rebuild artifacts after changing the active profile.";
   (exitCode === 0 ? console.log : console.error)(text);
   process.exit(exitCode);
 }
@@ -173,6 +191,14 @@ function isUpdateCommand(argv: string[]): boolean {
   return argv[0] === "update";
 }
 
+function isDoctorCommand(argv: string[]): boolean {
+  return argv[0] === "doctor";
+}
+
+function isApplyCommand(argv: string[]): boolean {
+  return argv[0] === "apply";
+}
+
 // Local role/profile subcommands (offline; no project/key).
 function isRolesCommand(argv: string[]): boolean {
   return argv[0] === "roles";
@@ -180,6 +206,105 @@ function isRolesCommand(argv: string[]): boolean {
 
 function isProfileCommand(argv: string[]): boolean {
   return argv[0] === "profile";
+}
+
+// Longest registry prefix that covers cwd (no API key required). Falls back to cwd.
+function resolveApplyRoot(cwd: string): { root: string; via: "registry" | "cwd" } {
+  try {
+    const entries = readRegistry();
+    const nd = cwd.replace(/[\\/]+/g, "/").replace(/\/+$/, "");
+    const ndCmp = process.platform === "win32" ? nd.toLowerCase() : nd;
+    let best: string | null = null;
+    let bestLen = -1;
+    for (const e of entries) {
+      let np = String(e.prefix).replace(/[\\/]+/g, "/").replace(/\/+$/, "");
+      const npCmp = process.platform === "win32" ? np.toLowerCase() : np;
+      const under = ndCmp === npCmp || ndCmp.startsWith(npCmp + "/");
+      if (under && npCmp.length > bestLen) {
+        best = e.prefix;
+        bestLen = npCmp.length;
+      }
+    }
+    if (best) return { root: best, via: "registry" };
+  } catch {
+    /* fall through */
+  }
+  return { root: cwd, via: "cwd" };
+}
+
+// doctor — truthfulness gate for each known harness vs default definition. Exit 1 on violation.
+function runDoctor(argv: string[]): void {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--help" || a === "-h") usage(0);
+    console.error(`doctor: unexpected argument: ${a}`);
+    usage();
+  }
+
+  validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
+  const roles = loadRoles();
+  const bindingNote = isEmptyRoles(roles)
+    ? "local binding: (empty — not required for doctor)"
+    : `local binding: activeProfile=${roles.activeProfile} (observational; gate uses definition only)`;
+
+  log(`doctor: definition="${DEFAULT_AGENT_DEFINITION.name}" (${DEFAULT_AGENT_DEFINITION.roles.length} roles)`);
+  log(`doctor: ${bindingNote}`);
+
+  let failed = false;
+  for (const harness of HARNESS_IDS) {
+    const violations = checkTruthfulness(DEFAULT_AGENT_DEFINITION, harness);
+    if (violations.length === 0) {
+      log(`doctor: ${harness} — OK`);
+    } else {
+      failed = true;
+      console.error(`doctor: ${harness} — ${violations.length} violation(s):`);
+      console.error(formatViolations(violations));
+    }
+  }
+
+  if (failed) {
+    console.error("doctor: FAILED — definition requires capability/ies a harness does not declare.");
+    process.exit(1);
+  }
+  log("doctor: all known harnesses OK.");
+}
+
+// apply — compile per-harness artifacts (distinct from update kit-copy).
+// First slice: opencode .opencode/agent/<role>.md under project root.
+function runApply(argv: string[]): void {
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--help" || a === "-h") usage(0);
+    console.error(`apply: unexpected argument: ${a}`);
+    usage();
+  }
+
+  validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
+  const { root, via } = resolveApplyRoot(process.cwd());
+  const rolesData = loadRoles();
+  const roleModels = resolveAgentRoles(rolesData, "opencode");
+
+  const plan = planOpencodeApply(DEFAULT_AGENT_DEFINITION, roleModels);
+  if (plan.violations.length > 0) {
+    console.error(formatApplyBlocked(plan.violations, plan.harness));
+    process.exit(1);
+  }
+
+  log(`apply: root=${root} (via ${via})`);
+  log(
+    `apply: definition="${DEFAULT_AGENT_DEFINITION.name}", harness=opencode, ` +
+      `boundRoles=${Object.keys(roleModels).length}`,
+  );
+
+  let written = 0;
+  for (const file of plan.files) {
+    const abs = join(root, file.relativePath);
+    mkdirSync(dirname(abs), { recursive: true });
+    writeFileSync(abs, file.content, "utf8");
+    log(`apply: wrote ${abs}`);
+    written++;
+  }
+  log(`apply: done — ${written} opencode agent file(s). (CC/droid generators: later slice.)`);
 }
 
 // Print active profile + agent/role/model tree from ~/.petbox/roles.json. Exit 0 when empty.
@@ -241,7 +366,7 @@ function runProfile(argv: string[]): void {
     `profile: activeProfile = "${next.activeProfile}"` +
       (created ? " (created empty profile shell)" : "") +
       `\n  wrote ${join(homedir(), ".petbox", "roles.json")}` +
-      `\n  run apply when available (artifact rebuild is not done by profile use).`,
+      `\n  re-run apply to rebuild artifacts (profile use does not compile).`,
   );
 }
 
@@ -990,6 +1115,14 @@ async function main(): Promise<void> {
   // <dir> <projectKey> positionals for the full wire path.
   if (isUpdateCommand(argv)) {
     runUpdate(argv);
+    return;
+  }
+  if (isDoctorCommand(argv)) {
+    runDoctor(argv);
+    return;
+  }
+  if (isApplyCommand(argv)) {
+    runApply(argv);
     return;
   }
   if (isRolesCommand(argv)) {
