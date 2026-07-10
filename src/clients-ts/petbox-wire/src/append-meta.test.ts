@@ -58,3 +58,36 @@ test("buildSessionMetaHeader wraps resolveObservedBinding as roleBinding", () =>
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("buildSessionMetaHeader: droid push finds factory-droid roles bucket", () => {
+  const home = freshHome();
+  try {
+    writeFileSync(
+      join(home, ".petbox", "roles.json"),
+      JSON.stringify({
+        activeProfile: "default",
+        profiles: {
+          default: {
+            agents: {
+              "factory-droid": {
+                roles: { orchestrator: { model: "deepseek-v4-pro" } },
+              },
+            },
+          },
+        },
+      }),
+    );
+    // droid-push-session.ts uses agent: "droid"
+    const raw = buildSessionMetaHeader("droid", home);
+    assert.ok(raw);
+    assert.deepEqual(JSON.parse(raw!), {
+      roleBinding: {
+        profile: "default",
+        agent: "droid",
+        roles: { orchestrator: "deepseek-v4-pro" },
+      },
+    });
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});

@@ -148,8 +148,52 @@ test("resolveAgentRoles / resolveObservedBinding do not invent defaults", () => 
       agent: "claude-code",
       roles: { orchestrator: "claude-opus-4", worker: "claude-sonnet-4" },
     });
-    // unknown agent → null observation
-    assert.equal(resolveObservedBinding("factory-droid", home), null);
+    // truly unknown agent → null observation
+    assert.equal(resolveObservedBinding("not-a-harness", home), null);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("factory-droid alias resolves to canonical droid (session agent id)", () => {
+  const home = freshHome();
+  try {
+    saveRoles(
+      {
+        activeProfile: "default",
+        profiles: {
+          default: {
+            agents: {
+              // legacy / display name in roles.json
+              "factory-droid": {
+                roles: {
+                  orchestrator: { model: "deepseek-v4-pro" },
+                  worker: { model: "deepseek-v4-pro" },
+                },
+              },
+            },
+          },
+        },
+      },
+      home,
+    );
+    // push-session / droid-push stamps agent:"droid" — must find factory-droid bucket
+    assert.deepEqual(resolveAgentRoles(loadRoles(home), "droid"), {
+      orchestrator: "deepseek-v4-pro",
+      worker: "deepseek-v4-pro",
+    });
+    assert.deepEqual(resolveAgentRoles(loadRoles(home), "factory-droid"), {
+      orchestrator: "deepseek-v4-pro",
+      worker: "deepseek-v4-pro",
+    });
+    const obs = resolveObservedBinding("droid", home);
+    assert.deepEqual(obs, {
+      profile: "default",
+      agent: "droid", // stamp always uses canonical id
+      roles: { orchestrator: "deepseek-v4-pro", worker: "deepseek-v4-pro" },
+    });
+    // looking up via alias still stamps canonical agent id
+    assert.equal(resolveObservedBinding("factory-droid", home)?.agent, "droid");
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

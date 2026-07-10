@@ -38,6 +38,38 @@ export type ObservedBinding = {
 
 const EMPTY: RolesFile = { activeProfile: "default", profiles: {} };
 
+/**
+ * Canonical agent ids used by session push / harness matrix (`droid-push-session` stamps
+ * agent:"droid", prompt-rag uses --agent droid, HARNESS_IDS uses droid).
+ * Aliases accepted in roles.json for the same bucket — lookup is alias-aware so a file
+ * written as `factory-droid` still resolves when push asks for `droid`.
+ */
+export const CANONICAL_AGENT_IDS = ["claude-code", "opencode", "droid"] as const;
+
+const AGENT_ALIASES: Readonly<Record<string, string>> = {
+  "factory-droid": "droid",
+  factory: "droid",
+  cc: "claude-code",
+  claude: "claude-code",
+};
+
+/** Map any alias / known id to the canonical agent id; unknown strings pass through. */
+export function canonicalAgentId(agent: string): string {
+  const a = agent.trim();
+  if (!a) return a;
+  return AGENT_ALIASES[a] ?? a;
+}
+
+/** Keys to try when reading agents{} from roles.json for a requested agent id. */
+function agentLookupKeys(agent: string): readonly string[] {
+  const canon = canonicalAgentId(agent);
+  const keys = new Set<string>([agent, canon]);
+  for (const [alias, c] of Object.entries(AGENT_ALIASES)) {
+    if (c === canon) keys.add(alias);
+  }
+  return [...keys];
+}
+
 export function rolesPath(homeDir: string = homedir()): string {
   return join(homeDir, ".petbox", "roles.json");
 }
@@ -143,23 +175,28 @@ export function useProfile(data: RolesFile, name: string): RolesFile {
   return { activeProfile: n, profiles };
 }
 
-/** Role→model map for one agent under the active profile (missing → {}). */
+/** Role→model map for one agent under the active profile (missing → {}). Alias-aware. */
 export function resolveAgentRoles(
   data: RolesFile,
   agent: string,
 ): Readonly<Record<string, string>> {
   const profile = data.profiles[data.activeProfile];
   if (!profile) return {};
-  const ar = profile.agents[agent];
-  if (!ar) return {};
-  const out: Record<string, string> = {};
-  for (const [role, b] of Object.entries(ar.roles)) out[role] = b.model;
-  return out;
+  // Prefer exact key, then aliases / canonical (first non-empty wins).
+  for (const key of agentLookupKeys(agent)) {
+    const ar = profile.agents[key];
+    if (!ar) continue;
+    const out: Record<string, string> = {};
+    for (const [role, b] of Object.entries(ar.roles)) out[role] = b.model;
+    if (Object.keys(out).length > 0) return out;
+  }
+  return {};
 }
 
 /**
  * Pure client helper: observed binding stamp for session metadata.
  * Returns null when the active profile has no roles for this agent (do not invent defaults).
+ * `agent` on the stamp is always the **canonical** id (e.g. droid, not factory-droid).
  */
 export function resolveObservedBinding(
   agent: string,
@@ -170,7 +207,7 @@ export function resolveObservedBinding(
   if (Object.keys(roles).length === 0) return null;
   return {
     profile: data.activeProfile,
-    agent,
+    agent: canonicalAgentId(agent),
     roles,
   };
 }
