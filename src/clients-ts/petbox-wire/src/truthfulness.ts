@@ -31,21 +31,33 @@ export function effectiveRequiredCapabilities(role: AgentRole): readonly string[
 }
 
 /**
- * Pure gate: definition + harness → violations (or empty).
+ * Pure gate for one role + harness → violations (or empty).
  * Unknown harness ids declare zero capabilities → every required cap is a violation.
+ */
+export function checkRoleTruthfulness(
+  role: AgentRole,
+  harness: string,
+): readonly TruthfulnessViolation[] {
+  const caps = harnessCapabilities(harness);
+  const out: TruthfulnessViolation[] = [];
+  for (const capability of effectiveRequiredCapabilities(role)) {
+    if (!caps.has(capability)) {
+      out.push({ role: role.slug, capability, harness });
+    }
+  }
+  return out;
+}
+
+/**
+ * Pure gate: definition + harness → all role violations (or empty).
  */
 export function checkTruthfulness(
   definition: AgentDefinition,
   harness: string,
 ): readonly TruthfulnessViolation[] {
-  const caps = harnessCapabilities(harness);
   const out: TruthfulnessViolation[] = [];
   for (const role of definition.roles) {
-    for (const capability of effectiveRequiredCapabilities(role)) {
-      if (!caps.has(capability)) {
-        out.push({ role: role.slug, capability, harness });
-      }
-    }
+    out.push(...checkRoleTruthfulness(role, harness));
   }
   return out;
 }

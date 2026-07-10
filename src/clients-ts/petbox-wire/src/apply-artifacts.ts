@@ -1,20 +1,29 @@
 // Pure compile helpers for petbox-wire apply (per-harness-artifact).
 //
-// planApply produces agent role files for any known harness. Violations for that
-// harness → empty files + violations (never silent drop of required lines).
-// model: frontmatter only when a local binding supplies it (never invent).
+// planApply produces agent role files for any known harness.
+// Per-role truthfulness: clean roles are emitted; dirty roles are skipped and
+// reported in violations/skippedRoles (never silently drop a required line from
+// a role that is emitted — the whole dirty role is blocked).
 //
-// Paths:
+// Paths (documented harness layouts):
 //   opencode     → .opencode/agent/<role>.md
-//   claude-code  → .claude/agents/<role>.md  (plural agents)
-//   droid        → .factory/agents/<role>.md
+//   claude-code  → .claude/agents/<role>.md
+//   droid        → .factory/droids/<name>.md  (Factory custom droids; project level)
+//     https://docs.factory.ai/cli/configuration/custom-droids
+//
+// model: from local roles.json binding when present; droid unbound → model: inherit
+// (Factory default). Never invent a concrete model id.
 //
 // Plain TS for native node type-stripping: zero deps.
 
 import { join } from "node:path";
 import type { AgentDefinition, AgentRole } from "./agent-definition.ts";
 import { isKnownHarness, type HarnessId } from "./harness-capabilities.ts";
-import { checkTruthfulness, formatViolations, type TruthfulnessViolation } from "./truthfulness.ts";
+import {
+  checkRoleTruthfulness,
+  formatViolations,
+  type TruthfulnessViolation,
+} from "./truthfulness.ts";
 
 export type PlannedFile = {
   readonly relativePath: string;
@@ -24,7 +33,10 @@ export type PlannedFile = {
 export type ApplyPlan = {
   readonly harness: string;
   readonly files: readonly PlannedFile[];
+  /** Truthfulness violations for roles that were NOT written. */
   readonly violations: readonly TruthfulnessViolation[];
+  /** Role slugs skipped because of violations. */
+  readonly skippedRoles: readonly string[];
 };
 
 /** Relative dir (posix) for agent role files per harness. */
@@ -35,7 +47,9 @@ export function agentFilesDir(harness: HarnessId): string {
     case "claude-code":
       return ".claude/agents";
     case "droid":
-      return ".factory/agents";
+      // Factory custom droids — project level only (org-locked settings are out of scope).
+      // https://docs.factory.ai/cli/configuration/custom-droids
+      return ".factory/droids";
   }
 }
 
@@ -83,7 +97,6 @@ export function buildRoleBody(role: AgentRole): string {
   }
   lines.push("");
 
-  // Explicit anti-lie for explore: never claim inheritance is globally forbidden.
   if (role.slug === "explore") {
     lines.push("## Model inheritance");
     lines.push(
@@ -97,7 +110,7 @@ export function buildRoleBody(role: AgentRole): string {
 }
 
 /**
- * Render one agent markdown file (YAML frontmatter + body).
+ * Claude Code / opencode agent markdown (YAML frontmatter + body).
  * model only when bound — never invent a model id.
  */
 export function renderAgentMarkdown(role: AgentRole, model?: string): string {
@@ -105,7 +118,6 @@ export function renderAgentMarkdown(role: AgentRole, model?: string): string {
   if (model && model.trim()) {
     frontLines.push(`model: ${model.trim()}`);
   }
-  // description helps harness agent pickers; keep short and derived from tier/notes.
   frontLines.push(`description: PetBox ${role.tier} role (${role.slug})`);
 
   const body = buildRoleBody(role);
@@ -115,15 +127,73 @@ export function renderAgentMarkdown(role: AgentRole, model?: string): string {
   return `---\n${frontLines.join("\n")}\n---\n\n${body.endsWith("\n") ? body : body + "\n"}`;
 }
 
+/**
+ * Factory custom droid markdown.
+ * Docs: https://docs.factory.ai/cli/configuration/custom-droids
+ * Frontmatter: name (required), description, model (inherit | explicit), optional
+ * reasoningEffort / tools / mcpServers. Body = system prompt.
+ * model: bound value from roles.json, else `inherit` (Factory default — not an invented id).
+ * mcpServers: petbox when the role requires MCP (main or subagent surface).
+ */
+export function renderDroidMarkdown(
+  role: AgentRole,
+  model?: string,
+  opts?: { mcpServerName?: string },
+): string {
+  // name: lowercase/digits/-/_ only (Factory DroidValidator).
+  const name = role.slug
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (!name) {
+    throw new Error(`role '${role.slug}': cannot form a valid droid name`);
+  }
+
+  const description = (role.notes?.trim() || `PetBox ${role.tier} role (${role.slug})`).slice(
+    0,
+    500,
+  );
+  const modelLine =
+    model && model.trim() ? model.trim() : "inherit"; // Factory default when unbound
+
+  const front: string[] = [
+    `name: ${name}`,
+    `description: ${JSON.stringify(description)}`,
+    `model: ${modelLine}`,
+  ];
+
+  // Scope petbox MCP to roles that need it (mcpServers = configured server names).
+  const needsMcp =
+    role.requiredCapabilities.includes("mcp_main_session") ||
+    role.requiredCapabilities.includes("mcp_subagent") ||
+    role.spawn?.allowed === true;
+  if (needsMcp) {
+    const server = opts?.mcpServerName ?? "petbox";
+    front.push(`mcpServers: ["${server}"]`);
+  }
+
+  const body = buildRoleBody(role);
+  return `---\n${front.join("\n")}\n---\n\n${body.endsWith("\n") ? body : body + "\n"}`;
+}
+
 /** @deprecated alias — prefer renderAgentMarkdown */
 export function renderOpencodeAgentMarkdown(role: AgentRole, model?: string): string {
   return renderAgentMarkdown(role, model);
 }
 
+function renderForHarness(
+  harness: HarnessId,
+  role: AgentRole,
+  model: string | undefined,
+): string {
+  if (harness === "droid") return renderDroidMarkdown(role, model);
+  return renderAgentMarkdown(role, model);
+}
+
 /**
  * Plan artifact writes for a definition + harness + optional role→model map.
- * Does not touch the filesystem. Violations are returned (never dropped);
- * callers must refuse to write when violations.length > 0.
+ * Emits clean roles; skips dirty roles with violations reported (not silent).
+ * Does not touch the filesystem.
  */
 export function planApply(
   definition: AgentDefinition,
@@ -141,24 +211,31 @@ export function planApply(
           harness,
         })),
       ),
+      skippedRoles: definition.roles.map((r) => r.slug),
     };
-  }
-
-  const violations = checkTruthfulness(definition, harness);
-  if (violations.length > 0) {
-    return { harness, files: [], violations };
   }
 
   const dir = agentFilesDir(harness);
-  const files: PlannedFile[] = definition.roles.map((role) => {
-    const model = roleModels[role.slug];
-    return {
-      relativePath: join(dir, `${role.slug}.md`).replace(/\\/g, "/"),
-      content: renderAgentMarkdown(role, model),
-    };
-  });
+  const files: PlannedFile[] = [];
+  const violations: TruthfulnessViolation[] = [];
+  const skippedRoles: string[] = [];
 
-  return { harness, files, violations: [] };
+  for (const role of definition.roles) {
+    const roleViolations = checkRoleTruthfulness(role, harness);
+    if (roleViolations.length > 0) {
+      violations.push(...roleViolations);
+      skippedRoles.push(role.slug);
+      continue;
+    }
+    const model = roleModels[role.slug];
+    const fileName = harness === "droid" ? `${role.slug.toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}.md` : `${role.slug}.md`;
+    files.push({
+      relativePath: join(dir, fileName).replace(/\\/g, "/"),
+      content: renderForHarness(harness, role, model),
+    });
+  }
+
+  return { harness, files, violations, skippedRoles };
 }
 
 /** Thin wrapper: planApply(..., "opencode"). */
@@ -169,13 +246,19 @@ export function planOpencodeApply(
   return planApply(definition, "opencode", roleModels);
 }
 
-/** Loud multi-line error for CLI when apply is blocked by the gate. */
+/** Loud multi-line error for CLI when roles are blocked by the gate. */
 export function formatApplyBlocked(
   violations: readonly TruthfulnessViolation[],
   harness: string,
+  skippedRoles?: readonly string[],
 ): string {
+  const skip =
+    skippedRoles && skippedRoles.length > 0
+      ? `\n  skipped roles: ${skippedRoles.join(", ")}`
+      : "";
   return (
-    `apply: truthfulness gate failed for harness '${harness}' — refusing to write artifacts:\n` +
-    formatViolations(violations)
+    `apply: truthfulness gate blocked role(s) on harness '${harness}':\n` +
+    formatViolations(violations) +
+    skip
   );
 }
