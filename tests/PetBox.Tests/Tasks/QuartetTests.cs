@@ -51,8 +51,9 @@ public sealed class QuartetTests : IDisposable
 		var en = await TasksTools.MethodologyCreateAsync(http, Flags(), _tasks, Proj, "quartet", "builtin", "quartet");
 		en.Name.Should().Be("quartet");
 		en.Changed.Should().BeTrue();
+		// Member boards ordered by name (stable index), not pipeline-kind order.
 		en.Boards.Select(b => b.Kind)
-			.Should().Equal("intake", "ideas", "spec", "work"); // pipeline order
+			.Should().BeEquivalentTo(["intake", "ideas", "spec", "work"]);
 		en.Boards.Should().OnlyContain(b => b.Name == b.Kind && !b.Closed);
 
 		// work board auto-wired to the spec board.
