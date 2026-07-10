@@ -28,6 +28,7 @@ public sealed class PetBoxDb : DataConnection
 	public ITable<TaskBoardMeta> TaskBoards => this.GetTable<TaskBoardMeta>();
 	public ITable<MemoryStoreMeta> MemoryStores => this.GetTable<MemoryStoreMeta>();
 	public ITable<Relation> Relations => this.GetTable<Relation>();
+	public ITable<AgentDefinitionRow> AgentDefinitions => this.GetTable<AgentDefinitionRow>();
 
 	public static DataOptions<PetBoxDb> CreateOptions(string connectionString) =>
 		new(new DataOptions().UseSQLite(connectionString).UseMappingSchema(SharedMappingSchema));

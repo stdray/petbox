@@ -33,6 +33,9 @@ public static class ApiKeyScopes
 	public const string DeployWrite = "deploy:write";
 	public const string AgentPoll = "agent:poll";
 	public const string AgentHeartbeat = "agent:heartbeat";
+	// Portable agent-definition store (NOT the deploy node-agent poll/heartbeat pair).
+	public const string AgentsRead = "agents:read";
+	public const string AgentsWrite = "agents:write";
 	public const string AdminProvision = "admin:provision";
 
 	public static readonly IReadOnlyList<ApiKeyScope> All =
@@ -58,6 +61,8 @@ public static class ApiKeyScopes
 		new(DeployWrite, "Manage deploy fleet",    "NEAR-ROOT, FLEET-WIDE: no project/workspace scoping exists on the deploy control-plane — register nodes, mint node keys, create/move/start/stop deployments for ANY project via the deploy UI.", "Deploy"),
 		new(AgentPoll,   "Agent: poll desired state", "GET /agent/poll — a node-agent reads its assigned deployments. Issue only on node-scoped keys.", "Deploy"),
 		new(AgentHeartbeat, "Agent: report state", "POST /agent/heartbeat — a node-agent reports actual container state. Issue only on node-scoped keys.", "Deploy"),
+		new(AgentsRead,  "Read agent definitions", "List/get portable agent-definition documents (roles/tier/capabilities/spawn/escalation) via /api/{p}/agent-defs and the MCP agent_def_* tools.", "Agents"),
+		new(AgentsWrite, "Write agent definitions","Create/update/delete portable agent-definition documents via /api/{p}/agent-defs and the MCP agent_def_* tools.", "Agents"),
 		new(AdminProvision, "Provision projects & keys", "ROOT-EQUIVALENT: mints API keys with ANY scopes for ANY project (including admin:provision itself), creates projects (project.*), sets config bindings (config.*). Issue deliberately; prefer short-lived keys for routine work.", "Admin"),
 	];
 

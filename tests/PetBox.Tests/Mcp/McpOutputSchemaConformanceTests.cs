@@ -46,7 +46,7 @@ public sealed class McpOutputSchemaConformanceFixture : IAsyncLifetime
 	const string Scopes =
 		"config:read,config:write,logs:ingest,logs:query,logs:admin,health:read,health:write," +
 		"data:read,data:write,data:schema,tasks:read,tasks:write,memory:read,memory:write," +
-		"llm:invoke,llm:admin,deploy:read,deploy:write,agent:poll,agent:heartbeat,admin:provision";
+		"llm:invoke,llm:admin,deploy:read,deploy:write,agent:poll,agent:heartbeat,agents:read,agents:write,admin:provision";
 
 	readonly string _baseDir;
 	readonly WebApplicationFactory<Program> _factory;
