@@ -32,12 +32,14 @@ public sealed class TaskUpsertAssociations
 		string projectKey, string board, MethodologyRuntime runtime, string? kindSlug,
 		IReadOnlyList<NodePatch> patches, PlanNode[] desired, CancellationToken ct)
 	{
-		// ONE RULE for every kind (primitives-tag-axes): the kind's TAG AXES drive
-		// enforcement — none = free-form tags (any namespace + bare words), declared =
-		// enforced with the axes as the namespace allowlist (bare tags rejected). The
-		// quartet presets carry the builtin area/concern axes, `simple` carries none, and a
+		// ONE RULE for every kind (primitives-tag-axes + methodology-instance-scoped-axes):
+		// the kind's TAG AXES on this board's runtime drive enforcement — none = free-form
+		// tags (any namespace + bare words), declared = enforced with the axes as the
+		// namespace allowlist (bare tags rejected). The runtime is instance-scoped when the
+		// board has MethodologyInstance membership (else the project-singleton def).
+		// Quartet presets carry the builtin area/concern axes, `simple` carries none, and a
 		// definition-resolved kind follows the definition's axes — so "methodology boards
-		// enforce, simple doesn't" now flows from axes-emptiness, not a hardcoded pair.
+		// enforce, simple doesn't" flows from axes-emptiness, not a hardcoded pair.
 		var axes = runtime.TagAxes(kindSlug);
 		var enforceNs = axes.Count > 0;
 		var namespaces = enforceNs ? axes.Select(a => a.Namespace).ToList() : null;

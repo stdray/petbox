@@ -12,10 +12,13 @@ public sealed record MethodologyDefinition(
 	string Name,
 	IReadOnlyList<MethodologyKindDef> Kinds)
 {
-	// Definition-level (project-wide) primitives — additive: a stored wave-1 document
-	// (no fields in its JSON) deserializes to the empty defaults.
+	// Definition-level primitives — additive: a stored wave-1 document (no fields in its
+	// JSON) deserializes to the empty defaults. Live authority is the methodology
+	// INSTANCE that carries this document (board → MethodologyInstance membership);
+	// the project-singleton MethodologyDefRow remains a transitional dual-read for
+	// boards without membership (spec methodology-instance-scoped-axes).
 	//
-	// Additional relation kinds the project declares, usable in relations_create alongside
+	// Additional relation kinds declared here, usable in relations_create alongside
 	// the builtin process + neutral kinds (spec primitives-link-kinds).
 	public IReadOnlyList<MethodologyLinkKindDef> LinkKinds { get; init; } = [];
 	// Declared tag namespaces (spec primitives-tag-axes). Empty = free-form tags on

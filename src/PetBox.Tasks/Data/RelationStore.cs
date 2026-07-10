@@ -27,11 +27,11 @@ public interface IRelationStore
 public sealed class RelationStore : IRelationStore
 {
 	// The kind VOCABULARY is validated in the service layer (ITasksService.
-	// ValidateRelationKindAsync), because it is project-aware since primitives-link-kinds:
+	// ValidateRelationKindAsync), instance-scoped since methodology-instance-scoped-axes:
 	// builtin process kinds (task_spec: task→spec. issue_task: intake issue→task.
 	// idea_spec: idea→spec. blocks: blocker→blocked. part_of: child→parent. supersedes:
 	// new→obsoleted) + builtin neutral kinds (relates_to/depends_on/mirrors) + the
-	// project's definition-declared kinds — see MethodologyRuntime.KnownRelationKinds().
+	// FROM node's instance-declared kinds — see MethodologyRuntime.KnownRelationKinds().
 	// The store only normalizes and checks structure; internal service callers pass
 	// literal builtin kinds.
 

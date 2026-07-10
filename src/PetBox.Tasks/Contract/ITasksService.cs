@@ -180,14 +180,16 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// leaves the mention literal). One batched read of the project's node history — no per-slug
 	// loop. The key of each returned entry is the REQUESTED slug (as mentioned).
 	Task<IReadOnlyDictionary<string, NodeRefResolution>> ResolveSlugsAsync(string projectKey, IReadOnlyCollection<string> slugs, CancellationToken ct = default);
-	// Validate a relation kind against the PROJECT's vocabulary — builtin process kinds
+	// Validate a relation kind against the INSTANCE vocabulary of the from-node's board
+	// (methodology-instance-scoped-axes): builtin process kinds
 	// (task_spec|issue_task|idea_spec|blocks|part_of|supersedes), builtin neutral kinds
 	// (relates_to|depends_on|mirrors — free semantic edges, no FSM effects), and the kinds
-	// the project's methodology definition declares (linkKinds). Returns the normalized
-	// (lowercased) kind; an unknown kind throws, listing every valid kind for the project.
-	// RelationTools calls this before touching the store (the store itself is not
-	// project-definition-aware).
-	Task<string> ValidateRelationKindAsync(string projectKey, string kind, CancellationToken ct = default);
+	// the board's methodology instance declares (linkKinds). When `fromNodeId` is omitted
+	// or the node/board has no instance membership, falls back to the project's legacy
+	// singleton definition (transitional dual-read). Returns the normalized (lowercased)
+	// kind; an unknown kind throws, listing every valid kind for that scope. RelationTools
+	// calls this after resolving the from-node (the store itself is not definition-aware).
+	Task<string> ValidateRelationKindAsync(string projectKey, string kind, string? fromNodeId = null, CancellationToken ct = default);
 	// Project a board by an ORDERED list of tag namespaces (e.g. [area, concern]): nodes
 	// bucketed by their tag value in each namespace ("(none)" for untagged), nested in
 	// dimension order, each group with a delivery roll-up. The projection is a view — it

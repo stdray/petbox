@@ -265,6 +265,150 @@ public sealed class MethodologyInstanceTests : IDisposable
 		again.Boards.Should().OnlyContain(b => !b.Created);
 	}
 
+	// methodology-instance-scoped-axes: tagAxes + declared linkKinds live on the instance
+	// rules document (via board membership), not as project-global authority. Two instances
+	// with different dictionaries must not leak into each other.
+	[Fact]
+	public async Task AxesAndLinkKinds_Isolated_BetweenTwoInstances()
+	{
+		static MethodologyDefinition Def(string name, string axis, string linkKind) => new(name,
+		[
+			new MethodologyKindDef("simple", QuickAddAllowed: true,
+			[
+				new MethodologyWorkflowDef(
+					["task"],
+					[
+						new WorkflowStatus("Todo", "Todo", StatusKind.Open),
+						new WorkflowStatus("Done", "Done", StatusKind.TerminalOk),
+					],
+					[new MethodologyTransitionDef("Todo", "Done")]),
+			]),
+		])
+		{
+			TagAxes = [new MethodologyTagAxisDef(axis)],
+			LinkKinds = [new MethodologyLinkKindDef(linkKind, $"{linkKind} edge")],
+		};
+
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "tmpl-a", Def("proc-a", "severity", "escalates"), 0);
+		await _tasks.UpsertMethodologyTemplateAsync(Proj, "tmpl-b", Def("proc-b", "channel", "handoff"), 0);
+		var instA = await _tasks.CreateMethodologyInstanceAsync(Proj, "alpha", "template", "tmpl-a");
+		var instB = await _tasks.CreateMethodologyInstanceAsync(Proj, "beta", "template", "tmpl-b");
+		var boardA = instA.Boards.Single().Name;
+		var boardB = instB.Boards.Single().Name;
+
+		// Tag axes: each instance enforces only its own namespace.
+		var okA = await _tasks.UpsertAsync(Proj, boardA,
+		[
+			new NodePatch { Key = "a1", Title = "A1", Type = "task", Status = "Todo", Body = "x",
+				Tags = ["severity:high"] },
+			new NodePatch { Key = "a2", Title = "A2", Type = "task", Status = "Todo", Body = "x",
+				Tags = ["severity:low"] },
+		]);
+		okA.Result.Applied.Should().BeTrue();
+
+		var leakA = () => _tasks.UpsertAsync(Proj, boardA,
+		[
+			new NodePatch { Key = "a-leak", Title = "Leak", Type = "task", Status = "Todo", Body = "x",
+				Tags = ["channel:email"] },
+		]);
+		(await leakA.Should().ThrowAsync<ArgumentException>()).WithMessage("*channel*");
+
+		var okB = await _tasks.UpsertAsync(Proj, boardB,
+		[
+			new NodePatch { Key = "b1", Title = "B1", Type = "task", Status = "Todo", Body = "x",
+				Tags = ["channel:email"] },
+			new NodePatch { Key = "b2", Title = "B2", Type = "task", Status = "Todo", Body = "x",
+				Tags = ["channel:chat"] },
+		]);
+		okB.Result.Applied.Should().BeTrue();
+
+		var leakB = () => _tasks.UpsertAsync(Proj, boardB,
+		[
+			new NodePatch { Key = "b-leak", Title = "Leak", Type = "task", Status = "Todo", Body = "x",
+				Tags = ["severity:high"] },
+		]);
+		(await leakB.Should().ThrowAsync<ArgumentException>()).WithMessage("*severity*");
+
+		// Link kinds: declared vocabulary is the FROM node's instance.
+		var a1 = (await _tasks.GetAsync(Proj, boardA)).Nodes.Single(n => n.Key == "a1");
+		var a2 = (await _tasks.GetAsync(Proj, boardA)).Nodes.Single(n => n.Key == "a2");
+		var b1 = (await _tasks.GetAsync(Proj, boardB)).Nodes.Single(n => n.Key == "b1");
+		var b2 = (await _tasks.GetAsync(Proj, boardB)).Nodes.Single(n => n.Key == "b2");
+
+		(await _tasks.ValidateRelationKindAsync(Proj, "escalates", a1.NodeId)).Should().Be("escalates");
+		(await _tasks.ValidateRelationKindAsync(Proj, "handoff", b1.NodeId)).Should().Be("handoff");
+
+		var crossA = () => _tasks.ValidateRelationKindAsync(Proj, "handoff", a1.NodeId);
+		(await crossA.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*handoff*")
+			.WithMessage("*alpha*");
+
+		var crossB = () => _tasks.ValidateRelationKindAsync(Proj, "escalates", b1.NodeId);
+		(await crossB.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*escalates*")
+			.WithMessage("*beta*");
+
+		// Builtins remain available on every instance.
+		(await _tasks.ValidateRelationKindAsync(Proj, "relates_to", a1.NodeId)).Should().Be("relates_to");
+		(await _tasks.ValidateRelationKindAsync(Proj, "blocks", b1.NodeId)).Should().Be("blocks");
+
+		// MCP relations_create follows the same instance scope (from-node).
+		var http = Http("tasks:read tasks:write");
+		var flags = Flags();
+		var relations = new RelationStore(_db);
+
+		var created = await RelationTools.CreateAsync(http, flags, relations, _tasks, Proj, "escalates", a1.NodeId, a2.NodeId);
+		created.Kind.Should().Be("escalates");
+
+		var mcpCross = () => RelationTools.CreateAsync(http, flags, relations, _tasks, Proj, "escalates", b1.NodeId, b2.NodeId);
+		(await mcpCross.Should().ThrowAsync<ArgumentException>()).WithMessage("*escalates*");
+	}
+
+	// Transitional dual-read: boards without MethodologyInstance still use the project-
+	// singleton definition's tagAxes/linkKinds (project-global authority during backfill).
+	[Fact]
+	public async Task LegacyUnassignedBoard_StillUsesProjectSingletonAxes()
+	{
+		// No instances yet — board_create without membership is allowed.
+		await _tasks.DefineMethodologyAsync(Proj, new MethodologyDefinition("legacy",
+		[
+			new MethodologyKindDef("simple", QuickAddAllowed: true,
+			[
+				new MethodologyWorkflowDef(
+					["task"],
+					[
+						new WorkflowStatus("Todo", "Todo", StatusKind.Open),
+						new WorkflowStatus("Done", "Done", StatusKind.TerminalOk),
+					],
+					[new MethodologyTransitionDef("Todo", "Done")]),
+			]),
+		])
+		{
+			TagAxes = [new MethodologyTagAxisDef("legacyaxis")],
+			LinkKinds = [new MethodologyLinkKindDef("legacyedge")],
+		}, 0);
+
+		var board = await _tasks.CreateBoardAsync(Proj, "orphan", "simple", null, null);
+		board.MethodologyInstance.Should().BeNull();
+
+		var ok = await _tasks.UpsertAsync(Proj, board.Name,
+		[
+			new NodePatch { Key = "n1", Title = "N1", Type = "task", Status = "Todo", Body = "x",
+				Tags = ["legacyaxis:v"] },
+		]);
+		ok.Result.Applied.Should().BeTrue();
+
+		var bad = () => _tasks.UpsertAsync(Proj, board.Name,
+		[
+			new NodePatch { Key = "n2", Title = "N2", Type = "task", Status = "Todo", Body = "x",
+				Tags = ["severity:high"] },
+		]);
+		(await bad.Should().ThrowAsync<ArgumentException>()).WithMessage("*severity*");
+
+		var n1 = (await _tasks.GetAsync(Proj, board.Name)).Nodes.Single(n => n.Key == "n1");
+		(await _tasks.ValidateRelationKindAsync(Proj, "legacyedge", n1.NodeId)).Should().Be("legacyedge");
+	}
+
 	[Fact]
 	public async Task Mcp_CreateListGetClose_RoundTrip()
 	{

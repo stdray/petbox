@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 public static class RelationTools
 {
 	[McpServerTool(Name = "relations_create", Title = "Create a relation", UseStructuredContent = true, OutputSchemaType = typeof(RelationCreatedResult))]
-	[Description("CREATE (idempotent) a typed directed edge between two nodes — an identical existing edge is returned, not duplicated. kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the project's methodology definition declares (tasks_methodology_def_upsert linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for the project. fromNodeId/toNodeId each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). Requires tasks:write.")]
+	[Description("CREATE (idempotent) a typed directed edge between two nodes — an identical existing edge is returned, not duplicated. kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the FROM node's methodology instance declares (linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for that instance (or the project singleton when the board has no instance membership). fromNodeId/toNodeId each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). Requires tasks:write.")]
 	public static async Task<RelationCreatedResult> CreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
 		string projectKey, string kind,
@@ -31,11 +31,12 @@ public static class RelationTools
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		// The kind vocabulary is project-aware (builtin + definition-declared linkKinds), so
-		// the service validates it; the store itself only checks structure.
-		kind = await tasks.ValidateRelationKindAsync(projectKey, kind, ct);
+		// Resolve endpoints first so the kind vocabulary can be scoped to the FROM node's
+		// board → methodology instance (methodology-instance-scoped-axes). The store itself
+		// only checks structure.
 		var from = await tasks.ResolveNodeRefAsync(projectKey, fromNodeId, ct: ct);
 		var to = await tasks.ResolveNodeRefAsync(projectKey, toNodeId, ct: ct);
+		kind = await tasks.ValidateRelationKindAsync(projectKey, kind, from, ct);
 		var rel = await relations.CreateAsync(projectKey, kind, from, to, ct);
 		return new RelationCreatedResult(rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId);
 	}
