@@ -38,7 +38,7 @@ async function main(): Promise<void> {
   try {
     const resolved = resolveProject(cwd);
     if (!resolved) return; // not a registered project → no output
-    let out = buildProtocol(resolved.project, mcpPetboxTool, { source });
+    let out = buildProtocol(resolved.project, mcpPetboxTool, { source, harness: "claude-code" });
     // Append the curated memory canon when available (best-effort; degrades to nothing).
     const canon = await fetchCanonBlock(resolved);
     if (canon) out += `\n\n${canon}`;

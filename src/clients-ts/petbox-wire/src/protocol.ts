@@ -7,10 +7,17 @@
 // turns a bare verb (e.g. "memory_search") into that agent's fully-qualified tool name. Claude
 // Code and Droid both expose petbox tools as `mcp__petbox__<verb>`; opencode as `petbox_<verb>`.
 //
+// Role-orchestration prescriptions (SPAWN by DEFAULT / fan-out / orchestrator mandate) are
+// gated by harness capability spawn_subagents (definition-truthfulness / wiring-startup-symmetry).
+// Memory protocol (search-before-rework, capture, tool names) is always emitted.
+//
 // The CC-only "resume/compact" suffix is opt-in via `opts.source` (Droid's SessionStart payload
 // also carries a `source`, so it shares the same behavior). Any other source = no suffix.
 //
 // Plain TS for native node type-stripping: no enum/namespace/parameter-properties, zero deps.
+
+import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
+import { hasCapability } from "./harness-capabilities.ts";
 
 export type ToolNamer = (verb: string) => string;
 
@@ -18,10 +25,46 @@ export type ProtocolOpts = {
   // The SessionStart `source` (Claude Code / Droid). "resume" | "compact" append a recall nudge;
   // anything else (or omitted) renders the base protocol only.
   source?: string;
+  /**
+   * Target harness id (claude-code | opencode | droid). Controls whether spawn/orchestrator
+   * prescriptions are emitted. Injectors always pass it. Omitted / unknown → no spawn prose
+   * (never invent a capability the harness does not declare).
+   */
+  harness?: string;
 };
+
+/** True when protocol may prescribe SPAWN workers / fan-out / orchestrator mandate. */
+export function orchestrationPrescriptionsAllowed(harness: string | undefined): boolean {
+  if (!harness) return false;
+  return hasCapability(harness, "spawn_subagents");
+}
+
+function buildSelfIntro(allowSpawn: boolean): string {
+  if (allowSpawn) {
+    const orch = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "orchestrator");
+    const notes =
+      orch?.notes?.trim() ||
+      "plan, decompose, delegate, review, triage. Prefer spawning workers over solo implementation.";
+    return `Your FIRST response MUST open with:
+\`🧠 PetBox memory active\`
+Then next line, your self-intro — exactly:
+\`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates). Banner reaches only main loop; role always \`orchestrator\`. When spawning workers, write their self-intro into the brief (they never see this).
+
+**Orchestrate — delegate by DEFAULT.** SPAWN workers for anything beyond a trivial edit — implementation, research, review, multi-file. Fan-out is default; solo is exception to justify. If several calls deep implementing, stop and delegate. (No subagent → inline is fine.) Spawn as \`worker\`; lead with worker preamble.
+
+Orchestrator notes (from definition): ${notes}`;
+  }
+
+  // No spawn_subagents: memory protocol still applies; do not force orchestrator-spawn mandate.
+  return `Your FIRST response MUST open with:
+\`🧠 PetBox memory active\`
+Then next line, your self-intro — exactly:
+\`<your model name> · main\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates). This harness does not declare spawn_subagents — do not assume subagent fan-out is available; work in the main session.`;
+}
 
 // Build the memory-protocol block for a project. `tool` maps a bare verb to the agent's
 // fully-qualified MCP tool name so the SAME text renders correct tool names everywhere.
+// Spawn/orchestrator prescriptions only when opts.harness has spawn_subagents.
 export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolOpts): string {
   const memorySearch = tool("memory_search");
   const memoryGet = tool("memory_get");
@@ -34,16 +77,14 @@ export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolO
   const tasksMethodologyGet = tool("tasks_methodology_get");
   const tasksWorkflow = tool("tasks_workflow");
 
+  const allowSpawn = orchestrationPrescriptionsAllowed(opts?.harness);
+  const intro = buildSelfIntro(allowSpawn);
+
   let out = `## PetBox memory
 
 This project is wired to PetBox (project \`${project}\`) over the \`petbox\` MCP.
 
-Your FIRST response MUST open with:
-\`🧠 PetBox memory active\`
-Then next line, your self-intro — exactly:
-\`<your model name> · orchestrator\` — + one sentence naming your working rules (search-before-rework, capture-as-you-go, respect the gates). Banner reaches only main loop; role always \`orchestrator\`. When spawning workers, write their self-intro into the brief (they never see this).
-
-**Orchestrate — delegate by DEFAULT.** SPAWN workers for anything beyond a trivial edit — implementation, research, review, multi-file. Fan-out is default; solo is exception to justify. If several calls deep implementing, stop and delegate. (No subagent → inline is fine.) Spawn as \`worker\`; lead with worker preamble.
+${intro}
 
 PetBox remembers curated facts AND full session history. Start from SEARCH, not assumption.
 
