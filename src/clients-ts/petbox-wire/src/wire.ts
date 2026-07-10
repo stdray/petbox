@@ -291,9 +291,15 @@ function runDoctor(argv: string[]): void {
 }
 
 // apply — compile per-harness artifacts (distinct from update kit-copy).
-// Writes agent role files for every known harness under project root.
+// Writes agent role files per harness under project root.
 // Definition source: server fetch when registry resolves cwd; else offline default.
-// Any harness with truthfulness violations → print all, write nothing, exit 1.
+//
+// Per harness (definition-truthfulness + wiring-startup-symmetry):
+//   - violations → refuse writes for THAT harness only (loud), keep going for others
+//   - clean plan → write files
+// Exit 1 if any harness failed; exit 0 only when every known harness accepted the
+// definition. Offline still produces artifacts for harnesses the definition fits
+// (e.g. default roster writes CC+opencode; droid fails honestly).
 async function runApply(argv: string[]): Promise<void> {
   let definitionKey = DEFAULT_DEFINITION_KEY;
   let offline = false;
@@ -330,31 +336,21 @@ async function runApply(argv: string[]): Promise<void> {
   validateAgentDefinition(definition);
 
   const rolesData = loadRoles();
-  const plans: ApplyPlan[] = [];
-  let blocked = false;
-  for (const harness of HARNESS_IDS) {
-    // Canonical agent ids: claude-code, opencode, droid (roles.ts aliases resolve).
-    const roleModels = resolveAgentRoles(rolesData, harness);
-    const plan = planApply(definition, harness, roleModels);
-    plans.push(plan);
-    if (plan.violations.length > 0) blocked = true;
-  }
-
-  if (blocked) {
-    for (const plan of plans) {
-      if (plan.violations.length > 0) {
-        console.error(formatApplyBlocked(plan.violations, plan.harness));
-      }
-    }
-    process.exit(1);
-  }
-
   log(`apply: root=${root} (via ${via})`);
   log(`apply: definition="${definition.name}", harnesses=${HARNESS_IDS.join(",")}`);
 
   let written = 0;
   const writtenHarnesses: string[] = [];
-  for (const plan of plans) {
+  const failedHarnesses: string[] = [];
+  for (const harness of HARNESS_IDS) {
+    // Canonical agent ids: claude-code, opencode, droid (roles.ts aliases resolve).
+    const roleModels = resolveAgentRoles(rolesData, harness);
+    const plan = planApply(definition, harness, roleModels);
+    if (plan.violations.length > 0) {
+      console.error(formatApplyBlocked(plan.violations, plan.harness));
+      failedHarnesses.push(plan.harness);
+      continue;
+    }
     for (const file of plan.files) {
       const abs = join(root, file.relativePath);
       mkdirSync(dirname(abs), { recursive: true });
@@ -364,9 +360,20 @@ async function runApply(argv: string[]): Promise<void> {
     }
     if (plan.files.length > 0) writtenHarnesses.push(plan.harness);
   }
+
   log(
-    `apply: done — ${written} agent file(s) for harness(es): ${writtenHarnesses.join(", ") || "(none)"}`,
+    `apply: wrote ${written} agent file(s) for harness(es): ${writtenHarnesses.join(", ") || "(none)"}` +
+      (failedHarnesses.length
+        ? `; blocked: ${failedHarnesses.join(", ")}`
+        : ""),
   );
+  if (failedHarnesses.length > 0) {
+    console.error(
+      `apply: FAILED for harness(es): ${failedHarnesses.join(", ")} — definition not truth-clean there.`,
+    );
+    process.exit(1);
+  }
+  log("apply: done — all known harnesses accepted the definition.");
 }
 
 // Pick server definition when possible; always fall back to DEFAULT_AGENT_DEFINITION.
