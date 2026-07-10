@@ -5,15 +5,31 @@
 //   header X-Api-Key; scope agents:read
 //   200 → { key, version, definition: { name, roles: [...] }, created?, updated? }
 //
-// Best-effort: network / 404 / auth / bad shape / timeout → null (never throws).
-// Offline compile uses DEFAULT_AGENT_DEFINITION when this returns null.
+// Polarity (definition-offline-lkg / wiring-memory-canon):
+//   Server is authoritative; disk is LKG replica under ~/.petbox/cache/<project>.agent-def.json.
+//   roles.json is the opposite polarity (disk authoritative) — not touched here.
+//
+// Resolution order on apply:
+//   1. live server fetch (unless --offline)
+//   2. LKG cache from last successful fetch (with explicit staleness mark)
+//   3. DEFAULT_AGENT_DEFINITION only when no cache exists (fresh machine)
+//
+// Best-effort: network / 404 / auth / bad JSON / timeout → null from fetch (never throws).
 //
 // Plain TS for native node type-stripping: zero deps.
 
+import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { AgentDefinition, AgentRole, RoleEscalation, RoleSpawn } from "./agent-definition.ts";
+import { DEFAULT_AGENT_DEFINITION, validateAgentDefinition } from "./agent-definition.ts";
 
 export const DEFAULT_DEFINITION_KEY = "default";
 export const AGENT_DEF_FETCH_TIMEOUT_MS = 8000;
+
+/** Shown when apply uses LKG cache instead of a live server fetch (definition-offline-lkg). */
+export const AGENT_DEF_STALE_MARKER =
+  "⚠ Agent definition is from the local LKG cache (PetBox unreachable) — may be stale.";
 
 /** Successful server fetch: key + version envelope around a portable definition. */
 export type FetchedAgentDefinition = {
@@ -32,6 +48,38 @@ export type FetchAgentDefinitionOptions = {
   /** Injected for tests; defaults to global fetch. */
   readonly fetchImpl?: typeof fetch;
 };
+
+export type AgentDefCacheRecord = {
+  readonly key: string;
+  readonly version: number;
+  readonly fetchedAt: string;
+  readonly definition: AgentDefinition;
+};
+
+/** Where a resolved definition came from (for logs / tests). */
+export type AgentDefSource = "server" | "lkg" | "default";
+
+export type ResolvedAgentDefinition = {
+  readonly definition: AgentDefinition;
+  readonly source: AgentDefSource;
+  /** True when source === "lkg" (explicit staleness). */
+  readonly stale: boolean;
+  readonly key?: string;
+  readonly version?: number;
+  /** Human-facing line for apply logs when stale. */
+  readonly staleMarker?: string;
+};
+
+export function agentDefCacheDir(homeDir: string = homedir()): string {
+  return join(homeDir, ".petbox", "cache");
+}
+
+/** Path: ~/.petbox/cache/<project>.agent-def.json (project may contain $ etc.). */
+export function agentDefCachePath(projectKey: string, homeDir: string = homedir()): string {
+  // Same sanitization style as canon: use project key as filename stem.
+  const stem = String(projectKey).trim() || "unknown";
+  return join(agentDefCacheDir(homeDir), `${stem}.agent-def.json`);
+}
 
 /**
  * Pure JSON → definition mapping. Returns null on any invalid/incomplete shape.
@@ -70,7 +118,7 @@ export function parseAgentDefinitionResponse(json: unknown): FetchedAgentDefinit
 /**
  * GET the named agent definition. Returns the mapped definition on 200 + valid body;
  * null on any failure (network, timeout, non-OK status, bad JSON, invalid shape).
- * Never throws.
+ * Never throws. Does NOT write LKG — caller uses writeAgentDefCache on success.
  */
 export async function fetchAgentDefinition(
   opts: FetchAgentDefinitionOptions,
@@ -106,6 +154,137 @@ export async function fetchAgentDefinition(
   } catch {
     return null;
   }
+}
+
+/** Persist LKG after a successful fetch. Never throws. */
+export function writeAgentDefCache(
+  projectKey: string,
+  fetched: FetchedAgentDefinition,
+  homeDir: string = homedir(),
+  now: () => string = () => new Date().toISOString(),
+): void {
+  try {
+    const dir = agentDefCacheDir(homeDir);
+    mkdirSync(dir, { recursive: true });
+    const record: AgentDefCacheRecord = {
+      key: fetched.key,
+      version: fetched.version,
+      fetchedAt: now(),
+      definition: fetched.definition,
+    };
+    writeFileSync(agentDefCachePath(projectKey, homeDir), JSON.stringify(record, null, 2) + "\n", "utf8");
+  } catch {
+    // best-effort
+  }
+}
+
+/** Read LKG cache. Returns null if missing/corrupt. Never throws. */
+export function readAgentDefCache(
+  projectKey: string,
+  homeDir: string = homedir(),
+): AgentDefCacheRecord | null {
+  try {
+    const path = agentDefCachePath(projectKey, homeDir);
+    if (!existsSync(path)) return null;
+    const raw = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!raw || typeof raw !== "object") return null;
+    const r = raw as Record<string, unknown>;
+    const key = typeof r.key === "string" && r.key.trim() ? r.key.trim() : null;
+    const version = parseVersion(r.version);
+    const fetchedAt = typeof r.fetchedAt === "string" ? r.fetchedAt : "";
+    if (key === null || version === null) return null;
+    const def = r.definition;
+    if (!def || typeof def !== "object") return null;
+    // Re-parse via envelope so shape validation matches server responses.
+    const mapped = parseAgentDefinitionResponse({
+      key,
+      version,
+      definition: def,
+    });
+    if (!mapped) return null;
+    try {
+      validateAgentDefinition(mapped.definition);
+    } catch {
+      return null;
+    }
+    return {
+      key: mapped.key,
+      version: mapped.version,
+      fetchedAt,
+      definition: mapped.definition,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export type ResolveAgentDefinitionOptions = {
+  readonly offline: boolean;
+  readonly definitionKey: string;
+  /** When set, used for cache path + fetch. When unset offline/no-registry → default. */
+  readonly projectKey?: string;
+  readonly baseUrl?: string;
+  readonly apiKey?: string;
+  readonly homeDir?: string;
+  readonly fetchImpl?: typeof fetch;
+  readonly timeoutMs?: number;
+};
+
+/**
+ * Resolve definition for apply: server → LKG → DEFAULT.
+ * --offline skips network, still prefers LKG over DEFAULT.
+ */
+export async function resolveAgentDefinitionWithLkg(
+  opts: ResolveAgentDefinitionOptions,
+): Promise<ResolvedAgentDefinition> {
+  const homeDir = opts.homeDir ?? homedir();
+  const projectKey = opts.projectKey?.trim() ?? "";
+  const defKey = opts.definitionKey.trim() || DEFAULT_DEFINITION_KEY;
+
+  if (!opts.offline && projectKey && opts.baseUrl && opts.apiKey) {
+    const fetched = await fetchAgentDefinition({
+      baseUrl: opts.baseUrl,
+      projectKey,
+      apiKey: opts.apiKey,
+      definitionKey: defKey,
+      timeoutMs: opts.timeoutMs,
+      fetchImpl: opts.fetchImpl,
+    });
+    if (fetched) {
+      writeAgentDefCache(projectKey, fetched, homeDir);
+      return {
+        definition: fetched.definition,
+        source: "server",
+        stale: false,
+        key: fetched.key,
+        version: fetched.version,
+      };
+    }
+  }
+
+  // LKG before DEFAULT (definition-offline-lkg).
+  if (projectKey) {
+    const cached = readAgentDefCache(projectKey, homeDir);
+    if (cached) {
+      // Prefer matching key when possible; still use cache if only one project doc was stored.
+      if (cached.key === defKey || defKey === DEFAULT_DEFINITION_KEY) {
+        return {
+          definition: cached.definition,
+          source: "lkg",
+          stale: true,
+          key: cached.key,
+          version: cached.version,
+          staleMarker: AGENT_DEF_STALE_MARKER,
+        };
+      }
+    }
+  }
+
+  return {
+    definition: DEFAULT_AGENT_DEFINITION,
+    source: "default",
+    stale: false,
+  };
 }
 
 function parseVersion(v: unknown): number | null {

@@ -61,7 +61,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_DEFINITION_KEY,
-  fetchAgentDefinition,
+  resolveAgentDefinitionWithLkg,
 } from "./agent-def-fetch.ts";
 import {
   DEFAULT_AGENT_DEFINITION,
@@ -145,12 +145,13 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             Kit-copy only — does NOT compile per-harness agent artifacts (use apply).\n" +
     "apply        Compile per-harness startup artifacts from a portable agent definition + local\n" +
     "             role→model binding (~/.petbox/roles.json). Tries GET /api/{project}/agent-defs/{key}\n" +
-    "             when cwd resolves via ~/.petbox/projects.json; falls back to the built-in default on\n" +
-    "             network/404/auth miss or --offline. --definition <key> selects the server doc\n" +
-    "             (default key: default). Writes agent files under the project root:\n" +
+    "             when cwd resolves via ~/.petbox/projects.json; on miss uses LKG cache\n" +
+    "             (~/.petbox/cache/<project>.agent-def.json) with a staleness mark, else built-in\n" +
+    "             DEFAULT only when no cache. --offline skips network (cache→DEFAULT). --definition\n" +
+    "             <key> selects the server doc (default: default). Writes under project root:\n" +
     "             claude-code .claude/agents/, opencode .opencode/agent/, droid .factory/droids/.\n" +
     "             model: frontmatter only when bound (droid unbound → model: inherit) — never invents\n" +
-    "             a concrete model id. Clean roles are written; dirty roles are skipped and reported.\n" +
+    "             a concrete model id. Clean roles written; dirty skipped and reported.\n" +
     "             Exit codes: 0 full success; 1 hard failure (invalid definition/throw); 2 usage/args;\n" +
     "             3 truthfulness partial/block (policy — distinct from usage).\n" +
     "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
@@ -410,36 +411,31 @@ async function runApply(argv: string[]): Promise<void> {
   process.exit(WIRE_EXIT.truthfulness);
 }
 
-// Pick server definition when possible; always fall back to DEFAULT_AGENT_DEFINITION.
+// Server → LKG cache → built-in DEFAULT (definition-offline-lkg).
+// Server is authoritative; disk is LKG replica. roles.json polarity is separate (not here).
 async function resolveApplyDefinition(opts: {
   offline: boolean;
   definitionKey: string;
   cwd: string;
 }): Promise<AgentDefinition> {
-  if (opts.offline) {
-    log("apply: offline default definition");
-    return DEFAULT_AGENT_DEFINITION;
-  }
-
   const resolved = resolveProject(opts.cwd);
-  if (!resolved) {
-    log("apply: offline default definition");
-    return DEFAULT_AGENT_DEFINITION;
-  }
-
-  const fetched = await fetchAgentDefinition({
-    baseUrl: resolved.baseUrl,
-    projectKey: resolved.project,
-    apiKey: resolved.apiKey,
+  const got = await resolveAgentDefinitionWithLkg({
+    offline: opts.offline,
     definitionKey: opts.definitionKey,
+    projectKey: resolved?.project,
+    baseUrl: resolved?.baseUrl,
+    apiKey: resolved?.apiKey,
   });
-  if (!fetched) {
-    log("apply: offline default definition");
-    return DEFAULT_AGENT_DEFINITION;
-  }
 
-  log(`apply: using server definition ${fetched.key} v${fetched.version}`);
-  return fetched.definition;
+  if (got.source === "server") {
+    log(`apply: using server definition ${got.key} v${got.version}`);
+  } else if (got.source === "lkg") {
+    log(`apply: ${got.staleMarker ?? "using LKG agent definition cache"}`);
+    log(`apply: using LKG definition ${got.key} v${got.version} (stale)`);
+  } else {
+    log("apply: offline default definition (no server, no LKG cache)");
+  }
+  return got.definition;
 }
 
 // Print active profile + agent/role/model tree from ~/.petbox/roles.json. Exit 0 when empty.
