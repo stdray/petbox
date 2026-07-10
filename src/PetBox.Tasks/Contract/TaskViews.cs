@@ -226,6 +226,37 @@ public sealed record MethodologyDefAck(long Version, bool Changed, int Migrated 
 // built-in MethodologyPresets.
 public sealed record MethodologyDefView(MethodologyDefinition Definition, long Version, DateTime Created, DateTime Updated);
 
+// ---- named methodology templates (methodology-template-storage) ----------------------
+// Independent of the live process singleton (MethodologyDefView) and of future instance
+// entities. Source ∈ stored|builtin|definition:
+//   stored     — a row in methodology_templates
+//   builtin    — quartet|classic|simple rendered from MethodologyPresets (version 0)
+//   definition — dual-read of the legacy singleton def under key "methodology" (compat
+//                until instance core lands; def_get still owns the live process read)
+
+// Ack of a template write/delete/snapshot: the template key, its current revision, and
+// whether this call created a new revision (false = identical resubmit / delete no-op).
+// Conflicts throw — same posture as MethodologyDefAck.
+public sealed record MethodologyTemplateAck(string Key, long Version, bool Changed);
+
+// One named template as a full document + envelope. Created/Updated are null for
+// builtins (never stored). Version is 0 for builtins.
+public sealed record MethodologyTemplateView(
+	string Key,
+	string Source,
+	MethodologyDefinition Definition,
+	long Version,
+	DateTime? Created,
+	DateTime? Updated);
+
+// Compact list row for tasks_methodology_template_list (no full definition body).
+public sealed record MethodologyTemplateListItem(
+	string Key,
+	string Source,
+	string Name,
+	long Version,
+	DateTime? Updated);
+
 // The runtime-derived agent guide to a project's process (tasks_methodology_guide, spec
 // artifacts-from-definition): markdown prose + the structured invariants it was derived
 // from (the machine-readable form — no markdown re-parsing downstream). `Source` says

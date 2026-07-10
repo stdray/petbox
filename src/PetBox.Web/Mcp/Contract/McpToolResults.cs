@@ -492,6 +492,36 @@ public sealed record MethodologyDefGetResult(
 	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
 	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
 
+// ---- methodology templates (methodology-template-storage) ----------------------------
+
+// tasks_methodology_template_upsert / _snapshot / _delete ack.
+public sealed record MethodologyTemplateUpsertResult(string Key, long Version, bool Changed);
+
+// tasks_methodology_template_delete ack (Deleted mirrors Changed for the delete verb).
+public sealed record MethodologyTemplateDeleteResult(string Key, bool Deleted, long Version);
+
+// tasks_methodology_template_get answer. Found=true → key/source + the definition document
+// (same kinds/workflows shape as def_get). Found=false → honest miss (not an error) for a
+// non-builtin key that has no stored template and is not the dual-read definition key.
+// Source ∈ stored|builtin|definition.
+public sealed record MethodologyTemplateGetResult(
+	bool Found,
+	string? Key = null,
+	string? Source = null,
+	string? Name = null,
+	IReadOnlyList<MethodologyKindView>? Kinds = null,
+	long? Version = null,
+	DateTime? Created = null,
+	DateTime? Updated = null,
+	IReadOnlyList<MethodologyLinkKindView>? LinkKinds = null,
+	IReadOnlyList<MethodologyTagAxisView>? TagAxes = null);
+
+// tasks_methodology_template_list answer: builtins + stored (+ dual-read definition entry).
+public sealed record MethodologyTemplateListResult(IReadOnlyList<MethodologyTemplateListItemView> Templates);
+
+public sealed record MethodologyTemplateListItemView(
+	string Key, string Source, string Name, long Version, DateTime? Updated = null);
+
 // One kind of a stored methodology definition; workflow blocks reuse the tasks_workflow
 // status vocabulary (kind = open|terminalok|terminalcancel). LinkConstraints are the
 // kind's per-type creation link requirements, Effects its declared transition effects

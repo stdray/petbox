@@ -158,6 +158,8 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		["tasks_board_set_spec"] = "pending: needs a spec board seeded",
 		["tasks_methodology_enable"] = "pending: mutates board setup mid-battery",
 		["tasks_methodology_def_upsert"] = "pending: full methodology-definition JSON",
+		["tasks_methodology_template_upsert"] = "pending: full methodology-definition JSON",
+		["tasks_methodology_template_snapshot"] = "pending: write path covered by MethodologyTemplateTests",
 		["config_binding_delete"] = "pending: destructive; needs a seeded binding threaded mid-battery",
 		["db_create"] = "pending: Data chain (create→schema→exec→query→describe)",
 		["db_delete"] = "pending: Data chain",
@@ -254,6 +256,8 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("tasks_methodology_get", new { projectKey = ProjectKey }),
 			("tasks_methodology_guide", new { projectKey = ProjectKey }),
 			("tasks_methodology_def_get", new { projectKey = ProjectKey }),
+			("tasks_methodology_template_list", new { projectKey = ProjectKey }),
+			("tasks_methodology_template_get", new { projectKey = ProjectKey, key = "quartet" }),
 			("memory_search", new { projectKey = ProjectKey }),
 			("memory_store_list", new { projectKey = ProjectKey, includeUsage = true }),
 			("memory_delta", new { projectKey = ProjectKey, store = "notes", sinceVersion = 0 }),
@@ -308,6 +312,8 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 			("tasks_board_delete", new { projectKey = ProjectKey, board = "no-such-board" }),
 			// deleting a definition the project never had: a conformant {deleted:false} no-op.
 			("tasks_methodology_def_delete", new { projectKey = ProjectKey }),
+			// deleting a template that never existed: conformant {deleted:false} no-op.
+			("tasks_methodology_template_delete", new { projectKey = ProjectKey, key = "no-such-tmpl" }),
 		};
 		foreach (var (tool, args) in edge)
 			await StrictOk(failures, tool, args);
@@ -322,6 +328,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		"session_upsert", "log_create", "comments_upsert", "comments_search", "comments_get", "comments_delta",
 		"tasks_search", "tasks_board_list", "tasks_workflow", "tasks_delta", "tasks_node_get",
 		"tasks_methodology_get", "tasks_methodology_guide", "tasks_methodology_def_get",
+		"tasks_methodology_template_list", "tasks_methodology_template_get",
 		"memory_search", "memory_store_list", "memory_delta", "memory_get",
 		"session_search", "session_get", "session_delta", "config_binding_upsert", "config_binding_search",
 		"config_binding_delta", "config_binding_get", "log_list", "log_query",
@@ -334,6 +341,7 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 	{
 		"session_delete", "memory_store_delete", "log_delete", "relations_delete", "comments_delete",
 		"tasks_board_close", "tasks_board_reopen", "tasks_board_delete", "tasks_methodology_def_delete",
+		"tasks_methodology_template_delete",
 	};
 
 	// ── assertion helpers ──────────────────────────────────────────────────────

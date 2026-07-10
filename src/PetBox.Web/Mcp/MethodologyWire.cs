@@ -53,33 +53,59 @@ static class MethodologyWire
 		new(
 			Defined: true,
 			Name: def.Name,
-			Kinds: def.Kinds.Select(k => new MethodologyKindView(
-				k.Kind, k.QuickAddAllowed,
-				k.Workflows.Select(w => new MethodologyWorkflowBlockView(
-					Types: w.Types,
-					Initial: w.Initial,
-					Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
-					Transitions: w.Transitions.Select(t => new MethodologyTransitionView(
-						t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact,
-						t.EnforceApproval,
-						Checklist: t.Checklist is { Count: > 0 } ? t.Checklist : null)).ToList())).ToList(),
-				LinkConstraints: k.LinkConstraints is { Count: > 0 }
-					? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(
-						c.Type, c.Link, c.TargetKind,
-						TargetStatuses: c.TargetStatuses is { Count: > 0 } ? c.TargetStatuses : null)).ToList()
-					: null,
-				Effects: k.Effects is { Count: > 0 }
-					? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom)).ToList()
-					: null)).ToList(),
+			Kinds: ProjectKinds(def),
 			Version: version,
 			Created: created,
 			Updated: updated,
-			LinkKinds: def.LinkKinds is { Count: > 0 }
-				? def.LinkKinds.Select(lk => new MethodologyLinkKindView(lk.Slug, lk.Description)).ToList()
+			LinkKinds: ProjectLinkKinds(def),
+			TagAxes: ProjectTagAxes(def));
+
+	// Project a named template (stored|builtin|definition) onto the template_get wire result.
+	// Reuses the same kinds/workflows document body as def_get so a template is copyable into
+	// def_upsert / template_upsert without reshaping.
+	public static MethodologyTemplateGetResult ProjectTemplate(
+		string key, string source, MethodologyDefinition def, long version, DateTime? created, DateTime? updated) =>
+		new(
+			Found: true,
+			Key: key,
+			Source: source,
+			Name: def.Name,
+			Kinds: ProjectKinds(def),
+			Version: version,
+			Created: created,
+			Updated: updated,
+			LinkKinds: ProjectLinkKinds(def),
+			TagAxes: ProjectTagAxes(def));
+
+	static List<MethodologyKindView> ProjectKinds(MethodologyDefinition def) =>
+		def.Kinds.Select(k => new MethodologyKindView(
+			k.Kind, k.QuickAddAllowed,
+			k.Workflows.Select(w => new MethodologyWorkflowBlockView(
+				Types: w.Types,
+				Initial: w.Initial,
+				Statuses: w.Statuses.Select(s => new WorkflowStatusView(s.Slug, s.Name, s.Kind.ToString().ToLowerInvariant())).ToList(),
+				Transitions: w.Transitions.Select(t => new MethodologyTransitionView(
+					t.From, t.To, t.RequiresApproval, t.RequiresReason, t.PreconditionArtifact,
+					t.EnforceApproval,
+					Checklist: t.Checklist is { Count: > 0 } ? t.Checklist : null)).ToList())).ToList(),
+			LinkConstraints: k.LinkConstraints is { Count: > 0 }
+				? k.LinkConstraints.Select(c => new MethodologyLinkConstraintView(
+					c.Type, c.Link, c.TargetKind,
+					TargetStatuses: c.TargetStatuses is { Count: > 0 } ? c.TargetStatuses : null)).ToList()
 				: null,
-			TagAxes: def.TagAxes is { Count: > 0 }
-				? def.TagAxes.Select(a => new MethodologyTagAxisView(a.Namespace, a.Description)).ToList()
-				: null);
+			Effects: k.Effects is { Count: > 0 }
+				? k.Effects.Select(e => new MethodologyEffectView(e.On, e.Link, e.Direction, e.Set, e.OnlyFrom)).ToList()
+				: null)).ToList();
+
+	static List<MethodologyLinkKindView>? ProjectLinkKinds(MethodologyDefinition def) =>
+		def.LinkKinds is { Count: > 0 }
+			? def.LinkKinds.Select(lk => new MethodologyLinkKindView(lk.Slug, lk.Description)).ToList()
+			: null;
+
+	static List<MethodologyTagAxisView>? ProjectTagAxes(MethodologyDefinition def) =>
+		def.TagAxes is { Count: > 0 }
+			? def.TagAxes.Select(a => new MethodologyTagAxisView(a.Namespace, a.Description)).ToList()
+			: null;
 
 	// Map the typed wire document onto the domain definition 1:1 (nulls → empty lists —
 	// the validator then reports "needs at least one ..." instead of an opaque NRE).
