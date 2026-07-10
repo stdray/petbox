@@ -44,6 +44,10 @@ public sealed record PlanNodeInput
 	public string? Type { get; init; }
 	public string? Title { get; init; }
 	public string? Body { get; init; }
+	// First-class reason for a RequiresReason status transition on THIS call (not the node
+	// body). Omitted/null/whitespace fails a gated transition; a non-empty value is accepted
+	// and persisted as an `artifact:reason` comment.
+	public string? Reason { get; init; }
 
 	// Attached commit SHAs (node-commits-impl). null = omit (don't touch); a non-null list
 	// (incl. empty) REPLACES the node's full commit set — same semantics as Tags.

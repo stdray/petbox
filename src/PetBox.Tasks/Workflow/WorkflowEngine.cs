@@ -54,7 +54,7 @@ public static class WorkflowEngine
 			if (tr is null)
 				return WorkflowResult.Fail($"no transition '{fromSlug}' -> '{toSlug}'; from '{fromSlug}' you can go to: {string.Join("|", wf.NextFrom(fromSlug!))}");
 			if (tr.RequiresReason && !hasReason)
-				return WorkflowResult.Fail($"transition '{fromSlug}' -> '{toSlug}' requires a reason (non-empty body)");
+				return WorkflowResult.Fail($"transition '{fromSlug}' -> '{toSlug}' requires a reason (provide a non-empty reason field on this call)");
 			if (tr.RequiresApproval && (enforceApproval || tr.EnforceApproval) && !actorCanApprove)
 				return WorkflowResult.Fail($"transition '{fromSlug}' -> '{toSlug}' requires maintainer approval");
 		}

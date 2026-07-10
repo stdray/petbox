@@ -17,10 +17,11 @@ public sealed record WorkflowStatus(string Slug, string Name, StatusKind Kind);
 // A directed edge in a type's state machine. `RequiresApproval` marks the
 // transition as maintainer-only (the approve gate — capability modelled here,
 // enforcement is opt-in at the call site). `RequiresReason` demands a non-empty
-// body (e.g. triage → wontfix). `PreconditionArtifact` names a comment-artifact tag
-// (e.g. "spec_plan" → an `artifact:spec_plan` comment) the node must carry before the
-// transition fires — gates are transition data, enforced by
-// RequirePreconditionArtifactsAsync (the ideas preset gates exploring→review this way).
+// `reason` field on the status-changing upsert (e.g. triage → wontfix) — never the
+// node body. `PreconditionArtifact` names a comment-artifact tag (e.g. "spec_plan" →
+// an `artifact:spec_plan` comment) the node must carry before the transition fires —
+// gates are transition data, enforced by RequirePreconditionArtifactsAsync (the ideas
+// preset gates exploring→review this way).
 public sealed record WorkflowTransition(string From, string To, bool RequiresApproval = false, bool RequiresReason = false, string? PreconditionArtifact = null)
 {
 	// Approval-gate MODE (schema v2): with RequiresApproval, `true` means the server BLOCKS

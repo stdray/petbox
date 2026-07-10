@@ -827,7 +827,7 @@ public sealed partial class TasksService : ITasksService
 				throw new ArgumentException($"node '{both}' is both deleted and upserted in one batch — pick one");
 		}
 
-		var desired = upsertPatches.Select(p => ApplyWorkflow(runtime, kindSlug, Merge(p, prior), prior, actor) with { Board = board }).ToArray();
+		var desired = upsertPatches.Select(p => ApplyWorkflow(runtime, kindSlug, Merge(p, prior), prior, actor, p.Reason) with { Board = board }).ToArray();
 		ValidateChanges(desired, prior);
 		// Resolve slug specRefs to NodeIds ONCE, up front — both the validation below and the
 		// task_spec edge write (LinkRefsAsync) read this map, so it must never carry a raw slug.
@@ -930,6 +930,10 @@ public sealed partial class TasksService : ITasksService
 				await TaskUpsertAssociations.SetCommitsAsync(ctx, board, upsertPatches, desired, ct);
 				await _associations.SetPartOfAsync(projectKey, board, upsertPatches, desired, ct);
 				await _associations.SetSupersedesAsync(projectKey, board, upsertPatches, desired, runtime, ct);
+				// RequiresReason reasons land as comments after the node write (same post-tx
+				// style as tags/partOf — not inside the temporal node transaction).
+				if (r.Applied)
+					await PersistReasonCommentsAsync(projectKey, board, runtime, kindSlug, upsertPatches, desired, prior, ct);
 			}
 		// Refresh the FTS Tags column now that SetTagsAsync (above) has run: the in-tx index wrote
 		// content + pre-upsert tags transactionally; re-index this batch's open nodes with the
@@ -1361,7 +1365,8 @@ public sealed partial class TasksService : ITasksService
 	// inherit from source), and validate status/transition — the single workflow point.
 	// The workflow resolves through the runtime: definition-declared kinds from data,
 	// everything else from the built-in presets exactly as before.
-	static PlanNode ApplyWorkflow(MethodologyRuntime runtime, string? kindSlug, PlanNode node, Dictionary<string, PlanNode> prior, TasksActor actor)
+	// `reason` is the call-scoped RequiresReason payload (NodePatch.Reason) — never the body.
+	static PlanNode ApplyWorkflow(MethodologyRuntime runtime, string? kindSlug, PlanNode node, Dictionary<string, PlanNode> prior, TasksActor actor, string? reason)
 	{
 		var type = node.Type.Length == 0 ? null : node.Type;
 		// Simple boards: type is a label from a small fixed set; empty defaults to `task`, and an
@@ -1397,10 +1402,39 @@ public sealed partial class TasksService : ITasksService
 		var from = current?.Status ?? source?.Status;
 		// Per-transition enforcement only (the global enforceApproval flag stays off): a
 		// transition whose methodology declares EnforceApproval demands an approving actor.
+		// RequiresReason is gated on the call-scoped `reason` field — never the node body.
 		var res = WorkflowEngine.Validate(wf, runtime.KindName(kindSlug), runtime.ValidTypes(kindSlug),
-			type, from, n.Status, actorCanApprove: actor.CanApprove, hasReason: !string.IsNullOrWhiteSpace(n.Body));
+			type, from, n.Status, actorCanApprove: actor.CanApprove, hasReason: !string.IsNullOrWhiteSpace(reason));
 		if (!res.Ok) throw new ArgumentException(res.Error);
 		return n;
+	}
+
+	// Persist a RequiresReason transition's `reason` field as an `artifact:reason` comment on
+	// the node. Best-effort post-write (same style as tags/partOf associations): only fires
+	// when the applied transition actually required a reason and the patch carried one.
+	async Task PersistReasonCommentsAsync(
+		string projectKey, string board, MethodologyRuntime runtime, string? kindSlug,
+		IReadOnlyList<NodePatch> patches, PlanNode[] desired, Dictionary<string, PlanNode> prior, CancellationToken ct)
+	{
+		foreach (var p in patches)
+		{
+			if (string.IsNullOrWhiteSpace(p.Reason)) continue;
+			var d = desired.FirstOrDefault(n => string.Equals(n.Key, p.Key, StringComparison.Ordinal));
+			if (d is null || d.NodeId.Length == 0) continue;
+
+			var cur = prior.GetValueOrDefault(d.Key)
+				?? (d.PrevKey is not null ? prior.GetValueOrDefault(d.PrevKey) : null);
+			var from = cur?.Status;
+			if (from is null) continue; // birth — RequiresReason only applies to transitions
+			if (string.Equals(from, d.Status, StringComparison.OrdinalIgnoreCase)) continue;
+
+			var wf = runtime.For(kindSlug, d.Type.Length == 0 ? null : d.Type);
+			var tr = wf?.Transition(from, d.Status);
+			if (tr is null || !tr.RequiresReason) continue;
+
+			await _comments.AddAsync(projectKey, board, d.NodeId, parentId: null, author: "system",
+				body: p.Reason.Trim(), tags: ["artifact:reason"], ct);
+		}
 	}
 
 	// Declarative immutable-field invariants (NodeId/type once set). The prior row is the

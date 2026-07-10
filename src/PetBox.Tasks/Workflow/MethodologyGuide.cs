@@ -150,7 +150,7 @@ public static class MethodologyGuide
 			}
 			if (t.RequiresReason)
 			{
-				md.AppendLine($"  - {t.From} -> {t.To} requires a reason: provide it in the body of the status-changing upsert.");
+				md.AppendLine($"  - {t.From} -> {t.To} requires a reason: provide the `reason` field on the status-changing upsert (never the node body).");
 				invariants.Add(new(kind, "reason_required", $"{t.From} -> {t.To}"));
 			}
 			if (t.PreconditionArtifact is not null)
