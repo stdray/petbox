@@ -155,7 +155,8 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             3 truthfulness partial/block (policy — distinct from usage).\n" +
     "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
     "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
-    "             violation; exit 1 on any violation. Offline.\n" +
+    "             violation. Exit 0 all OK; 1 hard fail (invalid default def); 2 usage; 3 truthfulness\n" +
+    "             (same taxonomy as apply — policy block is not a hard crash). Offline.\n" +
     "roles        Print the local role→model binding for the active profile (~/.petbox/roles.json).\n" +
     "             Offline; empty store exits 0 with a clear message (never invents default models).\n" +
     "roles export Write a bootstrap copy of roles.json to stdout (no secrets; pipe to a file on a\n" +
@@ -255,16 +256,23 @@ function resolveApplyRoot(cwd: string): { root: string; via: "registry" | "cwd" 
   return { root: cwd, via: "cwd" };
 }
 
-// doctor — truthfulness gate for each known harness vs default definition. Exit 1 on violation.
+// doctor — truthfulness gate for each known harness vs default definition.
+// Exit codes match apply (WIRE_EXIT): 0 OK; 1 hard (invalid def); 2 usage; 3 truthfulness policy.
 function runDoctor(argv: string[]): void {
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") usage(0);
     console.error(`doctor: unexpected argument: ${a}`);
-    usage();
+    usage(WIRE_EXIT.usage);
   }
 
-  validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
+  try {
+    validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
+  } catch (e) {
+    console.error(`doctor: hard failure — ${e instanceof Error ? e.message : String(e)}`);
+    process.exit(WIRE_EXIT.hard);
+  }
+
   const roles = loadRoles();
   const bindingNote = isEmptyRoles(roles)
     ? "local binding: (empty — not required for doctor)"
@@ -273,23 +281,27 @@ function runDoctor(argv: string[]): void {
   log(`doctor: definition="${DEFAULT_AGENT_DEFINITION.name}" (${DEFAULT_AGENT_DEFINITION.roles.length} roles)`);
   log(`doctor: ${bindingNote}`);
 
-  let failed = false;
+  let hadTruthfulnessBlock = false;
   for (const harness of HARNESS_IDS) {
     const violations = checkTruthfulness(DEFAULT_AGENT_DEFINITION, harness);
     if (violations.length === 0) {
       log(`doctor: ${harness} — OK`);
     } else {
-      failed = true;
+      hadTruthfulnessBlock = true;
       console.error(`doctor: ${harness} — ${violations.length} violation(s):`);
       console.error(formatViolations(violations));
     }
   }
 
-  if (failed) {
-    console.error("doctor: FAILED — definition requires capability/ies a harness does not declare.");
-    process.exit(1);
+  const code = classifyApplyExit({ hadTruthfulnessBlock });
+  if (code === WIRE_EXIT.ok) {
+    log("doctor: all known harnesses OK.");
+    process.exit(WIRE_EXIT.ok);
   }
-  log("doctor: all known harnesses OK.");
+  console.error(
+    `doctor: FAILED — definition requires capability/ies a harness does not declare (exit ${WIRE_EXIT.truthfulness}).`,
+  );
+  process.exit(WIRE_EXIT.truthfulness);
 }
 
 // apply — compile per-harness artifacts (distinct from update kit-copy).

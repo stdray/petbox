@@ -34,3 +34,10 @@ test("usage code is 2 (convention) and truthfulness block is 3", () => {
   assert.equal(policyBlock, 3);
   assert.notEqual(usageTypo, policyBlock);
 });
+
+test("doctor and apply share truthfulness exit 3 (not hard 1)", () => {
+  // Both tools call classifyApplyExit({ hadTruthfulnessBlock: true }) for policy fails.
+  assert.equal(classifyApplyExit({ hadTruthfulnessBlock: true }), WIRE_EXIT.truthfulness);
+  assert.notEqual(WIRE_EXIT.truthfulness, WIRE_EXIT.hard);
+  assert.notEqual(WIRE_EXIT.truthfulness, WIRE_EXIT.usage);
+});
