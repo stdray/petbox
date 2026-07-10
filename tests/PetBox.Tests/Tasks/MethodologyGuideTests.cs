@@ -157,6 +157,12 @@ public sealed class MethodologyGuideTests : IClassFixture<MethodologyGuideFixtur
 		inv.Should().Contain(("work", "transition_effect", "Done: incoming issue_task -> done"));
 		inv.Should().Contain(("work", "transition_effect", "Done: outgoing blocks from Blocked -> InProgress"));
 		inv.Should().Contain(("work", "tag_axes", "area|concern"));
+		// primitives-enum-residual: auto-wire + delivery type roles are DATA-born.
+		inv.Should().Contain(("work", "auto_wire", "spec"));
+		inv.Should().Contain(("spec", "delivery", "required:feature; defects:bug"));
+		md.Should().Contain("auto-wires SpecBoard of the `work` board to the `spec` board");
+		md.Should().Contain("required types (feature)");
+		md.Should().Contain("defect types (bug)");
 		inv.Should().NotContain(i => i.Kind == "simple" && i.Rule == "tag_axes", "simple declares no axes");
 
 		// classic's gates, machine-readable: the Duplicate reason gate ONLY — no Cancelled

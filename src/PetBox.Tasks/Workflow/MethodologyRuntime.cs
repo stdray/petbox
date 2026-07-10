@@ -62,6 +62,24 @@ public sealed class MethodologyRuntime
 			? kind.Effects ?? []
 			: MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)).Effects;
 
+	// Auto-wire target of a kind (primitives-enum-residual): the definition's when it
+	// declares the kind, else the preset's (work → "spec"). Null = no auto-wire.
+	public string? AutoWireSpecFrom(string? kindSlug) =>
+		ResolvedKind(kindSlug)?.AutoWireSpecFrom;
+
+	// Delivery roll-up config of a kind (primitives-enum-residual): the definition's when
+	// it declares the kind, else the preset's (spec: required=feature, defect=bug). Null =
+	// no delivery computation for this kind. Gates ComputeSpecDeliveryAsync.
+	public MethodologyDeliveryDef? DeliveryOf(string? kindSlug) =>
+		ResolvedKind(kindSlug)?.Delivery;
+
+	// The kind definition the resolvers above share: definition override wins, else the
+	// preset KindDef for the parsed BoardKind (unknown slugs → Simple).
+	MethodologyKindDef? ResolvedKind(string? kindSlug) =>
+		kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind)
+			? kind
+			: MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug));
+
 	// Tag axes governing a board of this kind — ONE rule for everything: no axes =
 	// free-form tags, axes declared = enforced namespace allowlist. A definition-resolved
 	// kind runs on the definition's (project-wide) axes; a preset kind on the preset's

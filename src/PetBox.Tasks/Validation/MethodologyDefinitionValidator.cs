@@ -168,6 +168,52 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		}
 
 		ValidateEffects(kind, KindStatuses(kind), knownLinks, ctx);
+		ValidateAutoWire(kind, ctx);
+		ValidateDelivery(kind, ctx);
+	}
+
+	// AutoWireSpecFrom is a kind slug naming the board to wire SpecBoard to. Format-checked
+	// only (the target may be a preset kind outside this definition); cannot equal self.
+	static void ValidateAutoWire(MethodologyKindDef kind, ValidationContext<MethodologyDefinition> ctx)
+	{
+		if (kind.AutoWireSpecFrom is null) return;
+		if (!IsSlug(kind.AutoWireSpecFrom))
+			ctx.AddFailure($"kind '{kind.Kind}': autoWireSpecFrom '{kind.AutoWireSpecFrom}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
+		else if (string.Equals(kind.AutoWireSpecFrom, kind.Kind, StringComparison.OrdinalIgnoreCase))
+			ctx.AddFailure($"kind '{kind.Kind}': autoWireSpecFrom cannot name the same kind");
+	}
+
+	// Delivery type roles: RequiredTypes non-empty (otherwise the roll-up is always
+	// not_started and the declaration is noise); every type is a valid slug. Types name
+	// LINKED tasks (typically of another kind), so they are NOT required to appear in this
+	// kind's workflow blocks.
+	static void ValidateDelivery(MethodologyKindDef kind, ValidationContext<MethodologyDefinition> ctx)
+	{
+		if (kind.Delivery is null) return;
+		var d = kind.Delivery;
+		if (d.RequiredTypes is not { Count: > 0 })
+		{
+			ctx.AddFailure($"kind '{kind.Kind}': delivery.requiredTypes must be non-empty (omit delivery for no roll-up)");
+			return;
+		}
+		var seenReq = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var t in d.RequiredTypes)
+		{
+			if (!IsSlug(t))
+				ctx.AddFailure($"kind '{kind.Kind}': delivery.requiredTypes '{t}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
+			else if (!seenReq.Add(t))
+				ctx.AddFailure($"kind '{kind.Kind}': delivery.requiredTypes '{t}' is declared more than once");
+		}
+		var seenDef = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+		foreach (var t in d.DefectTypes ?? [])
+		{
+			if (!IsSlug(t))
+				ctx.AddFailure($"kind '{kind.Kind}': delivery.defectTypes '{t}' is not a valid slug (^[a-z][a-z0-9_-]{{0,99}}$)");
+			else if (!seenDef.Add(t))
+				ctx.AddFailure($"kind '{kind.Kind}': delivery.defectTypes '{t}' is declared more than once");
+			else if (seenReq.Contains(t))
+				ctx.AddFailure($"kind '{kind.Kind}': delivery type '{t}' cannot be both required and defect");
+		}
 	}
 
 	// Link-constraint TARGET declaration (schema v2): `TargetKind` is a kind slug; when the

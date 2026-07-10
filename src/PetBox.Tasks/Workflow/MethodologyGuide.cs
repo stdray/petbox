@@ -8,9 +8,10 @@ namespace PetBox.Tasks.Workflow;
 // prose, kept structured so future consumers (memory invariants, artifact codegen) don't
 // re-parse markdown. Rule ∈ approval_gate (owner-only by convention) |
 // approval_gate_enforced (the server blocks it) | reason_required |
-// precondition_artifact | checklist | transition_effect | link_constraint | tag_axes;
-// Detail is the rule's compact payload (e.g. "Review -> Done",
-// "feature requires task_spec (specRef)", "area|concern").
+// precondition_artifact | checklist | transition_effect | link_constraint | tag_axes |
+// auto_wire | delivery; Detail is the rule's compact payload (e.g. "Review -> Done",
+// "feature requires task_spec (specRef)", "area|concern", "spec",
+// "required:feature; defects:bug").
 public sealed record MethodologyInvariant(string Kind, string Rule, string Detail);
 
 // Renders a project's EFFECTIVE methodology — definition-declared kinds + preset kinds
@@ -83,6 +84,12 @@ public static class MethodologyGuide
 
 		if (kind.Effects is { Count: > 0 } effects)
 			AppendEffects(md, kind.Kind, effects, invariants);
+
+		if (kind.AutoWireSpecFrom is { Length: > 0 } from)
+			AppendAutoWire(md, kind.Kind, from, invariants);
+
+		if (kind.Delivery is { } delivery)
+			AppendDelivery(md, kind.Kind, delivery, invariants);
 	}
 
 	static void AppendWorkflow(StringBuilder md, string kind, MethodologyWorkflowDef block, List<MethodologyInvariant> invariants)
@@ -228,6 +235,34 @@ public static class MethodologyGuide
 		var link = markdown ? $"`{e.Link}`" : e.Link;
 		var scope = e.OnlyFrom is null ? "" : $" currently in {e.OnlyFrom}";
 		return $"On entering {e.On}, {e.Direction} {link} nodes{scope} are set to {e.Set}.";
+	}
+
+	// SpecBoard auto-wire as DATA (primitives-enum-residual) — when exactly one board of
+	// each kind is active and SpecBoard is empty, the server wires them.
+	static void AppendAutoWire(StringBuilder md, string kind, string fromKind, List<MethodologyInvariant> invariants)
+	{
+		md.AppendLine();
+		md.AppendLine("### Auto-wire");
+		md.AppendLine();
+		md.AppendLine($"- When exactly one active `{kind}` board and one active `{fromKind}` board exist and SpecBoard is empty, the server auto-wires SpecBoard of the `{kind}` board to the `{fromKind}` board.");
+		invariants.Add(new(kind, "auto_wire", fromKind));
+	}
+
+	// Delivery type roles as DATA (primitives-enum-residual) — the feature/bug quartet rule
+	// is just requiredTypes=feature, defectTypes=bug on the preset.
+	static void AppendDelivery(StringBuilder md, string kind, MethodologyDeliveryDef delivery, List<MethodologyInvariant> invariants)
+	{
+		var required = string.Join("|", delivery.RequiredTypes);
+		var defects = string.Join("|", delivery.DefectTypes);
+		md.AppendLine();
+		md.AppendLine("### Delivery roll-up");
+		md.AppendLine();
+		md.AppendLine("- Delivery is COMPUTED from inbound `task_spec` links (and rolled up the part_of tree):");
+		md.AppendLine($"  - required types ({required}): none → not_started; any non-terminal-ok → in_progress; all terminal-ok → done candidate");
+		md.AppendLine(defects.Length > 0
+			? $"  - defect types ({defects}): any still open while requireds are done → done_with_defects"
+			: "  - no defect types declared — done has no defect variant");
+		invariants.Add(new(kind, "delivery", $"required:{required}; defects:{defects}"));
 	}
 
 	static void AppendRelationKinds(StringBuilder md, MethodologyRuntime runtime)

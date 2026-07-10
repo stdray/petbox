@@ -127,15 +127,22 @@ public sealed partial class TasksService : ITasksService
 			throw new ArgumentException($"project '{projectKey}' already has an active {kind.ToString().ToLowerInvariant()} board ('{existing.Name}') — the methodology quartet is one-per-project; close it (tasks_board_close) or use a simple board");
 	}
 
-	// When exactly one active spec and one active work board exist and the work board has no
-	// spec link, wire it automatically — so the agent need not call board_set_spec by hand.
+	// Data-driven SpecBoard auto-wire (primitives-enum-residual): for every kind that
+	// declares AutoWireSpecFrom, when exactly one active board of that kind and one of the
+	// target kind exist and SpecBoard is empty, wire them. The quartet work→spec rule is
+	// preset DATA on the work KindDef — no BoardKind special-case here.
 	async Task AutoWireSpecAsync(string projectKey, CancellationToken ct)
 	{
-		var boards = await _boards.ListAsync(projectKey, ct);
-		var spec = boards.SingleOrDefault(b => b.ClosedAt == null && MethodologyPresets.ParseKind(b.Kind) == BoardKind.Spec);
-		var work = boards.SingleOrDefault(b => b.ClosedAt == null && MethodologyPresets.ParseKind(b.Kind) == BoardKind.Work);
-		if (spec is not null && work is not null && string.IsNullOrWhiteSpace(work.SpecBoard))
-			await _boards.UpdateAsync(projectKey, work.Name, m => m with { SpecBoard = spec.Name }, ct);
+		var runtime = await RuntimeAsync(projectKey, ct);
+		var active = (await _boards.ListAsync(projectKey, ct)).Where(b => b.ClosedAt == null).ToList();
+		foreach (var kind in runtime.EffectiveKinds())
+		{
+			if (kind.AutoWireSpecFrom is not { Length: > 0 } fromKind) continue;
+			var self = active.Where(b => string.Equals(b.Kind, kind.Kind, StringComparison.OrdinalIgnoreCase)).ToList();
+			var target = active.Where(b => string.Equals(b.Kind, fromKind, StringComparison.OrdinalIgnoreCase)).ToList();
+			if (self.Count == 1 && target.Count == 1 && string.IsNullOrWhiteSpace(self[0].SpecBoard))
+				await _boards.UpdateAsync(projectKey, self[0].Name, m => m with { SpecBoard = target[0].Name }, ct);
+		}
 	}
 
 	public async Task<(bool Set, string? SpecBoard)> SetSpecBoardAsync(string projectKey, string board, string? specBoard, CancellationToken ct = default)
@@ -389,7 +396,11 @@ public sealed partial class TasksService : ITasksService
 		var runtime = await RuntimeAsync(projectKey, ct);
 		var presetKind = runtime.PresetKind(meta.Kind); // null = definition-resolved kind
 		var parentOf = await ParentMapAsync(projectKey, ct);
-		var delivery = presetKind == BoardKind.Spec ? await ComputeSpecDeliveryAsync(projectKey, active, parentOf, runtime, ct) : null;
+		// Delivery is gated by kind DATA (MethodologyDeliveryDef), not BoardKind.Spec.
+		var deliveryDef = runtime.DeliveryOf(meta.Kind);
+		var delivery = deliveryDef is not null
+			? await ComputeSpecDeliveryAsync(projectKey, active, parentOf, runtime, deliveryDef, ct)
+			: null;
 
 		var index = await BuildNodeIndexAsync(projectKey, ct);
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
@@ -636,8 +647,9 @@ public sealed partial class TasksService : ITasksService
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		var active = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList();
 		var tagsByNode = await _tags.BoardTagsAsync(projectKey, board, ct);
-		var delivery = runtime.PresetKind(meta.Kind) == BoardKind.Spec
-			? await ComputeSpecDeliveryAsync(projectKey, active, await ParentMapAsync(projectKey, ct), runtime, ct)
+		var deliveryDef = runtime.DeliveryOf(meta.Kind);
+		var delivery = deliveryDef is not null
+			? await ComputeSpecDeliveryAsync(projectKey, active, await ParentMapAsync(projectKey, ct), runtime, deliveryDef, ct)
 			: null;
 
 		var groups = ProjectByTags(active, dims, 0, tagsByNode, delivery);
@@ -733,11 +745,14 @@ public sealed partial class TasksService : ITasksService
 			? new LinkDto(nodeId, r.Board, r.Slug, r.Title, r.Status)
 			: new LinkDto(nodeId, null, null, null, "missing");
 
-	// COMPUTED spec roll-up (keyed by NodeId): a spec node's delivery derives bottom-up from
+	// COMPUTED delivery roll-up (keyed by NodeId): a node's delivery derives bottom-up from
 	// the tasks linked (task_spec) to it and its part_of descendants (decomposition may cross
 	// boards) — each leaf resolves independently before combining, rather than pooling every
-	// task in the subtree into one flat union.
-	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(string projectKey, IReadOnlyList<PlanNode> specNodes, Dictionary<string, string> parentOf, MethodologyRuntime runtime, CancellationToken ct)
+	// task in the subtree into one flat union. Type roles come from `def` (methodology data),
+	// not string literals (primitives-enum-residual).
+	async Task<Dictionary<string, string>> ComputeSpecDeliveryAsync(
+		string projectKey, IReadOnlyList<PlanNode> specNodes, Dictionary<string, string> parentOf,
+		MethodologyRuntime runtime, MethodologyDeliveryDef def, CancellationToken ct)
 	{
 		var byNodeId = new Dictionary<string, (string Type, string Status)>(StringComparer.Ordinal);
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
@@ -766,7 +781,7 @@ public sealed partial class TasksService : ITasksService
 			if (memo.TryGetValue(nodeId, out var cached)) return cached;
 			if (!visiting.Add(nodeId)) return "not_started"; // cycle guard; part_of shouldn't cycle
 			string? own = tasksOf.TryGetValue(nodeId, out var ts)
-				? Delivery(ts.Where(byNodeId.ContainsKey).Select(id => byNodeId[id]).ToList(), runtime)
+				? Delivery(ts.Where(byNodeId.ContainsKey).Select(id => byNodeId[id]).ToList(), runtime, def)
 				: null;
 			var childDeliveries = childrenOf.TryGetValue(nodeId, out var kids)
 				? kids.Select(DeliveryOf)
@@ -780,13 +795,17 @@ public sealed partial class TasksService : ITasksService
 		return specNodes.ToDictionary(s => s.NodeId, s => DeliveryOf(s.NodeId), StringComparer.Ordinal);
 	}
 
-	static string Delivery(List<(string Type, string Status)> tasks, MethodologyRuntime runtime)
+	// Type roles from methodology data: RequiredTypes drive progress; DefectTypes open while
+	// requireds are done yield done_with_defects. No hardcoded "feature"/"bug" here.
+	static string Delivery(List<(string Type, string Status)> tasks, MethodologyRuntime runtime, MethodologyDeliveryDef def)
 	{
-		var features = tasks.Where(t => t.Type == "feature").ToList();
-		if (features.Count == 0) return "not_started";
-		if (!features.All(f => runtime.KindOfSlug(f.Status) == StatusKind.TerminalOk)) return "in_progress";
-		var openBug = tasks.Any(t => t.Type == "bug" && runtime.KindOfSlug(t.Status) == StatusKind.Open);
-		return openBug ? "done_with_defects" : "done";
+		var required = tasks.Where(t => def.RequiredTypes.Contains(t.Type, StringComparer.OrdinalIgnoreCase)).ToList();
+		if (required.Count == 0) return "not_started";
+		if (!required.All(f => runtime.KindOfSlug(f.Status) == StatusKind.TerminalOk)) return "in_progress";
+		var openDefect = tasks.Any(t =>
+			def.DefectTypes.Contains(t.Type, StringComparer.OrdinalIgnoreCase)
+			&& runtime.KindOfSlug(t.Status) == StatusKind.Open);
+		return openDefect ? "done_with_defects" : "done";
 	}
 
 	// ---- write: upsert ----

@@ -19,9 +19,9 @@ public static class MethodologyPresets
 	public const string Name = "builtin-presets";
 
 	// Kind slug → process-role enum. The enum is the key for semantics that are NOT yet
-	// primitives (quartet singleton rule, spec delivery roll-up, FSM effects, ideaRef/specRef
-	// board-kind checks, UI kind rendering). Unknown slugs — including the legacy `free`
-	// (pre-M029 rows) — read as Simple, exactly as they always did.
+	// primitives (quartet singleton rule, ideaRef/specRef board-kind checks, UI kind
+	// rendering). Auto-wire and delivery type roles are DATA on KindDef. Unknown slugs —
+	// including the legacy `free` (pre-M029 rows) — read as Simple, exactly as they always did.
 	public static BoardKind ParseKind(string? kind) =>
 		Enum.TryParse<BoardKind>(kind, ignoreCase: true, out var k) ? k : BoardKind.Simple;
 
@@ -160,6 +160,8 @@ public static class MethodologyPresets
 			new MethodologyTransitionEffectDef(On: "Done", Link: "issue_task", Direction: "incoming", Set: "done"),
 			new MethodologyTransitionEffectDef(On: "Done", Link: "blocks", Direction: "outgoing", Set: "InProgress", OnlyFrom: "Blocked"),
 		],
+		// primitives-enum-residual: work→spec auto-wire is DATA (executed by AutoWireSpecAsync).
+		AutoWireSpecFrom = "spec",
 	};
 
 	// A spec node is born `defined` (a worked-out requirement) and can only retire to
@@ -186,6 +188,9 @@ public static class MethodologyPresets
 		[
 			new MethodologyLinkConstraintDef("spec", "idea_spec") { TargetKind = "ideas", TargetStatuses = ["accepted"] },
 		],
+		// primitives-enum-residual: delivery type roles are DATA (feature drives progress;
+		// open bug → done_with_defects). Computed by TasksService.ComputeSpecDeliveryAsync.
+		Delivery = new MethodologyDeliveryDef(["feature"], ["bug"]),
 	};
 
 	// Mirrors the work gate: an idea reaches `review` (agent ceiling), the maintainer
@@ -386,9 +391,10 @@ public static class MethodologyPresets
 	// passes MethodologyDefinitionValidator (the preset slug is the definition name; every kind
 	// slug, status and transition come straight from the preset data). Read-only: the returned
 	// definition is a template, NOT an installed methodology. The data-born semantics (link
-	// constraints incl. targets — the ideaRef/specRef guards — and transition effects — intake
-	// auto-close, blocks auto-unblock) DO travel with the copy; only the enum-keyed extras
-	// (delivery roll-up, quartet singleton rule, auto-wire) stay preset-only.
+	// constraints incl. targets — the ideaRef/specRef guards — transition effects — intake
+	// auto-close, blocks auto-unblock — auto-wire work→spec, and delivery type roles) DO
+	// travel with the copy; only the enum-keyed extras (quartet singleton rule) stay
+	// preset-only.
 	public static MethodologyDefinition RenderPresetDefinition(string? slug)
 	{
 		var preset = ResolveProvisioningPreset(slug);
