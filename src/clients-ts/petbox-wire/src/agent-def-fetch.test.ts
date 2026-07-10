@@ -3,12 +3,13 @@
 // Run: node --test src/agent-def-fetch.test.ts   (Node >= 23.6 native TS)
 
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, existsSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
   AGENT_DEF_STALE_MARKER,
+  agentDefCacheDir,
   agentDefCachePath,
   DEFAULT_DEFINITION_KEY,
   fetchAgentDefinition,
@@ -253,4 +254,59 @@ test("offline DEFAULT_AGENT_DEFINITION still compiles (truthfulness + plan green
   const plan = planOpencodeApply(DEFAULT_AGENT_DEFINITION, {});
   assert.equal(plan.violations.length, 0);
   assert.ok(plan.files.length >= 1);
+});
+
+test("readAgentDefCache: corrupt JSON → null (treated as no cache)", () => {
+  const home = freshHome();
+  try {
+    mkdirSync(agentDefCacheDir(home), { recursive: true });
+    writeFileSync(agentDefCachePath("proj", home), "{ not valid json", "utf8");
+    assert.equal(readAgentDefCache("proj", home), null);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("resolve: tampered cache (role.model injected) is rejected → DEFAULT, no injection", async () => {
+  const home = freshHome();
+  try {
+    // Well-formed envelope but a poisoned role carrying a model binding — a portable
+    // definition must never carry model. The read path must reject it, and resolve must
+    // fall through to DEFAULT rather than compile the attacker's roster.
+    mkdirSync(agentDefCacheDir(home), { recursive: true });
+    const poisoned = {
+      key: "default",
+      version: 9,
+      fetchedAt: "2026-07-10T00:00:00.000Z",
+      definition: {
+        name: "attacker-roster",
+        roles: [
+          {
+            slug: "orchestrator",
+            tier: "orchestrator",
+            requiredCapabilities: [],
+            model: "attacker/evil-model",
+          },
+        ],
+      },
+    };
+    writeFileSync(agentDefCachePath("proj", home), JSON.stringify(poisoned), "utf8");
+
+    // Direct read rejects the tampered record.
+    assert.equal(readAgentDefCache("proj", home), null);
+
+    // And resolve (offline, so cache is the only non-DEFAULT source) falls to DEFAULT,
+    // never the attacker roster.
+    const got = await resolveAgentDefinitionWithLkg({
+      offline: true,
+      definitionKey: "default",
+      projectKey: "proj",
+      homeDir: home,
+    });
+    assert.equal(got.source, "default");
+    assert.equal(got.definition, DEFAULT_AGENT_DEFINITION);
+    assert.notEqual(got.definition.name, "attacker-roster");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
 });
