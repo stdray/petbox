@@ -141,14 +141,25 @@ public sealed class MethodologyRuntime
 			.Concat(_kinds.Keys.OrderBy(k => k, StringComparer.Ordinal));
 
 	// The workflow for (kind slug, type). Null = the kind needs a known type (the "type
-	// required" contract — a defined kind always, a preset kind only for Work).
+	// required" contract). Instance rules store full preset blobs as defined kinds, so
+	// empty-type resolution MUST match MethodologyPresets.For: Work requires an explicit
+	// type; other kinds resolve the first block's default type FSM.
 	public Workflow? For(string? kindSlug, string? type)
 	{
 		if (kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind))
 		{
-			if (string.IsNullOrEmpty(type)) return null;
-			var block = FindBlock(kind, type);
-			return block?.ToWorkflow(type.ToLowerInvariant());
+			if (string.IsNullOrEmpty(type))
+			{
+				if (string.Equals(kindSlug, "work", StringComparison.OrdinalIgnoreCase))
+					return null;
+				if (kind.Workflows.Count == 0 || kind.Workflows[0].Types.Count == 0)
+					return null;
+				var defType = kind.Workflows[0].Types[0];
+				return kind.Workflows[0].ToWorkflow(defType);
+			}
+			var label = type.ToLowerInvariant();
+			var block = FindBlock(kind, label);
+			return block?.ToWorkflow(label);
 		}
 		return MethodologyPresets.For(MethodologyPresets.ParseKind(kindSlug), type);
 	}

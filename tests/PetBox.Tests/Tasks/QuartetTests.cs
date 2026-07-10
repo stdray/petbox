@@ -112,11 +112,13 @@ public sealed class QuartetTests : IDisposable
 		classic.Kind.Should().Be("classic");
 		classic.SpecBoard.Should().BeNull("classic is outside the spec/work auto-wire");
 
-		// Idempotent rerun; and classic is NOT a singleton — more boards may be created.
+		// Idempotent rerun; and classic is NOT a process-role singleton — more boards may be
+		// created on the same instance (membership required once any instance exists).
 		var again = await TasksTools.MethodologyEnableAsync(http, Flags(), _tasks, Proj, preset: "classic");
 		again.Boards.Should().ContainSingle().Which.Created.Should().BeFalse("the classic kind is already provisioned");
 		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(1);
-		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "another", "classic");
+		await TasksTools.BoardCreateAsync(http, Flags(), _tasks, Proj, "another", "classic",
+			methodologyInstance: "classic");
 		(await TasksTools.BoardListAsync(http, Flags(), _tasks, Proj)).Boards.Count.Should().Be(2);
 	}
 
