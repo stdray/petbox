@@ -3,7 +3,13 @@
 //
 //   npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]
 //                                      [--telemetry] [--telemetry-log <name>]
+//   npx petbox-wire update
 //   (dev, from a checkout: node <pkg>/src/wire.ts <dir> <projectKey> …)
+//
+// `update` refreshes only the stable kit copy (~/.petbox/wire/) from this package — protocol,
+// scripts, kit-owned templates — with the same mirror/orphan cleanup as a full wire. It does
+// NOT touch keys, registry entries, sticky prompt-rag/telemetry flags, per-project MCP/skills,
+// or require projectKey/key.
 //
 // --telemetry (opt-in, off by default) wires Claude Code to export its loop telemetry (OTLP
 // metrics + log-events) into the project's petbox named log (default `cc-telemetry`): it ensures
@@ -36,9 +42,20 @@
 // Unlike the hooks, this is a CLI: step failures surface loudly (no silent swallow).
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { PROMPT_RAG_DEFAULTS, type PromptRagConfig } from "./registry.ts";
@@ -79,10 +96,14 @@ function usage(exitCode: number = 2): never {
   const text =
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
     "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag | --no-prompt-rag]\n" +
+    "       npx petbox-wire update\n" +
     "       npx petbox-wire --help\n" +
     "\n" +
     "Wire a project to PetBox: global hooks, MCP configs and skills. prompt-RAG is OFF by default\n" +
-    "(opt in per project with --prompt-rag; --no-prompt-rag or a plain re-run removes the global hook).";
+    "(opt in per project with --prompt-rag; --no-prompt-rag or a plain re-run removes the global hook).\n" +
+    "\n" +
+    "update  Refresh ~/.petbox/wire only (protocol/scripts/templates) from this package. Does not\n" +
+    "        touch keys, registry, sticky prompt-rag/telemetry, or per-project MCP/skills.";
   (exitCode === 0 ? console.log : console.error)(text);
   process.exit(exitCode);
 }
@@ -128,6 +149,11 @@ function parseArgs(argv: string[]): Args {
     telemetryLog: telemetryLog.trim(),
     promptRag,
   };
+}
+
+// True when argv is the safe kit-refresh subcommand (no project/key required).
+function isUpdateCommand(argv: string[]): boolean {
+  return argv[0] === "update";
 }
 
 // ---- small helpers ---------------------------------------------------------
@@ -269,14 +295,44 @@ async function validateKey(baseUrl: string, key: string, projectKey: string): Pr
 
 // ---- step 5: stable kit copy -----------------------------------------------
 
+// Short content fingerprint of every regular file under root (path + bytes, sorted). Used by
+// `update` (and full wire's stable copy) so operators can see before/after kit identity without
+// a package version (published package.json is often 0.0.0 until CI stamps it).
+function kitFingerprint(root: string): string {
+  if (!existsSync(root)) return "(absent)";
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir).sort()) {
+      const abs = join(dir, name);
+      const st = statSync(abs);
+      if (st.isDirectory()) walk(abs);
+      else if (st.isFile()) files.push(abs);
+    }
+  };
+  walk(root);
+  const h = createHash("sha256");
+  for (const abs of files) {
+    const rel = relative(root, abs).replace(/\\/g, "/");
+    h.update(rel);
+    h.update("\0");
+    h.update(readFileSync(abs));
+    h.update("\0");
+  }
+  return h.digest("hex").slice(0, 12);
+}
+
+type CopyKitResult = { before: string; after: string; skipped: boolean };
+
 // Copy the running kit (HERE — an npx cache dir or a checkout's src/) into the stable location
 // (~/.petbox/wire/), overwriting. Every global hook/plugin link is computed from STABLE, so the
 // wiring keeps working after npx evicts its cache or a checkout moves. Copies the whole src dir
 // (all .ts files + templates/SKILL.md). No-op when already running the installed copy.
-function copyKitToStable(): void {
+// `label` prefixes log lines (full wire uses "[5/10]"; `update` uses "update").
+function copyKitToStable(label: string = "[5/10]"): CopyKitResult {
+  const before = kitFingerprint(STABLE);
   if (resolve(HERE) === resolve(STABLE)) {
-    log(`[5/10] stable copy: already running the installed kit at ${STABLE} — skipped.`);
-    return;
+    log(`${label} stable copy: already running the installed kit at ${STABLE} — skipped.`);
+    return { before, after: before, skipped: true };
   }
   mkdirSync(STABLE, { recursive: true });
   // Orphan cleanup — STABLE must be an EXACT MIRROR of HERE, never a UNION. cpSync overwrites but
@@ -289,11 +345,41 @@ function copyKitToStable(): void {
   for (const name of readdirSync(STABLE)) {
     if (!hereEntries.has(name)) {
       rmSync(join(STABLE, name), { recursive: true, force: true });
-      log(`[5/10] orphan cleanup: removed ${name} from ${STABLE} (not shipped by this kit).`);
+      log(`${label} orphan cleanup: removed ${name} from ${STABLE} (not shipped by this kit).`);
     }
   }
   cpSync(HERE, STABLE, { recursive: true, force: true });
-  log(`[5/10] stable copy: kit installed to ${STABLE} (from ${HERE}).`);
+  const after = kitFingerprint(STABLE);
+  log(`${label} stable copy: kit installed to ${STABLE} (from ${HERE}); hash ${before} → ${after}.`);
+  return { before, after, skipped: false };
+}
+
+// Safe kit-text refresh only: mirror THIS package into ~/.petbox/wire with orphan cleanup.
+// Intentionally does NOT: rotate/require API keys, touch ~/.petbox/keys.json or projects.json,
+// reinstall global hooks, rewrite per-project MCP/skills, or flip sticky prompt-rag/telemetry.
+// v1: STABLE kit only — re-run full wire to regenerate per-project skill bodies / MCP configs.
+function runUpdate(argv: string[]): void {
+  // `update` takes no flags other than help; reject extras so typos don't silently no-op.
+  for (let i = 1; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--help" || a === "-h") usage(0);
+    console.error(`update: unexpected argument: ${a}`);
+    usage();
+  }
+  log(`update: refreshing stable kit ${STABLE} from ${HERE}`);
+  log(`update: source hash ${kitFingerprint(HERE)}`);
+  const result = copyKitToStable("update:");
+  if (result.skipped) {
+    log(`update: done — kit already at ${STABLE} (hash ${result.after}).`);
+  } else if (result.before === result.after) {
+    log(`update: done — kit unchanged (hash ${result.after}).`);
+  } else {
+    log(`update: done — kit hash ${result.before} → ${result.after}.`);
+  }
+  log(
+    "update: skipped keys, registry, sticky prompt-rag/telemetry, global hooks reinstall, " +
+      "and per-project MCP/skills (re-run full wire to refresh those).",
+  );
 }
 
 // ---- step 6: registry ------------------------------------------------------
@@ -810,7 +896,15 @@ async function selfSmoke(baseUrl: string, project: string, key: string): Promise
 // ---- main ------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  const args = parseArgs(process.argv.slice(2));
+  const argv = process.argv.slice(2);
+  // Subcommand: safe kit-text refresh (no project/key). Must run before parseArgs, which
+  // requires <dir> <projectKey> positionals for the full wire path.
+  if (isUpdateCommand(argv)) {
+    runUpdate(argv);
+    return;
+  }
+
+  const args = parseArgs(argv);
   const dir = resolve(args.dir);
   const project = args.projectKey;
   const baseUrl = DEFAULT_BASE_URL;
