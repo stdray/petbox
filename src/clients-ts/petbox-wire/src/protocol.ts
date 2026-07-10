@@ -30,6 +30,9 @@ export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolO
   const memoryRemember = tool("memory_remember");
   const memoryUpsert = tool("memory_upsert");
   const tasksUpsert = tool("tasks_upsert");
+  const tasksMethodologyGuide = tool("tasks_methodology_guide");
+  const tasksMethodologyGet = tool("tasks_methodology_get");
+  const tasksWorkflow = tool("tasks_workflow");
 
   let out = `## PetBox memory
 
@@ -55,7 +58,7 @@ PetBox remembers curated facts AND full session history. Start from SEARCH, not 
 
 **Autocapture is LIVE:** server distills facts into \`autocaptured\` after each session. So: (1) don't re-store autocaptured entries — promotion is owner's call; (2) end-of-session sweep = INSURANCE: before stopping, store 1-3 must-not-wait learnings (decision+why, root cause, gotcha) and 0-2 friction notes (what got in the way, what looked stale). Skip narration, skip anything derivable from code/git.
 
-**Process defects are findings, not obstacles:** never silently work around a process/doc defect or doc-vs-reality contradiction — file an intake issue (\`${tasksUpsert}\` type:"issue" status:"reported"). Process criticism is welcome, never scope creep.`;
+**Process defects are findings, not obstacles:** never silently work around a process/doc defect or doc-vs-reality contradiction — file it on THIS project's methodology (do not invent board/type/status). Read process via \`${tasksMethodologyGuide}\` / \`${tasksMethodologyGet}\`; legal types/statuses for a board via \`${tasksWorkflow}\`; then \`${tasksUpsert}\` with those values. Process criticism is welcome, never scope creep.`;
 
   const source = opts?.source;
   if (source === "resume" || source === "compact") {
