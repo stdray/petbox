@@ -1,4 +1,4 @@
-// Protocol inject: memory always; spawn prescriptions only when harness has spawn_subagents.
+// Protocol inject: memory always; spawn prescriptions when harness has spawn_subagents.
 //
 // Run: node --test src/protocol.test.ts
 
@@ -12,26 +12,27 @@ import {
 
 const project = "demo";
 
-test("orchestrationPrescriptionsAllowed tracks spawn_subagents", () => {
+test("orchestrationPrescriptionsAllowed tracks spawn_subagents for all three harnesses", () => {
   assert.equal(orchestrationPrescriptionsAllowed("claude-code"), true);
   assert.equal(orchestrationPrescriptionsAllowed("opencode"), true);
-  assert.equal(orchestrationPrescriptionsAllowed("droid"), false);
+  // Factory Task tool on main session — https://docs.factory.ai/cli/configuration/custom-droids
+  assert.equal(orchestrationPrescriptionsAllowed("droid"), true);
   assert.equal(orchestrationPrescriptionsAllowed(undefined), false);
   assert.equal(orchestrationPrescriptionsAllowed("unknown"), false);
 });
 
-test("buildProtocol for droid MUST NOT contain spawn-by-default prose", () => {
+test("buildProtocol for droid CONTAINS spawn/orchestrator prose (Factory spawns via Task)", () => {
   const text = buildProtocol(project, mcpPetboxTool, { harness: "droid" });
   const lower = text.toLowerCase();
-  assert.ok(!lower.includes("spawn workers"), `droid protocol must not SPAWN workers:\n${text}`);
   assert.ok(
-    !lower.includes("delegate by default"),
-    `droid protocol must not delegate by DEFAULT:\n${text}`,
+    lower.includes("spawn workers") || lower.includes("delegate by default"),
+    `droid protocol must prescribe spawn/delegate:\n${text}`,
   );
-  assert.ok(!lower.includes("fan-out is default"), `droid must not claim fan-out default:\n${text}`);
-  // Memory protocol still present.
-  assert.match(text, /search before rework/i);
+  assert.match(text, /orchestrator/i);
   assert.match(text, /PetBox memory active/);
+  assert.match(text, /search before rework/i);
+  // Must not fall back to "· main" no-spawn self-intro
+  assert.ok(!lower.includes("· main"), `droid must not use no-spawn main intro:\n${text}`);
 });
 
 test("buildProtocol for claude-code / opencode MUST contain spawn/delegate language", () => {
@@ -43,7 +44,6 @@ test("buildProtocol for claude-code / opencode MUST contain spawn/delegate langu
       `${harness} protocol must prescribe spawn/delegate:\n${text}`,
     );
     assert.match(text, /orchestrator/i);
-    // Derived from definition notes when spawn allowed.
     assert.match(text, /plan, decompose, delegate|Orchestrator notes/i);
   }
 });

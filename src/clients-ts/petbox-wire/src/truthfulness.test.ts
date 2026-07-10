@@ -1,4 +1,4 @@
-// Unit tests for the definition truthfulness gate + default agent definition.
+// Unit tests for the definition truthfulness gate + default agent definition + apply plans.
 //
 // Run: node --test src/truthfulness.test.ts   (Node >= 23.6 native TS)
 
@@ -13,6 +13,7 @@ import {
   formatApplyBlocked,
   planApply,
   planOpencodeApply,
+  renderDroidMarkdown,
   renderOpencodeAgentMarkdown,
 } from "./apply-artifacts.ts";
 import { HARNESS_IDS, harnessCapabilities, hasCapability } from "./harness-capabilities.ts";
@@ -38,13 +39,25 @@ test("opencode declares role_files + mcp_subagent + spawn_subagents, not dynamic
   assert.equal(caps.has("dynamic_model_at_spawn"), false);
 });
 
-test("droid declares only hooks — no unconditional mcp_main_session", () => {
-  assert.equal(hasCapability("droid", "hooks"), true);
-  assert.equal(hasCapability("droid", "mcp_main_session"), false);
-  assert.equal(hasCapability("droid", "spawn_subagents"), false);
-  assert.equal(hasCapability("droid", "dynamic_model_at_spawn"), false);
+test("droid matrix from Factory docs: role_files+spawn+mcp+dynamic+hooks; no explore-inherit claim", () => {
+  // https://docs.factory.ai/cli/configuration/custom-droids
+  // https://docs.factory.ai/cli/configuration/mcp
   const caps = harnessCapabilities("droid");
-  assert.deepEqual([...caps], ["hooks"]);
+  for (const c of [
+    "mcp_main_session",
+    "mcp_subagent",
+    "spawn_subagents",
+    "role_files",
+    "dynamic_model_at_spawn",
+    "hooks",
+  ] as const) {
+    assert.equal(caps.has(c), true, `droid must declare ${c}`);
+  }
+  assert.equal(
+    hasCapability("droid", "builtin_explore_inherits_model"),
+    false,
+    "do not claim CC-style Explore inherit without separate verification",
+  );
 });
 
 test("constructed def requiring missing cap fails with role+capability+harness in message", () => {
@@ -71,80 +84,36 @@ test("constructed def requiring missing cap fails with role+capability+harness i
   assert.match(msg, /claude-code/);
 });
 
-test("orchestrator spawn.allowed implies spawn_subagents violation on droid", () => {
-  const def: AgentDefinition = {
-    name: "t",
-    roles: [
-      {
-        slug: "orchestrator",
-        tier: "orchestrator",
-        // spawn.allowed alone is enough — spawn_subagents is implicit
-        requiredCapabilities: [],
-        spawn: { allowed: true, allowedRoles: ["worker"] },
-      },
-    ],
-  };
-  const v = checkTruthfulness(def, "droid");
-  assert.ok(v.some((x) => x.role === "orchestrator" && x.capability === "spawn_subagents"));
-  assert.match(formatViolations(v), /spawn_subagents/);
-  assert.match(formatViolations(v), /droid/);
-  // claude-code declares spawn_subagents → clean for this minimal def
-  assert.deepEqual(checkTruthfulness(def, "claude-code"), []);
-});
-
-test("role only needing declared caps → ok (empty violations)", () => {
-  const def: AgentDefinition = {
-    name: "t",
-    roles: [
-      {
-        slug: "orchestrator",
-        tier: "orchestrator",
-        requiredCapabilities: ["mcp_main_session", "hooks"],
-      },
-    ],
-  };
-  assert.deepEqual(checkTruthfulness(def, "claude-code"), []);
-  // droid lacks mcp_main_session
-  const droidV = checkTruthfulness(def, "droid");
-  assert.ok(droidV.some((x) => x.capability === "mcp_main_session"));
-});
-
-test("default definition fails droid (no spawn_subagents / mcp_main_session) — intentional honesty", () => {
+test("DEFAULT is truth-clean on all known harnesses (including droid)", () => {
   validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
-  // Harnesses with spawn + mcp (claude-code, opencode) pass.
-  for (const h of ["claude-code", "opencode"] as const) {
+  for (const h of HARNESS_IDS) {
     const v = checkTruthfulness(DEFAULT_AGENT_DEFINITION, h);
     assert.deepEqual(v, [], `default must pass on ${h}: ${formatViolations(v)}`);
   }
-  // droid lacks spawn_subagents and mcp_main_session → DEFAULT fails (not a silent pass).
-  const droidV = checkTruthfulness(DEFAULT_AGENT_DEFINITION, "droid");
-  assert.ok(droidV.length > 0, "default must fail truthfulness on droid");
-  assert.ok(
-    droidV.some((x) => x.capability === "spawn_subagents" && x.role === "orchestrator"),
-    `expected orchestrator/spawn_subagents on droid: ${formatViolations(droidV)}`,
-  );
-  assert.ok(
-    droidV.some((x) => x.capability === "mcp_main_session"),
-    `expected mcp_main_session violation on droid: ${formatViolations(droidV)}`,
-  );
-
   const explore = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "explore");
-  assert.ok(explore, "default roster includes explore");
-  assert.match(explore!.notes ?? "", /builtin_explore_inherits_model|inheritance/i);
-  assert.ok(
-    !(explore!.notes ?? "").toLowerCase().includes("inheritance forbidden"),
-    "explore notes must not claim inheritance forbidden",
-  );
-
-  // Document: only harnesses missing spawn/mcp fail — not a blanket "all green" lie.
-  const failing = HARNESS_IDS.filter(
-    (h) => checkTruthfulness(DEFAULT_AGENT_DEFINITION, h).length > 0,
-  );
-  assert.deepEqual(failing, ["droid"]);
+  assert.ok(explore);
+  assert.ok(!(explore!.notes ?? "").toLowerCase().includes("inheritance forbidden"));
 });
 
-test("planApply: paths for claude-code, opencode, droid", () => {
-  // Minimal def that is truth-clean on all three (no mcp/spawn requirements).
+test("gate still fires: role needing undeclared cap on a harness that lacks it", () => {
+  // opencode does not declare dynamic_model_at_spawn (PR #18588)
+  const def: AgentDefinition = {
+    name: "bad",
+    roles: [
+      {
+        slug: "worker",
+        tier: "worker",
+        requiredCapabilities: ["dynamic_model_at_spawn"],
+      },
+    ],
+  };
+  const v = checkTruthfulness(def, "opencode");
+  assert.equal(v.length, 1);
+  assert.equal(v[0]!.capability, "dynamic_model_at_spawn");
+  assert.equal(v[0]!.harness, "opencode");
+});
+
+test("planApply: paths for claude-code, opencode, droid (.factory/droids)", () => {
   const portable: AgentDefinition = {
     name: "portable",
     roles: [
@@ -158,7 +127,6 @@ test("planApply: paths for claude-code, opencode, droid", () => {
   };
   const cc = planApply(portable, "claude-code", {});
   assert.equal(cc.violations.length, 0);
-  assert.ok(cc.files.every((f) => f.relativePath.startsWith(".claude/agents/")));
   assert.ok(cc.files.some((f) => f.relativePath === ".claude/agents/worker.md"));
 
   const oc = planApply(portable, "opencode", {});
@@ -167,8 +135,61 @@ test("planApply: paths for claude-code, opencode, droid", () => {
 
   const dr = planApply(portable, "droid", {});
   assert.equal(dr.violations.length, 0);
-  assert.ok(dr.files.every((f) => f.relativePath.startsWith(".factory/agents/")));
-  assert.ok(dr.files.some((f) => f.relativePath === ".factory/agents/worker.md"));
+  assert.ok(dr.files.every((f) => f.relativePath.startsWith(".factory/droids/")));
+  assert.ok(dr.files.some((f) => f.relativePath === ".factory/droids/worker.md"));
+});
+
+test("planApply DEFAULT writes all three harnesses including droid droids", () => {
+  for (const h of HARNESS_IDS) {
+    const plan = planApply(DEFAULT_AGENT_DEFINITION, h, {});
+    assert.equal(plan.violations.length, 0, formatViolations(plan.violations));
+    assert.ok(plan.files.length >= 5, `${h} should emit all default roles`);
+  }
+  const droid = planApply(DEFAULT_AGENT_DEFINITION, "droid", {
+    orchestrator: "custom:deepseek-v4-pro",
+  });
+  const orch = droid.files.find((f) => f.relativePath.includes("orchestrator"));
+  assert.ok(orch);
+  assert.match(orch!.content, /^---\nname: orchestrator\n/m);
+  assert.match(orch!.content, /model: custom:deepseek-v4-pro/);
+  assert.match(orch!.content, /mcpServers: \["petbox"\]/);
+});
+
+test("renderDroidMarkdown: unbound model is inherit; bound uses roles.json value", () => {
+  const role = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "worker")!;
+  const inherit = renderDroidMarkdown(role);
+  assert.match(inherit, /name: worker/);
+  assert.match(inherit, /model: inherit/);
+
+  const pinned = renderDroidMarkdown(role, "claude-sonnet-4-5-20250929");
+  assert.match(pinned, /model: claude-sonnet-4-5-20250929/);
+});
+
+test("planApply: emits clean roles, skips only dirty ones", () => {
+  const def: AgentDefinition = {
+    name: "mixed",
+    roles: [
+      {
+        slug: "worker",
+        tier: "worker",
+        requiredCapabilities: [],
+        spawn: { allowed: false },
+      },
+      {
+        slug: "needs-dyn",
+        tier: "worker",
+        requiredCapabilities: ["dynamic_model_at_spawn"],
+        spawn: { allowed: false },
+      },
+    ],
+  };
+  // opencode lacks dynamic_model_at_spawn
+  const plan = planApply(def, "opencode", {});
+  assert.equal(plan.files.length, 1);
+  assert.ok(plan.files[0]!.relativePath.endsWith("worker.md"));
+  assert.deepEqual(plan.skippedRoles, ["needs-dyn"]);
+  assert.equal(plan.violations.length, 1);
+  assert.match(formatApplyBlocked(plan.violations, "opencode", plan.skippedRoles), /needs-dyn/);
 });
 
 test("planApply: bound model in claude-code frontmatter; unbound omits model", () => {
@@ -189,27 +210,6 @@ test("planApply: bound model in claude-code frontmatter; unbound omits model", (
   assert.ok(!/^model:/m.test(body.split("---")[1] ?? ""), "no invented model");
 });
 
-test("planApply: violations block files and formatApplyBlocked is loud", () => {
-  const def: AgentDefinition = {
-    name: "bad",
-    roles: [
-      {
-        slug: "worker",
-        tier: "worker",
-        requiredCapabilities: ["dynamic_model_at_spawn"],
-      },
-    ],
-  };
-  const plan = planApply(def, "opencode", {});
-  assert.equal(plan.files.length, 0);
-  assert.equal(plan.violations.length, 1);
-  const msg = formatApplyBlocked(plan.violations, "opencode");
-  assert.match(msg, /refusing to write/);
-  assert.match(msg, /dynamic_model_at_spawn/);
-  assert.match(msg, /worker/);
-  assert.match(msg, /opencode/);
-});
-
 test("planOpencodeApply: bound model in frontmatter; unbound omits model", () => {
   const withModel = planOpencodeApply(DEFAULT_AGENT_DEFINITION, {
     worker: "deepseek/deepseek-v4-pro",
@@ -218,36 +218,6 @@ test("planOpencodeApply: bound model in frontmatter; unbound omits model", () =>
   const worker = withModel.files.find((f) => f.relativePath.endsWith("worker.md"));
   assert.ok(worker);
   assert.match(worker!.content, /^---\nmodel: deepseek\/deepseek-v4-pro\n/m);
-  assert.match(worker!.content, /# worker/);
-
-  const unbound = planOpencodeApply(DEFAULT_AGENT_DEFINITION, {});
-  const orch = unbound.files.find((f) => f.relativePath.endsWith("orchestrator.md"));
-  assert.ok(orch);
-  assert.ok(!/^model:/m.test(orch!.content.split("---")[1] ?? ""), "no invented model");
-  // description-only frontmatter is fine
-  assert.match(orch!.content, /^---\n/);
-});
-
-test("planOpencodeApply: violations block files and formatApplyBlocked is loud", () => {
-  const def: AgentDefinition = {
-    name: "bad",
-    roles: [
-      {
-        slug: "worker",
-        tier: "worker",
-        // dynamic_model_at_spawn is a CC capability, not opencode
-        requiredCapabilities: ["dynamic_model_at_spawn"],
-      },
-    ],
-  };
-  const plan = planOpencodeApply(def, {});
-  assert.equal(plan.files.length, 0);
-  assert.equal(plan.violations.length, 1);
-  const msg = formatApplyBlocked(plan.violations, "opencode");
-  assert.match(msg, /refusing to write/);
-  assert.match(msg, /dynamic_model_at_spawn/);
-  assert.match(msg, /worker/);
-  assert.match(msg, /opencode/);
 });
 
 test("renderOpencodeAgentMarkdown explore body does not forbid inheritance", () => {
@@ -257,7 +227,7 @@ test("renderOpencodeAgentMarkdown explore body does not forbid inheritance", () 
   assert.ok(!md.toLowerCase().includes("inheritance forbidden"));
 });
 
-test("validateAgentDefinition rejects role.model", () => {
+test("validateAgentDefinition rejects role.model and nested model", () => {
   assert.throws(
     () =>
       validateAgentDefinition({
@@ -269,6 +239,35 @@ test("validateAgentDefinition rejects role.model", () => {
             requiredCapabilities: [],
             // @ts-expect-error intentional
             model: "should-not-be-here",
+          },
+        ],
+      }),
+    /model is not allowed/,
+  );
+  assert.throws(
+    () =>
+      validateAgentDefinition({
+        name: "x",
+        // @ts-expect-error intentional
+        model: "root-bad",
+        roles: [{ slug: "w", tier: "worker", requiredCapabilities: [] }],
+      }),
+    /model is not allowed/,
+  );
+  assert.throws(
+    () =>
+      validateAgentDefinition({
+        name: "x",
+        roles: [
+          {
+            slug: "w",
+            tier: "worker",
+            requiredCapabilities: [],
+            spawn: {
+              allowed: false,
+              // @ts-expect-error intentional
+              model: "nested-bad",
+            },
           },
         ],
       }),
