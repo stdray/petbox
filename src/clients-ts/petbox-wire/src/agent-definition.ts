@@ -4,7 +4,7 @@
 //   - Roles carry slug, tier, requiredCapabilities, spawn, escalation.
 //   - model is NEVER part of this document (local binding lives in roles.json).
 //   - Built-in DEFAULT_AGENT_DEFINITION ships with the kit for offline compile;
-//     server fetch is a later slice (non-goal here).
+//     apply tries server fetch first (agent-def-fetch.ts) and falls back here.
 //
 // Plain TS for native node type-stripping: zero deps.
 

@@ -57,14 +57,27 @@ import {
 import { homedir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_AGENT_DEFINITION, validateAgentDefinition } from "./agent-definition.ts";
+import {
+  DEFAULT_DEFINITION_KEY,
+  fetchAgentDefinition,
+} from "./agent-def-fetch.ts";
+import {
+  DEFAULT_AGENT_DEFINITION,
+  validateAgentDefinition,
+  type AgentDefinition,
+} from "./agent-definition.ts";
 import {
   formatApplyBlocked,
   planOpencodeApply,
 } from "./apply-artifacts.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
-import { PROMPT_RAG_DEFAULTS, readRegistry, type PromptRagConfig } from "./registry.ts";
+import {
+  PROMPT_RAG_DEFAULTS,
+  readRegistry,
+  resolveProject,
+  type PromptRagConfig,
+} from "./registry.ts";
 import {
   exportRolesBootstrap,
   formatResolvedBinding,
@@ -113,7 +126,7 @@ function usage(exitCode: number = 2): never {
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
     "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag | --no-prompt-rag]\n" +
     "       npx petbox-wire update\n" +
-    "       npx petbox-wire apply\n" +
+    "       npx petbox-wire apply [--definition <key>] [--offline]\n" +
     "       npx petbox-wire doctor\n" +
     "       npx petbox-wire roles\n" +
     "       npx petbox-wire roles export\n" +
@@ -126,10 +139,13 @@ function usage(exitCode: number = 2): never {
     "update       Refresh ~/.petbox/wire only (protocol/scripts/templates) from this package. Does not\n" +
     "             touch keys, registry, sticky prompt-rag/telemetry, or per-project MCP/skills.\n" +
     "             Kit-copy only — does NOT compile per-harness agent artifacts (use apply).\n" +
-    "apply        Compile per-harness startup artifacts from the built-in agent definition + local\n" +
-    "             role→model binding (~/.petbox/roles.json). Offline. First slice: writes\n" +
-    "             .opencode/agent/<role>.md under cwd (or registry project root). model: frontmatter\n" +
-    "             only when bound — never invents a model id. Truthfulness failures exit 1 (loud).\n" +
+    "apply        Compile per-harness startup artifacts from a portable agent definition + local\n" +
+    "             role→model binding (~/.petbox/roles.json). Tries GET /api/{project}/agent-defs/{key}\n" +
+    "             when cwd resolves via ~/.petbox/projects.json; falls back to the built-in default on\n" +
+    "             network/404/auth miss or --offline. --definition <key> selects the server doc\n" +
+    "             (default key: default). First slice: writes .opencode/agent/<role>.md under cwd\n" +
+    "             (or registry project root). model: frontmatter only when bound — never invents a\n" +
+    "             model id. Truthfulness failures exit 1 (loud). Offline compile always succeeds.\n" +
     "doctor       Run the definition truthfulness gate for every known harness against the default\n" +
     "             definition (+ optional local binding is noted, not required). Prints OK or each\n" +
     "             violation; exit 1 on any violation. Offline.\n" +
@@ -271,20 +287,46 @@ function runDoctor(argv: string[]): void {
 
 // apply — compile per-harness artifacts (distinct from update kit-copy).
 // First slice: opencode .opencode/agent/<role>.md under project root.
-function runApply(argv: string[]): void {
+// Definition source: server fetch when registry resolves cwd; else offline default.
+async function runApply(argv: string[]): Promise<void> {
+  let definitionKey = DEFAULT_DEFINITION_KEY;
+  let offline = false;
   for (let i = 1; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") usage(0);
-    console.error(`apply: unexpected argument: ${a}`);
-    usage();
+    else if (a === "--offline") offline = true;
+    else if (a === "--definition") {
+      const v = argv[++i];
+      if (!v || v.startsWith("--")) {
+        console.error("apply: --definition requires a non-empty key");
+        usage();
+      }
+      definitionKey = v.trim();
+      if (!definitionKey) {
+        console.error("apply: --definition requires a non-empty key");
+        usage();
+      }
+    } else if (a.startsWith("--")) {
+      console.error(`apply: unexpected argument: ${a}`);
+      usage();
+    } else {
+      console.error(`apply: unexpected argument: ${a}`);
+      usage();
+    }
   }
 
-  validateAgentDefinition(DEFAULT_AGENT_DEFINITION);
   const { root, via } = resolveApplyRoot(process.cwd());
+  const definition = await resolveApplyDefinition({
+    offline,
+    definitionKey,
+    cwd: process.cwd(),
+  });
+  validateAgentDefinition(definition);
+
   const rolesData = loadRoles();
   const roleModels = resolveAgentRoles(rolesData, "opencode");
 
-  const plan = planOpencodeApply(DEFAULT_AGENT_DEFINITION, roleModels);
+  const plan = planOpencodeApply(definition, roleModels);
   if (plan.violations.length > 0) {
     console.error(formatApplyBlocked(plan.violations, plan.harness));
     process.exit(1);
@@ -292,7 +334,7 @@ function runApply(argv: string[]): void {
 
   log(`apply: root=${root} (via ${via})`);
   log(
-    `apply: definition="${DEFAULT_AGENT_DEFINITION.name}", harness=opencode, ` +
+    `apply: definition="${definition.name}", harness=opencode, ` +
       `boundRoles=${Object.keys(roleModels).length}`,
   );
 
@@ -305,6 +347,38 @@ function runApply(argv: string[]): void {
     written++;
   }
   log(`apply: done — ${written} opencode agent file(s). (CC/droid generators: later slice.)`);
+}
+
+// Pick server definition when possible; always fall back to DEFAULT_AGENT_DEFINITION.
+async function resolveApplyDefinition(opts: {
+  offline: boolean;
+  definitionKey: string;
+  cwd: string;
+}): Promise<AgentDefinition> {
+  if (opts.offline) {
+    log("apply: offline default definition");
+    return DEFAULT_AGENT_DEFINITION;
+  }
+
+  const resolved = resolveProject(opts.cwd);
+  if (!resolved) {
+    log("apply: offline default definition");
+    return DEFAULT_AGENT_DEFINITION;
+  }
+
+  const fetched = await fetchAgentDefinition({
+    baseUrl: resolved.baseUrl,
+    projectKey: resolved.project,
+    apiKey: resolved.apiKey,
+    definitionKey: opts.definitionKey,
+  });
+  if (!fetched) {
+    log("apply: offline default definition");
+    return DEFAULT_AGENT_DEFINITION;
+  }
+
+  log(`apply: using server definition ${fetched.key} v${fetched.version}`);
+  return fetched.definition;
 }
 
 // Print active profile + agent/role/model tree from ~/.petbox/roles.json. Exit 0 when empty.
@@ -1122,7 +1196,7 @@ async function main(): Promise<void> {
     return;
   }
   if (isApplyCommand(argv)) {
-    runApply(argv);
+    await runApply(argv);
     return;
   }
   if (isRolesCommand(argv)) {
