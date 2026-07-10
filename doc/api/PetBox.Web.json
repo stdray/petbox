@@ -3568,6 +3568,12 @@
           "updated": {
             "type": "string",
             "format": "date-time"
+          },
+          "meta": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

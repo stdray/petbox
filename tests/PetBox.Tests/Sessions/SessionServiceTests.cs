@@ -262,4 +262,82 @@ public sealed class SessionServiceTests : IDisposable
 		o.Version.Should().Be(2);
 		(await _svc.GetAsync("proj", "s1")).Should().NotBeNull(); // resurrected
 	}
+
+	// ---- MetaJson: observed client stamp (last-write-wins; null keeps existing) ----------
+
+	const string MetaV1 = """{"roleBinding":{"profile":"default","agent":"claude-code","roles":{"orchestrator":"m1"}}}""";
+	const string MetaV2 = """{"roleBinding":{"profile":"work","agent":"claude-code","roles":{"orchestrator":"m2","worker":"m3"}}}""";
+
+	[Fact]
+	public async Task Upsert_WithMeta_StoresAndReturnsOnGetAndList()
+	{
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("session", "plan")), MetaV1);
+
+		var snap = await _svc.GetAsync("proj", "s1");
+		snap!.MetaJson.Should().Be(MetaV1);
+		(await _svc.ListAsync("proj")).Single().MetaJson.Should().Be(MetaV1);
+	}
+
+	[Fact]
+	public async Task Append_WithoutMeta_PreservesExistingMeta()
+	{
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("user", "a")), MetaV1);
+
+		var o = await _svc.AppendAsync("proj", "s1", "claude-code", 2, Msgs(("assistant", "b")));
+		o.Applied.Should().BeTrue();
+		o.Appended.Should().Be(1);
+
+		(await _svc.GetAsync("proj", "s1"))!.MetaJson.Should().Be(MetaV1, "omitted meta must not wipe");
+	}
+
+	[Fact]
+	public async Task Append_WithMeta_OverwritesExistingMeta()
+	{
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("user", "a")), MetaV1);
+
+		await _svc.AppendAsync("proj", "s1", "claude-code", 2, Msgs(("assistant", "b")), MetaV2);
+
+		(await _svc.GetAsync("proj", "s1"))!.MetaJson.Should().Be(MetaV2);
+	}
+
+	[Fact]
+	public async Task Upsert_WithoutMeta_PreservesExistingMeta()
+	{
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("user", "a")), MetaV1);
+		await _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("user", "a"), ("assistant", "b")));
+
+		(await _svc.GetAsync("proj", "s1"))!.MetaJson.Should().Be(MetaV1);
+	}
+
+	[Fact]
+	public async Task Append_FullOverlap_WithMeta_StillStampsMeta()
+	{
+		await _svc.AppendAsync("proj", "s1", "claude-code", 1, Msgs(("user", "a")), MetaV1);
+
+		// Exact re-send (full overlap) + new meta: content unchanged, meta last-write-wins.
+		var o = await _svc.AppendAsync("proj", "s1", "claude-code", 1, Msgs(("user", "a")), MetaV2);
+		o.Applied.Should().BeTrue();
+		o.Appended.Should().Be(0);
+		(await _svc.GetAsync("proj", "s1"))!.MetaJson.Should().Be(MetaV2);
+	}
+
+	[Fact]
+	public async Task Append_Gap_DoesNotWriteMeta()
+	{
+		await _svc.AppendAsync("proj", "s1", "claude-code", 1, Msgs(("user", "a")), MetaV1);
+
+		var o = await _svc.AppendAsync("proj", "s1", "claude-code", 3, Msgs(("user", "c")), MetaV2);
+		o.Applied.Should().BeFalse();
+		(await _svc.GetAsync("proj", "s1"))!.MetaJson.Should().Be(MetaV1, "gap must not stamp meta");
+	}
+
+	[Fact]
+	public async Task Meta_InvalidJson_Throws()
+	{
+		var act = () => _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("user", "a")), "not-json");
+		await act.Should().ThrowAsync<ArgumentException>();
+
+		var arr = () => _svc.UpsertAsync("proj", "s1", "claude-code", Msgs(("user", "a")), "[1,2]");
+		await arr.Should().ThrowAsync<ArgumentException>();
+	}
 }

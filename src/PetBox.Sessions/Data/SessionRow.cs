@@ -19,4 +19,8 @@ public sealed record SessionRow
 	// of the same SessionId replaces the whole row with these defaults — i.e. resurrects it.
 	[Column] public bool IsDeleted { get; init; }
 	[Column] public DateTime? DeletedAt { get; init; }
+	// Optional observed client metadata (JSON object). Last-write-wins when a push supplies it;
+	// null on a write means "leave whatever is stored alone" (resolved in SessionService before
+	// InsertOrReplace). Never server-authoritative — clients stamp local role bindings here.
+	[Column] public string? MetaJson { get; init; }
 }

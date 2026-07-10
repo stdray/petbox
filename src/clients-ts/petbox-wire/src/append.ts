@@ -19,8 +19,14 @@
 // Fallback: an old server without the append route 404s → push the full transcript to the
 // legacy last-write-wins endpoint, exactly what the hooks did before.
 //
+// Observed role binding (binding-not-server-authoritative): when ~/.petbox/roles.json has
+// roles for the agent, stamp X-PetBox-Session-Meta with { roleBinding }. Best-effort —
+// missing roles.json never fails the push. Server stores as session MetaJson observation
+// only; local roles.json remains the source of truth.
+//
 // Plain TS for native node type-stripping: zero deps.
 
+import { resolveObservedBinding } from "./roles.ts";
 import type { Msg } from "./transcript.ts";
 
 // How many trailing messages to optimistically resend when the server cursor is unknown.
@@ -38,17 +44,48 @@ export type PushTarget = {
   timeoutMs: number;
 };
 
+/**
+ * Pure helper: JSON for X-PetBox-Session-Meta, or null when no local binding / any error.
+ * Shape: { roleBinding: { profile, agent, roles: { role: model } } }
+ */
+export function buildSessionMetaHeader(
+  agent: string,
+  homeDir?: string,
+): string | null {
+  try {
+    const obs =
+      homeDir === undefined
+        ? resolveObservedBinding(agent)
+        : resolveObservedBinding(agent, homeDir);
+    if (!obs) return null;
+    return JSON.stringify({ roleBinding: obs });
+  } catch {
+    return null;
+  }
+}
+
 function ndjson(msgs: readonly Msg[]): string {
   return msgs.map((m) => JSON.stringify(m)).join("\n");
 }
 
-async function post(url: string, apiKey: string, body: string, timeoutMs: number): Promise<Response> {
+async function post(
+  url: string,
+  apiKey: string,
+  body: string,
+  timeoutMs: number,
+  metaHeader: string | null,
+): Promise<Response> {
+  const headers: Record<string, string> = {
+    "X-Api-Key": apiKey,
+    "Content-Type": "application/x-ndjson; charset=utf-8",
+  };
+  if (metaHeader) headers["X-PetBox-Session-Meta"] = metaHeader;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     return await fetch(url, {
       method: "POST",
-      headers: { "X-Api-Key": apiKey, "Content-Type": "application/x-ndjson; charset=utf-8" },
+      headers,
       body,
       signal: ctrl.signal,
     });
@@ -73,6 +110,8 @@ export async function pushTranscript(
   if (knownLastOrdinal !== null && knownLastOrdinal >= msgs.length) return knownLastOrdinal;
 
   const base = `${t.baseUrl}/api/sessions/${t.project}/${encodeURIComponent(t.sessionId)}`;
+  // Stamp observed binding once per push; never let roles.json issues fail the transcript.
+  const metaHeader = buildSessionMetaHeader(t.agent);
 
   let from =
     knownLastOrdinal !== null && knownLastOrdinal >= 0
@@ -87,6 +126,7 @@ export async function pushTranscript(
         t.apiKey,
         ndjson(msgs.slice(from - 1)),
         t.timeoutMs,
+        metaHeader,
       );
     } catch {
       return null; // network failure — a full-snapshot retry would fail the same way
@@ -113,7 +153,13 @@ export async function pushTranscript(
   }
 
   try {
-    const resp = await post(`${base}?agent=${encodeURIComponent(t.agent)}`, t.apiKey, ndjson(msgs), t.timeoutMs);
+    const resp = await post(
+      `${base}?agent=${encodeURIComponent(t.agent)}`,
+      t.apiKey,
+      ndjson(msgs),
+      t.timeoutMs,
+      metaHeader,
+    );
     if (!resp.ok) return null;
     const j = (await resp.json().catch(() => null)) as { version?: number } | null;
     return j && typeof j.version === "number" ? j.version : msgs.length;

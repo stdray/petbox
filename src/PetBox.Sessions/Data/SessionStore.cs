@@ -44,9 +44,9 @@ public sealed class SessionStore : ISessionStore
 		var rows = await db.Sessions
 			.Where(s => !s.IsDeleted)
 			.OrderBy(s => s.SessionId)
-			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated })
+			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson })
 			.ToListAsync(ct);
-		return rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated)).ToList();
+		return rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated, r.MetaJson)).ToList();
 	}
 
 	public async Task<SessionHeaderPage> ListPageAsync(string projectKey, string? search, int pageNum, int pageSize, CancellationToken ct = default)
@@ -67,12 +67,12 @@ public sealed class SessionStore : ISessionStore
 			.OrderBy(s => s.SessionId)
 			.Skip(offset)
 			.Take(pageSize + 1)
-			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated })
+			.Select(s => new { s.SessionId, s.Agent, s.Version, s.Updated, s.MetaJson })
 			.ToListAsync(ct);
 
 		var hasNext = rows.Count > pageSize;
 		if (hasNext) rows.RemoveAt(rows.Count - 1);
-		var headers = rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated)).ToList();
+		var headers = rows.Select(r => new SessionHeader(r.SessionId, r.Agent, r.Version, r.Updated, r.MetaJson)).ToList();
 		return new SessionHeaderPage(headers, hasNext, total);
 	}
 
@@ -84,7 +84,7 @@ public sealed class SessionStore : ISessionStore
 			.FirstOrDefaultAsync(ct);
 		return row is null
 			? null
-			: new SessionSnapshot(row.SessionId, row.Agent, SessionContent.Decode(row.ContentZ), row.Version, row.Updated);
+			: new SessionSnapshot(row.SessionId, row.Agent, SessionContent.Decode(row.ContentZ), row.Version, row.Updated, row.MetaJson);
 	}
 
 	// How many colliding ids to surface on an ambiguous prefix — enough to show the collision

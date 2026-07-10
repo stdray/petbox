@@ -294,7 +294,8 @@ public sealed record SessionUpsertResult(string SessionId, long Version, int Mes
 // LastOrdinal is the server's cursor, the client resends the tail from LastOrdinal+1.
 public sealed record SessionAppendResult(string SessionId, bool Applied, long LastOrdinal, int Appended, string? Reason);
 
-public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version);
+// Meta is the optional observed client stamp (raw JSON object string) when present.
+public sealed record SessionGetResult(string SessionId, string Agent, string Content, int Length, long Version, string? Meta = null);
 
 public sealed record SessionDeletedResult(bool Deleted, string SessionId);
 

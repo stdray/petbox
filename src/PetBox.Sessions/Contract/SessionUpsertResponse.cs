@@ -14,6 +14,7 @@ public sealed record SessionAppendGapResponse(string Error, long LastOrdinal);
 
 // REST list of session headers (no bodies): what the history importer's upgrade-only
 // guard reads to compare local message counts against server versions.
-public sealed record SessionHeaderResponse(string SessionId, string Agent, long Version, DateTime Updated);
+// Meta is the optional observed client stamp (raw JSON object string) when present.
+public sealed record SessionHeaderResponse(string SessionId, string Agent, long Version, DateTime Updated, string? Meta = null);
 
 public sealed record SessionListResponse(IReadOnlyList<SessionHeaderResponse> Sessions);
