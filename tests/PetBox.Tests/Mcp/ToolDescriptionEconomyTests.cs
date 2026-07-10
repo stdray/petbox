@@ -88,6 +88,10 @@ public sealed class ToolDescriptionEconomyMechanismTests
 		new object[] { "memory_remember",  new[] { "memory_upsert", "workspace", "task board" }, "low-ceremony" },
 		new object[] { "session_search",   new[] { "two-stage", "fullScan", "memory:read" }, "hitsPerSession" },
 		new object[] { "comments_upsert",  new[] { "CREATE", "PATCH", "WATERMARK", "headings", "==headings==", "applied" }, "artifact" },
+		// report_issue's HEAD carries the whole call decision — the SYSTEMIC-vs-one-off water line, the
+		// memory_remember routing for own-project friction, and the batch-at-end-of-turn rule. Nothing
+		// reads tool_describe before deciding to report, so only the auth plumbing may ride below.
+		new object[] { "report_issue",     new[] { "SYSTEMIC", "memory_remember", "END of your turn", "triage" }, "authenticated key" },
 	};
 
 	[Theory]
