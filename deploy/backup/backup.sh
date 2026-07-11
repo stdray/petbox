@@ -1,7 +1,18 @@
 #!/bin/sh
-# Offsite backup of the PetBox data volume via restic.
-#   compact (data minus logs) -> R2          — small, keeps the R2 free tier alive
-#   full    (data incl. logs)  -> FirstVDS S3 — the fat copy
+# Offsite backup of the PetBox data volume via restic. Two repos, same contents —
+# data only, never logs:
+#   compact -> R2          — small, keeps the R2 free tier alive
+#   full    -> FirstVDS S3 — the second, independent copy
+#
+# LOGS ARE NOT BACKED UP. Logs are telemetry, not data: backups restore business
+# state, log/metric history is expendable. Owner decision 2026-07-11 — self-logs were
+# 79% of every set (7.3 GB offsite vs 635 MB of live data). BackupService already
+# stops snapshotting data/logs/** into the set (Backup.ExcludedLogsDirName), and
+# EXCLUDE_LOGS below keeps the restic side honest for sets written before that
+# change (they still carry logs/ until the 14-set local rotation flushes them, ~7d).
+# In the repos, the old fat snapshots age out via `forget --keep-daily/--keep-weekly`
+# + `--prune` (up to ~4 weeks for the weeklies).
+#
 # Source is BackupService's newest *-auto snapshot dir (already a consistent set of
 # VACUUM-INTO copies — no live WAL touched). Both repos also carry data/keys/
 # (the DataProtection key ring), which the .db-only snapshot does NOT contain and
@@ -41,6 +52,13 @@ if [ -z "$newest" ]; then
 fi
 newest="${newest%/}"
 log "source snapshot: $newest"
+
+# The named log exclusion — see the header. Applied to BOTH legs: PetBox's own log
+# dbs (data/logs/{project}/{log}.db, mirrored into the snapshot set as
+# <set>/logs/**) are telemetry, not data, and never go offsite. Everything else in
+# the set is data and IS pushed: petbox.db, deploy.db, db/**, memory/**, tasks/**,
+# sessions/**, config/** (+ $DATA_DIR/keys, the DataProtection key ring).
+EXCLUDE_LOGS="--exclude $newest/logs"
 
 # push REPO TAG EXTRA_ARGS ACCESS_KEY SECRET_KEY
 push() {
@@ -86,15 +104,16 @@ run_leg() {
 # (same rule that bit the `if` form). Using `||` here would silently defeat
 # run_leg's internal `set -e` and make failed legs read as successful again.
 
-# ── compact -> R2 (exclude the heavy, least-critical logs subtree) ──
+# ── compact -> R2 (data, no logs) ──
 run_leg compact /tmp/backup-compact.log \
-	"s3:${R2_S3_ENDPOINT}/${R2_BUCKET}/compact" compact "--exclude $newest/logs" \
+	"s3:${R2_S3_ENDPOINT}/${R2_BUCKET}/compact" compact "$EXCLUDE_LOGS" \
 	"$R2_ACCESS_KEY_ID" "$R2_SECRET_ACCESS_KEY"
 compact_ok=$?
 
-# ── full -> FirstVDS S3 (everything, incl. logs) ──
+# ── full -> FirstVDS S3 (data, no logs — the "full" tag is historical; the repo
+# names/tags stay as-is so existing restic retention keeps working) ──
 run_leg full /tmp/backup-full.log \
-	"s3:${FVDS_S3_ENDPOINT}/${FVDS_BUCKET}/full" full "" \
+	"s3:${FVDS_S3_ENDPOINT}/${FVDS_BUCKET}/full" full "$EXCLUDE_LOGS" \
 	"$FVDS_ACCESS_KEY_ID" "$FVDS_SECRET_ACCESS_KEY"
 full_ok=$?
 

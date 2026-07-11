@@ -101,8 +101,11 @@ public partial class Program
 		builder.Services.AddScoped(sp => new PetBoxDb(PetBoxDb.CreateOptions(ResolveCs(sp))));
 		// Portable agent-definition store (Core DB, always on — no feature flag).
 		builder.Services.AddScoped<PetBox.Core.Services.IAgentDefinitionService, PetBox.Core.Services.AgentDefinitionService>();
+		// Log dbs live under data/logs/** — the one subtree Backup deliberately skips
+		// (telemetry, not data; see Backup.ExcludedLogsDirName). Named constant, not a
+		// literal, so the two can't drift apart.
 		builder.Services.AddSingleton<IScopedDbFactory<LogDb>>(sp => new ScopedDbFactory<LogDb>(
-				Path.Combine(ResolveDataDir(sp), "logs"), PetBox.Core.Settings.Scope.Project,
+				Path.Combine(ResolveDataDir(sp), PetBox.Core.Data.Backup.ExcludedLogsDirName), PetBox.Core.Settings.Scope.Project,
 				cs => new LogDb(LogDb.CreateOptions(cs)), LogSchema.Ensure));
 		builder.Services.AddScoped<ILogStore, LogStore>();
 		builder.Services.AddScoped<PetBox.Log.Core.Query.ILogQueryService, PetBox.Log.Core.Query.LogQueryService>();

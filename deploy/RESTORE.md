@@ -2,12 +2,21 @@
 
 What the offsite backup contains (restic repos, encrypted with `RESTIC_PASSWORD`):
 
-- **compact** → Cloudflare R2 (`s3:$R2_S3_ENDPOINT/$R2_BUCKET/compact`) — all data **except** `logs/`.
-- **full** → FirstVDS S3 (`s3:$FVDS_S3_ENDPOINT/$FVDS_BUCKET/full`) — everything incl. `logs/`.
+- **compact** → Cloudflare R2 (`s3:$R2_S3_ENDPOINT/$R2_BUCKET/compact`)
+- **full** → FirstVDS S3 (`s3:$FVDS_S3_ENDPOINT/$FVDS_BUCKET/full`)
+
+Both repos now carry the **same** contents — data only. The tags are historical.
 
 Each snapshot holds the newest consistent `backups/*-auto` set **plus** `data/keys/` (the
 DataProtection key ring). `PETBOX_MASTER_KEY` is **not** in the backup — it lives in GitHub
 Actions secrets / KeePass and is required to decrypt config secrets.
+
+In the set: `petbox.db`, `deploy.db`, `db/**` (user schemas + user data), `memory/**`,
+`tasks/**`, `sessions/**`, `config/**`.
+
+**Not** in the set: `logs/**`. PetBox's own logs are telemetry, not data — a restore comes
+back with **no log/metric history**, and that is intentional (owner decision 2026-07-11: logs
+were 79% of every set). Nothing else is excluded.
 
 ## What you need before starting
 
@@ -18,14 +27,14 @@ Actions secrets / KeePass and is required to decrypt config secrets.
 
 ## 1. Restore the data volume
 
-Pick a repo (compact is enough to be operational; full also brings logs). Example with R2:
+Pick either repo (same contents; use whichever is reachable). Example with R2:
 
 ```sh
 export RESTIC_PASSWORD='<from KeePass>'
 export AWS_ACCESS_KEY_ID='<R2 access key>'
 export AWS_SECRET_ACCESS_KEY='<R2 secret key>'
 export AWS_DEFAULT_REGION=us-east-1
-REPO="s3:https://<account>.r2.cloudflarestorage.com/petbox/compact"   # or the FirstVDS full repo
+REPO="s3:https://<account>.r2.cloudflarestorage.com/petbox/compact"   # or the FirstVDS repo
 
 restic -r "$REPO" snapshots                 # find the snapshot to restore
 restic -r "$REPO" restore latest --target /tmp/pb-restore
