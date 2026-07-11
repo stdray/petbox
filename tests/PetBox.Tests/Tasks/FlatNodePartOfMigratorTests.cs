@@ -49,7 +49,7 @@ public sealed class FlatNodePartOfMigratorTests : IDisposable
 			Node("spec", "ui/login", "id-uilogin"), // last segment "login" collides with auth/login
 		}, partition: n => n.Board == "spec");
 
-		var relations = new RelationStore(_db);
+		var relations = new RelationStore(_factory);
 		var migrated = new FlatNodePartOfMigrator(Path.Combine(_dir, "tasks"), _factory, relations).Migrate();
 		migrated.Should().Be(1);
 

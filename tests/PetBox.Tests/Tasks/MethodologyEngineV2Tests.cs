@@ -39,7 +39,7 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
-		_relations = new RelationStore(_db);
+		_relations = new RelationStore(_factory);
 		_tasks = new TasksService(new TaskBoardStore(_db, _factory), _relations, new TagStore(_factory), new CommentService(_factory));
 	}
 

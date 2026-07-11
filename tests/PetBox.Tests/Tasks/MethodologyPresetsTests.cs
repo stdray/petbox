@@ -476,7 +476,7 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_comments = new CommentService(_factory);
-		_tasks = new TasksService(new TaskBoardStore(_db, _factory), new RelationStore(_db), new TagStore(_factory), _comments);
+		_tasks = new TasksService(new TaskBoardStore(_db, _factory), new RelationStore(_factory), new TagStore(_factory), _comments);
 	}
 
 	public void Dispose()

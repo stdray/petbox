@@ -1,14 +1,18 @@
 using LinqToDB;
 using LinqToDB.Async;
 using PetBox.Core.Data;
-using PetBox.Core.Models;
 
 namespace PetBox.Tasks.Data;
 
-// Project-level store of typed edges between node ids (in petbox.db). Edges bind to
-// stable NodeId, so they survive node renames. Interval-temporal: an edge is active
-// while ClosedAt is null; delete/effects soft-close it (history kept). Mirrors
-// TaskBoardStore (uses PetBoxDb).
+// Project-level store of typed edges between node ids. Lives in the PER-PROJECT tasks file
+// (tasks/{project}.db) via IScopedDbFactory<TasksDb>, in the same file as plan_nodes — that
+// co-location is what lets the endpoints carry a real FK (relations-in-project-db). The
+// `projectKey` argument is the FILE selector, not a column: edges are strictly intra-project
+// and there is no ProjectKey column any more.
+//
+// Edges bind to the stable NodeId, so they survive node renames. Interval-temporal: an edge
+// is active while ClosedAt is null; delete/effects soft-close it (history kept). Mirrors
+// TagStore (the other per-project, node-keyed, SCD-2 association store).
 public interface IRelationStore
 {
 	Task<Relation> CreateAsync(string projectKey, string kind, string fromNodeId, string toNodeId, CancellationToken ct = default);
@@ -35,8 +39,8 @@ public sealed class RelationStore : IRelationStore
 	// The store only normalizes and checks structure; internal service callers pass
 	// literal builtin kinds.
 
-	readonly PetBoxDb _db;
-	public RelationStore(PetBoxDb db) => _db = db;
+	readonly IScopedDbFactory<TasksDb> _factory;
+	public RelationStore(IScopedDbFactory<TasksDb> factory) => _factory = factory;
 
 	public async Task<Relation> CreateAsync(string projectKey, string kind, string fromNodeId, string toNodeId, CancellationToken ct = default)
 	{
@@ -46,29 +50,38 @@ public sealed class RelationStore : IRelationStore
 		if (string.IsNullOrWhiteSpace(fromNodeId) || string.IsNullOrWhiteSpace(toNodeId))
 			throw new ArgumentException("fromNodeId and toNodeId are required");
 
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
+
 		// Idempotent: an identical ACTIVE edge is returned, not duplicated.
-		var existing = await _db.Relations.FirstOrDefaultAsync(
-			r => r.ProjectKey == projectKey && r.Kind == kind && r.FromNodeId == fromNodeId && r.ToNodeId == toNodeId && r.ClosedAt == null, ct);
+		var existing = await ctx.GetTable<Relation>().FirstOrDefaultAsync(
+			r => r.Kind == kind && r.FromNodeId == fromNodeId && r.ToNodeId == toNodeId && r.ClosedAt == null, ct);
 		if (existing is not null)
 			return existing;
+
+		// Endpoint existence is ENFORCED BY THE DB (FK to plan_node_ids) — this check exists to
+		// turn that into a readable error instead of a raw SQLite constraint failure. It closes
+		// the dangling-edge hole at NodeRefResolver, which passes any 32-hex value through as a
+		// NodeId without checking that a node by that id exists.
+		await AssertNodeExistsAsync(ctx, projectKey, fromNodeId, "fromNodeId", ct);
+		await AssertNodeExistsAsync(ctx, projectKey, toNodeId, "toNodeId", ct);
 
 		var rel = new Relation
 		{
 			Id = Guid.NewGuid().ToString("N"),
-			ProjectKey = projectKey,
 			Kind = kind,
 			FromNodeId = fromNodeId,
 			ToNodeId = toNodeId,
 			CreatedAt = DateTime.UtcNow,
 			ClosedAt = null,
 		};
-		await _db.InsertAsync(rel, token: ct);
+		await ctx.InsertAsync(rel, token: ct);
 		return rel;
 	}
 
 	public async Task<IReadOnlyList<Relation>> ListAsync(string projectKey, string nodeId, string direction = "both", bool includeHistory = false, CancellationToken ct = default)
 	{
-		var q = _db.Relations.Where(r => r.ProjectKey == projectKey);
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
+		IQueryable<Relation> q = ctx.GetTable<Relation>();
 		if (!includeHistory)
 			q = q.Where(r => r.ClosedAt == null);
 		q = direction.ToLowerInvariant() switch
@@ -80,17 +93,21 @@ public sealed class RelationStore : IRelationStore
 		return await q.ToListAsync(ct);
 	}
 
-	public async Task<bool> DeleteAsync(string projectKey, string id, CancellationToken ct = default) =>
-		await _db.Relations
-			.Where(r => r.ProjectKey == projectKey && r.Id == id && r.ClosedAt == null)
+	public async Task<bool> DeleteAsync(string projectKey, string id, CancellationToken ct = default)
+	{
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
+		return await ctx.GetTable<Relation>()
+			.Where(r => r.Id == id && r.ClosedAt == null)
 			.Set(r => r.ClosedAt, _ => DateTime.UtcNow)
 			.UpdateAsync(ct) > 0;
+	}
 
 	public async Task<int> CloseAsync(string projectKey, string kind, string fromNodeId, string toNodeId, CancellationToken ct = default)
 	{
 		kind = (kind ?? "").ToLowerInvariant();
-		return await _db.Relations
-			.Where(r => r.ProjectKey == projectKey && r.Kind == kind && r.FromNodeId == fromNodeId && r.ToNodeId == toNodeId && r.ClosedAt == null)
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
+		return await ctx.GetTable<Relation>()
+			.Where(r => r.Kind == kind && r.FromNodeId == fromNodeId && r.ToNodeId == toNodeId && r.ClosedAt == null)
 			.Set(r => r.ClosedAt, _ => DateTime.UtcNow)
 			.UpdateAsync(ct);
 	}
@@ -98,8 +115,20 @@ public sealed class RelationStore : IRelationStore
 	public async Task<IReadOnlyList<Relation>> ListByKindAsync(string projectKey, string kind, CancellationToken ct = default)
 	{
 		kind = (kind ?? "").ToLowerInvariant();
-		return await _db.Relations
-			.Where(r => r.ProjectKey == projectKey && r.Kind == kind && r.ClosedAt == null)
+		using var ctx = _factory.NewEnsuredConnection(projectKey);
+		return await ctx.GetTable<Relation>()
+			.Where(r => r.Kind == kind && r.ClosedAt == null)
 			.ToListAsync(ct);
+	}
+
+	// The registry (plan_node_ids) is the FK parent, and triggers keep it == the set of node
+	// identities present in plan_nodes — so this is exactly "does this node exist in this
+	// project's file", asked of the same source of truth the FK will consult.
+	static async Task AssertNodeExistsAsync(TasksDb ctx, string projectKey, string nodeId, string param, CancellationToken ct)
+	{
+		if (await ctx.GetTable<PlanNodeId>().AnyAsync(n => n.NodeId == nodeId, ct)) return;
+		throw new ArgumentException(
+			$"{param} '{nodeId}' does not exist in project '{projectKey}' — a relation endpoint must be an existing node " +
+			"(pass a node slug or the NodeId of a node from tasks_upsert/tasks_search)");
 	}
 }

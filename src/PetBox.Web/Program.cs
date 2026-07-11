@@ -546,12 +546,25 @@ public partial class Program
 		// Returns the count migrated; the migrator logs each board itself, so ignore it here.
 		new PetBox.Tasks.Data.LegacyTaskFileMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, tasksMigLog).Migrate();
 
+		// One-time, idempotent (relations-in-project-db): move typed edges out of the Core DB's
+		// legacy Relation table into each project's own tasks file, where their endpoints get a
+		// real FK to the nodes. Dangling edges (endpoint node gone) are DROPPED and logged. Runs
+		// after the legacy fold (so every board is in its per-project file) and BEFORE the flat
+		// back-fill below — that one creates part_of edges through the store, i.e. already into
+		// the new home, so the copy has to land first or the same edge would exist twice.
+		using (var relScope = app.Services.CreateScope())
+		{
+			var coreDb = relScope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			var relLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.RelationsBackfill");
+			new PetBox.Tasks.Data.RelationsToTasksDbMigrator(coreDb, tasksFactory, Path.Combine(dataDir, "tasks"), relLog).Migrate();
+		}
+
 		// One-time, idempotent (spec-flat-tags): convert legacy path-keyed nodes to flat
 		// slugs + synthesize part_of edges. Runs after the legacy fold so every board is in
-		// its per-project file; needs PetBoxDb for the part_of edges (in petbox.db).
+		// its per-project file; the part_of edges land in the per-project tasks file.
 		using (var flatScope = app.Services.CreateScope())
 		{
-			var relations = new PetBox.Tasks.Data.RelationStore(flatScope.ServiceProvider.GetRequiredService<PetBoxDb>());
+			var relations = new PetBox.Tasks.Data.RelationStore(tasksFactory);
 			var flatLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.FlatNodeMigration");
 			new PetBox.Tasks.Data.FlatNodePartOfMigrator(Path.Combine(dataDir, "tasks"), tasksFactory, relations, flatLog).Migrate();
 		}

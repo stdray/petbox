@@ -61,7 +61,7 @@ public sealed class ProjectDeletePageTests : IDisposable
 		_db.Insert(new LogMeta { ProjectKey = projectKey, Name = "app", CreatedAt = now, UpdatedAt = now });
 		_db.Insert(new TaskBoardMeta { ProjectKey = projectKey, Name = "work", Kind = "simple", CreatedAt = now, UpdatedAt = now });
 		_db.Insert(new MemoryStoreMeta { ProjectKey = projectKey, Name = "notes", CreatedAt = now, UpdatedAt = now, IsSystem = false });
-		_db.Insert(new Relation { Id = $"r_{projectKey}", ProjectKey = projectKey, Kind = "blocks", FromNodeId = "a", ToNodeId = "b", CreatedAt = now });
+		_db.Insert(new LegacyRelation { Id = $"r_{projectKey}", ProjectKey = projectKey, Kind = "blocks", FromNodeId = "a", ToNodeId = "b", CreatedAt = now });
 		_db.Insert(new Setting { Scope = nameof(Scope.Project), ScopeKey = projectKey, Path = "log.retention.days", Type = "int", Value = "7", UpdatedAt = now });
 	}
 
@@ -75,7 +75,7 @@ public sealed class ProjectDeletePageTests : IDisposable
 		+ _db.Logs.Count(l => l.ProjectKey == projectKey)
 		+ _db.TaskBoards.Count(b => b.ProjectKey == projectKey)
 		+ _db.MemoryStores.Count(m => m.ProjectKey == projectKey)
-		+ _db.Relations.Count(r => r.ProjectKey == projectKey)
+		+ _db.LegacyRelations.Count(r => r.ProjectKey == projectKey)
 		+ _db.Settings.Count(s => s.Scope == nameof(Scope.Project) && s.ScopeKey == projectKey);
 
 	[Fact]

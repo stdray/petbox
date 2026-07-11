@@ -67,7 +67,7 @@ public sealed class SelfTracingTests : IDisposable
 	{
 		var factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
-		var tasks = new TasksService(new TaskBoardStore(_db, factory), new RelationStore(_db),
+		var tasks = new TasksService(new TaskBoardStore(_db, factory), new RelationStore(factory),
 			new TagStore(factory), new CommentService(factory));
 
 		var (listener, started) = Listen(PetBoxActivitySources.TasksSourceName);
