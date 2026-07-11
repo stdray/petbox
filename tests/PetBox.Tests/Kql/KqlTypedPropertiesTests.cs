@@ -433,6 +433,71 @@ public sealed class KqlTypedPropertiesTests
 		Rec(3, """{"Chars":"4999","Neg":"oops"}"""),
 	];
 
+	// ---- nullable DATETIME bin (kql-bin-nullable-datetime-fix) ----
+	// The datetime arm of bin() was the last strict numeric/instant context: todatetime() of a bag value yields
+	// DateTime? (long? epoch-ms in the SQL domain), so `bin(todatetime(Properties.T), 1h)` — THE time-histogram
+	// idiom over a property-carried timestamp — was rejected outright. It now routes through the
+	// null-propagating BinDateTimeMsN / BinDateTimeN, symmetrically with the numeric arm's BinLongN/BinDoubleN:
+	// the unparseable and the missing value get their OWN (null) bucket and are NOT coalesced to the epoch
+	// (which would invent a phantom 1970 bucket and skew a time histogram).
+	// Production-only: KustoLoco tz-shifts datetime literals and models the dynamic bag differently, so
+	// todatetime is out of the differential (see this file's header).
+	static IReadOnlyList<LogEntryRecord> EventTimeData =>
+	[
+		Rec(1, """{"T":"2026-04-19T10:17:00Z"}"""),
+		Rec(2, """{"T":"2026-04-19T10:59:59Z"}"""),
+		Rec(3, """{"T":"2026-04-19T11:02:00Z"}"""),
+		Rec(4, """{"T":"not-a-date"}"""),  // unparseable → null
+		Rec(5, "{}"),                      // missing → null
+	];
+
+	static readonly DateTime H10 = new(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc);
+	static readonly DateTime H11 = new(2026, 4, 19, 11, 0, 0, DateTimeKind.Utc);
+
+	[Theory]
+	[InlineData("events | project Id, B = bin(todatetime(Properties.T), 1h)")]
+	[InlineData("events | extend t = todatetime(Properties.T) | project Id, B = bin(t, 1h)")]
+	public async Task BinDateTime_OverConvertedProperty_AsAProjection_NullsPropagate(string kql)
+	{
+		var rows = await Table(kql, EventTimeData);
+		var by = rows.ToDictionary(r => (long)r[0]!, r => r[1]);
+		by[1].Should().Be(H10);
+		by[2].Should().Be(H10);  // 10:59:59 still floors to the top of the hour
+		by[3].Should().Be(H11);
+		// The query SURVIVES the bad rows — no throw, no hidden coalesce to the epoch.
+		by[4].Should().BeNull();
+		by[5].Should().BeNull();
+	}
+
+	[Theory]
+	[InlineData("events | summarize C = count() by Bucket = bin(todatetime(Properties.T), 1h)")]
+	[InlineData("events | extend t = todatetime(Properties.T) | summarize C = count() by Bucket = bin(t, 1h)")]
+	public async Task BinDateTime_OverConvertedProperty_AsAGroupByKey_HasItsOwnNullBucket(string kql)
+	{
+		var rows = await Table(kql, EventTimeData);
+		var buckets = rows.Select(r => (Key: r[0], Count: (long)r[1]!)).ToList();
+		buckets.Should().HaveCount(3);
+		buckets.Should().Contain(b => Equals(b.Key, H10) && b.Count == 2);
+		buckets.Should().Contain(b => Equals(b.Key, H11) && b.Count == 1);
+		// The unparseable + missing rows share ONE null bucket — not a 1970-01-01 bucket, not an error.
+		buckets.Should().Contain(b => b.Key == null && b.Count == 2);
+	}
+
+	// The bucket floor is the same absolute-tick floor the non-null arm uses (BinDateTimeMs), so a sub-hour
+	// step lines up identically; and a NON-converted (non-nullable) Timestamp still takes the strict arm.
+	[Fact]
+	public async Task BinDateTime_NullableAndNonNullableArms_AgreeOnTheFloor()
+	{
+		var rows = await Table(
+			"events | where Id <= 3 | project Id, Half = bin(todatetime(Properties.T), 30m), Ts = bin(Timestamp, 1h)",
+			EventTimeData);
+		var by = rows.ToDictionary(r => (long)r[0]!, r => r);
+		by[1][1].Should().Be(H10);
+		by[2][1].Should().Be(H10.AddMinutes(30));  // 10:59:59 → 10:30
+		by[3][1].Should().Be(H11);
+		by[1][2].Should().Be(H10);                 // the strict (non-nullable) column arm is unchanged
+	}
+
 	// ---- bare-name → Properties fallback (no KustoLoco analogue → production-only) ----
 
 	static IReadOnlyList<LogEntryRecord> FallbackData =>

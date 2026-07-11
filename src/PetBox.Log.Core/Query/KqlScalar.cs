@@ -1142,15 +1142,20 @@ static class KqlScalarFunctions
 		var value = args[0];
 		var step = args[1];
 
-		if (value.Type == typeof(DateTime) && step.Type == typeof(TimeSpan))
-			return Expr.Call(Method(nameof(BinDateTime)), value, step);
+		// In-memory instant domain (RowScalarContext): DateTime, or DateTime? when the instant came from
+		// todatetime() — every bag value is TEXT, so `bin(todatetime(Properties.X), 1h)` is THE time-histogram
+		// idiom over the property bag, and todatetime maps a malformed/missing value to null (Kusto). The
+		// nullable arm PROPAGATES that null (its own bucket) exactly like the numeric arm's BinLongN/BinDoubleN.
+		if (KqlScalar.NonNullable(value.Type) == typeof(DateTime) && step.Type == typeof(TimeSpan))
+			return Expr.Call(
+				Method(KqlScalar.IsNullable(value.Type) ? nameof(BinDateTimeN) : nameof(BinDateTime)), value, step);
 
-		// SQL/record domain: a datetime is epoch-ms `long` and the timespan step is a constant literal.
-		// Bucket by absolute ticks (BinDateTimeMs) to match the in-memory BinDateTime exactly. A non-constant
-		// step or a sub-millisecond step (which the ms-precision epoch-ms round-trip cannot represent
-		// losslessly) throws → the transient bridge runs that stage in-memory (both are unreachable in
-		// practice — timespan literals are whole-ms constants).
-		if (value.Type == typeof(long) && step.Type == typeof(TimeSpan))
+		// SQL/record domain: a datetime is epoch-ms `long` (long? for a todatetime result) and the timespan step
+		// is a constant literal. Bucket by absolute ticks (BinDateTimeMs / the null-propagating BinDateTimeMsN)
+		// to match the in-memory BinDateTime exactly. A non-constant step or a sub-millisecond step (which the
+		// ms-precision epoch-ms round-trip cannot represent losslessly) throws → the transient bridge runs that
+		// stage in-memory (both are unreachable in practice — timespan literals are whole-ms constants).
+		if ((value.Type == typeof(long) || value.Type == typeof(long?)) && step.Type == typeof(TimeSpan))
 		{
 			if (step is not System.Linq.Expressions.ConstantExpression { Value: TimeSpan ts })
 				throw new UnsupportedKqlException("bin() with a datetime value requires a constant timespan step");
@@ -1158,7 +1163,10 @@ static class KqlScalarFunctions
 				throw new UnsupportedKqlException("bin() step must be a positive timespan");
 			if (ts.Ticks % TimeSpan.TicksPerMillisecond != 0)
 				throw new UnsupportedKqlException("bin() with a datetime value requires a whole-millisecond timespan step");
-			return Expr.Call(SqlM(nameof(KqlSqlExpressions.BinDateTimeMs)), value, Expr.Constant(ts.Ticks));
+			var binMs = KqlScalar.IsNullable(value.Type)
+				? nameof(KqlSqlExpressions.BinDateTimeMsN)
+				: nameof(KqlSqlExpressions.BinDateTimeMs);
+			return Expr.Call(SqlM(binMs), value, Expr.Constant(ts.Ticks));
 		}
 
 		// Nullable numerics count as numeric here: bin(toint(Properties.RespChars), 5000) is THE histogram
@@ -1465,5 +1473,11 @@ static class KqlScalarFunctions
 		var floored = v.Ticks / step.Ticks * step.Ticks;
 		return new DateTime(floored, v.Kind);
 	}
+
+	// The null-propagating in-memory counterpart (a todatetime() result is DateTime? in the row context):
+	// null in → null out, i.e. its own bucket. A separate NAME, not an overload — Method() resolves by
+	// GetMethod(name). The step guard still fires for a non-null value, so a bad step stays loud.
+	static DateTime? BinDateTimeN(DateTime? v, TimeSpan step) =>
+		v is { } dt ? BinDateTime(dt, step) : null;
 
 }

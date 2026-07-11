@@ -239,6 +239,18 @@ public static class KqlSqlExpressions
 	public static long BinDateTimeMs(long ms, long stepTicks) =>
 		((ms * TimeSpan.TicksPerMillisecond + UnixEpochTicks) / stepTicks * stepTicks - UnixEpochTicks) / TimeSpan.TicksPerMillisecond;
 
+	// bin(datetime, timespan) over a NULLABLE instant — the datetime counterpart of BinLongN/BinDoubleN, and
+	// the shape todatetime() produces (every bag value is TEXT, so `bin(todatetime(Properties.X), 1h)` — THE
+	// time-histogram idiom over the property bag — feeds a long? epoch-ms here; Kusto maps a malformed/missing
+	// value to null). The SQL is the IDENTITY of the non-null arm: NULL propagates through the arithmetic on
+	// both providers, so an unparseable timestamp lands in its OWN (null) bucket in `summarize … by bin(…)`
+	// instead of failing the query — and it is NOT coalesced to the epoch, which would invent a 1970 bucket.
+	// A separate NAME (not an overload) because the compiler resolves these by GetMethod(name).
+	[Sql.Expression("((({0} * 10000 + 621355968000000000) / {1}) * {1} - 621355968000000000) / 10000", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "((({0} * 10000 + 621355968000000000) // {1}) * {1} - 621355968000000000) // 10000", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static long? BinDateTimeMsN(long? ms, long stepTicks) =>
+		ms is { } v ? BinDateTimeMs(v, stepTicks) : null;
+
 	// bin(value, step) for INTEGER values: floor(value/step)*step toward NEGATIVE INFINITY (Kusto/KQL
 	// semantics, NOT trunc-toward-zero). Expressed via SQLite's non-negative-remainder identity
 	// `value - ((value % step + step) % step)` — a single translatable arithmetic expression that agrees
