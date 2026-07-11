@@ -78,7 +78,11 @@ records**, not the working plan — do not treat them as current state.
 6. **Deploy only on explicit command** (the `deploy` tag flow); after deploy, run a
    live smoke against production endpoints.
 7. **Don't silently work around process/doc defects** — file an intake card on
-   `$system`.
+   `$system`. Same rule when sources disagree: the order of truth is
+   **maintainer > spec > tests > code**. If you think a spec node is wrong, implement it
+   anyway and raise the objection (intake card, or a comment on the node) — never
+   silently override the higher source. Unclear which reading is right → take the one
+   that is cheaper to undo, and say so.
 8. **Delegating to workers (fan-out):** a spawned subagent does NOT run the
    SessionStart hook — it never sees the memory banner, canon, or role rules, so the
    ONLY channel is your spawn brief. Workers that don't get the rules drift: they
@@ -98,6 +102,24 @@ records**, not the working plan — do not treat them as current state.
    (`~/.claude/agents/worker.md`) whose system prompt carries this and which has no
    Agent tool (can't self-spawn) — the brief preamble is then the backstop, not the
    only line of defense.
+9. **What NOT to delegate.** Fan-out is the default, but the default is not universal:
+   **delegate when verifying the result is cheaper than producing it** —
+   `cost(specify) + cost(verify) < cost(do it yourself)`. Judge the task on four flags
+   (is a mistake reversible; is the context transferable into a brief; is the result
+   mechanically checkable or a matter of judgement; how big it is) and take the FIRST
+   rule that fires:
+   1. Irreversible (deploy, force-push, anything touching prod or secrets) → do it yourself.
+   2. Context you cannot compile into a brief → do it yourself; a worker starved of it
+      will scout, drift, and hand back plausible garbage.
+   3. Judgement call on a small/medium task → do it yourself (specifying the taste costs
+      more than doing the work). A LARGE judgement task may still be delegated as a
+      DRAFT, if you will review it.
+   4. Otherwise → delegate.
+
+   Never delegate: secrets, irreversible operations, architecture / spec / plan
+   decisions, the review of a worker's own output, and edits so small the brief is
+   longer than the diff. Retries are bounded: a worker that fails gets ONE stronger
+   worker, then you take the task yourself — never a third attempt.
 
 ## Build entry points
 
@@ -166,9 +188,12 @@ required on a **new** entry (`memory_upsert` with version 0, or `memory_remember
 an edit it is optional (an omitted field stays unchanged). Store durable facts not
 derivable from code/git/config; do **not** store what the repo/git already records,
 transient state, secrets, or actionable work (that's a task). `Feedback`/`Project`
-entries should include the *why* and *how to apply*. Search before writing, update
-over duplicating, delete when wrong (temporal history makes deletes safe). A cold
-`tasks_upsert` / `memory_upsert` auto-creates the board/store.
+entries should include the *why*, the *how to apply*, and a **revisit trigger** — the
+condition under which the fact stops holding and may be reopened ("when the spec is
+backfilled", "if we ever ship a second workspace"). Without one a decision is immortal:
+a later agent either obeys it forever or breaks it on a whim, and neither is a decision.
+Search before writing, update over duplicating, delete when wrong (temporal history makes
+deletes safe). A cold `tasks_upsert` / `memory_upsert` auto-creates the board/store.
 
 ## Documents — what's here
 
