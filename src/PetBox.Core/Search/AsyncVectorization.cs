@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+
 namespace PetBox.Core.Search;
 
 // Async materialization of Class-B (enriching) indexes — the write path NEVER blocks on
@@ -38,25 +40,36 @@ public interface IIndexCursorStore
 	Task<bool> IsDeadAsync(string index, string type, string id, CancellationToken ct = default);
 }
 
-public sealed record DrainResult(int Indexed, int Deleted, int DeadLettered, bool Advanced, long Cursor);
+// The outcome of one drain pass. `SourceVersion` is the source's max version at the start of the
+// pass: SourceVersion − Cursor is the index's LAG, the number that says "semantic search here is
+// behind by N versions" (0 = caught up). Carried out so a job can log/alert on it.
+public sealed record DrainResult(int Indexed, int Deleted, int DeadLettered, bool Advanced, long Cursor, long SourceVersion = 0)
+{
+	public long Lag => Math.Max(0, SourceVersion - Cursor);
+}
 
 // Drains one source into one Class-B index, tracking a cursor + dead-letter for that index.
-public sealed class AsyncVectorizationWorker
+public sealed partial class AsyncVectorizationWorker
 {
 	readonly string _index;
 	readonly ISearchSource _source;
 	readonly ISearchIndex _target;
 	readonly IIndexCursorStore _store;
 	readonly int _maxAttempts;
+	// Optional: without it a poison doc is dead-lettered in total silence — the index quietly
+	// stops carrying that entity FOREVER and nobody ever learns why (the very hole this leaf closes).
+	readonly ILogger? _log;
 
 	public AsyncVectorizationWorker(
-		string indexName, ISearchSource source, ISearchIndex target, IIndexCursorStore store, int maxAttempts = 5)
+		string indexName, ISearchSource source, ISearchIndex target, IIndexCursorStore store, int maxAttempts = 5,
+		ILogger? log = null)
 	{
 		_index = indexName;
 		_source = source;
 		_target = target;
 		_store = store;
 		_maxAttempts = maxAttempts;
+		_log = log;
 	}
 
 	// One drain pass. Materializes the delta into the index; advances the cursor ONLY if nothing
@@ -74,7 +87,11 @@ public sealed class AsyncVectorizationWorker
 		foreach (var del in delta.Deletes)
 		{
 			try { await _target.DeleteAsync(null, del.Scope, del.Type, del.Id, ct); deleted++; }
-			catch { blocked = true; } // retried on the next drain (deletes aren't dead-lettered)
+			catch (Exception ex)
+			{
+				blocked = true; // retried on the next drain (deletes aren't dead-lettered)
+				if (_log is not null) LogDeleteFailed(_log, _index, del.Type, del.Id, ex);
+			}
 		}
 
 		foreach (var doc in delta.Upserts)
@@ -86,25 +103,51 @@ public sealed class AsyncVectorizationWorker
 				await _store.ClearAttemptsAsync(_index, doc.Type, doc.Id, ct);
 				indexed++;
 			}
-			catch
+			catch (Exception ex)
 			{
 				var attempts = await _store.BumpAttemptsAsync(_index, doc.Type, doc.Id, ct);
 				if (attempts >= _maxAttempts)
 				{
 					await _store.MarkDeadAsync(_index, doc.Type, doc.Id, ct);
 					deadLettered++;
+					// LOUD: this entity leaves the index permanently. The last exception's message
+					// is the only evidence of WHY — it used to be swallowed here.
+					if (_log is not null) LogDeadLetter(_log, _index, doc.Type, doc.Id, attempts, ex.Message, ex);
 				}
 				else
 				{
 					blocked = true; // transient → hold the cursor so a recovery backfills this item
+					if (_log is not null) LogIndexAttemptFailed(_log, _index, doc.Type, doc.Id, attempts, ex.Message);
 				}
 			}
 		}
 
 		if (!blocked) await _store.SetCursorAsync(_index, delta.CurrentVersion, ct);
 		var newCursor = await _store.GetCursorAsync(_index, ct);
-		return new DrainResult(indexed, deleted, deadLettered, Advanced: !blocked, Cursor: newCursor);
+		var result = new DrainResult(indexed, deleted, deadLettered, Advanced: !blocked, Cursor: newCursor,
+			SourceVersion: delta.CurrentVersion);
+		// Summary of the pass, including the LAG that says how far behind the semantic index is.
+		// Skipped when there was literally nothing to do, so an idle drain loop stays quiet.
+		if (_log is not null && (indexed > 0 || deleted > 0 || deadLettered > 0 || blocked))
+			LogDrain(_log, _index, indexed, deleted, deadLettered, result.Advanced, newCursor, result.Lag);
+		return result;
 	}
+
+	[LoggerMessage(EventId = 401, Level = LogLevel.Warning,
+		Message = "vectorization {Index}: DEAD-LETTERED {Type}/{Id} after {Attempts} attempts — {Error}")]
+	static partial void LogDeadLetter(ILogger logger, string index, string type, string id, int attempts, string error, Exception ex);
+
+	[LoggerMessage(EventId = 402, Level = LogLevel.Debug,
+		Message = "vectorization {Index}: {Type}/{Id} failed (attempt {Attempts}) — {Error}; cursor held")]
+	static partial void LogIndexAttemptFailed(ILogger logger, string index, string type, string id, int attempts, string error);
+
+	[LoggerMessage(EventId = 403, Level = LogLevel.Debug,
+		Message = "vectorization {Index}: delete of {Type}/{Id} failed; cursor held")]
+	static partial void LogDeleteFailed(ILogger logger, string index, string type, string id, Exception ex);
+
+	[LoggerMessage(EventId = 404, Level = LogLevel.Information,
+		Message = "vectorization {Index}: indexed {Indexed}, deleted {Deleted}, dead-lettered {DeadLettered}, advanced {Advanced}, cursor {Cursor}, lag {Lag}")]
+	static partial void LogDrain(ILogger logger, string index, int indexed, int deleted, int deadLettered, bool advanced, long cursor, long lag);
 }
 
 // In-memory cursor store: fine for tests/dev and single-process drains. Not durable across

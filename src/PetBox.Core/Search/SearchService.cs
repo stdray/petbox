@@ -1,4 +1,5 @@
 using LinqToDB.Data;
+using Microsoft.Extensions.Logging;
 
 namespace PetBox.Core.Search;
 
@@ -13,11 +14,19 @@ namespace PetBox.Core.Search;
 //     work item; the facade simply skips them on write.
 //   Read  — poll every index, RRF-fuse their ranked id lists (reuse HybridMerge), and report
 //     which retrievers ran + whether the result is degraded.
-public sealed class SearchService
+public sealed partial class SearchService
 {
 	readonly IReadOnlyList<ISearchIndex> _indexes;
+	// Optional: the facade is constructed per query by consumers that have no DI graph at hand
+	// (MemoryService, TasksService, …). Null → the degradation is still REPORTED in the response
+	// provenance, just not logged.
+	readonly ILogger? _log;
 
-	public SearchService(IEnumerable<ISearchIndex> indexes) => _indexes = indexes.ToList();
+	public SearchService(IEnumerable<ISearchIndex> indexes, ILogger? log = null)
+	{
+		_indexes = indexes.ToList();
+		_log = log;
+	}
 
 	public async Task IndexAsync(DataConnection tx, SearchDoc doc, CancellationToken ct = default)
 	{
@@ -38,6 +47,7 @@ public sealed class SearchService
 		var rankings = new List<IReadOnlyList<string>>();
 		var byId = new Dictionary<string, Hit>();
 		bool lexical = false, semantic = false, degraded = false;
+		string? reason = null;
 
 		foreach (var ix in _indexes)
 		{
@@ -50,11 +60,19 @@ public sealed class SearchService
 				if (ix.Capability.HasFlag(SearchCapability.Lexical)) lexical = true;
 				if (ix.Capability.HasFlag(SearchCapability.Vector)) semantic = true;
 			}
-			catch
+			catch (Exception ex)
 			{
 				// An index that should have answered failed → degrade honestly (the requested
 				// capability flag stays false; the response says so) rather than silently drop it.
+				// The failure is CLASSIFIED (an embedder adapter hands us a code; anything else is
+				// index-error) so the caller learns WHY, and LOGGED so a silent hole — e.g. a
+				// project with no Embed route, where semantic search never ran at all — shows up on
+				// day one instead of never. First failure owns the reason.
 				degraded = true;
+				var code = ex is SearchDegradedException sde ? sde.Reason : SearchDegradedReason.IndexError;
+				reason ??= code;
+				if (_log is not null)
+					LogIndexDegraded(_log, ix.GetType().Name, ix.Capability.ToString(), scope, code, ex);
 			}
 		}
 
@@ -63,10 +81,14 @@ public sealed class SearchService
 		// SearchService calls, so a consumer can globally merge several per-container pools by it.
 		var fused = HybridMerge.RrfScored([.. rankings]);
 		var hitsOut = fused.Take(k).Select(f => byId[f.Key] with { Score = f.Score }).ToList();
-		return new SearchResponse(hitsOut, new SearchRetrievers(lexical, semantic, degraded));
+		return new SearchResponse(hitsOut, new SearchRetrievers(lexical, semantic, degraded, reason));
 	}
 
 	// Fusion identity = the entity address (type, id) within the queried scope. The unit
 	// separator keeps composite keys collision-free.
 	static string Key(string type, string id) => type + "\x1f" + id;
+
+	[LoggerMessage(EventId = 400, Level = LogLevel.Warning,
+		Message = "search: index {Index} ({Capability}) failed in scope '{Scope}' → degraded, reason {Reason}")]
+	static partial void LogIndexDegraded(ILogger logger, string index, string capability, string scope, string reason, Exception ex);
 }

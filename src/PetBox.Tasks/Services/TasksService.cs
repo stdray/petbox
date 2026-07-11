@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
 using LinqToDB;
+using Microsoft.Extensions.Logging;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.SQLite;
 using PetBox.Core.Contract;
@@ -38,6 +39,9 @@ public sealed partial class TasksService : ITasksService
 	// construction (tests, other adapters) still gets the shipped flooring (same pattern as
 	// MemoryService).
 	readonly SearchRerankOptions _rerank;
+	// Optional (DI fills it). Handed to the per-query SearchService so a degraded retriever leg
+	// (e.g. no Embed route → semantic never ran) is logged, not merely flagged in the response.
+	readonly ILogger<TasksService>? _log;
 	// Node identity (slug / NodeId) resolution — private collaborator, not DI-registered.
 	readonly NodeRefResolver _nodeRefs;
 	// Post-write stages for UpsertAsync (associations + FSM/delete effects).
@@ -57,13 +61,15 @@ public sealed partial class TasksService : ITasksService
 	// candidate depth is per-request: max(3×limit, 50) — see SearchNodesAsync.
 	const int VectorDim = 1024;
 
-	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null, SearchRerankOptions? rerank = null)
+	public TasksService(ITaskBoardStore boards, IRelationStore relations, ITagStore tags, ICommentService comments, ILlmClient? llm = null, SearchRerankOptions? rerank = null,
+		ILogger<TasksService>? log = null)
 	{
 		_boards = boards;
 		_relations = relations;
 		_tags = tags;
 		_comments = comments;
 		_llm = llm;
+		_log = log;
 		_rerank = rerank ?? new SearchRerankOptions();
 		_nodeRefs = new NodeRefResolver(boards);
 		_effects = new TaskTransitionEffects(boards, relations, tags);
@@ -1410,7 +1416,7 @@ public sealed partial class TasksService : ITasksService
 		if (_llm is not null)
 			indexes.Add(new VectorSearchIndex(connect, new LlmClientEmbedder(_llm, projectKey), VectorDim));
 
-		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(boardFilter), k, ct);
+		var resp = await new SearchService(indexes, _log).SearchAsync(projectKey, query, new SearchFilter(boardFilter), k, ct);
 		if (resp.Hits.Count == 0) return ([], resp.Retrievers);
 
 		// Semantic-noise floor (spec search-relevance-floor): a hit the lexical leg did NOT confirm

@@ -215,7 +215,7 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 		// message count) leaves substantive hits to refill the quota after the floor trims the
 		// junk. The floor mirrors stage-1 discovery (RankDiscovery, spec: search-fair-fusion).
 		var pool = Math.Max(3 * k, 20);
-		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, new SearchFilter(null), pool, ct);
+		var resp = await new SearchService(indexes, _logger).SearchAsync(projectKey, query, new SearchFilter(null), pool, ct);
 
 		var byVersion = entry.Messages.ToDictionary(m => m.Version);
 		var hits = new List<SessionEpisodicHit>(k);

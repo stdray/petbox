@@ -294,14 +294,14 @@ public static class SessionTools
 			c.SessionId, c.Agent,
 			Description: c.Description,
 			Hits: c.Hits.Select(h => new SessionSearchHitView(h.Message, h.Role, h.Snippet, h.Score, h.Retriever)).ToList(),
-			Retrievers: new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded),
+			Retrievers: new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded, c.Retrievers.DegradedReason),
 			Sources: c.Sources)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(items);
 		return new SessionSearchResultView(
 			kept,
 			Distilled: o.Distilled,
 			Reason: o.Reason,
-			Retrievers: new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded),
+			Retrievers: new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded, o.Discovery.DegradedReason),
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
 			Hint: omitted > 0 ? SearchBudgetHint : null,
