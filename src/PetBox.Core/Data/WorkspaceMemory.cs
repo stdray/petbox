@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using LinqToDB;
 using LinqToDB.Async;
 using PetBox.Core.Models;
@@ -14,21 +15,40 @@ namespace PetBox.Core.Data;
 //
 // Reserved project keys that must never be deleted / orphan-swept: "$system", "$workspace",
 // and every "$ws-*" container. See ProjectDeletion.IsReserved.
-public static class WorkspaceMemory
+//
+// Workspace keys that become URL segments and `{key}.db` paths MUST be allowlisted at
+// creation time (IsCreatableWorkspaceKey). ContainerKeyFor / Routes.SharedMemory are on the
+// layout render path — they never throw on a weird key (would 500 every page of that ws).
+public static partial class WorkspaceMemory
 {
 	public const string SystemWorkspace = "$system";
 	public const string SystemContainer = "$workspace";
 	public const string ContainerPrefix = "$ws-";
 
+	// New workspace keys: safe for Windows file names, URL path segments, and `$ws-` prefixing.
+	// `$system` is seeded, never creatable. `sys` is reserved (legacy admin collision).
+	// Pattern: ^[a-z0-9][a-z0-9-]*$ (length 1..63).
+	[GeneratedRegex(@"^[a-z0-9][a-z0-9-]{0,62}$")]
+	private static partial Regex CreatableKeyRx();
+
+	// True for a key that may be created via admin UI (not `$system` / `sys`).
+	public static bool IsCreatableWorkspaceKey(string? key) =>
+		!string.IsNullOrEmpty(key)
+		&& CreatableKeyRx().IsMatch(key)
+		&& !string.Equals(key, "sys", StringComparison.OrdinalIgnoreCase);
+
+	// True for any known-good workspace key: the reserved system key or a creatable key.
+	// Used by EnsureContainerAsync so garbage keys never become Projects rows / files.
+	public static bool IsValidWorkspaceKey(string? key) =>
+		string.Equals(key, SystemWorkspace, StringComparison.Ordinal)
+		|| IsCreatableWorkspaceKey(key);
+
 	// Map a workspace key onto its memory-container project key.
-	// Rejects empty / path-like keys so a bad wsKey cannot leak into a project key or URL.
-	public static string ContainerKeyFor(string workspaceKey)
-	{
-		ValidateWorkspaceKey(workspaceKey);
-		return string.Equals(workspaceKey, SystemWorkspace, StringComparison.Ordinal)
+	// Never throws — this is on the layout render path (Routes.SharedMemory / _Layout).
+	public static string ContainerKeyFor(string workspaceKey) =>
+		string.Equals(workspaceKey, SystemWorkspace, StringComparison.Ordinal)
 			? SystemContainer
 			: ContainerPrefix + workspaceKey;
-	}
 
 	// True for the reserved memory-container project keys ($workspace and $ws-*).
 	// "$system" is reserved too but is a real user-facing project, not a memory container.
@@ -47,10 +67,12 @@ public static class WorkspaceMemory
 	}
 
 	// Lazy-ensure the Projects row for a workspace's memory container (same shape as M028).
-	// Idempotent: existence check + insert. A concurrent insert race is swallowed only when
-	// the row now exists (true PK conflict); any other DbException is rethrown.
+	// No-op for invalid keys (never throw — dashboard/layout may call this). Idempotent:
+	// existence check + insert. A concurrent insert race is swallowed only when the row
+	// now exists (true PK conflict); any other DbException is rethrown.
 	public static async Task EnsureContainerAsync(PetBoxDb db, string workspaceKey, CancellationToken ct = default)
 	{
+		if (!IsValidWorkspaceKey(workspaceKey)) return;
 		var key = ContainerKeyFor(workspaceKey);
 		if (await db.Projects.AnyAsync(p => p.Key == key, ct)) return;
 		try
@@ -68,16 +90,6 @@ public static class WorkspaceMemory
 			// Concurrent first-resolve may have won the insert — only swallow if the row is there.
 			if (!await db.Projects.AnyAsync(p => p.Key == key, ct)) throw;
 		}
-	}
-
-	// Workspace keys become container project keys and URL segments — reject empty and path junk.
-	static void ValidateWorkspaceKey(string workspaceKey)
-	{
-		if (string.IsNullOrWhiteSpace(workspaceKey))
-			throw new ArgumentException("workspaceKey is required", nameof(workspaceKey));
-		if (workspaceKey.Contains('/') || workspaceKey.Contains('\\') || workspaceKey.Contains('\0')
-			|| workspaceKey.Contains("..", StringComparison.Ordinal))
-			throw new ArgumentException($"invalid workspaceKey '{workspaceKey}'", nameof(workspaceKey));
 	}
 
 	// Resolve the caller's project → its WorkspaceKey → container key, ensuring the row exists.

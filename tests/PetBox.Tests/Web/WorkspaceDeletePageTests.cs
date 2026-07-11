@@ -1,6 +1,9 @@
+using System.Security.Claims;
 using LinqToDB;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using Microsoft.AspNetCore.Mvc.ViewFeatures;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Web.Pages.Admin;
@@ -30,7 +33,24 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
-	WorkspacesModel Page() => new(_db);
+	WorkspacesModel Page()
+	{
+		var page = new WorkspacesModel(_db);
+		var http = new DefaultHttpContext
+		{
+			User = new ClaimsPrincipal(new ClaimsIdentity(
+				[new Claim(PetBox.Core.Auth.PetBoxClaims.UserId, "1")], "test")),
+		};
+		page.PageContext = new PageContext { HttpContext = http };
+		page.TempData = new TempDataDictionary(http, new EmptyTempDataProvider());
+		return page;
+	}
+
+	sealed class EmptyTempDataProvider : ITempDataProvider
+	{
+		public IDictionary<string, object> LoadTempData(HttpContext context) => new Dictionary<string, object>();
+		public void SaveTempData(HttpContext context, IDictionary<string, object> values) { }
+	}
 
 	[Fact]
 	public async Task Delete_nonempty_workspace_is_rejected_and_nothing_is_removed()
@@ -75,5 +95,36 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 		result.Should().BeOfType<PageResult>();
 		page.ErrorMessage.Should().Contain("$system");
 		_db.Workspaces.Any(w => w.Key == "$system").Should().BeTrue();
+	}
+
+	// workspace-memory-isolation: create path allowlists keys that become URL/file segments.
+	[Theory]
+	[InlineData("a:b")]
+	[InlineData("a b")]
+	[InlineData("a/b")]
+	[InlineData("sys")]
+	[InlineData("$system")] // also pre-seeded; create must still reject (allowlist)
+	[InlineData("Foo")]
+	public async Task Create_rejects_invalid_workspace_key(string key)
+	{
+		var page = Page();
+		var before = _db.Workspaces.Count();
+		var result = await page.OnPostCreateAsync(key, "Name", "desc");
+
+		result.Should().BeOfType<PageResult>();
+		page.ErrorMessage.Should().Contain("must match");
+		_db.Workspaces.Count().Should().Be(before, "rejected create must not insert a new workspace row");
+	}
+
+	[Fact]
+	public async Task Create_accepts_allowlisted_key_and_provisions_memory_container()
+	{
+		var page = Page();
+		// WorkspacesModel create needs a user claim for auto-membership — optional for this assert.
+		var result = await page.OnPostCreateAsync("acme-1", "Acme", "desc");
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		_db.Workspaces.Any(w => w.Key == "acme-1").Should().BeTrue();
+		_db.Projects.Any(p => p.Key == "$ws-acme-1" && p.WorkspaceKey == "acme-1").Should().BeTrue();
 	}
 }

@@ -30,9 +30,11 @@ public sealed class WorkspacesModel : PageModel
 			return Page();
 		}
 
-		if (string.Equals(Key, "sys", StringComparison.OrdinalIgnoreCase))
+		// Allowlist before insert: keys become URL segments and $ws-{key} file paths.
+		// Do NOT put this throw on the layout render path — gate creation only.
+		if (!WorkspaceMemory.IsCreatableWorkspaceKey(Key))
 		{
-			ErrorMessage = "Workspace key 'sys' is reserved.";
+			ErrorMessage = "Workspace key must match ^[a-z0-9][a-z0-9-]*$ (lowercase letters, digits, hyphens; 'sys' is reserved).";
 			OnGet();
 			return Page();
 		}

@@ -1,6 +1,8 @@
+using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
@@ -10,14 +12,17 @@ namespace PetBox.Web.Pages.ProjectHome;
 // Read-only detail for one memory store (/ui/{ws}/{project}/memory/{store}). Shows
 // the currently-active entries (ActiveTo == null) ordered by Key. Existence is
 // checked against metadata first so we don't auto-vivify a phantom file.
-[Authorize]
+// WorkspaceViewer + project↔route workspace bind — same tenant gate as Memory page.
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class MemoryStoreModel : PageModel
 {
+	readonly PetBoxDb _db;
 	readonly FeatureFlags _features;
 	readonly IMemoryService _memory;
 
-	public MemoryStoreModel(FeatureFlags features, IMemoryService memory)
+	public MemoryStoreModel(PetBoxDb db, FeatureFlags features, IMemoryService memory)
 	{
+		_db = db;
 		_features = features;
 		_memory = memory;
 	}
@@ -57,6 +62,9 @@ public sealed class MemoryStoreModel : PageModel
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
 		if (!_features.IsEnabled(Feature.Memory)) return NotFound();
+		var project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		if (project is null || !string.Equals(project.WorkspaceKey, WorkspaceKey, StringComparison.Ordinal))
+			return NotFound();
 		if (!await _memory.StoreExistsAsync(ProjectKey, Store, ct)) return NotFound();
 
 		if (PageNum < 0) PageNum = 0;

@@ -1,4 +1,5 @@
 using System.Net;
+using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -476,11 +477,28 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("memory-empty"); // no stores yet, but the page resolved the project
 	}
 
-	// IDOR guard: route workspaceKey must match the container project's WorkspaceKey.
-	// A $ws-* key for another workspace under /ui/$system/... must not resolve.
+	// Field IDOR guard: Project.WorkspaceKey must match route.workspaceKey.
+	// Seed $ws-other-ws (WorkspaceKey=other-ws) so the page finds a row — without the
+	// guard it would list that container's stores under the $system URL. With the guard,
+	// Project is nulled and the empty/notfound state is shown.
 	[Fact]
 	public async Task Memory_MismatchedWorkspaceContainer_ShowsNotFound()
 	{
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			if (!db.Workspaces.Any(w => w.Key == "other-ws"))
+				db.Insert(new PetBox.Core.Models.Workspace
+				{
+					Key = "other-ws", Name = "Other", Description = "", CreatedAt = DateTime.UtcNow,
+				});
+			if (!db.Projects.Any(p => p.Key == "$ws-other-ws"))
+				db.Insert(new PetBox.Core.Models.Project
+				{
+					Key = "$ws-other-ws", WorkspaceKey = "other-ws", Name = "Workspace", Description = "",
+				});
+		}
+
 		using var resp = await GetAuthedAsync("/ui/$system/$ws-other-ws/memory");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();

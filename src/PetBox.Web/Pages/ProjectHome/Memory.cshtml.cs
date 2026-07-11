@@ -12,7 +12,9 @@ namespace PetBox.Web.Pages.ProjectHome;
 // Main-UI memory dashboard for a project (/ui/{ws}/{project}/memory). Read-only
 // list of named stores from petbox.db metadata. v1 is project-scoped. Stores are
 // created by agents via the memory MCP tools.
-[Authorize]
+// WorkspaceViewer: route workspaceKey membership (sysadmin free-pass) — closes
+// cross-tenant shared-memory reads that bare [Authorize] allowed.
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class MemoryModel : PageModel
 {
 	readonly PetBoxDb _db;
@@ -46,7 +48,8 @@ public sealed class MemoryModel : PageModel
 			await WorkspaceMemory.EnsureContainerAsync(_db, WorkspaceKey, ct);
 
 		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
-		// Bind project to route workspace — reject IDOR (/ui/other-ws/$workspace/memory etc.).
+		// Bind project to route workspace — reject field IDOR (/ui/$system/$ws-other/memory).
+		// Membership of route workspace is enforced by WorkspaceViewer policy above.
 		if (Project is not null && !string.Equals(Project.WorkspaceKey, WorkspaceKey, StringComparison.Ordinal))
 			Project = null;
 		if (Project is null || !MemoryEnabled) return;
