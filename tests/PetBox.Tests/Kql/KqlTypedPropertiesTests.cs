@@ -215,6 +215,125 @@ public sealed class KqlTypedPropertiesTests
 		rows[0][0].Should().Be(700L);
 	}
 
+	// ---- nullable numeric CONTEXTS over a converted property (kql-nullable-numeric-contexts) ----
+	// Every bag value is TEXT, so numeric analysis goes through toint/tolong/todouble → Nullable<T>. bin(),
+	// arithmetic and unary +/- must therefore ACCEPT a nullable numeric and PROPAGATE the null (Kusto/SQL
+	// semantics): the unparseable row is neither silently coalesced to 0 (that would skew aggregates) nor
+	// allowed to fail the whole query.
+
+	// Two parseable rows in different buckets, one in the same bucket as the first, plus an unparseable and a
+	// missing value → the null bucket.
+	static IReadOnlyList<LogEntryRecord> CharsData =>
+	[
+		Rec(1, """{"RespChars":"1200"}"""),
+		Rec(2, """{"RespChars":"6000"}"""),
+		Rec(3, """{"RespChars":"4999"}"""),
+		Rec(4, """{"RespChars":"n/a"}"""),  // unparseable → null
+		Rec(5, "{}"),                        // missing → null
+	];
+
+	[Fact]
+	public async Task Bin_OverConvertedProperty_Histograms_WithNullBucket()
+	{
+		var rows = await Table(
+			"events | extend rc = toint(Properties.RespChars) | summarize C = count() by Bucket = bin(rc, 5000)",
+			CharsData);
+		var buckets = rows.Select(r => (Key: r[0], Count: (long)r[1]!)).ToList();
+		buckets.Should().HaveCount(3);
+		buckets.Should().Contain(b => Equals(b.Key, 0L) && b.Count == 2);      // 1200, 4999
+		buckets.Should().Contain(b => Equals(b.Key, 5000L) && b.Count == 1);   // 6000
+		// 'n/a' + missing → ONE null bucket: not an error, and NOT folded into bucket 0.
+		buckets.Should().Contain(b => b.Key == null && b.Count == 2);
+	}
+
+	[Fact]
+	public async Task Bin_OverConvertedProperty_AsAProjection_NullsPropagate()
+	{
+		var rows = await Table(
+			"events | project Id, B = bin(toint(Properties.RespChars), 5000), D = bin(todouble(Properties.RespChars), 2500.0)",
+			CharsData);
+		var by = rows.ToDictionary(r => (long)r[0]!, r => r);
+		by[1][1].Should().Be(0L);
+		by[2][1].Should().Be(5000L);
+		by[2][2].Should().Be(5000.0);
+		by[4][1].Should().BeNull();
+		by[4][2].Should().BeNull();
+		by[5][1].Should().BeNull();
+	}
+
+	[Fact]
+	public async Task Arithmetic_OverConvertedProperty_SharePct_NullsPropagate()
+	{
+		var rows = await Table(
+			"events | extend chars = toint(Properties.RespChars) | extend sharePct = 100.0 * chars / 12000 "
+			+ "| project Id, sharePct, Neg = -chars, Plus = chars + 1",
+			CharsData);
+		var by = rows.ToDictionary(r => (long)r[0]!, r => r);
+		((double)by[1][1]!).Should().BeApproximately(10.0, 1e-9);   // 100.0 * 1200 / 12000
+		((double)by[2][1]!).Should().BeApproximately(50.0, 1e-9);   // 100.0 * 6000 / 12000
+		by[1][2].Should().Be(-1200L);
+		by[1][3].Should().Be(1201L);
+		// The unparseable / missing rows survive the query and carry nulls through EVERY numeric context.
+		by[4][1].Should().BeNull();
+		by[4][2].Should().BeNull();
+		by[4][3].Should().BeNull();
+		by[5][1].Should().BeNull();
+	}
+
+	// No hidden coalesce: the null rows contribute NOTHING to sum/avg (they'd drag avg down if binned to 0).
+	[Fact]
+	public async Task Aggregates_OverConvertedProperty_IgnoreNulls_NoCoalesceToZero()
+	{
+		var rows = await Table(
+			"events | extend chars = toint(Properties.RespChars) | summarize S = sum(chars), A = avg(chars), C = count()",
+			CharsData);
+		rows[0][0].Should().Be(1200L + 6000L + 4999L);
+		((double)rows[0][1]!).Should().BeApproximately((1200.0 + 6000.0 + 4999.0) / 3, 1e-9);
+		rows[0][2].Should().Be(5L); // every row is still there — nothing dropped, nothing thrown
+	}
+
+	// sum per NULL-able bucket (the reference engine can't serve this — see DualExecutorTests
+	// .NullableNumericBin_MatchReference — so it is pinned here): the null bucket aggregates the rows whose
+	// value didn't parse, and sums nothing for them.
+	[Fact]
+	public async Task Aggregates_OverConvertedProperty_PerNullableBin()
+	{
+		var rows = await Table(
+			"events | extend chars = toint(Properties.RespChars) | summarize S = sum(chars), C = count() by Bucket = bin(chars, 5000)",
+			CharsData);
+		var buckets = rows.Select(r => (Key: r[0], Sum: r[1], Count: (long)r[2]!)).ToList();
+		buckets.Should().Contain(b => Equals(b.Key, 0L) && Equals(b.Sum, 1200L + 4999L) && b.Count == 2);
+		buckets.Should().Contain(b => Equals(b.Key, 5000L) && Equals(b.Sum, 6000L) && b.Count == 1);
+		// The null bucket exists, counts its 2 rows, and sums to null (no value contributed) — NOT to 0.
+		buckets.Should().Contain(b => b.Key == null && b.Sum == null && b.Count == 2);
+	}
+
+	// The double arm of arithmetic is pinned to the SQL REAL domain (KqlSqlExpressions.AsReal): linq2db prints
+	// `100.0` as the bare integer `100`, and SQLite would then run `100 * chars / 8441721` as INTEGER math and
+	// truncate the quotient. Two integers still divide as integers (Kusto semantics).
+	[Fact]
+	public async Task Arithmetic_DoubleOperand_KeepsRealDivision_NotIntegerTruncation()
+	{
+		var rows = await Table(
+			"events | where Id == 3 | project P = 100.0 * toint(Properties.RespChars) / 12000, "
+			+ "Q = 100.0 * Id / 12000, IntDiv = toint(Properties.RespChars) / 12000",
+			CharsData);
+		((double)rows[0][0]!).Should().BeApproximately(100.0 * 4999 / 12000, 1e-9); // 41.658…, not 41
+		((double)rows[0][1]!).Should().BeApproximately(100.0 * 3 / 12000, 1e-9);    // 0.025, not 0
+		rows[0][2].Should().Be(0L);                                                  // long / long stays integer division
+	}
+
+	// A non-numeric operand is still a precise error (the fix widened numeric contexts to Nullable<T>, it did
+	// not make them accept anything), and the message speaks KQL types, not CLR ones.
+	[Theory]
+	[InlineData("events | project X = bin(Properties.RespChars, 5000)", "*bin()*(datetime, timespan) or (numeric, numeric)*string*")]
+	[InlineData("events | project X = Message * 2", "*requires a numeric operand*string*")]
+	public async Task NonNumericOperand_StillThrowsPrecise(string kql, string message)
+	{
+		var act = async () => await KqlTestHost.ExecuteAsync(CharsData, Parse(kql), KqlBackend.Sqlite);
+		(await act.Should().ThrowAsync<UnsupportedKqlException>()).WithMessage(message);
+	}
+
 	// ---- bare-name → Properties fallback (no KustoLoco analogue → production-only) ----
 
 	static IReadOnlyList<LogEntryRecord> FallbackData =>

@@ -258,6 +258,31 @@ public static class KqlSqlExpressions
 		return q * step;
 	}
 
+	// REAL-domain guard for arithmetic that promotes to double. linq2db prints a double CONSTANT with an
+	// integral value as a bare integer literal (`100.0` → `100`), and both SQLite and DuckDB are dynamically
+	// typed here: `100 * Id / 12000` then runs as INTEGER math and TRUNCATES (`100.0 * chars / 8441721` came
+	// back 41 instead of 41.658…). A plain Expr.Convert doesn't help — linq2db elides it. So the double arm of
+	// KqlScalar.Arithmetic wraps each operand in this explicit CAST, which pins the SQL operands to the real
+	// domain (SQLite REAL / DuckDB DOUBLE — DuckDB's REAL is single-precision, hence the separate arm). The C#
+	// body is the identity (NOT ServerSideOnly: casting to double is meaningful in memory too).
+	[Sql.Expression(ProviderName.SQLite, "CAST({0} AS REAL)")]
+	[Sql.Expression(ProviderName.DuckDB, "CAST({0} AS DOUBLE)")]
+	public static double AsReal(double value) => value;
+
+	// The null-propagating form (a converted property is double?): CAST(NULL) is NULL on both providers.
+	[Sql.Expression(ProviderName.SQLite, "CAST({0} AS REAL)", IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "CAST({0} AS DOUBLE)", IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? AsRealN(double? value) => value;
+
+	// bin(value, step) over a NULLABLE integer — the shape a typed conversion produces (toint/tolong of a
+	// Properties string is long?, since a malformed/missing value is Kusto's null). Same identity, same SQL:
+	// NULL propagates through the arithmetic on both providers, so a null value lands in its own (null) bucket
+	// instead of failing the query or being silently coalesced to 0. A separate NAME (not an overload) because
+	// the compiler resolves these by GetMethod(name).
+	[Sql.Expression("({0} - ((({0} % {1}) + {1}) % {1}))", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static long? BinLongN(long? value, long? step) =>
+		value is { } v && step is { } s ? BinLong(v, s) : null;
+
 	// bin(value, step) for REAL values: floor(value/step)*step. SQLite CAST(real AS INTEGER) truncates
 	// toward zero, so the floor is `trunc(q) - (q<0 AND q not integral ? 1 : 0)`; multiplied back by step.
 	// Same SQL-translatable / dual-body rationale as BinLong.
@@ -271,6 +296,12 @@ public static class KqlSqlExpressions
 			throw new UnsupportedKqlException("bin() step must be positive");
 		return Math.Floor(value / step) * step;
 	}
+
+	// bin(value, step) over a NULLABLE real — the todouble() counterpart of BinLongN (null in → null bucket).
+	[Sql.Expression("((CAST({0} / {1} AS INTEGER) - (CASE WHEN {0} / {1} < 0 AND {0} / {1} <> CAST({0} / {1} AS INTEGER) THEN 1 ELSE 0 END)) * {1})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	[Sql.Expression(ProviderName.DuckDB, "(floor({0} / {1}) * {1})", ServerSideOnly = true, IsNullable = Sql.IsNullableType.Nullable)]
+	public static double? BinDoubleN(double? value, double? step) =>
+		value is { } v && step is { } s ? BinDouble(v, s) : null;
 
 	// mv-expand array source: the JSON-array TEXT of `value` (a bag-extracted value or a whole column), or
 	// '[]' when it is NOT a JSON array (null / missing / a scalar / an object). Fed to json_each, so '[]'

@@ -697,9 +697,12 @@ static class KqlScalar
 	{
 		var l = RequireNumeric(Compile(b.Left, ctx), b.Kind.ToString());
 		var r = RequireNumeric(Compile(b.Right, ctx), b.Kind.ToString());
-		var t = CommonNumeric(l.Type, r.Type);
-		l = ConvertTo(l, t);
-		r = ConvertTo(r, t);
+		// Nullable-aware promotion: `100.0 * toint(Properties.X) / 8441721` mixes double, long? and long →
+		// the common type is double?, and the Expr.Multiply/Divide below LIFT over it, so a row whose property
+		// is missing/malformed yields null (Kusto null propagation) instead of failing the whole query.
+		var t = CommonValueType([l.Type, r.Type]);
+		l = RealGuard(ConvertToValue(l, t));
+		r = RealGuard(ConvertToValue(r, t));
 		return b.Kind switch
 		{
 			SyntaxKind.AddExpression => Expr.Add(l, r),
@@ -710,6 +713,19 @@ static class KqlScalar
 			_ => throw new UnsupportedKqlException($"arithmetic '{b.Kind}' not supported"),
 		};
 	}
+
+	// Pin a double-typed arithmetic operand to the SQL REAL domain. linq2db prints a double constant with an
+	// integral value as a bare integer (`100.0` → `100`) and ELIDES Expr.Convert, so SQLite/DuckDB — dynamically
+	// typed — would run `100 * chars / 8441721` as INTEGER math and truncate the quotient. An explicit
+	// CAST (KqlSqlExpressions.AsReal) restores real division. Integral targets are untouched (KQL's `/` on two
+	// integers IS integer division, matching Kusto).
+	static Expr RealGuard(Expr e) => NonNullable(e.Type) != typeof(double)
+		? e
+		: Expr.Call(
+			typeof(KqlSqlExpressions).GetMethod(IsNullable(e.Type)
+				? nameof(KqlSqlExpressions.AsRealN)
+				: nameof(KqlSqlExpressions.AsReal))!,
+			e);
 
 	static Expr StringMatch(BinaryExpression b, ScalarContext ctx, bool caseSensitive)
 	{
@@ -893,6 +909,14 @@ static class KqlScalar
 	// test the compiler uses internally.
 	public static bool IsNumericType(Type t) => IsNumeric(t);
 
+	// The numeric-CONTEXT test: a numeric OR its nullable form. Every value in the Properties bag is text, so
+	// numeric analysis of a property goes through toint/tolong/todouble, which (Kusto semantics: a malformed or
+	// missing value is null) yield long?/double?. A numeric context must therefore accept Nullable<T> wherever
+	// it accepts T — arithmetic, unary +/-, and bin() all lift instead of rejecting, and the null PROPAGATES
+	// (null operand → null result, null bin key → its own bucket). No hidden coalesce to 0: that would silently
+	// skew sum/avg.
+	public static bool IsNumericValue(Type t) => IsNumeric(NonNullable(t));
+
 	static bool IsEqualityOnly(SyntaxKind kind) => kind is
 		SyntaxKind.EqualExpression or SyntaxKind.NotEqualExpression;
 
@@ -900,9 +924,11 @@ static class KqlScalar
 		? e
 		: throw new UnsupportedKqlException($"expected a boolean expression, got {e.Type.Name}");
 
-	static Expr RequireNumeric(Expr e, string what) => IsNumeric(e.Type)
+	// Accepts a nullable numeric (see IsNumericValue) and passes it through UNCHANGED — the caller's
+	// Expr.Negate / Expr.Add / … then LIFTS over Nullable<T>, giving Kusto's null-propagating arithmetic.
+	static Expr RequireNumeric(Expr e, string what) => IsNumericValue(e.Type)
 		? e
-		: throw new UnsupportedKqlException($"{what} requires a numeric operand, got {e.Type.Name}");
+		: throw new UnsupportedKqlException($"{what} requires a numeric operand, got {FriendlyTypeName(e.Type)}");
 
 	static Type CommonNumeric(Type a, Type b)
 	{
@@ -1135,20 +1161,34 @@ static class KqlScalarFunctions
 			return Expr.Call(SqlM(nameof(KqlSqlExpressions.BinDateTimeMs)), value, Expr.Constant(ts.Ticks));
 		}
 
-		if (KqlScalar.IsNumericType(value.Type) && KqlScalar.IsNumericType(step.Type))
+		// Nullable numerics count as numeric here: bin(toint(Properties.RespChars), 5000) is THE histogram
+		// idiom over the (string-typed) property bag, and toint yields long?.
+		if (KqlScalar.IsNumericValue(value.Type) && KqlScalar.IsNumericValue(step.Type))
 		{
+			// CommonValueType is nullable-aware: any nullable operand makes the common type nullable, which
+			// selects the null-propagating BinLongN/BinDoubleN — a null value bins to null (its own bucket in
+			// `summarize … by bin(x, n)`), never to 0.
 			var t = KqlScalar.CommonValueType([value.Type, step.Type]);
 			// Route through the SQL-translatable KqlSqlExpressions.BinLong/BinDouble (not an in-memory-only
 			// helper) so numeric bin works as a `summarize … by bin(col, n)` GROUP BY key too, not only as a
 			// client-evaluated projection. The C# bodies preserve the exact floor-toward-negative-infinity
 			// semantics for the in-memory path.
-			return t == typeof(long)
-				? Expr.Call(SqlM(nameof(KqlSqlExpressions.BinLong)), KqlScalar.ConvertToValue(value, typeof(long)), KqlScalar.ConvertToValue(step, typeof(long)))
-				: Expr.Call(SqlM(nameof(KqlSqlExpressions.BinDouble)), KqlScalar.ConvertToValue(value, typeof(double)), KqlScalar.ConvertToValue(step, typeof(double)));
+			var integral = KqlScalar.NonNullable(t) == typeof(long);
+			var target = integral
+				? (KqlScalar.IsNullable(t) ? typeof(long?) : typeof(long))
+				: (KqlScalar.IsNullable(t) ? typeof(double?) : typeof(double));
+			var method = (integral, KqlScalar.IsNullable(t)) switch
+			{
+				(true, false) => nameof(KqlSqlExpressions.BinLong),
+				(true, true) => nameof(KqlSqlExpressions.BinLongN),
+				(false, false) => nameof(KqlSqlExpressions.BinDouble),
+				(false, true) => nameof(KqlSqlExpressions.BinDoubleN),
+			};
+			return Expr.Call(SqlM(method), KqlScalar.ConvertToValue(value, target), KqlScalar.ConvertToValue(step, target));
 		}
 
 		throw new UnsupportedKqlException(
-			$"bin() supports (datetime, timespan) or (numeric, numeric), got ({value.Type.Name}, {step.Type.Name})");
+			$"bin() supports (datetime, timespan) or (numeric, numeric), got ({KqlScalar.FriendlyTypeName(value.Type)}, {KqlScalar.FriendlyTypeName(step.Type)})");
 	}
 
 	// --- string functions (each backed by a dual SQL/in-memory KqlSqlExpressions method) ---

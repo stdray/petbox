@@ -416,6 +416,53 @@ public sealed class DualExecutorTests
 		await DualExecutor.AssertSameTableAsync(kql, PropsData);
 	}
 
+	// NULLABLE numeric contexts (kql-nullable-numeric-contexts): production reads EVERY bag value as text, so
+	// numeric analysis of a property runs through toint/todouble → Nullable<T>. bin(), arithmetic and unary
+	// minus must lift over that nullable and PROPAGATE the null (null bucket / null cell) exactly like the
+	// reference engine — never fail the query, never coalesce to 0.
+	//
+	// The null here comes from a MISSING key (row 4), not an unparseable string: KustoLoco's toint over a
+	// dynamic STRING yields null even for "1200" (it models dynamic differently — the same limitation that
+	// keeps todatetime/tobool out of the differential), so a string-valued bag can't be an oracle case. The
+	// unparseable-string row and the string-typed bag are pinned production-side (KqlTypedPropertiesTests
+	// .Bin_OverConvertedProperty_* / Arithmetic_OverConvertedProperty_*), which is where the real ingest shape
+	// lives anyway.
+	static readonly IReadOnlyList<TestEvent> NullableNumericData =
+	[
+		TestEvent.FromName(1, new DateTime(2026, 4, 19, 10, 0, 0, DateTimeKind.Utc), "Information", "a", "svc-a",
+			new Dictionary<string, object?> { ["RespChars"] = 1200 }),
+		TestEvent.FromName(2, new DateTime(2026, 4, 19, 10, 1, 0, DateTimeKind.Utc), "Information", "b", "svc-a",
+			new Dictionary<string, object?> { ["RespChars"] = 6000 }),
+		TestEvent.FromName(3, new DateTime(2026, 4, 19, 10, 2, 0, DateTimeKind.Utc), "Information", "c", "svc-b",
+			new Dictionary<string, object?> { ["RespChars"] = 4999 }),
+		TestEvent.FromName(4, new DateTime(2026, 4, 19, 10, 3, 0, DateTimeKind.Utc), "Information", "d", "svc-b",
+			new Dictionary<string, object?> { ["Other"] = 1 }), // no RespChars → toint(...) is null
+	];
+
+	[Theory]
+	[InlineData("events | extend rc = toint(Properties.RespChars) | summarize C = count() by Bucket = bin(rc, 5000)")]
+	[InlineData("events | summarize C = count() by Bucket = bin(toint(Properties.RespChars), 5000)")]
+	// NOT here: `summarize sum(toint(Properties.X)) by bin(…)` — the REFERENCE engine throws its known
+	// int→long column-cast on an aggregate over a converted column (same KustoLoco limitation the Level
+	// aggregates hit above), so the sum-per-bucket case is pinned production-side instead
+	// (KqlTypedPropertiesTests.Aggregates_OverConvertedProperty_PerNullableBin).
+	public async Task NullableNumericBin_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, NullableNumericData);
+	}
+
+	[Theory]
+	[InlineData("events | extend chars = toint(Properties.RespChars) | extend sharePct = 100.0 * chars / 12000 | project Id, sharePct")]
+	[InlineData("events | project Id, X = toint(Properties.RespChars) + 1")]
+	[InlineData("events | project Id, X = todouble(Properties.RespChars) * 2.0")]
+	// NOT here: unary minus over a converted column — the reference engine throws the SAME int→long
+	// column-cast it throws for `-Level` (see the in/between/unary-minus note above). Pinned production-side
+	// (KqlTypedPropertiesTests.Arithmetic_OverConvertedProperty_SharePct_NullsPropagate, column `Neg`).
+	public async Task NullableNumericArithmetic_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, NullableNumericData);
+	}
+
 	// --- correlation: join / lookup over a same-log subquery. The right subquery is a full pipeline
 	// over `events`. Both engines fully collide the self-join column names, so the right Id becomes
 	// `Id1`; a trailing `project Id, Id1` aligns the two engines' differing event shapes to a common
