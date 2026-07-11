@@ -463,6 +463,23 @@ public sealed class DualExecutorTests
 		await DualExecutor.AssertSameTableAsync(kql, NullableNumericData);
 	}
 
+	// REAL-domain (kql-double-literal-real-domain): a double literal whose value is INTEGRAL (5000.0, 2.0) is
+	// the trap — linq2db prints it as the bare integer `5000` and elides the Convert, so a dynamically-typed
+	// backend would do INTEGER math and truncate. The reference engine is the arbiter of what these must
+	// return: bin()'s double arm stays real (`bin(Id, 2.0)` is 2.0, not 2), and an iff/case result divided by
+	// a double literal keeps its fraction. `Id / 2` (two integers) stays INTEGER division on BOTH engines —
+	// the Kusto semantics the guard must not break.
+	[Theory]
+	[InlineData("events | project Id, X = bin(toint(Properties.RespChars), 5000.0)")]
+	[InlineData("events | project Id, X = bin(Id, 2.0), Y = bin(Id, 2.0) / 4")]
+	[InlineData("events | summarize C = count() by Bucket = bin(Id, 2.0)")]
+	[InlineData("events | project Id, X = iff(Id > 2, 3, 1) / 2.0, Y = case(Id > 2, 3, Id > 0, 1, 0) / 2.0")]
+	[InlineData("events | project Id, IntDiv = Id / 2, RealDiv = Id / 2.0")]
+	public async Task DoubleLiteralRealDomain_MatchReference(string kql)
+	{
+		await DualExecutor.AssertSameTableAsync(kql, NullableNumericData);
+	}
+
 	// --- correlation: join / lookup over a same-log subquery. The right subquery is a full pipeline
 	// over `events`. Both engines fully collide the self-join column names, so the right Id becomes
 	// `Id1`; a trailing `project Id, Id1` aligns the two engines' differing event shapes to a common

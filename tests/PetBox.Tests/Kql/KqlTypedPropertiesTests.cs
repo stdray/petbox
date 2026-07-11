@@ -334,6 +334,105 @@ public sealed class KqlTypedPropertiesTests
 		(await act.Should().ThrowAsync<UnsupportedKqlException>()).WithMessage(message);
 	}
 
+	// ---- REAL-domain regression net for the OTHER promotion-to-double points (kql-double-literal-real-domain).
+	//
+	// The defect KqlScalar.RealGuard closes is NARROW and structural: linq2db prints an integral-valued double
+	// constant as a bare integer (`100.0` → `100`) and ELIDES Expr.Convert, so a RAW SQL binary operator built
+	// from Expr.Multiply/Expr.Divide over a double operand runs as INTEGER math on the dynamically-typed
+	// SQLite/DuckDB and TRUNCATES — silently, since the query still succeeds. KqlScalar.Arithmetic is the ONLY
+	// place such a raw double-typed binary op is built (every other Expr.Divide/Multiply in the engine is over
+	// `long` epoch-ms/ticks/rank constants by design).
+	//
+	// The three other places a value is PROMOTED to double all sidestep the elision, and these tests pin that:
+	//   * bin()'s double arm — the operands are ARGUMENTS to a [Sql.Expression] method with DECLARED double /
+	//     double? parameters (BinDouble / BinDoubleN), so linq2db emits them in the real domain and the
+	//     division inside the template is real. NEGATIVE values are the discriminator: BinDouble floors toward
+	//     -inf, and under integer math `bin(-1, 2.0)` would come back 0 instead of -2.
+	//   * iff()/case() branch unification — builds a CASE, no division; a division APPLIED to the result is a
+	//     normal Arithmetic node and is RealGuard'ed there.
+	//   * mixed-type comparison / join+group keys — SQLite and DuckDB compare INTEGER against REAL numerically,
+	//     so no truncation is possible.
+	// Aggregate args (sum/avg/percentile) likewise never divide (avg's SQL AVG is real-valued natively).
+
+	// Negative values so the assertion FAILS under integer division: `(0 - Id) / 2` truncates toward zero (→ 0)
+	// where the real-domain floor gives -2/-4. Covers the projection AND the `summarize … by` GROUP-BY key.
+	[Fact]
+	public async Task Bin_IntegralDoubleStep_KeepsRealDomain_NotIntegerTruncation()
+	{
+		var rows = await Table(
+			"events | where Id <= 3 | project Id, Neg = bin(0 - Id, 2.0), Frac = bin(Id, 2.0) / 4, "
+			+ "Prop = bin(toint(Properties.Neg), 5000.0)",
+			SignedData);
+		var by = rows.ToDictionary(r => (long)r[0]!, r => r);
+		((double)by[1][1]!).Should().Be(-2.0);   // floor(-1/2)*2 — integer math would give 0
+		((double)by[3][1]!).Should().Be(-4.0);   // floor(-3/2)*2 — integer math would give -2
+		((double)by[3][2]!).Should().Be(0.5);    // bin(3, 2.0) = 2.0, /4 → 0.5 (a FRACTION, not 0)
+		((double)by[1][3]!).Should().Be(-5000.0);  // bin(-1200, 5000.0)
+		((double)by[2][3]!).Should().Be(-10000.0); // bin(-6000, 5000.0)
+		by[3][3].Should().BeNull();                // unparseable → its own null bucket, still no truncation
+	}
+
+	[Fact]
+	public async Task Bin_IntegralDoubleStep_AsGroupByKey_KeepsRealDomain()
+	{
+		var rows = await Table("events | summarize C = count() by Bucket = bin(0 - Id, 2.0)", SignedData);
+		var buckets = rows.Select(r => (Key: r[0], Count: (long)r[1]!)).ToList();
+		// -1,-2 → -2.0 ; -3 → -4.0. Under integer division both would collapse into a single 0 bucket.
+		buckets.Should().HaveCount(2);
+		buckets.Should().Contain(b => Equals(b.Key, -2.0) && b.Count == 2);
+		buckets.Should().Contain(b => Equals(b.Key, -4.0) && b.Count == 1);
+	}
+
+	// iff()/case() unify their branches to double; dividing THAT result must stay real (the division is an
+	// Arithmetic node, so RealGuard applies). `iff(…, 3, 1) / 2.0` is 1.5 / 0.5 — integer math gives 1 / 0.
+	[Fact]
+	public async Task IffCase_DoubleUnifiedBranches_KeepRealDivision()
+	{
+		var rows = await Table(
+			"events | where Id <= 2 | project Id, I = iff(Id > 1, 3, 1) / 2.0, "
+			+ "C = case(Id > 1, 3, Id > 0, 1, 0) / 2.0, D = iff(Id > 1, toint(Properties.Chars), 1) / 2.0",
+			SignedData);
+		var by = rows.ToDictionary(r => (long)r[0]!, r => r);
+		((double)by[1][1]!).Should().Be(0.5);
+		((double)by[2][1]!).Should().Be(1.5);
+		((double)by[1][2]!).Should().Be(0.5);
+		((double)by[2][2]!).Should().Be(1.5);
+		((double)by[1][3]!).Should().Be(0.5);
+		((double)by[2][3]!).Should().BeApproximately(6000 / 2.0, 1e-9);
+	}
+
+	// Aggregate arguments promoted to double: the arg is a RealGuard'ed Arithmetic node, and sum/avg/percentile
+	// preserve its fractional value end to end (4999/2 = 2499.5 — integer math would report 2499).
+	[Fact]
+	public async Task Aggregates_DoubleArgs_KeepFractionalPrecision()
+	{
+		var rows = await Table(
+			"events | summarize S = sum(todouble(Properties.Chars) / 2), A = avg(toint(Properties.Chars)), "
+			+ "P = percentile(todouble(Properties.Chars) / 2, 100)",
+			SignedData);
+		((double)rows[0][0]!).Should().BeApproximately((1200 + 6000 + 4999) / 2.0, 1e-9); // 6099.5, not 6099
+		((double)rows[0][1]!).Should().BeApproximately((1200 + 6000 + 4999) / 3.0, 1e-9);
+		((double)rows[0][2]!).Should().BeApproximately(6000 / 2.0, 1e-9);
+	}
+
+	// A mixed int/double comparison is a NUMERIC comparison on both backends — 4999 > 4999.5 is FALSE. (Were
+	// the double literal truncated to 4999 the row would wrongly survive `>` … and this is exactly why the
+	// comparison path needs no CAST: comparing is not dividing.)
+	[Fact]
+	public async Task MixedNumericComparison_ComparesNumerically_NoLiteralTruncation()
+	{
+		var kept = await Table("events | where toint(Properties.Chars) > 4999.5 | project Id", SignedData);
+		kept.Select(r => (long)r[0]!).Should().Equal(2L); // only 6000; 4999 does NOT pass 4999.5
+	}
+
+	// Positive + NEGATIVE + unparseable, so the floor-vs-truncate divergence and the null bucket are both live.
+	static IReadOnlyList<LogEntryRecord> SignedData =>
+	[
+		Rec(1, """{"Chars":"1200","Neg":"-1200"}"""),
+		Rec(2, """{"Chars":"6000","Neg":"-6000"}"""),
+		Rec(3, """{"Chars":"4999","Neg":"oops"}"""),
+	];
+
 	// ---- bare-name → Properties fallback (no KustoLoco analogue → production-only) ----
 
 	static IReadOnlyList<LogEntryRecord> FallbackData =>
