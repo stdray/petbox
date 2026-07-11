@@ -186,7 +186,10 @@ abstract class SqlRecordScalarContext : ScalarContext
 		// (bound case-insensitively by ResolveColumn), and the special-column check must agree with
 		// that binding, not with the raw spelling.
 		var canonical = ResolveKnownName(columnName);
-		var coerced = CoerceLiteral(literal, access.Type, canonical, isBagValue: !IsKnownColumn(canonical));
+		// A null coercion is the SECOND yield (like the nullable-column one above): the literal is valid but
+		// its type does not match the column's storage type, so only the general path can compare them.
+		if (CoerceLiteral(literal, access.Type, canonical, isBagValue: !IsKnownColumn(canonical)) is not { } coerced)
+			return null;
 		return op switch
 		{
 			SyntaxKind.EqualExpression => Expr.Equal(access, coerced),
@@ -201,14 +204,22 @@ abstract class SqlRecordScalarContext : ScalarContext
 
 	// Root-specific instant/duration columns first (datetime → epoch-ms, timespan → ticks); integer /
 	// string columns require the matching literal kind. Preserves the exact user-facing messages the
-	// `where` path has always produced.
-	Expr CoerceLiteral(LiteralExpression literal, Type targetType, string column, bool isBagValue)
+	// `where` path has always produced. Returns null to YIELD the fast path (see TryColumnLiteralComparison):
+	// the literal is comparable, just not in the column's storage type.
+	Expr? CoerceLiteral(LiteralExpression literal, Type targetType, string column, bool isBagValue)
 	{
 		if (CoerceSpecialLiteral(column, literal) is { } special)
 			return special;
 
 		if (targetType == typeof(long) || targetType == typeof(int))
 		{
+			// An integer column against a REAL literal (`Id > 0.5`) is a legal Kusto comparison — numeric, with
+			// both sides promoted to double. The fast path cannot express it (a direct Expr.GreaterThan needs
+			// matching operand types), so it yields exactly like it does for a nullable column above, and the
+			// general Compare/UnifyComparable path promotes and compares. Only a truly incomparable literal
+			// (string/bool/…) still raises the precise column-named error below.
+			if (literal.LiteralValue is double or decimal)
+				return null;
 			if (literal.LiteralValue is not long n)
 				throw new UnsupportedKqlException($"{column} comparison requires an integer literal");
 			if (targetType == typeof(int))

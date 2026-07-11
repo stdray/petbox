@@ -214,6 +214,63 @@ public sealed class SqliteKqlIntegrationTests : IAsyncLifetime
 		messages.Should().BeEquivalentTo(["boom", "crash on Earth"]);
 	}
 
+	// An integer column against a REAL literal is a NUMERIC comparison (Kusto promotes both sides to double),
+	// not a type error: the column-literal fast path yields and the general path compares. Ids are 1..5.
+	[Theory]
+	[InlineData("events | where Id > 0.5", 5)]
+	[InlineData("events | where Id >= 0.5", 5)]
+	[InlineData("events | where Id > 1.5", 4)]
+	[InlineData("events | where Id < 1.5", 1)]
+	[InlineData("events | where Id <= 2.0", 2)]
+	[InlineData("events | where Id == 1.5", 0)]   // no integer equals 1.5
+	[InlineData("events | where Id > -0.5", 5)]   // negative real literal
+	[InlineData("events | where Id < -0.5", 0)]
+	[InlineData("events | where 0.5 < Id", 5)]    // literal on the LEFT (reversed operands)
+	[InlineData("events | where 1.5 >= Id", 1)]
+	public async Task IntColumnVsRealLiteral_ComparesNumerically(string kql, int expected)
+	{
+		var messages = await RunAsync(kql);
+		messages.Should().HaveCount(expected);
+	}
+
+	[Fact]
+	public async Task IntColumnVsRealLiteral_IntegralValueMatchesEquality()
+	{
+		var messages = await RunAsync("events | where Id == 1.0");
+		messages.Should().BeEquivalentTo(["hello world"]); // 1.0 matches the integral Id 1
+	}
+
+	// The special (instant) columns keep their own coercion — a real literal against Timestamp is still the
+	// precise datetime() error, not a numeric epoch-ms comparison.
+	[Fact]
+	public void TimestampVsRealLiteral_StillThrows()
+	{
+		var act = () => KqlTransformer.Apply(_logDb.LogEntries, KustoCode.Parse("events | where Timestamp > 0.5")).ToList();
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*datetime() literal*");
+	}
+
+	// The fast path only YIELDS for a real literal; a genuinely incomparable literal (string) against an
+	// integer column still raises the precise column-named error rather than silently matching nothing.
+	[Theory]
+	[InlineData("events | where Id > 'x'")]
+	[InlineData("events | where Level == 'Error'")]
+	public void IntColumnVsStringLiteral_StillThrows(string kql)
+	{
+		var act = () => KqlTransformer.Apply(_logDb.LogEntries, KustoCode.Parse(kql)).ToList();
+		act.Should().Throw<UnsupportedKqlException>().WithMessage("*integer literal*");
+	}
+
+	// A numeric level comparison against a real literal is legal Kusto (Level is an int code); the string
+	// level NAMES keep their own column (LevelName), unaffected by the fast-path yield.
+	[Fact]
+	public async Task LevelVsRealLiteral_ComparesNumerically()
+	{
+		var byReal = await RunAsync("events | where Level > 2.5");
+		byReal.Should().BeEquivalentTo(["boom", "meh", "crash on Earth"]);
+		var byName = await RunAsync("events | where LevelName == 'Error'");
+		byName.Should().BeEquivalentTo(["boom", "crash on Earth"]);
+	}
+
 	[Fact]
 	public async Task PropertiesEq_TranslatesToJsonExtract()
 	{

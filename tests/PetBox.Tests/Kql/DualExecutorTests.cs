@@ -35,6 +35,27 @@ public sealed class DualExecutorTests
 		await DualExecutor.AssertSameAsync(kql, Dataset);
 	}
 
+	// An INTEGER column against a REAL literal is a plain numeric comparison in Kusto (both sides promote
+	// to double) — `Id > 0.5` keeps every row, `Id == 1.0` matches the integral 1. The column-literal fast
+	// path cannot express the mixed-type compare and yields to the general path; the oracle pins that the
+	// result is the numeric one and not an error. Reversed operand order too (`0.5 < Id`).
+	[Theory]
+	[InlineData("events | where Id > 0.5")]
+	[InlineData("events | where Id >= 0.5")]
+	[InlineData("events | where Id < 3.5")]
+	[InlineData("events | where Id <= 3.5")]
+	[InlineData("events | where Id == 1.0")]
+	[InlineData("events | where Id != 1.0")]
+	[InlineData("events | where Id == 1.5")]
+	[InlineData("events | where Id > -0.5")]
+	[InlineData("events | where 0.5 < Id")]
+	[InlineData("events | where 3.5 >= Id")]
+	[InlineData("events | where Level > 2.5")]
+	public async Task IntColumnAgainstRealLiteral_MatchesReference(string kql)
+	{
+		await DualExecutor.AssertSameAsync(kql, Dataset);
+	}
+
 	[Theory]
 	[InlineData("events | where Message contains 'boom'")]
 	[InlineData("events | where Message contains 'BOOM'")]
