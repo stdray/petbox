@@ -38,7 +38,17 @@ public sealed class MemoryModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
+		// Shared-memory routes (/ui/{ws}/$ws-{ws}/memory or /ui/$system/$workspace/memory):
+		// lazy-ensure the container so the first UI navigation is not a "Project not found"
+		// before any MCP write. No-op when the row already exists (incl. M028 $workspace).
+		if (WorkspaceMemory.IsWorkspaceContainer(ProjectKey)
+			&& string.Equals(WorkspaceMemory.WorkspaceKeyOfContainer(ProjectKey), WorkspaceKey, StringComparison.Ordinal))
+			await WorkspaceMemory.EnsureContainerAsync(_db, WorkspaceKey, ct);
+
 		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		// Bind project to route workspace — reject IDOR (/ui/other-ws/$workspace/memory etc.).
+		if (Project is not null && !string.Equals(Project.WorkspaceKey, WorkspaceKey, StringComparison.Ordinal))
+			Project = null;
 		if (Project is null || !MemoryEnabled) return;
 
 		Stores = await _memory.ListStoresAsync(ProjectKey, ct);

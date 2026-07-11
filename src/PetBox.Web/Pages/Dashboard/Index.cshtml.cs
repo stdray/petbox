@@ -57,6 +57,10 @@ public sealed class IndexModel : PageModel
 
 		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
 		var wsKey = WorkspaceKey;
+		// Ensure the workspace memory container exists before the "Shared memory" card links
+		// to it — non-$system workspaces are lazy-created (MCP write or this render path);
+		// $system is already seeded by M028/M031 so this is a no-op there.
+		await WorkspaceMemory.EnsureContainerAsync(_db, wsKey, ct);
 		// Workspace memory containers ($workspace / $ws-*) are not user projects — keep them
 		// out of the project grid (no logs/dbs/keys) and surface the current one as the
 		// dedicated "Shared memory" entry the view renders instead.

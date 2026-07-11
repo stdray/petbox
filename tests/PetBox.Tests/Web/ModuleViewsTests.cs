@@ -476,6 +476,17 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("memory-empty"); // no stores yet, but the page resolved the project
 	}
 
+	// IDOR guard: route workspaceKey must match the container project's WorkspaceKey.
+	// A $ws-* key for another workspace under /ui/$system/... must not resolve.
+	[Fact]
+	public async Task Memory_MismatchedWorkspaceContainer_ShowsNotFound()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/$ws-other-ws/memory");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("memory-notfound");
+	}
+
 	// The workspace dashboard surfaces a first-class "Workspace memory" entry linking to the
 	// shared container, and keeps "$workspace" itself out of the project grid (it's a memory
 	// container, not a user project).

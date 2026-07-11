@@ -448,6 +448,33 @@ public sealed class MemoryVerbsTests : IDisposable
 		res.Added.Select(e => e.Key).Should().Contain("star-index");
 	}
 
+	// Bare cascade with a "*" key and no projectKey: both legs are unresolvable → degrade
+	// to an empty result (admin/wiring bare memory_search("q")), not ArgumentException.
+	// Explicit scope=workspace still requires a resolvable project and throws.
+	[Fact]
+	public async Task Search_WildcardWithoutProjectKey_CascadeDegradesToEmpty()
+	{
+		var http = Http("memory:read,memory:write", "*");
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), "anything");
+		res.Items.Should().BeEmpty();
+
+		await Assert.ThrowsAsync<ArgumentException>(() =>
+			MemoryTools.SearchAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), "anything",
+				scope: "workspace"));
+	}
+
+	// First workspace-scope read before any write: container is lazy-ensured, search returns
+	// empty (no error) — critical path for a fresh non-$system workspace.
+	[Fact]
+	public async Task Search_Workspace_BeforeAnyWrite_EmptyWithoutError()
+	{
+		var http = Http("memory:read", OtherProj);
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(),
+			scope: "workspace");
+		res.Items.Should().BeEmpty();
+		_db.Projects.Any(p => p.Key == "$ws-other-ws" && p.WorkspaceKey == "other-ws").Should().BeTrue();
+	}
+
 	static IHttpContextAccessor Http(string scopes, string project = Proj)
 	{
 		var id = new ClaimsIdentity([new Claim("project", project), new Claim("scopes", scopes)], "test");

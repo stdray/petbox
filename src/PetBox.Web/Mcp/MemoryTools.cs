@@ -507,8 +507,12 @@ public static class MemoryTools
 	// The ordered list of (scope, container) memory_search reads. A single scope → that
 	// container; no scope → the full cascade, project first (most specific) ⊕ the caller's
 	// workspace container. Never hardcodes bare "$workspace" unless that IS the caller's
-	// container. The project leg is best-effort on ArgumentException (a "*" key without
-	// projectKey); the workspace leg still needs a resolvable project and throws if not.
+	// container.
+	//
+	// Both cascade legs are best-effort on ArgumentException: a "*" key without projectKey
+	// has no single project and no derivable workspace — skip that leg rather than failing
+	// the whole search (admin/wiring bare memory_search("q") must degrade to empty, not throw).
+	// Explicit scope=project|workspace still throws via ResolveScopeAsync when unresolvable.
 	static async Task<List<(string Scope, string Key)>> SearchContainersAsync(
 		IHttpContextAccessor http, PetBoxDb db, string? projectKey, string? scope, CancellationToken ct)
 	{
@@ -523,7 +527,7 @@ public static class MemoryTools
 		catch (UnauthorizedAccessException) { /* projectKey doesn't match claim */ }
 
 		// Workspace leg: need a project to derive the caller's workspace. Prefer the
-		// resolved project; fall back to re-resolve (throws for "*" without projectKey).
+		// resolved project; fall back to projectKey when it is already a container.
 		var forWs = resolvedProject ?? projectKey;
 		if (forWs is not null && WorkspaceMemory.IsWorkspaceContainer(forWs))
 		{
@@ -531,11 +535,17 @@ public static class MemoryTools
 				list.Add(("workspace", forWs));
 			return list;
 		}
-		// When project leg was skipped (e.g. "*" without projectKey), still try resolve —
-		// ResolveProject throws ArgumentException which surfaces to the caller.
-		var wsContainer = await ResolveCallerWorkspaceContainerAsync(http, db, forWs, ct);
-		if (!list.Any(c => c.Item2 == wsContainer))
-			list.Add(("workspace", wsContainer));
+		try
+		{
+			var wsContainer = await ResolveCallerWorkspaceContainerAsync(http, db, forWs, ct);
+			if (!list.Any(c => c.Item2 == wsContainer))
+				list.Add(("workspace", wsContainer));
+		}
+		catch (ArgumentException)
+		{
+			// "*" without projectKey (or otherwise unresolvable) — skip workspace leg.
+			// Explicit scope=workspace still throws above via ResolveScopeAsync.
+		}
 		return list;
 	}
 

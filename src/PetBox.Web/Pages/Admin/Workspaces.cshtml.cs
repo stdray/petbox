@@ -53,6 +53,10 @@ public sealed class WorkspacesModel : PageModel
 			CreatedAt = DateTime.UtcNow,
 		});
 
+		// Provision the workspace memory container so Shared-memory nav works immediately
+		// (without waiting for the first MCP write or dashboard ensure).
+		await WorkspaceMemory.EnsureContainerAsync(_db, Key);
+
 		// Auto-add the creator as Admin so they can switch into the workspace immediately.
 		var userIdRaw = User.FindFirst(PetBoxClaims.UserId)?.Value;
 		if (long.TryParse(userIdRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId))

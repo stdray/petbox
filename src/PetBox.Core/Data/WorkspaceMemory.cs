@@ -21,10 +21,14 @@ public static class WorkspaceMemory
 	public const string ContainerPrefix = "$ws-";
 
 	// Map a workspace key onto its memory-container project key.
-	public static string ContainerKeyFor(string workspaceKey) =>
-		string.Equals(workspaceKey, SystemWorkspace, StringComparison.Ordinal)
+	// Rejects empty / path-like keys so a bad wsKey cannot leak into a project key or URL.
+	public static string ContainerKeyFor(string workspaceKey)
+	{
+		ValidateWorkspaceKey(workspaceKey);
+		return string.Equals(workspaceKey, SystemWorkspace, StringComparison.Ordinal)
 			? SystemContainer
 			: ContainerPrefix + workspaceKey;
+	}
 
 	// True for the reserved memory-container project keys ($workspace and $ws-*).
 	// "$system" is reserved too but is a real user-facing project, not a memory container.
@@ -43,7 +47,8 @@ public static class WorkspaceMemory
 	}
 
 	// Lazy-ensure the Projects row for a workspace's memory container (same shape as M028).
-	// Idempotent: existence check + insert; a concurrent insert race is swallowed (PK conflict).
+	// Idempotent: existence check + insert. A concurrent insert race is swallowed only when
+	// the row now exists (true PK conflict); any other DbException is rethrown.
 	public static async Task EnsureContainerAsync(PetBoxDb db, string workspaceKey, CancellationToken ct = default)
 	{
 		var key = ContainerKeyFor(workspaceKey);
@@ -60,8 +65,19 @@ public static class WorkspaceMemory
 		}
 		catch (System.Data.Common.DbException)
 		{
-			// Concurrent first-resolve won the insert — row now exists.
+			// Concurrent first-resolve may have won the insert — only swallow if the row is there.
+			if (!await db.Projects.AnyAsync(p => p.Key == key, ct)) throw;
 		}
+	}
+
+	// Workspace keys become container project keys and URL segments — reject empty and path junk.
+	static void ValidateWorkspaceKey(string workspaceKey)
+	{
+		if (string.IsNullOrWhiteSpace(workspaceKey))
+			throw new ArgumentException("workspaceKey is required", nameof(workspaceKey));
+		if (workspaceKey.Contains('/') || workspaceKey.Contains('\\') || workspaceKey.Contains('\0')
+			|| workspaceKey.Contains("..", StringComparison.Ordinal))
+			throw new ArgumentException($"invalid workspaceKey '{workspaceKey}'", nameof(workspaceKey));
 	}
 
 	// Resolve the caller's project → its WorkspaceKey → container key, ensuring the row exists.
