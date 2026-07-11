@@ -102,24 +102,10 @@ records**, not the working plan — do not treat them as current state.
    (`~/.claude/agents/worker.md`) whose system prompt carries this and which has no
    Agent tool (can't self-spawn) — the brief preamble is then the backstop, not the
    only line of defense.
-9. **What NOT to delegate.** Fan-out is the default, but the default is not universal:
-   **delegate when verifying the result is cheaper than producing it** —
-   `cost(specify) + cost(verify) < cost(do it yourself)`. Judge the task on four flags
-   (is a mistake reversible; is the context transferable into a brief; is the result
-   mechanically checkable or a matter of judgement; how big it is) and take the FIRST
-   rule that fires:
-   1. Irreversible (deploy, force-push, anything touching prod or secrets) → do it yourself.
-   2. Context you cannot compile into a brief → do it yourself; a worker starved of it
-      will scout, drift, and hand back plausible garbage.
-   3. Judgement call on a small/medium task → do it yourself (specifying the taste costs
-      more than doing the work). A LARGE judgement task may still be delegated as a
-      DRAFT, if you will review it.
-   4. Otherwise → delegate.
-
-   Never delegate: secrets, irreversible operations, architecture / spec / plan
-   decisions, the review of a worker's own output, and edits so small the brief is
-   longer than the diff. Retries are bounded: a worker that fails gets ONE stronger
-   worker, then you take the task yourself — never a third attempt.
+9. **Delegate by default — the scarce resource is the main session's context.** Spawn a
+   worker for anything beyond a trivial edit: implementation, research, review,
+   multi-file work. The point is not token price, it is that work done inside a worker's
+   window does not consume yours.
 
 ## Build entry points
 
