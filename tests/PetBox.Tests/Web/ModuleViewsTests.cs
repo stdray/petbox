@@ -807,7 +807,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().NotContain("{{origin}}"); // the base-URL placeholder was substituted at render, not leaked
 	}
 
-	// The five /doc pages render their prose from the markdown canon (Pages/Doc/content/*.md) through
+	// The /doc pages render their prose from the markdown canon (Pages/Doc/content/*.md) through
 	// the shared server renderer (IMarkdownRenderer via _MdBody) — not hardcoded HTML. Proof: a known
 	// H1 from each md file appears as a real closing <h1> in the initial response (so the file resolved
 	// at the runtime path and went through the GFM renderer). Guards the doc-drift fix end to end.
@@ -817,6 +817,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	[InlineData("/doc/onboarding", "Agent onboarding</h1>")]
 	[InlineData("/doc/methodology", "Methodology cheatsheet (agent)</h1>")]
 	[InlineData("/doc/methodology/philosophy", "the model</h1>")]
+	[InlineData("/doc/wire", "Wire a project with petbox-wire</h1>")]
 	public async Task Doc_Pages_RenderMarkdownCanon_HeadingFromMd(string url, string heading)
 	{
 		using var resp = await _client.GetAsync(url);
@@ -832,7 +833,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	public void Doc_MarkdownCanon_ResolvesUnderContentRoot_AndSubstitutes()
 	{
 		var docs = _factory.Services.GetRequiredService<PetBox.Web.Pages.Doc.DocContent>();
-		foreach (var slug in new[] { "overview", "agent", "onboarding", "methodology", "philosophy" })
+		foreach (var slug in new[] { "overview", "agent", "onboarding", "methodology", "philosophy", "wire" })
 			docs.Read(slug).Should().NotBeNullOrWhiteSpace($"{slug}.md must ship at the runtime doc path");
 		// The origin placeholder is replaced in-place (proves the substitution mechanism runs).
 		var overview = docs.Read("overview", new Dictionary<string, string> { ["origin"] = "https://example.test" });

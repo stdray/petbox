@@ -1,0 +1,14 @@
+@page "/doc/wire"
+@model PetBox.Web.Pages.Doc.WireModel
+@{
+	ViewData["Title"] = "Wire a project with petbox-wire — PetBox";
+	Layout = "_PublicLayout";
+}
+	@* Thin shell: the prose is the markdown canon Pages/Doc/content/wire.md, rendered on the
+	   server through the shared IMarkdownRenderer (via _MdBody). No HTML duplication to hand-sync. *@
+	<main class="max-w-3xl mx-auto p-6" data-testid="doc-wire">
+		<p class="text-sm opacity-60"><a href="@Routes.Doc()">← docs</a></p>
+		<article>
+			<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = Model.Markdown, TestId = "doc-wire-body" })" />
+		</article>
+	</main>
