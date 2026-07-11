@@ -75,7 +75,17 @@ import {
 } from "./apply-artifacts.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
+import {
+  anyProjectPromptRagEnabled,
+  applyPromptRagHook,
+  checkPromptRagWiring,
+  decidePromptRagHook,
+  PROMPT_RAG_FILE,
+  type ApplyResult,
+  type PromptRagHookAction,
+} from "./prompt-rag-hook.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
+import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
 import {
   PROMPT_RAG_DEFAULTS,
   readRegistry,
@@ -137,8 +147,16 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "       npx petbox-wire profile use <name>\n" +
     "       npx petbox-wire --help\n" +
     "\n" +
-    "Wire a project to PetBox: global hooks, MCP configs and skills. prompt-RAG is OFF by default\n" +
-    "(opt in per project with --prompt-rag; --no-prompt-rag or a plain re-run removes the global hook).\n" +
+    "Wire a project to PetBox: global hooks, MCP configs and skills. prompt-RAG is OFF by default and\n" +
+    "STICKY: --prompt-rag opts this project in (and installs the global hook), --no-prompt-rag opts it\n" +
+    "out, and passing NEITHER leaves both the project's flag and the global hook exactly as they were.\n" +
+    "\n" +
+    "--env VAR    Name of the environment variable holding the project's API key. Default for a fresh\n" +
+    "             wire: PETBOX_<PROJECT>_API_KEY (same name the Connect page shows). An already-wired\n" +
+    "             directory keeps the name recorded in ~/.petbox/projects.json.\n" +
+    "--workspace  Override the workspace the server reports at GET /api/auth/validate (it fills\n" +
+    "  WS         {{WORKSPACE}} in the skill template). No hardcoded default: if the server reports\n" +
+    "             none and the flag is absent, the wire fails with exit 2 (usage).\n" +
     "\n" +
     "update       Refresh ~/.petbox/wire only (protocol/scripts/templates) from this package. Does not\n" +
     "             touch keys, registry, sticky prompt-rag/telemetry, or per-project MCP/skills.\n" +
@@ -293,6 +311,18 @@ function runDoctor(argv: string[]): void {
       console.error(formatViolations(violations));
     }
   }
+
+  // Cheap offline wiring check: a project whose registry flag says prompt-RAG is ON while the
+  // machine carries no hook to run it (the state the old sticky-prune bug produced) is invisible
+  // otherwise — the flag says on, nothing runs it. ADVISORY: it does not change the exit code (the
+  // doctor taxonomy is about definition truthfulness), it just names the mismatch.
+  const ragMismatches = checkPromptRagWiring({
+    entries: readRegistry(),
+    claudeHooks: readJson(join(homedir(), ".claude", "settings.json"))?.hooks,
+    droidHooks: readJson(join(homedir(), ".factory", "settings.json"))?.hooks,
+  });
+  if (ragMismatches.length === 0) log("doctor: prompt-rag — flag/hook wiring consistent.");
+  else for (const m of ragMismatches) log(`doctor: WARN ${m.message}`);
 
   const code = classifyApplyExit({ hadTruthfulnessBlock });
   if (code === WIRE_EXIT.ok) {
@@ -505,9 +535,8 @@ function runProfile(argv: string[]): void {
 
 const log = (msg: string) => console.log(msg);
 
-function deriveEnvVar(projectKey: string): string {
-  return projectKey.toUpperCase().replace(/[^A-Z0-9]/g, "_") + "_API_KEY";
-}
+// deriveEnvVar / resolveWorkspace live in wire-identity.ts (importable by unit tests; wire.ts
+// itself runs main() on import and cannot be imported).
 
 // Cross-platform key store (~/.petbox/keys.json): a flat JSON map { "<ENV_VAR>": "<key>" }.
 // The kit's own hooks read it (via registry.ts) with no env var required. The per-project MCP
@@ -593,7 +622,23 @@ function toFileUrl(absPath: string): string {
 
 // ---- step 4: validate ------------------------------------------------------
 
-async function validateKey(baseUrl: string, key: string, projectKey: string): Promise<void> {
+// What GET /api/auth/validate reports back (AuthValidResponse). `workspace` is only present on
+// servers new enough to report it — absent on an older deployment, which is a supported case
+// (the caller then requires --workspace instead of inventing a default).
+type ValidatedKey = {
+  project?: string;
+  scopes?: unknown;
+  workspace?: string;
+};
+
+// Validate the key and RETURN what the server said about it (null when the server could not be
+// asked meaningfully: endpoint missing / non-JSON body). Hard-exits on a rejected key or a
+// project mismatch, so nothing is persisted for a bad key.
+async function validateKey(
+  baseUrl: string,
+  key: string,
+  projectKey: string,
+): Promise<ValidatedKey | null> {
   const uri = `${baseUrl}/api/auth/validate`;
   let resp: Response;
   try {
@@ -614,16 +659,17 @@ async function validateKey(baseUrl: string, key: string, projectKey: string): Pr
   if (!resp.ok) {
     // Non-standard / endpoint missing → warn and continue.
     log(`[3/10] validate: unexpected status ${resp.status} (endpoint missing?); continuing with a warning.`);
-    return;
+    return null;
   }
   let body: any = null;
   try {
     body = await resp.json();
   } catch {
     log(`[3/10] validate: 200 but non-JSON body; continuing with a warning.`);
-    return;
+    return null;
   }
-  // Contract (AuthApi.cs): 200 => { project, scopes } (camelCase, ASP.NET web defaults).
+  // Contract (AuthApi.cs): 200 => { project, scopes, workspace } (camelCase, ASP.NET web
+  // defaults). `workspace` is newer than the other two — an older server omits it.
   const proj = body?.project ?? body?.Project;
   if (typeof proj === "string" && proj.length > 0) {
     if (proj !== projectKey) {
@@ -636,6 +682,12 @@ async function validateKey(baseUrl: string, key: string, projectKey: string): Pr
   } else {
     log(`[3/10] validate: 200 without a project field; continuing with a warning.`);
   }
+  const ws = body?.workspace ?? body?.Workspace;
+  return {
+    project: typeof proj === "string" ? proj : undefined,
+    scopes: body?.scopes ?? body?.Scopes,
+    workspace: typeof ws === "string" && ws.trim().length > 0 ? ws.trim() : undefined,
+  };
 }
 
 // ---- step 5: stable kit copy -----------------------------------------------
@@ -1017,30 +1069,29 @@ function pruneStaleKitHooks(hooksObj: any, validCmds: Set<string>): number {
   return removed;
 }
 
-// Remove EVERY hook (across all events) whose command targets the given STABLE kit file, then drop
-// now-empty groups. Mutates hooksObj in place; returns the count pruned. Commands quote the path
-// (`node "<...>/prompt-rag.ts"`, optionally ` --agent droid`), so matching the quoted basename
-// catches both the Claude Code and Droid variants. Used to keep prompt-RAG OFF by default and to
-// self-heal a version-skewed install where the kit no longer ships the referenced file.
-function pruneHooksTargeting(hooksObj: any, fileBasename: string): number {
-  let removed = 0;
-  const needle = `${fileBasename}"`;
-  for (const event of Object.keys(hooksObj)) {
-    const groups: any[] = Array.isArray(hooksObj[event]) ? hooksObj[event] : [];
-    for (const g of groups) {
-      if (!g || !Array.isArray(g.hooks)) continue;
-      const before = g.hooks.length;
-      g.hooks = g.hooks.filter(
-        (h: any) => !(typeof h?.command === "string" && h.command.includes(needle)),
-      );
-      removed += before - g.hooks.length;
-    }
-    hooksObj[event] = groups.filter((g) => !(g && Array.isArray(g.hooks) && g.hooks.length === 0));
+// pruneHooksTargeting + the whole prompt-RAG install-time policy live in prompt-rag-hook.ts — a
+// side-effect-free module, so the decision (install / prune / KEEP) is unit-testable; wire.ts runs
+// main() on import and cannot be imported by a test.
+
+// One log line per agent describing what actually happened to the global prompt-RAG hook. "keep"
+// prints the sticky no-op explicitly, so an operator can see the hook was deliberately not touched.
+function logPromptRagHook(agent: string, r: ApplyResult, action: PromptRagHookAction): void {
+  if (action === "keep") {
+    log(`[8/10] ${agent} hook UserPromptSubmit (prompt-rag) — left as found (sticky: neither --prompt-rag nor --no-prompt-rag).`);
+  } else if (action === "install") {
+    log(`[8/10] ${agent} hook UserPromptSubmit (prompt-rag) — ${r.installed ? "added" : "already present, skipped"}.`);
+  } else if (r.pruned > 0) {
+    log(`[8/10] pruned ${r.pruned} ${agent} prompt-rag UserPromptSubmit hook(s).`);
+  } else {
+    log(`[8/10] ${agent} hook UserPromptSubmit (prompt-rag) — not installed; nothing to prune.`);
   }
-  return removed;
 }
 
-function installGlobalHooks(promptRag: boolean): void {
+// `promptRagAction` is the already-made decision (decidePromptRagHook): "install" on --prompt-rag,
+// "prune" on --no-prompt-rag when nothing is left to serve (or a version-skewed kit), and "keep" —
+// the STICKY no-op — when this run passed neither flag. "keep" is the whole point: a plain re-wire
+// (refreshing an MCP config) must leave the global hook exactly as it found it, installed or not.
+function installGlobalHooks(promptRagAction: PromptRagHookAction): void {
   const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
   const promptRagCmd = `node "${join(STABLE, "prompt-rag.ts")}"`;
@@ -1052,14 +1103,6 @@ function installGlobalHooks(promptRag: boolean): void {
   const droidPullCmd = `node "${join(STABLE, "droid-pull-memory.ts")}"`;
   // Every kit hook command this run considers current — the prune keeps these, drops the rest.
   const validCmds = new Set([pushCmd, pullCmd, droidPushCmd, droidPullCmd]);
-  // Version-skew guard: only ever wire prompt-RAG when this run enables it AND the kit actually
-  // ships the hook file. A downgraded kit (published package behind canon) that lacks prompt-rag.ts
-  // must NOT leave a hook pointing at a missing/mismatched file — it self-heals to pruned instead.
-  const stableHasPromptRag = existsSync(join(STABLE, "prompt-rag.ts"));
-  if (promptRag && !stableHasPromptRag) {
-    log(`[8/10] prompt-rag requested but ${join(STABLE, "prompt-rag.ts")} is not shipped by this kit — skipping install (version-skew guard).`);
-  }
-  const wantPromptRag = promptRag && stableHasPromptRag;
 
   const settingsPath = join(homedir(), ".claude", "settings.json");
   const settings = readJson(settingsPath) ?? {};
@@ -1084,20 +1127,11 @@ function installGlobalHooks(promptRag: boolean): void {
 
   ensureHook("Stop", pushCmd);
   ensureHook("SessionStart", pullCmd);
-  // prompt-RAG (Claude Code only in v1): the UserPromptSubmit exact-match context injector is a
-  // GLOBAL hook, but OFF BY DEFAULT. It is installed ONLY when this run both requests it
-  // (--prompt-rag) and ships the file (wantPromptRag); otherwise any previously-installed prompt-rag
-  // hook is PRUNED. So a plain re-run, --no-prompt-rag, or a downgraded kit that lacks prompt-rag.ts
-  // all converge on "no prompt-rag hook" — the recurring version-skew crash can't survive a wire.
-  // (The per-project registry flag still gates injection at runtime; this is the install-time gate.)
+  // prompt-RAG: the UserPromptSubmit exact-match context injector is a GLOBAL hook (one per machine)
+  // that self-gates per project from the registry — so "installed while some project is off" is a
+  // CORRECT state, and the install-time toggle is STICKY (see prompt-rag-hook.ts for the policy).
   // UserPromptSubmit takes no matcher (CC docs), so the group shape { hooks: [...] } is correct.
-  if (wantPromptRag) {
-    ensureHook("UserPromptSubmit", promptRagCmd);
-  } else {
-    const pruned = pruneHooksTargeting(settings.hooks, "prompt-rag.ts");
-    if (pruned > 0) log(`[8/10] pruned ${pruned} claude prompt-rag UserPromptSubmit hook(s) — prompt-RAG off (default / --no-prompt-rag / kit lacks the file).`);
-    else log(`[8/10] claude hook UserPromptSubmit (prompt-rag) — off by default; not installed.`);
-  }
+  logPromptRagHook("claude", applyPromptRagHook(settings.hooks, promptRagAction, promptRagCmd), promptRagAction);
   writeJson(settingsPath, settings);
   log(`[8/10] merged hooks into ${settingsPath}`);
 
@@ -1128,20 +1162,12 @@ function installGlobalHooks(promptRag: boolean): void {
 
   ensureDroidHook("Stop", droidPushCmd);
   ensureDroidHook("SessionStart", droidPullCmd);
-  // prompt-RAG for Droid: same GLOBAL, per-project-self-gating model as the CC hook. Droid's
+  // prompt-RAG for Droid: same GLOBAL, per-project-self-gating model, same sticky decision. Droid's
   // UserPromptSubmit is CC-compatible, so we install the shared prompt-rag.ts with `--agent droid`
-  // (only the pointer's tool name differs). Installed on --prompt-rag (enable); like the CC hook it
-  // is intentionally NOT in KIT_HOOK_SUFFIXES, so a plain re-run / --no-prompt-rag / a wire of a
-  // different project leaves it untouched (per-project disable is the registry flag, not removal).
-  // Its command differs from the CC promptRagCmd (the `--agent droid` suffix), so ensureDroidHook's
-  // exact-command dedup keeps the two hooks independent and idempotent.
-  if (wantPromptRag) {
-    ensureDroidHook("UserPromptSubmit", droidPromptRagCmd);
-  } else {
-    const prunedRag = pruneHooksTargeting(droidSettings.hooks, "prompt-rag.ts");
-    if (prunedRag > 0) log(`[8/10] pruned ${prunedRag} droid prompt-rag UserPromptSubmit hook(s) — prompt-RAG off (default / --no-prompt-rag / kit lacks the file).`);
-    else log(`[8/10] droid hook UserPromptSubmit (prompt-rag) — off by default; not installed.`);
-  }
+  // (only the pointer's tool name differs). Its command differs from the CC promptRagCmd (the
+  // `--agent droid` suffix), so the exact-command dedup keeps the two hooks independent and
+  // idempotent; the prune matches the quoted basename and therefore catches both variants.
+  logPromptRagHook("droid", applyPromptRagHook(droidSettings.hooks, promptRagAction, droidPromptRagCmd), promptRagAction);
   writeJson(droidSettingsPath, droidSettings);
   log(`[8/10] merged droid hooks into ${droidSettingsPath}`);
 
@@ -1278,7 +1304,6 @@ async function main(): Promise<void> {
   const dir = resolve(args.dir);
   const project = args.projectKey;
   const baseUrl = DEFAULT_BASE_URL;
-  const workspace = args.workspace ?? "stdray";
 
   if (!existsSync(dir)) {
     console.error(`directory does not exist: ${dir}`);
@@ -1311,7 +1336,20 @@ async function main(): Promise<void> {
   }
 
   // 3. validate — BEFORE persisting anything, so a bad key never lands in the stores.
-  await validateKey(baseUrl, key, project);
+  const validated = await validateKey(baseUrl, key, project);
+
+  // 3b. workspace for the skill template ({{WORKSPACE}}): --workspace overrides the workspace the
+  // server reports at /api/auth/validate; there is NO hardcoded default. Resolved BEFORE any
+  // persistence so an unresolvable workspace leaves the machine untouched.
+  const ws = resolveWorkspace(args.workspace, validated?.workspace);
+  if (!ws.ok) {
+    console.error(ws.message);
+    process.exit(ws.exitCode);
+  }
+  const workspace = ws.workspace;
+  log(
+    `[3/10] workspace = ${workspace} (${ws.source === "flag" ? "--workspace" : "reported by /api/auth/validate"}).`,
+  );
 
   // 4. persist everywhere agents look: keys.json (kit hooks read it immediately) + a real
   // env var per platform (the per-project MCP configs reference ${envVar}). Idempotent, so
@@ -1350,9 +1388,19 @@ async function main(): Promise<void> {
     await ensurePromptRagAuditLog(baseUrl, project, key);
   }
 
-  // 8. global install — install the global prompt-RAG hook only when ENABLING (--prompt-rag);
-  // disable/sticky never add or remove it (it self-gates from the registry).
-  installGlobalHooks(args.promptRag === true);
+  // 8. global install. The prompt-RAG decision is STICKY: --prompt-rag installs the global hook,
+  // --no-prompt-rag prunes it ONLY when no registered project is left with the flag on (the hook is
+  // global and self-gates per project — one project opting out must not disable the others), and
+  // passing NEITHER flag leaves the hook exactly as found. `anyProjectEnabled` is read AFTER the
+  // step-6 upsert, so this project already counts with its new flag. A kit that no longer ships
+  // prompt-rag.ts always prunes (version-skew guard).
+  const promptRagAction = decidePromptRagHook({
+    requested: args.promptRag,
+    kitShipsHook: existsSync(join(STABLE, PROMPT_RAG_FILE)),
+    anyProjectEnabled: anyProjectPromptRagEnabled(readRegistry()),
+  });
+  log(`[8/10] prompt-rag hook: ${promptRagAction.action} — ${promptRagAction.reason}`);
+  installGlobalHooks(promptRagAction.action);
 
   // 9. cleanup legacy
   if (args.cleanupLegacy) cleanupLegacy(dir);

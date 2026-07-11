@@ -2482,7 +2482,8 @@
       "AuthValidResponse": {
         "required": [
           "project",
-          "scopes"
+          "scopes",
+          "workspace"
         ],
         "type": "object",
         "properties": {
@@ -2491,6 +2492,12 @@
           },
           "scopes": {
             "type": "string"
+          },
+          "workspace": {
+            "type": [
+              "null",
+              "string"
+            ]
           }
         }
       },

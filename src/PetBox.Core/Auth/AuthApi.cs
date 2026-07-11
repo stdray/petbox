@@ -1,14 +1,20 @@
 using System.Security.Claims;
+using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using PetBox.Core.Data;
+using PetBox.Core.Models;
 
 namespace PetBox.Core.Auth;
 
 public static class AuthApi
 {
 	// 200: the key's identity. 401: {"valid": false}.
-	public sealed record AuthValidResponse(string Project, string Scopes);
+	// `workspace` is additive and LAST: the workspace the key's project lives in, so a client
+	// (the CLI) can stop guessing a personal workspace. Null when it cannot be resolved — a
+	// valid key must still validate.
+	public sealed record AuthValidResponse(string Project, string Scopes, string? Workspace);
 	public sealed record AuthInvalidResponse(bool Valid);
 
 	public static void MapAuthEndpoints(this IEndpointRouteBuilder app)
@@ -19,7 +25,7 @@ public static class AuthApi
 			.RequireAuthorization("ApiKey");
 	}
 
-	static IResult Validate(HttpContext context)
+	static async Task<IResult> Validate(HttpContext context, PetBoxDb db, CancellationToken ct)
 	{
 		var user = context.User;
 		if (user.Identity is not { IsAuthenticated: true })
@@ -31,6 +37,30 @@ public static class AuthApi
 		if (string.IsNullOrEmpty(projectKey))
 			return Results.Json(new AuthInvalidResponse(false), statusCode: 401);
 
-		return TypedResults.Ok(new AuthValidResponse(projectKey, scopes ?? string.Empty));
+		return TypedResults.Ok(new AuthValidResponse(
+			projectKey, scopes ?? string.Empty, await ResolveWorkspaceAsync(user, db, projectKey, ct)));
+	}
+
+	// Prefer an explicit workspace claim when the identity carries one; otherwise the project row
+	// is the authority (an API key is project-scoped, a project belongs to exactly one workspace).
+	// Never throws: an unresolvable workspace is reported as null, not as a failed validation.
+	static async Task<string?> ResolveWorkspaceAsync(
+		ClaimsPrincipal user, PetBoxDb db, string projectKey, CancellationToken ct)
+	{
+		var claimed = user.FindFirstValue(PetBoxClaims.ActiveWorkspace);
+		if (!string.IsNullOrWhiteSpace(claimed)) return claimed;
+
+		try
+		{
+			var ws = await db.Projects
+				.Where((Project p) => p.Key == projectKey)
+				.Select(p => p.WorkspaceKey)
+				.FirstOrDefaultAsync(ct);
+			return string.IsNullOrWhiteSpace(ws) ? null : ws;
+		}
+		catch (Exception ex) when (ex is not OperationCanceledException)
+		{
+			return null;
+		}
 	}
 }

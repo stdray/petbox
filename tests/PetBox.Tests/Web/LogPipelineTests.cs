@@ -451,6 +451,39 @@ public sealed class LogPipelineTests : IClassFixture<LogPipelineFixture>
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
 		doc.RootElement.GetProperty("project").GetString().Should().Be("$system");
+		// The key is project-scoped; the project's row names its workspace. Clients (the CLI)
+		// read this instead of guessing a personal workspace.
+		doc.RootElement.GetProperty("workspace").GetString().Should().Be("$system");
+	}
+
+	// The workspace must come from the PROJECT ROW, not from the project key: a key scoped to a
+	// project inside another workspace reports that workspace.
+	[Fact]
+	public async Task AuthValidate_ValidKey_ReportsProjectsWorkspace()
+	{
+		const string key = "yb_key_ws_probe";
+		const string project = "wsprobe";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			await db.InsertAsync(new Project { Key = project, WorkspaceKey = "acme", Name = project });
+			await db.InsertAsync(new ApiKey
+			{
+				Key = key,
+				ProjectKey = project,
+				Scopes = "logs:read",
+				Name = key,
+				CreatedAt = DateTime.UtcNow,
+			});
+		}
+
+		var req = new HttpRequestMessage(HttpMethod.Get, "/api/auth/validate");
+		req.Headers.Add("X-Api-Key", key);
+		using var resp = await _client.SendAsync(req);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var root = JsonDocument.Parse(await resp.Content.ReadAsStringAsync()).RootElement;
+		root.GetProperty("project").GetString().Should().Be(project);
+		root.GetProperty("workspace").GetString().Should().Be("acme");
 	}
 
 	[Fact]
