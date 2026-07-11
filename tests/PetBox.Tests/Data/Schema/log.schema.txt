@@ -1,0 +1,69 @@
+# PetBox schema golden snapshot — tier: log
+# Generated from the tier's FluentMigrator migration set on a CLEAN database.
+# Do not hand-edit. Regenerate: PETBOX_SCHEMA_GOLDEN_UPDATE=1 dotnet test tests/PetBox.Tests --filter GoldenSchema
+# ...then READ the diff. See README.md.
+TABLE LogEntries
+  COL Exception TEXT NULL
+  COL Id INTEGER NULL PK1
+  COL Level INTEGER NOT NULL
+  COL Message TEXT NOT NULL
+  COL MessageTemplate TEXT NOT NULL
+  COL PropertiesJson TEXT NOT NULL DEFAULT '{}'
+  COL ServiceKey TEXT NOT NULL
+  COL TemplateHash INTEGER NOT NULL DEFAULT 0
+  COL TimestampMs INTEGER NOT NULL
+  INDEX IX_LogEntries_Level origin=c (Level)
+  INDEX IX_LogEntries_ServiceKey_TimestampMs origin=c (ServiceKey, TimestampMs DESC)
+  INDEX IX_LogEntries_TimestampMs origin=c (TimestampMs DESC)
+
+TABLE MetricPoints
+  COL AggregationTemporality INTEGER NULL
+  COL AttributesJson TEXT NOT NULL DEFAULT '{}'
+  COL BucketCountsJson TEXT NULL
+  COL Count INTEGER NULL
+  COL Description TEXT NULL
+  COL ExemplarsJson TEXT NULL
+  COL ExplicitBoundsJson TEXT NULL
+  COL Flags INTEGER NULL
+  COL Id INTEGER NULL PK1
+  COL IsMonotonic INTEGER NULL
+  COL Max REAL NULL
+  COL MetricName TEXT NOT NULL
+  COL MetricType INTEGER NOT NULL
+  COL Min REAL NULL
+  COL NegativeBucketsJson TEXT NULL
+  COL PositiveBucketsJson TEXT NULL
+  COL QuantileValuesJson TEXT NULL
+  COL Scale INTEGER NULL
+  COL StartUnixNs INTEGER NULL
+  COL Sum REAL NULL
+  COL TimeUnixNs INTEGER NOT NULL
+  COL Unit TEXT NULL
+  COL ValueDouble REAL NULL
+  COL ValueLong INTEGER NULL
+  COL ZeroCount INTEGER NULL
+  INDEX ix_metricpoints_name_time origin=c (MetricName, TimeUnixNs)
+  INDEX ix_metricpoints_time origin=c (TimeUnixNs)
+
+TABLE Spans
+  COL AttributesJson TEXT NOT NULL DEFAULT '{}'
+  COL EndUnixNs INTEGER NOT NULL
+  COL EventsJson TEXT NOT NULL DEFAULT '[]'
+  COL Kind INTEGER NOT NULL
+  COL LinksJson TEXT NOT NULL DEFAULT '[]'
+  COL Name TEXT NOT NULL
+  COL ParentSpanId TEXT NULL
+  COL SpanId TEXT NULL PK1
+  COL StartUnixNs INTEGER NOT NULL
+  COL StatusCode INTEGER NOT NULL
+  COL StatusDescription TEXT NULL
+  COL TraceId TEXT NOT NULL
+  INDEX ix_spans_start origin=c (StartUnixNs)
+  INDEX ix_spans_trace_start origin=c (TraceId, StartUnixNs)
+  INDEX sqlite_autoindex_Spans_1 UNIQUE origin=pk (SpanId)
+
+TABLE VersionInfo
+  COL AppliedOn DATETIME NULL
+  COL Description TEXT NULL
+  COL Version INTEGER NOT NULL
+  INDEX UC_Version UNIQUE origin=c (Version)

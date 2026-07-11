@@ -1,0 +1,49 @@
+# PetBox schema golden snapshot — tier: config
+# Generated from the tier's FluentMigrator migration set on a CLEAN database.
+# Do not hand-edit. Regenerate: PETBOX_SCHEMA_GOLDEN_UPDATE=1 dotnet test tests/PetBox.Tests --filter GoldenSchema
+# ...then READ the diff. See README.md.
+TABLE ConfigBindingHistory
+  COL Action TEXT NOT NULL
+  COL Actor TEXT NOT NULL DEFAULT 'system'
+  COL At TEXT NOT NULL
+  COL BindingId INTEGER NOT NULL
+  COL Id INTEGER NULL PK1
+  COL Kind INTEGER NOT NULL DEFAULT 0
+  COL NewValue TEXT NULL
+  COL OldValue TEXT NULL
+  COL Path TEXT NOT NULL
+  COL Tags TEXT NOT NULL
+  INDEX IX_ConfigBindingHistory_At origin=c (At DESC)
+  INDEX IX_ConfigBindingHistory_Path origin=c (Path)
+
+TABLE ConfigBindings
+  COL AuthTag TEXT NULL
+  COL Ciphertext TEXT NULL
+  COL ContentHash TEXT NOT NULL DEFAULT ''
+  COL CreatedAt TEXT NOT NULL
+  COL DeletedAt TEXT NULL
+  COL Id INTEGER NULL PK1
+  COL IsDeleted INTEGER NOT NULL DEFAULT 0
+  COL Iv TEXT NULL
+  COL Kind INTEGER NOT NULL DEFAULT 0
+  COL Path TEXT NOT NULL
+  COL Tags TEXT NOT NULL
+  COL UpdatedAt TEXT NOT NULL
+  COL Value TEXT NOT NULL
+  COL Version INTEGER NOT NULL DEFAULT 1
+  INDEX IX_ConfigBindings_IsDeleted origin=c (IsDeleted)
+  INDEX IX_ConfigBindings_Path origin=c (Path)
+
+TABLE TagVocabulary
+  COL CreatedAt TEXT NOT NULL
+  COL Description TEXT NULL
+  COL Id INTEGER NULL PK1
+  COL TagKey TEXT NOT NULL
+  INDEX IX_TagVocabulary_TagKey UNIQUE origin=c (TagKey)
+  INDEX sqlite_autoindex_TagVocabulary_1 UNIQUE origin=u (TagKey)
+
+TABLE VersionInfo
+  COL AppliedOn DATETIME NULL
+  COL Description TEXT NULL
+  COL Version INTEGER NOT NULL
+  INDEX UC_Version UNIQUE origin=c (Version)
