@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace PetBox.Core.Contract;
@@ -75,6 +76,27 @@ public static class AgentDefinitionJson
 	// Serialize a typed document to the stored/wire JSON form.
 	public static string Serialize(AgentDefinitionDoc def) =>
 		JsonSerializer.Serialize(def, Options);
+
+	// The canonical STORED form of a raw document: the caller's JSON verbatim — properties
+	// outside the typed schema included — with formatting normalized (so an identical resubmit
+	// that only differs in whitespace dedupes to a no-op instead of minting a phantom revision).
+	// A document carrying no `name` gets the key slug written in: we never store a nameless doc.
+	public static string CanonicalizeRaw(string json, string nameFallback)
+	{
+		var node = JsonNode.Parse(json);
+		if (node is not JsonObject obj)
+			throw new ArgumentException("agent definition body must be a JSON object");
+
+		if (!obj.TryGetPropertyValue("name", out var name)
+			|| name is not JsonValue v
+			|| v.GetValueKind() != JsonValueKind.String
+			|| string.IsNullOrWhiteSpace(v.GetValue<string>()))
+		{
+			obj["name"] = nameFallback;
+		}
+
+		return obj.ToJsonString(Options);
+	}
 
 	public static void Validate(AgentDefinitionDoc def)
 	{

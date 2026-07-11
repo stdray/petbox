@@ -89,6 +89,10 @@
 						<a href="@Routes.ProjectMemoryAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectMemoryAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-memory">Memory</a>
 					</li>
 				}
+				@* Portable agent definitions (agent-definition-as-data) — always on, no feature flag. *@
+				<li>
+					<a href="@Routes.ProjectAgentDefsAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectAgentDefsAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-agent-defs">Agent definitions</a>
+				</li>
 				<li>
 					<a href="@Routes.ProjectSettingsAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectSettingsAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-settings">Settings</a>
 				</li>

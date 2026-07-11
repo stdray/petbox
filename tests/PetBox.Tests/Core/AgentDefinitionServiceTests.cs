@@ -1,3 +1,4 @@
+using System.Text.Json;
 using LinqToDB;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
@@ -226,6 +227,105 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 		ack.Changed.Should().BeTrue();
 		var view = await _svc.GetAsync(Proj, "default");
 		view!.Definition.Roles.Should().ContainSingle(r => r.Slug == "worker");
+	}
+
+	// A definition carrying `notes` (every role of the TS client's DEFAULT_AGENT_DEFINITION does)
+	// plus arbitrary unknown fields at the root: the RAW path stores the caller's document, so
+	// they survive the round-trip instead of being dropped by re-serialization. The typed read is
+	// unchanged — the compilers still see only the schema.
+	const string RosterWithUnknownFields = """
+		{
+		  "name": "default",
+		  "notes": "root-level prose",
+		  "futureFlag": true,
+		  "roles": [
+		    {
+		      "slug": "worker",
+		      "tier": "worker",
+		      "requiredCapabilities": ["mcp"],
+		      "notes": "does the work",
+		      "spawn": { "allowed": false }
+		    }
+		  ]
+		}
+		""";
+
+	[Fact]
+	public async Task RawUpsert_PreservesUnknownFields_OnRoundTrip()
+	{
+		var ack = await _svc.UpsertJsonAsync(Proj, "default", RosterWithUnknownFields, 0);
+		ack.Changed.Should().BeTrue();
+
+		var raw = await _svc.GetJsonAsync(Proj, "default");
+		raw.Should().NotBeNull();
+		using var doc = JsonDocument.Parse(raw!);
+		var root = doc.RootElement;
+		root.GetProperty("notes").GetString().Should().Be("root-level prose");
+		root.GetProperty("futureFlag").GetBoolean().Should().BeTrue();
+		var role = root.GetProperty("roles")[0];
+		role.GetProperty("notes").GetString().Should().Be("does the work");
+		role.GetProperty("slug").GetString().Should().Be("worker");
+
+		// The typed view still projects the schema only — consumers are untouched.
+		var view = await _svc.GetAsync(Proj, "default");
+		view!.Definition.Name.Should().Be("default");
+		view.Definition.Roles.Should().ContainSingle(r => r.Slug == "worker");
+	}
+
+	[Fact]
+	public async Task RawUpsert_IdenticalResubmit_IsNoOp_NoPhantomRevision()
+	{
+		var ack = await _svc.UpsertJsonAsync(Proj, "default", RosterWithUnknownFields, 0);
+		var again = await _svc.UpsertJsonAsync(Proj, "default", RosterWithUnknownFields, ack.Version);
+		again.Changed.Should().BeFalse();
+		again.Version.Should().Be(ack.Version);
+
+		// Same document, different whitespace: canonical storage must not mint a revision either.
+		var reformatted = JsonSerializer.Serialize(JsonDocument.Parse(RosterWithUnknownFields).RootElement);
+		var third = await _svc.UpsertJsonAsync(Proj, "default", reformatted, ack.Version);
+		third.Changed.Should().BeFalse();
+		third.Version.Should().Be(ack.Version);
+	}
+
+	[Fact]
+	public async Task RawUpsert_WithoutName_UsesKeySlug()
+	{
+		const string nameless = """
+			{
+			  "roles": [
+			    { "slug": "worker", "tier": "worker", "requiredCapabilities": [] }
+			  ]
+			}
+			""";
+		var ack = await _svc.UpsertJsonAsync(Proj, "squad", nameless, 0);
+		ack.Changed.Should().BeTrue();
+
+		(await _svc.GetAsync(Proj, "squad"))!.Definition.Name.Should().Be("squad");
+		using var doc = JsonDocument.Parse((await _svc.GetJsonAsync(Proj, "squad"))!);
+		doc.RootElement.GetProperty("name").GetString().Should().Be("squad", "no nameless document is ever stored");
+	}
+
+	[Fact]
+	public async Task RawUpsert_UnknownFields_DoNotSmuggleModel()
+	{
+		const string bad = """
+			{
+			  "name": "default",
+			  "notes": "prose",
+			  "roles": [
+			    {
+			      "slug": "worker",
+			      "tier": "worker",
+			      "requiredCapabilities": [],
+			      "extra": { "nested": { "model": "smuggled" } }
+			    }
+			  ]
+			}
+			""";
+		var act = () => _svc.UpsertJsonAsync(Proj, "default", bad, 0);
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*model*not allowed*");
+		(await _svc.ListAsync(Proj)).Should().BeEmpty();
 	}
 
 	[Fact]

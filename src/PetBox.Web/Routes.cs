@@ -90,6 +90,7 @@ public static class Routes
 	public static string ProjectTasksAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/tasks";
 	public static string ProjectMethodologyAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/methodology";
 	public static string ProjectMemoryAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/memory";
+	public static string ProjectAgentDefsAdmin(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/agent-defs";
 	public static string ProjectConnect(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/connect";
 	public static string ProjectSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/info";
 	public static string ProjectLogSettings(string ws, string key) => $"{AdminPrefix}/ws/{ws}/projects/{key}/log";
@@ -113,6 +114,7 @@ public static class Routes
 	public static string DocAgent() => "/doc/agent";
 	public static string DocMethodology() => "/doc/methodology";
 	public static string DocPhilosophy() => "/doc/methodology/philosophy";
+	public static string DocWire() => "/doc/wire";
 
 	// Auth & misc — not under /ui prefix
 	public static string Login() => "/Login";
