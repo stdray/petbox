@@ -153,6 +153,9 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		["llm_rerank"] = "external: needs a live LLM endpoint",
 		["deploy_start"] = "external: SSHes to a fleet node",
 		["deploy_stop"] = "external: SSHes to a fleet node",
+		// external: the tool REFUSES without a live Embed route (that gate is the point of it);
+		// the success path is covered end-to-end in SearchReindexTests.
+		["search_reindex"] = "external: needs a live Embed route (refuses otherwise, by design)",
 		// pending: chained/complex state — tracked in mcp-conformance-exhaustive
 		["session_append"] = "pending: message-array shape not yet wired",
 		["tasks_board_set_spec"] = "pending: needs a spec board seeded",
