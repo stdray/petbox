@@ -22,7 +22,7 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
   never importable by a test — that is why `posix-env.ts` / `telemetry-settings.ts` / `wire-exit.ts`
   exist as separate side-effect-free modules).
 - `registry.ts` — reads `~/.petbox/projects.json`, longest-prefix match of cwd → project + key
-  (key from `process.env[VAR]`, else `~/.petbox/keys.json`) + the per-project `promptRag` config.
+  (key from `process.env[VAR]`, else `~/.petbox/keys.json`).
 - `protocol.ts` — the **single source** for the injected memory-protocol text. `buildProtocol(project, tool, opts)`
   renders one canonical text parametrized only by the MCP tool namer (`mcp__petbox__<verb>` for
   Claude Code, `petbox_<verb>` for opencode, `petbox___<verb>` for droid) plus the opt-in
@@ -38,12 +38,6 @@ Kit modules (all under `src/clients-ts/petbox-wire/src/`):
 - `transcript.ts` — Claude Code transcript parsing + the shared `extractText`/`isExcluded` rules.
 - `append.ts` — the shared session-push HTTP call the Stop hooks / plugin use.
 - `import-sessions.ts` — one-shot backfill of the local agent history (§7).
-- `prompt-rag.ts` — the OPT-IN Claude Code / Droid **UserPromptSubmit** hook: exact-match task-node
-  pointer injection (no fuzzy/semantic matching; silent when nothing matches). Global hook, gated
-  per project by the registry's `promptRag.enabled`.
-- `mcp-client.ts` — minimal Streamable-HTTP MCP client (initialize → notifications/initialized →
-  one `tools/call`) used by `prompt-rag.ts`, because tasks/memory are exposed over MCP only.
-  Total: any failure returns `null`, never throws.
 - `posix-env.ts` — POSIX half of `persistKeyForAgents` (regenerates `~/.petbox/env.sh` from the key
   store and marker-guards the login-profile source lines).
 - `telemetry-settings.ts` — builds the OTLP export env (`--telemetry`), split into a non-secret half
@@ -104,7 +98,6 @@ version, then imports `wire.ts`) plus the `src/` kit.
      stored. Kit hooks see the key immediately; **agents need a new terminal** after the first
      wiring so their MCP configs resolve the env var.
    - `--telemetry` / `--telemetry-log <name>` — opt-in Claude Code OTLP export (§2c).
-   - `--prompt-rag` / `--no-prompt-rag` — per-project prompt-RAG gate; **tri-state** (§2d).
    - `--cleanup-legacy` — remove a project's old per-project hook/plugin copies (§3).
    - `--help` / `-h` — the usage banner on stdout, exit 0.
 
@@ -133,8 +126,7 @@ version, then imports `wire.ts`) plus the `src/` kit.
    content fingerprint is printed before → after. Skipped when already running the installed copy.
    Every global link in step 8 is computed from this stable path.
 6. Upsert the registry entry `~/.petbox/projects.json`: `{prefix: <dir>, project, envVar}`
-   (replace by prefix; other entries untouched). `baseUrl` is written only when non-default; the
-   per-project `promptRag` config is **merged** (see §2d) so a plain re-run never drops it.
+   (replace by prefix; other entries untouched). `baseUrl` is written only when non-default.
 7. (Re)generate per-project files in `<dir>`:
    - `.mcp.json` — Claude Code MCP, `X-Api-Key: ${VAR}` (petbox-only file, regenerated whole).
    - `.opencode/opencode.json` — opencode remote MCP, `X-Api-Key: {env:VAR}` (regenerated whole).
@@ -156,10 +148,6 @@ version, then imports `wire.ts`) plus the `src/` kit.
      (`POST /api/logs/<project>/logs`; 201 or 409 = ready, anything else aborts), then merge the OTLP
      export env into `.claude/settings.json` (non-secret) and the API-key-bearing
      `OTEL_EXPORTER_OTLP_HEADERS` into `.claude/settings.local.json` (gitignored). See §2c.
-   - *7c (only when ENABLING prompt-RAG, `--prompt-rag`)*: ensure the `prompt-rag-audit` named log
-     exists — same idempotent `POST /api/logs/<project>/logs`, but **non-fatal**: a failure (e.g. the
-     wired key lacks `logs:admin`) only WARNs, because the hook still runs and its audits merely 404
-     until the log exists. See §2d.
 8. Global install (idempotent; all commands point at the stable copy `~/.petbox/wire/`):
    - `~/.claude/settings.json` — **merge** a `Stop` → `node "~/.petbox/wire/push-session.ts"` and
      `SessionStart` → `node "~/.petbox/wire/pull-memory.ts"` hook. The rest of the live settings
@@ -173,11 +161,6 @@ version, then imports `wire.ts`) plus the `src/` kit.
      written.
    - `~/.config/opencode/plugins/petbox.ts` — a thin shim that re-exports the kit plugin from the
      stable copy's `file:///` URL (single source of truth; overwritten each run).
-   - `UserPromptSubmit` → `node "~/.petbox/wire/prompt-rag.ts"` (Claude Code) and the same file with
-     `--agent droid` (Factory Droid) — installed when this run passes `--prompt-rag` AND the stable
-     kit actually ships `prompt-rag.ts` (version-skew guard: a kit without the file always prunes).
-     Passing **neither** flag leaves the hook exactly as found; `--no-prompt-rag` prunes it only once
-     no registered project has `promptRag.enabled` (see §2d). opencode is not wired for prompt-RAG in v1.
 9. `--cleanup-legacy` (see §3).
 10. Self-smoke: `POST /api/sessions/<project>/wire-smoke?agent=wire` (application/x-ndjson) and assert a numeric `version` in the response.
 
@@ -189,7 +172,7 @@ none at all. They are dispatched **before** arg parsing, so they never require a
 | Command | What it does |
 | --- | --- |
 | `petbox-wire update` | Mirror this package's `src/` into `~/.petbox/wire/` (same orphan cleanup as step 5, content hash before → after). **Only** that: no keys, no registry, no hooks reinstall, no MCP/skills regeneration, no sticky-flag reset. It does **not** compile agent artifacts — that is `apply`. |
-| `petbox-wire apply [--definition <key>] [--offline]` | Compile the per-harness agent role files from the portable definition + the local role→model binding. See §2e. |
+| `petbox-wire apply [--definition <key>] [--offline]` | Compile the per-harness agent role files from the portable definition + the local role→model binding. See §2d. |
 | `petbox-wire doctor` | Offline truthfulness gate: run `checkTruthfulness(DEFAULT_AGENT_DEFINITION, harness)` for every id in `HARNESS_IDS` and print OK or each violation. The local binding is *noted*, not required. |
 | `petbox-wire roles` | Print `activeProfile` + the resolved role→model tree from `~/.petbox/roles.json`. Offline. An empty store exits **0** with a message — it never invents a model. |
 | `petbox-wire roles export` | Write a bootstrap copy of `roles.json` to **stdout** (no secrets); pipe it to a file on a new machine. Offline. |
@@ -227,34 +210,7 @@ Code does not expand `${VAR}` inside `settings.json` `env` values (verified 2026
 reference form ships the literal string and the ingest 401s. That also **pins** the value: rotate the
 project key and the header goes stale — re-run the wire with `--telemetry` to re-provision.
 
-## 2d. prompt-RAG (`--prompt-rag` / `--no-prompt-rag`, off by default)
-
-Tri-state, deliberately — and the third state is sticky for **both** halves of the wiring (the
-per-project registry flag *and* the global hook):
-
-- `--prompt-rag` → the project's registry `promptRag.enabled = true`, the `prompt-rag-audit` log is
-  ensured (7c), and the global `UserPromptSubmit` hook is installed for Claude Code + Droid.
-- `--no-prompt-rag` → `promptRag.enabled = false` for this project; already-tuned tolerances
-  (`cap`, `requireHyphen`) are preserved. The global hook is pruned **only when no registered
-  project is left with the flag on** — it is one hook per machine serving every project, so tearing
-  it out because *this* project opted out would silently disable prompt-RAG for the projects that
-  explicitly opted in.
-- **neither → STICKY**: the project's existing `promptRag` *and* the installed hook are left exactly
-  as they were. A routine re-wire (e.g. `npx petbox-wire <dir> <project>` to refresh an MCP config)
-  never changes prompt-RAG in either direction.
-
-The one exception is the version-skew guard: if the stable kit (`~/.petbox/wire/`) does not ship
-`prompt-rag.ts`, any hook targeting it is pruned regardless of the flags — a hook command pointing at
-a missing file would crash every prompt.
-
-The hook is *global* but self-gates per project from `~/.petbox/projects.json`, so enablement is
-per-project even though one hook file serves every registered directory. Both gates therefore have
-the same polarity: the install-time gate only changes on an explicit flag, and the runtime gate is
-the registry flag. `petbox-wire doctor` reports a mismatch between them (flag on, no hook installed —
-or a hook installed with no project enabled). It injects only exact-match task-node **pointers**
-(key/board/status/title + an `expand:` command), never bodies, and is silent when nothing matches.
-
-## 2e. `apply` — compiled agent artifacts
+## 2d. `apply` — compiled agent artifacts
 
 Not part of the full wire; run it explicitly. It resolves the project root by the longest matching
 prefix in `~/.petbox/projects.json` (falling back to cwd), resolves the definition
@@ -273,12 +229,12 @@ when `roles.json` binds that role (droid unbound → `model: inherit`); a concre
 invented. Three sources, three owners: the definition is **server**-authoritative, `roles.json` is
 **machine**-authoritative, the capability matrix is **kit** data.
 
-## 2f. What lives under `~/.petbox/`
+## 2e. What lives under `~/.petbox/`
 
 | Path | Owner / contents |
 | --- | --- |
 | `wire/` | The stable kit copy. Every global hook / plugin shim points here. Refreshed by a full wire or `update`; an exact mirror of the shipped kit. |
-| `projects.json` | Registry: `{prefix, project, envVar, baseUrl?, promptRag?}` per entry. Resolved by longest prefix against cwd. |
+| `projects.json` | Registry: `{prefix, project, envVar, baseUrl?}` per entry. Resolved by longest prefix against cwd. |
 | `keys.json` | Flat `{ "<ENV_VAR>": "<key>" }` the kit hooks read directly (no env var needed). POSIX `0600`. Ground truth for "what is my env-var actually called". |
 | `env.sh` | POSIX only — regenerated from the whole key store, sourced (marker-guarded) from the login profiles. |
 | `roles.json` | Local role→model bindings + `activeProfile`. Machine-authoritative; never uploaded. |
@@ -339,6 +295,9 @@ Both SessionStart injectors (`pull-memory.ts` for Claude Code, `opencode-plugin.
 opencode) append the project's **memory canon** — the curated memory index, pointers to the
 durable facts — beneath the memory protocol. The shared builder is `canon.ts`, so the injected
 block is byte-identical across agents.
+
+Session start is the **only** point at which the wiring injects context — there is no per-prompt
+injection; within a session an agent pulls what it needs through the MCP tools.
 
 - **Endpoint:** `GET {baseUrl}/api/memory/{project}/canon` with header `X-Api-Key` → 200
   `{ "project": {body,updatedAt,version}|null, "workspace": {...}|null }`. Best-effort, ~8 s

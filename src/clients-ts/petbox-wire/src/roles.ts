@@ -40,7 +40,7 @@ const EMPTY: RolesFile = { activeProfile: "default", profiles: {} };
 
 /**
  * Canonical agent ids used by session push / harness matrix (`droid-push-session` stamps
- * agent:"droid", prompt-rag uses --agent droid, HARNESS_IDS uses droid).
+ * agent:"droid", HARNESS_IDS uses droid).
  * Aliases accepted in roles.json for the same bucket — lookup is alias-aware so a file
  * written as `factory-droid` still resolves when push asks for `droid`.
  */

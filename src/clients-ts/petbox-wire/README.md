@@ -38,7 +38,6 @@ Full documentation: <https://petbox.3po.su/doc/wire>.
 | `--cleanup-legacy` | Remove a project's old per-project hook/plugin copies. |
 | `--telemetry` | Wire Claude Code OTLP export into the project (off by default; Claude Code only). |
 | `--telemetry-log <name>` | Target named log for telemetry (default `cc-telemetry`; created if missing). |
-| `--prompt-rag` / `--no-prompt-rag` | Per-project prompt-RAG gate (exact-match task-pointer injection on `UserPromptSubmit`). Passing **neither is sticky** — the project keeps its current setting. |
 | `--help`, `-h` | Usage banner, exit 0. |
 
 The API key is validated against the server **before** anything is persisted, so a bad key never
@@ -57,15 +56,15 @@ your machine actually has.
 
 - **Global hooks** for Claude Code (`~/.claude/settings.json`) and Factory Droid
   (`~/.factory/settings.json`): a `Stop` hook that mirrors each session into PetBox and a
-  `SessionStart` hook that injects the memory protocol + canon. Merged, never clobbered.
+  `SessionStart` hook that injects the memory protocol + canon — the only context the wiring
+  injects; there is no per-prompt injection. Merged, never clobbered.
 - **A global opencode plugin** (`~/.config/opencode/plugins/petbox.ts`) with the same two behaviors.
 - **Per-project config** in `<dir>`: `.mcp.json` (Claude Code MCP), `.opencode/opencode.json`
   (opencode MCP), `.factory/mcp.json` (Droid MCP — **merged**, so team servers survive), the rendered
   `SKILL.md` under `.claude/skills/petbox/` and `.factory/skills/petbox/`, and the on-demand
   **agent-factory** skill under `.claude/skills/petbox-agent-factory/` and
   `.factory/skills/petbox-agent-factory/` (`roles` / `profile` / `doctor` / `apply`).
-- **Optional**, per flag: the Claude Code OTLP export env (`--telemetry`) and the global
-  `UserPromptSubmit` prompt-RAG hook (`--prompt-rag`).
+- **Optional**, per flag: the Claude Code OTLP export env (`--telemetry`).
 
 All MCP configs reference the key as `${VAR}` / `{env:VAR}` — the key itself is never written into a
 project file.
@@ -108,7 +107,7 @@ for *any* other failure — do not script against `3` there.
 | Path | Contents |
 | --- | --- |
 | `~/.petbox/wire/` | The stable kit copy. Every hook and plugin points here, so wiring survives `npx` cache eviction. Refresh with `update`. |
-| `~/.petbox/projects.json` | Registry: directory prefix → project, env-var name, base URL, prompt-RAG flag. |
+| `~/.petbox/projects.json` | Registry: directory prefix → project, env-var name, base URL. |
 | `~/.petbox/keys.json` | `{ "<ENV_VAR>": "<key>" }` (POSIX: `chmod 0600`). The kit hooks read `process.env[<ENV_VAR>]` first, then this file. |
 | `~/.petbox/env.sh` | POSIX only — generated from the key store, sourced from your login profiles. |
 | `~/.petbox/roles.json` | Local role→model bindings + `activeProfile`. Never uploaded. |

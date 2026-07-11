@@ -8,8 +8,14 @@
 //
 // `update` refreshes only the stable kit copy (~/.petbox/wire/) from this package — protocol,
 // scripts, kit-owned templates — with the same mirror/orphan cleanup as a full wire. It does
-// NOT touch keys, registry entries, sticky prompt-rag/telemetry flags, per-project MCP/skills,
-// or require projectKey/key.
+// NOT touch keys, registry entries, the sticky telemetry flag, per-project MCP/skills, or require
+// projectKey/key. It DOES run the prompt-RAG hook migration (below), because a refreshed kit no
+// longer ships prompt-rag.ts and a leftover hook pointing at it would fail on every prompt.
+//
+// prompt-RAG (the opt-in UserPromptSubmit context injector) was REMOVED. Its kit files are gone and
+// its flags no longer exist; what remains is a one-way MIGRATION that both `wire` and `update` run
+// unconditionally and idempotently: prune any hook targeting prompt-rag.ts from ~/.claude/settings.json
+// and ~/.factory/settings.json (see hook-prune.ts).
 //
 // --telemetry (opt-in, off by default) wires Claude Code to export its loop telemetry (OTLP
 // metrics + log-events) into the project's petbox named log (default `cc-telemetry`): it ensures
@@ -35,9 +41,8 @@
 //        - .claude/skills/petbox-agent-factory/SKILL.md  (on-demand factory skill)
 //        - .factory/skills/petbox-agent-factory/SKILL.md
 //    8. install the global Claude + Droid hooks + opencode plugin (merge, never clobber live files);
-//       all links point at the stable copy (~/.petbox/wire/). (--prompt-rag) additionally installs
-//       the OPT-IN Claude Code UserPromptSubmit prompt-RAG hook (off by default; safe exact-match
-//       context injection — see prompt-rag.ts).
+//       all links point at the stable copy (~/.petbox/wire/), and any dead prompt-RAG hook left by
+//       an older kit is pruned
 //    9. (--cleanup-legacy) remove the project's old per-project hook/plugin copies
 //   10. self-smoke: POST a tiny session and assert the server applied it
 //
@@ -74,24 +79,11 @@ import {
   type ApplyPlan,
 } from "./apply-artifacts.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
+import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
-import {
-  anyProjectPromptRagEnabled,
-  applyPromptRagHook,
-  checkPromptRagWiring,
-  decidePromptRagHook,
-  PROMPT_RAG_FILE,
-  type ApplyResult,
-  type PromptRagHookAction,
-} from "./prompt-rag-hook.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
-import {
-  PROMPT_RAG_DEFAULTS,
-  readRegistry,
-  resolveProject,
-  type PromptRagConfig,
-} from "./registry.ts";
+import { readRegistry, resolveProject } from "./registry.ts";
 import {
   exportRolesBootstrap,
   formatResolvedBinding,
@@ -122,13 +114,6 @@ type Args = {
   cleanupLegacy: boolean;
   telemetry: boolean;
   telemetryLog: string;
-  // Per-project prompt-RAG gate (step 1, registry-gated). Tri-state via two flags:
-  //   --prompt-rag    → promptRag=true  (enable on THIS project + install/keep the global hook)
-  //   --no-prompt-rag → promptRag=false (disable on THIS project; the global hook stays, self-gates)
-  //   neither         → promptRag=undefined = STICKY (leave the project's existing state untouched)
-  // The global UserPromptSubmit hook fires for every registered project and self-gates per project
-  // from ~/.petbox/projects.json, so enabling is per-project even though the hook is global.
-  promptRag: boolean | undefined;
 };
 
 const DEFAULT_TELEMETRY_LOG = "cc-telemetry";
@@ -138,7 +123,7 @@ const DEFAULT_TELEMETRY_LOG = "cc-telemetry";
 function usage(exitCode: number = WIRE_EXIT.usage): never {
   const text =
     "usage: npx petbox-wire <dir> <projectKey> [--env VAR] [--key KEY] [--workspace WS] [--cleanup-legacy]\n" +
-    "                       [--telemetry] [--telemetry-log <name>] [--prompt-rag | --no-prompt-rag]\n" +
+    "                       [--telemetry] [--telemetry-log <name>]\n" +
     "       npx petbox-wire update\n" +
     "       npx petbox-wire apply [--definition <key>] [--offline]\n" +
     "       npx petbox-wire doctor\n" +
@@ -147,9 +132,8 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "       npx petbox-wire profile use <name>\n" +
     "       npx petbox-wire --help\n" +
     "\n" +
-    "Wire a project to PetBox: global hooks, MCP configs and skills. prompt-RAG is OFF by default and\n" +
-    "STICKY: --prompt-rag opts this project in (and installs the global hook), --no-prompt-rag opts it\n" +
-    "out, and passing NEITHER leaves both the project's flag and the global hook exactly as they were.\n" +
+    "Wire a project to PetBox: global hooks, MCP configs and skills. (prompt-RAG was removed; wire and\n" +
+    "update now prune any leftover UserPromptSubmit hook that targets the retired prompt-rag.ts.)\n" +
     "\n" +
     "--env VAR    Name of the environment variable holding the project's API key. Default for a fresh\n" +
     "             wire: PETBOX_<PROJECT>_API_KEY (same name the Connect page shows). An already-wired\n" +
@@ -159,7 +143,8 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             none and the flag is absent, the wire fails with exit 2 (usage).\n" +
     "\n" +
     "update       Refresh ~/.petbox/wire only (protocol/scripts/templates) from this package. Does not\n" +
-    "             touch keys, registry, sticky prompt-rag/telemetry, or per-project MCP/skills.\n" +
+    "             touch keys, registry, sticky telemetry, or per-project MCP/skills (it does prune the\n" +
+    "             retired prompt-rag hook from the global settings files).\n" +
     "             Kit-copy only — does NOT compile per-harness agent artifacts (use apply).\n" +
     "apply        Compile per-harness startup artifacts from a portable agent definition + local\n" +
     "             role→model binding (~/.petbox/roles.json). Tries GET /api/{project}/agent-defs/{key}\n" +
@@ -194,7 +179,6 @@ function parseArgs(argv: string[]): Args {
   let cleanupLegacy = false;
   let telemetry = false;
   let telemetryLog = DEFAULT_TELEMETRY_LOG;
-  let promptRag: boolean | undefined = undefined; // undefined = STICKY (neither flag passed)
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--help" || a === "-h") usage(0);
@@ -204,8 +188,6 @@ function parseArgs(argv: string[]): Args {
     else if (a === "--cleanup-legacy") cleanupLegacy = true;
     else if (a === "--telemetry") telemetry = true;
     else if (a === "--telemetry-log") telemetryLog = argv[++i];
-    else if (a === "--prompt-rag") promptRag = true;
-    else if (a === "--no-prompt-rag") promptRag = false;
     else if (a.startsWith("--")) {
       console.error(`unknown flag: ${a}`);
       usage();
@@ -225,7 +207,6 @@ function parseArgs(argv: string[]): Args {
     cleanupLegacy,
     telemetry,
     telemetryLog: telemetryLog.trim(),
-    promptRag,
   };
 }
 
@@ -311,18 +292,6 @@ function runDoctor(argv: string[]): void {
       console.error(formatViolations(violations));
     }
   }
-
-  // Cheap offline wiring check: a project whose registry flag says prompt-RAG is ON while the
-  // machine carries no hook to run it (the state the old sticky-prune bug produced) is invisible
-  // otherwise — the flag says on, nothing runs it. ADVISORY: it does not change the exit code (the
-  // doctor taxonomy is about definition truthfulness), it just names the mismatch.
-  const ragMismatches = checkPromptRagWiring({
-    entries: readRegistry(),
-    claudeHooks: readJson(join(homedir(), ".claude", "settings.json"))?.hooks,
-    droidHooks: readJson(join(homedir(), ".factory", "settings.json"))?.hooks,
-  });
-  if (ragMismatches.length === 0) log("doctor: prompt-rag — flag/hook wiring consistent.");
-  else for (const m of ragMismatches) log(`doctor: WARN ${m.message}`);
 
   const code = classifyApplyExit({ hadTruthfulnessBlock });
   if (code === WIRE_EXIT.ok) {
@@ -733,11 +702,11 @@ function copyKitToStable(label: string = "[5/10]"): CopyKitResult {
   }
   mkdirSync(STABLE, { recursive: true });
   // Orphan cleanup — STABLE must be an EXACT MIRROR of HERE, never a UNION. cpSync overwrites but
-  // never DELETES, so a downgrade (e.g. an older npm package whose src lacks prompt-rag.ts) would
-  // leave a NEWER orphan file standing next to OLDER peers → version skew: prompt-rag.ts kept from a
-  // prior install importing `PROMPT_RAG_DEFAULTS` from a registry.ts the downgrade just reverted,
-  // which no longer exports it → SyntaxError on every prompt. Remove every top-level STABLE entry
-  // absent from HERE before copying, so the install can only ever match the shipped kit.
+  // never DELETES, so a file the shipped kit dropped (e.g. the retired prompt-rag.ts / mcp-client.ts)
+  // would keep standing next to its NEWER peers → version skew: a leftover module importing a symbol
+  // the current registry.ts no longer exports → SyntaxError at hook time. Remove every top-level
+  // STABLE entry absent from HERE before copying, so the install can only ever match the shipped kit.
+  // (The settings-side half of that removal is pruneLegacyPromptRagHooks — files AND hooks must go.)
   const hereEntries = new Set(readdirSync(HERE));
   for (const name of readdirSync(STABLE)) {
     if (!hereEntries.has(name)) {
@@ -751,9 +720,37 @@ function copyKitToStable(label: string = "[5/10]"): CopyKitResult {
   return { before, after, skipped: false };
 }
 
-// Safe kit-text refresh only: mirror THIS package into ~/.petbox/wire with orphan cleanup.
+// ---- migration: the retired prompt-RAG hook --------------------------------
+//
+// prompt-RAG is gone from the kit, but a machine that once ran `--prompt-rag` still has the hook
+// command sitting in ~/.claude/settings.json and ~/.factory/settings.json, pointing at a
+// prompt-rag.ts the kit no longer ships — which would fail on EVERY prompt. So: prune it
+// UNCONDITIONALLY (no flag gates it any more) on every wire/update run. Idempotent by construction:
+// the file is only rewritten when something was actually removed, so a second run is a byte-identical
+// no-op. Other hooks in those files are never touched (see hook-prune.ts).
+function pruneLegacyPromptRagHooks(label: string): void {
+  const targets: Array<[string, string]> = [
+    ["claude", join(homedir(), ".claude", "settings.json")],
+    ["droid", join(homedir(), ".factory", "settings.json")],
+  ];
+  for (const [agent, path] of targets) {
+    const settings = readJson(path);
+    if (!settings || typeof settings !== "object") continue;
+    if (!settings.hooks || typeof settings.hooks !== "object") continue;
+    const pruned = pruneDeadPromptRagHooks(settings.hooks);
+    if (pruned === 0) continue; // nothing to do → do not touch the file at all
+    writeJson(path, settings);
+    log(
+      `${label} migration: pruned ${pruned} dead ${agent} prompt-rag UserPromptSubmit hook(s) from ${path} ` +
+        `(the feature was removed; the hook pointed at a file the kit no longer ships).`,
+    );
+  }
+}
+
+// Safe kit-text refresh only: mirror THIS package into ~/.petbox/wire with orphan cleanup, plus the
+// prompt-RAG hook migration (a refreshed kit drops prompt-rag.ts, so the dead hook must go with it).
 // Intentionally does NOT: rotate/require API keys, touch ~/.petbox/keys.json or projects.json,
-// reinstall global hooks, rewrite per-project MCP/skills, or flip sticky prompt-rag/telemetry.
+// (re)install any live hook, rewrite per-project MCP/skills, or flip the sticky telemetry flag.
 // v1: STABLE kit only — re-run full wire to regenerate per-project skill bodies / MCP configs.
 function runUpdate(argv: string[]): void {
   // `update` takes no flags other than help; reject extras so typos don't silently no-op.
@@ -766,6 +763,7 @@ function runUpdate(argv: string[]): void {
   log(`update: refreshing stable kit ${STABLE} from ${HERE}`);
   log(`update: source hash ${kitFingerprint(HERE)}`);
   const result = copyKitToStable("update:");
+  pruneLegacyPromptRagHooks("update:");
   if (result.skipped) {
     log(`update: done — kit already at ${STABLE} (hash ${result.after}).`);
   } else if (result.before === result.after) {
@@ -774,7 +772,7 @@ function runUpdate(argv: string[]): void {
     log(`update: done — kit hash ${result.before} → ${result.after}.`);
   }
   log(
-    "update: skipped keys, registry, sticky prompt-rag/telemetry, global hooks reinstall, " +
+    "update: skipped keys, registry, sticky telemetry, global hooks reinstall, " +
       "and per-project MCP/skills (re-run full wire to refresh those).",
   );
 }
@@ -792,53 +790,21 @@ function registryEnvVar(prefix: string): string | undefined {
   return typeof v === "string" && v.length > 0 ? v : undefined;
 }
 
-// Merge a prompt-RAG update onto the entry's existing config.
-//   update === undefined → STICKY: return the existing config unchanged (may be undefined).
-//   update = { enabled }  → flip enabled, but PRESERVE any already-tuned tolerances (fall back to
-//                           PROMPT_RAG_DEFAULTS when neither the update nor the existing set them).
-// This is what keeps `promptRag` from being dropped on a plain re-run (sticky) and what lets
-// --prompt-rag / --no-prompt-rag toggle enablement without clobbering custom cap/requireHyphen.
-function mergePromptRag(
-  existing: PromptRagConfig | undefined,
-  update: PromptRagConfig | undefined,
-): PromptRagConfig | undefined {
-  if (!update) return existing;
-  return {
-    enabled: update.enabled,
-    cap: update.cap ?? existing?.cap ?? PROMPT_RAG_DEFAULTS.cap,
-    requireHyphen: update.requireHyphen ?? existing?.requireHyphen ?? PROMPT_RAG_DEFAULTS.requireHyphen,
-  };
-}
-
-// Upsert the registry entry for `prefix`. `promptRag` is the requested per-project prompt-RAG
-// update (undefined = leave the existing state as-is). The prior entry's `promptRag` is read back
-// and merged so a plain re-run never drops it, and neither prefix/project/envVar/baseUrl nor a
-// tuned promptRag is lost.
-function upsertRegistry(
-  prefix: string,
-  project: string,
-  envVar: string,
-  baseUrl: string,
-  promptRag?: PromptRagConfig,
-): void {
+// Upsert the registry entry for `prefix` — prefix/project/envVar (+ baseUrl when non-default).
+// The entry is rewritten whole, so a retired key from an older kit (the removed `promptRag` gate)
+// is dropped on the next wire rather than lingering as dead config.
+function upsertRegistry(prefix: string, project: string, envVar: string, baseUrl: string): void {
   const path = join(homedir(), ".petbox", "projects.json");
   const data = readJson(path) ?? {};
   const entries: any[] = Array.isArray(data.entries) ? data.entries : [];
   const norm = (p: string) => p.replace(/[\\/]+/g, "/").replace(/\/+$/, "").toLowerCase();
   const np = norm(prefix);
-  const prior = entries.find((e) => norm(String(e?.prefix ?? "")) === np);
   const next = entries.filter((e) => norm(String(e?.prefix ?? "")) !== np);
   const entry: any = { prefix, project, envVar };
   if (baseUrl !== DEFAULT_BASE_URL) entry.baseUrl = baseUrl;
-  const mergedRag = mergePromptRag(
-    prior && typeof prior.promptRag === "object" ? prior.promptRag : undefined,
-    promptRag,
-  );
-  if (mergedRag) entry.promptRag = mergedRag;
   next.push(entry);
   writeJson(path, { entries: next });
-  const ragNote = mergedRag ? ` [prompt-rag: ${mergedRag.enabled ? "on" : "off"}]` : "";
-  log(`[6/10] registry: upserted ${prefix} → ${project} (${envVar})${ragNote} in ${path}`);
+  log(`[6/10] registry: upserted ${prefix} → ${project} (${envVar}) in ${path}`);
 }
 
 // ---- step 7: per-project files --------------------------------------------
@@ -960,43 +926,6 @@ async function ensureTelemetryLog(
   process.exit(1);
 }
 
-// prompt-RAG self-audit log — the UserPromptSubmit hook (prompt-rag.ts) ships ONE CLEF record per
-// enabled-project invocation to this named log for injection-rate + precision eval. Path-based CLEF
-// ingest 404s if the log is absent, so create it when ENABLING prompt-RAG. Idempotent (409 =
-// already exists = success). Non-fatal by design: a failure (e.g. the wired key lacks logs:admin)
-// only means the first audits 404 until the log is created out-of-band — never a broken wiring — so
-// WARN and continue rather than abort (unlike ensureTelemetryLog, whose absence breaks OTLP export).
-const PROMPT_RAG_AUDIT_LOG = "prompt-rag-audit";
-
-async function ensurePromptRagAuditLog(baseUrl: string, project: string, key: string): Promise<void> {
-  const uri = `${baseUrl}/api/logs/${project}/logs`;
-  try {
-    const resp = await fetch(uri, {
-      method: "POST",
-      headers: { "X-Api-Key": key, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: PROMPT_RAG_AUDIT_LOG,
-        description:
-          "prompt-RAG hook self-audit (injection-rate + precision) — one record per enabled-project UserPromptSubmit invocation.",
-      }),
-      signal: AbortSignal.timeout(12000),
-    });
-    if (resp.ok || resp.status === 409) {
-      log(`[prompt-rag] audit log '${PROMPT_RAG_AUDIT_LOG}' ready in project '${project}' (HTTP ${resp.status}).`);
-      return;
-    }
-    const text = await resp.text().catch(() => "");
-    console.error(
-      `[prompt-rag] WARN could not ensure audit log '${PROMPT_RAG_AUDIT_LOG}' — HTTP ${resp.status} ${text}. ` +
-        `The hook still runs; audits 404 (silently) until the log exists (create it via mcp__petbox__log_create).`,
-    );
-  } catch (e) {
-    console.error(
-      `[prompt-rag] WARN could not reach ${uri} — ${(e as Error).message}. Audit log not ensured; the hook still runs.`,
-    );
-  }
-}
-
 // Persist the OTLP export env for Claude Code, SPLIT by secrecy (per-project, NOT machine-scope:
 // machine env would make EVERY CC session on the box export):
 //  - non-secret vars (endpoints, protocol, exporters, interval) → .claude/settings.json `env`;
@@ -1069,36 +998,12 @@ function pruneStaleKitHooks(hooksObj: any, validCmds: Set<string>): number {
   return removed;
 }
 
-// pruneHooksTargeting + the whole prompt-RAG install-time policy live in prompt-rag-hook.ts — a
-// side-effect-free module, so the decision (install / prune / KEEP) is unit-testable; wire.ts runs
-// main() on import and cannot be imported by a test.
-
-// One log line per agent describing what actually happened to the global prompt-RAG hook. "keep"
-// prints the sticky no-op explicitly, so an operator can see the hook was deliberately not touched.
-function logPromptRagHook(agent: string, r: ApplyResult, action: PromptRagHookAction): void {
-  if (action === "keep") {
-    log(`[8/10] ${agent} hook UserPromptSubmit (prompt-rag) — left as found (sticky: neither --prompt-rag nor --no-prompt-rag).`);
-  } else if (action === "install") {
-    log(`[8/10] ${agent} hook UserPromptSubmit (prompt-rag) — ${r.installed ? "added" : "already present, skipped"}.`);
-  } else if (r.pruned > 0) {
-    log(`[8/10] pruned ${r.pruned} ${agent} prompt-rag UserPromptSubmit hook(s).`);
-  } else {
-    log(`[8/10] ${agent} hook UserPromptSubmit (prompt-rag) — not installed; nothing to prune.`);
-  }
-}
-
-// `promptRagAction` is the already-made decision (decidePromptRagHook): "install" on --prompt-rag,
-// "prune" on --no-prompt-rag when nothing is left to serve (or a version-skewed kit), and "keep" —
-// the STICKY no-op — when this run passed neither flag. "keep" is the whole point: a plain re-wire
-// (refreshing an MCP config) must leave the global hook exactly as it found it, installed or not.
-function installGlobalHooks(promptRagAction: PromptRagHookAction): void {
+// Install the live kit hooks (Stop / SessionStart on both agents) and, on the way through, run the
+// retired-prompt-RAG migration on each settings object before it is written back — one read, one
+// write per file, so the prune costs nothing extra and cannot be skipped.
+function installGlobalHooks(): void {
   const pushCmd = `node "${join(STABLE, "push-session.ts")}"`;
   const pullCmd = `node "${join(STABLE, "pull-memory.ts")}"`;
-  const promptRagCmd = `node "${join(STABLE, "prompt-rag.ts")}"`;
-  // Droid reuses the SAME prompt-rag.ts hook (its UserPromptSubmit contract is CC-compatible:
-  // stdin JSON carries cwd+prompt, stdout on exit 0 is injected as context). Only the emitted
-  // pointer's tool name differs — `--agent droid` selects droidPetboxTool (`petbox___…`).
-  const droidPromptRagCmd = `node "${join(STABLE, "prompt-rag.ts")}" --agent droid`;
   const droidPushCmd = `node "${join(STABLE, "droid-push-session.ts")}"`;
   const droidPullCmd = `node "${join(STABLE, "droid-pull-memory.ts")}"`;
   // Every kit hook command this run considers current — the prune keeps these, drops the rest.
@@ -1127,11 +1032,12 @@ function installGlobalHooks(promptRagAction: PromptRagHookAction): void {
 
   ensureHook("Stop", pushCmd);
   ensureHook("SessionStart", pullCmd);
-  // prompt-RAG: the UserPromptSubmit exact-match context injector is a GLOBAL hook (one per machine)
-  // that self-gates per project from the registry — so "installed while some project is off" is a
-  // CORRECT state, and the install-time toggle is STICKY (see prompt-rag-hook.ts for the policy).
-  // UserPromptSubmit takes no matcher (CC docs), so the group shape { hooks: [...] } is correct.
-  logPromptRagHook("claude", applyPromptRagHook(settings.hooks, promptRagAction, promptRagCmd), promptRagAction);
+  // Migration (unconditional): drop any leftover prompt-rag UserPromptSubmit hook — the feature is
+  // gone and the kit no longer ships the file its command points at.
+  const ragPrunedClaude = pruneDeadPromptRagHooks(settings.hooks);
+  if (ragPrunedClaude > 0) {
+    log(`[8/10] pruned ${ragPrunedClaude} dead claude prompt-rag UserPromptSubmit hook(s) (feature removed).`);
+  }
   writeJson(settingsPath, settings);
   log(`[8/10] merged hooks into ${settingsPath}`);
 
@@ -1162,12 +1068,12 @@ function installGlobalHooks(promptRagAction: PromptRagHookAction): void {
 
   ensureDroidHook("Stop", droidPushCmd);
   ensureDroidHook("SessionStart", droidPullCmd);
-  // prompt-RAG for Droid: same GLOBAL, per-project-self-gating model, same sticky decision. Droid's
-  // UserPromptSubmit is CC-compatible, so we install the shared prompt-rag.ts with `--agent droid`
-  // (only the pointer's tool name differs). Its command differs from the CC promptRagCmd (the
-  // `--agent droid` suffix), so the exact-command dedup keeps the two hooks independent and
-  // idempotent; the prune matches the quoted basename and therefore catches both variants.
-  logPromptRagHook("droid", applyPromptRagHook(droidSettings.hooks, promptRagAction, droidPromptRagCmd), promptRagAction);
+  // Same migration on the Droid side. Its legacy command carried an `--agent droid` suffix, which is
+  // why the prune matches the QUOTED BASENAME (`prompt-rag.ts"`) and catches both variants.
+  const ragPrunedDroid = pruneDeadPromptRagHooks(droidSettings.hooks);
+  if (ragPrunedDroid > 0) {
+    log(`[8/10] pruned ${ragPrunedDroid} dead droid prompt-rag UserPromptSubmit hook(s) (feature removed).`);
+  }
   writeJson(droidSettingsPath, droidSettings);
   log(`[8/10] merged droid hooks into ${droidSettingsPath}`);
 
@@ -1361,12 +1267,8 @@ async function main(): Promise<void> {
   // 5. stable kit copy
   copyKitToStable();
 
-  // 6. registry — carry the per-project prompt-RAG update (undefined = sticky). --prompt-rag writes
-  // { enabled:true, +default tolerances }; --no-prompt-rag writes { enabled:false } (keeping any
-  // tuned tolerances); neither leaves the project's existing promptRag untouched.
-  const promptRagUpdate: PromptRagConfig | undefined =
-    args.promptRag === undefined ? undefined : { enabled: args.promptRag };
-  upsertRegistry(dir, project, envVar, baseUrl, promptRagUpdate);
+  // 6. registry
+  upsertRegistry(dir, project, envVar, baseUrl);
 
   // 7. project files
   writeProjectFiles(dir, project, envVar, workspace);
@@ -1382,25 +1284,9 @@ async function main(): Promise<void> {
     log(`[telemetry] not requested — skipped (pass --telemetry to enable Claude Code OTLP export).`);
   }
 
-  // 7c. prompt-RAG audit log (only when ENABLING): the hook's best-effort ingest 404s until
-  // `prompt-rag-audit` exists. Idempotent + non-fatal.
-  if (args.promptRag === true) {
-    await ensurePromptRagAuditLog(baseUrl, project, key);
-  }
-
-  // 8. global install. The prompt-RAG decision is STICKY: --prompt-rag installs the global hook,
-  // --no-prompt-rag prunes it ONLY when no registered project is left with the flag on (the hook is
-  // global and self-gates per project — one project opting out must not disable the others), and
-  // passing NEITHER flag leaves the hook exactly as found. `anyProjectEnabled` is read AFTER the
-  // step-6 upsert, so this project already counts with its new flag. A kit that no longer ships
-  // prompt-rag.ts always prunes (version-skew guard).
-  const promptRagAction = decidePromptRagHook({
-    requested: args.promptRag,
-    kitShipsHook: existsSync(join(STABLE, PROMPT_RAG_FILE)),
-    anyProjectEnabled: anyProjectPromptRagEnabled(readRegistry()),
-  });
-  log(`[8/10] prompt-rag hook: ${promptRagAction.action} — ${promptRagAction.reason}`);
-  installGlobalHooks(promptRagAction.action);
+  // 8. global install — installs the live Stop/SessionStart hooks and, unconditionally, prunes the
+  // dead prompt-rag UserPromptSubmit hook left behind by a kit that still had the feature.
+  installGlobalHooks();
 
   // 9. cleanup legacy
   if (args.cleanupLegacy) cleanupLegacy(dir);

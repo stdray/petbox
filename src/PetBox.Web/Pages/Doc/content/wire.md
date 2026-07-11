@@ -22,7 +22,6 @@ It validates the key against the server **before** persisting anything, so a bad
 | `--cleanup-legacy` | Remove wiring artefacts left by older kit versions from the project. |
 | `--telemetry` | Wire Claude Code OTLP export into the project's `.claude/settings.json` (off by default; Claude Code only). |
 | `--telemetry-log <name>` | Target named log for telemetry (default `cc-telemetry`); the log is created if missing. |
-| `--prompt-rag` / `--no-prompt-rag` | Per-project prompt-RAG gate, **sticky in both halves**. `--prompt-rag` sets the project's flag and installs the global `UserPromptSubmit` hook (Claude Code + Droid). `--no-prompt-rag` clears the flag, and removes the hook only once **no** registered project has it on (the hook is global and self-gates per project, so one project opting out must not disable the others). Passing **neither leaves both alone** — the flag and the installed hook survive a plain re-run untouched. |
 | `--help`, `-h` | Usage banner, exit 0. |
 
 What the full wire writes into `<dir>`: `.mcp.json` (Claude Code), `.opencode/opencode.json` (opencode), `.factory/mcp.json` (Factory Droid — **merged**, not overwritten, so team servers survive), and a `SKILL.md` under `.claude/skills/petbox/`, `.factory/skills/petbox/` plus the `petbox-agent-factory` skill in the same surfaces. All three MCP configs reference the key as `${VAR}` / `{env:VAR}` — the key itself is never written into a project file.
@@ -104,8 +103,8 @@ The CLI only ever **reads** definitions, so an `agents:read` key is enough to wi
 | --- | --- |
 | `GET /api/auth/validate` | Full wire — key validation before anything is persisted; also reports the workspace the key belongs to. |
 | `GET /api/{project}/agent-defs/{key}` | `apply` — the portable definition (`agents:read`). |
-| `GET /api/memory/{project}/canon` | SessionStart hook — the memory canon (cached to `~/.petbox/cache/`). |
-| `POST /api/logs/{project}/logs` | Full wire — ensures the telemetry / prompt-RAG audit log exists. |
+| `GET /api/memory/{project}/canon` | SessionStart hook — the memory canon (cached to `~/.petbox/cache/`). This is the only context the wiring injects; there is no per-prompt injection. |
+| `POST /api/logs/{project}/logs` | Full wire — ensures the telemetry log exists. |
 | `POST /api/sessions/{project}/wire-smoke` | Full wire — the final self-smoke that proves the key round-trips. |
 
 ## 9. What lives under `~/.petbox/`
@@ -113,7 +112,7 @@ The CLI only ever **reads** definitions, so an `agents:read` key is enough to wi
 | Path | Contents |
 | --- | --- |
 | `wire/` | The stable kit copy (hooks and scripts point here, so wiring survives npx cache eviction). Refresh with `update`. |
-| `projects.json` | Registry: directory prefix → project, env-var name, base URL, prompt-RAG flag. Resolved by longest prefix against cwd. |
+| `projects.json` | Registry: directory prefix → project, env-var name, base URL. Resolved by longest prefix against cwd. |
 | `keys.json` | Flat `{ "<ENV_VAR>": "<key>" }` map the kit hooks read directly. Tightened to `0600` on POSIX. |
 | `env.sh` | POSIX only — regenerated from the key store, sourced from your login profiles. |
 | `roles.json` | Local role→model bindings + `activeProfile`. Machine-owned; never uploaded. |

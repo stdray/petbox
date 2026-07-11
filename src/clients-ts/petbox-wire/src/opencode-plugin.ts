@@ -80,25 +80,9 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
     }
   }
 
-  // prompt-RAG (exact-match per-prompt pointer injection) is NOT ported to opencode. Assessed
-  // against @opencode-ai/plugin's Hooks interface (v1.15.12 index.d.ts; the same surface exists back
-  // to ≥1.1.36): opencode has NO clean equivalent of Claude Code's UserPromptSubmit — there is no
-  // hook that (a) fires once per user-message submission, (b) receives that prompt, and (c) lets you
-  // append per-turn context via a return value/stdout.
-  //   - `experimental.chat.system.transform` (used above) reaches the model but its input is only
-  //     { sessionID, model } — it never sees the user prompt, so it can't do prompt-conditional
-  //     exact-match (it's for the STATIC memory protocol).
-  //   - `chat.message` sees a new user message (output { message, parts }) but the docs frame it as
-  //     "called when a new message is received" (observational); whether mutating parts reaches the
-  //     model is undocumented/unconfirmed.
-  //   - `experimental.chat.messages.transform` (output.messages) DOES reach the model and can read
-  //     the last user turn — but it's `experimental`, fires on EVERY completion within a turn (tool
-  //     loops, sub-agents, compaction continues), not once per user submission, and would require
-  //     mutating the message array. That is a materially worse, noisier surrogate than CC's clean
-  //     stdout inject — exactly the RAG-as-dump failure mode this feature is designed to avoid.
-  // Verdict: DEFER. No injection is wired here on purpose (don't force a bad surrogate). If a future
-  // opencode release adds a true per-user-message context hook, port the shared prompt-rag.ts core
-  // (buildInjectionForProject) with the opencodePetboxTool namer (`petbox_tasks_node_get`).
+  // No per-prompt context injection is wired here. (The kit's prompt-RAG experiment — exact-match
+  // per-prompt pointer injection on Claude Code's UserPromptSubmit — has been removed entirely, and
+  // opencode never had a clean equivalent of that hook to port it to.)
   return {
     // Port of pull-memory — make the memory protocol part of the system prompt.
     "experimental.chat.system.transform": async (_input, output) => {
