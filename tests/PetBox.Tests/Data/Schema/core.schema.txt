@@ -1,0 +1,186 @@
+# PetBox schema golden snapshot — tier: core
+# Generated from the tier's FluentMigrator migration set on a CLEAN database.
+# Do not hand-edit. Regenerate: PETBOX_SCHEMA_GOLDEN_UPDATE=1 dotnet test tests/PetBox.Tests --filter GoldenSchema
+# ...then READ the diff. See README.md.
+TABLE ApiKeys
+  COL CreatedAt DATETIME NOT NULL
+  COL ExpiresAt DATETIME NULL
+  COL Key TEXT NOT NULL PK1
+  COL Name TEXT NOT NULL DEFAULT ''
+  COL ProjectKey TEXT NOT NULL
+  COL Scopes TEXT NOT NULL
+  INDEX sqlite_autoindex_ApiKeys_1 UNIQUE origin=pk (Key)
+
+TABLE DataDbs
+  COL CreatedAt DATETIME NOT NULL
+  COL Description TEXT NULL
+  COL MaxPageCount INTEGER NOT NULL
+  COL Name TEXT NOT NULL PK2
+  COL ProjectKey TEXT NOT NULL PK1
+  COL UpdatedAt DATETIME NOT NULL
+  INDEX sqlite_autoindex_DataDbs_1 UNIQUE origin=pk (ProjectKey, Name)
+
+TABLE DataTables
+  COL Columns TEXT NOT NULL DEFAULT '[]'
+  COL Delete INTEGER NOT NULL DEFAULT 0
+  COL Name TEXT NOT NULL PK1
+  COL ProjectKey TEXT NOT NULL
+  COL Read INTEGER NOT NULL DEFAULT 1
+  COL Write INTEGER NOT NULL DEFAULT 0
+  INDEX IX_DataTables_ProjectKey origin=c (ProjectKey)
+  INDEX sqlite_autoindex_DataTables_1 UNIQUE origin=pk (Name)
+
+TABLE HealthEndpoints
+  COL CreatedAt DATETIME NOT NULL
+  COL CreatedBy TEXT NULL
+  COL Enabled INTEGER NOT NULL
+  COL Id INTEGER NOT NULL PK1
+  COL IntervalSeconds INTEGER NOT NULL
+  COL ProjectKey TEXT NOT NULL
+  COL Url TEXT NOT NULL
+
+TABLE HealthReports
+  COL BuildDate TEXT NULL
+  COL Id INTEGER NOT NULL PK1
+  COL Name TEXT NULL
+  COL ReceivedAt DATETIME NOT NULL
+  COL Sha TEXT NULL
+  COL Source TEXT NOT NULL
+  COL Status TEXT NOT NULL
+  COL Svc TEXT NOT NULL
+  COL Tags TEXT NOT NULL
+  COL Version TEXT NULL
+  INDEX IX_HealthReports_ReceivedAt origin=c (ReceivedAt)
+  INDEX IX_HealthReports_Svc_Tags_ReceivedAt origin=c (Svc, Tags, ReceivedAt DESC)
+
+TABLE Logs
+  COL CreatedAt DATETIME NOT NULL
+  COL Description TEXT NULL
+  COL Name TEXT NOT NULL PK2
+  COL ProjectKey TEXT NOT NULL PK1
+  COL UpdatedAt DATETIME NOT NULL
+  INDEX sqlite_autoindex_Logs_1 UNIQUE origin=pk (ProjectKey, Name)
+
+TABLE MemoryStores
+  COL CreatedAt DATETIME NOT NULL
+  COL Description TEXT NULL
+  COL IsSystem INTEGER NOT NULL DEFAULT 0
+  COL Name TEXT NOT NULL PK2
+  COL ProjectKey TEXT NOT NULL PK1
+  COL UpdatedAt DATETIME NOT NULL
+  INDEX sqlite_autoindex_MemoryStores_1 UNIQUE origin=pk (ProjectKey, Name)
+
+TABLE Projects
+  COL Description TEXT NULL
+  COL Key TEXT NOT NULL PK1
+  COL Name TEXT NOT NULL
+  COL WorkspaceKey TEXT NOT NULL
+  INDEX sqlite_autoindex_Projects_1 UNIQUE origin=pk (Key)
+
+TABLE Relation
+  COL ClosedAt DATETIME NULL
+  COL CreatedAt DATETIME NOT NULL
+  COL FromNodeId TEXT NOT NULL
+  COL Id TEXT NOT NULL PK1
+  COL Kind TEXT NOT NULL
+  COL ProjectKey TEXT NOT NULL
+  COL ToNodeId TEXT NOT NULL
+  INDEX ix_relation_from origin=c (ProjectKey, FromNodeId)
+  INDEX ix_relation_to origin=c (ProjectKey, ToNodeId)
+  INDEX sqlite_autoindex_Relation_1 UNIQUE origin=pk (Id)
+
+TABLE SavedConfigFilters
+  COL CreatedAt DATETIME NOT NULL
+  COL FilterTags TEXT NOT NULL
+  COL Id INTEGER NOT NULL PK1
+  COL Name TEXT NOT NULL
+  COL WorkspaceKey TEXT NOT NULL
+  INDEX IX_SavedConfigFilters_WorkspaceKey origin=c (WorkspaceKey)
+
+TABLE SavedQueries
+  COL CreatedAt DATETIME NOT NULL
+  COL Id INTEGER NOT NULL PK1
+  COL Kql TEXT NOT NULL
+  COL Name TEXT NOT NULL
+  COL ProjectKey TEXT NOT NULL
+  COL UpdatedAt DATETIME NOT NULL
+  INDEX IX_SavedQueries_ProjectKey origin=c (ProjectKey)
+
+TABLE Settings
+  COL Path TEXT NOT NULL PK3
+  COL Scope TEXT NOT NULL PK1
+  COL ScopeKey TEXT NOT NULL PK2
+  COL Type TEXT NOT NULL
+  COL UpdatedAt DATETIME NOT NULL
+  COL UpdatedBy INTEGER NULL
+  COL Value TEXT NOT NULL
+  INDEX IX_Settings_ScopeKey origin=c (Scope, ScopeKey)
+  INDEX sqlite_autoindex_Settings_1 UNIQUE origin=pk (Scope, ScopeKey, Path)
+
+TABLE ShareLinks
+  COL ColumnsJson TEXT NOT NULL DEFAULT '[]'
+  COL CreatedAt DATETIME NOT NULL
+  COL CreatedBy TEXT NOT NULL DEFAULT 'system'
+  COL ExpiresAt DATETIME NOT NULL
+  COL Id TEXT NOT NULL PK1
+  COL Kql TEXT NOT NULL
+  COL LogName TEXT NOT NULL DEFAULT 'default'
+  COL ModesJson TEXT NOT NULL DEFAULT '{}'
+  COL ProjectKey TEXT NOT NULL
+  COL SaltBase64 TEXT NOT NULL
+  INDEX IX_ShareLinks_ExpiresAt origin=c (ExpiresAt)
+  INDEX sqlite_autoindex_ShareLinks_1 UNIQUE origin=pk (Id)
+
+TABLE TaskBoards
+  COL ClosedAt DATETIME NULL
+  COL CreatedAt DATETIME NOT NULL
+  COL Description TEXT NULL
+  COL Kind TEXT NOT NULL DEFAULT 'free'
+  COL MethodologyInstance TEXT NULL
+  COL Name TEXT NOT NULL PK2
+  COL ProjectKey TEXT NOT NULL PK1
+  COL SpecBoard TEXT NULL
+  COL UpdatedAt DATETIME NOT NULL
+  INDEX sqlite_autoindex_TaskBoards_1 UNIQUE origin=pk (ProjectKey, Name)
+
+TABLE Users
+  COL CreatedAt TEXT NOT NULL DEFAULT ''
+  COL Id INTEGER NOT NULL PK1
+  COL PasswordHash TEXT NOT NULL
+  COL Username TEXT NOT NULL
+  INDEX IX_Users_Username UNIQUE origin=c (Username)
+  INDEX sqlite_autoindex_Users_1 UNIQUE origin=u (Username)
+
+TABLE VersionInfo
+  COL AppliedOn DATETIME NULL
+  COL Description TEXT NULL
+  COL Version INTEGER NOT NULL
+  INDEX UC_Version UNIQUE origin=c (Version)
+
+TABLE WorkspaceMembers
+  COL Id INTEGER NOT NULL PK1
+  COL Role INTEGER NOT NULL
+  COL UserId INTEGER NOT NULL
+  COL WorkspaceKey TEXT NOT NULL
+  INDEX IX_WorkspaceMembers_UserId_WorkspaceKey UNIQUE origin=c (UserId, WorkspaceKey)
+
+TABLE Workspaces
+  COL CreatedAt TEXT NOT NULL DEFAULT ''
+  COL Description TEXT NULL
+  COL Key TEXT NOT NULL PK1
+  COL Name TEXT NOT NULL
+  INDEX sqlite_autoindex_Workspaces_1 UNIQUE origin=pk (Key)
+
+TABLE agent_definitions
+  COL ActiveFrom INTEGER NOT NULL
+  COL ActiveTo INTEGER NULL
+  COL Created TEXT NOT NULL
+  COL Json TEXT NOT NULL
+  COL Key TEXT NOT NULL PK2
+  COL PrevKey TEXT NULL
+  COL ProjectKey TEXT NOT NULL PK1
+  COL Updated TEXT NOT NULL
+  COL Version INTEGER NOT NULL PK3
+  INDEX ix_agent_definitions_project_active origin=c (ProjectKey, ActiveTo)
+  INDEX sqlite_autoindex_agent_definitions_1 UNIQUE origin=pk (ProjectKey, Key, Version)
+  INDEX ux_agent_definitions_active_project_key UNIQUE origin=c (ProjectKey, Key) WHERE ActiveTo IS NULL

@@ -1,0 +1,37 @@
+# PetBox schema golden snapshot — tier: sessions
+# Generated from the tier's FluentMigrator migration set on a CLEAN database.
+# Do not hand-edit. Regenerate: PETBOX_SCHEMA_GOLDEN_UPDATE=1 dotnet test tests/PetBox.Tests --filter GoldenSchema
+# ...then READ the diff. See README.md.
+TABLE VersionInfo
+  COL AppliedOn DATETIME NULL
+  COL Description TEXT NULL
+  COL Version INTEGER NOT NULL
+  INDEX UC_Version UNIQUE origin=c (Version)
+
+TABLE message_vec
+  COL Dim INTEGER NOT NULL
+  COL Hash TEXT NOT NULL
+  COL Model TEXT NOT NULL
+  COL SessionId TEXT NOT NULL PK1
+  COL Vec BLOB NOT NULL
+  COL Version INTEGER NOT NULL PK2
+  INDEX sqlite_autoindex_message_vec_1 UNIQUE origin=pk (SessionId, Version)
+
+TABLE session_term_cursor
+  COL Cursor INTEGER NOT NULL
+  COL SessionId TEXT NULL PK1
+  INDEX sqlite_autoindex_session_term_cursor_1 UNIQUE origin=pk (SessionId)
+
+TABLE sessions
+  COL Agent TEXT NOT NULL
+  COL ContentZ BLOB NOT NULL
+  COL DeletedAt TEXT NULL
+  COL IsDeleted INTEGER NOT NULL DEFAULT 0
+  COL MetaJson TEXT NULL
+  COL SessionId TEXT NOT NULL PK1
+  COL Updated TEXT NOT NULL
+  COL Version INTEGER NOT NULL
+  INDEX sqlite_autoindex_sessions_1 UNIQUE origin=pk (SessionId)
+
+VIRTUAL TABLE session_term_fts
+  DECL CREATE VIRTUAL TABLE session_term_fts USING fts5(SessionId UNINDEXED, Text, tokenize='unicode61')
