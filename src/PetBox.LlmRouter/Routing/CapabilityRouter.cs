@@ -81,8 +81,14 @@ public sealed partial class CapabilityRouter : ILlmClient
 			.ToList();
 
 		if (routes.Count == 0)
+		{
+			// The hole that killed semantic search everywhere outside $system and never said a
+			// word: a project with no Embed route throws here on EVERY query, and the only thing
+			// that ever escaped was a mute `degraded:true`. Say it out loud, with the project.
+			LogNoRoute(_log, cap, projectKey, tier ?? "-", resolved.Registry.Routes.Count(r => r.Capability == cap));
 			throw new LlmRouterException(cap, false,
-				$"no route configured for {cap}" + (tier is null ? "" : $" tier '{tier}'"));
+				$"no route configured for {cap}" + (tier is null ? "" : $" tier '{tier}'"), null, noRoute: true);
+		}
 
 		var attempt = 0;
 		Exception? last = null;
@@ -146,4 +152,7 @@ public sealed partial class CapabilityRouter : ILlmClient
 
 	[LoggerMessage(EventId = 304, Level = LogLevel.Warning, Message = "llm {Capability} transient failure on '{Endpoint}': {Message} — trying next")]
 	static partial void LogTransient(ILogger logger, LlmCapability capability, string endpoint, string message);
+
+	[LoggerMessage(EventId = 305, Level = LogLevel.Warning, Message = "llm {Capability}: NO ROUTE configured for project '{Project}' (tier '{Tier}'; {CapabilityRoutes} route(s) exist for this capability, none matched) — the capability is dead here")]
+	static partial void LogNoRoute(ILogger logger, LlmCapability capability, string project, string tier, int capabilityRoutes);
 }

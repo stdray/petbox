@@ -26,7 +26,7 @@ namespace PetBox.Web.Search;
 // (NewEnsuredConnection → schema ensure) materializes it only for a project whose store row says it
 // should exist — the migration then runs here, under supervision, instead of at a random first
 // write. Projects that never touched memory are not in the list and get no empty file.
-public sealed class MemoryVectorizationJob : IBackgroundIndexJob
+public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 {
 	// Must match MemoryService.VectorDim — the read path and the worker must store/query the same dim.
 	const int VectorDim = 1024;
@@ -61,16 +61,33 @@ public sealed class MemoryVectorizationJob : IBackgroundIndexJob
 				using (var probe = _factory.NewEnsuredConnection(project))
 					stores = probe.Entries.Select(e => e.Store).Distinct().ToList();
 
+				int projectIndexed = 0, projectDead = 0;
+				long maxLag = 0;
 				foreach (var store in stores)
 				{
 					ct.ThrowIfCancellationRequested();
 					var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(_llm, project), VectorDim);
 					var source = new MemorySearchSource(Connect, project, store);
 					var cursor = new SqliteIndexCursorStore(Connect);
-					var worker = new AsyncVectorizationWorker(MemoryCursors.Vector(store), source, target, cursor);
+					var worker = new AsyncVectorizationWorker(MemoryCursors.Vector(store), source, target, cursor,
+						log: _logger);
 
 					var r = await worker.DrainAsync(ct);
 					indexed += r.Indexed;
+					projectIndexed += r.Indexed;
+					projectDead += r.DeadLettered; // used to be dropped on the floor — a dead-letter was invisible
+					maxLag = Math.Max(maxLag, r.Lag);
+				}
+
+				// The three numbers that make a dead semantic index visible on day one: how many
+				// vectors this project actually has (0 with entries present ⇒ it NEVER ran), how
+				// many docs were permanently dropped, and how far the cursor trails the data.
+				// Logged (the existing observability pipeline) — no new metric mechanism invented.
+				if (_logger is not null && stores.Count > 0)
+				{
+					using var stats = _factory.NewEnsuredConnection(project);
+					var (vectors, dead) = await SearchIndexStatsReader.ReadAsync(stats, ct);
+					LogProjectStats(_logger, project, stores.Count, projectIndexed, projectDead, vectors, dead, maxLag);
 				}
 			}
 			catch (Exception ex) when (ex is not OperationCanceledException)
@@ -82,4 +99,9 @@ public sealed class MemoryVectorizationJob : IBackgroundIndexJob
 		}
 		return indexed;
 	}
+
+	[LoggerMessage(EventId = 410, Level = LogLevel.Information,
+		Message = "memory vectorization {Project}: {Stores} store(s), indexed {Indexed}, dead-lettered {DeadLettered} this pass; search_vec rows {VectorRows}, dead total {DeadTotal}, max cursor lag {Lag}")]
+	static partial void LogProjectStats(ILogger logger, string project, int stores, int indexed, int deadLettered,
+		long vectorRows, long deadTotal, long lag);
 }

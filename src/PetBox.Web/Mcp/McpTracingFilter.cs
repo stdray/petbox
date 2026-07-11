@@ -12,10 +12,13 @@ namespace PetBox.Web.Mcp;
 // request trace is attributable to the tool that ran (spec: trace-write-path-spans).
 // The span nests under the AspNetCore request span via Activity.Current.
 //
-// Beyond the tool name + status, the span carries request/response SIZES and key call
-// SHAPERS so the hot path can be audited (frequency × latency × volume × call character)
-// without reading bodies. PRIVACY CONTRACT: we log only FORMS and SIZES — never parameter
-// VALUES and never request/response bodies (spec: telemetry-no-payloads).
+// Beyond the tool name + status, the span AND the ToolCalls self-log carry request/response
+// SIZES and key call SHAPERS so the hot path can be audited (frequency × latency × volume ×
+// call character) without reading bodies. The shapers land in the LOG too because that — not
+// the span — is what the economy measurements are queried from (KQL over the self-log).
+// PRIVACY CONTRACT (spec: trace-mcp-call-shape): no CONTENT ever — no free text (the `q`
+// string included), no request/response bodies, no secrets. Only sizes, forms, and the values
+// of knobs a tool signature explicitly marked [LogArg]; unmarked is unobservable.
 static partial class McpTracingFilter
 {
 	// Match the server's tool serializer (relaxed encoder, same as McpErrorEnvelopeFilter)
@@ -47,14 +50,17 @@ static partial class McpTracingFilter
 			var tool = request.Params?.Name;
 			var session = request.Server.SessionId ?? NoSession;
 			var reqChars = SerializedLength(request.Params?.Arguments);
+			// The [LogArg]-marked args, extracted ONCE (one registry lookup by tool name) and fed
+			// to BOTH sinks: the span tags below and the self-log event's dynamic properties.
+			var args = request.Params?.Arguments;
+			var marked = ExtractMarkedArgs(tool, args);
 
 			using var span = StartToolSpan(tool);
 			if (span is not null)
 			{
-				var args = request.Params?.Arguments;
 				span.SetTag("petbox.request_chars", reqChars);
 				span.SetTag("petbox.session_id", request.Server.SessionId);
-				foreach (var (key, value) in ExtractArgShapers(args))
+				foreach (var (key, value) in ExtractArgShapers(marked, args))
 					span.SetTag(key, value);
 			}
 			try
@@ -69,7 +75,7 @@ static partial class McpTracingFilter
 				var outcome = result.IsError == true ? "error" : "ok";
 				if (result.IsError == true)
 					span?.SetStatus(ActivityStatusCode.Error);
-				LogToolCall(logger, tool, session, reqChars, respChars, outcome);
+				LogToolCall(logger, tool, session, reqChars, respChars, outcome, marked);
 				return result;
 			}
 			catch (Exception ex)
@@ -77,18 +83,46 @@ static partial class McpTracingFilter
 				span?.SetStatus(ActivityStatusCode.Error, ex.Message);
 				// No result to measure on a genuine throw → RespChars 0, Outcome error, then
 				// rethrow to preserve the error-status behavior for callers up the stack.
-				LogToolCall(logger, tool, session, reqChars, 0, "error");
+				LogToolCall(logger, tool, session, reqChars, 0, "error", marked);
 				throw;
 			}
 		});
 
-	// Source-generated, allocation-free self-log write (CA1873-clean). The template placeholder
-	// names (Tool/Session/ReqChars/RespChars/Outcome) become KQL-addressable Properties.<Name>
-	// once SystemLogger lifts the named args. Message starts with "mcp tool " — the query anchor.
-	[LoggerMessage(EventId = 600, Level = LogLevel.Information,
-		Message = "mcp tool {Tool} session {Session} req {ReqChars} resp {RespChars} outcome {Outcome}")]
-	static partial void LogToolCall(
-		ILogger logger, string? tool, string session, int reqChars, int respChars, string outcome);
+	// The self-log event's template. Its placeholder names (Tool/Session/ReqChars/RespChars/
+	// Outcome) are the STABLE KQL columns (Properties.<Name>) every existing query anchors on;
+	// the message starts with "mcp tool " — the query anchor for MessageTemplate.
+	const string ToolCallTemplate =
+		"mcp tool {Tool} session {Session} req {ReqChars} resp {RespChars} outcome {Outcome}";
+
+	// Written by hand rather than by [LoggerMessage] because the property set is VARIABLE: a
+	// source-generated template has a fixed placeholder list, but each tool contributes its own
+	// [LogArg] knobs (Arg_bodyLen, Arg_limit, Arg_q, …). SystemLogger lifts EVERY KVP of the MEL
+	// state (bar {OriginalFormat}, skipping nulls) into Properties.<Name>, so passing the state
+	// as an IReadOnlyList<KVP> makes each marked arg a top-level, KQL-addressable column — while
+	// {OriginalFormat} keeps MessageTemplate byte-identical to the old source-generated one.
+	static void LogToolCall(
+		ILogger logger, string? tool, string session, int reqChars, int respChars, string outcome,
+		List<McpLoggedArgs.MarkedArg> marked)
+	{
+		if (!logger.IsEnabled(LogLevel.Information)) return;
+
+		var state = new List<KeyValuePair<string, object?>>(6 + marked.Count)
+		{
+			new("Tool", tool),
+			new("Session", session),
+			new("ReqChars", reqChars),
+			new("RespChars", respChars),
+			new("Outcome", outcome),
+		};
+		foreach (var arg in marked)
+			state.Add(new(arg.LogProperty, arg.Value));
+		state.Add(new("{OriginalFormat}", ToolCallTemplate));
+
+		var message =
+			$"mcp tool {tool} session {session} req {reqChars} resp {respChars} outcome {outcome}";
+		logger.Log(LogLevel.Information, new EventId(600, nameof(LogToolCall)),
+			(IReadOnlyList<KeyValuePair<string, object?>>)state, null, (_, _) => message);
+	}
 
 	internal static Activity? StartToolSpan(string? toolName)
 	{
@@ -102,44 +136,64 @@ static partial class McpTracingFilter
 	static int SerializedLength(object? value) =>
 		value is null ? 0 : JsonSerializer.Serialize(value, SizeJson).Length;
 
-	// Pure, testable shaper extraction. Given the raw tool arguments, yields the privacy-safe
-	// span tags — FORMS and SIZES only, never values. A shaper whose arg is absent/empty
-	// produces NO pair, so its span tag stays unset (present-only semantics).
-	internal static IEnumerable<KeyValuePair<string, object?>> ExtractArgShapers(
-		IDictionary<string, JsonElement>? args)
+	// Pure, testable extraction of the [LogArg]-marked args of ONE call. The registry (built once
+	// from the parameter markup) says WHICH params of this tool may be shaped and how; here we
+	// pick the ones actually present. An unknown/unmarked tool yields NOTHING — the safe default:
+	// no markup, no arg telemetry, so a param can never leak by being merely named `q` or `limit`.
+	// An absent/null/empty arg produces NO entry either (present-only semantics).
+	internal static List<McpLoggedArgs.MarkedArg> ExtractMarkedArgs(
+		string? tool, IDictionary<string, JsonElement>? args)
 	{
-		var tags = new List<KeyValuePair<string, object?>>();
+		var marked = new List<McpLoggedArgs.MarkedArg>();
 		if (args is null || args.Count == 0)
-			return tags;
+			return marked;
 
-		// q — whether a non-empty search query was passed (bool; the value stays private).
-		if (args.TryGetValue("q", out var q)
-			&& q.ValueKind == JsonValueKind.String
-			&& !string.IsNullOrEmpty(q.GetString()))
-			tags.Add(new("petbox.arg.q", true));
+		foreach (var def in McpLoggedArgs.For(tool))
+		{
+			if (!args.TryGetValue(def.Name, out var el) || !IsNonEmpty(el))
+				continue;
 
-		// bodyLen / limit — numeric knobs; the number itself carries no user content.
-		if (TryGetInt64(args, "bodyLen", out var bodyLen))
-			tags.Add(new("petbox.arg.body_len", bodyLen));
-		if (TryGetInt64(args, "limit", out var limit))
-			tags.Add(new("petbox.arg.limit", limit));
+			// Presence: the VALUE never leaves the process — only "it was passed, non-empty".
+			// This is the only mode a free-text param (q) may ever carry.
+			var value = def.Mode == LogArgMode.Presence ? true : Scalar(el);
+			if (value is null)
+				continue; // a Value-mode arg of a shape we refuse to render (object/array) — drop it.
+
+			marked.Add(new(def.SpanTag, def.LogProperty, value));
+		}
+
+		return marked;
+	}
+
+	// The privacy-safe rendering of a Value-mode arg: numbers, bools and closed enum-like strings
+	// only (marking a param is the assertion that its value is such a knob — see LogArgAttribute).
+	// Objects/arrays have no scalar shape and are refused.
+	static object? Scalar(JsonElement el) => el.ValueKind switch
+	{
+		JsonValueKind.Number => el.TryGetInt64(out var i) ? i : el.GetDouble(),
+		JsonValueKind.True => true,
+		JsonValueKind.False => false,
+		JsonValueKind.String => el.GetString(),
+		_ => null,
+	};
+
+	// The span tags of one call: the marked args (already extracted) under their petbox.arg.*
+	// names, plus the DERIVED `fields` shape — which is not a parameter at all but a shape read
+	// off the node payload, hence computed here rather than declared in a signature.
+	internal static IEnumerable<KeyValuePair<string, object?>> ExtractArgShapers(
+		IReadOnlyList<McpLoggedArgs.MarkedArg> marked, IDictionary<string, JsonElement>? args)
+	{
+		var tags = new List<KeyValuePair<string, object?>>(marked.Count + 1);
+		foreach (var arg in marked)
+			tags.Add(new(arg.SpanTag, arg.Value));
 
 		// fields — for upsert-style tools, the sorted set of NON-EMPTY payload field NAMES on
 		// the node payload(s). Names only, never values: lets a status-only transition be told
 		// apart from a body/title edit.
-		var fields = ExtractFieldShape(args);
-		if (fields is not null)
+		if (args is { Count: > 0 } && ExtractFieldShape(args) is { } fields)
 			tags.Add(new("petbox.arg.fields", fields));
 
 		return tags;
-	}
-
-	static bool TryGetInt64(IDictionary<string, JsonElement> args, string name, out long value)
-	{
-		value = 0;
-		return args.TryGetValue(name, out var el)
-			&& el.ValueKind == JsonValueKind.Number
-			&& el.TryGetInt64(out value);
 	}
 
 	// `version` is pure CAS bookkeeping — always present on an upsert node and semantically

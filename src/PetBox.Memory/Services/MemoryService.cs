@@ -1,6 +1,7 @@
 using LinqToDB;
 using LinqToDB.Async;
 using LinqToDB.Data;
+using Microsoft.Extensions.Logging;
 using PetBox.Core.Contract;
 using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
@@ -45,12 +46,17 @@ public sealed class MemoryService : IMemoryService
 	// config section. Defaults are enabled/conservative, so an un-wired construction (tests,
 	// other adapters) still gets the shipped ranking.
 	readonly SearchRerankOptions _rerank;
+	// Optional (DI fills it; hand-constructed test/adapter instances pass none). Handed to the
+	// per-query SearchService so a degraded retriever leg is LOGGED, not just flagged.
+	readonly ILogger<MemoryService>? _log;
 
-	public MemoryService(IMemoryStore stores, ILlmClient? llm = null, SearchRerankOptions? rerank = null)
+	public MemoryService(IMemoryStore stores, ILlmClient? llm = null, SearchRerankOptions? rerank = null,
+		ILogger<MemoryService>? log = null)
 	{
 		_stores = stores;
 		_llm = llm;
 		_rerank = rerank ?? new SearchRerankOptions();
+		_log = log;
 	}
 
 	// ---- store lifecycle ----
@@ -396,7 +402,7 @@ public sealed class MemoryService : IMemoryService
 		// The store filter rides the index (Type IN …), so a store outside the scope can never eat
 		// a slot in the top-k — the recall the old per-file fan-out got by construction.
 		var filter = new SearchFilter(Types: stores);
-		var resp = await new SearchService(indexes).SearchAsync(projectKey, query, filter, k, ct);
+		var resp = await new SearchService(indexes, _log).SearchAsync(projectKey, query, filter, k, ct);
 
 		// Resolve hits to entries (preserving fused order + score) and apply the MemoryType filter.
 		// The fused hit's Retriever names the FIRST index that surfaced it; the lexical index is

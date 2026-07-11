@@ -99,11 +99,11 @@ public static class CommentTools
 	public static async Task<CommentsSearchResult> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments, ITasksService tasks,
 		string projectKey,
-		[Description("Search query. Omit for a deterministic chronological listing (list = search without q).")] string? q = null,
+		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic chronological listing (list = search without q).")] string? q = null,
 		[Description("Scope to one board. Omit = the whole project.")] string? board = null,
 		[Description("Scope to one owner node: its slug key on `board`, or its 32-hex NodeId. A node that matches nothing → an empty result (not an error).")] string? nodeId = null,
-		[Description("Body length knob (uniform contract): omitted = FULL in a listing / a ~240-char snippet with q; 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
-		[Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
+		[LogArg][Description("Body length knob (uniform contract): omitted = FULL in a listing / a ~240-char snippet with q; 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[LogArg][Description("Max rows returned. Default: unbounded listing / 20 with q (0 = no cap).")] int? limit = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -124,7 +124,7 @@ public static class CommentTools
 		var dflt = hasQuery ? ModuleMcp.DefaultSnippet : ModuleMcp.FullBody;
 		var rows = res.Items.Select(c => Shape(c, bodyLen, dflt)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(rows);
-		var retrievers = res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded) : null;
+		var retrievers = res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason) : null;
 		return omitted == 0
 			? new CommentsSearchResult(kept, retrievers)
 			: new CommentsSearchResult(kept, retrievers, Truncated: true, Omitted: omitted, Hint: SearchBudgetHint);
@@ -155,7 +155,7 @@ public static class CommentTools
 	public static async Task<CommentView> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, ICommentService comments,
 		string projectKey, string id,
-		[Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[LogArg][Description("Body length knob (uniform contract): omitted = the FULL body (this is the pointed full read); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);

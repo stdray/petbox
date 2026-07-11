@@ -262,10 +262,10 @@ public static class SessionTools
 	public static async Task<SessionSearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, ISessionService sessionSvc, PetBox.Web.Search.SessionSearchService search,
 		string? projectKey = null,
-		[Description("Search query. Omit for a deterministic listing of the project's sessions (list = search without q).")] string? q = null,
-		[Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
-		[Description("With q: max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
-		[Description("With q: opt into the full-scan escape hatch (raw substring scan over every session). Only actually runs if the deployment's permission setting also allows it — see fullScanRan/fullScanReason in the response. Default false: never on automatically.")] bool fullScan = false,
+		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing of the project's sessions (list = search without q).")] string? q = null,
+		[LogArg][Description("With q: how many discovered sessions to hydrate and search inside (default 10, max 30).")] int sessions = 0,
+		[LogArg][Description("With q: max hits returned per session (default 5, max 20).")] int hitsPerSession = 0,
+		[LogArg][Description("With q: opt into the full-scan escape hatch (raw substring scan over every session). Only actually runs if the deployment's permission setting also allows it — see fullScanRan/fullScanReason in the response. Default false: never on automatically.")] bool fullScan = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -294,14 +294,14 @@ public static class SessionTools
 			c.SessionId, c.Agent,
 			Description: c.Description,
 			Hits: c.Hits.Select(h => new SessionSearchHitView(h.Message, h.Role, h.Snippet, h.Score, h.Retriever)).ToList(),
-			Retrievers: new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded),
+			Retrievers: new RetrieverInfo(c.Retrievers.Lexical, c.Retrievers.Semantic, c.Retrievers.Degraded, c.Retrievers.DegradedReason),
 			Sources: c.Sources)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(items);
 		return new SessionSearchResultView(
 			kept,
 			Distilled: o.Distilled,
 			Reason: o.Reason,
-			Retrievers: new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded),
+			Retrievers: new RetrieverInfo(o.Discovery.Lexical, o.Discovery.Semantic, o.Discovery.Degraded, o.Discovery.DegradedReason),
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
 			Hint: omitted > 0 ? SearchBudgetHint : null,

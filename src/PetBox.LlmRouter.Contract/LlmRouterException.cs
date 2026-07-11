@@ -11,10 +11,16 @@ public sealed class LlmRouterException : Exception
 	public LlmCapability Capability { get; }
 	public bool Transient { get; }
 
-	public LlmRouterException(LlmCapability capability, bool transient, string message, Exception? inner = null)
+	// The capability has NO route configured for this project at all — a structural config hole,
+	// not a provider failure. Distinguished because a consumer must be able to say so out loud
+	// (search reports it as degradedReason "embed-no-route"): retrying will never fix it.
+	public bool NoRoute { get; }
+
+	public LlmRouterException(LlmCapability capability, bool transient, string message, Exception? inner = null, bool noRoute = false)
 		: base(message, inner)
 	{
 		Capability = capability;
 		Transient = transient;
+		NoRoute = noRoute;
 	}
 }
