@@ -1,0 +1,68 @@
+# PetBox schema golden snapshot — tier: memory
+# Generated from the tier's FluentMigrator migration set on a CLEAN database.
+# Do not hand-edit. Regenerate: PETBOX_SCHEMA_GOLDEN_UPDATE=1 dotnet test tests/PetBox.Tests --filter GoldenSchema
+# ...then READ the diff. See README.md.
+TABLE VersionInfo
+  COL AppliedOn DATETIME NULL
+  COL Description TEXT NULL
+  COL Version INTEGER NOT NULL
+  INDEX UC_Version UNIQUE origin=c (Version)
+
+TABLE entry_usage
+  COL DeliberateCount INTEGER NOT NULL DEFAULT 0
+  COL Key TEXT NOT NULL PK2
+  COL LastHitAt TEXT NULL
+  COL OpenedCount INTEGER NOT NULL DEFAULT 0
+  COL Store TEXT NOT NULL DEFAULT '' PK1
+  COL SurfacedCount INTEGER NOT NULL DEFAULT 0
+  INDEX sqlite_autoindex_entry_usage_1 UNIQUE origin=pk (Store, Key)
+
+TABLE memory_entries
+  COL ActiveFrom INTEGER NOT NULL
+  COL ActiveTo INTEGER NULL
+  COL Body TEXT NOT NULL
+  COL Created TEXT NOT NULL
+  COL Description TEXT NOT NULL
+  COL Key TEXT NOT NULL PK2
+  COL Metadata TEXT NOT NULL DEFAULT ''
+  COL PrevKey TEXT NULL
+  COL Store TEXT NOT NULL DEFAULT '' PK1
+  COL Tags TEXT NOT NULL
+  COL Type INTEGER NOT NULL DEFAULT 2
+  COL Updated TEXT NOT NULL
+  COL Version INTEGER NOT NULL PK3
+  INDEX ix_memory_entries_active origin=c (Store, ActiveTo, Key)
+  INDEX sqlite_autoindex_memory_entries_1 UNIQUE origin=pk (Store, Key, Version)
+  INDEX ux_memory_entries_active_key UNIQUE origin=c (Store, Key) WHERE ActiveTo IS NULL
+
+TABLE memory_store_merge
+  COL EntryRows INTEGER NOT NULL
+  COL MergedAt TEXT NOT NULL
+  COL Store TEXT NOT NULL PK1
+  COL UsageRows INTEGER NOT NULL
+  INDEX sqlite_autoindex_memory_store_merge_1 UNIQUE origin=pk (Store)
+
+TABLE search_cursor
+  COL IndexName TEXT NULL PK1
+  COL Version INTEGER NOT NULL
+  INDEX sqlite_autoindex_search_cursor_1 UNIQUE origin=pk (IndexName)
+
+TABLE search_deadletter
+  COL Attempts INTEGER NOT NULL
+  COL Dead INTEGER NOT NULL
+  COL Id TEXT NOT NULL PK3
+  COL IndexName TEXT NOT NULL PK1
+  COL Type TEXT NOT NULL PK2
+  INDEX sqlite_autoindex_search_deadletter_1 UNIQUE origin=pk (IndexName, Type, Id)
+
+TABLE search_vec
+  COL Dim INTEGER NOT NULL
+  COL Id TEXT NOT NULL PK3
+  COL Model TEXT NOT NULL
+  COL Scope TEXT NOT NULL PK1
+  COL Type TEXT NOT NULL PK2
+  COL Vec BLOB NOT NULL
+  INDEX sqlite_autoindex_search_vec_1 UNIQUE origin=pk (Scope, Type, Id)
+
+VIRTUAL TABLE search_fts
+  DECL CREATE VIRTUAL TABLE search_fts USING fts5(Scope UNINDEXED, Type UNINDEXED, Id UNINDEXED, Text, Tags, tokenize='unicode61')

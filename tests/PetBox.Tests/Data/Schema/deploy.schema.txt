@@ -1,0 +1,49 @@
+# PetBox schema golden snapshot — tier: deploy
+# Generated from the tier's FluentMigrator migration set on a CLEAN database.
+# Do not hand-edit. Regenerate: PETBOX_SCHEMA_GOLDEN_UPDATE=1 dotnet test tests/PetBox.Tests --filter GoldenSchema
+# ...then READ the diff. See README.md.
+TABLE VersionInfo
+  COL AppliedOn DATETIME NULL
+  COL Description TEXT NULL
+  COL Version INTEGER NOT NULL
+  INDEX UC_Version UNIQUE origin=c (Version)
+
+TABLE deploy_deployment
+  COL ConfigHash TEXT NOT NULL
+  COL ConfigTags TEXT NOT NULL
+  COL DesiredState INTEGER NOT NULL
+  COL Id TEXT NOT NULL PK1
+  COL ImageDigest TEXT NOT NULL
+  COL NodeId TEXT NOT NULL
+  COL Project TEXT NOT NULL
+  COL Relocatable INTEGER NOT NULL
+  COL RequiredTags TEXT NOT NULL
+  COL RunSpec TEXT NOT NULL DEFAULT '{}'
+  COL Service TEXT NOT NULL
+  COL UpdatedAt TEXT NOT NULL
+  INDEX ix_deploy_deployment_node origin=c (NodeId)
+  INDEX sqlite_autoindex_deploy_deployment_1 UNIQUE origin=pk (Id)
+  INDEX ux_deploy_deployment_service_node UNIQUE origin=c (Service, NodeId)
+
+TABLE deploy_deployment_status
+  COL ActualState INTEGER NOT NULL
+  COL ContainerId TEXT NULL
+  COL Error TEXT NULL
+  COL Healthy INTEGER NOT NULL
+  COL ImageDigest TEXT NULL
+  COL NodeId TEXT NOT NULL PK1
+  COL ReportedAt TEXT NOT NULL
+  COL Service TEXT NOT NULL PK2
+  INDEX sqlite_autoindex_deploy_deployment_status_1 UNIQUE origin=pk (NodeId, Service)
+
+TABLE deploy_node
+  COL Capabilities TEXT NOT NULL DEFAULT ''
+  COL CreatedAt TEXT NOT NULL
+  COL DisplayName TEXT NOT NULL
+  COL Ephemeral INTEGER NOT NULL
+  COL HostReport TEXT NOT NULL DEFAULT '{}'
+  COL Id TEXT NOT NULL PK1
+  COL KeyRef TEXT NULL
+  COL LastSeenAt TEXT NULL
+  COL Tags TEXT NOT NULL
+  INDEX sqlite_autoindex_deploy_node_1 UNIQUE origin=pk (Id)

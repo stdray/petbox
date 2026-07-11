@@ -1,0 +1,169 @@
+# PetBox schema golden snapshot — tier: tasks
+# Generated from the tier's FluentMigrator migration set on a CLEAN database.
+# Do not hand-edit. Regenerate: PETBOX_SCHEMA_GOLDEN_UPDATE=1 dotnet test tests/PetBox.Tests --filter GoldenSchema
+# ...then READ the diff. See README.md.
+TABLE VersionInfo
+  COL AppliedOn DATETIME NULL
+  COL Description TEXT NULL
+  COL Version INTEGER NOT NULL
+  INDEX UC_Version UNIQUE origin=c (Version)
+
+TABLE comment_tag
+  COL Board TEXT NOT NULL
+  COL CommentId TEXT NOT NULL PK1
+  COL Tag TEXT NOT NULL PK2
+  COL ValidFrom TEXT NOT NULL PK3
+  COL ValidTo TEXT NULL
+  INDEX ix_comment_tag_board origin=c (Board, Tag) WHERE ValidTo IS NULL
+  INDEX ix_comment_tag_comment origin=c (CommentId) WHERE ValidTo IS NULL
+  INDEX sqlite_autoindex_comment_tag_1 UNIQUE origin=pk (CommentId, Tag, ValidFrom)
+
+TABLE comments
+  COL ActiveFrom INTEGER NOT NULL
+  COL ActiveTo INTEGER NULL
+  COL Author TEXT NOT NULL DEFAULT ''
+  COL Board TEXT NOT NULL
+  COL Body TEXT NOT NULL
+  COL Created TEXT NOT NULL
+  COL Key TEXT NOT NULL PK1
+  COL NodeId TEXT NOT NULL
+  COL ParentId TEXT NULL
+  COL PrevKey TEXT NULL
+  COL Updated TEXT NOT NULL
+  COL Version INTEGER NOT NULL PK2
+  INDEX ix_comments_active origin=c (ActiveTo, Board, NodeId)
+  INDEX ix_comments_parent origin=c (ParentId) WHERE ActiveTo IS NULL
+  INDEX sqlite_autoindex_comments_1 UNIQUE origin=pk (Key, Version)
+  INDEX ux_comments_active_key UNIQUE origin=c (Key) WHERE ActiveTo IS NULL
+
+TABLE methodology_defs
+  COL ActiveFrom INTEGER NOT NULL
+  COL ActiveTo INTEGER NULL
+  COL Created TEXT NOT NULL
+  COL Json TEXT NOT NULL
+  COL Key TEXT NOT NULL PK1
+  COL PrevKey TEXT NULL
+  COL Updated TEXT NOT NULL
+  COL Version INTEGER NOT NULL PK2
+  INDEX sqlite_autoindex_methodology_defs_1 UNIQUE origin=pk (Key, Version)
+  INDEX ux_methodology_defs_active_key UNIQUE origin=c (Key) WHERE ActiveTo IS NULL
+
+TABLE methodology_instances
+  COL ActiveFrom INTEGER NOT NULL
+  COL ActiveTo INTEGER NULL
+  COL ClosedAt TEXT NULL
+  COL Created TEXT NOT NULL
+  COL Json TEXT NOT NULL
+  COL Key TEXT NOT NULL PK1
+  COL PrevKey TEXT NULL
+  COL Updated TEXT NOT NULL
+  COL Version INTEGER NOT NULL PK2
+  INDEX sqlite_autoindex_methodology_instances_1 UNIQUE origin=pk (Key, Version)
+  INDEX ux_methodology_instances_active_key UNIQUE origin=c (Key) WHERE ActiveTo IS NULL
+
+TABLE methodology_templates
+  COL ActiveFrom INTEGER NOT NULL
+  COL ActiveTo INTEGER NULL
+  COL Created TEXT NOT NULL
+  COL Json TEXT NOT NULL
+  COL Key TEXT NOT NULL PK1
+  COL PrevKey TEXT NULL
+  COL Updated TEXT NOT NULL
+  COL Version INTEGER NOT NULL PK2
+  INDEX sqlite_autoindex_methodology_templates_1 UNIQUE origin=pk (Key, Version)
+  INDEX ux_methodology_templates_active_key UNIQUE origin=c (Key) WHERE ActiveTo IS NULL
+
+TABLE node_tag
+  COL Board TEXT NOT NULL
+  COL NodeId TEXT NOT NULL PK1
+  COL Tag TEXT NOT NULL PK2
+  COL ValidFrom TEXT NOT NULL PK3
+  COL ValidTo TEXT NULL
+  FK (Tag) -> tag_vocab(Tag) ON DELETE NO ACTION ON UPDATE NO ACTION
+  INDEX ix_node_tag_board origin=c (Board, Tag) WHERE ValidTo IS NULL
+  INDEX ix_node_tag_node origin=c (NodeId) WHERE ValidTo IS NULL
+  INDEX ix_node_tag_tag origin=c (Tag) WHERE ValidTo IS NULL
+  INDEX sqlite_autoindex_node_tag_1 UNIQUE origin=pk (NodeId, Tag, ValidFrom)
+
+TABLE plan_node_commits
+  COL Board TEXT NOT NULL
+  COL NodeId TEXT NOT NULL PK1
+  COL Sha TEXT NOT NULL PK2
+  COL ValidFrom TEXT NOT NULL PK3
+  COL ValidTo TEXT NULL
+  INDEX ix_plan_node_commits_node origin=c (NodeId) WHERE ValidTo IS NULL
+  INDEX ix_plan_node_commits_sha origin=c (Sha) WHERE ValidTo IS NULL
+  INDEX sqlite_autoindex_plan_node_commits_1 UNIQUE origin=pk (NodeId, Sha, ValidFrom)
+
+TABLE plan_node_ids
+  COL NodeId TEXT NOT NULL PK1
+  INDEX sqlite_autoindex_plan_node_ids_1 UNIQUE origin=pk (NodeId)
+
+TABLE plan_nodes
+  COL ActiveFrom INTEGER NOT NULL
+  COL ActiveTo INTEGER NULL
+  COL Board TEXT NOT NULL DEFAULT '' PK1
+  COL Body TEXT NOT NULL
+  COL Created TEXT NOT NULL
+  COL Key TEXT NOT NULL PK2
+  COL Name TEXT NOT NULL DEFAULT ''
+  COL NodeId TEXT NOT NULL DEFAULT ''
+  COL PrevKey TEXT NULL
+  COL Priority INTEGER NOT NULL DEFAULT 0
+  COL Status TEXT NOT NULL DEFAULT ''
+  COL Type TEXT NOT NULL DEFAULT ''
+  COL Updated TEXT NOT NULL
+  COL Version INTEGER NOT NULL PK3
+  INDEX ix_plan_nodes_active origin=c (Board, ActiveTo, Priority, Key)
+  INDEX sqlite_autoindex_plan_nodes_1 UNIQUE origin=pk (Board, Key, Version)
+  INDEX ux_plan_nodes_active_board_key UNIQUE origin=c (Board, Key) WHERE ActiveTo IS NULL
+  TRIGGER trg_plan_nodes_register_id CREATE TRIGGER trg_plan_nodes_register_id AFTER INSERT ON plan_nodes WHEN NEW.NodeId <> '' BEGIN INSERT OR IGNORE INTO plan_node_ids (NodeId) VALUES (NEW.NodeId); END
+  TRIGGER trg_plan_nodes_register_id_upd CREATE TRIGGER trg_plan_nodes_register_id_upd AFTER UPDATE OF NodeId ON plan_nodes WHEN NEW.NodeId <> '' BEGIN INSERT OR IGNORE INTO plan_node_ids (NodeId) VALUES (NEW.NodeId); END
+  TRIGGER trg_plan_nodes_unregister_id CREATE TRIGGER trg_plan_nodes_unregister_id AFTER DELETE ON plan_nodes WHEN OLD.NodeId <> '' AND NOT EXISTS (SELECT 1 FROM plan_nodes WHERE NodeId = OLD.NodeId) BEGIN DELETE FROM plan_node_ids WHERE NodeId = OLD.NodeId; END
+
+TABLE relations
+  COL ClosedAt TEXT NULL
+  COL CreatedAt TEXT NOT NULL
+  COL FromNodeId TEXT NOT NULL
+  COL Id TEXT NOT NULL PK1
+  COL Kind TEXT NOT NULL
+  COL ToNodeId TEXT NOT NULL
+  FK (FromNodeId) -> plan_node_ids(NodeId) ON DELETE CASCADE ON UPDATE NO ACTION
+  FK (ToNodeId) -> plan_node_ids(NodeId) ON DELETE CASCADE ON UPDATE NO ACTION
+  INDEX ix_relations_from origin=c (FromNodeId) WHERE ClosedAt IS NULL
+  INDEX ix_relations_kind origin=c (Kind) WHERE ClosedAt IS NULL
+  INDEX ix_relations_to origin=c (ToNodeId) WHERE ClosedAt IS NULL
+  INDEX sqlite_autoindex_relations_1 UNIQUE origin=pk (Id)
+  INDEX ux_relations_active UNIQUE origin=c (Kind, FromNodeId, ToNodeId) WHERE ClosedAt IS NULL
+
+TABLE search_cursor
+  COL IndexName TEXT NULL PK1
+  COL Version INTEGER NOT NULL
+  INDEX sqlite_autoindex_search_cursor_1 UNIQUE origin=pk (IndexName)
+
+TABLE search_deadletter
+  COL Attempts INTEGER NOT NULL
+  COL Dead INTEGER NOT NULL
+  COL Id TEXT NOT NULL PK3
+  COL IndexName TEXT NOT NULL PK1
+  COL Type TEXT NOT NULL PK2
+  INDEX sqlite_autoindex_search_deadletter_1 UNIQUE origin=pk (IndexName, Type, Id)
+
+TABLE search_vec
+  COL Dim INTEGER NOT NULL
+  COL Id TEXT NOT NULL PK3
+  COL Model TEXT NOT NULL
+  COL Scope TEXT NOT NULL PK1
+  COL Type TEXT NOT NULL PK2
+  COL Vec BLOB NOT NULL
+  INDEX sqlite_autoindex_search_vec_1 UNIQUE origin=pk (Scope, Type, Id)
+
+TABLE tag_vocab
+  COL CreatedAt TEXT NOT NULL
+  COL Description TEXT NULL
+  COL Namespace TEXT NOT NULL
+  COL Tag TEXT NOT NULL PK1
+  INDEX sqlite_autoindex_tag_vocab_1 UNIQUE origin=pk (Tag)
+
+VIRTUAL TABLE search_fts
+  DECL CREATE VIRTUAL TABLE search_fts USING fts5(Scope UNINDEXED, Type UNINDEXED, Id UNINDEXED, Text, Tags, tokenize='unicode61')
