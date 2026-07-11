@@ -30,6 +30,12 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 	// Must match TasksService.VectorDim.
 	const int VectorDim = 1024;
 
+	// Per-PASS embed budget across every project and board — same reasoning (and same number) as
+	// MemoryVectorizationJob.MaxDocsPerPass: one sequential HTTP embed per doc (~150 ms), jobs run
+	// serially on a 60s enrichment tick, so a post-reindex delta (the whole board) must be drained
+	// in portions or it owns the tick. 200 docs ≈ 30 s.
+	internal const int MaxDocsPerPass = 200;
+
 	readonly IScopedDbFactory<TasksDb> _factory;
 	readonly IProjectCatalog _catalog;
 	readonly ILlmClient? _llm;
@@ -49,8 +55,10 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 		if (_llm is null) return 0;
 
 		var indexed = 0;
+		var budget = MaxDocsPerPass; // per-PASS embed budget, shared by every project/board below
 		foreach (var project in await _catalog.ListTaskProjectKeysAsync(ct))
 		{
+			if (budget <= 0) break; // spent — the remaining backlog drains on the next tick
 			ct.ThrowIfCancellationRequested();
 
 			try
@@ -78,13 +86,15 @@ public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 				long maxLag = 0;
 				foreach (var board in boards)
 				{
+					if (budget <= 0) break;
 					ct.ThrowIfCancellationRequested();
 					var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(_llm, project), VectorDim);
-					var source = new TasksSearchSource(Connect, project, board);
+					var source = new TasksSearchSource(Connect, project, board, maxDocs: budget);
 					var cursor = new SqliteIndexCursorStore(Connect);
 					var worker = new AsyncVectorizationWorker(board, source, target, cursor, log: _logger); // per-board cursor
 
 					var r = await worker.DrainAsync(ct);
+					budget -= r.Indexed;
 					indexed += r.Indexed;
 					projectIndexed += r.Indexed;
 					projectDead += r.DeadLettered; // previously dropped: a dead-lettered node vanished in silence

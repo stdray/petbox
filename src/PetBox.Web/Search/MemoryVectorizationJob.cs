@@ -31,6 +31,16 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 	// Must match MemoryService.VectorDim — the read path and the worker must store/query the same dim.
 	const int VectorDim = 1024;
 
+	// How many documents ONE pass of this job may embed, across every project and store it walks.
+	// Embedding is one sequential HTTP call per doc (~150 ms against the home endpoint), and
+	// SearchEnrichmentService runs its jobs one after another on a 60s tick — so an uncapped pass
+	// after a reindex (delta = the whole store) would hold the tick for the entire backfill and
+	// starve the digest/facts/behavior jobs behind it. 200 docs ≈ 30 s ≈ half the tick: steady-state
+	// deltas (a handful of docs) are unaffected, and a backfill drains in portions, one per tick.
+	// The budget is spent in catalog order, so a big project can eat a whole pass; it simply
+	// continues on the next tick, and the projects behind it start moving once it is caught up.
+	internal const int MaxDocsPerPass = 200;
+
 	readonly IScopedDbFactory<MemoryDb> _factory;
 	readonly IProjectCatalog _catalog;
 	readonly ILlmClient? _llm;
@@ -50,8 +60,10 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 		if (_llm is null) return 0;
 
 		var indexed = 0;
+		var budget = MaxDocsPerPass; // per-PASS embed budget, shared by every project/store below
 		foreach (var project in await _catalog.ListMemoryProjectKeysAsync(ct))
 		{
+			if (budget <= 0) break; // out of budget — the rest of the backlog is next tick's
 			ct.ThrowIfCancellationRequested();
 			try
 			{
@@ -77,14 +89,16 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 				long maxLag = 0;
 				foreach (var store in stores)
 				{
+					if (budget <= 0) break;
 					ct.ThrowIfCancellationRequested();
 					var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(_llm, project), VectorDim);
-					var source = new MemorySearchSource(Connect, project, store);
+					var source = new MemorySearchSource(Connect, project, store, maxDocs: budget);
 					var cursor = new SqliteIndexCursorStore(Connect);
 					var worker = new AsyncVectorizationWorker(MemoryCursors.Vector(store), source, target, cursor,
 						log: _logger);
 
 					var r = await worker.DrainAsync(ct);
+					budget -= r.Indexed;
 					indexed += r.Indexed;
 					projectIndexed += r.Indexed;
 					projectDead += r.DeadLettered; // used to be dropped on the floor — a dead-letter was invisible

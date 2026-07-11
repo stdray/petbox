@@ -156,6 +156,10 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.MemoryVectorizationJob>();
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.TasksVectorizationJob>();
 		builder.Services.AddHostedService<PetBox.Web.Search.SearchEnrichmentService>();
+		// Manual reindex (the `search_reindex` MCP tool): rewinds a project's Class-B cursors and
+		// clears its dead-letter so the stock drain above re-embeds the whole corpus. Never runs on
+		// its own — an operator asks for it, and it refuses if Embed has no route.
+		builder.Services.AddScoped<PetBox.Web.Search.SearchReindexService>();
 		// LLM router: neutral ILlmClient (embed/rerank/chat) + ILlmRegistryAdmin over a
 		// config-stored endpoint/route registry. Unconditional DI; Feature.LlmRouter gates
 		// the MCP surface, not registration.
