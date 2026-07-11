@@ -598,7 +598,7 @@ public static class TasksTools
 		var (kept, omitted) = new ResponseBudget().Take(rows);
 		return new TaskSearchResultView(
 			kept, res.Board, res.Kind, res.SpecBoard, res.CurrentVersion,
-			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded) : null,
+			Retrievers: res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason) : null,
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
 			Hint: omitted > 0 ? SearchBudgetHint : null);

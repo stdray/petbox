@@ -403,7 +403,10 @@ public static class MemoryTools
 			}, ct);
 			if (res.Retrievers is { } r)
 				retrievers = retrievers is { } agg
-					? new SearchRetrievers(agg.Lexical | r.Lexical, agg.Semantic | r.Semantic, agg.Degraded | r.Degraded)
+					// The reason survives the OR-merge across scopes: the first scope that degraded
+					// owns it (a mute degraded:true is exactly what this leaf exists to kill).
+					? new SearchRetrievers(agg.Lexical | r.Lexical, agg.Semantic | r.Semantic, agg.Degraded | r.Degraded,
+						agg.DegradedReason ?? r.DegradedReason)
 					: r;
 
 			// Usage counters are keyed per (store, key) — rows may span stores in one container.
@@ -453,7 +456,7 @@ public static class MemoryTools
 		var (kept, omitted) = new ResponseBudget().Take(rows);
 		return new MemorySearchResultView(
 			kept,
-			Retrievers: retrievers is { } fin ? new RetrieverInfo(fin.Lexical, fin.Semantic, fin.Degraded) : null,
+			Retrievers: retrievers is { } fin ? new RetrieverInfo(fin.Lexical, fin.Semantic, fin.Degraded, fin.DegradedReason) : null,
 			Truncated: omitted > 0 ? true : null,
 			Omitted: omitted > 0 ? omitted : null,
 			Hint: omitted > 0 ? SearchBudgetHint : null);

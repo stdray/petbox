@@ -21,8 +21,18 @@ public sealed class LlmClientEmbedder : IEmbedder
 
 	public async Task<EmbedBatch> EmbedAsync(IReadOnlyList<string> inputs, CancellationToken ct = default)
 	{
-		var res = await _llm.EmbedAsync(_projectKey, new EmbedRequest(inputs), ct);
-		var dim = res.Vectors.Count > 0 ? res.Vectors[0].Length : 0;
-		return new EmbedBatch(res.Vectors, res.Model.Model, dim);
+		try
+		{
+			var res = await _llm.EmbedAsync(_projectKey, new EmbedRequest(inputs), ct);
+			var dim = res.Vectors.Count > 0 ? res.Vectors[0].Length : 0;
+			return new EmbedBatch(res.Vectors, res.Model.Model, dim);
+		}
+		catch (LlmRouterException ex)
+		{
+			// The edge is also where the router's failure becomes a SEARCH reason code: no Embed
+			// route (the project-wide hole), a 4xx, or a transient chain failure. Core.Search reads
+			// the code off this exception without ever seeing the router's types.
+			throw new SearchDegradedException(SearchDegradedReason.Embed(ex.NoRoute, ex.Transient), ex.Message, ex);
+		}
 	}
 }

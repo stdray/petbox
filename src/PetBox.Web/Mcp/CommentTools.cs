@@ -124,7 +124,7 @@ public static class CommentTools
 		var dflt = hasQuery ? ModuleMcp.DefaultSnippet : ModuleMcp.FullBody;
 		var rows = res.Items.Select(c => Shape(c, bodyLen, dflt)).ToList();
 		var (kept, omitted) = new ResponseBudget().Take(rows);
-		var retrievers = res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded) : null;
+		var retrievers = res.Retrievers is { } r ? new RetrieverInfo(r.Lexical, r.Semantic, r.Degraded, r.DegradedReason) : null;
 		return omitted == 0
 			? new CommentsSearchResult(kept, retrievers)
 			: new CommentsSearchResult(kept, retrievers, Truncated: true, Omitted: omitted, Hint: SearchBudgetHint);

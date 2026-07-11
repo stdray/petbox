@@ -25,7 +25,7 @@ namespace PetBox.Web.Search;
 // (NewEnsuredConnection → schema ensure) materializes it only where the catalog says it belongs —
 // migrations then run here, under supervision, rather than at some random first write. A project
 // with no board is not in the list and gets no empty file.
-public sealed class TasksVectorizationJob : IBackgroundIndexJob
+public sealed partial class TasksVectorizationJob : IBackgroundIndexJob
 {
 	// Must match TasksService.VectorDim.
 	const int VectorDim = 1024;
@@ -62,16 +62,30 @@ public sealed class TasksVectorizationJob : IBackgroundIndexJob
 					boards = probe.GetTable<PlanNode>().Where(n => n.ActiveTo == null)
 						.Select(n => n.Board).Distinct().ToList();
 
+				int projectIndexed = 0, projectDead = 0;
+				long maxLag = 0;
 				foreach (var board in boards)
 				{
 					ct.ThrowIfCancellationRequested();
 					var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(_llm, project), VectorDim);
 					var source = new TasksSearchSource(Connect, project, board);
 					var cursor = new SqliteIndexCursorStore(Connect);
-					var worker = new AsyncVectorizationWorker(board, source, target, cursor); // per-board cursor
+					var worker = new AsyncVectorizationWorker(board, source, target, cursor, log: _logger); // per-board cursor
 
 					var r = await worker.DrainAsync(ct);
 					indexed += r.Indexed;
+					projectIndexed += r.Indexed;
+					projectDead += r.DeadLettered; // previously dropped: a dead-lettered node vanished in silence
+					maxLag = Math.Max(maxLag, r.Lag);
+				}
+
+				// Same three counters as the memory job: vectors present, docs permanently dropped,
+				// how far the cursor trails the boards' version space (0 vectors + boards ⇒ dead index).
+				if (_logger is not null && boards.Count > 0)
+				{
+					using var stats = _factory.NewEnsuredConnection(project);
+					var (vectors, dead) = await SearchIndexStatsReader.ReadAsync(stats, ct);
+					LogProjectStats(_logger, project, boards.Count, projectIndexed, projectDead, vectors, dead, maxLag);
 				}
 			}
 			catch (Exception ex) when (ex is not OperationCanceledException)
@@ -83,4 +97,9 @@ public sealed class TasksVectorizationJob : IBackgroundIndexJob
 		}
 		return indexed;
 	}
+
+	[LoggerMessage(EventId = 411, Level = LogLevel.Information,
+		Message = "tasks vectorization {Project}: {Boards} board(s), indexed {Indexed}, dead-lettered {DeadLettered} this pass; search_vec rows {VectorRows}, dead total {DeadTotal}, max cursor lag {Lag}")]
+	static partial void LogProjectStats(ILogger logger, string project, int boards, int indexed, int deadLettered,
+		long vectorRows, long deadTotal, long lag);
 }
