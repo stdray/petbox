@@ -43,10 +43,21 @@ public sealed class WorkspaceMemoryTests : IDisposable
 	[InlineData("Foo", false)] // uppercase
 	[InlineData("sys", false)] // reserved
 	[InlineData("$system", false)] // not creatable via form
+	[InlineData("acme\n", false)] // trailing newline must not slip past ^..$ (the bug)
+	[InlineData("sys\n", false)] // reserve bypass via newline
+	[InlineData("-abc", false)] // leading hyphen — first char must be [a-z0-9]
 	[InlineData("", false)]
 	[InlineData(null, false)]
 	public void IsCreatableWorkspaceKey_Allowlist(string? key, bool expected) =>
 		WorkspaceMemory.IsCreatableWorkspaceKey(key).Should().Be(expected);
+
+	// Length boundary: 1 + up to 62 trailing chars = max 63.
+	[Fact]
+	public void IsCreatableWorkspaceKey_LengthBoundary()
+	{
+		WorkspaceMemory.IsCreatableWorkspaceKey(new string('a', 63)).Should().BeTrue();
+		WorkspaceMemory.IsCreatableWorkspaceKey(new string('a', 64)).Should().BeFalse();
+	}
 
 	[Fact]
 	public void IsValidWorkspaceKey_AllowsSystemAndCreatable()

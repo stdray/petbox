@@ -28,7 +28,7 @@ public static partial class WorkspaceMemory
 	// New workspace keys: safe for Windows file names, URL path segments, and `$ws-` prefixing.
 	// `$system` is seeded, never creatable. `sys` is reserved (legacy admin collision).
 	// Pattern: ^[a-z0-9][a-z0-9-]*$ (length 1..63).
-	[GeneratedRegex(@"^[a-z0-9][a-z0-9-]{0,62}$")]
+	[GeneratedRegex(@"\A[a-z0-9][a-z0-9-]{0,62}\z")]
 	private static partial Regex CreatableKeyRx();
 
 	// True for a key that may be created via admin UI (not `$system` / `sys`).
