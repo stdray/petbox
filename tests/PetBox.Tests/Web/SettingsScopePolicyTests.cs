@@ -19,6 +19,7 @@ public sealed class SettingsScopePolicyTests
 			typeof(IngestionSettings),
 			typeof(DashboardSettings),
 			typeof(SessionFullScanSettings),
+			typeof(LlmRegistryInheritanceSettings),
 		]);
 	}
 

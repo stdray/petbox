@@ -31,9 +31,23 @@ public sealed class PetBoxDb : DataConnection
 	// is kept (not dropped) until the backfill is verified on live data — see LegacyRelation.
 	public ITable<LegacyRelation> LegacyRelations => this.GetTable<LegacyRelation>();
 	public ITable<AgentDefinitionRow> AgentDefinitions => this.GetTable<AgentDefinitionRow>();
+	// The LLM registry's own store (M039): endpoints carry their api key as columns, routes are
+	// bound to their level by a composite FK. Not yet read by the router — the ConfigBindings-backed
+	// LlmRegistryStore still serves production.
+	public ITable<LlmEndpointRow> LlmEndpoints => this.GetTable<LlmEndpointRow>();
+	public ITable<LlmRouteRow> LlmRoutes => this.GetTable<LlmRouteRow>();
 
-	public static DataOptions<PetBoxDb> CreateOptions(string connectionString) =>
-		new(new DataOptions().UseSQLite(connectionString).UseMappingSchema(SharedMappingSchema));
+	// Foreign Keys=True turns on per-connection FK enforcement — SQLite defaults it OFF, and an
+	// unenforced FK is decoration. core.db had no foreign keys at all until llm_routes' composite FK
+	// (Scope, ScopeKey, Endpoint) -> llm_endpoints(Scope, ScopeKey, Name), which is what stops a route
+	// at one level from pointing at an endpoint (and therefore an api key) at another. Nothing else in
+	// core.db declares a FK, so switching enforcement on changes no other write path. Mirrors TasksDb.
+	public static DataOptions<PetBoxDb> CreateOptions(string connectionString)
+	{
+		if (!connectionString.Contains("Foreign Keys", StringComparison.OrdinalIgnoreCase))
+			connectionString = connectionString.TrimEnd(';') + ";Foreign Keys=True";
+		return new(new DataOptions().UseSQLite(connectionString).UseMappingSchema(SharedMappingSchema));
+	}
 
 	// Fluent mapping is built ONCE into this shared schema and handed to every
 	// connection via DataOptions.UseMappingSchema. The previous approach rebuilt it

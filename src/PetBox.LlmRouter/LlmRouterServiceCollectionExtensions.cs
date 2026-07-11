@@ -28,6 +28,14 @@ public static class LlmRouterServiceCollectionExtensions
 		services.AddScoped<ILlmRegistryAdmin>(sp => sp.GetRequiredService<LlmRegistryStore>());
 		services.AddScoped<ILlmRegistryResolver>(sp => sp.GetRequiredService<LlmRegistryStore>());
 
+		// The levelled registry in core.db (llm-registry-own-store): its own tables, a
+		// Project->Workspace->System cascade, api keys as columns of the endpoint row. Registered but
+		// NOT yet wired to the router — CapabilityRouter still resolves through the ConfigBindings
+		// store above. Importing the live data and flipping ILlmRegistryResolver over are separate
+		// steps; until then these two are exercised by tests only.
+		services.AddScoped<ILlmRegistryLevelResolver, LlmRegistryLevelResolver>();
+		services.AddScoped<ILlmRegistryLevelAdmin, LlmRegistryLevelAdmin>();
+
 		services.AddScoped<ILlmClient, CapabilityRouter>();
 		return services;
 	}
