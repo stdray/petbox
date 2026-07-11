@@ -353,15 +353,15 @@ public static class MemoryTools
 		""")]
 	public static async Task<MemorySearchResultView> SearchAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory, IMemoryUsageRecorder usage,
-		[Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
-		[Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
+		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
+		[LogArg][Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
 		string? projectKey = null,
-		[Description("Narrow to one store within each scope (default: sweep every store except the sensitive ones).")] string? store = null,
+		[LogArg][Description("Narrow to one store within each scope (default: sweep every store except the sensitive ones).")] string? store = null,
 		[Description("Taxonomy filter: User|Feedback|Project|Reference.")] string? type = null,
 		[Description("Sort order: {by: relevance|created|updated, desc?}. Default: updated desc (listing) / relevance (with q).")] SortInput? sort = null,
-		[Description("Max rows returned (default 20; 0 = no cap — the output budget still applies).")] int? limit = null,
-		[Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
-		[Description("Include usage counters (surfaced/opened/lastHitAt) per row (default false).")] bool includeUsage = false,
+		[LogArg][Description("Max rows returned (default 20; 0 = no cap — the output budget still applies).")] int? limit = null,
+		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[LogArg][Description("Include usage counters (surfaced/opened/lastHitAt) per row (default false).")] bool includeUsage = false,
 		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{

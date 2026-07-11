@@ -1,10 +1,14 @@
 using System.Net;
 using System.Text.Json;
+using LinqToDB;
+using LinqToDB.Async;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using ModelContextProtocol.Client;
+using PetBox.Core.Data;
+using PetBox.Core.Models;
 using PetBox.Log.Core.Data;
 
 namespace PetBox.Tests.Mcp;
@@ -24,11 +28,20 @@ public sealed class McpToolCallMetricsFixture : IAsyncLifetime
 	// self-log's own project, so log_query over $system/petbox passes the ownership check.
 	public const string SystemApiKey = "yb_key_system_internal";
 
+	// A SECOND key on the same ($system) project, scoped memory:read. Needed because the two
+	// tools SystemApiKey can call (whoami, log_query) carry NO [LogArg] markup at all — log_query's
+	// `take` hides inside the free-text `kql` and must never be logged. memory_search is the tool
+	// with the marked knobs (q/scope/store/limit/bodyLen/includeUsage), so it is the only way to
+	// prove Arg_* end-to-end: emitted → flushed → QUERYABLE FROM KQL, which is the whole point.
+	public const string MemoryApiKey = "yb_key_system_memory";
+
 	HttpClient _http = null!;
+	HttpClient _memoryHttp = null!;
 
 	public WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Http => _http;
 	public McpClient Mcp { get; private set; } = null!;
+	public McpClient MemoryMcp { get; private set; } = null!;
 
 	public McpToolCallMetricsFixture()
 	{
@@ -57,6 +70,10 @@ public sealed class McpToolCallMetricsFixture : IAsyncLifetime
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Features:Logging"] = "true",
 						["Features:Data"] = "true",
+						// memory_search asserts Feature.Memory at CALL time (FeatureFlags reads
+						// IConfiguration), so — unlike the build-time-gated flags above — the
+						// in-memory value is enough; no process-wide env var needed.
+						["Features:Memory"] = "true",
 						["Seq:SelfLog:Enabled"] = "true",
 					});
 				});
@@ -75,6 +92,17 @@ public sealed class McpToolCallMetricsFixture : IAsyncLifetime
 			var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
 			if (!await store.ExistsAsync(LogNames.SystemProject, LogNames.SelfLog))
 				await store.CreateAsync(LogNames.SystemProject, LogNames.SelfLog, null);
+
+			// The memory:read key on $system (the migrations seed the project, not this key).
+			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			await db.ApiKeys.Where(k => k.Key == MemoryApiKey).DeleteAsync();
+			await db.InsertAsync(new ApiKey
+			{
+				Key = MemoryApiKey,
+				ProjectKey = LogNames.SystemProject,
+				Scopes = "memory:read",
+				CreatedAt = DateTime.UtcNow,
+			});
 		}
 
 		_http.DefaultRequestHeaders.Add("X-Api-Key", SystemApiKey);
@@ -84,11 +112,23 @@ public sealed class McpToolCallMetricsFixture : IAsyncLifetime
 			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = SystemApiKey },
 		}, _http);
 		Mcp = await McpClient.CreateAsync(transport, cancellationToken: default);
+
+		// Its own HttpClient (no default X-Api-Key) so the two MCP sessions can never share or
+		// shadow each other's key header.
+		_memoryHttp = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
+		var memoryTransport = new HttpClientTransport(new HttpClientTransportOptions
+		{
+			Endpoint = new Uri(_memoryHttp.BaseAddress!, "/mcp"),
+			AdditionalHeaders = new Dictionary<string, string> { ["X-Api-Key"] = MemoryApiKey },
+		}, _memoryHttp);
+		MemoryMcp = await McpClient.CreateAsync(memoryTransport, cancellationToken: default);
 	}
 
 	public async Task DisposeAsync()
 	{
+		await MemoryMcp.DisposeAsync();
 		await Mcp.DisposeAsync();
+		_memoryHttp.Dispose();
 		_http.Dispose();
 		await Factory.DisposeAsync();
 	}
@@ -123,8 +163,24 @@ public sealed class McpToolCallMetricsTests : IClassFixture<McpToolCallMetricsFi
 			["kql"] = "events | take 1",
 		});
 
+	// The [LogArg]-marked tool, driven over the memory:read MCP session. The args are chosen so
+	// the call SUCCEEDS against an empty memory store (an empty hit list is fine — we measure the
+	// CALL, not the hits) while turning the exact knobs the economy queries care about.
+	const string SearchQuery = "petbox-secret-query-text";
+
+	async Task CallMemorySearchAsync() =>
+		await (await MemoryTool("memory_search")).CallAsync(new Dictionary<string, object?>
+		{
+			["q"] = SearchQuery,
+			["bodyLen"] = 0,
+			["limit"] = 5,
+		});
+
 	async Task<McpClientTool> Tool(string name) =>
 		(await _fx.Mcp.ListToolsAsync()).First(t => t.Name == name);
+
+	async Task<McpClientTool> MemoryTool(string name) =>
+		(await _fx.MemoryMcp.ListToolsAsync()).First(t => t.Name == name);
 
 	// Count "mcp tool {Tool}" self-log events for a tool via KQL. The SystemLogFlusher is async
 	// (2s / 200-batch), so poll until the count reaches an expected minimum.
@@ -216,5 +272,69 @@ public sealed class McpToolCallMetricsTests : IClassFixture<McpToolCallMetricsFi
 		byTool["log_query"].Calls.Should().Be(logBefore + 1);
 		byTool["log_query"].Bytes.Should().BeGreaterThan(0, "summed response volume is the economy metric");
 		byTool["whoami"].Bytes.Should().BeGreaterThan(0);
+	}
+
+	// The [LogArg] chore's END-TO-END claim (chore: toolcalls-log-params): the marked args of a
+	// REAL tool call reach the self-log as Properties.Arg_<paramName> and are QUERYABLE FROM KQL —
+	// which is the whole point, because the economy measurements ARE KQL over the ToolCalls log.
+	// Unit tests cover the extraction; only this proves emit → flush → query.
+	[Fact]
+	public async Task ToolCall_MarkedArgs_AreQueryableFromKql_AndCarryNoFreeText()
+	{
+		// A real memory_search over MCP with an explicit shape: a `q`, bodyLen:0, limit:5. The hit
+		// list is empty (nothing was ever remembered on this host) and that is fine — the CALL is
+		// the measurement, not its hits.
+		await CallMemorySearchAsync();
+		await WaitForToolCallCountAsync("memory_search", atLeast: 1);
+
+		// The knob-reading query an economy report actually runs. Same accommodations as above:
+		// `contains 'mcp tool'` is the anchor (no startswith), and every projected dynamic member
+		// must be aliased. Arg_includeUsage was NOT passed — present-only semantics means the
+		// property is absent from the event, and this engine renders an absent member as a NULL
+		// cell (not "", not a missing column).
+		var doc = await QueryAsync(
+			"events | where MessageTemplate contains 'mcp tool' | where Properties.Tool == 'memory_search' " +
+			"| project BodyLen=Properties.Arg_bodyLen, Limit=Properties.Arg_limit, Q=Properties.Arg_q, " +
+			"Usage=Properties.Arg_includeUsage | take 1");
+
+		var rows = doc.RootElement.GetProperty("rows");
+		rows.GetArrayLength().Should().Be(1, "the marked call must be one addressable row");
+
+		var row = rows[0];
+		AsNumber(row[0]).Should().Be(0, "bodyLen:0 — the cheap-path knob the agent turned is visible");
+		AsNumber(row[1]).Should().Be(5, "limit:5 — the other knob, readable per call");
+		row[3].ValueKind.Should().Be(JsonValueKind.Null,
+			"includeUsage was never passed → present-only semantics leaves Arg_includeUsage ABSENT");
+
+		// PRIVACY, the load-bearing assertion: `q` is marked Presence, so what lands is the BOOL
+		// true — never the query text. Read the RAW event (not just the projection) so the check is
+		// on what is actually stored: the property's raw JSON must be the bare literal `true`
+		// (a string value would be quoted, as Properties.Tool is), and the text must appear nowhere.
+		var raw = await QueryAsync(
+			"events | where MessageTemplate contains 'mcp tool' | where Properties.Tool == 'memory_search' | take 1");
+		var props = raw.RootElement.GetProperty("events")[0].GetProperty("Properties");
+		var argQ = props.GetProperty("Arg_q").GetString();
+		argQ.Should().Be("true", "Presence mode logs the bare bool true, not the query text");
+		props.GetRawText().Should().NotContain(SearchQuery, "the free-text query must never reach the log");
+	}
+
+	// The safe default, end-to-end: a tool NOBODY marked up contributes NO arg telemetry. log_query
+	// is exactly that tool — its `take` hides inside the free-text `kql`, which must never be logged.
+	[Fact]
+	public async Task ToolCall_WithoutMarkup_CarriesNoArgProperties()
+	{
+		await CallLogQueryAsync();
+		await WaitForToolCallCountAsync("log_query", atLeast: 1);
+
+		var raw = await QueryAsync(
+			"events | where MessageTemplate contains 'mcp tool' | where Properties.Tool == 'log_query' | take 1");
+		var props = raw.RootElement.GetProperty("events")[0].GetProperty("Properties");
+
+		// Not "Arg_kql is absent" (that would be a tautology — the param is unmarked) but the
+		// stronger shape claim: the event carries NO Arg_* property AT ALL.
+		props.EnumerateObject().Select(p => p.Name)
+			.Should().NotContain(n => n.StartsWith("Arg_", StringComparison.Ordinal),
+				"an unmarked tool emits zero arg telemetry")
+			.And.Contain("Tool", "…while the always-on economy columns are still there");
 	}
 }
