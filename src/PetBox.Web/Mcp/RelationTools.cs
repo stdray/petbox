@@ -19,26 +19,58 @@ namespace PetBox.Web.Mcp;
 [McpServerToolType]
 public static class RelationTools
 {
-	[McpServerTool(Name = "relations_create", Title = "Create a relation", UseStructuredContent = true, OutputSchemaType = typeof(RelationCreatedResult))]
-	[Description("CREATE (idempotent) a typed directed edge between two nodes — an identical existing edge is returned, not duplicated. kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the FROM node's methodology instance declares (linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for that instance (or the project singleton when the board has no instance membership). fromNodeId/toNodeId each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). Requires tasks:write.")]
-	public static async Task<RelationCreatedResult> CreateAsync(
+	[McpServerTool(Name = "relations_create", Title = "Create a relation", UseStructuredContent = true, OutputSchemaType = typeof(RelationsCreatedResult))]
+	[Description("CREATE (idempotent) typed directed edge(s) between nodes — an identical existing edge is returned, not duplicated. BATCH form: pass items:[{kind, from, to}, …] (from/to = slug|NodeId; fromNodeId/toNodeId accepted as aliases on each item). SINGLE form (backward-compatible): omit items and pass top-level kind + fromNodeId + toNodeId (treated as a one-item batch). kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the FROM node's methodology instance declares (linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for that instance (or the project singleton when the board has no instance membership). from/to each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). All items are resolve+validated first; the first validation error fails the whole batch (no partial writes) naming the bad item index. Creates then run sequentially via the store. Returns {relations:[{id,kind,fromNodeId,toNodeId},…]}. Requires tasks:write.")]
+	public static async Task<RelationsCreatedResult> CreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
-		string projectKey, string kind,
-		[Description("Source node: slug or NodeId (a slug resolves project-wide and must be unambiguous).")] string fromNodeId,
-		[Description("Target node: slug or NodeId (a slug resolves project-wide and must be unambiguous).")] string toNodeId,
+		string projectKey,
+		[Description("Single-form kind (when items is omitted).")] string? kind = null,
+		[Description("Single-form source node: slug or NodeId (when items is omitted).")] string? fromNodeId = null,
+		[Description("Single-form target node: slug or NodeId (when items is omitted).")] string? toNodeId = null,
+		[Description("Batch items: [{kind, from, to}] (fromNodeId/toNodeId accepted as aliases). Prefer this for multi-edge creates.")] RelationCreateItemInput[]? items = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		// Resolve endpoints first so the kind vocabulary can be scoped to the FROM node's
-		// board → methodology instance (methodology-instance-scoped-axes). The store itself
-		// only checks structure.
-		var from = await tasks.ResolveNodeRefAsync(projectKey, fromNodeId, ct: ct);
-		var to = await tasks.ResolveNodeRefAsync(projectKey, toNodeId, ct: ct);
-		kind = await tasks.ValidateRelationKindAsync(projectKey, kind, from, ct);
-		var rel = await relations.CreateAsync(projectKey, kind, from, to, ct);
-		return new RelationCreatedResult(rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId);
+
+		var batch = NormalizeCreateItems(items, kind, fromNodeId, toNodeId);
+		// Resolve+validate ALL items first so a bad ref never partially writes earlier edges.
+		var resolved = new List<(string Kind, string From, string To)>(batch.Length);
+		for (var i = 0; i < batch.Length; i++)
+		{
+			var item = batch[i];
+			try
+			{
+				if (string.IsNullOrWhiteSpace(item.Kind))
+					throw new ArgumentException("kind is required");
+				var fromRef = ItemFrom(item);
+				var toRef = ItemTo(item);
+				if (string.IsNullOrWhiteSpace(fromRef))
+					throw new ArgumentException("from (or fromNodeId) is required");
+				if (string.IsNullOrWhiteSpace(toRef))
+					throw new ArgumentException("to (or toNodeId) is required");
+				// Resolve endpoints first so the kind vocabulary can be scoped to the FROM node's
+				// board → methodology instance (methodology-instance-scoped-axes). The store itself
+				// only checks structure.
+				var from = await tasks.ResolveNodeRefAsync(projectKey, fromRef, ct: ct);
+				var to = await tasks.ResolveNodeRefAsync(projectKey, toRef, ct: ct);
+				var k = await tasks.ValidateRelationKindAsync(projectKey, item.Kind, from, ct);
+				resolved.Add((k, from, to));
+			}
+			catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+			{
+				throw new ArgumentException($"items[{i}]: {ex.Message}", ex);
+			}
+		}
+
+		var created = new List<RelationCreatedResult>(resolved.Count);
+		foreach (var (k, from, to) in resolved)
+		{
+			var rel = await relations.CreateAsync(projectKey, k, from, to, ct);
+			created.Add(new RelationCreatedResult(rel.Id, rel.Kind, rel.FromNodeId, rel.ToNodeId));
+		}
+		return new RelationsCreatedResult(created);
 	}
 
 	[McpServerTool(Name = "relations_list", Title = "List relations", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationsListResult))]
@@ -59,15 +91,58 @@ public static class RelationTools
 		return new RelationsListResult(list.Select(r => new RelationRow(r.Id, r.Kind, r.FromNodeId, r.ToNodeId, r.CreatedAt, r.ClosedAt)).ToList());
 	}
 
-	[McpServerTool(Name = "relations_delete", Title = "Delete a relation", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationDeletedResult))]
-	[Description("Delete a relation by its edge id (from relations_create/relations_list — not a node ref). Requires tasks:write.")]
-	public static async Task<RelationDeletedResult> DeleteAsync(
+	[McpServerTool(Name = "relations_delete", Title = "Delete a relation", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(RelationsDeletedResult))]
+	[Description("Soft-delete relation edge(s) by edge id (from relations_create/relations_list — not a node ref). BATCH form: pass ids:[…] of edge ids. SINGLE form (backward-compatible): pass top-level id (treated as a one-item batch). Returns {relations:[{id,deleted},…]} — deleted=false when the id was already closed or unknown. Requires tasks:write.")]
+	public static async Task<RelationsDeletedResult> DeleteAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations,
-		string projectKey, string id, CancellationToken ct = default)
+		string projectKey,
+		[Description("Single-form edge id (when ids is omitted).")] string? id = null,
+		[Description("Batch of edge ids to soft-close.")] string[]? ids = null,
+		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
-		return new RelationDeletedResult(await relations.DeleteAsync(projectKey, id, ct));
+
+		var batch = NormalizeDeleteIds(ids, id);
+		var results = new List<RelationDeletedResult>(batch.Length);
+		foreach (var edgeId in batch)
+		{
+			var deleted = await relations.DeleteAsync(projectKey, edgeId, ct);
+			results.Add(new RelationDeletedResult(edgeId, deleted));
+		}
+		return new RelationsDeletedResult(results);
 	}
+
+	static RelationCreateItemInput[] NormalizeCreateItems(
+		RelationCreateItemInput[]? items, string? kind, string? fromNodeId, string? toNodeId)
+	{
+		if (items is { Length: > 0 }) return items;
+		if (!string.IsNullOrWhiteSpace(kind) || !string.IsNullOrWhiteSpace(fromNodeId) || !string.IsNullOrWhiteSpace(toNodeId))
+		{
+			return
+			[
+				new RelationCreateItemInput
+				{
+					Kind = kind,
+					FromNodeId = fromNodeId,
+					ToNodeId = toNodeId,
+				},
+			];
+		}
+		throw new ArgumentException("relations_create requires items:[{kind,from,to},…] or single-form kind + fromNodeId + toNodeId");
+	}
+
+	static string[] NormalizeDeleteIds(string[]? ids, string? id)
+	{
+		if (ids is { Length: > 0 }) return ids;
+		if (!string.IsNullOrWhiteSpace(id)) return [id];
+		throw new ArgumentException("relations_delete requires ids:[…] or single-form id");
+	}
+
+	static string? ItemFrom(RelationCreateItemInput item) =>
+		!string.IsNullOrWhiteSpace(item.From) ? item.From : item.FromNodeId;
+
+	static string? ItemTo(RelationCreateItemInput item) =>
+		!string.IsNullOrWhiteSpace(item.To) ? item.To : item.ToNodeId;
 }

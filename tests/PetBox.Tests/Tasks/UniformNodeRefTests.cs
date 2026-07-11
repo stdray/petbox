@@ -141,9 +141,10 @@ public sealed class UniformNodeRefTests : IDisposable
 		var b2 = await Seed(http, "b2", """[{"key":"beta","status":"Todo","title":"B"}]""");
 
 		// Cross-board: each side resolves project-wide from its slug alone.
-		var rel = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, "blocks", "alpha", "beta");
-		rel.FromNodeId.Should().Be(b1["alpha"]);
-		rel.ToNodeId.Should().Be(b2["beta"]);
+		var rel = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: "alpha", toNodeId: "beta");
+		rel.Relations.Should().ContainSingle();
+		rel.Relations[0].FromNodeId.Should().Be(b1["alpha"]);
+		rel.Relations[0].ToNodeId.Should().Be(b2["beta"]);
 	}
 
 	[Fact]
@@ -153,9 +154,10 @@ public sealed class UniformNodeRefTests : IDisposable
 		var ids = await Seed(http, "b", """
 			[{"key":"one","status":"Todo","title":"1"},{"key":"two","status":"Todo","title":"2"}]
 			""");
-		var rel = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, "blocks", ids["one"], ids["two"]);
-		rel.FromNodeId.Should().Be(ids["one"]);
-		rel.ToNodeId.Should().Be(ids["two"]);
+		var rel = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: ids["one"], toNodeId: ids["two"]);
+		rel.Relations.Should().ContainSingle();
+		rel.Relations[0].FromNodeId.Should().Be(ids["one"]);
+		rel.Relations[0].ToNodeId.Should().Be(ids["two"]);
 	}
 
 	[Fact]
@@ -165,8 +167,9 @@ public sealed class UniformNodeRefTests : IDisposable
 		await Seed(http, "b1", """[{"key":"dup","status":"Todo","title":"D1"},{"key":"target","status":"Todo","title":"T"}]""");
 		await Seed(http, "b2", """[{"key":"dup","status":"Todo","title":"D2"}]""");
 
-		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, "blocks", "dup", "target");
+		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: "dup", toNodeId: "target");
 		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*items[0]*")
 			.WithMessage("*ambiguous slug 'dup'*")
 			.WithMessage("*boards: [b1, b2]*")
 			.WithMessage("*pass the node's NodeId*");
@@ -178,8 +181,9 @@ public sealed class UniformNodeRefTests : IDisposable
 		var http = Http();
 		await Seed(http, "b", """[{"key":"real","status":"Todo","title":"R"}]""");
 
-		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, "blocks", "ghost", "real");
+		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: "ghost", toNodeId: "real");
 		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*items[0]*")
 			.WithMessage($"*node 'ghost' does not match any active node in project '{Proj}'*");
 	}
 
@@ -190,13 +194,88 @@ public sealed class UniformNodeRefTests : IDisposable
 		var ids = await Seed(http, "b", """
 			[{"key":"one","status":"Todo","title":"1"},{"key":"two","status":"Todo","title":"2"}]
 			""");
-		await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, "blocks", ids["one"], ids["two"]);
+		await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: ids["one"], toNodeId: ids["two"]);
 
 		// Listed by slug and by NodeId identically (the uniform ref).
 		var bySlug = await RelationTools.ListAsync(http, Flags(), _relations, _tasks, Proj, "one");
 		var byId = await RelationTools.ListAsync(http, Flags(), _relations, _tasks, Proj, ids["one"]);
 		bySlug.Relations.Should().BeEquivalentTo(byId.Relations);
 		bySlug.Relations.Single().FromNodeId.Should().Be(ids["one"]);
+	}
+
+	// ---- relations_create/delete batch form ----
+
+	[Fact]
+	public async Task RelationsCreate_BatchItems_CreatesAll()
+	{
+		var http = Http();
+		var ids = await Seed(http, "b", """
+			[{"key":"a","status":"Todo","title":"A"},{"key":"b","status":"Todo","title":"B"},
+			 {"key":"c","status":"Todo","title":"C"},{"key":"d","status":"Todo","title":"D"}]
+			""");
+
+		var created = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, items:
+		[
+			new RelationCreateItemInput { Kind = "blocks", From = "a", To = "b" },
+			new RelationCreateItemInput { Kind = "relates_to", FromNodeId = ids["c"], ToNodeId = ids["d"] },
+		]);
+
+		created.Relations.Should().HaveCount(2);
+		created.Relations[0].Kind.Should().Be("blocks");
+		created.Relations[0].FromNodeId.Should().Be(ids["a"]);
+		created.Relations[0].ToNodeId.Should().Be(ids["b"]);
+		created.Relations[1].Kind.Should().Be("relates_to");
+		created.Relations[1].FromNodeId.Should().Be(ids["c"]);
+		created.Relations[1].ToNodeId.Should().Be(ids["d"]);
+	}
+
+	[Fact]
+	public async Task RelationsCreate_Batch_ValidationFailsWholeBatch_NoPartialWrite()
+	{
+		var http = Http();
+		var ids = await Seed(http, "b", """
+			[{"key":"a","status":"Todo","title":"A"},{"key":"b","status":"Todo","title":"B"}]
+			""");
+
+		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, items:
+		[
+			new RelationCreateItemInput { Kind = "blocks", From = "a", To = "b" },
+			new RelationCreateItemInput { Kind = "blocks", From = "ghost", To = "b" },
+		]);
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*items[1]*")
+			.WithMessage("*ghost*");
+
+		// First item was validated but never written (fail-all-before-create).
+		var list = await RelationTools.ListAsync(http, Flags(), _relations, _tasks, Proj, ids["a"]);
+		list.Relations.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task RelationsDelete_BatchAndSingleForm()
+	{
+		var http = Http();
+		var ids = await Seed(http, "b", """
+			[{"key":"a","status":"Todo","title":"A"},{"key":"b","status":"Todo","title":"B"},
+			 {"key":"c","status":"Todo","title":"C"},{"key":"d","status":"Todo","title":"D"}]
+			""");
+		var created = await RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, items:
+		[
+			new RelationCreateItemInput { Kind = "blocks", From = "a", To = "b" },
+			new RelationCreateItemInput { Kind = "blocks", From = "c", To = "d" },
+		]);
+		var id0 = created.Relations[0].Id;
+		var id1 = created.Relations[1].Id;
+
+		var single = await RelationTools.DeleteAsync(http, Flags(), _relations, Proj, id: id0);
+		single.Relations.Should().ContainSingle();
+		single.Relations[0].Id.Should().Be(id0);
+		single.Relations[0].Deleted.Should().BeTrue();
+
+		var batch = await RelationTools.DeleteAsync(http, Flags(), _relations, Proj, ids: [id1, "no-such"]);
+		batch.Relations.Should().HaveCount(2);
+		batch.Relations[0].Should().Be(new RelationDeletedResult(id1, true));
+		batch.Relations[1].Should().Be(new RelationDeletedResult("no-such", false));
 	}
 
 	// ---- comments_upsert/search: slug resolves on the `board` param ----

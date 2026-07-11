@@ -239,6 +239,17 @@ public sealed record CommentItemInput
 	public long Version { get; init; }
 }
 
+// One item of a relations_create batch. Prefer card language `from`/`to`; `fromNodeId`/`toNodeId`
+// are accepted aliases (same as the tool's single-form BC params).
+public sealed record RelationCreateItemInput
+{
+	public string? Kind { get; init; }
+	public string? From { get; init; }
+	public string? To { get; init; }
+	public string? FromNodeId { get; init; }
+	public string? ToNodeId { get; init; }
+}
+
 // An entry as submitted to memory_upsert. Mirrors EXACTLY the fields the old JsonElement parser
 // (MemoryTools.ParseEntries) accepted, including the `deleted:true` soft-delete marker.
 public sealed record MemoryEntryInputDto
