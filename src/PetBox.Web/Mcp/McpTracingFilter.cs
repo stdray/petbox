@@ -3,6 +3,7 @@ using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ModelContextProtocol;
+using ModelContextProtocol.Protocol;
 using ModelContextProtocol.Server;
 using PetBox.Core.Observability;
 
@@ -66,8 +67,7 @@ static partial class McpTracingFilter
 			try
 			{
 				var result = await next(request, ct);
-				// content + structuredContent = the payload a client receives (spec wording).
-				var respChars = SerializedLength(new { result.Content, result.StructuredContent });
+				var respChars = ResponseChars(result);
 				span?.SetTag("petbox.response_chars", respChars);
 				// The inner McpErrorEnvelopeFilter converts tool-body exceptions into an
 				// IsError result BEFORE this (outer) filter sees them, so attribute the outcome
@@ -130,6 +130,17 @@ static partial class McpTracingFilter
 		span?.SetTag("petbox.tool", toolName);
 		return span;
 	}
+
+	// RespChars: the payload ONE client actually puts in context, counted ONCE. The SDK emits
+	// every result TWICE on the wire — as structuredContent AND as an escaped text mirror of
+	// the same JSON — but no client reads both (Claude Code reads structuredContent; droid and
+	// opencode read the text copy), so the wire is ~2x what any single agent sees. Measure the
+	// logical payload: structuredContent when present, else the content blocks — the error
+	// envelope (McpErrorEnvelopeFilter) is text-only by design and must still be measured.
+	internal static int ResponseChars(CallToolResult result) =>
+		result.StructuredContent is not null
+			? SerializedLength(result.StructuredContent)
+			: result.Content is { Count: > 0 } content ? SerializedLength(content) : 0;
 
 	// Length of the serialized value (0 for null). Cheap enough for the hot path — one
 	// serialize pass, no second copy.
