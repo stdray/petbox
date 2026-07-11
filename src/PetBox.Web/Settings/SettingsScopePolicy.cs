@@ -29,6 +29,10 @@ public static class SettingsScopePolicy
 		typeof(IngestionSettings),
 		typeof(DashboardSettings),
 		typeof(SessionFullScanSettings),
+		// The LLM-registry inheritance pair (System tap + Workspace opt-out). Registered here so the
+		// two toggles appear on the existing Sys/Workspace settings pages — HasMinScope pins each one
+		// to its home scope, so neither renders (or writes a dead value) on the other's page.
+		typeof(LlmRegistryInheritanceSettings),
 	];
 
 	// The scope range this interim policy governs. Service/User/Membership pages (just

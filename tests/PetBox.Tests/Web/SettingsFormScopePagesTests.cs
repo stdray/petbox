@@ -183,8 +183,10 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 	{
 		// The generic-page requirement: System/Workspace/Project all present the SAME
 		// Log/Ingestion/Dashboard field catalog (SettingsScopePolicy.Records driving all three).
-		// SessionFullScanSettings is deliberately excluded from this comparison — its two fields
-		// stay HasMinScope-pinned to their own single scope, by design.
+		// The HasMinScope-pinned records are deliberately excluded from this comparison — their
+		// fields stay pinned to their own single scope, by design (SessionFullScanSettings; and
+		// LlmRegistryInheritanceSettings, whose System tap and Workspace opt-out are two
+		// independent, non-cascading switches).
 		var jar = new CookieJar();
 		await LogInAsync(jar);
 
@@ -201,7 +203,10 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 		projFields.Should().BeEquivalentTo(sysFields);
 	}
 
-	static readonly string[] FullScanFieldNames = ["SystemEnabled", "ProjectEnabled"];
+	// Every HasMinScope-pinned field: rendered on exactly ONE scope page, so it can never be part of
+	// the uniform field set the three pages must agree on.
+	static readonly string[] PinnedFieldNames =
+		["SystemEnabled", "ProjectEnabled", "SystemShared", "WorkspaceInherits"];
 
 	static HashSet<string> UniformFieldTestIds(string html)
 	{
@@ -215,7 +220,7 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 			var start = idx + marker.Length;
 			var end = html.IndexOf('"', start);
 			var name = html[start..end];
-			if (Array.IndexOf(FullScanFieldNames, name) < 0)
+			if (Array.IndexOf(PinnedFieldNames, name) < 0)
 				found.Add(name);
 			idx = end;
 		}

@@ -184,3 +184,35 @@ TABLE agent_definitions
   INDEX ix_agent_definitions_project_active origin=c (ProjectKey, ActiveTo)
   INDEX sqlite_autoindex_agent_definitions_1 UNIQUE origin=pk (ProjectKey, Key, Version)
   INDEX ux_agent_definitions_active_project_key UNIQUE origin=c (ProjectKey, Key) WHERE ActiveTo IS NULL
+
+TABLE llm_endpoints
+  COL BaseUrl TEXT NOT NULL
+  COL CertThumbprint TEXT NULL
+  COL ConnectTimeoutMs INTEGER NOT NULL
+  COL KeyAuthTag TEXT NULL
+  COL KeyCipher TEXT NULL
+  COL KeyIv TEXT NULL
+  COL Name TEXT NOT NULL PK3
+  COL RequestTimeoutMs INTEGER NOT NULL
+  COL Scope TEXT NOT NULL PK1
+  COL ScopeKey TEXT NOT NULL PK2
+  COL UpdatedAt DATETIME NOT NULL
+  COL UpdatedBy INTEGER NULL
+  INDEX sqlite_autoindex_llm_endpoints_1 UNIQUE origin=pk (Scope, ScopeKey, Name)
+
+TABLE llm_routes
+  COL Capability TEXT NOT NULL
+  COL Endpoint TEXT NOT NULL
+  COL Id TEXT NOT NULL PK1
+  COL Model TEXT NOT NULL
+  COL Priority INTEGER NOT NULL
+  COL Scope TEXT NOT NULL
+  COL ScopeKey TEXT NOT NULL
+  COL Thinking TEXT NULL
+  COL Tier TEXT NULL
+  COL UpdatedAt DATETIME NOT NULL
+  COL UpdatedBy INTEGER NULL
+  FK (Scope, ScopeKey, Endpoint) -> llm_endpoints(Scope, ScopeKey, Name) ON DELETE CASCADE ON UPDATE CASCADE
+  INDEX ix_llm_routes_level origin=c (Scope, ScopeKey)
+  INDEX sqlite_autoindex_llm_routes_1 UNIQUE origin=pk (Id)
+  INDEX ux_llm_routes_level_capability_tier_endpoint_model UNIQUE origin=c (Scope, ScopeKey, Capability, Tier, Endpoint, Model)
