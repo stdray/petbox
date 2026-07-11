@@ -86,18 +86,17 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 		(_httpApprove, Approver) = await ConnectAsync(MaintainerKey);
 	}
 
-	// Wipe everything the previous test may have written under the shared host, so each
-	// test sees an empty "wf" project: catalog + edges live in petbox.db (task_boards,
-	// relations — boards like `spec`/`ideas` are per-project singletons, so leftover rows
-	// would change board_create/auto-wire behavior); nodes/comments/tags/version cursors/
-	// search index all live in the per-project tasks file, which we delete wholesale.
+	// Wipe everything the previous test may have written under the shared host, so each test
+	// sees an empty "wf" project: the board CATALOG lives in petbox.db (task_boards — boards
+	// like `spec`/`ideas` are per-project singletons, so leftover rows would change
+	// board_create/auto-wire behavior); nodes/edges/comments/tags/version cursors/search index
+	// all live in the per-project tasks file, which we delete wholesale.
 	public async Task ResetAsync()
 	{
 		using (var scope = Factory.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			await db.TaskBoards.Where(b => b.ProjectKey == ProjectKey).DeleteAsync();
-			await db.Relations.Where(r => r.ProjectKey == ProjectKey).DeleteAsync();
 		}
 
 		var tasksFactory = Factory.Services.GetRequiredService<IScopedDbFactory<TasksDb>>();

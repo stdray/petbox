@@ -27,7 +27,9 @@ public sealed class PetBoxDb : DataConnection
 	public ITable<SavedConfigFilter> SavedConfigFilters => this.GetTable<SavedConfigFilter>();
 	public ITable<TaskBoardMeta> TaskBoards => this.GetTable<TaskBoardMeta>();
 	public ITable<MemoryStoreMeta> MemoryStores => this.GetTable<MemoryStoreMeta>();
-	public ITable<Relation> Relations => this.GetTable<Relation>();
+	// LEGACY: relations now live in the per-project tasks file (tasks/{project}.db). This table
+	// is kept (not dropped) until the backfill is verified on live data — see LegacyRelation.
+	public ITable<LegacyRelation> LegacyRelations => this.GetTable<LegacyRelation>();
 	public ITable<AgentDefinitionRow> AgentDefinitions => this.GetTable<AgentDefinitionRow>();
 
 	public static DataOptions<PetBoxDb> CreateOptions(string connectionString) =>

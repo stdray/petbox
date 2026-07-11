@@ -33,7 +33,7 @@ public sealed class StaleBaselineResolveTests : IDisposable
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		var store = new TaskBoardStore(_db, _factory);
-		_tasks = new TasksService(store, new RelationStore(_db), new TagStore(_factory), new CommentService(_factory));
+		_tasks = new TasksService(store, new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
 	}
 
 	public void Dispose()

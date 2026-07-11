@@ -40,7 +40,7 @@ public sealed class TasksTreeContractTests : IDisposable
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db, _factory);
-		_relations = new RelationStore(_db);
+		_relations = new RelationStore(_factory);
 		_commentSvc = new CommentService(_factory);
 		_tasks = new TasksService(_store, _relations, new TagStore(_factory), _commentSvc);
 	}

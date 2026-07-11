@@ -40,7 +40,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_commentSvc = new CommentService(_factory);
-		_tasks = new TasksService(new TaskBoardStore(_db, _factory), new RelationStore(_db), new TagStore(_factory), _commentSvc);
+		_tasks = new TasksService(new TaskBoardStore(_db, _factory), new RelationStore(_factory), new TagStore(_factory), _commentSvc);
 	}
 
 	public void Dispose()
@@ -252,7 +252,7 @@ public sealed class TasksUnifiedSearchTests : IDisposable
 		var specId = up.Added.Single(n => n.Key == "spec-target").NodeId;
 		// Direct task_spec edge → the node carries a `spec` link on ANY board kind (the listing
 		// enrichment), so the q-mode drop of it below is not vacuous.
-		await new RelationStore(_db).CreateAsync(Proj, "task_spec", featId, specId);
+		await new RelationStore(_factory).CreateAsync(Proj, "task_spec", featId, specId);
 		return (featId, specId);
 	}
 

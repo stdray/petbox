@@ -57,7 +57,7 @@ public sealed class McpModuleToolsTests : IDisposable
 			c => new SessionsDb(SessionsDb.CreateOptions(c)), SessionsSchema.Ensure);
 
 		_boards = new TaskBoardStore(_db, _tasksFactory);
-		_relations = new RelationStore(_db);
+		_relations = new RelationStore(_tasksFactory);
 		_tasks = new TasksService(_boards, _relations, new TagStore(_tasksFactory), new CommentService(_tasksFactory));
 		_stores = new MemoryStore(_db, _memFactory);
 		_memory = new MemoryService(_stores);

@@ -38,7 +38,7 @@ public sealed class TasksHybridSearchTests : IDisposable
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db, _factory);
-		_relations = new RelationStore(_db);
+		_relations = new RelationStore(_factory);
 		_commentSvc = new CommentService(_factory);
 		_tags = new TagStore(_factory);
 	}

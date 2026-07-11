@@ -38,7 +38,7 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 		_tasksFactory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_comments = new CommentService(_tasksFactory);
-		_tasks = new TasksService(new TaskBoardStore(_db, _tasksFactory), new RelationStore(_db),
+		_tasks = new TasksService(new TaskBoardStore(_db, _tasksFactory), new RelationStore(_tasksFactory),
 			new TagStore(_tasksFactory), _comments);
 	}
 

@@ -42,7 +42,7 @@ public sealed class CommentUiEditTests : IDisposable
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db, _factory);
 		_comments = new CommentService(_factory);
-		_tasks = new TasksService(_store, new RelationStore(_db), new TagStore(_factory), _comments);
+		_tasks = new TasksService(_store, new RelationStore(_factory), new TagStore(_factory), _comments);
 	}
 
 	public void Dispose()

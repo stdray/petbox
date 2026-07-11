@@ -99,16 +99,16 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 	}
 
 	// Wipe everything the previous test may have written under the shared host, so each
-	// test sees an empty project: catalog + edges live in petbox.db (task_boards,
-	// relations); nodes/comments/tags/methodology definitions/version cursors/search index
-	// all live in the per-project tasks file, which we delete wholesale.
+	// test sees an empty project: only the board CATALOG lives in petbox.db (task_boards);
+	// nodes/edges/comments/tags/methodology definitions/version cursors/search index all
+	// live in the per-project tasks file, which we delete wholesale (relations moved there
+	// — relations-in-project-db — so they go with it).
 	public async Task ResetAsync()
 	{
 		using (var scope = Factory.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			await db.TaskBoards.Where(b => b.ProjectKey == ProjectKey).DeleteAsync();
-			await db.Relations.Where(r => r.ProjectKey == ProjectKey).DeleteAsync();
 		}
 
 		var tasksFactory = Factory.Services.GetRequiredService<IScopedDbFactory<TasksDb>>();
