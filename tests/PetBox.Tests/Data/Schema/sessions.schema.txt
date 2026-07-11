@@ -18,7 +18,7 @@ TABLE message_vec
   INDEX sqlite_autoindex_message_vec_1 UNIQUE origin=pk (SessionId, Version)
 
 TABLE search_cursor
-  COL IndexName TEXT NOT NULL PK1
+  COL IndexName TEXT NULL PK1
   COL Version INTEGER NOT NULL
   INDEX sqlite_autoindex_search_cursor_1 UNIQUE origin=pk (IndexName)
 

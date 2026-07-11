@@ -26,9 +26,15 @@ public sealed class M007_SearchCursorTables : Migration
 {
 	public override void Up()
 	{
+		// `.Nullable()` on a PRIMARY KEY column looks wrong and is deliberate. A non-INTEGER
+		// `PRIMARY KEY` column in SQLite does NOT imply NOT NULL, so the tables the runtime
+		// created — and the same two tables in the memory (M006) and tasks (M009) tiers — have a
+		// nullable IndexName. Declaring NOT NULL here would give a FRESH sessions file a different
+		// shape from an ADOPTED one (and from the other tiers) forever. Tightening it is a
+		// deliberate migration of its own, across all three tiers, not a side effect of this one.
 		if (!Schema.Table("search_cursor").Exists())
 			Create.Table("search_cursor")
-				.WithColumn("IndexName").AsString().NotNullable().PrimaryKey()
+				.WithColumn("IndexName").AsString().Nullable().PrimaryKey()
 				.WithColumn("Version").AsInt64().NotNullable();
 
 		if (!Schema.Table("search_deadletter").Exists())
