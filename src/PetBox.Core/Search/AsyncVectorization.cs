@@ -43,7 +43,11 @@ public interface IIndexCursorStore
 // The outcome of one drain pass. `SourceVersion` is the source's max version at the start of the
 // pass: SourceVersion − Cursor is the index's LAG, the number that says "semantic search here is
 // behind by N versions" (0 = caught up). Carried out so a job can log/alert on it.
-public sealed record DrainResult(int Indexed, int Deleted, int DeadLettered, bool Advanced, long Cursor, long SourceVersion = 0)
+// `Stalled` is the SearchDegradedReason that aborted the pass because the EMBEDDER (not the doc)
+// was down — non-null means "nothing is wrong with the data, come back later".
+public sealed record DrainResult(
+	int Indexed, int Deleted, int DeadLettered, bool Advanced, long Cursor, long SourceVersion = 0,
+	string? Stalled = null)
 {
 	public long Lag => Math.Max(0, SourceVersion - Cursor);
 }
@@ -72,6 +76,21 @@ public sealed partial class AsyncVectorizationWorker
 		_log = log;
 	}
 
+	// Infrastructure failure — the EMBEDDER is unreachable, the document is innocent. `embed-no-route`
+	// (the project has no Embed route yet) and `embed-transient` (every provider refused/timed out;
+	// an OPEN CIRCUIT BREAKER lands here too — the router reports an all-endpoints-open chain as a
+	// transient failure) say nothing at all about this doc: retrying it later WILL work. Charging an
+	// attempt for these is what once killed the vectors — 5 ticks of a down endpoint (60s apart) and
+	// EVERY document was dead-lettered forever, cursor sailing on past them. So: no attempt, no
+	// dead-letter, hold the cursor, stop the pass.
+	// Anything else is a POISON DOCUMENT: `embed-upstream-4xx` (the provider looked at THIS text and
+	// definitively rejected it — too long, bad encoding, bad request) or `index-error`/any other
+	// exception (SQL, corrupt row). That is what the attempt counter and the dead-letter exist for.
+	static string? Infrastructure(Exception ex) => ex is SearchDegradedException sde &&
+		sde.Reason is SearchDegradedReason.EmbedNoRoute or SearchDegradedReason.EmbedTransient
+			? sde.Reason
+			: null;
+
 	// One drain pass. Materializes the delta into the index; advances the cursor ONLY if nothing
 	// is left in a transient-failure state. A failure that has burned through maxAttempts is
 	// dead-lettered (skipped henceforth) so it stops blocking the cursor. Upserts/deletes are
@@ -82,6 +101,7 @@ public sealed partial class AsyncVectorizationWorker
 		var delta = await _source.DeltaAsync(cursor, ct);
 
 		var blocked = false;
+		string? stalled = null;
 		int indexed = 0, deleted = 0, deadLettered = 0;
 
 		foreach (var del in delta.Deletes)
@@ -102,6 +122,16 @@ public sealed partial class AsyncVectorizationWorker
 				await _target.IndexAsync(null, doc, ct);
 				await _store.ClearAttemptsAsync(_index, doc.Type, doc.Id, ct);
 				indexed++;
+			}
+			catch (Exception ex) when (Infrastructure(ex) is not null)
+			{
+				// The embedder is down, not the doc. Nothing is charged to anything; the cursor stays
+				// put so the whole un-indexed remainder is re-drained (= backfilled) on recovery, and
+				// we stop the pass instead of walking the rest of the delta into the same dead socket.
+				stalled = Infrastructure(ex);
+				blocked = true;
+				if (_log is not null) LogEmbedderDown(_log, _index, stalled!, doc.Type, doc.Id, ex.Message);
+				break;
 			}
 			catch (Exception ex)
 			{
@@ -125,7 +155,7 @@ public sealed partial class AsyncVectorizationWorker
 		if (!blocked) await _store.SetCursorAsync(_index, delta.CurrentVersion, ct);
 		var newCursor = await _store.GetCursorAsync(_index, ct);
 		var result = new DrainResult(indexed, deleted, deadLettered, Advanced: !blocked, Cursor: newCursor,
-			SourceVersion: delta.CurrentVersion);
+			SourceVersion: delta.CurrentVersion, Stalled: stalled);
 		// Summary of the pass, including the LAG that says how far behind the semantic index is.
 		// Skipped when there was literally nothing to do, so an idle drain loop stays quiet.
 		if (_log is not null && (indexed > 0 || deleted > 0 || deadLettered > 0 || blocked))
@@ -136,6 +166,10 @@ public sealed partial class AsyncVectorizationWorker
 	[LoggerMessage(EventId = 401, Level = LogLevel.Warning,
 		Message = "vectorization {Index}: DEAD-LETTERED {Type}/{Id} after {Attempts} attempts — {Error}")]
 	static partial void LogDeadLetter(ILogger logger, string index, string type, string id, int attempts, string error, Exception ex);
+
+	[LoggerMessage(EventId = 405, Level = LogLevel.Information,
+		Message = "vectorization {Index}: embedder unavailable ({Reason}) at {Type}/{Id} — pass stalled, cursor HELD, no attempts charged, nothing dead-lettered; retries on recovery ({Error})")]
+	static partial void LogEmbedderDown(ILogger logger, string index, string reason, string type, string id, string error);
 
 	[LoggerMessage(EventId = 402, Level = LogLevel.Debug,
 		Message = "vectorization {Index}: {Type}/{Id} failed (attempt {Attempts}) — {Error}; cursor held")]
