@@ -99,6 +99,11 @@ public partial class Program
 			new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(bootstrapCs).DataSource)!);
 
 		builder.Services.AddScoped(sp => new PetBoxDb(PetBoxDb.CreateOptions(ResolveCs(sp))));
+		// The catalog of projects/entities (core.db) — the SOURCE OF TRUTH the background enrichment
+		// jobs ask "which projects exist" (spec: catalog-is-source-of-truth). Per-project SQLite files
+		// are created lazily, so a job that enumerated `{tier}/*.db` was blind to a project without a
+		// file yet and kept working the ghost file of a deleted one. Scoped: it reads PetBoxDb.
+		builder.Services.AddScoped<IProjectCatalog, ProjectCatalog>();
 		// Portable agent-definition store (Core DB, always on — no feature flag).
 		builder.Services.AddScoped<PetBox.Core.Services.IAgentDefinitionService, PetBox.Core.Services.AgentDefinitionService>();
 		// Log dbs live under data/logs/** — the one subtree Backup deliberately skips
@@ -186,7 +191,7 @@ public partial class Program
 		// a singleton clock (the job itself is scoped — a fresh instance per tick).
 		builder.Services.AddSingleton<PetBox.Web.Search.MemoryQuarantineGcClock>();
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob>(sp => new PetBox.Web.Search.MemoryQuarantineGcJob(
-			sp.GetRequiredService<IScopedDbFactory<PetBox.Memory.Data.MemoryDb>>(),
+			sp.GetRequiredService<IProjectCatalog>(),
 			sp.GetRequiredService<PetBox.Memory.Contract.IMemoryService>(),
 			sp.GetService<Microsoft.Extensions.Logging.ILogger<PetBox.Web.Search.MemoryQuarantineGcJob>>(),
 			minAge: builder.Configuration.GetValue<int?>("Memory:QuarantineGc:MinAgeDays") is { } days ? TimeSpan.FromDays(days) : null,

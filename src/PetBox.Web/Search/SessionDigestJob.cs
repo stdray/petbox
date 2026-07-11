@@ -71,7 +71,7 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 		full-text search. No commentary, no markdown headers; output the digest text only.
 		""";
 
-	readonly IScopedDbFactory<SessionsDb> _factory;
+	readonly IProjectCatalog _catalog;
 	readonly ISessionService _sessions;
 	readonly IMemoryService _memory;
 	readonly ILlmClient? _llm;
@@ -82,11 +82,11 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 	// Round-robin start position across passes; passes run strictly sequentially.
 	static int _rotation;
 
-	public SessionDigestJob(IScopedDbFactory<SessionsDb> factory, ISessionService sessions,
+	public SessionDigestJob(IProjectCatalog catalog, ISessionService sessions,
 		IMemoryService memory, ILlmClient? llm = null, ILogger<SessionDigestJob>? logger = null,
 		TimeSpan? quietPeriod = null, TimeSpan? budget = null)
 	{
-		_factory = factory;
+		_catalog = catalog;
 		_sessions = sessions;
 		_memory = memory;
 		_llm = llm;
@@ -101,9 +101,19 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 
 		var distilled = 0;
 		var clock = new DrainClock(_budget);
-		// Session DBs are flat {baseDir}/{project}.db files (Scope.Project, no sub-name),
-		// so the scope keys are the file names at the base dir itself.
-		foreach (var project in DrainPacing.Rotate(ScopedDbFiles.ListNames(_factory.BaseDir, string.Empty), ref _rotation))
+		// Catalog, not file scan (spec: catalog-is-source-of-truth). Sessions are the one tier with
+		// NO per-entity catalog in core.db (a session lives only in sessions/{project}.db), so the
+		// PROJECT catalog is the whole answer: every project, and nothing but the projects. Scanning
+		// sessions/*.db instead missed a project until its first push materialized the file, and kept
+		// distilling a deleted project's GHOST file — burning a chat call per session and writing the
+		// digests back into a memory file the orphan sweeper had just reclaimed.
+		//
+		// Lazy-creation: the LLM gate below runs BEFORE any store access, so a project is only opened
+		// (→ sessions file created + migrated) when chat is actually available for it; then
+		// ListAsync returns 0 headers and the pass moves on. That is the deliberate trade: an empty,
+		// migrated sessions file per project — created once, then just an open + indexed read per
+		// tick — in exchange for never again being blind to a project that has no file yet.
+		foreach (var project in DrainPacing.Rotate(await _catalog.ListProjectKeysAsync(ct), ref _rotation))
 		{
 			ct.ThrowIfCancellationRequested();
 			if (clock.Exhausted) break;

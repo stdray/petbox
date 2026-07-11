@@ -61,6 +61,7 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 		""";
 
 	readonly IScopedDbFactory<MemoryDb> _factory;
+	readonly IProjectCatalog _catalog;
 	readonly IMemoryService _memory;
 	readonly ILlmClient? _llm;
 	readonly ILogger<BehaviorPatternJob>? _logger;
@@ -70,11 +71,12 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 	// Round-robin start position across passes; passes run strictly sequentially.
 	static int _rotation;
 
-	public BehaviorPatternJob(IScopedDbFactory<MemoryDb> factory, IMemoryService memory,
-		ILlmClient? llm = null, ILogger<BehaviorPatternJob>? logger = null, TimeSpan? budget = null,
-		IOptions<AutocaptureDedupOptions>? dedup = null)
+	public BehaviorPatternJob(IScopedDbFactory<MemoryDb> factory, IProjectCatalog catalog,
+		IMemoryService memory, ILlmClient? llm = null, ILogger<BehaviorPatternJob>? logger = null,
+		TimeSpan? budget = null, IOptions<AutocaptureDedupOptions>? dedup = null)
 	{
 		_factory = factory;
+		_catalog = catalog;
 		_memory = memory;
 		_llm = llm;
 		_logger = logger;
@@ -88,7 +90,13 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 
 		var mined = 0;
 		var clock = new DrainClock(_budget);
-		foreach (var project in DrainPacing.Rotate(ScopedDbFiles.ListRootScopeKeys(_factory.BaseDir), ref _rotation))
+		// Catalog, not file scan (spec: catalog-is-source-of-truth): projects come from core.db
+		// `MemoryStores` (the tier's own catalog), never from memory/*.db. This job WRITES memory, so
+		// a ghost file was the worst offender — mining a deleted project's leftovers re-created the
+		// file the orphan sweeper had just reclaimed; and a project whose store row exists without a
+		// materialized file was mined never. The quarantine-store gate below is a catalog read, so a
+		// project without `autocaptured` still opens no file.
+		foreach (var project in DrainPacing.Rotate(await _catalog.ListMemoryProjectKeysAsync(ct), ref _rotation))
 		{
 			ct.ThrowIfCancellationRequested();
 			if (clock.Exhausted) break; // mining = one chat call per project; rotation serves the rest next pass

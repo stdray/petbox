@@ -1,6 +1,5 @@
 using PetBox.Core.Data;
 using PetBox.Memory.Contract;
-using PetBox.Memory.Data;
 
 namespace PetBox.Web.Search;
 
@@ -38,7 +37,7 @@ public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 	public static readonly TimeSpan DefaultMinAge = TimeSpan.FromDays(30);
 	public static readonly TimeSpan DefaultScanInterval = TimeSpan.FromHours(6);
 
-	readonly IScopedDbFactory<MemoryDb> _factory;
+	readonly IProjectCatalog _catalog;
 	readonly IMemoryService _memory;
 	readonly ILogger<MemoryQuarantineGcJob>? _logger;
 	readonly TimeSpan _minAge;
@@ -46,11 +45,11 @@ public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 	readonly TimeSpan _scanInterval;
 	readonly MemoryQuarantineGcClock _clock;
 
-	public MemoryQuarantineGcJob(IScopedDbFactory<MemoryDb> factory, IMemoryService memory,
+	public MemoryQuarantineGcJob(IProjectCatalog catalog, IMemoryService memory,
 		ILogger<MemoryQuarantineGcJob>? logger = null, TimeSpan? minAge = null, bool enforce = false,
 		TimeSpan? scanInterval = null, MemoryQuarantineGcClock? clock = null)
 	{
-		_factory = factory;
+		_catalog = catalog;
 		_memory = memory;
 		_logger = logger;
 		_minAge = minAge ?? DefaultMinAge;
@@ -67,7 +66,14 @@ public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 
 		var cutoff = now - _minAge;
 		var retired = 0;
-		foreach (var project in ScopedDbFiles.ListRootScopeKeys(_factory.BaseDir))
+		// Catalog, not file scan (spec: catalog-is-source-of-truth): the sweep list is the projects
+		// that HAVE memory per core.db `MemoryStores`, not the memory/*.db files on disk. A file scan
+		// would sweep the GHOST file of a deleted project (and, under enforce, write soft-deletes back
+		// into it — resurrecting a file MemoryOrphanCleanupService is trying to reclaim), and would
+		// miss a project whose store row exists but whose file has not been materialized yet. The
+		// StoreExistsAsync gate below is itself a catalog read, so no file is opened for a project
+		// that has no quarantine store.
+		foreach (var project in await _catalog.ListMemoryProjectKeysAsync(ct))
 		{
 			ct.ThrowIfCancellationRequested();
 			try

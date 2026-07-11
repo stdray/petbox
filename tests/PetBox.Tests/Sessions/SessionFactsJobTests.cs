@@ -55,7 +55,8 @@ public sealed class SessionFactsJobTests : IDisposable
 	}
 
 	SessionFactsJob Job(ILlmClient? llm, TimeSpan? budget = null) =>
-		new(_sessionsFactory, _sessions, _memory, llm, logger: null, quietPeriod: NoQuiet, budget: budget);
+		new(_sessionsFactory, new ProjectCatalog(_db), _sessions, _memory, llm, logger: null,
+			quietPeriod: NoQuiet, budget: budget);
 
 	[Fact]
 	public async Task MultiBatchBacklog_DrainsFullyInOnePass()

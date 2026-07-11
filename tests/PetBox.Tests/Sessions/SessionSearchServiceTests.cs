@@ -52,7 +52,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 		_sessions = new SessionService(new SessionStore(_sessionsFactory));
 		_memory = new MemoryService(new MemoryStore(_db, _memoryFactory), llm: null);
 		_episodic = new DuckDbSessionEpisodicIndex(_sessionsFactory);
-		_termIndex = new SessionTermIndex(_sessionsFactory, _sessions);
+		_termIndex = new SessionTermIndex(_sessionsFactory, new ProjectCatalog(_db), _sessions);
 		_fullScanIndex = new SessionFullScanIndex(_sessions);
 		_settingsResolver = new SettingsResolver(_db, new NoSecrets());
 		_search = new SessionSearchService(_memory, _episodic, _termIndex, _fullScanIndex, _settingsResolver, _sessions);
@@ -71,7 +71,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 		contents.Select(c => new SessionMessageInput("user", c)).ToArray();
 
 	Task<int> Distill() =>
-		new SessionDigestJob(_sessionsFactory, _sessions, _memory, new EchoChat(), logger: null, quietPeriod: NoQuiet)
+		new SessionDigestJob(new ProjectCatalog(_db), _sessions, _memory, new EchoChat(), logger: null, quietPeriod: NoQuiet)
 			.DrainAllAsync(CancellationToken.None);
 
 	[Fact]
@@ -136,7 +136,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 		await _sessions.UpsertAsync(Proj, "s-verbatim", "claude-code",
 			Msgs($"обсуждали тему А, отдельно всплыл идентификатор {TermB} в логах ошибки"));
 
-		var distilled = await new SessionDigestJob(_sessionsFactory, _sessions, _memory, new FixedDigestChat(),
+		var distilled = await new SessionDigestJob(new ProjectCatalog(_db), _sessions, _memory, new FixedDigestChat(),
 			logger: null, quietPeriod: NoQuiet).DrainAllAsync(CancellationToken.None);
 		distilled.Should().Be(1);
 
