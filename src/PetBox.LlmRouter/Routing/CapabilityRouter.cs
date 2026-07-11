@@ -12,16 +12,24 @@ namespace PetBox.LlmRouter.Routing;
 // endpoint is skipped without a connection (llm-fast-down). Every served call logs who
 // answered (llm-observability) via source-generated LoggerMessage — the logger config, not
 // in-code level checks, decides what is emitted. Scoped (depends on the scoped resolver).
+//
+// The registry it resolves through is the LEVELLED one in core.db (ILlmRegistryLevelResolver,
+// spec: llm-registry-own-store), NOT the old ConfigBindings-backed LlmRegistryStore. That flip is
+// what turns semantic search on for every project outside $system: a workspace with no registry of
+// its own now INHERITS the system level instead of resolving to nothing. And because the resolver
+// knows WHY a project has no routes, the no-route error says so — "the system registry is not
+// inherited here" is a different sentence from "there is no route anywhere", and both reach the
+// caller (degradedReason) and the log (event 305).
 public sealed partial class CapabilityRouter : ILlmClient
 {
-	readonly ILlmRegistryResolver _resolver;
+	readonly ILlmRegistryLevelResolver _resolver;
 	readonly CertPinningHttpClientProvider _clients;
 	readonly IOpenAiCompatibleClient _upstream;
 	readonly EndpointBreaker _breaker;
 	readonly ILogger<CapabilityRouter> _log;
 
 	public CapabilityRouter(
-		ILlmRegistryResolver resolver,
+		ILlmRegistryLevelResolver resolver,
 		CertPinningHttpClientProvider clients,
 		IOpenAiCompatibleClient upstream,
 		EndpointBreaker breaker,
@@ -84,10 +92,13 @@ public sealed partial class CapabilityRouter : ILlmClient
 		{
 			// The hole that killed semantic search everywhere outside $system and never said a
 			// word: a project with no Embed route throws here on EVERY query, and the only thing
-			// that ever escaped was a mute `degraded:true`. Say it out loud, with the project.
-			LogNoRoute(_log, cap, projectKey, tier ?? "-", resolved.Registry.Routes.Count(r => r.Capability == cap));
-			throw new LlmRouterException(cap, false,
-				$"no route configured for {cap}" + (tier is null ? "" : $" tier '{tier}'"), null, noRoute: true);
+			// that ever escaped was a mute `degraded:true`. Say it out loud, with the project AND
+			// the reason — the resolver distinguishes "nobody has a route" from "inheritance is
+			// switched off here", and that distinction is the whole point of asking it.
+			var reason = resolved.NoRouteMessage(cap) + (tier is null ? "" : $" (tier '{tier}')");
+			LogNoRoute(_log, cap, projectKey, resolved.WorkspaceKey, tier ?? "-",
+				resolved.Level?.ToString() ?? "none", resolved.InheritanceBlocked, reason);
+			throw new LlmRouterException(cap, false, reason, null, noRoute: true);
 		}
 
 		var attempt = 0;
@@ -153,6 +164,8 @@ public sealed partial class CapabilityRouter : ILlmClient
 	[LoggerMessage(EventId = 304, Level = LogLevel.Warning, Message = "llm {Capability} transient failure on '{Endpoint}': {Message} — trying next")]
 	static partial void LogTransient(ILogger logger, LlmCapability capability, string endpoint, string message);
 
-	[LoggerMessage(EventId = 305, Level = LogLevel.Warning, Message = "llm {Capability}: NO ROUTE configured for project '{Project}' (tier '{Tier}'; {CapabilityRoutes} route(s) exist for this capability, none matched) — the capability is dead here")]
-	static partial void LogNoRoute(ILogger logger, LlmCapability capability, string project, string tier, int capabilityRoutes);
+	[LoggerMessage(EventId = 305, Level = LogLevel.Warning,
+		Message = "llm {Capability}: NO ROUTE for project '{Project}' (workspace '{Workspace}', tier '{Tier}', resolved level {Level}, inheritance blocked: {InheritanceBlocked}) — {Reason}. The capability is dead here")]
+	static partial void LogNoRoute(ILogger logger, LlmCapability capability, string project, string workspace,
+		string tier, string level, bool inheritanceBlocked, string reason);
 }

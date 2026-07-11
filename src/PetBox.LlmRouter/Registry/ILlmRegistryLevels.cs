@@ -17,8 +17,9 @@ namespace PetBox.LlmRouter.Registry;
 //                               — not because a check catches it, but because the API cannot
 //                               express it.
 //
-// Nothing in production is wired to these yet: the ConfigBindings-backed LlmRegistryStore still
-// serves the router. Data import and the DI flip are separate steps.
+// The router resolves through ILlmRegistryLevelResolver (CapabilityRouter). The old
+// ConfigBindings-backed LlmRegistryStore is off the runtime path and survives one more version only
+// because the admin/MCP surface still writes through it.
 
 // One level of the registry. ScopeKey is the workspace key for Scope.Workspace and "$" for
 // Scope.System. Scope.Project is RESERVED — the resolver walks it, nothing writes it yet.
