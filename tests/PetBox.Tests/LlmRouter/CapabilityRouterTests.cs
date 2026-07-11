@@ -12,17 +12,21 @@ namespace PetBox.Tests.LlmRouter;
 // throws transient, and a circuit-open endpoint is skipped without an attempt.
 public sealed class CapabilityRouterTests
 {
+	// One resolved LEVEL (the router now consumes ILlmRegistryLevelResolver, not the old store).
+	static ResolvedRegistryLevel Level(LlmRegistry registry, bool inheritanceBlocked = false) =>
+		new(RegistryLevel.System, registry, new Dictionary<string, string>(StringComparer.Ordinal),
+			inheritanceBlocked, "proj", "ws");
+
 	// Two embed providers, primary (priority 10) then secondary (priority 20).
-	static ResolvedRegistry TwoEmbed() => new(
+	static ResolvedRegistryLevel TwoEmbed() => Level(
 		new LlmRegistry(
 			[new LlmEndpoint("primary", "https://p"), new LlmEndpoint("secondary", "https://s")],
 			[
 				new LlmRoute(LlmCapability.Embed, "primary", "mp", 10),
 				new LlmRoute(LlmCapability.Embed, "secondary", "ms", 20),
-			]),
-		new Dictionary<string, string>());
+			]));
 
-	static CapabilityRouter Build(ILlmRegistryResolver resolver, IOpenAiCompatibleClient upstream, EndpointBreaker breaker) =>
+	static CapabilityRouter Build(ILlmRegistryLevelResolver resolver, IOpenAiCompatibleClient upstream, EndpointBreaker breaker) =>
 		new(resolver, new CertPinningHttpClientProvider(), upstream, breaker, NullLogger<CapabilityRouter>.Instance);
 
 	[Fact]
@@ -91,11 +95,10 @@ public sealed class CapabilityRouterTests
 	[Fact]
 	public async Task Chat_passes_route_thinking_to_upstream()
 	{
-		var reg = new ResolvedRegistry(
+		var reg = Level(
 			new LlmRegistry(
 				[new LlmEndpoint("ds", "https://d")],
-				[new LlmRoute(LlmCapability.Chat, "ds", "m", 10, Thinking: LlmThinking.Disabled)]),
-			new Dictionary<string, string>());
+				[new LlmRoute(LlmCapability.Chat, "ds", "m", 10, Thinking: LlmThinking.Disabled)]));
 		var upstream = new FakeUpstream { ChatReply = "ok" };
 		var router = Build(new FakeResolver(reg), upstream, new EndpointBreaker(new FakeTimeProvider()));
 
@@ -108,11 +111,10 @@ public sealed class CapabilityRouterTests
 	[Fact]
 	public async Task Chat_without_thinking_passes_null()
 	{
-		var reg = new ResolvedRegistry(
+		var reg = Level(
 			new LlmRegistry(
 				[new LlmEndpoint("ds", "https://d")],
-				[new LlmRoute(LlmCapability.Chat, "ds", "m", 10)]),
-			new Dictionary<string, string>());
+				[new LlmRoute(LlmCapability.Chat, "ds", "m", 10)]));
 		var upstream = new FakeUpstream { ChatReply = "ok" };
 		var router = Build(new FakeResolver(reg), upstream, new EndpointBreaker(new FakeTimeProvider()));
 
@@ -124,19 +126,24 @@ public sealed class CapabilityRouterTests
 	[Fact]
 	public async Task No_route_for_capability_throws_non_transient()
 	{
-		var router = Build(new FakeResolver(new ResolvedRegistry(LlmRegistry.Empty, new Dictionary<string, string>())),
-			new FakeUpstream(), new EndpointBreaker(new FakeTimeProvider()));
+		var resolved = new ResolvedRegistryLevel(null, LlmRegistry.Empty,
+			new Dictionary<string, string>(StringComparer.Ordinal), InheritanceBlocked: false, "proj", "ws");
+		var router = Build(new FakeResolver(resolved), new FakeUpstream(), new EndpointBreaker(new FakeTimeProvider()));
 
 		var act = async () => await router.EmbedAsync("proj", new EmbedRequest(["x"]));
 
-		(await act.Should().ThrowAsync<LlmRouterException>()).Which.Transient.Should().BeFalse();
+		var ex = (await act.Should().ThrowAsync<LlmRouterException>()).Which;
+		ex.Transient.Should().BeFalse();
+		ex.NoRoute.Should().BeTrue();
+		// The message is the resolver's honest one, not a generic "no route configured".
+		ex.Message.Should().Contain("no route for Embed").And.Contain("ws");
 	}
 
 	// ---- fakes ----
 
-	sealed class FakeResolver(ResolvedRegistry reg) : ILlmRegistryResolver
+	sealed class FakeResolver(ResolvedRegistryLevel reg) : ILlmRegistryLevelResolver
 	{
-		public Task<ResolvedRegistry> ResolveAsync(string projectKey, CancellationToken ct = default) => Task.FromResult(reg);
+		public Task<ResolvedRegistryLevel> ResolveAsync(string projectKey, CancellationToken ct = default) => Task.FromResult(reg);
 	}
 
 	sealed class FakeUpstream : IOpenAiCompatibleClient

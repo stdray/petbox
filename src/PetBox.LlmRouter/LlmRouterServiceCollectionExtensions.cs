@@ -22,19 +22,23 @@ public static class LlmRouterServiceCollectionExtensions
 		services.TryAddSingleton<CertPinningHttpClientProvider>();
 		services.TryAddSingleton<IOpenAiCompatibleClient, OpenAiCompatibleClient>();
 
-		// Registry store is scoped (depends on the scoped PetBoxDb); one instance backs both
-		// the admin contract and the impl-internal resolver.
+		// The levelled registry in core.db (llm-registry-own-store): its own tables, a
+		// Project->Workspace->System cascade, api keys as columns of the endpoint row. THIS is what
+		// the router resolves through now — the runtime flip. A workspace that declares no registry
+		// of its own inherits $system's, which is precisely how semantic search comes alive for the
+		// projects that never had an Embed route.
+		services.AddScoped<ILlmRegistryLevelResolver, LlmRegistryLevelResolver>();
+		services.AddScoped<ILlmRegistryLevelAdmin, LlmRegistryLevelAdmin>();
+
+		// The OLD ConfigBindings-backed store. It is no longer on the router's path: nothing resolves
+		// through ILlmRegistryResolver any more. It stays registered for ONE version because the
+		// admin/MCP surface (Pages/Llm, LlmRouterTools) still edits through ILlmRegistryAdmin — so for
+		// that version the admin UI shows the old registry while the runtime serves the new one. That
+		// divergence is deliberate and time-boxed: the admin surface moves to ILlmRegistryLevelAdmin
+		// next, and this store is deleted after it.
 		services.AddScoped<LlmRegistryStore>();
 		services.AddScoped<ILlmRegistryAdmin>(sp => sp.GetRequiredService<LlmRegistryStore>());
 		services.AddScoped<ILlmRegistryResolver>(sp => sp.GetRequiredService<LlmRegistryStore>());
-
-		// The levelled registry in core.db (llm-registry-own-store): its own tables, a
-		// Project->Workspace->System cascade, api keys as columns of the endpoint row. Registered but
-		// NOT yet wired to the router — CapabilityRouter still resolves through the ConfigBindings
-		// store above. Importing the live data and flipping ILlmRegistryResolver over are separate
-		// steps; until then these two are exercised by tests only.
-		services.AddScoped<ILlmRegistryLevelResolver, LlmRegistryLevelResolver>();
-		services.AddScoped<ILlmRegistryLevelAdmin, LlmRegistryLevelAdmin>();
 
 		services.AddScoped<ILlmClient, CapabilityRouter>();
 		return services;

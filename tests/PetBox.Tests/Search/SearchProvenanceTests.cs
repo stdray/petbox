@@ -93,9 +93,7 @@ public sealed class SearchProvenanceTests : IDisposable
 	{
 		// One endpoint, refused: the chain is exhausted transiently. A caller must be able to tell
 		// "the embedder blipped, retry" from "this project has no embed route, semantic is dead".
-		var reg = new ResolvedRegistry(
-			new LlmRegistry([new LlmEndpoint("p", "https://p")], [new LlmRoute(LlmCapability.Embed, "p", "m", 10)]),
-			new Dictionary<string, string>());
+		var reg = new LlmRegistry([new LlmEndpoint("p", "https://p")], [new LlmRoute(LlmCapability.Embed, "p", "m", 10)]);
 		var router = new CapabilityRouter(new FixedResolver(reg), new CertPinningHttpClientProvider(),
 			new RefusingUpstream(), new EndpointBreaker(new FakeTimeProvider()),
 			new CapturingLogger<CapabilityRouter>());
@@ -176,15 +174,18 @@ public sealed class SearchProvenanceTests : IDisposable
 
 	// ---- fakes ----
 
-	sealed class EmptyResolver : ILlmRegistryResolver
+	sealed class EmptyResolver : ILlmRegistryLevelResolver
 	{
-		public Task<ResolvedRegistry> ResolveAsync(string projectKey, CancellationToken ct = default) =>
-			Task.FromResult(new ResolvedRegistry(LlmRegistry.Empty, new Dictionary<string, string>()));
+		public Task<ResolvedRegistryLevel> ResolveAsync(string projectKey, CancellationToken ct = default) =>
+			Task.FromResult(new ResolvedRegistryLevel(null, LlmRegistry.Empty,
+				new Dictionary<string, string>(StringComparer.Ordinal), InheritanceBlocked: false, projectKey, "ws"));
 	}
 
-	sealed class FixedResolver(ResolvedRegistry reg) : ILlmRegistryResolver
+	sealed class FixedResolver(LlmRegistry reg) : ILlmRegistryLevelResolver
 	{
-		public Task<ResolvedRegistry> ResolveAsync(string projectKey, CancellationToken ct = default) => Task.FromResult(reg);
+		public Task<ResolvedRegistryLevel> ResolveAsync(string projectKey, CancellationToken ct = default) =>
+			Task.FromResult(new ResolvedRegistryLevel(RegistryLevel.System, reg,
+				new Dictionary<string, string>(StringComparer.Ordinal), InheritanceBlocked: false, projectKey, "ws"));
 	}
 
 	sealed class UnusedUpstream : IOpenAiCompatibleClient
