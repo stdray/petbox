@@ -11,8 +11,9 @@ namespace PetBox.Memory.Data.Migrations;
 public sealed class M004_MemoryMetadata : Migration
 {
 	public override void Up() =>
-		Execute.Sql("ALTER TABLE memory_entries ADD COLUMN Metadata TEXT NOT NULL DEFAULT '';");
+		Alter.Table("memory_entries")
+			.AddColumn("Metadata").AsString().NotNullable().WithDefaultValue("");
 
 	public override void Down() =>
-		Execute.Sql("ALTER TABLE memory_entries DROP COLUMN Metadata;");
+		Delete.Column("Metadata").FromTable("memory_entries");
 }

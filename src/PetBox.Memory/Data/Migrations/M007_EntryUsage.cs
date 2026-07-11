@@ -6,23 +6,18 @@ namespace PetBox.Memory.Data.Migrations;
 // SURFACED in a recall/search answer vs was OPENED directly (memory_get) — the two
 // signals behind procedural-lift graduation/cleanup decisions. Counters are telemetry,
 // not state: losing rows only loses statistics.
+//
+// M009 later repartitions this table by Store (rebuild, PK becomes (Store, Key)).
 [Migration(7, "Per-entry usage counters (entry_usage)")]
 public sealed class M007_EntryUsage : Migration
 {
-	public override void Up()
-	{
-		Execute.Sql("""
-			CREATE TABLE IF NOT EXISTS entry_usage (
-				Key TEXT NOT NULL PRIMARY KEY,
-				SurfacedCount INTEGER NOT NULL DEFAULT 0,
-				OpenedCount INTEGER NOT NULL DEFAULT 0,
-				LastHitAt TEXT NULL
-			);
-			""");
-	}
+	public override void Up() =>
+		Create.Table("entry_usage")
+			.WithColumn("Key").AsString().NotNullable().PrimaryKey()
+			.WithColumn("SurfacedCount").AsInt64().NotNullable().WithDefaultValue(0)
+			.WithColumn("OpenedCount").AsInt64().NotNullable().WithDefaultValue(0)
+			.WithColumn("LastHitAt").AsString().Nullable();
 
-	public override void Down()
-	{
-		Execute.Sql("DROP TABLE IF EXISTS entry_usage;");
-	}
+	// No `IF EXISTS`: Up() created entry_usage.
+	public override void Down() => Delete.Table("entry_usage");
 }

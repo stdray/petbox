@@ -13,8 +13,9 @@ namespace PetBox.Memory.Data.Migrations;
 public sealed class M008_EntryUsageDeliberate : Migration
 {
 	public override void Up() =>
-		Execute.Sql("ALTER TABLE entry_usage ADD COLUMN DeliberateCount INTEGER NOT NULL DEFAULT 0;");
+		Alter.Table("entry_usage")
+			.AddColumn("DeliberateCount").AsInt64().NotNullable().WithDefaultValue(0);
 
 	public override void Down() =>
-		Execute.Sql("ALTER TABLE entry_usage DROP COLUMN DeliberateCount;");
+		Delete.Column("DeliberateCount").FromTable("entry_usage");
 }

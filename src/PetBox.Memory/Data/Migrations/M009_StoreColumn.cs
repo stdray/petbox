@@ -1,4 +1,5 @@
 using FluentMigrator;
+using PetBox.Core.Data;
 
 namespace PetBox.Memory.Data.Migrations;
 
@@ -20,12 +21,15 @@ namespace PetBox.Memory.Data.Migrations;
 // shared PetBox.Core.Search index implementations for no gain.
 //
 // Typed FluentMigrator DDL (no `IF NOT EXISTS`): a migration runs once per VersionInfo, so a
-// tolerant CREATE would only swallow schema drift. Raw SQL is used for exactly two things it
-// cannot express — the data move (INSERT…SELECT) and the PARTIAL unique index.
+// tolerant CREATE would only swallow schema drift. Two things the typed API cannot express go
+// through the NAMED, guarded SqliteDdl helpers instead of an anonymous Execute.Sql: the data
+// moves (INSERT…SELECT → SqliteDdl.Raw, reason recorded) and the PARTIAL unique index
+// (SqliteDdl.PartialIndex — a filtered index has no typed form, and .Filter() from the SqlServer
+// extension would silently drop the WHERE here, turning it into a TOTAL unique index).
 //
 // Forward-only.
 [Migration(9, "memory_entries/entry_usage: add Store, repoint PKs to (Store, …), per-store indexes")]
-public sealed class M009_StoreColumn : Migration
+public sealed class M009_StoreColumn : SqliteMigration
 {
 	public override void Up()
 	{
@@ -44,9 +48,9 @@ public sealed class M009_StoreColumn : Migration
 			.WithColumn("Created").AsString().NotNullable()
 			.WithColumn("Updated").AsString().NotNullable();
 
-		// Data move — no typed equivalent. A fresh per-project file is empty here; a legacy
-		// per-store file adopted in place carries its rows over with an empty Store.
-		Execute.Sql("""
+		SqliteDdl.Raw(
+			"table rebuild: move the memory_entries rows into the new (Store, Key, Version) shape — SQLite cannot alter a PK in place, and an INSERT..SELECT has no typed form. A fresh per-project file is empty here; a legacy per-store file adopted in place carries its rows over with an empty Store",
+			"""
 			INSERT INTO memory_entries_new (Store,Key,Version,Type,Description,Body,Tags,Metadata,PrevKey,ActiveFrom,ActiveTo,Created,Updated)
 			SELECT '', Key, Version, Type, Description, Body, Tags, Metadata, PrevKey, ActiveFrom, ActiveTo, Created, Updated
 			FROM memory_entries;
@@ -58,9 +62,13 @@ public sealed class M009_StoreColumn : Migration
 			.OnColumn("Store").Ascending()
 			.OnColumn("ActiveTo").Ascending()
 			.OnColumn("Key").Ascending();
-		// PARTIAL unique index (one ACTIVE revision per key, per store) — FluentMigrator has no
-		// fluent form for a filtered index, so this one stays raw.
-		Execute.Sql("CREATE UNIQUE INDEX ux_memory_entries_active_key ON memory_entries (Store, Key) WHERE ActiveTo IS NULL;");
+		// PARTIAL unique index: one ACTIVE revision per key, per store.
+		SqliteDdl.PartialIndex(
+			name: "ux_memory_entries_active_key",
+			table: "memory_entries",
+			columns: ["Store", "Key"],
+			where: "ActiveTo IS NULL",
+			unique: true);
 
 		Create.Table("entry_usage_new")
 			.WithColumn("Store").AsString().NotNullable().WithDefaultValue("").PrimaryKey()
@@ -70,7 +78,9 @@ public sealed class M009_StoreColumn : Migration
 			.WithColumn("OpenedCount").AsInt64().NotNullable().WithDefaultValue(0)
 			.WithColumn("LastHitAt").AsString().Nullable();
 
-		Execute.Sql("""
+		SqliteDdl.Raw(
+			"table rebuild: move the entry_usage counters into the new (Store, Key) shape — same INSERT..SELECT constraint as memory_entries above",
+			"""
 			INSERT INTO entry_usage_new (Store,Key,SurfacedCount,DeliberateCount,OpenedCount,LastHitAt)
 			SELECT '', Key, SurfacedCount, DeliberateCount, OpenedCount, LastHitAt FROM entry_usage;
 			""");
