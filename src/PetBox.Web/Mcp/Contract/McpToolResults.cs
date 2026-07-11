@@ -274,13 +274,21 @@ public sealed record MemorySearchResultView(
 
 // ---- relations.* ---------------------------------------------------------------------
 
+// One row of a relations_create batch (and the historical single-create shape).
 public sealed record RelationCreatedResult(string Id, string Kind, string FromNodeId, string ToNodeId);
+
+// Batch create result — Relations is always present (length 1 for the single-form BC path).
+public sealed record RelationsCreatedResult(IReadOnlyList<RelationCreatedResult> Relations);
 
 public sealed record RelationRow(string Id, string Kind, string FromNodeId, string ToNodeId, DateTime CreatedAt, DateTime? ClosedAt);
 
 public sealed record RelationsListResult(IReadOnlyList<RelationRow> Relations);
 
-public sealed record RelationDeletedResult(bool Deleted);
+// One row of a relations_delete batch (id + whether soft-close found an active edge).
+public sealed record RelationDeletedResult(string Id, bool Deleted);
+
+// Batch delete result — Relations is always present (length 1 for the single-id BC path).
+public sealed record RelationsDeletedResult(IReadOnlyList<RelationDeletedResult> Relations);
 
 // ---- report_issue --------------------------------------------------------------------
 

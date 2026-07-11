@@ -357,10 +357,11 @@ public sealed class MethodologyInstanceTests : IDisposable
 		var flags = Flags();
 		var relations = new RelationStore(_db);
 
-		var created = await RelationTools.CreateAsync(http, flags, relations, _tasks, Proj, "escalates", a1.NodeId, a2.NodeId);
-		created.Kind.Should().Be("escalates");
+		var created = await RelationTools.CreateAsync(http, flags, relations, _tasks, Proj, kind: "escalates", fromNodeId: a1.NodeId, toNodeId: a2.NodeId);
+		created.Relations.Should().ContainSingle();
+		created.Relations[0].Kind.Should().Be("escalates");
 
-		var mcpCross = () => RelationTools.CreateAsync(http, flags, relations, _tasks, Proj, "escalates", b1.NodeId, b2.NodeId);
+		var mcpCross = () => RelationTools.CreateAsync(http, flags, relations, _tasks, Proj, kind: "escalates", fromNodeId: b1.NodeId, toNodeId: b2.NodeId);
 		(await mcpCross.Should().ThrowAsync<ArgumentException>()).WithMessage("*escalates*");
 	}
 
