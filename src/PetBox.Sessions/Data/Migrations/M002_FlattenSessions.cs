@@ -11,22 +11,29 @@ namespace PetBox.Sessions.Data.Migrations;
 // history is intentionally dropped (it was N full ~74KB copies per session — the bloat this
 // removes). Active sessions also self-heal on the next full-transcript push, and the raw
 // per-turn archive lives in the local Claude JSONL transcripts.
+//
+// SQLite cannot ALTER the temporal shape into the flat one, so this is the table-REBUILD idiom:
+// rename the old table aside, create the new one, move the rows, drop the old. Rename/Create/Delete
+// are all expressible with the typed API — no raw DDL is needed here at all. The row move is NOT
+// SQL: the payload has to be re-encoded (Brotli) in C#, so it stays an Execute.WithConnection.
+// Expressions run in the order Up() queues them, which is what makes rename-before-create safe.
+//
+// No `IF EXISTS` anywhere: `sessions` is created by M001 and `sessions_legacy` by the RENAME two
+// lines up, both of which VersionInfo guarantees have run. If either is missing, that is schema
+// drift and this migration SHOULD fail loudly rather than shrug and leave the data behind.
 [Migration(2, "Flatten sessions to latest-snapshot (JSONL+Brotli), drop temporal history")]
 public sealed class M002_FlattenSessions : Migration
 {
 	public override void Up()
 	{
-		// SQLite can't ALTER the temporal shape into the flat one — rebuild the table.
-		Execute.Sql("ALTER TABLE sessions RENAME TO sessions_legacy;");
-		Execute.Sql("""
-			CREATE TABLE sessions (
-				SessionId TEXT    NOT NULL PRIMARY KEY,
-				Agent     TEXT    NOT NULL,
-				ContentZ  BLOB    NOT NULL,
-				Version   INTEGER NOT NULL,
-				Updated   TEXT    NOT NULL
-			);
-			""");
+		Rename.Table("sessions").To("sessions_legacy");
+
+		Create.Table("sessions")
+			.WithColumn("SessionId").AsString().NotNullable().PrimaryKey()
+			.WithColumn("Agent").AsString().NotNullable()
+			.WithColumn("ContentZ").AsBinary().NotNullable()
+			.WithColumn("Version").AsInt64().NotNullable()
+			.WithColumn("Updated").AsString().NotNullable();
 
 		// Carry over each session's latest active revision as a single legacy message.
 		Execute.WithConnection((conn, tx) =>
@@ -55,7 +62,7 @@ public sealed class M002_FlattenSessions : Migration
 			}
 		});
 
-		Execute.Sql("DROP TABLE sessions_legacy;");
+		Delete.Table("sessions_legacy");
 	}
 
 	static void AddParam(IDbCommand cmd, string name, object value)
@@ -66,6 +73,7 @@ public sealed class M002_FlattenSessions : Migration
 		cmd.Parameters.Add(p);
 	}
 
-	public override void Down() =>
-		Execute.Sql("DROP TABLE IF EXISTS sessions;");
+	// One-way: the flattening destroyed the per-revision history, so Down() can only remove the
+	// flat table (it does not resurrect what M001 held). No `IF EXISTS` — Down() runs after Up().
+	public override void Down() => Delete.Table("sessions");
 }
