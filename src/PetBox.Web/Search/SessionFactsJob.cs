@@ -135,8 +135,8 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 			{
 				if (!await _llm.IsAvailableAsync(project, LlmCapability.Chat, ct)) continue;
 
-				using (var ensure = _factory.NewEnsuredConnection(project))
-					SqliteIndexCursorStore.EnsureSchema(ensure);
+				// No DDL here: NewEnsuredConnection runs the sessions-tier migrations
+				// (SessionsSchema.Ensure), and M007 owns search_cursor/search_deadletter.
 				var cursors = new SqliteIndexCursorStore(() => _factory.NewEnsuredConnection(project));
 
 				var headers = await _sessions.ListAsync(project, ct);

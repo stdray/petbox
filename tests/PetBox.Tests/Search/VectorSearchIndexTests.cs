@@ -21,9 +21,7 @@ public sealed class VectorSearchIndexTests : IDisposable
 		_dir = Path.Combine(Path.GetTempPath(), "petbox-vec-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		_cs = $"Data Source={Path.Combine(_dir, "store.db")}";
-		using var db = Connect();
-		SqliteFtsIndex.EnsureSchema(db);
-		VectorSearchIndex.EnsureSchema(db);
+		SearchTestSchema.Ensure(_cs);
 	}
 
 	public void Dispose()

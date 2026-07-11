@@ -36,13 +36,8 @@ public sealed class VectorSearchIndex : ISearchIndex
 	public SearchConsistency ConsistencyClass => SearchConsistency.Eventual;
 	public SearchCapability Capability => SearchCapability.Vector;
 
-	public static void EnsureSchema(DataConnection db) => db.Execute("""
-		CREATE TABLE IF NOT EXISTS search_vec (
-			Scope TEXT NOT NULL, Type TEXT NOT NULL, Id TEXT NOT NULL,
-			Model TEXT NOT NULL, Dim INTEGER NOT NULL, Vec BLOB NOT NULL,
-			PRIMARY KEY (Scope, Type, Id)
-		);
-		""");
+	// No EnsureSchema here: search_vec is DDL, and DDL is born in exactly one place — the owning
+	// module's migration (memory M006_SearchTables, tasks M009_SearchTables).
 
 	// Eventual: the worker calls this, not the entity transaction. `tx` is honoured when the
 	// caller already holds a connection to this file; otherwise we open (and dispose) our own.
