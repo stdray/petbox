@@ -59,11 +59,22 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 		var factory = NewFactory();
 		await SeedStoreAsync(factory, "a");
 
-		// Simulate a file untouched since before M006: search tables gone, journal row gone —
-		// exactly what NewConnection() (no _ensureSchema) sees on such a file.
+		// Simulate a file untouched since before M006 — and simulate it FAITHFULLY: such a file has
+		// NONE of the four contract search tables and still carries the bespoke memory_fts /
+		// memory_vec that M006 replaces, with M006 absent from the journal. (Rolling back only
+		// search_cursor would leave a half-applied hybrid that exists on no disk anywhere; it used
+		// to "pass" solely because M006's DDL was written with IF NOT EXISTS, i.e. because the
+		// migration was willing to re-run on top of itself — the very drift-masking the migration
+		// rules now forbid. M006 is strict DDL today, so the thing worth pinning is that it copes
+		// with the REAL old file.)
 		using (var raw = factory.NewEnsuredConnection(Proj))
 		{
+			raw.Execute("DROP TABLE search_fts");
+			raw.Execute("DROP TABLE search_vec");
 			raw.Execute("DROP TABLE search_cursor");
+			raw.Execute("DROP TABLE search_deadletter");
+			raw.Execute("CREATE VIRTUAL TABLE memory_fts USING fts5(Key UNINDEXED, Description, Body, Tags, tokenize='unicode61')");
+			raw.Execute("CREATE TABLE memory_vec (Key TEXT PRIMARY KEY, Model TEXT NOT NULL, Dim INTEGER NOT NULL, Vec BLOB NOT NULL)");
 			raw.Execute("DELETE FROM VersionInfo WHERE Version = 6");
 		}
 

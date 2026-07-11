@@ -1,4 +1,5 @@
 using FluentMigrator;
+using PetBox.Core.Data;
 
 namespace PetBox.Memory.Data.Migrations;
 
@@ -10,40 +11,73 @@ namespace PetBox.Memory.Data.Migrations;
 // SqliteFtsIndex/VectorSearchIndex/SqliteIndexCursorStore.EnsureSchema. Whole-assembly scan
 // applies it to every memory store file. Lexical content is rebuilt cheaply on first search;
 // vectors are re-embedded by the worker (cursor starts at 0 = full backfill).
+//
+// Everything here is typed DDL except the FTS5 virtual table, which has no typed form and is
+// SQLite-specific (SqliteDdl.Fts5Table — guarded, so it cannot silently no-op on another engine).
+//
+// The DROPs carry no `IF EXISTS`: memory_fts and memory_vec are created by M003 and M005, which
+// VersionInfo guarantees ran before this one. If they are somehow absent, that is schema drift
+// and this migration SHOULD fail loudly instead of shrugging.
 [Migration(6, "Replace memory_fts/memory_vec with contract search tables (search_fts/vec/cursor/deadletter)")]
-public sealed class M006_SearchTables : Migration
+public sealed class M006_SearchTables : SqliteMigration
 {
-	public override void Up() => Execute.Sql("""
-		CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
-			Scope UNINDEXED, Type UNINDEXED, Id UNINDEXED, Text, Tags, tokenize='unicode61'
-		);
-		CREATE TABLE IF NOT EXISTS search_vec (
-			Scope TEXT NOT NULL, Type TEXT NOT NULL, Id TEXT NOT NULL,
-			Model TEXT NOT NULL, Dim INTEGER NOT NULL, Vec BLOB NOT NULL,
-			PRIMARY KEY (Scope, Type, Id)
-		);
-		CREATE TABLE IF NOT EXISTS search_cursor (
-			IndexName TEXT PRIMARY KEY, Version INTEGER NOT NULL
-		);
-		CREATE TABLE IF NOT EXISTS search_deadletter (
-			IndexName TEXT NOT NULL, Type TEXT NOT NULL, Id TEXT NOT NULL,
-			Attempts INTEGER NOT NULL, Dead INTEGER NOT NULL,
-			PRIMARY KEY (IndexName, Type, Id)
-		);
-		DROP TABLE IF EXISTS memory_fts;
-		DROP TABLE IF EXISTS memory_vec;
-		""");
+	public override void Up()
+	{
+		SqliteDdl.Fts5Table(
+			name: "search_fts",
+			columns: ["Scope", "Type", "Id", "Text", "Tags"],
+			unindexed: ["Scope", "Type", "Id"], // the entity address: stored, not tokenised
+			tokenize: "unicode61");
 
-	public override void Down() => Execute.Sql("""
-		DROP TABLE IF EXISTS search_fts;
-		DROP TABLE IF EXISTS search_vec;
-		DROP TABLE IF EXISTS search_cursor;
-		DROP TABLE IF EXISTS search_deadletter;
-		CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(
-			Key UNINDEXED, Description, Body, Tags, tokenize='unicode61'
-		);
-		CREATE TABLE IF NOT EXISTS memory_vec (
-			Key TEXT PRIMARY KEY, Model TEXT NOT NULL, Dim INTEGER NOT NULL, Vec BLOB NOT NULL
-		);
-		""");
+		Create.Table("search_vec")
+			.WithColumn("Scope").AsString().NotNullable().PrimaryKey()
+			.WithColumn("Type").AsString().NotNullable().PrimaryKey()
+			.WithColumn("Id").AsString().NotNullable().PrimaryKey()
+			.WithColumn("Model").AsString().NotNullable()
+			.WithColumn("Dim").AsInt32().NotNullable()
+			.WithColumn("Vec").AsBinary().NotNullable();
+
+		Create.Table("search_cursor")
+			// `.Nullable()` on a PRIMARY KEY column looks wrong and is deliberate: the original DDL
+			// said `IndexName TEXT PRIMARY KEY`, and SQLite does NOT imply NOT NULL on a
+			// non-INTEGER primary key — so every memory file in production has this column
+			// nullable. FluentMigrator's default for a PK column is NOT NULL, which would be a
+			// (harmless-looking, but real) schema change; this migration must keep reproducing the
+			// shape that is on disk. Tightening it is a separate, deliberate migration, not a
+			// side effect of a refactor.
+			.WithColumn("IndexName").AsString().Nullable().PrimaryKey()
+			.WithColumn("Version").AsInt64().NotNullable();
+
+		Create.Table("search_deadletter")
+			.WithColumn("IndexName").AsString().NotNullable().PrimaryKey()
+			.WithColumn("Type").AsString().NotNullable().PrimaryKey()
+			.WithColumn("Id").AsString().NotNullable().PrimaryKey()
+			.WithColumn("Attempts").AsInt32().NotNullable()
+			.WithColumn("Dead").AsBoolean().NotNullable();
+
+		Delete.Table("memory_fts"); // created by M003
+		Delete.Table("memory_vec"); // created by M005
+	}
+
+	// Symmetric inverse of Up(): the four tables it created are dropped, the two it dropped are
+	// recreated in their M003/M005 shape. Again no `IF EXISTS` — Down() runs only after Up().
+	public override void Down()
+	{
+		Delete.Table("search_fts");
+		Delete.Table("search_vec");
+		Delete.Table("search_cursor");
+		Delete.Table("search_deadletter");
+
+		SqliteDdl.Fts5Table(
+			name: "memory_fts",
+			columns: ["Key", "Description", "Body", "Tags"],
+			unindexed: ["Key"],
+			tokenize: "unicode61");
+
+		Create.Table("memory_vec")
+			.WithColumn("Key").AsString().Nullable().PrimaryKey() // nullable PK: see M005
+			.WithColumn("Model").AsString().NotNullable()
+			.WithColumn("Dim").AsInt32().NotNullable()
+			.WithColumn("Vec").AsBinary().NotNullable();
+	}
 }
