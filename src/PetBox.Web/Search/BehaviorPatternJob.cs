@@ -88,7 +88,7 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 
 		var mined = 0;
 		var clock = new DrainClock(_budget);
-		foreach (var project in DrainPacing.Rotate(ScopedDbFiles.ListScopeKeys(_factory.BaseDir), ref _rotation))
+		foreach (var project in DrainPacing.Rotate(ScopedDbFiles.ListRootScopeKeys(_factory.BaseDir), ref _rotation))
 		{
 			ct.ThrowIfCancellationRequested();
 			if (clock.Exhausted) break; // mining = one chat call per project; rotation serves the rest next pass
@@ -97,7 +97,9 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 				if (!await _memory.StoreExistsAsync(project, QuarantineStore, ct)) continue;
 				if (!await _llm.IsAvailableAsync(project, LlmCapability.Chat, ct)) continue;
 
-				var cursors = new SqliteIndexCursorStore(() => _factory.NewEnsuredConnection(project, QuarantineStore));
+				// The project's ONE memory file (every store lives in it); this job's markers
+				// (behavior-mining, dedup sweep) are named cursors in its search_cursor table.
+				var cursors = new SqliteIndexCursorStore(() => _factory.NewEnsuredConnection(project));
 
 				// One embedding memo per project per pass, shared by the sweep and the miner's
 				// dedup guard (both compare against the whole store).

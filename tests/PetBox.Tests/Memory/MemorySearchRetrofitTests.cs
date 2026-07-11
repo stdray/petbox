@@ -49,18 +49,18 @@ public sealed class MemorySearchRetrofitTests : IDisposable
 
 	async Task<DrainResult> DrainVectors(ILlmClient llm, string store)
 	{
-		DataConnection Connect() => _factory.NewEnsuredConnection(Proj, store);
+		DataConnection Connect() => _factory.NewEnsuredConnection(Proj);
 		var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(llm, Proj));
-		var source = new MemorySearchSource(Connect, Proj);
+		var source = new MemorySearchSource(Connect, Proj, store);
 		var cursor = new SqliteIndexCursorStore(Connect);
-		var worker = new AsyncVectorizationWorker(MemorySearchDocs.VectorIndex, source, target, cursor);
+		var worker = new AsyncVectorizationWorker(MemoryCursors.Vector(store), source, target, cursor);
 		return await worker.DrainAsync();
 	}
 
 	[Fact]
 	public async Task LexicalFloor_IsTransactional_RollbackLeavesNoTrace()
 	{
-		var ctx = _factory.GetDb(Proj, "notes"); // auto-creates the file + schema (incl. search_fts)
+		var ctx = _factory.GetDb(Proj); // auto-creates the file + schema (incl. search_fts)
 		var fts = new SqliteFtsIndex(() => ctx);
 		var entry = new MemoryEntry { Key = "k1", Type = MemoryType.Project, Description = "alpha", Body = "alpha body" };
 
@@ -86,7 +86,7 @@ public sealed class MemorySearchRetrofitTests : IDisposable
 		await memory.UpsertAsync(Proj, "notes", [Entry("k1", "alpha note", "alpha keyword body")], []);
 
 		// Simulate a store written before the retrofit: entries exist but search_fts is empty.
-		var ctx = _store.GetContext(Proj, "notes");
+		var ctx = _store.GetContext(Proj);
 		ctx.Execute("DELETE FROM search_fts");
 
 		var res = await memory.SearchAsync(Proj, "notes", "alpha", type: null);
@@ -103,7 +103,7 @@ public sealed class MemorySearchRetrofitTests : IDisposable
 		await memory.CreateStoreAsync(Proj, "notes", null);
 		await memory.UpsertAsync(Proj, "notes", [Entry("k1", "alpha note", "alpha body")], []);
 
-		var ctx = _store.GetContext(Proj, "notes");
+		var ctx = _store.GetContext(Proj);
 		ctx.Execute<long>("SELECT count(*) FROM search_vec").Should().Be(0); // write path never embeds
 
 		var r = await DrainVectors(llm, "notes");
@@ -123,7 +123,7 @@ public sealed class MemorySearchRetrofitTests : IDisposable
 		var memory = new MemoryService(_store, working);
 		await memory.CreateStoreAsync(Proj, "notes", null);
 		await memory.UpsertAsync(Proj, "notes", [Entry("k1", "alpha note", "alpha body")], []);
-		var ctx = _store.GetContext(Proj, "notes");
+		var ctx = _store.GetContext(Proj);
 
 		// Embedder down: the item fails transiently, the cursor is held (not advanced), nothing lost.
 		var down = await DrainVectors(new ThrowingLlmClient(), "notes");

@@ -5,13 +5,15 @@ using PetBox.Core.Data;
 
 namespace PetBox.Memory.Data;
 
-// Periodically removes a deleted project's memory-store `.db` files (and their .wal/.shm
-// sidecars) plus the now-empty {project} directory. A project delete cascades away its
-// MemoryStores metadata via ProjectDeletion (a bulk row delete that bypasses
-// MemoryStore.DeleteAsync, which reclaims a single store's file), leaving the files
-// orphaned. Reclaimed per-project (project existence is the orphan signal) — see
-// ProjectFileOrphans. Mirrors PetBox.Data.OrphanCleanupService /
-// PetBox.Log.Core.LogOrphanCleanupService.
+// Periodically removes a deleted project's memory `.db` file (and its .wal/.shm sidecars). A
+// project delete cascades away its MemoryStores metadata via ProjectDeletion (a bulk row delete
+// that bypasses MemoryStore.DeleteAsync, which now just drops one store's ROWS), leaving the file
+// orphaned. Reclaimed per-project (project existence is the orphan signal) — see ProjectFileOrphans.
+// Mirrors PetBox.Data.OrphanCleanupService / PetBox.Log.Core.LogOrphanCleanupService.
+//
+// Memory is now a single file per project (memory/{project}.db), so the root-file sweep is the
+// live path; the per-store-directory sweep still runs to reclaim a deleted project's LEGACY
+// memory/{project}/*.db files (left in place by the merge migration — see LegacyStoreMerge).
 public sealed partial class MemoryOrphanCleanupService(
 	IServiceProvider services,
 	IScopedDbFactory<MemoryDb> factory,
@@ -46,7 +48,13 @@ public sealed partial class MemoryOrphanCleanupService(
 	{
 		using var scope = services.CreateScope();
 		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		var reclaimed = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var projectKey in await ProjectFileOrphans.ReclaimRootFilesAsync(db, factory, ct))
+			reclaimed.Add(projectKey);
+		// Legacy per-store layout: a deleted project's old memory/{project}/ directory.
 		foreach (var projectKey in await ProjectFileOrphans.ReclaimProjectDirsAsync(db, factory, ct))
+			reclaimed.Add(projectKey);
+		foreach (var projectKey in reclaimed)
 			LogOrphanRemoved(logger, projectKey);
 	}
 

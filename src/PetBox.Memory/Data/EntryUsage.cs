@@ -7,7 +7,10 @@ namespace PetBox.Memory.Data;
 [Table("entry_usage")]
 public sealed record EntryUsage
 {
-	[Column, PrimaryKey, NotNull] public string Key { get; init; } = string.Empty;
+	// Partition: the owning store (see MemoryEntry.Store) — all of a project's stores share
+	// this table, so the counter key is (Store, Key).
+	[Column, PrimaryKey(0), NotNull] public string Store { get; init; } = string.Empty;
+	[Column, PrimaryKey(1), NotNull] public string Key { get; init; } = string.Empty;
 	[Column] public long SurfacedCount { get; init; }
 	// The subset of SurfacedCount from a DELIBERATE search (usage:"deliberate") — the honest
 	// value signal (machine hook pulls bump SurfacedCount but never this). See M008.
