@@ -108,6 +108,9 @@ public sealed class VectorSearchIndex : ISearchIndex
 		// the query, so we never compare incomparable vectors.
 		var rowsQ = db.GetTable<Row>().Where(r => r.Scope == scope && r.Model == qmodel && r.Dim == qdim);
 		if (filter.Type is not null) rowsQ = rowsQ.Where(r => r.Type == filter.Type);
+		// Include-SET narrowing (`Type IN (...)`) — one brute-force pass over several containers
+		// sharing this index (e.g. every memory store of a project), not one pass per container.
+		if (filter.Types is { Count: > 0 } types) rowsQ = rowsQ.Where(r => types.Contains(r.Type));
 		var rows = rowsQ.ToList();
 
 		var candidates = rows.Select(r => (Key: r.Type + Sep + r.Id, Vec: VectorCodec.Decode(r.Vec)));

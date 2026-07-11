@@ -6,15 +6,18 @@ using PetBox.Core.Models;
 
 namespace PetBox.Memory.Data;
 
-// Catalog over named memory stores: metadata CRUD in PetBoxDb.MemoryStores plus
-// the on-disk file lifecycle via IScopedDbFactory<MemoryDb>. Mirrors LogStore.
+// Catalog over named memory stores: metadata CRUD in PetBoxDb.MemoryStores plus the per-PROJECT
+// SQLite file lifecycle via IScopedDbFactory<MemoryDb>. All of a project's stores share one file
+// (memory/{project}.db); a store's entries are the rows whose Store column equals its name —
+// exactly the tasks tier's board partition. Mirrors TaskBoardStore.
 // v1 is project-scoped only. Explicit creation — no auto-vivify.
 public interface IMemoryStore
 {
-	MemoryDb GetContext(string projectKey, string store);
+	// The project's shared memory file (holds every store's entries, partitioned by Store).
+	MemoryDb GetContext(string projectKey);
 	// A fresh, caller-owned, schema-ensured connection. The caller disposes it.
 	// See IScopedDbFactory.NewEnsuredConnection.
-	MemoryDb NewEnsuredConnection(string projectKey, string store);
+	MemoryDb NewEnsuredConnection(string projectKey);
 	Task<bool> ExistsAsync(string projectKey, string store, CancellationToken ct = default);
 	// Create the store if it does not yet exist; no-op if it does. Used by the
 	// upsert write path to auto-vivify on first write (deliberate exception to the
@@ -25,6 +28,8 @@ public interface IMemoryStore
 	// last activity (entries live in a separate file, not this meta row).
 	Task TouchAsync(string projectKey, string store, CancellationToken ct = default);
 	Task<MemoryStoreMeta> CreateAsync(string projectKey, string store, string? description, CancellationToken ct = default);
+	// Drops the catalog row AND the store's rows (entries + usage counters) from the shared
+	// project file. Search docs are purged by the service door (it owns the index wiring).
 	Task<bool> DeleteAsync(string projectKey, string store, CancellationToken ct = default);
 }
 
@@ -53,11 +58,11 @@ public sealed partial class MemoryStore : IMemoryStore
 		_factory = factory;
 	}
 
-	public MemoryDb GetContext(string projectKey, string store) =>
-		_factory.GetDb(projectKey, store);
+	public MemoryDb GetContext(string projectKey) =>
+		_factory.GetDb(projectKey);
 
-	public MemoryDb NewEnsuredConnection(string projectKey, string store) =>
-		_factory.NewEnsuredConnection(projectKey, store);
+	public MemoryDb NewEnsuredConnection(string projectKey) =>
+		_factory.NewEnsuredConnection(projectKey);
 
 	public Task<bool> ExistsAsync(string projectKey, string store, CancellationToken ct = default) =>
 		_db.MemoryStores.AnyAsync(s => s.ProjectKey == projectKey && s.Name == store, ct);
@@ -107,7 +112,9 @@ public sealed partial class MemoryStore : IMemoryStore
 		};
 		await _db.InsertAsync(meta, token: ct);
 
-		_factory.NewEnsuredConnection(projectKey, store).Dispose();
+		// Materialize the project file + schema eagerly (creating a store is now a catalog row,
+		// not a file — the file may already hold other stores' rows).
+		_factory.NewEnsuredConnection(projectKey).Dispose();
 		return meta;
 	}
 
@@ -119,8 +126,12 @@ public sealed partial class MemoryStore : IMemoryStore
 		if (deleted == 0)
 			return false;
 
-		await _factory.EvictAsync(projectKey, store);
-		ScopedDbFiles.TryDelete(ScopedDbFiles.PathFor(_factory.BaseDir, projectKey, store));
+		// Stores share the project file, so delete just this store's rows (all revisions + its
+		// usage counters), not the file. The search docs (search_fts/search_vec, addressed
+		// Type=store) are purged by MemoryService.DeleteStoreAsync, which owns the index wiring.
+		using var db = _factory.NewEnsuredConnection(projectKey);
+		await db.Entries.Where(e => e.Store == store).DeleteAsync(ct);
+		await db.Usage.Where(u => u.Store == store).DeleteAsync(ct);
 		return true;
 	}
 }

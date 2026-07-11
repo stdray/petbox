@@ -67,7 +67,7 @@ public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 
 		var cutoff = now - _minAge;
 		var retired = 0;
-		foreach (var project in ScopedDbFiles.ListScopeKeys(_factory.BaseDir))
+		foreach (var project in ScopedDbFiles.ListRootScopeKeys(_factory.BaseDir))
 		{
 			ct.ThrowIfCancellationRequested();
 			try

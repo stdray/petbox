@@ -51,11 +51,11 @@ public sealed class MemoryHybridSearchTests : IDisposable
 	// the model/dim guard matches). Mirrors MemoryVectorizationJob for one store.
 	async Task<DrainResult> DrainVectors(ILlmClient llm, string store)
 	{
-		DataConnection Connect() => _factory.NewEnsuredConnection(Proj, store);
+		DataConnection Connect() => _factory.NewEnsuredConnection(Proj);
 		var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(llm, Proj));
-		var source = new MemorySearchSource(Connect, Proj);
+		var source = new MemorySearchSource(Connect, Proj, store);
 		var cursor = new SqliteIndexCursorStore(Connect);
-		var worker = new AsyncVectorizationWorker(MemorySearchDocs.VectorIndex, source, target, cursor);
+		var worker = new AsyncVectorizationWorker(MemoryCursors.Vector(store), source, target, cursor);
 		return await worker.DrainAsync();
 	}
 
@@ -133,7 +133,7 @@ public sealed class MemoryHybridSearchTests : IDisposable
 
 		// Corrupt "bad"'s stored vector to a different model — the query embedding's (model,dim)
 		// guard must exclude it from the semantic candidate set.
-		var ctx = _store.GetContext(Proj, "notes");
+		var ctx = _store.GetContext(Proj);
 		ctx.Execute("UPDATE search_vec SET Model = 'other-model' WHERE Id = 'bad'");
 
 		// Lexical off so only the semantic leg drives the result set.

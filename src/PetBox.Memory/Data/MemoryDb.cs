@@ -4,7 +4,8 @@ using LinqToDB.DataProvider.SQLite;
 
 namespace PetBox.Memory.Data;
 
-// linq2db context over a single memory store file (data/memory/{project}/{store}.db).
+// linq2db context over a project's memory file (data/memory/{project}.db) — all of the
+// project's stores share it, partitioned by MemoryEntry.Store.
 public sealed class MemoryDb : DataConnection
 {
 	public MemoryDb(DataOptions<MemoryDb> options) : base(options.Options) { }

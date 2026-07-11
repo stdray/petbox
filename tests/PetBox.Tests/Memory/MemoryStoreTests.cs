@@ -42,18 +42,35 @@ public sealed class MemoryStoreTests : IDisposable
 	{
 		await _store.CreateAsync("proj", "notes", "agent notes");
 		(await _store.ExistsAsync("proj", "notes")).Should().BeTrue();
-		File.Exists(ScopedDbFiles.PathFor(_factory.BaseDir, "proj", "notes")).Should().BeTrue();
+		// One file per PROJECT: creating a store is a catalog row, and the project's shared
+		// memory file is materialized (name == null, like tasks/sessions).
+		File.Exists(ScopedDbFiles.PathFor(_factory.BaseDir, "proj", null)).Should().BeTrue();
 	}
 
 	[Fact]
-	public async Task Delete_RemovesMeta()
+	public async Task Create_SecondStore_SharesTheProjectFile()
 	{
 		await _store.CreateAsync("proj", "notes", null);
-		(await _store.DeleteAsync("proj", "notes")).Should().BeTrue();
-		(await _store.ExistsAsync("proj", "notes")).Should().BeFalse();
-		// Physical file removal is best-effort (TryDelete bails on a Windows lock and
-		// orphan-cleanup retries later); DeleteAsync only contracts that the metadata
-		// is gone. Mirrors LogStore's delete coverage — see EntityToolsTests.
+		await _store.CreateAsync("proj", "ops", null);
+
+		Directory.GetFiles(_factory.BaseDir, "*.db").Should().ContainSingle()
+			.Which.Should().EndWith("proj.db");
+	}
+
+	[Fact]
+	public async Task Delete_RemovesMeta_AndTheStoresRows_LeavingSiblingsIntact()
+	{
+		var memory = new MemoryService(_store);
+		await memory.UpsertAsync("proj", "notes", [new MemoryEntryInput { Key = "n1", Type = "Project", Body = "keep" }], []);
+		await memory.UpsertAsync("proj", "ops", [new MemoryEntryInput { Key = "o1", Type = "Project", Body = "drop" }], []);
+
+		(await _store.DeleteAsync("proj", "ops")).Should().BeTrue();
+		(await _store.ExistsAsync("proj", "ops")).Should().BeFalse();
+
+		// The stores share one file, so a delete drops the store's ROWS — and only those.
+		var ctx = _store.GetContext("proj");
+		ctx.Entries.Where(e => e.ActiveTo == null).Select(e => e.Store).ToList()
+			.Should().BeEquivalentTo(["notes"]);
 	}
 
 	[Fact]
@@ -100,7 +117,7 @@ public sealed class MemoryStoreTests : IDisposable
 			[]);
 
 		outcome.Result.Applied.Should().BeTrue();
-		var ctx = _store.GetContext("proj", "canon");
+		var ctx = _store.GetContext("proj");
 		var active = ctx.Entries.Where(e => e.ActiveTo == null).ToList();
 		active.Should().ContainSingle();
 		active[0].Body.Should().Be("pointers");
@@ -110,7 +127,7 @@ public sealed class MemoryStoreTests : IDisposable
 	public async Task MemoryEntry_TemporalRoundtrip_ThroughStoreFile()
 	{
 		await _store.CreateAsync("proj", "notes", null);
-		var ctx = _store.GetContext("proj", "notes");
+		var ctx = _store.GetContext("proj");
 
 		var r = await TemporalStore.UpsertAsync(ctx, new[]
 		{

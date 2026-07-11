@@ -35,8 +35,12 @@ public readonly record struct SearchDoc(string Scope, string Type, string Id, st
 // across indexes — the facade fuses by RANK, not raw score), and which retriever produced it.
 public readonly record struct Hit(string Type, string Id, double Score, string? Retriever = null);
 
-// Read-path narrowing. Minimal for the skeleton (entity type); grows as consumers need it.
-public readonly record struct SearchFilter(string? Type = null);
+// Read-path narrowing. `Type` pins ONE entity type; `Types` is an include-SET over the same
+// column — the seam that lets a consumer whose containers share one file (memory stores in
+// memory/{project}.db, Type = store name) narrow a SINGLE index query to several containers at
+// once, instead of running one query per container and merging by hand. Null/empty = no
+// narrowing on that axis; when both are set, both must hold.
+public readonly record struct SearchFilter(string? Type = null, IReadOnlyList<string>? Types = null);
 
 // A fused search response: the ranked hits plus honest provenance (which retrievers ran and
 // whether the result is degraded). (spec: search-provenance.)

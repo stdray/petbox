@@ -103,7 +103,7 @@ public sealed class MemoryFusionRerankTests : IDisposable
 				Entry("new-weak", "alpha only mentioned once here"),
 			], []);
 			// Backdate the strong hit far past the 30-day half-life.
-			var ctx = _store.GetContext(Proj, "notes");
+			var ctx = _store.GetContext(Proj);
 			ctx.Execute("UPDATE memory_entries SET Updated = @u WHERE Key = @k",
 				new DataParameter("u", DateTime.UtcNow.AddDays(-120)),
 				new DataParameter("k", "old-strong"));
@@ -240,11 +240,11 @@ public sealed class MemoryFusionRerankTests : IDisposable
 	// path uses (mirrors MemoryHybridSearchTests / MemoryVectorizationJob for one store).
 	async Task DrainVectors(ILlmClient llm, string store)
 	{
-		DataConnection Connect() => _factory.NewEnsuredConnection(Proj, store);
+		DataConnection Connect() => _factory.NewEnsuredConnection(Proj);
 		var target = new VectorSearchIndex(Connect, new LlmClientEmbedder(llm, Proj));
-		var source = new MemorySearchSource(Connect, Proj);
+		var source = new MemorySearchSource(Connect, Proj, store);
 		var cursor = new SqliteIndexCursorStore(Connect);
-		var worker = new AsyncVectorizationWorker(MemorySearchDocs.VectorIndex, source, target, cursor);
+		var worker = new AsyncVectorizationWorker(MemoryCursors.Vector(store), source, target, cursor);
 		await worker.DrainAsync();
 	}
 

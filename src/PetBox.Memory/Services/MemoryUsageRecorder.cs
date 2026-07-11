@@ -77,16 +77,18 @@ public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 
 	void Apply(Hit hit)
 	{
-		using var db = _factory.NewEnsuredConnection(hit.Project, hit.Store);
+		// One file per project; the counter key is (Store, Key) — see M009.
+		using var db = _factory.NewEnsuredConnection(hit.Project);
 		db.Execute("""
-			INSERT INTO entry_usage (Key, SurfacedCount, DeliberateCount, OpenedCount, LastHitAt)
-			VALUES (@key, @surfaced, @deliberate, @opened, @at)
-			ON CONFLICT(Key) DO UPDATE SET
+			INSERT INTO entry_usage (Store, Key, SurfacedCount, DeliberateCount, OpenedCount, LastHitAt)
+			VALUES (@store, @key, @surfaced, @deliberate, @opened, @at)
+			ON CONFLICT(Store, Key) DO UPDATE SET
 				SurfacedCount = SurfacedCount + excluded.SurfacedCount,
 				DeliberateCount = DeliberateCount + excluded.DeliberateCount,
 				OpenedCount = OpenedCount + excluded.OpenedCount,
 				LastHitAt = excluded.LastHitAt;
 			""",
+			new DataParameter("store", hit.Store),
 			new DataParameter("key", hit.Key),
 			new DataParameter("surfaced", hit.Opened ? 0 : 1),
 			// Deliberate is the honest subset of a surface: only an intentional (non-machine)

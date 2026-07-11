@@ -76,6 +76,9 @@ public sealed class SqliteFtsIndex : ISearchIndex
 		var q = db.GetTable<Row>()
 			.Where(r => r.Scope == scope && Sql.Ext.SQLite().Match(r, match));
 		if (filter.Type is not null) q = q.Where(r => r.Type == filter.Type);
+		// Include-SET narrowing (translates to `Type IN (...)`) — one query over several
+		// containers sharing this index, instead of one query per container.
+		if (filter.Types is { Count: > 0 } types) q = q.Where(r => types.Contains(r.Type));
 
 		// FTS5 bm25 rank: more-negative = more relevant. Order ascending (best first), and
 		// surface a higher-is-better score for honest provenance.
