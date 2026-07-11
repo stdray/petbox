@@ -93,7 +93,7 @@ public sealed class SqliteDdlTests
 		exec.Sql[0].Should().Be("CREATE UNIQUE INDEX ux_e_active ON e (Store, Key) WHERE ActiveTo IS NULL;");
 		exec.Sql[1].Should().Be(
 			"CREATE VIRTUAL TABLE search_fts USING fts5(Scope UNINDEXED, Type UNINDEXED, Id UNINDEXED, Text, tokenize='unicode61');");
-		exec.Sql[2].Should().Be("CREATE TRIGGER trg_e AFTER INSERT ON e FOR EACH ROW BEGIN INSERT INTO log(Id) VALUES (NEW.Id); END;");
+		exec.Sql[2].Should().Be("CREATE TRIGGER trg_e AFTER INSERT ON e BEGIN INSERT INTO log(Id) VALUES (NEW.Id); END;");
 
 		exec.Sql.Should().NotContain(s => s.Contains("IF NOT EXISTS", StringComparison.OrdinalIgnoreCase));
 	}

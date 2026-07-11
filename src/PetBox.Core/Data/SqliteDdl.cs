@@ -105,7 +105,10 @@ public sealed class SqliteDdl
 		Emit(
 			operation: $"Trigger({name})",
 			why: "triggers have no typed FluentMigrator form, and their body is SQLite SQL",
-			sql: $"CREATE TRIGGER {name} {when} ON {table}{cond} FOR EACH ROW BEGIN {stmts} END;");
+			// No `FOR EACH ROW`: SQLite has no other kind of trigger, so the clause adds nothing but a
+			// word — and that word would land in sqlite_master, diverging the stored DDL of every
+			// trigger we rewrite from the one already on disk.
+			sql: $"CREATE TRIGGER {name} {when} ON {table}{cond} BEGIN {stmts} END;");
 	}
 
 	// The escape hatch for what the three named helpers do not cover — an `INSERT..SELECT` data
