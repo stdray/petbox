@@ -47,7 +47,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	}
 
 	BehaviorPatternJob Job(ILlmClient? llm, AutocaptureDedupOptions? dedup = null) =>
-		new(_factory, _memory, llm, dedup: dedup is null ? null : Options.Create(dedup));
+		new(_factory, new ProjectCatalog(_db), _memory, llm, dedup: dedup is null ? null : Options.Create(dedup));
 
 	Task SeedFeedback(string key, string sessionId, string description) =>
 		_memory.UpsertAsync(Proj, Store, [new MemoryEntryInput

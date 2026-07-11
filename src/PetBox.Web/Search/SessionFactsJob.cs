@@ -92,6 +92,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 		""";
 
 	readonly IScopedDbFactory<SessionsDb> _factory;
+	readonly IProjectCatalog _catalog;
 	readonly ISessionService _sessions;
 	readonly IMemoryService _memory;
 	readonly ILlmClient? _llm;
@@ -103,12 +104,13 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 	// Round-robin start position across passes; passes run strictly sequentially.
 	static int _rotation;
 
-	public SessionFactsJob(IScopedDbFactory<SessionsDb> factory, ISessionService sessions,
-		IMemoryService memory, ILlmClient? llm = null, ILogger<SessionFactsJob>? logger = null,
-		TimeSpan? quietPeriod = null, TimeSpan? budget = null,
+	public SessionFactsJob(IScopedDbFactory<SessionsDb> factory, IProjectCatalog catalog,
+		ISessionService sessions, IMemoryService memory, ILlmClient? llm = null,
+		ILogger<SessionFactsJob>? logger = null, TimeSpan? quietPeriod = null, TimeSpan? budget = null,
 		IOptions<AutocaptureDedupOptions>? dedup = null)
 	{
 		_factory = factory;
+		_catalog = catalog;
 		_sessions = sessions;
 		_memory = memory;
 		_llm = llm;
@@ -126,7 +128,12 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 
 		var captured = 0;
 		var clock = new DrainClock(_budget);
-		foreach (var project in DrainPacing.Rotate(ScopedDbFiles.ListNames(_factory.BaseDir, string.Empty), ref _rotation))
+		// Catalog, not file scan (spec: catalog-is-source-of-truth) — see SessionDigestJob for the
+		// full argument. Sessions have no per-entity catalog, so the PROJECT catalog is the answer:
+		// a project with no sessions file yet is now visible (its file is created + migrated behind
+		// the LLM gate below), and a deleted project's ghost file is not autocaptured into memory
+		// that the orphan sweeper has already reclaimed.
+		foreach (var project in DrainPacing.Rotate(await _catalog.ListProjectKeysAsync(ct), ref _rotation))
 		{
 			ct.ThrowIfCancellationRequested();
 			if (clock.Exhausted) break;

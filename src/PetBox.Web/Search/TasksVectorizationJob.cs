@@ -9,36 +9,48 @@ using PetBox.Tasks.Services;
 namespace PetBox.Web.Search;
 
 // Drains each project's board vectors into the co-located Class-B index. Tasks files are flat
-// (tasks/{project}.db, one file per project, all boards inside), so we enumerate the *.db files,
-// and within each the distinct boards — boards are temporal PARTITIONS, so each board drains with
-// its OWN cursor (IndexName = board) over its partition's delta. A down embedder dead-letters per
-// item without head-of-line blocking. No embedder wired → no-op.
+// (tasks/{project}.db, one file per project, all boards inside); the project list comes from the
+// TaskBoards CATALOG (core.db), and within each file the distinct boards — boards are temporal
+// PARTITIONS, so each board drains with its OWN cursor (IndexName = board) over its partition's
+// delta. A down embedder dead-letters per item without head-of-line blocking. No embedder wired →
+// no-op.
+//
+// Catalog, not file scan (spec: catalog-is-source-of-truth). The tasks file is created lazily on
+// first node write, so `tasks/*.db` is not the project list: it MISSES a project whose board exists
+// in the catalog but whose file was never materialized, and it keeps draining the GHOST file of a
+// deleted project until TaskBoardOrphanCleanupService reclaims it. `TaskBoards` is the tasks tier's
+// own catalog (written with the board, cascaded on project delete).
+//
+// Lazy-creation: the list is exactly the projects that already own a board, so opening the file
+// (NewEnsuredConnection → schema ensure) materializes it only where the catalog says it belongs —
+// migrations then run here, under supervision, rather than at some random first write. A project
+// with no board is not in the list and gets no empty file.
 public sealed class TasksVectorizationJob : IBackgroundIndexJob
 {
 	// Must match TasksService.VectorDim.
 	const int VectorDim = 1024;
 
 	readonly IScopedDbFactory<TasksDb> _factory;
+	readonly IProjectCatalog _catalog;
 	readonly ILlmClient? _llm;
 	readonly ILogger<TasksVectorizationJob>? _logger;
 
-	public TasksVectorizationJob(IScopedDbFactory<TasksDb> factory, ILlmClient? llm = null,
-		ILogger<TasksVectorizationJob>? logger = null)
+	public TasksVectorizationJob(IScopedDbFactory<TasksDb> factory, IProjectCatalog catalog,
+		ILlmClient? llm = null, ILogger<TasksVectorizationJob>? logger = null)
 	{
 		_factory = factory;
+		_catalog = catalog;
 		_llm = llm;
 		_logger = logger;
 	}
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
 	{
-		if (_llm is null || !Directory.Exists(_factory.BaseDir)) return 0;
+		if (_llm is null) return 0;
 
 		var indexed = 0;
-		foreach (var path in Directory.EnumerateFiles(_factory.BaseDir, "*.db"))
+		foreach (var project in await _catalog.ListTaskProjectKeysAsync(ct))
 		{
-			var project = Path.GetFileNameWithoutExtension(path);
-			if (string.IsNullOrEmpty(project)) continue;
 			ct.ThrowIfCancellationRequested();
 
 			try

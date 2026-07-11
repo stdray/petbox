@@ -8,27 +8,39 @@ using PetBox.Memory.Services;
 namespace PetBox.Web.Search;
 
 // Drains every project's memory stores into the co-located Class-B vector index. Memory files are
-// flat (memory/{project}.db, one file per project, all stores inside), so we enumerate the *.db
-// files, and within each the distinct stores — stores are temporal PARTITIONS, so each store drains
-// with its OWN cursor (MemoryCursors.Vector(store)) over its partition's delta. Mirrors
-// TasksVectorizationJob. A down embedder dead-letters per item without head-of-line blocking
-// (AsyncVectorizationWorker). No embedder wired → no-op.
+// flat (memory/{project}.db, one file per project, all stores inside); the project list comes from
+// the MemoryStores CATALOG (core.db), and within each file the distinct stores — stores are
+// temporal PARTITIONS, so each store drains with its OWN cursor (MemoryCursors.Vector(store)) over
+// its partition's delta. Mirrors TasksVectorizationJob. A down embedder dead-letters per item
+// without head-of-line blocking (AsyncVectorizationWorker). No embedder wired → no-op.
 //
-// (Store enumeration reads the file's own rows; a follow-up card — W4 — moves the project/store
-// enumeration of every memory job onto the MemoryStores catalog.)
+// Catalog, not file scan (spec: catalog-is-source-of-truth). The memory file is created lazily on
+// first write, so `memory/*.db` is not the project list: it MISSES a project whose store exists in
+// the catalog but whose file has not been materialized yet, and it keeps a GHOST — a deleted
+// project's file, which lingers until MemoryOrphanCleanupService reclaims it — alive, burning embed
+// calls on a project that no longer exists. `MemoryStores` is memory's own catalog (a row is
+// written on explicit create AND on the auto-vivifying first write, and cascaded on project
+// delete), so it is both narrower and truer than the disk.
+//
+// Lazy-creation: drained projects are exactly those that ALREADY have memory, so opening the file
+// (NewEnsuredConnection → schema ensure) materializes it only for a project whose store row says it
+// should exist — the migration then runs here, under supervision, instead of at a random first
+// write. Projects that never touched memory are not in the list and get no empty file.
 public sealed class MemoryVectorizationJob : IBackgroundIndexJob
 {
 	// Must match MemoryService.VectorDim — the read path and the worker must store/query the same dim.
 	const int VectorDim = 1024;
 
 	readonly IScopedDbFactory<MemoryDb> _factory;
+	readonly IProjectCatalog _catalog;
 	readonly ILlmClient? _llm;
 	readonly ILogger<MemoryVectorizationJob>? _logger;
 
-	public MemoryVectorizationJob(IScopedDbFactory<MemoryDb> factory, ILlmClient? llm = null,
-		ILogger<MemoryVectorizationJob>? logger = null)
+	public MemoryVectorizationJob(IScopedDbFactory<MemoryDb> factory, IProjectCatalog catalog,
+		ILlmClient? llm = null, ILogger<MemoryVectorizationJob>? logger = null)
 	{
 		_factory = factory;
+		_catalog = catalog;
 		_llm = llm;
 		_logger = logger;
 	}
@@ -38,7 +50,7 @@ public sealed class MemoryVectorizationJob : IBackgroundIndexJob
 		if (_llm is null) return 0;
 
 		var indexed = 0;
-		foreach (var project in ScopedDbFiles.ListRootScopeKeys(_factory.BaseDir))
+		foreach (var project in await _catalog.ListMemoryProjectKeysAsync(ct))
 		{
 			ct.ThrowIfCancellationRequested();
 			try

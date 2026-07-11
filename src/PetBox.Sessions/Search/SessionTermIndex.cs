@@ -24,13 +24,15 @@ namespace PetBox.Sessions.Search;
 public sealed class SessionTermIndex : ISessionTermIndex
 {
 	readonly IScopedDbFactory<SessionsDb> _factory;
+	readonly IProjectCatalog _catalog;
 	readonly ISessionService _sessions;
 	readonly ILogger<SessionTermIndex>? _logger;
 
-	public SessionTermIndex(IScopedDbFactory<SessionsDb> factory, ISessionService sessions,
-		ILogger<SessionTermIndex>? logger = null)
+	public SessionTermIndex(IScopedDbFactory<SessionsDb> factory, IProjectCatalog catalog,
+		ISessionService sessions, ILogger<SessionTermIndex>? logger = null)
 	{
 		_factory = factory;
+		_catalog = catalog;
 		_sessions = sessions;
 		_logger = logger;
 	}
@@ -53,7 +55,19 @@ public sealed class SessionTermIndex : ISessionTermIndex
 	public async Task<int> DrainAllAsync(CancellationToken ct = default)
 	{
 		var indexed = 0;
-		foreach (var project in ScopedDbFiles.ListNames(_factory.BaseDir, string.Empty))
+		// Catalog, not file scan (spec: catalog-is-source-of-truth): the pass walks the PROJECT
+		// catalog (core.db), not sessions/*.db. Sessions have no per-entity catalog, so the project
+		// list IS the work list — a project whose file has not been materialized yet is no longer
+		// invisible, and a deleted project's ghost file is no longer indexed.
+		//
+		// Lazy-creation: this job is chat-free and has NO gate before the store, so it opens (→
+		// creates + migrates) sessions/{project}.db for every catalog project. Deliberate, and the
+		// cheapest place in the system to pay for it: the ensure runs once per project per process
+		// (the ScopedDbFactory is a singleton and memoizes the ensure flag), after which a tick costs
+		// one SQLite open plus a cursor read against an empty table. The alternative — a
+		// File.Exists() short-circuit — is precisely the bug this card removes: it makes the
+		// filesystem the source of truth again.
+		foreach (var project in await _catalog.ListProjectKeysAsync(ct))
 		{
 			ct.ThrowIfCancellationRequested();
 			try

@@ -57,7 +57,7 @@ public sealed class SessionDigestJobTests : IDisposable
 
 	SessionDigestJob Job(ILlmClient? llm, TimeSpan? quiet = null, TimeSpan? budget = null,
 		ILogger<SessionDigestJob>? logger = null) =>
-		new(_sessionsFactory, _sessions, _memory, llm, logger: logger, quietPeriod: quiet ?? NoQuiet, budget: budget);
+		new(new ProjectCatalog(_db), _sessions, _memory, llm, logger: logger, quietPeriod: quiet ?? NoQuiet, budget: budget);
 
 	// A single message that clears the MinDistillChars (40) substance floor, so mechanics
 	// tests (cursor/delta/availability) actually reach the distiller — they are not testing

@@ -53,7 +53,7 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 	}
 
 	MemoryQuarantineGcJob Job(bool enforce, TimeSpan? minAge = null) =>
-		new(_factory, _memory, logger: null, minAge: minAge ?? AllOld, enforce: enforce, scanInterval: NoThrottle);
+		new(new ProjectCatalog(_db), _memory, logger: null, minAge: minAge ?? AllOld, enforce: enforce, scanInterval: NoThrottle);
 
 	async Task Seed(string store, params string[] keys) =>
 		await _memory.UpsertAsync(Proj, store,
@@ -150,7 +150,7 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 	public async Task Throttle_SecondPassWithinInterval_IsSkipped()
 	{
 		await Seed(Store, "a1");
-		var job = new MemoryQuarantineGcJob(_factory, _memory, logger: null,
+		var job = new MemoryQuarantineGcJob(new ProjectCatalog(_db), _memory, logger: null,
 			minAge: AllOld, enforce: true, scanInterval: TimeSpan.FromHours(6));
 
 		var first = await job.DrainAllAsync(CancellationToken.None);

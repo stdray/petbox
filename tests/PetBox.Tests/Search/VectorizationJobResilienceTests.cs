@@ -79,7 +79,7 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 		}
 
 		// Fresh factory = fresh process (GetDb's ensure cache is per-instance).
-		var job = new MemoryVectorizationJob(NewFactory(), new FakeLlmClient());
+		var job = new MemoryVectorizationJob(NewFactory(), new ProjectCatalog(_db), new FakeLlmClient());
 		await job.DrainAllAsync(CancellationToken.None); // must not throw
 
 		using var check = factory.NewEnsuredConnection(Proj);
@@ -94,7 +94,7 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 		await SeedStoreAsync(factory, "a");
 		await SeedStoreAsync(factory, "b");
 
-		var job = new MemoryVectorizationJob(NewFactory(), new FakeLlmClient());
+		var job = new MemoryVectorizationJob(NewFactory(), new ProjectCatalog(_db), new FakeLlmClient());
 		await job.DrainAllAsync(CancellationToken.None);
 
 		// Stores share the file but are independent temporal partitions: one cursor row each.
@@ -120,7 +120,7 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 		using (var raw = factory.NewEnsuredConnection(Proj))
 			raw.Execute("DROP TABLE memory_entries");
 
-		var job = new MemoryVectorizationJob(NewFactory(), new FakeLlmClient());
+		var job = new MemoryVectorizationJob(NewFactory(), new ProjectCatalog(_db), new FakeLlmClient());
 		await job.DrainAllAsync(CancellationToken.None); // must not throw
 
 		// The healthy project's cursor advanced — its drain ran despite "proj" failing first.
