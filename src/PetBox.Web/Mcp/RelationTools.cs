@@ -20,7 +20,7 @@ namespace PetBox.Web.Mcp;
 public static class RelationTools
 {
 	[McpServerTool(Name = "relations_create", Title = "Create a relation", UseStructuredContent = true, OutputSchemaType = typeof(RelationsCreatedResult))]
-	[Description("CREATE (idempotent) typed directed edge(s) between nodes — an identical existing edge is returned, not duplicated. BATCH form: pass items:[{kind, from, to}, …] (from/to = slug|NodeId; fromNodeId/toNodeId accepted as aliases on each item). SINGLE form (backward-compatible): omit items and pass top-level kind + fromNodeId + toNodeId (treated as a one-item batch). kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the FROM node's methodology instance declares (linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for that instance (or the project singleton when the board has no instance membership). from/to each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). All items are resolve+validated first; the first validation error fails the whole batch (no partial writes) naming the bad item index. Creates then run sequentially via the store. Returns {relations:[{id,kind,fromNodeId,toNodeId},…]}. Requires tasks:write.")]
+	[Description("CREATE (idempotent) typed directed edge(s) between nodes — an identical existing edge is returned, not duplicated. BATCH form: pass items:[{kind, from, to}, …] (from/to = slug|NodeId; fromNodeId/toNodeId accepted as aliases on each item). SINGLE form (backward-compatible): omit items and pass top-level kind + fromNodeId + toNodeId (treated as a one-item batch). kind: process kinds task_spec|issue_task|idea_spec|blocks|part_of|supersedes (carry FSM effects/guards), NEUTRAL kinds relates_to|depends_on|mirrors (free semantic edges between any nodes — no FSM effects, no process meaning), plus any kinds the FROM node's methodology instance declares (linkKinds — also effect-free). An unknown kind is rejected listing every kind valid for that instance (or the project singleton when the board has no instance membership). from/to each take a slug or NodeId: a 32-hex value is the stable PlanNode.NodeId (from tasks_upsert/tasks_search); a slug resolves across ALL the project's boards and must be unambiguous — the same slug on 2+ boards is an error naming the boards (pass the NodeId then). All items are resolve+validated first; the first validation error fails the whole batch BEFORE any write, naming the bad item index. Creates then run sequentially and each is idempotent, so the create phase itself is NOT transactional — a mid-batch store failure can leave earlier edges written, but re-running the whole batch is safe (identical edges are returned, never duplicated). Passing items together with single-form kind/from/to is rejected; a single-form error keeps its original message (no items[i] prefix). Returns {relations:[{id,kind,fromNodeId,toNodeId},…]}. Requires tasks:write.")]
 	public static async Task<RelationsCreatedResult> CreateAsync(
 		IHttpContextAccessor http, FeatureFlags features, IRelationStore relations, ITasksService tasks,
 		string projectKey,
@@ -34,7 +34,7 @@ public static class RelationTools
 		ModuleMcp.AssertProject(http, projectKey);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
-		var batch = NormalizeCreateItems(items, kind, fromNodeId, toNodeId);
+		var (batch, singleForm) = NormalizeCreateItems(items, kind, fromNodeId, toNodeId);
 		// Resolve+validate ALL items first so a bad ref never partially writes earlier edges.
 		var resolved = new List<(string Kind, string From, string To)>(batch.Length);
 		for (var i = 0; i < batch.Length; i++)
@@ -42,6 +42,8 @@ public static class RelationTools
 			var item = batch[i];
 			try
 			{
+				if (item is null)
+					throw new ArgumentException("item is null");
 				if (string.IsNullOrWhiteSpace(item.Kind))
 					throw new ArgumentException("kind is required");
 				var fromRef = ItemFrom(item);
@@ -60,6 +62,8 @@ public static class RelationTools
 			}
 			catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
 			{
+				// Single-form (BC) keeps its original, unprefixed message; batch items are tagged by index.
+				if (singleForm) throw;
 				throw new ArgumentException($"items[{i}]: {ex.Message}", ex);
 			}
 		}
@@ -114,21 +118,32 @@ public static class RelationTools
 		return new RelationsDeletedResult(results);
 	}
 
-	static RelationCreateItemInput[] NormalizeCreateItems(
+	// Returns the item batch plus whether it came from the single-form (BC) path — single-form
+	// errors are rethrown verbatim (no items[i] prefix) so the pre-batch wire error text is preserved.
+	static (RelationCreateItemInput[] Batch, bool SingleForm) NormalizeCreateItems(
 		RelationCreateItemInput[]? items, string? kind, string? fromNodeId, string? toNodeId)
 	{
-		if (items is { Length: > 0 }) return items;
-		if (!string.IsNullOrWhiteSpace(kind) || !string.IsNullOrWhiteSpace(fromNodeId) || !string.IsNullOrWhiteSpace(toNodeId))
+		var hasSingle = !string.IsNullOrWhiteSpace(kind) || !string.IsNullOrWhiteSpace(fromNodeId) || !string.IsNullOrWhiteSpace(toNodeId);
+		if (items is { Length: > 0 })
+		{
+			if (hasSingle)
+				throw new ArgumentException("relations_create: pass either items:[…] or single-form kind/fromNodeId/toNodeId, not both");
+			return (items, false);
+		}
+		if (hasSingle)
 		{
 			return
-			[
-				new RelationCreateItemInput
-				{
-					Kind = kind,
-					FromNodeId = fromNodeId,
-					ToNodeId = toNodeId,
-				},
-			];
+			(
+				[
+					new RelationCreateItemInput
+					{
+						Kind = kind,
+						FromNodeId = fromNodeId,
+						ToNodeId = toNodeId,
+					},
+				],
+				true
+			);
 		}
 		throw new ArgumentException("relations_create requires items:[{kind,from,to},…] or single-form kind + fromNodeId + toNodeId");
 	}

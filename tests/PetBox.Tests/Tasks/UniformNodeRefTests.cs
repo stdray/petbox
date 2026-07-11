@@ -167,9 +167,9 @@ public sealed class UniformNodeRefTests : IDisposable
 		await Seed(http, "b1", """[{"key":"dup","status":"Todo","title":"D1"},{"key":"target","status":"Todo","title":"T"}]""");
 		await Seed(http, "b2", """[{"key":"dup","status":"Todo","title":"D2"}]""");
 
+		// Single-form error is verbatim (no items[i] prefix) — the pre-batch wire text is preserved.
 		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: "dup", toNodeId: "target");
 		(await act.Should().ThrowAsync<ArgumentException>())
-			.WithMessage("*items[0]*")
 			.WithMessage("*ambiguous slug 'dup'*")
 			.WithMessage("*boards: [b1, b2]*")
 			.WithMessage("*pass the node's NodeId*");
@@ -183,7 +183,6 @@ public sealed class UniformNodeRefTests : IDisposable
 
 		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj, kind: "blocks", fromNodeId: "ghost", toNodeId: "real");
 		(await act.Should().ThrowAsync<ArgumentException>())
-			.WithMessage("*items[0]*")
 			.WithMessage($"*node 'ghost' does not match any active node in project '{Proj}'*");
 	}
 
@@ -249,6 +248,20 @@ public sealed class UniformNodeRefTests : IDisposable
 		// First item was validated but never written (fail-all-before-create).
 		var list = await RelationTools.ListAsync(http, Flags(), _relations, _tasks, Proj, ids["a"]);
 		list.Relations.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task RelationsCreate_ItemsPlusSingleForm_Rejected()
+	{
+		var http = Http();
+		await Seed(http, "b", """[{"key":"a","status":"Todo","title":"A"},{"key":"b","status":"Todo","title":"B"}]""");
+
+		var act = () => RelationTools.CreateAsync(http, Flags(), _relations, _tasks, Proj,
+			kind: "blocks", fromNodeId: "a", toNodeId: "b",
+			items: [new RelationCreateItemInput { Kind = "blocks", From = "a", To = "b" }]);
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*either items*")
+			.WithMessage("*not both*");
 	}
 
 	[Fact]
