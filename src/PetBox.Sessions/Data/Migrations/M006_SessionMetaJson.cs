@@ -6,11 +6,13 @@ namespace PetBox.Sessions.Data.Migrations;
 // a push supplies X-PetBox-Session-Meta / MCP meta. NOT server-authoritative: the client
 // stamps its local role→model binding here for observation only (binding-not-server-authoritative).
 // Null/absent on a write leaves any existing value intact.
+//
+// Plain typed ADD COLUMN: the flat `sessions` table is M002's, and VersionInfo guarantees M002 ran.
 [Migration(6, "Add nullable MetaJson column to sessions")]
 public sealed class M006_SessionMetaJson : Migration
 {
 	public override void Up() =>
-		Execute.Sql("ALTER TABLE sessions ADD COLUMN MetaJson TEXT NULL;");
+		Alter.Table("sessions").AddColumn("MetaJson").AsString().Nullable();
 
 	// SQLite ALTER TABLE DROP COLUMN needs 3.35+; the column is harmless to leave behind.
 	public override void Down()
