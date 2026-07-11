@@ -589,6 +589,24 @@ public partial class Program
 			new PetBox.Tasks.Data.MethodologyInstanceBackfill(coreDb, tasksFactory, backfillLog).Migrate();
 		}
 
+		// One-time, idempotent (llm-registry-own-store): copy the live LLM registry out of the Config
+		// module (config/$system.db: the `llm/registry` JSON binding + one `llm/secret/{endpoint}`
+		// binding per api key) into core.db's llm_endpoints/llm_routes at level System:$. A startup
+		// hook and NOT a migration on purpose — the source rows live in a DIFFERENT FILE whose path is
+		// runtime config, which a core.db migration could only reach by ATTACHing raw SQL and would
+		// fail wherever that file does not exist. Api keys are copied as CIPHERTEXT, verbatim (same
+		// AES-GCM, same master key): never decrypted, so the import needs no PETBOX_MASTER_KEY and no
+		// plaintext key ever exists. The old bindings are NOT touched — they stay read-only and keep
+		// serving the router until the DI flip lands.
+		using (var llmScope = app.Services.CreateScope())
+		{
+			var coreDb = llmScope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			var configFactory = llmScope.ServiceProvider.GetRequiredService<IConfigDbFactory>();
+			var llmImportLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("LlmRouter.RegistryImport");
+			new PetBox.LlmRouter.Registry.LlmRegistryImporter(
+				coreDb, configFactory, Path.Combine(dataDir, "config"), llmImportLog).Import();
+		}
+
 		using (var scope = app.Services.CreateScope())
 		{
 			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
