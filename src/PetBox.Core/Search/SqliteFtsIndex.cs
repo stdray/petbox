@@ -24,13 +24,9 @@ public sealed class SqliteFtsIndex : ISearchIndex
 	public SearchConsistency ConsistencyClass => SearchConsistency.Synchronous;
 	public SearchCapability Capability => SearchCapability.Lexical;
 
-	// Idempotent DDL. Called once during the store's schema bootstrap; the FTS5 virtual
-	// table must exist in the entity's file so writes can join its transaction.
-	public static void EnsureSchema(DataConnection db) => db.Execute("""
-		CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
-			Scope UNINDEXED, Type UNINDEXED, Id UNINDEXED, Text, Tags, tokenize='unicode61'
-		);
-		""");
+	// No EnsureSchema here: the search_fts virtual table is DDL, and DDL is born in exactly one
+	// place — the owning module's migration (memory M006_SearchTables, tasks M009_SearchTables).
+	// The index just assumes the table its file's migration set created.
 
 	// Upsert one entity's row: delete any prior row for (Scope, Type, Id) then insert.
 	// Runs on the caller's transaction (Class A) — `tx` must be non-null for a Synchronous

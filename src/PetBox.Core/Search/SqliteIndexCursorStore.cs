@@ -17,17 +17,6 @@ public sealed class SqliteIndexCursorStore : IIndexCursorStore
 	// connect: opens a fresh DataConnection to the SAME file the index lives in.
 	public SqliteIndexCursorStore(Func<DataConnection> connect) => _connect = connect;
 
-	public static void EnsureSchema(DataConnection db) => db.Execute("""
-		CREATE TABLE IF NOT EXISTS search_cursor (
-			IndexName TEXT PRIMARY KEY, Version INTEGER NOT NULL
-		);
-		CREATE TABLE IF NOT EXISTS search_deadletter (
-			IndexName TEXT NOT NULL, Type TEXT NOT NULL, Id TEXT NOT NULL,
-			Attempts INTEGER NOT NULL, Dead INTEGER NOT NULL,
-			PRIMARY KEY (IndexName, Type, Id)
-		);
-		""");
-
 	public async Task<long> GetCursorAsync(string index, CancellationToken ct = default)
 	{
 		using var db = _connect();

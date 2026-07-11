@@ -55,7 +55,7 @@ public sealed class SearchEvalHarnessTests : IDisposable
 		var cs = $"Data Source={Path.Combine(_dir, name + ".db")}";
 		DataConnection Connect() => new(new DataOptions().UseSQLite(cs));
 
-		using (var schema = Connect()) SqliteFtsIndex.EnsureSchema(schema);
+		SearchTestSchema.Ensure(cs);
 		var svc = new SearchService([new SqliteFtsIndex(Connect)]);
 
 		await using var db = Connect();
