@@ -303,6 +303,14 @@ public static class MemoryTools
 		Bodies follow the uniform `bodyLen` knob (omitted = a ~240-char snippet, -1 = full, or
 		memory_get); each row's `version` is the CAS baseline for memory_upsert. Hard ~30k-char
 		output budget. Requires memory:read.
+
+		Cost — your context pays it. Same query, same rows: bodyLen:0 = 1x, default snippet
+		~1.5-2x, bodyLen:-1 ~3x+ and unbounded per row — a single long entry can add thousands
+		of chars on its own.
+		Cheap path: search with bodyLen:0, read the descriptions, then memory_get the 1-3 keys
+		you actually need. Use -1 only when you already know the keys and there are few.
+		Pulling full bodies across a wide limit "just in case" is the most expensive habit
+		available here: it routinely spends a third of the response budget on text you will not read.
 		[[full]]
 		THE memory read verb — one tool for both LISTING and SEARCH (list = search without
 		`q`; replaces the former memory.list + memory.recall).

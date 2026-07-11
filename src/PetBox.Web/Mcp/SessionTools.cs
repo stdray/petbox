@@ -217,6 +217,15 @@ public static class SessionTools
 		hits with message ordinals for session_get). `fullScan` is gated by deployment permission
 		(never automatic). Listing needs tasks:read; search also needs memory:read. Hard ~30k-char
 		output budget.
+
+		Cost — your context pays it. Hits carry verbatim transcript text, so widening how many
+		sessions are hydrated and how many hits each returns multiplies the response fast —
+		a single wide scan can add thousands of chars of raw messages, and `fullScan` is the
+		widest of all.
+		Cheap path: search with the defaults, read the descriptions and hits, then session_get
+		the 1-3 sessions (at the hit ordinals) you actually need.
+		Widening the scan "just in case" is the most expensive habit available here: it
+		routinely spends a third of the response budget on text you will not read.
 		[[full]]
 		THE session read verb — one tool for both LISTING and SEARCH (list = search without
 		`q`; replaces the former session.list).
