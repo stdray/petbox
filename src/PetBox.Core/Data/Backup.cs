@@ -12,8 +12,21 @@ public static class Backup
 {
 	public const string BackupsDirName = "backups";
 
-	// Snapshots every *.db under dataDir (except the backups dir itself) into a new
-	// set folder, then prunes old sets. Returns the relative paths copied.
+	// PetBox's own log dbs (data/logs/{project}/{log}.db — the same dir the LogDb
+	// factory is rooted at in Program.cs). Deliberately NOT snapshotted.
+	//
+	// WHY: logs are telemetry, not data. Backups restore business state; log/metric
+	// history is expendable. Owner decision 2026-07-11 — they were 79% of every set
+	// (7.3 GB of offsite backups against 635 MB of live data), so the whole subtree
+	// is excluded, knowingly accepting that a restore comes back with no log history.
+	//
+	// Everything else under dataDir IS data and stays in the set: petbox.db, deploy.db,
+	// db/** (user schemas / data_schema_apply), memory/**, tasks/**, sessions/**, config/**.
+	public const string ExcludedLogsDirName = "logs";
+
+	// Snapshots every *.db under dataDir (except the backups dir itself and the
+	// excluded logs subtree) into a new set folder, then prunes old sets. Returns the
+	// relative paths copied.
 	public static IReadOnlyList<string> SnapshotAll(string dataDir, string stamp, string label, int retainSets)
 	{
 		var backupsRoot = Path.Combine(dataDir, BackupsDirName);
@@ -34,11 +47,16 @@ public static class Backup
 		return copied;
 	}
 
-	static IEnumerable<string> EnumerateDbs(string dataDir, string backupsRoot) =>
-		!Directory.Exists(dataDir)
-			? []
-			: Directory.EnumerateFiles(dataDir, "*.db", SearchOption.AllDirectories)
-				.Where(p => !p.StartsWith(backupsRoot, StringComparison.OrdinalIgnoreCase));
+	static IEnumerable<string> EnumerateDbs(string dataDir, string backupsRoot)
+	{
+		if (!Directory.Exists(dataDir)) return [];
+		// Trailing separator so the prefix match can't swallow a sibling like
+		// `logs-archive/` — only the `logs/` directory itself is excluded.
+		var logsRoot = Path.Combine(dataDir, ExcludedLogsDirName) + Path.DirectorySeparatorChar;
+		return Directory.EnumerateFiles(dataDir, "*.db", SearchOption.AllDirectories)
+			.Where(p => !p.StartsWith(backupsRoot, StringComparison.OrdinalIgnoreCase)
+				&& !p.StartsWith(logsRoot, StringComparison.OrdinalIgnoreCase));
+	}
 
 	static void VacuumInto(string srcDbPath, string destDbPath)
 	{

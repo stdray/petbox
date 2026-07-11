@@ -46,6 +46,34 @@ public sealed class BackupTests : IDisposable
 		sets.Should().BeEquivalentTo(["20260531-110000-b", "20260531-120000-c"]); // oldest pruned
 	}
 
+	// Logs are telemetry, not data (owner decision 2026-07-11): data/logs/** must never
+	// land in a set, while every other subtree must. Guards both halves — the exclusion
+	// must not take real data with it.
+	[Fact]
+	public void SnapshotAll_ExcludesLogsButKeepsData()
+	{
+		MakeDb(Path.Combine(_dir, "logs", "petbox", "app.db"), rows: 1);        // telemetry — excluded
+		MakeDb(Path.Combine(_dir, "petbox.db"), rows: 1);                        // data
+		MakeDb(Path.Combine(_dir, "deploy.db"), rows: 1);                        // data
+		MakeDb(Path.Combine(_dir, "db", "proj", "user.db"), rows: 1);            // data (user schema)
+		MakeDb(Path.Combine(_dir, "memory", "proj.db"), rows: 1);                // data
+		MakeDb(Path.Combine(_dir, "tasks", "proj", "board.db"), rows: 1);        // data
+		MakeDb(Path.Combine(_dir, "sessions", "proj.db"), rows: 1);              // data
+		MakeDb(Path.Combine(_dir, "config", "ws.db"), rows: 1);                  // data
+
+		var copied = Backup.SnapshotAll(_dir, "20260711-120000", "test", retainSets: 14)
+			.Select(p => p.Replace('\\', '/')).ToList();
+
+		copied.Should().BeEquivalentTo([
+			"petbox.db", "deploy.db", "db/proj/user.db", "memory/proj.db",
+			"tasks/proj/board.db", "sessions/proj.db", "config/ws.db",
+		]);
+
+		var setDir = Path.Combine(_dir, Backup.BackupsDirName, "20260711-120000-test");
+		Directory.Exists(Path.Combine(setDir, Backup.ExcludedLogsDirName)).Should().BeFalse();
+		File.Exists(Path.Combine(setDir, "db", "proj", "user.db")).Should().BeTrue();
+	}
+
 	static void MakeDb(string path, int rows)
 	{
 		Directory.CreateDirectory(Path.GetDirectoryName(path)!);
