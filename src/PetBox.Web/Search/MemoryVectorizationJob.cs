@@ -55,6 +55,18 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 			ct.ThrowIfCancellationRequested();
 			try
 			{
+				// Gate on Embed being reachable for THIS project (no route / breaker open) before the
+				// drain touches a single doc — same gate the chat jobs already have. A down endpoint is
+				// a normal, self-healing state (Info, not Warning): we simply skip this tick. Without it
+				// the drain used to walk every document into a dead socket, and the failures looked like
+				// the DOCUMENTS' fault. Belt-and-braces with the worker's own infra classification: the
+				// endpoint can also die mid-pass, after the gate said yes.
+				if (!await _llm.IsAvailableAsync(project, LlmCapability.Embed, ct))
+				{
+					if (_logger is not null) LogEmbedUnavailable(_logger, project);
+					continue;
+				}
+
 				DataConnection Connect() => _factory.NewEnsuredConnection(project);
 
 				List<string> stores;
@@ -99,6 +111,10 @@ public sealed partial class MemoryVectorizationJob : IBackgroundIndexJob
 		}
 		return indexed;
 	}
+
+	[LoggerMessage(EventId = 412, Level = LogLevel.Information,
+		Message = "memory vectorization {Project}: Embed unavailable (no route or circuit open) — skipping this pass, cursor untouched")]
+	static partial void LogEmbedUnavailable(ILogger logger, string project);
 
 	[LoggerMessage(EventId = 410, Level = LogLevel.Information,
 		Message = "memory vectorization {Project}: {Stores} store(s), indexed {Indexed}, dead-lettered {DeadLettered} this pass; search_vec rows {VectorRows}, dead total {DeadTotal}, max cursor lag {Lag}")]
