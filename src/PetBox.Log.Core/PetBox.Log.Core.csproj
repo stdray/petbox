@@ -2,7 +2,8 @@
 
 	<PropertyGroup>
 		<IsPackable>false</IsPackable>
-		<NoWarn>$(NoWarn);CA1859</NoWarn>
+		<!-- FluentMigrator convention uses underscores in migration class names (M001_LogBaseline). -->
+		<NoWarn>$(NoWarn);CA1859;CA1707;NU1510</NoWarn>
 	</PropertyGroup>
 
 	<ItemGroup>
@@ -22,6 +23,7 @@
 		<PackageReference Include="Microsoft.Data.Sqlite" />
 		<PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" />
 		<PackageReference Include="Microsoft.Azure.Kusto.Language" />
+		<PackageReference Include="FluentMigrator" />
 	</ItemGroup>
 
 	<ItemGroup>

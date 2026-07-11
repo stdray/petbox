@@ -5,7 +5,7 @@ namespace PetBox.Tests.Data.Schema;
 
 // GOLDEN SCHEMA SNAPSHOTS — a safety net under the migration bodies.
 //
-// Each tier owns a FluentMigrator set (Core/Tasks/Memory/Sessions/Deploy). Nothing else in the
+// Each tier owns a FluentMigrator set (Core/Tasks/Memory/Sessions/Deploy/Config/Log). Nothing else in the
 // suite pins the SHAPE those migrations produce: a body can be rewritten (raw SQL -> typed API,
 // a column type widened, a partial index's predicate edited, a trigger dropped) and, unless some
 // unrelated test happens to touch that exact column, the change lands silently.
@@ -46,6 +46,8 @@ public sealed class GoldenSchemaTests : IDisposable
 	[InlineData("memory")]
 	[InlineData("sessions")]
 	[InlineData("deploy")]
+	[InlineData("config")]
+	[InlineData("log")]
 	public void Schema_matches_the_golden_snapshot(string tier)
 	{
 		var actual = Snapshot(tier, Path.Combine(_dir, tier + ".db"));
@@ -84,6 +86,8 @@ public sealed class GoldenSchemaTests : IDisposable
 	[InlineData("memory")]
 	[InlineData("sessions")]
 	[InlineData("deploy")]
+	[InlineData("config")]
+	[InlineData("log")]
 	public void Running_the_migrations_twice_leaves_the_schema_unchanged(string tier)
 	{
 		var db = Path.Combine(_dir, tier + ".db");
@@ -144,6 +148,8 @@ public sealed class GoldenSchemaTests : IDisposable
 			case "memory": PetBox.Memory.Data.MemorySchema.Ensure(cs); break;
 			case "sessions": PetBox.Sessions.Data.SessionsSchema.Ensure(cs); break;
 			case "deploy": PetBox.Deploy.Data.DeploySchema.Ensure(cs); break;
+			case "config": PetBox.Config.Data.ConfigSchema.Ensure(cs); break;
+			case "log": PetBox.Log.Core.Data.LogSchema.Ensure(cs); break;
 			default: throw new ArgumentOutOfRangeException(nameof(tier), tier, "unknown tier");
 		}
 		return Header(tier) + SchemaSnapshot.Capture(cs);
