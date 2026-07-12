@@ -31,6 +31,7 @@ public sealed class NavTreeAndDataViewFixture : IAsyncLifetime
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
+						["Host:BackgroundServices"] = "false",
 						["Features:Logging"] = "true",
 						["Features:Data"] = "true",
 						["Admin:Username"] = "admin",

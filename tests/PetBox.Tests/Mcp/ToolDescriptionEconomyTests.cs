@@ -153,6 +153,7 @@ public sealed class ToolDescriptionEconomyWireFixture : IAsyncLifetime
 			b.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>
 			{
 				["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
+				["Host:BackgroundServices"] = "false",
 				["Features:Tasks"] = "true",
 				["Features:Memory"] = "true",
 			}));

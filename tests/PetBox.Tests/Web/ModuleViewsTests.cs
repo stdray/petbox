@@ -38,6 +38,7 @@ public sealed class ModuleViewsFixture : IAsyncLifetime
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
+						["Host:BackgroundServices"] = "false",
 						["Features:Tasks"] = "true",
 						["Features:Memory"] = "true",
 						["Features:Data"] = "true",

@@ -31,6 +31,7 @@ public sealed class SettingsFormScopePagesFixture : IAsyncLifetime
 				b.ConfigureAppConfiguration((_, cfg) => cfg.AddInMemoryCollection(new Dictionary<string, string?>
 				{
 					["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
+					["Host:BackgroundServices"] = "false",
 					["Admin:Username"] = "admin",
 					["Admin:PasswordHash"] = TestPasswordHash,
 				}));

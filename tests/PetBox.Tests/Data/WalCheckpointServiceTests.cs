@@ -31,6 +31,7 @@ public sealed class WalCheckpointServiceTests : IAsyncLifetime
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
+						["Host:BackgroundServices"] = "false",
 						["Features:Data"] = "true",
 					});
 				});
