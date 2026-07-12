@@ -54,6 +54,14 @@ public sealed record MethodologyKindDef(
 	// task_spec links using the declared type roles (the quartet feature/bug roll-up, as
 	// data). Null = no delivery computation for this kind.
 	public MethodologyDeliveryDef? Delivery { get; init; }
+	// The view mode (BoardViewModeNames) a board of this kind opens in when the user has no
+	// explicit/saved choice (spec methodology-default-view-field, board-view-persistence).
+	// Null = the builtin default (BoardViewModeNames.Tree) applies — so a stored document
+	// from before this field existed deserializes fine and behaves exactly as before.
+	// Validated against BoardViewModeNames.All by MethodologyDefinitionValidator; an
+	// unrenderable-but-known name (e.g. kanban before its partial ships) is a resolve-time
+	// silent degradation to Tree, not a definition error.
+	public string? DefaultView { get; init; }
 }
 
 // Delivery roll-up as DATA (spec primitives-enum-residual): how linked task_spec nodes

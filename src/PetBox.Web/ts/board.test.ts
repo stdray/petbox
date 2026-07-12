@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compareSortValues, parseSortPref, sortKeyValue } from "./board.ts";
+import { compareSortValues, parseSortPref, parseViewPref, sortKeyValue } from "./board.ts";
 
 test("parseSortPref: defaults to priority/asc for null, malformed, or unknown-key input", () => {
 	assert.deepEqual(parseSortPref(null), { by: "priority", desc: false });
@@ -44,4 +44,27 @@ test("compareSortValues: numeric and string comparisons order ascending (desc is
 	assert.equal(compareSortValues(1, 1), 0);
 	assert.ok(compareSortValues("a", "b") < 0);
 	assert.ok(compareSortValues("b", "a") > 0);
+});
+
+// board-view-persistence: parseViewPref backs initBoardViewPersistence's reconcile-on-load
+// redirect and its click-to-save handler — pure JSON-shape parsing, no DOM needed.
+test("parseViewPref: null/malformed/shapeless input reads as absent", () => {
+	assert.equal(parseViewPref(null), null);
+	assert.equal(parseViewPref("not json"), null);
+	assert.equal(parseViewPref("{}"), null);
+	assert.equal(parseViewPref(JSON.stringify({ mode: "" })), null);
+	assert.equal(parseViewPref(JSON.stringify({ mode: 42 })), null);
+});
+
+test("parseViewPref: round-trips a mode-only preference", () => {
+	assert.deepEqual(parseViewPref(JSON.stringify({ mode: "tree" })), { mode: "tree" });
+});
+
+test("parseViewPref: round-trips a mode+by preference (tags)", () => {
+	assert.deepEqual(parseViewPref(JSON.stringify({ mode: "tags", by: "area,concern" })), { mode: "tags", by: "area,concern" });
+});
+
+test("parseViewPref: a non-string/blank `by` is dropped, not carried through as garbage", () => {
+	assert.deepEqual(parseViewPref(JSON.stringify({ mode: "tags", by: "" })), { mode: "tags" });
+	assert.deepEqual(parseViewPref(JSON.stringify({ mode: "tags", by: 7 })), { mode: "tags" });
 });

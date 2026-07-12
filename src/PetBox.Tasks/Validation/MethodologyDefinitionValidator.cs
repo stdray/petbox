@@ -170,6 +170,18 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		ValidateEffects(kind, KindStatuses(kind), knownLinks, ctx);
 		ValidateAutoWire(kind, ctx);
 		ValidateDelivery(kind, ctx);
+		ValidateDefaultView(kind, ctx);
+	}
+
+	// DefaultView names a BoardViewModeNames entry (methodology-default-view-field). Format-
+	// checked against the known mode-name set only — whether PetBox.Web has shipped a
+	// renderer for it yet is a resolve-time (not definition-time) concern, so `kanban`/
+	// `outline`/`table` are already valid here before their partials exist.
+	static void ValidateDefaultView(MethodologyKindDef kind, ValidationContext<MethodologyDefinition> ctx)
+	{
+		if (kind.DefaultView is null) return;
+		if (!BoardViewModeNames.IsKnown(kind.DefaultView))
+			ctx.AddFailure($"kind '{kind.Kind}': defaultView '{kind.DefaultView}' is not a known view mode ({string.Join("|", BoardViewModeNames.All)})");
 	}
 
 	// AutoWireSpecFrom is a kind slug naming the board to wire SpecBoard to. Format-checked

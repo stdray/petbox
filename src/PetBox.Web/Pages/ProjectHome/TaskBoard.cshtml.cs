@@ -54,14 +54,29 @@ public sealed class TaskBoardModel : PageModel
 	public IReadOnlyDictionary<string, IReadOnlyList<CommentLine>> CommentThreads { get; private set; }
 		= new Dictionary<string, IReadOnlyList<CommentLine>>(StringComparer.Ordinal);
 
-	// View mode: the default part_of TREE, or the tag-groups PROJECTION (board-tag-grouping).
-	// `?view=tags&by=area,concern` selects an ordered list of tag namespaces; the projection
-	// is a pure view over the same nodes and never touches part_of (tag-grouping-is-projection).
+	// Explicit view-mode request from the URL (board-view-modes/board-view-persistence). Null
+	// = "not specified" — distinct from an explicit `?view=tree`, so the resolver
+	// (BoardViewModeRegistry.Resolve) can fall through to the methodology's defaultView
+	// before landing on the builtin Tree default. `?view=tags&by=area,concern` selects an
+	// ordered list of tag namespaces; that projection is a pure view over the same nodes and
+	// never touches part_of (tag-grouping-is-projection).
 	[BindProperty(SupportsGet = true, Name = "view")]
-	public string ViewMode { get; set; } = "tree";
+	public string? ViewMode { get; set; }
 
 	[BindProperty(SupportsGet = true, Name = "by")]
 	public string? By { get; set; }
+
+	// The mode BoardViewModeRegistry.Resolve settled on (explicit -> methodology defaultView
+	// -> Tree) — RENDERABLE by construction (Resolve never returns a mode without a partial).
+	// Exposed so the switcher can mark the active button and the client-side persistence
+	// script (board-view-meta) knows what the server actually rendered.
+	public string ResolvedViewMode { get; private set; } = PetBox.Tasks.Workflow.BoardViewModeNames.Tree;
+
+	// The partial TaskBoard.cshtml dispatches the content pane to — registry-driven, never a
+	// hardcoded name in the .cshtml. Falls back to the tree partial whenever the resolved
+	// mode's own content isn't actually usable (e.g. ResolvedViewMode is "tags" but `by` was
+	// invalid/empty — the existing tag-grouping fallback, preserved verbatim).
+	public string ContentPartialName { get; private set; } = "_BoardViewTree";
 
 	public bool IsTagView { get; private set; }
 	public IReadOnlyList<string> GroupDims { get; private set; } = []; // ordered namespaces actually applied
@@ -201,6 +216,13 @@ public sealed class TaskBoardModel : PageModel
 		Error = error;
 		(Runtime, KindSlug, ClosedAt) = await ResolveProcessAsync(ct);
 		KindName = Runtime.KindName(KindSlug);
+		// board-view-persistence resolution order: explicit `view` query-param (or a saved
+		// localStorage pick the client redirected into one — see board-view-meta in the
+		// .cshtml) -> this board's kind's methodology defaultView -> the builtin Tree
+		// default. Always lands on a RENDERABLE mode (BoardViewModeRegistry.Resolve never
+		// returns an entry without a shipped partial), so an unknown/reserved-but-unshipped
+		// name in the URL or in a definition degrades silently instead of 500ing.
+		ResolvedViewMode = BoardViewModeRegistry.Resolve(ViewMode, Runtime.DefaultView(KindSlug));
 		// closed-board-disabled-display: a closed board never shows quick-add, regardless of
 		// what the kind would otherwise allow — mirrors the server-side reject in UpsertAsync.
 		ShowQuickAdd = Runtime.QuickAddAllowed(KindSlug) && ClosedAt is null;
@@ -231,11 +253,11 @@ public sealed class TaskBoardModel : PageModel
 			.Concat(byNode.SelectMany(g => g).Select(c => (string?)c.Body));
 		NodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey, bodies, ct);
 
-		// Tag-groups projection: only when explicitly requested with a valid dimension list.
-		// Bad/empty `by` silently falls back to the tree (the service would reject it) — the
-		// view stays explicit, no implicit redirects.
+		// Tag-groups projection: only when the RESOLVED mode is tags with a valid dimension
+		// list. Bad/empty `by` silently falls back to the tree (the service would reject it)
+		// — the view stays explicit, no implicit redirects.
 		var dims = (By ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		if (string.Equals(ViewMode, "tags", StringComparison.OrdinalIgnoreCase) && dims.Length > 0)
+		if (string.Equals(ResolvedViewMode, BoardViewModeNames.Tags, StringComparison.OrdinalIgnoreCase) && dims.Length > 0)
 		{
 			try
 			{
@@ -247,6 +269,12 @@ public sealed class TaskBoardModel : PageModel
 			}
 			catch (ArgumentException) { /* invalid namespace → stay on the tree view */ }
 		}
+		// Content-pane dispatch: registry-driven, one lookup, no if-chain in the .cshtml. Only
+		// tree/tags are renderable today; IsTagView is the authority for tags (it accounts for
+		// the by-validity fallback above) — every other resolved mode (including a reserved-
+		// but-unshipped one) draws the tree partial, same as the pre-registry behavior.
+		ContentPartialName = (IsTagView ? BoardViewModeRegistry.Find(BoardViewModeNames.Tags) : BoardViewModeRegistry.Find(BoardViewModeNames.Tree))
+			?.PartialName ?? "_BoardViewTree";
 		return Page();
 	}
 

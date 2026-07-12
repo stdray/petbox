@@ -154,6 +154,58 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
 	}
 
+	// board-view-modes / board-view-persistence — HTTP-level smoke: the Razor
+	// `<partial name="@Model.ContentPartialName">` dispatch (BoardViewModeRegistry) resolves
+	// the partial NAME at runtime (the view engine looks it up by string), which the C#
+	// build/unit-test layer can't catch — only an actual render proves "_BoardViewTree"/
+	// "_BoardViewTags" exist and produce the expected markup.
+	[Fact]
+	public async Task TaskBoard_DefaultView_RendersTreePaneWithControlsAndMeta()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/$system/tasks/roadmap");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-view-controls\"");
+		html.Should().Contain("data-testid=\"board-view-meta\"");
+		html.Should().Contain("data-resolved-view=\"tree\"");
+	}
+
+	[Fact]
+	public async Task TaskBoard_TagsView_RendersTagGroupsPane()
+	{
+		const string board = "viewmodesmoke";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "view mode smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "vm1", Title = "VM1", Body = "x", Tags = ["area:ui"] },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tags&by=area");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-tag-groups\"");
+		html.Should().Contain("data-resolved-view=\"tags\"");
+	}
+
+	// An unknown mode (typo'd URL) or a reserved-but-unshipped one (kanban, before its
+	// partial exists) must silently degrade to the tree partial — never a 500.
+	[Theory]
+	[InlineData("bogus")]
+	[InlineData("kanban")]
+	public async Task TaskBoard_UnknownOrUnshippedViewMode_FallsBackToTree_NoException(string mode)
+	{
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/roadmap?view={mode}");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-resolved-view=\"tree\"");
+	}
+
 	[Fact]
 	public async Task TaskBoard_OrdersByTree_NotFlatPriority_AndRendersThreeLevels()
 	{

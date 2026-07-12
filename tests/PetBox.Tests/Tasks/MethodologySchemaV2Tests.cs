@@ -56,7 +56,8 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 	static MethodologyKindDef SupportKind(
 		MethodologyTransitionDef[]? transitions = null,
 		IReadOnlyList<MethodologyTransitionEffectDef>? effects = null,
-		IReadOnlyList<MethodologyLinkConstraintDef>? constraints = null) =>
+		IReadOnlyList<MethodologyLinkConstraintDef>? constraints = null,
+		string? defaultView = null) =>
 		new("support", QuickAddAllowed: true,
 		[
 			new MethodologyWorkflowDef(["ticket", "incident"],
@@ -70,6 +71,7 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 		{
 			Effects = effects ?? [],
 			LinkConstraints = constraints ?? [],
+			DefaultView = defaultView,
 		};
 
 	static MethodologyDefinition Def(params MethodologyKindDef[] kinds) => new("schema-v2", kinds);
@@ -225,6 +227,35 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 		await AssertRejected(
 			Def(SupportKind(constraints: [new("incident", "task_spec") { TargetKind = "spec", TargetStatuses = ["not a slug!"] }])),
 			"target status 'not a slug!' is not a valid status slug");
+	}
+
+	// ── defaultView (methodology-default-view-field) ─────────────────────────
+
+	[Fact]
+	public async Task DefaultView_UnknownValue_Rejected() =>
+		await AssertRejected(
+			Def(SupportKind(defaultView: "bogus")),
+			"defaultView 'bogus' is not a known view mode");
+
+	[Fact]
+	public async Task DefaultView_KnownValue_Stores()
+	{
+		// "kanban" isn't renderable in PetBox.Web yet (no partial), but the validator only
+		// checks the NAME is known — whether a partial exists is BoardViewModeRegistry's
+		// resolve-time concern, not a definition-time error (board-view-mode-framework hands
+		// the renderer to a later worker; the name is already legal today).
+		var ack = await Define(Def(SupportKind(defaultView: BoardViewModeNames.Kanban)));
+		ack.Changed.Should().BeTrue();
+	}
+
+	[Fact]
+	public async Task DefaultView_Omitted_IsValid_LikeAnyOtherOptionalField()
+	{
+		// The pre-existing behavior every other test in this file already exercises
+		// (SupportKind's default `defaultView: null`) — stated explicitly here so the "an old
+		// stored document without defaultView stays valid" promise has its own named test.
+		var ack = await Define(Def(SupportKind()));
+		ack.Changed.Should().BeTrue();
 	}
 }
 

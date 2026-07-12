@@ -9,6 +9,7 @@
 const LS_ACTIVE = "tasksActiveOnly";
 const LS_COLLAPSED = "tasksCollapsed";
 const LS_SORT = "tasksSort";
+const LS_VIEW_PREFIX = "tasksView:";
 
 interface Row {
 	el: HTMLElement;
@@ -60,6 +61,77 @@ export function sortKeyValue(d: DOMStringMap, by: SortKey): number | string {
 export function compareSortValues(a: number | string, b: number | string): number {
 	if (typeof a === "string" || typeof b === "string") return String(a).localeCompare(String(b));
 	return a - b;
+}
+
+// board-view-persistence: the view mode a board opens in is remembered per BOARD (not
+// globally, unlike active-only/collapsed/sort above) — different boards have different
+// methodology defaultViews (kanban/outline/table/tree), so one global choice would fight
+// the per-kind default. Stored under `tasksView:<projectKey>/<board>` (the same key
+// TaskBoard.cshtml embeds in [data-testid='board-view-meta'] data-board-key).
+export interface BoardViewPref {
+	mode: string;
+	by?: string;
+}
+
+export function parseViewPref(raw: string | null): BoardViewPref | null {
+	if (!raw) return null;
+	try {
+		const p = JSON.parse(raw) as Partial<BoardViewPref>;
+		if (p && typeof p.mode === "string" && p.mode.length > 0) {
+			// exactOptionalPropertyTypes: only include `by` when it's a real value — an
+			// explicit `by: undefined` is a type error under that flag.
+			return typeof p.by === "string" && p.by.length > 0 ? { mode: p.mode, by: p.by } : { mode: p.mode };
+		}
+	} catch {
+		// malformed localStorage value — treat as absent
+	}
+	return null;
+}
+
+// Runs on EVERY board page load (tree/tags/future kanban alike — unlike initBoardPage below,
+// which only wires the tree pane's own interactivity and bails when that pane isn't
+// rendered). Two jobs:
+//   1. Reconcile: if the URL has no explicit `?view=`, and a saved pref differs from what the
+//      server actually resolved/rendered (`data-resolved-view`), redirect to the saved mode.
+//      This runs at normal deferred module-script timing (after the body is parsed, same as
+//      every other persisted board pref in this file) rather than an early <head> script, so
+//      a returning user with a non-default saved mode may see one flash of the server-
+//      resolved view before the redirect — the same tradeoff already accepted for the
+//      active-only/collapsed/sort prefs above, kept deliberately rather than adding a second
+//      inline-<script> exception to the "no inline JS in .cshtml" rule (the one that exists,
+//      _ThemeScript, is reserved for the light/dark FOUC case).
+//   2. Save: clicking a view-switch link (`[data-view-link]`) persists its mode (+ optional
+//      `by`) before the browser navigates — a plain `<a href>` click, not intercepted.
+export function initBoardViewPersistence(): void {
+	const meta = document.querySelector<HTMLElement>("[data-testid='board-view-meta']");
+	if (!meta) return;
+	const boardKey = meta.dataset["boardKey"];
+	if (!boardKey) return;
+	const storageKey = LS_VIEW_PREFIX + boardKey;
+
+	if (!new URLSearchParams(window.location.search).has("view")) {
+		const saved = parseViewPref(localStorage.getItem(storageKey));
+		if (saved && saved.mode !== meta.dataset["resolvedView"]) {
+			const qs = new URLSearchParams();
+			qs.set("view", saved.mode);
+			if (saved.by) qs.set("by", saved.by);
+			window.location.replace(`${window.location.pathname}?${qs.toString()}`);
+			return; // navigating away — no point wiring click handlers on this (stale) page
+		}
+	}
+
+	for (const link of Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-view-link]"))) {
+		link.addEventListener("click", () => {
+			const mode = link.dataset["viewMode"];
+			if (!mode) return;
+			const by = link.dataset["viewBy"];
+			try {
+				localStorage.setItem(storageKey, JSON.stringify(by ? { mode, by } : { mode }));
+			} catch {
+				// storage unavailable (private mode / quota) — the click still navigates normally
+			}
+		});
+	}
 }
 
 export function initBoardPage(): void {
