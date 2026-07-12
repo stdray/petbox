@@ -387,9 +387,11 @@ public static class MemoryTools
 		(the compact listing default), 0 = no body, N>0 = the first N chars ("…" when cut),
 			-1 = the full body — or pull a full body with memory_get.
 
-		`includeUsage` adds surfaced/opened/lastHitAt counters per row. A search answer
-		counts an impression for the returned rows; a listing (no `q`) is curation and
-		counts nothing. The response has a HARD OUTPUT BUDGET (~30k serialized chars):
+		`includeUsage` adds surfaced/opened/lastHitAt counters per row. Usage counts what was
+		actually SENT (post-limit, post-budget): every DELIVERED row counts an impression, in
+		both modes — but only a search (with `q`) counts as deliberate; a listing has no
+		relevance behind it, so it bumps `surfaced` and never the deliberate value signal.
+		The response has a HARD OUTPUT BUDGET (~30k serialized chars):
 		overflowing rows are prefix-cut in result order and flagged `truncated:true` +
 		`omitted` + a narrowing `hint`; no markers = the complete answer. Requires
 		memory:read.
@@ -485,10 +487,6 @@ public static class MemoryTools
 					container, scopeName, h.Store, h.Entry.Key, h.Entry.Body.Length,
 					hasQuery ? h.ScoreRaw : null)));
 			}
-			// Impression = the rows a SEARCH answer returned (a listing is curation — not counted).
-			if (hasQuery)
-				foreach (var g in res.Hits.GroupBy(h => h.Store, StringComparer.OrdinalIgnoreCase))
-					usage.Surfaced(container, g.Key, g.Select(h => h.Entry.Key).ToList(), deliberate);
 		}
 
 		// Cross-scope honest merge (query mode, 2+ scopes contributed): the best hit wins
@@ -513,12 +511,24 @@ public static class MemoryTools
 		// will be sent (bodies already sliced by the service), prefix-cut, marked — never silent.
 		var (kept, omitted) = new ResponseBudget().Take(rows);
 
-		// Delivery telemetry (spec: usage-cost-and-fit-separate) — recorded on what was ACTUALLY
-		// SENT: Take is a prefix cut, so the first kept.Count ordered rows are the answer. The
-		// enqueue is fire-and-forget (the recorder drains in the background), so the read path
-		// does not wait on it. Note this is a SEPARATE record point from the entry_usage
-		// impression above, which stays where it is (task: usage-record-what-was-sent).
-		RecordDeliveries(usage, ordered.Take(kept.Count).ToList(), scored,
+		// What was ACTUALLY SENT: Take is a prefix cut, so the first kept.Count ordered rows are
+		// the answer. Both usage record points below are driven by THIS list — a row dropped by
+		// `cap` or by the response budget never reached the agent's context and must not count
+		// (spec: usage-counts-what-was-sent).
+		var delivered = ordered.Take(kept.Count).ToList();
+
+		// Impression = the rows the answer DELIVERED. A LISTING delivers too (its rows land in the
+		// caller's context exactly like a search's), so it bumps Surfaced — but it ran no relevance
+		// leg, so it is never DELIBERATE: DeliberateCount is the value signal GC trusts, and "this
+		// row happened to be listed" proves nothing about the fact's worth.
+		foreach (var g in delivered.GroupBy(d => (d.Facts.Container, d.Facts.Store)))
+			usage.Surfaced(g.Key.Container, g.Key.Store, g.Select(d => d.Facts.Key).ToList(),
+				deliberate: hasQuery && deliberate);
+
+		// Delivery telemetry (spec: usage-cost-and-fit-separate) — the cost/fit record of the same
+		// delivered rows. The enqueue is fire-and-forget (the recorder drains in the background),
+		// so the read path does not wait on it.
+		RecordDeliveries(usage, delivered, scored,
 			tool: hasQuery ? "search" : "listing",
 			sessionId: McpSessionId(http),
 			usageSource: deliberate ? DeliberateSource : MachineSource);
