@@ -125,10 +125,16 @@ jobs:
           set -euo pipefail
           chmod +x ./build.sh
           TAG_FILE="$RUNNER_TEMP/docker-tag.txt"
+          # Ask for the target we actually want. DockerPush is gated by WithCriteria(dockerPush),
+          # and Cake treats a REQUESTED target that its criteria skips as an ERROR ("Could not
+          # reach target 'DockerPush' since it was skipped due to a criteria") — so
+          # `--target=DockerPush --dockerPush=false` fails the job even though the build and
+          # smoke both succeeded. DockerSmoke is the same chain minus the push.
+          TARGET=DockerSmoke
           PUSH=false
-          if [ "$GITHUB_REF" = "refs/tags/deploy" ]; then PUSH=true; fi
-          echo "Docker push enabled: $PUSH (ref: $GITHUB_REF)"
-          ./build.sh --target=DockerPush \
+          if [ "$GITHUB_REF" = "refs/tags/deploy" ]; then TARGET=DockerPush; PUSH=true; fi
+          echo "Docker target: $TARGET (push=$PUSH, ref: $GITHUB_REF)"
+          ./build.sh --target="$TARGET" \
             --dockerPush="$PUSH" \
             --ghcrRepository=${{ github.repository }} \
             --dockerTagOutput="$TAG_FILE" \
