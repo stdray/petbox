@@ -76,6 +76,47 @@ public sealed class MemoryToolsContractTests : IDisposable
 			() => MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "no-such-key"));
 	}
 
+	// spec addressed-read-batched: `keys` reads N entries in ONE call, rows in the asked order
+	// (bodies full, like the single get).
+	[Fact]
+	public async Task Get_Batch_ReturnsEveryAddressedEntry()
+	{
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "a", type = "project", description = "da", body = "ba" },
+			new { key = "b", type = "project", description = "db", body = "bb" },
+			new { key = "c", type = "project", description = "dc", body = "bc" },
+		}));
+
+		var got = await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes",
+			keys: ["c", "a"]);
+
+		got.Entries.Select(e => e.Key).Should().Equal("c", "a");
+		got.Entries.Select(e => e.Body).Should().Equal("bc", "ba");
+	}
+
+	// The batch is a SOFT filter (the tasks_search `keys[]` contract): a key that resolves to
+	// nothing is silently dropped, and an all-missing batch is an EMPTY result, not an error —
+	// only a lone `key` miss stays a not-found throw (Get_MissingKey_Throws).
+	[Fact]
+	public async Task Get_Batch_MissingKey_IsDroppedNotAnError()
+	{
+		var http = Http("memory:read,memory:write");
+		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes", McpInputs.Entries(new object[]
+		{
+			new { key = "present", type = "project", description = "d", body = "b" },
+		}));
+
+		var got = await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes",
+			keys: ["present", "no-such-key"]);
+		got.Entries.Select(e => e.Key).Should().Equal("present");
+
+		var none = await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes",
+			keys: ["no-such-key", "nor-this"]);
+		none.Entries.Should().BeEmpty();
+	}
+
 	[Fact]
 	public async Task Upsert_AutoVivifies_NormalisesTags_AndFiltersByType()
 	{
@@ -176,7 +217,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		}));
 		res.Applied.Should().BeTrue();
 
-		var after = (await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "k"))!;
+		var after = (await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "k")).Entries.Single();
 		after.Description.Should().Be("keep-d");
 		after.Body.Should().Be("keep-b");
 		after.Tags.Should().Equal("t3");
@@ -200,7 +241,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		}));
 		res.Applied.Should().BeTrue();
 
-		var after = (await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "c"))!;
+		var after = (await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "c")).Entries.Single();
 		after.Body.Should().BeEmpty();
 		after.Description.Should().Be("d");
 		after.Tags.Should().Equal("t");
@@ -218,7 +259,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		}));
 		res.Applied.Should().BeTrue();
 
-		var after = (await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "fresh"))!;
+		var after = (await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), Proj, "notes", "fresh")).Entries.Single();
 		after.Body.Should().Be("only-body");
 		after.Description.Should().BeEmpty();
 		after.Tags.Should().BeEmpty();

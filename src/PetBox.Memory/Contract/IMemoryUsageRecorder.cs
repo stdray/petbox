@@ -18,9 +18,41 @@ public interface IMemoryUsageRecorder
 	// A direct memory_get of one entry — an engagement (stronger than an impression).
 	void Opened(string projectKey, string store, string key);
 
+	// The rows a tool call actually DELIVERED, one event per entry (spec:
+	// usage-cost-and-fit-separate). entry_usage answers "how often" with a counter; this
+	// answers "at what CONTEXT COST, and how well did it FIT" — kept as raw components,
+	// never collapsed into one scalar. Same fire-and-forget contract as the counters:
+	// enqueued, drained in the background, dropped on overflow. `projectKey` is the
+	// CONTAINER the entries came from (project or workspace) — the events land in its file.
+	void Delivered(string projectKey, IReadOnlyList<MemoryDeliveryEvent> events);
+
 	// Drains everything enqueued so far to disk. For tests and graceful shutdown.
 	Task FlushAsync(CancellationToken ct = default);
 }
+
+// One entry as it was handed to a caller by one tool call (spec: usage-cost-and-fit-separate).
+// COST and FIT stay separate, and both stay raw:
+//   cost — DeliveredChars (body chars actually sent, after the bodyLen contract), BodyChars
+//          (the entry's full body), RowChars (the row's whole serialized wire price).
+//   fit  — Rank (1-based position in the answer; MMR reorders rows without touching the score),
+//          ScoreRaw (the fused RRF score BEFORE recency decay) and KRel (that score over the
+//          request's top-1 → a within-request [0,1] normalization; raw RRF has no meaningful
+//          absolute scale, its ceiling is ~1/60).
+// `Tool` is search | get | listing; a listing ran no relevance leg (ScoreRaw/KRel null), and a
+// memory_get is a perfect fit by definition (KRel = 1, DeliveredChars = BodyChars).
+public sealed record MemoryDeliveryEvent(
+	string Tool,
+	string Scope,
+	string Store,
+	string Key,
+	int DeliveredChars,
+	int BodyChars,
+	int RowChars,
+	int Rank,
+	double? ScoreRaw,
+	double? KRel,
+	string? SessionId,
+	string UsageSource);
 
 // One entry's usage as exposed on read surfaces (opt-in flags / UI). `Deliberate` is the
 // subset of `Surfaced` from deliberate (non-machine) searches — the honest value signal.

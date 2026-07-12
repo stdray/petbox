@@ -107,6 +107,26 @@ public sealed class MemoryUsageTests : IDisposable
 		usage["u1"].Surfaced.Should().Be(0);
 	}
 
+	// spec addressed-read-batched: the counter measures ENTRIES handed over, not calls — a batch
+	// get of N keys is N engagements (one Opened each), and a key that matched nothing (never
+	// handed over) is not counted at all.
+	[Fact]
+	public async Task BatchGet_CountsEngagement_PerReturnedKey()
+	{
+		await Seed("u1", "u2");
+
+		var got = await MemoryTools.GetAsync(Http(), Flags(), _db, _memory, _recorder, Proj, "notes",
+			keys: ["u1", "u2", "no-such-key"]);
+		await _recorder.FlushAsync();
+
+		got.Entries.Select(e => e.Key).Should().Equal("u1", "u2");
+		var usage = await _memory.GetUsageAsync(Proj, "notes");
+		usage["u1"].Opened.Should().Be(1);
+		usage["u2"].Opened.Should().Be(1);
+		usage["u1"].Surfaced.Should().Be(0);
+		usage.Should().NotContainKey("no-such-key");
+	}
+
 	[Fact]
 	public async Task Listing_AndDirectServiceTraffic_CountNothing()
 	{
