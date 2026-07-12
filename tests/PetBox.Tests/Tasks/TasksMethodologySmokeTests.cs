@@ -964,4 +964,107 @@ public sealed class TasksMethodologySmokeTests : IClassFixture<TasksMethodologyS
 		Text(r).Should().Contain("is a slug, but this board has no linked spec board");
 		Text(r).Should().Contain("provide the spec node");
 	}
+
+	// 31. ideaRef accepts the idea node's SLUG (resolved on the ideas board of this board's
+	// methodology instance, mirroring specRef) — and the target is TERMINAL (`accepted`), so
+	// the resolver must not filter by status. The idea_spec edge carries the resolved NodeId.
+	[Fact]
+	public async Task IdeaRef_BySlug_ToAcceptedIdea_CreatesIdeaSpecEdge()
+	{
+		var ideaId = await AcceptedIdeaId("want-x");
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var spec = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "spec",
+			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", ideaRef = "want-x" })
+		});
+		IsErr(spec).Should().BeFalse(Text(spec));
+		var specId = NodeId(spec, "x");
+
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = specId, direction = "to" });
+		Text(rels).Should().Contain("idea_spec");
+		Text(rels).Should().Contain(ideaId); // the resolved NodeId, never the raw slug
+	}
+
+	// 32. the same slug resolution from the WORK board (ideaRef is not spec-board-only): the
+	// ideas board is found by kind within the instance bucket, not via the SpecBoard pin.
+	[Fact]
+	public async Task IdeaRef_BySlug_FromWorkBoard_Resolves()
+	{
+		var ideaId = await AcceptedIdeaId("want-x");
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		var work = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "chore-x", type = "chore", status = "Pending", title = "Chore", body = "x", ideaRef = "want-x" })
+		});
+		IsErr(work).Should().BeFalse(Text(work));
+		var taskId = NodeId(work, "chore-x");
+
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = taskId, direction = "to" });
+		Text(rels).Should().Contain("idea_spec");
+		Text(rels).Should().Contain(ideaId);
+	}
+
+	// 33. slug resolution does NOT weaken the constraint: a slug pointing at a non-accepted
+	// idea resolves fine, then dies on the STATUS rule (not on the resolve message).
+	[Fact]
+	public async Task IdeaRef_BySlug_ToNonAcceptedIdea_RejectedByStatusRule()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "ideas", kind = "ideas" });
+		await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "ideas",
+			nodes = Nodes(new { key = "drv", type = "idea", status = "exploring", title = "drv", body = "x" })
+		});
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var r = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "spec",
+			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", ideaRef = "drv" })
+		});
+		IsErr(r).Should().BeTrue();
+		Text(r).Should().Contain("not accepted");
+		Text(r).Should().NotContain("does not match any node on ideas board");
+	}
+
+	// 34. an unknown slug ideaRef is rejected, and the error names the ideas board it searched.
+	[Fact]
+	public async Task IdeaRef_UnknownSlug_RejectedNamingIdeasBoard()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "ideas", kind = "ideas" });
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var r = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "spec",
+			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", ideaRef = "no-such-idea" })
+		});
+		IsErr(r).Should().BeTrue();
+		Text(r).Should().Contain("no-such-idea");
+		// (the envelope '-escapes quotes, so assert around the quoted board name)
+		Text(r).Should().Contain("does not match any node on ideas board");
+		Text(r).Should().Contain("ideas\\u0027");
+	}
+
+	// 35. regression: the NodeId form still passes through untouched.
+	[Fact]
+	public async Task IdeaRef_ByNodeId_StillResolves()
+	{
+		var ideaId = await AcceptedIdeaId("want-x");
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var spec = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "spec",
+			nodes = Nodes(new { key = "x", status = "defined", title = "X", body = "x", ideaRef = ideaId })
+		});
+		IsErr(spec).Should().BeFalse(Text(spec));
+		var rels = await Agent("relations_list", new { projectKey = ProjectKey, nodeId = NodeId(spec, "x"), direction = "to" });
+		Text(rels).Should().Contain(ideaId);
+	}
 }

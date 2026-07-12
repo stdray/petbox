@@ -1105,7 +1105,9 @@ public sealed partial class TasksService : ITasksService
 		var specRefs = ResolveSpecRefs(projectKey, meta, LinkFields(upsertPatches, p => p.SpecRef));
 		// blockedBy resolves ONCE up front too, so the `blocks` edge always carries a NodeId.
 		var blockedBy = ResolveBlockedBy(board, desired, prior, LinkFields(upsertPatches, p => p.BlockedBy));
-		var ideaRefs = LinkFields(upsertPatches, p => p.IdeaRef);
+		// ideaRef resolves ONCE up front the same way (slug → the ideas board of this instance),
+		// so both the constraint check and the idea_spec edge write see a NodeId, never a slug.
+		var ideaRefs = await ResolveIdeaRefsAsync(projectKey, meta, runtime, LinkFields(upsertPatches, p => p.IdeaRef), ct);
 		using (PetBoxActivitySources.Tasks.StartActivity("tasks.upsert.guards"))
 		{
 			RequireDefinitionLinks(runtime, kindSlug, desired, prior, specRefs, blockedBy, ideaRefs);
@@ -1743,6 +1745,66 @@ public sealed partial class TasksService : ITasksService
 		}
 		return specRefs;
 	}
+
+	// ideaRef accepts the idea node's slug OR its NodeId, mirroring specRef (ResolveSpecRefs).
+	// There is no SpecBoard-style pin for ideas, so a slug resolves against the board(s) whose
+	// kind is the idea_spec target kind (`ideas`) INSIDE THIS BOARD'S methodology-instance
+	// bucket — the same membership grouping AutoWireSpecAsync wires work→spec within, so a
+	// multi-instance project never resolves an ideaRef across instances. Any active row matches:
+	// no status filter (the only legal target is TERMINAL `accepted`; the kind/status constraint
+	// still runs afterwards in ValidateLinkTargetsAsync). NodeId-shaped values pass through
+	// untouched. Callable from any board that carries an ideaRef (spec today, work as well).
+	async Task<Dictionary<string, string>> ResolveIdeaRefsAsync(
+		string projectKey, TaskBoardMeta board, MethodologyRuntime runtime,
+		Dictionary<string, string> ideaRefs, CancellationToken ct)
+	{
+		if (ideaRefs.Count == 0) return ideaRefs;
+		var slugRefs = ideaRefs.Where(kv => !NodeRefResolver.LooksLikeNodeId(kv.Value.Trim())).ToList();
+		foreach (var (key, raw) in ideaRefs.ToList())
+			ideaRefs[key] = raw.Trim();
+		if (slugRefs.Count == 0) return ideaRefs;
+
+		// The target kind is DATA: the writing kind's idea_spec constraint names it (spec preset:
+		// `ideas`); a definition that declares no target falls back to the preset ideas kind.
+		var targetKind = runtime.LinkConstraints(board.Kind)
+			.FirstOrDefault(c => string.Equals(c.Link, "idea_spec", StringComparison.OrdinalIgnoreCase) && c.TargetKind is not null)
+			?.TargetKind ?? BoardKind.Ideas.ToString().ToLowerInvariant();
+
+		var instance = board.MethodologyInstance ?? "";
+		var ideaBoards = (await _boards.ListAsync(projectKey, ct))
+			.Where(b => b.ClosedAt == null
+				&& string.Equals(b.MethodologyInstance ?? "", instance, StringComparison.OrdinalIgnoreCase)
+				&& string.Equals(runtime.KindName(b.Kind), targetKind, StringComparison.OrdinalIgnoreCase))
+			.Select(b => b.Name)
+			.OrderBy(n => n, StringComparer.Ordinal)
+			.ToList();
+
+		var (firstKey, firstRaw) = slugRefs[0];
+		if (ideaBoards.Count == 0)
+			throw new ArgumentException($"ideaRef '{firstRaw}' (node '{firstKey}') is a slug, but no active {targetKind} board exists alongside board '{board.Name}'{InstanceSuffix(instance)} — create one or provide the idea node's NodeId");
+
+		var boardList = string.Join(", ", ideaBoards);
+		using var ctx = _boards.NewEnsuredConnection(projectKey);
+		foreach (var (key, raw) in slugRefs)
+		{
+			var slug = raw.Trim().ToLowerInvariant();
+			var hits = ctx.PlanNodes
+				.Where(n => ideaBoards.Contains(n.Board) && n.ActiveTo == null && n.Key == slug)
+				.ToList()
+				.Where(n => n.NodeId.Length > 0)
+				.ToList();
+			ideaRefs[key] = hits.Count switch
+			{
+				1 => hits[0].NodeId,
+				0 => throw new ArgumentException($"ideaRef '{raw}' (node '{key}') does not match any node on {targetKind} board{(ideaBoards.Count > 1 ? "s" : "")} '{boardList}'"),
+				_ => throw new ArgumentException($"ambiguous ideaRef '{raw}' (node '{key}') — the slug matches nodes on boards: [{string.Join(", ", hits.Select(h => h.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the idea node's NodeId instead"),
+			};
+		}
+		return ideaRefs;
+	}
+
+	static string InstanceSuffix(string instance) =>
+		instance.Length == 0 ? "" : $" in methodology instance '{instance}'";
 
 	// blockedBy accepts the blocker's slug OR its NodeId, mirroring specRef (ResolveSpecRefs).
 	// A slug resolves on THIS board (blockers are usually siblings) over the active rows
