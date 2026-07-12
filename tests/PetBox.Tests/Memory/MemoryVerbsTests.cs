@@ -2,6 +2,7 @@ using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -364,10 +365,10 @@ public sealed class MemoryVerbsTests : IDisposable
 	// AssertProject (tasks/sessions/etc.) is unchanged: a project-scoped key may NOT address
 	// $workspace as a project — only the memory surface's AssertMemoryProjectAsync grants it.
 	[Fact]
-	public void NonMemoryTool_AddressingWorkspaceContainer_StillFails()
+	public async Task NonMemoryTool_AddressingWorkspaceContainer_StillFails()
 	{
 		var http = Http("memory:read,memory:write");
-		Assert.Throws<UnauthorizedAccessException>(() =>
+		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
 			ModuleMcp.AssertProject(http, MemoryTools.WorkspaceContainer));
 	}
 
@@ -475,10 +476,16 @@ public sealed class MemoryVerbsTests : IDisposable
 		_db.Projects.Any(p => p.Key == "$ws-other-ws" && p.WorkspaceKey == "other-ws").Should().BeTrue();
 	}
 
-	static IHttpContextAccessor Http(string scopes, string project = Proj)
+	IHttpContextAccessor Http(string scopes, string project = Proj)
 	{
 		var id = new ClaimsIdentity([new Claim("project", project), new Claim("scopes", scopes)], "test");
-		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id) } };
+		// ModuleMcp.AssertProject/ResolveProject resolve IProjectCatalog off the HttpContext's own
+		// DI container (spec work/smoke-writes-into-real-projects).
+		var services = new ServiceCollection().AddSingleton<IProjectCatalog>(new ProjectCatalog(_db)).BuildServiceProvider();
+		return new HttpContextAccessor
+		{
+			HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id), RequestServices = services },
+		};
 	}
 
 	static FeatureFlags Flags()

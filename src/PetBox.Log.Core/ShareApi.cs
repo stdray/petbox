@@ -44,6 +44,7 @@ public static class ShareApi
 		HttpContext ctx,
 		PetBoxDb db,
 		ShareCreateRequest req,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
 		if (string.IsNullOrWhiteSpace(req.ProjectKey) || string.IsNullOrWhiteSpace(req.Kql))
@@ -53,8 +54,7 @@ public static class ShareApi
 		// only proves SOME authenticated identity, not that it's authorized for THIS project. Without
 		// this, any authenticated caller could mint a share link (served anonymously at GetTsvAsync)
 		// exporting another project's log data. Same ProjectScope.Authorizes pattern as SessionApi.
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, req.ProjectKey))
+		if (!await ProjectScope.AuthorizesAsync(ctx.User, req.ProjectKey, catalog, ct))
 			return Results.Forbid();
 
 		var salt = RandomNumberGenerator.GetBytes(32);

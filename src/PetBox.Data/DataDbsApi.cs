@@ -63,9 +63,11 @@ public static partial class DataDbsApi
 		CreateDbRequest req,
 		PetBoxDb db,
 		IDataDbFactory factory,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
+		if (!authOk) return forbid!;
 		if (req is null || string.IsNullOrWhiteSpace(req.Name))
 			return Results.BadRequest(new ErrorResponse("name is required"));
 		if (!DbNameRegex().IsMatch(req.Name))
@@ -105,9 +107,11 @@ public static partial class DataDbsApi
 		HttpContext ctx,
 		string projectKey,
 		PetBoxDb db,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
+		if (!authOk) return forbid!;
 
 		var rows = await db.DataDbs
 			.Where(d => d.ProjectKey == projectKey)
@@ -124,9 +128,11 @@ public static partial class DataDbsApi
 		string name,
 		PetBoxDb db,
 		IDataDbFactory factory,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
+		if (!authOk) return forbid!;
 
 		var deleted = await db.DataDbs
 			.Where(d => d.ProjectKey == projectKey && d.Name == name)

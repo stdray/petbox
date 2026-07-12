@@ -26,6 +26,11 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	// back to when a tool's optional projectKey is omitted. Present only when the key has one.
 	public const string DefaultProjectClaim = "project_default";
 
+	// The claim carrying ApiKey.SandboxOnly (spec work/smoke-writes-into-real-projects). Present
+	// (value "true") ONLY when the key is sandbox-only — an absent claim means "no containment
+	// check", i.e. the old behavior, for every existing key. ProjectScope.AuthorizesAsync reads it.
+	public const string SandboxOnlyClaim = "sandbox_only";
+
 	protected override Task<AuthenticateResult> HandleAuthenticateAsync()
 	{
 		var apiKey = Request.Headers[ApiKeyHeader].FirstOrDefault()
@@ -53,6 +58,8 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 		};
 		if (!string.IsNullOrWhiteSpace(key.DefaultProjectKey))
 			claims.Add(new Claim(DefaultProjectClaim, key.DefaultProjectKey.Trim()));
+		if (key.SandboxOnly)
+			claims.Add(new Claim(SandboxOnlyClaim, "true"));
 
 		var identity = new ClaimsIdentity(claims, SchemeName);
 		var principal = new ClaimsPrincipal(identity);

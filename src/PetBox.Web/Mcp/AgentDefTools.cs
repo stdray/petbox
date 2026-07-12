@@ -21,7 +21,7 @@ public static class AgentDefTools
 		IHttpContextAccessor http, IAgentDefinitionService svc,
 		string projectKey, CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsRead);
 		var items = await svc.ListAsync(projectKey, ct);
 		return new AgentDefListResult(
@@ -36,7 +36,7 @@ public static class AgentDefTools
 		[Description("Definition slug key (e.g. default).")] string key,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsRead);
 		var view = await svc.GetAsync(projectKey, key, ct);
 		if (view is null)
@@ -66,7 +66,7 @@ public static class AgentDefTools
 		[Description("Watermark baseline: version from last agent_def_get; 0 = create.")] long version = 0,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsWrite);
 		// Parse from JsonElement so role.model is rejected on the wire shape.
 		var def = AgentDefinitionJson.Parse(definition);
@@ -83,7 +83,7 @@ public static class AgentDefTools
 		[Description("Watermark baseline from last agent_def_get; 0 = delete current regardless.")] long version = 0,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsWrite);
 		var ack = await svc.DeleteAsync(projectKey, key, version, ct);
 		return new AgentDefDeleteResult(ack.Key, Deleted: ack.Changed, ack.Version);

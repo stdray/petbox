@@ -87,9 +87,9 @@ public static class LogApi
 	public sealed record LogInfo(string Name, string? Description, DateTime CreatedAt, DateTime UpdatedAt);
 
 	static async Task<IResult> CreateLogAsync(
-		HttpContext ctx, string projectKey, CreateLogRequest req, ILogStore store, CancellationToken ct)
+		HttpContext ctx, string projectKey, CreateLogRequest req, ILogStore store, IProjectCatalog catalog, CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsAdmin)) return Results.Forbid();
 		if (req is null || string.IsNullOrWhiteSpace(req.Name))
 			return Results.BadRequest(new ErrorResponse("name is required"));
@@ -110,9 +110,9 @@ public static class LogApi
 	}
 
 	static async Task<IResult> ListLogsAsync(
-		HttpContext ctx, string projectKey, ILogStore store, CancellationToken ct)
+		HttpContext ctx, string projectKey, ILogStore store, IProjectCatalog catalog, CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
 
 		var rows = (await store.ListAsync(projectKey, ct))
@@ -122,9 +122,9 @@ public static class LogApi
 	}
 
 	static async Task<IResult> DeleteLogAsync(
-		HttpContext ctx, string projectKey, string name, ILogStore store, CancellationToken ct)
+		HttpContext ctx, string projectKey, string name, ILogStore store, IProjectCatalog catalog, CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsAdmin)) return Results.Forbid();
 		if (projectKey == LogNames.SystemProject && name == LogNames.SelfLog)
 			return Results.BadRequest(new ErrorResponse("the petbox self-log cannot be deleted"));
@@ -133,17 +133,9 @@ public static class LogApi
 		return deleted ? Results.NoContent() : Results.NotFound(new ErrorResponse("log not found"));
 	}
 
-	static bool AuthorizeProject(HttpContext ctx, string projectKey, out IResult forbid)
-	{
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
-		{
-			forbid = Results.Forbid();
-			return false;
-		}
-		forbid = null!;
-		return true;
-	}
+	static async Task<IResult?> AuthorizeProjectAsync(
+		HttpContext ctx, string projectKey, IProjectCatalog catalog, CancellationToken ct) =>
+		await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct) ? null : Results.Forbid();
 
 	static bool HasScope(HttpContext ctx, string required) =>
 		HasScope(ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "", required);
@@ -216,6 +208,7 @@ public static class LogApi
 		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
 		// The "ApiKey" policy only proves SOME api key authenticated — every OTHER handler in
@@ -224,7 +217,7 @@ public static class LogApi
 		// key's project claim authorizes THIS route's projectKey and carries the right scope; this
 		// handler was missing both, so any logs:* key from any project could ingest into any
 		// project's named log via the path-based CLEF route.
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsIngest)) return Results.Forbid();
 
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
@@ -258,9 +251,10 @@ public static class LogApi
 		string projectKey,
 		string logName,
 		ILogQueryService query,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
 
 		var kql = ctx.Request.Query["q"].FirstOrDefault();
@@ -356,9 +350,10 @@ public static class LogApi
 		string projectKey,
 		string logName,
 		ILogStore store,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
 
 		if (!await store.ExistsAsync(projectKey, logName, ct))
@@ -388,6 +383,7 @@ public static class LogApi
 		CleFParser parser,
 		IIngestionPipeline pipeline,
 		IConfiguration config,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
 		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
@@ -420,6 +416,14 @@ public static class LogApi
 					statusCode: StatusCodes.Status403Forbidden);
 
 			projectKey = key.ProjectKey;
+			// The destination is the key's OWN project, so the claim check is trivially
+			// satisfied — but containment is not: re-check it live rather than leaning on the
+			// mint-time invariant, exactly as SeqIngestPathAsync does (a future flip of
+			// Project.Sandbox would silently turn that invariant into a hole).
+			if (!await ProjectScope.AuthorizesAsync(key.ProjectKey, projectKey, key.SandboxOnly, catalog, ct))
+				return Results.Json(
+					new ErrorResponse($"key is not authorized for project '{projectKey}'"),
+					statusCode: StatusCodes.Status403Forbidden);
 			logName = LogNames.Default;
 			serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault() is { Length: > 0 } svc ? svc : "seq";
 
@@ -458,6 +462,7 @@ public static class LogApi
 		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
 		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
@@ -474,7 +479,11 @@ public static class LogApi
 			return Results.Json(
 				new ErrorResponse($"key lacks the '{ApiKeyScopes.LogsIngest}' scope"),
 				statusCode: StatusCodes.Status403Forbidden);
-		if (!ProjectScope.Authorizes(key.ProjectKey, projectKey))
+		// This handler authenticates the Seq key manually (AllowAnonymous + X-Seq-ApiKey), so it
+		// has no ClaimsPrincipal to read — go through the string-based AuthorizesAsync overload
+		// directly with the DB row's own ProjectKey/SandboxOnly, same containment guarantee as
+		// every claims-based caller (spec work/smoke-writes-into-real-projects).
+		if (!await ProjectScope.AuthorizesAsync(key.ProjectKey, projectKey, key.SandboxOnly, catalog, ct))
 			return Results.Json(
 				new ErrorResponse($"key is not authorized for project '{projectKey}'"),
 				statusCode: StatusCodes.Status403Forbidden);
@@ -504,9 +513,10 @@ public static class LogApi
 		string projectKey,
 		string logName,
 		ITailBroadcaster broadcaster,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
 
 		ctx.Response.Headers.ContentType = "text/event-stream";

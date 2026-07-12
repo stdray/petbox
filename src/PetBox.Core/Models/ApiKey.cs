@@ -20,4 +20,12 @@ public sealed record ApiKey
 	// behavior: an omitted projectKey is an error). Meaningless on a project-scoped key — it
 	// already defaults to its own claim — so apikey_create rejects the combination.
 	public string? DefaultProjectKey { get; init; }
+	// A SandboxOnly key is a smoke/background-job key: ProjectScope's identity check (claim vs.
+	// projectKey) still applies unchanged, but a SECOND, orthogonal containment check also has to
+	// pass — the target project must have Project.Sandbox = true (ProjectScope.AuthorizesAsync).
+	// The wildcard claim ("*") does NOT bypass this: it authorizes ANY project by claim, but a
+	// SandboxOnly wildcard key still resolves the containment check against whatever projectKey
+	// the call actually names. This is what lets one smoke key span every sandbox project without
+	// also being able to reach $system / yobapub (spec work/smoke-writes-into-real-projects).
+	public bool SandboxOnly { get; init; }
 }

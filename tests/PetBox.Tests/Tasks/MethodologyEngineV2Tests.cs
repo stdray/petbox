@@ -266,7 +266,7 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");
-		var ctx = new DefaultHttpContext { User = new ClaimsPrincipal(id) };
+		var ctx = new DefaultHttpContext { RequestServices = TestProjectCatalog.Services, User = new ClaimsPrincipal(id) };
 		ctx.Request.Scheme = "https";
 		ctx.Request.Host = new HostString("box.test");
 		return new HttpContextAccessor { HttpContext = ctx };

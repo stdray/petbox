@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Data.Sqlite;
 using PetBox.Core.Contract;
+using PetBox.Core.Data;
 using PetBox.Data.Contract;
 
 namespace PetBox.Data;
@@ -67,10 +68,11 @@ public static class QueryExecApi
 
 	static async Task<IResult> QueryAsync(
 		HttpContext ctx, string projectKey, string dbName, QueryRequest req,
-		IDataSqlService sql, CancellationToken ct)
+		IDataSqlService sql, IProjectCatalog catalog, CancellationToken ct)
 	{
 		if (CheckBodySize(ctx, QueryBodyLimitBytes) is { } tooBig) return tooBig;
-		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
+		if (!authOk) return forbid!;
 		if (req is null || string.IsNullOrWhiteSpace(req.Sql))
 			return Results.BadRequest(new ErrorResponse("sql is required"));
 
@@ -85,10 +87,11 @@ public static class QueryExecApi
 
 	static async Task<IResult> ExecAsync(
 		HttpContext ctx, string projectKey, string dbName, QueryRequest req,
-		IDataSqlService sql, CancellationToken ct)
+		IDataSqlService sql, IProjectCatalog catalog, CancellationToken ct)
 	{
 		if (CheckBodySize(ctx, ExecBodyLimitBytes) is { } tooBig) return tooBig;
-		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
+		if (!authOk) return forbid!;
 		if (req is null || string.IsNullOrWhiteSpace(req.Sql))
 			return Results.BadRequest(new ErrorResponse("sql is required"));
 

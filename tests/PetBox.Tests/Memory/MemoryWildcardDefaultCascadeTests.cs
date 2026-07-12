@@ -106,7 +106,7 @@ public sealed class MemoryWildcardDefaultCascadeTests : IDisposable
 		if (defaultProject is not null)
 			claims.Add(new Claim(ApiKeyAuthenticationHandler.DefaultProjectClaim, defaultProject));
 		var id = new ClaimsIdentity(claims, "test");
-		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id) } };
+		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { RequestServices = TestProjectCatalog.Services, User = new ClaimsPrincipal(id) } };
 	}
 
 	static FeatureFlags Flags()

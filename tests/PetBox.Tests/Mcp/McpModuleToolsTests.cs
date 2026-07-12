@@ -369,7 +369,7 @@ public sealed class McpModuleToolsTests : IDisposable
 	static IHttpContextAccessor Http(string scopes, string? project = null)
 	{
 		var id = new ClaimsIdentity([new Claim("project", project ?? Proj), new Claim("scopes", scopes)], "test");
-		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id) } };
+		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { RequestServices = TestProjectCatalog.Services, User = new ClaimsPrincipal(id) } };
 	}
 
 	static FeatureFlags Flags(bool tasks = true, bool memory = true)

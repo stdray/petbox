@@ -57,7 +57,7 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 	{
 		var id = new System.Security.Claims.ClaimsIdentity(
 			[new System.Security.Claims.Claim("project", Proj), new System.Security.Claims.Claim("scopes", "memory:read,memory:write")], "test");
-		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new System.Security.Claims.ClaimsPrincipal(id) } };
+		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { RequestServices = TestProjectCatalog.Services, User = new System.Security.Claims.ClaimsPrincipal(id) } };
 	}
 
 	static PetBox.Core.Features.FeatureFlags Flags()

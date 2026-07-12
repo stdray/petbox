@@ -319,7 +319,7 @@ public sealed class TasksTreeContractTests : IDisposable
 	static IHttpContextAccessor Http(string scopes)
 	{
 		var id = new ClaimsIdentity([new Claim("project", Proj), new Claim("scopes", scopes)], "test");
-		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id) } };
+		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { RequestServices = TestProjectCatalog.Services, User = new ClaimsPrincipal(id) } };
 	}
 
 	static FeatureFlags Flags()

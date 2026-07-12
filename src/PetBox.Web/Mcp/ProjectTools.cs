@@ -24,13 +24,21 @@ public static partial class ProjectTools
 	private static partial Regex KeyRegex();
 
 	[McpServerTool(Name = "project_create", Title = "Create a project", UseStructuredContent = true, OutputSchemaType = typeof(ProjectCreatedResult))]
-	[Description("Creates a project in a workspace. Requires admin:provision. `key` must match ^[a-z][a-z0-9_-]{0,99}$; `name` defaults to the key.")]
+	[Description("""
+		Creates a project in a workspace. Requires admin:provision. `key` must match
+		^[a-z][a-z0-9_-]{0,99}$; `name` defaults to the key. `sandbox:true` marks it a SANDBOX
+		project — the containment target for sandbox-only API keys (apikey_create sandboxOnly:true):
+		background/smoke jobs run there exactly as they do in production (enrichment stays on), but a
+		sandbox-only key can physically write ONLY into projects flagged sandbox here. Use it for
+		smoke-test / throwaway traffic that must never land in a real project.
+		""")]
 	public static async Task<ProjectCreatedResult> CreateAsync(
 		IHttpContextAccessor http, PetBoxDb db,
 		[Description("Workspace the project belongs to.")] string workspaceKey,
 		[Description("Project key (^[a-z][a-z0-9_-]{0,99}$).")] string key,
 		[Description("Display name (defaults to the key).")] string? name = null,
 		[Description("Optional description.")] string? description = null,
+		[Description("Marks this a SANDBOX project — the write-gate containment target for sandbox-only API keys. Default false.")] bool sandbox = false,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
@@ -49,8 +57,9 @@ public static partial class ProjectTools
 			WorkspaceKey = workspaceKey,
 			Name = string.IsNullOrWhiteSpace(name) ? key : name!,
 			Description = description ?? string.Empty,
+			Sandbox = sandbox,
 		}, token: ct);
-		return new ProjectCreatedResult(key, workspaceKey, name, description);
+		return new ProjectCreatedResult(key, workspaceKey, name, description, sandbox);
 	}
 
 	[McpServerTool(Name = "project_list", Title = "List projects", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ProjectListResult))]
@@ -65,7 +74,7 @@ public static partial class ProjectTools
 		if (!string.IsNullOrEmpty(workspaceKey))
 			q = q.Where(p => p.WorkspaceKey == workspaceKey);
 		var rows = await q.OrderBy(p => p.Key)
-			.Select(p => new ProjectRow(p.Key, p.WorkspaceKey, p.Name, p.Description))
+			.Select(p => new ProjectRow(p.Key, p.WorkspaceKey, p.Name, p.Description, p.Sandbox))
 			.ToListAsync(ct);
 		return new ProjectListResult(rows);
 	}
