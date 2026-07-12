@@ -44,6 +44,7 @@ TABLE MetricPoints
   COL ZeroCount INTEGER NULL
   INDEX ix_metricpoints_name_time origin=c (MetricName, TimeUnixNs)
   INDEX ix_metricpoints_time origin=c (TimeUnixNs)
+  INDEX ux_metricpoints_identity UNIQUE origin=c (MetricName, MetricType, TimeUnixNs, AttributesJson)
 
 TABLE Spans
   COL AttributesJson TEXT NOT NULL DEFAULT '{}'
