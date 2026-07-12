@@ -16,8 +16,35 @@ namespace PetBox.Web.Ingestion;
 // Invariant: proto DTOs never leak past this file. Everything downstream speaks LogEntryCandidate.
 // TraceId/SpanId/EventId get folded into the Properties JSON (petbox LogEntryCandidate has no
 // first-class trace fields — see Models/LogEntryCandidate.cs).
+//
+// CLEF PARITY (the fidelity contract of compat-ingest — a stock OTLP client must land the same
+// entry a Seq/CLEF client does):
+//   @x  ← the OTel `exception.type` / `exception.message` / `exception.stacktrace` attributes,
+//         recomposed into the single Exception string CLEF carries (see ComposeException).
+//   @mt ← the message template. OTLP has no template field; the .NET exporter ships it as the
+//         `{OriginalFormat}` attribute (OtlpLogRecordTransformer special-cases that key).
+// Both are LIFTED out of the attribute bag into their first-class fields and NOT also mirrored
+// into Properties — CLEF does not put @x/@mt in the property bag either.
+//
+// KNOWN LIMIT — the rendered message can be missing, and it is not ours to invent:
+//   the .NET exporter emits `{OriginalFormat}` only when it also renders the body
+//   (IncludeFormattedMessage=true). With the default IncludeFormattedMessage=false the exporter
+//   puts the TEMPLATE ITSELF in Body and sends no `{OriginalFormat}` attribute — so Message and
+//   MessageTemplate are both the template and the rendered text does not exist on the wire.
+//   Non-.NET SDKs (python/go/java) have no message-template concept at all: no template attribute
+//   ever arrives and MessageTemplate falls back to Body (= Message). Template-hash grouping is
+//   therefore exact for .NET-with-formatted-message, degenerate-but-stable otherwise. We do not
+//   reverse-engineer a template out of a rendered string.
 static class OtlpLogsParser
 {
+	// OTel semantic conventions for an exception recorded on a log record.
+	const string ExceptionType = "exception.type";
+	const string ExceptionMessage = "exception.message";
+	const string ExceptionStacktrace = "exception.stacktrace";
+
+	// The .NET convention for the Microsoft.Extensions.Logging message template.
+	const string OriginalFormat = "{OriginalFormat}";
+
 	public static OtlpLogsParseResult Parse(ReadOnlySpan<byte> protobuf, string serviceKey)
 	{
 		ExportLogsServiceRequest request;
@@ -68,14 +95,24 @@ static class OtlpLogsParser
 		var level = MapSeverity(record.SeverityNumber);
 		var body = FormatBody(record.Body);
 
-		var messageTemplate = string.IsNullOrEmpty(record.EventName) ? body : record.EventName;
+		// Template precedence: the exporter's explicit template ({OriginalFormat}) beats EventName
+		// (an OTel event NAME — "device.app.lifecycle" — not a template, but the only pre-existing
+		// signal here), which beats the rendered body. See the KNOWN LIMIT note on the class.
+		var template = StringAttribute(record.Attributes, OriginalFormat)
+			?? (string.IsNullOrEmpty(record.EventName) ? null : record.EventName);
+		var messageTemplate = string.IsNullOrEmpty(template) ? body : template;
+		// CLEF: an empty @m falls back to @mt. Same here — a body-less record with a template
+		// still has a message.
+		var message = string.IsNullOrEmpty(body) ? messageTemplate : body;
+
+		var exception = ComposeException(record.Attributes);
 
 		var properties = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
 
 		// Attribute merge order: record < resource. Resource attributes describe deployment
 		// identity (service.name, host.name, ...) and must win on collision — a record can't
 		// override what container it came from.
-		foreach (var kv in FlattenAttributes(record.Attributes))
+		foreach (var kv in FlattenAttributes(record.Attributes, LiftedKeys))
 			properties[kv.Key] = kv.Value;
 		foreach (var kv in resourceAttrs)
 			properties[kv.Key] = kv.Value;
@@ -99,12 +136,58 @@ static class OtlpLogsParser
 			ServiceKey = serviceKey,
 			Timestamp = timestamp,
 			Level = level,
-			Message = body,
+			Message = message,
 			MessageTemplate = messageTemplate,
-			Exception = null,
+			Exception = exception,
 			Properties = JsonSerializer.Serialize(properties),
 		};
 		return true;
+	}
+
+	// The four attribute keys promoted to first-class LogEntryCandidate fields — kept OUT of the
+	// property bag so the entry looks exactly like the CLEF one (no exception.* duplicate of @x).
+	static readonly ImmutableHashSet<string> LiftedKeys = ImmutableHashSet.Create(
+		StringComparer.Ordinal, ExceptionType, ExceptionMessage, ExceptionStacktrace, OriginalFormat);
+
+	// exception.{type,message,stacktrace} → the ONE string CLEF's @x carries (which, from a Serilog/
+	// Seq client, is `Exception.ToString()`: "Type: message\n   at frame…").
+	//
+	// The OTel .NET SDK already sets exception.stacktrace to ex.ToString(), so its stacktrace ALREADY
+	// starts with "Type: message" — blindly prepending the header would double it. Other SDKs (python,
+	// go) send a bare traceback there. So: emit the header, and append the stacktrace only where it is
+	// not already carrying it. A record with none of the three keys keeps Exception = null.
+	static string? ComposeException(Google.Protobuf.Collections.RepeatedField<KeyValue>? attributes)
+	{
+		var type = StringAttribute(attributes, ExceptionType);
+		var message = StringAttribute(attributes, ExceptionMessage);
+		var stack = StringAttribute(attributes, ExceptionStacktrace);
+		if (type is null && message is null && stack is null) return null;
+
+		var header = (type, message) switch
+		{
+			(not null, not null) => $"{type}: {message}",
+			(not null, null) => type,
+			(null, not null) => message,
+			_ => null,
+		};
+
+		if (stack is null) return header;
+		if (header is null) return stack;
+		return stack.StartsWith(header, StringComparison.Ordinal) ? stack : $"{header}{Environment.NewLine}{stack}";
+	}
+
+	// Raw (un-normalized) lookup of a string-valued attribute: the lifted keys are matched on the
+	// wire spelling ("{OriginalFormat}", "exception.type"), BEFORE KqlPropertyKeys rewrites them for
+	// storage — normalization is a property-bag concern and these never reach the bag.
+	static string? StringAttribute(Google.Protobuf.Collections.RepeatedField<KeyValue>? attributes, string key)
+	{
+		if (attributes is null) return null;
+		foreach (var kv in attributes)
+			if (string.Equals(kv.Key, key, StringComparison.Ordinal)
+				&& kv.Value?.ValueCase == AnyValue.ValueOneofCase.StringValue
+				&& !string.IsNullOrEmpty(kv.Value.StringValue))
+				return kv.Value.StringValue;
+		return null;
 	}
 
 	// OTel SeverityNumber is a 1-24 ladder (4 steps per level). Map to the 6-level
@@ -138,7 +221,8 @@ static class OtlpLogsParser
 	}
 
 	static ImmutableDictionary<string, JsonElement> FlattenAttributes(
-		Google.Protobuf.Collections.RepeatedField<KeyValue>? attributes)
+		Google.Protobuf.Collections.RepeatedField<KeyValue>? attributes,
+		ImmutableHashSet<string>? skip = null)
 	{
 		if (attributes is null || attributes.Count == 0)
 			return ImmutableDictionary<string, JsonElement>.Empty;
@@ -152,6 +236,7 @@ static class OtlpLogsParser
 		foreach (var kv in attributes)
 		{
 			if (string.IsNullOrEmpty(kv.Key)) continue;
+			if (skip is not null && skip.Contains(kv.Key)) continue;
 			builder[names.Assign(kv.Key)] = AnyValueToJson(kv.Value);
 		}
 		return builder.ToImmutable();

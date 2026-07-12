@@ -54,6 +54,34 @@ Ingested signals are then queryable via KQL over three tabular roots — `events
 `log_query`, and the logs UI. The `metrics` root exposes the same subset of the KQL surface as
 `events`/`spans`.
 
+### OTLP logs → CLEF fidelity (what maps to what, and the one limit)
+
+An OTLP log record lands as the same `LogEntry` a CLEF/Seq client produces
+(`src/PetBox.Web/Ingestion/OtlpLogsParser.cs`):
+
+| CLEF   | OTLP                                                        |
+|--------|-------------------------------------------------------------|
+| `@t`   | `time_unix_nano` (falls back to `observed_time_unix_nano`)   |
+| `@l`   | `severity_number` (the 1–24 ladder → the 6 CLEF levels)      |
+| `@m`   | `body`                                                       |
+| `@mt`  | the `{OriginalFormat}` attribute (see the limit below)       |
+| `@x`   | `exception.type` / `exception.message` / `exception.stacktrace`, recomposed into one string |
+| props  | every other record + resource attribute (resource wins)      |
+
+The `exception.*` and `{OriginalFormat}` attributes are **lifted** into the first-class
+`Exception` / `MessageTemplate` fields and do **not** also appear in the property bag — exactly as CLEF
+keeps `@x`/`@mt` out of the properties.
+
+**LIMIT — the message template is not always on the wire, and PetBox does not invent one.** OTLP has no
+template field. The OTel **.NET** exporter ships the template as the `{OriginalFormat}` attribute *only
+when it also renders the body* (`IncludeFormattedMessage = true`); with the default `false` it puts the
+**template itself** in `body` and sends no `{OriginalFormat}` — so the rendered text simply does not
+exist on the wire. Other SDKs (python/go/java) have no message-template concept at all and never send
+one. In both of those cases `MessageTemplate == Message == body`, and template-hash grouping degrades to
+grouping by the rendered line (stable, but coarser). **To get true template grouping from a .NET
+service, set `IncludeFormattedMessage = true` on the OTLP log exporter.** Reverse-engineering a template
+out of a rendered string is explicitly not done.
+
 ## Why config is differentiated (we did NOT adopt a config standard wholesale)
 
 Two config standards were evaluated as backend compat-endpoints and **both deferred**:
