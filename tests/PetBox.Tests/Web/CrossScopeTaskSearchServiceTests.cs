@@ -167,6 +167,24 @@ public sealed class CrossScopeTaskSearchServiceTests : IDisposable
 		hits.Should().ContainSingle();
 	}
 
+	// board-view-mode-framework: the table-reuse columns (priority/tags/updatedAt/delivery) ride
+	// along on CrossScopeSearchHit for free — h.Node is already the fully-enriched PlanNodeView,
+	// so no extra per-hit query is needed to back the reused _TaskTable's columns.
+	[Fact]
+	public async Task Hit_CarriesPriorityTagsUpdatedAt_ForTheReusedTableColumns()
+	{
+		await Seed(ProjA, "work", new NodePatch { Key = "tagged-task", Title = "Tagged", Body = "x", Priority = 7, Tags = ["area:ui"] });
+
+		var scope = ByWorkspace((Ws: "ws1", Project: Proj(ProjA, "ws1")));
+		var hits = await CoreOnly().SearchAsync(scope, "tagged-task", "https", "box.test");
+
+		hits.Should().ContainSingle();
+		var hit = hits[0];
+		hit.Priority.Should().Be(7);
+		hit.Tags.Should().Contain("area:ui");
+		hit.UpdatedAt.Should().NotBeNull();
+	}
+
 	[Fact]
 	public async Task EmptyQuery_ReturnsEmpty()
 	{

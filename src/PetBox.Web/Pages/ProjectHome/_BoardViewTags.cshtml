@@ -1,0 +1,36 @@
+@model PetBox.Web.Pages.ProjectHome.TaskBoardModel
+@* Tags view mode (board-view-modes/board-tag-grouping): a projection over the same nodes,
+   grouped by an ordered tag-namespace list — never touches part_of
+   (tag-grouping-is-projection). One entry in BoardViewModeRegistry ("tags" -> this partial).
+   TaskBoardModel.LoadAsync only dispatches here when IsTagView is true (an invalid/empty
+   `by` falls back to _BoardViewTree instead — this partial never has to guess). *@
+@if (Model.GroupRows.Count == 0)
+{
+	<div class="alert" data-testid="board-empty">This board has no active plan nodes.</div>
+}
+else
+{
+	<ul class="flex flex-col gap-2" data-testid="board-tag-groups">
+		@foreach (var row in Model.GroupRows)
+		{
+			@if (row.Node is null)
+			{
+				<li class="mt-2" style="margin-left:@(row.Depth * 1.5)rem" data-testid="tag-group" data-group-key="@row.GroupKey">
+					<div class="flex items-baseline gap-2 border-b border-base-300 pb-1">
+						<span class="font-mono font-semibold text-sm">@row.GroupKey</span>
+						@if (row.Delivery is not null)
+						{
+							<partial name="_DeliveryBadge" model="@(new PetBox.Web.Pages.Shared.DeliveryBadgeModel(row.Delivery) { Size = "badge-xs", Title = "delivery — rolled up over this group", TestId = null })" />
+						}
+					</div>
+				</li>
+			}
+			else
+			{
+				var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, row.Node.Status);
+				Model.CommentThreads.TryGetValue(row.Node.NodeId, out var thread);
+				<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, row.Node, row.Depth, closed, true, false, thread, Model.CommitUrlTemplate, Model.NodeRefs)" />
+			}
+		}
+	</ul>
+}

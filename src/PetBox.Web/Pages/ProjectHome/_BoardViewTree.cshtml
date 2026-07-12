@@ -1,0 +1,50 @@
+@model PetBox.Web.Pages.ProjectHome.TaskBoardModel
+@* Tree view mode (board-view-modes): the stored part_of tree, DFS-ordered — the historical
+   default. One entry in BoardViewModeRegistry ("tree" -> this partial); TaskBoard.cshtml
+   dispatches to it without knowing anything mode-specific. Client interactivity (collapse /
+   filter / active-only / sort) is ts/board.ts, keyed off the data-* attrs _PlanNodeCard
+   renders on each <li data-node-id>. *@
+@if (Model.Nodes.Count == 0)
+{
+	<div class="alert" data-testid="board-empty">This board has no active plan nodes.</div>
+}
+else
+{
+	// A node has children when some other node's part_of parent is its NodeId — only those
+	// get a collapse caret. (Visibility/collapse/filter is applied client-side by ts/board.ts;
+	// active-only + collapsed state persist in localStorage.)
+	var parentIds = Model.Nodes.Where(x => x.ParentNodeId is not null).Select(x => x.ParentNodeId!).ToHashSet(StringComparer.Ordinal);
+
+	<div class="mb-3 flex flex-wrap items-center gap-2" data-testid="board-filter">
+		<input type="search" class="input input-bordered input-xs w-48" placeholder="filter…" data-testid="board-filter-text" aria-label="Filter text" />
+		<select class="select select-bordered select-xs" data-testid="board-filter-status" aria-label="Filter by status"><option value="">status: any</option></select>
+		<select class="select select-bordered select-xs" data-testid="board-filter-type" aria-label="Filter by type"><option value="">type: any</option></select>
+		<label class="label cursor-pointer justify-start gap-2 text-xs">
+			<input type="checkbox" class="toggle toggle-xs" data-testid="active-only-toggle" />
+			<span>active only</span>
+		</label>
+		@* Client-side row-order toggle (board-sort-impl): reorders the rendered <li>s in place
+		   (siblings only — the part_of nesting itself is untouched, per finding D11 on the
+		   server ordering) and persists the choice to localStorage["tasksSort"]. *@
+		<span class="text-xs opacity-60 ml-1">sort:</span>
+		<select class="select select-bordered select-xs" data-testid="board-sort-by" aria-label="Sort by">
+			<option value="priority">priority</option>
+			<option value="created">created</option>
+			<option value="updated">updated</option>
+			<option value="title">title</option>
+		</select>
+		<button type="button" class="btn btn-ghost btn-xs font-mono" data-testid="board-sort-dir" aria-label="Toggle sort direction" title="toggle ascending / descending">↑</button>
+	</div>
+	<ul class="flex flex-col gap-2" data-testid="board-nodes">
+		@foreach (var n in Model.Nodes)
+		{
+			var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
+			// A closed node hides under "active only" — unless it still has open
+			// descendants, in which case it stays so its children aren't orphaned.
+			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);
+			var hasChildren = parentIds.Contains(n.NodeId);
+			Model.CommentThreads.TryGetValue(n.NodeId, out var thread);
+			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread, Model.CommitUrlTemplate, Model.NodeRefs)" />
+		}
+	</ul>
+}

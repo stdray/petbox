@@ -54,18 +54,50 @@ public sealed class TaskBoardModel : PageModel
 	public IReadOnlyDictionary<string, IReadOnlyList<CommentLine>> CommentThreads { get; private set; }
 		= new Dictionary<string, IReadOnlyList<CommentLine>>(StringComparer.Ordinal);
 
-	// View mode: the default part_of TREE, or the tag-groups PROJECTION (board-tag-grouping).
-	// `?view=tags&by=area,concern` selects an ordered list of tag namespaces; the projection
-	// is a pure view over the same nodes and never touches part_of (tag-grouping-is-projection).
+	// Explicit view-mode request from the URL (board-view-modes/board-view-persistence). Null
+	// = "not specified" — distinct from an explicit `?view=tree`, so the resolver
+	// (BoardViewModeRegistry.Resolve) can fall through to the methodology's defaultView
+	// before landing on the builtin Tree default. `?view=tags&by=area,concern` selects an
+	// ordered list of tag namespaces; that projection is a pure view over the same nodes and
+	// never touches part_of (tag-grouping-is-projection).
 	[BindProperty(SupportsGet = true, Name = "view")]
-	public string ViewMode { get; set; } = "tree";
+	public string? ViewMode { get; set; }
 
 	[BindProperty(SupportsGet = true, Name = "by")]
 	public string? By { get; set; }
 
+	// The mode BoardViewModeRegistry.Resolve settled on (explicit -> methodology defaultView
+	// -> Tree) — RENDERABLE by construction (Resolve never returns a mode without a partial).
+	// Exposed so the switcher can mark the active button and the client-side persistence
+	// script (board-view-meta) knows what the server actually rendered.
+	public string ResolvedViewMode { get; private set; } = PetBox.Tasks.Workflow.BoardViewModeNames.Tree;
+
+	// The partial TaskBoard.cshtml dispatches the content pane to — registry-driven, never a
+	// hardcoded name in the .cshtml. Falls back to the tree partial whenever the resolved
+	// mode's own content isn't actually usable (e.g. ResolvedViewMode is "tags" but `by` was
+	// invalid/empty — the existing tag-grouping fallback, preserved verbatim).
+	public string ContentPartialName { get; private set; } = "_BoardViewTree";
+
 	public bool IsTagView { get; private set; }
 	public IReadOnlyList<string> GroupDims { get; private set; } = []; // ordered namespaces actually applied
 	public IReadOnlyList<GroupRow> GroupRows { get; private set; } = []; // flattened tag-groups pane
+
+	// Kanban view mode (board-view-mode-framework): one column per FSM status, sourced from
+	// WorkflowBlocks — NEVER hardcoded, so a board on a different methodology still gets its own
+	// stage columns. A multi-block kind (two type FSMs on one board) unions the blocks' statuses,
+	// first-seen order, so a shared status name collapses into one column instead of duplicating.
+	public sealed record KanbanColumn(string Slug, string Name);
+	public IReadOnlyList<KanbanColumn> KanbanColumns { get; private set; } = [];
+
+	// Outline view mode (board-view-mode-framework): which OutlineRevealModeNames constant the
+	// _BoardViewOutline partial renders with. Resolved via Runtime.OutlineReveal(KindSlug) — DATA
+	// on the kind (MethodologyKindDef.OutlineReveal), not a process-role enum lookup, so a `spec`
+	// board provisioned from the quartet/classic BUILTIN TEMPLATE (its kinds materialize into a
+	// stored MethodologyDefinition — methodology-template-storage) still resolves inline-lazy.
+	// spec's bodies are one short normative line (inline-lazy: cheap to fetch and read in place);
+	// every other kind (incl. a project-defined custom kind, where body length is unknown) gets
+	// `navigate`, the conservative default.
+	public string OutlineRevealMode { get; private set; } = OutlineRevealModeNames.Navigate;
 
 	public bool ShowQuickAdd { get; private set; }
 
@@ -130,6 +162,32 @@ public sealed class TaskBoardModel : PageModel
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 		return await LoadAsync(ct);
+	}
+
+	// Outline view mode, inline-lazy reveal (board-view-mode-framework / board-body-truncate):
+	// fired by the <details> `toggle` htmx trigger in _BoardViewOutline.cshtml — the node's body
+	// is fetched ONLY when its heading is expanded, never bundled into the initial board render.
+	// Returns the same _MdBody fragment a board card renders, so autolinking (commit refs,
+	// [[slug]] mentions) matches every other body surface. 404s a node id from a different board
+	// (or one that no longer exists) — the handler never trusts nodeId alone.
+	public async Task<IActionResult> OnGetNodeBodyAsync(string nodeId, CancellationToken ct)
+	{
+		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
+		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
+
+		var detail = await _tasks.GetNodeAsync(ProjectKey, nodeId, ct);
+		if (detail is null || !string.Equals(detail.Board, Board, StringComparison.Ordinal)) return NotFound();
+
+		var commitUrlTemplate = (await _settings.GetAsync<RepoSettings>(Scope.Project, ProjectKey, ct)).CommitUrlTemplate;
+		var nodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey, [detail.Node.Body], ct);
+
+		return Partial("_MdBody", new MdBodyModel
+		{
+			Body = detail.Node.Body,
+			TestId = "outline-body-content",
+			CommitUrlTemplate = commitUrlTemplate,
+			NodeRefs = nodeRefs,
+		});
 	}
 
 	// comments-ui-edit: add a comment (or, when parentId is set, a reply) under `nodeId` — a
@@ -201,6 +259,13 @@ public sealed class TaskBoardModel : PageModel
 		Error = error;
 		(Runtime, KindSlug, ClosedAt) = await ResolveProcessAsync(ct);
 		KindName = Runtime.KindName(KindSlug);
+		// board-view-persistence resolution order: explicit `view` query-param (or a saved
+		// localStorage pick the client redirected into one — see board-view-meta in the
+		// .cshtml) -> this board's kind's methodology defaultView -> the builtin Tree
+		// default. Always lands on a RENDERABLE mode (BoardViewModeRegistry.Resolve never
+		// returns an entry without a shipped partial), so an unknown/reserved-but-unshipped
+		// name in the URL or in a definition degrades silently instead of 500ing.
+		ResolvedViewMode = BoardViewModeRegistry.Resolve(ViewMode, Runtime.DefaultView(KindSlug));
 		// closed-board-disabled-display: a closed board never shows quick-add, regardless of
 		// what the kind would otherwise allow — mirrors the server-side reject in UpsertAsync.
 		ShowQuickAdd = Runtime.QuickAddAllowed(KindSlug) && ClosedAt is null;
@@ -212,6 +277,24 @@ public sealed class TaskBoardModel : PageModel
 		var workflow = await _tasks.GetBoardWorkflowAsync(ProjectKey, Board, ct);
 		WorkflowBlocks = workflow.Workflows;
 		WorkflowJson = WorkflowGraphJson.Serialize(workflow);
+
+		// Kanban's columns are just this same WorkflowBlocks surface, reshaped — always computed
+		// (cheap; WorkflowBlocks is already in hand) rather than gated on ResolvedViewMode, same
+		// posture as WorkflowBlocks/WorkflowJson above.
+		KanbanColumns = WorkflowBlocks
+			.SelectMany(b => b.Workflow.Statuses)
+			.GroupBy(s => s.Slug, StringComparer.OrdinalIgnoreCase)
+			.Select(g => new KanbanColumn(g.Key, g.First().Name))
+			.ToList();
+
+		// Outline's reveal mode is DATA on the kind (Runtime.OutlineReveal), not a PresetKind
+		// lookup — PresetKind nulls out for any DEFINED kind (its correct guard for process-role
+		// behavior), but a `spec` board provisioned from the quartet/classic builtin template
+		// stores its kinds as a materialized definition too, which made the inline-lazy branch
+		// unreachable for every real board. A definition-declared custom kind's body length is
+		// still unknown by default (OutlineReveal null → the conservative `navigate` fallback)
+		// unless the definition opts in.
+		OutlineRevealMode = Runtime.OutlineReveal(KindSlug);
 
 		// includeClosed: we render closed nodes too (the "active only" toggle hides them
 		// client-side); GetAsync supplies each node's part_of parent + depth.
@@ -231,11 +314,11 @@ public sealed class TaskBoardModel : PageModel
 			.Concat(byNode.SelectMany(g => g).Select(c => (string?)c.Body));
 		NodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey, bodies, ct);
 
-		// Tag-groups projection: only when explicitly requested with a valid dimension list.
-		// Bad/empty `by` silently falls back to the tree (the service would reject it) — the
-		// view stays explicit, no implicit redirects.
+		// Tag-groups projection: only when the RESOLVED mode is tags with a valid dimension
+		// list. Bad/empty `by` silently falls back to the tree (the service would reject it)
+		// — the view stays explicit, no implicit redirects.
 		var dims = (By ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		if (string.Equals(ViewMode, "tags", StringComparison.OrdinalIgnoreCase) && dims.Length > 0)
+		if (string.Equals(ResolvedViewMode, BoardViewModeNames.Tags, StringComparison.OrdinalIgnoreCase) && dims.Length > 0)
 		{
 			try
 			{
@@ -247,6 +330,16 @@ public sealed class TaskBoardModel : PageModel
 			}
 			catch (ArgumentException) { /* invalid namespace → stay on the tree view */ }
 		}
+		// Content-pane dispatch: registry-driven, one lookup, no if-chain in the .cshtml. Tags is
+		// special-cased because IsTagView already folds in the by-validity fallback above (a
+		// resolved "tags" mode with a bad/empty `by` must still draw the tree, not a broken tags
+		// pane) — every other resolved mode (kanban/outline/table/tree, and any future entry)
+		// dispatches straight off its own registry entry; a resolved key the registry doesn't
+		// actually carry (shouldn't happen — Resolve() only ever returns a renderable key) falls
+		// back to tree defensively rather than a 500.
+		ContentPartialName = string.Equals(ResolvedViewMode, BoardViewModeNames.Tags, StringComparison.OrdinalIgnoreCase)
+			? (IsTagView ? BoardViewModeRegistry.Find(BoardViewModeNames.Tags) : BoardViewModeRegistry.Find(BoardViewModeNames.Tree))?.PartialName ?? "_BoardViewTree"
+			: BoardViewModeRegistry.Find(ResolvedViewMode)?.PartialName ?? "_BoardViewTree";
 		return Page();
 	}
 

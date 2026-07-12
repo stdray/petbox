@@ -1,0 +1,82 @@
+@model PetBox.Web.Pages.ProjectHome.TaskBoardModel
+@* Kanban view mode (board-view-mode-framework): cards grouped into one column per FSM status.
+   Columns come from Model.KanbanColumns (TaskBoardModel.LoadAsync, sourced from WorkflowBlocks)
+   — NEVER hardcoded, so this ONE partial renders correctly for any methodology's own statuses,
+   not just work's Pending/InProgress/Review/Done. View only: no drag-and-drop (a status change
+   is a write through the FSM guards — a separate story). *@
+@if (Model.Nodes.Count == 0)
+{
+	<div class="alert" data-testid="board-empty">This board has no active plan nodes.</div>
+}
+else
+{
+	var byStatus = Model.Nodes
+		.GroupBy(n => n.Status, StringComparer.OrdinalIgnoreCase)
+		.ToDictionary(g => g.Key, g => (IReadOnlyList<PlanNodeView>)g
+			.OrderBy(n => n.Priority).ThenBy(n => n.Key, StringComparer.Ordinal).ToList(),
+			StringComparer.OrdinalIgnoreCase);
+	var knownSlugs = Model.KanbanColumns.Select(c => c.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
+	// A node whose status isn't in ANY workflow block (a stale/legacy slug the FSM no longer
+	// declares) still needs a home on the board — an extra "other" column rather than a silently
+	// dropped card.
+	var strayCount = Model.Nodes.Count(n => !knownSlugs.Contains(n.Status));
+
+	<div class="flex gap-3 overflow-x-auto pb-2" data-testid="board-kanban">
+		@foreach (var col in Model.KanbanColumns)
+		{
+			var nodesInCol = byStatus.TryGetValue(col.Slug, out var list) ? list : [];
+			<div class="flex-none w-72" data-testid="kanban-column" data-status="@col.Slug">
+				<div class="font-semibold text-sm mb-2 flex items-center gap-2">
+					<span>@col.Name</span>
+					<span class="badge badge-ghost badge-xs" data-testid="kanban-column-count">@nodesInCol.Count</span>
+				</div>
+				<ul class="flex flex-col gap-2 min-h-8">
+					@foreach (var n in nodesInCol)
+					{
+						var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
+						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId">
+							<div class="card-body p-2 gap-1">
+								<a href="@nodeUrl" class="font-semibold link link-hover text-sm" data-testid="node-name">@n.Title</a>
+								<div class="flex items-center gap-1 flex-wrap text-xs opacity-70">
+									<span class="badge badge-ghost badge-xs" data-testid="node-type">@n.Type</span>
+									<span class="font-mono" data-testid="node-priority" title="priority">P@(n.Priority)</span>
+									@if (n.Delivery is not null)
+									{
+										<partial name="_DeliveryBadge" model="@(new DeliveryBadgeModel(n.Delivery) { Size = "badge-xs" })" />
+									}
+								</div>
+								@if (n.Tags.Count > 0)
+								{
+									<div class="flex flex-wrap gap-1" data-testid="node-tags">
+										@foreach (var t in n.Tags)
+										{
+											<span class="badge badge-outline badge-xs">@t</span>
+										}
+									</div>
+								}
+							</div>
+						</li>
+					}
+				</ul>
+			</div>
+		}
+		@if (strayCount > 0)
+		{
+			<div class="flex-none w-72" data-testid="kanban-column" data-status="">
+				<div class="font-semibold text-sm mb-2 opacity-60">other</div>
+				<ul class="flex flex-col gap-2 min-h-8">
+					@foreach (var n in Model.Nodes.Where(n => !knownSlugs.Contains(n.Status)).OrderBy(n => n.Priority).ThenBy(n => n.Key, StringComparer.Ordinal))
+					{
+						var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
+						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId">
+							<div class="card-body p-2 gap-1">
+								<a href="@nodeUrl" class="font-semibold link link-hover text-sm" data-testid="node-name">@n.Title</a>
+								<span class="font-mono text-xs opacity-70" title="unrecognized status">@n.Status</span>
+							</div>
+						</li>
+					}
+				</ul>
+			</div>
+		}
+	</div>
+}

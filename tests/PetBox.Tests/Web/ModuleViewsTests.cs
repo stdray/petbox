@@ -154,6 +154,199 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
 	}
 
+	// board-view-modes / board-view-persistence — HTTP-level smoke: the Razor
+	// `<partial name="@Model.ContentPartialName">` dispatch (BoardViewModeRegistry) resolves
+	// the partial NAME at runtime (the view engine looks it up by string), which the C#
+	// build/unit-test layer can't catch — only an actual render proves "_BoardViewTree"/
+	// "_BoardViewTags" exist and produce the expected markup.
+	[Fact]
+	public async Task TaskBoard_DefaultView_RendersTreePaneWithControlsAndMeta()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/$system/tasks/roadmap");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-view-controls\"");
+		html.Should().Contain("data-testid=\"board-view-meta\"");
+		html.Should().Contain("data-resolved-view=\"tree\"");
+	}
+
+	[Fact]
+	public async Task TaskBoard_TagsView_RendersTagGroupsPane()
+	{
+		const string board = "viewmodesmoke";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "view mode smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "vm1", Title = "VM1", Body = "x", Tags = ["area:ui"] },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tags&by=area");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-tag-groups\"");
+		html.Should().Contain("data-resolved-view=\"tags\"");
+	}
+
+	// An unknown mode (typo'd URL) must silently degrade to the tree partial — never a 500.
+	[Fact]
+	public async Task TaskBoard_UnknownViewMode_FallsBackToTree_NoException()
+	{
+		using var resp = await GetAuthedAsync("/ui/$system/$system/tasks/roadmap?view=bogus");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-resolved-view=\"tree\"");
+	}
+
+	// board-view-modes-highlight-degrade regression: `?view=tags` with no `by` renders the tree
+	// content pane (ContentPartialName degrades, IsTagView false) while ResolvedViewMode still
+	// reports "tags" — the switcher used to compare against ResolvedViewMode, so NO button lit
+	// up (neither tree nor any tags preset). The highlight must track what actually rendered.
+	[Fact]
+	public async Task TaskBoard_TagsViewWithoutBy_DegradesToTree_HighlightsTreeButtonOnly()
+	{
+		const string board = "viewmodetagsdegrade";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "tags degrade smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "d1", Title = "D1", Body = "x" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tags");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-resolved-view=\"tags\"");
+		html.Should().Contain("data-testid=\"board-nodes\""); // the tree pane actually rendered
+
+		var controlsStart = html.IndexOf("data-testid=\"board-view-controls\"", StringComparison.Ordinal);
+		controlsStart.Should().BeGreaterThan(-1);
+		var controlsEnd = html.IndexOf("</div>", controlsStart, StringComparison.Ordinal);
+		var controls = html[controlsStart..controlsEnd];
+
+		System.Text.RegularExpressions.Regex.Count(controls, "btn-active").Should().Be(1,
+			"exactly the tree button — the one that matches what actually rendered — should be highlighted");
+		controls.Should().MatchRegex("btn-active\"[^>]*data-testid=\"view-tree\"");
+	}
+
+	// board-view-mode-framework: kanban/outline/table HTTP-level smoke — same "only an actual
+	// render proves the partial exists" reasoning as the tree/tags smoke above.
+	[Fact]
+	public async Task TaskBoard_KanbanView_RendersColumnsFromWorkflow_NotHardcoded()
+	{
+		const string board = "viewmodekanban";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "kanban smoke"); // simple kind
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "k1", Title = "K1", Body = "x", Priority = 7 },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-resolved-view=\"kanban\"");
+		html.Should().Contain("data-testid=\"board-kanban\"");
+		// Simple kind's OWN statuses (Todo/InProgress/Blocked/Done/Cancelled) — not a hardcoded
+		// column set (a work-kind board would show Pending/InProgress/Review/… instead).
+		html.Should().Contain("data-testid=\"kanban-column\" data-status=\"Todo\"");
+		html.Should().Contain("data-node-key=\"k1\"");
+		// Regression: the card used to render the literal Razor text "P@n.Priority" instead of
+		// the resolved priority value (a missing `@(...)` around the member access) — assert
+		// the actual number renders AND that no stray `@` (an unresolved Razor expression)
+		// leaked into the card markup at all.
+		html.Should().Contain("data-testid=\"node-priority\" title=\"priority\">P7<");
+		html.Should().NotContain("P@");
+	}
+
+	[Fact]
+	public async Task TaskBoard_OutlineView_NavigateMode_NeverShipsTheBody()
+	{
+		const string board = "viewmodeoutline";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "outline smoke"); // simple kind → navigate
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "o1", Title = "O1", Body = "a wiki-length body that must not ship inline" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-resolved-view=\"outline\"");
+		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"navigate\"");
+		html.Should().NotContain("a wiki-length body that must not ship inline");
+	}
+
+	[Fact]
+	public async Task TaskBoard_OutlineView_SpecKind_UsesInlineLazy_BodyNotInInitialRender()
+	{
+		const string board = "viewmodeoutlinespec";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "outline spec smoke", "spec");
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "sreq", NodeId = "id-sreq", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
+			}, partition: n => n.Board == board);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"inline-lazy\"");
+		html.Should().Contain("data-testid=\"outline-node-lazy\"");
+		html.Should().NotContain("a one-line normative statement"); // fetched only on expand
+	}
+
+	[Fact]
+	public async Task TaskBoard_TableView_RendersExpectedColumns()
+	{
+		const string board = "viewmodetable";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "table smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "t1", Title = "T1", Body = "x", Tags = ["area:ui"] },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=table");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-resolved-view=\"table\"");
+		html.Should().Contain("data-testid=\"board-table\"");
+		html.Should().Contain("data-node-key=\"t1\"");
+		html.Should().Contain(">area:ui<");
+	}
+
 	[Fact]
 	public async Task TaskBoard_OrdersByTree_NotFlatPriority_AndRendersThreeLevels()
 	{

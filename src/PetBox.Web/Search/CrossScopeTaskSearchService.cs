@@ -142,12 +142,22 @@ public sealed class CrossScopeTaskSearchService(
 		Status: h.Node.Status,
 		Type: h.Node.Type,
 		Url: h.Node.Url ?? "",
-		ExactMatch: exactMatch);
+		ExactMatch: exactMatch,
+		// board-view-table reuse: h.Node is already the fully-enriched PlanNodeView (same read
+		// TaskBoard's own table view projects), so these ride along for free — no extra query.
+		Priority: h.Node.Priority,
+		Tags: h.Node.Tags,
+		UpdatedAt: h.Node.UpdatedAt,
+		Delivery: h.Node.Delivery);
 }
 
 // One cross-scope search result row: the enriched node's identity/status plus WHERE it lives
 // (Workspace/ProjectKey/Board — the spec requires every result to locate the task) and its
 // absolute permalink. ExactMatch marks an identifier-leg hit (shown ahead of full-text hits).
+// Priority/Tags/UpdatedAt/Delivery back the reused _TaskTable columns (board-view-mode-
+// framework's table task) — this fan-out spans many projects/methodologies at once, so unlike
+// TaskBoard's own table view, Status here is NOT resolved through a MethodologyRuntime (no
+// single runtime applies); it renders as a plain outline badge, same as the page always has.
 public sealed record CrossScopeSearchHit(
 	string Workspace,
 	string ProjectKey,
@@ -158,4 +168,8 @@ public sealed record CrossScopeSearchHit(
 	string Status,
 	string Type,
 	string Url,
-	bool ExactMatch);
+	bool ExactMatch,
+	long Priority = 0,
+	IReadOnlyList<string>? Tags = null,
+	DateTime? UpdatedAt = null,
+	string? Delivery = null);
