@@ -64,7 +64,7 @@ public sealed class LlmRegistryImportTests : IDisposable
 	// The source, written by the OLD store exactly as production wrote it: one Plain `llm/registry`
 	// JSON binding + one encrypted Secret binding per api key, in config/$system.db.
 	async Task SeedLegacyAsync(LlmRegistry registry, Dictionary<string, string> apiKeys) =>
-		await new LlmRegistryStore(_configFactory, _secrets, _db).SetAsync(SystemWs, registry, apiKeys);
+		await new LlmRegistryStore(_configFactory, _secrets, _db.Factory()).SetAsync(SystemWs, registry, apiKeys);
 
 	static LlmRegistry TwoEndpointRegistry() => new(
 		[
@@ -167,7 +167,7 @@ public sealed class LlmRegistryImportTests : IDisposable
 		});
 		Importer().Import();
 
-		var resolver = new LlmRegistryLevelResolver(_db, _secrets, new SettingsResolver(_db, _secrets),
+		var resolver = new LlmRegistryLevelResolver(_db.Factory(), _secrets, new SettingsResolver(_db.Factory(), _secrets),
 			new CapturingLogger<LlmRegistryLevelResolver>());
 		var resolved = await resolver.ResolveAsync(SystemWs); // the built-in $system project
 

@@ -36,7 +36,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
-		_memory = new MemoryService(new MemoryStore(_db, _factory), llm: null);
+		_memory = new MemoryService(new MemoryStore(_db.Factory(), _factory), llm: null);
 	}
 
 	public void Dispose()
@@ -47,7 +47,7 @@ public sealed class BehaviorPatternJobTests : IDisposable
 	}
 
 	BehaviorPatternJob Job(ILlmClient? llm, AutocaptureDedupOptions? dedup = null) =>
-		new(_factory, new ProjectCatalog(_db), _memory, llm, dedup: dedup is null ? null : Options.Create(dedup));
+		new(_factory, new ProjectCatalog(_db.Factory()), _memory, llm, dedup: dedup is null ? null : Options.Create(dedup));
 
 	Task SeedFeedback(string key, string sessionId, string description) =>
 		_memory.UpsertAsync(Proj, Store, [new MemoryEntryInput

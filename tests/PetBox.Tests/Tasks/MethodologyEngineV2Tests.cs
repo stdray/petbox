@@ -40,7 +40,7 @@ public sealed class MethodologyEngineV2Tests : IDisposable
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_relations = new RelationStore(_factory);
-		_tasks = new TasksService(new TaskBoardStore(_db, _factory), _relations, new TagStore(_factory), new CommentService(_factory));
+		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), _relations, new TagStore(_factory), new CommentService(_factory));
 	}
 
 	public void Dispose()

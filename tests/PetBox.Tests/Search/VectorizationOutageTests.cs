@@ -346,7 +346,7 @@ public sealed class VectorizationOutageTests
 			TestSchema.Core(cs);
 			_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 			_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
-			Catalog = new ProjectCatalog(_db);
+			Catalog = new ProjectCatalog(_db.Factory());
 		}
 
 		public ProjectCatalog Catalog { get; }
@@ -359,7 +359,7 @@ public sealed class VectorizationOutageTests
 
 		public async Task SeedMemoryAsync()
 		{
-			var memory = new MemoryService(new MemoryStore(_db, NewMemoryFactory()));
+			var memory = new MemoryService(new MemoryStore(_db.Factory(), NewMemoryFactory()));
 			var r = await memory.UpsertAsync(Proj, "notes",
 				[new MemoryEntryInput { Key = "k1", Type = "Project", Body = "some body text" }], []);
 			r.Result.Applied.Should().BeTrue();
@@ -368,7 +368,7 @@ public sealed class VectorizationOutageTests
 		public async Task SeedTasksAsync()
 		{
 			var factory = NewTasksFactory();
-			var tasks = new TasksService(new TaskBoardStore(_db, factory), new RelationStore(factory),
+			var tasks = new TasksService(new TaskBoardStore(_db.Factory(), factory), new RelationStore(factory),
 				new TagStore(factory), new CommentService(factory), llm: null);
 			await tasks.CreateBoardAsync(Proj, "b", "simple", null, null);
 			await tasks.UpsertAsync(Proj, "b", [new NodePatch { Key = "n1", Version = 0, Title = "t", Body = "some body text" }]);

@@ -39,7 +39,7 @@ public sealed class MethodologyInstanceBackfillTests : IDisposable
 		_db.Insert(new Project { Key = ProjB, WorkspaceKey = "ws", Name = "B", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
-		_boards = new TaskBoardStore(_db, _factory);
+		_boards = new TaskBoardStore(_db.Factory(), _factory);
 		_tasks = new TasksService(_boards, new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
 	}
 

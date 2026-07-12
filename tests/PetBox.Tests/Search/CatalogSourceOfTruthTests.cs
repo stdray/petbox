@@ -58,7 +58,7 @@ public sealed class CatalogSourceOfTruthTests : IDisposable
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
 		TestSchema.Core(cs);
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
-		_catalog = new ProjectCatalog(_db);
+		_catalog = new ProjectCatalog(_db.Factory());
 
 		_memoryFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
@@ -67,9 +67,9 @@ public sealed class CatalogSourceOfTruthTests : IDisposable
 		_sessionsFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
 			c => new SessionsDb(SessionsDb.CreateOptions(c)), SessionsSchema.Ensure);
 
-		_memory = new MemoryService(new MemoryStore(_db, _memoryFactory), llm: null);
+		_memory = new MemoryService(new MemoryStore(_db.Factory(), _memoryFactory), llm: null);
 		_sessions = new SessionService(new SessionStore(_sessionsFactory));
-		_boards = new TaskBoardStore(_db, _tasksFactory);
+		_boards = new TaskBoardStore(_db.Factory(), _tasksFactory);
 		_tasks = new TasksService(_boards, new RelationStore(_tasksFactory), new TagStore(_tasksFactory),
 			new CommentService(_tasksFactory), llm: null);
 

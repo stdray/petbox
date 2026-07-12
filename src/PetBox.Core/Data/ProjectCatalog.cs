@@ -52,24 +52,43 @@ public interface IProjectCatalog
 	Task<bool> IsSandboxAsync(string projectKey, CancellationToken ct = default);
 }
 
+// Every method is one self-contained read, so each opens its own connection and disposes it. The
+// catalog is asked from BACKGROUND JOBS that fan out over projects in parallel — exactly the shape
+// that made a shared scoped PetBoxDb unsafe (a linq2db DataConnection is not thread-safe). Taking
+// the factory means there is no connection here to share.
 public sealed class ProjectCatalog : IProjectCatalog
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _factory;
 
-	public ProjectCatalog(PetBoxDb db) => _db = db;
+	public ProjectCatalog(ICoreDbFactory factory) => _factory = factory;
 
-	public async Task<IReadOnlyList<string>> ListProjectKeysAsync(CancellationToken ct = default) =>
-		await _db.Projects.Select(p => p.Key).OrderBy(k => k).ToListAsync(ct);
+	public async Task<IReadOnlyList<string>> ListProjectKeysAsync(CancellationToken ct = default)
+	{
+		using var db = _factory.Open();
+		return await db.Projects.Select(p => p.Key).OrderBy(k => k).ToListAsync(ct);
+	}
 
-	public async Task<IReadOnlyList<string>> ListWorkspaceKeysAsync(CancellationToken ct = default) =>
-		await _db.Workspaces.Select(w => w.Key).OrderBy(k => k).ToListAsync(ct);
+	public async Task<IReadOnlyList<string>> ListWorkspaceKeysAsync(CancellationToken ct = default)
+	{
+		using var db = _factory.Open();
+		return await db.Workspaces.Select(w => w.Key).OrderBy(k => k).ToListAsync(ct);
+	}
 
-	public async Task<IReadOnlyList<string>> ListMemoryProjectKeysAsync(CancellationToken ct = default) =>
-		await _db.MemoryStores.Select(s => s.ProjectKey).Distinct().OrderBy(k => k).ToListAsync(ct);
+	public async Task<IReadOnlyList<string>> ListMemoryProjectKeysAsync(CancellationToken ct = default)
+	{
+		using var db = _factory.Open();
+		return await db.MemoryStores.Select(s => s.ProjectKey).Distinct().OrderBy(k => k).ToListAsync(ct);
+	}
 
-	public async Task<IReadOnlyList<string>> ListTaskProjectKeysAsync(CancellationToken ct = default) =>
-		await _db.TaskBoards.Select(b => b.ProjectKey).Distinct().OrderBy(k => k).ToListAsync(ct);
+	public async Task<IReadOnlyList<string>> ListTaskProjectKeysAsync(CancellationToken ct = default)
+	{
+		using var db = _factory.Open();
+		return await db.TaskBoards.Select(b => b.ProjectKey).Distinct().OrderBy(k => k).ToListAsync(ct);
+	}
 
-	public async Task<bool> IsSandboxAsync(string projectKey, CancellationToken ct = default) =>
-		await _db.Projects.AnyAsync(p => p.Key == projectKey && p.Sandbox, ct);
+	public async Task<bool> IsSandboxAsync(string projectKey, CancellationToken ct = default)
+	{
+		using var db = _factory.Open();
+		return await db.Projects.AnyAsync(p => p.Key == projectKey && p.Sandbox, ct);
+	}
 }

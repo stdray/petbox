@@ -50,11 +50,11 @@ public sealed class SessionSearchServiceTests : IDisposable
 		_memoryFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
 		_sessions = new SessionService(new SessionStore(_sessionsFactory));
-		_memory = new MemoryService(new MemoryStore(_db, _memoryFactory), llm: null);
+		_memory = new MemoryService(new MemoryStore(_db.Factory(), _memoryFactory), llm: null);
 		_episodic = new DuckDbSessionEpisodicIndex(_sessionsFactory);
-		_termIndex = new SessionTermIndex(_sessionsFactory, new ProjectCatalog(_db), _sessions);
+		_termIndex = new SessionTermIndex(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions);
 		_fullScanIndex = new SessionFullScanIndex(_sessions);
-		_settingsResolver = new SettingsResolver(_db, new NoSecrets());
+		_settingsResolver = new SettingsResolver(_db.Factory(), new NoSecrets());
 		_search = new SessionSearchService(_memory, _episodic, _termIndex, _fullScanIndex, _settingsResolver, _sessions);
 	}
 
@@ -71,7 +71,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 		contents.Select(c => new SessionMessageInput("user", c)).ToArray();
 
 	Task<int> Distill() =>
-		new SessionDigestJob(_sessionsFactory, new ProjectCatalog(_db), _sessions, _memory, new EchoChat(),
+		new SessionDigestJob(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions, _memory, new EchoChat(),
 				logger: null, quietPeriod: NoQuiet)
 			.DrainAllAsync(CancellationToken.None);
 
@@ -137,7 +137,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 		await _sessions.UpsertAsync(Proj, "s-verbatim", "claude-code",
 			Msgs($"обсуждали тему А, отдельно всплыл идентификатор {TermB} в логах ошибки"));
 
-		var distilled = await new SessionDigestJob(_sessionsFactory, new ProjectCatalog(_db), _sessions, _memory,
+		var distilled = await new SessionDigestJob(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions, _memory,
 			new FixedDigestChat(), logger: null, quietPeriod: NoQuiet).DrainAllAsync(CancellationToken.None);
 		distilled.Should().Be(1);
 

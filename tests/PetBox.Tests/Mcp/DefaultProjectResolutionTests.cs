@@ -189,7 +189,7 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 		// DI container (spec work/smoke-writes-into-real-projects) — none of these tests set the
 		// `sandbox_only` claim, so the containment check short-circuits and this stub is never
 		// actually queried, but it has to be resolvable or the DI lookup itself throws.
-		var services = new ServiceCollection().AddSingleton<IProjectCatalog>(new ProjectCatalog(_db)).BuildServiceProvider();
+		var services = new ServiceCollection().AddSingleton<IProjectCatalog>(new ProjectCatalog(_db.Factory())).BuildServiceProvider();
 		return new HttpContextAccessor
 		{
 			HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id), RequestServices = services },

@@ -43,7 +43,7 @@ public sealed class SessionFactsJobTests : IDisposable
 		_memoryFactory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
 		_sessions = new SessionService(new SessionStore(_sessionsFactory));
-		_memory = new MemoryService(new MemoryStore(_db, _memoryFactory), llm: null);
+		_memory = new MemoryService(new MemoryStore(_db.Factory(), _memoryFactory), llm: null);
 	}
 
 	public void Dispose()
@@ -55,7 +55,7 @@ public sealed class SessionFactsJobTests : IDisposable
 	}
 
 	SessionFactsJob Job(ILlmClient? llm, TimeSpan? budget = null) =>
-		new(_sessionsFactory, new ProjectCatalog(_db), _sessions, _memory, llm, logger: null,
+		new(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions, _memory, llm, logger: null,
 			quietPeriod: NoQuiet, budget: budget);
 
 	[Fact]

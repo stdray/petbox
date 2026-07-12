@@ -34,12 +34,14 @@ public sealed partial class LogStore : ILogStore
 	[GeneratedRegex(@"^[a-z][a-z0-9_-]{0,99}$")]
 	private static partial Regex LogNameRegex();
 
-	readonly PetBoxDb _db;
+	// The core-db meta lookups go through the FACTORY — one fresh, caller-owned connection per
+	// method, never a request-shared one (a linq2db DataConnection is not thread-safe).
+	readonly ICoreDbFactory _core;
 	readonly IScopedDbFactory<LogDb> _factory;
 
-	public LogStore(PetBoxDb db, IScopedDbFactory<LogDb> factory)
+	public LogStore(ICoreDbFactory core, IScopedDbFactory<LogDb> factory)
 	{
-		_db = db;
+		_core = core;
 		_factory = factory;
 	}
 
@@ -49,14 +51,20 @@ public sealed partial class LogStore : ILogStore
 	public LogDb NewEnsuredContext(string projectKey, string logName) =>
 		_factory.NewEnsuredConnection(projectKey, logName);
 
-	public Task<bool> ExistsAsync(string projectKey, string logName, CancellationToken ct = default) =>
-		_db.Logs.AnyAsync(l => l.ProjectKey == projectKey && l.Name == logName, ct);
+	public async Task<bool> ExistsAsync(string projectKey, string logName, CancellationToken ct = default)
+	{
+		using var db = _core.Open();
+		return await db.Logs.AnyAsync(l => l.ProjectKey == projectKey && l.Name == logName, ct);
+	}
 
-	public async Task<IReadOnlyList<LogMeta>> ListAsync(string projectKey, CancellationToken ct = default) =>
-		await _db.Logs
+	public async Task<IReadOnlyList<LogMeta>> ListAsync(string projectKey, CancellationToken ct = default)
+	{
+		using var db = _core.Open();
+		return await db.Logs
 			.Where(l => l.ProjectKey == projectKey)
 			.OrderBy(l => l.Name)
 			.ToListAsync(ct);
+	}
 
 	public async Task<LogMeta> CreateAsync(string projectKey, string logName, string? description, CancellationToken ct = default)
 	{
@@ -65,7 +73,9 @@ public sealed partial class LogStore : ILogStore
 		if (!LogNameRegex().IsMatch(logName))
 			throw new ArgumentException("invalid name; must match ^[a-z][a-z0-9_-]{0,99}$", nameof(logName));
 
-		var projectExists = await _db.Projects.AnyAsync(p => p.Key == projectKey, ct);
+		using var db = _core.Open();
+
+		var projectExists = await db.Projects.AnyAsync(p => p.Key == projectKey, ct);
 		if (!projectExists)
 			throw new InvalidOperationException($"project '{projectKey}' not found");
 
@@ -82,7 +92,7 @@ public sealed partial class LogStore : ILogStore
 			CreatedAt = now,
 			UpdatedAt = now,
 		};
-		await _db.InsertAsync(meta, token: ct);
+		await db.InsertAsync(meta, token: ct);
 
 		// Materialize the file + schema eagerly (no implicit create-on-first-write).
 		_factory.NewEnsuredConnection(projectKey, logName).Dispose();
@@ -91,9 +101,13 @@ public sealed partial class LogStore : ILogStore
 
 	public async Task<bool> DeleteAsync(string projectKey, string logName, CancellationToken ct = default)
 	{
-		var deleted = await _db.Logs
-			.Where(l => l.ProjectKey == projectKey && l.Name == logName)
-			.DeleteAsync(ct);
+		int deleted;
+		using (var db = _core.Open())
+		{
+			deleted = await db.Logs
+				.Where(l => l.ProjectKey == projectKey && l.Name == logName)
+				.DeleteAsync(ct);
+		}
 		if (deleted == 0)
 			return false;
 

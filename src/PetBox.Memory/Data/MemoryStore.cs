@@ -49,12 +49,15 @@ public sealed partial class MemoryStore : IMemoryStore
 	public static readonly IReadOnlySet<string> SystemStoreNames =
 		new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "session-digests", "autocaptured", "canon" };
 
-	readonly PetBoxDb _db;
+	// The core-db meta lookups go through the FACTORY — one fresh, caller-owned connection per
+	// method, never a request-shared one (a linq2db DataConnection is not thread-safe, and these
+	// reads are driven from parallel fan-out branches of a single request).
+	readonly ICoreDbFactory _core;
 	readonly IScopedDbFactory<MemoryDb> _factory;
 
-	public MemoryStore(PetBoxDb db, IScopedDbFactory<MemoryDb> factory)
+	public MemoryStore(ICoreDbFactory core, IScopedDbFactory<MemoryDb> factory)
 	{
-		_db = db;
+		_core = core;
 		_factory = factory;
 	}
 
@@ -64,20 +67,29 @@ public sealed partial class MemoryStore : IMemoryStore
 	public MemoryDb NewEnsuredConnection(string projectKey) =>
 		_factory.NewEnsuredConnection(projectKey);
 
-	public Task<bool> ExistsAsync(string projectKey, string store, CancellationToken ct = default) =>
-		_db.MemoryStores.AnyAsync(s => s.ProjectKey == projectKey && s.Name == store, ct);
+	public async Task<bool> ExistsAsync(string projectKey, string store, CancellationToken ct = default)
+	{
+		using var db = _core.Open();
+		return await db.MemoryStores.AnyAsync(s => s.ProjectKey == projectKey && s.Name == store, ct);
+	}
 
-	public async Task<IReadOnlyList<MemoryStoreMeta>> ListAsync(string projectKey, CancellationToken ct = default) =>
-		await _db.MemoryStores
+	public async Task<IReadOnlyList<MemoryStoreMeta>> ListAsync(string projectKey, CancellationToken ct = default)
+	{
+		using var db = _core.Open();
+		return await db.MemoryStores
 			.Where(s => s.ProjectKey == projectKey)
 			.OrderBy(s => s.Name)
 			.ToListAsync(ct);
+	}
 
-	public Task TouchAsync(string projectKey, string store, CancellationToken ct = default) =>
-		_db.MemoryStores
+	public async Task TouchAsync(string projectKey, string store, CancellationToken ct = default)
+	{
+		using var db = _core.Open();
+		await db.MemoryStores
 			.Where(s => s.ProjectKey == projectKey && s.Name == store)
 			.Set(s => s.UpdatedAt, DateTime.UtcNow)
 			.UpdateAsync(ct);
+	}
 
 	public async Task EnsureAsync(string projectKey, string store, CancellationToken ct = default)
 	{
@@ -93,7 +105,9 @@ public sealed partial class MemoryStore : IMemoryStore
 		if (!NameRegex().IsMatch(store))
 			throw new ArgumentException("invalid name; must match ^[a-z][a-z0-9_-]{0,99}$", nameof(store));
 
-		var projectExists = await _db.Projects.AnyAsync(p => p.Key == projectKey, ct);
+		using var core = _core.Open();
+
+		var projectExists = await core.Projects.AnyAsync(p => p.Key == projectKey, ct);
 		if (!projectExists)
 			throw new InvalidOperationException($"project '{projectKey}' not found");
 
@@ -110,7 +124,7 @@ public sealed partial class MemoryStore : IMemoryStore
 			UpdatedAt = now,
 			IsSystem = SystemStoreNames.Contains(store),
 		};
-		await _db.InsertAsync(meta, token: ct);
+		await core.InsertAsync(meta, token: ct);
 
 		// Materialize the project file + schema eagerly (creating a store is now a catalog row,
 		// not a file — the file may already hold other stores' rows).
@@ -120,9 +134,13 @@ public sealed partial class MemoryStore : IMemoryStore
 
 	public async Task<bool> DeleteAsync(string projectKey, string store, CancellationToken ct = default)
 	{
-		var deleted = await _db.MemoryStores
-			.Where(s => s.ProjectKey == projectKey && s.Name == store)
-			.DeleteAsync(ct);
+		int deleted;
+		using (var core = _core.Open())
+		{
+			deleted = await core.MemoryStores
+				.Where(s => s.ProjectKey == projectKey && s.Name == store)
+				.DeleteAsync(ct);
+		}
 		if (deleted == 0)
 			return false;
 
