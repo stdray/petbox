@@ -79,6 +79,15 @@ static class McpProjectDefaultFilter
 		try
 		{
 			if (request.Params is not { } p) return;
+
+			// BLANK ≡ ABSENT, before anything else looks at the argument. ModuleMcp.ResolveProject
+			// already reads a blank projectKey as "omitted"; every other reader used to see a real ""
+			// — and `ProjectScope.Authorizes("*", "")` said yes, so a `projectKey:""` from a wildcard
+			// key walked into `ScopedDbFiles.PathFor("")` = a literal `tasks/.db`. Dropping the key
+			// here gives blank ONE meaning on every tool: the resolver's job (inject the default
+			// below, or the tool's own "projectKey is required").
+			if (IsBlank(p.Arguments)) p.Arguments = Without(p.Arguments!, ProjectKeyArg);
+
 			if (ModuleMcp.DefaultProjectOf(request.User) is not { } project) return;
 			if (Supplied(p.Arguments)) return;                                  // explicit ALWAYS wins
 			if (!RequiresProjectKey(request.Services, p.Name)) return;          // the load-bearing gate
@@ -102,11 +111,26 @@ static class McpProjectDefaultFilter
 
 	// "The caller supplied projectKey": the key is present with a real value. An explicit JSON null
 	// is not a usable project — treat it as absent (binding would fail on it anyway) and inject.
+	// (A blank string is gone by now — Inject strips it as ABSENT.)
 	static bool Supplied(IDictionary<string, JsonElement>? args) =>
 		args is not null
 		&& args.TryGetValue(ProjectKeyArg, out var el)
 		&& el.ValueKind != JsonValueKind.Null
 		&& el.ValueKind != JsonValueKind.Undefined;
+
+	// A present-but-blank projectKey ("" / "   ") — a project reference to nothing.
+	static bool IsBlank(IDictionary<string, JsonElement>? args) =>
+		args is not null
+		&& args.TryGetValue(ProjectKeyArg, out var el)
+		&& el.ValueKind == JsonValueKind.String
+		&& string.IsNullOrWhiteSpace(el.GetString());
+
+	static Dictionary<string, JsonElement> Without(IDictionary<string, JsonElement> args, string key)
+	{
+		var copy = new Dictionary<string, JsonElement>(args, StringComparer.Ordinal);
+		copy.Remove(key);
+		return copy;
+	}
 
 	// Does THIS tool's own input schema list projectKey as `required`? Read from the server's
 	// canonical ToolCollection (the same source tool_describe reads) — the schema is generated from
@@ -114,12 +138,26 @@ static class McpProjectDefaultFilter
 	// (McpOutputSchema.NullableAware prunes nullable params from `required`). Reading the SCHEMA
 	// rather than a hand-kept tool list means a new tool is covered the day it is written, and a
 	// parameter that turns optional leaves coverage the day it changes.
-	static bool RequiresProjectKey(IServiceProvider? services, string? tool)
+	static bool RequiresProjectKey(IServiceProvider? services, string? tool) =>
+		Schema(services, tool) is { } schema && RequiresProjectKey(schema);
+
+	// Does this tool take a projectKey AT ALL (required or optional)? McpProjectExistsFilter asks it
+	// to decide whether an ABSENT projectKey is a project reference (the tool will resolve the key's
+	// default INSIDE itself — memory_remember & co.) or simply not one (whoami, project_list, …).
+	// Same schema source as RequiresProjectKey, so the two predicates cannot drift apart.
+	public static bool TakesProjectKey(IServiceProvider? services, string? tool) =>
+		Schema(services, tool) is { } schema
+		&& schema.ValueKind == JsonValueKind.Object
+		&& schema.TryGetProperty("properties", out var properties)
+		&& properties.ValueKind == JsonValueKind.Object
+		&& properties.TryGetProperty(ProjectKeyArg, out _);
+
+	static JsonElement? Schema(IServiceProvider? services, string? tool)
 	{
-		if (services is null || string.IsNullOrEmpty(tool)) return false;
+		if (services is null || string.IsNullOrEmpty(tool)) return null;
 		var collection = services.GetService<IOptions<McpServerOptions>>()?.Value.ToolCollection;
-		if (collection is null || !collection.TryGetPrimitive(tool, out var t) || t is null) return false;
-		return RequiresProjectKey(t.ProtocolTool.InputSchema);
+		if (collection is null || !collection.TryGetPrimitive(tool, out var t) || t is null) return null;
+		return t.ProtocolTool.InputSchema;
 	}
 
 	public static bool RequiresProjectKey(JsonElement schema) =>

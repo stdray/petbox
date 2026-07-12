@@ -31,6 +31,7 @@ public sealed class ProjectExistsFilterFixture : IAsyncLifetime
 
 	public const string StarRealKey = "yb_key_w3_star_real";
 	public const string StarGoneKey = "yb_key_w3_star_gone";
+	public const string StarBareKey = "yb_key_w3_star_bare";
 
 	const string Scopes = "admin:provision,tasks:read,tasks:write,memory:read,memory:write";
 
@@ -41,6 +42,7 @@ public sealed class ProjectExistsFilterFixture : IAsyncLifetime
 	public string DataDir { get; private set; } = "";
 	public McpClient StarReal { get; private set; } = null!;   // "*" key, default = RealProject
 	public McpClient StarGone { get; private set; } = null!;   // "*" key, default = a DELETED project
+	public McpClient StarBare { get; private set; } = null!;   // "*" key, NO default — nothing resolves
 
 	public ProjectExistsFilterFixture()
 	{
@@ -90,16 +92,30 @@ public sealed class ProjectExistsFilterFixture : IAsyncLifetime
 				DefaultProjectKey = GoneProject,
 				CreatedAt = DateTime.UtcNow,
 			});
+
+			// The key that resolves NOTHING: "*" claim, no default. A blank projectKey from this key
+			// has nowhere to go — and used to end up in a literal `tasks/.db` all the same.
+			await db.InsertAsync(new ApiKey
+			{
+				Key = StarBareKey,
+				ProjectKey = ProjectScope.AllProjects,
+				Scopes = Scopes,
+				CreatedAt = DateTime.UtcNow,
+			});
 		}
 
 		StarReal = await ConnectAsync(StarRealKey);
 		StarGone = await ConnectAsync(StarGoneKey);
+		StarBare = await ConnectAsync(StarBareKey);
 	}
 
 	public IServiceScope Scope() => _factory.Services.CreateScope();
 
 	// The per-project tasks DB — the store whose LAZY creation is the bug: it appears on first write.
 	public string TasksDbOf(string project) => Path.Combine(DataDir, "tasks", $"{project}.db");
+
+	// …and the memory one, for the paths that resolve the project INSIDE the tool (memory_remember).
+	public string MemoryDbOf(string project) => Path.Combine(DataDir, "memory", $"{project}.db");
 
 	async Task<McpClient> ConnectAsync(string apiKey)
 	{
@@ -218,10 +234,11 @@ public sealed class ProjectExistsFilterTests : IClassFixture<ProjectExistsFilter
 		File.Exists(_fx.TasksDbOf("w3fresh")).Should().BeTrue("the store is still created lazily on first write");
 	}
 
-	// The wildcard "*" in a projectKey slot is a claim sentinel, not a project reference: apikey_list('*')
-	// lists the cross-project keys. The filter must not "reject" it as an unknown project.
+	// The wildcard "*" in a projectKey slot is a claim sentinel on the apikey_* tools, which address
+	// keys BY claim: apikey_list('*') lists the cross-project keys. There it must NOT be "rejected as
+	// an unknown project" — the control for the rejections below.
 	[Fact]
-	public async Task WildcardProjectKey_IsNotAProjectReference()
+	public async Task WildcardProjectKey_IsNotAProjectReference_OnTheApiKeyTools()
 	{
 		var result = await (await Tool(_fx.StarReal, "apikey_list")).CallAsync(new Dictionary<string, object?>
 		{
@@ -232,6 +249,172 @@ public sealed class ProjectExistsFilterTests : IClassFixture<ProjectExistsFilter
 		result.StructuredContent!.Value.GetProperty("keys").EnumerateArray()
 			.Select(k => k.GetProperty("key").GetString())
 			.Should().Contain(ProjectExistsFilterFixture.StarRealKey);
+	}
+
+	// F3 — …and NOWHERE else. On a tool that routes STORAGE by projectKey, "*" is a file name:
+	// Authorizes("*","*") is true and ScopedDbFiles.PathFor does not sanitize, so this used to create
+	// a literal `tasks/*.db`. An agent copying the "*" out of whoami into a projectKey slot is real.
+	[Fact]
+	public async Task WildcardProjectKey_IsRefused_OnAStorageTool()
+	{
+		var result = await BoardCreateAsync(_fx.StarReal, ProjectScope.AllProjects, "w3star");
+
+		result.IsError.Should().Be(true);
+		Text(result).Should().Contain("is not a project");
+		(await HasBoardRowAsync(ProjectScope.AllProjects)).Should().BeFalse();
+		Directory.Exists(Path.Combine(_fx.DataDir, "tasks")).Should().BeTrue();
+		Directory.EnumerateFiles(Path.Combine(_fx.DataDir, "tasks"))
+			.Select(Path.GetFileName)
+			.Should().NotContain(f => f!.Contains('*'), "'*' must never become a store file name");
+	}
+
+	// F3 — a BLANK projectKey means ABSENT (the resolver's job), everywhere. On a key that resolves
+	// NOTHING there is nothing to fall back to: the call fails, and — the part that matters — it does
+	// not create `tasks/.db` on the way out. (AssertProject("") used to be TRUE for a "*" claim.)
+	[Fact]
+	public async Task BlankProjectKey_Refused_WhenTheKeyResolvesNoDefault_AndCreatesNoStore()
+	{
+		var result = await BoardCreateAsync(_fx.StarBare, "", "w3blank");
+
+		result.IsError.Should().Be(true, Text(result));
+		File.Exists(Path.Combine(_fx.DataDir, "tasks", ".db")).Should().BeFalse(
+			"a blank projectKey must never reach store creation");
+		(await HasBoardRowAsync("")).Should().BeFalse();
+	}
+
+	// …and on a key that DOES resolve one, blank means exactly what an omitted projectKey means: the
+	// key's default. Same rule, one meaning — no drift from ModuleMcp.ResolveProject.
+	[Fact]
+	public async Task BlankProjectKey_MeansAbsent_AndResolvesTheKeysDefault()
+	{
+		var result = await BoardCreateAsync(_fx.StarReal, "   ", "w3blankdefault");
+
+		result.IsError.Should().NotBe(true, Text(result));
+		(await HasBoardRowAsync(ProjectExistsFilterFixture.RealProject)).Should().BeTrue();
+		File.Exists(Path.Combine(_fx.DataDir, "tasks", ".db")).Should().BeFalse();
+	}
+
+	// F2 — the projectKey the tool resolves INSIDE itself (memory_remember & co: projectKey is OPTIONAL,
+	// so the default filter deliberately does not inject and the filter never saw it). A "*" key whose
+	// default names a DELETED project would auto-vivify memory/<gone>.db + a MemoryStores row for a
+	// project nobody has — the very write path the default-project feature enabled.
+	[Fact]
+	public async Task ResolvedDefault_NamingADeletedProject_IsRefused_OnTheOptionalProjectKeyPath()
+	{
+		var result = await (await Tool(_fx.StarGone, "memory_remember")).CallAsync(new Dictionary<string, object?>
+		{
+			["text"] = "a fact that must not land in a ghost project",
+			["type"] = "Project",
+		});
+
+		result.IsError.Should().Be(true);
+		Text(result).Should().Contain(ProjectExistsFilterFixture.GoneProject).And.Contain("does not exist");
+		File.Exists(_fx.MemoryDbOf(ProjectExistsFilterFixture.GoneProject)).Should().BeFalse(
+			"the resolved default is a project reference too — an unknown one creates no store");
+
+		using var scope = _fx.Scope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		(await db.MemoryStores.AnyAsync(m => m.ProjectKey == ProjectExistsFilterFixture.GoneProject))
+			.Should().BeFalse("…nor a catalog row");
+	}
+
+	// F4 — a $ws-<key> container names a WORKSPACE, and its Projects row is created LAZILY on first
+	// resolve. Checking it against the PROJECT registry refused the first-ever direct write to a fresh
+	// workspace's shared memory, with advice that cannot be followed (project_create forbids '$').
+	[Fact]
+	public async Task WorkspaceContainer_FirstDirectWrite_Succeeds()
+	{
+		var container = WorkspaceMemory.ContainerKeyFor(ProjectExistsFilterFixture.Workspace);
+
+		using (var scope = _fx.Scope())
+		{
+			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			(await db.Projects.AnyAsync(p => p.Key == container)).Should().BeFalse(
+				"the container's Projects row does not exist until something resolves it — that IS the case under test");
+		}
+
+		var result = await (await Tool(_fx.StarReal, "memory_store_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = container,
+			["store"] = "shared",
+		});
+
+		result.IsError.Should().NotBe(true, Text(result));
+		File.Exists(_fx.MemoryDbOf(container)).Should().BeTrue();
+	}
+
+	// …and a typo'd container still names no workspace, so it is still refused (and says so in the
+	// terms of the thing it actually names).
+	[Fact]
+	public async Task WorkspaceContainer_NamingNoWorkspace_IsRefused()
+	{
+		var result = await (await Tool(_fx.StarReal, "memory_store_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = "$ws-nosuch",
+			["store"] = "shared",
+		});
+
+		result.IsError.Should().Be(true);
+		Text(result).Should().Contain("names no workspace");
+		File.Exists(_fx.MemoryDbOf("$ws-nosuch")).Should().BeFalse();
+	}
+
+	// The legacy $system container is a workspace reference too — it names the seeded "$system" workspace.
+	[Fact]
+	public async Task SystemWorkspaceContainer_IsAcceptedAsAWorkspaceReference()
+	{
+		var result = await (await Tool(_fx.StarReal, "memory_store_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["projectKey"] = WorkspaceMemory.SystemContainer,
+			["store"] = "w3shared",
+		});
+
+		result.IsError.Should().NotBe(true, Text(result));
+	}
+
+	// THE COUPLING the review found untested: the exists filter must stay INSIDE McpErrorEnvelopeFilter.
+	// Registered outside it, the throw would surface as the framework's opaque error and stop being the
+	// structured { error: { type, message, detail } } body every other reject uses — agents parse `.error`.
+	[Fact]
+	public async Task Rejection_IsAStructuredErrorEnvelope()
+	{
+		var result = await BoardCreateAsync(_fx.StarReal, ProjectExistsFilterFixture.TypoProject, "w3envelope");
+
+		result.IsError.Should().Be(true);
+		result.StructuredContent.Should().BeNull("an error carries no structuredContent");
+
+		var error = JsonDocument.Parse(Text(result)).RootElement.GetProperty("error");
+		error.GetProperty("type").GetString().Should().Be(nameof(InvalidOperationException));
+		error.GetProperty("message").GetString().Should().Contain("does not exist");
+		error.TryGetProperty("detail", out _).Should().BeTrue();
+	}
+
+	// F2 (the other half) — deleting a project must not leave a DANGLING default on a surviving key.
+	// A cross-project key is not deleted with the project (its claim is "*"), so its DefaultProjectKey
+	// would keep naming a ghost — the exact state StarGone simulates. Null it out.
+	[Fact]
+	public async Task ProjectDeletion_NullsOutADanglingDefaultProjectKey()
+	{
+		using var scope = _fx.Scope();
+		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		const string project = "w3doomed";
+		const string key = "yb_key_w3_dangling";
+
+		await db.InsertAsync(new Project { Key = project, WorkspaceKey = ProjectExistsFilterFixture.Workspace, Name = "Doomed" });
+		await db.InsertAsync(new ApiKey
+		{
+			Key = key,
+			ProjectKey = ProjectScope.AllProjects,
+			Scopes = "tasks:read",
+			DefaultProjectKey = project,
+			CreatedAt = DateTime.UtcNow,
+		});
+
+		(await ProjectDeletion.DeleteAsync(db, project)).Should().BeTrue();
+
+		var survivor = await db.ApiKeys.FirstOrDefaultAsync(k => k.Key == key);
+		survivor.Should().NotBeNull("a '*' key survives the deletion of the project it merely defaulted to");
+		survivor!.DefaultProjectKey.Should().BeNull("…and its default must not keep naming a project that is gone");
 	}
 
 	// The suggester itself: near misses only. A key that resembles nothing in the registry gets an
@@ -246,4 +429,10 @@ public sealed class ProjectExistsFilterTests : IClassFixture<ProjectExistsFilter
 	[Fact]
 	public void Suggest_IsSilent_WhenNothingIsClose() =>
 		McpProjectExistsFilter.Suggest("zzzqqq", ["$system", "kpvotes", "petbox"]).Should().BeEmpty();
+
+	// F5 — a 1-char reference is a fragment, not a typo: a prefix match used to score 0, so "k"
+	// "suggested" every project starting with k as a perfect match.
+	[Fact]
+	public void Suggest_IgnoresAOneCharFragment() =>
+		McpProjectExistsFilter.Suggest("k", ["kpvotes", "kpx", "petbox"]).Should().BeEmpty();
 }

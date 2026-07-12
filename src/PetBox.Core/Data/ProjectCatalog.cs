@@ -33,6 +33,12 @@ public interface IProjectCatalog
 	// exactly like the file scan it replaces.
 	Task<IReadOnlyList<string>> ListProjectKeysAsync(CancellationToken ct = default);
 
+	// Every workspace key in core.db `Workspaces`, ordered. The registry a `$ws-<key>` / `$workspace`
+	// MEMORY CONTAINER is validated against: a container's Projects row is created LAZILY (on the first
+	// resolve — WorkspaceMemory.EnsureContainerAsync), so the Projects list answers "does this container
+	// exist yet", which is not the question — the question is whether it names a real workspace.
+	Task<IReadOnlyList<string>> ListWorkspaceKeysAsync(CancellationToken ct = default);
+
 	// Projects that have at least one memory store registered (core.db `MemoryStores`).
 	Task<IReadOnlyList<string>> ListMemoryProjectKeysAsync(CancellationToken ct = default);
 
@@ -48,6 +54,9 @@ public sealed class ProjectCatalog : IProjectCatalog
 
 	public async Task<IReadOnlyList<string>> ListProjectKeysAsync(CancellationToken ct = default) =>
 		await _db.Projects.Select(p => p.Key).OrderBy(k => k).ToListAsync(ct);
+
+	public async Task<IReadOnlyList<string>> ListWorkspaceKeysAsync(CancellationToken ct = default) =>
+		await _db.Workspaces.Select(w => w.Key).OrderBy(k => k).ToListAsync(ct);
 
 	public async Task<IReadOnlyList<string>> ListMemoryProjectKeysAsync(CancellationToken ct = default) =>
 		await _db.MemoryStores.Select(s => s.ProjectKey).Distinct().OrderBy(k => k).ToListAsync(ct);

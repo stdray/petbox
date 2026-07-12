@@ -494,7 +494,7 @@ public static class MemoryTools
 		if ((s is null or "" or "project")
 			&& projectKey is not null
 			&& WorkspaceMemory.IsWorkspaceContainer(projectKey))
-			return ("workspace", projectKey);
+			return ("workspace", await DirectContainerAsync(db, projectKey, ct));
 
 		return s switch
 		{
@@ -504,13 +504,24 @@ public static class MemoryTools
 		};
 	}
 
+	// A container addressed DIRECTLY as projectKey. Its Projects row is lazy (created on first resolve),
+	// so the first-ever direct write to a fresh workspace's shared memory has to materialize it — but
+	// only when it names a workspace that EXISTS (WorkspaceMemory.EnsureAddressedContainerAsync); a
+	// typo'd "$ws-nosuch" stays a rejection (McpProjectExistsFilter refuses it, and for a key the filter
+	// skips, AssertMemoryProjectAsync below still does) rather than becoming a fresh container row.
+	static async Task<string> DirectContainerAsync(PetBoxDb db, string container, CancellationToken ct)
+	{
+		await WorkspaceMemory.EnsureAddressedContainerAsync(db, container, ct);
+		return container;
+	}
+
 	// Caller's project → WorkspaceKey → WorkspaceMemory.ContainerKeyFor, ensuring the row.
-	// Direct container projectKeys pass through (row must already exist for authz).
+	// A direct container projectKey passes through (ensured the same way).
 	static async Task<string> ResolveCallerWorkspaceContainerAsync(
 		IHttpContextAccessor http, PetBoxDb db, string? projectKey, CancellationToken ct)
 	{
 		if (projectKey is not null && WorkspaceMemory.IsWorkspaceContainer(projectKey))
-			return projectKey;
+			return await DirectContainerAsync(db, projectKey, ct);
 		// ResolveProject throws ArgumentException for a "*" key with no default and no
 		// projectKey — intentional (nothing to derive a workspace from).
 		var proj = ModuleMcp.ResolveProject(http, projectKey);
