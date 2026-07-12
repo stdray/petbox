@@ -15,8 +15,27 @@ public static class MigrationRunner
 	static readonly ConcurrentDictionary<string, object> Locks = new(StringComparer.OrdinalIgnoreCase);
 
 	// Runs the Core (main petbox.db) migration set.
-	public static void Run(string connectionString) =>
+	//
+	// core.db was the ONE internal db still running in journal_mode=DELETE: every other tier
+	// (Tasks/Memory/Sessions/Deploy) applies the pragmas from its own *Schema.Ensure before its
+	// migration set, but core.db is bootstrapped here and here alone, and this overload never
+	// applied them. Under DELETE a writer takes an EXCLUSIVE lock on the whole file, so a reader
+	// concurrent with a writer gets SQLITE_BUSY rather than the pre-write snapshot WAL would hand
+	// it — and core.db is precisely the file whose connection count we are about to multiply
+	// (PetBoxDb moving behind a factory: one caller-owned connection per call instead of one
+	// shared per request). Apply WAL + busy_timeout BEFORE MigrateUp, so the very first schema
+	// build already writes the mode into the file header (journal_mode is persistent — set once,
+	// survives every reopen).
+	//
+	// Safe for backups: Backup.SnapshotAll uses VACUUM INTO, which produces a single consistent
+	// file with no -wal/-shm sidecar and is explicitly WAL-safe, and it globs "*.db" so the
+	// sidecars are never picked up as sources. Safe for the test template: TestSchema
+	// checkpoint(TRUNCATE)s and releases the pooled handle before copying the file.
+	public static void Run(string connectionString)
+	{
+		SqlitePragmas.ApplyWal(connectionString);
 		Run(connectionString, typeof(Migrations.M001_Initial).Assembly);
+	}
 
 	// Runs the migration set found in `migrationsAssembly` against `connectionString`.
 	// Used by the per-tier scoped factories (Tasks/Memory/Sessions): each tier owns
