@@ -59,7 +59,7 @@ public static class DataTools
 	}
 
 	[McpServerTool(Name = "data_exec", Title = "Run SQL exec (INSERT/UPDATE/DELETE/DDL)", UseStructuredContent = true, OutputSchemaType = typeof(DataExecResult))]
-	[Description("Executes a non-query statement. Returns affected row count. PRAGMA writable_schema / temp_store_directory / data_store_directory / trusted_schema are denied. SQLITE_FULL surfaces as a quota error. Requires data:write scope.")]
+	[Description("Executes a non-query statement. Returns affected row count. PRAGMA writable_schema / temp_store_directory / data_store_directory / trusted_schema are denied, and so is max_page_count — it IS the disk quota, so raising it would lift your own cap. Writing past the quota surfaces SQLITE_FULL as a quota error. Requires data:write scope.")]
 	public static async Task<DataExecResult> ExecAsync(
 		IHttpContextAccessor http,
 		IDataSqlService dataSql,
