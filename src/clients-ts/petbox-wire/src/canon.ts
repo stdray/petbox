@@ -66,14 +66,23 @@ The curated memory index (canon) for this project — pointers to durable facts;
 // JSON) — the caller uses ok to decide whether to fall back to the stale offline cache.
 async function fetchCanon(
   resolved: ResolvedProject,
+  timeoutMs: number = FETCH_TIMEOUT_MS,
 ): Promise<{ ok: true; resp: CanonResponse | null } | { ok: false }> {
   const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+  // timeoutMs <= 0 (budget already exhausted by a prior sequential fetch, e.g. pull-memory.ts's
+  // shared session-start budget) aborts on the next tick — same effect as skipping the network
+  // call, degrading straight to the offline cache below rather than blocking.
+  const timer = setTimeout(() => ctrl.abort(), Math.max(0, timeoutMs));
   try {
     const url = `${resolved.baseUrl}/api/memory/${resolved.project}/canon`;
     const resp = await fetch(url, {
       method: "GET",
-      headers: { "X-Api-Key": resolved.apiKey },
+      // Connection: close so this socket doesn't linger keep-alive after the response —
+      // a SessionStart/Stop hook process exits right after this fetch, and a kept-alive
+      // socket is a libuv handle that either stalls natural process exit for seconds or
+      // races a forced process.exit() against the handle's own close teardown (the crash
+      // this header exists to prevent; see pull-memory.ts's exit comment).
+      headers: { "X-Api-Key": resolved.apiKey, Connection: "close" },
       signal: ctrl.signal,
     });
     if (!resp.ok) return { ok: false }; // 404 (endpoint absent) / 401 / 5xx → degrade to cache
@@ -108,9 +117,12 @@ async function readCache(project: string): Promise<string | null> {
 // cached and returned; on failure a cached block (if any) is returned PREFIXED with a stale
 // marker. Returns null when there is nothing to show (fetch failed AND no cache, or both
 // canon parts are empty). Never throws.
-export async function fetchCanonBlock(resolved: ResolvedProject): Promise<string | null> {
+export async function fetchCanonBlock(
+  resolved: ResolvedProject,
+  opts?: { timeoutMs?: number },
+): Promise<string | null> {
   try {
-    const result = await fetchCanon(resolved);
+    const result = await fetchCanon(resolved, opts?.timeoutMs);
     if (result.ok) {
       // Successful fetch — the server is authoritative. A real block is cached and returned;
       // an empty canon returns null (do NOT show a stale cache when the server says "nothing").

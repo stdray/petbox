@@ -22,6 +22,7 @@
 
 import { resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
 import { fetchCanonBlock } from "./canon.ts";
+import { unrefLingeringHandles } from "./hook-drain.ts";
 import { buildProtocol, droidPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
 
@@ -34,6 +35,20 @@ function readStdin(): Promise<string> {
     process.stdin.on("data", (c) => (buf += c));
     process.stdin.on("end", () => resolve(buf));
     process.stdin.on("error", () => resolve(buf));
+  });
+}
+
+// process.stdout.write() on a Windows pipe is asynchronous — the call can return before the
+// OS-level write completes. Awaiting the write callback guarantees the context JSON is fully
+// flushed before main() resolves, so the process never ends mid-write and truncates it (see
+// pull-memory.ts's identical helper for the full rationale).
+function writeStdout(text: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (text.length === 0) {
+      resolve();
+      return;
+    }
+    process.stdout.write(text, () => resolve());
   });
 }
 
@@ -70,10 +85,23 @@ async function main(): Promise<void> {
         additionalContext: context,
       },
     };
-    process.stdout.write(JSON.stringify(out));
+    await writeStdout(JSON.stringify(out));
   } catch {
     // best-effort
   }
 }
 
-main().finally(() => process.exit(0));
+// Exit cleanly instead of tearing the process down mid-close: a hard process.exit() while
+// libuv handles from the concurrent HTTP fetches are still closing raced Windows' async
+// handle teardown (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c`)
+// and could truncate the stdout write above (fire-and-forget on a Windows pipe) — the same
+// crash observed in pull-memory.ts (see its exit comment). Setting exitCode and returning lets
+// Node drain the event loop naturally instead — `Connection: close` (canon.ts /
+// agent-def-fetch.ts) covers a completed fetch, and unrefLingeringHandles covers a fetch
+// aborted mid-flight against a stalled server (measured to leave its TLSSocket alive for
+// several more seconds otherwise; see hook-drain.ts) so a slow session start can't turn into
+// a multi-second stall on a handle nothing is still using.
+main().finally(() => {
+  process.exitCode = 0;
+  unrefLingeringHandles();
+});
