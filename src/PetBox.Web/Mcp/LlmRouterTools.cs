@@ -11,10 +11,17 @@ namespace PetBox.Web.Mcp;
 
 // MCP surface for the LLM router. A THIN adapter: assert feature/project/scope, DESERIALIZE
 // the JSON argument straight into typed contract records (no hand-rolled field walking), and
-// delegate to the neutral contracts — ILlmClient (invoke) and ILlmRegistryAdmin (configure),
+// delegate to the neutral contracts — ILlmClient (invoke) and ILlmRegistryEditor (configure),
 // which own validation (FluentValidation) and routing. It must NOT touch the router impl (a
 // NetArchTest enforces dependence on PetBox.LlmRouter.Contract only). Scopes: llm:invoke
 // (embed/rerank/chat) and llm:admin (read/write registry).
+//
+// llm_config_* used to write ILlmRegistryAdmin (the old ConfigBindings store), which the router
+// stopped reading at the flip — an upsert reported success and changed nothing the runtime could
+// see. They now edit the LEVELLED registry the router resolves through. The SHAPE is unchanged:
+// llm_config_get still returns a plain LlmRegistry (the one DECLARED at the project's own level).
+// Adding level/inherited/owner to it is a breaking contract change and waits on the owner (llm-l5
+// item 5).
 [McpServerToolType]
 public static class LlmRouterTools
 {
@@ -29,15 +36,15 @@ public static class LlmRouterTools
 		Dictionary<string, string>? ApiKeys = null);
 
 	[McpServerTool(Name = "llm_config_get", Title = "Get LLM router registry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(LlmRegistry))]
-	[Description("Return the project's LLM router registry (endpoints + routes), WITHOUT secrets. Requires llm:admin.")]
+	[Description("Return the LLM router registry DECLARED at this project's own level (endpoints + routes), WITHOUT secrets. Inherited levels are not shown. Requires llm:admin.")]
 	public static async Task<LlmRegistry> ConfigGetAsync(
-		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryAdmin admin,
+		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryEditor registry,
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
-		return await admin.GetAsync(projectKey, ct);
+		return await registry.GetAsync(projectKey, ct);
 	}
 
 	[McpServerTool(Name = "llm_config_upsert", Title = "Upsert LLM router registry", UseStructuredContent = true, OutputSchemaType = typeof(LlmConfigSetResult))]
@@ -50,7 +57,7 @@ public static class LlmRouterTools
 		Validated before save (unknown endpoint in a route, bad URL, etc. -> error).
 		""")]
 	public static async Task<LlmConfigSetResult> ConfigUpsertAsync(
-		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryAdmin admin,
+		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryEditor registry,
 		string projectKey,
 		[Description("JSON object { endpoints[], routes[], apiKeys? }")] JsonElement config,
 		CancellationToken ct = default)
@@ -61,9 +68,12 @@ public static class LlmRouterTools
 
 		var input = Deserialize<ConfigSetInput>(config)
 			?? throw new ArgumentException("config must be a JSON object with endpoints + routes");
-		var registry = new LlmRegistry(input.Endpoints ?? [], input.Routes ?? []);
-		await admin.SetAsync(projectKey, registry, input.ApiKeys ?? new Dictionary<string, string>(), ct);
-		return new LlmConfigSetResult(true, registry.Endpoints.Count, registry.Routes.Count);
+		var declared = new LlmRegistry(input.Endpoints ?? [], input.Routes ?? []);
+		// Replaces the project's own level WHOLE — endpoints, routes and (for endpoints named in
+		// apiKeys) their keys. A whole-level declaration is the only safe kind: a level resolves
+		// atomically, so a half-declared one is a registry with routes pointing at keyless endpoints.
+		await registry.SetAsync(projectKey, declared, input.ApiKeys ?? new Dictionary<string, string>(), ct);
+		return new LlmConfigSetResult(true, declared.Endpoints.Count, declared.Routes.Count);
 	}
 
 	[McpServerTool(Name = "llm_embed", Title = "Embed text via the router", UseStructuredContent = true, OutputSchemaType = typeof(EmbedResult))]

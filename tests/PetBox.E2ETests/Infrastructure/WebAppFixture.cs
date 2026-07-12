@@ -28,6 +28,9 @@ public sealed class WebAppFixture : IAsyncLifetime
 			s["Features:Config"] = "true";
 			s["Features:Data"] = "true";
 			s["Features:Logging"] = "true";
+			// The LLM admin page is feature-gated (LlmAdminUiTests drives it). No upstream is ever
+			// called: the suite edits the registry and reads it back through the resolver.
+			s["Features:LlmRouter"] = "true";
 		});
 
 		_playwright = await Playwright.CreateAsync();

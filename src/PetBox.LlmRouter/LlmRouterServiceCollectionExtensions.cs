@@ -30,12 +30,15 @@ public static class LlmRouterServiceCollectionExtensions
 		services.AddScoped<ILlmRegistryLevelResolver, LlmRegistryLevelResolver>();
 		services.AddScoped<ILlmRegistryLevelAdmin, LlmRegistryLevelAdmin>();
 
-		// The OLD ConfigBindings-backed store. It is no longer on the router's path: nothing resolves
-		// through ILlmRegistryResolver any more. It stays registered for ONE version because the
-		// admin/MCP surface (Pages/Llm, LlmRouterTools) still edits through ILlmRegistryAdmin — so for
-		// that version the admin UI shows the old registry while the runtime serves the new one. That
-		// divergence is deliberate and time-boxed: the admin surface moves to ILlmRegistryLevelAdmin
-		// next, and this store is deleted after it.
+		// …and the admin/MCP surface writes through THIS, into the same tables. That closes the
+		// one-version divergence the flip opened: the admin page and llm_config_* used to edit the old
+		// ConfigBindings store while the router served the new one, so a save in the UI changed
+		// nothing that the runtime could see.
+		services.AddScoped<ILlmRegistryEditor, LlmRegistryEditor>();
+
+		// The OLD ConfigBindings-backed store. Off the router's path (nothing resolves through
+		// ILlmRegistryResolver any more) AND now off the admin's path too. It stays registered, and its
+		// bindings stay readable, only until llm-l7 retires it — nothing writes it any more.
 		services.AddScoped<LlmRegistryStore>();
 		services.AddScoped<ILlmRegistryAdmin>(sp => sp.GetRequiredService<LlmRegistryStore>());
 		services.AddScoped<ILlmRegistryResolver>(sp => sp.GetRequiredService<LlmRegistryStore>());

@@ -63,12 +63,33 @@ public interface ILlmRegistryLevelResolver
 	Task<ResolvedRegistryLevel> ResolveAsync(string projectKey, CancellationToken ct = default);
 }
 
+// One level's rows as an EDITOR sees them: endpoints (Name is the PK) and routes carrying the
+// stable id of their row. The plain LlmRegistry cannot express that id, and without it the admin
+// surface had to address a route by its position in the list.
+public sealed record LlmLevelSnapshot(
+	IReadOnlyList<LlmEndpoint> Endpoints,
+	IReadOnlyList<IdentifiedRoute> Routes);
+
 // Write side. Explicit level, always; no cascade, no inheritance, no projectKey.
 public interface ILlmRegistryLevelAdmin
 {
 	// The registry AS DECLARED at exactly this level (no inheritance), WITHOUT secrets. Empty when
 	// this level declares nothing.
 	Task<LlmRegistry> GetAsync(Scope scope, string scopeKey, CancellationToken ct = default);
+
+	// The same rows, each route with its stable id — what an editor addresses rows by.
+	Task<LlmLevelSnapshot> GetSnapshotAsync(Scope scope, string scopeKey, CancellationToken ct = default);
+
+	// Replace this level, PRESERVING each route's id. A route with a blank id is a new row and gets
+	// a fresh one. Otherwise identical to SetAsync (which is this, with every id blank).
+	Task SetSnapshotAsync(
+		Scope scope,
+		string scopeKey,
+		IReadOnlyList<LlmEndpoint> endpoints,
+		IReadOnlyList<IdentifiedRoute> routes,
+		IReadOnlyDictionary<string, string> apiKeys,
+		long? updatedBy = null,
+		CancellationToken ct = default);
 
 	// Replace this level's registry. `apiKeys` maps endpoint Name -> api key; an endpoint absent
 	// from the map keeps the key it already had at THIS level (a rename is a new endpoint, and it

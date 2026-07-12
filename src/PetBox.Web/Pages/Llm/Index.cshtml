@@ -22,11 +22,25 @@
 			<div class="alert alert-error" data-testid="llm-error">@Model.Error</div>
 		}
 
-		<p class="text-sm opacity-70">
-			Workspace-level registry. API keys are write-only: leave the field blank to keep the current key.
-			Cert SHA-256 pin is for a self-signed endpoint (blank = trust the public CA).
-			Routes map a capability to an endpoint + upstream model; lower priority is tried first.
-		</p>
+		@if (Model.Inherited)
+		{
+			<div class="alert alert-info" data-testid="llm-inherited-notice">
+				<span>
+					This registry is <strong>inherited</strong> from <code>@Model.InheritedFrom</code> — it is what serves
+					this project, and it is read-only here. Editing a single row would replace the whole inherited
+					registry (endpoints, routes and API keys) with just that row. Overriding it in
+					<code>@Model.Level</code> means copying the level as a whole, which is not available yet.
+				</span>
+			</div>
+		}
+		else
+		{
+			<p class="text-sm opacity-70" data-testid="llm-level">
+				Registry level <code>@Model.Level</code>. API keys are write-only: leave the field blank to keep the current key.
+				Cert SHA-256 pin is for a self-signed endpoint (blank = trust the public CA).
+				Routes map a capability to an endpoint + upstream model; lower priority is tried first.
+			</p>
+		}
 
 		<div class="space-y-3">
 			<h2 class="font-semibold">Endpoints</h2>
@@ -37,50 +51,72 @@
 			@foreach (var ep in Model.Endpoints)
 			{
 				<div class="card bg-base-200 p-3 space-y-2" data-testid="llm-endpoint-row">
-					<form method="post" asp-page-handler="Save" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
-						@Html.AntiForgeryToken()
-						<label class="form-control"><span class="label-text">Name</span>
-							<input class="input input-bordered input-sm" name="name" value="@ep.Name" readonly /></label>
-						<label class="form-control md:col-span-2"><span class="label-text">Base URL</span>
-							<input class="input input-bordered input-sm" name="baseUrl" value="@ep.BaseUrl" /></label>
-						<label class="form-control"><span class="label-text">Cert SHA-256 pin</span>
-							<input class="input input-bordered input-sm" name="certThumbprint" value="@ep.CertThumbprint" placeholder="(public CA)" /></label>
-						<label class="form-control"><span class="label-text">Connect ms</span>
-							<input class="input input-bordered input-sm" type="number" name="connectTimeoutMs" value="@ep.ConnectTimeoutMs" /></label>
-						<label class="form-control"><span class="label-text">Request ms</span>
-							<input class="input input-bordered input-sm" type="number" name="requestTimeoutMs" value="@ep.RequestTimeoutMs" /></label>
-						<label class="form-control md:col-span-2"><span class="label-text">API key (set/replace)</span>
-							<input class="input input-bordered input-sm" type="password" name="newKey" placeholder="blank = keep" autocomplete="new-password" /></label>
-						<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-save">Save</button></div>
-					</form>
-					<form method="post" asp-page-handler="Delete" onsubmit="return confirm('Delete endpoint @ep.Name?')">
-						@Html.AntiForgeryToken()
-						<input type="hidden" name="name" value="@ep.Name" />
-						<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="llm-delete">Delete &laquo;@ep.Name&raquo;</button>
-					</form>
+					@if (Model.Inherited)
+					{
+						<div class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+							<label class="form-control"><span class="label-text">Name</span>
+								<input class="input input-bordered input-sm" value="@ep.Name" disabled /></label>
+							<label class="form-control md:col-span-2"><span class="label-text">Base URL</span>
+								<input class="input input-bordered input-sm" value="@ep.BaseUrl" disabled /></label>
+							<label class="form-control"><span class="label-text">Cert SHA-256 pin</span>
+								<input class="input input-bordered input-sm" value="@ep.CertThumbprint" placeholder="(public CA)" disabled /></label>
+							<label class="form-control"><span class="label-text">Connect ms</span>
+								<input class="input input-bordered input-sm" type="number" value="@ep.ConnectTimeoutMs" disabled /></label>
+							<label class="form-control"><span class="label-text">Request ms</span>
+								<input class="input input-bordered input-sm" type="number" value="@ep.RequestTimeoutMs" disabled /></label>
+							<div><span class="badge badge-ghost" data-testid="llm-endpoint-inherited">inherited</span></div>
+						</div>
+					}
+					else
+					{
+						<form method="post" asp-page-handler="Save" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+							@Html.AntiForgeryToken()
+							<label class="form-control"><span class="label-text">Name</span>
+								<input class="input input-bordered input-sm" name="name" value="@ep.Name" readonly /></label>
+							<label class="form-control md:col-span-2"><span class="label-text">Base URL</span>
+								<input class="input input-bordered input-sm" name="baseUrl" value="@ep.BaseUrl" /></label>
+							<label class="form-control"><span class="label-text">Cert SHA-256 pin</span>
+								<input class="input input-bordered input-sm" name="certThumbprint" value="@ep.CertThumbprint" placeholder="(public CA)" /></label>
+							<label class="form-control"><span class="label-text">Connect ms</span>
+								<input class="input input-bordered input-sm" type="number" name="connectTimeoutMs" value="@ep.ConnectTimeoutMs" /></label>
+							<label class="form-control"><span class="label-text">Request ms</span>
+								<input class="input input-bordered input-sm" type="number" name="requestTimeoutMs" value="@ep.RequestTimeoutMs" /></label>
+							<label class="form-control md:col-span-2"><span class="label-text">API key (set/replace)</span>
+								<input class="input input-bordered input-sm" type="password" name="newKey" placeholder="blank = keep" autocomplete="new-password" /></label>
+							<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-save">Save</button></div>
+						</form>
+						<form method="post" asp-page-handler="Delete" onsubmit="return confirm('Delete endpoint @ep.Name?')">
+							@Html.AntiForgeryToken()
+							<input type="hidden" name="name" value="@ep.Name" />
+							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="llm-delete">Delete &laquo;@ep.Name&raquo;</button>
+						</form>
+					}
 				</div>
 			}
 		</div>
 
-		<div class="card bg-base-100 border p-3 space-y-2">
-			<h2 class="font-semibold">Add provider</h2>
-			<form method="post" asp-page-handler="Save" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end" data-testid="llm-add">
-				@Html.AntiForgeryToken()
-				<label class="form-control"><span class="label-text">Name</span>
-					<input class="input input-bordered input-sm" name="name" placeholder="e.g. home" required /></label>
-				<label class="form-control md:col-span-2"><span class="label-text">Base URL</span>
-					<input class="input input-bordered input-sm" name="baseUrl" placeholder="https://host:port" required /></label>
-				<label class="form-control"><span class="label-text">Cert SHA-256 pin</span>
-					<input class="input input-bordered input-sm" name="certThumbprint" placeholder="(public CA)" /></label>
-				<label class="form-control"><span class="label-text">Connect ms</span>
-					<input class="input input-bordered input-sm" type="number" name="connectTimeoutMs" value="2000" /></label>
-				<label class="form-control"><span class="label-text">Request ms</span>
-					<input class="input input-bordered input-sm" type="number" name="requestTimeoutMs" value="60000" /></label>
-				<label class="form-control md:col-span-2"><span class="label-text">API key</span>
-					<input class="input input-bordered input-sm" type="password" name="newKey" autocomplete="new-password" /></label>
-				<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-add-save">Add</button></div>
-			</form>
-		</div>
+		@if (!Model.Inherited)
+		{
+			<div class="card bg-base-100 border p-3 space-y-2">
+				<h2 class="font-semibold">Add provider</h2>
+				<form method="post" asp-page-handler="Save" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end" data-testid="llm-add">
+					@Html.AntiForgeryToken()
+					<label class="form-control"><span class="label-text">Name</span>
+						<input class="input input-bordered input-sm" name="name" placeholder="e.g. home" required /></label>
+					<label class="form-control md:col-span-2"><span class="label-text">Base URL</span>
+						<input class="input input-bordered input-sm" name="baseUrl" placeholder="https://host:port" required /></label>
+					<label class="form-control"><span class="label-text">Cert SHA-256 pin</span>
+						<input class="input input-bordered input-sm" name="certThumbprint" placeholder="(public CA)" /></label>
+					<label class="form-control"><span class="label-text">Connect ms</span>
+						<input class="input input-bordered input-sm" type="number" name="connectTimeoutMs" value="2000" /></label>
+					<label class="form-control"><span class="label-text">Request ms</span>
+						<input class="input input-bordered input-sm" type="number" name="requestTimeoutMs" value="60000" /></label>
+					<label class="form-control md:col-span-2"><span class="label-text">API key</span>
+						<input class="input input-bordered input-sm" type="password" name="newKey" autocomplete="new-password" /></label>
+					<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-add-save">Add</button></div>
+				</form>
+			</div>
+		}
 
 		<div class="space-y-3">
 			<h2 class="font-semibold">Routes</h2>
@@ -88,89 +124,111 @@
 			{
 				<div class="opacity-60 text-sm" data-testid="llm-no-routes">No routes configured — add one below.</div>
 			}
-			@for (var i = 0; i < Model.Routes.Count; i++)
+			@foreach (var row in Model.Routes)
 			{
-				var r = Model.Routes[i];
-				<div class="card bg-base-200 p-3 space-y-2" data-testid="llm-route-row">
-					<form method="post" asp-page-handler="SaveRoute" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+				var r = row.Route;
+				<div class="card bg-base-200 p-3 space-y-2" data-testid="llm-route-row" data-route-id="@row.Id">
+					@if (Model.Inherited)
+					{
+						<div class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+							<label class="form-control"><span class="label-text">Capability</span>
+								<input class="input input-bordered input-sm" value="@r.Capability" disabled /></label>
+							<label class="form-control"><span class="label-text">Endpoint</span>
+								<input class="input input-bordered input-sm" value="@r.Endpoint" disabled /></label>
+							<label class="form-control md:col-span-2"><span class="label-text">Model</span>
+								<input class="input input-bordered input-sm" value="@r.Model" disabled /></label>
+							<label class="form-control"><span class="label-text">Priority</span>
+								<input class="input input-bordered input-sm" type="number" value="@r.Priority" disabled /></label>
+							<label class="form-control"><span class="label-text">Tier</span>
+								<input class="input input-bordered input-sm" value="@r.Tier" placeholder="(default)" disabled /></label>
+							<div><span class="badge badge-ghost" data-testid="llm-route-inherited">inherited</span></div>
+						</div>
+					}
+					else
+					{
+						<form method="post" asp-page-handler="SaveRoute" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end">
+							@Html.AntiForgeryToken()
+							<input type="hidden" name="routeId" value="@row.Id" />
+							<label class="form-control"><span class="label-text">Capability</span>
+								<select class="select select-bordered select-sm" name="capability">
+									@foreach (var cap in Enum.GetValues<PetBox.LlmRouter.Contract.LlmCapability>())
+									{
+										<option value="@cap" selected="@(cap == r.Capability)">@cap</option>
+									}
+								</select></label>
+							<label class="form-control"><span class="label-text">Endpoint</span>
+								<select class="select select-bordered select-sm" name="endpoint">
+									@foreach (var ep in Model.Endpoints)
+									{
+										<option value="@ep.Name" selected="@(ep.Name == r.Endpoint)">@ep.Name</option>
+									}
+								</select></label>
+							<label class="form-control md:col-span-2"><span class="label-text">Model</span>
+								<input class="input input-bordered input-sm" name="model" value="@r.Model" /></label>
+							<label class="form-control"><span class="label-text">Priority</span>
+								<input class="input input-bordered input-sm" type="number" name="priority" value="@r.Priority" /></label>
+							<label class="form-control"><span class="label-text">Tier</span>
+								<input class="input input-bordered input-sm" name="tier" value="@r.Tier" placeholder="(default)" /></label>
+							<label class="form-control"><span class="label-text">Thinking</span>
+								<select class="select select-bordered select-sm" name="thinking">
+									<option value="" selected="@(r.Thinking is null)">(provider default)</option>
+									<option value="enabled" selected="@(r.Thinking == PetBox.LlmRouter.Contract.LlmThinking.Enabled)">enabled</option>
+									<option value="disabled" selected="@(r.Thinking == PetBox.LlmRouter.Contract.LlmThinking.Disabled)">disabled</option>
+								</select></label>
+							<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-route-save">Save</button></div>
+						</form>
+						<form method="post" asp-page-handler="DeleteRoute" onsubmit="return confirm('Delete this route?')">
+							@Html.AntiForgeryToken()
+							<input type="hidden" name="routeId" value="@row.Id" />
+							<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="llm-route-delete">Delete route</button>
+						</form>
+					}
+				</div>
+			}
+		</div>
+
+		@if (!Model.Inherited)
+		{
+			<div class="card bg-base-100 border p-3 space-y-2">
+				<h2 class="font-semibold">Add route</h2>
+				@if (Model.Endpoints.Count == 0)
+				{
+					<div class="opacity-60 text-sm">Add a provider endpoint first — a route must point at an existing endpoint.</div>
+				}
+				else
+				{
+					<form method="post" asp-page-handler="SaveRoute" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end" data-testid="llm-route-add">
 						@Html.AntiForgeryToken()
-						<input type="hidden" name="index" value="@i" />
 						<label class="form-control"><span class="label-text">Capability</span>
 							<select class="select select-bordered select-sm" name="capability">
 								@foreach (var cap in Enum.GetValues<PetBox.LlmRouter.Contract.LlmCapability>())
 								{
-									<option value="@cap" selected="@(cap == r.Capability)">@cap</option>
+									<option value="@cap">@cap</option>
 								}
 							</select></label>
 						<label class="form-control"><span class="label-text">Endpoint</span>
 							<select class="select select-bordered select-sm" name="endpoint">
 								@foreach (var ep in Model.Endpoints)
 								{
-									<option value="@ep.Name" selected="@(ep.Name == r.Endpoint)">@ep.Name</option>
+									<option value="@ep.Name">@ep.Name</option>
 								}
 							</select></label>
 						<label class="form-control md:col-span-2"><span class="label-text">Model</span>
-							<input class="input input-bordered input-sm" name="model" value="@r.Model" /></label>
+							<input class="input input-bordered input-sm" name="model" placeholder="e.g. deepseek-chat" required /></label>
 						<label class="form-control"><span class="label-text">Priority</span>
-							<input class="input input-bordered input-sm" type="number" name="priority" value="@r.Priority" /></label>
+							<input class="input input-bordered input-sm" type="number" name="priority" value="100" /></label>
 						<label class="form-control"><span class="label-text">Tier</span>
-							<input class="input input-bordered input-sm" name="tier" value="@r.Tier" placeholder="(default)" /></label>
+							<input class="input input-bordered input-sm" name="tier" placeholder="(default)" /></label>
 						<label class="form-control"><span class="label-text">Thinking</span>
 							<select class="select select-bordered select-sm" name="thinking">
-								<option value="" selected="@(r.Thinking is null)">(provider default)</option>
-								<option value="enabled" selected="@(r.Thinking == PetBox.LlmRouter.Contract.LlmThinking.Enabled)">enabled</option>
-								<option value="disabled" selected="@(r.Thinking == PetBox.LlmRouter.Contract.LlmThinking.Disabled)">disabled</option>
+								<option value="">(provider default)</option>
+								<option value="enabled">enabled</option>
+								<option value="disabled">disabled</option>
 							</select></label>
-						<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-route-save">Save</button></div>
+						<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-route-add-save">Add</button></div>
 					</form>
-					<form method="post" asp-page-handler="DeleteRoute" onsubmit="return confirm('Delete this route?')">
-						@Html.AntiForgeryToken()
-						<input type="hidden" name="index" value="@i" />
-						<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="llm-route-delete">Delete route</button>
-					</form>
-				</div>
-			}
-		</div>
-
-		<div class="card bg-base-100 border p-3 space-y-2">
-			<h2 class="font-semibold">Add route</h2>
-			@if (Model.Endpoints.Count == 0)
-			{
-				<div class="opacity-60 text-sm">Add a provider endpoint first — a route must point at an existing endpoint.</div>
-			}
-			else
-			{
-				<form method="post" asp-page-handler="SaveRoute" class="grid grid-cols-1 md:grid-cols-6 gap-2 items-end" data-testid="llm-route-add">
-					@Html.AntiForgeryToken()
-					<label class="form-control"><span class="label-text">Capability</span>
-						<select class="select select-bordered select-sm" name="capability">
-							@foreach (var cap in Enum.GetValues<PetBox.LlmRouter.Contract.LlmCapability>())
-							{
-								<option value="@cap">@cap</option>
-							}
-						</select></label>
-					<label class="form-control"><span class="label-text">Endpoint</span>
-						<select class="select select-bordered select-sm" name="endpoint">
-							@foreach (var ep in Model.Endpoints)
-							{
-								<option value="@ep.Name">@ep.Name</option>
-							}
-						</select></label>
-					<label class="form-control md:col-span-2"><span class="label-text">Model</span>
-						<input class="input input-bordered input-sm" name="model" placeholder="e.g. deepseek-chat" required /></label>
-					<label class="form-control"><span class="label-text">Priority</span>
-						<input class="input input-bordered input-sm" type="number" name="priority" value="100" /></label>
-					<label class="form-control"><span class="label-text">Tier</span>
-						<input class="input input-bordered input-sm" name="tier" placeholder="(default)" /></label>
-					<label class="form-control"><span class="label-text">Thinking</span>
-						<select class="select select-bordered select-sm" name="thinking">
-							<option value="">(provider default)</option>
-							<option value="enabled">enabled</option>
-							<option value="disabled">disabled</option>
-						</select></label>
-					<div><button type="submit" class="btn btn-sm btn-primary" data-testid="llm-route-add-save">Add</button></div>
-				</form>
-			}
-		</div>
+				}
+			</div>
+		}
 	}
 </div>
