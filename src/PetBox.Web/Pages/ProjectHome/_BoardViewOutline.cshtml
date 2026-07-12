@@ -22,7 +22,12 @@ else
 		{
 			var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
 			var hasBody = !string.IsNullOrEmpty(n.Body);
-			<li data-testid="outline-row" data-node-key="@n.Key" data-node-id="@n.NodeId" data-depth="@n.Depth" style="margin-left:@(n.Depth * 1.5)rem">
+			// Tree edges (outline-tree-edges, live UI review finding): a left border per
+			// indented row is the same nesting-guide convention _CommentThread already uses for
+			// reply depth — without it, depth reads only from indentation, which is easy to
+			// misjudge once a few sibling groups stack up.
+			var edgeClass = n.Depth > 0 ? "border-l-2 border-base-300/60 pl-2" : "";
+			<li data-testid="outline-row" data-node-key="@n.Key" data-node-id="@n.NodeId" data-depth="@n.Depth" class="@edgeClass" style="margin-left:@(n.Depth * 1.5)rem">
 				@if (lazy && hasBody)
 				{
 					var bodyUrl = $"?handler=NodeBody&nodeId={Uri.EscapeDataString(n.NodeId)}";
