@@ -74,18 +74,27 @@ public sealed class SandboxWriteGateFixture : IAsyncLifetime
 
 			await db.InsertAsync(new ApiKey
 			{
-				Key = ScopedSandboxKey, ProjectKey = SandboxProject, Scopes = Scopes,
-				SandboxOnly = true, CreatedAt = DateTime.UtcNow,
+				Key = ScopedSandboxKey,
+				ProjectKey = SandboxProject,
+				Scopes = Scopes,
+				SandboxOnly = true,
+				CreatedAt = DateTime.UtcNow,
 			});
 			await db.InsertAsync(new ApiKey
 			{
-				Key = WildcardSandboxKey, ProjectKey = ProjectScope.AllProjects, Scopes = Scopes,
-				SandboxOnly = true, CreatedAt = DateTime.UtcNow,
+				Key = WildcardSandboxKey,
+				ProjectKey = ProjectScope.AllProjects,
+				Scopes = Scopes,
+				SandboxOnly = true,
+				CreatedAt = DateTime.UtcNow,
 			});
 			await db.InsertAsync(new ApiKey
 			{
-				Key = WildcardPlainKey, ProjectKey = ProjectScope.AllProjects, Scopes = Scopes,
-				SandboxOnly = false, CreatedAt = DateTime.UtcNow,
+				Key = WildcardPlainKey,
+				ProjectKey = ProjectScope.AllProjects,
+				Scopes = Scopes,
+				SandboxOnly = false,
+				CreatedAt = DateTime.UtcNow,
 			});
 		}
 

@@ -53,13 +53,19 @@ public sealed class SessionApiSandboxAuthzFixture : IAsyncLifetime
 		await db.InsertAsync(new Project { Key = SandboxProject, WorkspaceKey = "$system", Name = "Sandbox", Sandbox = true });
 		await db.InsertAsync(new ApiKey
 		{
-			Key = SandboxOnlyKey, ProjectKey = SandboxProject, Scopes = "tasks:read,tasks:write",
-			SandboxOnly = true, CreatedAt = DateTime.UtcNow,
+			Key = SandboxOnlyKey,
+			ProjectKey = SandboxProject,
+			Scopes = "tasks:read,tasks:write",
+			SandboxOnly = true,
+			CreatedAt = DateTime.UtcNow,
 		});
 		await db.InsertAsync(new ApiKey
 		{
-			Key = WildcardSandboxOnlyKey, ProjectKey = ProjectScope.AllProjects, Scopes = "tasks:read,tasks:write",
-			SandboxOnly = true, CreatedAt = DateTime.UtcNow,
+			Key = WildcardSandboxOnlyKey,
+			ProjectKey = ProjectScope.AllProjects,
+			Scopes = "tasks:read,tasks:write",
+			SandboxOnly = true,
+			CreatedAt = DateTime.UtcNow,
 		});
 	}
 

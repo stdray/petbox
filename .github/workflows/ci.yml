@@ -75,14 +75,15 @@ jobs:
       - name: Ensure build script is executable
         run: chmod +x ./build.sh
 
-      # ONE target, not a hand-assembled list of steps: `Validate` (build.cs) is the single
-      # definition of what "the code is OK" means — today FormatVerify + Test, tomorrow
-      # whatever else we add there. Assembling the gate here instead would mean the next
-      # check gets bolted on beside it and the two definitions drift.
+      # ONE target, not a hand-assembled list of steps: `Test` (build.cs) is the single
+      # definition of what "the code is OK" means — format + build + unit + E2E, and whatever
+      # else we add there tomorrow. It is also the target the dev loop runs, so CI cannot be
+      # stricter than the local run: that gap is what let a green local branch fail the deploy
+      # tag run on whitespace.
       # Not --target=Verify: that also runs the TS/Python SDK checks, whose toolchains (uv)
       # this job doesn't set up.
-      - name: Cake Validate target (format + build + unit + E2E)
-        run: ./build.sh --target=Validate --playwrightWithDeps=false
+      - name: Cake Test target (format + build + unit + E2E)
+        run: ./build.sh --target=Test --playwrightWithDeps=false
 
   publish:
     if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/npm-wire' && github.ref != 'refs/tags/pypi'

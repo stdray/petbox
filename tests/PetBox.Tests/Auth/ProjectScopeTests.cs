@@ -38,12 +38,12 @@ public sealed class ProjectScopeSandboxTests
 	// sandboxOnly:true, project-scoped claim, matching claim+project.
 	[InlineData(SandboxProj, SandboxProj, true, true)]   // sandbox project -> allowed
 	[InlineData(RealProj, RealProj, true, false)]        // real project -> refused by containment
-	// sandboxOnly:true, WILDCARD claim — authorizes every project by IDENTITY, but containment
-	// still applies per-call. THE case the design calls out: "*" does not bypass the gate.
+														 // sandboxOnly:true, WILDCARD claim — authorizes every project by IDENTITY, but containment
+														 // still applies per-call. THE case the design calls out: "*" does not bypass the gate.
 	[InlineData("*", SandboxProj, true, true)]           // wildcard + sandbox project -> allowed
 	[InlineData("*", RealProj, true, false)]             // wildcard + real project -> STILL refused
-	// Identity still governs first: a project-scoped claim that doesn't even match the target is
-	// refused regardless of sandboxOnly/containment (short-circuit — Authorizes() runs first).
+														 // Identity still governs first: a project-scoped claim that doesn't even match the target is
+														 // refused regardless of sandboxOnly/containment (short-circuit — Authorizes() runs first).
 	[InlineData(SandboxProj, RealProj, true, false)]
 	public async Task AuthorizesAsync_StringOverload(
 		string? claim, string projectKey, bool sandboxOnly, bool expected)
