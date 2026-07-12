@@ -24,13 +24,16 @@ public sealed class DataSqlService : IDataSqlService
 		"max_page_count",
 	};
 
-	readonly PetBoxDb _db;
+	// The core-db lookup (the DataDbs catalog row + its quota) goes through the FACTORY: a fresh,
+	// caller-owned connection per open, never a request-shared one. A linq2db DataConnection is not
+	// thread-safe, and a single request can run several queries concurrently.
+	readonly ICoreDbFactory _core;
 	readonly IDataDbFactory _factory;
 	readonly SchemaRunner _runner;
 
-	public DataSqlService(PetBoxDb db, IDataDbFactory factory, SchemaRunner runner)
+	public DataSqlService(ICoreDbFactory core, IDataDbFactory factory, SchemaRunner runner)
 	{
-		_db = db;
+		_core = core;
 		_factory = factory;
 		_runner = runner;
 	}
@@ -85,8 +88,12 @@ public sealed class DataSqlService : IDataSqlService
 	// has to be re-applied here on every request — see IDataDbFactory.
 	async Task<SqliteConnection> OpenAsync(string projectKey, string dbName, CancellationToken ct)
 	{
-		var row = await _db.DataDbs.FirstOrDefaultAsync(
-			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
+		DataDb? row;
+		using (var core = _core.Open())
+		{
+			row = await core.DataDbs.FirstOrDefaultAsync(
+				(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
+		}
 		if (row is null) throw new DataDbNotFoundException(projectKey, dbName);
 		return await _factory.OpenAsync(projectKey, dbName, row.MaxPageCount, ct);
 	}

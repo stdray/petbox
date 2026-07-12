@@ -34,7 +34,7 @@ public sealed class TasksDeleteTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
-		_store = new TaskBoardStore(_db, _factory);
+		_store = new TaskBoardStore(_db.Factory(), _factory);
 		_relations = new RelationStore(_factory);
 		_tasks = new TasksService(_store, _relations, new TagStore(_factory), new CommentService(_factory));
 	}

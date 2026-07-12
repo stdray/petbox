@@ -49,14 +49,18 @@ public sealed partial class LlmRegistryImporter
 
 	static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-	readonly PetBoxDb _core;
+	// A one-shot STARTUP path, but it takes the factory like everything else: it opens ONE connection
+	// for the whole Import() and disposes it on the way out, instead of borrowing a scoped PetBoxDb
+	// from a throwaway DI scope. The all-or-nothing transaction below is unchanged — it just runs on
+	// a connection this class owns.
+	readonly ICoreDbFactory _factory;
 	readonly IConfigDbFactory _configFactory;
 	readonly string _configDir;
 	readonly ILogger _log;
 
-	public LlmRegistryImporter(PetBoxDb core, IConfigDbFactory configFactory, string configDir, ILogger log)
+	public LlmRegistryImporter(ICoreDbFactory factory, IConfigDbFactory configFactory, string configDir, ILogger log)
 	{
-		_core = core;
+		_factory = factory;
 		_configFactory = configFactory;
 		_configDir = configDir;
 		_log = log;
@@ -77,8 +81,11 @@ public sealed partial class LlmRegistryImporter
 
 	public Result Import()
 	{
+		// One caller-owned connection for the whole import — the gates, the rows and the transaction.
+		using var core = _factory.Open();
+
 		// ---- gate 1: has this already happened? ----
-		var marker = _core.Settings.FirstOrDefault(s =>
+		var marker = core.Settings.FirstOrDefault(s =>
 			s.Scope == nameof(Scope.System) && s.ScopeKey == RegistryLevel.SystemScopeKey && s.Path == MarkerPath);
 		if (marker is not null)
 		{
@@ -86,7 +93,7 @@ public sealed partial class LlmRegistryImporter
 			return Result.None(Outcome.AlreadyDone);
 		}
 
-		if (_core.LlmEndpoints.Any() || _core.LlmRoutes.Any())
+		if (core.LlmEndpoints.Any() || core.LlmRoutes.Any())
 		{
 			// Rows but no marker: somebody already wrote the new store through the admin. Not ours to
 			// overwrite — the import only ever populates an EMPTY registry.
@@ -204,12 +211,12 @@ public sealed partial class LlmRegistryImporter
 		}
 
 		// ---- write: all of it, or none of it (marker included) ----
-		using (var tx = _core.BeginTransaction())
+		using (var tx = core.BeginTransaction())
 		{
-			foreach (var row in endpointRows) _core.Insert(row);
-			foreach (var row in routeRows) _core.Insert(row);
+			foreach (var row in endpointRows) core.Insert(row);
+			foreach (var row in routeRows) core.Insert(row);
 
-			_core.Insert(new Setting
+			core.Insert(new Setting
 			{
 				Scope = scope,
 				ScopeKey = level.ScopeKey,

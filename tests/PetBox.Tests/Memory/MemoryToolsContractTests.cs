@@ -34,7 +34,7 @@ public sealed class MemoryToolsContractTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
-		_store = new MemoryStore(_db, _factory);
+		_store = new MemoryStore(_db.Factory(), _factory);
 		_memory = new MemoryService(_store);
 	}
 

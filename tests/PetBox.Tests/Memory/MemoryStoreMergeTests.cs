@@ -35,7 +35,7 @@ public sealed class MemoryStoreMergeTests : IDisposable
 		_memoryDir = Path.Combine(_dir, "memory");
 		_factory = new ScopedDbFactory<MemoryDb>(_memoryDir, Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
-		_store = new MemoryStore(_db, _factory);
+		_store = new MemoryStore(_db.Factory(), _factory);
 	}
 
 	public void Dispose()

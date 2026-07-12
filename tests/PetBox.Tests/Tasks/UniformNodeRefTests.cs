@@ -42,7 +42,7 @@ public sealed class UniformNodeRefTests : IDisposable
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_relations = new RelationStore(_factory);
 		_comments = new CommentService(_factory);
-		_tasks = new TasksService(new TaskBoardStore(_db, _factory), _relations, new TagStore(_factory), _comments);
+		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _factory), _relations, new TagStore(_factory), _comments);
 	}
 
 	public void Dispose()

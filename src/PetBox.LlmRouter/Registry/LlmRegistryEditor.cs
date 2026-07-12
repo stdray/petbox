@@ -25,13 +25,25 @@ namespace PetBox.LlmRouter.Registry;
 // override copies $system's key ciphertext is the owner's call, not ours).
 public sealed class LlmRegistryEditor : ILlmRegistryEditor
 {
-	readonly PetBoxDb _db;
+	// This editor and the LevelAdmin it delegates to used to share ONE connection (both scoped, one
+	// scope). They now open their own, which makes the ORDER OF OPERATIONS load-bearing:
+	//
+	//   NEVER call another core-db service while holding an open core transaction.
+	//
+	// core.db runs with Cache=Shared, where a second connection reading a table another connection
+	// has locked gets SQLITE_LOCKED — and the busy handler does NOT retry LOCKED, so it is an
+	// instant hard failure, not a wait. Every method below therefore resolves the level FIRST
+	// (OwnLevelAsync opens a connection, reads, and disposes it — the `using` ends with the method),
+	// and only THEN calls _admin, which opens its own connection and its own transaction. The read
+	// is finished and the connection returned before any transaction exists. Keep it that way: if a
+	// future edit needs a lookup inside the write, hand the value in — do not reach back out.
+	readonly ICoreDbFactory _factory;
 	readonly ILlmRegistryLevelAdmin _admin;
 	readonly ILlmRegistryLevelResolver _resolver;
 
-	public LlmRegistryEditor(PetBoxDb db, ILlmRegistryLevelAdmin admin, ILlmRegistryLevelResolver resolver)
+	public LlmRegistryEditor(ICoreDbFactory factory, ILlmRegistryLevelAdmin admin, ILlmRegistryLevelResolver resolver)
 	{
-		_db = db;
+		_factory = factory;
 		_admin = admin;
 		_resolver = resolver;
 	}
@@ -86,9 +98,13 @@ public sealed class LlmRegistryEditor : ILlmRegistryEditor
 		await _admin.SetSnapshotAsync(level.Scope, level.ScopeKey, endpoints, routes, apiKeys, ct: ct);
 	}
 
+	// Opens, reads, and CLOSES — the connection does not outlive this method, so it is never held
+	// while _admin runs its replace transaction (see the class comment).
 	async Task<RegistryLevel> OwnLevelAsync(string projectKey, CancellationToken ct)
 	{
-		var workspaceKey = await _db.Projects
+		using var db = _factory.Open();
+
+		var workspaceKey = await db.Projects
 			.Where(p => p.Key == projectKey)
 			.Select(p => p.WorkspaceKey)
 			.FirstOrDefaultAsync(ct)

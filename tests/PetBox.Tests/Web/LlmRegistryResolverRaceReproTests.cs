@@ -61,7 +61,7 @@ public sealed class LlmRegistryResolverRacePrimitiveTests : IDisposable
 	public async Task ConcurrentResolve_OnOneScopedPetBoxDb_MustNotThrow()
 	{
 		var resolver = new LlmRegistryLevelResolver(
-			_db, _secrets, new SettingsResolver(_db, _secrets), NullLogger<LlmRegistryLevelResolver>.Instance);
+			_db.Factory(), _secrets, new SettingsResolver(_db.Factory(), _secrets), NullLogger<LlmRegistryLevelResolver>.Instance);
 
 		var seen = new ConcurrentBag<string>();
 		for (var attempt = 0; attempt < 50 && seen.IsEmpty; attempt++)
@@ -79,7 +79,7 @@ public sealed class LlmRegistryResolverRacePrimitiveTests : IDisposable
 	[Fact]
 	public async Task ConcurrentSettingsRead_OnOneScopedPetBoxDb_MustNotThrow()
 	{
-		var settings = new SettingsResolver(_db, _secrets);
+		var settings = new SettingsResolver(_db.Factory(), _secrets);
 		var seen = new ConcurrentBag<string>();
 		for (var attempt = 0; attempt < 50 && seen.IsEmpty; attempt++)
 			await Task.WhenAll(Enumerable.Range(0, 8).Select(i => Task.Run(async () =>

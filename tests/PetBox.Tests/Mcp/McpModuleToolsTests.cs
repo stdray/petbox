@@ -56,10 +56,10 @@ public sealed class McpModuleToolsTests : IDisposable
 		_sessFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
 			c => new SessionsDb(SessionsDb.CreateOptions(c)), SessionsSchema.Ensure);
 
-		_boards = new TaskBoardStore(_db, _tasksFactory);
+		_boards = new TaskBoardStore(_db.Factory(), _tasksFactory);
 		_relations = new RelationStore(_tasksFactory);
 		_tasks = new TasksService(_boards, _relations, new TagStore(_tasksFactory), new CommentService(_tasksFactory));
-		_stores = new MemoryStore(_db, _memFactory);
+		_stores = new MemoryStore(_db.Factory(), _memFactory);
 		_memory = new MemoryService(_stores);
 		_sessions = new SessionStore(_sessFactory);
 		_sessionSvc = new SessionService(_sessions);

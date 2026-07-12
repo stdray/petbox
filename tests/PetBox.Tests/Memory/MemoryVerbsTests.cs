@@ -43,7 +43,7 @@ public sealed class MemoryVerbsTests : IDisposable
 		_db.Insert(new Project { Key = OtherProj, WorkspaceKey = "other-ws", Name = "O", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
-		_store = new MemoryStore(_db, _factory);
+		_store = new MemoryStore(_db.Factory(), _factory);
 		_memory = new MemoryService(_store);
 	}
 
@@ -481,7 +481,7 @@ public sealed class MemoryVerbsTests : IDisposable
 		var id = new ClaimsIdentity([new Claim("project", project), new Claim("scopes", scopes)], "test");
 		// ModuleMcp.AssertProject/ResolveProject resolve IProjectCatalog off the HttpContext's own
 		// DI container (spec work/smoke-writes-into-real-projects).
-		var services = new ServiceCollection().AddSingleton<IProjectCatalog>(new ProjectCatalog(_db)).BuildServiceProvider();
+		var services = new ServiceCollection().AddSingleton<IProjectCatalog>(new ProjectCatalog(_db.Factory())).BuildServiceProvider();
 		return new HttpContextAccessor
 		{
 			HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id), RequestServices = services },

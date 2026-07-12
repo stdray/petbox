@@ -23,13 +23,13 @@ public sealed class LlmRegistryStore : ILlmRegistryAdmin, ILlmRegistryResolver
 
 	readonly IConfigDbFactory _configFactory;
 	readonly ISecretEncryptor _secrets;
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _core;
 
-	public LlmRegistryStore(IConfigDbFactory configFactory, ISecretEncryptor secrets, PetBoxDb db)
+	public LlmRegistryStore(IConfigDbFactory configFactory, ISecretEncryptor secrets, ICoreDbFactory core)
 	{
 		_configFactory = configFactory;
 		_secrets = secrets;
-		_db = db;
+		_core = core;
 	}
 
 	public Task<LlmRegistry> GetAsync(string projectKey, CancellationToken ct = default)
@@ -127,7 +127,8 @@ public sealed class LlmRegistryStore : ILlmRegistryAdmin, ILlmRegistryResolver
 
 	string ResolveWorkspace(string projectKey)
 	{
-		var project = _db.Projects.FirstOrDefault(p => p.Key == projectKey)
+		using var core = _core.Open();
+		var project = core.Projects.FirstOrDefault(p => p.Key == projectKey)
 			?? throw new LlmRouterException(LlmCapability.Embed, false, $"unknown project '{projectKey}'");
 		return project.WorkspaceKey;
 	}

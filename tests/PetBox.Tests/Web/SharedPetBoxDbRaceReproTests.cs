@@ -29,7 +29,7 @@ public sealed class SharedPetBoxDbRaceReproTests : IDisposable
 			_db.Insert(new Project { Key = $"proj-{i}", WorkspaceKey = "ws1", Name = $"P{i}", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
-		_store = new TaskBoardStore(_db, _factory);
+		_store = new TaskBoardStore(_db.Factory(), _factory);
 	}
 
 	public void Dispose()

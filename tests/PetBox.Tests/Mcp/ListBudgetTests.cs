@@ -54,9 +54,9 @@ public sealed class ListBudgetTests : IDisposable
 		_sessFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
 			c => new SessionsDb(SessionsDb.CreateOptions(c)), SessionsSchema.Ensure);
 
-		_tasks = new TasksService(new TaskBoardStore(_db, _tasksFactory), new RelationStore(_tasksFactory),
+		_tasks = new TasksService(new TaskBoardStore(_db.Factory(), _tasksFactory), new RelationStore(_tasksFactory),
 			new TagStore(_tasksFactory), new CommentService(_tasksFactory));
-		_memory = new MemoryService(new MemoryStore(_db, _memFactory));
+		_memory = new MemoryService(new MemoryStore(_db.Factory(), _memFactory));
 		_sessions = new SessionService(new SessionStore(_sessFactory));
 		_comments = new CommentService(_tasksFactory);
 	}

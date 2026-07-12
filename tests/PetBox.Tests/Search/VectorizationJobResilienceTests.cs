@@ -46,7 +46,7 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 
 	async Task SeedStoreAsync(ScopedDbFactory<MemoryDb> factory, string store, string project = Proj)
 	{
-		var memory = new MemoryService(new MemoryStore(_db, factory));
+		var memory = new MemoryService(new MemoryStore(_db.Factory(), factory));
 		var r = await memory.UpsertAsync(project, store,
 			new[] { new MemoryEntryInput { Key = "k1", Type = "Project", Body = "some body text" } },
 			Array.Empty<MemoryDelete>());
@@ -79,7 +79,7 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 		}
 
 		// Fresh factory = fresh process (GetDb's ensure cache is per-instance).
-		var job = new MemoryVectorizationJob(NewFactory(), new ProjectCatalog(_db), new FakeLlmClient());
+		var job = new MemoryVectorizationJob(NewFactory(), new ProjectCatalog(_db.Factory()), new FakeLlmClient());
 		await job.DrainAllAsync(CancellationToken.None); // must not throw
 
 		using var check = factory.NewEnsuredConnection(Proj);
@@ -94,7 +94,7 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 		await SeedStoreAsync(factory, "a");
 		await SeedStoreAsync(factory, "b");
 
-		var job = new MemoryVectorizationJob(NewFactory(), new ProjectCatalog(_db), new FakeLlmClient());
+		var job = new MemoryVectorizationJob(NewFactory(), new ProjectCatalog(_db.Factory()), new FakeLlmClient());
 		await job.DrainAllAsync(CancellationToken.None);
 
 		// Stores share the file but are independent temporal partitions: one cursor row each.
@@ -120,7 +120,7 @@ public sealed class VectorizationJobResilienceTests : IDisposable
 		using (var raw = factory.NewEnsuredConnection(Proj))
 			raw.Execute("DROP TABLE memory_entries");
 
-		var job = new MemoryVectorizationJob(NewFactory(), new ProjectCatalog(_db), new FakeLlmClient());
+		var job = new MemoryVectorizationJob(NewFactory(), new ProjectCatalog(_db.Factory()), new FakeLlmClient());
 		await job.DrainAllAsync(CancellationToken.None); // must not throw
 
 		// The healthy project's cursor advanced — its drain ran despite "proj" failing first.

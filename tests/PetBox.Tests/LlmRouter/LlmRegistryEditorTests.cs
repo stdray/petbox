@@ -54,10 +54,10 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		_db.Insert(new Project { Key = SysProj, WorkspaceKey = WorkspaceMemory.SystemWorkspace, Name = "S", Description = "" });
 
 		var secrets = new AesGcmSecretEncryptor(Options.Create(new SecretEncryptorOptions { MasterKey = "test-master-key" }));
-		var settings = new SettingsResolver(_db, secrets);
-		_levels = new LlmRegistryLevelAdmin(_db, secrets);
-		_resolver = new LlmRegistryLevelResolver(_db, secrets, settings, NullLogger<LlmRegistryLevelResolver>.Instance);
-		_editor = new LlmRegistryEditor(_db, _levels, _resolver);
+		var settings = new SettingsResolver(_db.Factory(), secrets);
+		_levels = new LlmRegistryLevelAdmin(_db.Factory(), secrets);
+		_resolver = new LlmRegistryLevelResolver(_db.Factory(), secrets, settings, NullLogger<LlmRegistryLevelResolver>.Instance);
+		_editor = new LlmRegistryEditor(_db.Factory(), _levels, _resolver);
 	}
 
 	public void Dispose()
