@@ -33,7 +33,7 @@ public sealed class SessionPushContractTests(WebAppFixture app) : IAsyncLifetime
 		_http = new HttpClient { BaseAddress = new Uri(app.BaseUrl) };
 
 		using var scope = app.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.ApiKeys.Where(k => k.Key == WriteKey || k.Key == ReadOnlyKey).DeleteAsync();
 		await db.Projects.Where(p => p.Key == ProjectKey).DeleteAsync();
 		await db.Workspaces.Where(w => w.Key == Workspace).DeleteAsync();

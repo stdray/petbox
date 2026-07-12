@@ -74,7 +74,7 @@ public sealed class ProjectDefaultFilterFixture : IAsyncLifetime
 		TestSchema.Core(cs);
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.InsertAsync(new Workspace { Key = "w2ws", Name = "W2", CreatedAt = DateTime.UtcNow });
 			await db.InsertAsync(new Project { Key = HomeProject, WorkspaceKey = "w2ws", Name = "Home" });
 			await db.InsertAsync(new Project { Key = OtherProject, WorkspaceKey = "w2ws", Name = "Other" });

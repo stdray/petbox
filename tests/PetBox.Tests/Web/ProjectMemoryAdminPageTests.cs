@@ -36,7 +36,7 @@ public sealed class ProjectMemoryAdminPageTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
-		_store = new MemoryStore(_db, _factory);
+		_store = new MemoryStore(_db.Factory(), _factory);
 		_memory = new MemoryService(_store);
 	}
 
@@ -56,7 +56,7 @@ public sealed class ProjectMemoryAdminPageTests : IDisposable
 	}
 
 	ProjectMemoryModel Page() =>
-		new(_db, Features(), _memory) { WorkspaceKey = "ws", ProjectKey = Proj };
+		new(_db.Factory(), Features(), _memory) { WorkspaceKey = "ws", ProjectKey = Proj };
 
 	[Fact]
 	public async Task Delete_OrdinaryStore_Removes()

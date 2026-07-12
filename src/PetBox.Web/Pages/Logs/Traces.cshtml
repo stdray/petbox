@@ -77,7 +77,7 @@ else
 					};
 					<tr class="hover" data-testid="trace-row" data-trace-id="@t.TraceId">
 						<td class="font-mono text-xs opacity-70">
-							<time class="local-time" datetime="@t.StartTime.ToString("o")">@t.StartTime:yyyy-MM-dd HH:mm:ss.fff</time>
+							<time class="local-time" data-ms datetime="@t.StartTime.ToString("o")">@t.StartTime:yyyy-MM-dd HH:mm:ss.fff</time>
 						</td>
 						<td class="font-mono text-xs">
 							<a asp-page="/Logs/Trace" asp-route-workspaceKey="@Model.WorkspaceKey" asp-route-projectKey="@Model.EffectiveProjectKey" asp-route-log="@Model.SelectedLog" asp-route-traceId="@t.TraceId" class="link link-primary">@t.RootName</a>

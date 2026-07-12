@@ -67,7 +67,7 @@ public sealed class SelfTracingTests : IDisposable
 	{
 		var factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
-		var tasks = new TasksService(new TaskBoardStore(_db, factory), new RelationStore(factory),
+		var tasks = new TasksService(new TaskBoardStore(_db.Factory(), factory), new RelationStore(factory),
 			new TagStore(factory), new CommentService(factory));
 
 		var (listener, started) = Listen(PetBoxActivitySources.TasksSourceName);
@@ -92,7 +92,7 @@ public sealed class SelfTracingTests : IDisposable
 	{
 		var factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
-		var memory = new MemoryService(new MemoryStore(_db, factory));
+		var memory = new MemoryService(new MemoryStore(_db.Factory(), factory));
 
 		var (listener, started) = Listen(PetBoxActivitySources.MemorySourceName);
 		using (listener)

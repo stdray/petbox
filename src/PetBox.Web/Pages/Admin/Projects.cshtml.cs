@@ -10,9 +10,9 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectsModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 
-	public ProjectsModel(PetBoxDb db) => _db = db;
+	public ProjectsModel(ICoreDbFactory f) => _f = f;
 
 	// authz-bypass-project-create: bound ONLY from the route — never Form/Query — so a POST
 	// body field named "WorkspaceKey" cannot retarget the write after the WorkspaceAdmin policy
@@ -24,11 +24,14 @@ public sealed class ProjectsModel : PageModel
 	public IReadOnlyList<Project> ProjectsInWorkspace { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet() =>
-		ProjectsInWorkspace = _db.Projects
+	public void OnGet()
+	{
+		using var db = _f.Open();
+		ProjectsInWorkspace = db.Projects
 			.Where(p => p.WorkspaceKey == WorkspaceKey)
 			.OrderBy(p => p.Key)
 			.ToList();
+	}
 
 	static readonly HashSet<string> ReservedKeys = new(StringComparer.OrdinalIgnoreCase)
 	{
@@ -37,6 +40,7 @@ public sealed class ProjectsModel : PageModel
 
 	public async Task<IActionResult> OnPostCreateAsync(string key, string name, string description)
 	{
+		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(name))
 		{
 			ErrorMessage = "Key and Name are required.";
@@ -58,14 +62,14 @@ public sealed class ProjectsModel : PageModel
 			return Page();
 		}
 
-		if (await _db.Projects.AnyAsync(p => p.Key == key))
+		if (await db.Projects.AnyAsync(p => p.Key == key))
 		{
 			ErrorMessage = $"Project '{key}' already exists.";
 			OnGet();
 			return Page();
 		}
 
-		await _db.InsertAsync(new Project
+		await db.InsertAsync(new Project
 		{
 			Key = key,
 			WorkspaceKey = WorkspaceKey,

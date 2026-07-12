@@ -73,7 +73,7 @@ public sealed class Linq2DbDataE2ETests : IAsyncLifetime
 
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.ApiKeys.Where(k => k.Key == TestApiKey).DeleteAsync();
 			await db.Projects.Where(p => p.Key == TestProjectKey).DeleteAsync();
 			await db.Workspaces.Where(w => w.Key == TestWorkspace).DeleteAsync();

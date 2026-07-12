@@ -39,7 +39,7 @@ public sealed class OtlpIngestAuthzTests
 		var proj = $"otlpauthz{Guid.NewGuid():N}"[..16];
 		var key = $"yb_key_{Guid.NewGuid():N}";
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new Project { Key = proj, WorkspaceKey = LogNames.SystemProject, Name = proj });
 		await db.InsertAsync(new ApiKey { Key = key, ProjectKey = proj, Scopes = scopes, Name = key, CreatedAt = DateTime.UtcNow });
 		var store = scope.ServiceProvider.GetRequiredService<ILogStore>();

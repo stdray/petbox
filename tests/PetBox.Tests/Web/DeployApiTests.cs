@@ -54,15 +54,18 @@ public sealed class DeployApiFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new ApiKey { Key = AdminKey, ProjectKey = "ops", Scopes = "deploy:read,deploy:write", CreatedAt = DateTime.UtcNow });
 		await db.InsertAsync(new ApiKey { Key = NodeKey, ProjectKey = Node, Scopes = "agent:poll,agent:heartbeat", CreatedAt = DateTime.UtcNow });
 
 		// deploy.db is shared across test instances (same temp dir) — clear it for isolation.
-		var deploy = scope.ServiceProvider.GetRequiredService<DeployDb>();
-		await deploy.Statuses.DeleteAsync();
-		await deploy.Deployments.DeleteAsync();
-		await deploy.Nodes.DeleteAsync();
+		// DeployDb is no longer in DI (only IDeployDbFactory is) — open a connection and own it.
+		await using (var deploy = scope.ServiceProvider.GetRequiredService<IDeployDbFactory>().Open())
+		{
+			await deploy.Statuses.DeleteAsync();
+			await deploy.Deployments.DeleteAsync();
+			await deploy.Nodes.DeleteAsync();
+		}
 
 		// A project + workspace + a config binding so poll can resolve env server-side.
 		await db.Workspaces.Where(w => w.Key == "wsdep").DeleteAsync();

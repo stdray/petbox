@@ -248,7 +248,7 @@ public sealed class SearchReindexTests
 			TestSchema.Core(cs);
 			_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 			_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
-			_catalog = new ProjectCatalog(_db);
+			_catalog = new ProjectCatalog(_db.Factory());
 		}
 
 		public ScopedDbFactory<MemoryDb> NewMemoryFactory() =>
@@ -266,7 +266,7 @@ public sealed class SearchReindexTests
 		// n entries, one upsert each → n distinct versions (what the take-N cap walks through).
 		public async Task SeedMemoryAsync(string store, int n)
 		{
-			var memory = new MemoryService(new MemoryStore(_db, NewMemoryFactory()));
+			var memory = new MemoryService(new MemoryStore(_db.Factory(), NewMemoryFactory()));
 			for (var i = 0; i < n; i++)
 			{
 				var r = await memory.UpsertAsync(Proj, store,
@@ -278,7 +278,7 @@ public sealed class SearchReindexTests
 		// n entries in ONE upsert → all share a single version (an indivisible group).
 		public async Task SeedMemoryBatchAsync(string store, int n)
 		{
-			var memory = new MemoryService(new MemoryStore(_db, NewMemoryFactory()));
+			var memory = new MemoryService(new MemoryStore(_db.Factory(), NewMemoryFactory()));
 			var inputs = Enumerable.Range(0, n)
 				.Select(i => new MemoryEntryInput { Key = $"k{i}", Type = "Project", Body = $"body number {i}" })
 				.ToList();
@@ -289,7 +289,7 @@ public sealed class SearchReindexTests
 		public async Task SeedTasksAsync(string board, int n)
 		{
 			var factory = NewTasksFactory();
-			var tasks = new TasksService(new TaskBoardStore(_db, factory), new RelationStore(factory),
+			var tasks = new TasksService(new TaskBoardStore(_db.Factory(), factory), new RelationStore(factory),
 				new TagStore(factory), new CommentService(factory), llm: null);
 			await tasks.CreateBoardAsync(Proj, board, "simple", null, null);
 			for (var i = 0; i < n; i++)

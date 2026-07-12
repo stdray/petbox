@@ -1,7 +1,27 @@
+using LinqToDB;
 using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 
 namespace PetBox.Tests;
+
+// Bridges test setup — which keeps its own PetBoxDb to seed rows and assert against — to the
+// services under test, which now take ICoreDbFactory and open their OWN connection per call
+// (core-db-behind-factory). The factory points at the SAME core.db file and carries the SAME
+// DataOptions, so it reuses the SHARED MappingSchema (never build a per-connection one — that was
+// the ~290 MB prod OOM; see PetBoxDb.SharedMappingSchema).
+//
+// The test's `_db` and the service's connections are DIFFERENT connections to one file, which is
+// exactly the production shape. Every core db in the suite is file-backed, so that resolves to the
+// same database; a `Data Source=:memory:` core db would NOT work here (a second connection would
+// see an empty database) and none of these tests use one.
+public static class TestCoreDb
+{
+	public static ICoreDbFactory Factory(this PetBoxDb db) =>
+		new CoreDbFactory(new DataOptions<PetBoxDb>(db.Options));
+
+	public static ICoreDbFactory CoreFactory(string connectionString) =>
+		new CoreDbFactory(connectionString);
+}
 
 // Building the Core (petbox.db) schema with FluentMigrator — a fresh DI container, an
 // assembly scan and MigrateUp — costs ~0.2s and runs in EVERY test constructor. Across

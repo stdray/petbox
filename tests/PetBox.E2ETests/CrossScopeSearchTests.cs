@@ -30,7 +30,7 @@ public sealed class CrossScopeSearchTests(WebAppFixture app, ITestOutputHelper o
 	public async Task InitializeAsync()
 	{
 		using var scope = app.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 
 		foreach (var ws in new[] { WsA, WsB })
 			if (!await db.Workspaces.AnyAsync(w => w.Key == ws))

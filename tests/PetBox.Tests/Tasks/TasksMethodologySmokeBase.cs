@@ -87,7 +87,7 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 
 		using (var scope = Factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.ApiKeys.Where(k => k.Key == AgentKey || k.Key == MaintainerKey).DeleteAsync();
 			await db.Projects.Where(p => p.Key == ProjectKey).DeleteAsync();
 			await db.Workspaces.Where(w => w.Key == "test").DeleteAsync();
@@ -114,7 +114,7 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 	{
 		using (var scope = Factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.TaskBoards.Where(b => b.ProjectKey == ProjectKey).DeleteAsync();
 		}
 

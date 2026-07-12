@@ -26,11 +26,12 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]
 	[Description("CREATE a named memory store. `scope`: project (default) | workspace. Requires memory:write.")]
 	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
-		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
 		string projectKey, string store, string? description = null,
 		[Description("project | workspace (default project).")] string? scope = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		projectKey = (await ResolveScopeAsync(http, db, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
@@ -55,13 +56,14 @@ public static class MemoryTools
 		apart. Reading this does NOT count as usage (curation, not an impression).
 		""")]
 	public static async Task<MemoryStoreListResult> StoreListAsync(
-		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
 		string? projectKey = null,
 		[Description("Attach a per-store usage aggregate (coverage, median recency, dead tail, window cost/fit) (default false).")] bool includeUsage = false,
 		[LogArg][Description("Trailing window (days) the usage cost/fit is measured over (default 30). Ignored without includeUsage.")] int? usageWindowDays = null,
 		[Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var rows = new List<MemoryStoreRow>();
@@ -95,11 +97,12 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreDeletedResult))]
 	[Description("Delete a memory store and its entries. `scope`: project (default) | workspace. Requires memory:write.")]
 	public static async Task<MemoryStoreDeletedResult> StoreDeleteAsync(
-		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
 		string projectKey, string store,
 		[Description("project | workspace (default project).")] string? scope = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		projectKey = (await ResolveScopeAsync(http, db, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
@@ -121,13 +124,14 @@ public static class MemoryTools
 		the same cascade contract as memory_search. Requires memory:read.
 		""")]
 	public static async Task<MemoryGetResultView> GetAsync(
-		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory, IMemoryUsageRecorder usage,
+		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory, IMemoryUsageRecorder usage,
 		string projectKey, string store,
 		[Description("One key to read. Combine with `keys` or use either alone.")] string? key = null,
 		[Description("Batch of keys read in ONE call; a key that matches nothing is silently dropped (soft filter).")] string[]? keys = null,
 		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
@@ -227,13 +231,14 @@ public static class MemoryTools
 		for a full delta since a cursor, call memory_delta with it as `sinceVersion`.
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
-		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
 		string projectKey, string store,
 		[Description("Array of entry objects: { key, type, description, body, tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace (default project).")] string? scope = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		projectKey = (await ResolveScopeAsync(http, db, projectKey, scope, ct)).Key;
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
@@ -245,12 +250,13 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface. `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search. Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
-		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
 		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
@@ -332,11 +338,12 @@ public static class MemoryTools
 		Returns { id, scope, store, key }.
 		""")]
 	public static async Task<MemoryRememberResult> RememberAsync(
-		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
 		string text, string? scope = null, string? projectKey = null, string? store = null,
 		string? type = null, string[]? tags = null, string? description = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("text is required");
@@ -422,7 +429,7 @@ public static class MemoryTools
 		hit below the relevance floor is dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows).
 		""")]
 	public static async Task<MemorySearchResultView> SearchAsync(
-		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory, IMemoryUsageRecorder usage,
+		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory, IMemoryUsageRecorder usage,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
 		[LogArg][Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
 		string? projectKey = null,
@@ -435,6 +442,7 @@ public static class MemoryTools
 		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var hasQuery = !string.IsNullOrWhiteSpace(q);

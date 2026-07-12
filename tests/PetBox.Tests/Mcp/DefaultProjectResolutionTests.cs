@@ -90,7 +90,7 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 	[Fact]
 	public async Task ApiKeyCreate_DefaultProject_WithoutAllProjects_IsRejected()
 	{
-		var act = () => ApiKeyTools.CreateAsync(Admin(), _db, "k", "memory:read",
+		var act = () => ApiKeyTools.CreateAsync(Admin(), _db.Factory(), "k", "memory:read",
 			projectKey: "kpvotes", defaultProject: "kpvotes");
 		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*defaultProject is only valid with allProjects*");
@@ -99,7 +99,7 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 	[Fact]
 	public async Task ApiKeyCreate_DefaultProject_MustExist()
 	{
-		var act = () => ApiKeyTools.CreateAsync(Admin(), _db, "k", "memory:read",
+		var act = () => ApiKeyTools.CreateAsync(Admin(), _db.Factory(), "k", "memory:read",
 			allProjects: true, defaultProject: "nope");
 		await act.Should().ThrowAsync<InvalidOperationException>();
 	}
@@ -107,14 +107,14 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 	[Fact]
 	public async Task ApiKeyCreate_AllProjectsWithDefault_PersistsAndIsListed()
 	{
-		var created = await ApiKeyTools.CreateAsync(Admin(), _db, "wildcard", "memory:read",
+		var created = await ApiKeyTools.CreateAsync(Admin(), _db.Factory(), "wildcard", "memory:read",
 			allProjects: true, defaultProject: "kpvotes");
 
 		created.ProjectKey.Should().Be(ProjectScope.AllProjects);
 		created.DefaultProjectKey.Should().Be("kpvotes");
 		_db.ApiKeys.Single(k => k.Key == created.Key).DefaultProjectKey.Should().Be("kpvotes");
 
-		var listed = await ApiKeyTools.ListAsync(Admin(), _db, ProjectScope.AllProjects);
+		var listed = await ApiKeyTools.ListAsync(Admin(), _db.Factory(), ProjectScope.AllProjects);
 		listed.Keys.Single(k => k.Key == created.Key).DefaultProjectKey.Should().Be("kpvotes");
 	}
 
@@ -122,7 +122,7 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 	[Fact]
 	public async Task ApiKeyCreate_ProjectScoped_LeavesTheDefaultNull()
 	{
-		var created = await ApiKeyTools.CreateAsync(Admin(), _db, "scoped", "memory:read", projectKey: "kpvotes");
+		var created = await ApiKeyTools.CreateAsync(Admin(), _db.Factory(), "scoped", "memory:read", projectKey: "kpvotes");
 		created.DefaultProjectKey.Should().BeNull();
 		_db.ApiKeys.Single(k => k.Key == created.Key).DefaultProjectKey.Should().BeNull();
 	}
@@ -135,7 +135,7 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 	[Fact]
 	public async Task ApiKeyCreate_SandboxOnly_AgainstANonSandboxProject_IsRejected()
 	{
-		var act = () => ApiKeyTools.CreateAsync(Admin(), _db, "smoke-bad", "memory:read",
+		var act = () => ApiKeyTools.CreateAsync(Admin(), _db.Factory(), "smoke-bad", "memory:read",
 			projectKey: "kpvotes", sandboxOnly: true);
 		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*sandboxOnly*sandbox project*");
@@ -147,7 +147,7 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 	{
 		_db.Insert(new Project { Key = "sandboxproj", WorkspaceKey = "ws", Name = "Sandbox", Sandbox = true });
 
-		var created = await ApiKeyTools.CreateAsync(Admin(), _db, "smoke-good", "memory:read",
+		var created = await ApiKeyTools.CreateAsync(Admin(), _db.Factory(), "smoke-good", "memory:read",
 			projectKey: "sandboxproj", sandboxOnly: true);
 
 		created.SandboxOnly.Should().BeTrue();
@@ -160,7 +160,7 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 	[Fact]
 	public async Task ApiKeyCreate_SandboxOnly_WithAllProjects_IsAllowed_NoProjectToValidate()
 	{
-		var created = await ApiKeyTools.CreateAsync(Admin(), _db, "smoke-wildcard", "memory:read",
+		var created = await ApiKeyTools.CreateAsync(Admin(), _db.Factory(), "smoke-wildcard", "memory:read",
 			allProjects: true, sandboxOnly: true);
 
 		created.ProjectKey.Should().Be(ProjectScope.AllProjects);
@@ -172,7 +172,7 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 	[Fact]
 	public async Task ApiKeyCreate_Default_LeavesSandboxOnlyFalse()
 	{
-		var created = await ApiKeyTools.CreateAsync(Admin(), _db, "plain", "memory:read", projectKey: "kpvotes");
+		var created = await ApiKeyTools.CreateAsync(Admin(), _db.Factory(), "plain", "memory:read", projectKey: "kpvotes");
 		created.SandboxOnly.Should().BeFalse();
 		_db.ApiKeys.Single(k => k.Key == created.Key).SandboxOnly.Should().BeFalse();
 	}
@@ -189,7 +189,7 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 		// DI container (spec work/smoke-writes-into-real-projects) — none of these tests set the
 		// `sandbox_only` claim, so the containment check short-circuits and this stub is never
 		// actually queried, but it has to be resolvable or the DI lookup itself throws.
-		var services = new ServiceCollection().AddSingleton<IProjectCatalog>(new ProjectCatalog(_db)).BuildServiceProvider();
+		var services = new ServiceCollection().AddSingleton<IProjectCatalog>(new ProjectCatalog(_db.Factory())).BuildServiceProvider();
 		return new HttpContextAccessor
 		{
 			HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id), RequestServices = services },

@@ -44,7 +44,7 @@ public sealed class MemoryRowWeightTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
-		_memory = new MemoryService(new MemoryStore(_db, _factory), llm: null);
+		_memory = new MemoryService(new MemoryStore(_db.Factory(), _factory), llm: null);
 		_recorder = new MemoryUsageRecorder(_factory);
 	}
 
@@ -108,7 +108,7 @@ public sealed class MemoryRowWeightTests : IDisposable
 	{
 		await Seed(3);
 
-		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db, _memory, _recorder, "телеметрию",
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию",
 			scope: "project", store: "notes", bodyLen: 0);
 
 		res.Items.Should().NotBeEmpty();
@@ -121,7 +121,7 @@ public sealed class MemoryRowWeightTests : IDisposable
 		}
 
 		// The full description is not lost — the addressed read still carries it whole.
-		var got = await MemoryTools.GetAsync(Http(), Flags(), _db, _memory, _recorder, Proj, "notes", "row1");
+		var got = await MemoryTools.GetAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, Proj, "notes", "row1");
 		got.Entries.Should().ContainSingle().Which.Description.Should().Be(LongDescription);
 	}
 
@@ -130,7 +130,7 @@ public sealed class MemoryRowWeightTests : IDisposable
 	{
 		await Seed(3);
 
-		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db, _memory, _recorder,
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder,
 			scope: "project", store: "notes", bodyLen: 0);
 
 		res.Items.Should().NotBeEmpty();
@@ -147,7 +147,7 @@ public sealed class MemoryRowWeightTests : IDisposable
 	{
 		await SeedAscii(13); // the shape of the 2026-07-12 measurement: one query, 13 rows
 
-		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db, _memory, _recorder, "telemetry",
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "telemetry",
 			scope: "project", store: "notes", bodyLen: 0, limit: 20);
 
 		res.Items.Should().HaveCount(13);

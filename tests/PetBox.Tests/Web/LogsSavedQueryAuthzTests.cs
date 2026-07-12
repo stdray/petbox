@@ -54,7 +54,7 @@ public sealed class LogsSavedQueryAuthzFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 
 		await db.InsertAsync(new Workspace { Key = "wsa", Name = "Wsa", Description = "", CreatedAt = DateTime.UtcNow });
 		await db.InsertAsync(new Workspace { Key = "wsb", Name = "Wsb", Description = "", CreatedAt = DateTime.UtcNow });
@@ -166,7 +166,7 @@ public sealed class LogsSavedQueryAuthzTests : IClassFixture<LogsSavedQueryAuthz
 		deleteResp.Headers.Location!.ToString().Should().Contain("/Login");
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		db.SavedQueries.Any(q => q.Id == _fx.VictimSavedQueryId).Should().BeTrue(
 			"the cross-tenant delete must not have removed wsb's saved query");
 	}
@@ -203,7 +203,7 @@ public sealed class LogsSavedQueryAuthzTests : IClassFixture<LogsSavedQueryAuthz
 		deleteResp.StatusCode.Should().Be(HttpStatusCode.Redirect);
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		db.SavedQueries.Any(q => q.Id == _fx.OtherProjectSavedQueryId).Should().BeTrue(
 			"a route locked to proja must not delete proja2's saved query, even within the same workspace");
 	}

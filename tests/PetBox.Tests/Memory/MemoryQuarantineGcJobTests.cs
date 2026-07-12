@@ -39,7 +39,7 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
-		_store = new MemoryStore(_db, _factory);
+		_store = new MemoryStore(_db.Factory(), _factory);
 		_memory = new MemoryService(_store, llm: null);
 		_recorder = new MemoryUsageRecorder(_factory);
 	}
@@ -53,7 +53,7 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 	}
 
 	MemoryQuarantineGcJob Job(bool enforce, TimeSpan? minAge = null) =>
-		new(new ProjectCatalog(_db), _memory, logger: null, minAge: minAge ?? AllOld, enforce: enforce, scanInterval: NoThrottle);
+		new(new ProjectCatalog(_db.Factory()), _memory, logger: null, minAge: minAge ?? AllOld, enforce: enforce, scanInterval: NoThrottle);
 
 	async Task Seed(string store, params string[] keys) =>
 		await _memory.UpsertAsync(Proj, store,
@@ -204,7 +204,7 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 		await _recorder.FlushAsync();
 
 		// A stricter fit floor (0.1) says 0.2 is good enough → the same entry is no longer a boar.
-		var job = new MemoryQuarantineGcJob(new ProjectCatalog(_db), _memory, logger: null,
+		var job = new MemoryQuarantineGcJob(new ProjectCatalog(_db.Factory()), _memory, logger: null,
 			minAge: AllOld, enforce: true, scanInterval: NoThrottle, maxAvgKRel: 0.1);
 
 		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
@@ -215,7 +215,7 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 	public async Task Throttle_SecondPassWithinInterval_IsSkipped()
 	{
 		await Seed(Store, "a1");
-		var job = new MemoryQuarantineGcJob(new ProjectCatalog(_db), _memory, logger: null,
+		var job = new MemoryQuarantineGcJob(new ProjectCatalog(_db.Factory()), _memory, logger: null,
 			minAge: AllOld, enforce: true, scanInterval: TimeSpan.FromHours(6));
 
 		var first = await job.DrainAllAsync(CancellationToken.None);

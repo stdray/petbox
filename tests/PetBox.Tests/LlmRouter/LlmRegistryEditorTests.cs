@@ -54,10 +54,10 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		_db.Insert(new Project { Key = SysProj, WorkspaceKey = WorkspaceMemory.SystemWorkspace, Name = "S", Description = "" });
 
 		var secrets = new AesGcmSecretEncryptor(Options.Create(new SecretEncryptorOptions { MasterKey = "test-master-key" }));
-		var settings = new SettingsResolver(_db, secrets);
-		_levels = new LlmRegistryLevelAdmin(_db, secrets);
-		_resolver = new LlmRegistryLevelResolver(_db, secrets, settings, NullLogger<LlmRegistryLevelResolver>.Instance);
-		_editor = new LlmRegistryEditor(_db, _levels, _resolver);
+		var settings = new SettingsResolver(_db.Factory(), secrets);
+		_levels = new LlmRegistryLevelAdmin(_db.Factory(), secrets);
+		_resolver = new LlmRegistryLevelResolver(_db.Factory(), secrets, settings, NullLogger<LlmRegistryLevelResolver>.Instance);
+		_editor = new LlmRegistryEditor(_db.Factory(), _levels, _resolver);
 	}
 
 	public void Dispose()
@@ -161,7 +161,7 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		reordered.Routes[1].Id.Should().Be(editedId);
 
 		// Now the user's form arrives, carrying the id it was rendered with (NOT an index).
-		var page = new IndexModel(_editor, Flags(), _db) { WorkspaceKey = Ws, ProjectKey = Proj };
+		var page = new IndexModel(_editor, Flags(), _db.Factory()) { WorkspaceKey = Ws, ProjectKey = Proj };
 		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "chat-model-v2", 50, null, null, editedId);
 
 		var after = await _editor.ViewAsync(Proj);
@@ -181,7 +181,7 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		var view = await _editor.ViewAsync(Proj);
 		var doomed = view.Routes.Single(r => r.Route.Model == "embed-model").Id;
 
-		var page = new IndexModel(_editor, Flags(), _db) { WorkspaceKey = Ws, ProjectKey = Proj };
+		var page = new IndexModel(_editor, Flags(), _db.Factory()) { WorkspaceKey = Ws, ProjectKey = Proj };
 		await page.OnPostDeleteRouteAsync(doomed);
 
 		var resolved = await _resolver.ResolveAsync(Proj);
@@ -214,7 +214,7 @@ public sealed class LlmRegistryEditorTests : IDisposable
 			NoKeys);
 
 		var view = await _editor.ViewAsync(Proj);
-		var page = new IndexModel(_editor, Flags(), _db) { WorkspaceKey = Ws, ProjectKey = Proj };
+		var page = new IndexModel(_editor, Flags(), _db.Factory()) { WorkspaceKey = Ws, ProjectKey = Proj };
 
 		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "hijacked", 1, null, null, view.Routes[0].Id);
 

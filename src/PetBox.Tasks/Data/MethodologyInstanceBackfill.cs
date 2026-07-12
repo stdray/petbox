@@ -45,13 +45,13 @@ public sealed class MethodologyInstanceBackfill
 		Converters = { new JsonStringEnumConverter() },
 	};
 
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _dbf;
 	readonly IScopedDbFactory<TasksDb> _factory;
 	readonly ILogger? _log;
 
-	public MethodologyInstanceBackfill(PetBoxDb db, IScopedDbFactory<TasksDb> factory, ILogger? log = null)
+	public MethodologyInstanceBackfill(ICoreDbFactory dbf, IScopedDbFactory<TasksDb> factory, ILogger? log = null)
 	{
-		_db = db;
+		_dbf = dbf;
 		_factory = factory;
 		_log = log;
 	}
@@ -59,7 +59,8 @@ public sealed class MethodologyInstanceBackfill
 	// Returns the number of projects that had at least one board membership written.
 	public int Migrate()
 	{
-		var projects = _db.TaskBoards
+		using var db = _dbf.Open();
+		var projects = db.TaskBoards
 			.Select(b => b.ProjectKey)
 			.Distinct()
 			.OrderBy(k => k)
@@ -69,7 +70,7 @@ public sealed class MethodologyInstanceBackfill
 		{
 			try
 			{
-				if (MigrateProject(project)) touched++;
+				if (MigrateProject(db, project)) touched++;
 			}
 			catch (Exception ex)
 			{
@@ -82,9 +83,9 @@ public sealed class MethodologyInstanceBackfill
 	}
 
 	// Exposed for tests: run a single project and report whether any membership was written.
-	internal bool MigrateProject(string projectKey)
+	internal bool MigrateProject(PetBoxDb db, string projectKey)
 	{
-		var boards = _db.TaskBoards
+		var boards = db.TaskBoards
 			.Where(b => b.ProjectKey == projectKey)
 			.OrderBy(b => b.Name)
 			.ToList();
@@ -219,7 +220,7 @@ public sealed class MethodologyInstanceBackfill
 		var assigned = 0;
 		foreach (var (boardName, instanceKey) in plan)
 		{
-			var n = _db.TaskBoards
+			var n = db.TaskBoards
 				.Where(b => b.ProjectKey == projectKey && b.Name == boardName)
 				.Set(b => b.MethodologyInstance, instanceKey)
 				.Set(b => b.UpdatedAt, now)

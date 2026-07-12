@@ -56,10 +56,10 @@ public sealed class McpModuleToolsTests : IDisposable
 		_sessFactory = new ScopedDbFactory<SessionsDb>(Path.Combine(_dir, "sessions"), Scope.Project,
 			c => new SessionsDb(SessionsDb.CreateOptions(c)), SessionsSchema.Ensure);
 
-		_boards = new TaskBoardStore(_db, _tasksFactory);
+		_boards = new TaskBoardStore(_db.Factory(), _tasksFactory);
 		_relations = new RelationStore(_tasksFactory);
 		_tasks = new TasksService(_boards, _relations, new TagStore(_tasksFactory), new CommentService(_tasksFactory));
-		_stores = new MemoryStore(_db, _memFactory);
+		_stores = new MemoryStore(_db.Factory(), _memFactory);
 		_memory = new MemoryService(_stores);
 		_sessions = new SessionStore(_sessFactory);
 		_sessionSvc = new SessionService(_sessions);
@@ -166,15 +166,15 @@ public sealed class McpModuleToolsTests : IDisposable
 	public async Task Memory_Upsert_Search_Roundtrip()
 	{
 		var http = Http("memory:read,memory:write");
-		await MemoryTools.StoreCreateAsync(http, Flags(), _db, _memory, Proj, "notes");
-		await MemoryTools.UpsertAsync(http, Flags(), _db, _memory, Proj, "notes",
+		await MemoryTools.StoreCreateAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes");
+		await MemoryTools.UpsertAsync(http, Flags(), _db.Factory(), _memory, Proj, "notes",
 			McpInputs.Entries(new[]
 			{
 				new { key = "go", type = "reference", description = "Go style", body = "tabs not spaces", tags = new[] { "go", "style" } },
 			}));
 
 		// memory_search is THE read verb (list = search without q; replaced list+recall).
-		var hits = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var hits = await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			"tabs", scope: "project", store: "notes");
 		hits.Items.Should().ContainSingle();
 	}

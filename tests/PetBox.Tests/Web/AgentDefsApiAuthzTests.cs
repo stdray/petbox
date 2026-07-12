@@ -51,7 +51,7 @@ public sealed class AgentDefsApiAuthzFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new Project { Key = Proj, WorkspaceKey = "$system", Name = "AdefAuthz" });
 		await db.InsertAsync(new ApiKey
 		{

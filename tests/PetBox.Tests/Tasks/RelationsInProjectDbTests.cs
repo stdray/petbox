@@ -36,7 +36,7 @@ public sealed class RelationsInProjectDbTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<TasksDb>(Path.Combine(_dir, "tasks"), Scope.Project,
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
-		_store = new TaskBoardStore(_db, _factory);
+		_store = new TaskBoardStore(_db.Factory(), _factory);
 		_relations = new RelationStore(_factory);
 		_tasks = new TasksService(_store, _relations, new TagStore(_factory), new CommentService(_factory));
 	}
@@ -243,7 +243,7 @@ public sealed class RelationsInProjectDbTests : IDisposable
 	}
 
 	RelationsToTasksDbMigrator Migrator() =>
-		new(_db, _factory, Path.Combine(_dir, "tasks"));
+		new(_db.Factory(), _factory, Path.Combine(_dir, "tasks"));
 
 	// A row in the LEGACY Core-DB table (the migration source). Returns its id.
 	string SeedLegacy(string project, string kind, string from, string to, DateTime? closedAt = null)

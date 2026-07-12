@@ -35,7 +35,7 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 
 	WorkspacesModel Page()
 	{
-		var page = new WorkspacesModel(_db);
+		var page = new WorkspacesModel(_db.Factory());
 		var http = new DefaultHttpContext
 		{
 			User = new ClaimsPrincipal(new ClaimsIdentity(

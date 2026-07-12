@@ -35,7 +35,7 @@ public sealed class MemoryWildcardDefaultCascadeTests : IDisposable
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
 		_factory = new ScopedDbFactory<MemoryDb>(Path.Combine(_dir, "memory"), Scope.Project,
 			c => new MemoryDb(MemoryDb.CreateOptions(c)), MemorySchema.Ensure);
-		_memory = new MemoryService(new MemoryStore(_db, _factory));
+		_memory = new MemoryService(new MemoryStore(_db.Factory(), _factory));
 	}
 
 	public void Dispose()
@@ -52,10 +52,10 @@ public sealed class MemoryWildcardDefaultCascadeTests : IDisposable
 	{
 		var http = Wildcard(defaultProject: Proj);
 
-		var p = await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "kafka rebalance storm", scope: "project");
-		var w = await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "kafka rebalance storm", scope: "workspace");
+		var p = await MemoryTools.RememberAsync(http, Flags(), _db.Factory(), _memory, "kafka rebalance storm", scope: "project");
+		var w = await MemoryTools.RememberAsync(http, Flags(), _db.Factory(), _memory, "kafka rebalance storm", scope: "workspace");
 
-		var res = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), "kafka");
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), "kafka");
 
 		res.Items.Select(h => h.Key).Should().Contain([p.Key, w.Key]);
 		res.Items.Select(h => h.Scope).Should().Contain("project").And.Contain("workspace");
@@ -71,11 +71,11 @@ public sealed class MemoryWildcardDefaultCascadeTests : IDisposable
 		_db.Insert(new Project { Key = "other", WorkspaceKey = "ws", Name = "O", Description = "" });
 		var http = Wildcard(defaultProject: Proj);
 
-		await MemoryTools.RememberAsync(http, Flags(), _db, _memory, "kafka in other", projectKey: "other", scope: "project");
+		await MemoryTools.RememberAsync(http, Flags(), _db.Factory(), _memory, "kafka in other", projectKey: "other", scope: "project");
 
-		var here = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), "kafka",
+		var here = await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), "kafka",
 			projectKey: "other", scope: "project");
-		var dflt = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), "kafka",
+		var dflt = await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), "kafka",
 			scope: "project");
 
 		here.Items.Should().ContainSingle();
@@ -89,10 +89,10 @@ public sealed class MemoryWildcardDefaultCascadeTests : IDisposable
 	{
 		var http = Wildcard(defaultProject: null);
 
-		var res = await MemoryTools.SearchAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(), "kafka");
+		var res = await MemoryTools.SearchAsync(http, Flags(), _db.Factory(), _memory, new NoopUsageRecorder(), "kafka");
 		res.Items.Should().BeEmpty();
 
-		var act = () => MemoryTools.RememberAsync(http, Flags(), _db, _memory, "kafka", scope: "project");
+		var act = () => MemoryTools.RememberAsync(http, Flags(), _db.Factory(), _memory, "kafka", scope: "project");
 		await act.Should().ThrowAsync<ArgumentException>();
 	}
 

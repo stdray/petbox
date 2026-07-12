@@ -60,7 +60,7 @@ public sealed class ConfigPipelineFixture : IAsyncLifetime
 		});
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new ApiKey
 		{
 			Key = WriteKey,

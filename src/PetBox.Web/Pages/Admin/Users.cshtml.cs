@@ -13,12 +13,12 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "SysAdmin")]
 public sealed class UsersModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly AdminOptions _adminOptions;
 
-	public UsersModel(PetBoxDb db, IOptions<AdminOptions> adminOptions)
+	public UsersModel(ICoreDbFactory f, IOptions<AdminOptions> adminOptions)
 	{
-		_db = db;
+		_f = f;
 		_adminOptions = adminOptions.Value;
 	}
 
@@ -32,8 +32,9 @@ public sealed class UsersModel : PageModel
 
 	void Load()
 	{
-		var users = _db.Users.OrderBy(u => u.Username).ToList();
-		var members = _db.WorkspaceMembers.ToList();
+		using var db = _f.Open();
+		var users = db.Users.OrderBy(u => u.Username).ToList();
+		var members = db.WorkspaceMembers.ToList();
 
 		Users = [.. users.Select(u => new UserRow(
 			u.Id,
@@ -57,6 +58,7 @@ public sealed class UsersModel : PageModel
 
 	public async Task<IActionResult> OnPostCreateAsync(string? username, string? password)
 	{
+		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
 		{
 			ErrorMessage = "Username and password are required.";
@@ -64,14 +66,14 @@ public sealed class UsersModel : PageModel
 			return Page();
 		}
 
-		if (_db.Users.Any(u => u.Username == username))
+		if (db.Users.Any(u => u.Username == username))
 		{
 			ErrorMessage = $"User '{username}' already exists.";
 			Load();
 			return Page();
 		}
 
-		await _db.InsertWithInt64IdentityAsync(new User
+		await db.InsertWithInt64IdentityAsync(new User
 		{
 			Username = username.Trim(),
 			PasswordHash = AdminPasswordHasher.Hash(password),
@@ -84,6 +86,7 @@ public sealed class UsersModel : PageModel
 
 	public async Task<IActionResult> OnPostResetPasswordAsync(long userId, string? newPassword)
 	{
+		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(newPassword))
 		{
 			ErrorMessage = "New password is required.";
@@ -91,7 +94,7 @@ public sealed class UsersModel : PageModel
 			return Page();
 		}
 
-		await _db.Users
+		await db.Users
 			.Where(u => u.Id == userId)
 			.Set(u => u.PasswordHash, AdminPasswordHasher.Hash(newPassword))
 			.UpdateAsync();
@@ -102,7 +105,8 @@ public sealed class UsersModel : PageModel
 
 	public async Task<IActionResult> OnPostDeleteAsync(long userId)
 	{
-		var user = _db.Users.FirstOrDefault(u => u.Id == userId);
+		using var db = _f.Open();
+		var user = db.Users.FirstOrDefault(u => u.Id == userId);
 		if (user is null)
 			return RedirectToPage();
 
@@ -121,10 +125,10 @@ public sealed class UsersModel : PageModel
 		}
 
 		// Guard the last sysadmin: a user is a sysadmin if they hold $system Admin.
-		var isSysAdmin = _db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin);
+		var isSysAdmin = db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin);
 		if (isSysAdmin)
 		{
-			var sysAdminCount = _db.WorkspaceMembers.Count(m => m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin);
+			var sysAdminCount = db.WorkspaceMembers.Count(m => m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin);
 			if (sysAdminCount <= 1)
 			{
 				ErrorMessage = "Cannot delete the last system administrator.";
@@ -133,8 +137,8 @@ public sealed class UsersModel : PageModel
 			}
 		}
 
-		await _db.WorkspaceMembers.Where(m => m.UserId == userId).DeleteAsync();
-		await _db.Users.Where(u => u.Id == userId).DeleteAsync();
+		await db.WorkspaceMembers.Where(m => m.UserId == userId).DeleteAsync();
+		await db.Users.Where(u => u.Id == userId).DeleteAsync();
 
 		this.NotifySuccess($"User '{user.Username}' deleted.");
 		return RedirectToPage();

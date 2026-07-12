@@ -16,6 +16,7 @@ namespace PetBox.Dashboard;
 // — the status page flags a (svc,tags) whose latest report has gone stale.
 public sealed partial class HealthPoller(
 	IServiceProvider services,
+	ICoreDbFactory coreDb,
 	IHttpClientFactory httpClientFactory,
 	ILogger<HealthPoller> logger) : BackgroundService
 {
@@ -63,8 +64,9 @@ public sealed partial class HealthPoller(
 
 	async Task RunPassAsync(DashboardSettings settings, CancellationToken ct)
 	{
-		using var scope = services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		// One caller-owned connection for the pass; the poll loop below is strictly sequential
+		// (await per endpoint, no fan-out), so this connection is only ever driven by one thread.
+		using var db = coreDb.Open();
 		var endpoints = await db.HealthEndpoints.Where(e => e.Enabled).ToListAsync(ct);
 		if (endpoints.Count == 0) return;
 

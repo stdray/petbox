@@ -94,7 +94,7 @@ public sealed class McpToolCallMetricsFixture : IAsyncLifetime
 				await store.CreateAsync(LogNames.SystemProject, LogNames.SelfLog, null);
 
 			// The memory:read key on $system (the migrations seed the project, not this key).
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.ApiKeys.Where(k => k.Key == MemoryApiKey).DeleteAsync();
 			await db.InsertAsync(new ApiKey
 			{

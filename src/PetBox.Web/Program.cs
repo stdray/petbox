@@ -118,7 +118,13 @@ public partial class Program
 		Directory.CreateDirectory(Path.GetDirectoryName(
 			new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(bootstrapCs).DataSource)!);
 
-		builder.Services.AddScoped(sp => new PetBoxDb(PetBoxDb.CreateOptions(ResolveCs(sp))));
+		// core.db is reached ONLY through ICoreDbFactory: `using var db = factory.Open()` per call,
+		// giving a fresh caller-owned connection instead of a request-shared one. A linq2db
+		// DataConnection is not thread-safe, so a scoped PetBoxDb registration would hand the SAME
+		// connection to every thread a request fans out onto (the cross-scope search 500s) — that
+		// registration is gone now, and DbInjectionGuardTests asserts it stays gone. SINGLETON here:
+		// the factory holds only DataOptions, never a connection.
+		builder.Services.AddSingleton<ICoreDbFactory>(sp => new CoreDbFactory(ResolveCs(sp)));
 		// The catalog of projects/entities (core.db) — the SOURCE OF TRUTH the background enrichment
 		// jobs ask "which projects exist" (spec: catalog-is-source-of-truth). Per-project SQLite files
 		// are created lazily, so a job that enumerated `{tier}/*.db` was blind to a project without a
@@ -267,8 +273,14 @@ public partial class Program
 					?? new PetBox.Sessions.Contract.SessionEpisodicOptions()));
 		// Deploy: single FLEET-WIDE mutable db (one node hosts containers from many
 		// projects, so NOT per-project scoped). Schema ensured once at startup in Configure().
-		builder.Services.AddScoped(sp => new PetBox.Deploy.Data.DeployDb(
-			PetBox.Deploy.Data.DeployDb.CreateOptions($"Data Source={Path.Combine(ResolveDataDir(sp), "deploy.db")};Cache=Shared")));
+		// DeployDb itself is deliberately NOT registered: the ONLY way to a connection is
+		// IDeployDbFactory.Open(), which yields a fresh caller-owned one. An unregistered type cannot
+		// be injected anywhere — not a ctor, not a minimal-API handler parameter, not an MCP tool
+		// method, not GetRequiredService — so "a scoped DataConnection shared across the threads a
+		// request fans out onto" stops being expressible rather than merely being absent today.
+		// DbInjectionGuardTests fails the build if the registration ever comes back.
+		builder.Services.AddSingleton<PetBox.Deploy.Data.IDeployDbFactory>(sp => new PetBox.Deploy.Data.DeployDbFactory(
+			$"Data Source={Path.Combine(ResolveDataDir(sp), "deploy.db")};Cache=Shared"));
 		builder.Services.AddScoped<PetBox.Deploy.Contract.IDeployService, PetBox.Deploy.Services.DeployService>();
 		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Deploy))
 			builder.Services.AddGatedHostedService<PetBox.Deploy.Services.DeployFailoverSweeper>();
@@ -604,11 +616,11 @@ public partial class Program
 		// after the legacy fold (so every board is in its per-project file) and BEFORE the flat
 		// back-fill below — that one creates part_of edges through the store, i.e. already into
 		// the new home, so the copy has to land first or the same edge would exist twice.
-		using (var relScope = app.Services.CreateScope())
+		var coreDbFactory = app.Services.GetRequiredService<ICoreDbFactory>();
+
 		{
-			var coreDb = relScope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			var relLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.RelationsBackfill");
-			new PetBox.Tasks.Data.RelationsToTasksDbMigrator(coreDb, tasksFactory, Path.Combine(dataDir, "tasks"), relLog).Migrate();
+			new PetBox.Tasks.Data.RelationsToTasksDbMigrator(coreDbFactory, tasksFactory, Path.Combine(dataDir, "tasks"), relLog).Migrate();
 		}
 
 		// One-time, idempotent (spec-flat-tags): convert legacy path-keyed nodes to flat
@@ -624,13 +636,11 @@ public partial class Program
 		// One-time, idempotent (methodology-instance-backfill): every existing TaskBoard gets
 		// exactly-one MethodologyInstance membership. Creates methodology_instances rows from
 		// project def / effective builtins; packs quartet process-role boards into one shared
-		// instance when possible. Runs after schema ensure + flat migration; needs PetBoxDb
+		// instance when possible. Runs after schema ensure + flat migration; needs core.db
 		// (membership) + per-project tasks files (instance documents).
-		using (var backfillScope = app.Services.CreateScope())
 		{
-			var coreDb = backfillScope.ServiceProvider.GetRequiredService<PetBoxDb>();
 			var backfillLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.MethodologyInstanceBackfill");
-			new PetBox.Tasks.Data.MethodologyInstanceBackfill(coreDb, tasksFactory, backfillLog).Migrate();
+			new PetBox.Tasks.Data.MethodologyInstanceBackfill(coreDbFactory, tasksFactory, backfillLog).Migrate();
 		}
 
 		// One-time, idempotent (llm-registry-own-store): copy the live LLM registry out of the Config
@@ -644,16 +654,16 @@ public partial class Program
 		// serving the router until the DI flip lands.
 		using (var llmScope = app.Services.CreateScope())
 		{
-			var coreDb = llmScope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			var coreFactory = llmScope.ServiceProvider.GetRequiredService<ICoreDbFactory>();
 			var configFactory = llmScope.ServiceProvider.GetRequiredService<IConfigDbFactory>();
 			var llmImportLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("LlmRouter.RegistryImport");
 			new PetBox.LlmRouter.Registry.LlmRegistryImporter(
-				coreDb, configFactory, Path.Combine(dataDir, "config"), llmImportLog).Import();
+				coreFactory, configFactory, Path.Combine(dataDir, "config"), llmImportLog).Import();
 		}
 
 		using (var scope = app.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = coreDbFactory.Open();
 			var adminOptions = scope.ServiceProvider.GetRequiredService<IOptions<AdminOptions>>();
 			AdminBootstrapper.EnsureAdminUser(db, adminOptions);
 

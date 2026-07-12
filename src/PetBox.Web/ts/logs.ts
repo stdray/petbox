@@ -1,18 +1,8 @@
 // ---------- Local-time rendering ----------
-function formatLocalTime(iso: string): string {
-	const d = new Date(iso);
-	if (Number.isNaN(d.getTime())) return iso;
-	const pad = (n: number, w = 2) => String(n).padStart(w, "0");
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
-}
-
-function renderLocalTimes(root: ParentNode): void {
-	const list = root.querySelectorAll<HTMLElement>("time.local-time[datetime]");
-	list.forEach((el) => {
-		const iso = el.getAttribute("datetime");
-		if (iso) el.textContent = formatLocalTime(iso);
-	});
-}
+// formatLocalTime/renderLocalTimes live in ./localTime (kept side-effect-free there so
+// localTime.test.ts can import them under `node --test` without a DOM). Wiring below is the
+// only part that touches `document`.
+import { renderLocalTimes } from "./localTime";
 
 renderLocalTimes(document);
 document.addEventListener("htmx:afterSwap", (event) => {

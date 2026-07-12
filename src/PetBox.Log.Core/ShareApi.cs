@@ -42,11 +42,12 @@ public static class ShareApi
 
 	static async Task<IResult> CreateShareAsync(
 		HttpContext ctx,
-		PetBoxDb db,
+		ICoreDbFactory dbf,
 		ShareCreateRequest req,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		if (string.IsNullOrWhiteSpace(req.ProjectKey) || string.IsNullOrWhiteSpace(req.Kql))
 			return Results.BadRequest(new ErrorResponse("ProjectKey and Kql required"));
 
@@ -86,11 +87,12 @@ public static class ShareApi
 
 	static async Task<IResult> GetTsvAsync(
 		HttpContext ctx,
-		PetBoxDb db,
+		ICoreDbFactory dbf,
 		ILogStore store,
 		string token,
 		CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		var share = await db.ShareLinks.FirstOrDefaultAsync((ShareLink s) => s.Id == token, ct);
 		if (share is null) return Results.NotFound();
 		if (share.ExpiresAt < DateTime.UtcNow) return Results.NotFound(new ErrorResponse("link expired"));

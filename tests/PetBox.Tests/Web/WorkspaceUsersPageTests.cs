@@ -34,7 +34,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
-	WorkspaceUsersModel Page() => new(_db);
+	WorkspaceUsersModel Page() => new(_db.Factory());
 
 	[Fact]
 	public async Task Add_existing_user_without_password_succeeds_and_keeps_password()

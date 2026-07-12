@@ -33,7 +33,7 @@ public sealed class LogIngestClefAuthzTests
 	async Task SeedProjectKeyAsync(string apiKey, string projectKey, string scopes, bool createDefaultLog)
 	{
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new Project { Key = projectKey, WorkspaceKey = LogNames.SystemProject, Name = projectKey });
 		await db.InsertAsync(new ApiKey { Key = apiKey, ProjectKey = projectKey, Scopes = scopes, Name = apiKey, CreatedAt = DateTime.UtcNow });
 		if (createDefaultLog)

@@ -59,7 +59,7 @@ public sealed class CrossScopeSearchFanOutIntegrationTests : IDisposable
 
 			// A WORKING system-level embed route, inherited by ws1 — so a clean run degrades NOTHING
 			// and any "degraded" line in the log is a real failure, not a missing route.
-			new LlmRegistryLevelAdmin(seed, secrets).SetAsync(Scope.System, RegistryLevel.SystemScopeKey,
+			new LlmRegistryLevelAdmin(seed.Factory(), secrets).SetAsync(Scope.System, RegistryLevel.SystemScopeKey,
 				new LlmRegistry([new LlmEndpoint("stub-ep", "https://stub.example")],
 					[new LlmRoute(LlmCapability.Embed, "stub-ep", "stub-embed-v1")]),
 				new Dictionary<string, string>(StringComparer.Ordinal) { ["stub-ep"] = "stub-key" })
@@ -76,6 +76,11 @@ public sealed class CrossScopeSearchFanOutIntegrationTests : IDisposable
 
 		// Program.cs shape: PetBoxDb is SCOPED — one non-thread-safe DataConnection per scope.
 		services.AddScoped(_ => new PetBoxDb(PetBoxDb.CreateOptions(cs)));
+		// …and ICoreDbFactory is the SINGLETON that hands out fresh, caller-owned connections. Same
+		// as Program.cs. The services under test here (TaskBoardStore, SettingsResolver,
+		// LlmRegistryLevelResolver) now take the factory, which is the whole point of this test: the
+		// fan-out branches must not share one connection.
+		services.AddSingleton<ICoreDbFactory>(_ => new CoreDbFactory(cs));
 		services.AddSingleton<IScopedDbFactory<TasksDb>>(_factory);
 		services.AddScoped<ITaskBoardStore, TaskBoardStore>();
 		services.AddScoped<IRelationStore, RelationStore>();

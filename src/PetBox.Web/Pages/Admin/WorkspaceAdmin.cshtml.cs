@@ -11,12 +11,12 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceMember")]
 public sealed class WorkspaceAdminModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly IConfigDbFactory _configFactory;
 
-	public WorkspaceAdminModel(PetBoxDb db, IConfigDbFactory configFactory)
+	public WorkspaceAdminModel(ICoreDbFactory f, IConfigDbFactory configFactory)
 	{
-		_db = db;
+		_f = f;
 		_configFactory = configFactory;
 	}
 
@@ -32,12 +32,13 @@ public sealed class WorkspaceAdminModel : PageModel
 
 	public void OnGet()
 	{
-		Workspace = _db.Workspaces.FirstOrDefault(w => w.Key == WorkspaceKey);
+		using var db = _f.Open();
+		Workspace = db.Workspaces.FirstOrDefault(w => w.Key == WorkspaceKey);
 		if (Workspace is null) return;
 
-		Projects = _db.Projects.Where(p => p.WorkspaceKey == WorkspaceKey).OrderBy(p => p.Key).ToList();
+		Projects = db.Projects.Where(p => p.WorkspaceKey == WorkspaceKey).OrderBy(p => p.Key).ToList();
 		ProjectCount = Projects.Count;
-		MemberCount = _db.WorkspaceMembers.Count(m => m.WorkspaceKey == WorkspaceKey);
+		MemberCount = db.WorkspaceMembers.Count(m => m.WorkspaceKey == WorkspaceKey);
 
 		using var configDb = _configFactory.NewConfigDb(WorkspaceKey);
 		BindingCount = configDb.Bindings.Count(b => !b.IsDeleted);

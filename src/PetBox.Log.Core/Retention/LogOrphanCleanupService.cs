@@ -13,7 +13,7 @@ namespace PetBox.Log.Core.Retention;
 // on Windows the file stays locked and this service mops up on its next tick.
 // Mirrors PetBox.Data.OrphanCleanupService for the user-data module.
 public sealed partial class LogOrphanCleanupService(
-	IServiceProvider services,
+	ICoreDbFactory coreDb,
 	IScopedDbFactory<LogDb> factory,
 	ILogger<LogOrphanCleanupService> logger) : BackgroundService
 {
@@ -43,8 +43,7 @@ public sealed partial class LogOrphanCleanupService(
 
 	internal async Task RunOncePassAsync(CancellationToken ct)
 	{
-		using var scope = services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = coreDb.Open();
 
 		var knownProjects = await db.Logs
 			.Select(l => l.ProjectKey)

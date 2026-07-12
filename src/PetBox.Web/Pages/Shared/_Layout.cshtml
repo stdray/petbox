@@ -41,7 +41,13 @@
 <body class="min-h-full">
 	<div id="app-drawer" class="drawer drawer-open">
 		<input id="sidebar-toggle" type="checkbox" class="drawer-toggle" />
-		<div class="drawer-content flex flex-col min-h-screen">
+		@* min-w-0: a flex/grid item defaults to min-width:auto, so it won't shrink below its
+		   content's intrinsic width. Without it, a wide row (e.g. the kanban view's column
+		   ribbon, which has its OWN overflow-x-auto) pushes this drawer-content column past
+		   the viewport and the BODY scrolls sideways instead — the ribbon's own scrollbar
+		   never gets a chance to engage because it's never actually width-constrained
+		   (kanban-body-scrolls-not-ribbon, live UI review finding). *@
+		<div class="drawer-content flex flex-col min-h-screen min-w-0">
 			<header class="navbar bg-base-200 border-b border-base-300 px-2 lg:px-4 min-h-12">
 				<div class="flex-none">
 					<label for="sidebar-toggle" class="btn btn-ghost btn-sm drawer-button" data-testid="nav-toggle" title="Toggle sidebar">

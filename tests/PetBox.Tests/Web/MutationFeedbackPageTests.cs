@@ -59,7 +59,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	[Fact]
 	public async Task Workspace_create_redirects_clean_and_sets_success_notice()
 	{
-		var page = new WorkspacesModel(_db);
+		var page = new WorkspacesModel(_db.Factory());
 		Wire(page);
 
 		var result = await page.OnPostCreateAsync("acme", "Acme", "desc");
@@ -74,7 +74,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task Workspace_delete_redirects_clean_and_sets_success_notice()
 	{
 		_db.Insert(new Workspace { Key = "solo", Name = "Solo", Description = "", CreatedAt = DateTime.UtcNow });
-		var page = new WorkspacesModel(_db);
+		var page = new WorkspacesModel(_db.Factory());
 		Wire(page);
 
 		var result = await page.OnPostDeleteAsync("solo");
@@ -92,7 +92,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 		var victimId = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "victim", PasswordHash = "x", CreatedAt = DateTime.UtcNow });
 
-		var page = new UsersModel(_db, adminOptions);
+		var page = new UsersModel(_db.Factory(), adminOptions);
 		Wire(page, userId: 999); // current user is someone else, so the self-delete guard passes
 
 		var result = await page.OnPostDeleteAsync(victimId);
@@ -106,7 +106,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task Connect_mint_redirects_clean_and_carries_the_once_shown_key()
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
-		var page = new ProjectConnectModel(_db, Features()) { WorkspaceKey = "ws", ProjectKey = "proj" };
+		var page = new ProjectConnectModel(_db.Factory(), Features()) { WorkspaceKey = "ws", ProjectKey = "proj" };
 		Wire(page);
 
 		var result = await page.OnPostMintAsync("agent", [ApiKeyScopes.TasksRead]);
@@ -121,7 +121,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task ProjectDetail_create_key_redirects_to_clean_url_and_carries_the_key()
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
-		var page = new ProjectDetailModel(_db, Features(), new NullSettingsResolver())
+		var page = new ProjectDetailModel(_db.Factory(), Features(), new NullSettingsResolver())
 		{
 			WorkspaceKey = "ws",
 			ProjectKey = "proj",
@@ -140,7 +140,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task ProjectDetail_create_key_with_blank_name_re_renders_and_carries_nothing()
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
-		var page = new ProjectDetailModel(_db, Features(), new NullSettingsResolver())
+		var page = new ProjectDetailModel(_db.Factory(), Features(), new NullSettingsResolver())
 		{
 			WorkspaceKey = "ws",
 			ProjectKey = "proj",
@@ -161,7 +161,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task AgentKeys_revoke_redirects_clean_and_sets_success_notice()
 	{
 		_db.Insert(new ApiKey { Key = "yb_key_x", ProjectKey = "proj", Scopes = ApiKeyScopes.TasksRead, Name = "ci", CreatedAt = DateTime.UtcNow });
-		var page = new AgentKeysModel(_db);
+		var page = new AgentKeysModel(_db.Factory());
 		Wire(page);
 
 		var result = await page.OnPostRevokeAsync("yb_key_x");
@@ -177,7 +177,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 		var uid = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "bob", PasswordHash = "x", CreatedAt = DateTime.UtcNow });
 		_db.Insert(new WorkspaceMember { UserId = uid, WorkspaceKey = "ws", Role = WorkspaceRole.Member });
-		var page = new WorkspaceUsersModel(_db);
+		var page = new WorkspaceUsersModel(_db.Factory());
 		Wire(page);
 
 		var result = await page.OnPostRemoveAsync("ws", uid);
@@ -192,7 +192,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
 		_db.Insert(new ApiKey { Key = "yb_key_z", ProjectKey = "proj", Scopes = ApiKeyScopes.TasksRead, Name = "ci", CreatedAt = DateTime.UtcNow });
-		var page = new ProjectDetailModel(_db, Features(), new NullSettingsResolver())
+		var page = new ProjectDetailModel(_db.Factory(), Features(), new NullSettingsResolver())
 		{
 			WorkspaceKey = "ws",
 			ProjectKey = "proj",

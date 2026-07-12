@@ -69,7 +69,7 @@ public sealed class MemoryCanonApiFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.ApiKeys.Where(k => k.Key == TestApiKey).DeleteAsync();
 		await db.Projects.Where(p => p.Key == TestProjectKey).DeleteAsync();
 		await db.Workspaces.Where(w => w.Key == "test").DeleteAsync();
@@ -140,7 +140,7 @@ public sealed class MemoryCanonApiTests : IClassFixture<MemoryCanonApiFixture>, 
 	async Task WriteCanonAsync(string projectKey, string body, string key = "index")
 	{
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		// MemoryStore.CreateAsync requires a Projects row; lazy-ensure workspace containers.
 		if (projectKey == TestWorkspaceContainer)
 			await WorkspaceMemory.EnsureContainerAsync(db, "test");

@@ -8,19 +8,20 @@ using PetBox.Core.Settings;
 
 namespace PetBox.Web.Settings;
 
-public sealed class SettingsResolver(PetBoxDb db, ISecretEncryptor encryptor) : ISettingsResolver
+public sealed class SettingsResolver(ICoreDbFactory factory, ISecretEncryptor encryptor) : ISettingsResolver
 {
-	// The READ path takes a fresh, call-owned connection instead of the injected scoped PetBoxDb
-	// (AddScoped, Program.cs:101 — ONE LinqToDB DataConnection per request, and a DataConnection is
-	// NOT thread-safe). GetAsync is reached from parallel branches of one request scope: the
-	// cross-scope search fan-out drives CapabilityRouter -> LlmRegistryLevelResolver ->
-	// ISettingsResolver.GetAsync on EVERY embed, i.e. on every query. Cloning the scoped
-	// connection's DataOptions keeps the provider, the connection string and the SHARED mapping
-	// schema, and Microsoft.Data.Sqlite pools the underlying connection (same remedy as
-	// TaskBoardStore.cs:75). The WRITE path (SetAsync/ResetAsync) stays on the injected connection:
-	// it is an admin-page single-threaded path, and it must remain able to join whatever the
-	// request's connection is doing.
-	readonly DataOptions<PetBoxDb> _readOptions = new(db.Options);
+	// EVERY path — read and write — takes a fresh, call-owned connection from the factory. A linq2db
+	// DataConnection is NOT thread-safe, and GetAsync is reached from parallel branches of one request
+	// scope: the cross-scope search fan-out drives CapabilityRouter -> LlmRegistryLevelResolver ->
+	// ISettingsResolver.GetAsync on EVERY embed, i.e. on every query.
+	//
+	// The WRITE path used to stay on the injected scoped connection, justified by a comment claiming
+	// it "must remain able to join whatever the request's connection is doing". That was never true:
+	// SetAsync opened no transaction, so each property was its own autocommit and there was nothing to
+	// join. Worse — that made a MULTI-PROPERTY SAVE NON-ATOMIC: a throw on the 3rd of 5 properties
+	// (an unencryptable secret, a bad cast) left the first two committed and the rest not, i.e. the
+	// admin page silently half-applied. So the write path now opens ONE connection per CALL and wraps
+	// the whole property loop in ONE transaction: all properties, or none.
 
 	public async Task<T> GetAsync<T>(Scope deepestScope, string deepestScopeKey, CancellationToken ct = default)
 		where T : new()
@@ -29,7 +30,7 @@ public sealed class SettingsResolver(PetBoxDb db, ISecretEncryptor encryptor) : 
 		var props = SettingPropertyCache.Get(typeof(T));
 		if (props.Count == 0) return result;
 
-		using var read = new PetBoxDb(_readOptions);
+		using var read = factory.Open();
 
 		foreach (var prop in props)
 		{
@@ -57,6 +58,13 @@ public sealed class SettingsResolver(PetBoxDb db, ISecretEncryptor encryptor) : 
 	{
 		var props = SettingPropertyCache.Get(typeof(T));
 		var now = DateTime.UtcNow;
+
+		// ONE connection and ONE transaction for the whole save: a settings form is a SINGLE edit by
+		// the user, and applying half of it is never a state they asked for. Encode() throws on a
+		// secret with no master key configured and on a bad cast, and before this it threw MIDWAY —
+		// after earlier properties had already autocommitted.
+		using var db = factory.Open();
+		await using var tx = await db.BeginTransactionAsync(ct);
 
 		foreach (var prop in props)
 		{
@@ -96,6 +104,10 @@ public sealed class SettingsResolver(PetBoxDb db, ISecretEncryptor encryptor) : 
 					.UpdateAsync(ct);
 			}
 		}
+
+		// Not reached if the loop threw: the `await using` rolls the transaction back, so a failed
+		// save writes NOTHING.
+		await tx.CommitAsync(ct);
 	}
 
 	public async Task ResetAsync<T>(Scope scope, string scopeKey, string propertyName, CancellationToken ct = default)
@@ -105,6 +117,8 @@ public sealed class SettingsResolver(PetBoxDb db, ISecretEncryptor encryptor) : 
 		var match = props.FirstOrDefault(p => p.Property.Name == propertyName)
 			?? throw new ArgumentException($"Property {propertyName} on {typeof(T).Name} is not a [Setting].", nameof(propertyName));
 
+		// A single statement — atomic on its own, no explicit transaction needed.
+		using var db = factory.Open();
 		await db.Settings
 			.Where(s => s.Scope == scope.ToString() && s.ScopeKey == scopeKey && s.Path == match.Attribute.Key)
 			.DeleteAsync(ct);

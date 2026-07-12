@@ -112,7 +112,7 @@ public sealed class AgentDefsAdminPageTests : IClassFixture<ModuleViewsFixture>
 	async Task EnsureProjectAsync(string project)
 	{
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		if (!db.Projects.Any(p => p.Key == project))
 			await db.InsertAsync(new Project { Key = project, WorkspaceKey = "$system", Name = $"Agent-def test target {project}" });
 	}

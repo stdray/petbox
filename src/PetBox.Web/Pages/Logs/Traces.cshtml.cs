@@ -12,12 +12,12 @@ namespace PetBox.Web.Pages.Logs;
 [Authorize]
 public sealed class TracesModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly ILogStore _logStore;
 
-	public TracesModel(PetBoxDb db, ILogStore logStore)
+	public TracesModel(ICoreDbFactory f, ILogStore logStore)
 	{
-		_db = db;
+		_f = f;
 		_logStore = logStore;
 	}
 
@@ -53,10 +53,11 @@ public sealed class TracesModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
+		using var db = _f.Open();
 		EffectiveProjectKey = ProjectKey ?? "";
 		if (string.IsNullOrEmpty(EffectiveProjectKey)) { SchemaMissing = true; return; }
 
-		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == EffectiveProjectKey, ct);
+		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == EffectiveProjectKey, ct);
 		ProjectName = project?.Name;
 
 		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();

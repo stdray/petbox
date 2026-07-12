@@ -75,10 +75,15 @@
 		</div>
 	}
 
-	@* Root add-comment form — always rendered, even on a thread with zero comments yet. *@
-	<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-1" data-testid="comment-add-form">
-		<input type="hidden" name="nodeId" value="@Model.NodeId" />
-		<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Add a comment…" data-testid="comment-add-body" aria-label="Add a comment"></textarea>
-		<button type="submit" class="btn btn-xs btn-primary self-start" data-testid="comment-add-submit">Comment</button>
-	</form>
+	@* Root add-comment form — rendered on the node detail page (always, even on a thread with
+	   zero comments yet). List views (board-comment-form-list-noise) pass ShowAddForm: false —
+	   commenting is a node-detail operation, not a per-card affordance on a list of nodes. *@
+	@if (Model.ShowAddForm)
+	{
+		<form method="post" asp-page-handler="CommentAdd" class="flex flex-col gap-1 mt-1" data-testid="comment-add-form">
+			<input type="hidden" name="nodeId" value="@Model.NodeId" />
+			<textarea name="body" rows="2" required class="textarea textarea-bordered textarea-xs w-full" placeholder="Add a comment…" data-testid="comment-add-body" aria-label="Add a comment"></textarea>
+			<button type="submit" class="btn btn-xs btn-primary self-start" data-testid="comment-add-submit">Comment</button>
+		</form>
+	}
 </div>

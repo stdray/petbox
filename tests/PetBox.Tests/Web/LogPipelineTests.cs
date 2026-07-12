@@ -468,7 +468,7 @@ public sealed class LogPipelineTests
 		const string project = "wsprobe";
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.InsertAsync(new Project { Key = project, WorkspaceKey = "acme", Name = project });
 			await db.InsertAsync(new ApiKey
 			{
@@ -591,7 +591,7 @@ public sealed class LogPipelineTests
 	async Task SeedProjectKeyAsync(string apiKey, string projectKey, string scopes, bool createDefaultLog)
 	{
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new Project
 		{
 			Key = projectKey,

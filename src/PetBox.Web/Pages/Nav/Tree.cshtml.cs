@@ -21,14 +21,14 @@ namespace PetBox.Web.Pages.Nav;
 [Authorize]
 public sealed class TreeModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly INavigationContext _nav;
 	readonly FeatureFlags _features;
 	readonly IDataDbFactory _factory;
 
-	public TreeModel(PetBoxDb db, INavigationContext nav, FeatureFlags features, IDataDbFactory factory)
+	public TreeModel(ICoreDbFactory f, INavigationContext nav, FeatureFlags features, IDataDbFactory factory)
 	{
-		_db = db;
+		_f = f;
 		_nav = nav;
 		_features = features;
 		_factory = factory;
@@ -39,10 +39,11 @@ public sealed class TreeModel : PageModel
 	public string DbName { get; private set; } = string.Empty;
 	public IReadOnlyList<string> Names { get; private set; } = [];
 
-	// Resolves the project and verifies the caller can see its workspace.
-	bool CanAccessProject(string projectKey)
+	// Resolves the project and verifies the caller can see its workspace. Takes the caller's
+	// connection rather than opening its own — every caller already holds one for the same request.
+	bool CanAccessProject(PetBoxDb core, string projectKey)
 	{
-		var project = _db.Projects.FirstOrDefault(p => p.Key == projectKey);
+		var project = core.Projects.FirstOrDefault(p => p.Key == projectKey);
 		if (project is null) return false;
 		if (!_nav.AvailableWorkspaces.Any(w => string.Equals(w.Key, project.WorkspaceKey, StringComparison.Ordinal)))
 			return false;
@@ -53,8 +54,9 @@ public sealed class TreeModel : PageModel
 
 	public IActionResult OnGetLogs(string project)
 	{
-		if (!CanAccessProject(project)) return NotFound();
-		Names = _db.Logs
+		using var db = _f.Open();
+		if (!CanAccessProject(db, project)) return NotFound();
+		Names = db.Logs
 			.Where(l => l.ProjectKey == project)
 			.OrderBy(l => l.Name)
 			.Select(l => l.Name)
@@ -64,9 +66,10 @@ public sealed class TreeModel : PageModel
 
 	public IActionResult OnGetDatabases(string project)
 	{
-		if (!CanAccessProject(project)) return NotFound();
+		using var db = _f.Open();
+		if (!CanAccessProject(db, project)) return NotFound();
 		if (!_features.IsEnabled(Feature.Data)) { Names = []; return Partial("_DbNodes", this); }
-		Names = _db.DataDbs
+		Names = db.DataDbs
 			.Where(d => d.ProjectKey == project)
 			.OrderBy(d => d.Name)
 			.Select(d => d.Name)
@@ -74,12 +77,15 @@ public sealed class TreeModel : PageModel
 		return Partial("_DbNodes", this);
 	}
 
+	// NB: the `db` parameter is the DataDb NAME (bound from the request) — it is not a connection.
+	// The core connection is `core` here to keep the two apart.
 	public async Task<IActionResult> OnGetTablesAsync(string project, string db, CancellationToken ct)
 	{
-		if (!CanAccessProject(project)) return NotFound();
+		using var core = _f.Open();
+		if (!CanAccessProject(core, project)) return NotFound();
 		if (!_features.IsEnabled(Feature.Data)) return NotFound();
 
-		var exists = await _db.DataDbs.AnyAsync(
+		var exists = await core.DataDbs.AnyAsync(
 			d => d.ProjectKey == project && d.Name == db, ct);
 		if (!exists) return NotFound();
 		DbName = db;

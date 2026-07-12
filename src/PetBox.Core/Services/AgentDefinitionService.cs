@@ -27,18 +27,22 @@ public interface IAgentDefinitionService
 
 public sealed partial class AgentDefinitionService : IAgentDefinitionService
 {
-	readonly PetBoxDb _db;
+	// A FACTORY, not a context: every method opens its own connection and disposes it, so no
+	// DataConnection outlives a call or is reachable from two threads (a linq2db DataConnection is
+	// not thread-safe; the scoped PetBoxDb this replaces was shared across a request's fan-out).
+	readonly ICoreDbFactory _factory;
 
 	// Same slug shape as boards/nodes/methodology template keys.
 	[GeneratedRegex(@"^[a-z][a-z0-9_-]{0,99}$")]
 	private static partial Regex SlugRegex();
 
-	public AgentDefinitionService(PetBoxDb db) => _db = db;
+	public AgentDefinitionService(ICoreDbFactory factory) => _factory = factory;
 
 	public async Task<IReadOnlyList<AgentDefinitionListItem>> ListAsync(string projectKey, CancellationToken ct = default)
 	{
 		var pk = RequireProjectKey(projectKey);
-		var rows = await _db.AgentDefinitions
+		using var db = _factory.Open();
+		var rows = await db.AgentDefinitions
 			.Where(r => r.ProjectKey == pk && r.ActiveTo == null)
 			.OrderBy(r => r.Key)
 			.ToListAsync(ct);
@@ -53,7 +57,8 @@ public sealed partial class AgentDefinitionService : IAgentDefinitionService
 	{
 		var pk = RequireProjectKey(projectKey);
 		var k = NormalizeKey(key);
-		var row = await _db.AgentDefinitions
+		using var db = _factory.Open();
+		var row = await db.AgentDefinitions
 			.FirstOrDefaultAsync(r => r.ProjectKey == pk && r.Key == k && r.ActiveTo == null, ct);
 		if (row is null) return null;
 		var def = Deserialize(pk, row);
@@ -64,7 +69,8 @@ public sealed partial class AgentDefinitionService : IAgentDefinitionService
 	{
 		var pk = RequireProjectKey(projectKey);
 		var k = NormalizeKey(key);
-		var row = await _db.AgentDefinitions
+		using var db = _factory.Open();
+		var row = await db.AgentDefinitions
 			.FirstOrDefaultAsync(r => r.ProjectKey == pk && r.Key == k && r.ActiveTo == null, ct);
 		return row?.Json;
 	}
@@ -106,7 +112,8 @@ public sealed partial class AgentDefinitionService : IAgentDefinitionService
 			Json = storedJson,
 		};
 
-		var r = await TemporalStore.UpsertAsync(_db, new[] { row }, partition: x => x.ProjectKey == pk, ct: ct);
+		using var db = _factory.Open();
+		var r = await TemporalStore.UpsertAsync(db, new[] { row }, partition: x => x.ProjectKey == pk, ct: ct);
 		if (!r.Applied)
 		{
 			var c = r.Conflicts[0];
@@ -129,12 +136,17 @@ public sealed partial class AgentDefinitionService : IAgentDefinitionService
 		var pk = RequireProjectKey(projectKey);
 		var k = NormalizeKey(key);
 
-		var current = await _db.AgentDefinitions
+		// The existence probe and the temporal close share ONE connection for the whole call — the
+		// close is a read-modify-write over the same rows, and splitting it across two connections
+		// would race a concurrent writer between them.
+		using var db = _factory.Open();
+
+		var current = await db.AgentDefinitions
 			.FirstOrDefaultAsync(r => r.ProjectKey == pk && r.Key == k && r.ActiveTo == null, ct);
 		if (current is null)
 			return new AgentDefinitionAck(k, Version: 0, Changed: false); // idempotent
 
-		var r = await TemporalStore.UpsertAsync(_db, Array.Empty<AgentDefinitionRow>(),
+		var r = await TemporalStore.UpsertAsync(db, Array.Empty<AgentDefinitionRow>(),
 			[(k, version)], partition: x => x.ProjectKey == pk, ct: ct);
 		if (!r.Applied)
 		{

@@ -680,7 +680,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	{
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			if (!db.Workspaces.Any(w => w.Key == "other-ws"))
 				db.Insert(new PetBox.Core.Models.Workspace
 				{

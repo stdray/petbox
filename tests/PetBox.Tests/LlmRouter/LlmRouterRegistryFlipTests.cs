@@ -61,9 +61,9 @@ public sealed class LlmRouterRegistryFlipTests : IDisposable
 		// The real encryptor with a real master key: the key of an inherited endpoint has to survive
 		// AES-GCM round-tripping on the live path, not just in an admin unit test.
 		_secrets = new AesGcmSecretEncryptor(Options.Create(new SecretEncryptorOptions { MasterKey = "test-master-key" }));
-		_settings = new SettingsResolver(_db, _secrets);
-		_resolver = new LlmRegistryLevelResolver(_db, _secrets, _settings, NullLogger<LlmRegistryLevelResolver>.Instance);
-		_admin = new LlmRegistryLevelAdmin(_db, _secrets);
+		_settings = new SettingsResolver(_db.Factory(), _secrets);
+		_resolver = new LlmRegistryLevelResolver(_db.Factory(), _secrets, _settings, NullLogger<LlmRegistryLevelResolver>.Instance);
+		_admin = new LlmRegistryLevelAdmin(_db.Factory(), _secrets);
 		_router = new CapabilityRouter(_resolver, new CertPinningHttpClientProvider(), _upstream,
 			new EndpointBreaker(new FakeTimeProvider()), _routerLog);
 	}

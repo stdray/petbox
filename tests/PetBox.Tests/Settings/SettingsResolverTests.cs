@@ -87,7 +87,11 @@ public sealed class SettingsResolverTests : IClassFixture<SettingsResolverFixtur
 	async Task<(ISettingsResolver Resolver, PetBoxDb Db)> GetResolverAsync(string? projectKey = null, string? workspaceKey = null)
 	{
 		var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		// Not `using`: this connection is returned to the caller and used well after this method
+		// returns (a `using` here disposes it before the caller ever touches it — ObjectDisposedException).
+		// The DI scope above is deliberately never disposed either, for the same reason; both leak for
+		// the test process's short lifetime, same as before this method took ICoreDbFactory.
+		var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 
 		if (workspaceKey is not null && !db.Workspaces.Any(w => w.Key == workspaceKey))
 			await db.InsertAsync(new Workspace { Key = workspaceKey, Name = workspaceKey, CreatedAt = DateTime.UtcNow });

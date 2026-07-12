@@ -30,30 +30,27 @@ namespace PetBox.LlmRouter.Registry;
 // served by $system.
 public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 {
-	readonly DataOptions<PetBoxDb> _coreOptions;
+	// READ-ONLY resolver, but on the HOTTEST core-db path there is: EVERY embed (every hybrid search
+	// query) resolves the level, and that is 4+ round-trips (Projects, Settings x2 via
+	// ISettingsResolver, LlmRoutes, LlmEndpoints) — issued BEFORE the "no route" decision, so they
+	// happen even for a project with no routes at all. A linq2db DataConnection is NOT thread-safe,
+	// and this resolver sits under CapabilityRouter, which parallel fan-outs
+	// (CrossScopeTaskSearchService) drive from several branches of one request scope. So it takes the
+	// FACTORY and opens a fresh, call-owned connection per resolve. (It used to clone the scoped
+	// PetBoxDb's DataOptions by hand; ICoreDbFactory is that mechanic, once — and it keeps the SHARED
+	// mapping schema, a per-connection one being the prod OOM: see PetBoxDb.SharedMappingSchema.)
+	readonly ICoreDbFactory _core;
 	readonly ISecretEncryptor _secrets;
 	readonly ISettingsResolver _settings;
 	readonly ILogger<LlmRegistryLevelResolver> _log;
 
 	public LlmRegistryLevelResolver(
-		PetBoxDb db,
+		ICoreDbFactory core,
 		ISecretEncryptor secrets,
 		ISettingsResolver settings,
 		ILogger<LlmRegistryLevelResolver> log)
 	{
-		// READ-ONLY resolver, but on the HOTTEST shared-connection path there is: EVERY embed (every
-		// hybrid search query) resolves the level, and that is 4+ round-trips (Projects, Settings x2 via
-		// ISettingsResolver, LlmRoutes, LlmEndpoints) — issued BEFORE the "no route" decision, so they
-		// happen even for a project with no routes at all. The injected PetBoxDb is AddScoped
-		// (Program.cs:101) — ONE non-thread-safe LinqToDB DataConnection per request — and this resolver
-		// sits under CapabilityRouter, which parallel fan-outs (CrossScopeTaskSearchService) drive from
-		// several branches of one request scope. So take a fresh, call-owned connection instead of the
-		// shared one: cloning the scoped connection's DataOptions keeps the provider, the connection
-		// string and the SHARED mapping schema (no per-connection MappingSchema — that was the prod OOM,
-		// see PetBoxDb.SharedMappingSchema) and Microsoft.Data.Sqlite pools the underlying connection.
-		// Same remedy as TaskBoardStore.cs:75. Belt AND braces: the fan-out now also gives each branch
-		// its own DI scope, but a scoped service must not be a landmine for the next parallel caller.
-		_coreOptions = new DataOptions<PetBoxDb>(db.Options);
+		_core = core;
 		_secrets = secrets;
 		_settings = settings;
 		_log = log;
@@ -61,7 +58,7 @@ public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 
 	public async Task<ResolvedRegistryLevel> ResolveAsync(string projectKey, CancellationToken ct = default)
 	{
-		using var db = new PetBoxDb(_coreOptions);
+		using var db = _core.Open();
 
 		var workspaceKey = await db.Projects
 			.Where(p => p.Key == projectKey)

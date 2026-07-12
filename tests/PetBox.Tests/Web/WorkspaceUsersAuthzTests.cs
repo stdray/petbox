@@ -49,7 +49,7 @@ public sealed class WorkspaceUsersAuthzFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 
 		await db.InsertAsync(new Workspace { Key = "wsa", Name = "Wsa", Description = "", CreatedAt = DateTime.UtcNow });
 		await db.InsertAsync(new Workspace { Key = "wsb", Name = "Wsb", Description = "", CreatedAt = DateTime.UtcNow });
@@ -137,7 +137,7 @@ public sealed class WorkspaceUsersAuthzTests : IClassFixture<WorkspaceUsersAuthz
 		addResp.Headers.Location!.ToString().Should().Contain("/Login");
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		db.Users.Any(u => u.Username == "intruder-user").Should().BeFalse(
 			"the cross-tenant add must not have created a user account, let alone a wsb membership");
 	}
@@ -174,7 +174,7 @@ public sealed class WorkspaceUsersAuthzTests : IClassFixture<WorkspaceUsersAuthz
 		addResp.StatusCode.Should().Be(HttpStatusCode.Redirect, "eve is Admin of the route workspace (wsa)");
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		var user = db.Users.FirstOrDefault(u => u.Username == "pwn-user");
 		user.Should().NotBeNull("the create should still succeed — scoped to the route workspace");
 

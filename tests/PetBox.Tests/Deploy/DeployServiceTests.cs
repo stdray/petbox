@@ -11,6 +11,9 @@ namespace PetBox.Tests.Deploy;
 public sealed class DeployServiceTests : IDisposable
 {
 	readonly string _dir;
+	// A direct connection, for the fixture backdoors that seed state the service has no API for
+	// (e.g. backdating LastSeenAt to make a node look stale). The SERVICE itself gets the factory —
+	// it opens and disposes its own connection per call.
 	readonly DeployDb _db;
 	readonly DeployService _svc;
 
@@ -21,7 +24,7 @@ public sealed class DeployServiceTests : IDisposable
 		var cs = $"Data Source={Path.Combine(_dir, "deploy.db")};Cache=Shared";
 		DeploySchema.Ensure(cs);
 		_db = new DeployDb(DeployDb.CreateOptions(cs));
-		_svc = new DeployService(_db);
+		_svc = new DeployService(new DeployDbFactory(cs));
 	}
 
 	public void Dispose()

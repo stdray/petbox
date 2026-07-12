@@ -17,13 +17,13 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class MemoryModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly IMemoryService _memory;
 
-	public MemoryModel(PetBoxDb db, FeatureFlags features, IMemoryService memory)
+	public MemoryModel(ICoreDbFactory f, FeatureFlags features, IMemoryService memory)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_memory = memory;
 	}
@@ -40,14 +40,15 @@ public sealed class MemoryModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
+		using var db = _f.Open();
 		// Shared-memory routes (/ui/{ws}/$ws-{ws}/memory or /ui/$system/$workspace/memory):
 		// lazy-ensure the container so the first UI navigation is not a "Project not found"
 		// before any MCP write. No-op when the row already exists (incl. M028 $workspace).
 		if (WorkspaceMemory.IsWorkspaceContainer(ProjectKey)
 			&& string.Equals(WorkspaceMemory.WorkspaceKeyOfContainer(ProjectKey), WorkspaceKey, StringComparison.Ordinal))
-			await WorkspaceMemory.EnsureContainerAsync(_db, WorkspaceKey, ct);
+			await WorkspaceMemory.EnsureContainerAsync(db, WorkspaceKey, ct);
 
-		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		// Bind project to route workspace — reject field IDOR (/ui/$system/$ws-other/memory).
 		// Membership of route workspace is enforced by WorkspaceViewer policy above.
 		if (Project is not null && !string.Equals(Project.WorkspaceKey, WorkspaceKey, StringComparison.Ordinal))

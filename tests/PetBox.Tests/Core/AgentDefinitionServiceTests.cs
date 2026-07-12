@@ -26,7 +26,7 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 		TestSchema.Core(cs);
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
 		_db.Insert(new Project { Key = Proj, WorkspaceKey = "ws", Name = "P", Description = "" });
-		_svc = new AgentDefinitionService(_db);
+		_svc = new AgentDefinitionService(_db.Factory());
 	}
 
 	public void Dispose()

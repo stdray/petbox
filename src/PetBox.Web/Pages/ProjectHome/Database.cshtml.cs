@@ -18,13 +18,13 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize]
 public sealed class DatabaseModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly IDataDbFactory _factory;
 
-	public DatabaseModel(PetBoxDb db, FeatureFlags features, IDataDbFactory factory)
+	public DatabaseModel(ICoreDbFactory f, FeatureFlags features, IDataDbFactory factory)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_factory = factory;
 	}
@@ -45,12 +45,13 @@ public sealed class DatabaseModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
+		using var db = _f.Open();
 		if (!DataEnabled) return Page();
 
-		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null) return Page();
 
-		Db = await _db.DataDbs.FirstOrDefaultAsync(
+		Db = await db.DataDbs.FirstOrDefaultAsync(
 			d => d.ProjectKey == ProjectKey && d.Name == DbName, ct);
 		if (Db is null) return Page();
 
