@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using PetBox.Core.Data;
@@ -60,19 +59,18 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 					{
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Features:Tasks"] = "true",
+						// Same reason as TasksMcpFixture: these smoke tests only need the MCP stack.
+						// Background services (enrichment, orphan cleanup, WAL checkpoint, self-log
+						// flush) tick on wall-clock timers, so under a LOADED parallel run — where the
+						// class takes longer than their 10s/30s initial delays — they fire in the middle
+						// of a test and hold pooled SqliteConnections / native file handles on Windows,
+						// which makes ResetAsync's delete of the per-test tasks file fail. The host's OWN
+						// off-switch, not surgery on its DI container (spec: host-composition-contract).
+						["Host:BackgroundServices"] = "false",
 					});
 				});
 				b.ConfigureServices(svc =>
 				{
-					// Same reason as TasksMcpFixture: these smoke tests only need the MCP stack.
-					// Background services (enrichment, orphan cleanup, WAL checkpoint, self-log
-					// flush) tick on wall-clock timers, so under a LOADED parallel run — where the
-					// class takes longer than their 10s/30s initial delays — they fire in the middle
-					// of a test and hold pooled SqliteConnections / native file handles on Windows,
-					// which makes ResetAsync's delete of the per-test tasks file fail.
-					var hosted = svc.Where(d => typeof(IHostedService).IsAssignableFrom(d.ServiceType)).ToList();
-					foreach (var h in hosted) svc.Remove(h);
-
 					var tasksFactory = svc.SingleOrDefault(d => d.ServiceType == typeof(IScopedDbFactory<TasksDb>));
 					if (tasksFactory is not null) svc.Remove(tasksFactory);
 					svc.AddSingleton<IScopedDbFactory<TasksDb>>(_ => new ScopedDbFactory<TasksDb>(

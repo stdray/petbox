@@ -21,6 +21,7 @@ public sealed class HealthEndpointTests : IAsyncLifetime
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
+						["Host:BackgroundServices"] = "false",
 					});
 				});
 			});

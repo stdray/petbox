@@ -70,6 +70,7 @@ public sealed class McpOutputSchemaConformanceFixture : IAsyncLifetime
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
+						["Host:BackgroundServices"] = "false",
 						// Enable every feature so a covered read is never an isError just because
 						// its subsystem was toggled off.
 						["Features:Tasks"] = "true",
