@@ -74,32 +74,63 @@ public sealed class MethodologyRuntime
 		ResolvedKind(kindSlug)?.Delivery;
 
 	// The methodology-declared default view mode for a kind (methodology-default-view-field):
-	// the definition's when it declares the kind, else the preset's (work→kanban, spec→
-	// outline, intake→table, ideas→tree). Null = no methodology preference — the caller
-	// (BoardViewModeRegistry.Resolve) falls through to the builtin Tree default. The name is
-	// format-only here; whether it is currently RENDERABLE is a PetBox.Web concern.
+	// merged PER FIELD, NOT per kind like ResolvedKind below (board-view-defaults-not-
+	// applied-existing-instances) — a board provisioned from the quartet/classic BUILTIN
+	// TEMPLATE materializes each preset MethodologyKindDef into the instance's stored
+	// definition VERBATIM at creation time (RenderPresetDefinition); an instance created
+	// before this field existed therefore stores DefaultView as null on a kind it otherwise
+	// fully declares (e.g. `work`), and the whole-object merge in ResolvedKind reads that
+	// null as "no default" instead of "no OPINION, use the preset" — the four `$system`
+	// boards all opened in Tree in production because of exactly this. The definition's
+	// DefaultView when non-null, else the preset's for the SAME resolved kind (work→kanban,
+	// spec→outline, intake→table, ideas→tree; a wholly custom kind slug with no BoardKind
+	// match falls back to Simple's DefaultView, itself null). Null overall = no methodology
+	// preference — the caller (BoardViewModeRegistry.Resolve) falls through to the builtin
+	// Tree default; never throws for a user-defined kind with no preset counterpart. The
+	// name is format-only here; whether it is currently RENDERABLE is a PetBox.Web concern.
 	public string? DefaultView(string? kindSlug) =>
-		ResolvedKind(kindSlug)?.DefaultView;
+		DeclaredField(kindSlug, k => k.DefaultView) ?? PresetField(kindSlug, k => k.DefaultView);
 
-	// The outline view's reveal mode for a kind (board-view-mode-framework): the definition's
-	// OutlineReveal when it declares the kind, else the preset's (spec → inline-lazy; every
-	// other kind → null, read as Navigate below). Uses the SAME merge as DefaultView/Delivery/
-	// AutoWireSpecFrom — deliberately NOT PresetKind, whose null-for-a-defined-kind guard is
-	// correct for process-role behavior (FSM effects, delivery roll-up, quartet invariants) but
-	// wrong here: a board provisioned from the quartet/classic BUILTIN TEMPLATE stores its kinds
-	// as a materialized MethodologyDefinition (RenderPresetDefinition copies each preset
-	// MethodologyKindDef verbatim, this field included), so PresetKind would read null for a
-	// perfectly ordinary `spec` board and the InlineLazy branch would be unreachable in
-	// practice — exactly the bug this resolver exists to avoid.
+	// The outline view's reveal mode for a kind (board-view-mode-framework): the SAME per-
+	// FIELD merge as DefaultView just above, for the identical reason (a pre-field-existing
+	// materialized definition stores this null on a kind it otherwise fully declares). The
+	// definition's OutlineReveal when non-null, else the preset's for the same resolved kind
+	// (spec → inline-lazy; every other kind → null, read as Navigate below). Deliberately
+	// NOT PresetKind, whose null-for-a-defined-kind guard is correct for process-role
+	// behavior (FSM effects, delivery roll-up, quartet invariants) but wrong here: PresetKind
+	// would read null for a perfectly ordinary `spec` board and the InlineLazy branch would
+	// be unreachable in practice — exactly the bug this resolver exists to avoid.
 	public string OutlineReveal(string? kindSlug) =>
-		ResolvedKind(kindSlug)?.OutlineReveal ?? OutlineRevealModeNames.Navigate;
+		(DeclaredField(kindSlug, k => k.OutlineReveal) ?? PresetField(kindSlug, k => k.OutlineReveal))
+			?? OutlineRevealModeNames.Navigate;
 
-	// The kind definition the resolvers above share: definition override wins, else the
-	// preset KindDef for the parsed BoardKind (unknown slugs → Simple).
+	// The kind definition the process-role resolvers above (LinkConstraints, Effects,
+	// AutoWireSpecFrom, DeliveryOf) share: definition override wins WHOLESALE when the kind
+	// is declared, else the preset KindDef for the parsed BoardKind (unknown slugs → Simple).
+	// Deliberately whole-object, unlike DefaultView/OutlineReveal above: a declared kind's
+	// process fields (link constraints, effects, delivery roll-up, auto-wire target) are
+	// process semantics the DEFINITION is the source of truth for — an omitted field there
+	// means "this kind has none of that", not "inherit the preset's". Only the two display-
+	// only view-mode fields get the field-level merge, because their documented null meaning
+	// ("no opinion, use the builtin/preset default") is what a pre-field document actually
+	// intends, and merging the other fields would silently reintroduce preset process
+	// behavior (e.g. work's task_spec link constraint) onto a definition that deliberately
+	// dropped it.
 	MethodologyKindDef? ResolvedKind(string? kindSlug) =>
 		kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind)
 			? kind
 			: MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug));
+
+	// The declared kind's own value for `select`, or null when the kind isn't declared at
+	// all (the field-merge counterpart's "no opinion from the definition" half).
+	string? DeclaredField(string? kindSlug, Func<MethodologyKindDef, string?> select) =>
+		kindSlug is not null && _kinds.TryGetValue(kindSlug, out var kind) ? select(kind) : null;
+
+	// The PRESET's value for `select`, resolved for the SAME kind slug (parsed to its
+	// BoardKind, unknown → Simple) regardless of whether the definition declares it — the
+	// field-merge counterpart's preset half, shared by DefaultView and OutlineReveal.
+	static string? PresetField(string? kindSlug, Func<MethodologyKindDef, string?> select) =>
+		select(MethodologyPresets.KindDef(MethodologyPresets.ParseKind(kindSlug)));
 
 	// Tag axes governing a board of this kind — ONE rule for everything: no axes =
 	// free-form tags, axes declared = enforced namespace allowlist. A definition-resolved
