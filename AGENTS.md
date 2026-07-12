@@ -250,6 +250,9 @@ Historical (frozen) — a record of how the project got here, not current state:
 - Cake + GitVersion for build/versioning
 - GitHub Actions CI/CD with SSH deploy
 - E2E: Playwright (chromium)
+  - Локальная отладка UI через скилл `playwright-cli`: только bundled chromium
+    (`--browser=chrome|msedge` на Windows оставляет висящее чёрное окно), после работы —
+    `npx playwright-cli close-all`. Подробности — в памяти PetBox (workspace).
 
 ## Module architecture
 
