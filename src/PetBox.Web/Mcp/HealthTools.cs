@@ -35,7 +35,7 @@ public static class HealthTools
 		[Description("Optional cap on history entries per service (most-recent first). Defaults to 50 when history is on.")] int? limit = null,
 		CancellationToken ct = default)
 	{
-		AssertProject(http, projectKey);
+		ModuleMcp.AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.HealthRead);
 
 		if (staleThresholdSeconds < 0) throw new ArgumentException("staleThresholdSeconds must be >= 0");
@@ -117,14 +117,6 @@ public static class HealthTools
 	{
 		var age = (long)(nowUtc - DateTime.SpecifyKind(receivedAt, DateTimeKind.Utc)).TotalSeconds;
 		return age < 0 ? 0 : age; // clock skew guard — a future timestamp is not "negative age"
-	}
-
-	static void AssertProject(IHttpContextAccessor accessor, string projectKey)
-	{
-		var ctx = accessor.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
-			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
 	}
 
 	static void AssertScope(IHttpContextAccessor accessor, string required)

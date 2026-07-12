@@ -38,7 +38,7 @@ public static class LogTools
 		[Description("KQL query, e.g. 'events | where Level == 4 | take 50' or 'events | summarize count() by ServiceKey'.")] string kql,
 		CancellationToken ct = default)
 	{
-		AssertProject(http, projectKey);
+		ModuleMcp.AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.LogsQuery);
 
 		LogQueryResult result;
@@ -79,14 +79,6 @@ public static class LogTools
 		{
 			throw new InvalidOperationException(ex.Message);
 		}
-	}
-
-	static void AssertProject(IHttpContextAccessor accessor, string projectKey)
-	{
-		var ctx = accessor.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
-			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
 	}
 
 	static void AssertScope(IHttpContextAccessor accessor, string required)

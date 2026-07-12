@@ -25,7 +25,7 @@ public static class LogCatalogTools
 		[Description("Optional description.")] string? description = null,
 		CancellationToken ct = default)
 	{
-		AssertProject(http, projectKey);
+		ModuleMcp.AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 		if (await logStore.ExistsAsync(projectKey, name, ct))
@@ -40,7 +40,7 @@ public static class LogCatalogTools
 		IHttpContextAccessor http, ILogStore logStore,
 		string projectKey, CancellationToken ct = default)
 	{
-		AssertProject(http, projectKey);
+		ModuleMcp.AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.LogsQuery);
 		var rows = await logStore.ListAsync(projectKey, ct);
 		return new LogListResult(rows.Select(l => new LogRow(l.Name, l.Description, l.CreatedAt, l.UpdatedAt)).ToList());
@@ -52,20 +52,12 @@ public static class LogCatalogTools
 		IHttpContextAccessor http, ILogStore logStore,
 		string projectKey, string name, CancellationToken ct = default)
 	{
-		AssertProject(http, projectKey);
+		ModuleMcp.AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 		var deleted = await logStore.DeleteAsync(projectKey, name, ct);
 		if (!deleted) throw new InvalidOperationException("Log not found");
 		return new LogDeletedResult(true, name);
-	}
-
-	static void AssertProject(IHttpContextAccessor accessor, string projectKey)
-	{
-		var ctx = accessor.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
-			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
 	}
 
 	static void AssertScope(IHttpContextAccessor accessor, string required)
