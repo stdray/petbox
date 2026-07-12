@@ -13,6 +13,7 @@
 // is swallowed and we ALWAYS exit 0 — never break the user's session.
 
 import { pushTranscript } from "./append.ts";
+import { unrefLingeringHandles } from "./hook-drain.ts";
 import { resolveProject } from "./registry.ts";
 import { buildMessages, type Msg } from "./transcript.ts";
 // Observed role binding is stamped inside pushTranscript (X-PetBox-Session-Meta via
@@ -83,4 +84,16 @@ async function main(): Promise<void> {
   }
 }
 
-main().finally(() => process.exit(0));
+// Exit cleanly instead of tearing the process down mid-close: a hard process.exit() while
+// libuv handles from the HTTP push above are still closing can race Windows' async handle
+// teardown (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), src\win\async.c`) — the
+// same crash observed in pull-memory.ts (see its exit comment). Setting exitCode and returning
+// lets Node drain the event loop naturally instead — `Connection: close` (append.ts) covers a
+// completed push, and unrefLingeringHandles covers a push aborted mid-flight against a stalled
+// server (measured to leave its TLSSocket alive for several more seconds otherwise; see
+// hook-drain.ts) so a slow Stop hook can't turn into a multi-second stall on a handle nothing
+// is still using.
+main().finally(() => {
+  process.exitCode = 0;
+  unrefLingeringHandles();
+});

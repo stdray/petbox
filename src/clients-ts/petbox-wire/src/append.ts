@@ -78,6 +78,9 @@ async function post(
   const headers: Record<string, string> = {
     "X-Api-Key": apiKey,
     "Content-Type": "application/x-ndjson; charset=utf-8",
+    // Connection: close — no lingering keep-alive socket after this short-lived hook
+    // process's request (see canon.ts's fetchCanon for the full rationale).
+    Connection: "close",
   };
   if (metaHeader) headers["X-PetBox-Session-Meta"] = metaHeader;
   const ctrl = new AbortController();

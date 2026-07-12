@@ -142,7 +142,9 @@ export async function fetchAgentDefinition(
       const url = `${base}/api/${encodeURIComponent(project)}/agent-defs/${encodeURIComponent(defKey)}`;
       const resp = await fetchFn(url, {
         method: "GET",
-        headers: { "X-Api-Key": apiKey },
+        // Connection: close — no lingering keep-alive socket after a short-lived hook
+        // process's single request (see canon.ts's fetchCanon for the full rationale).
+        headers: { "X-Api-Key": apiKey, Connection: "close" },
         signal: ctrl.signal,
       });
       if (!resp.ok) return null;
