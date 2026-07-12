@@ -119,6 +119,13 @@ public partial class Program
 			new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(bootstrapCs).DataSource)!);
 
 		builder.Services.AddScoped(sp => new PetBoxDb(PetBoxDb.CreateOptions(ResolveCs(sp))));
+		// The way core.db SHOULD be reached: `using var db = factory.Open()` per call, giving a
+		// fresh caller-owned connection instead of a request-shared one. A linq2db DataConnection is
+		// not thread-safe, and the AddScoped registration above hands the SAME one to every thread a
+		// request fans out onto (the cross-scope search 500s). Consumers are being migrated onto the
+		// factory; when the last one is off it, the scoped registration goes away and the bug class
+		// stops being expressible. SINGLETON: it holds only DataOptions, never a connection.
+		builder.Services.AddSingleton<ICoreDbFactory>(sp => new CoreDbFactory(ResolveCs(sp)));
 		// The catalog of projects/entities (core.db) — the SOURCE OF TRUTH the background enrichment
 		// jobs ask "which projects exist" (spec: catalog-is-source-of-truth). Per-project SQLite files
 		// are created lazily, so a job that enumerated `{tier}/*.db` was blind to a project without a
@@ -267,8 +274,14 @@ public partial class Program
 					?? new PetBox.Sessions.Contract.SessionEpisodicOptions()));
 		// Deploy: single FLEET-WIDE mutable db (one node hosts containers from many
 		// projects, so NOT per-project scoped). Schema ensured once at startup in Configure().
-		builder.Services.AddScoped(sp => new PetBox.Deploy.Data.DeployDb(
-			PetBox.Deploy.Data.DeployDb.CreateOptions($"Data Source={Path.Combine(ResolveDataDir(sp), "deploy.db")};Cache=Shared")));
+		// DeployDb itself is deliberately NOT registered: the ONLY way to a connection is
+		// IDeployDbFactory.Open(), which yields a fresh caller-owned one. An unregistered type cannot
+		// be injected anywhere — not a ctor, not a minimal-API handler parameter, not an MCP tool
+		// method, not GetRequiredService — so "a scoped DataConnection shared across the threads a
+		// request fans out onto" stops being expressible rather than merely being absent today.
+		// DbInjectionGuardTests fails the build if the registration ever comes back.
+		builder.Services.AddSingleton<PetBox.Deploy.Data.IDeployDbFactory>(sp => new PetBox.Deploy.Data.DeployDbFactory(
+			$"Data Source={Path.Combine(ResolveDataDir(sp), "deploy.db")};Cache=Shared"));
 		builder.Services.AddScoped<PetBox.Deploy.Contract.IDeployService, PetBox.Deploy.Services.DeployService>();
 		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Deploy))
 			builder.Services.AddGatedHostedService<PetBox.Deploy.Services.DeployFailoverSweeper>();

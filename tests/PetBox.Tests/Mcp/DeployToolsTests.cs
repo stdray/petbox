@@ -17,7 +17,6 @@ namespace PetBox.Tests.Mcp;
 public sealed class DeployToolsTests : IDisposable
 {
 	readonly string _dir;
-	readonly DeployDb _deploy;
 	readonly DeployService _svc;
 	readonly PetBoxDb _db;
 
@@ -27,8 +26,9 @@ public sealed class DeployToolsTests : IDisposable
 		Directory.CreateDirectory(_dir);
 		var deployCs = $"Data Source={Path.Combine(_dir, "deploy.db")};Cache=Shared";
 		DeploySchema.Ensure(deployCs);
-		_deploy = new DeployDb(DeployDb.CreateOptions(deployCs));
-		_svc = new DeployService(_deploy);
+		// The service owns its connections now (one per call, via the factory) — there is no
+		// long-lived DeployDb for the fixture to hold.
+		_svc = new DeployService(new DeployDbFactory(deployCs));
 
 		var coreCs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
 		TestSchema.Core(coreCs);
@@ -37,7 +37,6 @@ public sealed class DeployToolsTests : IDisposable
 
 	public void Dispose()
 	{
-		_deploy.Dispose();
 		_db.Dispose();
 		TestDirs.CleanupOrDefer(_dir);
 	}
