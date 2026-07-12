@@ -396,6 +396,10 @@ public static class MemoryTools
 		`omitted` + a narrowing `hint`; no markers = the complete answer. Requires
 		memory:read.
 
+		ROW WEIGHT: a row's `description` is capped at ~160 chars ("…" when cut) in BOTH modes —
+		the head of a row is priced per row, so it stays a one-liner; memory_get returns the full
+		description (and the full body).
+
 		Returns { items: [{ scope, store, key, type, description, body, tags, version }], retrievers? };
 		`version` is the entry's CAS baseline for memory_upsert (pass it back to edit without a Stale round-trip).
 		With `q` each row also carries `score` (the fused, freshness-blended relevance) and `retriever`
@@ -471,7 +475,11 @@ public static class MemoryTools
 			foreach (var h in res.Hits)
 			{
 				var u = includeUsage && usageMap.TryGetValue(h.Store + "\x1f" + h.Entry.Key, out var uv) ? uv : null;
-				var row = new MemorySearchHitView(scopeName, h.Store, h.Entry.Key, h.Entry.Type, h.Entry.Description,
+				var row = new MemorySearchHitView(scopeName, h.Store, h.Entry.Key, h.Entry.Type,
+					// The row HEAD is priced per row too (spec: row-weight-bounded): an unbounded
+					// description made the head, not the body, the bigger half of a search's cost.
+					// Same uniform truncation contract as a body — the full text is one memory_get away.
+					ModuleMcp.Body(h.Entry.Description, null, DescriptionSnippet) ?? "",
 					// Uniform bodyLen contract, default a ~240-char snippet (compact listing).
 					ModuleMcp.Body(h.Entry.Body, bodyLen, ModuleMcp.DefaultSnippet), h.Entry.Tags, h.Entry.Version,
 					includeUsage ? (u?.Surfaced ?? 0) : null, includeUsage ? (u?.Opened ?? 0) : null, u?.LastHitAt,
@@ -543,6 +551,14 @@ public static class MemoryTools
 
 	// The bounded default of memory_search (both modes; spec bounded-result-sets).
 	const int DefaultLimit = 20;
+
+	// The cap on a row's `description` in search/listing rows (spec: row-weight-bounded). A
+	// description is by contract a ONE-LINE summary, and 160 chars is a full line of prose — long
+	// enough to identify a fact, short enough that the row head cannot outweigh its body. It is
+	// NOT caller-tunable (no per-field knob): the field is a head, not a payload; a longer text
+	// means the entry's body was written into its description, and the fix for that is memory_get
+	// (full description + full body), not a wider search row.
+	const int DescriptionSnippet = 160;
 
 	// The usage-signal split, as recorded on a delivery event (mirrors entry_usage's
 	// deliberate/machine cut — see the `usageSource` argument of memory_search).
