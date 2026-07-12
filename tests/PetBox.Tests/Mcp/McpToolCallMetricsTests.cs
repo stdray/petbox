@@ -212,9 +212,14 @@ public sealed class McpToolCallMetricsTests : IClassFixture<McpToolCallMetricsFi
 	[Fact]
 	public async Task ToolCall_EmitsQueryableMetricEvent_WithSessionAndSizes()
 	{
-		// One measured call over the MCP surface → one always-on self-log write.
+		// One measured call over the MCP surface → one always-on self-log write. Wait for OUR OWN
+		// event (before+1), not `atLeast: 1`: the flusher is async and the self-log is shared by
+		// every test in this class, so a bare `>= 1` can be satisfied by a SIBLING test's event
+		// while this call is still queued — letting it escape unflushed and rot the next test's
+		// baseline (that was the MultipleCalls_… "3 where 2 expected" flake).
+		var before = await ToolCallCountAsync("log_query");
 		await CallLogQueryAsync();
-		await WaitForToolCallCountAsync("log_query", atLeast: 1);
+		await WaitForToolCallCountAsync("log_query", before + 1);
 
 		// The exact query the spec targets: attribute a call to its session and read the sizes.
 		// Two backend accommodations (both faithful to the spec's intent): this KQL engine has
@@ -323,8 +328,11 @@ public sealed class McpToolCallMetricsTests : IClassFixture<McpToolCallMetricsFi
 	[Fact]
 	public async Task ToolCall_WithoutMarkup_CarriesNoArgProperties()
 	{
+		// Delta, not `atLeast: 1` — see ToolCall_EmitsQueryableMetricEvent: every test must leave the
+		// self-log fully flushed, or its stragglers land in a later test's counts.
+		var before = await ToolCallCountAsync("log_query");
 		await CallLogQueryAsync();
-		await WaitForToolCallCountAsync("log_query", atLeast: 1);
+		await WaitForToolCallCountAsync("log_query", before + 1);
 
 		var raw = await QueryAsync(
 			"events | where MessageTemplate contains 'mcp tool' | where Properties.Tool == 'log_query' | take 1");
