@@ -63,7 +63,7 @@ public sealed class ConfigApiWorkspaceAuthzFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new Workspace { Key = WsA, Name = "WsA", CreatedAt = DateTime.UtcNow });
 		await db.InsertAsync(new Workspace { Key = WsB, Name = "WsB", CreatedAt = DateTime.UtcNow });
 		await db.InsertAsync(new Project { Key = ProjA, WorkspaceKey = WsA, Name = "ProjA" });

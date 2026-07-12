@@ -48,7 +48,7 @@ public sealed class SessionApiSandboxAuthzFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new Project { Key = RealProject, WorkspaceKey = "$system", Name = "Real", Sandbox = false });
 		await db.InsertAsync(new Project { Key = SandboxProject, WorkspaceKey = "$system", Name = "Sandbox", Sandbox = true });
 		await db.InsertAsync(new ApiKey

@@ -52,7 +52,7 @@ public sealed class AdminProjectsAuthzFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 
 		await db.InsertAsync(new Workspace { Key = "wsa", Name = "Wsa", Description = "", CreatedAt = DateTime.UtcNow });
 		await db.InsertAsync(new Workspace { Key = "wsb", Name = "Wsb", Description = "", CreatedAt = DateTime.UtcNow });
@@ -149,7 +149,7 @@ public sealed class AdminProjectsAuthzTests : IClassFixture<AdminProjectsAuthzFi
 		createResp.Headers.Location!.ToString().Should().Contain("/Login");
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		db.Projects.Any(p => p.WorkspaceKey == "wsb" && p.Key == "intruder").Should().BeFalse(
 			"the cross-tenant create must not have inserted a row into wsb — this is the exploit the fix closes");
 	}
@@ -192,7 +192,7 @@ public sealed class AdminProjectsAuthzTests : IClassFixture<AdminProjectsAuthzFi
 		createResp.StatusCode.Should().Be(HttpStatusCode.Redirect, "eve is Admin of the route workspace (wsa), so the policy allows the POST");
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		var landedInWsb = db.Projects.Any(p => p.WorkspaceKey == "wsb" && p.Key == "pwn");
 		var landedInWsa = db.Projects.Any(p => p.WorkspaceKey == "wsa" && p.Key == "pwn");
 
@@ -229,7 +229,7 @@ public sealed class AdminProjectsAuthzTests : IClassFixture<AdminProjectsAuthzFi
 		createResp.Headers.Location!.ToString().Should().NotContain("/Login");
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		db.Projects.Any(p => p.WorkspaceKey == "wsb" && p.Key == "legit").Should().BeTrue(
 			"bo administers wsb, so the create must land the row there");
 	}

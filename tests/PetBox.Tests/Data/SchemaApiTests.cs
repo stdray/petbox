@@ -64,7 +64,7 @@ public sealed class SchemaApiFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 
 		await db.DataDbs.DeleteAsync();
 		await db.ApiKeys.Where(k => k.Key == TestApiKey).DeleteAsync();
@@ -85,7 +85,7 @@ public sealed class SchemaApiFixture : IAsyncLifetime
 	{
 		using (var scope = Factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.DataDbs.DeleteAsync();
 		}
 

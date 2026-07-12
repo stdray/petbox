@@ -121,7 +121,7 @@ public sealed class LlmRegistryResolverRaceHostFixture : IAsyncLifetime
 		TestSchema.Core(cs);
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		for (var i = 0; i < Projects; i++)
 			await db.InsertAsync(new Project { Key = $"proj-{i}", WorkspaceKey = "$system", Name = $"P{i}", Description = "" });
 	}

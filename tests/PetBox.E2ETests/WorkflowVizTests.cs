@@ -26,7 +26,7 @@ public sealed class WorkflowVizTests(WebAppFixture app, ITestOutputHelper output
 	public async Task InitializeAsync()
 	{
 		using var scope = app.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 
 		if (!await db.Workspaces.AnyAsync(w => w.Key == Ws))
 			await db.InsertAsync(new Workspace { Key = Ws, Name = Ws, CreatedAt = DateTime.UtcNow });

@@ -26,14 +26,14 @@ namespace PetBox.Tasks.Data;
 // for it. (Prod audit 2026-07-11: 1262 active edges, 9 dangling.)
 public sealed class RelationsToTasksDbMigrator
 {
-	readonly PetBoxDb _core;
+	readonly ICoreDbFactory _dbf;
 	readonly IScopedDbFactory<TasksDb> _factory;
 	readonly string _tasksDir;
 	readonly ILogger? _log;
 
-	public RelationsToTasksDbMigrator(PetBoxDb core, IScopedDbFactory<TasksDb> factory, string tasksDir, ILogger? log = null)
+	public RelationsToTasksDbMigrator(ICoreDbFactory dbf, IScopedDbFactory<TasksDb> factory, string tasksDir, ILogger? log = null)
 	{
-		_core = core;
+		_dbf = dbf;
 		_factory = factory;
 		_tasksDir = tasksDir;
 		_log = log;
@@ -43,7 +43,8 @@ public sealed class RelationsToTasksDbMigrator
 
 	public Result Migrate()
 	{
-		var byProject = _core.GetTable<LegacyRelation>()
+		using var core = _dbf.Open();
+		var byProject = core.GetTable<LegacyRelation>()
 			.ToList()
 			.GroupBy(r => r.ProjectKey, StringComparer.Ordinal)
 			.OrderBy(g => g.Key, StringComparer.Ordinal)

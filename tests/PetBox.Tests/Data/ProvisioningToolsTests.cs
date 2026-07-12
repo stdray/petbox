@@ -59,7 +59,7 @@ public sealed class ProvisioningToolsFixture : IAsyncLifetime
 
 		using (var scope = Factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.ApiKeys.Where(k => k.Key == AgentKey || k.Key == NoScopeKey).DeleteAsync();
 			await db.Workspaces.Where(w => w.Key == Workspace).DeleteAsync();
 			await db.InsertAsync(new Workspace { Key = Workspace, Name = "Prov", CreatedAt = DateTime.UtcNow });
@@ -148,7 +148,7 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 		})).Should().NotContain("\"error\"");
 
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		(await db.Projects.AnyAsync(p => p.Key == projectKey)).Should().BeTrue();
 		(await db.ApiKeys.AnyAsync(k => k.ProjectKey == projectKey && k.ExpiresAt != null)).Should().BeTrue();
 
@@ -218,7 +218,7 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 		result.Should().Contain("\"*\"");
 
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		(await db.ApiKeys.AnyAsync(k => k.ProjectKey == "*" && k.Name == "maintenance")).Should().BeTrue();
 
 		// apikey_list addresses wildcard keys by the literal "*" project.
@@ -271,7 +271,7 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 		Text(result).Should().Contain("name is required");
 
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		(await db.ApiKeys.AnyAsync(k => k.ProjectKey == projectKey)).Should().BeFalse();
 	}
 
@@ -302,7 +302,7 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 		})).Should().NotContain("\"error\"");
 
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		(await db.ApiKeys.CountAsync(k => k.ProjectKey == projectKey && k.Name == "agent")).Should().Be(2);
 	}
 

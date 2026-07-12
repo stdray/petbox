@@ -70,7 +70,7 @@ public sealed class DataDbsApiFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 
 		// Wipe + seed: kpvotes project + an ApiKey with data:schema scope.
 		await db.DataDbs.DeleteAsync();
@@ -109,7 +109,7 @@ public sealed class DataDbsApiFixture : IAsyncLifetime
 	{
 		using (var scope = Factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.DataDbs.DeleteAsync();
 		}
 
@@ -156,7 +156,7 @@ public sealed class DataDbsApiTests : IClassFixture<DataDbsApiFixture>, IAsyncLi
 		resp.StatusCode.Should().Be(HttpStatusCode.Created);
 
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		var row = await db.DataDbs.FirstOrDefaultAsync((Core.Models.DataDb d) => d.ProjectKey == TestProjectKey && d.Name == "cache");
 		row.Should().NotBeNull();
 		row!.MaxPageCount.Should().Be(4096);
@@ -235,7 +235,7 @@ public sealed class DataDbsApiTests : IClassFixture<DataDbsApiFixture>, IAsyncLi
 		resp.StatusCode.Should().Be(HttpStatusCode.NoContent);
 
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		var row = await db.DataDbs.FirstOrDefaultAsync((Core.Models.DataDb d) =>
 			d.ProjectKey == TestProjectKey && d.Name == "cache");
 		row.Should().BeNull();

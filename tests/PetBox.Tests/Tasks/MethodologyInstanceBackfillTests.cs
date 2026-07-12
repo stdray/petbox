@@ -50,7 +50,7 @@ public sealed class MethodologyInstanceBackfillTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
-	MethodologyInstanceBackfill Backfill() => new(_db, _factory);
+	MethodologyInstanceBackfill Backfill() => new(_db.Factory(), _factory);
 
 	// Seed a legacy board (null membership) the way pre-instance catalogs look.
 	async Task<TaskBoardMeta> SeedBoard(string project, string name, string kind, DateTime? closedAt = null)

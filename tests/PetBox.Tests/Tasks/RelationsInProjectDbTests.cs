@@ -243,7 +243,7 @@ public sealed class RelationsInProjectDbTests : IDisposable
 	}
 
 	RelationsToTasksDbMigrator Migrator() =>
-		new(_db, _factory, Path.Combine(_dir, "tasks"));
+		new(_db.Factory(), _factory, Path.Combine(_dir, "tasks"));
 
 	// A row in the LEGACY Core-DB table (the migration source). Returns its id.
 	string SeedLegacy(string project, string kind, string from, string to, DateTime? closedAt = null)

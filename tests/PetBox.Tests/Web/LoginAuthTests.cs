@@ -62,7 +62,7 @@ public sealed class LoginAuthFixture : IAsyncLifetime
 	public async Task ResetAsync()
 	{
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.WorkspaceMembers.DeleteAsync();
 		await db.Users.DeleteAsync();
 		AdminBootstrapper.EnsureAdminUser(db, scope.ServiceProvider.GetRequiredService<IOptions<AdminOptions>>());
@@ -121,7 +121,7 @@ public sealed class LoginAuthTests : IClassFixture<LoginAuthFixture>, IAsyncLife
 	async Task SeedSysAdminAsync(string username)
 	{
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		var id = await db.InsertWithInt64IdentityAsync(new User { Username = username, PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
 		await db.InsertAsync(new WorkspaceMember { UserId = id, WorkspaceKey = "$system", Role = WorkspaceRole.Admin });
 	}

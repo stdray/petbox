@@ -55,7 +55,7 @@ public sealed class ApiKeyExpiryFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.Projects.Where(p => p.Key == Project).DeleteAsync();
 		await db.ApiKeys.Where(k => k.Key == ExpiredKey || k.Key == ValidKey).DeleteAsync();
 

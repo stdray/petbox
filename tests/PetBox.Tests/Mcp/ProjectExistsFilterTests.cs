@@ -79,7 +79,7 @@ public sealed class ProjectExistsFilterFixture : IAsyncLifetime
 
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.InsertAsync(new Workspace { Key = Workspace, Name = "W3", CreatedAt = DateTime.UtcNow });
 			await db.InsertAsync(new Project { Key = RealProject, WorkspaceKey = Workspace, Name = "Real" });
 
@@ -174,7 +174,7 @@ public sealed class ProjectExistsFilterTests : IClassFixture<ProjectExistsFilter
 	async Task<bool> HasBoardRowAsync(string project)
 	{
 		using var scope = _fx.Scope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		return await db.TaskBoards.AnyAsync(b => b.ProjectKey == project);
 	}
 
@@ -347,7 +347,7 @@ public sealed class ProjectExistsFilterTests : IClassFixture<ProjectExistsFilter
 			"the resolved default is a project reference too — an unknown one creates no store");
 
 		using var scope = _fx.Scope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		(await db.MemoryStores.AnyAsync(m => m.ProjectKey == ProjectExistsFilterFixture.GoneProject))
 			.Should().BeFalse("…nor a catalog row");
 	}
@@ -362,7 +362,7 @@ public sealed class ProjectExistsFilterTests : IClassFixture<ProjectExistsFilter
 
 		using (var scope = _fx.Scope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			(await db.Projects.AnyAsync(p => p.Key == container)).Should().BeFalse(
 				"the container's Projects row does not exist until something resolves it — that IS the case under test");
 		}
@@ -430,7 +430,7 @@ public sealed class ProjectExistsFilterTests : IClassFixture<ProjectExistsFilter
 	public async Task ProjectDeletion_NullsOutADanglingDefaultProjectKey()
 	{
 		using var scope = _fx.Scope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		const string project = "w3doomed";
 		const string key = "yb_key_w3_dangling";
 
