@@ -131,6 +131,34 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 			e.KRel!.Value.Should().BeApproximately(e.ScoreRaw!.Value / top, 1e-9);
 	}
 
+	// A BATCH get hands over N bodies, so it is N deliveries — not one per CALL. (The two features
+	// landed on separate branches and this is where they were merged by hand: batch keys ⊕ delivery
+	// events. Ranks follow the answer's order, which is the order the keys were asked in.)
+	[Fact]
+	public async Task BatchGet_RecordsOneEvent_PerEntryHandedOver()
+	{
+		await Seed("u1", "u2", "u3");
+
+		var res = await MemoryTools.GetAsync(Http(), Flags(), _db, _memory, _recorder, Proj, "notes",
+			keys: ["u3", "u1", "nope"]);
+		await _recorder.FlushAsync();
+
+		res.Entries.Select(e => e.Key).Should().Equal("u3", "u1"); // asked order; the miss is dropped
+
+		var events = Events();
+		events.Should().HaveCount(2, "a key that matched nothing was never delivered");
+		events.Select(e => e.Key).Should().Equal("u3", "u1");
+		events.Select(e => e.Rank).Should().Equal(1, 2);
+		foreach (var e in events)
+		{
+			e.Tool.Should().Be("get");
+			e.DeliveredChars.Should().Be(LongBody.Length);
+			e.BodyChars.Should().Be(LongBody.Length);
+			e.KRel.Should().Be(1);
+			e.ScoreRaw.Should().BeNull();
+		}
+	}
+
 	// A get delivers the WHOLE body of an entry the caller named: cost is the full body and fit
 	// is perfect by construction — no fused score exists behind it to normalize.
 	[Fact]
