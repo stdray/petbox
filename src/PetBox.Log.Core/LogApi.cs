@@ -383,6 +383,7 @@ public static class LogApi
 		CleFParser parser,
 		IIngestionPipeline pipeline,
 		IConfiguration config,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
 		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
@@ -415,6 +416,14 @@ public static class LogApi
 					statusCode: StatusCodes.Status403Forbidden);
 
 			projectKey = key.ProjectKey;
+			// The destination is the key's OWN project, so the claim check is trivially
+			// satisfied — but containment is not: re-check it live rather than leaning on the
+			// mint-time invariant, exactly as SeqIngestPathAsync does (a future flip of
+			// Project.Sandbox would silently turn that invariant into a hole).
+			if (!await ProjectScope.AuthorizesAsync(key.ProjectKey, projectKey, key.SandboxOnly, catalog, ct))
+				return Results.Json(
+					new ErrorResponse($"key is not authorized for project '{projectKey}'"),
+					statusCode: StatusCodes.Status403Forbidden);
 			logName = LogNames.Default;
 			serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault() is { Length: > 0 } svc ? svc : "seq";
 
