@@ -111,6 +111,19 @@ records**, not the working plan — do not treat them as current state.
    the merge is on `main`, move the tag IMMEDIATELY and watch only the tag run. Do NOT
    wait for `main`'s own CI first: it runs the same tests, and the tag run re-runs them
    anyway (it will not deploy on a red build) — waiting just burns ~6 minutes twice.
+   **A smoke NEVER writes into a real project.** Its target is the sandbox project
+   `smoke` (workspace `sandbox`), and it authenticates with a `sandboxOnly` key — never
+   your session's `$system` key, never a customer project's. Read-only probes (`/health`,
+   `/version`, a search) may hit anything; anything that CREATES a board, project,
+   session, memory entry or task goes to the sandbox. This is enforced, not merely asked:
+   a `sandboxOnly` key is rejected against any project without the `sandbox` flag, on MCP
+   and REST alike (even a wildcard `*` key — the check is on the TARGET, not the claim).
+   The rule exists because it was broken: six `smoke-*` boards took up residence next to
+   `work`/`spec` in `$system`, and two one-line probes ("Reply with exactly: PONG") landed
+   in the customer project `yobapub`, where `SessionDigestJob` tried to digest them and
+   burned ~1462 LLM calls. Background jobs run in the sandbox exactly as in production —
+   that is the point, a smoke must be able to prove them — so the sandbox is a real
+   target, not a null sink: clean up after yourself there.
 8. **Clean up when the card closes — the worktree's life ends with the card, not with
    the push:** once a card reaches a terminal status (`Done`/`Cancelled`) and its branch
    is merged, remove the worktree (`git worktree remove <dir>`) and delete the branch
