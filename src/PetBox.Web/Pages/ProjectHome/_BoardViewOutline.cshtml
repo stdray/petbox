@@ -1,0 +1,51 @@
+@model PetBox.Web.Pages.ProjectHome.TaskBoardModel
+@* Outline view mode (board-view-mode-framework): a heading-hierarchy table of contents over the
+   SAME DFS-ordered nodes the tree pane uses (part_of depth, via n.Depth) — just headings, not
+   full cards. ONE partial serves every board kind; Model.OutlineRevealMode (TaskBoardModel.
+   LoadAsync) parameterizes what expanding a heading DOES:
+     - inline-lazy: <details>'s native `toggle` event fires an htmx GET at OnGetNodeBodyAsync,
+       which fetches and renders JUST that node's body on demand — no body ships in this page's
+       initial HTML (board-body-truncate: inline body only on explicit reveal).
+     - navigate: no expand affordance at all; the heading link goes straight to the node page.
+   See OutlineRevealModeNames for which board kinds get which mode and why. *@
+@{
+	var lazy = Model.OutlineRevealMode == OutlineRevealModeNames.InlineLazy;
+}
+@if (Model.Nodes.Count == 0)
+{
+	<div class="alert" data-testid="board-empty">This board has no active plan nodes.</div>
+}
+else
+{
+	<ul class="flex flex-col gap-1" data-testid="board-outline" data-reveal-mode="@Model.OutlineRevealMode">
+		@foreach (var n in Model.Nodes)
+		{
+			var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
+			var hasBody = !string.IsNullOrEmpty(n.Body);
+			<li data-testid="outline-row" data-node-key="@n.Key" data-node-id="@n.NodeId" data-depth="@n.Depth" style="margin-left:@(n.Depth * 1.5)rem">
+				@if (lazy && hasBody)
+				{
+					var bodyUrl = $"?handler=NodeBody&nodeId={Uri.EscapeDataString(n.NodeId)}";
+					<details data-testid="outline-node-lazy" hx-get="@bodyUrl" hx-trigger="toggle once" hx-target="find [data-outline-body]" hx-swap="innerHTML">
+						<summary class="cursor-pointer flex items-baseline gap-2">
+							<a href="@nodeUrl" class="font-semibold link link-hover" data-testid="node-name">@n.Title</a>
+							<span class="font-mono text-xs opacity-50">@n.Key</span>
+							<partial name="_StatusBadge" model="new StatusBadgeModel(Model.Runtime, Model.KindSlug, n.Status)" />
+						</summary>
+						<div class="mt-1 ml-2" data-outline-body data-testid="outline-body">
+							<span class="opacity-50 text-xs italic" data-testid="outline-body-loading">loading…</span>
+						</div>
+					</details>
+				}
+				else
+				{
+					<div class="flex items-baseline gap-2">
+						<a href="@nodeUrl" class="font-semibold link link-hover" data-testid="node-name">@n.Title</a>
+						<span class="font-mono text-xs opacity-50">@n.Key</span>
+						<partial name="_StatusBadge" model="new StatusBadgeModel(Model.Runtime, Model.KindSlug, n.Status)" />
+					</div>
+				}
+			</li>
+		}
+	</ul>
+}

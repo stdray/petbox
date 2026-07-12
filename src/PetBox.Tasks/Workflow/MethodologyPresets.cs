@@ -162,6 +162,10 @@ public static class MethodologyPresets
 		],
 		// primitives-enum-residual: work→spec auto-wire is DATA (executed by AutoWireSpecAsync).
 		AutoWireSpecFrom = "spec",
+		// methodology-default-view-field: work opens in kanban (stage columns) by default.
+		// The renderer isn't shipped yet (board-view-mode-framework) — until it is,
+		// BoardViewModeRegistry.Resolve degrades this to Tree, so the board still works.
+		DefaultView = BoardViewModeNames.Kanban,
 	};
 
 	// A spec node is born `defined` (a worked-out requirement) and can only retire to
@@ -191,6 +195,13 @@ public static class MethodologyPresets
 		// primitives-enum-residual: delivery type roles are DATA (feature drives progress;
 		// open bug → done_with_defects). Computed by TasksService.ComputeSpecDeliveryAsync.
 		Delivery = new MethodologyDeliveryDef(["feature"], ["bug"]),
+		// methodology-default-view-field: spec opens in outline (heading hierarchy) by
+		// default. Renderer not shipped yet — degrades to Tree until it is.
+		DefaultView = BoardViewModeNames.Outline,
+		// board-view-mode-framework: a spec node's body is one short normative line —
+		// cheap to fetch and read inline, so the outline view expands it in place rather
+		// than sending the reader to the node page.
+		OutlineReveal = OutlineRevealModeNames.InlineLazy,
 	};
 
 	// Mirrors the work gate: an idea reaches `review` (agent ceiling), the maintainer
@@ -218,7 +229,12 @@ public static class MethodologyPresets
 				new("exploring", "deferred"),
 				new("deferred", "exploring"),
 			]),
-	]);
+	])
+	{
+		// methodology-default-view-field: ideas opens in tree — same as the builtin
+		// fallback, stated explicitly so the quartet's four kinds are uniformly declared.
+		DefaultView = BoardViewModeNames.Tree,
+	};
 
 	static readonly MethodologyKindDef IntakeKind = new("intake", QuickAddAllowed: true,
 	[
@@ -238,7 +254,12 @@ public static class MethodologyPresets
 				new("triage", "wontfix", RequiresReason: true),
 				new("confirmed", "done", RequiresApproval: true),
 			]),
-	]);
+	])
+	{
+		// methodology-default-view-field: intake opens in table (scannable inbox rows) by
+		// default. Renderer not shipped yet — degrades to Tree until it is.
+		DefaultView = BoardViewModeNames.Table,
+	};
 
 	public static MethodologyKindDef KindDef(BoardKind kind) => kind switch
 	{

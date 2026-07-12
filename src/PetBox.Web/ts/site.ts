@@ -3,7 +3,7 @@ import Alpine from "alpinejs";
 
 import "./logs";
 import "./sidebar";
-import { initBoardPage } from "./board";
+import { initBoardPage, initBoardViewPersistence } from "./board";
 import { initCommentThreads } from "./commentThread";
 import { initConfigPage } from "./config";
 import { initConfirmForms } from "./confirm";
@@ -16,6 +16,7 @@ import { initWorkspacePersistence } from "./workspace";
 Alpine.start();
 initConfigPage();
 initWorkspacePersistence();
+initBoardViewPersistence();
 initBoardPage();
 initNodeEdit();
 initCommentThreads();

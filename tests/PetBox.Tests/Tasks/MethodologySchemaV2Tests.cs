@@ -56,7 +56,9 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 	static MethodologyKindDef SupportKind(
 		MethodologyTransitionDef[]? transitions = null,
 		IReadOnlyList<MethodologyTransitionEffectDef>? effects = null,
-		IReadOnlyList<MethodologyLinkConstraintDef>? constraints = null) =>
+		IReadOnlyList<MethodologyLinkConstraintDef>? constraints = null,
+		string? defaultView = null,
+		string? outlineReveal = null) =>
 		new("support", QuickAddAllowed: true,
 		[
 			new MethodologyWorkflowDef(["ticket", "incident"],
@@ -70,6 +72,8 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 		{
 			Effects = effects ?? [],
 			LinkConstraints = constraints ?? [],
+			DefaultView = defaultView,
+			OutlineReveal = outlineReveal,
 		};
 
 	static MethodologyDefinition Def(params MethodologyKindDef[] kinds) => new("schema-v2", kinds);
@@ -225,6 +229,49 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 		await AssertRejected(
 			Def(SupportKind(constraints: [new("incident", "task_spec") { TargetKind = "spec", TargetStatuses = ["not a slug!"] }])),
 			"target status 'not a slug!' is not a valid status slug");
+	}
+
+	// ── defaultView (methodology-default-view-field) ─────────────────────────
+
+	[Fact]
+	public async Task DefaultView_UnknownValue_Rejected() =>
+		await AssertRejected(
+			Def(SupportKind(defaultView: "bogus")),
+			"defaultView 'bogus' is not a known view mode");
+
+	[Fact]
+	public async Task DefaultView_KnownValue_Stores()
+	{
+		// The validator only checks the NAME is known (BoardViewModeNames.IsKnown) — whether a
+		// partial exists is BoardViewModeRegistry's resolve-time concern, a separate layer
+		// entirely (kanban is in fact renderable today, but that's incidental to this test).
+		var ack = await Define(Def(SupportKind(defaultView: BoardViewModeNames.Kanban)));
+		ack.Changed.Should().BeTrue();
+	}
+
+	[Fact]
+	public async Task DefaultView_Omitted_IsValid_LikeAnyOtherOptionalField()
+	{
+		// The pre-existing behavior every other test in this file already exercises
+		// (SupportKind's default `defaultView: null`) — stated explicitly here so the "an old
+		// stored document without defaultView stays valid" promise has its own named test.
+		var ack = await Define(Def(SupportKind()));
+		ack.Changed.Should().BeTrue();
+	}
+
+	// ── outlineReveal (board-view-mode-framework) ────────────────────────────
+
+	[Fact]
+	public async Task OutlineReveal_UnknownValue_Rejected() =>
+		await AssertRejected(
+			Def(SupportKind(outlineReveal: "bogus")),
+			"outlineReveal 'bogus' is not a known reveal mode");
+
+	[Fact]
+	public async Task OutlineReveal_KnownValue_Stores()
+	{
+		var ack = await Define(Def(SupportKind(outlineReveal: OutlineRevealModeNames.InlineLazy)));
+		ack.Changed.Should().BeTrue();
 	}
 }
 
