@@ -18,7 +18,14 @@ import {
   renderOpencodeAgentMarkdown,
 } from "./apply-artifacts.ts";
 import { HARNESS_IDS, harnessCapabilities, hasCapability } from "./harness-capabilities.ts";
-import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
+import { allowedModels, isResolvableModel } from "./harness-models.ts";
+import {
+  checkTruthfulness,
+  formatViolations,
+  isModelViolation,
+  type ModelViolation,
+} from "./truthfulness.ts";
+import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 
 test("claude-code declares role_files + spawn_subagents + mcp_subagent (verified live 2026-07-12)", () => {
   const caps = harnessCapabilities("claude-code");
@@ -196,23 +203,128 @@ test("planApply: emits clean roles, skips only dirty ones", () => {
   assert.match(formatApplyBlocked(plan.violations, "opencode", plan.skippedRoles), /needs-dyn/);
 });
 
-test("planApply: bound model in claude-code frontmatter; unbound omits model", () => {
+test("planApply: bound model in claude-code frontmatter; unbound omits model (+warns)", () => {
   const portable: AgentDefinition = {
     name: "p",
     roles: [{ slug: "worker", tier: "worker", requiredCapabilities: [] }],
   };
-  const withModel = planApply(portable, "claude-code", {
-    worker: "anthropic/claude-sonnet-4",
-  });
+  // Must be an id Claude Code actually resolves — the old fixture used a provider-prefixed
+  // "anthropic/claude-sonnet-4", which is exactly the shape the model gate now rejects.
+  const withModel = planApply(portable, "claude-code", { worker: "sonnet" });
   assert.equal(withModel.violations.length, 0);
   const worker = withModel.files.find((f) => f.relativePath.endsWith("worker.md"));
   assert.ok(worker);
-  assert.match(worker!.content, /^---\nname: worker\nmodel: anthropic\/claude-sonnet-4\n/m);
+  assert.match(worker!.content, /^---\nname: worker\nmodel: sonnet\n/m);
+  assert.deepEqual(withModel.warnings, []);
 
   const unbound = planApply(portable, "claude-code", {});
   const body = unbound.files[0]!.content;
   assert.match(body, /^---\nname: worker\n/m, "name: is always emitted");
   assert.ok(!/^model:/m.test(body.split("---")[1] ?? ""), "no invented model");
+  // Unbound is legal (inherit) but must not be silent.
+  assert.equal(unbound.violations.length, 0);
+  assert.equal(unbound.warnings.length, 1);
+  assert.match(unbound.warnings[0]!, /inherit the session\/parent model/);
+});
+
+test("model gate: claude-code role bound to a droid id is BLOCKED (not written)", () => {
+  const portable: AgentDefinition = {
+    name: "p",
+    roles: [
+      { slug: "worker", tier: "worker", requiredCapabilities: [] },
+      { slug: "utility", tier: "utility", requiredCapabilities: [] },
+    ],
+  };
+  // The 2026-07-12 incident: droid ids copied into the claude-code block of roles.json.
+  const plan = planApply(portable, "claude-code", {
+    worker: "custom:DeepSeek-V4-Pro-0",
+    utility: "haiku",
+  });
+
+  assert.deepEqual(plan.skippedRoles, ["worker"]);
+  assert.ok(
+    !plan.files.some((f) => f.relativePath.endsWith("worker.md")),
+    "an unresolvable model must never reach .claude/agents/*.md",
+  );
+  assert.ok(plan.files.some((f) => f.relativePath.endsWith("utility.md")));
+
+  assert.equal(plan.violations.length, 1);
+  const v = plan.violations[0]!;
+  assert.ok(isModelViolation(v));
+  assert.equal(v.role, "worker");
+  assert.equal(v.harness, "claude-code");
+  assert.equal(v.model, "custom:DeepSeek-V4-Pro-0");
+  assert.ok(v.allowedModels.includes("sonnet"));
+
+  const msg = formatApplyBlocked(plan.violations, plan.harness, plan.skippedRoles);
+  assert.match(msg, /worker/);
+  assert.match(msg, /custom:DeepSeek-V4-Pro-0/);
+  assert.match(msg, /claude-code/);
+  assert.match(msg, /SILENTLY inherit the session model/);
+  assert.match(msg, /Allowed: .*sonnet/);
+
+  // apply's exit contract: a blocked role ⇒ non-zero (3), same as a capability violation.
+  const hadTruthfulnessBlock = plan.violations.length > 0;
+  assert.equal(classifyApplyExit({ hadTruthfulnessBlock }), WIRE_EXIT.truthfulness);
+  assert.notEqual(WIRE_EXIT.truthfulness, 0);
+});
+
+test("model gate: every claude-code alias in the live roster resolves; junk does not", () => {
+  // .claude/agents/*.md of this repo (verified 2026-07-12): opus/sonnet/haiku/fable.
+  for (const m of ["opus", "sonnet", "haiku", "fable", "inherit", "OPUS"]) {
+    assert.equal(isResolvableModel("claude-code", m), true, `${m} must resolve`);
+  }
+  // Concrete Anthropic ids (claude-api canon), incl. the 1M-context suffix form.
+  for (const m of ["claude-opus-4-8", "claude-sonnet-5", "claude-opus-4-8[1m]"]) {
+    assert.equal(isResolvableModel("claude-code", m), true, `${m} must resolve`);
+  }
+  for (const m of [
+    "custom:DeepSeek-V4-Pro-0",
+    "custom:Qwen3.7-Max-[1M-ctx-·-orchestrator]-0",
+    "deepseek/deepseek-v4-pro",
+    "anthropic/claude-sonnet-4",
+    "claude-sonnet-4.6", // typo'd id
+    "gpt-5",
+  ]) {
+    assert.equal(isResolvableModel("claude-code", m), false, `${m} must NOT resolve`);
+  }
+  assert.ok(allowedModels("claude-code")!.length > 0);
+});
+
+test("model gate: droid/opencode id spaces stay open (no invented allow-list)", () => {
+  // Both resolve ids against a local/provider registry — the kit makes no claim, so a real
+  // binding like custom:DeepSeek-V4-Pro-0 or deepseek/deepseek-v4-pro must NOT be blocked.
+  assert.equal(allowedModels("droid"), null);
+  assert.equal(allowedModels("opencode"), null);
+  assert.equal(isResolvableModel("droid", "custom:DeepSeek-V4-Pro-0"), true);
+  assert.equal(isResolvableModel("opencode", "deepseek/deepseek-v4-pro"), true);
+
+  const droid = planApply(DEFAULT_AGENT_DEFINITION, "droid", {
+    worker: "custom:DeepSeek-V4-Pro-0",
+  });
+  assert.equal(droid.violations.length, 0);
+  const oc = planApply(DEFAULT_AGENT_DEFINITION, "opencode", {
+    worker: "deepseek/deepseek-v4-pro",
+  });
+  assert.equal(oc.violations.length, 0);
+});
+
+test("checkTruthfulness (doctor path) also gates the local model binding", () => {
+  const clean = checkTruthfulness(DEFAULT_AGENT_DEFINITION, "claude-code", {
+    orchestrator: "opus",
+    worker: "sonnet",
+    utility: "haiku",
+    reserve: "fable",
+    explore: "haiku",
+  });
+  assert.deepEqual(clean, [], formatViolations(clean));
+
+  const dirty = checkTruthfulness(DEFAULT_AGENT_DEFINITION, "claude-code", {
+    worker: "custom:DeepSeek-V4-Pro-0",
+  });
+  assert.equal(dirty.length, 1);
+  assert.ok(isModelViolation(dirty[0]!));
+  assert.equal((dirty[0] as ModelViolation).role, "worker");
 });
 
 test("planOpencodeApply: bound model in frontmatter; unbound omits model", () => {

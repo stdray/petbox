@@ -3,7 +3,10 @@
 // planApply produces agent role files for any known harness.
 // Per-role truthfulness: clean roles are emitted; dirty roles are skipped and
 // reported in violations/skippedRoles (never silently drop a required line from
-// a role that is emitted — the whole dirty role is blocked).
+// a role that is emitted — the whole dirty role is blocked). "Dirty" covers BOTH
+// a missing harness capability AND a local model binding the harness cannot resolve
+// (harness-models.ts) — the latter would otherwise be written into frontmatter and
+// silently ignored by the harness, which then falls back to the session model.
 //
 // Paths (documented harness layouts):
 //   opencode     → .opencode/agent/<role>.md
@@ -33,10 +36,17 @@ export type PlannedFile = {
 export type ApplyPlan = {
   readonly harness: string;
   readonly files: readonly PlannedFile[];
-  /** Truthfulness violations for roles that were NOT written. */
+  /** Truthfulness violations (capability or model) for roles that were NOT written. */
   readonly violations: readonly TruthfulnessViolation[];
   /** Role slugs skipped because of violations. */
   readonly skippedRoles: readonly string[];
+  /**
+   * Non-blocking notices. A role with NO local model binding is written without a model key
+   * (claude-code/opencode) or with `model: inherit` (droid) — legitimate, but it means the
+   * agent runs on the session/parent model. Warn so that is a choice, not a surprise.
+   * A role bound to an id the harness cannot resolve is NOT a warning — it is a violation.
+   */
+  readonly warnings: readonly string[];
 };
 
 /** Relative dir (posix) for agent role files per harness. */
@@ -217,6 +227,7 @@ export function planApply(
         })),
       ),
       skippedRoles: definition.roles.map((r) => r.slug),
+      warnings: [],
     };
   }
 
@@ -224,15 +235,24 @@ export function planApply(
   const files: PlannedFile[] = [];
   const violations: TruthfulnessViolation[] = [];
   const skippedRoles: string[] = [];
+  const warnings: string[] = [];
 
   for (const role of definition.roles) {
-    const roleViolations = checkRoleTruthfulness(role, harness);
+    const model = roleModels[role.slug];
+    // Gate BEFORE render: a role bound to a model this harness cannot resolve is blocked,
+    // exactly like a missing capability — never write an id the harness would silently ignore.
+    const roleViolations = checkRoleTruthfulness(role, harness, model);
     if (roleViolations.length > 0) {
       violations.push(...roleViolations);
       skippedRoles.push(role.slug);
       continue;
     }
-    const model = roleModels[role.slug];
+    if (!model || !model.trim()) {
+      warnings.push(
+        `role '${role.slug}' has no model binding for harness '${harness}' — the agent will ` +
+          `inherit the session/parent model. Bind it in ~/.petbox/roles.json to pin a tier.`,
+      );
+    }
     const fileName = harness === "droid" ? `${role.slug.toLowerCase().replace(/[^a-z0-9_-]+/g, "-")}.md` : `${role.slug}.md`;
     files.push({
       relativePath: join(dir, fileName).replace(/\\/g, "/"),
@@ -240,7 +260,7 @@ export function planApply(
     });
   }
 
-  return { harness, files, violations, skippedRoles };
+  return { harness, files, violations, skippedRoles, warnings };
 }
 
 /** Thin wrapper: planApply(..., "opencode"). */
