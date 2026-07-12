@@ -18,7 +18,8 @@ namespace PetBox.Tests.Web;
 // SeedProjectKeyAsync-style project/key seeding, mirroring LogPipelineTests' own
 // CompatSeq_ForeignProjectKey_Returns403 / LogQuery_ForeignProject_Returns403 cross-project tests
 // (which already exist for the OTHER LogApi handlers — this endpoint had no equivalent).
-public sealed class LogIngestClefAuthzTests : IClassFixture<LogPipelineFixture>
+[Collection(LogPipelineCollectionDef.Name)]
+public sealed class LogIngestClefAuthzTests
 {
 	readonly LogPipelineFixture _fx;
 	readonly HttpClient _client;

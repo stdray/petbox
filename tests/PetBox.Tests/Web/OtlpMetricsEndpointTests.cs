@@ -16,7 +16,8 @@ namespace PetBox.Tests.Web;
 // asserts landed points by reading the per-log MetricPoints table straight through ILogStore.
 // Unlike CLEF logs (async channel), metric points are BulkCopyAsync'd inside the request, so the
 // rows are queryable the moment the 200 returns — no WaitForIngest poll needed.
-public sealed class OtlpMetricsEndpointTests : IClassFixture<LogPipelineFixture>
+[Collection(LogPipelineCollectionDef.Name)]
+public sealed class OtlpMetricsEndpointTests
 {
 	readonly LogPipelineFixture _fx;
 
