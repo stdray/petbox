@@ -6,8 +6,10 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
+using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -43,6 +45,11 @@ public sealed class ProjectDefaultFilterFixture : IAsyncLifetime
 	public McpClient StarWithDefault { get; private set; } = null!;
 	public McpClient StarNoDefault { get; private set; } = null!;
 	public McpClient Scoped { get; private set; } = null!;
+
+	// The host's own services — the canonical, unfiltered ToolCollection lives here (the same source
+	// McpProjectDefaultFilter reads). Used by the parameter-NAME guard below, which is about what the
+	// tools DECLARE, not about what any one caller is served.
+	public IServiceProvider Services => _factory.Services;
 
 	public ProjectDefaultFilterFixture()
 	{
@@ -286,6 +293,58 @@ public sealed class ProjectDefaultFilterTests : IClassFixture<ProjectDefaultFilt
 		var multi = (await Tool(mcp, "comments_get")).ProtocolTool;
 		Required(multi).Should().Contain("id").And.NotContain("projectKey");
 	}
+
+	// ── the parameter NAME both filters key on ─────────────────────────────────────────────────
+
+	// The whole default/existence machinery is keyed on ONE literal parameter name: "projectKey"
+	// (McpProjectDefaultFilter.ProjectKeyArg). A tool that spells its project-routing argument anything
+	// else sits SILENTLY outside all three guards — no default injection, no existence check, no "*"
+	// refusal — and the miss is invisible: the binder simply ignores the unknown argument the caller
+	// passed, and the filter then fills `projectKey` with the key's default. deploy_upsert shipped that
+	// way (its param was `project`, and a deployment landed in the wrong project); the only guard since
+	// has been a DOCS test (McpToolArgNamesInDocsTests), which cannot see a new tool's C# signature.
+	//
+	// So: the LIVE registered schemas are the source of truth here — same ToolCollection the filter
+	// reads, so a tool is covered the day it is written.
+	[Fact]
+	public void NoTool_SpellsItsProjectArgument_AnythingButProjectKey()
+	{
+		var collection = _fx.Services.GetRequiredService<IOptions<McpServerOptions>>().Value.ToolCollection;
+		collection.Should().NotBeNull();
+
+		var offenders = collection!
+			.SelectMany(t => Parameters(t.ProtocolTool).Select(param => (Tool: t.ProtocolTool.Name, Param: param)))
+			.Where(x => IsProjectish(x.Param))
+			.Select(x => $"{x.Tool}({x.Param})")
+			.OrderBy(x => x, StringComparer.Ordinal)
+			.ToList();
+
+		offenders.Should().BeEmpty(
+			"a project-routing MCP argument MUST be named exactly `{0}` — McpProjectDefaultFilter (default "
+			+ "injection + the per-caller schema) and McpProjectExistsFilter (the existence check and the "
+			+ "'*' refusal) both key on that literal name, and a parameter under any other name is invisible "
+			+ "to all of them: the call is neither defaulted nor validated, and an argument the caller does "
+			+ "pass is silently dropped by the binder. Rename the parameter",
+			McpProjectDefaultFilter.ProjectKeyArg);
+	}
+
+	// A parameter name that MEANS "the project this call routes to" but is not the one name the filters
+	// look for. Kept deliberately literal (an exact-name list + a casing check) — `defaultProject` on
+	// apikey_create is a VALUE, not a routing argument, and must not trip this.
+	static readonly string[] Projectish = ["project", "project_key", "projectid", "project_id", "proj"];
+
+	static bool IsProjectish(string name) =>
+		name != McpProjectDefaultFilter.ProjectKeyArg
+		&& (Projectish.Contains(name, StringComparer.OrdinalIgnoreCase)
+			// …and a CASING drift ("ProjectKey") is the same miss: the lookup is Ordinal.
+			|| string.Equals(name, McpProjectDefaultFilter.ProjectKeyArg, StringComparison.OrdinalIgnoreCase));
+
+	static IEnumerable<string> Parameters(Tool tool) =>
+		tool.InputSchema.ValueKind == JsonValueKind.Object
+		&& tool.InputSchema.TryGetProperty("properties", out var properties)
+		&& properties.ValueKind == JsonValueKind.Object
+			? properties.EnumerateObject().Select(p => p.Name)
+			: [];
 
 	// ── the containment: every injection is greppable ──────────────────────────────────────────
 
