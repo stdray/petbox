@@ -112,14 +112,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cake DockerPush (build + smoke + push)
+      # Build + smoke on every push, but only PUSH the image when we are actually deploying.
+      # `deploy` re-runs this job for the tag ref and pins prod to the tag it produces here
+      # (PETBOX_IMAGE below), so images published on ordinary main pushes were never pulled
+      # by anything — pure CI minutes and GHCR churn. The BUILD still earns its keep: DockerSmoke
+      # boots the container, so a broken Dockerfile surfaces on main instead of mid-deploy, and
+      # the GHA layer cache stays warm for the eventual deploy build.
+      # The docker tag is written by the `Docker` task, not the push, so dockerTag is set either way.
+      - name: Cake DockerPush (build + smoke; push only for the deploy tag)
         id: publish
         run: |
           set -euo pipefail
           chmod +x ./build.sh
           TAG_FILE="$RUNNER_TEMP/docker-tag.txt"
+          PUSH=false
+          if [ "$GITHUB_REF" = "refs/tags/deploy" ]; then PUSH=true; fi
+          echo "Docker push enabled: $PUSH (ref: $GITHUB_REF)"
           ./build.sh --target=DockerPush \
-            --dockerPush=true \
+            --dockerPush="$PUSH" \
             --ghcrRepository=${{ github.repository }} \
             --dockerTagOutput="$TAG_FILE" \
             --dockerCacheFrom=type=gha \
