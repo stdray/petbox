@@ -11,6 +11,7 @@ namespace PetBox.Log.Core.Retention;
 
 public sealed partial class RetentionService(
 	IServiceProvider services,
+	ICoreDbFactory coreDb,
 	ILogger<RetentionService> logger) : BackgroundService
 {
 	protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -41,7 +42,7 @@ public sealed partial class RetentionService(
 	public async Task<TimeSpan> RunPassAsync(DateTime now, CancellationToken ct)
 	{
 		using var scope = services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = coreDb.Open();
 		var store = scope.ServiceProvider.GetRequiredService<ILogStore>();
 		var resolver = scope.ServiceProvider.GetRequiredService<ISettingsResolver>();
 

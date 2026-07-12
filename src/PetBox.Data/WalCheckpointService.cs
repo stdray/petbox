@@ -19,7 +19,7 @@ namespace PetBox.Data;
 // readers — if a checkpoint can't complete because a reader is in mid-read,
 // SQLite returns SQLITE_BUSY and we just retry next tick.
 public sealed partial class WalCheckpointService(
-	IServiceProvider services,
+	ICoreDbFactory coreDb,
 	IDataDbFactory factory,
 	ILogger<WalCheckpointService> logger) : BackgroundService
 {
@@ -49,8 +49,7 @@ public sealed partial class WalCheckpointService(
 
 	internal async Task RunOncePassAsync(CancellationToken ct)
 	{
-		using var scope = services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = coreDb.Open();
 
 		var dbs = await db.DataDbs
 			.Select(d => new { d.ProjectKey, d.Name })

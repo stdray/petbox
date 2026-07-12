@@ -13,7 +13,7 @@ namespace PetBox.Tasks.Data;
 // lifecycle == the project's — see ProjectFileOrphans. Mirrors
 // PetBox.Data.OrphanCleanupService / PetBox.Log.Core.LogOrphanCleanupService.
 public sealed partial class TaskBoardOrphanCleanupService(
-	IServiceProvider services,
+	ICoreDbFactory coreDb,
 	IScopedDbFactory<TasksDb> factory,
 	ILogger<TaskBoardOrphanCleanupService> logger) : BackgroundService
 {
@@ -45,8 +45,7 @@ public sealed partial class TaskBoardOrphanCleanupService(
 	// Exposed as internal so tests can drive a single pass deterministically.
 	internal async Task RunOncePassAsync(CancellationToken ct)
 	{
-		using var scope = services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = coreDb.Open();
 		foreach (var projectKey in await ProjectFileOrphans.ReclaimRootFilesAsync(db, factory, ct))
 			LogOrphanRemoved(logger, projectKey);
 	}

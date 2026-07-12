@@ -20,7 +20,12 @@ public sealed class ApiKeyAuthMiddleware
 			return;
 		}
 
-		var db = context.RequestServices.GetRequiredService<PetBoxDb>();
+		// A fresh, caller-owned connection per request — never the scoped one. This is the hot auth
+		// path, so it was measured before being moved: opening a connection off the factory costs
+		// ~3.7µs against an auth hop that already does a DB round-trip. That is noise, and it buys
+		// the property that matters — there is no shared PetBoxDb for a fan-out request to trample.
+		var factory = context.RequestServices.GetRequiredService<ICoreDbFactory>();
+		using var db = factory.Open();
 		var key = await db.ApiKeys
 			.FirstOrDefaultAsync(k => k.Key == apiKey, CancellationToken.None);
 
