@@ -80,10 +80,52 @@ jobs:
       # else we add there tomorrow. It is also the target the dev loop runs, so CI cannot be
       # stricter than the local run: that gap is what let a green local branch fail the deploy
       # tag run on whitespace.
-      # Not --target=Verify: that also runs the TS/Python SDK checks, whose toolchains (uv)
-      # this job doesn't set up.
+      # Not --target=Verify: that also runs the TS/Python SDK checks, which have their own
+      # `sdk` job below (bun + uv toolchains, in parallel with this one).
       - name: Cake Test target (format + build + unit + E2E)
         run: ./build.sh --target=Test --playwrightWithDeps=false
+
+  # Client-SDK gate. The TS and Python SDKs are published to public registries (npm/PyPI) on
+  # their own tags; until this job existed NOTHING checked them in CI — the targets were only
+  # reachable via `Verify`, which no workflow called. Its own job (not a step in `test`) so the
+  # bun/uv toolchains and the SDK checks run in PARALLEL with the .NET suite.
+  sdk:
+    if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/npm-wire' && github.ref != 'refs/tags/pypi'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      # dotnet is here only to run build.sh (the Cake script) — the checks themselves are bun/uv.
+      - uses: actions/setup-dotnet@v5
+        with:
+          global-json-file: global.json
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
+          restore-keys: nuget-${{ runner.os }}-
+
+      - name: Cache Cake runfile build dir
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/dotnet/runfile
+          key: cake-runfile-${{ runner.os }}-${{ hashFiles('build.cs', 'global.json', '.config/dotnet-tools.json') }}
+
+      - name: Ensure build script is executable
+        run: chmod +x ./build.sh
+
+      - name: Cake SdkChecks target (TS + Python SDK lint/typecheck/test)
+        run: ./build.sh --target=SdkChecks
 
   publish:
     if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/npm-wire' && github.ref != 'refs/tags/pypi'
