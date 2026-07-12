@@ -310,6 +310,7 @@ public partial class Program
 																		 // is exactly where the projectKey injection must sit: inside McpTracingFilter, so the
 																		 // ambient Activity is the `mcp.tool <name>` span the misroute marker belongs on.
 				PetBox.Web.Mcp.McpProjectDefaultFilter.Register(filters); // the key's default project: inject + honest schema
+				PetBox.Web.Mcp.McpProjectExistsFilter.Register(filters);  // …and the RESOLVED project must exist (W3)
 			});
 		builder.Services.AddSingleton<FeatureFlags>();
 
