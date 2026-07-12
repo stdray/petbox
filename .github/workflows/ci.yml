@@ -64,6 +64,16 @@ jobs:
       - name: Ensure build script is executable
         run: chmod +x ./build.sh
 
+      # Format is a gate, not a suggestion: for a long time NOTHING ran it (this job used
+      # to jump straight to Test, and `dotnet format --verify-no-changes` lives only in the
+      # Verify/CI target, which nothing invoked), so drift piled up in main unnoticed and
+      # every agent that dutifully ran `dotnet format` before committing got a diff full of
+      # OTHER people's files. Run it here, before Test, so it fails fast and cheap.
+      # Deliberately NOT --target=Verify: that also pulls in the TS/Python SDK lint+test,
+      # which need toolchains this job doesn't set up.
+      - name: Cake FormatVerify target (dotnet format --verify-no-changes)
+        run: ./build.sh --target=FormatVerify
+
       - name: Cake Test target (build + unit + E2E)
         run: ./build.sh --target=Test --playwrightWithDeps=false
 
@@ -102,14 +112,24 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Cake DockerPush (build + smoke + push)
+      # Build + smoke on every push, but only PUSH the image when we are actually deploying.
+      # `deploy` re-runs this job for the tag ref and pins prod to the tag it produces here
+      # (PETBOX_IMAGE below), so images published on ordinary main pushes were never pulled
+      # by anything — pure CI minutes and GHCR churn. The BUILD still earns its keep: DockerSmoke
+      # boots the container, so a broken Dockerfile surfaces on main instead of mid-deploy, and
+      # the GHA layer cache stays warm for the eventual deploy build.
+      # The docker tag is written by the `Docker` task, not the push, so dockerTag is set either way.
+      - name: Cake DockerPush (build + smoke; push only for the deploy tag)
         id: publish
         run: |
           set -euo pipefail
           chmod +x ./build.sh
           TAG_FILE="$RUNNER_TEMP/docker-tag.txt"
+          PUSH=false
+          if [ "$GITHUB_REF" = "refs/tags/deploy" ]; then PUSH=true; fi
+          echo "Docker push enabled: $PUSH (ref: $GITHUB_REF)"
           ./build.sh --target=DockerPush \
-            --dockerPush=true \
+            --dockerPush="$PUSH" \
             --ghcrRepository=${{ github.repository }} \
             --dockerTagOutput="$TAG_FILE" \
             --dockerCacheFrom=type=gha \

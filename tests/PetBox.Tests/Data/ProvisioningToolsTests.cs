@@ -132,13 +132,18 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 		var create = await ToolAsync("project_create");
 		Text(await create.CallAsync(new Dictionary<string, object?>
 		{
-			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "Provisioned",
+			["workspaceKey"] = Workspace,
+			["key"] = projectKey,
+			["name"] = "Provisioned",
 		})).Should().NotContain("\"error\"");
 
 		var mint = await ToolAsync("apikey_create");
 		Text(await mint.CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = projectKey, ["name"] = "pet", ["scopes"] = "data:read,data:write", ["expiresInSeconds"] = 3600,
+			["projectKey"] = projectKey,
+			["name"] = "pet",
+			["scopes"] = "data:read,data:write",
+			["expiresInSeconds"] = 3600,
 		})).Should().NotContain("\"error\"");
 
 		using var scope = _factory.Services.CreateScope();
@@ -157,7 +162,9 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
 		await (await ToolAsync("project_create")).CallAsync(new Dictionary<string, object?>
 		{
-			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "Listed",
+			["workspaceKey"] = Workspace,
+			["key"] = projectKey,
+			["name"] = "Listed",
 		});
 		var listed = Text(await (await ToolAsync("project_list")).CallAsync(new Dictionary<string, object?> { ["workspaceKey"] = Workspace }));
 		listed.Should().Contain(projectKey);
@@ -168,7 +175,9 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 	{
 		var result = await (await ToolAsync("project_create")).CallAsync(new Dictionary<string, object?>
 		{
-			["workspaceKey"] = Workspace, ["key"] = "Bad Key!", ["name"] = "x",
+			["workspaceKey"] = Workspace,
+			["key"] = "Bad Key!",
+			["name"] = "x",
 		});
 		// Structured {error} payload (GuardAsync) — assert the cause is the key validation.
 		Text(result).Should().Contain("invalid");
@@ -180,11 +189,15 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
 		await (await ToolAsync("project_create")).CallAsync(new Dictionary<string, object?>
 		{
-			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "x",
+			["workspaceKey"] = Workspace,
+			["key"] = projectKey,
+			["name"] = "x",
 		});
 		var result = await (await ToolAsync("apikey_create")).CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = projectKey, ["name"] = "k", ["scopes"] = "data:read,bogus:scope",
+			["projectKey"] = projectKey,
+			["name"] = "k",
+			["scopes"] = "data:read,bogus:scope",
 		});
 		Text(result).Should().Contain("Unknown scopes");
 	}
@@ -196,7 +209,9 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 		// project-existence check must be skipped and projectKey omitted.
 		var result = Text(await (await ToolAsync("apikey_create")).CallAsync(new Dictionary<string, object?>
 		{
-			["name"] = "maintenance", ["scopes"] = "tasks:read,tasks:write", ["allProjects"] = true,
+			["name"] = "maintenance",
+			["scopes"] = "tasks:read,tasks:write",
+			["allProjects"] = true,
 		}));
 		result.Should().NotContain("\"error\"");
 		result.Should().Contain("\"*\"");
@@ -215,7 +230,10 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 	{
 		var result = Text(await (await ToolAsync("apikey_create")).CallAsync(new Dictionary<string, object?>
 		{
-			["name"] = "k", ["scopes"] = "tasks:read", ["projectKey"] = "$system", ["allProjects"] = true,
+			["name"] = "k",
+			["scopes"] = "tasks:read",
+			["projectKey"] = "$system",
+			["allProjects"] = true,
 		}));
 		result.Should().Contain("mutually exclusive");
 	}
@@ -225,7 +243,8 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 	{
 		var result = Text(await (await ToolAsync("apikey_create")).CallAsync(new Dictionary<string, object?>
 		{
-			["name"] = "k", ["scopes"] = "tasks:read",
+			["name"] = "k",
+			["scopes"] = "tasks:read",
 		}));
 		result.Should().Contain("projectKey is required");
 	}
@@ -236,11 +255,15 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
 		await (await ToolAsync("project_create")).CallAsync(new Dictionary<string, object?>
 		{
-			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "x",
+			["workspaceKey"] = Workspace,
+			["key"] = projectKey,
+			["name"] = "x",
 		});
 		var result = await (await ToolAsync("apikey_create")).CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = projectKey, ["name"] = "   ", ["scopes"] = "data:read",
+			["projectKey"] = projectKey,
+			["name"] = "   ",
+			["scopes"] = "data:read",
 		});
 		// Structured {error} payload (GuardAsync) — a whitespace-only name is rejected, not
 		// silently defaulted; nothing is minted.
@@ -259,16 +282,22 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 		var projectKey = "p" + Guid.NewGuid().ToString("N")[..8];
 		await (await ToolAsync("project_create")).CallAsync(new Dictionary<string, object?>
 		{
-			["workspaceKey"] = Workspace, ["key"] = projectKey, ["name"] = "x",
+			["workspaceKey"] = Workspace,
+			["key"] = projectKey,
+			["name"] = "x",
 		});
 		var mint = await ToolAsync("apikey_create");
 		Text(await mint.CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = projectKey, ["name"] = "agent", ["scopes"] = "data:read",
+			["projectKey"] = projectKey,
+			["name"] = "agent",
+			["scopes"] = "data:read",
 		})).Should().NotContain("\"error\"");
 		Text(await mint.CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = projectKey, ["name"] = "  agent  ", ["scopes"] = "data:read",
+			["projectKey"] = projectKey,
+			["name"] = "  agent  ",
+			["scopes"] = "data:read",
 		})).Should().NotContain("\"error\"");
 
 		using var scope = _factory.Services.CreateScope();
@@ -301,7 +330,9 @@ public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixt
 			var tool = (await mcp.ListToolsAsync()).First(t => t.Name == "project_create");
 			var result = await tool.CallAsync(new Dictionary<string, object?>
 			{
-				["workspaceKey"] = Workspace, ["key"] = "shouldfail", ["name"] = "x",
+				["workspaceKey"] = Workspace,
+				["key"] = "shouldfail",
+				["name"] = "x",
 			});
 			// Structured {error} payload (GuardAsync) — the cause is the missing scope.
 			Text(result).Should().Contain("scope");

@@ -74,7 +74,13 @@ public sealed class FlatNodePartOfMigratorTests : IDisposable
 
 	static PlanNode Node(string board, string key, string nodeId) => new()
 	{
-		Board = board, Key = key, NodeId = nodeId, Version = 0,
-		Status = "defined", Type = "spec", Name = key, Body = "x",
+		Board = board,
+		Key = key,
+		NodeId = nodeId,
+		Version = 0,
+		Status = "defined",
+		Type = "spec",
+		Name = key,
+		Body = "x",
 	};
 }

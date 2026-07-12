@@ -97,15 +97,21 @@ public sealed class CatalogSourceOfTruthTests : IDisposable
 	void CatalogMemoryStore(string project, string store) =>
 		_db.Insert(new MemoryStoreMeta
 		{
-			ProjectKey = project, Name = store, CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+			ProjectKey = project,
+			Name = store,
+			CreatedAt = DateTime.UtcNow,
+			UpdatedAt = DateTime.UtcNow,
 			IsSystem = MemoryStore.SystemStoreNames.Contains(store),
 		});
 
 	void CatalogTaskBoard(string project, string board) =>
 		_db.Insert(new TaskBoardMeta
 		{
-			ProjectKey = project, Name = board, Kind = "simple",
-			CreatedAt = DateTime.UtcNow, UpdatedAt = DateTime.UtcNow,
+			ProjectKey = project,
+			Name = board,
+			Kind = "simple",
+			CreatedAt = DateTime.UtcNow,
+			UpdatedAt = DateTime.UtcNow,
 		});
 
 	// Seeds real content for `Ghost` through the normal service paths (which create the files AND the

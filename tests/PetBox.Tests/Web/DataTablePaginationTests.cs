@@ -168,7 +168,7 @@ public sealed class DataTablePaginationTests : IClassFixture<DataTablePagination
 		html.Should().Contain("row-001");
 		html.Should().NotContain("row-051"); // page 0 stops before the 51st row
 		html.Should().Contain("page 1 ·"); // 1-based page label
-		// Prev is a disabled button (no link) on the first page; Next links forward.
+										   // Prev is a disabled button (no link) on the first page; Next links forward.
 		html.Should().NotContain("data-testid=\"table-prev\"");
 		html.Should().Contain("data-testid=\"table-next\"");
 		html.Should().Contain("pageNum=1"); // the renamed, non-reserved query key

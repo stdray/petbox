@@ -238,7 +238,7 @@ public sealed class SessionEpisodicIndexTests : IDisposable
 		fake.Inputs.Should().NotContain("```");
 		fake.Inputs.Should().NotContain("Записано.");
 		fake.Inputs.Should().Contain(c => c.Contains("реальным смыслом")); // the substantive one embedded
-		// And no message_vec cache rows were spent on the junk — only the one substantive message.
+																		   // And no message_vec cache rows were spent on the junk — only the one substantive message.
 		_factory.GetDb(Proj).MessageVectors.Count(v => v.SessionId == "s1").Should().Be(1);
 	}
 

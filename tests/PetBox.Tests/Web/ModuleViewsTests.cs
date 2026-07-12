@@ -490,12 +490,18 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			if (!db.Workspaces.Any(w => w.Key == "other-ws"))
 				db.Insert(new PetBox.Core.Models.Workspace
 				{
-					Key = "other-ws", Name = "Other", Description = "", CreatedAt = DateTime.UtcNow,
+					Key = "other-ws",
+					Name = "Other",
+					Description = "",
+					CreatedAt = DateTime.UtcNow,
 				});
 			if (!db.Projects.Any(p => p.Key == "$ws-other-ws"))
 				db.Insert(new PetBox.Core.Models.Project
 				{
-					Key = "$ws-other-ws", WorkspaceKey = "other-ws", Name = "Workspace", Description = "",
+					Key = "$ws-other-ws",
+					WorkspaceKey = "other-ws",
+					Name = "Workspace",
+					Description = "",
 				});
 		}
 

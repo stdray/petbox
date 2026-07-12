@@ -560,11 +560,20 @@ Task("Dev")
 
 // ─── Lint / verify ───
 
+// A gate that cannot fail is not a gate. StartProcess returns the exit code — DISCARDING it
+// (as this task used to) made FormatVerify succeed even when `dotnet format` reported errors,
+// so it was a no-op even on the rare occasion something invoked it.
 Task("FormatVerify")
 	.Does(() =>
 	{
-		StartProcess("dotnet", $"restore {solution}");
-		StartProcess("dotnet", $"format {solution} --verify-no-changes --no-restore");
+		var restoreExit = StartProcess("dotnet", $"restore {solution}");
+		if (restoreExit != 0)
+			throw new CakeException($"dotnet restore failed with exit code {restoreExit}");
+
+		var formatExit = StartProcess("dotnet", $"format {solution} --verify-no-changes --no-restore");
+		if (formatExit != 0)
+			throw new CakeException(
+				$"dotnet format --verify-no-changes failed with exit code {formatExit} — run `dotnet format` and commit the result");
 	});
 
 Task("Verify")

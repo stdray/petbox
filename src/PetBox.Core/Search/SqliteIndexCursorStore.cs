@@ -39,7 +39,11 @@ public sealed class SqliteIndexCursorStore : IIndexCursorStore
 		var attempts = (row?.Attempts ?? 0) + 1;
 		await db.InsertOrReplaceAsync(new DeadLetterRow
 		{
-			IndexName = index, Type = type, Id = id, Attempts = attempts, Dead = row?.Dead ?? false,
+			IndexName = index,
+			Type = type,
+			Id = id,
+			Attempts = attempts,
+			Dead = row?.Dead ?? false,
 		}, token: ct);
 		return attempts;
 	}
@@ -60,7 +64,11 @@ public sealed class SqliteIndexCursorStore : IIndexCursorStore
 		var row = await Find(db, index, type, id, ct);
 		await db.InsertOrReplaceAsync(new DeadLetterRow
 		{
-			IndexName = index, Type = type, Id = id, Attempts = row?.Attempts ?? 0, Dead = true,
+			IndexName = index,
+			Type = type,
+			Id = id,
+			Attempts = row?.Attempts ?? 0,
+			Dead = true,
 		}, token: ct);
 	}
 

@@ -114,11 +114,11 @@ static class McpOutputSchema
 					: services => McpServerTool.Create(mi, r => r.Services is { } sp
 						? ActivatorUtilities.CreateInstance(sp, tt)
 						: Activator.CreateInstance(tt)!, new()
-					{
-						Services = services,
-						SerializerOptions = serializerOptions,
-						SchemaCreateOptions = schemaOptions,
-					})));
+						{
+							Services = services,
+							SerializerOptions = serializerOptions,
+							SchemaCreateOptions = schemaOptions,
+						})));
 			}
 		}
 

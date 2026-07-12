@@ -180,9 +180,9 @@ public sealed class KqlTypedPropertiesTests
 		// well-formed ISO still parses to the correct UTC instant (epoch-ms in the SQL layer)
 		EpochMs(by[5]).Should().Be(1704164645000L); // 2024-01-02T03:04:05Z
 		EpochMs(by[6]).Should().Be(1704153600000L); // date-only = UTC midnight
-		// >3 fractional digits: SQLite's unixepoch(...,'subsec') ROUNDS to millisecond precision internally
-		// (.6789 s → .679 s) BEFORE the *1000/CAST, so the exposed value is already ms-rounded; the CAST
-		// (truncate) only guards float representation drift below the ms. Observed: 679.
+													// >3 fractional digits: SQLite's unixepoch(...,'subsec') ROUNDS to millisecond precision internally
+													// (.6789 s → .679 s) BEFORE the *1000/CAST, so the exposed value is already ms-rounded; the CAST
+													// (truncate) only guards float representation drift below the ms. Observed: 679.
 		EpochMs(by[7]).Should().Be(1704164645679L);
 	}
 
@@ -242,7 +242,7 @@ public sealed class KqlTypedPropertiesTests
 		buckets.Should().HaveCount(3);
 		buckets.Should().Contain(b => Equals(b.Key, 0L) && b.Count == 2);      // 1200, 4999
 		buckets.Should().Contain(b => Equals(b.Key, 5000L) && b.Count == 1);   // 6000
-		// 'n/a' + missing → ONE null bucket: not an error, and NOT folded into bucket 0.
+																			   // 'n/a' + missing → ONE null bucket: not an error, and NOT folded into bucket 0.
 		buckets.Should().Contain(b => b.Key == null && b.Count == 2);
 	}
 

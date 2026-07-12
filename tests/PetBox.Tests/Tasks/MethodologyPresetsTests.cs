@@ -587,13 +587,17 @@ public sealed class MethodologyPresetGuardsTests : IDisposable
 		(await noReason.Should().ThrowAsync<ArgumentException>()).WithMessage("*requires a reason*");
 		var bodyOnly = () => Upsert("backlog", new NodePatch
 		{
-			Key = node.Key, Status = "Duplicate", Version = v3,
+			Key = node.Key,
+			Status = "Duplicate",
+			Version = v3,
 			Body = "a full body is not a reason — the reason field is required",
 		});
 		(await bodyOnly.Should().ThrowAsync<ArgumentException>()).WithMessage("*requires a reason*");
 		await Upsert("backlog", new NodePatch
 		{
-			Key = node.Key, Status = "Duplicate", Version = v3,
+			Key = node.Key,
+			Status = "Duplicate",
+			Version = v3,
 			Reason = "duplicate of the v2-flow card on backlog2",
 		});
 		var closed = (await _tasks.GetAsync(Proj, "backlog", includeClosed: true)).Nodes.Single();

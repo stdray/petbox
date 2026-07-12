@@ -145,7 +145,8 @@ public sealed class McpDataToolsTests : IClassFixture<McpDataToolsFixture>
 
 		var create = await tools["db_create"].CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = TestProjectKey, ["name"] = TestDbName,
+			["projectKey"] = TestProjectKey,
+			["name"] = TestDbName,
 		});
 		create.IsError.Should().NotBe(true);
 
@@ -202,7 +203,8 @@ public sealed class McpDataToolsTests : IClassFixture<McpDataToolsFixture>
 		var tools = (await _mcp.ListToolsAsync()).ToDictionary(t => t.Name);
 		await tools["db_create"].CallAsync(new Dictionary<string, object?>
 		{
-			["projectKey"] = TestProjectKey, ["name"] = "tmp",
+			["projectKey"] = TestProjectKey,
+			["name"] = "tmp",
 		});
 
 		var result = await tools["data_exec"].CallAsync(new Dictionary<string, object?>

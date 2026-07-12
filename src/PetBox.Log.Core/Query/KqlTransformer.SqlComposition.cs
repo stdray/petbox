@@ -237,7 +237,8 @@ public static partial class KqlTransformer
 		var inputNames = new HashSet<string>(stage.Columns.Select(c => c.Name), StringComparer.OrdinalIgnoreCase);
 		var defined = new Dictionary<string, Expr>(StringComparer.OrdinalIgnoreCase);
 		var storageCtx = new DerivedColumnContext(baseCtx,
-			name => inputNames.Contains(name) ? null : defined.GetValueOrDefault(name)) { UtcNow = now };
+			name => inputNames.Contains(name) ? null : defined.GetValueOrDefault(name))
+		{ UtcNow = now };
 
 		var rowParam = Expr.Parameter(typeof(object?[]), "row");
 		var working = stage.Columns.ToList();
@@ -1309,7 +1310,8 @@ public static partial class KqlTransformer
 						{
 							Expr selected = Expr.Call(SelectM(source, argT), g, sel);
 							return Expr.Call(AggExtM(nameof(KqlAggregateExpressions.ApproxCountDistinct), argT), selected);
-						});
+						}
+						);
 						return true;
 					}
 					var nullable = !argT.IsValueType || KqlScalar.IsNullable(argT);
@@ -1324,7 +1326,8 @@ public static partial class KqlTransformer
 						}
 						var distinct = Expr.Call(EnumM("Distinct", 1, argT), selected);
 						return Expr.Convert(Expr.Call(EnumM("Count", 1, argT), distinct), typeof(long));
-					});
+					}
+					);
 					return true;
 				}
 
@@ -1353,7 +1356,8 @@ public static partial class KqlTransformer
 					{
 						Expr selected = Expr.Call(SelectM(source, argT), g, sel);
 						return Expr.Call(AggExtM(method, argT), selected);
-					});
+					}
+					);
 					return true;
 				}
 
@@ -1404,7 +1408,8 @@ public static partial class KqlTransformer
 					{
 						Expr selected = Expr.Call(SelectM(source, qT), g, qSel);
 						return Expr.Call(AggExtM(nameof(KqlAggregateExpressions.QuantileDisc), qT), selected, Expr.Constant(p / 100.0));
-					});
+					}
+					);
 					return true;
 				}
 
