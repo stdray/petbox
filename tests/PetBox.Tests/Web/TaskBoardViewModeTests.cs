@@ -9,12 +9,14 @@ using PetBox.Tasks.Data;
 using PetBox.Tasks.Services;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Pages.ProjectHome;
+using PetBox.Web.Rendering;
 
 namespace PetBox.Tests.Web;
 
 // board-view-modes / board-view-persistence, end to end through TaskBoardModel: the resolution
 // order (explicit `?view=` -> the board kind's methodology defaultView -> the builtin Tree
-// default), and the "never a 500" promise for an unknown/reserved-but-unshipped mode in the URL.
+// default), the "never a 500" promise for an unknown mode in the URL, and (board-view-mode-
+// framework) kanban's columns / outline's reveal-mode parameterization.
 public sealed class TaskBoardViewModeTests : IDisposable
 {
 	const string Proj = "proj";
@@ -113,33 +115,103 @@ public sealed class TaskBoardViewModeTests : IDisposable
 	}
 
 	[Fact]
-	public async Task ReservedButUnshippedMethodologyDefault_DegradesToTree()
+	public async Task IntakeMethodologyDefault_TableIsNowShipped_ResolvesToTable()
 	{
-		// intake's own preset default is "table" (methodology-default-view-field), which has
-		// no PetBox.Web partial yet — resolution must not surface "table" as something the
-		// page tries (and fails) to render.
+		// intake's own preset default is "table" (methodology-default-view-field). Table's
+		// partial shipped with board-view-mode-framework's follow-up, so this now resolves to
+		// (and renders) table instead of degrading — the degrade-to-tree behavior this test
+		// used to pin is exercised by UnknownUrlViewMode_FallsBackToTree_NoException below with
+		// a genuinely unregistered name instead.
 		await _store.CreateAsync(Proj, "b4", null, "intake");
 		var m = Model("b4");
 		var result = await m.OnGetAsync(default);
 		result.Should().NotBeNull();
-		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Tree);
-		m.ContentPartialName.Should().Be("_BoardViewTree");
+		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Table);
+		m.ContentPartialName.Should().Be("_BoardViewTable");
 	}
 
-	// ── (d) an unknown/unsupported mode in the URL never 500s ──────────────────
+	// ── (d) an unknown mode in the URL never 500s ───────────────────────────────
 
-	[Theory]
-	[InlineData("bogus")]
-	[InlineData("kanban")] // known name, no renderer yet
-	public async Task UnknownOrUnshippedUrlViewMode_FallsBackToTree_NoException(string requested)
+	[Fact]
+	public async Task UnknownUrlViewMode_FallsBackToTree_NoException()
 	{
 		await _store.CreateAsync(Proj, "b5", null, "simple");
 		var m = Model("b5");
-		m.ViewMode = requested;
+		m.ViewMode = "bogus";
 		var result = await m.OnGetAsync(default);
 		result.Should().NotBeNull();
 		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Tree);
 		m.IsTagView.Should().BeFalse();
 		m.ContentPartialName.Should().Be("_BoardViewTree");
+	}
+
+	[Fact]
+	public async Task KanbanUrlViewMode_NowRenders_NotAFallback()
+	{
+		// kanban had no renderer when this suite was first written (see the removed
+		// UnknownOrUnshippedUrlViewMode_FallsBackToTree_NoException("kanban") case); the
+		// board-view-mode-framework follow-up shipped its partial, so an explicit ?view=kanban
+		// now resolves to kanban itself instead of degrading.
+		await _store.CreateAsync(Proj, "b6", null, "simple");
+		var m = Model("b6");
+		m.ViewMode = BoardViewModeNames.Kanban;
+		var result = await m.OnGetAsync(default);
+		result.Should().NotBeNull();
+		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Kanban);
+		m.ContentPartialName.Should().Be("_BoardViewKanban");
+	}
+
+	// ── kanban: columns come from the board's OWN workflow, not hardcoded ──────
+
+	[Fact]
+	public async Task Kanban_ColumnsComeFromTheBoardsOwnWorkflow_NotHardcoded()
+	{
+		// A custom methodology whose statuses (Todo/Done) look nothing like the `work` preset's
+		// own kanban columns (Pending/InProgress/Review/Done/Blocked/Deferred/Cancelled) — proves
+		// KanbanColumns is sourced from THIS board's workflow, not a hardcoded stage list.
+		var board = await CreateInstanceBoard("kanbaninst", "kanbankind", BoardViewModeNames.Kanban);
+		var m = Model(board);
+		await m.OnGetAsync(default);
+
+		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Kanban);
+		m.ContentPartialName.Should().Be("_BoardViewKanban");
+		m.KanbanColumns.Select(c => c.Slug).Should().Equal("Todo", "Done");
+		m.KanbanColumns.Select(c => c.Slug).Should().NotContain(["Pending", "InProgress", "Review"]);
+	}
+
+	// ── outline: reveal mode follows the board's PRESET kind ───────────────────
+
+	[Fact]
+	public async Task Outline_SpecKind_UsesInlineLazyRevealMode()
+	{
+		await _store.CreateAsync(Proj, "specboard", null, "spec");
+		var m = Model("specboard");
+		m.ViewMode = BoardViewModeNames.Outline;
+		await m.OnGetAsync(default);
+		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Outline);
+		m.ContentPartialName.Should().Be("_BoardViewOutline");
+		m.OutlineRevealMode.Should().Be(OutlineRevealModeNames.InlineLazy);
+	}
+
+	[Fact]
+	public async Task Outline_NonSpecKind_UsesNavigateRevealMode()
+	{
+		await _store.CreateAsync(Proj, "simpleboard", null, "simple");
+		var m = Model("simpleboard");
+		m.ViewMode = BoardViewModeNames.Outline;
+		await m.OnGetAsync(default);
+		m.OutlineRevealMode.Should().Be(OutlineRevealModeNames.Navigate);
+	}
+
+	[Fact]
+	public async Task Outline_CustomDefinedKind_ConservativelyUsesNavigateRevealMode()
+	{
+		// A definition-declared custom kind's body length is unknown — the conservative default
+		// (navigate) applies even though it isn't the `spec` preset.
+		var board = await CreateInstanceBoard("outlineinst", "outlinekind", BoardViewModeNames.Outline);
+		var m = Model(board);
+		await m.OnGetAsync(default);
+		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Outline);
+		m.OutlineRevealMode.Should().Be(OutlineRevealModeNames.Navigate);
 	}
 }

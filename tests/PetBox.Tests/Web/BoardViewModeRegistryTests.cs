@@ -23,18 +23,9 @@ public sealed class BoardViewModeRegistryTests
 
 	[Fact]
 	public void ExplicitChoice_UnrenderableName_FallsThroughToMethodologyDefault() =>
-		// "bogus" isn't a registered mode at all — same silent degradation an unrenderable-
-		// but-known name (e.g. "kanban" before its partial ships) gets, since Find() returns
-		// null for both today.
+		// "bogus" isn't a registered mode at all — Find() returns null, so Resolve falls
+		// through to the methodology default exactly as it would for any other unknown name.
 		BoardViewModeRegistry.Resolve(requested: "bogus", methodologyDefault: "tags").Should().Be("tags");
-
-	[Fact]
-	public void ReservedButUnshippedMode_DegradesToTree_NeverThrows() =>
-		// kanban/outline/table are KNOWN names (BoardViewModeNames.All, so a methodology
-		// definition may legally set them — see BoardViewModeNamesTests) but have no registry
-		// entry yet — Resolve degrades silently, exactly like an unknown URL value would.
-		BoardViewModeRegistry.Resolve(requested: null, methodologyDefault: BoardViewModeNames.Kanban)
-			.Should().Be(BoardViewModeNames.Tree);
 
 	[Fact]
 	public void BothUnrenderable_FallsBackToTree() =>
@@ -44,23 +35,18 @@ public sealed class BoardViewModeRegistryTests
 	public void ResolutionIsCaseInsensitive() =>
 		BoardViewModeRegistry.Resolve(requested: "TAGS", methodologyDefault: null).Should().Be("tags");
 
-	[Fact]
-	public void Entries_TreeAndTags_AreRenderableToday()
-	{
-		BoardViewModeRegistry.IsRenderable(BoardViewModeNames.Tree).Should().BeTrue();
-		BoardViewModeRegistry.IsRenderable(BoardViewModeNames.Tags).Should().BeTrue();
-	}
-
 	[Theory]
+	[InlineData(BoardViewModeNames.Tree)]
+	[InlineData(BoardViewModeNames.Tags)]
 	[InlineData(BoardViewModeNames.Kanban)]
 	[InlineData(BoardViewModeNames.Outline)]
 	[InlineData(BoardViewModeNames.Table)]
-	public void ReservedModes_AreKnownButNotYetRenderable(string mode)
+	public void AllKnownModes_AreRenderable(string mode)
 	{
-		// Pins the exact "not yet" boundary board-view-mode-framework hands to the next
-		// worker: legal to NAME (BoardViewModeNames.IsKnown), not yet legal to RENDER
-		// (BoardViewModeRegistry.IsRenderable) — adding one entry to Entries flips this.
+		// board-view-mode-framework's follow-up shipped kanban/outline/table's partials — every
+		// BoardViewModeNames constant is now both a legal NAME (IsKnown) and RENDERABLE
+		// (a registry entry with a real partial); no name is reserved-but-unshipped anymore.
 		BoardViewModeNames.IsKnown(mode).Should().BeTrue();
-		BoardViewModeRegistry.IsRenderable(mode).Should().BeFalse();
+		BoardViewModeRegistry.IsRenderable(mode).Should().BeTrue();
 	}
 }

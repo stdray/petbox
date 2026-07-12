@@ -193,17 +193,116 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-resolved-view=\"tags\"");
 	}
 
-	// An unknown mode (typo'd URL) or a reserved-but-unshipped one (kanban, before its
-	// partial exists) must silently degrade to the tree partial — never a 500.
-	[Theory]
-	[InlineData("bogus")]
-	[InlineData("kanban")]
-	public async Task TaskBoard_UnknownOrUnshippedViewMode_FallsBackToTree_NoException(string mode)
+	// An unknown mode (typo'd URL) must silently degrade to the tree partial — never a 500.
+	[Fact]
+	public async Task TaskBoard_UnknownViewMode_FallsBackToTree_NoException()
 	{
-		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/roadmap?view={mode}");
+		using var resp = await GetAuthedAsync("/ui/$system/$system/tasks/roadmap?view=bogus");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("data-resolved-view=\"tree\"");
+	}
+
+	// board-view-mode-framework: kanban/outline/table HTTP-level smoke — same "only an actual
+	// render proves the partial exists" reasoning as the tree/tags smoke above.
+	[Fact]
+	public async Task TaskBoard_KanbanView_RendersColumnsFromWorkflow_NotHardcoded()
+	{
+		const string board = "viewmodekanban";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "kanban smoke"); // simple kind
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "k1", Title = "K1", Body = "x" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-resolved-view=\"kanban\"");
+		html.Should().Contain("data-testid=\"board-kanban\"");
+		// Simple kind's OWN statuses (Todo/InProgress/Blocked/Done/Cancelled) — not a hardcoded
+		// column set (a work-kind board would show Pending/InProgress/Review/… instead).
+		html.Should().Contain("data-testid=\"kanban-column\" data-status=\"Todo\"");
+		html.Should().Contain("data-node-key=\"k1\"");
+	}
+
+	[Fact]
+	public async Task TaskBoard_OutlineView_NavigateMode_NeverShipsTheBody()
+	{
+		const string board = "viewmodeoutline";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "outline smoke"); // simple kind → navigate
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "o1", Title = "O1", Body = "a wiki-length body that must not ship inline" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-resolved-view=\"outline\"");
+		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"navigate\"");
+		html.Should().NotContain("a wiki-length body that must not ship inline");
+	}
+
+	[Fact]
+	public async Task TaskBoard_OutlineView_SpecKind_UsesInlineLazy_BodyNotInInitialRender()
+	{
+		const string board = "viewmodeoutlinespec";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "outline spec smoke", "spec");
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "sreq", NodeId = "id-sreq", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
+			}, partition: n => n.Board == board);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"inline-lazy\"");
+		html.Should().Contain("data-testid=\"outline-node-lazy\"");
+		html.Should().NotContain("a one-line normative statement"); // fetched only on expand
+	}
+
+	[Fact]
+	public async Task TaskBoard_TableView_RendersExpectedColumns()
+	{
+		const string board = "viewmodetable";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "table smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "t1", Title = "T1", Body = "x", Tags = ["area:ui"] },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=table");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-resolved-view=\"table\"");
+		html.Should().Contain("data-testid=\"board-table\"");
+		html.Should().Contain("data-node-key=\"t1\"");
+		html.Should().Contain(">area:ui<");
 	}
 
 	[Fact]

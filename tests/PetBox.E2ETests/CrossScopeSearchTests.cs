@@ -86,8 +86,10 @@ public sealed class CrossScopeSearchTests(WebAppFixture app, ITestOutputHelper o
 		var hit = _page.GetByTestId("search-hit").Filter(new() { HasText = "Cross-scope target node" });
 		await Expect(hit).ToBeVisibleAsync();
 		// The row names WHERE the task lives — a different workspace/project than the current one.
-		await Expect(_page.GetByTestId("search-ws-group").Filter(new() { HasText = WsB })).ToBeVisibleAsync();
-		await Expect(_page.GetByTestId("search-project-group").Filter(new() { HasText = ProjB })).ToBeVisibleAsync();
+		// (board-view-mode-framework: the result table's workspace/project/board columns replaced
+		// the earlier grouped-by-workspace/project sections — same information, one row now.)
+		await Expect(hit).ToContainTextAsync(WsB);
+		await Expect(hit).ToContainTextAsync(ProjB);
 
 		await hit.Locator("a").ClickAsync();
 		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);

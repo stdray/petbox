@@ -240,10 +240,9 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 	[Fact]
 	public async Task DefaultView_KnownValue_Stores()
 	{
-		// "kanban" isn't renderable in PetBox.Web yet (no partial), but the validator only
-		// checks the NAME is known — whether a partial exists is BoardViewModeRegistry's
-		// resolve-time concern, not a definition-time error (board-view-mode-framework hands
-		// the renderer to a later worker; the name is already legal today).
+		// The validator only checks the NAME is known (BoardViewModeNames.IsKnown) — whether a
+		// partial exists is BoardViewModeRegistry's resolve-time concern, a separate layer
+		// entirely (kanban is in fact renderable today, but that's incidental to this test).
 		var ack = await Define(Def(SupportKind(defaultView: BoardViewModeNames.Kanban)));
 		ack.Changed.Should().BeTrue();
 	}

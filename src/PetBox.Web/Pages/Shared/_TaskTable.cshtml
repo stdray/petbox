@@ -1,0 +1,102 @@
+@model PetBox.Web.Pages.Shared.TaskTableModel
+@* The ONE flat task table (board-view-mode-framework's table task): shared by TaskBoard's own
+   table view mode (_BoardViewTable.cshtml, ShowScopeColumns=false) and the cross-scope search
+   results page (Pages/Search.cshtml, ShowScopeColumns=true — a hit can live on any board in any
+   project, so workspace/project/board become real columns instead of implicit page context).
+   Sorting/filtering reuse the EXISTING client mechanism (board-sort-impl, ts/board.ts
+   initBoardPage) via the same testids/data-* the tree pane uses — not a second parallel one:
+   initBoardPage() runs unconditionally on every page and wires up whatever of this markup is
+   present, table or tree alike. *@
+@if (Model.Rows.Count == 0)
+{
+	<div class="alert" data-testid="board-empty">No tasks.</div>
+}
+else
+{
+	<div class="mb-3 flex flex-wrap items-center gap-2" data-testid="board-filter">
+		<input type="search" class="input input-bordered input-xs w-48" placeholder="filter…" data-testid="board-filter-text" aria-label="Filter text" />
+		<select class="select select-bordered select-xs" data-testid="board-filter-status" aria-label="Filter by status"><option value="">status: any</option></select>
+		<select class="select select-bordered select-xs" data-testid="board-filter-type" aria-label="Filter by type"><option value="">type: any</option></select>
+		<label class="label cursor-pointer justify-start gap-2 text-xs">
+			<input type="checkbox" class="toggle toggle-xs" data-testid="active-only-toggle" />
+			<span>active only</span>
+		</label>
+		<span class="text-xs opacity-60 ml-1">sort:</span>
+		<select class="select select-bordered select-xs" data-testid="board-sort-by" aria-label="Sort by">
+			<option value="priority">priority</option>
+			<option value="created">created</option>
+			<option value="updated">updated</option>
+			<option value="title">title</option>
+		</select>
+		<button type="button" class="btn btn-ghost btn-xs font-mono" data-testid="board-sort-dir" aria-label="Toggle sort direction" title="toggle ascending / descending">↑</button>
+	</div>
+	<div class="overflow-x-auto">
+		<table class="table table-sm" data-testid="board-table">
+			<thead>
+				<tr>
+					@if (Model.ShowScopeColumns)
+					{
+						<th>workspace</th>
+						<th>project</th>
+						<th>board</th>
+					}
+					<th>key</th>
+					<th>type</th>
+					<th>status</th>
+					<th>priority</th>
+					<th>tags</th>
+					<th>updated</th>
+					<th>delivery</th>
+				</tr>
+			</thead>
+			<tbody data-testid="board-nodes">
+				@foreach (var row in Model.Rows)
+				{
+					var search = $"{row.Title} {row.Key} {string.Join(' ', row.Tags)}".ToLowerInvariant();
+					<tr data-testid="@(Model.ShowScopeColumns ? "search-hit" : "task-table-row")"
+						data-node-id="@row.NodeId" data-node-key="@row.Key"
+						data-status="@row.StatusSlug" data-type="@row.Type" data-priority="@row.Priority" data-title="@row.Title"
+						data-created="@(row.CreatedAt?.ToString("o") ?? "")" data-updated="@(row.UpdatedAt?.ToString("o") ?? "")"
+						data-search="@search" data-closed="@row.Closed.ToString().ToLowerInvariant()" data-keep-visible="false">
+						@if (Model.ShowScopeColumns)
+						{
+							<td class="font-mono text-xs opacity-70" data-testid="row-workspace">@row.Workspace</td>
+							<td class="font-mono text-xs opacity-70" data-testid="row-project">@row.ProjectKey</td>
+							<td class="font-mono text-xs opacity-70" data-testid="row-board">@row.Board</td>
+						}
+						<td>
+							<a href="@row.Url" class="link link-hover font-semibold" data-testid="node-name">@row.Title</a>
+							<span class="font-mono text-xs opacity-50">@row.Key</span>
+						</td>
+						<td><span class="badge badge-ghost badge-xs" data-testid="node-type">@row.Type</span></td>
+						<td>
+							@if (row.StatusShow)
+							{
+								<span class="badge @row.StatusCssClass badge-sm" data-testid="node-status">@row.StatusDisplay</span>
+							}
+						</td>
+						<td data-testid="node-priority">@row.Priority</td>
+						<td data-testid="node-tags">
+							@foreach (var t in row.Tags)
+							{
+								<span class="badge badge-outline badge-xs mr-1">@t</span>
+							}
+						</td>
+						<td>
+							@if (row.UpdatedAt is not null)
+							{
+								<time class="local-time text-xs" datetime="@row.UpdatedAt.Value.ToString("o")" data-testid="node-updated">@row.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time>
+							}
+						</td>
+						<td>
+							@if (row.Delivery is not null)
+							{
+								<partial name="_DeliveryBadge" model="@(new DeliveryBadgeModel(row.Delivery) { Size = "badge-xs" })" />
+							}
+						</td>
+					</tr>
+				}
+			</tbody>
+		</table>
+	</div>
+}
