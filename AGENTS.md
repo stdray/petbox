@@ -95,15 +95,16 @@ records**, not the working plan — do not treat them as current state.
    what was actually done, the evidence it works (numbers, commits, live checks), and
    anything the next reader must know that the diff won't tell them. For a cancel/wontfix/
    reject, the verdict is WHY, and what would change the answer. A card closed without a
-   verdict is indistinguishable a month later from one abandoned. The engine enforces this
-   the same way it enforces `spec_plan` on `exploring → review`, via `preconditionArtifact`
-   — so a missing verdict is a rejected transition, not a nag. Tag the comment
-   `artifact:verdict` (the `artifact:` prefix is the convention; a bare `verdict` tag does
-   NOT satisfy the gate). **One gap you must cover yourself:** a work card reaching `Done`
-   auto-closes its linked intake issue through the `issue_task` effect, and that cascade
-   does NOT check the gate — the issue lands in `done` with no verdict of its own. That is
-   fine when the work card's verdict tells the story, but if the issue deserves its own
-   answer, post it BEFORE closing the work card.
+   verdict is indistinguishable a month later from one abandoned. Tag the comment
+   `artifact:verdict` (the `artifact:` prefix is the convention).
+   **This is binding on agents but NO LONGER enforced by the engine** — the
+   `preconditionArtifact:"verdict"` gate was removed from every terminal transition
+   (2026-07-12, intake `verdict-gate-blocks-maintainer`): the UI has no way to author an
+   artifact-tagged comment, so a hard gate locked the maintainer — the one person entitled
+   to close a card — out of closing anything. It stays off until the UI can write artifacts.
+   An idea is exempt on principle, not just for now: its `spec_plan` IS its verdict (it
+   states what the acceptance changes), so `review → accepted` must never carry the gate.
+   `spec_plan` on `exploring → review` remains enforced.
 7. **Deploy only on explicit command** (the `deploy` tag flow); after deploy, run a
    live smoke against production endpoints.
 8. **Clean up when the card closes — the worktree's life ends with the card, not with
