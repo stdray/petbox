@@ -65,9 +65,9 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 
 					var tasksFactory = svc.SingleOrDefault(d => d.ServiceType == typeof(IScopedDbFactory<TasksDb>));
 					if (tasksFactory is not null) svc.Remove(tasksFactory);
-				svc.AddSingleton<IScopedDbFactory<TasksDb>>(_ => new ScopedDbFactory<TasksDb>(
-					Path.Combine(_baseDir, "tasks"), PetBox.Core.Settings.Scope.Project,
-					cs => new TasksDb(TasksDb.CreateOptions(cs)), TasksSchema.Ensure));
+					svc.AddSingleton<IScopedDbFactory<TasksDb>>(_ => new ScopedDbFactory<TasksDb>(
+						Path.Combine(_baseDir, "tasks"), PetBox.Core.Settings.Scope.Project,
+						cs => new TasksDb(TasksDb.CreateOptions(cs)), TasksSchema.Ensure));
 				});
 			});
 	}
@@ -114,24 +114,10 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 		var tasksFactory = Factory.Services.GetRequiredService<IScopedDbFactory<TasksDb>>();
 		await tasksFactory.EvictAsync(ProjectKey);
 		var path = Path.Combine(_baseDir, "tasks", ProjectKey + ".db");
-		if (File.Exists(path))
-		{
-			using var conn = new SqliteConnection($"Data Source={path};Pooling=False");
-			conn.Open();
-			using var cmd = conn.CreateCommand();
-			cmd.CommandText = "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA journal_mode=DELETE;";
-			cmd.ExecuteNonQuery();
-		}
-		SqliteConnection.ClearAllPools();
-		for (var attempt = 0; attempt < 5; attempt++)
-		{
-			GC.Collect();
-			GC.WaitForPendingFinalizers();
-			if (ScopedDbFiles.TryDelete(path))
-				return;
-			Task.Delay(100).GetAwaiter().GetResult();
-		}
-		throw new InvalidOperationException($"per-test reset could not delete {path} (still locked)");
+		// Clears this file's pools, checkpoints, deletes — in that order, which matters.
+		// (Never ClearAllPools(): it is process-global and yanks pooled connections out from
+		// under every other collection running in parallel. See TestDirs.)
+		TestDirs.ResetDbFile(path);
 	}
 
 	public async Task DisposeAsync()

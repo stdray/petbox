@@ -26,6 +26,9 @@ public sealed class QueryExecApiFixture : IAsyncLifetime
 
 	readonly string _baseDir;
 
+	// Exposed so quota tests can drop pooled DataDb connections (see Quota_Exceeded_Returns507).
+	public string BaseDir => _baseDir;
+
 	public WebApplicationFactory<Program> Factory { get; }
 	public HttpClient Client { get; private set; } = null!;
 
@@ -199,6 +202,18 @@ public sealed class QueryExecApiTests : IClassFixture<QueryExecApiFixture>, IAsy
 	}
 
 	[Fact]
+	public async Task Exec_PRAGMA_max_page_count_Forbidden()
+	{
+		// max_page_count IS the disk quota, and it's per-connection state we re-apply on
+		// every open — letting a pet set it would let a pet lift its own quota.
+		var resp = await _client.PostAsJsonAsync($"/api/data/{TestProjectKey}/{TestDbName}/exec",
+			new { sql = "PRAGMA max_page_count = 4294967294" });
+		resp.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+		var body = await resp.Content.ReadAsStringAsync();
+		body.Should().Contain("max_page_count");
+	}
+
+	[Fact]
 	public async Task Exec_PRAGMA_safe_OK()
 	{
 		var resp = await _client.PostAsJsonAsync($"/api/data/{TestProjectKey}/{TestDbName}/exec",
@@ -225,6 +240,12 @@ public sealed class QueryExecApiTests : IClassFixture<QueryExecApiFixture>, IAsy
 		create.EnsureSuccessStatusCode();
 		await _client.PostAsJsonAsync($"/api/data/{TestProjectKey}/{tinyDb}/schema",
 			new { name = "M001", sql = "CREATE TABLE blobs (id INTEGER PRIMARY KEY, data BLOB)" });
+
+		// Drop every pooled connection to this DataDb, so /exec below gets a genuinely
+		// fresh one — exactly what production does after the pool prunes idle connections.
+		// PRAGMA max_page_count is per-connection: without re-applying it on open, the
+		// quota simply does not exist on that connection and this INSERT would return 200.
+		TestDirs.ClearPoolsUnder(_fx.BaseDir);
 
 		var hugePayload = new string('x', 5 * 1024 * 1024);
 		var resp = await _client.PostAsJsonAsync($"/api/data/{TestProjectKey}/{tinyDb}/exec",

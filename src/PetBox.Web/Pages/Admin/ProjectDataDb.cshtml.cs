@@ -7,28 +7,30 @@ using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Data;
+using PetBox.Data.Contract;
 using PetBox.Data.Schema;
 
 namespace PetBox.Web.Pages.Admin;
 
 // Detail page for a single DataDb: introspects tables via PRAGMA, lists
 // applied migrations from __SchemaVersions, and exposes a paste-migration
-// form. Apply uses SchemaRunner directly (the HTTP /schema endpoint is
-// ApiKey-auth, this page is cookie-auth via WorkspaceAdmin policy).
+// form. Apply goes through IDataSqlService — the same quota'd path as the HTTP
+// /schema endpoint and the MCP tool (that endpoint is ApiKey-auth, this page is
+// cookie-auth via WorkspaceAdmin policy, so the page can't just call it).
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectDataDbModel : PageModel
 {
 	readonly PetBoxDb _db;
 	readonly FeatureFlags _features;
 	readonly IDataDbFactory _factory;
-	readonly SchemaRunner _runner;
+	readonly IDataSqlService _sql;
 
-	public ProjectDataDbModel(PetBoxDb db, FeatureFlags features, IDataDbFactory factory, SchemaRunner runner)
+	public ProjectDataDbModel(PetBoxDb db, FeatureFlags features, IDataDbFactory factory, IDataSqlService sql)
 	{
 		_db = db;
 		_features = features;
 		_factory = factory;
-		_runner = runner;
+		_sql = sql;
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -69,8 +71,8 @@ public sealed class ProjectDataDbModel : PageModel
 			return Page();
 		}
 
-		var cs = _factory.GetConnectionString(ProjectKey, DbName);
-		var result = _runner.Apply(cs, name, sql);
+		// The service opens the DataDb's quota'd connection (max_page_count is per-connection).
+		var result = await _sql.ApplySchemaAsync(ProjectKey, DbName, name, sql);
 		switch (result.Kind)
 		{
 			case SchemaApplyKind.Applied:

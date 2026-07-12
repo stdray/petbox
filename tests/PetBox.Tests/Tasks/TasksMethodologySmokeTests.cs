@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Client;
 using ModelContextProtocol.Protocol;
 using PetBox.Core.Data;
@@ -56,6 +57,15 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 				});
 				b.ConfigureServices(svc =>
 				{
+					// Same reason as TasksMcpFixture: these smoke tests only need the MCP stack.
+					// Background services (enrichment, orphan cleanup, WAL checkpoint, self-log
+					// flush) tick on wall-clock timers, so under a LOADED parallel run — where the
+					// class takes longer than their 10s/30s initial delays — they fire in the middle
+					// of a test and hold pooled SqliteConnections / native file handles on Windows,
+					// which makes ResetAsync's delete of the per-test tasks file fail.
+					var hosted = svc.Where(d => typeof(IHostedService).IsAssignableFrom(d.ServiceType)).ToList();
+					foreach (var h in hosted) svc.Remove(h);
+
 					var tasksFactory = svc.SingleOrDefault(d => d.ServiceType == typeof(IScopedDbFactory<TasksDb>));
 					if (tasksFactory is not null) svc.Remove(tasksFactory);
 					svc.AddSingleton<IScopedDbFactory<TasksDb>>(_ => new ScopedDbFactory<TasksDb>(
@@ -102,11 +112,10 @@ public sealed class TasksMethodologySmokeFixture : IAsyncLifetime
 		var tasksFactory = Factory.Services.GetRequiredService<IScopedDbFactory<TasksDb>>();
 		await tasksFactory.EvictAsync(ProjectKey);
 		var path = Path.Combine(_baseDir, "tasks", ProjectKey + ".db");
-		// Pool identity is the connection string; TasksDb.CreateOptions appends Foreign Keys=True.
-		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={path}"));
-		SqliteConnection.ClearPool(new SqliteConnection($"Data Source={path};Foreign Keys=True"));
-		if (!ScopedDbFiles.TryDelete(path))
-			throw new InvalidOperationException($"per-test reset could not delete {path} (still locked)");
+		// Clears this file's pools, checkpoints, deletes — in that order, which matters.
+		// (Never ClearAllPools(): it is process-global and yanks pooled connections out from
+		// under every other collection running in parallel. See TestDirs.)
+		TestDirs.ResetDbFile(path);
 	}
 
 	async Task<(HttpClient, McpClient)> ConnectAsync(string apiKey)

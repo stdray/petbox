@@ -53,9 +53,7 @@ public static class SchemaApi
 		string projectKey,
 		string dbName,
 		SchemaApplyRequest req,
-		PetBoxDb db,
-		IDataDbFactory factory,
-		SchemaRunner runner,
+		IDataSqlService sql,
 		CancellationToken ct)
 	{
 		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
@@ -64,12 +62,11 @@ public static class SchemaApi
 		if (req.Sql is null)
 			return Results.BadRequest(new ErrorResponse("sql is required"));
 
-		var row = await db.DataDbs.FirstOrDefaultAsync(
-			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
-		if (row is null) return Results.NotFound(new ErrorResponse("DataDb not found"));
-
-		var cs = factory.GetConnectionString(projectKey, dbName);
-		var result = runner.Apply(cs, req.Name, req.Sql);
+		// The service resolves the DataDb row and opens its quota'd connection (migration
+		// SQL writes, and max_page_count is per-connection) — same path as the MCP tool.
+		SchemaApplyResult result;
+		try { result = await sql.ApplySchemaAsync(projectKey, dbName, req.Name, req.Sql, ct); }
+		catch (DataDbNotFoundException) { return Results.NotFound(new ErrorResponse("DataDb not found")); }
 
 		var payload = new SchemaApplyResponse(result.Kind.ToString(), result.Hash, result.ExistingHash);
 		return result.Kind switch
@@ -96,9 +93,7 @@ public static class SchemaApi
 			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
 		if (row is null) return Results.NotFound(new ErrorResponse("DataDb not found"));
 
-		var cs = factory.GetConnectionString(projectKey, dbName);
-		await using var conn = new SqliteConnection(cs);
-		await conn.OpenAsync(ct);
+		await using var conn = await factory.OpenAsync(projectKey, dbName, row.MaxPageCount, ct);
 
 		// __SchemaVersions may not exist yet if no migrations have been applied.
 		await using var existsCmd = conn.CreateCommand();

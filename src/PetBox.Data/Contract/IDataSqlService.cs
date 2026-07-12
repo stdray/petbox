@@ -1,4 +1,5 @@
 using System.Text.Json;
+using PetBox.Data.Schema;
 
 namespace PetBox.Data.Contract;
 
@@ -20,6 +21,14 @@ public interface IDataSqlService
 	// PRAGMA deny-list (throws DeniedPragmaException).
 	Task<int> ExecAsync(
 		string projectKey, string dbName, string sql, IReadOnlyList<SqlArg> parameters, int timeoutSeconds, CancellationToken ct = default);
+
+	// Named migration (DbUp + hash idempotency). Lives here for the same reason as the
+	// two above: opening the DataDb's quota'd connection is the Data module's job, so
+	// adapters (MCP data_schema_apply, REST POST /schema, admin UI) never touch a raw
+	// SqliteConnection. Throws DataDbNotFoundException; a bad script comes back as
+	// SchemaApplyResult.Failed, not an exception.
+	Task<SchemaApplyResult> ApplySchemaAsync(
+		string projectKey, string dbName, string name, string sql, CancellationToken ct = default);
 }
 
 // A bound SQL parameter with an already-CLR value (null => DBNull at bind time).
