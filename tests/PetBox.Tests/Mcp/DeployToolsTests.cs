@@ -159,6 +159,7 @@ public sealed class DeployToolsTests : IDisposable
 			HttpContext = new DefaultHttpContext
 			{
 				User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("project", "ops"), new Claim("scopes", scopes)], "test")),
+				RequestServices = TestProjectCatalog.Services,
 			},
 		};
 

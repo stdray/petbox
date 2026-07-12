@@ -24,6 +24,8 @@
  * `petbox_memory_upsert` (the Claude `mcp__petbox__*` names do not apply here).
  */
 import type { Plugin } from "@opencode-ai/plugin";
+import { resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
+import { DEFAULT_AGENT_DEFINITION, type AgentDefinition } from "./agent-definition.ts";
 import { pushTranscript } from "./append.ts";
 import { fetchCanonBlock } from "./canon.ts";
 import { buildProtocol, opencodePetboxTool } from "./protocol.ts";
@@ -32,6 +34,17 @@ import { resolveProject } from "./registry.ts";
 export const PetboxPlugin: Plugin = async ({ client, directory }) => {
   // Resolve the active project once at load. null → both hooks no-op.
   const resolved = resolveProject(directory ?? "");
+
+  // Resolve the banner's orchestrator notes ONCE at plugin load — server → LKG cache → the
+  // built-in default, same order `apply` uses (resolveAgentDefinitionForSession wraps
+  // agent-def-fetch.ts's resolveAgentDefinitionWithLkg). Bounded by that helper's own ~8s
+  // fetch timeout; the plugin instance is long-lived for the opencode session, so this is a
+  // one-time load-time cost, not a per-prompt one, and never throws/blocks indefinitely.
+  let agentDefinition: AgentDefinition = DEFAULT_AGENT_DEFINITION;
+  if (resolved) {
+    const got = await resolveAgentDefinitionForSession(resolved);
+    agentDefinition = got.definition;
+  }
 
   // Avoid re-POSTing the same state when session.idle fires repeatedly.
   const lastPushed = new Map<string, string>();
@@ -87,7 +100,12 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
     // Port of pull-memory — make the memory protocol part of the system prompt.
     "experimental.chat.system.transform": async (_input, output) => {
       if (!resolved) return;
-      output.system.push(buildProtocol(resolved.project, opencodePetboxTool, { harness: "opencode" }));
+      output.system.push(
+        buildProtocol(resolved.project, opencodePetboxTool, {
+          harness: "opencode",
+          definition: agentDefinition,
+        }),
+      );
       // Append the curated memory canon when available (best-effort; degrades to nothing).
       const canon = await fetchCanonBlock(resolved);
       if (canon) output.system.push(canon);

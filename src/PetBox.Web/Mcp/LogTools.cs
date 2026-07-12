@@ -38,7 +38,7 @@ public static class LogTools
 		[Description("KQL query, e.g. 'events | where Level == 4 | take 50' or 'events | summarize count() by ServiceKey'.")] string kql,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.LogsQuery);
 
 		LogQueryResult result;

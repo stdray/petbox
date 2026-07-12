@@ -44,6 +44,7 @@ public sealed class ProvisioningToolsFixture : IAsyncLifetime
 						// process-wide env write with a per-class value would leak into any
 						// host booting concurrently now that classes run in parallel.
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
+						["Host:BackgroundServices"] = "false",
 						["Features:Config"] = "true",
 					});
 				});

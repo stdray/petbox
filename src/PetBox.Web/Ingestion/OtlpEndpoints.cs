@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Configuration;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
+using PetBox.Core.Data;
 using PetBox.Log.Core.Contract;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Ingestion;
@@ -121,17 +122,9 @@ public static class OtlpEndpoints
 	// inject OTLP logs/traces/metrics into any project. The bare self-export routes below
 	// (SelfIngest*, AllowAnonymous + shared-secret X-Seq-ApiKey) are a deliberately different,
 	// unauthenticated-by-design contract and are left untouched.
-	static bool AuthorizeProject(HttpContext ctx, string projectKey, out IResult forbid)
-	{
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
-		{
-			forbid = Results.Forbid();
-			return false;
-		}
-		forbid = null!;
-		return true;
-	}
+	static async Task<IResult?> AuthorizeProjectAsync(
+		HttpContext ctx, string projectKey, IProjectCatalog catalog, CancellationToken ct) =>
+		await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct) ? null : Results.Forbid();
 
 	static async Task<IResult> IngestLogs(
 		HttpContext ctx,
@@ -139,9 +132,10 @@ public static class OtlpEndpoints
 		string logName,
 		ILogStore store,
 		IIngestionPipeline pipeline,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 
 		var serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(serviceKey))
@@ -166,9 +160,10 @@ public static class OtlpEndpoints
 		string projectKey,
 		string logName,
 		ILogStore store,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'; create it first"));
@@ -192,9 +187,10 @@ public static class OtlpEndpoints
 		string projectKey,
 		string logName,
 		ILogStore store,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
 
 		if (!await store.ExistsAsync(projectKey, logName, ct))
 			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'; create it first"));

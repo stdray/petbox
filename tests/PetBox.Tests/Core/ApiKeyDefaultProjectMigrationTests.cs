@@ -39,7 +39,13 @@ public sealed class ApiKeyDefaultProjectMigrationTests : IDisposable
 				('yb_key_legacy_wild', '*', 'memory:read', 'legacy wildcard', '2026-01-01');
 			""");
 
-		MigrateTo(40);
+		// Past 40 (the migration under test) to the LATEST schema, not just 40: PetBoxDb's shared
+		// FluentMappingBuilder mapping for ApiKeys is CURRENT-schema, not version-40-schema — a later
+		// migration that fluently declares a new ApiKeys column (M042.SandboxOnly) makes a typed
+		// LinqToDB query 404 on "no such column" if the physical schema stops short of it. Stopping
+		// exactly at 40 is still what proves THIS migration's effect (nothing later touches
+		// DefaultProjectKey), it's just that the read-back has to happen against the full schema.
+		MigrateToLatest();
 
 		using var db = new PetBoxDb(PetBoxDb.CreateOptions(_cs));
 		var keys = db.ApiKeys.ToDictionary(k => k.Key, k => k);
@@ -71,5 +77,20 @@ public sealed class ApiKeyDefaultProjectMigrationTests : IDisposable
 			.BuildServiceProvider();
 		using var scope = services.CreateScope();
 		scope.ServiceProvider.GetRequiredService<IMigrationRunner>().MigrateUp(version);
+	}
+
+	// Every migration after the one under test — so a typed PetBoxDb query (bound to the CURRENT,
+	// not version-N, shared mapping schema) can read the row back.
+	void MigrateToLatest()
+	{
+		using var services = new ServiceCollection()
+			.AddFluentMigratorCore()
+			.ConfigureRunner(rb => rb
+				.AddSQLite()
+				.WithGlobalConnectionString(_cs)
+				.ScanIn(typeof(M001_Initial).Assembly).For.Migrations())
+			.BuildServiceProvider();
+		using var scope = services.CreateScope();
+		scope.ServiceProvider.GetRequiredService<IMigrationRunner>().MigrateUp();
 	}
 }

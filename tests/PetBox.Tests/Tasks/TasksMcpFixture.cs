@@ -5,7 +5,6 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using ModelContextProtocol.Client;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -52,17 +51,17 @@ public abstract class TasksMcpFixture : IAsyncLifetime
 					{
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Features:Tasks"] = "true",
+						// Methodology tests only need the MCP stack — background services
+						// (vectorization, digest, orphan cleanup etc.) just create pooled
+						// SqliteConnections that hold native file handles on Windows and
+						// prevent ResetAsync from deleting per-test files. The host's OWN
+						// off-switch, not surgery on its DI container (spec:
+						// host-composition-contract).
+						["Host:BackgroundServices"] = "false",
 					});
 				});
 				b.ConfigureServices(svc =>
 				{
-					// Methodology tests only need MCP stack — background services
-					// (vectorization, digest, orphan cleanup etc.) just create pooled
-					// SqliteConnections that hold native file handles on Windows and
-					// prevent ResetAsync from deleting per-test files.
-					var hosted = svc.Where(d => typeof(IHostedService).IsAssignableFrom(d.ServiceType)).ToList();
-					foreach (var h in hosted) svc.Remove(h);
-
 					var tasksFactory = svc.SingleOrDefault(d => d.ServiceType == typeof(IScopedDbFactory<TasksDb>));
 					if (tasksFactory is not null) svc.Remove(tasksFactory);
 					svc.AddSingleton<IScopedDbFactory<TasksDb>>(_ => new ScopedDbFactory<TasksDb>(

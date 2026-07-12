@@ -35,7 +35,7 @@ public static class LlmRouterTools
 		string projectKey, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
 		return await admin.GetAsync(projectKey, ct);
 	}
@@ -52,11 +52,12 @@ public static class LlmRouterTools
 	public static async Task<LlmConfigSetResult> ConfigUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryAdmin admin,
 		string projectKey,
+		[McpJsonShape("object")]
 		[Description("JSON object { endpoints[], routes[], apiKeys? }")] JsonElement config,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmAdmin);
 
 		var input = Deserialize<ConfigSetInput>(config)
@@ -74,11 +75,12 @@ public static class LlmRouterTools
 	public static async Task<EmbedResult> EmbedAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
 		string projectKey,
+		[McpJsonShape("array")]
 		[Description("JSON array of strings")] JsonElement inputs,
 		string? tier = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var texts = Deserialize<List<string>>(inputs) ?? throw new ArgumentException("inputs must be a JSON array of strings");
@@ -93,11 +95,12 @@ public static class LlmRouterTools
 	public static async Task<RerankResult> RerankAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
 		string projectKey, string query,
+		[McpJsonShape("array")]
 		[Description("JSON array of document strings")] JsonElement documents,
 		int? topN = null, string? tier = null, CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var docs = Deserialize<List<string>>(documents) ?? throw new ArgumentException("documents must be a JSON array of strings");
@@ -113,12 +116,13 @@ public static class LlmRouterTools
 	public static async Task<ChatResult> ChatAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
 		string projectKey,
+		[McpJsonShape("array")]
 		[Description("JSON array of { role, content } messages")] JsonElement messages,
 		string? tier = null, double? temperature = null, int? maxTokens = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.LlmRouter);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.LlmInvoke);
 
 		var msgs = Deserialize<List<ChatMessage>>(messages);

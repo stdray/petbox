@@ -53,7 +53,7 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 	{
 		var id = new ClaimsIdentity(
 			[new Claim("project", Proj), new Claim("scopes", "tasks:read,tasks:write")], "test");
-		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id) } };
+		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { RequestServices = TestProjectCatalog.Services, User = new ClaimsPrincipal(id) } };
 	}
 
 	static FeatureFlags Flags() =>

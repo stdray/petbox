@@ -45,6 +45,7 @@ public sealed class MemoryCanonApiFixture : IAsyncLifetime
 					cfg.AddInMemoryCollection(new Dictionary<string, string?>
 					{
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
+						["Host:BackgroundServices"] = "false",
 						["Features:Memory"] = "true",
 					});
 				});

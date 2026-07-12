@@ -6,7 +6,13 @@
 //
 // The project is resolved from cwd via the shared registry; if the cwd is not a registered
 // project this prints nothing and exits 0. Best-effort, never blocks — always exit 0.
+//
+// The banner's orchestrator notes resolve server → LKG cache → built-in default, same as
+// `apply` (resolveAgentDefinitionForSession, wrapping agent-def-fetch.ts's
+// resolveAgentDefinitionWithLkg). That fetch runs CONCURRENTLY with the canon fetch (both
+// bounded by their own ~8s timeout) so the two budgets don't stack serially on session start.
 
+import { resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
 import { fetchCanonBlock } from "./canon.ts";
 import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
@@ -38,9 +44,17 @@ async function main(): Promise<void> {
   try {
     const resolved = resolveProject(cwd);
     if (!resolved) return; // not a registered project → no output
-    let out = buildProtocol(resolved.project, mcpPetboxTool, { source, harness: "claude-code" });
+    // Run concurrently: each is independently bounded, so total added wait stays ~8s, not ~16s.
+    const [defResult, canon] = await Promise.all([
+      resolveAgentDefinitionForSession(resolved),
+      fetchCanonBlock(resolved),
+    ]);
+    let out = buildProtocol(resolved.project, mcpPetboxTool, {
+      source,
+      harness: "claude-code",
+      definition: defResult.definition,
+    });
     // Append the curated memory canon when available (best-effort; degrades to nothing).
-    const canon = await fetchCanonBlock(resolved);
     if (canon) out += `\n\n${canon}`;
     process.stdout.write(out);
   } catch {

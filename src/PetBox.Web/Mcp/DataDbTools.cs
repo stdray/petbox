@@ -32,7 +32,7 @@ public static class DataDbTools
 		[Description("Page-count quota (default ~262144 = ~1 GB).")] long? maxPageCount = null,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 		if (await db.DataDbs.AnyAsync((DataDb d) => d.ProjectKey == projectKey && d.Name == name, ct))
@@ -59,7 +59,7 @@ public static class DataDbTools
 		IHttpContextAccessor http, PetBoxDb db,
 		string projectKey, CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataRead);
 		var rows = await db.DataDbs
 			.Where(d => d.ProjectKey == projectKey)
@@ -75,7 +75,7 @@ public static class DataDbTools
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,
 		string projectKey, string name, CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 		var deleted = await db.DataDbs.Where(d => d.ProjectKey == projectKey && d.Name == name).DeleteAsync(ct);
@@ -90,7 +90,7 @@ public static class DataDbTools
 		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,
 		string projectKey, string dbName, CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataRead);
 		var row = await db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);

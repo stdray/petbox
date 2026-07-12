@@ -9,6 +9,7 @@ TABLE ApiKeys
   COL Key TEXT NOT NULL PK1
   COL Name TEXT NOT NULL DEFAULT ''
   COL ProjectKey TEXT NOT NULL
+  COL SandboxOnly INTEGER NOT NULL DEFAULT 0
   COL Scopes TEXT NOT NULL
   INDEX sqlite_autoindex_ApiKeys_1 UNIQUE origin=pk (Key)
 
@@ -75,6 +76,7 @@ TABLE Projects
   COL Description TEXT NULL
   COL Key TEXT NOT NULL PK1
   COL Name TEXT NOT NULL
+  COL Sandbox INTEGER NOT NULL DEFAULT 0
   COL WorkspaceKey TEXT NOT NULL
   INDEX sqlite_autoindex_Projects_1 UNIQUE origin=pk (Key)
 

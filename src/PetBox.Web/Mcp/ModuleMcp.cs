@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Auth;
+using PetBox.Core.Data;
 using PetBox.Core.Features;
 
 namespace PetBox.Web.Mcp;
@@ -12,12 +14,22 @@ namespace PetBox.Web.Mcp;
 // ("project", "scopes") are set by ApiKeyAuthenticationHandler.
 static class ModuleMcp
 {
-	public static void AssertProject(IHttpContextAccessor http, string projectKey)
+	// IProjectCatalog is resolved from the request's own DI container (same pattern
+	// ApiKeyAuthenticationHandler uses for IApiKeyLookup) rather than added as a new parameter to
+	// every one of the ~90 call sites across the *Tools.cs files — AssertProject/ResolveProject
+	// keep their existing (http, projectKey) shape, they just became async (the sandbox
+	// containment check — ProjectScope.AuthorizesAsync — is a DB read).
+	public static async Task AssertProject(IHttpContextAccessor http, string projectKey, CancellationToken ct = default)
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
-			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
+		var catalog = ctx.RequestServices.GetRequiredService<IProjectCatalog>();
+		switch (await ProjectScope.EvaluateAsync(ctx.User, projectKey, catalog, ct))
+		{
+			case ProjectAccess.SandboxContainment:
+				throw new UnauthorizedAccessException(ProjectScope.SandboxDenialMessage(projectKey));
+			case ProjectAccess.ClaimMismatch:
+				throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
+		}
 	}
 
 	// THE single resolver for the effective projectKey on tools where it is OPTIONAL:
@@ -29,17 +41,22 @@ static class ModuleMcp
 	// every project but names none — falls back to the key's DefaultProjectKey, surfaced as the
 	// `project_default` claim. Only when nothing resolves (a "*" key with no default) is this an
 	// error. The result is always authorized against the claim.
-	public static string ResolveProject(IHttpContextAccessor http, string? projectKey)
+	public static async Task<string> ResolveProject(IHttpContextAccessor http, string? projectKey, CancellationToken ct = default)
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
+		var catalog = ctx.RequestServices.GetRequiredService<IProjectCatalog>();
 		var effective = string.IsNullOrWhiteSpace(projectKey) ? DefaultProjectOf(ctx.User) : projectKey;
 		if (string.IsNullOrWhiteSpace(effective))
 			throw new ArgumentException(
 				"projectKey is required (the API key is not scoped to a single project — pass projectKey, " +
 				"or set a default project on the key)");
-		if (!ProjectScope.Authorizes(claim, effective))
-			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{effective}'");
+		switch (await ProjectScope.EvaluateAsync(ctx.User, effective, catalog, ct))
+		{
+			case ProjectAccess.SandboxContainment:
+				throw new UnauthorizedAccessException(ProjectScope.SandboxDenialMessage(effective));
+			case ProjectAccess.ClaimMismatch:
+				throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{effective}'");
+		}
 		return effective;
 	}
 

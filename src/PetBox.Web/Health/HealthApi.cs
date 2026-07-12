@@ -31,7 +31,7 @@ public static class HealthApi
 		string? BuildDate,
 		string Status);
 
-	static async Task<IResult> PushAsync(HttpContext ctx, PetBoxDb db, HealthPushRequest req, CancellationToken ct)
+	static async Task<IResult> PushAsync(HttpContext ctx, PetBoxDb db, IProjectCatalog catalog, HealthPushRequest req, CancellationToken ct)
 	{
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -46,8 +46,7 @@ public static class HealthApi
 			return TypedResults.BadRequest(new ErrorResponse("tags.project is required"));
 
 		// A project-scoped key may only report for its own project.
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, project))
+		if (!await ProjectScope.AuthorizesAsync(ctx.User, project, catalog, ct))
 			return Results.Forbid();
 
 		await db.InsertAsync(new HealthReport

@@ -155,7 +155,7 @@ public partial class Program
 		// Unconditional like the stores it serves.
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.MemoryVectorizationJob>();
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.TasksVectorizationJob>();
-		builder.Services.AddHostedService<PetBox.Web.Search.SearchEnrichmentService>();
+		builder.Services.AddGatedHostedService<PetBox.Web.Search.SearchEnrichmentService>();
 		// Manual reindex (the `search_reindex` MCP tool): rewinds a project's Class-B cursors and
 		// clears its dead-letter so the stock drain above re-embeds the whole corpus. Never runs on
 		// its own — an operator asks for it, and it refuses if Embed has no route.
@@ -245,19 +245,19 @@ public partial class Program
 			PetBox.Deploy.Data.DeployDb.CreateOptions($"Data Source={Path.Combine(ResolveDataDir(sp), "deploy.db")};Cache=Shared")));
 		builder.Services.AddScoped<PetBox.Deploy.Contract.IDeployService, PetBox.Deploy.Services.DeployService>();
 		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Deploy))
-			builder.Services.AddHostedService<PetBox.Deploy.Services.DeployFailoverSweeper>();
+			builder.Services.AddGatedHostedService<PetBox.Deploy.Services.DeployFailoverSweeper>();
 		// Orphan file reclamation for the per-project temporal stores (tasks / memory /
 		// sessions). ProjectDeletion cascades away a deleted project's Core-DB metadata but
 		// leaves its on-disk `.db` files behind; these mop them up eventually-consistently,
 		// mirroring the Data/Log orphan services. Unconditional data hygiene (like
 		// BackupService) — the factories above are unconditional, and a file can outlive a
 		// since-disabled feature.
-		builder.Services.AddHostedService<PetBox.Tasks.Data.TaskBoardOrphanCleanupService>();
-		builder.Services.AddHostedService<PetBox.Memory.Data.MemoryOrphanCleanupService>();
-		builder.Services.AddHostedService<PetBox.Sessions.Data.SessionOrphanCleanupService>();
+		builder.Services.AddGatedHostedService<PetBox.Tasks.Data.TaskBoardOrphanCleanupService>();
+		builder.Services.AddGatedHostedService<PetBox.Memory.Data.MemoryOrphanCleanupService>();
+		builder.Services.AddGatedHostedService<PetBox.Sessions.Data.SessionOrphanCleanupService>();
 		// Periodic VACUUM INTO snapshots of every internal db; unconditional (data
 		// safety is cross-cutting, not feature-gated).
-		builder.Services.AddHostedService(sp => new PetBox.Core.Data.BackupService(
+		builder.Services.AddGatedHostedService(sp => new PetBox.Core.Data.BackupService(
 			ResolveDataDir(sp),
 			sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PetBox.Core.Data.BackupService>>()));
 		var masterKey = builder.Configuration["PetBox:MasterKey"]
@@ -273,19 +273,23 @@ public partial class Program
 		{
 			builder.Services.AddSingleton<ChannelIngestionPipeline>();
 			builder.Services.AddSingleton<IIngestionPipeline>(sp => sp.GetRequiredService<ChannelIngestionPipeline>());
-			builder.Services.AddHostedService(sp => sp.GetRequiredService<ChannelIngestionPipeline>());
-			builder.Services.AddHostedService<PetBox.Log.Core.Retention.RetentionService>();
-			builder.Services.AddHostedService<PetBox.Log.Core.Retention.LogOrphanCleanupService>();
+			// Registered TWICE — write side (IIngestionPipeline, above) and drain side (hosted,
+			// below). Host:BackgroundServices=false suppresses only the DRAIN: the pipeline still
+			// resolves and still accepts enqueues, they just never reach SQLite. Intended; see the
+			// long note on HostedServiceGate.
+			builder.Services.AddGatedHostedService<ChannelIngestionPipeline>();
+			builder.Services.AddGatedHostedService<PetBox.Log.Core.Retention.RetentionService>();
+			builder.Services.AddGatedHostedService<PetBox.Log.Core.Retention.LogOrphanCleanupService>();
 		}
 		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Dashboard))
 		{
 			builder.Services.AddHttpClient();
-			builder.Services.AddHostedService<PetBox.Dashboard.HealthPoller>();
+			builder.Services.AddGatedHostedService<PetBox.Dashboard.HealthPoller>();
 		}
 		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Data))
 		{
-			builder.Services.AddHostedService<PetBox.Data.OrphanCleanupService>();
-			builder.Services.AddHostedService<PetBox.Data.WalCheckpointService>();
+			builder.Services.AddGatedHostedService<PetBox.Data.OrphanCleanupService>();
+			builder.Services.AddGatedHostedService<PetBox.Data.WalCheckpointService>();
 		}
 
 		// MCP server. Tools are discovered via reflection from the Web assembly
@@ -350,7 +354,7 @@ public partial class Program
 			builder.Services.AddSingleton<PetBox.Log.Core.SelfLogging.SystemLoggerProvider>();
 			builder.Services.AddSingleton<Microsoft.Extensions.Logging.ILoggerProvider>(
 				sp => sp.GetRequiredService<PetBox.Log.Core.SelfLogging.SystemLoggerProvider>());
-			builder.Services.AddHostedService<PetBox.Log.Core.SelfLogging.SystemLogFlusher>();
+			builder.Services.AddGatedHostedService<PetBox.Log.Core.SelfLogging.SystemLogFlusher>();
 		}
 
 		var otelEnabled = builder.Configuration.GetValue("OpenTelemetry:Enabled", false);
