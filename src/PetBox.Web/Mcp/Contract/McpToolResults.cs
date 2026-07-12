@@ -191,6 +191,13 @@ public sealed record MemoryStoreRow(string Scope, string Name, string? Descripti
 // Per-store usage aggregate on the wire (memory_store_list includeUsage:true; null when
 // the flag is off). Flattens MemoryUsageAggregate.DeadTail into DeadCount + DeadTailKeys —
 // spec: memory-usage-aggregate.
+//
+// The impression counters (surfaced/opened) are kept for back-compat but they cannot tell
+// "dear and off-target" from "cheap and dead-on" — they count that a row appeared, not what it
+// cost or whether it fit. The COST/FIT pair does (spec: usage-cost-and-fit-separate), over the
+// trailing `WindowDays`: DeliveredChars/RowChars = the context this store spent, AvgKRel = the
+// event-weighted mean fit of what it spent it on. Additive: null on a store with no deliveries
+// in the window (and on any client that never asked).
 public sealed record MemoryStoreUsageRow(
 	int TotalEntries,
 	int SurfacedAtLeastOnce,
@@ -199,7 +206,13 @@ public sealed record MemoryStoreUsageRow(
 	double OpenedFraction,
 	DateTime? MedianLastHitAt,
 	int DeadCount,
-	IReadOnlyList<string> DeadTailKeys);
+	IReadOnlyList<string> DeadTailKeys,
+	int? WindowDays = null,
+	long? Deliveries = null,
+	long? DeliveredChars = null,
+	long? RowChars = null,
+	double? AvgKRel = null,
+	int? EntriesDelivered = null);
 
 public sealed record MemoryStoreListResult(IReadOnlyList<MemoryStoreRow> Stores);
 
@@ -277,7 +290,15 @@ public sealed record MemorySearchHitView(
 	// lexically confirmed, "semantic" = vector-only); both null and omitted on the wire in
 	// listing mode.
 	double? Score = null,
-	string? Retriever = null);
+	string? Retriever = null,
+	// The entry's own cost/fit, from delivery_events (includeUsage only; spec:
+	// usage-cost-and-fit-separate). DeliveredChars = all-time body chars this entry has poured
+	// into callers' context; AvgKRel = the mean within-request fit of those deliveries (null =
+	// it has only ever been delivered by a listing, which runs no relevance leg). This is the
+	// ONLY read surface of delivery_events per entry: surfaced/opened say an entry keeps
+	// APPEARING, these two say what that costs and whether it was worth it.
+	long? DeliveredChars = null,
+	double? AvgKRel = null);
 
 // The memory_search result — ONE shape for both modes (SearchEnvelope form): `Items` in
 // final order, `Retrievers` provenance with a query (null in listing mode), and the
