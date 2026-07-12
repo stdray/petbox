@@ -112,7 +112,13 @@ public sealed class PetBoxDb : DataConnection
 			.HasPrimaryKey(d => d.Name)
 			.Property(d => d.Name).HasLength(200).IsNullable(false)
 			.Property(d => d.ProjectKey).HasLength(100).IsNullable(false)
-			.Property(d => d.Columns).HasDataType(DataType.Text).IsNullable(false);
+			.Property(d => d.Columns).HasDataType(DataType.Text).IsNullable(false)
+			// Real M005 columns (NOT NULL, defaulted) that were never declared here — so linq2db dropped
+			// them from the schema cache: INSERT omitted them and every read came back `false`, silently.
+			// Found by FluentMappingCompletenessTests, the guard for exactly this class of bug.
+			.Property(d => d.Read).IsNullable(false)
+			.Property(d => d.Write).IsNullable(false)
+			.Property(d => d.Delete).IsNullable(false);
 
 		builder.Entity<SavedQuery>()
 			.HasTableName("SavedQueries")

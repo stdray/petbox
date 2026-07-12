@@ -298,6 +298,17 @@ migration `M019_DropServices`.)
   wildcard `*` (a cross-project key), but its **scopes** are always explicit.
 - **Log records are append-only, immutable.** No update or delete of an ingested
   event.
+- **A Core entity column must be declared in `PetBoxDb`'s Fluent mapping.** `PetBoxDb`
+  maps its entities with `FluentMappingBuilder`; a property that exists on the model AND
+  as a migration column but is NOT declared there is silently dropped from linq2db's
+  schema cache — `InsertAsync` omits it, reads come back NULL, **and the call still
+  reports success**. So adding a column takes THREE things: the migration, a
+  `.Property(x => x.Foo)…` line in `PetBoxDb.BuildMappingSchema`, and an INSERT→SELECT
+  round-trip test. A migration-only test does NOT catch this (the column is in the DB;
+  it is the mapping that lost it). `FluentMappingCompletenessTests` enforces it
+  mechanically — a property that is genuinely not persisted is opted out with
+  `[NotColumn]`. Past scars: `SavedQuery.CreatedAt/UpdatedAt` ("Save as" 500'd),
+  `ApiKey.ExpiresAt`, `ApiKey.DefaultProjectKey`, `DataTable.Read/Write/Delete`.
 - **English-only UI chrome.** UI strings are plain English literals — no
   Cyrillic/Hebrew/Arabic in chrome text. (No localization infrastructure exists yet:
   no `AddLocalization`/`IStringLocalizer` anywhere — adopting it is a future task;
