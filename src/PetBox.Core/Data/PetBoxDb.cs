@@ -102,6 +102,9 @@ public sealed class PetBoxDb : DataConnection
 			// Explicitly declared so it isn't dropped from the schema cache (see ShareLink note
 			// above) — otherwise ExpiresAt reads back null and Where(...ExpiresAt...) won't translate.
 			.Property(a => a.ExpiresAt).HasDataType(DataType.DateTime).IsNullable(true)
+			// Same reason: an undeclared column on a partially-Fluent entity is dropped from the
+			// schema cache, so INSERT would omit it and the default project would silently vanish.
+			.Property(a => a.DefaultProjectKey).HasLength(100).IsNullable(true)
 			.Property(a => a.CreatedAt).IsNullable(false);
 
 		builder.Entity<DataTable>()
@@ -109,7 +112,13 @@ public sealed class PetBoxDb : DataConnection
 			.HasPrimaryKey(d => d.Name)
 			.Property(d => d.Name).HasLength(200).IsNullable(false)
 			.Property(d => d.ProjectKey).HasLength(100).IsNullable(false)
-			.Property(d => d.Columns).HasDataType(DataType.Text).IsNullable(false);
+			.Property(d => d.Columns).HasDataType(DataType.Text).IsNullable(false)
+			// Real M005 columns (NOT NULL, defaulted) that were never declared here — so linq2db dropped
+			// them from the schema cache: INSERT omitted them and every read came back `false`, silently.
+			// Found by FluentMappingCompletenessTests, the guard for exactly this class of bug.
+			.Property(d => d.Read).IsNullable(false)
+			.Property(d => d.Write).IsNullable(false)
+			.Property(d => d.Delete).IsNullable(false);
 
 		builder.Entity<SavedQuery>()
 			.HasTableName("SavedQueries")

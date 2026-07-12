@@ -22,11 +22,11 @@ Tools: `deploy_node_list`, `deploy_node_upsert`, `deploy_node_delete`, `deploy_l
 2. **Know the image.** Get the pushed image ref/digest (e.g. `ghcr.io/you/bot:sha-…`) from the project's last build.
 3. **Create the deployment:**
    ```
-   deploy_upsert(service="<svc>", project="<petbox-project>", nodeId="<node>",
+   deploy_upsert(service="<svc>", projectKey="<petbox-project>", nodeId="<node>",
                  imageDigest="<image>", running=true,
                  requiredTags="<csv>", configTags="<csv>", relocatable=<bool>)
    ```
-   - `project` drives server-side env resolution from `(project, configTags)` — make sure that project's config bindings exist if the container needs env.
+   - `projectKey` (NOT `project` — every project-routing MCP arg is spelled `projectKey`) drives server-side env resolution from `(projectKey, configTags)` — make sure that project's config bindings exist if the container needs env.
    - `requiredTags` ⊆ the node's tags (also the failover constraint). `relocatable=true` only for stateless/idempotent services.
    - Needs ports/volumes/healthcheck/limits? Pass the **run-spec** fields on the same call: `ports=["127.0.0.1:8080:8080"]`, `volumes=["/host:/container[:ro]"]` (bind mounts; host dirs must exist), `restart=`, `healthcheckCmd/Interval/Timeout/Retries`, `memory=`, `cpus=`, `network=`, `command=[...]`, `labels=["k=v"]` (`petbox.*` reserved). Any run-spec change recreates the container (it's hashed). Details: `deploy-fleet.md §3b`.
    - **A web app behind the proxy?** Add `domain="app.example.com"` (+ optional `sitePort=`, default = ports[0] host port) — the agent maintains the Caddy route itself. The target node must have caddy (check the node's `capabilities` in `deploy_node_list`; enroll installs it on supported Ubuntu); a site on a caddy-less node shows an explicit `error` on the deployment instead of running silently broken (`deploy-fleet.md §3c`).

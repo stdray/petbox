@@ -19,7 +19,7 @@ namespace PetBox.Web.Mcp;
 public static class ApiKeyTools
 {
 	[McpServerTool(Name = "apikey_create", Title = "Mint an API key", UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyCreatedResult))]
-	[Description("Mints a project-scoped API key. Requires admin:provision. `scopes` is a comma-separated list; unknown scopes are rejected. `expiresInSeconds` (optional) sets a TTL. `allProjects:true` mints a CROSS-PROJECT key (project claim '*', reads+writes every project) — `projectKey` must be omitted then. The raw key is returned ONCE — store it now.")]
+	[Description("Mints a project-scoped API key. Requires admin:provision. `scopes` is a comma-separated list; unknown scopes are rejected. `expiresInSeconds` (optional) sets a TTL. `allProjects:true` mints a CROSS-PROJECT key (project claim '*', reads+writes every project) — `projectKey` must be omitted then. `defaultProject` (cross-project keys ONLY) is the project the tools with an OPTIONAL projectKey fall back to when it is omitted; a project-scoped key already defaults to its own claim, so passing it there is an error. The raw key is returned ONCE — store it now.")]
 	public static async Task<ApiKeyCreatedResult> CreateAsync(
 		IHttpContextAccessor http, PetBoxDb db,
 		[Description("Human-readable key name.")] string name,
@@ -27,6 +27,7 @@ public static class ApiKeyTools
 		[Description("Project the key is scoped to. Required unless allProjects.")] string? projectKey = null,
 		[Description("Optional TTL in seconds; omit for a non-expiring key.")] long? expiresInSeconds = null,
 		[Description("Mint a cross-project key (claim '*'). Omit projectKey when set.")] bool allProjects = false,
+		[Description("Fallback project when a tool's optional projectKey is omitted. Only with allProjects:true.")] string? defaultProject = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
@@ -37,6 +38,7 @@ public static class ApiKeyTools
 		if (string.IsNullOrWhiteSpace(scopes)) throw new ArgumentException("scopes is required");
 
 		string effectiveProject;
+		string? effectiveDefault = null;
 		if (allProjects)
 		{
 			// The wildcard lives only in the claim (ProjectScope.AllProjects) — it is not a
@@ -45,9 +47,20 @@ public static class ApiKeyTools
 			if (!string.IsNullOrWhiteSpace(projectKey) && projectKey != ProjectScope.AllProjects)
 				throw new ArgumentException("allProjects and projectKey are mutually exclusive — omit projectKey");
 			effectiveProject = ProjectScope.AllProjects;
+			if (!string.IsNullOrWhiteSpace(defaultProject))
+			{
+				var dflt = defaultProject.Trim();
+				if (!await db.Projects.AnyAsync((Project p) => p.Key == dflt, ct))
+					throw new InvalidOperationException($"Project '{dflt}' not found");
+				effectiveDefault = dflt;
+			}
 		}
 		else
 		{
+			// A project-scoped key ALREADY defaults to its own claim (ModuleMcp.ResolveProject),
+			// so a second, possibly divergent default would be a silent contradiction — reject.
+			if (!string.IsNullOrWhiteSpace(defaultProject))
+				throw new ArgumentException("defaultProject is only valid with allProjects:true (a project-scoped key already defaults to its own project)");
 			if (string.IsNullOrWhiteSpace(projectKey)) throw new ArgumentException("projectKey is required (or pass allProjects:true)");
 			if (!await db.Projects.AnyAsync((Project p) => p.Key == projectKey, ct))
 				throw new InvalidOperationException($"Project '{projectKey}' not found");
@@ -69,12 +82,13 @@ public static class ApiKeyTools
 			Name = name.Trim(),
 			CreatedAt = DateTime.UtcNow,
 			ExpiresAt = expiresAt,
+			DefaultProjectKey = effectiveDefault,
 		}, token: ct);
-		return new ApiKeyCreatedResult(keyValue, effectiveProject, valid, expiresAt);
+		return new ApiKeyCreatedResult(keyValue, effectiveProject, valid, expiresAt, effectiveDefault);
 	}
 
 	[McpServerTool(Name = "apikey_list", Title = "List API keys", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyListResult))]
-	[Description("Lists a project's API keys (key, name, scopes, created/expiry). Requires admin:provision.")]
+	[Description("Lists a project's API keys (key, name, scopes, created/expiry, defaultProjectKey). Requires admin:provision. Pass projectKey '*' to list the cross-project keys — `defaultProjectKey` is the project such a key falls back to when a tool's optional projectKey is omitted.")]
 	public static async Task<ApiKeyListResult> ListAsync(
 		IHttpContextAccessor http, PetBoxDb db,
 		[Description("Project to list keys for.")] string projectKey,
@@ -85,7 +99,7 @@ public static class ApiKeyTools
 		var rows = await db.ApiKeys
 			.Where(k => k.ProjectKey == projectKey)
 			.OrderBy(k => k.CreatedAt)
-			.Select(k => new ApiKeyRow(k.Key, k.Name, k.Scopes, k.CreatedAt, k.ExpiresAt))
+			.Select(k => new ApiKeyRow(k.Key, k.Name, k.Scopes, k.CreatedAt, k.ExpiresAt, k.DefaultProjectKey))
 			.ToListAsync(ct);
 		return new ApiKeyListResult(rows);
 	}

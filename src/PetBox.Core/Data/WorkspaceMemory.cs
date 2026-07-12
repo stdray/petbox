@@ -92,6 +92,22 @@ public static partial class WorkspaceMemory
 		}
 	}
 
+	// Ensure the Projects row for a DIRECTLY ADDRESSED container ("$workspace" / "$ws-<key>" passed as
+	// a projectKey — memory_upsert/get/delta/store_create address the shared store that way). The row
+	// is lazy, so the first such write would otherwise fail on a container nobody has resolved yet.
+	//
+	// Ensured ONLY when the container names a WORKSPACE THAT EXISTS: a container is not a thing anyone
+	// can conjure by naming it either ("$ws-nosuch" must stay a rejection, not become a fresh row).
+	// Returns false when it names no workspace — the caller's own authz/existence check then rejects.
+	public static async Task<bool> EnsureAddressedContainerAsync(
+		PetBoxDb db, string containerKey, CancellationToken ct = default)
+	{
+		if (WorkspaceKeyOfContainer(containerKey) is not { } wsKey || !IsValidWorkspaceKey(wsKey)) return false;
+		if (!await db.Workspaces.AnyAsync(w => w.Key == wsKey, ct)) return false;
+		await EnsureContainerAsync(db, wsKey, ct);
+		return true;
+	}
+
 	// Resolve the caller's project → its WorkspaceKey → container key, ensuring the row exists.
 	// `projectKey` is the already-resolved (claim-authorized) project, not a container.
 	public static async Task<string> ResolveAndEnsureContainerAsync(

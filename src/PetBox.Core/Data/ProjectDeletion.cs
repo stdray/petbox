@@ -37,6 +37,14 @@ public static class ProjectDeletion
 			return false;
 
 		await db.ApiKeys.Where(k => k.ProjectKey == projectKey).DeleteAsync(ct);
+		// A cross-project ("*") key SURVIVES the deletion (its claim is not this project), so its
+		// DefaultProjectKey would be left DANGLING — pointing at a project that no longer exists.
+		// Every tool that resolves the key's default (ModuleMcp.ResolveProject) would then route
+		// writes at a ghost. Null it out: the key keeps working, it just has no default again.
+		await db.ApiKeys
+			.Where(k => k.DefaultProjectKey == projectKey)
+			.Set(k => k.DefaultProjectKey, (string?)null)
+			.UpdateAsync(ct);
 		await db.HealthEndpoints.Where(e => e.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.DataDbs.Where(d => d.ProjectKey == projectKey).DeleteAsync(ct);
 		await db.DataTables.Where(t => t.ProjectKey == projectKey).DeleteAsync(ct);

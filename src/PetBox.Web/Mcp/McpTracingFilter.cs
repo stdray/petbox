@@ -55,6 +55,11 @@ static partial class McpTracingFilter
 			// to BOTH sinks: the span tags below and the self-log event's dynamic properties.
 			var args = request.Params?.Arguments;
 			var marked = ExtractMarkedArgs(tool, args);
+			// Was projectKey on the wire? McpProjectDefaultFilter (an INNER filter) may add it during
+			// `next` — comparing before/after tells the self-log which calls the key's DEFAULT project
+			// routed (rather than the caller), without depending on a trace listener being active (the
+			// span tag alone vanishes when nothing samples). Present-only: absent unless injected.
+			var hadProjectKey = HasProjectKey(args);
 
 			using var span = StartToolSpan(tool);
 			if (span is not null)
@@ -75,7 +80,7 @@ static partial class McpTracingFilter
 				var outcome = result.IsError == true ? "error" : "ok";
 				if (result.IsError == true)
 					span?.SetStatus(ActivityStatusCode.Error);
-				LogToolCall(logger, tool, session, reqChars, respChars, outcome, marked);
+				LogToolCall(logger, tool, session, reqChars, respChars, outcome, marked, Injected(hadProjectKey, request));
 				return result;
 			}
 			catch (Exception ex)
@@ -83,7 +88,7 @@ static partial class McpTracingFilter
 				span?.SetStatus(ActivityStatusCode.Error, ex.Message);
 				// No result to measure on a genuine throw → RespChars 0, Outcome error, then
 				// rethrow to preserve the error-status behavior for callers up the stack.
-				LogToolCall(logger, tool, session, reqChars, 0, "error", marked);
+				LogToolCall(logger, tool, session, reqChars, 0, "error", marked, Injected(hadProjectKey, request));
 				throw;
 			}
 		});
@@ -102,11 +107,11 @@ static partial class McpTracingFilter
 	// {OriginalFormat} keeps MessageTemplate byte-identical to the old source-generated one.
 	static void LogToolCall(
 		ILogger logger, string? tool, string session, int reqChars, int respChars, string outcome,
-		List<McpLoggedArgs.MarkedArg> marked)
+		List<McpLoggedArgs.MarkedArg> marked, bool projectKeyInjected)
 	{
 		if (!logger.IsEnabled(LogLevel.Information)) return;
 
-		var state = new List<KeyValuePair<string, object?>>(6 + marked.Count)
+		var state = new List<KeyValuePair<string, object?>>(7 + marked.Count)
 		{
 			new("Tool", tool),
 			new("Session", session),
@@ -116,6 +121,11 @@ static partial class McpTracingFilter
 		};
 		foreach (var arg in marked)
 			state.Add(new(arg.LogProperty, arg.Value));
+		// Present-only, like the Arg_* shapers: the column exists ONLY on a call the server routed to
+		// the key's default project — so `Properties.ProjectKeyInjected == true` greps every misroute
+		// candidate, and a normal call carries no extra byte.
+		if (projectKeyInjected)
+			state.Add(new("ProjectKeyInjected", true));
 		state.Add(new("{OriginalFormat}", ToolCallTemplate));
 
 		var message =
@@ -123,6 +133,14 @@ static partial class McpTracingFilter
 		logger.Log(LogLevel.Information, new EventId(600, nameof(LogToolCall)),
 			(IReadOnlyList<KeyValuePair<string, object?>>)state, null, (_, _) => message);
 	}
+
+	// The self-log mirror of McpProjectDefaultFilter's span tag: projectKey was NOT on the wire but IS
+	// on the arguments after the inner filters ran ⇒ the server injected the key's default project.
+	internal static bool Injected(bool hadProjectKey, RequestContext<CallToolRequestParams> request) =>
+		!hadProjectKey && HasProjectKey(request.Params?.Arguments);
+
+	static bool HasProjectKey(IDictionary<string, JsonElement>? args) =>
+		args is not null && args.ContainsKey(McpProjectDefaultFilter.ProjectKeyArg);
 
 	internal static Activity? StartToolSpan(string? toolName)
 	{

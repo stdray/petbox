@@ -99,7 +99,10 @@ public static class DeployTools
 	public static async Task<DeployDeploymentResult> UpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, IDeployService svc,
 		[Description("Service name (slug).")] string service,
-		[Description("Project the service belongs to (its config applies).")] string project,
+		// NAMED projectKey, not `project`: every project-routing MCP arg is spelled `projectKey`, and
+		// McpProjectDefaultFilter keys the key's-default injection on exactly that name — an odd one
+		// out would silently sit outside the coverage.
+		[Description("Project the service belongs to (its config applies).")] string projectKey,
 		[Description("Target node id.")] string nodeId,
 		[Description("Image reference/digest to run.")] string imageDigest,
 		[Description("Existing deployment id to update; omit to create.")] string? id = null,
@@ -134,7 +137,7 @@ public static class DeployTools
 			Network: network, Command: command, Labels: ParseLabels(labels),
 			Site: string.IsNullOrWhiteSpace(domain) ? null : new SiteSpec(domain, sitePort));
 		var d = await svc.UpsertDeploymentAsync(new DeploymentInput(
-			id, service, project, nodeId, imageDigest,
+			id, service, projectKey, nodeId, imageDigest,
 			running ? DesiredState.Running : DesiredState.Stopped, relocatable, requiredTags ?? "", configTags ?? "",
 			runSpec), ct);
 		return new DeployDeploymentResult(d);

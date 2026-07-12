@@ -4,6 +4,7 @@
 # ...then READ the diff. See README.md.
 TABLE ApiKeys
   COL CreatedAt DATETIME NOT NULL
+  COL DefaultProjectKey TEXT NULL
   COL ExpiresAt DATETIME NULL
   COL Key TEXT NOT NULL PK1
   COL Name TEXT NOT NULL DEFAULT ''

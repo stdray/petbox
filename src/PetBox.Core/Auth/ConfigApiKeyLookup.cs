@@ -9,6 +9,8 @@ public sealed record ConfigApiKeyEntry
 	public string Key { get; init; } = string.Empty;
 	public string ProjectKey { get; init; } = string.Empty;
 	public string Scopes { get; init; } = string.Empty;
+	// Optional fallback project for a cross-project ("*") key — see ApiKey.DefaultProjectKey.
+	public string? DefaultProjectKey { get; init; }
 }
 
 public sealed record ConfigApiKeyOptions
@@ -37,6 +39,7 @@ public sealed class ConfigApiKeyLookup : IApiKeyLookup
 				Key = entry.Key,
 				ProjectKey = entry.ProjectKey,
 				Scopes = entry.Scopes,
+				DefaultProjectKey = entry.DefaultProjectKey,
 				CreatedAt = now,
 			};
 		}

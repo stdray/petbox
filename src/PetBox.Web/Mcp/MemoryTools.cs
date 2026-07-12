@@ -481,11 +481,12 @@ public static class MemoryTools
 	}
 
 	// Resolve a single explicit scope to its container projectKey.
-	// project → the key's project (authorized via the claim); workspace → the caller's
-	// workspace memory container (lazy-ensured). When projectKey is already a workspace
-	// container and scope is omitted/project, treat as workspace (callers may address
-	// $workspace / $ws-* directly as projectKey). A "*" key without projectKey cannot
-	// resolve a workspace and throws ArgumentException.
+	// project → the key's project (ModuleMcp.ResolveProject: the explicit arg, else the claim,
+	// else — for a "*" key — its default project); workspace → the caller's workspace memory
+	// container (lazy-ensured, derived from that same resolved project). When projectKey is
+	// already a workspace container and scope is omitted/project, treat as workspace (callers
+	// may address $workspace / $ws-* directly as projectKey). A "*" key with NO default and no
+	// projectKey resolves nothing and throws ArgumentException.
 	static async Task<(string Scope, string Key)> ResolveScopeAsync(
 		IHttpContextAccessor http, PetBoxDb db, string? projectKey, string? scope, CancellationToken ct)
 	{
@@ -493,7 +494,7 @@ public static class MemoryTools
 		if ((s is null or "" or "project")
 			&& projectKey is not null
 			&& WorkspaceMemory.IsWorkspaceContainer(projectKey))
-			return ("workspace", projectKey);
+			return ("workspace", await DirectContainerAsync(db, projectKey, ct));
 
 		return s switch
 		{
@@ -503,14 +504,26 @@ public static class MemoryTools
 		};
 	}
 
+	// A container addressed DIRECTLY as projectKey. Its Projects row is lazy (created on first resolve),
+	// so the first-ever direct write to a fresh workspace's shared memory has to materialize it — but
+	// only when it names a workspace that EXISTS (WorkspaceMemory.EnsureAddressedContainerAsync); a
+	// typo'd "$ws-nosuch" stays a rejection (McpProjectExistsFilter refuses it, and for a key the filter
+	// skips, AssertMemoryProjectAsync below still does) rather than becoming a fresh container row.
+	static async Task<string> DirectContainerAsync(PetBoxDb db, string container, CancellationToken ct)
+	{
+		await WorkspaceMemory.EnsureAddressedContainerAsync(db, container, ct);
+		return container;
+	}
+
 	// Caller's project → WorkspaceKey → WorkspaceMemory.ContainerKeyFor, ensuring the row.
-	// Direct container projectKeys pass through (row must already exist for authz).
+	// A direct container projectKey passes through (ensured the same way).
 	static async Task<string> ResolveCallerWorkspaceContainerAsync(
 		IHttpContextAccessor http, PetBoxDb db, string? projectKey, CancellationToken ct)
 	{
 		if (projectKey is not null && WorkspaceMemory.IsWorkspaceContainer(projectKey))
-			return projectKey;
-		// ResolveProject throws ArgumentException for "*" without projectKey — intentional.
+			return await DirectContainerAsync(db, projectKey, ct);
+		// ResolveProject throws ArgumentException for a "*" key with no default and no
+		// projectKey — intentional (nothing to derive a workspace from).
 		var proj = ModuleMcp.ResolveProject(http, projectKey);
 		return await WorkspaceMemory.ResolveAndEnsureContainerAsync(db, proj, ct);
 	}
@@ -520,8 +533,12 @@ public static class MemoryTools
 	// workspace container. Never hardcodes bare "$workspace" unless that IS the caller's
 	// container.
 	//
-	// Both cascade legs are best-effort on ArgumentException: a "*" key without projectKey
-	// has no single project and no derivable workspace — skip that leg rather than failing
+	// The cascade is single-sourced on ModuleMcp.ResolveProject, so a "*" key WITH a default
+	// project cascades over that default (⊕ its workspace) exactly like a project-scoped key —
+	// the absent projectKey stays meaningful, it just now resolves.
+	//
+	// Both cascade legs remain best-effort on ArgumentException: a "*" key with NO default and
+	// no projectKey has no project and no derivable workspace — skip that leg rather than failing
 	// the whole search (admin/wiring bare memory_search("q") must degrade to empty, not throw).
 	// Explicit scope=project|workspace still throws via ResolveScopeAsync when unresolvable.
 	static async Task<List<(string Scope, string Key)>> SearchContainersAsync(
@@ -534,7 +551,7 @@ public static class MemoryTools
 		var list = new List<(string, string)>();
 		string? resolvedProject = null;
 		try { resolvedProject = ModuleMcp.ResolveProject(http, projectKey); list.Add(("project", resolvedProject)); }
-		catch (ArgumentException) { /* "*" key without projectKey — skip project leg */ }
+		catch (ArgumentException) { /* "*" key, no default, no projectKey — skip project leg */ }
 		catch (UnauthorizedAccessException) { /* projectKey doesn't match claim */ }
 
 		// Workspace leg: need a project to derive the caller's workspace. Prefer the
@@ -554,8 +571,8 @@ public static class MemoryTools
 		}
 		catch (ArgumentException)
 		{
-			// "*" without projectKey (or otherwise unresolvable) — skip workspace leg.
-			// Explicit scope=workspace still throws above via ResolveScopeAsync.
+			// "*" with no default and no projectKey (or otherwise unresolvable) — skip the
+			// workspace leg. Explicit scope=workspace still throws above via ResolveScopeAsync.
 		}
 		return list;
 	}

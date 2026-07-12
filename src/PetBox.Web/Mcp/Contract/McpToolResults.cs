@@ -16,7 +16,9 @@ namespace PetBox.Web.Mcp.Contract;
 
 // ---- whoami --------------------------------------------------------------------------
 
-public sealed record WhoAmIResult(string? Project, IReadOnlyList<string> Scopes);
+// `DefaultProject` is the key's fallback project for tools whose projectKey is optional — set
+// only on a cross-project ("*") key that carries one (omitted from the wire when null).
+public sealed record WhoAmIResult(string? Project, IReadOnlyList<string> Scopes, string? DefaultProject = null);
 
 // ---- comments.* ----------------------------------------------------------------------
 
@@ -96,9 +98,13 @@ public sealed record ProjectListResult(IReadOnlyList<ProjectRow> Projects);
 // ---- apikey.* (provisioning; replaces entity.* type "apikey") -------------------------
 
 // apikey_create returns the raw key ONCE (it is never retrievable again) + its granted scopes.
-public sealed record ApiKeyCreatedResult(string Key, string ProjectKey, IReadOnlyList<string> Scopes, DateTime? ExpiresAt);
+// `DefaultProjectKey` is the cross-project key's fallback project (null on a project-scoped key,
+// which already defaults to its own claim).
+public sealed record ApiKeyCreatedResult(string Key, string ProjectKey, IReadOnlyList<string> Scopes, DateTime? ExpiresAt,
+	string? DefaultProjectKey = null);
 
-public sealed record ApiKeyRow(string Key, string Name, string Scopes, DateTime CreatedAt, DateTime? ExpiresAt);
+public sealed record ApiKeyRow(string Key, string Name, string Scopes, DateTime CreatedAt, DateTime? ExpiresAt,
+	string? DefaultProjectKey = null);
 
 public sealed record ApiKeyListResult(IReadOnlyList<ApiKeyRow> Keys);
 

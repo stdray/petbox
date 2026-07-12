@@ -22,6 +22,10 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	public const string ApiKeyHeader = "X-Api-Key";
 	public const string LegacyApiKeyHeader = "X-YobaConf-ApiKey";
 
+	// The claim carrying ApiKey.DefaultProjectKey — the project a cross-project ("*") key falls
+	// back to when a tool's optional projectKey is omitted. Present only when the key has one.
+	public const string DefaultProjectClaim = "project_default";
+
 	protected override Task<AuthenticateResult> HandleAuthenticateAsync()
 	{
 		var apiKey = Request.Headers[ApiKeyHeader].FirstOrDefault()
@@ -40,11 +44,16 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 		if (key.ExpiresAt is { } expiresAt && expiresAt <= DateTime.UtcNow)
 			return Task.FromResult(AuthenticateResult.Fail("API key expired"));
 
-		var claims = new[]
+		// `project_default` is emitted ONLY when the key carries one: an absent claim means
+		// "no default", so the wildcard-key behavior is unchanged for every existing key.
+		var claims = new List<Claim>
 		{
-			new Claim("project", key.ProjectKey),
-			new Claim("scopes", key.Scopes),
+			new("project", key.ProjectKey),
+			new("scopes", key.Scopes),
 		};
+		if (!string.IsNullOrWhiteSpace(key.DefaultProjectKey))
+			claims.Add(new Claim(DefaultProjectClaim, key.DefaultProjectKey.Trim()));
+
 		var identity = new ClaimsIdentity(claims, SchemeName);
 		var principal = new ClaimsPrincipal(identity);
 		var ticket = new AuthenticationTicket(principal, SchemeName);

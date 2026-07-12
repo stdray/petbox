@@ -306,6 +306,11 @@ public partial class Program
 				PetBox.Web.Mcp.McpErrorEnvelopeFilter.Register(filters); // exceptions -> structured {error} body
 				PetBox.Web.Mcp.McpToolScopeFilter.Register(filters);     // A7b: scope-trim tools/list
 				PetBox.Web.Mcp.McpTracingFilter.Register(filters);       // span per tool call (self-tracing)
+																		 // LAST = INNERMOST (the SDK nests each registered filter inside the previous one), which
+																		 // is exactly where the projectKey injection must sit: inside McpTracingFilter, so the
+																		 // ambient Activity is the `mcp.tool <name>` span the misroute marker belongs on.
+				PetBox.Web.Mcp.McpProjectDefaultFilter.Register(filters); // the key's default project: inject + honest schema
+				PetBox.Web.Mcp.McpProjectExistsFilter.Register(filters);  // …and the RESOLVED project must exist (W3)
 			});
 		builder.Services.AddSingleton<FeatureFlags>();
 

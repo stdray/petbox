@@ -49,7 +49,10 @@ public sealed class SeededKeyNameMigrationTests : IDisposable
 		MigrateTo(34);
 
 		using var db = new PetBoxDb(PetBoxDb.CreateOptions(_cs));
-		var byKey = db.ApiKeys.ToDictionary(k => k.Key, k => k.Name);
+		// Project ONLY the columns under test: the DB is parked at v34, so a full-entity read
+		// would select columns added by later migrations (M040's DefaultProjectKey) that this
+		// staged schema does not have yet.
+		var byKey = db.ApiKeys.Select(k => new { k.Key, k.Name }).ToDictionary(k => k.Key, k => k.Name);
 
 		byKey["yb_key_system_internal"].Should().Be("system-internal"); // seeded key now labelled
 		byKey["yb_key_named_ctl"].Should().Be("ci pipeline");           // operator label preserved
