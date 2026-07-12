@@ -59,6 +59,12 @@ records**, not the working plan — do not treat them as current state.
    -b <branch> origin/main` — NOT `git pull` in the primary checkout (it is shared state,
    often parked on another session's feature branch with uncommitted edits). Pass an
    ABSOLUTE path to `git worktree add` (a relative path resolves against the cwd).
+   **Finding work already in the primary checkout is not permission to continue it
+   there** — an inherited diff (a previous session's unfinished edits) is the exact
+   trap: nothing is "created", so the rule feels satisfied, and the change ends up
+   committed from the shared tree. Move it out FIRST: `git stash push -u` → create the
+   worktree → `git stash pop` inside it (the stash is repo-level, so it pops wherever
+   you are).
 3. **Tests:** run via Cake (`./build.ps1 -Target Test`, or `./build.sh --target=Test`)
    or a filtered `dotnet test`; pipe output to `.tmp/test-run.log` and read the log
    instead of scrolling the console. For readable FAILURE detail (a quiet log drops the
