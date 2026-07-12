@@ -87,11 +87,28 @@ records**, not the working plan — do not treat them as current state.
    "don't commit unless asked".
 5. **Agent ceiling is Review:** mark finished work `Review`, never `Done`; the
    maintainer confirms `Done`.
-6. **Deploy only on explicit command** (the `deploy` tag flow); after deploy, run a
+6. **A card never closes silently — post the verdict:** ANY move to a terminal status
+   (`Done`/`Cancelled` on work, `done`/`wontfix`/`duplicate` on intake,
+   `accepted`/`rejected` on ideas, `deprecated` on spec) MUST be accompanied by a comment
+   on the card carrying the `verdict` artifact tag (`comments_upsert` with
+   `tags: ["verdict"]`). The card BODY states the intent; the verdict states the OUTCOME —
+   what was actually done, the evidence it works (numbers, commits, live checks), and
+   anything the next reader must know that the diff won't tell them. For a cancel/wontfix/
+   reject, the verdict is WHY, and what would change the answer. A card closed without a
+   verdict is indistinguishable a month later from one abandoned. The engine enforces this
+   the same way it enforces `spec_plan` on `exploring → review`, via `preconditionArtifact`
+   — so a missing verdict is a rejected transition, not a nag. Tag the comment
+   `artifact:verdict` (the `artifact:` prefix is the convention; a bare `verdict` tag does
+   NOT satisfy the gate). **One gap you must cover yourself:** a work card reaching `Done`
+   auto-closes its linked intake issue through the `issue_task` effect, and that cascade
+   does NOT check the gate — the issue lands in `done` with no verdict of its own. That is
+   fine when the work card's verdict tells the story, but if the issue deserves its own
+   answer, post it BEFORE closing the work card.
+7. **Deploy only on explicit command** (the `deploy` tag flow); after deploy, run a
    live smoke against production endpoints.
-7. **Don't silently work around process/doc defects** — file an intake card on
+8. **Don't silently work around process/doc defects** — file an intake card on
    `$system`.
-8. **Delegating to workers (fan-out):** a spawned subagent does NOT run the
+9. **Delegating to workers (fan-out):** a spawned subagent does NOT run the
    SessionStart hook — it never sees the memory banner, canon, or role rules, so the
    ONLY channel is your spawn brief. Workers that don't get the rules drift: they
    self-scout, broaden scope, and even spawn their own subagents. So EVERY worker
