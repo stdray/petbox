@@ -13,23 +13,8 @@
 }
 else
 {
-	<div class="mb-3 flex flex-wrap items-center gap-2" data-testid="board-filter">
-		<input type="search" class="input input-bordered input-xs w-48" placeholder="filter…" data-testid="board-filter-text" aria-label="Filter text" />
-		<select class="select select-bordered select-xs" data-testid="board-filter-status" aria-label="Filter by status"><option value="">status: any</option></select>
-		<select class="select select-bordered select-xs" data-testid="board-filter-type" aria-label="Filter by type"><option value="">type: any</option></select>
-		<label class="label cursor-pointer justify-start gap-2 text-xs">
-			<input type="checkbox" class="toggle toggle-xs" data-testid="active-only-toggle" />
-			<span>active only</span>
-		</label>
-		<span class="text-xs opacity-60 ml-1">sort:</span>
-		<select class="select select-bordered select-xs" data-testid="board-sort-by" aria-label="Sort by">
-			<option value="priority">priority</option>
-			<option value="created">created</option>
-			<option value="updated">updated</option>
-			<option value="title">title</option>
-		</select>
-		<button type="button" class="btn btn-ghost btn-xs font-mono" data-testid="board-sort-dir" aria-label="Toggle sort direction" title="toggle ascending / descending">↑</button>
-	</div>
+	var filterSortModel = new BoardFilterSortModel(SortHint: "sort rows:");
+	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<div class="overflow-x-auto">
 		<table class="table table-sm" data-testid="board-table">
 			<thead>
@@ -49,7 +34,7 @@ else
 					<th>delivery</th>
 				</tr>
 			</thead>
-			<tbody data-testid="board-nodes">
+			<tbody data-testid="board-nodes" data-sort-scope>
 				@foreach (var row in Model.Rows)
 				{
 					var search = $"{row.Title} {row.Key} {string.Join(' ', row.Tags)}".ToLowerInvariant();
