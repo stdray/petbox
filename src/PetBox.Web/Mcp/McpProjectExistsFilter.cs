@@ -62,11 +62,13 @@ namespace PetBox.Web.Mcp;
 // pass-throughs are the cases above, which are not project references at all.
 static class McpProjectExistsFilter
 {
-	// The ONLY tools where "*" in the projectKey slot is a legitimate value: they address API KEYS by
-	// their project CLAIM, and "*" is the cross-project claim — apikey_list('*') lists those keys,
-	// apikey_create carries it in the same slot alongside allProjects:true. Neither addresses storage.
-	// Verified against ApiKeyTools (apikey_delete takes `key`, not `projectKey`). Every other tool
-	// routes STORAGE by projectKey, where "*" is a file name, not a wildcard.
+	// The tools whose projectKey addresses API KEYS by their project CLAIM rather than routing STORAGE:
+	// apikey_list('*') lists the cross-project keys, apikey_create carries the same "*" in that slot
+	// alongside allProjects:true. Verified against ApiKeyTools (apikey_delete takes `key`, not
+	// `projectKey`). Two consequences, both below:
+	//   * "*" is a legitimate VALUE here and nowhere else (elsewhere it is a file name, not a wildcard);
+	//   * an ABSENT projectKey here names no project at all — these tools never resolve the caller's
+	//     default — so the fallback leg does not run for them.
 	static readonly HashSet<string> WildcardTools =
 		new(StringComparer.Ordinal) { "apikey_create", "apikey_list" };
 
@@ -86,6 +88,17 @@ static class McpProjectExistsFilter
 			// No projectKey on the wire. On a tool that TAKES one this is still a project reference —
 			// the tool will resolve the caller's default itself (see the header). On a tool that takes
 			// none (whoami, project_list, …) it is not, and must not drag the default into the call.
+			//
+			// …and on the tools that address keys BY CLAIM (WildcardTools) it is not one EITHER, even
+			// though they take a projectKey: apikey_create never resolves a default (its projectKey is
+			// `string?` and it either reads the literal argument or takes the allProjects branch — see
+			// ApiKeyTools.CreateAsync), so validating the caller's default here would reject a call over
+			// a project the call does not name. A DANGLING default is reachable: a config-sourced key
+			// (Auth:ApiKeys[] → ConfigApiKeyLookup) takes its DefaultProjectKey from appsettings with no
+			// validation and no deletion hook, unlike a DB key (ApiKeyTools validates on set,
+			// ProjectDeletion nulls it out). apikey_list is unaffected — its projectKey is REQUIRED, so
+			// McpProjectDefaultFilter injects the default and the call takes the Named path above.
+			if (WildcardTools.Contains(p.Name ?? "")) return;
 			if (!McpProjectDefaultFilter.TakesProjectKey(request.Services, p.Name)) return;
 			if (ModuleMcp.DefaultProjectOf(request.User) is not { } fallback) return;   // nothing resolves — the tool's own error
 			await AssertKnownAsync(request, fallback, ct);

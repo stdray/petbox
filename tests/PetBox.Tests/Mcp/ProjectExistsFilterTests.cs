@@ -32,6 +32,11 @@ public sealed class ProjectExistsFilterFixture : IAsyncLifetime
 	public const string StarRealKey = "yb_key_w3_star_real";
 	public const string StarGoneKey = "yb_key_w3_star_gone";
 	public const string StarBareKey = "yb_key_w3_star_bare";
+	// A CONFIG-sourced key (Auth:ApiKeys[] → ConfigApiKeyLookup) whose default names GoneProject.
+	// Config keys take DefaultProjectKey from appsettings with NO validation and no deletion hook —
+	// so a DANGLING default is reachable there, which is what makes the apikey_create carve-out below
+	// a real case rather than a hypothetical one.
+	public const string ConfigStarGoneKey = "yb_key_w3_cfg_gone";
 
 	const string Scopes = "admin:provision,tasks:read,tasks:write,memory:read,memory:write";
 
@@ -43,6 +48,7 @@ public sealed class ProjectExistsFilterFixture : IAsyncLifetime
 	public McpClient StarReal { get; private set; } = null!;   // "*" key, default = RealProject
 	public McpClient StarGone { get; private set; } = null!;   // "*" key, default = a DELETED project
 	public McpClient StarBare { get; private set; } = null!;   // "*" key, NO default — nothing resolves
+	public McpClient ConfigStarGone { get; private set; } = null!;  // appsettings key, default = a DELETED project
 
 	public ProjectExistsFilterFixture()
 	{
@@ -56,6 +62,10 @@ public sealed class ProjectExistsFilterFixture : IAsyncLifetime
 				["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 				["Features:Tasks"] = "true",
 				["Features:Memory"] = "true",
+				["Auth:ApiKeys:0:Key"] = ConfigStarGoneKey,
+				["Auth:ApiKeys:0:ProjectKey"] = ProjectScope.AllProjects,
+				["Auth:ApiKeys:0:Scopes"] = Scopes,
+				["Auth:ApiKeys:0:DefaultProjectKey"] = GoneProject,
 			}));
 		});
 	}
@@ -107,6 +117,7 @@ public sealed class ProjectExistsFilterFixture : IAsyncLifetime
 		StarReal = await ConnectAsync(StarRealKey);
 		StarGone = await ConnectAsync(StarGoneKey);
 		StarBare = await ConnectAsync(StarBareKey);
+		ConfigStarGone = await ConnectAsync(ConfigStarGoneKey);
 	}
 
 	public IServiceScope Scope() => _factory.Services.CreateScope();
@@ -249,6 +260,28 @@ public sealed class ProjectExistsFilterTests : IClassFixture<ProjectExistsFilter
 		result.StructuredContent!.Value.GetProperty("keys").EnumerateArray()
 			.Select(k => k.GetProperty("key").GetString())
 			.Should().Contain(ProjectExistsFilterFixture.StarRealKey);
+	}
+
+	// …and the OTHER half of "these tools address keys by claim, not storage": an ABSENT projectKey on
+	// apikey_create is not a project reference either. apikey_create never resolves the caller's default
+	// (its projectKey is `string?` — it reads the literal argument or takes the allProjects branch), so
+	// the filter's fallback leg must not validate that default here: it would reject the call over a
+	// project the call never named. The reachable case is a CONFIG-sourced key, whose DefaultProjectKey
+	// comes from appsettings unvalidated and survives the project's deletion.
+	[Fact]
+	public async Task ApiKeyCreate_FromAKeyWithADanglingDefault_IsNotRefused()
+	{
+		var result = await (await Tool(_fx.ConfigStarGone, "apikey_create")).CallAsync(new Dictionary<string, object?>
+		{
+			["name"] = "w3-cfg-probe",
+			["scopes"] = "tasks:read",
+			["allProjects"] = true,
+		});
+
+		result.IsError.Should().NotBe(true,
+			"apikey_create names no project when projectKey is omitted — the caller's dangling default is "
+			+ "not a reference this call makes");
+		result.StructuredContent!.Value.GetProperty("projectKey").GetString().Should().Be(ProjectScope.AllProjects);
 	}
 
 	// F3 — …and NOWHERE else. On a tool that routes STORAGE by projectKey, "*" is a file name:
