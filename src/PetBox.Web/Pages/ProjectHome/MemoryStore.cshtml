@@ -29,7 +29,7 @@
 		<div class="stat py-2 px-4">
 			<div class="stat-title text-xs">Opened</div>
 			<div class="stat-value text-lg" data-testid="agg-opened">@agg.OpenedAtLeastOnce / @agg.TotalEntries</div>
-			<div class="stat-desc">@($"{agg.OpenedFraction:P0}") opened directly</div>
+			<div class="stat-desc">@($"{agg.OpenedFraction:P0}") opened directly — a read count, not a value verdict; see Cost/Fit</div>
 		</div>
 		<div class="stat py-2 px-4">
 			<div class="stat-title text-xs">Median recency</div>
@@ -42,6 +42,26 @@
 			<div class="stat-title text-xs">Dead tail</div>
 			<div class="stat-value text-lg" data-testid="agg-dead">@agg.DeadTail.Count</div>
 			<div class="stat-desc" title="@string.Join(", ", agg.DeadTail.TopKeys)">never surfaced</div>
+		</div>
+		<div class="stat py-2 px-4">
+			<div class="stat-title text-xs">Cost (@(agg.Cost.WindowDays)d)</div>
+			<div class="stat-value text-lg" data-testid="agg-cost">
+				@(agg.Cost.Deliveries > 0 ? agg.Cost.DeliveredChars.ToString("N0") : "—")
+			</div>
+			<div class="stat-desc"
+				title="body chars this store delivered into callers' context over the window — read together with Fit: high chars + low fit = noise-boar, low chars + high fit = precise index">
+				@(agg.Cost.Deliveries > 0 ? $"{agg.Cost.EntriesDelivered} entries · {agg.Cost.Deliveries} deliveries" : "no deliveries in window")
+			</div>
+		</div>
+		<div class="stat py-2 px-4">
+			<div class="stat-title text-xs">Fit</div>
+			<div class="stat-value text-lg" data-testid="agg-fit">
+				@(agg.Cost.AvgKRel is { } fit ? $"{fit:P0}" : "—")
+			</div>
+			<div class="stat-desc"
+				title="mean within-request relevance of delivered rows — read together with Cost: high chars + low fit = noise-boar, low chars + high fit = precise index">
+				@(agg.Cost.AvgKRel.HasValue ? "avg relevance of delivered rows" : "no fit measured in window")
+			</div>
 		</div>
 	</div>
 }
@@ -74,8 +94,16 @@ else
 						@if (Model.Usage.TryGetValue(e.Key, out var u))
 						{
 							<span class="badge badge-ghost badge-sm opacity-70" data-testid="entry-usage"
-								title="surfaced @u.Surfaced × / opened @u.Opened × / last @(u.LastHitAt?.ToString("yyyy-MM-dd HH:mm") ?? "—")">
+								title="surfaced @u.Surfaced x / opened @u.Opened x / last @(u.LastHitAt?.ToString("yyyy-MM-dd HH:mm") ?? "none") -- an impression count, not a value verdict">
 								👁 @u.Surfaced · 📖 @u.Opened
+							</span>
+							<span class="badge badge-ghost badge-sm opacity-70" data-testid="entry-cost"
+								title="body chars delivered across this entry's deliveries -- a fact, not a verdict on its own; read together with Fit">
+								💰 @(u.Deliveries > 0 ? u.DeliveredChars.ToString("N0") : "—")
+							</span>
+							<span class="badge badge-ghost badge-sm opacity-70" data-testid="entry-fit"
+								title="mean within-request fit (kRel) of delivered rows -- pairs with Cost: high cost + low fit = noise, low cost + high fit = precise">
+								🎯 @(u.AvgKRel is { } k ? $"{k:P0}" : "—")
 							</span>
 						}
 						@if (!string.IsNullOrEmpty(e.Tags))
