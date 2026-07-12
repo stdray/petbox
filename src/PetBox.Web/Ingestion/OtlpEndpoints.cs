@@ -12,6 +12,17 @@ using PetBox.Log.Core.Ingestion;
 
 namespace PetBox.Web.Ingestion;
 
+// RETRY IDEMPOTENCY (compat-ingest): a stock OTLP exporter re-sends the identical batch on any
+// timeout/5xx, so ingest must be replayable. Spans and metric points are written through
+// InsertOrIgnoreAsync (SQLite `INSERT OR IGNORE`) against their natural keys — SpanId for a span,
+// (MetricName, MetricType, TimeUnixNs, AttributesJson) for a metric point (log-tier M002). A replay
+// is therefore a 200 with no new rows, where it used to be a 500 (span PK conflict) or a silent
+// duplicate (metric points had no key at all).
+//
+// `ingested` in the response stays the count of points/spans ACCEPTED from the payload, not the
+// number of rows physically inserted: it answers "did you take my batch?", which is the question the
+// exporter asks and the only one it can act on. A replay that stored nothing new is still a fully
+// accepted batch.
 public static class OtlpEndpoints
 {
 	public static void MapOtlpEndpoints(this IEndpointRouteBuilder app)
@@ -76,7 +87,7 @@ public static class OtlpEndpoints
 			// writer loop on the same file) racing one cached DataConnection is what
 			// produced ObjectDisposedException on sqlite3_stmt.
 			using var logDb = store.NewEnsuredContext(LogNames.SystemProject, LogNames.SelfLog);
-			await logDb.Spans.BulkCopyAsync(result.Spans, ct);
+			await logDb.InsertOrIgnoreAsync(result.Spans, ct);
 		}
 		return Results.Ok(new IngestResponse(result.Spans.Count, result.Errors));
 	}
@@ -96,7 +107,7 @@ public static class OtlpEndpoints
 			// writer loop on the same file) racing one cached DataConnection is what
 			// produced ObjectDisposedException on sqlite3_stmt.
 			using var logDb = store.NewEnsuredContext(LogNames.SystemProject, LogNames.SelfLog);
-			await logDb.MetricPoints.BulkCopyAsync(result.Points, ct);
+			await logDb.InsertOrIgnoreAsync(result.Points, ct);
 		}
 		return Results.Ok(new IngestResponse(result.Points.Count, result.Errors));
 	}
@@ -176,7 +187,7 @@ public static class OtlpEndpoints
 		if (result.Spans.Count > 0)
 		{
 			using var logDb = store.NewEnsuredContext(projectKey, logName);
-			await logDb.Spans.BulkCopyAsync(result.Spans, ct);
+			await logDb.InsertOrIgnoreAsync(result.Spans, ct);
 		}
 
 		return Results.Ok(new IngestResponse(result.Spans.Count, result.Errors));
@@ -203,7 +214,7 @@ public static class OtlpEndpoints
 		if (result.Points.Count > 0)
 		{
 			using var logDb = store.NewEnsuredContext(projectKey, logName);
-			await logDb.MetricPoints.BulkCopyAsync(result.Points, ct);
+			await logDb.InsertOrIgnoreAsync(result.Points, ct);
 		}
 
 		return Results.Ok(new IngestResponse(result.Points.Count, result.Errors));
