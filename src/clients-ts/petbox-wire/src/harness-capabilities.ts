@@ -37,9 +37,12 @@ export const CAPABILITIES: readonly Capability[] = [
 /**
  * Capability matrix — sources cited per cell.
  *
- * claude-code (verified live 2026-07-10 + Anthropic Claude Code agent docs):
- *   mcp_main_session — main session has MCP; spawned workers lacked mcp__petbox__* (live).
- *   mcp_subagent — NOT declared (same live observation: subagents do not see petbox MCP).
+ * claude-code (verified live 2026-07-10 + 2026-07-12 + Anthropic Claude Code agent docs):
+ *   mcp_main_session — main session has MCP.
+ *   mcp_subagent — declared (verified live 2026-07-12: a subagent with an unrestricted
+ *     tool set called an MCP tool, mcp__petbox__whoami, successfully). The earlier
+ *     "subagents lack MCP" note (2026-07-10) was an artifact of a hand-written
+ *     ~/.claude/agents/worker.md `tools:` whitelist that hid MCP — not a harness limit.
  *   dynamic_model_at_spawn — model passed dynamically at Agent/Task spawn.
  *   role_files — project/user agents under .claude/agents/*.md.
  *   builtin_explore_inherits_model — built-in Explore inherits parent model by default.
@@ -80,7 +83,8 @@ export const CAPABILITIES: readonly Capability[] = [
  */
 const MATRIX: Readonly<Record<HarnessId, readonly Capability[]>> = {
   "claude-code": [
-    "mcp_main_session", // live: main has MCP; subagents did not
+    "mcp_main_session", // live: main has MCP
+    "mcp_subagent", // live 2026-07-12: unrestricted subagent called mcp__petbox__whoami
     "dynamic_model_at_spawn", // model at Agent/Task spawn
     "role_files", // .claude/agents/*.md
     "builtin_explore_inherits_model", // built-in Explore inherits parent

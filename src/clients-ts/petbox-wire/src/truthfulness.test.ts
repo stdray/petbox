@@ -13,13 +13,14 @@ import {
   formatApplyBlocked,
   planApply,
   planOpencodeApply,
+  renderAgentMarkdown,
   renderDroidMarkdown,
   renderOpencodeAgentMarkdown,
 } from "./apply-artifacts.ts";
 import { HARNESS_IDS, harnessCapabilities, hasCapability } from "./harness-capabilities.ts";
 import { checkTruthfulness, formatViolations } from "./truthfulness.ts";
 
-test("claude-code declares role_files + spawn_subagents; still no mcp_subagent", () => {
+test("claude-code declares role_files + spawn_subagents + mcp_subagent (verified live 2026-07-12)", () => {
   const caps = harnessCapabilities("claude-code");
   assert.equal(caps.has("mcp_main_session"), true);
   assert.equal(caps.has("dynamic_model_at_spawn"), true);
@@ -27,7 +28,7 @@ test("claude-code declares role_files + spawn_subagents; still no mcp_subagent",
   assert.equal(caps.has("hooks"), true);
   assert.equal(caps.has("role_files"), true);
   assert.equal(caps.has("spawn_subagents"), true);
-  assert.equal(caps.has("mcp_subagent"), false);
+  assert.equal(caps.has("mcp_subagent"), true);
 });
 
 test("opencode declares role_files + mcp_subagent + spawn_subagents, not dynamic_model_at_spawn", () => {
@@ -67,21 +68,24 @@ test("constructed def requiring missing cap fails with role+capability+harness i
       {
         slug: "worker",
         tier: "worker",
-        requiredCapabilities: ["mcp_subagent"],
+        // opencode does not declare dynamic_model_at_spawn (PR #18588) — a capability
+        // still genuinely absent from a known harness's row, unlike mcp_subagent which
+        // claude-code now declares (verified live 2026-07-12).
+        requiredCapabilities: ["dynamic_model_at_spawn"],
       },
     ],
   };
-  const v = checkTruthfulness(def, "claude-code");
+  const v = checkTruthfulness(def, "opencode");
   assert.equal(v.length, 1);
   assert.deepEqual(v[0], {
     role: "worker",
-    capability: "mcp_subagent",
-    harness: "claude-code",
+    capability: "dynamic_model_at_spawn",
+    harness: "opencode",
   });
   const msg = formatViolations(v);
   assert.match(msg, /worker/);
-  assert.match(msg, /mcp_subagent/);
-  assert.match(msg, /claude-code/);
+  assert.match(msg, /dynamic_model_at_spawn/);
+  assert.match(msg, /opencode/);
 });
 
 test("DEFAULT is truth-clean on all known harnesses (including droid)", () => {
@@ -203,10 +207,11 @@ test("planApply: bound model in claude-code frontmatter; unbound omits model", (
   assert.equal(withModel.violations.length, 0);
   const worker = withModel.files.find((f) => f.relativePath.endsWith("worker.md"));
   assert.ok(worker);
-  assert.match(worker!.content, /^---\nmodel: anthropic\/claude-sonnet-4\n/m);
+  assert.match(worker!.content, /^---\nname: worker\nmodel: anthropic\/claude-sonnet-4\n/m);
 
   const unbound = planApply(portable, "claude-code", {});
   const body = unbound.files[0]!.content;
+  assert.match(body, /^---\nname: worker\n/m, "name: is always emitted");
   assert.ok(!/^model:/m.test(body.split("---")[1] ?? ""), "no invented model");
 });
 
@@ -217,7 +222,7 @@ test("planOpencodeApply: bound model in frontmatter; unbound omits model", () =>
   assert.equal(withModel.violations.length, 0);
   const worker = withModel.files.find((f) => f.relativePath.endsWith("worker.md"));
   assert.ok(worker);
-  assert.match(worker!.content, /^---\nmodel: deepseek\/deepseek-v4-pro\n/m);
+  assert.match(worker!.content, /^---\nname: worker\nmodel: deepseek\/deepseek-v4-pro\n/m);
 });
 
 test("renderOpencodeAgentMarkdown explore body does not forbid inheritance", () => {
@@ -273,4 +278,33 @@ test("validateAgentDefinition rejects role.model and nested model", () => {
       }),
     /model is not allowed/,
   );
+});
+
+test("renderAgentMarkdown: generated claude-code role file carries name: as first frontmatter key", () => {
+  const role = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "worker")!;
+  const md = renderAgentMarkdown(role);
+  assert.match(md, /^---\nname: worker\n/, "name: must be the first frontmatter key");
+  // No tools: key — omission means the file inherits the harness's full tool set,
+  // including MCP (that is the intended policy; see harness-capabilities.ts).
+  assert.ok(!/^tools:/m.test(md), "must not emit a tools: key");
+});
+
+test("renderAgentMarkdown / renderDroidMarkdown: role.notes land in the rendered body", () => {
+  const role = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "orchestrator")!;
+  assert.ok(role.notes && role.notes.length > 0);
+  const cc = renderAgentMarkdown(role);
+  assert.ok(cc.includes(role.notes!), "claude-code/opencode body must include role.notes");
+  const droid = renderDroidMarkdown(role);
+  assert.ok(droid.includes(role.notes!), "droid body must include role.notes");
+});
+
+test("leaf role body states the no-spawn rule imperatively, independent of harness tool grants", () => {
+  const worker = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "worker")!;
+  assert.equal(worker.spawn?.allowed, false);
+  const md = renderAgentMarkdown(worker);
+  assert.match(md, /MUST NOT spawn subagents/i);
+});
+
+test("claude-code declares mcp_subagent (verified live 2026-07-12)", () => {
+  assert.equal(hasCapability("claude-code", "mcp_subagent"), true);
 });
