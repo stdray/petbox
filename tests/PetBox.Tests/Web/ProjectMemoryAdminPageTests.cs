@@ -56,7 +56,7 @@ public sealed class ProjectMemoryAdminPageTests : IDisposable
 	}
 
 	ProjectMemoryModel Page() =>
-		new(_db, Features(), _memory) { WorkspaceKey = "ws", ProjectKey = Proj };
+		new(_db.Factory(), Features(), _memory) { WorkspaceKey = "ws", ProjectKey = Proj };
 
 	[Fact]
 	public async Task Delete_OrdinaryStore_Removes()

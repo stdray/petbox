@@ -23,12 +23,12 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectAgentDefsModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly IAgentDefinitionService _defs;
 
-	public ProjectAgentDefsModel(PetBoxDb db, IAgentDefinitionService defs)
+	public ProjectAgentDefsModel(ICoreDbFactory f, IAgentDefinitionService defs)
 	{
-		_db = db;
+		_f = f;
 		_defs = defs;
 	}
 
@@ -148,7 +148,8 @@ public sealed class ProjectAgentDefsModel : PageModel
 	// The project must exist AND live in the route workspace — the route is the only authority.
 	async Task<bool> LoadStateAsync(CancellationToken ct)
 	{
-		var project = await _db.Projects.FirstOrDefaultAsync(
+		using var db = _f.Open();
+		var project = await db.Projects.FirstOrDefaultAsync(
 			(Project p) => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
 		if (project is null) { ProjectNotFound = true; return false; }
 

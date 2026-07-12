@@ -15,13 +15,13 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize]
 public sealed class TasksModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
 
-	public TasksModel(PetBoxDb db, FeatureFlags features, ITasksService tasks)
+	public TasksModel(ICoreDbFactory f, FeatureFlags features, ITasksService tasks)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_tasks = tasks;
 	}
@@ -38,7 +38,8 @@ public sealed class TasksModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		using var db = _f.Open();
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null || !TasksEnabled) return;
 
 		Boards = await _tasks.ListBoardsAsync(ProjectKey, ct);

@@ -33,7 +33,7 @@ public static partial class ProjectTools
 		smoke-test / throwaway traffic that must never land in a real project.
 		""")]
 	public static async Task<ProjectCreatedResult> CreateAsync(
-		IHttpContextAccessor http, PetBoxDb db,
+		IHttpContextAccessor http, ICoreDbFactory dbf,
 		[Description("Workspace the project belongs to.")] string workspaceKey,
 		[Description("Project key (^[a-z][a-z0-9_-]{0,99}$).")] string key,
 		[Description("Display name (defaults to the key).")] string? name = null,
@@ -41,6 +41,7 @@ public static partial class ProjectTools
 		[Description("Marks this a SANDBOX project — the write-gate containment target for sandbox-only API keys. Default false.")] bool sandbox = false,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		if (string.IsNullOrWhiteSpace(key) || !KeyRegex().IsMatch(key))
@@ -65,10 +66,11 @@ public static partial class ProjectTools
 	[McpServerTool(Name = "project_list", Title = "List projects", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ProjectListResult))]
 	[Description("Lists projects, optionally scoped to one workspace. Requires admin:provision.")]
 	public static async Task<ProjectListResult> ListAsync(
-		IHttpContextAccessor http, PetBoxDb db,
+		IHttpContextAccessor http, ICoreDbFactory dbf,
 		[Description("Restrict to one workspace; omit for all projects.")] string? workspaceKey = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		var q = db.Projects.AsQueryable();
 		if (!string.IsNullOrEmpty(workspaceKey))

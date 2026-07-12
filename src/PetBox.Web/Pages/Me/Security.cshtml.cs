@@ -11,9 +11,9 @@ namespace PetBox.Web.Pages.Me;
 [Authorize]
 public sealed class SecurityModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 
-	public SecurityModel(PetBoxDb db) => _db = db;
+	public SecurityModel(ICoreDbFactory f) => _f = f;
 
 	public string? SuccessMessage { get; set; }
 	public string? ErrorMessage { get; set; }
@@ -22,6 +22,7 @@ public sealed class SecurityModel : PageModel
 
 	public async Task<IActionResult> OnPostChangePasswordAsync(string? currentPassword, string? newPassword, string? confirmPassword)
 	{
+		using var db = _f.Open();
 		if (string.IsNullOrEmpty(currentPassword) || string.IsNullOrEmpty(newPassword) || string.IsNullOrEmpty(confirmPassword))
 		{
 			ErrorMessage = "All three fields are required.";
@@ -45,7 +46,7 @@ public sealed class SecurityModel : PageModel
 			return Page();
 		}
 
-		var user = _db.Users.FirstOrDefault(u => u.Id == userId);
+		var user = db.Users.FirstOrDefault(u => u.Id == userId);
 		if (user is null)
 		{
 			ErrorMessage = "User not found.";
@@ -59,7 +60,7 @@ public sealed class SecurityModel : PageModel
 		}
 
 		var newHash = AdminPasswordHasher.Hash(newPassword);
-		await _db.Users.Where(u => u.Id == userId).Set(u => u.PasswordHash, newHash).UpdateAsync();
+		await db.Users.Where(u => u.Id == userId).Set(u => u.PasswordHash, newHash).UpdateAsync();
 
 		SuccessMessage = "Password updated.";
 		return Page();

@@ -38,8 +38,9 @@ public static class DeployApi
 			.RequireAuthorization("ApiKey");
 	}
 
-	static async Task<IResult> PollAsync(HttpContext ctx, IDeployService svc, PetBoxDb db, IConfigDbFactory configFactory, ISecretEncryptor encryptor, CancellationToken ct)
+	static async Task<IResult> PollAsync(HttpContext ctx, IDeployService svc, ICoreDbFactory dbf, IConfigDbFactory configFactory, ISecretEncryptor encryptor, CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		if (!HasScope(ctx, ApiKeyScopes.AgentPoll)) return Results.Forbid();
 		var nodeId = Claim(ctx, "project");
 		if (string.IsNullOrWhiteSpace(nodeId)) return TypedResults.BadRequest(new ErrorResponse("node key has no node claim"));
@@ -99,8 +100,9 @@ public static class DeployApi
 	public sealed record NodeEnrollRequest(string Id, string? DisplayName, string? Tags, bool Ephemeral, bool MintKey);
 	public sealed record NodeEnrollResponse(NodeView Node, string? Key);
 
-	static async Task<IResult> EnrollNodeAsync(HttpContext ctx, IDeployService svc, PetBoxDb db, NodeEnrollRequest req, CancellationToken ct)
+	static async Task<IResult> EnrollNodeAsync(HttpContext ctx, IDeployService svc, ICoreDbFactory dbf, NodeEnrollRequest req, CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		if (!HasScope(ctx, ApiKeyScopes.DeployWrite)) return Results.Forbid();
 		if (req is null || string.IsNullOrWhiteSpace(req.Id))
 			return TypedResults.BadRequest(new ErrorResponse("id is required"));

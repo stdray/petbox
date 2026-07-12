@@ -15,12 +15,12 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize]
 public sealed class DatabasesModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 
-	public DatabasesModel(PetBoxDb db, FeatureFlags features)
+	public DatabasesModel(ICoreDbFactory f, FeatureFlags features)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 	}
 
@@ -39,11 +39,12 @@ public sealed class DatabasesModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
+		using var db = _f.Open();
 		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
-		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null || !DataEnabled) return;
 
-		Dbs = await _db.DataDbs
+		Dbs = await db.DataDbs
 			.Where(d => d.ProjectKey == ProjectKey)
 			.OrderBy(d => d.Name)
 			.ToListAsync(ct);

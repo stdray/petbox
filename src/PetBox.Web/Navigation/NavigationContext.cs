@@ -25,9 +25,15 @@ public interface INavigationContext
 
 public sealed record WorkspaceOption(string Key, string Name);
 
+// Every db-touching member here opens its OWN connection and memoizes the RESULT, so a request
+// pays at most one Open() per memoized member (3-4 on a page that renders the full sidebar) and
+// holds no connection between them. Holding one scoped connection as a field is what this whole
+// refactor exists to remove — and it would be especially bad here: the nav context is resolved
+// during LAYOUT render, i.e. after a handler that disposed a shared connection would have left it
+// dead (ObjectDisposedException on every page that fanned out).
 public sealed class NavigationContext(
 	IHttpContextAccessor accessor,
-	PetBoxDb db,
+	ICoreDbFactory dbf,
 	PetBox.Core.Features.FeatureFlags features) : INavigationContext
 {
 	const string WorkspaceCookie = "yb_ws";
@@ -108,6 +114,8 @@ public sealed class NavigationContext(
 				return _workspaces;
 			}
 
+			using var db = dbf.Open();
+
 			// Sysadmin sees everything regardless of membership.
 			var isSysAdmin = Http!.User.HasClaim(PetBoxClaims.IsSysAdmin, "true");
 			if (isSysAdmin)
@@ -147,6 +155,7 @@ public sealed class NavigationContext(
 		{
 			if (_projects is not null) return _projects;
 			var wsKey = CurrentWorkspaceKey;
+			using var db = dbf.Open();
 			// Workspace memory containers ($workspace / $ws-*) are not user projects — they have
 			// no logs/dbs/tasks, so they don't belong in the project tree. The workspace dashboard
 			// surfaces the current container as the dedicated "Shared memory" entry instead.
@@ -165,6 +174,7 @@ public sealed class NavigationContext(
 		{
 			if (_projectsByWs is not null) return _projectsByWs;
 			var wsKeys = AvailableWorkspaces.Select(w => w.Key).ToHashSet(StringComparer.Ordinal);
+			using var db = dbf.Open();
 			var grouped = db.Projects
 				.Where(p => wsKeys.Contains(p.WorkspaceKey))
 				.OrderBy(p => p.Key)
@@ -189,6 +199,8 @@ public sealed class NavigationContext(
 			?? (IsProjectRoute() ? Http?.GetRouteValue("key")?.ToString() : null);
 		if (!string.IsNullOrEmpty(routeProject))
 		{
+			// Opened inside the branch: the common case (no project in the route) never touches the db.
+			using var db = dbf.Open();
 			var p = db.Projects.FirstOrDefault(pr => pr.Key == routeProject);
 			if (p is not null && IsMember(p.WorkspaceKey))
 				return p.WorkspaceKey;

@@ -15,7 +15,7 @@ namespace PetBox.Memory.Data;
 // live path; the per-store-directory sweep still runs to reclaim a deleted project's LEGACY
 // memory/{project}/*.db files (left in place by the merge migration — see LegacyStoreMerge).
 public sealed partial class MemoryOrphanCleanupService(
-	IServiceProvider services,
+	ICoreDbFactory coreDb,
 	IScopedDbFactory<MemoryDb> factory,
 	ILogger<MemoryOrphanCleanupService> logger) : BackgroundService
 {
@@ -46,8 +46,7 @@ public sealed partial class MemoryOrphanCleanupService(
 	// Exposed as internal so tests can drive a single pass deterministically.
 	internal async Task RunOncePassAsync(CancellationToken ct)
 	{
-		using var scope = services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = coreDb.Open();
 		var reclaimed = new HashSet<string>(StringComparer.Ordinal);
 		foreach (var projectKey in await ProjectFileOrphans.ReclaimRootFilesAsync(db, factory, ct))
 			reclaimed.Add(projectKey);

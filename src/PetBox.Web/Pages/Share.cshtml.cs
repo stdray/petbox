@@ -17,12 +17,12 @@ namespace PetBox.Web.Pages;
 [AllowAnonymous]
 public sealed class ShareModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly ILogStore _logStore;
 
-	public ShareModel(PetBoxDb db, ILogStore logStore)
+	public ShareModel(ICoreDbFactory f, ILogStore logStore)
 	{
-		_db = db;
+		_f = f;
 		_logStore = logStore;
 	}
 
@@ -38,7 +38,8 @@ public sealed class ShareModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		var share = await _db.ShareLinks.FirstOrDefaultAsync((ShareLink s) => s.Id == Token, ct);
+		using var db = _f.Open();
+		var share = await db.ShareLinks.FirstOrDefaultAsync((ShareLink s) => s.Id == Token, ct);
 		if (share is null)
 		{
 			ShareNotFound = true;

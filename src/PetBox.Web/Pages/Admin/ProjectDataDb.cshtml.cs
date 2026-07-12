@@ -20,14 +20,14 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectDataDbModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly IDataDbFactory _factory;
 	readonly IDataSqlService _sql;
 
-	public ProjectDataDbModel(PetBoxDb db, FeatureFlags features, IDataDbFactory factory, IDataSqlService sql)
+	public ProjectDataDbModel(ICoreDbFactory f, FeatureFlags features, IDataDbFactory factory, IDataSqlService sql)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_factory = factory;
 		_sql = sql;
@@ -46,9 +46,10 @@ public sealed class ProjectDataDbModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync()
 	{
+		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Data)) return base.NotFound();
 
-		Db = await _db.DataDbs.FirstOrDefaultAsync(
+		Db = await db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == ProjectKey && d.Name == DbName);
 		if (Db is null) { DbNotFound = true; return Page(); }
 
@@ -58,9 +59,10 @@ public sealed class ProjectDataDbModel : PageModel
 
 	public async Task<IActionResult> OnPostApplyAsync(string name, string sql)
 	{
+		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Data)) return base.NotFound();
 
-		Db = await _db.DataDbs.FirstOrDefaultAsync(
+		Db = await db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == ProjectKey && d.Name == DbName);
 		if (Db is null) { DbNotFound = true; return Page(); }
 

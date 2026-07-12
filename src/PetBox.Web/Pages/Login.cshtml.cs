@@ -15,12 +15,12 @@ namespace PetBox.Web.Pages;
 [AllowAnonymous]
 public sealed class LoginModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly AdminOptions _adminOptions;
 
-	public LoginModel(PetBoxDb db, IOptions<AdminOptions> adminOptions)
+	public LoginModel(ICoreDbFactory f, IOptions<AdminOptions> adminOptions)
 	{
-		_db = db;
+		_f = f;
 		_adminOptions = adminOptions.Value;
 	}
 
@@ -34,6 +34,7 @@ public sealed class LoginModel : PageModel
 
 	public async Task<IActionResult> OnPostAsync(string? username, string? password, string? returnUrl)
 	{
+		using var db = _f.Open();
 		Username = username;
 		ReturnUrl = returnUrl;
 
@@ -43,7 +44,7 @@ public sealed class LoginModel : PageModel
 			return Page();
 		}
 
-		var user = _db.Users.FirstOrDefault(u => u.Username == username);
+		var user = db.Users.FirstOrDefault(u => u.Username == username);
 		if (user is null || !AdminPasswordHasher.Verify(password, user.PasswordHash))
 		{
 			ErrorMessage = "Invalid username or password.";
@@ -57,7 +58,7 @@ public sealed class LoginModel : PageModel
 			&& string.Equals(user.Username, _adminOptions.Username, StringComparison.Ordinal);
 		if (isBootstrapAdmin && !AdminForceEnabled())
 		{
-			var otherSysAdminExists = _db.WorkspaceMembers
+			var otherSysAdminExists = db.WorkspaceMembers
 				.Any(m => m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin && m.UserId != user.Id);
 			if (otherSysAdminExists)
 			{
@@ -66,7 +67,7 @@ public sealed class LoginModel : PageModel
 			}
 		}
 
-		var memberships = _db.WorkspaceMembers
+		var memberships = db.WorkspaceMembers
 			.Where(m => m.UserId == user.Id)
 			.ToList();
 

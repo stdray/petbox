@@ -17,13 +17,13 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize]
 public sealed class SessionsModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly ISessionStore _store;
 
-	public SessionsModel(PetBoxDb db, FeatureFlags features, ISessionStore store)
+	public SessionsModel(ICoreDbFactory f, FeatureFlags features, ISessionStore store)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_store = store;
 	}
@@ -52,7 +52,8 @@ public sealed class SessionsModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		using var db = _f.Open();
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null || !SessionsEnabled) return;
 
 		if (PageNum < 0) PageNum = 0;

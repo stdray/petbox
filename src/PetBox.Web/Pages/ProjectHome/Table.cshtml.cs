@@ -20,13 +20,13 @@ public sealed class TableModel : PageModel
 {
 	const int PageSize = 50;
 
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly IDataDbFactory _factory;
 
-	public TableModel(PetBoxDb db, FeatureFlags features, IDataDbFactory factory)
+	public TableModel(ICoreDbFactory f, FeatureFlags features, IDataDbFactory factory)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_factory = factory;
 	}
@@ -59,9 +59,10 @@ public sealed class TableModel : PageModel
 	// route-key in Razor Pages, so a ?page=N query value never binds here.
 	public async Task<IActionResult> OnGetAsync(string? sql, int? pageNum, CancellationToken ct)
 	{
+		using var db = _f.Open();
 		if (!DataEnabled) return Page();
 
-		var exists = await _db.DataDbs.AnyAsync(
+		var exists = await db.DataDbs.AnyAsync(
 			d => d.ProjectKey == ProjectKey && d.Name == DbName, ct);
 		if (!exists) { DbNotFound = true; return Page(); }
 

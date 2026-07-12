@@ -18,18 +18,18 @@ public sealed class IndexModel : PageModel
 	readonly IConfigDbFactory _configFactory;
 	readonly ISecretEncryptor _encryptor;
 	readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _cache;
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 
 	public IndexModel(
 		IConfigDbFactory configFactory,
 		ISecretEncryptor encryptor,
 		Microsoft.Extensions.Caching.Memory.IMemoryCache cache,
-		PetBoxDb db)
+		ICoreDbFactory f)
 	{
 		_configFactory = configFactory;
 		_encryptor = encryptor;
 		_cache = cache;
-		_db = db;
+		_f = f;
 	}
 
 	public IReadOnlyList<SavedConfigFilter> SavedFilters { get; private set; } = [];
@@ -78,10 +78,11 @@ public sealed class IndexModel : PageModel
 
 	public IActionResult OnGet(string? q)
 	{
+		using var db = _f.Open();
 		EffectiveWorkspaceKey = ResolveWorkspace();
 		KeyQuery = string.IsNullOrWhiteSpace(q) ? null : q.Trim();
 
-		SavedFilters = _db.SavedConfigFilters
+		SavedFilters = db.SavedConfigFilters
 			.Where(f => f.WorkspaceKey == EffectiveWorkspaceKey)
 			.OrderBy(f => f.Name)
 			.ToList();
@@ -171,6 +172,7 @@ public sealed class IndexModel : PageModel
 
 	public IActionResult OnPostSaveFilter(string name)
 	{
+		using var db = _f.Open();
 		EffectiveWorkspaceKey = ResolveWorkspace();
 		var pairs = new List<string>();
 		foreach (var k in Request.Form.Keys)
@@ -183,12 +185,12 @@ public sealed class IndexModel : PageModel
 		{
 			var filterTags = string.Join(",", pairs.OrderBy(p => p, StringComparer.Ordinal));
 			var trimmed = name.Trim();
-			var existing = _db.SavedConfigFilters.FirstOrDefault(
+			var existing = db.SavedConfigFilters.FirstOrDefault(
 				f => f.WorkspaceKey == EffectiveWorkspaceKey && f.Name == trimmed);
 			if (existing is null)
-				_db.Insert(new SavedConfigFilter { WorkspaceKey = EffectiveWorkspaceKey, Name = trimmed, FilterTags = filterTags, CreatedAt = DateTime.UtcNow });
+				db.Insert(new SavedConfigFilter { WorkspaceKey = EffectiveWorkspaceKey, Name = trimmed, FilterTags = filterTags, CreatedAt = DateTime.UtcNow });
 			else
-				_db.SavedConfigFilters.Where(f => f.Id == existing.Id).Set(f => f.FilterTags, filterTags).Update();
+				db.SavedConfigFilters.Where(f => f.Id == existing.Id).Set(f => f.FilterTags, filterTags).Update();
 			this.NotifySuccess($"Filter '{trimmed}' saved.");
 		}
 		return RedirectBack();
@@ -196,8 +198,9 @@ public sealed class IndexModel : PageModel
 
 	public IActionResult OnPostDeleteFilter(long id)
 	{
+		using var db = _f.Open();
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		_db.SavedConfigFilters.Where(f => f.Id == id && f.WorkspaceKey == EffectiveWorkspaceKey).Delete();
+		db.SavedConfigFilters.Where(f => f.Id == id && f.WorkspaceKey == EffectiveWorkspaceKey).Delete();
 		this.NotifySuccess("Saved filter deleted.");
 		return RedirectBack();
 	}

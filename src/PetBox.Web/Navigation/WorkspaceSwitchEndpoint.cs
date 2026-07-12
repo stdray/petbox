@@ -24,10 +24,11 @@ public static class WorkspaceSwitchEndpoint
 
 	static async Task<IResult> Switch(
 		HttpContext ctx,
-		PetBoxDb db,
+		ICoreDbFactory dbf,
 		[FromForm] string? ws,
 		[FromForm] string? zone)
 	{
+		using var db = dbf.Open();
 		// `ws` is nullable on the binding so an empty-form POST surfaces as
 		// a clean 400, not an unhandled BadHttpRequestException with stack
 		// trace into the error log. The sidebar's onchange-submit form is

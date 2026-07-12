@@ -18,7 +18,7 @@ namespace PetBox.Data;
 // single-pet topology and survives across process restarts (next tick the
 // service walks the disk and reconciles against DataDbs).
 public sealed partial class OrphanCleanupService(
-	IServiceProvider services,
+	ICoreDbFactory coreDb,
 	IDataDbFactory factory,
 	ILogger<OrphanCleanupService> logger) : BackgroundService
 {
@@ -51,8 +51,7 @@ public sealed partial class OrphanCleanupService(
 	// without waiting on the 1-minute interval.
 	internal async Task RunOncePassAsync(CancellationToken ct)
 	{
-		using var scope = services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = coreDb.Open();
 
 		// Every project that has either metadata rows OR on-disk files.
 		var knownProjects = await db.DataDbs

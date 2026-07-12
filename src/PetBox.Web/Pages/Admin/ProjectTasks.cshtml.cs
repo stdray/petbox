@@ -18,13 +18,13 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectTasksModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
 
-	public ProjectTasksModel(PetBoxDb db, FeatureFlags features, ITasksService tasks)
+	public ProjectTasksModel(ICoreDbFactory f, FeatureFlags features, ITasksService tasks)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_tasks = tasks;
 	}
@@ -59,10 +59,11 @@ public sealed class ProjectTasksModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
+		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Tasks))
 			return NotFound();
 
-		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
+		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
 		Runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);

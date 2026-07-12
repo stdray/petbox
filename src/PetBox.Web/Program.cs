@@ -617,9 +617,10 @@ public partial class Program
 		// after the legacy fold (so every board is in its per-project file) and BEFORE the flat
 		// back-fill below — that one creates part_of edges through the store, i.e. already into
 		// the new home, so the copy has to land first or the same edge would exist twice.
-		using (var relScope = app.Services.CreateScope())
+		var coreDbFactory = app.Services.GetRequiredService<ICoreDbFactory>();
+
 		{
-			var coreDb = relScope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var coreDb = coreDbFactory.Open();
 			var relLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.RelationsBackfill");
 			new PetBox.Tasks.Data.RelationsToTasksDbMigrator(coreDb, tasksFactory, Path.Combine(dataDir, "tasks"), relLog).Migrate();
 		}
@@ -639,9 +640,8 @@ public partial class Program
 		// project def / effective builtins; packs quartet process-role boards into one shared
 		// instance when possible. Runs after schema ensure + flat migration; needs PetBoxDb
 		// (membership) + per-project tasks files (instance documents).
-		using (var backfillScope = app.Services.CreateScope())
 		{
-			var coreDb = backfillScope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var coreDb = coreDbFactory.Open();
 			var backfillLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.MethodologyInstanceBackfill");
 			new PetBox.Tasks.Data.MethodologyInstanceBackfill(coreDb, tasksFactory, backfillLog).Migrate();
 		}
@@ -666,7 +666,7 @@ public partial class Program
 
 		using (var scope = app.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = coreDbFactory.Open();
 			var adminOptions = scope.ServiceProvider.GetRequiredService<IOptions<AdminOptions>>();
 			AdminBootstrapper.EnsureAdminUser(db, adminOptions);
 

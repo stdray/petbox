@@ -57,7 +57,7 @@ public sealed class TracesListFilterTests : IDisposable
 		});
 	}
 
-	TracesModel NewModel() => new(_db, _store)
+	TracesModel NewModel() => new(_db.Factory(), _store)
 	{
 		WorkspaceKey = "ws",
 		ProjectKey = Proj,
