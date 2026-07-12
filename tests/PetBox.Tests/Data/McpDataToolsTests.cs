@@ -65,7 +65,7 @@ public sealed class McpDataToolsFixture : IAsyncLifetime
 
 		using (var scope = Factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.DataDbs.DeleteAsync();
 			await db.ApiKeys.Where(k => k.Key == TestApiKey).DeleteAsync();
 			await db.Projects.Where(p => p.Key == TestProjectKey).DeleteAsync();

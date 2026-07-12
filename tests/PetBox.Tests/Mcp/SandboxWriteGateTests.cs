@@ -67,7 +67,7 @@ public sealed class SandboxWriteGateFixture : IAsyncLifetime
 
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.InsertAsync(new Workspace { Key = Workspace, Name = "SBX", CreatedAt = DateTime.UtcNow });
 			await db.InsertAsync(new Project { Key = RealProject, WorkspaceKey = Workspace, Name = "Real", Sandbox = false });
 			await db.InsertAsync(new Project { Key = SandboxProject, WorkspaceKey = Workspace, Name = "Sandbox", Sandbox = true });
@@ -236,7 +236,7 @@ public sealed class SandboxWriteGateTests : IClassFixture<SandboxWriteGateFixtur
 		result.IsError.Should().Be(true);
 
 		using var scope = _fx.Scope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		(await db.TaskBoards.AnyAsync(b => b.ProjectKey == SandboxWriteGateFixture.RealProject))
 			.Should().BeFalse("a rejected board_create must not materialize a board in the real project");
 	}

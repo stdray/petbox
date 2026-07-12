@@ -46,7 +46,7 @@ public sealed class AdminProjectDetailAuthzFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 
 		await db.InsertAsync(new Workspace { Key = "wsa", Name = "Wsa", Description = "", CreatedAt = DateTime.UtcNow });
 		await db.InsertAsync(new Workspace { Key = "wsb", Name = "Wsb", Description = "", CreatedAt = DateTime.UtcNow });
@@ -134,7 +134,7 @@ public sealed class AdminProjectDetailAuthzTests : IClassFixture<AdminProjectDet
 		deleteResp.Headers.Location!.ToString().Should().Contain("/Login");
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		db.Projects.Any(p => p.Key == "projb").Should().BeTrue("the cross-tenant delete must not have removed wsb's project");
 	}
 
@@ -163,7 +163,7 @@ public sealed class AdminProjectDetailAuthzTests : IClassFixture<AdminProjectDet
 		createResp.Headers.Location!.ToString().Should().Contain("/Login");
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		db.ApiKeys.Any(k => k.ProjectKey == "projb" && k.Name == "intruder-key").Should().BeFalse(
 			"the cross-tenant create must not have minted a key for wsb's project");
 	}
@@ -202,7 +202,7 @@ public sealed class AdminProjectDetailAuthzTests : IClassFixture<AdminProjectDet
 		createResp.StatusCode.Should().Be(HttpStatusCode.Redirect, "eve is Admin of the route workspace (wsa)");
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		db.ApiKeys.Any(k => k.ProjectKey == "projb" && k.Name == "pwn-key").Should().BeFalse(
 			"a form-supplied ProjectKey must NOT override the route project used for the DB write");
 		db.ApiKeys.Any(k => k.ProjectKey == "proja" && k.Name == "pwn-key").Should().BeTrue(

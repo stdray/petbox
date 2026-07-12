@@ -57,7 +57,7 @@ public sealed class ConfigDeleteBindingTests : IAsyncLifetime
 		_client = _factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = _factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new ApiKey
 		{
 			Key = WriteKey,

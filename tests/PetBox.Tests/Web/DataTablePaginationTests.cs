@@ -66,7 +66,7 @@ public sealed class DataTablePaginationFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false, HandleCookies = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		var factory = scope.ServiceProvider.GetRequiredService<IDataDbFactory>();
 
 		// Physical SQLite file + a table with RowCount uniquely-tokenised rows.

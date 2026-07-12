@@ -68,7 +68,7 @@ public sealed class WalCheckpointServiceTests : IAsyncLifetime
 
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.Workspaces.Where(w => w.Key == "test").DeleteAsync();
 			await db.InsertAsync(new PetBox.Core.Models.Workspace { Key = "test", Name = "T", CreatedAt = DateTime.UtcNow });
 			await db.Projects.Where(p => p.Key == TestProjectKey).DeleteAsync();

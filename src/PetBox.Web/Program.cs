@@ -118,13 +118,12 @@ public partial class Program
 		Directory.CreateDirectory(Path.GetDirectoryName(
 			new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(bootstrapCs).DataSource)!);
 
-		builder.Services.AddScoped(sp => new PetBoxDb(PetBoxDb.CreateOptions(ResolveCs(sp))));
-		// The way core.db SHOULD be reached: `using var db = factory.Open()` per call, giving a
-		// fresh caller-owned connection instead of a request-shared one. A linq2db DataConnection is
-		// not thread-safe, and the AddScoped registration above hands the SAME one to every thread a
-		// request fans out onto (the cross-scope search 500s). Consumers are being migrated onto the
-		// factory; when the last one is off it, the scoped registration goes away and the bug class
-		// stops being expressible. SINGLETON: it holds only DataOptions, never a connection.
+		// core.db is reached ONLY through ICoreDbFactory: `using var db = factory.Open()` per call,
+		// giving a fresh caller-owned connection instead of a request-shared one. A linq2db
+		// DataConnection is not thread-safe, so a scoped PetBoxDb registration would hand the SAME
+		// connection to every thread a request fans out onto (the cross-scope search 500s) — that
+		// registration is gone now, and DbInjectionGuardTests asserts it stays gone. SINGLETON here:
+		// the factory holds only DataOptions, never a connection.
 		builder.Services.AddSingleton<ICoreDbFactory>(sp => new CoreDbFactory(ResolveCs(sp)));
 		// The catalog of projects/entities (core.db) — the SOURCE OF TRUTH the background enrichment
 		// jobs ask "which projects exist" (spec: catalog-is-source-of-truth). Per-project SQLite files
@@ -620,9 +619,8 @@ public partial class Program
 		var coreDbFactory = app.Services.GetRequiredService<ICoreDbFactory>();
 
 		{
-			using var coreDb = coreDbFactory.Open();
 			var relLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.RelationsBackfill");
-			new PetBox.Tasks.Data.RelationsToTasksDbMigrator(coreDb, tasksFactory, Path.Combine(dataDir, "tasks"), relLog).Migrate();
+			new PetBox.Tasks.Data.RelationsToTasksDbMigrator(coreDbFactory, tasksFactory, Path.Combine(dataDir, "tasks"), relLog).Migrate();
 		}
 
 		// One-time, idempotent (spec-flat-tags): convert legacy path-keyed nodes to flat
@@ -638,12 +636,11 @@ public partial class Program
 		// One-time, idempotent (methodology-instance-backfill): every existing TaskBoard gets
 		// exactly-one MethodologyInstance membership. Creates methodology_instances rows from
 		// project def / effective builtins; packs quartet process-role boards into one shared
-		// instance when possible. Runs after schema ensure + flat migration; needs PetBoxDb
+		// instance when possible. Runs after schema ensure + flat migration; needs core.db
 		// (membership) + per-project tasks files (instance documents).
 		{
-			using var coreDb = coreDbFactory.Open();
 			var backfillLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.MethodologyInstanceBackfill");
-			new PetBox.Tasks.Data.MethodologyInstanceBackfill(coreDb, tasksFactory, backfillLog).Migrate();
+			new PetBox.Tasks.Data.MethodologyInstanceBackfill(coreDbFactory, tasksFactory, backfillLog).Migrate();
 		}
 
 		// One-time, idempotent (llm-registry-own-store): copy the live LLM registry out of the Config

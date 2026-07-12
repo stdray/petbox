@@ -35,13 +35,7 @@ namespace PetBox.Tests.Architecture;
 public sealed class DbInjectionGuardTests
 {
 	// Contexts that must be reachable ONLY through their factory.
-	//
-	// TODO(core-db-behind-factory): PetBoxDb belongs in this list too — it is the other half of the
-	// same bug and the other half of this refactor. It stays OUT until its ~190 call sites are moved
-	// onto ICoreDbFactory; the moment the last `AddScoped<PetBoxDb>` consumer is gone, add
-	// typeof(PetBoxDb) here and delete this comment. Until then PetBoxDb is knowingly allowlisted:
-	// the guard is honest about what it does and does not yet hold.
-	static readonly Type[] MustNotBeInjectable = [typeof(DeployDb)];
+	static readonly Type[] MustNotBeInjectable = [typeof(DeployDb), typeof(PetBoxDb)];
 
 	// Types permitted to mention a guarded context in a ctor parameter. A FACTORY is the one thing
 	// that legitimately produces them — though note the factories take DataOptions/a connection

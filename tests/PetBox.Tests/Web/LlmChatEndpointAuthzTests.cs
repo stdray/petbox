@@ -30,7 +30,7 @@ public sealed class LlmChatEndpointAuthzTests
 		var proj = $"llmchatauthz{Guid.NewGuid():N}"[..16];
 		var key = $"yb_key_{Guid.NewGuid():N}";
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new Project
 		{
 			Key = proj,

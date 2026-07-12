@@ -56,7 +56,7 @@ public sealed class ShareApiAuthzFixture : IAsyncLifetime
 		Client = Factory.CreateClient(new WebApplicationFactoryClientOptions { AllowAutoRedirect = false });
 
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.InsertAsync(new Project { Key = ProjA, WorkspaceKey = "$system", Name = "ProjA" });
 		await db.InsertAsync(new Project { Key = ProjB, WorkspaceKey = "$system", Name = "ProjB" });
 		await db.InsertAsync(new ApiKey { Key = KeyA, ProjectKey = ProjA, Scopes = "logs:query", CreatedAt = DateTime.UtcNow });
@@ -112,7 +112,7 @@ public sealed class ShareApiAuthzTests : IClassFixture<ShareApiAuthzFixture>
 			"a key authorized only for project A must not mint a share link exporting project B's logs");
 
 		using var scope = _fx.Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		db.ShareLinks.Any(s => s.ProjectKey == ShareApiAuthzFixture.ProjB).Should().BeFalse(
 			"no share token must have been minted for the foreign project");
 	}

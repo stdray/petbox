@@ -100,7 +100,7 @@ public sealed class MutationFeedbackViewTests : IClassFixture<MutationFeedbackVi
 	{
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			if (!db.Users.Any(u => u.Username == "victim"))
 				db.Insert(new User { Username = "victim", PasswordHash = "x", CreatedAt = DateTime.UtcNow });
 		}

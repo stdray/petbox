@@ -85,7 +85,7 @@ public sealed class OrphanCleanupServiceTests : IAsyncLifetime
 
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			var now = DateTime.UtcNow;
 			await db.InsertAsync(new PetBox.Core.Models.DataDb
 			{

@@ -77,7 +77,7 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 
 		using (var scope = Factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.ApiKeys.Where(k => k.Key == TestApiKey).DeleteAsync();
 			await db.Projects.Where(p => p.Key == TestProjectKey).DeleteAsync();
 			await db.Workspaces.Where(w => w.Key == "test").DeleteAsync();
@@ -136,7 +136,7 @@ public sealed class McpLogToolsFixture : IAsyncLifetime
 	public async Task ResetAsync()
 	{
 		using var scope = Factory.Services.CreateScope();
-		var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		await db.ApiKeys.Where(k => k.Key == TestApiKey)
 			.Set(k => k.Scopes, TestScopes)
 			.UpdateAsync();
@@ -318,7 +318,7 @@ public sealed class McpLogToolsTests : IClassFixture<McpLogToolsFixture>, IAsync
 		// Re-key without logs:query.
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.ApiKeys.Where(k => k.Key == TestApiKey)
 				.Set(k => k.Scopes, "data:read")
 				.UpdateAsync();

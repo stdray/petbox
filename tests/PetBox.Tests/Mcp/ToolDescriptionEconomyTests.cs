@@ -174,7 +174,7 @@ public sealed class ToolDescriptionEconomyWireFixture : IAsyncLifetime
 		TestSchema.Core(cs);
 		using (var scope = _factory.Services.CreateScope())
 		{
-			var db = scope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			await db.ApiKeys.Where(k => k.Key == ApiKey).DeleteAsync();
 			await db.Projects.Where(p => p.Key == ProjectKey).DeleteAsync();
 			await db.Workspaces.Where(w => w.Key == "test").DeleteAsync();
