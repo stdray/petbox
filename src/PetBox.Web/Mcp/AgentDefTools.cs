@@ -62,6 +62,7 @@ public static class AgentDefTools
 		IHttpContextAccessor http, IAgentDefinitionService svc,
 		string projectKey,
 		[Description("Definition slug key (^[a-z][a-z0-9_-]{0,99}$).")] string key,
+		[McpJsonShape("object")]
 		[Description("The portable definition document: { name, roles:[{ slug, tier, requiredCapabilities, spawn?, escalation?, notes? }] }.")] JsonElement definition,
 		[Description("Watermark baseline: version from last agent_def_get; 0 = create.")] long version = 0,
 		CancellationToken ct = default)
@@ -69,9 +70,55 @@ public static class AgentDefTools
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AgentsWrite);
 		// Parse from JsonElement so role.model is rejected on the wire shape.
-		var def = AgentDefinitionJson.Parse(definition);
+		var def = ParseDefinition(definition);
 		var ack = await svc.UpsertAsync(projectKey, key, def, version, ct);
 		return new AgentDefUpsertResult(ack.Key, ack.Version, ack.Changed);
+	}
+
+	// Parse the `definition` argument, tolerating the double-encoded form.
+	//
+	// The schema now declares `definition` as an object ([McpJsonShape]) — before that it was a
+	// typeless node and strict clients sent the document as a JSON *string*, which blew up as a raw
+	// `JsonException: The JSON value could not be converted to AgentDefinitionDoc. Path: $` (intake
+	// mcp-agent-def-upsert-definition-param-untyped). Clients that still double-encode (a stale
+	// cached schema, a hand-rolled caller) are accepted: a string is parsed first. Everything that
+	// is still not an object fails as a STRUCTURAL ArgumentException — the {error} envelope then
+	// carries a message a caller can act on, not a .NET stack trace about `Path: $`.
+	static AgentDefinitionDoc ParseDefinition(JsonElement definition)
+	{
+		switch (definition.ValueKind)
+		{
+			case JsonValueKind.Object:
+				return AgentDefinitionJson.Parse(definition);
+
+			case JsonValueKind.String:
+				var raw = definition.GetString() ?? "";
+				JsonDocument doc;
+				try
+				{
+					doc = JsonDocument.Parse(raw);
+				}
+				catch (JsonException ex)
+				{
+					throw new ArgumentException(
+						$"definition must be a JSON object {{ name, roles:[…] }} — got a string that is not valid JSON: {ex.Message}");
+				}
+				using (doc)
+				{
+					if (doc.RootElement.ValueKind != JsonValueKind.Object)
+						throw new ArgumentException(
+							$"definition must be a JSON object {{ name, roles:[…] }} — the string decoded to a JSON {doc.RootElement.ValueKind.ToString().ToLowerInvariant()}");
+					return AgentDefinitionJson.Parse(doc.RootElement);
+				}
+
+			case JsonValueKind.Undefined:
+			case JsonValueKind.Null:
+				throw new ArgumentException("definition is required: a JSON object { name, roles:[…] }");
+
+			default:
+				throw new ArgumentException(
+					$"definition must be a JSON object {{ name, roles:[…] }} — got a JSON {definition.ValueKind.ToString().ToLowerInvariant()}");
+		}
 	}
 
 	[McpServerTool(Name = "agent_def_delete", Title = "Delete an agent definition", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(AgentDefDeleteResult))]

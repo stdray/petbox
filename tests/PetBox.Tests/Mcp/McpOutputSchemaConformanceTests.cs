@@ -347,6 +347,83 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		failures.Should().BeEmpty("edge branches must be strict-client-ok (isError OR conforms):\n" + string.Join("\n", failures));
 	}
 
+	// 4. INPUT-SCHEMA HONESTY — every raw-JSON payload parameter (a `JsonElement` arg: no CLR
+	// shape, so the exporter emits the boolean schema `true`) must DECLARE its JSON type. Without
+	// it a strict client has nothing to bind to and sends the payload double-encoded as a string:
+	// agent_def_upsert was uncallable over MCP for exactly this reason (intake
+	// mcp-agent-def-upsert-definition-param-untyped). [McpJsonShape] + the schema transform in
+	// McpOutputSchema stamp the type; this locks it for every raw-payload param on the surface.
+	[Theory]
+	[InlineData("agent_def_upsert", "definition", "object")]
+	[InlineData("llm_config_upsert", "config", "object")]
+	[InlineData("llm_embed", "inputs", "array")]
+	[InlineData("llm_rerank", "documents", "array")]
+	[InlineData("llm_chat", "messages", "array")]
+	[InlineData("data_query", "params", "array,null")]
+	[InlineData("data_exec", "params", "array,null")]
+	public void RawPayload_Params_Declare_Their_Json_Type(string tool, string param, string expected)
+	{
+		var schema = _tools[tool].ProtocolTool.InputSchema;
+		schema.TryGetProperty("properties", out var props).Should().BeTrue($"{tool} must have an input schema");
+		props.TryGetProperty(param, out var prop).Should().BeTrue($"{tool}.{param} must be in the input schema");
+
+		prop.TryGetProperty("type", out var type).Should().BeTrue(
+			$"{tool}.{param} is a raw JSON payload and MUST declare a type — a typeless schema node " +
+			"makes strict clients send it as a JSON string (mcp-agent-def-upsert-definition-param-untyped)");
+
+		var actual = type.ValueKind == JsonValueKind.Array
+			? string.Join(",", type.EnumerateArray().Select(t => t.GetString()))
+			: type.GetString();
+		actual.Should().Be(expected);
+	}
+
+	// The tolerance belt behind the schema fix: agent_def_upsert takes `definition` as an OBJECT
+	// (the schema-honest form) and, for a client on a stale/ignored schema, as a JSON STRING —
+	// and a string that is not a JSON object fails STRUCTURALLY (an actionable {error} envelope),
+	// never as a raw `JsonException … Path: $`.
+	[Fact]
+	public async Task AgentDefUpsert_Takes_Definition_As_Object_Or_JsonString_And_Rejects_Garbage()
+	{
+		static object Doc(string name) => new
+		{
+			name,
+			roles = new[] { new { slug = "worker", tier = "worker", requiredCapabilities = Array.Empty<string>() } },
+		};
+
+		// object — the shape the (now honest) schema asks for.
+		var asObject = await Call("agent_def_upsert", new { projectKey = ProjectKey, key = "tolerant-obj", version = 0, definition = Doc("tolerant-obj") });
+		asObject.IsError.Should().NotBe(true, "an object definition must be accepted: " + Text(asObject));
+
+		// JSON string — the double-encoded form a strict client sent when the schema was typeless.
+		var asString = await Call("agent_def_upsert", new
+		{
+			projectKey = ProjectKey,
+			key = "tolerant-str",
+			version = 0,
+			definition = JsonSerializer.Serialize(Doc("tolerant-str")),
+		});
+		asString.IsError.Should().NotBe(true, "a double-encoded (JSON-string) definition must be parsed, not rejected: " + Text(asString));
+
+		// Both landed: read them back through the surface.
+		var readBack = await Call("agent_def_get", new { projectKey = ProjectKey, key = "tolerant-str" });
+		readBack.StructuredContent?.GetProperty("found").GetBoolean().Should().BeTrue();
+		readBack.StructuredContent?.GetProperty("name").GetString().Should().Be("tolerant-str");
+
+		// Garbage string → a STRUCTURAL error (ArgumentException + an actionable message), not a
+		// raw JsonException about "Path: $".
+		var garbage = await Call("agent_def_upsert", new { projectKey = ProjectKey, key = "tolerant-bad", version = 0, definition = "{not json at all" });
+		garbage.IsError.Should().BeTrue();
+		var err = JsonDocument.Parse(Text(garbage)).RootElement.GetProperty("error");
+		err.GetProperty("type").GetString().Should().Be(nameof(ArgumentException));
+		err.GetProperty("message").GetString().Should().Contain("definition must be a JSON object");
+
+		// A well-formed JSON string that is not an object → the same structural error.
+		var notAnObject = await Call("agent_def_upsert", new { projectKey = ProjectKey, key = "tolerant-bad", version = 0, definition = "[1,2,3]" });
+		notAnObject.IsError.Should().BeTrue();
+		JsonDocument.Parse(Text(notAnObject)).RootElement.GetProperty("error").GetProperty("message").GetString()
+			.Should().Contain("definition must be a JSON object");
+	}
+
 	// Names exercised for success (seed writes + reads) — the coverage-gate source of truth.
 	static readonly string[] SuccessTools =
 	{

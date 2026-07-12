@@ -49,6 +49,7 @@ public static class DataTools
 		string projectKey,
 		string dbName,
 		string sql,
+		[McpJsonShape("array", "null")]
 		[Description("Optional parameter list as a JSON array of { name, value }. Pet builds via linq2db's ToSqlQuery().Parameters.")] JsonElement? @params = null,
 		CancellationToken ct = default)
 	{
@@ -66,6 +67,7 @@ public static class DataTools
 		string projectKey,
 		string dbName,
 		string sql,
+		[McpJsonShape("array", "null")]
 		JsonElement? @params = null,
 		CancellationToken ct = default)
 	{

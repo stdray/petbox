@@ -52,6 +52,7 @@ public static class LlmRouterTools
 	public static async Task<LlmConfigSetResult> ConfigUpsertAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmRegistryAdmin admin,
 		string projectKey,
+		[McpJsonShape("object")]
 		[Description("JSON object { endpoints[], routes[], apiKeys? }")] JsonElement config,
 		CancellationToken ct = default)
 	{
@@ -74,6 +75,7 @@ public static class LlmRouterTools
 	public static async Task<EmbedResult> EmbedAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
 		string projectKey,
+		[McpJsonShape("array")]
 		[Description("JSON array of strings")] JsonElement inputs,
 		string? tier = null, CancellationToken ct = default)
 	{
@@ -93,6 +95,7 @@ public static class LlmRouterTools
 	public static async Task<RerankResult> RerankAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
 		string projectKey, string query,
+		[McpJsonShape("array")]
 		[Description("JSON array of document strings")] JsonElement documents,
 		int? topN = null, string? tier = null, CancellationToken ct = default)
 	{
@@ -113,6 +116,7 @@ public static class LlmRouterTools
 	public static async Task<ChatResult> ChatAsync(
 		IHttpContextAccessor http, FeatureFlags features, ILlmClient client,
 		string projectKey,
+		[McpJsonShape("array")]
 		[Description("JSON array of { role, content } messages")] JsonElement messages,
 		string? tier = null, double? temperature = null, int? maxTokens = null,
 		CancellationToken ct = default)
