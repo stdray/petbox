@@ -172,6 +172,12 @@ public sealed class SandboxWriteGateTests : IClassFixture<SandboxWriteGateFixtur
 		// (Authorizes) before containment is even reached — either way, it must be refused.
 		var result = await SessionUpsertAsync(_fx.ScopedSandbox, SandboxWriteGateFixture.RealProject, "s-scoped-bad");
 		result.IsError.Should().Be(true);
+
+		// A claim mismatch, not a containment failure — the message must say "not scoped", not
+		// blame sandboxing (that would be misleading: this key's claim genuinely doesn't cover
+		// RealProject, regardless of any sandbox flag).
+		Text(result).Should().Contain("not scoped to project", Text(result));
+		Text(result).Should().NotContain("sandboxOnly", Text(result));
 	}
 
 	// THE case: a sandboxOnly WILDCARD key. Identity (Authorizes("*", RealProject)) says yes — the
@@ -184,6 +190,13 @@ public sealed class SandboxWriteGateTests : IClassFixture<SandboxWriteGateFixtur
 		result.IsError.Should().Be(true,
 			"the wildcard claim authorizes every project by identity, but a sandboxOnly key must still be "
 			+ "refused on a non-sandbox project — that is the entire point of the containment check");
+
+		// THE distinction this change is about: the wildcard claim DID authorize the project, so the
+		// denial must be explained as a sandbox-containment refusal, never as "not scoped" — an agent
+		// reading "not scoped" here would go chase claims instead of noticing it wrote outside the
+		// sandbox (see AGENTS.md rule 7).
+		Text(result).Should().Contain("sandboxOnly", Text(result));
+		Text(result).Should().NotContain("not scoped", Text(result));
 
 		using var scope = _fx.Scope();
 		var sessions = scope.ServiceProvider.GetRequiredService<ISessionService>();

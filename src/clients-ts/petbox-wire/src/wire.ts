@@ -275,15 +275,21 @@ function runDoctor(argv: string[]): void {
 
   const roles = loadRoles();
   const bindingNote = isEmptyRoles(roles)
-    ? "local binding: (empty — not required for doctor)"
-    : `local binding: activeProfile=${roles.activeProfile} (observational; gate uses definition only)`;
+    ? "local binding: (empty — capability gate only; no model ids to check)"
+    : `local binding: activeProfile=${roles.activeProfile} (model ids are gated against each harness)`;
 
   log(`doctor: definition="${DEFAULT_AGENT_DEFINITION.name}" (${DEFAULT_AGENT_DEFINITION.roles.length} roles)`);
   log(`doctor: ${bindingNote}`);
 
   let hadTruthfulnessBlock = false;
   for (const harness of HARNESS_IDS) {
-    const violations = checkTruthfulness(DEFAULT_AGENT_DEFINITION, harness);
+    // Same gate apply uses: capabilities + the LOCAL model binding for this harness, so a
+    // roles.json holding an id this harness cannot resolve fails here too (not at runtime).
+    const violations = checkTruthfulness(
+      DEFAULT_AGENT_DEFINITION,
+      harness,
+      resolveAgentRoles(roles, harness),
+    );
     if (violations.length === 0) {
       log(`doctor: ${harness} — OK`);
     } else {
@@ -299,7 +305,8 @@ function runDoctor(argv: string[]): void {
     process.exit(WIRE_EXIT.ok);
   }
   console.error(
-    `doctor: FAILED — definition requires capability/ies a harness does not declare (exit ${WIRE_EXIT.truthfulness}).`,
+    `doctor: FAILED — a role requires a capability a harness does not declare, or is bound to a ` +
+      `model a harness cannot resolve (exit ${WIRE_EXIT.truthfulness}).`,
   );
   process.exit(WIRE_EXIT.truthfulness);
 }
@@ -373,6 +380,10 @@ async function runApply(argv: string[]): Promise<void> {
       writeFileSync(abs, file.content, "utf8");
       log(`apply: wrote ${abs}`);
       written++;
+    }
+
+    for (const w of plan.warnings) {
+      console.error(`apply: warn — ${w}`);
     }
 
     if (plan.violations.length > 0) {
