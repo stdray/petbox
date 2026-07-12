@@ -45,14 +45,20 @@ public static class MemoryTools
 		⊕ workspace (rows labelled by scope, project first) — same as memory_search.
 		`includeUsage` (default false) attaches a per-store usage aggregate: totalEntries,
 		surfacedAtLeastOnce/openedAtLeastOnce (+ fractions over the active set), medianLastHitAt
-		(the median last-hit of the surfaced entries — "recency"), and the dead tail
+		(the median last-hit of the surfaced entries — "recency"), the dead tail
 		(deadCount never-surfaced entries + the oldest-first sample deadTailKeys, prime pruning
-		candidates). Reading this does NOT count as usage (curation, not an impression).
+		candidates), and the store's COST and FIT over the trailing `usageWindowDays` (default 30):
+		deliveredChars/rowChars = how much context this store actually poured into callers,
+		avgKRel = the mean fit (0..1, relative to each request's best hit) of what it poured.
+		Read the two together — high chars + low fit is a noise boar worth pruning; low chars +
+		high fit is a precise index worth keeping; the impression counters alone cannot tell those
+		apart. Reading this does NOT count as usage (curation, not an impression).
 		""")]
 	public static async Task<MemoryStoreListResult> StoreListAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string? projectKey = null,
-		[Description("Attach a per-store usage aggregate (coverage, median recency, dead tail) (default false).")] bool includeUsage = false,
+		[Description("Attach a per-store usage aggregate (coverage, median recency, dead tail, window cost/fit) (default false).")] bool includeUsage = false,
+		[LogArg][Description("Trailing window (days) the usage cost/fit is measured over (default 30). Ignored without includeUsage.")] int? usageWindowDays = null,
 		[Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
 		CancellationToken ct = default)
 	{
@@ -70,9 +76,15 @@ public static class MemoryTools
 				MemoryStoreUsageRow? usage = null;
 				if (includeUsage)
 				{
-					var a = await memory.GetUsageAggregateAsync(container, s.Name, ct: ct);
+					// A non-positive window is a caller error, not a silent "all time" — fall back
+					// to the default rather than aggregating the store's whole history by accident.
+					var window = usageWindowDays is { } d && d > 0 ? TimeSpan.FromDays(d) : (TimeSpan?)null;
+					var a = await memory.GetUsageAggregateAsync(container, s.Name, window: window, ct: ct);
 					usage = new MemoryStoreUsageRow(a.TotalEntries, a.SurfacedAtLeastOnce, a.OpenedAtLeastOnce,
-						a.SurfacedFraction, a.OpenedFraction, a.MedianLastHitAt, a.DeadTail.Count, a.DeadTail.TopKeys);
+						a.SurfacedFraction, a.OpenedFraction, a.MedianLastHitAt, a.DeadTail.Count, a.DeadTail.TopKeys,
+						// Cost and fit, kept separate and raw — the pair the impression counters cannot express.
+						a.Cost.WindowDays, a.Cost.Deliveries, a.Cost.DeliveredChars, a.Cost.RowChars,
+						a.Cost.AvgKRel is { } k ? Math.Round(k, 4) : null, a.Cost.EntriesDelivered);
 				}
 				rows.Add(new MemoryStoreRow(scopeName, s.Name, s.Description, s.CreatedAt, usage));
 			}
@@ -387,12 +399,21 @@ public static class MemoryTools
 		(the compact listing default), 0 = no body, N>0 = the first N chars ("…" when cut),
 			-1 = the full body — or pull a full body with memory_get.
 
-		`includeUsage` adds surfaced/opened/lastHitAt counters per row. A search answer
-		counts an impression for the returned rows; a listing (no `q`) is curation and
-		counts nothing. The response has a HARD OUTPUT BUDGET (~30k serialized chars):
+		`includeUsage` adds surfaced/opened/lastHitAt counters per row, plus the row's own COST
+		and FIT (deliveredChars = all-time body chars this entry has spent of callers' context;
+		avgKRel = the mean fit, 0..1 against each request's best hit, of its deliveries; null =
+		only ever delivered by a listing). Usage counts what was actually SENT (post-limit,
+		post-budget): every DELIVERED row counts an impression, in both modes — but only a search
+		(with `q`) counts as deliberate; a listing has no relevance behind it, so it bumps
+		`surfaced` and never the deliberate value signal. The response has a HARD OUTPUT BUDGET
+		(~30k serialized chars):
 		overflowing rows are prefix-cut in result order and flagged `truncated:true` +
 		`omitted` + a narrowing `hint`; no markers = the complete answer. Requires
 		memory:read.
+
+		ROW WEIGHT: a row's `description` is capped at ~160 chars ("…" when cut) in BOTH modes —
+		the head of a row is priced per row, so it stays a one-liner; memory_get returns the full
+		description (and the full body).
 
 		Returns { items: [{ scope, store, key, type, description, body, tags, version }], retrievers? };
 		`version` is the entry's CAS baseline for memory_upsert (pass it back to edit without a Stale round-trip).
@@ -410,7 +431,7 @@ public static class MemoryTools
 		[Description("Sort order: {by: relevance|created|updated, desc?}. Default: updated desc (listing) / relevance (with q).")] SortInput? sort = null,
 		[LogArg][Description("Max rows returned (default 20; 0 = no cap — the output budget still applies).")] int? limit = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
-		[LogArg][Description("Include usage counters (surfaced/opened/lastHitAt) per row (default false).")] bool includeUsage = false,
+		[LogArg][Description("Include usage per row: the counters (surfaced/opened/lastHitAt) AND the entry's cost/fit (deliveredChars/avgKRel) (default false).")] bool includeUsage = false,
 		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
@@ -469,7 +490,11 @@ public static class MemoryTools
 			foreach (var h in res.Hits)
 			{
 				var u = includeUsage && usageMap.TryGetValue(h.Store + "\x1f" + h.Entry.Key, out var uv) ? uv : null;
-				var row = new MemorySearchHitView(scopeName, h.Store, h.Entry.Key, h.Entry.Type, h.Entry.Description,
+				var row = new MemorySearchHitView(scopeName, h.Store, h.Entry.Key, h.Entry.Type,
+					// The row HEAD is priced per row too (spec: row-weight-bounded): an unbounded
+					// description made the head, not the body, the bigger half of a search's cost.
+					// Same uniform truncation contract as a body — the full text is one memory_get away.
+					ModuleMcp.Body(h.Entry.Description, null, DescriptionSnippet) ?? "",
 					// Uniform bodyLen contract, default a ~240-char snippet (compact listing).
 					ModuleMcp.Body(h.Entry.Body, bodyLen, ModuleMcp.DefaultSnippet), h.Entry.Tags, h.Entry.Version,
 					includeUsage ? (u?.Surfaced ?? 0) : null, includeUsage ? (u?.Opened ?? 0) : null, u?.LastHitAt,
@@ -477,7 +502,12 @@ public static class MemoryTools
 					// (compact — a number only). Null when it carries no session provenance.
 					SourcesCount(h.Entry.Metadata),
 					// Per-row relevance provenance (query mode only; null → omitted in a listing).
-					Score: hasQuery ? Math.Round(h.Score, 6) : null, Retriever: h.Retriever);
+					Score: hasQuery ? Math.Round(h.Score, 6) : null, Retriever: h.Retriever,
+					// The entry's own COST and FIT (delivery_events, all-time) — the only per-entry
+					// read surface of that table. Surfaced/opened say it keeps appearing; these say
+					// what the appearing costs and whether it lands (spec: usage-cost-and-fit-separate).
+					DeliveredChars: includeUsage ? (u?.DeliveredChars ?? 0) : null,
+					AvgKRel: includeUsage && u?.AvgKRel is { } k ? Math.Round(k, 4) : null);
 				// The service was asked for FULL bodies (BodyLen: 0), so h.Entry.Body is the whole
 				// entry — the denominator of "how much of it did this delivery actually send".
 				// ScoreRaw is the PRE-decay fused score (null in a listing: no relevance leg ran).
@@ -485,10 +515,6 @@ public static class MemoryTools
 					container, scopeName, h.Store, h.Entry.Key, h.Entry.Body.Length,
 					hasQuery ? h.ScoreRaw : null)));
 			}
-			// Impression = the rows a SEARCH answer returned (a listing is curation — not counted).
-			if (hasQuery)
-				foreach (var g in res.Hits.GroupBy(h => h.Store, StringComparer.OrdinalIgnoreCase))
-					usage.Surfaced(container, g.Key, g.Select(h => h.Entry.Key).ToList(), deliberate);
 		}
 
 		// Cross-scope honest merge (query mode, 2+ scopes contributed): the best hit wins
@@ -513,12 +539,24 @@ public static class MemoryTools
 		// will be sent (bodies already sliced by the service), prefix-cut, marked — never silent.
 		var (kept, omitted) = new ResponseBudget().Take(rows);
 
-		// Delivery telemetry (spec: usage-cost-and-fit-separate) — recorded on what was ACTUALLY
-		// SENT: Take is a prefix cut, so the first kept.Count ordered rows are the answer. The
-		// enqueue is fire-and-forget (the recorder drains in the background), so the read path
-		// does not wait on it. Note this is a SEPARATE record point from the entry_usage
-		// impression above, which stays where it is (task: usage-record-what-was-sent).
-		RecordDeliveries(usage, ordered.Take(kept.Count).ToList(), scored,
+		// What was ACTUALLY SENT: Take is a prefix cut, so the first kept.Count ordered rows are
+		// the answer. Both usage record points below are driven by THIS list — a row dropped by
+		// `cap` or by the response budget never reached the agent's context and must not count
+		// (spec: usage-counts-what-was-sent).
+		var delivered = ordered.Take(kept.Count).ToList();
+
+		// Impression = the rows the answer DELIVERED. A LISTING delivers too (its rows land in the
+		// caller's context exactly like a search's), so it bumps Surfaced — but it ran no relevance
+		// leg, so it is never DELIBERATE: DeliberateCount is the value signal GC trusts, and "this
+		// row happened to be listed" proves nothing about the fact's worth.
+		foreach (var g in delivered.GroupBy(d => (d.Facts.Container, d.Facts.Store)))
+			usage.Surfaced(g.Key.Container, g.Key.Store, g.Select(d => d.Facts.Key).ToList(),
+				deliberate: hasQuery && deliberate);
+
+		// Delivery telemetry (spec: usage-cost-and-fit-separate) — the cost/fit record of the same
+		// delivered rows. The enqueue is fire-and-forget (the recorder drains in the background),
+		// so the read path does not wait on it.
+		RecordDeliveries(usage, delivered, scored,
 			tool: hasQuery ? "search" : "listing",
 			sessionId: McpSessionId(http),
 			usageSource: deliberate ? DeliberateSource : MachineSource);
@@ -533,6 +571,14 @@ public static class MemoryTools
 
 	// The bounded default of memory_search (both modes; spec bounded-result-sets).
 	const int DefaultLimit = 20;
+
+	// The cap on a row's `description` in search/listing rows (spec: row-weight-bounded). A
+	// description is by contract a ONE-LINE summary, and 160 chars is a full line of prose — long
+	// enough to identify a fact, short enough that the row head cannot outweigh its body. It is
+	// NOT caller-tunable (no per-field knob): the field is a head, not a payload; a longer text
+	// means the entry's body was written into its description, and the fix for that is memory_get
+	// (full description + full body), not a wider search row.
+	const int DescriptionSnippet = 160;
 
 	// The usage-signal split, as recorded on a delivery event (mirrors entry_usage's
 	// deliberate/machine cut — see the `usageSource` argument of memory_search).

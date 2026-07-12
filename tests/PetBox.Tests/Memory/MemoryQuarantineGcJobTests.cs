@@ -146,6 +146,71 @@ public sealed class MemoryQuarantineGcJobTests : IDisposable
 		(await _memory.GetAsync(Proj, Store, "a1")).Should().BeNull();      // retired
 	}
 
+	// --- the two-dimensional rule (spec: usage-cost-and-fit-separate) --------------------
+	// COST (delivered body chars) and FIT (mean kRel) are what the impression counters cannot
+	// say. `Delivered` writes delivery_events only — it never bumps entry_usage — so every
+	// entry below has deliberate=0 / opened=0: under the OLD rule all of them died.
+
+	// N deliveries of one entry: `chars` of body at fit `kRel` each.
+	void Deliver(string key, int chars, double? kRel, int times = 1)
+	{
+		for (var i = 0; i < times; i++)
+			_recorder.Delivered(Proj, [new MemoryDeliveryEvent(
+				Tool: "search", Scope: "project", Store: Store, Key: key,
+				DeliveredChars: chars, BodyChars: chars, RowChars: chars + 100,
+				Rank: 1, ScoreRaw: 0.02, KRel: kRel, SessionId: null, UsageSource: "deliberate")]);
+	}
+
+	[Fact]
+	public async Task Enforce_RetiresExpensiveOffTargetEntry_ButSparesCheapPreciseOne()
+	{
+		await Seed(Store, "boar", "precise");
+		// The noise boar: 12k chars of context spent over six deliveries, mean fit 0.2 — it keeps
+		// getting paid for and keeps not being the answer.
+		Deliver("boar", chars: 2_000, kRel: 0.2, times: 6);
+		// The precise index row: the snippet that ANSWERS the question, so it is the top hit every
+		// time and nobody ever needs to open it. 1.2k chars total, fit 1.0. The old
+		// (deliberate == 0 && opened == 0) rule killed exactly this entry — the better it is, the
+		// more certainly it died.
+		Deliver("precise", chars: 200, kRel: 1.0, times: 6);
+		await _recorder.FlushAsync();
+
+		var retired = await Job(enforce: true).DrainAllAsync(CancellationToken.None);
+
+		retired.Should().Be(1);
+		(await _memory.GetAsync(Proj, Store, "boar")).Should().BeNull();       // dear and off-target
+		(await _memory.GetAsync(Proj, Store, "precise")).Should().NotBeNull(); // cheap and dead-on
+	}
+
+	[Fact]
+	public async Task Enforce_SparesExpensiveEntryThatActuallyFits()
+	{
+		await Seed(Store, "big");
+		Deliver("big", chars: 4_000, kRel: 0.9, times: 5); // 20k chars — but it IS the answer
+
+		await _recorder.FlushAsync();
+
+		var retired = await Job(enforce: true).DrainAllAsync(CancellationToken.None);
+
+		retired.Should().Be(0); // cost alone is not a verdict; fit is the other half
+		(await _memory.GetAsync(Proj, Store, "big")).Should().NotBeNull();
+	}
+
+	[Fact]
+	public async Task Enforce_ThresholdsAreConfigurable()
+	{
+		await Seed(Store, "boar");
+		Deliver("boar", chars: 2_000, kRel: 0.2, times: 6); // 12k chars at fit 0.2 — a boar by default
+		await _recorder.FlushAsync();
+
+		// A stricter fit floor (0.1) says 0.2 is good enough → the same entry is no longer a boar.
+		var job = new MemoryQuarantineGcJob(new ProjectCatalog(_db), _memory, logger: null,
+			minAge: AllOld, enforce: true, scanInterval: NoThrottle, maxAvgKRel: 0.1);
+
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+		(await _memory.GetAsync(Proj, Store, "boar")).Should().NotBeNull();
+	}
+
 	[Fact]
 	public async Task Throttle_SecondPassWithinInterval_IsSkipped()
 	{

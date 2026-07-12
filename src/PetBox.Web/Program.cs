@@ -189,10 +189,12 @@ public partial class Program
 		// Cross-session behavior-pattern mining over the accumulated distillates —
 		// registered AFTER the facts job so a tick mines the freshest observations.
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob, PetBox.Web.Search.BehaviorPatternJob>();
-		// Quarantine self-cleaning: retires aged autocaptured facts that never earned a
-		// deliberate reach. Report-only by default (structured log of candidates); enforce is
-		// opt-in via config. MinAge default 30d. Rides the enrichment tick, self-throttled via
-		// a singleton clock (the job itself is scoped — a fresh instance per tick).
+		// Quarantine self-cleaning: retires aged autocaptured facts that earned nothing — either
+		// never reached at all, or an expensive-and-off-target "noise boar" (>= MinDeliveredChars
+		// of body delivered at a mean fit below MaxAvgKRel over the trailing UsageWindowDays).
+		// Report-only by default (structured log of candidates); enforce is opt-in via config.
+		// MinAge default 30d. Rides the enrichment tick, self-throttled via a singleton clock
+		// (the job itself is scoped — a fresh instance per tick).
 		builder.Services.AddSingleton<PetBox.Web.Search.MemoryQuarantineGcClock>();
 		builder.Services.AddScoped<PetBox.Web.Search.IBackgroundIndexJob>(sp => new PetBox.Web.Search.MemoryQuarantineGcJob(
 			sp.GetRequiredService<IProjectCatalog>(),
@@ -200,7 +202,10 @@ public partial class Program
 			sp.GetService<Microsoft.Extensions.Logging.ILogger<PetBox.Web.Search.MemoryQuarantineGcJob>>(),
 			minAge: builder.Configuration.GetValue<int?>("Memory:QuarantineGc:MinAgeDays") is { } days ? TimeSpan.FromDays(days) : null,
 			enforce: builder.Configuration.GetValue("Memory:QuarantineGc:Enforce", false),
-			clock: sp.GetRequiredService<PetBox.Web.Search.MemoryQuarantineGcClock>()));
+			clock: sp.GetRequiredService<PetBox.Web.Search.MemoryQuarantineGcClock>(),
+			usageWindow: builder.Configuration.GetValue<int?>("Memory:QuarantineGc:UsageWindowDays") is { } wd ? TimeSpan.FromDays(wd) : null,
+			minDeliveredChars: builder.Configuration.GetValue<long?>("Memory:QuarantineGc:MinDeliveredChars"),
+			maxAvgKRel: builder.Configuration.GetValue<double?>("Memory:QuarantineGc:MaxAvgKRel")));
 		// Two-stage session search: digest discovery (memory) → episodic hydration. Discovery
 		// re-ranking reuses the shared `Search:Recency`/`Search:Diversity` policy (already a
 		// singleton above) for decay + MMR; the session-specific semantic-noise floor binds from

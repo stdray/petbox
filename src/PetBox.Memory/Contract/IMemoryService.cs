@@ -75,11 +75,21 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 
 	// --- usage telemetry, read side (the writer is IMemoryUsageRecorder) ---
 	// Usage counters for the given keys (null = the whole store), keyed by entry key;
-	// entries that never surfaced have no row and are absent from the map.
+	// entries that never surfaced AND never got delivered have no row and are absent from the
+	// map. The view carries both dimensions: the entry_usage counters (how often) and the
+	// all-time cost/fit rolled up from delivery_events (how many chars it spent, how well it
+	// fitted) — spec: usage-cost-and-fit-separate.
 	Task<IReadOnlyDictionary<string, MemoryUsageView>> GetUsageAsync(string projectKey, string store, IReadOnlyCollection<string>? keys = null, CancellationToken ct = default);
 
+	// Per-entry cost/fit from delivery_events over a WINDOW (default 30d; null = all time),
+	// keyed by entry key — an entry with no delivery in the window is absent from the map.
+	// The windowed sibling of GetUsageAsync's all-time cost/fit: the GC and the store aggregate
+	// judge on RECENT behaviour, a read surface reports the entry's whole life.
+	Task<IReadOnlyDictionary<string, MemoryDeliveryStats>> GetDeliveryStatsAsync(string projectKey, string store, TimeSpan? window = null, IReadOnlyCollection<string>? keys = null, CancellationToken ct = default);
+
 	// Store-wide usage aggregate over the ACTIVE entry set (coverage, median recency of the
-	// surfaced entries, and the never-surfaced dead tail). `deadTailLimit` caps the sampled
-	// dead-tail keys (oldest-created first). Sibling to GetUsageAsync — same entry_usage source.
-	Task<MemoryUsageAggregate> GetUsageAggregateAsync(string projectKey, string store, int deadTailLimit = 10, CancellationToken ct = default);
+	// surfaced entries, the never-surfaced dead tail, and the window's cost/fit). `deadTailLimit`
+	// caps the sampled dead-tail keys (oldest-created first); `window` scopes the cost/fit leg
+	// (default 30d). Sibling to GetUsageAsync — entry_usage + delivery_events.
+	Task<MemoryUsageAggregate> GetUsageAggregateAsync(string projectKey, string store, int deadTailLimit = 10, TimeSpan? window = null, CancellationToken ct = default);
 }
