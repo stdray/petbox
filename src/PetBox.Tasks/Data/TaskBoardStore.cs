@@ -54,13 +54,30 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 	private static partial Regex NameRegex();
 
 	readonly PetBoxDb _db;
+	readonly DataOptions<PetBoxDb> _coreOptions;
 	readonly IScopedDbFactory<TasksDb> _factory;
 
 	public TaskBoardStore(PetBoxDb db, IScopedDbFactory<TasksDb> factory)
 	{
 		_db = db;
+		// The injected PetBoxDb is AddScoped (Program.cs) — ONE LinqToDB DataConnection per HTTP
+		// request — and a DataConnection is NOT thread-safe. Read paths here are fanned out in
+		// parallel within a single request scope (CrossScopeTaskSearchService runs up to
+		// MaxProjectConcurrency per-project searches at once, each reaching FindAsync/ListAsync),
+		// and the overlapping calls trampled the shared SqliteCommand's parameter list — prod 500'd
+		// with "Must add values for the following parameters: @projectKey, @board" (and friends:
+		// "Collection was modified", ObjectDisposedException — one race, several faces).
+		// So the READS take a fresh, caller-owned connection per call (same pattern the tasks-file
+		// side already uses: IScopedDbFactory.NewEnsuredConnection). Cloning the scoped connection's
+		// DataOptions keeps the provider, the connection string and the SHARED mapping schema — no
+		// per-connection MappingSchema is built (that was the prod OOM, see PetBoxDb.SharedMappingSchema),
+		// and Microsoft.Data.Sqlite pools the underlying connection.
+		_coreOptions = new DataOptions<PetBoxDb>(db.Options);
 		_factory = factory;
 	}
+
+	// A fresh core-db connection, owned (and disposed) by the calling method. Never share it.
+	PetBoxDb NewCoreConnection() => new(_coreOptions);
 
 	public TasksDb GetContext(string projectKey) =>
 		_factory.GetDb(projectKey);
@@ -68,17 +85,26 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 	public TasksDb NewEnsuredConnection(string projectKey) =>
 		_factory.NewEnsuredConnection(projectKey);
 
-	public Task<bool> ExistsAsync(string projectKey, string board, CancellationToken ct = default) =>
-		_db.TaskBoards.AnyAsync(b => b.ProjectKey == projectKey && b.Name == board, ct);
+	public async Task<bool> ExistsAsync(string projectKey, string board, CancellationToken ct = default)
+	{
+		using var db = NewCoreConnection();
+		return await db.TaskBoards.AnyAsync(b => b.ProjectKey == projectKey && b.Name == board, ct);
+	}
 
-	public async Task<IReadOnlyList<TaskBoardMeta>> ListAsync(string projectKey, CancellationToken ct = default) =>
-		await _db.TaskBoards
+	public async Task<IReadOnlyList<TaskBoardMeta>> ListAsync(string projectKey, CancellationToken ct = default)
+	{
+		using var db = NewCoreConnection();
+		return await db.TaskBoards
 			.Where(b => b.ProjectKey == projectKey)
 			.OrderBy(b => b.Name)
 			.ToListAsync(ct);
+	}
 
-	public async Task<string?> FindProjectWorkspaceAsync(string projectKey, CancellationToken ct = default) =>
-		await _db.Projects.Where(p => p.Key == projectKey).Select(p => p.WorkspaceKey).FirstOrDefaultAsync(ct);
+	public async Task<string?> FindProjectWorkspaceAsync(string projectKey, CancellationToken ct = default)
+	{
+		using var db = NewCoreConnection();
+		return await db.Projects.Where(p => p.Key == projectKey).Select(p => p.WorkspaceKey).FirstOrDefaultAsync(ct);
+	}
 
 	public Task TouchAsync(string projectKey, string board, CancellationToken ct = default) =>
 		_db.TaskBoards
@@ -93,10 +119,13 @@ public sealed partial class TaskBoardStore : ITaskBoardStore
 		await CreateAsync(projectKey, board, null, "simple", ct: ct);
 	}
 
-	public Task<TaskBoardMeta?> FindAsync(string projectKey, string board, CancellationToken ct = default) =>
-		_db.TaskBoards
+	public async Task<TaskBoardMeta?> FindAsync(string projectKey, string board, CancellationToken ct = default)
+	{
+		using var db = NewCoreConnection();
+		return await db.TaskBoards
 			.Where(b => b.ProjectKey == projectKey && b.Name == board)
 			.FirstOrDefaultAsync(ct)!;
+	}
 
 	public async Task<string?> FindBoardByNodeIdAsync(string projectKey, string nodeId, CancellationToken ct = default)
 	{

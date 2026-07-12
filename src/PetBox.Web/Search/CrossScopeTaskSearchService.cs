@@ -25,7 +25,11 @@ namespace PetBox.Web.Search;
 // Exact hits are returned before full-text hits; within each leg, project order follows
 // ProjectsByWorkspace (workspace then project key) and full-text hits keep their per-project
 // relevance order. De-duped by NodeId (globally unique) and capped at MaxResults.
-public sealed class CrossScopeTaskSearchService(INavigationContext nav, IHttpContextAccessor http, ITasksService tasks)
+public sealed class CrossScopeTaskSearchService(
+	INavigationContext nav,
+	IHttpContextAccessor http,
+	ITasksService tasks,
+	ILogger<CrossScopeTaskSearchService>? log = null)
 {
 	// Bounded fan-out: enough parallelism to make a many-project search feel instant without
 	// hammering every project's TasksDb connection pool at once.
@@ -68,6 +72,17 @@ public sealed class CrossScopeTaskSearchService(INavigationContext nav, IHttpCon
 			{
 				return await SearchOneProjectAsync(job.Ws, job.Project, query, scheme, host, ct).ConfigureAwait(false);
 			}
+			// PARTIAL DEGRADATION, not a 500: one sick project must not take the whole page down.
+			// The catch used to be `ArgumentException` around the full-text leg only, so anything
+			// else (a corrupt tasks file, a missing board, the shared-PetBoxDb race this commit
+			// fixes) escaped Task.WhenAll and 500'd /ui/search. A branch that fails contributes no
+			// rows; every healthy project still answers. Cancellation is NOT swallowed — a
+			// cancelled request must stay cancelled.
+			catch (Exception ex) when (ex is not OperationCanceledException)
+			{
+				log?.LogWarning(ex, "Cross-scope search: project {ProjectKey} failed, skipping it", job.Project.Key);
+				return (Exact: (IReadOnlyList<CrossScopeSearchHit>)[], FullText: (IReadOnlyList<CrossScopeSearchHit>)[]);
+			}
 			finally
 			{
 				gate.Release();
@@ -104,24 +119,17 @@ public sealed class CrossScopeTaskSearchService(INavigationContext nav, IHttpCon
 		if (exact.Count > 0)
 			return (exact, []); // the identifier already resolved — a full-text pass would be redundant
 
-		IReadOnlyList<CrossScopeSearchHit> fullText;
-		try
+		// Full-text leg. A failure here throws: the fan-out's per-project catch turns it into an
+		// empty contribution (partial degradation) — no leg-local swallow, one place to reason about.
+		var textRes = await tasks.SearchNodesAsync(project.Key, new SearchRequest<TaskNodeFilter, TaskSortBy>
 		{
-			var textRes = await tasks.SearchNodesAsync(project.Key, new SearchRequest<TaskNodeFilter, TaskSortBy>
-			{
-				Query = query,
-				Limit = MaxFullTextPerProject,
-				BodyLen = 0,
-			}, urlPrefix, ct).ConfigureAwait(false);
-			fullText = textRes.Hits.Select(h => ToHit(ws, project.Key, h, exactMatch: false)).ToList();
-		}
-		catch (ArgumentException)
-		{
-			// Defensive: one project's query-mode quirk shouldn't take down the whole fan-out.
-			fullText = [];
-		}
+			Query = query,
+			Limit = MaxFullTextPerProject,
+			BodyLen = 0,
+		}, urlPrefix, ct).ConfigureAwait(false);
+		var fullText = textRes.Hits.Select(h => ToHit(ws, project.Key, h, exactMatch: false)).ToList();
 
-		return (exact, fullText);
+		return (exact, (IReadOnlyList<CrossScopeSearchHit>)fullText);
 	}
 
 	static CrossScopeSearchHit ToHit(string ws, string projectKey, TaskSearchHit h, bool exactMatch) => new(
