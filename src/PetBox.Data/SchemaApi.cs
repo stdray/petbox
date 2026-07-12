@@ -54,9 +54,11 @@ public static class SchemaApi
 		string dbName,
 		SchemaApplyRequest req,
 		IDataSqlService sql,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
+		if (!authOk) return forbid!;
 		if (req is null || string.IsNullOrWhiteSpace(req.Name))
 			return Results.BadRequest(new ErrorResponse("name is required"));
 		if (req.Sql is null)
@@ -85,9 +87,11 @@ public static class SchemaApi
 		string dbName,
 		PetBoxDb db,
 		IDataDbFactory factory,
+		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (!DataAuth.AuthorizeProject(ctx, projectKey, out var forbid)) return forbid;
+		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
+		if (!authOk) return forbid!;
 
 		var row = await db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);

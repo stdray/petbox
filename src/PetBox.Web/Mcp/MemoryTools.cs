@@ -295,7 +295,7 @@ public static class MemoryTools
 	{
 		if (!WorkspaceMemory.IsWorkspaceContainer(projectKey))
 		{
-			ModuleMcp.AssertProject(http, projectKey);
+			await ModuleMcp.AssertProject(http, projectKey, ct);
 			return;
 		}
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
@@ -674,7 +674,7 @@ public static class MemoryTools
 
 		return s switch
 		{
-			null or "" or "project" => ("project", ModuleMcp.ResolveProject(http, projectKey)),
+			null or "" or "project" => ("project", await ModuleMcp.ResolveProject(http, projectKey, ct)),
 			"workspace" => ("workspace", await ResolveCallerWorkspaceContainerAsync(http, db, projectKey, ct)),
 			_ => throw new ArgumentException($"invalid scope '{s}' (project|workspace)"),
 		};
@@ -700,7 +700,7 @@ public static class MemoryTools
 			return await DirectContainerAsync(db, projectKey, ct);
 		// ResolveProject throws ArgumentException for a "*" key with no default and no
 		// projectKey — intentional (nothing to derive a workspace from).
-		var proj = ModuleMcp.ResolveProject(http, projectKey);
+		var proj = await ModuleMcp.ResolveProject(http, projectKey, ct);
 		return await WorkspaceMemory.ResolveAndEnsureContainerAsync(db, proj, ct);
 	}
 
@@ -726,7 +726,7 @@ public static class MemoryTools
 
 		var list = new List<(string, string)>();
 		string? resolvedProject = null;
-		try { resolvedProject = ModuleMcp.ResolveProject(http, projectKey); list.Add(("project", resolvedProject)); }
+		try { resolvedProject = await ModuleMcp.ResolveProject(http, projectKey, ct); list.Add(("project", resolvedProject)); }
 		catch (ArgumentException) { /* "*" key, no default, no projectKey — skip project leg */ }
 		catch (UnauthorizedAccessException) { /* projectKey doesn't match claim */ }
 

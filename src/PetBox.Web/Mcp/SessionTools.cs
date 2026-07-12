@@ -44,7 +44,7 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		// MCP is the degenerate single-blob writer; store it as one message. Latest-snapshot
@@ -76,7 +76,7 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		var inputs = messages
@@ -112,7 +112,7 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var resolvedId = await ResolveOrThrowAsync(sessions, projectKey, sessionId, ct);
 		var s = resolvedId is null ? null : await sessions.GetAsync(projectKey, resolvedId, ct);
@@ -162,7 +162,7 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		// Resolve (throws on ambiguity) so a prefix can never delete the wrong session; a miss
 		// stays the idempotent { deleted: false }.
@@ -180,7 +180,7 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
 		// Sessions have no store-wide monotonic version — `Updated` (bumped to UtcNow on every
@@ -269,8 +269,8 @@ public static class SessionTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		projectKey = ModuleMcp.ResolveProject(http, projectKey);
-		ModuleMcp.AssertProject(http, projectKey);
+		projectKey = await ModuleMcp.ResolveProject(http, projectKey, ct);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
 		if (string.IsNullOrWhiteSpace(q))

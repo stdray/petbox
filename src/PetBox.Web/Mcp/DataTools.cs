@@ -34,7 +34,7 @@ public static class DataTools
 		[Description("SQL to apply. Multi-statement OK; PRAGMA statements may not parse with the SQLite dialect parser.")] string sql,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 
 		var result = await dataSql.ApplySchemaAsync(projectKey, dbName, name, sql, ct);
@@ -52,7 +52,7 @@ public static class DataTools
 		[Description("Optional parameter list as a JSON array of { name, value }. Pet builds via linq2db's ToSqlQuery().Parameters.")] JsonElement? @params = null,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataRead);
 		var rows = await dataSql.QueryAsync(projectKey, dbName, sql, ParseArgs(@params), TimeoutSeconds, ct);
 		return new DataQueryResult(rows);
@@ -69,7 +69,7 @@ public static class DataTools
 		JsonElement? @params = null,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataWrite);
 		var affected = await dataSql.ExecAsync(projectKey, dbName, sql, ParseArgs(@params), TimeoutSeconds, ct);
 		return new DataExecResult(affected);

@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
@@ -37,43 +38,43 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 	// ── the resolver ───────────────────────────────────────────────────────────
 
 	[Fact]
-	public void ProjectScopedClaim_NoArg_ResolvesToTheClaim() =>
-		ModuleMcp.ResolveProject(Http("kpvotes"), null).Should().Be("kpvotes");
+	public async Task ProjectScopedClaim_NoArg_ResolvesToTheClaim() =>
+		(await ModuleMcp.ResolveProject(Http("kpvotes"), null)).Should().Be("kpvotes");
 
 	[Fact]
-	public void Wildcard_WithDefault_NoArg_ResolvesToTheDefault() =>
-		ModuleMcp.ResolveProject(Http(ProjectScope.AllProjects, "kpvotes"), null).Should().Be("kpvotes");
+	public async Task Wildcard_WithDefault_NoArg_ResolvesToTheDefault() =>
+		(await ModuleMcp.ResolveProject(Http(ProjectScope.AllProjects, "kpvotes"), null)).Should().Be("kpvotes");
 
 	[Fact]
-	public void Wildcard_WithoutDefault_NoArg_StillThrowsTheOldError()
+	public async Task Wildcard_WithoutDefault_NoArg_StillThrowsTheOldError()
 	{
 		var act = () => ModuleMcp.ResolveProject(Http(ProjectScope.AllProjects), null);
-		act.Should().Throw<ArgumentException>()
+		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*projectKey is required*not scoped to a single project*");
 	}
 
 	[Fact]
-	public void ExplicitArg_Wins_OverClaimAndOverDefault()
+	public async Task ExplicitArg_Wins_OverClaimAndOverDefault()
 	{
 		// project-scoped key: the arg must equal the claim (that's authz), but it is the arg
 		// that is returned — the resolver never silently rewrites it.
-		ModuleMcp.ResolveProject(Http("kpvotes"), "kpvotes").Should().Be("kpvotes");
+		(await ModuleMcp.ResolveProject(Http("kpvotes"), "kpvotes")).Should().Be("kpvotes");
 		// wildcard + default: the arg beats the default.
-		ModuleMcp.ResolveProject(Http(ProjectScope.AllProjects, "kpvotes"), "other").Should().Be("other");
+		(await ModuleMcp.ResolveProject(Http(ProjectScope.AllProjects, "kpvotes"), "other")).Should().Be("other");
 	}
 
 	[Fact]
-	public void ProjectScopedClaim_ForeignArg_IsStillUnauthorized()
+	public async Task ProjectScopedClaim_ForeignArg_IsStillUnauthorized()
 	{
 		var act = () => ModuleMcp.ResolveProject(Http("kpvotes"), "other");
-		act.Should().Throw<UnauthorizedAccessException>();
+		await act.Should().ThrowAsync<UnauthorizedAccessException>();
 	}
 
 	// A default that does not authorize (only reachable if a project-scoped key somehow carried
 	// one) must NOT smuggle access: a non-"*" claim ignores project_default entirely.
 	[Fact]
-	public void ProjectScopedClaim_IgnoresAStrayDefaultClaim() =>
-		ModuleMcp.ResolveProject(Http("kpvotes", "other"), null).Should().Be("kpvotes");
+	public async Task ProjectScopedClaim_IgnoresAStrayDefaultClaim() =>
+		(await ModuleMcp.ResolveProject(Http("kpvotes", "other"), null)).Should().Be("kpvotes");
 
 	// ── whoami ─────────────────────────────────────────────────────────────────
 
@@ -126,16 +127,74 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 		_db.ApiKeys.Single(k => k.Key == created.Key).DefaultProjectKey.Should().BeNull();
 	}
 
+	// ── apikey_create sandboxOnly (spec work/smoke-writes-into-real-projects) ──
+
+	// Minting a sandboxOnly key scoped to a SPECIFIC non-sandbox project would hand out a key that
+	// can never write anything (ProjectScope.AuthorizesAsync refuses every call) — reject at mint
+	// time rather than leave that silently useless.
+	[Fact]
+	public async Task ApiKeyCreate_SandboxOnly_AgainstANonSandboxProject_IsRejected()
+	{
+		var act = () => ApiKeyTools.CreateAsync(Admin(), _db, "smoke-bad", "memory:read",
+			projectKey: "kpvotes", sandboxOnly: true);
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*sandboxOnly*sandbox project*");
+	}
+
+	// …but scoped to a project that IS flagged sandbox, the mint succeeds and the flag persists.
+	[Fact]
+	public async Task ApiKeyCreate_SandboxOnly_AgainstASandboxProject_Succeeds()
+	{
+		_db.Insert(new Project { Key = "sandboxproj", WorkspaceKey = "ws", Name = "Sandbox", Sandbox = true });
+
+		var created = await ApiKeyTools.CreateAsync(Admin(), _db, "smoke-good", "memory:read",
+			projectKey: "sandboxproj", sandboxOnly: true);
+
+		created.SandboxOnly.Should().BeTrue();
+		_db.ApiKeys.Single(k => k.Key == created.Key).SandboxOnly.Should().BeTrue();
+	}
+
+	// allProjects + sandboxOnly is valid BY DESIGN — one smoke key spanning every sandbox project.
+	// The containment check then runs per-CALL (ProjectScope.AuthorizesAsync), not at mint time, so
+	// there is no project to validate here.
+	[Fact]
+	public async Task ApiKeyCreate_SandboxOnly_WithAllProjects_IsAllowed_NoProjectToValidate()
+	{
+		var created = await ApiKeyTools.CreateAsync(Admin(), _db, "smoke-wildcard", "memory:read",
+			allProjects: true, sandboxOnly: true);
+
+		created.ProjectKey.Should().Be(ProjectScope.AllProjects);
+		created.SandboxOnly.Should().BeTrue();
+		_db.ApiKeys.Single(k => k.Key == created.Key).SandboxOnly.Should().BeTrue();
+	}
+
+	// A plain (non-sandboxOnly) key keeps SandboxOnly false — no change to any existing mint.
+	[Fact]
+	public async Task ApiKeyCreate_Default_LeavesSandboxOnlyFalse()
+	{
+		var created = await ApiKeyTools.CreateAsync(Admin(), _db, "plain", "memory:read", projectKey: "kpvotes");
+		created.SandboxOnly.Should().BeFalse();
+		_db.ApiKeys.Single(k => k.Key == created.Key).SandboxOnly.Should().BeFalse();
+	}
+
 	// ── plumbing ───────────────────────────────────────────────────────────────
 
-	static IHttpContextAccessor Http(string project, string? defaultProject = null, string scopes = "memory:read")
+	IHttpContextAccessor Http(string project, string? defaultProject = null, string scopes = "memory:read")
 	{
 		var claims = new List<Claim> { new("project", project), new("scopes", scopes) };
 		if (defaultProject is not null)
 			claims.Add(new Claim(ApiKeyAuthenticationHandler.DefaultProjectClaim, defaultProject));
 		var id = new ClaimsIdentity(claims, "test");
-		return new HttpContextAccessor { HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id) } };
+		// ModuleMcp.AssertProject/ResolveProject resolve IProjectCatalog off the HttpContext's own
+		// DI container (spec work/smoke-writes-into-real-projects) — none of these tests set the
+		// `sandbox_only` claim, so the containment check short-circuits and this stub is never
+		// actually queried, but it has to be resolvable or the DI lookup itself throws.
+		var services = new ServiceCollection().AddSingleton<IProjectCatalog>(new ProjectCatalog(_db)).BuildServiceProvider();
+		return new HttpContextAccessor
+		{
+			HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(id), RequestServices = services },
+		};
 	}
 
-	static IHttpContextAccessor Admin() => Http("$system", scopes: ApiKeyScopes.AdminProvision);
+	IHttpContextAccessor Admin() => Http("$system", scopes: ApiKeyScopes.AdminProvision);
 }

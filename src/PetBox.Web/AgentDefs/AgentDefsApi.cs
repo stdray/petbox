@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
+using PetBox.Core.Data;
 using PetBox.Core.Services;
 
 namespace PetBox.Web.AgentDefs;
@@ -51,19 +52,19 @@ public static class AgentDefsApi
 	public sealed record AgentDefinitionListResponse(IReadOnlyList<AgentDefinitionListItem> Items);
 
 	static async Task<IResult> ListAsync(
-		HttpContext ctx, string projectKey, IAgentDefinitionService svc, CancellationToken ct)
+		HttpContext ctx, string projectKey, IAgentDefinitionService svc, IProjectCatalog catalog, CancellationToken ct)
 	{
-		if (!Authorize(ctx, projectKey, ApiKeyScopes.AgentsRead, out var forbid))
-			return forbid!;
+		if (await AuthorizeAsync(ctx, projectKey, ApiKeyScopes.AgentsRead, catalog, ct) is { } forbid)
+			return forbid;
 		var items = await svc.ListAsync(projectKey, ct);
 		return TypedResults.Ok(new AgentDefinitionListResponse(items));
 	}
 
 	static async Task<IResult> GetAsync(
-		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, CancellationToken ct)
+		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, IProjectCatalog catalog, CancellationToken ct)
 	{
-		if (!Authorize(ctx, projectKey, ApiKeyScopes.AgentsRead, out var forbid))
-			return forbid!;
+		if (await AuthorizeAsync(ctx, projectKey, ApiKeyScopes.AgentsRead, catalog, ct) is { } forbid)
+			return forbid;
 		try
 		{
 			var view = await svc.GetAsync(projectKey, key, ct);
@@ -78,10 +79,10 @@ public static class AgentDefsApi
 	}
 
 	static async Task<IResult> PutAsync(
-		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, CancellationToken ct)
+		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, IProjectCatalog catalog, CancellationToken ct)
 	{
-		if (!Authorize(ctx, projectKey, ApiKeyScopes.AgentsWrite, out var forbid))
-			return forbid!;
+		if (await AuthorizeAsync(ctx, projectKey, ApiKeyScopes.AgentsWrite, catalog, ct) is { } forbid)
+			return forbid;
 
 		AgentDefinitionPutBody? body;
 		try
@@ -113,10 +114,10 @@ public static class AgentDefsApi
 	}
 
 	static async Task<IResult> DeleteAsync(
-		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, CancellationToken ct)
+		HttpContext ctx, string projectKey, string key, IAgentDefinitionService svc, IProjectCatalog catalog, CancellationToken ct)
 	{
-		if (!Authorize(ctx, projectKey, ApiKeyScopes.AgentsWrite, out var forbid))
-			return forbid!;
+		if (await AuthorizeAsync(ctx, projectKey, ApiKeyScopes.AgentsWrite, catalog, ct) is { } forbid)
+			return forbid;
 
 		long version = 0;
 		var raw = ctx.Request.Query["version"].FirstOrDefault();
@@ -138,23 +139,16 @@ public static class AgentDefsApi
 		}
 	}
 
-	static bool Authorize(HttpContext ctx, string projectKey, string scope, out IResult? forbid)
+	static async Task<IResult?> AuthorizeAsync(
+		HttpContext ctx, string projectKey, string scope, IProjectCatalog catalog, CancellationToken ct)
 	{
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
-		{
-			forbid = Results.Forbid();
-			return false;
-		}
+		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
+			return Results.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		var parts = scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 		if (!parts.Contains(scope, StringComparer.Ordinal))
-		{
-			forbid = Results.Forbid();
-			return false;
-		}
-		forbid = null;
-		return true;
+			return Results.Forbid();
+		return null;
 	}
 
 	static bool IsConflict(string message) =>

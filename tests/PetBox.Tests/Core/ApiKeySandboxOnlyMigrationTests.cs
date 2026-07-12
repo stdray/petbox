@@ -6,18 +6,19 @@ using PetBox.Core.Data.Migrations;
 
 namespace PetBox.Tests.Migrations;
 
-// M040 adds ApiKeys.DefaultProjectKey. It is ADDITIVE and NULLABLE: keys minted before it must
-// still authenticate and read back intact, with the new field NULL (= no default = the old
-// "projectKey is required" behavior for a "*" key). Staged migration test: migrate to 39, seed
-// keys against the pre-40 schema, then run M040.
-public sealed class ApiKeyDefaultProjectMigrationTests : IDisposable
+// M042 adds ApiKeys.SandboxOnly. It is ADDITIVE and NOT NULL DEFAULT false: keys minted before it
+// must still authenticate and read back intact, with the new field false (= no containment check —
+// the old "claim decides everything" behavior for every existing key, whether project-scoped or
+// wildcard). Staged migration test: migrate to 41 (Projects.Sandbox already exists), seed keys
+// against the pre-42 ApiKeys schema, then run M042.
+public sealed class ApiKeySandboxOnlyMigrationTests : IDisposable
 {
 	readonly string _dir;
 	readonly string _cs;
 
-	public ApiKeyDefaultProjectMigrationTests()
+	public ApiKeySandboxOnlyMigrationTests()
 	{
-		_dir = Path.Combine(Path.GetTempPath(), "petbox-m040-" + Guid.NewGuid().ToString("N"));
+		_dir = Path.Combine(Path.GetTempPath(), "petbox-m042-" + Guid.NewGuid().ToString("N"));
 		Directory.CreateDirectory(_dir);
 		_cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
 	}
@@ -29,9 +30,9 @@ public sealed class ApiKeyDefaultProjectMigrationTests : IDisposable
 	}
 
 	[Fact]
-	public void M040_LeavesExistingKeysValid_WithANullDefault()
+	public void M042_LeavesExistingKeysValid_WithASandboxOnlyOfFalse()
 	{
-		MigrateTo(39); // the schema as it was before DefaultProjectKey existed
+		MigrateTo(41); // Projects.Sandbox exists; ApiKeys.SandboxOnly does not yet
 
 		Exec("""
 			INSERT INTO ApiKeys (Key, ProjectKey, Scopes, Name, CreatedAt) VALUES
@@ -39,21 +40,17 @@ public sealed class ApiKeyDefaultProjectMigrationTests : IDisposable
 				('yb_key_legacy_wild', '*', 'memory:read', 'legacy wildcard', '2026-01-01');
 			""");
 
-		// Past 40 (the migration under test) to the LATEST schema, not just 40: PetBoxDb's shared
-		// FluentMappingBuilder mapping for ApiKeys is CURRENT-schema, not version-40-schema — a later
-		// migration that fluently declares a new ApiKeys column (M042.SandboxOnly) makes a typed
-		// LinqToDB query 404 on "no such column" if the physical schema stops short of it. Stopping
-		// exactly at 40 is still what proves THIS migration's effect (nothing later touches
-		// DefaultProjectKey), it's just that the read-back has to happen against the full schema.
+		// Past 42 (the migration under test) to the LATEST schema — see
+		// ApiKeyDefaultProjectMigrationTests for why a typed PetBoxDb query needs the FULL current
+		// schema, not just the version the migration under test lands on.
 		MigrateToLatest();
 
 		using var db = new PetBoxDb(PetBoxDb.CreateOptions(_cs));
 		var keys = db.ApiKeys.ToDictionary(k => k.Key, k => k);
 
-		keys["yb_key_legacy_scoped"].ProjectKey.Should().Be("kpvotes");
-		keys["yb_key_legacy_scoped"].DefaultProjectKey.Should().BeNull();
-		keys["yb_key_legacy_wild"].ProjectKey.Should().Be("*");
-		keys["yb_key_legacy_wild"].DefaultProjectKey.Should().BeNull();
+		keys["yb_key_legacy_scoped"].SandboxOnly.Should().BeFalse(
+			"a key minted before the sandbox gate must keep writing wherever its claim already authorized it");
+		keys["yb_key_legacy_wild"].SandboxOnly.Should().BeFalse();
 		keys["yb_key_legacy_wild"].Name.Should().Be("legacy wildcard"); // the row is otherwise untouched
 	}
 
@@ -79,8 +76,6 @@ public sealed class ApiKeyDefaultProjectMigrationTests : IDisposable
 		scope.ServiceProvider.GetRequiredService<IMigrationRunner>().MigrateUp(version);
 	}
 
-	// Every migration after the one under test — so a typed PetBoxDb query (bound to the CURRENT,
-	// not version-N, shared mapping schema) can read the row back.
 	void MigrateToLatest()
 	{
 		using var services = new ServiceCollection()

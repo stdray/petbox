@@ -31,7 +31,7 @@ public static class RelationTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		var (batch, singleForm) = NormalizeCreateItems(items, kind, fromNodeId, toNodeId);
@@ -87,7 +87,7 @@ public static class RelationTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var id = await tasks.ResolveNodeRefOrNullAsync(projectKey, nodeId, ct: ct);
 		if (id is null) return new RelationsListResult([]); // a node that isn't there → no edges (soft read), never an error
@@ -105,7 +105,7 @@ public static class RelationTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		var batch = NormalizeDeleteIds(ids, id);

@@ -25,7 +25,7 @@ public static class LogCatalogTools
 		[Description("Optional description.")] string? description = null,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 		if (await logStore.ExistsAsync(projectKey, name, ct))
@@ -40,7 +40,7 @@ public static class LogCatalogTools
 		IHttpContextAccessor http, ILogStore logStore,
 		string projectKey, CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.LogsQuery);
 		var rows = await logStore.ListAsync(projectKey, ct);
 		return new LogListResult(rows.Select(l => new LogRow(l.Name, l.Description, l.CreatedAt, l.UpdatedAt)).ToList());
@@ -52,7 +52,7 @@ public static class LogCatalogTools
 		IHttpContextAccessor http, ILogStore logStore,
 		string projectKey, string name, CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.LogsAdmin);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
 		var deleted = await logStore.DeleteAsync(projectKey, name, ct);

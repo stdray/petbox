@@ -44,6 +44,7 @@ public sealed class SessionDeltaTests : IDisposable
 			{
 				User = new ClaimsPrincipal(new ClaimsIdentity(
 					[new Claim("project", Proj), new Claim("scopes", "tasks:read,tasks:write")], "test")),
+				RequestServices = TestProjectCatalog.Services,
 			},
 		};
 

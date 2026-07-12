@@ -35,7 +35,7 @@ public static class HealthTools
 		[Description("Optional cap on history entries per service (most-recent first). Defaults to 50 when history is on.")] int? limit = null,
 		CancellationToken ct = default)
 	{
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.HealthRead);
 
 		if (staleThresholdSeconds < 0) throw new ArgumentException("staleThresholdSeconds must be >= 0");

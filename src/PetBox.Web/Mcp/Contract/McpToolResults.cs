@@ -89,9 +89,11 @@ public sealed record ConfigBindingDeletedResult(bool Deleted, long Id);
 
 // ---- project.* (provisioning; replaces entity.* type "project") ----------------------
 
-public sealed record ProjectCreatedResult(string Key, string WorkspaceKey, string? Name, string? Description);
+// `Sandbox` (spec work/smoke-writes-into-real-projects) marks a project as the containment target
+// for sandbox-only API keys — see ApiKeyCreatedResult.SandboxOnly.
+public sealed record ProjectCreatedResult(string Key, string WorkspaceKey, string? Name, string? Description, bool Sandbox = false);
 
-public sealed record ProjectRow(string Key, string WorkspaceKey, string Name, string Description);
+public sealed record ProjectRow(string Key, string WorkspaceKey, string Name, string Description, bool Sandbox = false);
 
 public sealed record ProjectListResult(IReadOnlyList<ProjectRow> Projects);
 
@@ -99,12 +101,14 @@ public sealed record ProjectListResult(IReadOnlyList<ProjectRow> Projects);
 
 // apikey_create returns the raw key ONCE (it is never retrievable again) + its granted scopes.
 // `DefaultProjectKey` is the cross-project key's fallback project (null on a project-scoped key,
-// which already defaults to its own claim).
+// which already defaults to its own claim). `SandboxOnly` (spec work/smoke-writes-into-real-projects)
+// marks the key unable to write anywhere except a Project.Sandbox = true project — see
+// ProjectScope.AuthorizesAsync.
 public sealed record ApiKeyCreatedResult(string Key, string ProjectKey, IReadOnlyList<string> Scopes, DateTime? ExpiresAt,
-	string? DefaultProjectKey = null);
+	string? DefaultProjectKey = null, bool SandboxOnly = false);
 
 public sealed record ApiKeyRow(string Key, string Name, string Scopes, DateTime CreatedAt, DateTime? ExpiresAt,
-	string? DefaultProjectKey = null);
+	string? DefaultProjectKey = null, bool SandboxOnly = false);
 
 public sealed record ApiKeyListResult(IReadOnlyList<ApiKeyRow> Keys);
 
