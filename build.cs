@@ -576,9 +576,18 @@ Task("FormatVerify")
 				$"dotnet format --verify-no-changes failed with exit code {formatExit} — run `dotnet format` and commit the result");
 	});
 
-Task("Verify")
+// The .NET gate, and the single place that defines what "the code is OK" means. CI runs THIS,
+// not a hand-assembled list of steps in ci.yml — so a new check is added here, once, and every
+// caller picks it up. `Test` stays exactly what its name says (run the tests): it is also the
+// dev loop and part of the Docker chain, and neither wants a format check bolted onto it.
+Task("Validate")
 	.IsDependentOn("FormatVerify")
-	.IsDependentOn("Test")
+	.IsDependentOn("Test");
+
+// Everything Validate covers, plus the client SDKs (bun + uv toolchains). This is the full
+// pre-push sweep; CI's .NET job runs Validate because it doesn't set up uv.
+Task("Verify")
+	.IsDependentOn("Validate")
 	.IsDependentOn("TsSdkLint")
 	.IsDependentOn("TsSdkTypecheck")
 	.IsDependentOn("TsSdkTest")

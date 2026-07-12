@@ -64,18 +64,14 @@ jobs:
       - name: Ensure build script is executable
         run: chmod +x ./build.sh
 
-      # Format is a gate, not a suggestion: for a long time NOTHING ran it (this job used
-      # to jump straight to Test, and `dotnet format --verify-no-changes` lives only in the
-      # Verify/CI target, which nothing invoked), so drift piled up in main unnoticed and
-      # every agent that dutifully ran `dotnet format` before committing got a diff full of
-      # OTHER people's files. Run it here, before Test, so it fails fast and cheap.
-      # Deliberately NOT --target=Verify: that also pulls in the TS/Python SDK lint+test,
-      # which need toolchains this job doesn't set up.
-      - name: Cake FormatVerify target (dotnet format --verify-no-changes)
-        run: ./build.sh --target=FormatVerify
-
-      - name: Cake Test target (build + unit + E2E)
-        run: ./build.sh --target=Test --playwrightWithDeps=false
+      # ONE target, not a hand-assembled list of steps: `Validate` (build.cs) is the single
+      # definition of what "the code is OK" means — today FormatVerify + Test, tomorrow
+      # whatever else we add there. Assembling the gate here instead would mean the next
+      # check gets bolted on beside it and the two definitions drift.
+      # Not --target=Verify: that also runs the TS/Python SDK checks, whose toolchains (uv)
+      # this job doesn't set up.
+      - name: Cake Validate target (format + build + unit + E2E)
+        run: ./build.sh --target=Validate --playwrightWithDeps=false
 
   publish:
     if: github.event_name == 'push' && github.ref != 'refs/tags/nuget' && github.ref != 'refs/tags/npm' && github.ref != 'refs/tags/npm-wire' && github.ref != 'refs/tags/pypi'
