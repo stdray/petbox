@@ -76,6 +76,12 @@ export const PetboxPlugin: Plugin = async ({ client, directory }) => {
     const lastID = messages[messages.length - 1]?.info?.id ?? "";
     if (lastPushed.get(sessionID) === lastID) return;
 
+    // NOT implemented here: subagentRuns (spec: subagent-run-provenance — see transcript.ts /
+    // droid-transcript.ts for the Claude Code and droid equivalents). `client.session.messages()`
+    // only surfaces text parts today (this function filters to `p.type === "text"` above); a
+    // local check of real opencode session storage (~/.local/share/opencode/storage/part) turned
+    // up no tool_use/task parts to confirm the shape a subagent spawn would take here, so adding
+    // this would mean guessing a schema rather than reading one — left out rather than invented.
     const lastOrdinal = await pushTranscript(
       {
         baseUrl: resolved.baseUrl,
