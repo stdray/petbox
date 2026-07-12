@@ -22,7 +22,8 @@ namespace PetBox.Tests.Web;
 // self-export routes (/v1/logs, /v1/traces, /v1/metrics — shared-secret X-Seq-ApiKey) are untouched
 // and not exercised here. Reuses LogPipelineFixture (shared host, $system/default already seeded),
 // mirroring OtlpMetricsEndpointTests' style.
-public sealed class OtlpIngestAuthzTests : IClassFixture<LogPipelineFixture>
+[Collection(LogPipelineCollectionDef.Name)]
+public sealed class OtlpIngestAuthzTests
 {
 	readonly LogPipelineFixture _fx;
 	readonly HttpClient _client;

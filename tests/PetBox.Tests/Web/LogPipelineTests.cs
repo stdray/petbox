@@ -86,7 +86,10 @@ public sealed class LogPipelineFixture : IAsyncLifetime
 
 // Out of the serialized WebAppFactory collection: the fixture writes only the constant
 // ASPNETCORE_ENVIRONMENT=Testing (never nulled) and uses its own Guid temp db.
-public sealed class LogPipelineTests : IClassFixture<LogPipelineFixture>
+// In LogPipelineCollection: one shared host for all six fixture consumers (see the
+// collection definition for why that is safe).
+[Collection(LogPipelineCollectionDef.Name)]
+public sealed class LogPipelineTests
 {
 	readonly WebApplicationFactory<Program> _factory;
 	readonly HttpClient _client;
