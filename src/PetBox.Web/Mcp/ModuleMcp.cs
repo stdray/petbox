@@ -23,8 +23,13 @@ static class ModuleMcp
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
 		var catalog = ctx.RequestServices.GetRequiredService<IProjectCatalog>();
-		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
-			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
+		switch (await ProjectScope.EvaluateAsync(ctx.User, projectKey, catalog, ct))
+		{
+			case ProjectAccess.SandboxContainment:
+				throw new UnauthorizedAccessException(ProjectScope.SandboxDenialMessage(projectKey));
+			case ProjectAccess.ClaimMismatch:
+				throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
+		}
 	}
 
 	// THE single resolver for the effective projectKey on tools where it is OPTIONAL:
@@ -45,8 +50,13 @@ static class ModuleMcp
 			throw new ArgumentException(
 				"projectKey is required (the API key is not scoped to a single project — pass projectKey, " +
 				"or set a default project on the key)");
-		if (!await ProjectScope.AuthorizesAsync(ctx.User, effective, catalog, ct))
-			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{effective}'");
+		switch (await ProjectScope.EvaluateAsync(ctx.User, effective, catalog, ct))
+		{
+			case ProjectAccess.SandboxContainment:
+				throw new UnauthorizedAccessException(ProjectScope.SandboxDenialMessage(effective));
+			case ProjectAccess.ClaimMismatch:
+				throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{effective}'");
+		}
 		return effective;
 	}
 
