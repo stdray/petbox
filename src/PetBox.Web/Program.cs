@@ -232,10 +232,16 @@ public partial class Program
 		// fair-fusion knobs (junk-exclusion min length + semantic-noise floor, spec
 		// search-fair-fusion) bind from `Search:Episodic:*` — sibling of the stage-1
 		// `Search:Sessions:*` floor above; conservative defaults when absent.
+		// The LLM client is taken as an IServiceScopeFactory, NOT as an ILlmClient: ILlmClient is
+		// SCOPED (CapabilityRouter → ILlmRegistryLevelResolver → PetBoxDb), and a singleton that
+		// resolves it here would capture ONE root-scoped PetBoxDb for the life of the process —
+		// shared by every concurrent session_search and never disposed. The index rents a client
+		// from a fresh scope per search instead (see CaptiveDependencyTests, which fails the build
+		// if any singleton's graph reaches a scoped service).
 		builder.Services.AddSingleton<PetBox.Sessions.Contract.ISessionEpisodicIndex>(sp =>
 			new PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex(
 				sp.GetRequiredService<IScopedDbFactory<PetBox.Sessions.Data.SessionsDb>>(),
-				sp.GetService<PetBox.LlmRouter.Contract.ILlmClient>(),
+				sp.GetRequiredService<IServiceScopeFactory>(),
 				sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex>>(),
 				options: builder.Configuration.GetSection("Search:Episodic").Get<PetBox.Sessions.Contract.SessionEpisodicOptions>()
 					?? new PetBox.Sessions.Contract.SessionEpisodicOptions()));
