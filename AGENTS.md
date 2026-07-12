@@ -50,8 +50,14 @@ records**, not the working plan — do not treat them as current state.
 1. **No code before a card:** every change starts from a work item on `$system`
    (intake issue → promoted task, or accepted idea → spec → work). Create/move the
    card BEFORE editing code.
-2. **Worktree before edits:** never edit the primary checkout; create a git worktree
-   for the change. Put every agent's worktree under `.claude/worktrees/<branch-slug>` —
+2. **Worktree before edits — ANY tracked file, not just code:** never edit the primary
+   checkout; create a git worktree for the change. The rule is about the *file*, not the
+   *kind of work*: if `git` tracks it, it is edited in a worktree — source, tests,
+   `AGENTS.md` and `doc/*`, build/CI files, `.claude/` skills, hooks and agent definitions,
+   `appsettings*.json`. A one-line doc or config fix is exactly the change that "feels too
+   small for a worktree", and it is how the shared checkout ends up dirty and how a commit
+   ends up on `main`. Only untracked/ignored paths (`.tmp/`, local logs, the scratchpad) may
+   be written anywhere. Put every agent's worktree under `.claude/worktrees/<branch-slug>` —
    one dir for CC/opencode/droid alike: it is INSIDE the repo (so opencode, which can only
    work within the project folder, is happy) yet gitignored (so it never dirties
    `git status`), and it is where Claude Code's own worktree tool already lands. Take a
