@@ -27,9 +27,7 @@ _API_KEY_HEADER = "X-YobaConf-ApiKey"
 EventListener = Callable[..., None]
 
 
-def _default_transport(
-    url: str, headers: Mapping[str, str], timeout: float = 10.0
-) -> HttpResponse:
+def _default_transport(url: str, headers: Mapping[str, str], timeout: float = 10.0) -> HttpResponse:
     """Perform a GET via urllib. Raises urllib errors only for unreachable hosts;
     HTTP 3xx/4xx/5xx are returned as HttpResponse (4xx/5xx via HTTPError handler).
 

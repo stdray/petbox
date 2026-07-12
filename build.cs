@@ -600,16 +600,24 @@ Task("FormatVerify")
 				$"dotnet format whitespace --verify-no-changes failed with exit code {formatExit} — run `dotnet format whitespace` and commit the result");
 	});
 
-// Everything Test covers, plus the client SDKs (bun + uv toolchains). This is the full
-// pre-push sweep; CI's .NET job runs Test because it doesn't set up uv.
-Task("Verify")
-	.IsDependentOn("Test")
+// `SdkChecks` IS the client-SDK gate — lint + typecheck + test for the TS and Python SDKs we
+// publish to npm/PyPI, and nothing from the .NET chain. It exists as its own target so CI can
+// run it as a SEPARATE job (bun + uv toolchains, in parallel with the .NET `test` job) without
+// dragging in Clean→Restore→Build→Test. Before this, the SDK targets lived only inside `Verify`,
+// which CI never called: the SDKs shipped to public registries unchecked by anything.
+Task("SdkChecks")
 	.IsDependentOn("TsSdkLint")
 	.IsDependentOn("TsSdkTypecheck")
 	.IsDependentOn("TsSdkTest")
 	.IsDependentOn("PyClientLint")
 	.IsDependentOn("PyClientTypecheck")
 	.IsDependentOn("PyClientTest");
+
+// Everything Test covers, plus the client SDKs (bun + uv toolchains). This is the full
+// pre-push sweep — the local equivalent of CI's two jobs (`test` + `sdk`) taken together.
+Task("Verify")
+	.IsDependentOn("Test")
+	.IsDependentOn("SdkChecks");
 
 Task("CI")
 	.IsDependentOn("Verify");
