@@ -57,7 +57,8 @@ public sealed class SessionDigestJobTests : IDisposable
 
 	SessionDigestJob Job(ILlmClient? llm, TimeSpan? quiet = null, TimeSpan? budget = null,
 		ILogger<SessionDigestJob>? logger = null) =>
-		new(new ProjectCatalog(_db), _sessions, _memory, llm, logger: logger, quietPeriod: quiet ?? NoQuiet, budget: budget);
+		new(_sessionsFactory, new ProjectCatalog(_db), _sessions, _memory, llm, logger: logger,
+			quietPeriod: quiet ?? NoQuiet, budget: budget);
 
 	// A single message that clears the MinDistillChars (40) substance floor, so mechanics
 	// tests (cursor/delta/availability) actually reach the distiller — they are not testing
@@ -339,6 +340,108 @@ public sealed class SessionDigestJobTests : IDisposable
 		(await _memory.GetAsync(Proj, SessionDigestJob.Store, "junk-short")).Should().BeNull();
 		(await _memory.GetAsync(Proj, SessionDigestJob.Store, "real")).Should().NotBeNull();
 		log.Warnings.Should().Contain(w => w.Contains("cleanup"));
+	}
+
+	// --- #4 the cursor outlives the digest: a refused session is not re-asked forever ---
+
+	[Fact]
+	public async Task LlmRefusal_NewSession_SecondPassSpendsNoChat()
+	{
+		// THE regression. The session has no digest entry (the model answers junk), so back when
+		// the cursor rode the entry's metadata there was nowhere to record the position: the
+		// session stayed a candidate and burned a chat call EVERY tick, forever (~730/day/session).
+		// The cursor now lives in search_cursor and advances regardless → exactly one call, ever.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1));
+		var chat = new ChatFake { NextText = "хм" }; // non-empty, but shorter than MinDigestChars
+		var job = Job(chat);
+
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+		chat.Prompts.Should().HaveCount(1);
+
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		chat.Prompts.Should().HaveCount(1);                                                // no second call
+		(await _memory.StoreExistsAsync(Proj, SessionDigestJob.Store)).Should().BeFalse(); // still nothing written
+	}
+
+	[Fact]
+	public async Task RepeatedRefusals_DeadLetterTheSession_NoFurtherChat()
+	{
+		// Each pass brings a genuinely new substantial turn, so the advanced cursor alone would
+		// keep re-asking. After MaxAttempts refusals the session is dead-lettered and dropped
+		// from the candidate set: the (N+1)-th turn spends no chat at all.
+		var chat = new ChatFake { NextText = "хм" };
+		var log = new CapturingLogger();
+		var job = Job(chat, logger: log);
+
+		for (var i = 1; i <= SessionDigestJob.MaxAttempts; i++)
+		{
+			await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+				Msgs(Enumerable.Range(1, i).Select(n => $"{n}: {Big1}").ToArray()));
+			await job.DrainAllAsync(CancellationToken.None);
+		}
+		chat.Prompts.Should().HaveCount(SessionDigestJob.MaxAttempts); // one call per refusal, no more
+		log.Warnings.Should().Contain(w => w.Contains("dead-lettered"));
+
+		// One more turn arrives — the dead session is skipped outright.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+			Msgs(Enumerable.Range(1, SessionDigestJob.MaxAttempts + 1).Select(n => $"{n}: {Big1}").ToArray()));
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		chat.Prompts.Should().HaveCount(SessionDigestJob.MaxAttempts);
+	}
+
+	[Fact]
+	public async Task RepeatedEmptyAnswers_HoldTheCursor_ThenDeadLetterTheSession()
+	{
+		// The empty-answer branch HOLDS the cursor (a broken response may hide a good delta —
+		// it must backfill when chat recovers), so it is a retry by design. The attempt counter
+		// is its ceiling: the same session is re-asked at most MaxAttempts times, then dies.
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code", Msgs(Big1));
+		var chat = new ChatFake { NextText = "   " };
+		var log = new CapturingLogger();
+		var job = Job(chat, logger: log);
+
+		for (var i = 1; i <= SessionDigestJob.MaxAttempts; i++)
+			(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		chat.Prompts.Should().HaveCount(SessionDigestJob.MaxAttempts);   // re-asked every pass — cursor held
+		(await _memory.StoreExistsAsync(Proj, SessionDigestJob.Store)).Should().BeFalse();
+		log.Warnings.Should().Contain(w => w.Contains("dead-lettered"));
+
+		// The ceiling: pass N+1 asks nothing at all — the session is dead.
+		(await job.DrainAllAsync(CancellationToken.None)).Should().Be(0);
+
+		chat.Prompts.Should().HaveCount(SessionDigestJob.MaxAttempts);
+	}
+
+	[Fact]
+	public async Task LegacyDigest_WithMetadataCursor_IsSeeded_NotReDistilledFromZero()
+	{
+		// Back-compat: an archive digest carries its position in Metadata.cursor and NO row in
+		// search_cursor. The first pass adopts that value instead of re-distilling the session
+		// from message 1 (which would re-run the LLM over the whole archive).
+		await _sessions.UpsertAsync(Proj, "s1", "claude-code",
+			Msgs("old-alpha: initial pass over the config resolver null-reference bug",
+				"old-beta: reproduced the crash locally against the staging snapshot",
+				"new-gamma: shipped the fix to ci.512 and verified it in the smoke run"));
+		await _memory.UpsertAsync(Proj, SessionDigestJob.Store, [new MemoryEntryInput
+		{
+			Key = "s1", Version = 0, Type = "Reference",
+			Description = "Сессия про фикс config resolver",
+			Body = "- разобрали падение резолвера конфигурации",
+			Tags = [SessionDigestJob.Tag],
+			Metadata = """{"sessionId":"s1","agent":"claude-code","cursor":2}""",
+		}], [], CancellationToken.None);
+		var chat = new ChatFake { NextText = "digest v2\n- old facts\n- new gamma fact" };
+
+		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);
+
+		chat.Prompts.Should().HaveCount(1);                      // one merge batch, not a full re-run
+		chat.Prompts[0].Should().Contain("new-gamma");           // only the tail was distilled…
+		chat.Prompts[0].Should().NotContain("old-alpha");        // …the seeded cursor skipped the rest
+		var entry = await _memory.GetAsync(Proj, SessionDigestJob.Store, "s1");
+		Cursor(entry!.Metadata).Should().Be(3);
 	}
 
 	// Captures warning-level messages so a test can assert the skip/guard/cleanup logged.
