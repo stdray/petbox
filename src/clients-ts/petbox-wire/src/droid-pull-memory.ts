@@ -34,9 +34,10 @@ import { buildProtocol, droidPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
 
 // Shared wall-clock budget for BOTH fetches combined (agent-def, then canon) — see the
-// module comment above. Same magnitude as the two fetches' own prior 8s timeouts so the
-// happy-path and degraded-path behavior don't regress, just no longer stack.
-const SESSION_FETCH_BUDGET_MS = 8000;
+// module comment above. Kept in step with pull-memory.ts: short on purpose, because the LKG
+// cache holds the same documents and a redeploy restarting the server must not tax every
+// session start with an 8s stall. Stale-but-instant beats fresh-but-late here.
+const SESSION_FETCH_BUDGET_MS = 2000;
 
 type HookInput = { cwd?: string; source?: string };
 
