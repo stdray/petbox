@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
@@ -32,7 +33,7 @@ static class ModuleMcp
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		var effective = string.IsNullOrWhiteSpace(projectKey) ? DefaultProject(ctx, claim) : projectKey;
+		var effective = string.IsNullOrWhiteSpace(projectKey) ? DefaultProjectOf(ctx.User) : projectKey;
 		if (string.IsNullOrWhiteSpace(effective))
 			throw new ArgumentException(
 				"projectKey is required (the API key is not scoped to a single project — pass projectKey, " +
@@ -44,12 +45,18 @@ static class ModuleMcp
 
 	// The project the key falls back to when the caller omits projectKey: its own claim, or —
 	// for a cross-project key — the `project_default` claim (absent ⇒ null ⇒ ResolveProject throws).
-	static string? DefaultProject(HttpContext ctx, string? claim) => claim switch
-	{
-		null or "" => null,
-		ProjectScope.AllProjects => Blank(ctx.User.Claims.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.DefaultProjectClaim)?.Value),
-		var single => single,
-	};
+	//
+	// Reads the PRINCIPAL, not the HttpContext, so the MCP filters (McpProjectDefaultFilter, whose
+	// RequestContext carries a ClaimsPrincipal and no HttpContext) ask this exact question — the
+	// injected argument and the advertised schema then agree with ResolveProject by construction
+	// rather than by a re-implementation that can drift.
+	public static string? DefaultProjectOf(ClaimsPrincipal? user) =>
+		user?.Claims.FirstOrDefault(c => c.Type == "project")?.Value switch
+		{
+			null or "" => null,
+			ProjectScope.AllProjects => Blank(user.Claims.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.DefaultProjectClaim)?.Value),
+			var single => Blank(single),
+		};
 
 	static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 

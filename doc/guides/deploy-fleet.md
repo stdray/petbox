@@ -77,11 +77,11 @@ Create a deployment — the agent on that node will pull the image and run it.
 
 **Via MCP:**
 ```
-deploy_upsert(service="bot", project="yobapub", nodeId="vdsina-1",
+deploy_upsert(service="bot", projectKey="yobapub", nodeId="vdsina-1",
               imageDigest="ghcr.io/you/bot:sha-abc123", running=true,
               requiredTags="net.x", configTags="env:prod")
 ```
-- `project` — the PetBox project whose **config** applies; the agent's container env is resolved **server-side** from `(project, configTags)` via the same `/v1/conf` resolver, so the node key needs no `config:read`.
+- `projectKey` — the PetBox project whose **config** applies; the agent's container env is resolved **server-side** from `(project, configTags)` via the same `/v1/conf` resolver, so the node key needs no `config:read`.
 - `requiredTags` — the node's tags must cover these (also used when failover picks a new home).
 - `relocatable=true` — let failover move it to another matching node if this one goes silent.
 
@@ -92,7 +92,7 @@ Within a poll the container `petbox-<service>` is up. Check actual state: UI gri
 A deployment can carry a declarative **run-spec** — the compose-subset the agent maps 1:1 to `docker run` flags (env is *not* part of it; env stays config-resolved). All fields are optional:
 
 ```
-deploy_upsert(service="web", project="yobapub", nodeId="vdsina-1",
+deploy_upsert(service="web", projectKey="yobapub", nodeId="vdsina-1",
               imageDigest="ghcr.io/you/web:sha-abc123",
               ports=["127.0.0.1:8080:8080"],                 # [ip:]host:container[/tcp|udp]
               volumes=["/opt/web/logs:/app/logs",            # /host:/container[:ro|rw] (bind mounts only)
@@ -113,7 +113,7 @@ The UI's *New deployment* form covers ports/volumes/restart/memory/cpus/network/
 A deployment with a **`domain`** is a *site*: besides the container, the node agent keeps a Caddy route (domain → loopback port) in line with it.
 
 ```
-deploy_upsert(service="web", project="yobapub", nodeId="vdsina-1",
+deploy_upsert(service="web", projectKey="yobapub", nodeId="vdsina-1",
               imageDigest="ghcr.io/you/web:sha-abc123",
               ports=["127.0.0.1:8080:8080"],
               domain="app.example.com")          # sitePort defaults to 8080 (ports[0] host port)
