@@ -17,14 +17,26 @@
 //
 // The banner's orchestrator notes resolve server → LKG cache → built-in default, same as
 // `apply` (resolveAgentDefinitionForSession, wrapping agent-def-fetch.ts's
-// resolveAgentDefinitionWithLkg). That fetch runs CONCURRENTLY with the canon fetch (both
-// bounded by their own ~8s timeout) so the two budgets don't stack serially on session start.
+// resolveAgentDefinitionWithLkg). That fetch and the canon fetch run SEQUENTIALLY under one
+// shared SESSION_FETCH_BUDGET_MS wall-clock budget (not Promise.all'd) — verbatim the same
+// reasoning as pull-memory.ts (this file's Claude Code counterpart): the happy path for both
+// requests together is ~100-200ms, so concurrency bought nothing there, and it made the two
+// independent 8s timeouts stack in the worst case if reasoned about naively. Giving the whole
+// hook one budget means whatever the agent-def fetch doesn't spend, the canon fetch inherits
+// as its own timeout, so the combined worst case stays ~SESSION_FETCH_BUDGET_MS, not 2x it. A
+// fetch that starts with little/no budget left degrades to its own fallback (LKG cache /
+// built-in default / no canon) rather than blocking — see canon.ts's fetchCanon.
 
 import { resolveAgentDefinitionForSession } from "./agent-def-fetch.ts";
 import { fetchCanonBlock } from "./canon.ts";
 import { unrefLingeringHandles } from "./hook-drain.ts";
 import { buildProtocol, droidPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
+
+// Shared wall-clock budget for BOTH fetches combined (agent-def, then canon) — see the
+// module comment above. Same magnitude as the two fetches' own prior 8s timeouts so the
+// happy-path and degraded-path behavior don't regress, just no longer stack.
+const SESSION_FETCH_BUDGET_MS = 8000;
 
 type HookInput = { cwd?: string; source?: string };
 
@@ -67,11 +79,17 @@ async function main(): Promise<void> {
   try {
     const resolved = resolveProject(cwd);
     if (!resolved) return; // not a registered project → no output
-    // Run concurrently: each is independently bounded, so total added wait stays ~8s, not ~16s.
-    const [defResult, canon] = await Promise.all([
-      resolveAgentDefinitionForSession(resolved),
-      fetchCanonBlock(resolved),
-    ]);
+
+    // Sequential under one shared budget (not Promise.all): whatever the first fetch doesn't
+    // spend is what the second gets, so the combined worst case is bounded by
+    // SESSION_FETCH_BUDGET_MS instead of stacking two independent timeouts.
+    const budgetStart = Date.now();
+    const defResult = await resolveAgentDefinitionForSession(resolved, {
+      timeoutMs: SESSION_FETCH_BUDGET_MS,
+    });
+    const remainingMs = SESSION_FETCH_BUDGET_MS - (Date.now() - budgetStart);
+    const canon = await fetchCanonBlock(resolved, { timeoutMs: remainingMs });
+
     let context = buildProtocol(resolved.project, droidPetboxTool, {
       source,
       harness: "droid",
