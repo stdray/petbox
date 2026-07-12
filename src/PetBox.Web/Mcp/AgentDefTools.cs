@@ -29,7 +29,7 @@ public static class AgentDefTools
 	}
 
 	[McpServerTool(Name = "agent_def_get", Title = "Get an agent definition", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(AgentDefGetResult))]
-	[Description("Return ONE portable agent-definition document by key (slug). Found=false on miss (not an error). Document carries roles with tier/requiredCapabilities/spawn/escalation — NO model fields (model binding is local). Requires agents:read.")]
+	[Description("Return ONE portable agent-definition document by key (slug). Found=false on miss (not an error). Document carries roles with tier/requiredCapabilities/spawn/escalation/notes — NO model fields (model binding is local). Requires agents:read.")]
 	public static async Task<AgentDefGetResult> GetAsync(
 		IHttpContextAccessor http, IAgentDefinitionService svc,
 		string projectKey,
@@ -54,7 +54,7 @@ public static class AgentDefTools
 	[McpServerTool(Name = "agent_def_upsert", Title = "Upsert an agent definition", UseStructuredContent = true, OutputSchemaType = typeof(AgentDefUpsertResult))]
 	[Description("""
 		Store a portable agent-definition document (roles/tier/requiredCapabilities/spawn/
-		escalation). Does NOT carry model binding — role.model is rejected. `key` is the
+		escalation/notes). Does NOT carry model binding — role.model is rejected. `key` is the
 		definition slug; `version` is the watermark baseline from agent_def_get (0 = create).
 		Identical resubmit → changed:false. Returns { key, version, changed }. Requires agents:write.
 		""")]
@@ -62,7 +62,7 @@ public static class AgentDefTools
 		IHttpContextAccessor http, IAgentDefinitionService svc,
 		string projectKey,
 		[Description("Definition slug key (^[a-z][a-z0-9_-]{0,99}$).")] string key,
-		[Description("The portable definition document: { name, roles:[{ slug, tier, requiredCapabilities, spawn?, escalation? }] }.")] JsonElement definition,
+		[Description("The portable definition document: { name, roles:[{ slug, tier, requiredCapabilities, spawn?, escalation?, notes? }] }.")] JsonElement definition,
 		[Description("Watermark baseline: version from last agent_def_get; 0 = create.")] long version = 0,
 		CancellationToken ct = default)
 	{
@@ -94,5 +94,6 @@ public static class AgentDefTools
 		r.Tier,
 		r.RequiredCapabilities,
 		r.Spawn is null ? null : new AgentDefSpawnView(r.Spawn.Allowed, r.Spawn.AllowedRoles),
-		r.Escalation is null ? null : new AgentDefEscalationView(r.Escalation.Available, r.Escalation.Targets));
+		r.Escalation is null ? null : new AgentDefEscalationView(r.Escalation.Available, r.Escalation.Targets),
+		r.Notes);
 }

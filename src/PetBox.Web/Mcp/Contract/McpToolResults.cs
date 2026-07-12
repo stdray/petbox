@@ -683,7 +683,8 @@ public sealed record AgentDefRoleView(
 	string Tier,
 	IReadOnlyList<string> RequiredCapabilities,
 	AgentDefSpawnView? Spawn = null,
-	AgentDefEscalationView? Escalation = null);
+	AgentDefEscalationView? Escalation = null,
+	string? Notes = null);
 
 public sealed record AgentDefSpawnView(bool Allowed, IReadOnlyList<string>? AllowedRoles = null);
 public sealed record AgentDefEscalationView(bool Available, IReadOnlyList<string>? Targets = null);

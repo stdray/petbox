@@ -45,9 +45,13 @@ export type AgentDefinition = {
  * Includes `explore` so the roster matches harnesses that ship a built-in explore
  * agent — with an explicit inheritance note (not a global "inheritance forbidden").
  *
- * Caps are honest for the roles: orchestrator needs MCP + spawn_subagents.
- * DEFAULT therefore fails truthfulness on harnesses that lack those (e.g. droid
- * has neither mcp_main_session nor spawn_subagents) — intentional honesty, not a bug.
+ * Caps are honest for the roles: orchestrator needs mcp_main_session + spawn_subagents.
+ * Per harness-capabilities.ts, all three known harnesses (claude-code, opencode, droid)
+ * declare both, so DEFAULT passes truthfulness on every known harness today — droid in
+ * particular declares mcp_main_session, mcp_subagent, spawn_subagents, role_files,
+ * dynamic_model_at_spawn and hooks per Factory's docs. This is not guaranteed to hold for
+ * future/unknown harnesses; the gate (checkRoleTruthfulness) still blocks any role that
+ * claims a capability its target harness does not declare.
  */
 export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
   name: "default",
@@ -67,12 +71,15 @@ export const DEFAULT_AGENT_DEFINITION: AgentDefinition = {
     {
       slug: "worker",
       tier: "worker",
-      // No mcp_subagent: Claude Code workers do not receive petbox MCP (verified).
+      // requiredCapabilities stays empty by design: worker is meant to stay portable
+      // even to a future/unknown harness without mcp_subagent. This is NOT a claim
+      // that MCP is unavailable to worker subagents on today's known harnesses —
+      // claude-code, opencode and droid all declare mcp_subagent (harness-capabilities.ts).
       requiredCapabilities: [],
       spawn: { allowed: false },
       escalation: { available: true, targets: ["orchestrator"] },
       notes:
-        "Scoped implementation / research leaf. Brief carries any PetBox data the orchestrator already fetched — do not assume MCP in the subagent session.",
+        "Scoped implementation / research leaf. Brief carries any PetBox data the orchestrator already fetched.",
     },
     {
       slug: "utility",

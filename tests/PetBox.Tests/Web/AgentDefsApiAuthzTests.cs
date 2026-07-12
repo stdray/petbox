@@ -163,4 +163,53 @@ public sealed class AgentDefsApiAuthzTests : IClassFixture<AgentDefsApiAuthzFixt
 				AgentDefsApiAuthzFixture.KeyWrite, content));
 		resp.StatusCode.Should().Be(HttpStatusCode.OK, await resp.Content.ReadAsStringAsync());
 	}
+
+	// End-to-end regression for the "server silently drops role.notes" defect: PUT a role's
+	// free-text notes through the typed REST path, GET it back, and the prose must survive —
+	// not just the wire shape, but the stored/canonical payload (a second PUT differing only
+	// in notes must mint a new revision, not collapse to changed:false).
+	[Fact]
+	public async Task Put_RoleNotes_RoundTrip_And_NotesOnlyDiff_IsChanged()
+	{
+		static string Body(long version, string notes) => $$"""
+			{
+			  "version": {{version}},
+			  "definition": {
+			    "name": "default",
+			    "roles": [
+			      { "slug": "worker", "tier": "worker", "requiredCapabilities": [], "notes": "{{notes}}" }
+			    ]
+			  }
+			}
+			""";
+
+		using var putContent = new StringContent(Body(0, "you are a LEAF, never spawn subagents"), Encoding.UTF8, "application/json");
+		using var putResp = await _client.SendAsync(
+			Req(HttpMethod.Put, $"/api/{AgentDefsApiAuthzFixture.Proj}/agent-defs/notesrt",
+				AgentDefsApiAuthzFixture.KeyWrite, putContent));
+		var putBody = await putResp.Content.ReadAsStringAsync();
+		putResp.StatusCode.Should().Be(HttpStatusCode.OK, putBody);
+
+		using var getResp = await _client.SendAsync(
+			Req(HttpMethod.Get, $"/api/{AgentDefsApiAuthzFixture.Proj}/agent-defs/notesrt", AgentDefsApiAuthzFixture.KeyRead));
+		var getBody = await getResp.Content.ReadAsStringAsync();
+		getResp.StatusCode.Should().Be(HttpStatusCode.OK, getBody);
+		getBody.Should().Contain("you are a LEAF, never spawn subagents",
+			"the role's notes must survive the PUT -> GET round trip, not be silently dropped");
+
+		using var ackDoc = System.Text.Json.JsonDocument.Parse(putBody);
+		var version = ackDoc.RootElement.GetProperty("version").GetInt64();
+
+		// A resubmit differing ONLY in notes must produce changed:true (notes are part of the
+		// stored payload, not stripped before the same-payload comparison).
+		using var putContent2 = new StringContent(Body(version, "a completely different briefing"), Encoding.UTF8, "application/json");
+		using var putResp2 = await _client.SendAsync(
+			Req(HttpMethod.Put, $"/api/{AgentDefsApiAuthzFixture.Proj}/agent-defs/notesrt",
+				AgentDefsApiAuthzFixture.KeyWrite, putContent2));
+		var putBody2 = await putResp2.Content.ReadAsStringAsync();
+		putResp2.StatusCode.Should().Be(HttpStatusCode.OK, putBody2);
+		using var ackDoc2 = System.Text.Json.JsonDocument.Parse(putBody2);
+		ackDoc2.RootElement.GetProperty("changed").GetBoolean().Should()
+			.BeTrue("two documents differing only in notes must not canonicalize to the same stored payload");
+	}
 }

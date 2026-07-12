@@ -82,7 +82,11 @@ export function buildRoleBody(role: AgentRole): string {
       : "(any)";
     lines.push(`- Allowed. Target roles: ${allowed}.`);
   } else {
-    lines.push("- Not allowed (leaf role).");
+    lines.push(
+      "- Not allowed. This is a leaf role: you MUST NOT spawn subagents " +
+        "(no Agent/Task/spawn tool use of any kind), regardless of what tools the " +
+        "harness makes available to this session.",
+    );
   }
   lines.push("");
 
@@ -111,19 +115,20 @@ export function buildRoleBody(role: AgentRole): string {
 
 /**
  * Claude Code / opencode agent markdown (YAML frontmatter + body).
+ * name: <role.slug> is the required first key — without it Claude Code will not
+ * register the file as an agent at all (mirrors renderDroidMarkdown's `name:`).
  * model only when bound — never invent a model id.
+ * No `tools:` key: omitting it means the agent inherits the harness's full tool
+ * set, including MCP — that is the intended policy (see harness-capabilities.ts).
  */
 export function renderAgentMarkdown(role: AgentRole, model?: string): string {
-  const frontLines: string[] = [];
+  const frontLines: string[] = [`name: ${role.slug}`];
   if (model && model.trim()) {
     frontLines.push(`model: ${model.trim()}`);
   }
   frontLines.push(`description: PetBox ${role.tier} role (${role.slug})`);
 
   const body = buildRoleBody(role);
-  if (frontLines.length === 0) {
-    return body.endsWith("\n") ? body : body + "\n";
-  }
   return `---\n${frontLines.join("\n")}\n---\n\n${body.endsWith("\n") ? body : body + "\n"}`;
 }
 
