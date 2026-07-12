@@ -50,7 +50,7 @@ public static class SearchTools
 		[Description("memory | tasks | all (default all — every tier whose feature is enabled).")] string? tier = null,
 		CancellationToken ct = default)
 	{
-		var project = ModuleMcp.ResolveProject(http, projectKey);
+		var project = await ModuleMcp.ResolveProject(http, projectKey, ct);
 		var requested = Parse(tier);
 
 		// `all` covers the tiers this deployment actually has switched on; an EXPLICIT tier whose

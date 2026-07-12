@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http;
 using PetBox.Core.Auth;
+using PetBox.Core.Data;
 
 namespace PetBox.Data;
 
@@ -9,17 +10,17 @@ namespace PetBox.Data;
 //
 // ApiKeyAuthenticationHandler emits the claim under the literal "project"
 // (not the PetBoxClaims constant); matches the same convention as AuthApi.
+//
+// AuthorizesAsync also enforces the sandbox write gate (spec
+// work/smoke-writes-into-real-projects): a SandboxOnly key additionally needs projectKey to name
+// a Project.Sandbox = true row.
 internal static class DataAuth
 {
-	public static bool AuthorizeProject(HttpContext ctx, string projectKey, out IResult forbid)
+	public static async Task<(bool Ok, IResult? Forbid)> AuthorizeProjectAsync(
+		HttpContext ctx, string projectKey, IProjectCatalog catalog, CancellationToken ct)
 	{
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
-		{
-			forbid = Results.Forbid();
-			return false;
-		}
-		forbid = null!;
-		return true;
+		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
+			return (false, Results.Forbid());
+		return (true, null);
 	}
 }

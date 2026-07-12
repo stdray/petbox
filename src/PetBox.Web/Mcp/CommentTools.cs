@@ -67,7 +67,7 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 
 		// Resolve each CREATE item's node ref (slug on `board` → 32-hex NodeId) at the adapter, so
@@ -107,7 +107,7 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
@@ -139,7 +139,7 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var d = await comments.DeltaAsync(projectKey, board, sinceVersion, ct);
 		return new CommentsUpsertResult(
@@ -159,7 +159,7 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksRead);
 		var c = await comments.GetAsync(projectKey, id, ct)
 			?? throw new InvalidOperationException($"comment '{id}' not found or already deleted in project '{projectKey}'");
@@ -174,7 +174,7 @@ public static class CommentTools
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
-		ModuleMcp.AssertProject(http, projectKey);
+		await ModuleMcp.AssertProject(http, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.TasksWrite);
 		return new CommentDeleteResult(await comments.DeleteAsync(projectKey, board, id, ct));
 	}

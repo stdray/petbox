@@ -44,6 +44,12 @@ public interface IProjectCatalog
 
 	// Projects that have at least one task board registered (core.db `TaskBoards`).
 	Task<IReadOnlyList<string>> ListTaskProjectKeysAsync(CancellationToken ct = default);
+
+	// The containment half of the sandbox write gate (spec work/smoke-writes-into-real-projects):
+	// does `projectKey` name a project with Projects.Sandbox = true? A project that does not exist
+	// at all is NOT sandbox (false, not an error) — ProjectScope.AuthorizesAsync then denies, same
+	// as any other unknown-project write, and callers don't need a separate not-found branch.
+	Task<bool> IsSandboxAsync(string projectKey, CancellationToken ct = default);
 }
 
 public sealed class ProjectCatalog : IProjectCatalog
@@ -63,4 +69,7 @@ public sealed class ProjectCatalog : IProjectCatalog
 
 	public async Task<IReadOnlyList<string>> ListTaskProjectKeysAsync(CancellationToken ct = default) =>
 		await _db.TaskBoards.Select(b => b.ProjectKey).Distinct().OrderBy(k => k).ToListAsync(ct);
+
+	public async Task<bool> IsSandboxAsync(string projectKey, CancellationToken ct = default) =>
+		await _db.Projects.AnyAsync(p => p.Key == projectKey && p.Sandbox, ct);
 }

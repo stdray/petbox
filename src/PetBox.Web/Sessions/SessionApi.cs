@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
+using PetBox.Core.Data;
 using PetBox.Sessions.Contract;
 
 namespace PetBox.Web.Sessions;
@@ -56,10 +57,9 @@ public static class SessionApi
 	}
 
 	static async Task<IResult> ListAsync(
-		HttpContext ctx, string projectKey, ISessionService sessions, CancellationToken ct)
+		HttpContext ctx, string projectKey, ISessionService sessions, IProjectCatalog catalog, CancellationToken ct)
 	{
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
+		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
 			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:read"))
@@ -71,10 +71,9 @@ public static class SessionApi
 	}
 
 	static async Task<IResult> UpsertAsync(
-		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
+		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, IProjectCatalog catalog, CancellationToken ct)
 	{
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
+		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
 			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))
@@ -103,10 +102,9 @@ public static class SessionApi
 	// Incremental push: the body is the same ndjson message stream, `fromOrdinal` (query) is the
 	// ordinal the batch starts at. Overlap applies idempotently; a gap 409s with the server cursor.
 	static async Task<IResult> AppendAsync(
-		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
+		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, IProjectCatalog catalog, CancellationToken ct)
 	{
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
+		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
 			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))
@@ -158,10 +156,9 @@ public static class SessionApi
 
 	// Soft delete; a later push of the same sessionId resurrects it. Mirrors session_delete.
 	static async Task<IResult> DeleteAsync(
-		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, CancellationToken ct)
+		HttpContext ctx, string projectKey, string sessionId, ISessionService sessions, IProjectCatalog catalog, CancellationToken ct)
 	{
-		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		if (!ProjectScope.Authorizes(claim, projectKey))
+		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
 			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split([',', ' ', ';'], StringSplitOptions.RemoveEmptyEntries).Contains("tasks:write"))

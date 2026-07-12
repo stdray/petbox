@@ -90,7 +90,13 @@ public sealed class PetBoxDb : DataConnection
 			.Property(p => p.Key).HasLength(100).IsNullable(false)
 			.Property(p => p.WorkspaceKey).HasLength(100).IsNullable(false)
 			.Property(p => p.Name).HasLength(200).IsNullable(false)
-			.Property(p => p.Description).HasLength(1000);
+			.Property(p => p.Description).HasLength(1000)
+			// Same reason as ApiKey.DefaultProjectKey below: an undeclared column on a
+			// partially-Fluent entity is dropped from the schema cache, so INSERT silently omits it
+			// and every read comes back the CLR default (false) regardless of what was stored —
+			// which is exactly the sandbox write gate's containment column (M041), so a dropped
+			// mapping here would have made every project look non-sandbox forever.
+			.Property(p => p.Sandbox).IsNullable(false);
 
 		builder.Entity<ApiKey>()
 			.HasTableName("ApiKeys")
@@ -105,7 +111,11 @@ public sealed class PetBoxDb : DataConnection
 			// Same reason: an undeclared column on a partially-Fluent entity is dropped from the
 			// schema cache, so INSERT would omit it and the default project would silently vanish.
 			.Property(a => a.DefaultProjectKey).HasLength(100).IsNullable(true)
-			.Property(a => a.CreatedAt).IsNullable(false);
+			.Property(a => a.CreatedAt).IsNullable(false)
+			// M042 (spec work/smoke-writes-into-real-projects) — same "dropped from the schema
+			// cache" trap: without this, a sandboxOnly key would mint fine but persist/read back
+			// SandboxOnly=false, silently defeating the write gate for every minted key.
+			.Property(a => a.SandboxOnly).IsNullable(false);
 
 		builder.Entity<DataTable>()
 			.HasTableName("DataTables")

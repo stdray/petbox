@@ -45,6 +45,7 @@ public sealed class ConfigBindingUniformVerbsTests : IDisposable
 			HttpContext = new DefaultHttpContext
 			{
 				User = new ClaimsPrincipal(new ClaimsIdentity([new Claim("scopes", "admin:provision")], "test")),
+				RequestServices = TestProjectCatalog.Services,
 			},
 		};
 
