@@ -30,7 +30,7 @@ namespace PetBox.LlmRouter.Registry;
 // served by $system.
 public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 {
-	readonly PetBoxDb _db;
+	readonly DataOptions<PetBoxDb> _coreOptions;
 	readonly ISecretEncryptor _secrets;
 	readonly ISettingsResolver _settings;
 	readonly ILogger<LlmRegistryLevelResolver> _log;
@@ -41,7 +41,19 @@ public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 		ISettingsResolver settings,
 		ILogger<LlmRegistryLevelResolver> log)
 	{
-		_db = db;
+		// READ-ONLY resolver, but on the HOTTEST shared-connection path there is: EVERY embed (every
+		// hybrid search query) resolves the level, and that is 4+ round-trips (Projects, Settings x2 via
+		// ISettingsResolver, LlmRoutes, LlmEndpoints) — issued BEFORE the "no route" decision, so they
+		// happen even for a project with no routes at all. The injected PetBoxDb is AddScoped
+		// (Program.cs:101) — ONE non-thread-safe LinqToDB DataConnection per request — and this resolver
+		// sits under CapabilityRouter, which parallel fan-outs (CrossScopeTaskSearchService) drive from
+		// several branches of one request scope. So take a fresh, call-owned connection instead of the
+		// shared one: cloning the scoped connection's DataOptions keeps the provider, the connection
+		// string and the SHARED mapping schema (no per-connection MappingSchema — that was the prod OOM,
+		// see PetBoxDb.SharedMappingSchema) and Microsoft.Data.Sqlite pools the underlying connection.
+		// Same remedy as TaskBoardStore.cs:75. Belt AND braces: the fan-out now also gives each branch
+		// its own DI scope, but a scoped service must not be a landmine for the next parallel caller.
+		_coreOptions = new DataOptions<PetBoxDb>(db.Options);
 		_secrets = secrets;
 		_settings = settings;
 		_log = log;
@@ -49,7 +61,9 @@ public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 
 	public async Task<ResolvedRegistryLevel> ResolveAsync(string projectKey, CancellationToken ct = default)
 	{
-		var workspaceKey = await _db.Projects
+		using var db = new PetBoxDb(_coreOptions);
+
+		var workspaceKey = await db.Projects
 			.Where(p => p.Key == projectKey)
 			.Select(p => p.WorkspaceKey)
 			.FirstOrDefaultAsync(ct)
@@ -70,7 +84,7 @@ public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 		foreach (var level in chain)
 		{
 			var scope = level.Scope.ToString();
-			var routeRows = await _db.LlmRoutes
+			var routeRows = await db.LlmRoutes
 				.Where(r => r.Scope == scope && r.ScopeKey == level.ScopeKey)
 				.ToListAsync(ct);
 
@@ -79,7 +93,7 @@ public sealed partial class LlmRegistryLevelResolver : ILlmRegistryLevelResolver
 			// the first step of exactly the merge this design forbids).
 			if (routeRows.Count == 0) continue;
 
-			var endpointRows = await _db.LlmEndpoints
+			var endpointRows = await db.LlmEndpoints
 				.Where(e => e.Scope == scope && e.ScopeKey == level.ScopeKey)
 				.ToListAsync(ct);
 

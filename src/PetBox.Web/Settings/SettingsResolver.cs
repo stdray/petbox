@@ -10,6 +10,18 @@ namespace PetBox.Web.Settings;
 
 public sealed class SettingsResolver(PetBoxDb db, ISecretEncryptor encryptor) : ISettingsResolver
 {
+	// The READ path takes a fresh, call-owned connection instead of the injected scoped PetBoxDb
+	// (AddScoped, Program.cs:101 — ONE LinqToDB DataConnection per request, and a DataConnection is
+	// NOT thread-safe). GetAsync is reached from parallel branches of one request scope: the
+	// cross-scope search fan-out drives CapabilityRouter -> LlmRegistryLevelResolver ->
+	// ISettingsResolver.GetAsync on EVERY embed, i.e. on every query. Cloning the scoped
+	// connection's DataOptions keeps the provider, the connection string and the SHARED mapping
+	// schema, and Microsoft.Data.Sqlite pools the underlying connection (same remedy as
+	// TaskBoardStore.cs:75). The WRITE path (SetAsync/ResetAsync) stays on the injected connection:
+	// it is an admin-page single-threaded path, and it must remain able to join whatever the
+	// request's connection is doing.
+	readonly DataOptions<PetBoxDb> _readOptions = new(db.Options);
+
 	public async Task<T> GetAsync<T>(Scope deepestScope, string deepestScopeKey, CancellationToken ct = default)
 		where T : new()
 	{
@@ -17,12 +29,14 @@ public sealed class SettingsResolver(PetBoxDb db, ISecretEncryptor encryptor) : 
 		var props = SettingPropertyCache.Get(typeof(T));
 		if (props.Count == 0) return result;
 
+		using var read = new PetBoxDb(_readOptions);
+
 		foreach (var prop in props)
 		{
-			var chain = await BuildChainAsync(deepestScope, deepestScopeKey, prop.Attribute.TopLevel, ct);
+			var chain = await BuildChainAsync(read, deepestScope, deepestScopeKey, prop.Attribute.TopLevel, ct);
 			foreach (var (scope, scopeKey) in chain)
 			{
-				var row = await db.Settings.FirstOrDefaultAsync(
+				var row = await read.Settings.FirstOrDefaultAsync(
 					s => s.Scope == scope.ToString()
 						&& s.ScopeKey == scopeKey
 						&& s.Path == prop.Attribute.Key,
@@ -96,7 +110,8 @@ public sealed class SettingsResolver(PetBoxDb db, ISecretEncryptor encryptor) : 
 			.DeleteAsync(ct);
 	}
 
-	async Task<List<(Scope Scope, string ScopeKey)>> BuildChainAsync(Scope deepest, string deepestKey, Scope topLevel, CancellationToken ct)
+	// `read` is the caller's own connection (see GetAsync) — never the shared scoped one.
+	static async Task<List<(Scope Scope, string ScopeKey)>> BuildChainAsync(PetBoxDb read, Scope deepest, string deepestKey, Scope topLevel, CancellationToken ct)
 	{
 		// Skip scopes finer than the property's TopLevel — they're not reachable for this property.
 		var chain = new List<(Scope, string)>();
@@ -111,7 +126,7 @@ public sealed class SettingsResolver(PetBoxDb db, ISecretEncryptor encryptor) : 
 				AddIfReachable(chain, Scope.System, "$", topLevel);
 				break;
 			case Scope.Project:
-				var ws = await db.Projects
+				var ws = await read.Projects
 					.Where(p => p.Key == deepestKey)
 					.Select(p => p.WorkspaceKey)
 					.FirstOrDefaultAsync(ct);
@@ -126,7 +141,7 @@ public sealed class SettingsResolver(PetBoxDb db, ISecretEncryptor encryptor) : 
 				{
 					var projKey = deepestKey[..slash];
 					AddIfReachable(chain, Scope.Project, projKey, topLevel);
-					var svcWs = await db.Projects
+					var svcWs = await read.Projects
 						.Where(p => p.Key == projKey)
 						.Select(p => p.WorkspaceKey)
 						.FirstOrDefaultAsync(ct);

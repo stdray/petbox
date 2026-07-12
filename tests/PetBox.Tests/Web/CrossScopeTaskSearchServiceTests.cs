@@ -25,6 +25,7 @@ public sealed class CrossScopeTaskSearchServiceTests : IDisposable
 	readonly PetBoxDb _db;
 	readonly ScopedDbFactory<TasksDb> _factory;
 	readonly TasksService _tasks;
+	readonly Microsoft.Extensions.DependencyInjection.ServiceProvider _sp;
 
 	public CrossScopeTaskSearchServiceTests()
 	{
@@ -40,10 +41,12 @@ public sealed class CrossScopeTaskSearchServiceTests : IDisposable
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		var store = new TaskBoardStore(_db, _factory);
 		_tasks = new TasksService(store, new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
+		_sp = CrossScopeTestHost.SharedTasksService(_tasks);
 	}
 
 	public void Dispose()
 	{
+		_sp.Dispose();
 		_db.Dispose();
 		_factory.DisposeAsync().AsTask().GetAwaiter().GetResult();
 		TestDirs.CleanupOrDefer(_dir);
@@ -70,8 +73,11 @@ public sealed class CrossScopeTaskSearchServiceTests : IDisposable
 
 	sealed record UpsertResultView(IReadOnlyList<(string Key, string NodeId)> Added);
 
-	CrossScopeTaskSearchService CoreOnly() =>
-		new(nav: null!, http: null!, tasks: _tasks);
+	// Built through DI, like production (Program.cs:500) — the fan-out resolves ITasksService per
+	// branch out of its own IServiceScope, so it can no longer be handed one by `new`. Here every
+	// branch gets the SAME TasksService instance (these tests are about fan-out/merge semantics,
+	// not about connection isolation — that is CrossScopeSearchFanOutIntegrationTests' job).
+	CrossScopeTaskSearchService CoreOnly() => _sp.Search();
 
 	[Fact]
 	public async Task AccessScoping_ExcludesProjectsOutsideTheEnumeration()

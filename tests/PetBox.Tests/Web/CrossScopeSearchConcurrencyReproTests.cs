@@ -10,18 +10,32 @@ using PetBox.Web.Search;
 
 namespace PetBox.Tests.Web;
 
-// REPRO (prod bug, GET /ui/search?q=llm-l5 -> 500): the cross-scope fan-out
-// (CrossScopeTaskSearchService, up to MaxProjectConcurrency=6 branches in parallel) runs inside
-// ONE request scope against ONE scoped ITasksService, whose TaskBoardStore holds ONE scoped
-// PetBoxDb — a LinqToDB DataConnection, which is NOT thread-safe. Every full-text branch that
-// produces hits calls _boards.FindAsync (TasksService.cs:1457 -> TaskBoardStore.cs:96) on that
-// shared connection; overlapping calls corrupt the command's parameter list, which is why prod
-// threw "Must add values for the following parameters: @projectKey, @board" — precisely
-// FindAsync's two parameters.
+// REPRO (prod bug, GET /ui/search?q=llm-l5 -> 500) of the BOARD-META LEG ONLY — read the scope
+// note below before trusting this file.
 //
-// The embed leg is what ALIGNS the branches in prod (the trace shows 8 CapabilityRouter embed
-// calls, then the throw), so the fixture uses a deliberately slow stub embedder to reproduce
-// that alignment instead of relying on luck.
+// The cross-scope fan-out (CrossScopeTaskSearchService, up to MaxProjectConcurrency=6 branches in
+// parallel) runs inside ONE request scope against ONE scoped ITasksService, whose TaskBoardStore
+// holds ONE scoped PetBoxDb — a LinqToDB DataConnection, which is NOT thread-safe. Every full-text
+// branch that produces hits calls _boards.FindAsync (TasksService.cs:1457 -> TaskBoardStore.cs:96)
+// on that shared connection; overlapping calls corrupt the command's parameter list, which is why
+// prod threw "Must add values for the following parameters: @projectKey, @board" — precisely
+// FindAsync's two parameters. That leg is pinned here, and it stays pinned: the fixture hands every
+// branch the SAME TasksService (CrossScopeTestHost.SharedTasksService), so this test proves
+// TaskBoardStore's own-connection fix directly, not merely the per-branch DI scope in front of it.
+//
+// WHAT THIS TEST DOES NOT COVER — and why it was green while the bug was still open. It substitutes
+// SlowStubEmbedder for ILlmClient, i.e. it stubs out EXACTLY the component the second head of the
+// race lives in: in production the embed leg goes CapabilityRouter -> LlmRegistryLevelResolver ->
+// SettingsResolver, all AddScoped, all holding that same PetBoxDb, and it issues 4+ reads on it per
+// query (even for a project with no routes — the reads happen BEFORE the "no route" decision). With
+// a stub embedder none of that runs. It also asserts NotThrow, which cannot see this leg at all:
+// the search facade catches a failing index (degrade honestly) and the fan-out catches a failing
+// branch, so the embed race manifests as MISSING ROWS and a log line, never as an exception.
+//   -> The embed leg is covered by LlmRegistryResolverRaceReproTests (the primitives + the real DI
+//      graph) and by CrossScopeSearchFanOutIntegrationTests (the fan-out over the REAL router,
+//      asserting a hit from every project and zero degradation). Do not widen this file to cover
+//      it — a stub embedder here is the point; the false sense of safety came from pretending
+//      otherwise.
 public sealed class CrossScopeSearchConcurrencyReproTests : IDisposable
 {
 	const int Projects = 8;
@@ -70,7 +84,8 @@ public sealed class CrossScopeSearchConcurrencyReproTests : IDisposable
 				.ToList(),
 		};
 
-		var svc = new CrossScopeTaskSearchService(nav: null!, http: null!, tasks: _tasks);
+		using var sp = CrossScopeTestHost.SharedTasksService(_tasks);
+		var svc = sp.Search();
 
 		var act = async () =>
 		{
@@ -78,6 +93,9 @@ public sealed class CrossScopeSearchConcurrencyReproTests : IDisposable
 				await svc.SearchAsync(scope, "llm", "https", "box.test");
 		};
 
+		// NotThrow is the RIGHT assertion for THIS leg only: TaskBoardStore's reads are NOT behind a
+		// swallowing catch, so a race there escapes the branch. (For the embed leg it would be the
+		// wrong assertion — see the class note.)
 		await act.Should().NotThrowAsync(
 			"the cross-scope fan-out must not use one scoped PetBoxDb from several threads at once");
 	}
