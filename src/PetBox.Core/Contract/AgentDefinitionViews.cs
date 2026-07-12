@@ -18,12 +18,17 @@ public sealed record AgentDefinitionEscalation(
 	bool Available,
 	IReadOnlyList<string>? Targets = null);
 
+// Notes: free-text prose for the role (e.g. a worker's "you are a LEAF, never spawn
+// subagents…" briefing). Optional — a role without notes never serializes an empty key
+// (DefaultIgnoreCondition = WhenWritingNull on AgentDefinitionJson.Options) and Validate
+// never requires it.
 public sealed record AgentDefinitionRole(
 	string Slug,
 	string Tier,
 	IReadOnlyList<string> RequiredCapabilities,
 	AgentDefinitionSpawn? Spawn = null,
-	AgentDefinitionEscalation? Escalation = null);
+	AgentDefinitionEscalation? Escalation = null,
+	string? Notes = null);
 
 public sealed record AgentDefinitionDoc(
 	string Name,

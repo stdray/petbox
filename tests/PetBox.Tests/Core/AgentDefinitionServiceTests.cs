@@ -230,9 +230,11 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 	}
 
 	// A definition carrying `notes` (every role of the TS client's DEFAULT_AGENT_DEFINITION does)
-	// plus arbitrary unknown fields at the root: the RAW path stores the caller's document, so
-	// they survive the round-trip instead of being dropped by re-serialization. The typed read is
-	// unchanged — the compilers still see only the schema.
+	// plus arbitrary unknown fields at the root: the RAW path stores the caller's document
+	// verbatim, so a root-level `notes` (not part of AgentDefinitionDoc's schema) and
+	// `futureFlag` survive as raw JSON even though the typed view doesn't project them. A
+	// role's `notes`, however, IS part of AgentDefinitionRole now — it survives both the raw
+	// JSON and the typed projection.
 	const string RosterWithUnknownFields = """
 		{
 		  "name": "default",
@@ -266,10 +268,13 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 		role.GetProperty("notes").GetString().Should().Be("does the work");
 		role.GetProperty("slug").GetString().Should().Be("worker");
 
-		// The typed view still projects the schema only — consumers are untouched.
+		// The typed view projects only what's in the schema — root-level `notes` (not part of
+		// AgentDefinitionDoc) is not exposed here — but a role's `notes` IS schema now and
+		// comes through the typed projection too.
 		var view = await _svc.GetAsync(Proj, "default");
 		view!.Definition.Name.Should().Be("default");
 		view.Definition.Roles.Should().ContainSingle(r => r.Slug == "worker");
+		view.Definition.Roles[0].Notes.Should().Be("does the work");
 	}
 
 	[Fact]
@@ -326,6 +331,91 @@ public sealed class AgentDefinitionServiceTests : IDisposable
 		(await act.Should().ThrowAsync<ArgumentException>())
 			.WithMessage("*model*not allowed*");
 		(await _svc.ListAsync(Proj)).Should().BeEmpty();
+	}
+
+	// The bug this guards: AgentDefinitionRole previously had no Notes member, so the TYPED
+	// upsert/get path (used by MCP agent_def_upsert/get and the REST PUT/GET) silently
+	// stripped a role's free-text prose on every round trip. Notes is now part of the schema
+	// itself (not an "unknown field" surviving only via the RAW path).
+	[Fact]
+	public async Task TypedUpsert_RoundTrips_RoleNotes()
+	{
+		var doc = new AgentDefinitionDoc("default",
+		[
+			new AgentDefinitionRole(
+				Slug: "worker",
+				Tier: "worker",
+				RequiredCapabilities: ["mcp"],
+				Notes: "you are a LEAF, never spawn subagents, do only the delegated task."),
+		]);
+
+		var ack = await _svc.UpsertAsync(Proj, "default", doc, 0);
+		ack.Changed.Should().BeTrue();
+
+		var view = await _svc.GetAsync(Proj, "default");
+		view.Should().NotBeNull();
+		view!.Definition.Roles.Should().ContainSingle();
+		view.Definition.Roles[0].Notes.Should()
+			.Be("you are a LEAF, never spawn subagents, do only the delegated task.");
+	}
+
+	[Fact]
+	public async Task TypedUpsert_RoleWithoutNotes_NotesIsNull()
+	{
+		var ack = await _svc.UpsertAsync(Proj, "default", SampleRoster(), 0);
+		ack.Changed.Should().BeTrue();
+
+		var view = await _svc.GetAsync(Proj, "default");
+		view!.Definition.Roles[0].Notes.Should().BeNull();
+	}
+
+	// Two documents differing ONLY in a role's `notes` must be treated as DIFFERENT payloads —
+	// notes participates in the stored/canonical form, it is not stripped before the
+	// same-payload comparison.
+	[Fact]
+	public async Task TypedUpsert_NotesOnlyDiff_ProducesChangedTrue()
+	{
+		static AgentDefinitionDoc RosterWithNotes(string notes) => new("default",
+		[
+			new AgentDefinitionRole(
+				Slug: "worker",
+				Tier: "worker",
+				RequiredCapabilities: ["mcp"],
+				Notes: notes),
+		]);
+
+		var ack = await _svc.UpsertAsync(Proj, "default", RosterWithNotes("first notes"), 0);
+		ack.Changed.Should().BeTrue();
+
+		var again = await _svc.UpsertAsync(Proj, "default", RosterWithNotes("completely different notes"), ack.Version);
+		again.Changed.Should().BeTrue("a role differing only in notes is a different stored payload");
+		again.Version.Should().BeGreaterThan(ack.Version);
+
+		var view = await _svc.GetAsync(Proj, "default");
+		view!.Definition.Roles[0].Notes.Should().Be("completely different notes");
+	}
+
+	// model-rejection must remain exactly as strict even when the role also carries notes.
+	[Fact]
+	public async Task Rejects_RoleModel_EvenWhenRoleCarriesNotes()
+	{
+		const string bad = """
+			{
+			  "name": "default",
+			  "roles": [
+			    {
+			      "slug": "worker",
+			      "tier": "worker",
+			      "requiredCapabilities": [],
+			      "notes": "prose that should not smuggle a model binding",
+			      "model": "claude-opus"
+			    }
+			  ]
+			}
+			""";
+		var act = () => _svc.UpsertJsonAsync(Proj, "default", bad, 0);
+		(await act.Should().ThrowAsync<ArgumentException>())
+			.WithMessage("*model*not allowed*");
 	}
 
 	[Fact]
