@@ -119,19 +119,15 @@ Task("Test")
 				throw new Exception($"Playwright install exited with code {exit}");
 		}
 
-		var testProjects = GetFiles("./tests/**/*.csproj");
-		foreach (var testProj in testProjects)
+		DotNetTest(solution, new DotNetTestSettings
 		{
-			DotNetTest(testProj.FullPath, new DotNetTestSettings
-			{
-				Configuration = configuration,
-				NoBuild = true,
-				// `research`-category tests are excluded from the default/CI run
-				// (they may hit the network, e.g. DuckDB `INSTALL fts`); run them
-				// explicitly with `dotnet test --filter Category=Research`.
-				Filter = "Category!=Research"
-			});
-		}
+			Configuration = configuration,
+			NoBuild = true,
+			// `research`-category tests are excluded from the default/CI run
+			// (they may hit the network, e.g. DuckDB `INSTALL fts`); run them
+			// explicitly with `dotnet test --filter Category=Research`.
+			Filter = "Category!=Research"
+		});
 	});
 
 // The image is built from the Dockerfile, which restores+publishes INSIDE the
@@ -563,17 +559,27 @@ Task("Dev")
 // A gate that cannot fail is not a gate. StartProcess returns the exit code — DISCARDING it
 // (as this task used to) made FormatVerify succeed even when `dotnet format` reported errors,
 // so it was a no-op even on the rare occasion something invoked it.
+//
+// Only the `whitespace` sub-command runs here, not the default (style + analyzers + whitespace).
+// .editorconfig only declares whitespace rules — charset, eol, indent/tabs, final-newline,
+// trim-trailing — it carries no style or analyzer severities. Style and analyzer enforcement
+// already lives in Directory.Build.props (AnalysisMode=All + EnforceCodeStyleInBuild=true +
+// TreatWarningsAsErrors=true), so the Build task fails on those diagnostics itself. Running
+// `dotnet format`'s style/analyzer passes here would just re-run diagnostics Build already
+// gates on — for ~50s of the ~80s FormatVerify budget, paid twice for nothing.
+//
+// Depends on the shared Restore task instead of restoring inline: Cake dedupes tasks across a
+// single run, so when Validate pulls in both FormatVerify and Test, Restore (and the Clean it
+// depends on) executes once and both tasks see the same restored packages — no wasted second
+// restore, and Clean runs before either consumer touches the tree.
 Task("FormatVerify")
+	.IsDependentOn("Restore")
 	.Does(() =>
 	{
-		var restoreExit = StartProcess("dotnet", $"restore {solution}");
-		if (restoreExit != 0)
-			throw new CakeException($"dotnet restore failed with exit code {restoreExit}");
-
-		var formatExit = StartProcess("dotnet", $"format {solution} --verify-no-changes --no-restore");
+		var formatExit = StartProcess("dotnet", $"format whitespace {solution} --verify-no-changes --no-restore");
 		if (formatExit != 0)
 			throw new CakeException(
-				$"dotnet format --verify-no-changes failed with exit code {formatExit} — run `dotnet format` and commit the result");
+				$"dotnet format whitespace --verify-no-changes failed with exit code {formatExit} — run `dotnet format whitespace` and commit the result");
 	});
 
 // The .NET gate, and the single place that defines what "the code is OK" means. CI runs THIS,

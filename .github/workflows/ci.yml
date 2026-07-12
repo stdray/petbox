@@ -46,6 +46,17 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
           restore-keys: nuget-${{ runner.os }}-
 
+      # Caches the compiled build.cs + Cake.Sdk source-generator output — the Cake file-based
+      # app's runfile build dir, ~27s of uncached bootstrap per job before build.sh does
+      # anything. The dir is content-addressed (same hash appeared in both jobs of run
+      # 29185482723), so no restore-keys: a stale prefix match would just be a DIFFERENT
+      # build.cs's output.
+      - name: Cache Cake runfile build dir
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/dotnet/runfile
+          key: cake-runfile-${{ runner.os }}-${{ hashFiles('build.cs', 'global.json', '.config/dotnet-tools.json') }}
+
       # Cache the chromium binary Playwright downloads for the E2E suite so it isn't
       # re-fetched every run. The hosted runner already has Chrome's shared libs, so
       # the build skips `--with-deps` (the slow apt-get) via --playwrightWithDeps=false.
@@ -97,6 +108,17 @@ jobs:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', 'Directory.Packages.props', 'global.json') }}
           restore-keys: nuget-${{ runner.os }}-
+
+      # Caches the compiled build.cs + Cake.Sdk source-generator output — the Cake file-based
+      # app's runfile build dir, ~27s of uncached bootstrap per job before build.sh does
+      # anything. The dir is content-addressed (same hash appeared in both jobs of run
+      # 29185482723), so no restore-keys: a stale prefix match would just be a DIFFERENT
+      # build.cs's output.
+      - name: Cache Cake runfile build dir
+        uses: actions/cache@v4
+        with:
+          path: ~/.local/share/dotnet/runfile
+          key: cake-runfile-${{ runner.os }}-${{ hashFiles('build.cs', 'global.json', '.config/dotnet-tools.json') }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
