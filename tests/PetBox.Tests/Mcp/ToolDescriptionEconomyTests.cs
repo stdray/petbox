@@ -213,8 +213,8 @@ public sealed class ToolDescriptionEconomyWireTests : IClassFixture<ToolDescript
 		var desc = _fx.Tools["tasks_upsert"].ProtocolTool.Description!;
 		desc.Should().Contain("WATERMARK");                 // head gotcha survives
 		desc.Should().Contain("headings").And.Contain("==headings=="); // GFM body-format trap is in the served head
-		// The "NOT literal \n" warning must READ as the two-character backslash+n, not a stray line
-		// break — a single-backslash bug turns "`\n`" into a real newline and this fails.
+																	   // The "NOT literal \n" warning must READ as the two-character backslash+n, not a stray line
+																	   // break — a single-backslash bug turns "`\n`" into a real newline and this fails.
 		desc.Should().Contain("`\\n`");
 		desc.Should().NotContain(McpToolDescriptions.Sentinel);
 		desc.Should().NotContain("autoResolved");           // deep detail is below the fold, not served

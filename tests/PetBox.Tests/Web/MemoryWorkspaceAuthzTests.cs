@@ -59,11 +59,15 @@ public sealed class MemoryWorkspaceAuthzFixture : IAsyncLifetime
 		// eve: Member of wsa only — not wsb.
 		var eveId = await db.InsertWithInt64IdentityAsync(new User
 		{
-			Username = "eve-mem", PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow,
+			Username = "eve-mem",
+			PasswordHash = PasswordHash,
+			CreatedAt = DateTime.UtcNow,
 		});
 		await db.InsertAsync(new WorkspaceMember
 		{
-			UserId = eveId, WorkspaceKey = "wsa", Role = WorkspaceRole.Member,
+			UserId = eveId,
+			WorkspaceKey = "wsa",
+			Role = WorkspaceRole.Member,
 		});
 	}
 

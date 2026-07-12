@@ -379,6 +379,7 @@ public sealed class LlmRegistryImportTests : IDisposable
 		public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 		public bool IsEnabled(MsLogLevel logLevel) => true;
 		public void Log<TState>(MsLogLevel logLevel, EventId eventId, TState state, Exception? exception,
-			Func<TState, Exception?, string> formatter) { }
+			Func<TState, Exception?, string> formatter)
+		{ }
 	}
 }

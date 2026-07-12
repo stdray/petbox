@@ -372,7 +372,11 @@ public sealed class KqlResultTests
 		var byId = rows.ToDictionary(r => (long)r[0]!, r => (long)r[1]!);
 		byId.Should().BeEquivalentTo(new Dictionary<long, long>
 		{
-			[1L] = 0L, [2L] = 2L, [3L] = 2L, [4L] = 4L, [5L] = 4L,
+			[1L] = 0L,
+			[2L] = 2L,
+			[3L] = 2L,
+			[4L] = 4L,
+			[5L] = 4L,
 		});
 	}
 

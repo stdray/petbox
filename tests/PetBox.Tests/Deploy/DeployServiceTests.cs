@@ -279,10 +279,10 @@ public sealed class DeployServiceTests : IDisposable
 	public async Task One_Copy_Per_Node_Is_Enforced()
 	{
 		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
-		await _svc.UpsertDeploymentAsync(new DeploymentInput(null, "bot", "proj", "n1","img1", DesiredState.Running, false, "", ""));
+		await _svc.UpsertDeploymentAsync(new DeploymentInput(null, "bot", "proj", "n1", "img1", DesiredState.Running, false, "", ""));
 
 		var act = async () => await _svc.UpsertDeploymentAsync(
-			new DeploymentInput(null, "bot", "proj", "n1","img2", DesiredState.Running, false, "", ""));
+			new DeploymentInput(null, "bot", "proj", "n1", "img2", DesiredState.Running, false, "", ""));
 		await act.Should().ThrowAsync<InvalidOperationException>();
 	}
 
@@ -290,7 +290,7 @@ public sealed class DeployServiceTests : IDisposable
 	public async Task Update_Existing_Deployment_By_Id_Does_Not_Collide_With_Itself()
 	{
 		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
-		var created = await _svc.UpsertDeploymentAsync(new DeploymentInput(null, "bot", "proj", "n1","img1", DesiredState.Running, false, "", ""));
+		var created = await _svc.UpsertDeploymentAsync(new DeploymentInput(null, "bot", "proj", "n1", "img1", DesiredState.Running, false, "", ""));
 		var updated = await _svc.UpsertDeploymentAsync(new DeploymentInput(created.Id, "bot", "proj", "n1", "img2", DesiredState.Stopped, false, "", ""));
 		updated.Id.Should().Be(created.Id);
 		updated.ImageDigest.Should().Be("img2");
@@ -353,7 +353,7 @@ public sealed class DeployServiceTests : IDisposable
 	public async Task DeleteNode_Cascades_Deployments()
 	{
 		await _svc.UpsertNodeAsync(new NodeInput("n1", "N1", "", false));
-		await _svc.UpsertDeploymentAsync(new DeploymentInput(null, "bot", "proj", "n1","img1", DesiredState.Running, false, "", ""));
+		await _svc.UpsertDeploymentAsync(new DeploymentInput(null, "bot", "proj", "n1", "img1", DesiredState.Running, false, "", ""));
 		(await _svc.DeleteNodeAsync("n1")).Should().BeTrue();
 		(await _svc.GetNodeAsync("n1")).Should().BeNull();
 		(await _svc.ListDeploymentsAsync()).Should().BeEmpty();

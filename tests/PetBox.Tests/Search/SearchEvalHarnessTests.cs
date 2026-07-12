@@ -77,8 +77,8 @@ public sealed class SearchEvalHarnessTests : IDisposable
 		report.HitRateAtK.Should().Be(1.0);
 		report.RecallAtK.Should().Be(1.0);
 		report.MrrAtK.Should().Be(1.0); // each query's sole relevant hit lands at rank 1
-		// Provenance: only the lexical Class-A index is wired → lexical ran on every query,
-		// semantic never, nothing degraded.
+										// Provenance: only the lexical Class-A index is wired → lexical ran on every query,
+										// semantic never, nothing degraded.
 		report.LexicalQueries.Should().Be(4);
 		report.SemanticQueries.Should().Be(0);
 		report.DegradedQueries.Should().Be(0);

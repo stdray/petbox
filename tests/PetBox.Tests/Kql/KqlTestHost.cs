@@ -55,24 +55,24 @@ public sealed class KqlLogHost : IDisposable
 		switch (backend)
 		{
 			case KqlBackend.Sqlite:
-			{
-				var connectionString =
-					$"Data Source=file:petbox-kql-{Guid.NewGuid():N}?mode=memory&cache=shared";
-				_keepAlive = new SqliteConnection(connectionString);
-				_keepAlive.Open();
-				LogSchema.Ensure(connectionString);
-				_db = new LogDb(LogDb.CreateOptions(connectionString));
-				break;
-			}
+				{
+					var connectionString =
+						$"Data Source=file:petbox-kql-{Guid.NewGuid():N}?mode=memory&cache=shared";
+					_keepAlive = new SqliteConnection(connectionString);
+					_keepAlive.Open();
+					LogSchema.Ensure(connectionString);
+					_db = new LogDb(LogDb.CreateOptions(connectionString));
+					break;
+				}
 			// Real DuckDb store: one LogDb over DuckDB's per-connection `:memory:` DB. linq2db holds the
 			// single connection open for the DataConnection's lifetime, so the schema created by
 			// LogSchemaDuckDb.Ensure and the rows seeded by BulkCopy(KeepIds) survive to the queries.
 			case KqlBackend.DuckDb:
-			{
-				_db = new LogDb(LogDb.CreateDuckDbOptions("DataSource=:memory:"));
-				LogSchemaDuckDb.Ensure(_db);
-				break;
-			}
+				{
+					_db = new LogDb(LogDb.CreateDuckDbOptions("DataSource=:memory:"));
+					LogSchemaDuckDb.Ensure(_db);
+					break;
+				}
 			default:
 				throw new ArgumentOutOfRangeException(nameof(backend));
 		}

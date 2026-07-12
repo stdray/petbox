@@ -352,26 +352,26 @@ public sealed partial class MethodologyInstanceService
 		switch (source)
 		{
 			case SourceBuiltin:
-			{
-				var slug = sourceKey.Trim().ToLowerInvariant();
-				// Accept "preset:quartet" sugar too.
-				if (slug.StartsWith("preset:", StringComparison.Ordinal))
-					slug = slug["preset:".Length..].Trim();
-				return MethodologyPresets.RenderBuiltinTemplate(slug);
-			}
+				{
+					var slug = sourceKey.Trim().ToLowerInvariant();
+					// Accept "preset:quartet" sugar too.
+					if (slug.StartsWith("preset:", StringComparison.Ordinal))
+						slug = slug["preset:".Length..].Trim();
+					return MethodologyPresets.RenderBuiltinTemplate(slug);
+				}
 			case SourceTemplate:
-			{
-				var view = await _templates.GetAsync(projectKey, sourceKey, ct)
-					?? throw new ArgumentException(
-						$"methodology template '{sourceKey}' not found — use a stored key, a builtin (quartet|classic|simple), or source=builtin");
-				return view.Definition;
-			}
+				{
+					var view = await _templates.GetAsync(projectKey, sourceKey, ct)
+						?? throw new ArgumentException(
+							$"methodology template '{sourceKey}' not found — use a stored key, a builtin (quartet|classic|simple), or source=builtin");
+					return view.Definition;
+				}
 			case SourceInstance:
-			{
-				var def = await GetDefinitionAsync(projectKey, sourceKey, allowClosed: true, ct)
-					?? throw new ArgumentException($"methodology instance '{sourceKey}' not found — cannot snapshot");
-				return def;
-			}
+				{
+					var def = await GetDefinitionAsync(projectKey, sourceKey, allowClosed: true, ct)
+						?? throw new ArgumentException($"methodology instance '{sourceKey}' not found — cannot snapshot");
+					return def;
+				}
 			default:
 				throw new ArgumentException(
 					$"unknown methodology create source '{source}' — use builtin|template|instance (explicit; no silent default)");

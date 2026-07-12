@@ -57,9 +57,13 @@ public sealed class CommentService : ICommentService
 				var id = Guid.NewGuid().ToString("N");
 				desired.Add(new CommentRow
 				{
-					Key = id, Version = it.Version, Board = board, NodeId = it.NodeId!,
+					Key = id,
+					Version = it.Version,
+					Board = board,
+					NodeId = it.NodeId!,
 					ParentId = string.IsNullOrEmpty(it.ParentId) ? null : it.ParentId,
-					Author = it.Author ?? string.Empty, Body = it.Body,
+					Author = it.Author ?? string.Empty,
+					Body = it.Body,
 				});
 				itemByKey[id] = it;
 			}
@@ -207,9 +211,13 @@ public sealed class CommentService : ICommentService
 		var id = Guid.NewGuid().ToString("N");
 		var row = new CommentRow
 		{
-			Key = id, Version = 0, Board = board, NodeId = nodeId,
+			Key = id,
+			Version = 0,
+			Board = board,
+			NodeId = nodeId,
 			ParentId = string.IsNullOrEmpty(parentId) ? null : parentId,
-			Author = author ?? string.Empty, Body = body,
+			Author = author ?? string.Empty,
+			Body = body,
 		};
 		// Class-A lexical floor: index the comment INSIDE the entity tx (onWithinTx), so a
 		// committed comment is never lexically-stale and the FTS row rolls back with it —
