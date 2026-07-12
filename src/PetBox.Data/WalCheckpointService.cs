@@ -62,6 +62,15 @@ public sealed partial class WalCheckpointService(
 
 			try
 			{
+				// The ONE write path that deliberately runs WITHOUT the disk quota, and it must
+				// stay that way. Every user write goes through IDataDbFactory.OpenAsync, which
+				// re-applies PRAGMA max_page_count (it is per-connection, not stored in the file).
+				// This is maintenance: it only folds WAL pages that a QUOTA'D writer was already
+				// allowed to write into the main file, so it cannot smuggle a pet past its quota.
+				// Quota'ing it would be actively harmful: if a quota is ever lowered below a db's
+				// current size, the checkpoint would fail with SQLITE_FULL forever and the -wal
+				// sidecar would grow without bound — filling the disk by way of the very rule
+				// meant to prevent it. Do not "fix" this to use OpenAsync.
 				var cs = factory.GetConnectionString(entry.ProjectKey, entry.Name);
 				await using var conn = new SqliteConnection(cs);
 				await conn.OpenAsync(ct);
