@@ -4,36 +4,41 @@ using Microsoft.Data.Sqlite;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Data.Contract;
+using PetBox.Data.Schema;
 
 namespace PetBox.Data.Services;
 
 // The one executor for raw user SQL: verifies the DataDb exists, resolves its
-// connection string, binds parameters, and runs the reader / non-query. The PRAGMA
-// deny-list lives here so both the MCP tools and the REST endpoints enforce it.
+// connection string, binds parameters, and runs the reader / non-query / migration.
+// The PRAGMA deny-list lives here so both the MCP tools and the REST endpoints enforce it,
+// and every path opens its connection through the same quota'd OpenAsync below.
 public sealed class DataSqlService : IDataSqlService
 {
 	// PRAGMAs that escape the DB file or corrupt shared state. Default-allow otherwise,
 	// keeping the raw-SQL pass-through promise (cheaper to maintain than an allow-list).
+	// max_page_count is here because it IS the disk quota: it's per-connection state we
+	// re-apply on every open, so a pet raising it mid-request would lift its own quota.
 	static readonly HashSet<string> PragmaDenyList = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"writable_schema", "temp_store_directory", "data_store_directory", "trusted_schema",
+		"max_page_count",
 	};
 
 	readonly PetBoxDb _db;
 	readonly IDataDbFactory _factory;
+	readonly SchemaRunner _runner;
 
-	public DataSqlService(PetBoxDb db, IDataDbFactory factory)
+	public DataSqlService(PetBoxDb db, IDataDbFactory factory, SchemaRunner runner)
 	{
 		_db = db;
 		_factory = factory;
+		_runner = runner;
 	}
 
 	public async Task<IReadOnlyList<IReadOnlyDictionary<string, object?>>> QueryAsync(
 		string projectKey, string dbName, string sql, IReadOnlyList<SqlArg> parameters, int timeoutSeconds, CancellationToken ct = default)
 	{
-		var cs = await ResolveConnectionStringAsync(projectKey, dbName, ct);
-		await using var conn = new SqliteConnection(cs);
-		await conn.OpenAsync(ct);
+		await using var conn = await OpenAsync(projectKey, dbName, ct);
 		await using var cmd = conn.CreateCommand();
 		cmd.CommandText = sql;
 		cmd.CommandTimeout = timeoutSeconds;
@@ -58,9 +63,7 @@ public sealed class DataSqlService : IDataSqlService
 		if (IsBlockedPragma(sql, out var denied))
 			throw new DeniedPragmaException(denied!);
 
-		var cs = await ResolveConnectionStringAsync(projectKey, dbName, ct);
-		await using var conn = new SqliteConnection(cs);
-		await conn.OpenAsync(ct);
+		await using var conn = await OpenAsync(projectKey, dbName, ct);
 		await using var cmd = conn.CreateCommand();
 		cmd.CommandText = sql;
 		cmd.CommandTimeout = timeoutSeconds;
@@ -69,12 +72,23 @@ public sealed class DataSqlService : IDataSqlService
 		return await cmd.ExecuteNonQueryAsync(ct);
 	}
 
-	async Task<string> ResolveConnectionStringAsync(string projectKey, string dbName, CancellationToken ct)
+	public async Task<SchemaApplyResult> ApplySchemaAsync(
+		string projectKey, string dbName, string name, string sql, CancellationToken ct = default)
+	{
+		// Migration SQL writes, so it runs on the same quota'd connection as exec.
+		await using var conn = await OpenAsync(projectKey, dbName, ct);
+		return _runner.Apply(conn, name, sql);
+	}
+
+	// Verifies the DataDb exists and opens a connection with its size quota applied.
+	// PRAGMA max_page_count is per-connection state, so the quota from the DataDbs row
+	// has to be re-applied here on every request — see IDataDbFactory.
+	async Task<SqliteConnection> OpenAsync(string projectKey, string dbName, CancellationToken ct)
 	{
 		var row = await _db.DataDbs.FirstOrDefaultAsync(
 			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
 		if (row is null) throw new DataDbNotFoundException(projectKey, dbName);
-		return _factory.GetConnectionString(projectKey, dbName);
+		return await _factory.OpenAsync(projectKey, dbName, row.MaxPageCount, ct);
 	}
 
 	static void Bind(SqliteCommand cmd, IReadOnlyList<SqlArg> parameters)

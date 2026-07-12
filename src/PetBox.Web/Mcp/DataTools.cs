@@ -1,15 +1,10 @@
 using System.ComponentModel;
 using System.Text.Json;
-using LinqToDB;
-using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
 using PetBox.Core.Models;
-using PetBox.Data;
 using PetBox.Data.Contract;
-using PetBox.Data.Schema;
 using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
@@ -19,10 +14,11 @@ namespace PetBox.Web.Mcp;
 // delete/describe) lives in DataDbTools (kept separate so this type stays free of a
 // raw Microsoft.Data.Sqlite dependency — a NetArchTest enforces that).
 //
-// query/exec delegate to the shared IDataSqlService — the same execution path the
-// REST /api/data/* endpoints use — so the PRAGMA deny-list, parameter binding and
-// existence check live in one place (a NetArchTest keeps these tools off the raw
-// connection). schema_apply uses SchemaRunner (DbUp) directly. Tools throw on a failed
+// All three delegate to the shared IDataSqlService — the same execution path the
+// REST /api/data/* endpoints use — so the PRAGMA deny-list, parameter binding, the
+// existence check and the quota'd connection (PRAGMA max_page_count is per-connection)
+// live in one place, inside the Data module. This type never opens a connection itself;
+// a NetArchTest keeps it off Microsoft.Data.Sqlite entirely. Tools throw on a failed
 // Assert* (or a denied PRAGMA / SQL error); McpErrorEnvelopeFilter renders the {error} body.
 [McpServerToolType]
 public static class DataTools
@@ -31,9 +27,7 @@ public static class DataTools
 	[Description("Applies a named SQL migration via DbUp + hash-based idempotency. Re-applying with same name+sql is a no-op; same name with different sql is a 409-style conflict. Requires data:schema scope.")]
 	public static async Task<DataSchemaApplyResult> SchemaApplyAsync(
 		IHttpContextAccessor http,
-		PetBoxDb db,
-		IDataDbFactory factory,
-		SchemaRunner runner,
+		IDataSqlService dataSql,
 		string projectKey,
 		string dbName,
 		[Description("Migration script name. Used as journal key — same name = same migration.")] string name,
@@ -43,12 +37,7 @@ public static class DataTools
 		AssertProject(http, projectKey);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 
-		var row = await db.DataDbs.FirstOrDefaultAsync(
-			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
-		if (row is null) throw new InvalidOperationException("DataDb not found");
-
-		var cs = factory.GetConnectionString(projectKey, dbName);
-		var result = runner.Apply(cs, name, sql);
+		var result = await dataSql.ApplySchemaAsync(projectKey, dbName, name, sql, ct);
 		return new DataSchemaApplyResult(result.Kind.ToString(), result.Hash, result.ExistingHash, result.Error);
 	}
 

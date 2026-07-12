@@ -2,6 +2,7 @@ using DbUp;
 using DbUp.Builder;
 using DbUp.Engine;
 using DbUp.Engine.Output;
+using DbUp.Sqlite.Helpers;
 using Microsoft.Data.Sqlite;
 
 namespace PetBox.Data.Schema;
@@ -25,12 +26,17 @@ namespace PetBox.Data.Schema;
 //
 // The journal table name (`__SchemaVersions`) lives inside the DataDb file
 // itself, not in main PetBoxDb. Each DataDb owns its own migration history.
+//
+// The caller passes an OPEN connection (from IDataDbFactory.OpenAsync), not a
+// connection string: migration SQL writes, so it must run under the DataDb's
+// per-connection size quota. DbUp runs on that same connection via SharedConnection.
 public sealed class SchemaRunner
 {
 	public const string JournalTableName = "__SchemaVersions";
 
-	public SchemaApplyResult Apply(string connectionString, string name, string sql)
+	public SchemaApplyResult Apply(SqliteConnection connection, string name, string sql)
 	{
+		ArgumentNullException.ThrowIfNull(connection);
 		ArgumentException.ThrowIfNullOrWhiteSpace(name);
 		ArgumentNullException.ThrowIfNull(sql);
 
@@ -43,7 +49,7 @@ public sealed class SchemaRunner
 			return SchemaApplyResult.Failed("SQL parse error: " + ex.Message, hash: "");
 		}
 
-		var existing = ReadExistingHash(connectionString, name);
+		var existing = ReadExistingHash(connection, name);
 		if (existing is not null)
 		{
 			return existing == newHash
@@ -54,8 +60,10 @@ public sealed class SchemaRunner
 		try
 		{
 			var script = new SqlScript(name, sql);
+			// SharedConnection reuses the already-open, quota'd connection (and leaves it
+			// open — the caller owns it) instead of letting DbUp open an unquota'd one.
 			var engine = DeployChanges.To
-				.SqliteDatabase(connectionString)
+				.SqliteDatabase(new SharedConnection(connection))
 				.WithScripts(script)
 				.JournalTo((connMgr, log) => new SqliteHashingJournal(connMgr, log, JournalTableName))
 				.WithTransactionPerScript()
@@ -74,11 +82,8 @@ public sealed class SchemaRunner
 		}
 	}
 
-	static string? ReadExistingHash(string connectionString, string scriptName)
+	static string? ReadExistingHash(SqliteConnection conn, string scriptName)
 	{
-		using var conn = new SqliteConnection(connectionString);
-		conn.Open();
-
 		// The journal table may not exist yet — first script application creates it.
 		using var existsCmd = conn.CreateCommand();
 		existsCmd.CommandText =
