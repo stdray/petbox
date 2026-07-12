@@ -124,6 +124,15 @@ public static class MemoryTools
 			if (entry is not null)
 			{
 				usage.Opened(container, store, key);
+				// Delivery event (spec: usage-cost-and-fit-separate). A get sends the FULL body, so
+				// deliveredChars == bodyChars, it is the only row (rank 1), and it is a perfect fit
+				// by construction (the caller named the key): kRel = 1, with no fused score behind it.
+				usage.Delivered(container, [new MemoryDeliveryEvent(
+					Tool: "get", Scope: scopeName, Store: store, Key: key,
+					DeliveredChars: entry.Body.Length, BodyChars: entry.Body.Length,
+					RowChars: ResponseBudget.CostOf(entry),
+					Rank: 1, ScoreRaw: null, KRel: 1, SessionId: McpSessionId(http),
+					UsageSource: DeliberateSource)]);
 				return entry;
 			}
 		}
@@ -373,9 +382,11 @@ public static class MemoryTools
 		// pulls) records the softer, un-counted-toward-value signal (spec: memoverhaul).
 		var deliberate = !string.Equals(usageSource?.Trim(), "machine", StringComparison.OrdinalIgnoreCase);
 
-		// Each collected row carries its scope RANK (cascade order — project first) and fused
-		// relevance Score so we can HONESTLY merge across scopes below.
-		var scored = new List<(double Score, int ScopeRank, MemorySearchHitView Row)>();
+		// Each collected row carries its scope RANK (cascade order — project first), the fused
+		// relevance Score (so we can HONESTLY merge across scopes below) and the delivery FACTS
+		// the telemetry needs about the row that never reach the wire (its container, its full
+		// body length, its pre-decay fused score).
+		var scored = new List<(double Score, int ScopeRank, MemorySearchHitView Row, DeliveryFacts Facts)>();
 		// Aggregate provenance across every scope searched: lexical/semantic = OR of the
 		// legs that ran; degraded = OR (any leg that wanted semantic but couldn't).
 		SearchRetrievers? retrievers = null;
@@ -418,7 +429,7 @@ public static class MemoryTools
 			foreach (var h in res.Hits)
 			{
 				var u = includeUsage && usageMap.TryGetValue(h.Store + "\x1f" + h.Entry.Key, out var uv) ? uv : null;
-				scored.Add((h.Score, scopeRank, new MemorySearchHitView(scopeName, h.Store, h.Entry.Key, h.Entry.Type, h.Entry.Description,
+				var row = new MemorySearchHitView(scopeName, h.Store, h.Entry.Key, h.Entry.Type, h.Entry.Description,
 					// Uniform bodyLen contract, default a ~240-char snippet (compact listing).
 					ModuleMcp.Body(h.Entry.Body, bodyLen, ModuleMcp.DefaultSnippet), h.Entry.Tags, h.Entry.Version,
 					includeUsage ? (u?.Surfaced ?? 0) : null, includeUsage ? (u?.Opened ?? 0) : null, u?.LastHitAt,
@@ -426,7 +437,13 @@ public static class MemoryTools
 					// (compact — a number only). Null when it carries no session provenance.
 					SourcesCount(h.Entry.Metadata),
 					// Per-row relevance provenance (query mode only; null → omitted in a listing).
-					Score: hasQuery ? Math.Round(h.Score, 6) : null, Retriever: h.Retriever)));
+					Score: hasQuery ? Math.Round(h.Score, 6) : null, Retriever: h.Retriever);
+				// The service was asked for FULL bodies (BodyLen: 0), so h.Entry.Body is the whole
+				// entry — the denominator of "how much of it did this delivery actually send".
+				// ScoreRaw is the PRE-decay fused score (null in a listing: no relevance leg ran).
+				scored.Add((h.Score, scopeRank, row, new DeliveryFacts(
+					container, scopeName, h.Store, h.Entry.Key, h.Entry.Body.Length,
+					hasQuery ? h.ScoreRaw : null)));
 			}
 			// Impression = the rows a SEARCH answer returned (a listing is curation — not counted).
 			if (hasQuery)
@@ -440,7 +457,7 @@ public static class MemoryTools
 		// (re-sorting by raw score would undo its MMR diversification); a listing keeps the
 		// project-first cascade order it was collected in.
 		var multiScope = scored.Select(s => s.ScopeRank).Distinct().Count() > 1;
-		IEnumerable<(double Score, int ScopeRank, MemorySearchHitView Row)> orderedScored =
+		IEnumerable<(double Score, int ScopeRank, MemorySearchHitView Row, DeliveryFacts Facts)> orderedScored =
 			hasQuery && multiScope
 				// Quantize the score so genuine relevance/freshness gaps decide the order, but
 				// sub-threshold noise (two rank-0 hits whose Updated differ by milliseconds) ties
@@ -448,12 +465,24 @@ public static class MemoryTools
 				// stable, so within a scope the service's relevance/MMR order is preserved.
 				? scored.OrderByDescending(s => Math.Round(s.Score, 6)).ThenBy(s => s.ScopeRank)
 				: scored;
-		var rows = orderedScored.Select(s => s.Row).ToList();
-		if (cap > 0 && rows.Count > cap) rows = rows.Take(cap).ToList();
+		var ordered = orderedScored.ToList();
+		if (cap > 0 && ordered.Count > cap) ordered = ordered.Take(cap).ToList();
+		var rows = ordered.Select(s => s.Row).ToList();
 
 		// Response budget (MCP-adapter-only): measured on the wire form of the rows as they
 		// will be sent (bodies already sliced by the service), prefix-cut, marked — never silent.
 		var (kept, omitted) = new ResponseBudget().Take(rows);
+
+		// Delivery telemetry (spec: usage-cost-and-fit-separate) — recorded on what was ACTUALLY
+		// SENT: Take is a prefix cut, so the first kept.Count ordered rows are the answer. The
+		// enqueue is fire-and-forget (the recorder drains in the background), so the read path
+		// does not wait on it. Note this is a SEPARATE record point from the entry_usage
+		// impression above, which stays where it is (task: usage-record-what-was-sent).
+		RecordDeliveries(usage, ordered.Take(kept.Count).ToList(), scored,
+			tool: hasQuery ? "search" : "listing",
+			sessionId: McpSessionId(http),
+			usageSource: deliberate ? DeliberateSource : MachineSource);
+
 		return new MemorySearchResultView(
 			kept,
 			Retrievers: retrievers is { } fin ? new RetrieverInfo(fin.Lexical, fin.Semantic, fin.Degraded, fin.DegradedReason) : null,
@@ -464,6 +493,67 @@ public static class MemoryTools
 
 	// The bounded default of memory_search (both modes; spec bounded-result-sets).
 	const int DefaultLimit = 20;
+
+	// The usage-signal split, as recorded on a delivery event (mirrors entry_usage's
+	// deliberate/machine cut — see the `usageSource` argument of memory_search).
+	const string DeliberateSource = "deliberate";
+	const string MachineSource = "machine";
+
+	// What a delivered row costs and how well it fitted — the parts that never reach the wire:
+	// the CONTAINER it came from (the events land in that container's file), the entry's FULL
+	// body length (the denominator of "how much of it did we send"), and the PRE-decay fused
+	// score (null in a listing). The wire row carries the rest (scope/store/key/body).
+	readonly record struct DeliveryFacts(
+		string Container, string Scope, string Store, string Key, int BodyChars, double? ScoreRaw);
+
+	// One delivery event per row actually SENT (spec: usage-cost-and-fit-separate). Cost and fit
+	// stay separate and stay raw — no single "value" scalar is derived here.
+	//
+	// kRel normalizes fit WITHIN the request: ScoreRaw / the top-1 ScoreRaw of this same request.
+	// Raw RRF has no absolute scale (its ceiling is ~1/60 ≈ 0.033 — see HybridMerge), so a bare
+	// score is not comparable across requests; the denominator is taken over EVERY collected row
+	// (pre-cap, all scopes — RRF scores are rank-based and therefore comparable across
+	// containers), so it is the request's true best hit even when the cap dropped it. Rank is the
+	// row's 1-based position in the delivered answer — MMR reorders rows without touching their
+	// score, so rank and scoreRaw are two different facts and BOTH are stored.
+	static void RecordDeliveries(
+		IMemoryUsageRecorder usage,
+		IReadOnlyList<(double Score, int ScopeRank, MemorySearchHitView Row, DeliveryFacts Facts)> delivered,
+		IReadOnlyList<(double Score, int ScopeRank, MemorySearchHitView Row, DeliveryFacts Facts)> all,
+		string tool, string? sessionId, string usageSource)
+	{
+		if (delivered.Count == 0) return;
+		var top = all.Max(s => s.Facts.ScoreRaw ?? 0);
+		var events = new List<MemoryDeliveryEvent>(delivered.Count);
+		for (var i = 0; i < delivered.Count; i++)
+		{
+			var (_, _, row, f) = delivered[i];
+			events.Add(new MemoryDeliveryEvent(
+				Tool: tool, Scope: f.Scope, Store: f.Store, Key: f.Key,
+				// The body as SENT (the bodyLen contract already applied) vs the whole entry.
+				DeliveredChars: row.Body?.Length ?? 0, BodyChars: f.BodyChars,
+				// The row's whole wire price — description, tags, envelope and all.
+				RowChars: ResponseBudget.CostOf(row),
+				Rank: i + 1,
+				ScoreRaw: f.ScoreRaw,
+				// A degenerate top-1 (no relevance leg, or a zero score) leaves fit unknown rather
+				// than dividing by zero and claiming a perfect 1.
+				KRel: f.ScoreRaw is { } s && top > 0 ? s / top : null,
+				SessionId: sessionId,
+				UsageSource: usageSource));
+		}
+		// Rows of one answer may span containers (the project ⊕ workspace cascade): each event
+		// belongs in the file of the container it was read from.
+		foreach (var g in events.Zip(delivered, (e, d) => (Event: e, d.Facts.Container))
+			.GroupBy(x => x.Container, StringComparer.OrdinalIgnoreCase))
+			usage.Delivered(g.Key, g.Select(x => x.Event).ToList());
+	}
+
+	// The MCP streamable-HTTP session id (the same one McpTracingFilter logs), read off the
+	// request header — a tool method has no IMcpServer in scope, and it is null on a stateless
+	// transport, which the event stores as-is.
+	static string? McpSessionId(IHttpContextAccessor http) =>
+		http.HttpContext?.Request.Headers["Mcp-Session-Id"].FirstOrDefault();
 
 	// Surfaced on MemorySearchResultView.Hint when the rows were cut by the response budget.
 	const string SearchBudgetHint =

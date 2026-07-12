@@ -8,6 +8,24 @@ TABLE VersionInfo
   COL Version INTEGER NOT NULL
   INDEX UC_Version UNIQUE origin=c (Version)
 
+TABLE delivery_events
+  COL BodyChars INTEGER NOT NULL
+  COL DeliveredChars INTEGER NOT NULL
+  COL Id INTEGER NOT NULL PK1
+  COL KRel NUMERIC NULL
+  COL Key TEXT NOT NULL
+  COL Rank INTEGER NOT NULL
+  COL RowChars INTEGER NOT NULL
+  COL Scope TEXT NOT NULL
+  COL ScoreRaw NUMERIC NULL
+  COL SessionId TEXT NULL
+  COL Store TEXT NOT NULL
+  COL Tool TEXT NOT NULL
+  COL Ts TEXT NOT NULL
+  COL UsageSource TEXT NOT NULL
+  INDEX ix_delivery_events_entry origin=c (Store, Key)
+  INDEX ix_delivery_events_ts origin=c (Ts)
+
 TABLE entry_usage
   COL DeliberateCount INTEGER NOT NULL DEFAULT 0
   COL Key TEXT NOT NULL PK2

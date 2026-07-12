@@ -210,7 +210,10 @@ public sealed class MemoryService : IMemoryService
 			var vecs = _llm is null ? null : LoadVectors(projectKey, hits.Select(h => h.Entry).ToList());
 			selected.AddRange(hits.Select(h => new Candidate(h.Entry.Store, h.Entry, h.Score,
 				vecs is not null && vecs.TryGetValue((h.Entry.Store, h.Entry.Key), out var v) ? v : null,
-				h.LexicalConfirmed)));
+				h.LexicalConfirmed,
+				// The fused score as fusion produced it — RankRelevance overwrites Score with the
+				// decayed blend below; ScoreRaw is what survives for the delivery telemetry.
+				ScoreRaw: h.Score)));
 		}
 		if (query is not null) retrievers ??= new SearchRetrievers(false, false, false);
 
@@ -229,7 +232,8 @@ public sealed class MemoryService : IMemoryService
 		var hits2 = selected.Select(x => new MemoryEntryHit(x.Store,
 			request.BodyLen > 0 ? View(x.Entry) with { Body = SnippetBody(x.Entry.Body, request.BodyLen) } : View(x.Entry),
 			x.Score,
-			query is null ? null : (x.LexicalConfirmed ? "lexical" : "semantic"))).ToList();
+			query is null ? null : (x.LexicalConfirmed ? "lexical" : "semantic"),
+			x.ScoreRaw)).ToList();
 		return new MemoryEntrySearchResult(hits2, retrievers);
 	}
 
@@ -237,8 +241,12 @@ public sealed class MemoryService : IMemoryService
 	// mode; 0 in a listing), the entry's vector (for MMR; null without an embedder / in a
 	// listing), and whether the lexical leg confirmed it (query mode — drives the semantic-noise
 	// floor + retriever provenance; always false in a listing, where the floor never runs). A
-	// record-struct so it slots into the existing list-building cheaply.
-	readonly record struct Candidate(string Store, MemoryEntry Entry, double Score, float[]? Vector, bool LexicalConfirmed = false);
+	// record-struct so it slots into the existing list-building cheaply. ScoreRaw is the fused
+	// score BEFORE the freshness decay: RankRelevance rewrites Score with the decayed blend (and
+	// MMR then reorders on it), so the raw fusion value would otherwise be unrecoverable — the
+	// delivery telemetry normalizes fit (kRel) against it, and normalizing the decayed score would
+	// count freshness twice.
+	readonly record struct Candidate(string Store, MemoryEntry Entry, double Score, float[]? Vector, bool LexicalConfirmed = false, double ScoreRaw = 0);
 
 	// GLOBAL query relevance ordering across every store's candidate pool (spec memoverhaul):
 	//   1. Freshness decay — multiply the fused RRF score by an exp half-life weight on Updated,

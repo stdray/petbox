@@ -1,4 +1,5 @@
 using System.Threading.Channels;
+using LinqToDB;
 using LinqToDB.Data;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
@@ -7,17 +8,20 @@ using PetBox.Memory.Data;
 
 namespace PetBox.Memory.Services;
 
-// The one writer of entry_usage. Singleton: increments are enqueued onto a bounded
-// channel and drained by a background loop, so the read path that reports a hit never
-// waits on SQLite (spec: учёт не замедляет чтение). The channel drops on overflow and
-// every batch is failure-isolated per (project, store) — telemetry must never take a
-// read surface down with it.
+// The one writer of entry_usage and delivery_events. Singleton: increments and delivery
+// events are enqueued onto a bounded channel and drained by a background loop, so the read
+// path that reports a hit never waits on SQLite (spec: учёт не замедляет чтение). The channel
+// drops on overflow and every batch is failure-isolated per (project, store) — telemetry must
+// never take a read surface down with it.
 public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 {
 	abstract record Event;
 	// Opened = an engagement (memory_get). For a surface (Opened=false), Deliberate splits an
 	// intentional search from an automatic machine pull; irrelevant for an Opened hit.
 	sealed record Hit(string Project, string Store, string Key, bool Opened, bool Deliberate) : Event;
+	// One delivered row. Ts is stamped at ENQUEUE (the moment of the read), not at drain — the
+	// event dates the delivery, not the background write.
+	sealed record Delivery(string Project, DateTime Ts, MemoryDeliveryEvent E) : Event;
 	sealed record FlushMark(TaskCompletionSource Done) : Event;
 
 	readonly IScopedDbFactory<MemoryDb> _factory;
@@ -41,6 +45,13 @@ public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 
 	public void Opened(string projectKey, string store, string key) =>
 		_events.Writer.TryWrite(new Hit(projectKey, store, key, Opened: true, Deliberate: true));
+
+	public void Delivered(string projectKey, IReadOnlyList<MemoryDeliveryEvent> events)
+	{
+		var now = DateTime.UtcNow; // one timestamp per DELIVERY: the rows of one answer share it
+		foreach (var e in events)
+			_events.Writer.TryWrite(new Delivery(projectKey, now, e));
+	}
 
 	public async Task FlushAsync(CancellationToken ct = default)
 	{
@@ -66,6 +77,19 @@ public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 						if (_logger?.IsEnabled(LogLevel.Debug) == true)
 							_logger.LogDebug(ex, "usage increment dropped for {Project}/{Store}/{Key}",
 								hit.Project, hit.Store, hit.Key);
+					}
+					break;
+				case Delivery delivery:
+					try
+					{
+						Apply(delivery);
+					}
+					catch (Exception ex)
+					{
+						// Same failure isolation as a counter increment: a lost event loses statistics.
+						if (_logger?.IsEnabled(LogLevel.Debug) == true)
+							_logger.LogDebug(ex, "delivery event dropped for {Project}/{Store}/{Key}",
+								delivery.Project, delivery.E.Store, delivery.E.Key);
 					}
 					break;
 				case FlushMark mark:
@@ -96,6 +120,29 @@ public sealed class MemoryUsageRecorder : IMemoryUsageRecorder, IAsyncDisposable
 			new DataParameter("deliberate", !hit.Opened && hit.Deliberate ? 1 : 0),
 			new DataParameter("opened", hit.Opened ? 1 : 0),
 			new DataParameter("at", DateTime.UtcNow));
+	}
+
+	// Append-only: one row per delivered entry (M011). Insert through the linq2db mapping so
+	// the columns cannot silently drift from the DeliveryEvent record.
+	void Apply(Delivery d)
+	{
+		using var db = _factory.NewEnsuredConnection(d.Project);
+		db.Insert(new DeliveryEvent
+		{
+			Ts = d.Ts,
+			SessionId = d.E.SessionId,
+			Tool = d.E.Tool,
+			Scope = d.E.Scope,
+			Store = d.E.Store,
+			Key = d.E.Key,
+			DeliveredChars = d.E.DeliveredChars,
+			BodyChars = d.E.BodyChars,
+			RowChars = d.E.RowChars,
+			Rank = d.E.Rank,
+			ScoreRaw = d.E.ScoreRaw,
+			KRel = d.E.KRel,
+			UsageSource = d.E.UsageSource,
+		});
 	}
 
 	public async ValueTask DisposeAsync()
