@@ -274,9 +274,12 @@ public partial class Program
 					?? new PetBox.Sessions.Contract.SessionEpisodicOptions()));
 		// Deploy: single FLEET-WIDE mutable db (one node hosts containers from many
 		// projects, so NOT per-project scoped). Schema ensured once at startup in Configure().
-		builder.Services.AddScoped(sp => new PetBox.Deploy.Data.DeployDb(
-			PetBox.Deploy.Data.DeployDb.CreateOptions($"Data Source={Path.Combine(ResolveDataDir(sp), "deploy.db")};Cache=Shared")));
-		// Same contract as ICoreDbFactory: a fresh caller-owned connection per call. SINGLETON.
+		// DeployDb itself is deliberately NOT registered: the ONLY way to a connection is
+		// IDeployDbFactory.Open(), which yields a fresh caller-owned one. An unregistered type cannot
+		// be injected anywhere — not a ctor, not a minimal-API handler parameter, not an MCP tool
+		// method, not GetRequiredService — so "a scoped DataConnection shared across the threads a
+		// request fans out onto" stops being expressible rather than merely being absent today.
+		// DbInjectionGuardTests fails the build if the registration ever comes back.
 		builder.Services.AddSingleton<PetBox.Deploy.Data.IDeployDbFactory>(sp => new PetBox.Deploy.Data.DeployDbFactory(
 			$"Data Source={Path.Combine(ResolveDataDir(sp), "deploy.db")};Cache=Shared"));
 		builder.Services.AddScoped<PetBox.Deploy.Contract.IDeployService, PetBox.Deploy.Services.DeployService>();

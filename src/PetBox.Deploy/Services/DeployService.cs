@@ -30,12 +30,17 @@ public sealed class DeployService : IDeployService
 		DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
 	};
 
-	private readonly DeployDb _db;
+	// A FACTORY, not a context. Every method opens its own connection and disposes it, so no
+	// DataConnection outlives a call or is reachable from two threads — a linq2db DataConnection is
+	// not thread-safe, and the AddScoped DeployDb this replaces was one connection shared by every
+	// thread a request fanned out onto. DeployDb is no longer registered in DI at all, so this is
+	// the ONLY way to reach it (DbInjectionGuardTests holds that line).
+	private readonly IDeployDbFactory _factory;
 	private readonly ILogger _logger;
 
-	public DeployService(DeployDb db, ILogger<DeployService>? logger = null)
+	public DeployService(IDeployDbFactory factory, ILogger<DeployService>? logger = null)
 	{
-		_db = db;
+		_factory = factory;
 		_logger = logger ?? NullLogger<DeployService>.Instance;
 	}
 
@@ -43,8 +48,9 @@ public sealed class DeployService : IDeployService
 
 	public async Task<NodeView> UpsertNodeAsync(NodeInput input, CancellationToken ct = default)
 	{
+		await using var db = _factory.Open();
 		var id = NormalizeId(input.Id);
-		var existing = await _db.Nodes.FirstOrDefaultAsync(n => n.Id == id, ct);
+		var existing = await db.Nodes.FirstOrDefaultAsync(n => n.Id == id, ct);
 		var node = new Node
 		{
 			Id = id,
@@ -60,15 +66,16 @@ public sealed class DeployService : IDeployService
 			HostReport = existing?.HostReport ?? "{}",
 			CreatedAt = existing?.CreatedAt ?? DateTime.UtcNow,
 		};
-		await _db.InsertOrReplaceAsync(node, token: ct);
-		var count = await _db.Deployments.CountAsync(d => d.NodeId == id, ct);
+		await db.InsertOrReplaceAsync(node, token: ct);
+		var count = await db.Deployments.CountAsync(d => d.NodeId == id, ct);
 		return ToView(node, count);
 	}
 
 	public async Task<IReadOnlyList<NodeView>> ListNodesAsync(CancellationToken ct = default)
 	{
-		var nodes = await _db.Nodes.OrderBy(n => n.Id).ToListAsync(ct);
-		var counts = (await _db.Deployments.ToListAsync(ct))
+		await using var db = _factory.Open();
+		var nodes = await db.Nodes.OrderBy(n => n.Id).ToListAsync(ct);
+		var counts = (await db.Deployments.ToListAsync(ct))
 			.GroupBy(d => d.NodeId)
 			.ToDictionary(g => g.Key, g => g.Count());
 		return nodes.Select(n => ToView(n, counts.GetValueOrDefault(n.Id))).ToList();
@@ -76,20 +83,22 @@ public sealed class DeployService : IDeployService
 
 	public async Task<NodeView?> GetNodeAsync(string id, CancellationToken ct = default)
 	{
+		await using var db = _factory.Open();
 		id = NormalizeId(id);
-		var node = await _db.Nodes.FirstOrDefaultAsync(n => n.Id == id, ct);
+		var node = await db.Nodes.FirstOrDefaultAsync(n => n.Id == id, ct);
 		if (node is null) return null;
-		var count = await _db.Deployments.CountAsync(d => d.NodeId == id, ct);
+		var count = await db.Deployments.CountAsync(d => d.NodeId == id, ct);
 		return ToView(node, count);
 	}
 
 	public async Task<bool> DeleteNodeAsync(string id, CancellationToken ct = default)
 	{
+		await using var db = _factory.Open();
 		id = NormalizeId(id);
 		// Cascade: a node's deployments and their reported status go with it.
-		await _db.Statuses.Where(s => s.NodeId == id).DeleteAsync(ct);
-		await _db.Deployments.Where(d => d.NodeId == id).DeleteAsync(ct);
-		var removed = await _db.Nodes.Where(n => n.Id == id).DeleteAsync(ct);
+		await db.Statuses.Where(s => s.NodeId == id).DeleteAsync(ct);
+		await db.Deployments.Where(d => d.NodeId == id).DeleteAsync(ct);
+		var removed = await db.Nodes.Where(n => n.Id == id).DeleteAsync(ct);
 		return removed > 0;
 	}
 
@@ -97,6 +106,7 @@ public sealed class DeployService : IDeployService
 
 	public async Task<DeploymentView> UpsertDeploymentAsync(DeploymentInput input, CancellationToken ct = default)
 	{
+		await using var db = _factory.Open();
 		var service = NormalizeId(input.Service);
 		var nodeId = NormalizeId(input.NodeId);
 		var project = (input.Project ?? string.Empty).Trim();   // project keys are case-sensitive
@@ -104,7 +114,7 @@ public sealed class DeployService : IDeployService
 			throw new ArgumentException("Service, Project and NodeId are required.");
 
 		// One deployment per (Service, NodeId). Reject a colliding row owned by another Id.
-		var collision = await _db.Deployments
+		var collision = await db.Deployments
 			.FirstOrDefaultAsync(d => d.Service == service && d.NodeId == nodeId, ct);
 		var id = NormalizeId(input.Id ?? string.Empty);
 		if (id.Length == 0) id = Guid.NewGuid().ToString("n");
@@ -130,18 +140,19 @@ public sealed class DeployService : IDeployService
 			ConfigHash = ComputeConfigHash(imageDigest, configTags, input.DesiredState, project, runSpecJson),
 			UpdatedAt = DateTime.UtcNow,
 		};
-		await _db.InsertOrReplaceAsync(deployment, token: ct);
-		var status = await _db.Statuses.FirstOrDefaultAsync(s => s.NodeId == nodeId && s.Service == service, ct);
+		await db.InsertOrReplaceAsync(deployment, token: ct);
+		var status = await db.Statuses.FirstOrDefaultAsync(s => s.NodeId == nodeId && s.Service == service, ct);
 		return ToView(deployment, status);
 	}
 
 	public async Task<IReadOnlyList<DeploymentView>> ListDeploymentsAsync(string? nodeId = null, string? service = null, CancellationToken ct = default)
 	{
-		var q = _db.Deployments.AsQueryable();
+		await using var db = _factory.Open();
+		var q = db.Deployments.AsQueryable();
 		if (!string.IsNullOrWhiteSpace(nodeId)) { var n = NormalizeId(nodeId); q = q.Where(d => d.NodeId == n); }
 		if (!string.IsNullOrWhiteSpace(service)) { var s = NormalizeId(service); q = q.Where(d => d.Service == s); }
 		var deployments = await q.OrderBy(d => d.Service).ThenBy(d => d.NodeId).ToListAsync(ct);
-		var statuses = (await _db.Statuses.ToListAsync(ct))
+		var statuses = (await db.Statuses.ToListAsync(ct))
 			.ToDictionary(s => (s.NodeId, s.Service));
 		return deployments
 			.Select(d => ToView(d, statuses.GetValueOrDefault((d.NodeId, d.Service))))
@@ -150,20 +161,22 @@ public sealed class DeployService : IDeployService
 
 	public async Task<DeploymentView?> GetDeploymentAsync(string id, CancellationToken ct = default)
 	{
+		await using var db = _factory.Open();
 		id = NormalizeId(id);
-		var d = await _db.Deployments.FirstOrDefaultAsync(x => x.Id == id, ct);
+		var d = await db.Deployments.FirstOrDefaultAsync(x => x.Id == id, ct);
 		if (d is null) return null;
-		var status = await _db.Statuses.FirstOrDefaultAsync(s => s.NodeId == d.NodeId && s.Service == d.Service, ct);
+		var status = await db.Statuses.FirstOrDefaultAsync(s => s.NodeId == d.NodeId && s.Service == d.Service, ct);
 		return ToView(d, status);
 	}
 
 	public async Task<bool> DeleteDeploymentAsync(string id, CancellationToken ct = default)
 	{
+		await using var db = _factory.Open();
 		id = NormalizeId(id);
-		var d = await _db.Deployments.FirstOrDefaultAsync(x => x.Id == id, ct);
+		var d = await db.Deployments.FirstOrDefaultAsync(x => x.Id == id, ct);
 		if (d is null) return false;
-		await _db.Statuses.Where(s => s.NodeId == d.NodeId && s.Service == d.Service).DeleteAsync(ct);
-		await _db.Deployments.Where(x => x.Id == id).DeleteAsync(ct);
+		await db.Statuses.Where(s => s.NodeId == d.NodeId && s.Service == d.Service).DeleteAsync(ct);
+		await db.Deployments.Where(x => x.Id == id).DeleteAsync(ct);
 		return true;
 	}
 
@@ -171,9 +184,10 @@ public sealed class DeployService : IDeployService
 
 	public async Task<PollResponse> PollAsync(string nodeId, CancellationToken ct = default)
 	{
+		await using var db = _factory.Open();
 		nodeId = NormalizeId(nodeId);
-		await TouchNodeAsync(nodeId, ct);
-		var deployments = await _db.Deployments.Where(d => d.NodeId == nodeId).OrderBy(d => d.Service).ToListAsync(ct);
+		await TouchNodeAsync(db, nodeId, ct);
+		var deployments = await db.Deployments.Where(d => d.NodeId == nodeId).OrderBy(d => d.Service).ToListAsync(ct);
 		var items = deployments
 			.Select(d => new PollItem(d.Service, d.Project, d.ImageDigest, d.DesiredState, d.ConfigTags, d.ConfigHash,
 				RunSpecJson.Parse(d.RunSpec)))
@@ -183,12 +197,13 @@ public sealed class DeployService : IDeployService
 
 	public async Task ApplyHeartbeatAsync(string nodeId, HeartbeatReport report, CancellationToken ct = default)
 	{
+		await using var db = _factory.Open();
 		nodeId = NormalizeId(nodeId);
-		await TouchNodeAsync(nodeId, ct);
+		await TouchNodeAsync(db, nodeId, ct);
 		// Capabilities are agent-detected host facts; only a capability-aware agent (non-null)
 		// overwrites them, so a legacy agent's heartbeat doesn't erase what a newer one found.
 		if (report.Capabilities is not null)
-			await _db.Nodes.Where(n => n.Id == nodeId)
+			await db.Nodes.Where(n => n.Id == nodeId)
 				.Set(n => n.Capabilities, NormalizeCsv(string.Join(",", report.Capabilities)))
 				.UpdateAsync(ct);
 
@@ -197,7 +212,7 @@ public sealed class DeployService : IDeployService
 		// The log line is the history (self-log), the node row holds only the latest.
 		if (report.Host is not null)
 		{
-			var prevJson = await _db.Nodes.Where(n => n.Id == nodeId).Select(n => n.HostReport).FirstOrDefaultAsync(ct);
+			var prevJson = await db.Nodes.Where(n => n.Id == nodeId).Select(n => n.HostReport).FirstOrDefaultAsync(ct);
 			var prev = ComputeWarnings(ParseHostReport(prevJson));
 			var next = ComputeWarnings(report.Host);
 			if (_logger.IsEnabled(LogLevel.Warning))
@@ -206,7 +221,7 @@ public sealed class DeployService : IDeployService
 			if (_logger.IsEnabled(LogLevel.Information))
 				foreach (var w in prev.Except(next, StringComparer.Ordinal))
 					_logger.LogInformation("deploy node {NodeId} host warning cleared: {Warning}", nodeId, w);
-			await _db.Nodes.Where(n => n.Id == nodeId)
+			await db.Nodes.Where(n => n.Id == nodeId)
 				.Set(n => n.HostReport, JsonSerializer.Serialize(report.Host, HostJson))
 				.UpdateAsync(ct);
 		}
@@ -217,7 +232,7 @@ public sealed class DeployService : IDeployService
 			var service = NormalizeId(a.Service);
 			if (service.Length == 0) continue;
 			reported.Add(service);
-			await _db.InsertOrReplaceAsync(new DeploymentStatus
+			await db.InsertOrReplaceAsync(new DeploymentStatus
 			{
 				NodeId = nodeId,
 				Service = service,
@@ -234,7 +249,7 @@ public sealed class DeployService : IDeployService
 		// for this node that's NOT in the report = the container is gone → mark Missing.
 		// Without this a stopped/removed deployment shows stale Running/healthy forever in
 		// deploy_list and the UI.
-		await _db.Statuses
+		await db.Statuses
 			.Where(s => s.NodeId == nodeId && !reported.Contains(s.Service) && s.ActualState != ActualState.Missing)
 			.Set(s => s.ActualState, ActualState.Missing)
 			.Set(s => s.Healthy, false)
@@ -247,18 +262,19 @@ public sealed class DeployService : IDeployService
 
 	public async Task<IReadOnlyList<RescheduleAction>> RescheduleStaleAsync(TimeSpan staleness, CancellationToken ct = default)
 	{
+		await using var db = _factory.Open();
 		var now = DateTime.UtcNow;
-		var nodes = await _db.Nodes.ToListAsync(ct);
+		var nodes = await db.Nodes.ToListAsync(ct);
 		var staleNodeIds = nodes.Where(n => n.LastSeenAt is { } s && now - s >= staleness).Select(n => n.Id).ToHashSet(StringComparer.Ordinal);
 		if (staleNodeIds.Count == 0) return [];
 
 		var online = nodes.Where(n => n.LastSeenAt is { } s && now - s < OnlineWindow && !staleNodeIds.Contains(n.Id)).ToList();
 
 		// All current placements, so we preserve one-copy-per-node as we relocate.
-		var occupancy = (await _db.Deployments.ToListAsync(ct))
+		var occupancy = (await db.Deployments.ToListAsync(ct))
 			.Select(d => (d.Service, d.NodeId)).ToHashSet();
 
-		var candidates = (await _db.Deployments.Where(d => d.Relocatable).ToListAsync(ct))
+		var candidates = (await db.Deployments.Where(d => d.Relocatable).ToListAsync(ct))
 			.Where(d => staleNodeIds.Contains(d.NodeId))
 			.ToList();
 
@@ -279,7 +295,7 @@ public sealed class DeployService : IDeployService
 
 			occupancy.Remove((d.Service, d.NodeId));
 			occupancy.Add((d.Service, target.Id));
-			await _db.Deployments.Where(x => x.Id == d.Id)
+			await db.Deployments.Where(x => x.Id == d.Id)
 				.Set(x => x.NodeId, target.Id).Set(x => x.UpdatedAt, now).UpdateAsync(ct);
 			actions.Add(new RescheduleAction(d.Id, d.Service, d.NodeId, target.Id, true, "relocated"));
 		}
@@ -291,8 +307,12 @@ public sealed class DeployService : IDeployService
 
 	// LastSeenAt is the liveness signal failover watches; both poll and heartbeat
 	// are outbound agent contacts, so both bump it.
-	private Task<int> TouchNodeAsync(string nodeId, CancellationToken ct) =>
-		_db.Nodes.Where(n => n.Id == nodeId).Set(n => n.LastSeenAt, (DateTime?)DateTime.UtcNow).UpdateAsync(ct);
+	//
+	// Takes the caller's connection rather than opening its own: it is part of the caller's unit of
+	// work, and opening a second connection to the same file mid-call would be a self-inflicted
+	// writer/writer contention (and, under a future transaction, a deadlock against ourselves).
+	private static Task<int> TouchNodeAsync(DeployDb db, string nodeId, CancellationToken ct) =>
+		db.Nodes.Where(n => n.Id == nodeId).Set(n => n.LastSeenAt, (DateTime?)DateTime.UtcNow).UpdateAsync(ct);
 
 	// --- helpers ---
 
