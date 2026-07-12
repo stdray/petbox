@@ -64,6 +64,16 @@ jobs:
       - name: Ensure build script is executable
         run: chmod +x ./build.sh
 
+      # Format is a gate, not a suggestion: for a long time NOTHING ran it (this job used
+      # to jump straight to Test, and `dotnet format --verify-no-changes` lives only in the
+      # Verify/CI target, which nothing invoked), so drift piled up in main unnoticed and
+      # every agent that dutifully ran `dotnet format` before committing got a diff full of
+      # OTHER people's files. Run it here, before Test, so it fails fast and cheap.
+      # Deliberately NOT --target=Verify: that also pulls in the TS/Python SDK lint+test,
+      # which need toolchains this job doesn't set up.
+      - name: Cake FormatVerify target (dotnet format --verify-no-changes)
+        run: ./build.sh --target=FormatVerify
+
       - name: Cake Test target (build + unit + E2E)
         run: ./build.sh --target=Test --playwrightWithDeps=false
 
