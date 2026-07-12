@@ -106,9 +106,20 @@ records**, not the working plan — do not treat them as current state.
    answer, post it BEFORE closing the work card.
 7. **Deploy only on explicit command** (the `deploy` tag flow); after deploy, run a
    live smoke against production endpoints.
-8. **Don't silently work around process/doc defects** — file an intake card on
+8. **Clean up when the card closes — the worktree's life ends with the card, not with
+   the push:** once a card reaches a terminal status (`Done`/`Cancelled`) and its branch
+   is merged, remove the worktree (`git worktree remove <dir>`) and delete the branch
+   both locally (`git branch -d`) and on the remote (`git push origin --delete`). Rule 2
+   creates a worktree per change and rule 4 ends at the push, so nothing ever reaped
+   them: they accumulated to ~120 stale worktrees, 115 dead local branches and 14 merged
+   remote ones before anyone noticed, and `git worktree list` stopped being readable.
+   **Never reap blindly** — a worktree may hold someone else's unfinished work. Delete
+   ONLY one that is clean (`git status --porcelain` empty) AND fully merged
+   (`git rev-list --count origin/main..HEAD` is 0) AND not `locked`; anything else stays,
+   and if it looks abandoned, say so instead of removing it.
+9. **Don't silently work around process/doc defects** — file an intake card on
    `$system`.
-9. **Delegating to workers (fan-out):** a spawned subagent does NOT run the
+10. **Delegating to workers (fan-out):** a spawned subagent does NOT run the
    SessionStart hook — it never sees the memory banner, canon, or role rules, so the
    ONLY channel is your spawn brief. Workers that don't get the rules drift: they
    self-scout, broaden scope, and even spawn their own subagents. So EVERY worker
