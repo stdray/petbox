@@ -4,6 +4,7 @@ using LinqToDB;
 using LinqToDB.Data;
 using LinqToDB.DataProvider.DuckDB;
 using LinqToDB.Mapping;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using PetBox.Core.Data;
 using PetBox.Core.Search;
@@ -43,7 +44,12 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 
 	readonly IScopedDbFactory<SessionsDb> _factory;
 	readonly SessionStore _store;
-	readonly ILlmClient? _llm;
+	// NOT an ILlmClient field. This class is a SINGLETON (it IS the hydration cache), while
+	// ILlmClient is SCOPED (CapabilityRouter → ILlmRegistryLevelResolver → PetBoxDb). Holding one
+	// would be a captive dependency: a single PetBoxDb resolved from the root provider, shared by
+	// every concurrent session_search and never disposed. So the client is RENTED per search and
+	// returned — the same shape the background jobs already use (SearchEnrichmentService:50).
+	readonly Func<LlmRental> _rentLlm;
 	readonly ILogger<DuckDbSessionEpisodicIndex>? _logger;
 	readonly TimeSpan _ttl;
 	readonly int _maxHydrated;
@@ -55,19 +61,53 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 	// and queries are ~17ms — contention is cheaper than per-entry locking.
 	readonly SemaphoreSlim _gate = new(1, 1);
 
+	// PRODUCTION wiring. The LLM client is resolved from a FRESH DI scope on each search and the
+	// scope is disposed with it, so the scoped graph behind it (PetBoxDb) is never shared across
+	// concurrent searches and never leaks.
+	public DuckDbSessionEpisodicIndex(IScopedDbFactory<SessionsDb> factory, IServiceScopeFactory scopes,
+		ILogger<DuckDbSessionEpisodicIndex>? logger = null, TimeSpan? ttl = null,
+		int maxHydrated = DefaultMaxHydrated, TimeProvider? time = null,
+		SessionEpisodicOptions? options = null)
+		: this(factory, () =>
+		{
+			var scope = scopes.CreateScope();
+			// GetService, not GetRequiredService: the LlmRouter feature may be off, and the
+			// semantic leg is designed to be skipped silently when no embedder exists.
+			return new LlmRental(scope.ServiceProvider.GetService<ILlmClient>(), scope);
+		}, logger, ttl, maxHydrated, time, options)
+	{
+	}
+
+	// Caller-owned client (tests, and any caller whose ILlmClient is genuinely singleton-lived).
+	// NEVER pass a SCOPED service here from a singleton registration — that is the captive this
+	// class was built to avoid; CaptiveDependencyTests fails the build if anyone tries.
 	public DuckDbSessionEpisodicIndex(IScopedDbFactory<SessionsDb> factory, ILlmClient? llm = null,
 		ILogger<DuckDbSessionEpisodicIndex>? logger = null, TimeSpan? ttl = null,
 		int maxHydrated = DefaultMaxHydrated, TimeProvider? time = null,
 		SessionEpisodicOptions? options = null)
+		: this(factory, () => new LlmRental(llm, null), logger, ttl, maxHydrated, time, options)
+	{
+	}
+
+	DuckDbSessionEpisodicIndex(IScopedDbFactory<SessionsDb> factory, Func<LlmRental> rentLlm,
+		ILogger<DuckDbSessionEpisodicIndex>? logger, TimeSpan? ttl, int maxHydrated,
+		TimeProvider? time, SessionEpisodicOptions? options)
 	{
 		_factory = factory;
 		_store = new SessionStore(factory);
-		_llm = llm;
+		_rentLlm = rentLlm;
 		_logger = logger;
 		_ttl = ttl ?? DefaultTtl;
 		_maxHydrated = maxHydrated;
 		_time = time ?? TimeProvider.System;
 		_options = options ?? new SessionEpisodicOptions();
+	}
+
+	// One search's lease on an ILlmClient: the client plus the DI scope it came from (null when the
+	// caller owns the client). Disposing it disposes the scope — and with it the scoped PetBoxDb.
+	readonly record struct LlmRental(ILlmClient? Client, IServiceScope? Scope) : IDisposable
+	{
+		public void Dispose() => Scope?.Dispose();
 	}
 
 	public async Task<SessionEpisodicResult?> SearchAsync(string projectKey, string sessionId, string query, int k, CancellationToken ct = default)
@@ -204,11 +244,17 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 
 	async Task<SessionEpisodicResult> QueryAsync(Hydrated entry, string projectKey, string query, int k, CancellationToken ct)
 	{
+		// The rental spans the whole query: the semantic leg's embed calls run INSIDE the
+		// SearchService.SearchAsync await below (VectorLeg.SearchAsync → EnsureVectors…), so the
+		// scope must outlive fusion — and is torn down the moment this method returns.
+		using var rental = _rentLlm();
+		var llm = rental.Client;
+
 		var indexes = new List<ISearchIndex>();
 		if (entry.Fts is not null)
 			indexes.Add(new FtsLeg(entry.Fts));
-		if (_llm is not null && await _llm.IsAvailableAsync(projectKey, LlmCapability.Embed, ct))
-			indexes.Add(new VectorLeg(entry, q => EnsureVectorsAndEmbedQueryAsync(projectKey, entry, q, ct)));
+		if (llm is not null && await llm.IsAvailableAsync(projectKey, LlmCapability.Embed, ct))
+			indexes.Add(new VectorLeg(entry, q => EnsureVectorsAndEmbedQueryAsync(llm, projectKey, entry, q, ct)));
 
 		// OVER-FETCH, then floor, then cut to k: fetching only k and then dropping semantic
 		// noise would return SHORT. A pool of max(3k, 20) (naturally bounded by the session's
@@ -245,9 +291,9 @@ public sealed class DuckDbSessionEpisodicIndex : ISessionEpisodicIndex, IDisposa
 	// from the persistent message_vec cache where the content hash still matches, embedding
 	// and persisting only the misses. A failure here surfaces to SearchService, which
 	// degrades the answer instead of failing the search.
-	async Task<float[]> EnsureVectorsAndEmbedQueryAsync(string projectKey, Hydrated entry, string query, CancellationToken ct)
+	async Task<float[]> EnsureVectorsAndEmbedQueryAsync(ILlmClient llm, string projectKey, Hydrated entry, string query, CancellationToken ct)
 	{
-		var embedder = new LlmClientEmbedder(_llm!, projectKey);
+		var embedder = new LlmClientEmbedder(llm, projectKey);
 		var qb = await embedder.EmbedAsync([query], ct);
 		var queryVec = Truncate(qb.Vectors[0], VectorDim);
 		// Comparability guard = the query's (model, truncated dim) — message vectors must

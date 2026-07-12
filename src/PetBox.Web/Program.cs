@@ -49,6 +49,26 @@ public partial class Program
 
 	public static void ConfigureServices(WebApplicationBuilder builder)
 	{
+		// Defense-in-depth against the captive-dependency class (see CaptiveDependencyTests,
+		// PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex fix): ValidateScopes makes a
+		// singleton that reaches a Scoped service THROW instead of silently sharing one root
+		// instance across every concurrent request. This is NOT a startup gate — a captive taken
+		// inside a factory lambda (the shape the real bug had) is invisible to ValidateOnBuild,
+		// and a singleton registered via a factory is constructed LAZILY, on first resolution, not
+		// at builder.Build(). So this flag does not fail the boot; it fails the first request that
+		// touches the offending singleton, loudly, instead of quietly corrupting concurrent state.
+		// The actual startup-time gate is CaptiveDependencyTests in CI, which force-resolves every
+		// singleton up front. ValidateOnBuild is turned on alongside it: it IS free (a pure ctor
+		// signature walk against the registered graph, no factory lambdas invoked) and catches a
+		// different, complementary shape — a plain ctor-injected type mismatch or an unregistered
+		// dependency — for free, at builder.Build() time, in every environment (both flags default
+		// to off outside Development).
+		builder.Host.UseDefaultServiceProvider(o =>
+		{
+			o.ValidateScopes = true;
+			o.ValidateOnBuild = true;
+		});
+
 		// Build-time OpenAPI generation (GetDocument.Insider) hosts this entry-point all the way
 		// through app.Run() — it lets StartAsync run (migrations + hosted services fire) and only
 		// then aborts before serving requests. Left alone it would migrate ./data/petbox.db and
@@ -232,10 +252,16 @@ public partial class Program
 		// fair-fusion knobs (junk-exclusion min length + semantic-noise floor, spec
 		// search-fair-fusion) bind from `Search:Episodic:*` — sibling of the stage-1
 		// `Search:Sessions:*` floor above; conservative defaults when absent.
+		// The LLM client is taken as an IServiceScopeFactory, NOT as an ILlmClient: ILlmClient is
+		// SCOPED (CapabilityRouter → ILlmRegistryLevelResolver → PetBoxDb), and a singleton that
+		// resolves it here would capture ONE root-scoped PetBoxDb for the life of the process —
+		// shared by every concurrent session_search and never disposed. The index rents a client
+		// from a fresh scope per search instead (see CaptiveDependencyTests, which fails the build
+		// if any singleton's graph reaches a scoped service).
 		builder.Services.AddSingleton<PetBox.Sessions.Contract.ISessionEpisodicIndex>(sp =>
 			new PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex(
 				sp.GetRequiredService<IScopedDbFactory<PetBox.Sessions.Data.SessionsDb>>(),
-				sp.GetService<PetBox.LlmRouter.Contract.ILlmClient>(),
+				sp.GetRequiredService<IServiceScopeFactory>(),
 				sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex>>(),
 				options: builder.Configuration.GetSection("Search:Episodic").Get<PetBox.Sessions.Contract.SessionEpisodicOptions>()
 					?? new PetBox.Sessions.Contract.SessionEpisodicOptions()));
