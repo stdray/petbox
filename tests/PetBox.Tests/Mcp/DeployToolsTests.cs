@@ -44,7 +44,7 @@ public sealed class DeployToolsTests : IDisposable
 	[Fact]
 	public async Task NodeUpsert_Mints_Key_And_NodeList_Shows_It()
 	{
-		var r = Json(await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db,
+		var r = Json(await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory(),
 			"vdsina-1", "VDSina", "net.x", ephemeral: false, mintKey: true));
 		r.GetProperty("key").GetString().Should().StartWith("yb_key_node_");
 		r.GetProperty("node").GetProperty("id").GetString().Should().Be("vdsina-1");
@@ -62,8 +62,8 @@ public sealed class DeployToolsTests : IDisposable
 	[Fact]
 	public async Task Upsert_Then_Stop_Start_Move()
 	{
-		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db, "n1");
-		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db, "n2");
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory(), "n1");
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory(), "n2");
 
 		var created = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
 			"bot", "proj", "n1", "img1"));
@@ -87,7 +87,7 @@ public sealed class DeployToolsTests : IDisposable
 	[Fact]
 	public async Task Upsert_With_RunSpec_Then_Stop_Preserves_It()
 	{
-		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db, "n1");
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory(), "n1");
 
 		var created = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
 			"web", "proj", "n1", "img1",
@@ -118,7 +118,7 @@ public sealed class DeployToolsTests : IDisposable
 	[Fact]
 	public async Task Upsert_With_Domain_Creates_Site_RunSpec()
 	{
-		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db, "n1");
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory(), "n1");
 		var created = Json(await DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
 			"web", "proj", "n1", "img1",
 			ports: ["127.0.0.1:8080:8080"],
@@ -131,7 +131,7 @@ public sealed class DeployToolsTests : IDisposable
 	[Fact]
 	public async Task Upsert_With_Bad_RunSpec_Throws()
 	{
-		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db, "n1");
+		await DeployTools.NodeUpsertAsync(Http("deploy:write"), Flags(), _svc, _db.Factory(), "n1");
 		var ex = await Assert.ThrowsAsync<ArgumentException>(() => DeployTools.UpsertAsync(Http("deploy:write"), Flags(), _svc,
 			"web", "proj", "n1", "img1", ports: ["oops"]));
 		ex.Message.Should().Contain("port");
@@ -142,7 +142,7 @@ public sealed class DeployToolsTests : IDisposable
 	{
 		// Tools throw on the scope assert; McpErrorEnvelopeFilter renders {error} on the wire.
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			DeployTools.NodeUpsertAsync(Http("deploy:read"), Flags(), _svc, _db, "x"));
+			DeployTools.NodeUpsertAsync(Http("deploy:read"), Flags(), _svc, _db.Factory(), "x"));
 	}
 
 	[Fact]

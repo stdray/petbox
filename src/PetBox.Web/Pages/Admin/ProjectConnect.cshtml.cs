@@ -16,12 +16,12 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectConnectModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 
-	public ProjectConnectModel(PetBoxDb db, FeatureFlags features)
+	public ProjectConnectModel(ICoreDbFactory f, FeatureFlags features)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 	}
 
@@ -77,7 +77,8 @@ public sealed class ProjectConnectModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync()
 	{
-		Project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
+		using var db = _f.Open();
+		Project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
 		if (Project is null) { ProjectNotFound = true; return Page(); }
 		// A just-minted key rides here across the Post/Redirect/Get from OnPostMint and is shown
 		// once; a refresh (no TempData) falls back to the mint form. See Notice.CarryNewKey.
@@ -87,7 +88,8 @@ public sealed class ProjectConnectModel : PageModel
 
 	public async Task<IActionResult> OnPostMintAsync(string name, string[]? scopes)
 	{
-		Project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
+		using var db = _f.Open();
+		Project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
 		if (Project is null) { ProjectNotFound = true; return Page(); }
 
 		if (string.IsNullOrWhiteSpace(name))
@@ -110,7 +112,7 @@ public sealed class ProjectConnectModel : PageModel
 		}
 
 		var keyValue = $"yb_key_{Guid.NewGuid():N}";
-		await _db.InsertAsync(new ApiKey
+		await db.InsertAsync(new ApiKey
 		{
 			Key = keyValue,
 			ProjectKey = ProjectKey,

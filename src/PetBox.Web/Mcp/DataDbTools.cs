@@ -26,12 +26,13 @@ public static class DataDbTools
 	[McpServerTool(Name = "db_create", Title = "Create a DataDb", UseStructuredContent = true, OutputSchemaType = typeof(DataDbCreatedResult))]
 	[Description("Creates a named DataDb (user-data SQLite file) in a project. Requires data:schema scope. `maxPageCount` caps the file size (default ~1 GB at 4 KB pages).")]
 	public static async Task<DataDbCreatedResult> CreateAsync(
-		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,
+		IHttpContextAccessor http, ICoreDbFactory dbf, IDataDbFactory factory,
 		string projectKey, string name,
 		[Description("Optional description.")] string? description = null,
 		[Description("Page-count quota (default ~262144 = ~1 GB).")] long? maxPageCount = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
@@ -56,9 +57,10 @@ public static class DataDbTools
 	[McpServerTool(Name = "db_list", Title = "List DataDbs", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbListResult))]
 	[Description("Lists a project's DataDbs (name, description, quota, timestamps). Requires data:read scope.")]
 	public static async Task<DataDbListResult> ListAsync(
-		IHttpContextAccessor http, PetBoxDb db,
+		IHttpContextAccessor http, ICoreDbFactory dbf,
 		string projectKey, CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataRead);
 		var rows = await db.DataDbs
@@ -72,9 +74,10 @@ public static class DataDbTools
 	[McpServerTool(Name = "db_delete", Title = "Delete a DataDb", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDeletedResult))]
 	[Description("Deletes a DataDb and its on-disk file. Requires data:schema scope.")]
 	public static async Task<DataDbDeletedResult> DeleteAsync(
-		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,
+		IHttpContextAccessor http, ICoreDbFactory dbf, IDataDbFactory factory,
 		string projectKey, string name, CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
@@ -87,9 +90,10 @@ public static class DataDbTools
 	[McpServerTool(Name = "db_describe", Title = "Describe a DataDb", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDescribeResult))]
 	[Description("Returns a DataDb's tables and their columns (name, type, notNull, pk). Requires data:read scope.")]
 	public static async Task<DataDbDescribeResult> DescribeAsync(
-		IHttpContextAccessor http, PetBoxDb db, IDataDbFactory factory,
+		IHttpContextAccessor http, ICoreDbFactory dbf, IDataDbFactory factory,
 		string projectKey, string dbName, CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataRead);
 		var row = await db.DataDbs.FirstOrDefaultAsync(

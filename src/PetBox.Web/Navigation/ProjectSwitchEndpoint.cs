@@ -28,11 +28,12 @@ public static class ProjectSwitchEndpoint
 
 	static async Task<IResult> Switch(
 		HttpContext ctx,
-		PetBoxDb db,
+		ICoreDbFactory dbf,
 		[FromForm] string? ws,
 		[FromForm] string? key,
 		[FromForm] string? zone)
 	{
+		using var db = dbf.Open();
 		// Both nullable so an empty-form POST (Alpine/onchange firing before a value is
 		// selected) surfaces as a clean 400, not an unhandled BadHttpRequestException.
 		if (string.IsNullOrWhiteSpace(ws))

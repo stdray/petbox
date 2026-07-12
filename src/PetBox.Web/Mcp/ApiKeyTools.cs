@@ -21,7 +21,7 @@ public static class ApiKeyTools
 	[McpServerTool(Name = "apikey_create", Title = "Mint an API key", UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyCreatedResult))]
 	[Description("Mints a project-scoped API key. Requires admin:provision. `scopes` is a comma-separated list; unknown scopes are rejected. `expiresInSeconds` (optional) sets a TTL. `allProjects:true` mints a CROSS-PROJECT key (project claim '*', reads+writes every project) — `projectKey` must be omitted then. `defaultProject` (cross-project keys ONLY) is the project the tools with an OPTIONAL projectKey fall back to when it is omitted; a project-scoped key already defaults to its own claim, so passing it there is an error. `sandboxOnly:true` mints a SANDBOX key (spec work/smoke-writes-into-real-projects): on top of the normal claim check, every write is also required to land in a project flagged `sandbox` (project_create sandbox:true) — this holds even for a `sandboxOnly:true, allProjects:true` key (one smoke key spanning every sandbox project, still refused on every real one). With a specific `projectKey` (not allProjects), that project must already be a sandbox project. The raw key is returned ONCE — store it now.")]
 	public static async Task<ApiKeyCreatedResult> CreateAsync(
-		IHttpContextAccessor http, PetBoxDb db,
+		IHttpContextAccessor http, ICoreDbFactory dbf,
 		[Description("Human-readable key name.")] string name,
 		[Description("Comma-separated scope list, e.g. 'data:read,data:write'.")] string scopes,
 		[Description("Project the key is scoped to. Required unless allProjects.")] string? projectKey = null,
@@ -31,6 +31,7 @@ public static class ApiKeyTools
 		[Description("Mint a SANDBOX-ONLY key: writes are additionally gated to projects flagged sandbox (see project_create). Default false.")] bool sandboxOnly = false,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		// A key's name is its only human-readable label in the admin list; blank names are
 		// the prod-data symptom we're closing off. Reject empty/whitespace here (the admin UI
@@ -102,10 +103,11 @@ public static class ApiKeyTools
 	[McpServerTool(Name = "apikey_list", Title = "List API keys", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyListResult))]
 	[Description("Lists a project's API keys (key, name, scopes, created/expiry, defaultProjectKey). Requires admin:provision. Pass projectKey '*' to list the cross-project keys — `defaultProjectKey` is the project such a key falls back to when a tool's optional projectKey is omitted.")]
 	public static async Task<ApiKeyListResult> ListAsync(
-		IHttpContextAccessor http, PetBoxDb db,
+		IHttpContextAccessor http, ICoreDbFactory dbf,
 		[Description("Project to list keys for.")] string projectKey,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(projectKey)) throw new ArgumentException("projectKey is required");
 		var rows = await db.ApiKeys
@@ -119,10 +121,11 @@ public static class ApiKeyTools
 	[McpServerTool(Name = "apikey_delete", Title = "Delete an API key", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyDeletedResult))]
 	[Description("Deletes (revokes) an API key by its raw key value. Requires admin:provision.")]
 	public static async Task<ApiKeyDeletedResult> DeleteAsync(
-		IHttpContextAccessor http, PetBoxDb db,
+		IHttpContextAccessor http, ICoreDbFactory dbf,
 		[Description("The raw key value to revoke.")] string key,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("key is required");
 		var deleted = await db.ApiKeys.Where(k => k.Key == key).DeleteAsync(ct);

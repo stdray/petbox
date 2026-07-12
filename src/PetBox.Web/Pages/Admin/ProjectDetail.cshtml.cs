@@ -12,13 +12,13 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectDetailModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly ISettingsResolver _settings;
 
-	public ProjectDetailModel(PetBoxDb db, FeatureFlags features, ISettingsResolver settings)
+	public ProjectDetailModel(ICoreDbFactory f, FeatureFlags features, ISettingsResolver settings)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_settings = settings;
 	}
@@ -58,15 +58,16 @@ public sealed class ProjectDetailModel : PageModel
 
 	public async Task OnGetAsync()
 	{
-		Project = _db.Projects.FirstOrDefault(p => p.Key == ProjectKey);
+		using var db = _f.Open();
+		Project = db.Projects.FirstOrDefault(p => p.Key == ProjectKey);
 		if (Project is null) return;
 
 		// A just-minted key rides here across the Post/Redirect/Get from OnPostCreateKey and is
 		// shown once; a refresh (no TempData) drops it. See Notice.CarryNewKey.
 		NewKey = this.TakeNewKey();
 
-		HealthEndpoints = _db.HealthEndpoints.Where(e => e.ProjectKey == ProjectKey).OrderBy(e => e.Url).ToList();
-		Keys = _db.ApiKeys.Where(k => k.ProjectKey == ProjectKey).OrderByDescending(k => k.CreatedAt).ToList();
+		HealthEndpoints = db.HealthEndpoints.Where(e => e.ProjectKey == ProjectKey).OrderBy(e => e.Url).ToList();
+		Keys = db.ApiKeys.Where(k => k.ProjectKey == ProjectKey).OrderByDescending(k => k.CreatedAt).ToList();
 
 		// Effective LogSettings via cascade (project → workspace → system).
 		var isSystem = string.Equals(ProjectKey, "$system", StringComparison.Ordinal);
@@ -79,7 +80,7 @@ public sealed class ProjectDetailModel : PageModel
 		DefaultRetentionDays = isSystem ? fallback.SystemRetainDays : fallback.RetentionDays;
 
 		// Has the project explicitly overridden its own retention?
-		var overrideRow = _db.Settings.FirstOrDefault(s =>
+		var overrideRow = db.Settings.FirstOrDefault(s =>
 			s.Scope == "Project" && s.ScopeKey == ProjectKey && s.Path == "log.retention.days");
 		RetentionOverrideDays = overrideRow is null
 			? null
@@ -149,6 +150,7 @@ public sealed class ProjectDetailModel : PageModel
 
 	public async Task<IActionResult> OnPostCreateHealthEndpointAsync(string url, int? intervalSeconds)
 	{
+		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out _))
 		{
 			ErrorMessage = "A valid absolute URL is required.";
@@ -156,7 +158,7 @@ public sealed class ProjectDetailModel : PageModel
 			return Page();
 		}
 
-		await _db.InsertAsync(new HealthEndpoint
+		await db.InsertAsync(new HealthEndpoint
 		{
 			ProjectKey = ProjectKey,
 			Url = url.Trim(),
@@ -171,13 +173,15 @@ public sealed class ProjectDetailModel : PageModel
 
 	public async Task<IActionResult> OnPostDeleteHealthEndpointAsync(long id)
 	{
-		await _db.HealthEndpoints.Where(e => e.Id == id && e.ProjectKey == ProjectKey).DeleteAsync();
+		using var db = _f.Open();
+		await db.HealthEndpoints.Where(e => e.Id == id && e.ProjectKey == ProjectKey).DeleteAsync();
 		this.NotifySuccess("Health endpoint deleted.");
 		return Self();
 	}
 
 	public async Task<IActionResult> OnPostCreateKeyAsync(string name, string[]? scopes)
 	{
+		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(name))
 		{
 			ErrorMessage = "Name is required.";
@@ -202,7 +206,7 @@ public sealed class ProjectDetailModel : PageModel
 		}
 
 		var keyValue = $"yb_key_{Guid.NewGuid():N}";
-		await _db.InsertAsync(new ApiKey
+		await db.InsertAsync(new ApiKey
 		{
 			Key = keyValue,
 			ProjectKey = ProjectKey,
@@ -219,7 +223,8 @@ public sealed class ProjectDetailModel : PageModel
 
 	public async Task<IActionResult> OnPostRevokeKeyAsync(string keyValue)
 	{
-		await _db.ApiKeys.Where(k => k.Key == keyValue && k.ProjectKey == ProjectKey).DeleteAsync();
+		using var db = _f.Open();
+		await db.ApiKeys.Where(k => k.Key == keyValue && k.ProjectKey == ProjectKey).DeleteAsync();
 		this.NotifySuccess("API key revoked.");
 		return Self();
 	}
@@ -228,6 +233,7 @@ public sealed class ProjectDetailModel : PageModel
 	// mint time — finding D5). Same validation as minting: known scopes, at least one.
 	public async Task<IActionResult> OnPostUpdateKeyScopesAsync(string keyValue, string[]? scopes)
 	{
+		using var db = _f.Open();
 		var raw = scopes is null ? "" : string.Join(",", scopes);
 		var (valid, invalid) = PetBox.Core.Auth.ApiKeyScopes.Validate(raw);
 		if (invalid.Count > 0)
@@ -243,7 +249,7 @@ public sealed class ProjectDetailModel : PageModel
 			return Page();
 		}
 
-		await _db.ApiKeys
+		await db.ApiKeys
 			.Where(k => k.Key == keyValue && k.ProjectKey == ProjectKey)
 			.Set(k => k.Scopes, string.Join(",", valid))
 			.UpdateAsync();
@@ -256,6 +262,7 @@ public sealed class ProjectDetailModel : PageModel
 	// exact cascade + the file-level scope boundary. Reserved built-ins refuse deletion.
 	public async Task<IActionResult> OnPostDeleteAsync()
 	{
+		using var db = _f.Open();
 		if (ProjectDeletion.IsReserved(ProjectKey))
 		{
 			ErrorMessage = $"Cannot delete the reserved project '{ProjectKey}'.";
@@ -263,7 +270,7 @@ public sealed class ProjectDetailModel : PageModel
 			return Page();
 		}
 
-		var deleted = await ProjectDeletion.DeleteAsync(_db, ProjectKey);
+		var deleted = await ProjectDeletion.DeleteAsync(db, ProjectKey);
 		if (!deleted)
 		{
 			ErrorMessage = "Project not found.";

@@ -10,9 +10,9 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class WorkspaceSettingsModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 
-	public WorkspaceSettingsModel(PetBoxDb db) => _db = db;
+	public WorkspaceSettingsModel(ICoreDbFactory f) => _f = f;
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
 	[FromRoute(Name = "workspaceKey")]
@@ -43,6 +43,7 @@ public sealed class WorkspaceSettingsModel : PageModel
 
 	public async Task<IActionResult> OnPostSaveAsync()
 	{
+		using var db = _f.Open();
 		Load();
 		if (Workspace is null)
 		{
@@ -56,7 +57,7 @@ public sealed class WorkspaceSettingsModel : PageModel
 			return Page();
 		}
 
-		await _db.Workspaces
+		await db.Workspaces
 			.Where(w => w.Key == WorkspaceKey)
 			.Set(w => w.Name, Name)
 			.Set(w => w.Description, Description ?? string.Empty)
@@ -69,9 +70,10 @@ public sealed class WorkspaceSettingsModel : PageModel
 
 	void Load()
 	{
-		Workspace = _db.Workspaces.FirstOrDefault(w => w.Key == WorkspaceKey);
+		using var db = _f.Open();
+		Workspace = db.Workspaces.FirstOrDefault(w => w.Key == WorkspaceKey);
 		if (Workspace is null) return;
-		ProjectCount = _db.Projects.Count(p => p.WorkspaceKey == WorkspaceKey);
-		MemberCount = _db.WorkspaceMembers.Count(m => m.WorkspaceKey == WorkspaceKey);
+		ProjectCount = db.Projects.Count(p => p.WorkspaceKey == WorkspaceKey);
+		MemberCount = db.WorkspaceMembers.Count(m => m.WorkspaceKey == WorkspaceKey);
 	}
 }

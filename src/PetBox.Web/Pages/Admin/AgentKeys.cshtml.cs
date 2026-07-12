@@ -12,9 +12,9 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "SysAdmin")]
 public sealed class AgentKeysModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 
-	public AgentKeysModel(PetBoxDb db) => _db = db;
+	public AgentKeysModel(ICoreDbFactory f) => _f = f;
 
 	public sealed record KeyRow(string Key, string Name, string ProjectKey, string Scopes, DateTime CreatedAt, DateTime? ExpiresAt, bool Expired);
 
@@ -24,10 +24,11 @@ public sealed class AgentKeysModel : PageModel
 
 	void Load()
 	{
+		using var db = _f.Open();
 		// All DB-minted keys, expiring and permanent — the sysadmin overview. Config-declared
 		// keys (appsettings/env) are not rows and don't appear here.
 		var now = DateTime.UtcNow;
-		Keys = [.. _db.ApiKeys
+		Keys = [.. db.ApiKeys
 			.OrderByDescending(k => k.CreatedAt)
 			.ToList()
 			.Select(k => new KeyRow(k.Key, k.Name, k.ProjectKey, k.Scopes, k.CreatedAt, k.ExpiresAt, k.ExpiresAt != null && k.ExpiresAt <= now))];
@@ -35,7 +36,8 @@ public sealed class AgentKeysModel : PageModel
 
 	public async Task<IActionResult> OnPostRevokeAsync(string key)
 	{
-		await _db.ApiKeys.Where(k => k.Key == key).DeleteAsync();
+		using var db = _f.Open();
+		await db.ApiKeys.Where(k => k.Key == key).DeleteAsync();
 		this.NotifySuccess("API key revoked.");
 		return RedirectToPage();
 	}

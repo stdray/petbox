@@ -31,8 +31,9 @@ public static class HealthApi
 		string? BuildDate,
 		string Status);
 
-	static async Task<IResult> PushAsync(HttpContext ctx, PetBoxDb db, IProjectCatalog catalog, HealthPushRequest req, CancellationToken ct)
+	static async Task<IResult> PushAsync(HttpContext ctx, ICoreDbFactory dbf, IProjectCatalog catalog, HealthPushRequest req, CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 				.Contains(ApiKeyScopes.HealthWrite, StringComparer.Ordinal))

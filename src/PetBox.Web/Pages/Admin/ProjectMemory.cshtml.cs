@@ -15,13 +15,13 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectMemoryModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly IMemoryService _memory;
 
-	public ProjectMemoryModel(PetBoxDb db, FeatureFlags features, IMemoryService memory)
+	public ProjectMemoryModel(ICoreDbFactory f, FeatureFlags features, IMemoryService memory)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_memory = memory;
 	}
@@ -39,10 +39,11 @@ public sealed class ProjectMemoryModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync()
 	{
+		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Memory))
 			return NotFound();
 
-		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
+		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
 		Stores = [.. await _memory.ListStoresAsync(ProjectKey)];

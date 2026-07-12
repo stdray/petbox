@@ -10,9 +10,9 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class WorkspaceUsersModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 
-	public WorkspaceUsersModel(PetBoxDb db) => _db = db;
+	public WorkspaceUsersModel(ICoreDbFactory f) => _f = f;
 
 	public IReadOnlyList<(WorkspaceMember Member, string Username)> Members { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
@@ -24,9 +24,10 @@ public sealed class WorkspaceUsersModel : PageModel
 
 	void LoadMembers(string workspaceKey)
 	{
-		var members = _db.WorkspaceMembers.Where(m => m.WorkspaceKey == workspaceKey).ToList();
+		using var db = _f.Open();
+		var members = db.WorkspaceMembers.Where(m => m.WorkspaceKey == workspaceKey).ToList();
 		var userIds = members.Select(m => m.UserId).ToHashSet();
-		var users = _db.Users.Where(u => userIds.Contains(u.Id)).ToList();
+		var users = db.Users.Where(u => userIds.Contains(u.Id)).ToList();
 		var userMap = users.ToDictionary(u => u.Id, u => u.Username);
 		Members = members.Select(m => (m, userMap.GetValueOrDefault(m.UserId, "?"))).ToList();
 	}
@@ -36,6 +37,7 @@ public sealed class WorkspaceUsersModel : PageModel
 	// Query) would otherwise let override the route after the WorkspaceAdmin policy check passed.
 	public async Task<IActionResult> OnPostAddAsync([FromRoute(Name = "workspaceKey")] string workspaceKey, string Username, string? Password, WorkspaceRole Role)
 	{
+		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(Username))
 		{
 			ErrorMessage = "Username is required.";
@@ -43,7 +45,7 @@ public sealed class WorkspaceUsersModel : PageModel
 			return Page();
 		}
 
-		var existing = _db.Users.FirstOrDefault(u => u.Username == Username);
+		var existing = db.Users.FirstOrDefault(u => u.Username == Username);
 		long userId;
 		if (existing is not null)
 		{
@@ -62,13 +64,13 @@ public sealed class WorkspaceUsersModel : PageModel
 			}
 
 			var hash = AdminPasswordHasher.Hash(Password);
-			var newId = await _db.InsertWithInt64IdentityAsync(new User { Username = Username, PasswordHash = hash, CreatedAt = DateTime.UtcNow });
+			var newId = await db.InsertWithInt64IdentityAsync(new User { Username = Username, PasswordHash = hash, CreatedAt = DateTime.UtcNow });
 			userId = newId;
 		}
 
-		var already = _db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == workspaceKey);
+		var already = db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == workspaceKey);
 		if (!already)
-			await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = workspaceKey, Role = Role });
+			await db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = workspaceKey, Role = Role });
 
 		this.NotifySuccess("Member added.");
 		return RedirectToPage();
@@ -76,7 +78,8 @@ public sealed class WorkspaceUsersModel : PageModel
 
 	public async Task<IActionResult> OnPostRemoveAsync([FromRoute(Name = "workspaceKey")] string workspaceKey, long userId)
 	{
-		await _db.WorkspaceMembers.Where(m => m.UserId == userId && m.WorkspaceKey == workspaceKey).DeleteAsync();
+		using var db = _f.Open();
+		await db.WorkspaceMembers.Where(m => m.UserId == userId && m.WorkspaceKey == workspaceKey).DeleteAsync();
 		this.NotifySuccess("Member removed.");
 		return RedirectToPage();
 	}

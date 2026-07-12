@@ -33,13 +33,13 @@ public sealed class IndexModel : PageModel
 {
 	readonly ILlmRegistryEditor _registry;
 	readonly FeatureFlags _features;
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 
-	public IndexModel(ILlmRegistryEditor registry, FeatureFlags features, PetBoxDb db)
+	public IndexModel(ILlmRegistryEditor registry, FeatureFlags features, ICoreDbFactory f)
 	{
 		_registry = registry;
 		_features = features;
-		_db = db;
+		_f = f;
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -211,6 +211,9 @@ public sealed class IndexModel : PageModel
 		InheritedFrom = view.InheritedFrom;
 	}
 
-	async Task<bool> ProjectExistsAsync(CancellationToken ct) =>
-		await _db.Projects.AnyAsync(p => p.Key == ProjectKey, ct);
+	async Task<bool> ProjectExistsAsync(CancellationToken ct)
+	{
+		using var db = _f.Open();
+		return await db.Projects.AnyAsync(p => p.Key == ProjectKey, ct);
+	}
 }

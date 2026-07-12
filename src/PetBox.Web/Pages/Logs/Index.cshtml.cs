@@ -16,12 +16,12 @@ namespace PetBox.Web.Pages.Logs;
 public sealed class IndexModel : PageModel
 {
 	readonly ILogStore _logStore;
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 
-	public IndexModel(ILogStore logStore, PetBoxDb db)
+	public IndexModel(ILogStore logStore, ICoreDbFactory f)
 	{
 		_logStore = logStore;
-		_db = db;
+		_f = f;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "kql")]
@@ -78,11 +78,12 @@ public sealed class IndexModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
+		using var db = _f.Open();
 		var projectFilter = ProjectKeyRoute;
 		if (string.IsNullOrWhiteSpace(projectFilter))
 			return Page();
 
-		var project = await _db.Projects
+		var project = await db.Projects
 			.FirstOrDefaultAsync((Project p) => p.Key == projectFilter, ct);
 		if (project is null)
 			return Page();
@@ -102,14 +103,14 @@ public sealed class IndexModel : PageModel
 
 		// Saved queries are project-scoped (shared across the project's logs).
 		var pk = ProjectKey;
-		SavedQueries = await _db.SavedQueries
+		SavedQueries = await db.SavedQueries
 			.Where(q => q.ProjectKey == pk)
 			.OrderBy(q => q.Name)
 			.ToListAsync(ct);
 
 		if (!string.IsNullOrWhiteSpace(SavedName))
 		{
-			var saved = await _db.SavedQueries
+			var saved = await db.SavedQueries
 				.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == pk && q.Name == SavedName, ct);
 			if (saved is not null)
 			{
@@ -251,21 +252,22 @@ public sealed class IndexModel : PageModel
 		[FromForm(Name = "kql")] string? kql,
 		CancellationToken ct)
 	{
+		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(ProjectKeyRoute) || string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(kql))
 			return RedirectToProject();
 
-		var existing = await _db.SavedQueries
+		var existing = await db.SavedQueries
 			.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == ProjectKeyRoute && q.Name == name.Trim(), ct);
 		if (existing is not null)
 		{
 #pragma warning disable CA2016
-			await _db.UpdateAsync(existing with { Kql = kql, UpdatedAt = DateTime.UtcNow });
+			await db.UpdateAsync(existing with { Kql = kql, UpdatedAt = DateTime.UtcNow });
 #pragma warning restore CA2016
 		}
 		else
 		{
 #pragma warning disable CA2016
-			await _db.InsertAsync(new SavedQuery
+			await db.InsertAsync(new SavedQuery
 			{
 				Name = name.Trim(),
 				Kql = kql,
@@ -284,13 +286,14 @@ public sealed class IndexModel : PageModel
 		[FromForm(Name = "savedId")] long savedId,
 		CancellationToken ct)
 	{
+		using var db = _f.Open();
 		// Defense in depth: scope the delete to the ROUTE project too, not just the id — even
 		// with ProjectKeyRoute now route-locked, an id alone spans every project in every
 		// workspace, so without this filter a same-workspace member could delete another
 		// project's saved query by guessing/enumerating its id.
 		var pk = ProjectKeyRoute;
 #pragma warning disable CA2016
-		await _db.SavedQueries
+		await db.SavedQueries
 			.Where(q => q.Id == savedId && q.ProjectKey == pk)
 			.DeleteAsync();
 #pragma warning restore CA2016

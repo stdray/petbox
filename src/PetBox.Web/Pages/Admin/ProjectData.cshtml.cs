@@ -15,13 +15,13 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectDataModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly IDataDbFactory _factory;
 
-	public ProjectDataModel(PetBoxDb db, FeatureFlags features, IDataDbFactory factory)
+	public ProjectDataModel(ICoreDbFactory f, FeatureFlags features, IDataDbFactory factory)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_factory = factory;
 	}
@@ -39,13 +39,14 @@ public sealed class ProjectDataModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync()
 	{
+		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Data))
 			return NotFound();
 
-		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
+		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
-		DataDbs = await _db.DataDbs
+		DataDbs = await db.DataDbs
 			.Where(d => d.ProjectKey == ProjectKey)
 			.OrderBy(d => d.Name)
 			.ToListAsync();
@@ -54,6 +55,7 @@ public sealed class ProjectDataModel : PageModel
 
 	public async Task<IActionResult> OnPostCreateAsync(string name, string? description, long? maxPageCount)
 	{
+		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Data)) return NotFound();
 		if (string.IsNullOrWhiteSpace(name))
 		{
@@ -62,7 +64,7 @@ public sealed class ProjectDataModel : PageModel
 			return Page();
 		}
 
-		var exists = await _db.DataDbs.AnyAsync((DataDb d) => d.ProjectKey == ProjectKey && d.Name == name);
+		var exists = await db.DataDbs.AnyAsync((DataDb d) => d.ProjectKey == ProjectKey && d.Name == name);
 		if (exists)
 		{
 			ErrorMessage = $"DataDb '{name}' already exists.";
@@ -83,7 +85,7 @@ public sealed class ProjectDataModel : PageModel
 		}
 
 		var now = DateTime.UtcNow;
-		await _db.InsertAsync(new DataDb
+		await db.InsertAsync(new DataDb
 		{
 			ProjectKey = ProjectKey,
 			Name = name,
@@ -97,9 +99,10 @@ public sealed class ProjectDataModel : PageModel
 
 	public async Task<IActionResult> OnPostDeleteAsync(string name)
 	{
+		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Data)) return NotFound();
 
-		await _db.DataDbs.Where(d => d.ProjectKey == ProjectKey && d.Name == name).DeleteAsync();
+		await db.DataDbs.Where(d => d.ProjectKey == ProjectKey && d.Name == name).DeleteAsync();
 		_factory.TryDelete(ProjectKey, name);
 		this.NotifySuccess($"DataDb '{name}' deleted.");
 		return RedirectToPage();

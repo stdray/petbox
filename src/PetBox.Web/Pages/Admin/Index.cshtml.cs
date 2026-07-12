@@ -10,13 +10,13 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize]
 public sealed class IndexModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly IDeployService _deploy;
 
-	public IndexModel(PetBoxDb db, FeatureFlags features, IDeployService deploy)
+	public IndexModel(ICoreDbFactory f, FeatureFlags features, IDeployService deploy)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_deploy = deploy;
 	}
@@ -31,14 +31,15 @@ public sealed class IndexModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		WorkspaceCount = await _db.Workspaces.CountAsync(ct);
-		ProjectCount = await _db.Projects.CountAsync(ct);
-		UserCount = await _db.Users.CountAsync(ct);
+		using var db = _f.Open();
+		WorkspaceCount = await db.Workspaces.CountAsync(ct);
+		ProjectCount = await db.Projects.CountAsync(ct);
+		UserCount = await db.Users.CountAsync(ct);
 		// Count of system-wide setting rows (defaults). Per-project/per-user overrides
 		// count separately when their pages need it.
-		SettingOverrideCount = await _db.Settings.CountAsync(s => s.Scope == "System", ct);
+		SettingOverrideCount = await db.Settings.CountAsync(s => s.Scope == "System", ct);
 		// All DB-minted API keys — the Agent keys overview counts the same rows it lists.
-		AgentKeyCount = await _db.ApiKeys.CountAsync(ct);
+		AgentKeyCount = await db.ApiKeys.CountAsync(ct);
 
 		if (DeployEnabled)
 			DeployNodeCount = (await _deploy.ListNodesAsync(ct)).Count;

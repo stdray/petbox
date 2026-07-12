@@ -17,20 +17,20 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize]
 public sealed class IndexModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly ISettingsResolver _settings;
 	readonly IConfigDbFactory _configFactory;
 	readonly ITasksService _tasks;
 	readonly FeatureFlags _features;
 
 	public IndexModel(
-		PetBoxDb db,
+		ICoreDbFactory f,
 		ISettingsResolver settings,
 		IConfigDbFactory configFactory,
 		ITasksService tasks,
 		FeatureFlags features)
 	{
-		_db = db;
+		_f = f;
 		_settings = settings;
 		_configFactory = configFactory;
 		_tasks = tasks;
@@ -63,12 +63,13 @@ public sealed class IndexModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		Project = await _db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		using var db = _f.Open();
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null) return;
 
-		LogCount = await _db.Logs.CountAsync(l => l.ProjectKey == ProjectKey, ct);
-		DbCount = await _db.DataDbs.CountAsync(d => d.ProjectKey == ProjectKey, ct);
-		KeyCount = await _db.ApiKeys.CountAsync(k => k.ProjectKey == ProjectKey, ct);
+		LogCount = await db.Logs.CountAsync(l => l.ProjectKey == ProjectKey, ct);
+		DbCount = await db.DataDbs.CountAsync(d => d.ProjectKey == ProjectKey, ct);
+		KeyCount = await db.ApiKeys.CountAsync(k => k.ProjectKey == ProjectKey, ct);
 		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
 
 		if (ConfigEnabled)
@@ -80,13 +81,13 @@ public sealed class IndexModel : PageModel
 		var dash = await _settings.GetAsync<DashboardSettings>(Scope.System, "$", ct);
 		StaleSeconds = dash.StaleSeconds;
 
-		var maxIds = await _db.HealthReports
+		var maxIds = await db.HealthReports
 			.GroupBy(r => new { r.Svc, r.Tags })
 			.Select(g => g.Max(x => x.Id))
 			.ToListAsync(ct);
 		var latest = maxIds.Count == 0
 			? []
-			: await _db.HealthReports.Where(r => maxIds.Contains(r.Id)).ToListAsync(ct);
+			: await db.HealthReports.Where(r => maxIds.Contains(r.Id)).ToListAsync(ct);
 
 		var rows = new List<HealthRow>();
 		foreach (var r in latest)

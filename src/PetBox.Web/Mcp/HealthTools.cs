@@ -27,7 +27,7 @@ public static class HealthTools
 	[Description("Reads the latest health report per running service in a project (status, version, age, stale flag), with time in ISO-8601 UTC. Identity of a service is (svc, canonical tags). Optionally returns per-service history when `window` (seconds) and/or `limit` are supplied. Requires health:read scope; a project-scoped key sees only its own project, a cross-project ('*') key any project.")]
 	public static async Task<HealthSearchResultView> SearchAsync(
 		IHttpContextAccessor http,
-		PetBoxDb db,
+		ICoreDbFactory dbf,
 		[Description("Project key — must match the calling ApiKey's project claim (a '*' key may name any project).")] string projectKey,
 		[Description("Optional exact service name filter (HealthReport.Svc).")] string? svc = null,
 		[Description("A latest report older than this many seconds is flagged stale. Default 300.")] int staleThresholdSeconds = 300,
@@ -35,6 +35,7 @@ public static class HealthTools
 		[Description("Optional cap on history entries per service (most-recent first). Defaults to 50 when history is on.")] int? limit = null,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.HealthRead);
 

@@ -8,9 +8,9 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class WorkspaceDetailModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 
-	public WorkspaceDetailModel(PetBoxDb db) => _db = db;
+	public WorkspaceDetailModel(ICoreDbFactory f) => _f = f;
 
 	public Workspace? Workspace { get; private set; }
 	public IReadOnlyList<Project> Projects { get; private set; } = [];
@@ -18,11 +18,12 @@ public sealed class WorkspaceDetailModel : PageModel
 
 	public void OnGet(string key)
 	{
-		Workspace = _db.Workspaces.FirstOrDefault(w => w.Key == key);
+		using var db = _f.Open();
+		Workspace = db.Workspaces.FirstOrDefault(w => w.Key == key);
 		if (Workspace is not null)
 		{
-			Projects = _db.Projects.Where(p => p.WorkspaceKey == key).OrderBy(p => p.Key).ToList();
-			MemberCount = _db.WorkspaceMembers.Count(m => m.WorkspaceKey == key);
+			Projects = db.Projects.Where(p => p.WorkspaceKey == key).OrderBy(p => p.Key).ToList();
+			MemberCount = db.WorkspaceMembers.Count(m => m.WorkspaceKey == key);
 		}
 	}
 }

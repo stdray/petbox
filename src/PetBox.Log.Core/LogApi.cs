@@ -378,7 +378,7 @@ public static class LogApi
 	// to petbox's system log instead of the project's.
 	static async Task<IResult> SeqIngestAsync(
 		HttpContext ctx,
-		PetBoxDb yobaBoxDb,
+		ICoreDbFactory dbf,
 		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
@@ -386,6 +386,7 @@ public static class LogApi
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
+		using var yobaBoxDb = dbf.Open();
 		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(apiKey))
 			return Results.Unauthorized();
@@ -461,13 +462,14 @@ public static class LogApi
 		HttpContext ctx,
 		string projectKey,
 		string logName,
-		PetBoxDb yobaBoxDb,
+		ICoreDbFactory dbf,
 		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
+		using var yobaBoxDb = dbf.Open();
 		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(apiKey))
 			return Results.Unauthorized();

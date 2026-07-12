@@ -61,11 +61,12 @@ public static partial class DataDbsApi
 		HttpContext ctx,
 		string projectKey,
 		CreateDbRequest req,
-		PetBoxDb db,
+		ICoreDbFactory dbf,
 		IDataDbFactory factory,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
 		if (!authOk) return forbid!;
 		if (req is null || string.IsNullOrWhiteSpace(req.Name))
@@ -106,10 +107,11 @@ public static partial class DataDbsApi
 	static async Task<IResult> ListAsync(
 		HttpContext ctx,
 		string projectKey,
-		PetBoxDb db,
+		ICoreDbFactory dbf,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
 		if (!authOk) return forbid!;
 
@@ -126,11 +128,12 @@ public static partial class DataDbsApi
 		HttpContext ctx,
 		string projectKey,
 		string name,
-		PetBoxDb db,
+		ICoreDbFactory dbf,
 		IDataDbFactory factory,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
 		if (!authOk) return forbid!;
 

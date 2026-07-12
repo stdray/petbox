@@ -47,7 +47,7 @@ public sealed class LlmAdminPageTests : IDisposable
 	}
 
 	IndexModel Page(FakeEditor reg, bool feature = true) =>
-		new(reg, Features(feature), _db) { WorkspaceKey = "ws", ProjectKey = Proj };
+		new(reg, Features(feature), _db.Factory()) { WorkspaceKey = "ws", ProjectKey = Proj };
 
 	[Fact]
 	public async Task Feature_disabled_returns_NotFound()

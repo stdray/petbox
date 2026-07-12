@@ -42,8 +42,9 @@ public static class ConfigApi
 	// Resolves every config path visible to the calling API key's project, shaped by template.
 	// Workspace is derived from the key's project (ApiKey is project-scoped); tags come from the
 	// query string plus auto ws:/project: tags.
-	static IResult Conf(HttpContext context, PetBoxDb db, IConfigDbFactory configFactory, ISecretEncryptor encryptor)
+	static IResult Conf(HttpContext context, ICoreDbFactory dbf, IConfigDbFactory configFactory, ISecretEncryptor encryptor)
 	{
+		using var db = dbf.Open();
 		var projectKey = context.User.FindFirst("project")?.Value;
 		if (string.IsNullOrEmpty(projectKey))
 			return Results.Unauthorized();
@@ -124,8 +125,9 @@ public static class ConfigApi
 		return $"\"{Convert.ToHexStringLower(hash[..16])}\"";
 	}
 
-	static async Task<IResult> Create(HttpContext context, PetBoxDb db, IConfigDbFactory configFactory, string workspaceKey, ConfigBindingDto dto)
+	static async Task<IResult> Create(HttpContext context, ICoreDbFactory dbf, IConfigDbFactory configFactory, string workspaceKey, ConfigBindingDto dto)
 	{
+		using var db = dbf.Open();
 		if (!AuthorizeWorkspace(context, db, workspaceKey, out var forbid)) return forbid;
 		if (string.IsNullOrWhiteSpace(dto.Path))
 			return Results.BadRequest(new ErrorResponse("path is required"));
@@ -155,8 +157,9 @@ public static class ConfigApi
 
 	// Soft-delete: mark IsDeleted=1, keep the row. Resolve filters it out.
 	// UI's history page can offer "Undelete" for the last deleted version.
-	static async Task<IResult> Delete(HttpContext context, PetBoxDb db, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
+	static async Task<IResult> Delete(HttpContext context, ICoreDbFactory dbf, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
 	{
+		using var db = dbf.Open();
 		if (!AuthorizeWorkspace(context, db, workspaceKey, out var forbid)) return forbid;
 		using var configDb = configFactory.NewConfigDb(workspaceKey);
 		var now = DateTime.UtcNow;

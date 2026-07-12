@@ -14,13 +14,13 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectLogsModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly ILogStore _store;
 
-	public ProjectLogsModel(PetBoxDb db, FeatureFlags features, ILogStore store)
+	public ProjectLogsModel(ICoreDbFactory f, FeatureFlags features, ILogStore store)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_store = store;
 	}
@@ -41,10 +41,11 @@ public sealed class ProjectLogsModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync()
 	{
+		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Logging))
 			return NotFound();
 
-		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
+		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
 		Logs = [.. await _store.ListAsync(ProjectKey)];

@@ -85,11 +85,12 @@ public static class SchemaApi
 		HttpContext ctx,
 		string projectKey,
 		string dbName,
-		PetBoxDb db,
+		ICoreDbFactory dbf,
 		IDataDbFactory factory,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
 		if (!authOk) return forbid!;
 

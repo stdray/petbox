@@ -45,7 +45,7 @@ public sealed class ProjectDeletePageTests : IDisposable
 	}
 
 	ProjectDetailModel Page(string projectKey) =>
-		new(_db, Features(), new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = projectKey };
+		new(_db.Factory(), Features(), new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = projectKey };
 
 	// Seed one owned row in every table the cascade touches, for the given project key.
 	void SeedOwnedResources(string projectKey)

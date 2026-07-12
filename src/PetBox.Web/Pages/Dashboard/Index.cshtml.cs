@@ -13,13 +13,13 @@ namespace PetBox.Web.Pages.Dashboard;
 [Authorize]
 public sealed class IndexModel : PageModel
 {
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly INavigationContext _nav;
 	readonly ISettingsResolver _settings;
 
-	public IndexModel(PetBoxDb db, INavigationContext nav, ISettingsResolver settings)
+	public IndexModel(ICoreDbFactory f, INavigationContext nav, ISettingsResolver settings)
 	{
-		_db = db;
+		_f = f;
 		_nav = nav;
 		_settings = settings;
 	}
@@ -44,6 +44,7 @@ public sealed class IndexModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
+		using var db = _f.Open();
 		// The /ui/{workspaceKey} catch-all must NOT silently render the resolved default
 		// workspace (previously $system) for an unknown or non-member key. NavigationContext
 		// only resolves the route key when the user is a member of it (ResolveWorkspace step 1);
@@ -60,11 +61,11 @@ public sealed class IndexModel : PageModel
 		// Ensure the workspace memory container exists before the "Shared memory" card links
 		// to it — non-$system workspaces are lazy-created (MCP write or this render path);
 		// $system is already seeded by M028/M031 so this is a no-op there.
-		await WorkspaceMemory.EnsureContainerAsync(_db, wsKey, ct);
+		await WorkspaceMemory.EnsureContainerAsync(db, wsKey, ct);
 		// Workspace memory containers ($workspace / $ws-*) are not user projects — keep them
 		// out of the project grid (no logs/dbs/keys) and surface the current one as the
 		// dedicated "Shared memory" entry the view renders instead.
-		Projects = (await _db.Projects
+		Projects = (await db.Projects
 				.Where(p => p.WorkspaceKey == wsKey)
 				.OrderBy(p => p.Key).ToListAsync(ct))
 			.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p.Key))
@@ -74,16 +75,16 @@ public sealed class IndexModel : PageModel
 		var dash = await _settings.GetAsync<DashboardSettings>(Scope.System, "$", ct);
 		StaleSeconds = dash.StaleSeconds;
 
-		LogCount = await CountByProjectAsync(_db.Logs.Where(l => projectKeys.Contains(l.ProjectKey)).Select(l => l.ProjectKey), ct);
-		DbCount = await CountByProjectAsync(_db.DataDbs.Where(d => projectKeys.Contains(d.ProjectKey)).Select(d => d.ProjectKey), ct);
-		KeyCount = await CountByProjectAsync(_db.ApiKeys.Where(k => projectKeys.Contains(k.ProjectKey)).Select(k => k.ProjectKey), ct);
+		LogCount = await CountByProjectAsync(db.Logs.Where(l => projectKeys.Contains(l.ProjectKey)).Select(l => l.ProjectKey), ct);
+		DbCount = await CountByProjectAsync(db.DataDbs.Where(d => projectKeys.Contains(d.ProjectKey)).Select(d => d.ProjectKey), ct);
+		KeyCount = await CountByProjectAsync(db.ApiKeys.Where(k => projectKeys.Contains(k.ProjectKey)).Select(k => k.ProjectKey), ct);
 
 		// Latest report per service. Identity is (project tag, Svc) — the rest of the
 		// tags (host, elapsedMs, reason, …) are volatile payload of a single report, so
 		// grouping by the raw Tags string would resurface the whole history. The project
 		// tag lives inside Tags, hence the in-memory pass. Id is identity-ascending:
 		// max Id = newest.
-		var slim = await _db.HealthReports
+		var slim = await db.HealthReports
 			.Select(r => new { r.Id, r.Svc, r.Tags })
 			.ToListAsync(ct);
 		var maxIds = slim
@@ -92,7 +93,7 @@ public sealed class IndexModel : PageModel
 			.ToList();
 		var latest = maxIds.Count == 0
 			? []
-			: await _db.HealthReports.Where(r => maxIds.Contains(r.Id)).ToListAsync(ct);
+			: await db.HealthReports.Where(r => maxIds.Contains(r.Id)).ToListAsync(ct);
 
 		var byProject = new Dictionary<string, List<HealthRow>>(StringComparer.Ordinal);
 		foreach (var r in latest)

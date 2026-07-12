@@ -35,13 +35,13 @@ public sealed class ProjectMethodologyModel : PageModel
 {
 	public enum EditorMode { View, Cta, Base, Edit, Confirm }
 
-	readonly PetBoxDb _db;
+	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
 
-	public ProjectMethodologyModel(PetBoxDb db, FeatureFlags features, ITasksService tasks)
+	public ProjectMethodologyModel(ICoreDbFactory f, FeatureFlags features, ITasksService tasks)
 	{
-		_db = db;
+		_f = f;
 		_features = features;
 		_tasks = tasks;
 	}
@@ -333,7 +333,8 @@ public sealed class ProjectMethodologyModel : PageModel
 
 	async Task<bool> LoadStateAsync(CancellationToken ct)
 	{
-		var project = await _db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
+		using var db = _f.Open();
+		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return false; }
 
 		OpenInstances = (await _tasks.ListMethodologyInstancesAsync(ProjectKey, ct))
@@ -388,6 +389,7 @@ public sealed class ProjectMethodologyModel : PageModel
 	// stored templates and open instance rules — each with graph docs for the per-card SVG preview.
 	async Task LoadBasesAsync(CancellationToken ct)
 	{
+		using var db = _f.Open();
 		var options = new List<BaseOption>();
 		var previews = new List<(string Ref, IEnumerable<(BoardWorkflowView View, IReadOnlyList<string> EffectNotes)> Views)>();
 
@@ -398,7 +400,7 @@ public sealed class ProjectMethodologyModel : PageModel
 			previews.Add((slug, GraphViews(MethodologyPresets.RenderPresetDefinition(p.Slug))));
 		}
 
-		var projects = await _db.Projects.Where((Project p) => p.Key != ProjectKey)
+		var projects = await db.Projects.Where((Project p) => p.Key != ProjectKey)
 			.OrderBy(p => p.Key).ToListAsync(ct);
 		foreach (var p in projects)
 		{

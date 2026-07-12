@@ -25,8 +25,9 @@ public static class AuthApi
 			.RequireAuthorization("ApiKey");
 	}
 
-	static async Task<IResult> Validate(HttpContext context, PetBoxDb db, CancellationToken ct)
+	static async Task<IResult> Validate(HttpContext context, ICoreDbFactory dbf, CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		var user = context.User;
 		if (user.Identity is not { IsAuthenticated: true })
 			return Results.Json(new AuthInvalidResponse(false), statusCode: 401);

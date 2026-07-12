@@ -36,7 +36,7 @@ public static class DeployTools
 	[McpServerTool(Name = "deploy_node_upsert", Title = "Register/update a node", UseStructuredContent = true, OutputSchemaType = typeof(DeployNodeResult))]
 	[Description("Registers or updates a node. With mintKey=true also mints (or rotates) the node-scoped agent key and returns it ONCE. Requires deploy:write.")]
 	public static async Task<DeployNodeResult> NodeUpsertAsync(
-		IHttpContextAccessor http, FeatureFlags features, IDeployService svc, PetBoxDb db,
+		IHttpContextAccessor http, FeatureFlags features, IDeployService svc, ICoreDbFactory dbf,
 		[Description("Node id (slug), e.g. 'vdsina-1'.")] string id,
 		[Description("Display name.")] string? displayName = null,
 		[Description("Capability tags CSV, e.g. 'net.x,disk=nvme'.")] string? tags = null,
@@ -44,6 +44,7 @@ public static class DeployTools
 		[Description("Mint (or rotate) the node agent key and return it once.")] bool mintKey = false,
 		CancellationToken ct = default)
 	{
+		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Deploy);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.DeployWrite);
 		if (string.IsNullOrWhiteSpace(id)) throw new ArgumentException("id is required");

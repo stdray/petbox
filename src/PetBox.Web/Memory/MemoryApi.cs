@@ -36,8 +36,9 @@ public static class MemoryApi
 	}
 
 	static async Task<IResult> CanonAsync(
-		HttpContext ctx, string projectKey, IMemoryService memory, PetBoxDb db, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, IMemoryService memory, ICoreDbFactory dbf, IProjectCatalog catalog, CancellationToken ct)
 	{
+		using var db = dbf.Open();
 		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
 			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
