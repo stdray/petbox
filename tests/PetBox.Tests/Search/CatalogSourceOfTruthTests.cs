@@ -238,7 +238,7 @@ public sealed class CatalogSourceOfTruthTests : IDisposable
 	// ---- SessionDigestJob ----
 
 	SessionDigestJob DigestJob() =>
-		new(_catalog, _sessions, _memory, new StubChat("Сессия про фикс\n- фикс резолвера"),
+		new(_sessionsFactory, _catalog, _sessions, _memory, new StubChat("Сессия про фикс\n- фикс резолвера"),
 			logger: null, quietPeriod: TimeSpan.FromMinutes(-5));
 
 	[Fact]

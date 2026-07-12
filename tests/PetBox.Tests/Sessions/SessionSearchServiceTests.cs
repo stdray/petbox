@@ -71,7 +71,8 @@ public sealed class SessionSearchServiceTests : IDisposable
 		contents.Select(c => new SessionMessageInput("user", c)).ToArray();
 
 	Task<int> Distill() =>
-		new SessionDigestJob(new ProjectCatalog(_db), _sessions, _memory, new EchoChat(), logger: null, quietPeriod: NoQuiet)
+		new SessionDigestJob(_sessionsFactory, new ProjectCatalog(_db), _sessions, _memory, new EchoChat(),
+				logger: null, quietPeriod: NoQuiet)
 			.DrainAllAsync(CancellationToken.None);
 
 	[Fact]
@@ -136,8 +137,8 @@ public sealed class SessionSearchServiceTests : IDisposable
 		await _sessions.UpsertAsync(Proj, "s-verbatim", "claude-code",
 			Msgs($"обсуждали тему А, отдельно всплыл идентификатор {TermB} в логах ошибки"));
 
-		var distilled = await new SessionDigestJob(new ProjectCatalog(_db), _sessions, _memory, new FixedDigestChat(),
-			logger: null, quietPeriod: NoQuiet).DrainAllAsync(CancellationToken.None);
+		var distilled = await new SessionDigestJob(_sessionsFactory, new ProjectCatalog(_db), _sessions, _memory,
+			new FixedDigestChat(), logger: null, quietPeriod: NoQuiet).DrainAllAsync(CancellationToken.None);
 		distilled.Should().Be(1);
 
 		var digestOnly = await _memory.SearchAsync(Proj, SessionDigestJob.Store, TermB, type: null);

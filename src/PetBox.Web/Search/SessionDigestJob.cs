@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using PetBox.Core.Data;
+using PetBox.Core.Search;
 using PetBox.LlmRouter.Contract;
 using PetBox.Memory.Contract;
 using PetBox.Sessions.Contract;
@@ -10,16 +11,31 @@ namespace PetBox.Web.Search;
 
 // Distills every session into a compact facts digest stored in the project's
 // `session-digests` memory store — the always-on DISCOVERY tier of session search
-// (spec: session-discovery-digest). The digest entry is also the cursor: its metadata
-// records the last distilled message ordinal, so a pass touches only sessions whose
-// header Version moved past it and feeds ISessionService.DeltaAsync just the increment.
+// (spec: session-discovery-digest). A pass touches only sessions whose header Version
+// moved past their cursor and feeds ISessionService.DeltaAsync just the increment.
 // Distillation is asynchronous enrichment off the write path (spec:
 // write-never-blocks-on-enrich); no chat capability → the pass is a no-op and the
 // un-advanced cursor backfills when chat recovers (spec: durable-backfill).
+//
+// The cursor lives in the sessions file's `search_cursor` table (SqliteIndexCursorStore),
+// NOT in the digest entry it produces. It used to ride the entry's Metadata — and that was a
+// chat-burning loop: a session the model refuses to digest (or one whose junk digest the
+// cleanup below soft-deletes) HAS no entry, so there was nothing to write the cursor on; the
+// session stayed a candidate forever and was re-distilled every single tick. A cursor that
+// only exists when the work SUCCEEDS cannot record failure. Now the cursor is independent of
+// the entry, always advances, and a session the model keeps refusing is dead-lettered after
+// MaxAttempts (search_deadletter) and skipped henceforth.
 public sealed class SessionDigestJob : IBackgroundIndexJob
 {
 	public const string Store = "session-digests";
 	public const string Tag = "session-digest";
+
+	// Dead-letter identity: one row per session in the sessions file's search_deadletter.
+	internal const string DeadLetterType = "session-digest";
+
+	// Refusals a session burns before it is dead-lettered — same budget as
+	// AsyncVectorizationWorker's poison-doc allowance.
+	internal const int MaxAttempts = 5;
 
 	// An actively-pushed session grows every turn; distilling on each 60s tick would burn
 	// a chat call per turn. Only sessions quiet for this long get distilled — the cursor
@@ -71,6 +87,7 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 		full-text search. No commentary, no markdown headers; output the digest text only.
 		""";
 
+	readonly IScopedDbFactory<SessionsDb> _factory;
 	readonly IProjectCatalog _catalog;
 	readonly ISessionService _sessions;
 	readonly IMemoryService _memory;
@@ -82,10 +99,11 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 	// Round-robin start position across passes; passes run strictly sequentially.
 	static int _rotation;
 
-	public SessionDigestJob(IProjectCatalog catalog, ISessionService sessions,
-		IMemoryService memory, ILlmClient? llm = null, ILogger<SessionDigestJob>? logger = null,
-		TimeSpan? quietPeriod = null, TimeSpan? budget = null)
+	public SessionDigestJob(IScopedDbFactory<SessionsDb> factory, IProjectCatalog catalog,
+		ISessionService sessions, IMemoryService memory, ILlmClient? llm = null,
+		ILogger<SessionDigestJob>? logger = null, TimeSpan? quietPeriod = null, TimeSpan? budget = null)
 	{
+		_factory = factory;
 		_catalog = catalog;
 		_sessions = sessions;
 		_memory = memory;
@@ -94,6 +112,8 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 		_quietPeriod = quietPeriod ?? DefaultQuietPeriod;
 		_budget = budget ?? DrainPacing.DefaultBudget;
 	}
+
+	static string CursorName(string sessionId) => "session-digest:" + sessionId;
 
 	public async Task<int> DrainAllAsync(CancellationToken ct)
 	{
@@ -124,23 +144,32 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 
 				// Self-heal: purge junk digests older passes minted (empty / "no content to
 				// digest" / super-short) before distilling — a pass owns this machine store.
+				// Safe now that the cursor lives outside the entry: deleting a junk digest no
+				// longer resets the session's position to zero.
 				await CleanupJunkDigestsAsync(project, ct);
 
 				var headers = await _sessions.ListAsync(project, ct);
 				if (headers.Count == 0) continue;
 
+				// No DDL here: NewEnsuredConnection runs the sessions-tier migrations
+				// (SessionsSchema.Ensure), and M007 owns search_cursor/search_deadletter.
+				var cursors = new SqliteIndexCursorStore(() => _factory.NewEnsuredConnection(project));
 				var states = await LoadDigestStatesAsync(project, ct);
 				var cutoff = DateTime.UtcNow - _quietPeriod;
 				foreach (var header in headers)
 				{
 					ct.ThrowIfCancellationRequested();
 					if (clock.ProjectExhausted) break;
-					states.TryGetValue(header.SessionId, out var state);
-					if (header.Version <= (state?.Cursor ?? 0)) continue;
 					if (header.Updated > cutoff) continue; // still hot — let the turn settle
+					states.TryGetValue(header.SessionId, out var state);
+					var cursor = await SeedCursorAsync(cursors, header.SessionId, state, ct);
+					if (header.Version <= cursor) continue;
+					// A session the model has refused MaxAttempts times is not asked again.
+					if (await cursors.IsDeadAsync(CursorName(header.SessionId), DeadLetterType, header.SessionId, ct))
+						continue;
 					try
 					{
-						if (await DistillAsync(project, header, state, clock, ct))
+						if (await DistillAsync(project, header, state, cursor, cursors, clock, ct))
 							distilled++;
 					}
 					catch (Exception ex) when (ex is not OperationCanceledException)
@@ -189,21 +218,32 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 		}
 	}
 
-	async Task<bool> DistillAsync(string project, SessionHeader header, DigestState? state,
-		DrainClock clock, CancellationToken ct)
+	// Legacy seed: before the cursor moved into search_cursor it rode the digest entry's
+	// Metadata. A session whose search_cursor is still 0 but whose EXISTING digest carries a
+	// positive cursor adopts that position once — without this, every digest in the archive
+	// would re-distill from message 1 (a full, expensive LLM re-run) on the first new pass.
+	// After the seed, Metadata.cursor is written for debugging only and never read back.
+	static async Task<long> SeedCursorAsync(SqliteIndexCursorStore cursors, string sessionId,
+		DigestState? state, CancellationToken ct)
 	{
-		var cursor = state?.Cursor ?? 0;
+		var cursor = await cursors.GetCursorAsync(CursorName(sessionId), ct);
+		if (cursor > 0 || state is null || state.Cursor <= 0) return cursor;
+		await cursors.SetCursorAsync(CursorName(sessionId), state.Cursor, ct);
+		return state.Cursor;
+	}
+
+	async Task<bool> DistillAsync(string project, SessionHeader header, DigestState? state, long cursor,
+		SqliteIndexCursorStore cursors, DrainClock clock, CancellationToken ct)
+	{
 		var delta = await _sessions.DeltaAsync(project, header.SessionId, cursor, ct);
 		if (delta.Count == 0) return false;
 
 		// #1 Skip before the LLM: an insubstantial delta (empty/heartbeat/tool-noise) is not
-		// distilled at all — no chat call, no digest minted. If a digest already exists, its
-		// cursor is advanced past this trivial tail so it is not re-examined; a brand-new
-		// empty session anchors no cursor (nothing to write it on) and is re-skipped cheaply.
+		// distilled at all — no chat call, no digest minted. The cursor advances past the trivial
+		// tail UNCONDITIONALLY (entry or no entry) so it is never reconsidered.
 		if (!IsSubstantial(delta))
 		{
-			if (state is not null)
-				await AdvanceCursorAsync(project, header, state, delta[^1].Version, ct);
+			await AdvanceCursorAsync(project, header, state, cursor, delta[^1].Version, cursors, ct);
 			return false;
 		}
 
@@ -213,7 +253,22 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 		{
 			if (clock.ProjectExhausted) break; // park at lastVersion — resumes next pass
 			var updated = await ChatDistillAsync(project, digest, batch, ct);
-			if (string.IsNullOrWhiteSpace(updated)) return false; // hold the cursor, retry next tick
+			// #1b An EMPTY answer is a broken RESPONSE, not broken input — the delta may be perfectly
+			// good, the chat endpoint just gave us nothing. So, unlike the refusal branch below, the
+			// cursor is HELD: a transient blip must backfill the same delta when chat recovers (spec:
+			// durable-backfill). But a hold with no ceiling is the very bug this job had — an endpoint
+			// that returns whitespace forever would re-ask this session every tick, forever. Both
+			// branches therefore share ONE attempt counter: transient → backfilled, permanent → dead
+			// after MaxAttempts and dropped from the candidate set.
+			if (string.IsNullOrWhiteSpace(updated))
+			{
+				var (empties, condemned) = await CountAttemptAsync(cursors, header.SessionId, ct);
+				_logger?.LogWarning(
+					"session digest got an EMPTY chat answer for {Project}/{Session}: nothing written, cursor HELD at {Cursor} for backfill; attempt {Attempts}/{MaxAttempts}{Dead}",
+					project, header.SessionId, cursor, empties, MaxAttempts,
+					condemned ? " — session dead-lettered, it will no longer be distilled" : "");
+				return false;
+			}
 			digest = updated.Trim();
 			lastVersion = batch[^1].Version;
 			clock.Unit();
@@ -221,15 +276,18 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 		if (lastVersion == cursor) return false; // budget hit before the first batch
 
 		// #2 Guard after the LLM: a refusal / empty / super-short answer is NOT written as a
-		// digest. The cursor still advances (over an existing entry) so the same trailing
-		// noise is not re-distilled next tick; a session with no anchor entry mints nothing.
+		// digest. Here the INPUT is what the model rejected, so there is nothing to gain by
+		// re-chewing this delta: the cursor advances ANYWAY — with or without an entry to hang it
+		// on — and the refusal is counted on the same counter as #1b. MaxAttempts of them and the
+		// session is dead-lettered out of the candidate set. This is the loop-breaker.
 		if (IsRefusal(digest))
 		{
+			var (attempts, dead) = await CountAttemptAsync(cursors, header.SessionId, ct);
+			await AdvanceCursorAsync(project, header, state, cursor, lastVersion, cursors, ct);
 			_logger?.LogWarning(
-				"session digest skipped for {Project}/{Session}: model returned no usable digest ({Len} chars); cursor advanced, nothing written",
-				project, header.SessionId, digest.Trim().Length);
-			if (state is not null)
-				await AdvanceCursorAsync(project, header, state, lastVersion, ct);
+				"session digest skipped for {Project}/{Session}: model returned no usable digest ({Len} chars); nothing written, cursor moved to {Cursor}; refusal {Attempts}/{MaxAttempts}{Dead}",
+				project, header.SessionId, digest.Trim().Length, lastVersion, attempts, MaxAttempts,
+				dead ? " — session dead-lettered, it will no longer be distilled" : "");
 			return false;
 		}
 
@@ -247,12 +305,15 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 		}], [], ct);
 		if (outcome.Result.Conflicts.Count > 0)
 		{
-			// Someone edited the digest entry concurrently; the held cursor re-distills
-			// against the fresh baseline next tick.
+			// Someone edited the digest entry concurrently; the HELD cursor (not advanced yet)
+			// re-distills against the fresh baseline next tick.
 			_logger?.LogWarning("session digest write conflicted for {Project}/{Session}; retrying next tick",
 				project, header.SessionId);
 			return false;
 		}
+		// Written — only now is the position durable, and the refusal trail is cleared.
+		await cursors.SetCursorAsync(CursorName(header.SessionId), lastVersion, ct);
+		await cursors.ClearAttemptsAsync(CursorName(header.SessionId), DeadLetterType, header.SessionId, ct);
 		return true;
 	}
 
@@ -303,13 +364,34 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 	static string BuildMetadata(SessionHeader header, long cursor) =>
 		JsonSerializer.Serialize(new { sessionId = header.SessionId, agent = header.Agent, cursor });
 
-	// Move an EXISTING digest's cursor forward without re-distilling or changing its body —
-	// used when a delta is insubstantial or the model refused, so the trailing noise is not
-	// reconsidered next tick. A conflict just means someone rewrote the entry; the held
-	// cursor re-converges next pass.
-	async Task AdvanceCursorAsync(string project, SessionHeader header, DigestState state, long cursor, CancellationToken ct)
+	// One failed digest attempt (a refusal OR an empty chat answer) against the session's
+	// dead-letter row; at MaxAttempts the session is condemned and IsDeadAsync drops it from the
+	// candidate set — the ceiling that keeps a permanently-undigestible session from burning a
+	// chat call every tick. Recoverable, not data loss: a reindex / SearchBackfill wipes
+	// search_deadletter and resets the cursors (see SearchReindexService), so a wave of
+	// dead-letters caused by a degraded chat endpoint is repaired by a reindex.
+	static async Task<(int Attempts, bool Dead)> CountAttemptAsync(SqliteIndexCursorStore cursors,
+		string sessionId, CancellationToken ct)
 	{
-		if (cursor <= state.Cursor) return; // nothing to advance past
+		var index = CursorName(sessionId);
+		var attempts = await cursors.BumpAttemptsAsync(index, DeadLetterType, sessionId, ct);
+		var dead = attempts >= MaxAttempts;
+		if (dead) await cursors.MarkDeadAsync(index, DeadLetterType, sessionId, ct);
+		return (attempts, dead);
+	}
+
+	// Move the session's cursor forward without re-distilling — used when a delta is
+	// insubstantial or the model refused, so the trailing noise is not reconsidered next tick.
+	// The authoritative move is the search_cursor write, which happens whether or not a digest
+	// entry exists (a session with no entry is exactly the one that used to loop forever). When
+	// an entry DOES exist its Metadata.cursor is mirrored for debuggability only; a conflict
+	// there is harmless — the real cursor has already moved.
+	async Task AdvanceCursorAsync(string project, SessionHeader header, DigestState? state, long cursor,
+		long to, SqliteIndexCursorStore cursors, CancellationToken ct)
+	{
+		if (to <= cursor) return; // nothing to advance past
+		await cursors.SetCursorAsync(CursorName(header.SessionId), to, ct);
+		if (state is null) return;
 		var outcome = await _memory.UpsertAsync(project, Store, [new MemoryEntryInput
 		{
 			Key = header.SessionId,
@@ -318,10 +400,10 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 			Description = state.Description,
 			Body = state.Body,
 			Tags = [Tag],
-			Metadata = BuildMetadata(header, cursor),
+			Metadata = BuildMetadata(header, to),
 		}], [], ct);
 		if (outcome.Result.Conflicts.Count > 0)
-			_logger?.LogWarning("session digest cursor-advance conflicted for {Project}/{Session}; retrying next tick",
+			_logger?.LogWarning("session digest metadata cursor mirror conflicted for {Project}/{Session}; harmless — the durable cursor moved",
 				project, header.SessionId);
 	}
 
