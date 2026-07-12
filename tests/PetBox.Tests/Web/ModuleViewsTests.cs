@@ -239,6 +239,47 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		controls.Should().MatchRegex("btn-active\"[^>]*data-testid=\"view-tree\"");
 	}
 
+	// board-tag-grouping-hidden: the maintainer pulled the tag-grouping presets from the
+	// switcher (BoardViewModeRegistry's Tags entry is now Hidden) — the button never renders —
+	// while `?view=tags&by=...` keeps resolving and rendering exactly as before (Resolve/Find
+	// scan the full, unfiltered Entries list). This is the regression a bare "remove the button"
+	// edit could silently break: hiding from discovery must not also break direct navigation.
+	[Fact]
+	public async Task TaskBoard_ViewSwitcher_HidesTagsButDirectUrlStillResolvesAndRenders()
+	{
+		using var switcherResp = await GetAuthedAsync("/ui/$system/$system/tasks/roadmap");
+		switcherResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var switcherHtml = await switcherResp.Content.ReadAsStringAsync();
+		var controlsStart = switcherHtml.IndexOf("data-testid=\"board-view-controls\"", StringComparison.Ordinal);
+		var controlsEnd = switcherHtml.IndexOf("</div>", controlsStart, StringComparison.Ordinal);
+		var controls = switcherHtml[controlsStart..controlsEnd];
+		controls.Should().NotContain("data-view-mode=\"tags\"", "the tags preset buttons must not appear in the switcher");
+		controls.Should().NotContain("tags:", "the tag-namespace preset fan-out label must not appear either");
+		// The other four modes are unaffected — still offered.
+		controls.Should().Contain("data-testid=\"view-tree\"");
+		controls.Should().Contain("data-testid=\"view-kanban\"");
+		controls.Should().Contain("data-testid=\"view-outline\"");
+		controls.Should().Contain("data-testid=\"view-table\"");
+
+		const string board = "viewswitcherhiddentags";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "hidden tags direct-url smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "ht1", Title = "HT1", Body = "x", Tags = ["area:ui"] },
+			]);
+		}
+		using var directResp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tags&by=area");
+		directResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var directHtml = await directResp.Content.ReadAsStringAsync();
+		directHtml.Should().Contain("data-testid=\"board-tag-groups\"");
+		directHtml.Should().Contain("data-resolved-view=\"tags\"");
+	}
+
 	// board-view-mode-framework: kanban/outline/table HTTP-level smoke — same "only an actual
 	// render proves the partial exists" reasoning as the tree/tags smoke above.
 	[Fact]
@@ -274,6 +315,41 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().NotContain("P@");
 	}
 
+	// board-node-filter / board-sort: kanban used to have NO filter/sort panel at all (the gap
+	// this feature closes) — assert the shared _BoardFilterSort bar renders, each column is its
+	// own reorder scope, and the card carries the full data-* contract ts/board.ts needs to
+	// filter/sort it (status/type/priority/title/created/updated/closed) — the same contract
+	// _PlanNodeCard carries for the tree pane.
+	[Fact]
+	public async Task TaskBoard_KanbanView_RendersFilterSortBar_WithFullDataAttributesPerCard()
+	{
+		const string board = "viewmodekanbanfilter";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "kanban filter/sort smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "kf1", Title = "KF1", Body = "a body that must not leak into data-search", Priority = 3, Tags = ["area:ui"] },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-filter\"");
+		html.Should().Contain("data-testid=\"board-filter-text\"");
+		html.Should().Contain("data-testid=\"board-filter-status\"");
+		html.Should().Contain("data-testid=\"board-sort-by\"");
+		// Each column <ul> is its own reorder scope — sort must stay within a column.
+		html.Should().Contain("data-sort-scope");
+		html.Should().Contain("data-status=\"Todo\" data-type=\"task\" data-priority=\"3\"");
+		html.Should().Contain("data-search=\"kf1 kf1 area:ui\""); // title, key, tags — no body
+		html.Should().NotContain("a body that must not leak into data-search");
+	}
+
 	[Fact]
 	public async Task TaskBoard_OutlineView_NavigateMode_NeverShipsTheBody()
 	{
@@ -296,6 +372,38 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-resolved-view=\"outline\"");
 		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"navigate\"");
 		html.Should().NotContain("a wiki-length body that must not ship inline");
+	}
+
+	// board-node-filter / board-sort: outline used to have NO filter/sort panel either. Assert
+	// the shared bar renders, the row list is one reorder scope (data-sort-scope, data-parent-id
+	// so branches — not just leaves — sort correctly), AND — the regression this fix specifically
+	// guards, since a naive data-* copy from _PlanNodeCard would include n.Body — that data-search
+	// still never leaks the body (board-body-truncate must survive the new attribute).
+	[Fact]
+	public async Task TaskBoard_OutlineView_RendersFilterSortBar_WithoutLeakingBodyIntoDataSearch()
+	{
+		const string board = "viewmodeoutlinefilter";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "outline filter/sort smoke"); // simple kind → navigate
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "of1", Title = "OF1", Body = "a wiki-length body that must not ship inline or leak into data-search", Tags = ["area:ui"] },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-filter\"");
+		html.Should().Contain("data-testid=\"board-sort-by\"");
+		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"navigate\" data-sort-scope");
+		html.Should().Contain("data-parent-id=\"\""); // root row — no part_of parent on this board
+		html.Should().Contain("data-search=\"of1 of1 area:ui\""); // title + key + tags — no body
+		html.Should().NotContain("a wiki-length body that must not ship inline or leak into data-search");
 	}
 
 	[Fact]

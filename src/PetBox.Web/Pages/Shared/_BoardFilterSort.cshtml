@@ -1,0 +1,28 @@
+@model PetBox.Web.Pages.Shared.BoardFilterSortModel
+@* The shared filter+sort control bar (board-node-filter / board-sort): ONE partial, included
+   by every board view mode's content pane (_BoardViewTree, _BoardViewKanban, _BoardViewOutline,
+   _TaskTable — the table's own render target for the "table" mode). Wiring is entirely
+   client-side (ts/board.ts initBoardPage), keyed off testids/data-* here and the data-node-id /
+   data-sort-scope attributes each mode's own row/card markup carries — this partial only draws
+   the controls, it has no idea which mode is rendering it. See BoardFilterSortModel for what a
+   mode declares (today: just the sort-hint label). *@
+<div class="mb-3 flex flex-wrap items-center gap-2" data-testid="board-filter">
+	<input type="search" class="input input-bordered input-xs w-48" placeholder="filter…" data-testid="board-filter-text" aria-label="Filter text" />
+	<select class="select select-bordered select-xs" data-testid="board-filter-status" aria-label="Filter by status"><option value="">status: any</option></select>
+	<select class="select select-bordered select-xs" data-testid="board-filter-type" aria-label="Filter by type"><option value="">type: any</option></select>
+	<label class="label cursor-pointer justify-start gap-2 text-xs">
+		<input type="checkbox" class="toggle toggle-xs" data-testid="active-only-toggle" />
+		<span>active only</span>
+	</label>
+	@* Client-side sort toggle (board-sort-impl): reorders rows/cards within each of the page's
+	   `[data-sort-scope]` containers (siblings only — see ts/board.ts reorderDom) and persists
+	   the choice to localStorage["tasksSort"]. *@
+	<span class="text-xs opacity-60 ml-1">@Model.SortHint</span>
+	<select class="select select-bordered select-xs" data-testid="board-sort-by" aria-label="Sort by">
+		<option value="priority">priority</option>
+		<option value="created">created</option>
+		<option value="updated">updated</option>
+		<option value="title">title</option>
+	</select>
+	<button type="button" class="btn btn-ghost btn-xs font-mono" data-testid="board-sort-dir" aria-label="Toggle sort direction" title="toggle ascending / descending">↑</button>
+</div>

@@ -7,7 +7,12 @@
        which fetches and renders JUST that node's body on demand — no body ships in this page's
        initial HTML (board-body-truncate: inline body only on explicit reveal).
      - navigate: no expand affordance at all; the heading link goes straight to the node page.
-   See OutlineRevealModeNames for which board kinds get which mode and why. *@
+   See OutlineRevealModeNames for which board kinds get which mode and why.
+   board-node-filter / board-sort: the shared _BoardFilterSort bar plus the same ts/board.ts
+   data-* contract _PlanNodeCard carries (data-node-id/data-parent-id/status/type/priority/…) —
+   the outline row list is DFS-flat exactly like the tree pane (indentation via margin-left, no
+   actual DOM nesting), so it's ONE reorder scope and "sort" reorders sibling branches in place,
+   same as tree. *@
 @{
 	var lazy = Model.OutlineRevealMode == OutlineRevealModeNames.InlineLazy;
 }
@@ -17,17 +22,25 @@
 }
 else
 {
-	<ul class="flex flex-col gap-1" data-testid="board-outline" data-reveal-mode="@Model.OutlineRevealMode">
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(SortHint: "sort branches:");
+	<partial name="_BoardFilterSort" model="filterSortModel" />
+	<ul class="flex flex-col gap-1" data-testid="board-outline" data-reveal-mode="@Model.OutlineRevealMode" data-sort-scope>
 		@foreach (var n in Model.Nodes)
 		{
 			var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
 			var hasBody = !string.IsNullOrEmpty(n.Body);
+			var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
+			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);
+			// board-body-truncate: unlike the tree card, outline never ships the body inline (it's
+			// fetched lazily on expand, or never at all in navigate mode) — data-search must NOT
+			// leak it into the initial HTML, so this omits n.Body where _PlanNodeCard includes it.
+			var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
 			// Tree edges (outline-tree-edges, live UI review finding): a left border per
 			// indented row is the same nesting-guide convention _CommentThread already uses for
 			// reply depth — without it, depth reads only from indentation, which is easy to
 			// misjudge once a few sibling groups stack up.
 			var edgeClass = n.Depth > 0 ? "border-l-2 border-base-300/60 pl-2" : "";
-			<li data-testid="outline-row" data-node-key="@n.Key" data-node-id="@n.NodeId" data-depth="@n.Depth" class="@edgeClass" style="margin-left:@(n.Depth * 1.5)rem">
+			<li data-testid="outline-row" data-node-key="@n.Key" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-depth="@n.Depth" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="@keepVisible.ToString().ToLowerInvariant()" class="@edgeClass" style="margin-left:@(n.Depth * 1.5)rem">
 				@if (lazy && hasBody)
 				{
 					var bodyUrl = $"?handler=NodeBody&nodeId={Uri.EscapeDataString(n.NodeId)}";

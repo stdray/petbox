@@ -1,10 +1,23 @@
-// Task board view interactivity — collapse / filter / active-only. Imperative (mirrors
-// config.ts), so it does NOT fight Alpine over display: the board renders a FLAT DFS list of
-// <li data-node-id …> and we toggle each row's `hidden`. A row is shown unless:
+// Task board view interactivity — collapse / filter / active-only / sort. Imperative (mirrors
+// config.ts), so it does NOT fight Alpine over display. A row is shown unless:
 //   - active-only is on and the row is closed (and not kept visible for an open descendant),
 //   - any of its part_of ancestors is collapsed,
 //   - the filter bar excludes it (status / type / free text).
 // Persisted bits (active-only, collapsed set) live in localStorage, keyed board-independently.
+//
+// board-node-filter / board-sort: this wiring is SHARED by every view mode (tree/kanban/
+// outline/table), not one mechanism per mode. Two conventions make that possible:
+//   - a "row" is ANY `[data-node-id]` element anywhere on the page — filtering (show/hide) and
+//     the status/type <select> population both operate over EVERY row on the page regardless of
+//     which container it lives in, since exactly one view mode's content pane is ever rendered
+//     per page load.
+//   - a "sort scope" is any `[data-sort-scope]` container — reordering (reorderDom) runs
+//     independently PER SCOPE, walking each scope's own rows depth-first via data-parent-id
+//     (rows with no parent, or whose parent isn't in the same scope, sort as siblings at that
+//     scope's root). Tree/outline render ONE scope (their DFS-flat list — no actual DOM nesting,
+//     data-parent-id alone encodes it), so sort reorders sibling branches; table renders one
+//     scope with flat (parent-less) rows, so sort reorders the whole row list; kanban renders
+//     ONE scope PER COLUMN, so sort reorders cards within each column independently.
 
 const LS_ACTIVE = "tasksActiveOnly";
 const LS_COLLAPSED = "tasksCollapsed";
@@ -106,9 +119,9 @@ export function viewPrefNeedsReconcile(
 	return saved.mode !== resolvedMode || (saved.by ?? "") !== (resolvedBy ?? "");
 }
 
-// Runs on EVERY board page load (tree/tags/future kanban alike — unlike initBoardPage below,
-// which only wires the tree pane's own interactivity and bails when that pane isn't
-// rendered). Two jobs:
+// Runs on EVERY board page load (every view mode alike — unlike initBoardPage below, which
+// wires the filter/sort/collapse interactivity and bails when no view mode's filter bar
+// rendered, e.g. an empty board). Two jobs:
 //   1. Reconcile: if the URL has no explicit `?view=`, and a saved pref differs from what the
 //      server actually resolved/rendered (`data-resolved-view`), redirect to the saved mode.
 //      This runs at normal deferred module-script timing (after the body is parsed, same as
@@ -152,27 +165,27 @@ export function initBoardViewPersistence(): void {
 	}
 }
 
-export function initBoardPage(): void {
-	const boardEl = document.querySelector<HTMLElement>("[data-testid='board-nodes']");
-	if (!boardEl) return;
-	const board: HTMLElement = boardEl; // narrowed once, non-null everywhere below (incl. nested closures)
+// One independent reorder scope (board-sort): a `[data-sort-scope]` container plus the
+// roots/childrenOf sibling structure computed from ONLY the rows inside it. Kanban renders one
+// of these per column; tree/outline/table render exactly one for the whole pane.
+interface SortScope {
+	el: HTMLElement;
+	roots: Row[];
+	childrenOf: Map<string, Row[]>;
+}
 
-	const rows: Row[] = Array.from(board.querySelectorAll<HTMLElement>("[data-node-id]")).map((el) => ({
-		el,
-		id: el.dataset["nodeId"] ?? "",
-		parent: el.dataset["parentId"] || null,
-	}));
-	const parentOf = new Map<string, string>();
-	for (const r of rows) if (r.parent) parentOf.set(r.id, r.parent);
-
-	// Sibling groups for the sort toggle — a root is any row whose parent isn't ALSO a row on
-	// this board (no parent, or a parent filtered out of this read). Sorting only ever reorders
-	// within a sibling group, then re-walks depth-first, so the part_of nesting/indentation
-	// stays intact (board-sort-impl keeps finding D11's server-side invariant on the client).
-	const idSet = new Set(rows.map((r) => r.id));
+function buildScope(el: HTMLElement, rows: readonly Row[]): SortScope {
+	const scopeRows = rows.filter((r) => el.contains(r.el));
+	// Sibling groups for the sort toggle — a root is any row whose parent isn't ALSO a row in
+	// THIS scope (no parent, or a parent outside the scope / filtered out). Sorting only ever
+	// reorders within a sibling group, then re-walks depth-first, so the part_of nesting/
+	// indentation stays intact (board-sort-impl keeps finding D11's server-side invariant on the
+	// client). Rows with no data-parent-id (table rows, kanban cards) are all roots, so a scope
+	// with no nesting just sorts flat — table's "sort by column", kanban's "sort within column".
+	const idSet = new Set(scopeRows.map((r) => r.id));
 	const childrenOf = new Map<string, Row[]>();
 	const roots: Row[] = [];
-	for (const r of rows) {
+	for (const r of scopeRows) {
 		if (r.parent && idSet.has(r.parent)) {
 			const kids = childrenOf.get(r.parent) ?? [];
 			kids.push(r);
@@ -181,6 +194,28 @@ export function initBoardPage(): void {
 			roots.push(r);
 		}
 	}
+	return { el, roots, childrenOf };
+}
+
+export function initBoardPage(): void {
+	// board-node-filter / board-sort: gate on the filter bar rather than a specific mode's own
+	// container — it's the ONE thing every non-empty view mode renders (tree/kanban/outline/
+	// table alike), so this single check covers all of them instead of one per mode.
+	if (!document.querySelector("[data-testid='board-filter']")) return;
+
+	// Rows: every `[data-node-id]` element anywhere on the page. Exactly one view mode's content
+	// pane is ever rendered per page load, so this needs no scoping to a single container.
+	const rows: Row[] = Array.from(document.querySelectorAll<HTMLElement>("[data-node-id]")).map((el) => ({
+		el,
+		id: el.dataset["nodeId"] ?? "",
+		parent: el.dataset["parentId"] || null,
+	}));
+	const parentOf = new Map<string, string>();
+	for (const r of rows) if (r.parent) parentOf.set(r.id, r.parent);
+
+	const scopes: SortScope[] = Array.from(document.querySelectorAll<HTMLElement>("[data-sort-scope]")).map((el) =>
+		buildScope(el, rows),
+	);
 
 	let activeOnly = JSON.parse(localStorage.getItem(LS_ACTIVE) ?? "true") as boolean;
 	const collapsed = new Set<string>(JSON.parse(localStorage.getItem(LS_COLLAPSED) ?? "[]") as string[]);
@@ -224,24 +259,27 @@ export function initBoardPage(): void {
 		return false;
 	}
 
-	// Depth-first re-append in sort order: each sibling group is sorted by the current
-	// SortPref, then its subtree is walked before moving to the next sibling — exactly the
-	// server's own DFS shape, just with a chosen comparison key instead of the fixed
-	// priority-then-key one. `appendChild` on an already-attached node MOVES it, so one pass
-	// over the whole tree reorders every row without detach/reattach churn.
+	// Depth-first re-append in sort order, independently PER SCOPE: each sibling group is sorted
+	// by the current SortPref, then its subtree is walked before moving to the next sibling —
+	// exactly the server's own DFS shape, just with a chosen comparison key instead of the fixed
+	// priority-then-key one. `appendChild` on an already-attached node MOVES it, so one pass over
+	// each scope reorders every row in it without detach/reattach churn. A kanban board has one
+	// scope per column, so a card only ever moves within its own column, never across.
 	function reorderDom(): void {
 		const cmp = (a: Row, b: Row): number => {
 			const v = compareSortValues(sortKeyValue(a.el.dataset, sortPref.by), sortKeyValue(b.el.dataset, sortPref.by));
 			return sortPref.desc ? -v : v;
 		};
-		function walk(list: Row[]): void {
-			for (const r of [...list].sort(cmp)) {
-				board.appendChild(r.el);
-				const kids = childrenOf.get(r.id);
-				if (kids) walk(kids);
+		for (const scope of scopes) {
+			function walk(list: Row[]): void {
+				for (const r of [...list].sort(cmp)) {
+					scope.el.appendChild(r.el);
+					const kids = scope.childrenOf.get(r.id);
+					if (kids) walk(kids);
+				}
 			}
+			walk(scope.roots);
 		}
-		walk(roots);
 	}
 
 	function apply(): void {
@@ -266,7 +304,9 @@ export function initBoardPage(): void {
 		}
 	}
 
-	board.addEventListener("click", (evt) => {
+	// Collapse toggle (tree/outline only — kanban/table cards carry no [data-collapse-toggle]):
+	// delegated on the document since rows no longer live under one single container.
+	document.addEventListener("click", (evt) => {
 		const toggle = (evt.target as HTMLElement).closest<HTMLElement>("[data-collapse-toggle]");
 		if (!toggle) return;
 		evt.preventDefault();

@@ -1,0 +1,20 @@
+namespace PetBox.Web.Pages.Shared;
+
+// board-node-filter / board-sort: the ONE parameterized filter+sort control bar, shared by
+// EVERY board view mode (tree/kanban/outline/table — tags is a projection over tree, not a
+// render target of its own). A mode INCLUDES this partial and declares what's applicable via
+// this record, instead of copy-pasting the <div> — same discipline BoardViewModeRegistry
+// applies to the switcher and TaskTableModel applies to the table body: one implementation,
+// per-caller parameters.
+//
+// The control set itself (text / status / type / active-only / sort-key / sort-direction) is
+// identical everywhere — board-node-filter and board-sort promise filtering+sorting to the
+// BOARD, not to a specific render, so every mode gets full parity by default. What a mode
+// actually declares is the SORT semantics: `SortHint` names what "sort" reorders in ITS OWN
+// rendering (tree/outline reorder sibling branches in place; kanban reorders cards within each
+// `data-sort-scope` column; table reorders the flat row list) — the control markup and the
+// underlying mechanism (ts/board.ts initBoardPage, keyed off `[data-node-id]` / `[data-sort-scope]`)
+// stay one shared implementation; only the label changes so the affordance reads correctly per
+// mode. A future mode with a dimension this bar doesn't cover (or that wants FEWER controls)
+// extends this record with a new switch, not a new copy of the markup.
+public sealed record BoardFilterSortModel(string SortHint = "sort:");
