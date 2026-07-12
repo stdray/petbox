@@ -287,6 +287,41 @@ export async function resolveAgentDefinitionWithLkg(
   };
 }
 
+/** Minimal shape SessionStart injectors already have from registry.ts's resolveProject. */
+export type SessionProjectRef = {
+  readonly project: string;
+  readonly baseUrl: string;
+  readonly apiKey: string;
+};
+
+/**
+ * Resolve the agent definition for a SessionStart banner — the SAME server → LKG → DEFAULT
+ * order `apply` uses (resolveAgentDefinitionWithLkg), pinned to the default definition key.
+ * This closes the asymmetry where subagent role files already got server-authored notes via
+ * `apply` but the main-loop banner (protocol.ts) was stuck on the hard-coded built-in default.
+ *
+ * Bounded by AGENT_DEF_FETCH_TIMEOUT_MS (same budget as the canon fetch already on this path,
+ * see canon.ts) so a wedged network never turns into an unbounded session-start stall — the
+ * abort falls through to the LKG cache, then the built-in default, never a crash or blank
+ * banner. Callers SHOULD run this concurrently with fetchCanonBlock (e.g. via Promise.all)
+ * rather than awaiting it first, so the two 8s budgets don't stack serially.
+ */
+export async function resolveAgentDefinitionForSession(
+  resolved: SessionProjectRef,
+  opts?: { homeDir?: string; fetchImpl?: typeof fetch; timeoutMs?: number },
+): Promise<ResolvedAgentDefinition> {
+  return resolveAgentDefinitionWithLkg({
+    offline: false,
+    definitionKey: DEFAULT_DEFINITION_KEY,
+    projectKey: resolved.project,
+    baseUrl: resolved.baseUrl,
+    apiKey: resolved.apiKey,
+    homeDir: opts?.homeDir,
+    fetchImpl: opts?.fetchImpl,
+    timeoutMs: opts?.timeoutMs,
+  });
+}
+
 function parseVersion(v: unknown): number | null {
   if (typeof v === "number" && Number.isFinite(v) && v >= 0) return Math.trunc(v);
   if (typeof v === "string" && v.trim()) {

@@ -16,6 +16,7 @@
 //
 // Plain TS for native node type-stripping: no enum/namespace/parameter-properties, zero deps.
 
+import type { AgentDefinition } from "./agent-definition.ts";
 import { DEFAULT_AGENT_DEFINITION } from "./agent-definition.ts";
 import { hasCapability } from "./harness-capabilities.ts";
 
@@ -31,6 +32,14 @@ export type ProtocolOpts = {
    * (never invent a capability the harness does not declare).
    */
   harness?: string;
+  /**
+   * Portable agent definition to render the orchestrator self-intro notes from. Callers
+   * resolve this the same way `apply` does — server fetch, then LKG cache, then the built-in
+   * default (agent-def-fetch.ts's resolveAgentDefinitionWithLkg) — so the main-loop banner no
+   * longer drifts from the per-role artifacts that already got server-authored notes. Omitted
+   * → DEFAULT_AGENT_DEFINITION (never crash, never an empty banner).
+   */
+  definition?: AgentDefinition;
 };
 
 /** True when protocol may prescribe SPAWN workers / fan-out / orchestrator mandate. */
@@ -39,9 +48,9 @@ export function orchestrationPrescriptionsAllowed(harness: string | undefined): 
   return hasCapability(harness, "spawn_subagents");
 }
 
-function buildSelfIntro(allowSpawn: boolean): string {
+function buildSelfIntro(allowSpawn: boolean, definition: AgentDefinition): string {
   if (allowSpawn) {
-    const orch = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "orchestrator");
+    const orch = definition.roles.find((r) => r.slug === "orchestrator");
     const notes =
       orch?.notes?.trim() ||
       "plan, decompose, delegate, review, triage. Prefer spawning workers over solo implementation.";
@@ -78,7 +87,8 @@ export function buildProtocol(project: string, tool: ToolNamer, opts?: ProtocolO
   const tasksWorkflow = tool("tasks_workflow");
 
   const allowSpawn = orchestrationPrescriptionsAllowed(opts?.harness);
-  const intro = buildSelfIntro(allowSpawn);
+  const definition = opts?.definition ?? DEFAULT_AGENT_DEFINITION;
+  const intro = buildSelfIntro(allowSpawn, definition);
 
   let out = `## PetBox memory
 
