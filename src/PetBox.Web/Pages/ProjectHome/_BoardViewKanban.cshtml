@@ -26,7 +26,13 @@ else
 		{
 			var nodesInCol = byStatus.TryGetValue(col.Slug, out var list) ? list : [];
 			<div class="flex-none w-72" data-testid="kanban-column" data-status="@col.Slug">
-				<div class="font-semibold text-sm mb-2 flex items-center gap-2">
+				@* pl-4: the card below is `rounded-box` (1rem radius) — its rounded top-left
+				   corner curves away from the column's true left edge, so a header flush at
+				   x=0 reads as shifted left of the card content under it. 1rem matches
+				   card-compact's own body padding, so the column name lines up with where the
+				   card's rounding ends and its text actually starts (kanban-header-align,
+				   live UI review finding). *@
+				<div class="font-semibold text-sm mb-2 pl-4 flex items-center gap-2">
 					<span>@col.Name</span>
 					<span class="badge badge-ghost badge-xs" data-testid="kanban-column-count">@nodesInCol.Count</span>
 				</div>
@@ -63,7 +69,7 @@ else
 		@if (strayCount > 0)
 		{
 			<div class="flex-none w-72" data-testid="kanban-column" data-status="">
-				<div class="font-semibold text-sm mb-2 opacity-60">other</div>
+				<div class="font-semibold text-sm mb-2 pl-4 opacity-60">other</div>
 				<ul class="flex flex-col gap-2 min-h-8">
 					@foreach (var n in Model.Nodes.Where(n => !knownSlugs.Contains(n.Status)).OrderBy(n => n.Priority).ThenBy(n => n.Key, StringComparer.Ordinal))
 					{

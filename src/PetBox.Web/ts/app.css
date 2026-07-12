@@ -86,6 +86,32 @@
 	}
 }
 
+/* daisyUI pins each badge size to height == line-height (badge-xs is the worst: a 0.75rem
+   line-height on a 0.75rem font — zero leading at all). Cyrillic descenders (у, р, ф, ц, щ,
+   з, д — common in user-entered tag values) extend past that line box and get visually
+   clipped by the pill's rounded/solid bottom edge (tag-badge-descender-clip, live UI review
+   finding). `!important` because daisyUI's own `.badge-xs`/`.badge-sm`/`.badge-lg` rules set
+   the same height/line-height properties on the same element and would otherwise win on
+   source order alone — applies uniformly to every badge size, fixed once here, not per
+   template. */
+.badge {
+	height: auto !important;
+	line-height: 1.6 !important;
+}
+
+/* Outline view (board-view-mode-framework): an expanded node body sits directly under its
+   heading in a headings-first TOC row. _MdBody deliberately renders every OTHER surface (node
+   page, board card, comment) at the same text-base size — that invariant is right for those
+   (a node's body must not visually drift by where it's shown) — but here the heading and body
+   share a row, and identical size/weight reads as "more heading", not body prose
+   (outline-body-typography, live UI review finding). Scope the override to the outline's own
+   wrapper rather than touching the shared _MdBody component's contract. */
+[data-outline-body] .md-body.text-base {
+	font-size: 0.875rem;
+	line-height: 1.5rem;
+	opacity: 0.85;
+}
+
 /* Rendered markdown (plan-node bodies). Tailwind's base reset strips heading/list styling and
    there is no typography plugin, so re-assert a compact, readable set scoped to .md-body. */
 .md-body { line-height: 1.6; }

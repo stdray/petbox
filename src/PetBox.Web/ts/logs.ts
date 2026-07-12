@@ -1,9 +1,13 @@
 // ---------- Local-time rendering ----------
+// Single source of truth for every `<time class="local-time" datetime="…">` in the
+// UI (board cards, comments, logs, traces, dashboard, share links, …) — deliberately
+// drops milliseconds: sub-second precision is noise for a human-readable timestamp
+// (petbox-date-format-ms-noise). Keep formatting changes here, not per-template.
 function formatLocalTime(iso: string): string {
 	const d = new Date(iso);
 	if (Number.isNaN(d.getTime())) return iso;
 	const pad = (n: number, w = 2) => String(n).padStart(w, "0");
-	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}.${pad(d.getMilliseconds(), 3)}`;
+	return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 function renderLocalTimes(root: ParentNode): void {
