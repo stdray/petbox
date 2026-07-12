@@ -171,6 +171,7 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		ValidateAutoWire(kind, ctx);
 		ValidateDelivery(kind, ctx);
 		ValidateDefaultView(kind, ctx);
+		ValidateOutlineReveal(kind, ctx);
 	}
 
 	// DefaultView names a BoardViewModeNames entry (methodology-default-view-field). Format-
@@ -182,6 +183,15 @@ internal sealed partial class MethodologyDefinitionValidator : AbstractValidator
 		if (kind.DefaultView is null) return;
 		if (!BoardViewModeNames.IsKnown(kind.DefaultView))
 			ctx.AddFailure($"kind '{kind.Kind}': defaultView '{kind.DefaultView}' is not a known view mode ({string.Join("|", BoardViewModeNames.All)})");
+	}
+
+	// OutlineReveal names an OutlineRevealModeNames entry (board-view-mode-framework). Format-
+	// checked against the known reveal-mode set only, same posture as DefaultView.
+	static void ValidateOutlineReveal(MethodologyKindDef kind, ValidationContext<MethodologyDefinition> ctx)
+	{
+		if (kind.OutlineReveal is null) return;
+		if (!OutlineRevealModeNames.IsKnown(kind.OutlineReveal))
+			ctx.AddFailure($"kind '{kind.Kind}': outlineReveal '{kind.OutlineReveal}' is not a known reveal mode ({string.Join("|", OutlineRevealModeNames.All)})");
 	}
 
 	// AutoWireSpecFrom is a kind slug naming the board to wire SpecBoard to. Format-checked

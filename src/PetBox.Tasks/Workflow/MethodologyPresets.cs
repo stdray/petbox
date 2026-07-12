@@ -198,6 +198,10 @@ public static class MethodologyPresets
 		// methodology-default-view-field: spec opens in outline (heading hierarchy) by
 		// default. Renderer not shipped yet — degrades to Tree until it is.
 		DefaultView = BoardViewModeNames.Outline,
+		// board-view-mode-framework: a spec node's body is one short normative line —
+		// cheap to fetch and read inline, so the outline view expands it in place rather
+		// than sending the reader to the node page.
+		OutlineReveal = OutlineRevealModeNames.InlineLazy,
 	};
 
 	// Mirrors the work gate: an idea reaches `review` (agent ceiling), the maintainer

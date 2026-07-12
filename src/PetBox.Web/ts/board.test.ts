@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compareSortValues, parseSortPref, parseViewPref, sortKeyValue } from "./board.ts";
+import { compareSortValues, parseSortPref, parseViewPref, sortKeyValue, viewPrefNeedsReconcile } from "./board.ts";
 
 test("parseSortPref: defaults to priority/asc for null, malformed, or unknown-key input", () => {
 	assert.deepEqual(parseSortPref(null), { by: "priority", desc: false });
@@ -67,4 +67,28 @@ test("parseViewPref: round-trips a mode+by preference (tags)", () => {
 test("parseViewPref: a non-string/blank `by` is dropped, not carried through as garbage", () => {
 	assert.deepEqual(parseViewPref(JSON.stringify({ mode: "tags", by: "" })), { mode: "tags" });
 	assert.deepEqual(parseViewPref(JSON.stringify({ mode: "tags", by: 7 })), { mode: "tags" });
+});
+
+// board-view-persistence regression: initBoardViewPersistence used to compare ONLY `mode`
+// against data-resolved-view, so a saved {mode:"tags", by:"area"} silently lost its `by`
+// whenever the server's own by-less resolution already reported "tags" (e.g. a methodology
+// defaultView of "tags", with no `by` on the URL) — mode matched, no redirect fired, and the
+// page rendered the by-less tags degradation instead of the saved grouping.
+test("viewPrefNeedsReconcile: no saved pref never reconciles", () => {
+	assert.equal(viewPrefNeedsReconcile(null, "tree", undefined), false);
+});
+
+test("viewPrefNeedsReconcile: mode differs -> reconcile", () => {
+	assert.equal(viewPrefNeedsReconcile({ mode: "tags", by: "area" }, "tree", undefined), true);
+});
+
+test("viewPrefNeedsReconcile: same mode, `by` differs -> reconcile (the defect this test pins)", () => {
+	assert.equal(viewPrefNeedsReconcile({ mode: "tags", by: "area" }, "tags", ""), true);
+	assert.equal(viewPrefNeedsReconcile({ mode: "tags", by: "area" }, "tags", "concern"), true);
+});
+
+test("viewPrefNeedsReconcile: same mode and by -> no reconcile", () => {
+	assert.equal(viewPrefNeedsReconcile({ mode: "tags", by: "area" }, "tags", "area"), false);
+	assert.equal(viewPrefNeedsReconcile({ mode: "tree" }, "tree", undefined), false);
+	assert.equal(viewPrefNeedsReconcile({ mode: "tree" }, "tree", ""), false);
 });

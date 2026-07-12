@@ -88,6 +88,24 @@ export function parseViewPref(raw: string | null): BoardViewPref | null {
 	return null;
 }
 
+// board-view-persistence: whether a saved localStorage pref is STALE relative to what the
+// server actually resolved/rendered this load (data-resolved-view / data-resolved-by) — the
+// pure decision behind initBoardViewPersistence's reconcile-on-load redirect, factored out so
+// the `by` comparison is testable without a DOM (mirrors parseViewPref/compareSortValues
+// above). Comparing `mode` alone let a saved {mode:"tags", by:"area"} silently lose its `by`
+// whenever the server's own by-less resolution already landed on "tags" (e.g. a methodology
+// defaultView of "tags"): the mode matched, so no redirect fired and the page rendered the
+// by-less tags degradation instead of the saved grouping. Absent `by` on either side reads as
+// "" so a mode-only pref against a mode-only resolution still compares equal.
+export function viewPrefNeedsReconcile(
+	saved: BoardViewPref | null,
+	resolvedMode: string | undefined,
+	resolvedBy: string | undefined,
+): boolean {
+	if (!saved) return false;
+	return saved.mode !== resolvedMode || (saved.by ?? "") !== (resolvedBy ?? "");
+}
+
 // Runs on EVERY board page load (tree/tags/future kanban alike — unlike initBoardPage below,
 // which only wires the tree pane's own interactivity and bails when that pane isn't
 // rendered). Two jobs:
@@ -111,7 +129,7 @@ export function initBoardViewPersistence(): void {
 
 	if (!new URLSearchParams(window.location.search).has("view")) {
 		const saved = parseViewPref(localStorage.getItem(storageKey));
-		if (saved && saved.mode !== meta.dataset["resolvedView"]) {
+		if (saved && viewPrefNeedsReconcile(saved, meta.dataset["resolvedView"], meta.dataset["resolvedBy"])) {
 			const qs = new URLSearchParams();
 			qs.set("view", saved.mode);
 			if (saved.by) qs.set("by", saved.by);

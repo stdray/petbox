@@ -62,6 +62,19 @@ public sealed record MethodologyKindDef(
 	// unrenderable-but-known name (e.g. kanban before its partial ships) is a resolve-time
 	// silent degradation to Tree, not a definition error.
 	public string? DefaultView { get; init; }
+	// The outline view's reveal mode (OutlineRevealModeNames) for a board of this kind
+	// (board-view-mode-framework). Null = the conservative builtin default (Navigate)
+	// applies. Declared HERE, as data on the kind, rather than derived from a process-role
+	// enum (BoardKind/PresetKind) — a board provisioned from the quartet/classic BUILTIN
+	// TEMPLATE stores its kinds as a materialized MethodologyDefinition (methodology-
+	// template-storage: MethodologyPresets.RenderPresetDefinition copies each preset
+	// MethodologyKindDef verbatim, INCLUDING this field), so a real `spec` board gets
+	// InlineLazy exactly like a pure-preset one — MethodologyRuntime.PresetKind would
+	// wrongly read null for it (it treats ANY defined kind as process-role-less, the
+	// correct guard for FSM/delivery/quartet-invariant behavior, but wrong for a display
+	// heuristic that should travel with the template). Validated against
+	// OutlineRevealModeNames.All by MethodologyDefinitionValidator.
+	public string? OutlineReveal { get; init; }
 }
 
 // Delivery roll-up as DATA (spec primitives-enum-residual): how linked task_spec nodes

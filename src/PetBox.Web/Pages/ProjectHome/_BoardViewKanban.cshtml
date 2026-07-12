@@ -39,7 +39,7 @@ else
 								<a href="@nodeUrl" class="font-semibold link link-hover text-sm" data-testid="node-name">@n.Title</a>
 								<div class="flex items-center gap-1 flex-wrap text-xs opacity-70">
 									<span class="badge badge-ghost badge-xs" data-testid="node-type">@n.Type</span>
-									<span class="font-mono" data-testid="node-priority" title="priority">P@n.Priority</span>
+									<span class="font-mono" data-testid="node-priority" title="priority">P@(n.Priority)</span>
 									@if (n.Delivery is not null)
 									{
 										<partial name="_DeliveryBadge" model="@(new DeliveryBadgeModel(n.Delivery) { Size = "badge-xs" })" />

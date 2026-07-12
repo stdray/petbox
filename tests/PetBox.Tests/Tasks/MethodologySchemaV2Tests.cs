@@ -57,7 +57,8 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 		MethodologyTransitionDef[]? transitions = null,
 		IReadOnlyList<MethodologyTransitionEffectDef>? effects = null,
 		IReadOnlyList<MethodologyLinkConstraintDef>? constraints = null,
-		string? defaultView = null) =>
+		string? defaultView = null,
+		string? outlineReveal = null) =>
 		new("support", QuickAddAllowed: true,
 		[
 			new MethodologyWorkflowDef(["ticket", "incident"],
@@ -72,6 +73,7 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 			Effects = effects ?? [],
 			LinkConstraints = constraints ?? [],
 			DefaultView = defaultView,
+			OutlineReveal = outlineReveal,
 		};
 
 	static MethodologyDefinition Def(params MethodologyKindDef[] kinds) => new("schema-v2", kinds);
@@ -254,6 +256,21 @@ public sealed class MethodologySchemaV2ValidationTests : IDisposable
 		// (SupportKind's default `defaultView: null`) — stated explicitly here so the "an old
 		// stored document without defaultView stays valid" promise has its own named test.
 		var ack = await Define(Def(SupportKind()));
+		ack.Changed.Should().BeTrue();
+	}
+
+	// ── outlineReveal (board-view-mode-framework) ────────────────────────────
+
+	[Fact]
+	public async Task OutlineReveal_UnknownValue_Rejected() =>
+		await AssertRejected(
+			Def(SupportKind(outlineReveal: "bogus")),
+			"outlineReveal 'bogus' is not a known reveal mode");
+
+	[Fact]
+	public async Task OutlineReveal_KnownValue_Stores()
+	{
+		var ack = await Define(Def(SupportKind(outlineReveal: OutlineRevealModeNames.InlineLazy)));
 		ack.Changed.Should().BeTrue();
 	}
 }

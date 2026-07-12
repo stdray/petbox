@@ -203,6 +203,42 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-resolved-view=\"tree\"");
 	}
 
+	// board-view-modes-highlight-degrade regression: `?view=tags` with no `by` renders the tree
+	// content pane (ContentPartialName degrades, IsTagView false) while ResolvedViewMode still
+	// reports "tags" — the switcher used to compare against ResolvedViewMode, so NO button lit
+	// up (neither tree nor any tags preset). The highlight must track what actually rendered.
+	[Fact]
+	public async Task TaskBoard_TagsViewWithoutBy_DegradesToTree_HighlightsTreeButtonOnly()
+	{
+		const string board = "viewmodetagsdegrade";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "tags degrade smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "d1", Title = "D1", Body = "x" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tags");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-resolved-view=\"tags\"");
+		html.Should().Contain("data-testid=\"board-nodes\""); // the tree pane actually rendered
+
+		var controlsStart = html.IndexOf("data-testid=\"board-view-controls\"", StringComparison.Ordinal);
+		controlsStart.Should().BeGreaterThan(-1);
+		var controlsEnd = html.IndexOf("</div>", controlsStart, StringComparison.Ordinal);
+		var controls = html[controlsStart..controlsEnd];
+
+		System.Text.RegularExpressions.Regex.Count(controls, "btn-active").Should().Be(1,
+			"exactly the tree button — the one that matches what actually rendered — should be highlighted");
+		controls.Should().MatchRegex("btn-active\"[^>]*data-testid=\"view-tree\"");
+	}
+
 	// board-view-mode-framework: kanban/outline/table HTTP-level smoke — same "only an actual
 	// render proves the partial exists" reasoning as the tree/tags smoke above.
 	[Fact]
@@ -217,7 +253,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
 			await tasks.UpsertAsync("$system", board,
 			[
-				new PetBox.Tasks.Contract.NodePatch { Key = "k1", Title = "K1", Body = "x" },
+				new PetBox.Tasks.Contract.NodePatch { Key = "k1", Title = "K1", Body = "x", Priority = 7 },
 			]);
 		}
 
@@ -230,6 +266,12 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		// column set (a work-kind board would show Pending/InProgress/Review/… instead).
 		html.Should().Contain("data-testid=\"kanban-column\" data-status=\"Todo\"");
 		html.Should().Contain("data-node-key=\"k1\"");
+		// Regression: the card used to render the literal Razor text "P@n.Priority" instead of
+		// the resolved priority value (a missing `@(...)` around the member access) — assert
+		// the actual number renders AND that no stray `@` (an unresolved Razor expression)
+		// leaked into the card markup at all.
+		html.Should().Contain("data-testid=\"node-priority\" title=\"priority\">P7<");
+		html.Should().NotContain("P@");
 	}
 
 	[Fact]

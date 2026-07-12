@@ -214,4 +214,31 @@ public sealed class TaskBoardViewModeTests : IDisposable
 		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Outline);
 		m.OutlineRevealMode.Should().Be(OutlineRevealModeNames.Navigate);
 	}
+
+	// Regression (board-view-modes inline-lazy unreachable): every OTHER outline test above
+	// creates its `spec` board directly against the store (`_store.CreateAsync(..., "spec")`),
+	// which leaves the project on MethodologyRuntime.PresetsOnly — IsDefinedKind("spec") is
+	// false there, so the OLD `Runtime.PresetKind(KindSlug) == BoardKind.Spec` check happened
+	// to still work and the gap went unnoticed. A REAL spec board never looks like that: it is
+	// provisioned by the standard quartet/classic template (EnableMethodologyAsync ->
+	// MethodologyInstanceService.CreateAsync(source: builtin) -> MethodologyPresets.
+	// RenderBuiltinTemplate), which stores every kind — including "spec" — as a materialized
+	// MethodologyDefinition. That makes IsDefinedKind("spec") TRUE, so PresetKind("spec") used
+	// to read null and the board fell to `navigate` — inline-lazy was dead code for every board
+	// created the ordinary way. Runtime.OutlineReveal (data on MethodologyKindDef, propagated
+	// through RenderPresetDefinition) fixes this by not routing through PresetKind at all.
+	[Fact]
+	public async Task Outline_SpecKind_ViaStandardQuartetTemplate_UsesInlineLazyRevealMode()
+	{
+		await _tasks.EnableMethodologyAsync(Proj, "quartet", default);
+		var specBoard = (await _store.ListAsync(Proj, default)).Single(b => string.Equals(b.Kind, "spec", StringComparison.Ordinal));
+
+		var m = Model(specBoard.Name);
+		m.ViewMode = BoardViewModeNames.Outline;
+		await m.OnGetAsync(default);
+
+		m.ResolvedViewMode.Should().Be(BoardViewModeNames.Outline);
+		m.ContentPartialName.Should().Be("_BoardViewOutline");
+		m.OutlineRevealMode.Should().Be(OutlineRevealModeNames.InlineLazy);
+	}
 }

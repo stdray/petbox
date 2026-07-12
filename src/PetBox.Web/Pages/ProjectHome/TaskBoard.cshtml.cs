@@ -90,10 +90,13 @@ public sealed class TaskBoardModel : PageModel
 	public IReadOnlyList<KanbanColumn> KanbanColumns { get; private set; } = [];
 
 	// Outline view mode (board-view-mode-framework): which OutlineRevealModeNames constant the
-	// _BoardViewOutline partial renders with. Chosen per board KIND — a spec board's bodies are
-	// one short normative line (inline-lazy: cheap to fetch and read in place); every other kind
-	// (incl. a project-defined custom kind, where body length is unknown) is treated as
-	// potentially wiki-length and gets `navigate` instead, the conservative default.
+	// _BoardViewOutline partial renders with. Resolved via Runtime.OutlineReveal(KindSlug) — DATA
+	// on the kind (MethodologyKindDef.OutlineReveal), not a process-role enum lookup, so a `spec`
+	// board provisioned from the quartet/classic BUILTIN TEMPLATE (its kinds materialize into a
+	// stored MethodologyDefinition — methodology-template-storage) still resolves inline-lazy.
+	// spec's bodies are one short normative line (inline-lazy: cheap to fetch and read in place);
+	// every other kind (incl. a project-defined custom kind, where body length is unknown) gets
+	// `navigate`, the conservative default.
 	public string OutlineRevealMode { get; private set; } = OutlineRevealModeNames.Navigate;
 
 	public bool ShowQuickAdd { get; private set; }
@@ -284,12 +287,14 @@ public sealed class TaskBoardModel : PageModel
 			.Select(g => new KanbanColumn(g.Key, g.First().Name))
 			.ToList();
 
-		// Outline's reveal mode follows the board's PRESET kind — a definition-declared custom
-		// kind's body length is unknown, so it gets the conservative `navigate` default rather
-		// than guessing inline-lazy.
-		OutlineRevealMode = Runtime.PresetKind(KindSlug) == BoardKind.Spec
-			? OutlineRevealModeNames.InlineLazy
-			: OutlineRevealModeNames.Navigate;
+		// Outline's reveal mode is DATA on the kind (Runtime.OutlineReveal), not a PresetKind
+		// lookup — PresetKind nulls out for any DEFINED kind (its correct guard for process-role
+		// behavior), but a `spec` board provisioned from the quartet/classic builtin template
+		// stores its kinds as a materialized definition too, which made the inline-lazy branch
+		// unreachable for every real board. A definition-declared custom kind's body length is
+		// still unknown by default (OutlineReveal null → the conservative `navigate` fallback)
+		// unless the definition opts in.
+		OutlineRevealMode = Runtime.OutlineReveal(KindSlug);
 
 		// includeClosed: we render closed nodes too (the "active only" toggle hides them
 		// client-side); GetAsync supplies each node's part_of parent + depth.

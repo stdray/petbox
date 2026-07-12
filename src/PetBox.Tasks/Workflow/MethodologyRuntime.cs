@@ -81,6 +81,19 @@ public sealed class MethodologyRuntime
 	public string? DefaultView(string? kindSlug) =>
 		ResolvedKind(kindSlug)?.DefaultView;
 
+	// The outline view's reveal mode for a kind (board-view-mode-framework): the definition's
+	// OutlineReveal when it declares the kind, else the preset's (spec → inline-lazy; every
+	// other kind → null, read as Navigate below). Uses the SAME merge as DefaultView/Delivery/
+	// AutoWireSpecFrom — deliberately NOT PresetKind, whose null-for-a-defined-kind guard is
+	// correct for process-role behavior (FSM effects, delivery roll-up, quartet invariants) but
+	// wrong here: a board provisioned from the quartet/classic BUILTIN TEMPLATE stores its kinds
+	// as a materialized MethodologyDefinition (RenderPresetDefinition copies each preset
+	// MethodologyKindDef verbatim, this field included), so PresetKind would read null for a
+	// perfectly ordinary `spec` board and the InlineLazy branch would be unreachable in
+	// practice — exactly the bug this resolver exists to avoid.
+	public string OutlineReveal(string? kindSlug) =>
+		ResolvedKind(kindSlug)?.OutlineReveal ?? OutlineRevealModeNames.Navigate;
+
 	// The kind definition the resolvers above share: definition override wins, else the
 	// preset KindDef for the parsed BoardKind (unknown slugs → Simple).
 	MethodologyKindDef? ResolvedKind(string? kindSlug) =>

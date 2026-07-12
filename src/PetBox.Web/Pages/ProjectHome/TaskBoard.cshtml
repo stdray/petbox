@@ -91,7 +91,13 @@
 		}
 		else
 		{
-			var active = !Model.IsTagView && Model.ResolvedViewMode == entry.Key;
+			// Highlight tracks what's ACTUALLY rendered (Model.ContentPartialName), not the
+			// requested/resolved mode name: `?view=tags` with no/invalid `by` degrades the
+			// content pane to tree (IsTagView false) while ResolvedViewMode still reports
+			// "tags" — comparing against ResolvedViewMode left every button dark in that case.
+			// ContentPartialName always equals exactly one entry's PartialName (the tags
+			// degrade included — it becomes "_BoardViewTree", matching the tree entry here).
+			var active = entry.PartialName == Model.ContentPartialName;
 			<a href="?view=@entry.Key" class="btn btn-xs @(active ? "btn-active" : "btn-ghost")" data-testid="view-@entry.Key" data-view-link data-view-mode="@entry.Key">@entry.Label</a>
 		}
 	}
