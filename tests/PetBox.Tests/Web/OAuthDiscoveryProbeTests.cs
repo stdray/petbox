@@ -12,7 +12,8 @@ namespace PetBox.Tests.Web;
 // client's `JSON.parse` throw ("Invalid OAuth error response: Unrecognized token '<'") and abort the
 // whole reconnect (a dead /mcp). Reuses the anonymous LogPipelineFixture client — discovery is
 // pre-auth, so no key is sent.
-public sealed class OAuthDiscoveryProbeTests : IClassFixture<LogPipelineFixture>
+[Collection(LogPipelineCollectionDef.Name)]
+public sealed class OAuthDiscoveryProbeTests
 {
 	readonly HttpClient _client;
 

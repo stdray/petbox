@@ -12,7 +12,8 @@ namespace PetBox.Tests.Web;
 // The endpoint requires the "LlmInvoke" named policy (ApiKey auth + llm:invoke scope)
 // and resolves the project from the key's project claim (no project in the URL).
 // Reuses LogPipelineFixture (shared host); each test seeds a fresh project+key pair.
-public sealed class LlmChatEndpointAuthzTests : IClassFixture<LogPipelineFixture>
+[Collection(LogPipelineCollectionDef.Name)]
+public sealed class LlmChatEndpointAuthzTests
 {
 	readonly LogPipelineFixture _fx;
 	readonly HttpClient _client;
