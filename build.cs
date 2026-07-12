@@ -94,8 +94,15 @@ Task("Build")
 		DotNetBuild(solution, CreateVersionedBuildSettings(buildVersion, gitVersion.ShortSha, gitVersion.CommitDate));
 	});
 
+// `Test` IS the .NET gate — the single definition of "the code is OK", and the same thing
+// locally and in CI. Every check is a precondition of it, so a green local Test cannot be a red
+// CI run. The split it replaces (a `Validate` target = FormatVerify + Test, run only by CI)
+// meant the dev loop ran a strictly weaker gate than the pipeline: the sandbox-write-gate branch
+// was green on `Test` locally and failed the deploy tag run on whitespace it never saw. A new
+// check goes here, once, and every caller — dev loop, CI, Verify — picks it up.
 Task("Test")
 	.IsDependentOn("Build")
+	.IsDependentOn("FormatVerify")
 	.Does(() =>
 	{
 		// Ensure Playwright browser binaries are installed for the E2E suite.
@@ -569,7 +576,7 @@ Task("Dev")
 // gates on — for ~50s of the ~80s FormatVerify budget, paid twice for nothing.
 //
 // Depends on the shared Restore task instead of restoring inline: Cake dedupes tasks across a
-// single run, so when Validate pulls in both FormatVerify and Test, Restore (and the Clean it
+// single run, so when Test pulls in both FormatVerify and Build, Restore (and the Clean it
 // depends on) executes once and both tasks see the same restored packages — no wasted second
 // restore, and Clean runs before either consumer touches the tree.
 Task("FormatVerify")
@@ -582,18 +589,10 @@ Task("FormatVerify")
 				$"dotnet format whitespace --verify-no-changes failed with exit code {formatExit} — run `dotnet format whitespace` and commit the result");
 	});
 
-// The .NET gate, and the single place that defines what "the code is OK" means. CI runs THIS,
-// not a hand-assembled list of steps in ci.yml — so a new check is added here, once, and every
-// caller picks it up. `Test` stays exactly what its name says (run the tests): it is also the
-// dev loop and part of the Docker chain, and neither wants a format check bolted onto it.
-Task("Validate")
-	.IsDependentOn("FormatVerify")
-	.IsDependentOn("Test");
-
-// Everything Validate covers, plus the client SDKs (bun + uv toolchains). This is the full
-// pre-push sweep; CI's .NET job runs Validate because it doesn't set up uv.
+// Everything Test covers, plus the client SDKs (bun + uv toolchains). This is the full
+// pre-push sweep; CI's .NET job runs Test because it doesn't set up uv.
 Task("Verify")
-	.IsDependentOn("Validate")
+	.IsDependentOn("Test")
 	.IsDependentOn("TsSdkLint")
 	.IsDependentOn("TsSdkTypecheck")
 	.IsDependentOn("TsSdkTest")
