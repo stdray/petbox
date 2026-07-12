@@ -28,6 +28,12 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 
 	public async Task<LlmRegistry> GetAsync(Scope scope, string scopeKey, CancellationToken ct = default)
 	{
+		var snapshot = await GetSnapshotAsync(scope, scopeKey, ct);
+		return new LlmRegistry(snapshot.Endpoints, snapshot.Routes.Select(r => r.Route).ToList());
+	}
+
+	public async Task<LlmLevelSnapshot> GetSnapshotAsync(Scope scope, string scopeKey, CancellationToken ct = default)
+	{
 		var level = Validate(scope, scopeKey);
 		var name = level.Scope.ToString();
 
@@ -43,28 +49,45 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 			.Select(e => new LlmEndpoint(e.Name, e.BaseUrl, e.CertThumbprint, e.ConnectTimeoutMs, e.RequestTimeoutMs))
 			.ToList();
 
+		// The row's Id travels with the route — it is the handle the admin surface edits/deletes by.
 		var routes = routeRows
-			.Select(r => new LlmRoute(
+			.Select(r => new IdentifiedRoute(r.Id, new LlmRoute(
 				Enum.Parse<LlmCapability>(r.Capability, ignoreCase: true),
 				r.Endpoint,
 				r.Model,
 				r.Priority,
 				r.Tier,
-				r.Thinking is null ? null : Enum.Parse<LlmThinking>(r.Thinking, ignoreCase: true)))
+				r.Thinking is null ? null : Enum.Parse<LlmThinking>(r.Thinking, ignoreCase: true))))
 			.ToList();
 
-		return new LlmRegistry(endpoints, routes);
+		return new LlmLevelSnapshot(endpoints, routes);
 	}
 
-	public async Task SetAsync(
+	// A whole-registry replace: every route is a new row, so every id is fresh.
+	public Task SetAsync(
 		Scope scope,
 		string scopeKey,
 		LlmRegistry registry,
 		IReadOnlyDictionary<string, string> apiKeys,
 		long? updatedBy = null,
+		CancellationToken ct = default) =>
+		SetSnapshotAsync(
+			scope, scopeKey,
+			registry.Endpoints,
+			registry.Routes.Select(r => new IdentifiedRoute(string.Empty, r)).ToList(),
+			apiKeys, updatedBy, ct);
+
+	public async Task SetSnapshotAsync(
+		Scope scope,
+		string scopeKey,
+		IReadOnlyList<LlmEndpoint> endpoints,
+		IReadOnlyList<IdentifiedRoute> routes,
+		IReadOnlyDictionary<string, string> apiKeys,
+		long? updatedBy = null,
 		CancellationToken ct = default)
 	{
 		var level = Validate(scope, scopeKey);
+		var registry = new LlmRegistry(endpoints, routes.Select(r => r.Route).ToList());
 
 		// Same validator the old store used: unique endpoint names, absolute http(s) base URLs, sane
 		// timeouts, and every route pointing at an endpoint DECLARED IN THIS registry. That last rule
@@ -116,17 +139,21 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 			});
 		}
 
-		var routeRows = registry.Routes.Select(r => new LlmRouteRow
+		// The id is KEPT when the caller hands one back. The rows are deleted and re-inserted (a level
+		// is replaced whole), but a route that was on screen keeps the same handle across the save —
+		// which is what makes "edit THIS row" mean the same row on the next request, whoever else has
+		// saved in between.
+		var routeRows = routes.Select(r => new LlmRouteRow
 		{
-			Id = Guid.NewGuid().ToString("N"),
+			Id = string.IsNullOrWhiteSpace(r.Id) ? Guid.NewGuid().ToString("N") : r.Id,
 			Scope = name,
 			ScopeKey = level.ScopeKey,
-			Capability = r.Capability.ToString(),
-			Endpoint = r.Endpoint,
-			Model = r.Model,
-			Priority = r.Priority,
-			Tier = r.Tier,
-			Thinking = r.Thinking?.ToString(),
+			Capability = r.Route.Capability.ToString(),
+			Endpoint = r.Route.Endpoint,
+			Model = r.Route.Model,
+			Priority = r.Route.Priority,
+			Tier = r.Route.Tier,
+			Thinking = r.Route.Thinking?.ToString(),
 			UpdatedAt = now,
 			UpdatedBy = updatedBy,
 		}).ToList();
