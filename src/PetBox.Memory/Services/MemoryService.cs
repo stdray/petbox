@@ -121,6 +121,22 @@ public sealed class MemoryService : IMemoryService
 		return e is null ? null : View(e);
 	}
 
+	// Batched addressed read: ONE query for N keys (they share the store's partition in the
+	// project file), resolved in the caller's key order. Soft filter — a key with no active entry
+	// simply yields no row; duplicates collapse. An empty ask never touches the DB.
+	public async Task<IReadOnlyList<MemoryEntryView>> GetManyAsync(string projectKey, string store, IReadOnlyList<string> keys, CancellationToken ct = default)
+	{
+		var wanted = keys.Where(k => !string.IsNullOrWhiteSpace(k)).Select(k => k.Trim()).Distinct(StringComparer.Ordinal).ToList();
+		if (wanted.Count == 0) return [];
+		await EnsureStore(projectKey, store, ct);
+		using var ctx = _stores.NewEnsuredConnection(projectKey);
+		var found = ctx.Entries
+			.Where(x => x.Store == store && x.ActiveTo == null && wanted.Contains(x.Key))
+			.ToList()
+			.ToDictionary(e => e.Key, StringComparer.Ordinal);
+		return wanted.Where(found.ContainsKey).Select(k => View(found[k])).ToList();
+	}
+
 	public async Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);

@@ -95,40 +95,70 @@ public static class MemoryTools
 		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
 	}
 
-	[McpServerTool(Name = "memory_get", Title = "Get a memory entry", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryEntryView))]
+	[McpServerTool(Name = "memory_get", Title = "Get memory entries by key", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryGetResultView))]
 	[Description("""
-		Get the active entry by key. A missing/unknown key is a not-found ERROR (never a bare
-		null: a declared outputSchema demands structured content, so a null result is rejected
-		by strict MCP clients — the error rides the isError channel instead).
+		Get the active entries by key — full bodies, addressed. `key` reads ONE; `keys` reads a
+		BATCH in one call (the cheap path after a bodyLen:0 search: pull the 1-5 keys you actually
+		need at once, not one round-trip each). Always returns { entries: [...] }, in the asked
+		order.
+		In a BATCH a key that matches nothing is silently dropped (soft filter, like tasks_search
+		`keys`) and an empty result is not an error; with a single `key` a miss stays a not-found
+		ERROR (never a bare null — strict MCP clients reject a null structured result; the error
+		rides the isError channel).
 		`scope`: project (default) | workspace. Omit to CASCADE project first, then workspace —
 		the same cascade contract as memory_search. Requires memory:read.
 		""")]
-	public static async Task<MemoryEntryView> GetAsync(
+	public static async Task<MemoryGetResultView> GetAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory, IMemoryUsageRecorder usage,
-		string projectKey, string store, string key,
+		string projectKey, string store,
+		[Description("One key to read. Combine with `keys` or use either alone.")] string? key = null,
+		[Description("Batch of keys read in ONE call; a key that matches nothing is silently dropped (soft filter).")] string[]? keys = null,
 		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
+		// The ask: `key` ⊕ `keys`, de-duped, order preserved. A BATCH ask (any `keys` supplied)
+		// tolerates misses; a lone `key` keeps the historic not-found error.
+		var batch = keys is { Length: > 0 };
+		var wanted = new[] { key }.Concat(keys ?? [])
+			.Where(k => !string.IsNullOrWhiteSpace(k))
+			.Select(k => k!.Trim())
+			.Distinct(StringComparer.Ordinal)
+			.ToList();
+		if (wanted.Count == 0) throw new ArgumentException("key or keys is required");
+
 		// Cascade: explicit scope → one container; no scope → project first, then the
 		// caller's own workspace container (never a hardcoded global). Unauthorized
-		// cascade legs are skipped so a foreign container never surfaces.
+		// cascade legs are skipped so a foreign container never surfaces. A key found in the
+		// nearer container is NOT re-read from the farther one (project precedence).
+		var found = new Dictionary<string, MemoryEntryView>(StringComparer.Ordinal);
 		foreach (var (scopeName, container) in await SearchContainersAsync(http, db, projectKey, scope, ct))
 		{
 			ct.ThrowIfCancellationRequested();
 			try { await AssertMemoryProjectAsync(http, db, container, ct); }
 			catch (UnauthorizedAccessException) { continue; }
-			var entry = await memory.GetAsync(container, store, key, ct);
-			if (entry is not null)
+			var missing = wanted.Where(k => !found.ContainsKey(k)).ToList();
+			if (missing.Count == 0) break;
+			// A cascade leg that doesn't HAVE the store contributes nothing — it is not a failure of
+			// the read (the store may live in the other container). Without this the batch's soft
+			// filter could not exist: an unresolved key walks to the far leg, and a store-not-found
+			// there would throw the whole call.
+			if (!await memory.StoreExistsAsync(container, store, ct)) continue;
+			foreach (var entry in await memory.GetManyAsync(container, store, missing, ct))
 			{
-				usage.Opened(container, store, key);
-				return entry;
+				found[entry.Key] = entry;
+				// An engagement per entry actually HANDED OVER — a batch of N bodies read is N
+				// opens, not one (the counter measures entries, not calls).
+				usage.Opened(container, store, entry.Key);
 			}
 		}
 
-		throw new InvalidOperationException($"memory entry '{key}' not found in store '{store}' (scope: {(scope ?? "cascade project+workspace")})");
+		if (found.Count == 0 && !batch)
+			throw new InvalidOperationException($"memory entry '{wanted[0]}' not found in store '{store}' (scope: {(scope ?? "cascade project+workspace")})");
+
+		return new MemoryGetResultView(wanted.Where(found.ContainsKey).Select(k => found[k]).ToList());
 	}
 
 	[McpServerTool(Name = "memory_upsert", Title = "Upsert memory entries", UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
