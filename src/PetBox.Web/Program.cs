@@ -49,6 +49,26 @@ public partial class Program
 
 	public static void ConfigureServices(WebApplicationBuilder builder)
 	{
+		// Defense-in-depth against the captive-dependency class (see CaptiveDependencyTests,
+		// PetBox.Sessions.Episodic.DuckDbSessionEpisodicIndex fix): ValidateScopes makes a
+		// singleton that reaches a Scoped service THROW instead of silently sharing one root
+		// instance across every concurrent request. This is NOT a startup gate — a captive taken
+		// inside a factory lambda (the shape the real bug had) is invisible to ValidateOnBuild,
+		// and a singleton registered via a factory is constructed LAZILY, on first resolution, not
+		// at builder.Build(). So this flag does not fail the boot; it fails the first request that
+		// touches the offending singleton, loudly, instead of quietly corrupting concurrent state.
+		// The actual startup-time gate is CaptiveDependencyTests in CI, which force-resolves every
+		// singleton up front. ValidateOnBuild is turned on alongside it: it IS free (a pure ctor
+		// signature walk against the registered graph, no factory lambdas invoked) and catches a
+		// different, complementary shape — a plain ctor-injected type mismatch or an unregistered
+		// dependency — for free, at builder.Build() time, in every environment (both flags default
+		// to off outside Development).
+		builder.Host.UseDefaultServiceProvider(o =>
+		{
+			o.ValidateScopes = true;
+			o.ValidateOnBuild = true;
+		});
+
 		// Build-time OpenAPI generation (GetDocument.Insider) hosts this entry-point all the way
 		// through app.Run() — it lets StartAsync run (migrations + hosted services fire) and only
 		// then aborts before serving requests. Left alone it would migrate ./data/petbox.db and
