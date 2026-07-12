@@ -102,6 +102,9 @@ public sealed class PetBoxDb : DataConnection
 			// Explicitly declared so it isn't dropped from the schema cache (see ShareLink note
 			// above) — otherwise ExpiresAt reads back null and Where(...ExpiresAt...) won't translate.
 			.Property(a => a.ExpiresAt).HasDataType(DataType.DateTime).IsNullable(true)
+			// Same reason: an undeclared column on a partially-Fluent entity is dropped from the
+			// schema cache, so INSERT would omit it and the default project would silently vanish.
+			.Property(a => a.DefaultProjectKey).HasLength(100).IsNullable(true)
 			.Property(a => a.CreatedAt).IsNullable(false);
 
 		builder.Entity<DataTable>()

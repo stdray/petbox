@@ -19,25 +19,39 @@ static class ModuleMcp
 			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{projectKey}'");
 	}
 
-	// Resolve the effective projectKey for tools where it is OPTIONAL: when omitted,
-	// default to the key's single-project claim so a project-scoped key need not repeat
-	// it. A cross-project ("*") key has no single project to default to, so an explicit
-	// projectKey is required there. Always authorizes the result against the claim.
+	// THE single resolver for the effective projectKey on tools where it is OPTIONAL:
+	//
+	//     arg ?? (claim == "*" ? project_default claim : claim)
+	//
+	// An explicitly passed projectKey ALWAYS wins. Omitted, a project-scoped key defaults to
+	// its own claim (it need not repeat it); a cross-project ("*") key — whose claim authorizes
+	// every project but names none — falls back to the key's DefaultProjectKey, surfaced as the
+	// `project_default` claim. Only when nothing resolves (a "*" key with no default) is this an
+	// error. The result is always authorized against the claim.
 	public static string ResolveProject(IHttpContextAccessor http, string? projectKey)
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
-		var effective = projectKey;
+		var effective = string.IsNullOrWhiteSpace(projectKey) ? DefaultProject(ctx, claim) : projectKey;
 		if (string.IsNullOrWhiteSpace(effective))
-		{
-			if (string.IsNullOrEmpty(claim) || claim == ProjectScope.AllProjects)
-				throw new ArgumentException("projectKey is required (the API key is not scoped to a single project)");
-			effective = claim;
-		}
+			throw new ArgumentException(
+				"projectKey is required (the API key is not scoped to a single project — pass projectKey, " +
+				"or set a default project on the key)");
 		if (!ProjectScope.Authorizes(claim, effective))
 			throw new UnauthorizedAccessException($"ApiKey is not scoped to project '{effective}'");
 		return effective;
 	}
+
+	// The project the key falls back to when the caller omits projectKey: its own claim, or —
+	// for a cross-project key — the `project_default` claim (absent ⇒ null ⇒ ResolveProject throws).
+	static string? DefaultProject(HttpContext ctx, string? claim) => claim switch
+	{
+		null or "" => null,
+		ProjectScope.AllProjects => Blank(ctx.User.Claims.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.DefaultProjectClaim)?.Value),
+		var single => single,
+	};
+
+	static string? Blank(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
 	public static void AssertScope(IHttpContextAccessor http, string required)
 	{

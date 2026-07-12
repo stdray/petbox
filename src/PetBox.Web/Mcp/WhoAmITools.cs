@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
+using PetBox.Core.Auth;
 using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
@@ -14,13 +15,15 @@ namespace PetBox.Web.Mcp;
 public static class WhoAmITools
 {
 	[McpServerTool(Name = "whoami", Title = "Identify the calling ApiKey", ReadOnly = true, UseStructuredContent = true)]
-	[Description("Returns the calling ApiKey's identity: { project, scopes }. `project` is the key's project claim — every other tool needs a projectKey that must match it. `scopes` is the list of granted scopes (e.g. 'data:read', 'logs:query', 'tasks:write') that gate what you may do. Call this first when you do not already know your own project key and scopes.")]
+	[Description("Returns the calling ApiKey's identity: { project, scopes, defaultProject }. `project` is the key's project claim — every other tool needs a projectKey that must match it ('*' = a cross-project key: any projectKey is allowed). `scopes` is the list of granted scopes (e.g. 'data:read', 'logs:query', 'tasks:write') that gate what you may do. `defaultProject` (cross-project keys only, when set) is the project the tools with an OPTIONAL projectKey fall back to when you omit it. Call this first when you do not already know your own project key and scopes.")]
 	public static WhoAmIResult WhoAmI(IHttpContextAccessor http)
 	{
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
 		var project = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
 		var scopes = (ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? string.Empty)
 			.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-		return new WhoAmIResult(project, scopes);
+		var defaultProject = ctx.User.Claims
+			.FirstOrDefault(c => c.Type == ApiKeyAuthenticationHandler.DefaultProjectClaim)?.Value;
+		return new WhoAmIResult(project, scopes, defaultProject);
 	}
 }
