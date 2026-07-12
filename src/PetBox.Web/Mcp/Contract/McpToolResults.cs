@@ -205,6 +205,12 @@ public sealed record MemoryStoreListResult(IReadOnlyList<MemoryStoreRow> Stores)
 
 public sealed record MemoryStoreDeletedResult(bool Deleted);
 
+// memory_get result (spec addressed-read-batched): ALWAYS a list, whether the caller addressed
+// one `key` or a batch of `keys` — one shape for both, so a client never branches on arity.
+// Rows come back in the requested key order; a key that resolved to nothing is simply absent
+// (the batch is a soft filter, exactly like tasks_search `keys[]`).
+public sealed record MemoryGetResultView(IReadOnlyList<PetBox.Memory.Contract.MemoryEntryView> Entries);
+
 // Echo projection of a memory entry for the upsert/delta MCP surface. `Body` is
 // slice-controlled (null -> omitted). `Tags` is an array (the memory surface speaks
 // tag arrays; storage stays CSV).

@@ -328,8 +328,8 @@ public sealed class MemoryVerbsTests : IDisposable
 
 		var got = await MemoryTools.GetAsync(http, Flags(), _db, _memory, new NoopUsageRecorder(),
 			MemoryTools.WorkspaceContainer, "canon", "index");
-		got.Should().NotBeNull();
-		got!.Body.Should().Contain("workspace canon");
+		got.Entries.Should().ContainSingle();
+		got.Entries[0].Body.Should().Contain("workspace canon");
 	}
 
 	// The write scope still gates the workspace pass: waving $workspace through the project
