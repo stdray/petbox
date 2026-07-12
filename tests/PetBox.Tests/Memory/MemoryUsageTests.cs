@@ -12,11 +12,12 @@ using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Tests.Memory;
 
-// The usage-telemetry promises (spec: memory-usage-observability): a memory_search (with q)
-// answer counts an impression for the RETURNED entries, a direct get counts an
-// engagement, listing counts nothing, internal IMemoryService traffic counts nothing,
-// counters surface only under includeUsage, and the read path never waits on the write
-// (the recorder is a queue — tests flush explicitly).
+// The usage-telemetry promises (spec: memory-usage-observability + usage-counts-what-was-sent):
+// a memory_search answer counts an impression for the entries it actually SENT (post-limit,
+// post-budget — a row cut before the wire is not surfaced), a listing delivers too (surfaced,
+// but never deliberate), a direct get counts an engagement, internal IMemoryService traffic
+// counts nothing, counters surface only under includeUsage, and the read path never waits on
+// the write (the recorder is a queue — tests flush explicitly).
 public sealed class MemoryUsageTests : IDisposable
 {
 	const string Proj = "proj";
@@ -79,6 +80,21 @@ public sealed class MemoryUsageTests : IDisposable
 			}).ToList(), []);
 	}
 
+	// N entries whose bodies are big enough to make the response budget bite.
+	async Task SeedBig(int count, int bodyChars)
+	{
+		await _memory.CreateStoreAsync(Proj, "notes", null);
+		await _memory.UpsertAsync(Proj, "notes",
+			Enumerable.Range(1, count).Select(i => new MemoryEntryInput
+			{
+				Key = $"big{i}",
+				Version = 0,
+				Type = "Project",
+				Description = $"запись big{i} про телеметрию",
+				Body = new string('я', bodyChars),
+			}).ToList(), []);
+	}
+
 	[Fact]
 	public async Task SearchAnswer_CountsImpression_ForReturnedEntries()
 	{
@@ -127,19 +143,60 @@ public sealed class MemoryUsageTests : IDisposable
 		usage.Should().NotContainKey("no-such-key");
 	}
 
+	// A listing IS a delivery — its rows land in the caller's context exactly like a search's, so
+	// they are impressions. But no relevance leg ran behind them, so they never count as
+	// deliberate: DeliberateCount stays the honest "this fact proved its worth" signal GC reads.
 	[Fact]
-	public async Task Listing_AndDirectServiceTraffic_CountNothing()
+	public async Task Listing_CountsSurfaced_ButNotDeliberate()
 	{
 		await Seed("u1");
 
-		// Bulk listing (memory_search without q = curation) + internal machine path (the
-		// distiller's neighbor probe).
 		await MemoryTools.SearchAsync(Http(), Flags(), _db, _memory, _recorder, scope: "project", store: "notes");
+		await _recorder.FlushAsync();
+
+		var u = (await _memory.GetUsageAsync(Proj, "notes"))["u1"];
+		u.Surfaced.Should().Be(1);
+		u.Deliberate.Should().Be(0);
+		u.Opened.Should().Be(0);
+
+		// …and the deliberate cut the GC looks at stays empty for a listing-only entry.
+		var agg = await _memory.GetUsageAggregateAsync(Proj, "notes");
+		agg.SurfacedAtLeastOnce.Should().Be(1);
+		agg.DeliberatelySurfacedAtLeastOnce.Should().Be(0);
+	}
+
+	// Internal machine path (the distiller's neighbor probe) reaches IMemoryService directly and
+	// counts nothing — only the agent-facing adapters record usage.
+	[Fact]
+	public async Task DirectServiceTraffic_CountsNothing()
+	{
+		await Seed("u1");
+
 		await _memory.SearchAsync(Proj, "notes", "телеметрию", type: null);
 		await _memory.GetAsync(Proj, "notes", "u1");
 		await _recorder.FlushAsync();
 
 		(await _memory.GetUsageAsync(Proj, "notes")).Should().BeEmpty();
+	}
+
+	// Impressions are counted on what was SENT, not on what was found: rows the response budget
+	// prefix-cut never reached the agent's context, so they must not look surfaced
+	// (spec: usage-counts-what-was-sent).
+	[Fact]
+	public async Task BudgetCutRows_AreNotCountedSurfaced()
+	{
+		await SeedBig(12, 5_000);
+
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db, _memory, _recorder, "телеметрию",
+			scope: "project", store: "notes", limit: 20, bodyLen: -1);
+		await _recorder.FlushAsync();
+
+		res.Truncated.Should().BeTrue("12 × 5k-char bodies overflow the ~30k output budget");
+		res.Items.Count.Should().BeLessThan(12);
+
+		var usage = await _memory.GetUsageAsync(Proj, "notes");
+		usage.Keys.Should().BeEquivalentTo(res.Items.Select(i => i.Key), "only the delivered rows are impressions");
+		usage.Values.Should().OnlyContain(u => u.Surfaced == 1);
 	}
 
 	[Fact]
