@@ -1,5 +1,9 @@
 # syntax=docker/dockerfile:1.7
-FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
+# Pinned to the exact SDK in global.json, not the floating `10.0` tag: that tag shipped
+# 10.0.201 while CI installed 10.0.202 and a dev box ran 10.0.301 — three SDKs on one commit,
+# and `dotnet format` disagrees across feature bands, so the format gate's verdict depended on
+# where it ran. Bump this and global.json together.
+FROM mcr.microsoft.com/dotnet/sdk:10.0.301 AS build
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends curl unzip \
 	&& rm -rf /var/lib/apt/lists/*
