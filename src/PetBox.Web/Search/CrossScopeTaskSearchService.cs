@@ -1,4 +1,5 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Contract;
 using PetBox.Core.Models;
 using PetBox.Tasks.Contract;
@@ -25,10 +26,26 @@ namespace PetBox.Web.Search;
 // Exact hits are returned before full-text hits; within each leg, project order follows
 // ProjectsByWorkspace (workspace then project key) and full-text hits keep their per-project
 // relevance order. De-duped by NodeId (globally unique) and capped at MaxResults.
+//
+// ONE DI SCOPE PER BRANCH — the structural invariant that makes this fan-out legal at all.
+// The request's own scope owns ONE PetBoxDb (AddScoped, Program.cs:101) and ONE of every other
+// scoped service hanging off it (ITasksService/ITaskBoardStore, ILlmClient -> CapabilityRouter ->
+// ILlmRegistryLevelResolver -> ISettingsResolver). A LinqToDB DataConnection is NOT thread-safe,
+// so running N branches in parallel inside the request scope means N threads on one connection:
+// prod 500'd with "Must add values for the following parameters: @projectKey, @board" (and
+// "Collection was modified", ObjectDisposedException — one race, several faces). Patching the
+// stores one by one to open their own connection only closes the CASE: the first fix gave the
+// board-meta reads (TaskBoardStore) a private connection while the EMBED leg
+// (SearchNodesAsync -> VectorSearchIndex -> CapabilityRouter -> LlmRegistryLevelResolver, which
+// reads Projects/Settings/LlmRoutes/LlmEndpoints on EVERY query, before it can even decide there
+// is no route) kept racing on the shared one. So the fix here is at the boundary that creates the
+// parallelism: every branch resolves its OWN ITasksService out of its OWN IServiceScope, hence its
+// own PetBoxDb and its own object graph. "Inside one DI scope there is no parallelism" becomes a
+// structural fact instead of a convention no scoped service (present or future) can rely on.
 public sealed class CrossScopeTaskSearchService(
 	INavigationContext nav,
 	IHttpContextAccessor http,
-	ITasksService tasks,
+	IServiceScopeFactory scopes,
 	ILogger<CrossScopeTaskSearchService>? log = null)
 {
 	// Bounded fan-out: enough parallelism to make a many-project search feel instant without
@@ -105,6 +122,12 @@ public sealed class CrossScopeTaskSearchService(
 	async Task<(IReadOnlyList<CrossScopeSearchHit> Exact, IReadOnlyList<CrossScopeSearchHit> FullText)> SearchOneProjectAsync(
 		string ws, Project project, string query, string? scheme, string? host, CancellationToken ct)
 	{
+		// The branch's own DI scope: its own PetBoxDb and its own scoped graph (see the class note).
+		// Everything it returns is a materialized record, so the scope — and every connection in it —
+		// can die with the branch.
+		await using var scope = scopes.CreateAsyncScope();
+		var tasks = scope.ServiceProvider.GetRequiredService<ITasksService>();
+
 		var urlPrefix = scheme is null || host is null
 			? null
 			: $"{scheme}://{host}{Routes.ProjectTasks(ws, project.Key)}/";
