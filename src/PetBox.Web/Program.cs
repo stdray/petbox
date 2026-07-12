@@ -657,11 +657,11 @@ public partial class Program
 		// serving the router until the DI flip lands.
 		using (var llmScope = app.Services.CreateScope())
 		{
-			var coreDb = llmScope.ServiceProvider.GetRequiredService<PetBoxDb>();
+			var coreFactory = llmScope.ServiceProvider.GetRequiredService<ICoreDbFactory>();
 			var configFactory = llmScope.ServiceProvider.GetRequiredService<IConfigDbFactory>();
 			var llmImportLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("LlmRouter.RegistryImport");
 			new PetBox.LlmRouter.Registry.LlmRegistryImporter(
-				coreDb, configFactory, Path.Combine(dataDir, "config"), llmImportLog).Import();
+				coreFactory, configFactory, Path.Combine(dataDir, "config"), llmImportLog).Import();
 		}
 
 		using (var scope = app.Services.CreateScope())

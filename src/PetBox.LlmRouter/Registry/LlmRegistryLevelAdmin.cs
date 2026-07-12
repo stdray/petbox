@@ -17,12 +17,17 @@ namespace PetBox.LlmRouter.Registry;
 // named level is touched, ever.
 public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 {
-	readonly PetBoxDb _db;
+	// The FACTORY, not a context. This class holds the only core-db transaction on a request path
+	// (SetSnapshotAsync: DELETE routes -> DELETE endpoints -> INSERT xN -> commit), and it is
+	// self-contained inside the method — it opens the connection, owns it, and disposes it. That is
+	// what makes the transaction safe to move off the shared scoped PetBoxDb: nothing else can be
+	// mid-statement on this connection.
+	readonly ICoreDbFactory _factory;
 	readonly ISecretEncryptor _secrets;
 
-	public LlmRegistryLevelAdmin(PetBoxDb db, ISecretEncryptor secrets)
+	public LlmRegistryLevelAdmin(ICoreDbFactory factory, ISecretEncryptor secrets)
 	{
-		_db = db;
+		_factory = factory;
 		_secrets = secrets;
 	}
 
@@ -37,10 +42,12 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 		var level = Validate(scope, scopeKey);
 		var name = level.Scope.ToString();
 
-		var endpointRows = await _db.LlmEndpoints
+		using var db = _factory.Open();
+
+		var endpointRows = await db.LlmEndpoints
 			.Where(e => e.Scope == name && e.ScopeKey == level.ScopeKey)
 			.ToListAsync(ct);
-		var routeRows = await _db.LlmRoutes
+		var routeRows = await db.LlmRoutes
 			.Where(r => r.Scope == name && r.ScopeKey == level.ScopeKey)
 			.ToListAsync(ct);
 
@@ -98,10 +105,19 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 		var name = level.Scope.ToString();
 		var now = DateTime.UtcNow;
 
+		// ONE connection for the whole write, opened here and disposed on the way out. Everything
+		// below — the key read, the encryption, the replace transaction — runs on it and nothing
+		// else touches it.
+		using var db = _factory.Open();
+
 		// Keys already stored at THIS level, so an endpoint the caller did not hand a new key for
 		// keeps the one it had. Read from the level being written — never from a resolved/inherited
 		// one, which would be how somebody else's credentials get copied into this level.
-		var existing = (await _db.LlmEndpoints
+		// Read BEFORE the transaction opens: this is our own connection, so it is the same data
+		// either way, but keeping reads out of the write transaction is the rule that stops a core-db
+		// transaction from ever waiting on another connection (SQLITE_BUSY/SQLITE_LOCKED — core.db
+		// runs Cache=Shared, and the busy handler does not retry LOCKED).
+		var existing = (await db.LlmEndpoints
 				.Where(e => e.Scope == name && e.ScopeKey == level.ScopeKey)
 				.ToListAsync(ct))
 			.ToDictionary(e => e.Name, StringComparer.Ordinal);
@@ -160,16 +176,16 @@ public sealed class LlmRegistryLevelAdmin : ILlmRegistryLevelAdmin
 
 		// Routes first: they are the FK children, and the FK is ON DELETE CASCADE — deleting the
 		// endpoints would take them anyway, but doing it explicitly keeps the order legible.
-		await using var tx = await _db.BeginTransactionAsync(ct);
+		await using var tx = await db.BeginTransactionAsync(ct);
 
-		await _db.LlmRoutes.Where(r => r.Scope == name && r.ScopeKey == level.ScopeKey).DeleteAsync(ct);
-		await _db.LlmEndpoints.Where(e => e.Scope == name && e.ScopeKey == level.ScopeKey).DeleteAsync(ct);
+		await db.LlmRoutes.Where(r => r.Scope == name && r.ScopeKey == level.ScopeKey).DeleteAsync(ct);
+		await db.LlmEndpoints.Where(e => e.Scope == name && e.ScopeKey == level.ScopeKey).DeleteAsync(ct);
 
-		foreach (var row in endpointRows) await _db.InsertAsync(row, token: ct);
+		foreach (var row in endpointRows) await db.InsertAsync(row, token: ct);
 		// If a route somehow names an endpoint outside this level, the composite FK rejects the
 		// INSERT and the whole transaction rolls back. The validator should have caught it first;
 		// the database is what makes that a guarantee rather than a habit.
-		foreach (var row in routeRows) await _db.InsertAsync(row, token: ct);
+		foreach (var row in routeRows) await db.InsertAsync(row, token: ct);
 
 		await tx.CommitAsync(ct);
 	}

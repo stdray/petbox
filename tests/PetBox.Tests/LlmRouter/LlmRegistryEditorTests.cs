@@ -55,9 +55,9 @@ public sealed class LlmRegistryEditorTests : IDisposable
 
 		var secrets = new AesGcmSecretEncryptor(Options.Create(new SecretEncryptorOptions { MasterKey = "test-master-key" }));
 		var settings = new SettingsResolver(_db.Factory(), secrets);
-		_levels = new LlmRegistryLevelAdmin(_db, secrets);
+		_levels = new LlmRegistryLevelAdmin(_db.Factory(), secrets);
 		_resolver = new LlmRegistryLevelResolver(_db.Factory(), secrets, settings, NullLogger<LlmRegistryLevelResolver>.Instance);
-		_editor = new LlmRegistryEditor(_db, _levels, _resolver);
+		_editor = new LlmRegistryEditor(_db.Factory(), _levels, _resolver);
 	}
 
 	public void Dispose()

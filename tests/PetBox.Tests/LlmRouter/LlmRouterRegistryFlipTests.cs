@@ -63,7 +63,7 @@ public sealed class LlmRouterRegistryFlipTests : IDisposable
 		_secrets = new AesGcmSecretEncryptor(Options.Create(new SecretEncryptorOptions { MasterKey = "test-master-key" }));
 		_settings = new SettingsResolver(_db.Factory(), _secrets);
 		_resolver = new LlmRegistryLevelResolver(_db.Factory(), _secrets, _settings, NullLogger<LlmRegistryLevelResolver>.Instance);
-		_admin = new LlmRegistryLevelAdmin(_db, _secrets);
+		_admin = new LlmRegistryLevelAdmin(_db.Factory(), _secrets);
 		_router = new CapabilityRouter(_resolver, new CertPinningHttpClientProvider(), _upstream,
 			new EndpointBreaker(new FakeTimeProvider()), _routerLog);
 	}

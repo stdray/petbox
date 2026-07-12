@@ -59,7 +59,7 @@ public sealed class LlmRegistryImportTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
-	LlmRegistryImporter Importer() => new(_db, _configFactory, _configDir, _log);
+	LlmRegistryImporter Importer() => new(_db.Factory(), _configFactory, _configDir, _log);
 
 	// The source, written by the OLD store exactly as production wrote it: one Plain `llm/registry`
 	// JSON binding + one encrypted Secret binding per api key, in config/$system.db.
@@ -207,7 +207,7 @@ public sealed class LlmRegistryImportTests : IDisposable
 		await SeedLegacyAsync(TwoEndpointRegistry(), new Dictionary<string, string> { ["local"] = "local-secret" });
 		Importer().Import();
 
-		await new LlmRegistryLevelAdmin(_db, _secrets)
+		await new LlmRegistryLevelAdmin(_db.Factory(), _secrets)
 			.SetAsync(Scope.System, "$", LlmRegistry.Empty, new Dictionary<string, string>());
 		_db.LlmEndpoints.Count().Should().Be(0);
 
@@ -224,7 +224,7 @@ public sealed class LlmRegistryImportTests : IDisposable
 		await SeedLegacyAsync(TwoEndpointRegistry(), new Dictionary<string, string> { ["local"] = "local-secret" });
 
 		// Somebody wrote the new store first (no marker exists — this is not an import).
-		await new LlmRegistryLevelAdmin(_db, _secrets).SetAsync(Scope.System, "$",
+		await new LlmRegistryLevelAdmin(_db.Factory(), _secrets).SetAsync(Scope.System, "$",
 			new LlmRegistry([new LlmEndpoint("hand-made", "https://hand.example")],
 				[new LlmRoute(LlmCapability.Embed, "hand-made", "m")]),
 			new Dictionary<string, string> { ["hand-made"] = "hand-key" });
