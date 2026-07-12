@@ -45,14 +45,20 @@ public static class MemoryTools
 		⊕ workspace (rows labelled by scope, project first) — same as memory_search.
 		`includeUsage` (default false) attaches a per-store usage aggregate: totalEntries,
 		surfacedAtLeastOnce/openedAtLeastOnce (+ fractions over the active set), medianLastHitAt
-		(the median last-hit of the surfaced entries — "recency"), and the dead tail
+		(the median last-hit of the surfaced entries — "recency"), the dead tail
 		(deadCount never-surfaced entries + the oldest-first sample deadTailKeys, prime pruning
-		candidates). Reading this does NOT count as usage (curation, not an impression).
+		candidates), and the store's COST and FIT over the trailing `usageWindowDays` (default 30):
+		deliveredChars/rowChars = how much context this store actually poured into callers,
+		avgKRel = the mean fit (0..1, relative to each request's best hit) of what it poured.
+		Read the two together — high chars + low fit is a noise boar worth pruning; low chars +
+		high fit is a precise index worth keeping; the impression counters alone cannot tell those
+		apart. Reading this does NOT count as usage (curation, not an impression).
 		""")]
 	public static async Task<MemoryStoreListResult> StoreListAsync(
 		IHttpContextAccessor http, FeatureFlags features, PetBoxDb db, IMemoryService memory,
 		string? projectKey = null,
-		[Description("Attach a per-store usage aggregate (coverage, median recency, dead tail) (default false).")] bool includeUsage = false,
+		[Description("Attach a per-store usage aggregate (coverage, median recency, dead tail, window cost/fit) (default false).")] bool includeUsage = false,
+		[LogArg][Description("Trailing window (days) the usage cost/fit is measured over (default 30). Ignored without includeUsage.")] int? usageWindowDays = null,
 		[Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
 		CancellationToken ct = default)
 	{
@@ -70,9 +76,15 @@ public static class MemoryTools
 				MemoryStoreUsageRow? usage = null;
 				if (includeUsage)
 				{
-					var a = await memory.GetUsageAggregateAsync(container, s.Name, ct: ct);
+					// A non-positive window is a caller error, not a silent "all time" — fall back
+					// to the default rather than aggregating the store's whole history by accident.
+					var window = usageWindowDays is { } d && d > 0 ? TimeSpan.FromDays(d) : (TimeSpan?)null;
+					var a = await memory.GetUsageAggregateAsync(container, s.Name, window: window, ct: ct);
 					usage = new MemoryStoreUsageRow(a.TotalEntries, a.SurfacedAtLeastOnce, a.OpenedAtLeastOnce,
-						a.SurfacedFraction, a.OpenedFraction, a.MedianLastHitAt, a.DeadTail.Count, a.DeadTail.TopKeys);
+						a.SurfacedFraction, a.OpenedFraction, a.MedianLastHitAt, a.DeadTail.Count, a.DeadTail.TopKeys,
+						// Cost and fit, kept separate and raw — the pair the impression counters cannot express.
+						a.Cost.WindowDays, a.Cost.Deliveries, a.Cost.DeliveredChars, a.Cost.RowChars,
+						a.Cost.AvgKRel is { } k ? Math.Round(k, 4) : null, a.Cost.EntriesDelivered);
 				}
 				rows.Add(new MemoryStoreRow(scopeName, s.Name, s.Description, s.CreatedAt, usage));
 			}
@@ -387,7 +399,10 @@ public static class MemoryTools
 		(the compact listing default), 0 = no body, N>0 = the first N chars ("…" when cut),
 			-1 = the full body — or pull a full body with memory_get.
 
-		`includeUsage` adds surfaced/opened/lastHitAt counters per row. A search answer
+		`includeUsage` adds surfaced/opened/lastHitAt counters per row, plus the row's own
+		COST and FIT (deliveredChars = all-time body chars this entry has spent of callers'
+		context; avgKRel = the mean fit, 0..1 against each request's best hit, of its deliveries;
+		null = only ever delivered by a listing). A search answer
 		counts an impression for the returned rows; a listing (no `q`) is curation and
 		counts nothing. The response has a HARD OUTPUT BUDGET (~30k serialized chars):
 		overflowing rows are prefix-cut in result order and flagged `truncated:true` +
@@ -410,7 +425,7 @@ public static class MemoryTools
 		[Description("Sort order: {by: relevance|created|updated, desc?}. Default: updated desc (listing) / relevance (with q).")] SortInput? sort = null,
 		[LogArg][Description("Max rows returned (default 20; 0 = no cap — the output budget still applies).")] int? limit = null,
 		[LogArg][Description("Body length knob (uniform contract): omitted = a ~240-char snippet (the compact listing default — fetch a full body with memory_get or bodyLen:-1); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
-		[LogArg][Description("Include usage counters (surfaced/opened/lastHitAt) per row (default false).")] bool includeUsage = false,
+		[LogArg][Description("Include usage per row: the counters (surfaced/opened/lastHitAt) AND the entry's cost/fit (deliveredChars/avgKRel) (default false).")] bool includeUsage = false,
 		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
@@ -477,7 +492,12 @@ public static class MemoryTools
 					// (compact — a number only). Null when it carries no session provenance.
 					SourcesCount(h.Entry.Metadata),
 					// Per-row relevance provenance (query mode only; null → omitted in a listing).
-					Score: hasQuery ? Math.Round(h.Score, 6) : null, Retriever: h.Retriever);
+					Score: hasQuery ? Math.Round(h.Score, 6) : null, Retriever: h.Retriever,
+					// The entry's own COST and FIT (delivery_events, all-time) — the only per-entry
+					// read surface of that table. Surfaced/opened say it keeps appearing; these say
+					// what the appearing costs and whether it lands (spec: usage-cost-and-fit-separate).
+					DeliveredChars: includeUsage ? (u?.DeliveredChars ?? 0) : null,
+					AvgKRel: includeUsage && u?.AvgKRel is { } k ? Math.Round(k, 4) : null);
 				// The service was asked for FULL bodies (BodyLen: 0), so h.Entry.Body is the whole
 				// entry — the denominator of "how much of it did this delivery actually send".
 				// ScoreRaw is the PRE-decay fused score (null in a listing: no relevance leg ran).

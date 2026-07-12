@@ -56,13 +56,30 @@ public sealed record MemoryDeliveryEvent(
 
 // One entry's usage as exposed on read surfaces (opt-in flags / UI). `Deliberate` is the
 // subset of `Surfaced` from deliberate (non-machine) searches — the honest value signal.
-public sealed record MemoryUsageView(long Surfaced, long Opened, DateTime? LastHitAt, long Deliberate = 0);
+//
+// The counters answer HOW OFTEN (impressions); the delivery-derived trio answers the two
+// questions an impression cannot (spec: usage-cost-and-fit-separate): what the entry COST
+// (DeliveredChars — body chars actually sent across its deliveries) and how well it FIT
+// (AvgKRel — the mean within-request fit of those deliveries; null when no delivery carried
+// one, i.e. listings only). Cost and fit stay SEPARATE: "expensive and off-target" and
+// "cheap and dead-on" are opposite outcomes that a single scalar would smear together.
+// Additive: the counters are untouched, so every existing reader keeps working.
+public sealed record MemoryUsageView(
+	long Surfaced, long Opened, DateTime? LastHitAt, long Deliberate = 0,
+	long Deliveries = 0, long DeliveredChars = 0, double? AvgKRel = null);
+
+// Delivery-derived cost/fit for ONE entry over a window (the read side of delivery_events).
+// Deliveries = how many rows this entry was sent as; DeliveredChars = the body chars those
+// rows actually carried; RowChars = their whole serialized wire price; AvgKRel = the mean of
+// the deliveries that carried a fit (null when none did — a listing runs no relevance leg).
+public sealed record MemoryDeliveryStats(long Deliveries, long DeliveredChars, long RowChars, double? AvgKRel);
 
 // Store-wide usage aggregate (spec: memory-usage-aggregate) — a single glance at how a
 // store's entries are actually reached. Coverage (how many entries ever surfaced/opened
-// and the fractions over the active set), the recency of the surfaced set, and the dead
-// tail (entries that never once surfaced — the prime pruning candidates). Pure telemetry,
-// derived from the same entry_usage counters GetUsageAsync reads; never load-bearing.
+// and the fractions over the active set), the recency of the surfaced set, the dead
+// tail (entries that never once surfaced — the prime pruning candidates), and the store's
+// COST/FIT over a window (from delivery_events — the only signal that separates a store
+// that is expensive and off-target from one that is cheap and dead-on).
 public sealed record MemoryUsageAggregate(
 	int TotalEntries,
 	int SurfacedAtLeastOnce,
@@ -77,7 +94,23 @@ public sealed record MemoryUsageAggregate(
 	// "давность" = now − this. A real observed median TIMESTAMP (not an age) keeps it
 	// deterministic — the caller/UI turns it into an age against the current clock.
 	DateTime? MedianLastHitAt,
-	MemoryDeadTail DeadTail);
+	MemoryDeadTail DeadTail,
+	MemoryStoreCost Cost);
+
+// What a store COST and how well it FIT over the aggregate's window (spec:
+// usage-cost-and-fit-separate). Cost is chars, not a rate: `DeliveredChars` is how much
+// body text this store poured into callers' context in the window, `RowChars` the whole wire
+// price of those rows. Fit is `AvgKRel`, the mean within-request fit of the store's delivered
+// rows (null = nothing with a relevance leg was delivered). Read the two TOGETHER: high chars
+// + low fit = a noise boar; low chars + high fit = a precise index worth keeping.
+public sealed record MemoryStoreCost(
+	int WindowDays,
+	long Deliveries,
+	long DeliveredChars,
+	long RowChars,
+	double? AvgKRel,
+	// Distinct active entries that were delivered at least once in the window.
+	int EntriesDelivered);
 
 // The never-surfaced tail: the total count plus an oldest-first sample of their keys (by
 // entry Created — the most stale entries first, the best pruning candidates), capped at N.

@@ -586,14 +586,79 @@ public sealed class MemoryService : IMemoryService
 		using var ctx = _stores.NewEnsuredConnection(projectKey);
 		var q = ctx.Usage.Where(u => u.Store == store);
 		if (keys is not null) q = q.Where(u => keys.Contains(u.Key));
-		return q.ToList().ToDictionary(
-			u => u.Key,
-			u => new MemoryUsageView(u.SurfacedCount, u.OpenedCount, u.LastHitAt, u.DeliberateCount),
-			StringComparer.Ordinal);
+		// The counters answer "how often"; delivery_events answer "at what cost, how well" —
+		// all-time here (a read surface reports the entry's whole life; the GC and the store
+		// aggregate ask the WINDOWED sibling). Two dimensions, one row.
+		var cost = DeliveryRollup(ctx, store, window: null, keys);
+		var view = new Dictionary<string, MemoryUsageView>(StringComparer.Ordinal);
+		foreach (var u in q.ToList())
+		{
+			var d = cost.GetValueOrDefault(u.Key);
+			view[u.Key] = new MemoryUsageView(u.SurfacedCount, u.OpenedCount, u.LastHitAt, u.DeliberateCount,
+				d?.Deliveries ?? 0, d?.DeliveredChars ?? 0, d?.AvgKRel);
+		}
+		// The KEY SET stays the counter rows, deliberately: a listing delivers rows and counts NO
+		// impression (curation, by contract — spec memory-usage-observability), so a listing-only
+		// entry must not sprout a usage row here just because it has a delivery event. Its cost is
+		// not lost: the store aggregate reads delivery_events directly, counters or not.
+		return view;
+	}
+
+	public async Task<IReadOnlyDictionary<string, MemoryDeliveryStats>> GetDeliveryStatsAsync(string projectKey, string store,
+		TimeSpan? window = null, IReadOnlyCollection<string>? keys = null, CancellationToken ct = default)
+	{
+		await EnsureStore(projectKey, store, ct);
+		using var ctx = _stores.NewEnsuredConnection(projectKey);
+		return DeliveryRollup(ctx, store, window ?? DefaultUsageWindow, keys)
+			.ToDictionary(kv => kv.Key, kv => kv.Value.Stats, StringComparer.Ordinal);
+	}
+
+	// The window the cost/fit legs judge on unless the caller says otherwise: recent behaviour,
+	// not the entry's whole life. Matches the quarantine GC's 30d min-age cadence.
+	public static readonly TimeSpan DefaultUsageWindow = TimeSpan.FromDays(30);
+
+	// One entry's delivery roll-up plus the RAW fit parts. AvgKRel must stay decomposed here:
+	// a store-level mean is Σscore/Σn over EVENTS — averaging the per-entry means would weight a
+	// once-delivered entry the same as a hundred-times-delivered one.
+	sealed record Rollup(long Deliveries, long DeliveredChars, long RowChars, double KRelSum, long KRelCount)
+	{
+		public double? AvgKRel => KRelCount == 0 ? null : KRelSum / KRelCount;
+		public MemoryDeliveryStats Stats => new(Deliveries, DeliveredChars, RowChars, AvgKRel);
+	}
+
+	// delivery_events → per-key cost/fit, grouped in SQL (the table is append-only and grows with
+	// every delivered row — it is never pulled into memory). `window` null = all time.
+	static Dictionary<string, Rollup> DeliveryRollup(MemoryDb ctx, string store, TimeSpan? window,
+		IReadOnlyCollection<string>? keys)
+	{
+		var q = ctx.Deliveries.Where(d => d.Store == store);
+		if (window is { } w)
+		{
+			var since = DateTime.UtcNow - w;
+			q = q.Where(d => d.Ts >= since);
+		}
+
+		if (keys is not null) q = q.Where(d => keys.Contains(d.Key));
+		return q.GroupBy(d => d.Key)
+			.Select(g => new
+			{
+				Key = g.Key,
+				Deliveries = g.LongCount(),
+				DeliveredChars = g.Sum(d => d.DeliveredChars),
+				RowChars = g.Sum(d => d.RowChars),
+				// A listing carries no KRel (no relevance leg ran) — those events contribute cost
+				// but no fit, so the fit denominator counts only the events that HAVE one.
+				KRelSum = g.Sum(d => d.KRel ?? 0d),
+				KRelCount = g.Sum(d => d.KRel != null ? 1L : 0L),
+			})
+			.ToList()
+			.ToDictionary(r => r.Key,
+				r => new Rollup(r.Deliveries, r.DeliveredChars, r.RowChars, r.KRelSum, r.KRelCount),
+				StringComparer.Ordinal);
 	}
 
 	public async Task<MemoryUsageAggregate> GetUsageAggregateAsync(string projectKey, string store,
-		int deadTailLimit = 10, CancellationToken ct = default)
+		int deadTailLimit = 10, TimeSpan? window = null, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
 		using var ctx = _stores.NewEnsuredConnection(projectKey);
@@ -629,6 +694,32 @@ public sealed class MemoryService : IMemoryService
 			dead.Count,
 			dead.OrderBy(d => d.Created).ThenBy(d => d.Key, StringComparer.Ordinal)
 				.Take(Math.Max(0, deadTailLimit)).Select(d => d.Key).ToList());
+
+		// The second dimension (spec: usage-cost-and-fit-separate): what this store SPENT of the
+		// caller's context in the window, and how well what it spent it on actually fitted. The
+		// store-level fit is Σ(kRel)/Σ(events with a kRel) — an event-weighted mean, so a row
+		// delivered a hundred times weighs a hundred times (a mean of per-entry means would let a
+		// single perfect one-off outvote a hundred junk deliveries).
+		var win = window ?? DefaultUsageWindow;
+		var rollup = DeliveryRollup(ctx, store, win, keys: null);
+		var active = entries.Select(e => e.Key).ToHashSet(StringComparer.Ordinal);
+		var kRelSum = 0d;
+		var kRelCount = 0L;
+		long deliveries = 0, deliveredChars = 0, rowChars = 0;
+		var entriesDelivered = 0;
+		foreach (var (key, r) in rollup)
+		{
+			// Cost counts every row the store SENT — including one whose entry has since been
+			// retired: the context it burned was real. EntriesDelivered stays on the active set
+			// (it is a coverage number, and its denominator is TotalEntries).
+			deliveries += r.Deliveries;
+			deliveredChars += r.DeliveredChars;
+			rowChars += r.RowChars;
+			kRelSum += r.KRelSum;
+			kRelCount += r.KRelCount;
+			if (active.Contains(key)) entriesDelivered++;
+		}
+
 		return new MemoryUsageAggregate(
 			TotalEntries: total,
 			SurfacedAtLeastOnce: surfacedCount,
@@ -637,7 +728,14 @@ public sealed class MemoryService : IMemoryService
 			SurfacedFraction: total == 0 ? 0 : (double)surfacedCount / total,
 			OpenedFraction: total == 0 ? 0 : (double)openedCount / total,
 			MedianLastHitAt: Median(surfacedHits),
-			DeadTail: deadTail);
+			DeadTail: deadTail,
+			Cost: new MemoryStoreCost(
+				WindowDays: (int)Math.Round(win.TotalDays),
+				Deliveries: deliveries,
+				DeliveredChars: deliveredChars,
+				RowChars: rowChars,
+				AvgKRel: kRelCount == 0 ? null : kRelSum / kRelCount,
+				EntriesDelivered: entriesDelivered));
 	}
 
 	// Median of an unordered timestamp list: null when empty, the middle element for an odd
