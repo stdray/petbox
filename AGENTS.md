@@ -267,6 +267,32 @@ Historical (frozen) — a record of how the project got here, not current state:
     (`--browser=chrome|msedge` на Windows оставляет висящее чёрное окно), после работы —
     `npx playwright-cli close-all`. Подробности — в памяти PetBox (workspace).
 
+## Database connections — a hard invariant
+
+**No `DataConnection` is injectable. Ever.** `PetBoxDb` (core.db) and `DeployDb` are not
+registered in DI, so they cannot reach you through a ctor, a minimal-API/MCP handler
+parameter, or `GetRequiredService`. The only way in is:
+
+```csharp
+using var db = _coreDbFactory.Open();   // ICoreDbFactory / IDeployDbFactory
+```
+
+The other five (`TasksDb`, `LogDb`, `MemoryDb`, `SessionsDb`, `ConfigDb`) already work this
+way via `IScopedDbFactory<T>.NewEnsuredConnection`.
+
+Why: LinqToDB's `DataConnection` is not thread-safe. A request-scoped one shared across
+`Task.WhenAll` branches gets its `SqliteCommand` parameters trampled — which surfaced three
+times in one day (a fan-out leg, an embed leg one layer down, and a singleton that had
+captured a scoped client). Handing every caller its own connection makes that class of bug
+**unexpressible**, not merely detectable. `DbInjectionGuardTests` fails the build if a
+registration ever comes back.
+
+Two rules that survive the refactor:
+- Never construct `PetBoxDb` by hand — the factory preserves the shared `MappingSchema`, and
+  a per-connection schema is a ~290 MB production OOM (it has happened).
+- Never call another core-db service while holding an open core transaction: core.db runs
+  `Cache=Shared`, and the `SQLITE_LOCKED` it raises is not retried by the busy handler.
+
 ## Module architecture
 
 PetBox is a module monolith. Each subsystem is feature-toggled via `appsettings.json`:
