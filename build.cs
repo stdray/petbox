@@ -62,6 +62,17 @@ void RunUv(string args, string workingDir)
 		throw new CakeException($"uv {args} failed with exit code {exit}");
 }
 
+// The bun twin of RunUv. StartProcess returns the exit code and DISCARDING it makes the task
+// report success no matter what the tool said — the TsSdk* targets each called StartProcess bare,
+// so `bun run typecheck` could print TS2322 and the build still exited 0 (same defect FormatVerify
+// had, fixed in c68dc71). Every bun invocation goes through here so a gate cannot silently pass.
+void RunBun(string args, string workingDir)
+{
+	var exit = StartProcess("bun", new ProcessSettings { Arguments = args, WorkingDirectory = workingDir });
+	if (exit != 0)
+		throw new CakeException($"bun {args} failed with exit code {exit}");
+}
+
 // ─── Tasks ───
 
 Task("Clean")
@@ -337,23 +348,23 @@ Task("NuGetPush")
 // ─── TS SDK build + publish (public npmjs) ───
 
 Task("TsSdkInstall")
-	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "install --frozen-lockfile", WorkingDirectory = tsSdkDir }));
+	.Does(() => RunBun("install --frozen-lockfile", tsSdkDir));
 
 Task("TsSdkTypecheck")
 	.IsDependentOn("TsSdkInstall")
-	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "run typecheck", WorkingDirectory = tsSdkDir }));
+	.Does(() => RunBun("run typecheck", tsSdkDir));
 
 Task("TsSdkLint")
 	.IsDependentOn("TsSdkInstall")
-	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "run lint", WorkingDirectory = tsSdkDir }));
+	.Does(() => RunBun("run lint", tsSdkDir));
 
 Task("TsSdkTest")
 	.IsDependentOn("TsSdkInstall")
-	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "test", WorkingDirectory = tsSdkDir }));
+	.Does(() => RunBun("test", tsSdkDir));
 
 Task("TsSdkBuild")
 	.IsDependentOn("TsSdkInstall")
-	.Does(() => StartProcess("bun", new ProcessSettings { Arguments = "run build", WorkingDirectory = tsSdkDir }));
+	.Does(() => RunBun("run build", tsSdkDir));
 
 // Stamp package.json version from GitVersion, then verify the build output.
 // GitVersion runs standalone (only needs git, not .NET) so we avoid the full
