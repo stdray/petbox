@@ -76,6 +76,46 @@ public sealed class ProjectScopeSandboxTests
 		(await ProjectScope.AuthorizesAsync(user, RealProj, Catalog)).Should().BeTrue();
 	}
 
+	// EvaluateAsync is AuthorizesAsync with the denial reason kept apart — same table as
+	// AuthorizesAsync_StringOverload above, but asserting WHICH ProjectAccess came back rather than
+	// collapsing both failure reasons into `false`. THE case the whole change exists for: a wildcard
+	// claim authorizes RealProj by identity (ClaimMismatch would be wrong here), so a sandboxOnly
+	// wildcard key refused on a non-sandbox project must report SandboxContainment, not ClaimMismatch.
+	[Theory]
+	[InlineData("kpvotes", "kpvotes", false, ProjectAccess.Allowed)]
+	[InlineData("kpvotes", "other", false, ProjectAccess.ClaimMismatch)]
+	[InlineData(SandboxProj, SandboxProj, true, ProjectAccess.Allowed)]
+	[InlineData(RealProj, RealProj, true, ProjectAccess.SandboxContainment)]
+	[InlineData("*", SandboxProj, true, ProjectAccess.Allowed)]
+	[InlineData("*", RealProj, true, ProjectAccess.SandboxContainment)] // wildcard: identity says yes, containment says no
+	[InlineData(SandboxProj, RealProj, true, ProjectAccess.ClaimMismatch)] // identity fails first, containment never runs
+	public async Task EvaluateAsync_StringOverload_ReportsWhichCheckFailed(
+		string? claim, string projectKey, bool sandboxOnly, ProjectAccess expected)
+	{
+		(await ProjectScope.EvaluateAsync(claim, projectKey, sandboxOnly, Catalog)).Should().Be(expected);
+	}
+
+	// The ClaimsPrincipal overload of EvaluateAsync, from the actual shape ApiKeyAuthenticationHandler
+	// emits: a sandboxOnly WILDCARD key on a real (non-sandbox) project must come back
+	// SandboxContainment, never ClaimMismatch — that distinction is the entire point of this change
+	// (a wildcard smoke key refused here is refused for WHERE it's writing, not for its scope).
+	[Fact]
+	public async Task EvaluateAsync_ClaimsOverload_WildcardSandboxOnlyKey_OnARealProject_IsSandboxContainment_NotClaimMismatch()
+	{
+		var user = Principal(claim: "*", sandboxOnly: true);
+		(await ProjectScope.EvaluateAsync(user, RealProj, Catalog)).Should().Be(ProjectAccess.SandboxContainment);
+		(await ProjectScope.EvaluateAsync(user, SandboxProj, Catalog)).Should().Be(ProjectAccess.Allowed);
+	}
+
+	// A project-scoped key in a project it doesn't own is a ClaimMismatch even when sandboxOnly is
+	// set — identity is checked first, so this must NOT read as SandboxContainment.
+	[Fact]
+	public async Task EvaluateAsync_ClaimsOverload_ProjectScopedKey_OnAnotherProject_IsClaimMismatch()
+	{
+		var user = Principal(claim: SandboxProj, sandboxOnly: true);
+		(await ProjectScope.EvaluateAsync(user, RealProj, Catalog)).Should().Be(ProjectAccess.ClaimMismatch);
+	}
+
 	static ClaimsPrincipal Principal(string claim, bool sandboxOnly)
 	{
 		var claims = new List<Claim> { new("project", claim) };

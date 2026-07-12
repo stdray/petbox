@@ -420,9 +420,12 @@ public static class LogApi
 			// satisfied — but containment is not: re-check it live rather than leaning on the
 			// mint-time invariant, exactly as SeqIngestPathAsync does (a future flip of
 			// Project.Sandbox would silently turn that invariant into a hole).
-			if (!await ProjectScope.AuthorizesAsync(key.ProjectKey, projectKey, key.SandboxOnly, catalog, ct))
+			var access = await ProjectScope.EvaluateAsync(key.ProjectKey, projectKey, key.SandboxOnly, catalog, ct);
+			if (access != ProjectAccess.Allowed)
 				return Results.Json(
-					new ErrorResponse($"key is not authorized for project '{projectKey}'"),
+					new ErrorResponse(access == ProjectAccess.SandboxContainment
+						? ProjectScope.SandboxDenialMessage(projectKey, subject: "key")
+						: $"key is not authorized for project '{projectKey}'"),
 					statusCode: StatusCodes.Status403Forbidden);
 			logName = LogNames.Default;
 			serviceKey = ctx.Request.Headers["X-Service-Key"].FirstOrDefault() is { Length: > 0 } svc ? svc : "seq";
@@ -480,12 +483,15 @@ public static class LogApi
 				new ErrorResponse($"key lacks the '{ApiKeyScopes.LogsIngest}' scope"),
 				statusCode: StatusCodes.Status403Forbidden);
 		// This handler authenticates the Seq key manually (AllowAnonymous + X-Seq-ApiKey), so it
-		// has no ClaimsPrincipal to read — go through the string-based AuthorizesAsync overload
+		// has no ClaimsPrincipal to read — go through the string-based EvaluateAsync overload
 		// directly with the DB row's own ProjectKey/SandboxOnly, same containment guarantee as
 		// every claims-based caller (spec work/smoke-writes-into-real-projects).
-		if (!await ProjectScope.AuthorizesAsync(key.ProjectKey, projectKey, key.SandboxOnly, catalog, ct))
+		var access = await ProjectScope.EvaluateAsync(key.ProjectKey, projectKey, key.SandboxOnly, catalog, ct);
+		if (access != ProjectAccess.Allowed)
 			return Results.Json(
-				new ErrorResponse($"key is not authorized for project '{projectKey}'"),
+				new ErrorResponse(access == ProjectAccess.SandboxContainment
+					? ProjectScope.SandboxDenialMessage(projectKey, subject: "key")
+					: $"key is not authorized for project '{projectKey}'"),
 				statusCode: StatusCodes.Status403Forbidden);
 
 		if (!await store.ExistsAsync(projectKey, logName, ct))
