@@ -16,11 +16,17 @@ public sealed record CommentLine(CommentView Comment, int Depth);
 // (many node cards, one page) still names the right node — the node detail page ignores the
 // field and resolves the node from its own bound route instead, but the same partial/markup
 // serves both surfaces.
+// ShowAddForm: the root "Add a comment…" form is a page-of-one affordance (comments-ui-edit) —
+// meaningful on the node detail page, not under every card in a list view (tree/tags/kanban/
+// table), where it would put a live textarea under every node on the board
+// (board-comment-form-list-noise). Defaults true (the node detail page's own behavior); the
+// board's list partials pass false.
 public sealed record CommentThreadModel(
 	IReadOnlyList<CommentLine> Lines,
 	string NodeId,
 	string? CommitUrlTemplate = null,
-	IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs = null);
+	IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs = null,
+	bool ShowAddForm = true);
 
 // Shared thread flattener used by both the board page and the node detail page (so the two
 // surfaces render the SAME thread shape via the _CommentThread partial). Pure/static.
