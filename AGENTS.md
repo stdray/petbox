@@ -106,7 +106,11 @@ records**, not the working plan — do not treat them as current state.
    states what the acceptance changes), so `review → accepted` must never carry the gate.
    `spec_plan` on `exploring → review` remains enforced.
 7. **Deploy only on explicit command** (the `deploy` tag flow); after deploy, run a
-   live smoke against production endpoints.
+   live smoke against production endpoints. **The tag run IS the whole pipeline** —
+   pushing the `deploy` tag runs `test` → `publish` (image to ghcr) → `deploy`, so once
+   the merge is on `main`, move the tag IMMEDIATELY and watch only the tag run. Do NOT
+   wait for `main`'s own CI first: it runs the same tests, and the tag run re-runs them
+   anyway (it will not deploy on a red build) — waiting just burns ~6 minutes twice.
 8. **Clean up when the card closes — the worktree's life ends with the card, not with
    the push:** once a card reaches a terminal status (`Done`/`Cancelled`) and its branch
    is merged, remove the worktree (`git worktree remove <dir>`) and delete the branch
@@ -160,8 +164,12 @@ records**, not the working plan — do not treat them as current state.
   jobs: `deploy` (SSH deploy + post-deploy health smoke), `nuget`/`npm`/`pypi`
   (client publish).
 - **Deploy:** manual `deploy` tag only — move the tag to the target commit and push
-  it (`git tag -f deploy <sha> && git push origin deploy --force`). The deploy job
-  SSHes to prod, pulls the new image, and health-checks the fresh container.
+  it (`git tag -f deploy <sha> && git push origin deploy --force`). The tag run is a
+  FULL run of `ci.yml`: it re-runs `test`, rebuilds and pushes the image, and only then
+  runs the `deploy` job (SSH to prod, pull the new image, health-check the fresh
+  container). So the whole outbound flow is: merge → push `main` → move the tag → watch
+  the TAG run. The push-to-`main` run and the tag run execute the same tests, so waiting
+  for the former before tagging doubles the wall-clock for nothing.
 
 ## MCP access during development
 
