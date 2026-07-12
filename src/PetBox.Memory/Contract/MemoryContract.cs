@@ -89,7 +89,11 @@ public enum MemorySortBy
 // container, rather than the old greedy "project takes the limit, workspace gets the remainder".
 // Retriever names how the hit surfaced in query mode ("lexical" = lexically confirmed,
 // "semantic" = surfaced by the vector leg alone); null in listing mode (no relevance ran).
-public sealed record MemoryEntryHit(string Store, MemoryEntryView Entry, double Score = 0, string? Retriever = null);
+// `ScoreRaw` is the SAME fused relevance BEFORE the recency decay was blended in (0 in a
+// listing). Delivery telemetry normalizes fit against it (kRel = ScoreRaw / top-1 ScoreRaw of the
+// request): decay has already reordered the answer, so normalizing the DECAYED score would count
+// freshness twice.
+public sealed record MemoryEntryHit(string Store, MemoryEntryView Entry, double Score = 0, string? Retriever = null, double ScoreRaw = 0);
 
 // The rich per-family result of the unified read: the selected hits plus retriever
 // provenance (null in listing mode, where no retriever runs).

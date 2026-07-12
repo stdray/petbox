@@ -55,6 +55,7 @@ public sealed class NoopUsageRecorder : PetBox.Memory.Contract.IMemoryUsageRecor
 {
 	public void Surfaced(string projectKey, string store, IReadOnlyList<string> keys, bool deliberate = true) { }
 	public void Opened(string projectKey, string store, string key) { }
+	public void Delivered(string projectKey, IReadOnlyList<PetBox.Memory.Contract.MemoryDeliveryEvent> events) { }
 	public Task FlushAsync(CancellationToken ct = default) => Task.CompletedTask;
 }
 
