@@ -19,7 +19,7 @@ public sealed class WorkspaceAdminServiceTests
 		var dbf = new CoreDbFactory(cs);
 		var members = new WorkspaceMembershipService(dbf);
 		var svc = new WorkspaceAdminService(
-			dbf, new ProjectDirectory(dbf), members, new WorkspaceProvisioning(dbf));
+			dbf, new ProjectDirectory(dbf), members, new WorkspaceProvisioning(dbf, members));
 		return (svc, members, dbf);
 	}
 

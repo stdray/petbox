@@ -1,18 +1,17 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class WorkspaceSettingsModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IWorkspaceAdminService _workspaces;
 
-	public WorkspaceSettingsModel(ICoreDbFactory f) => _f = f;
+	public WorkspaceSettingsModel(IWorkspaceAdminService workspaces) => _workspaces = workspaces;
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
 	[FromRoute(Name = "workspaceKey")]
@@ -31,9 +30,9 @@ public sealed class WorkspaceSettingsModel : PageModel
 	public string? SuccessMessage { get; set; }
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet()
+	public async Task OnGetAsync()
 	{
-		Load();
+		await LoadAsync();
 		if (Workspace is not null)
 		{
 			Name = Workspace.Name;
@@ -43,37 +42,43 @@ public sealed class WorkspaceSettingsModel : PageModel
 
 	public async Task<IActionResult> OnPostSaveAsync()
 	{
-		using var db = _f.Open();
-		Load();
+		await LoadAsync();
 		if (Workspace is null)
 		{
 			ErrorMessage = "Workspace not found.";
 			return Page();
 		}
 
-		if (string.IsNullOrWhiteSpace(Name))
+		var result = await _workspaces.UpdateAsync(
+			WorkspaceKey, Name, Description, HttpContext.RequestAborted);
+
+		switch (result)
 		{
-			ErrorMessage = "Name is required.";
-			return Page();
+			case WorkspaceChangeResult.Refused refused:
+				ErrorMessage = refused.Reason;
+				return Page();
+			case WorkspaceChangeResult.NotFound:
+				ErrorMessage = "Workspace not found.";
+				return Page();
 		}
 
-		await db.Workspaces
-			.Where(w => w.Key == WorkspaceKey)
-			.Set(w => w.Name, Name)
-			.Set(w => w.Description, Description ?? string.Empty)
-			.UpdateAsync();
-
 		SuccessMessage = "Saved.";
-		Load();
+		await LoadAsync();
 		return Page();
 	}
 
-	void Load()
+	// includeContainers: true so ProjectCount keeps counting exactly what it counted when this page
+	// read core.db itself (every Projects row of the workspace, its `$ws-` memory container included).
+	// It is a display number here, NOT the delete gate — that one lives in IWorkspaceAdminService
+	// .DeleteAsync and deliberately does NOT count the container.
+	async Task LoadAsync()
 	{
-		using var db = _f.Open();
-		Workspace = db.Workspaces.FirstOrDefault(w => w.Key == WorkspaceKey);
-		if (Workspace is null) return;
-		ProjectCount = db.Projects.Count(p => p.WorkspaceKey == WorkspaceKey);
-		MemberCount = db.WorkspaceMembers.Count(m => m.WorkspaceKey == WorkspaceKey);
+		var overview = await _workspaces.GetOverviewAsync(
+			WorkspaceKey, includeContainers: true, HttpContext.RequestAborted);
+		if (overview is null) return;
+
+		Workspace = overview.Workspace;
+		ProjectCount = overview.Projects.Count;
+		MemberCount = overview.MemberCount;
 	}
 }

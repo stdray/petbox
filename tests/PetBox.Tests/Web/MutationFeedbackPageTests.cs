@@ -57,10 +57,20 @@ public sealed class MutationFeedbackPageTests : IDisposable
 		page.TempData = new TempDataDictionary(http, new NoopTempDataProvider());
 	}
 
+	// The workspaces page holds a service, not a connection (AGENTS.md: the database is visible only
+	// in the service layer) — so the fixture composes the real one over the same core.db.
+	IWorkspaceAdminService WorkspaceAdmin()
+	{
+		var dbf = _db.Factory();
+		var members = new WorkspaceMembershipService(dbf);
+		return new WorkspaceAdminService(
+			dbf, new ProjectDirectory(dbf), members, new WorkspaceProvisioning(dbf, members));
+	}
+
 	[Fact]
 	public async Task Workspace_create_redirects_clean_and_sets_success_notice()
 	{
-		var page = new WorkspacesModel(_db.Factory(), new WorkspaceProvisioning(_db.Factory()));
+		var page = new WorkspacesModel(WorkspaceAdmin());
 		Wire(page);
 
 		var result = await page.OnPostCreateAsync("acme", "Acme", "desc");
@@ -75,7 +85,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task Workspace_delete_redirects_clean_and_sets_success_notice()
 	{
 		_db.Insert(new Workspace { Key = "solo", Name = "Solo", Description = "", CreatedAt = DateTime.UtcNow });
-		var page = new WorkspacesModel(_db.Factory(), new WorkspaceProvisioning(_db.Factory()));
+		var page = new WorkspacesModel(WorkspaceAdmin());
 		Wire(page);
 
 		var result = await page.OnPostDeleteAsync("solo");

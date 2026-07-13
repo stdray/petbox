@@ -1,4 +1,5 @@
 using LinqToDB;
+using PetBox.Core.Auth;
 using PetBox.Core.Models;
 
 namespace PetBox.Core.Data;
@@ -21,7 +22,12 @@ namespace PetBox.Core.Data;
 // in the UI layer and made the connection's lifetime a Razor page's business. Now the only thing a
 // caller holds is this service, and every statement below runs on a connection this class opened and
 // closed. (Never construct PetBoxDb by hand — the factory carries the shared MappingSchema.)
-public sealed class WorkspaceProvisioning(ICoreDbFactory dbf)
+//
+// Every WorkspaceMembers read and write here goes through IWorkspaceMembershipService — including the
+// atomic quota claim. It used to have its OWN copy of that INSERT..SELECT statement (and of the
+// "which rows count as owned" predicate) alongside the service's: two copies of the one rule the
+// whole quota rests on, free to drift the moment either is touched. There is now one.
+public sealed class WorkspaceProvisioning(ICoreDbFactory dbf, IWorkspaceMembershipService members)
 {
 	// Why the outcome is a value and not an exception: both callers are Razor page handlers that
 	// re-render the form with the message. An exception would be control flow for the expected case.
@@ -38,28 +44,12 @@ public sealed class WorkspaceProvisioning(ICoreDbFactory dbf)
 	public const string QuotaExhaustedMessage =
 		"Your account has no remaining workspace allowance. Ask an administrator to raise it.";
 
-	// How many workspaces a user has already created.
-	//
-	// The model records no creator, and it deliberately stays that way: the honest question the quota
-	// asks is "how many workspaces does this account already OWN", and ownership IS the Admin role —
-	// that is what creation grants (workspace-creator-is-admin) and what an admin transferring a
-	// workspace would grant. Counting an explicit CreatedBy column instead would let a user shed a
-	// workspace (hand over their Admin, keep the row's authorship) and get no quota back, or keep
-	// admin of ten workspaces someone else created while their quota still reads "0 used".
-	//
-	// "$system" is excluded: nobody created it (it is seeded by M004), and it is the sysadmin marker
-	// — a sysadmin is not spending quota by being one. Sysadmins bypass the quota anyway.
-	public async Task<int> CountOwnedWorkspacesAsync(long userId, CancellationToken ct = default)
-	{
-		using var db = dbf.Open();
-		return await OwnedWorkspaces(db, userId).CountAsync(ct);
-	}
-
-	static IQueryable<WorkspaceMember> OwnedWorkspaces(PetBoxDb db, long userId) =>
-		db.WorkspaceMembers.Where(m =>
-			m.UserId == userId
-			&& m.Role == WorkspaceRole.Admin
-			&& m.WorkspaceKey != WorkspaceMemory.SystemWorkspace);
+	// How many workspaces a user has already created. The count lives in IWorkspaceMembershipService
+	// (the memberships ARE the ledger — ownership is the Admin role, "$system" excluded), and this is
+	// a pass-through so that the number a caller reads and the number the claim ENFORCES are produced
+	// by one expression and cannot disagree.
+	public Task<int> CountOwnedWorkspacesAsync(long userId, CancellationToken ct = default) =>
+		members.CountOwnedWorkspacesAsync(userId, ct);
 
 	// True when this account may create ONE more workspace: its explicit quota still exceeds the
 	// number it already owns. A missing user is false (not an exception) — an authorization question
@@ -69,18 +59,21 @@ public sealed class WorkspaceProvisioning(ICoreDbFactory dbf)
 	// enforcement and must never be mistaken for it: between its answer and a later INSERT there is a
 	// window, and a double-click is wide enough to drive through it (eight simultaneous posts from an
 	// account with an allowance of 1 produced eight workspaces, every single time). The enforcement is
-	// ClaimAdminSlotAsync, where the count and the insert are one statement.
+	// IWorkspaceMembershipService.ClaimAdminSlotAsync, where the count and the insert are one statement.
 	public async Task<bool> CanCreateAsync(long userId, CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
+		int? quota;
+		using (var db = dbf.Open())
+		{
+			quota = await db.Users
+				.Where(u => u.Id == userId)
+				.Select(u => (int?)u.WorkspaceQuota)
+				.FirstOrDefaultAsync(ct);
+		}
 
-		var quota = await db.Users
-			.Where(u => u.Id == userId)
-			.Select(u => (int?)u.WorkspaceQuota)
-			.FirstOrDefaultAsync(ct);
 		if (quota is not { } q || q <= 0) return false;
 
-		return q > await OwnedWorkspaces(db, userId).CountAsync(ct);
+		return q > await members.CountOwnedWorkspacesAsync(userId, ct);
 	}
 
 	// Create a workspace and hand it to its creator, or say why not.
@@ -125,11 +118,14 @@ public sealed class WorkspaceProvisioning(ICoreDbFactory dbf)
 		// that already includes every slot claimed by a request that beat it here. Gating the
 		// *Workspaces* insert on the same count would look every bit as atomic and would enforce
 		// nothing — the membership row it counts is not written until later, so N racers would each
-		// still read 0 and each still win.
+		// still read 0 and each still win. The statement itself is the membership service's (one copy,
+		// see its comment); it runs on its OWN connection, which is safe precisely because no
+		// transaction is held here — core.db runs Cache=Shared and an SQLITE_LOCKED under one is not
+		// retried.
 		var claimed = 0;
 		if (creatorUserId is { } creator)
 		{
-			claimed = await ClaimAdminSlotAsync(db, creator, key, bypassQuota, ct);
+			claimed = await members.ClaimAdminSlotAsync(creator, key, bypassQuota, ct);
 
 			// Nothing claimed, with a quota clause in play → the quota refused. (It also absorbs the
 			// degenerate "already a member of a key that has no workspace": that row already counts
@@ -158,64 +154,14 @@ public sealed class WorkspaceProvisioning(ICoreDbFactory dbf)
 			// The slot was claimed, but the workspace it was claimed for never came to exist (a racing
 			// create took the key, the container failed, …). Hand it back: an allowance quietly eaten by
 			// a workspace that does not exist is worse than the failure that caused it, because nobody
-			// short of a sysadmin can give it back. Releases only a row THIS call inserted.
+			// short of a sysadmin can give it back. Releases only a row THIS call inserted — and it goes
+			// through the membership service, the one door every membership writer uses.
 			if (claimed > 0 && creatorUserId is { } owner)
-			{
-				await db.WorkspaceMembers
-					.Where(m => m.UserId == owner && m.WorkspaceKey == key)
-					.DeleteAsync(ct);
-			}
+				await members.ReleaseSlotAsync(owner, key, ct);
 
 			throw;
 		}
 
 		return Result.Success();
-	}
-
-	// Claim one workspace slot for this account, atomically: the quota check IS the insert, so there
-	// is no instant between "may I?" and "done" for a second request to slip into.
-	//
-	// It reads as a query and it compiles to `INSERT INTO WorkspaceMembers (…) SELECT … FROM Users
-	// WHERE Id = @uid AND NOT EXISTS (…) AND (SELECT COUNT(*) …) < Users.WorkspaceQuota` — one
-	// statement. The Users row is the SOURCE of the insert rather than a separate lookup, which is
-	// what lets the account's quota be compared inside the same statement that consumes it; it also
-	// means an unknown account selects no rows and therefore claims nothing, which is the right answer
-	// for an identity that is not there.
-	//
-	// Returns rows affected: 1 = the slot is theirs, 0 = refused.
-	//
-	// spec workspace-creator-is-admin: the row this writes IS the creator's Admin membership, so the
-	// claim and the grant are one act. No re-login is needed for it to take effect —
-	// WorkspaceClaimsRefresher rebuilds the membership claims from the DB on every request.
-	//
-	// No transaction, deliberately: core.db runs Cache=Shared and the SQLITE_LOCKED it raises is not
-	// retried by the busy handler. A single self-contained statement needs no transaction to be atomic
-	// — which is precisely why the condition had to move inside it rather than into a `if` above it.
-	static Task<int> ClaimAdminSlotAsync(
-		PetBoxDb db,
-		long userId,
-		string workspaceKey,
-		bool bypassQuota,
-		CancellationToken ct)
-	{
-		var source = db.Users
-			.Where(u => u.Id == userId)
-			.Where(u => !db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == workspaceKey));
-
-		// A sysadmin is not bound by the quota (it is not their leash), so their claim carries no
-		// clause — but it still goes through this one statement, so there is one way to become a
-		// workspace's admin and not two.
-		if (!bypassQuota)
-			source = source.Where(u => OwnedWorkspaces(db, userId).Count() < u.WorkspaceQuota);
-
-		return source.InsertAsync(
-			db.WorkspaceMembers,
-			u => new WorkspaceMember
-			{
-				UserId = userId,
-				WorkspaceKey = workspaceKey,
-				Role = WorkspaceRole.Admin,
-			},
-			ct);
 	}
 }

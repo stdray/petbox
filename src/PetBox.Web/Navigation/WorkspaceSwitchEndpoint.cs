@@ -1,12 +1,10 @@
 using System.Globalization;
-using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
-using PetBox.Core.Data;
 
 namespace PetBox.Web.Navigation;
 
@@ -22,13 +20,16 @@ public static class WorkspaceSwitchEndpoint
 			.DisableAntiforgery();
 	}
 
+	// An endpoint lambda is pipeline code, not a service: it asks IWorkspaceMembershipService whether
+	// the caller is a member and never opens core.db itself (AGENTS.md — the database is visible only
+	// in the service layer). The membership read is also the seam a cache would live behind, and this
+	// endpoint fires on every workspace switch.
 	static async Task<IResult> Switch(
 		HttpContext ctx,
-		ICoreDbFactory dbf,
+		IWorkspaceMembershipService members,
 		[FromForm] string? ws,
 		[FromForm] string? zone)
 	{
-		using var db = dbf.Open();
 		// `ws` is nullable on the binding so an empty-form POST surfaces as
 		// a clean 400, not an unhandled BadHttpRequestException with stack
 		// trace into the error log. The sidebar's onchange-submit form is
@@ -40,9 +41,10 @@ public static class WorkspaceSwitchEndpoint
 		var userIdRaw = ctx.User.FindFirst(PetBoxClaims.UserId)?.Value;
 		if (!isSysAdmin && long.TryParse(userIdRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId))
 		{
-			var member = await db.WorkspaceMembers
-				.FirstOrDefaultAsync((Core.Models.WorkspaceMember m) => m.UserId == userId && m.WorkspaceKey == ws);
-			if (member is null)
+			// Any role is enough to SWITCH to a workspace (Viewer included) — the check is membership,
+			// not admin. RequestAborted, so a switch abandoned mid-flight does not keep reading.
+			var roles = await members.GetRolesAsync(userId, ctx.RequestAborted);
+			if (!roles.Any(r => string.Equals(r.WorkspaceKey, ws, StringComparison.Ordinal)))
 				return Results.Forbid();
 		}
 
