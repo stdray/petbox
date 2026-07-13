@@ -7,6 +7,7 @@ using PetBox.Config;
 using PetBox.Config.Data;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
+using PetBox.Core.Data.Temporal;
 using PetBox.Core.Models;
 using PetBox.Web.Mcp.Contract;
 
@@ -72,6 +73,7 @@ public static class ConfigTools
 		IHttpContextAccessor http, IConfigDbFactory configFactory, ISecretEncryptor secrets,
 		[Description("Workspace key the bindings belong to.")] string workspaceKey,
 		[Description("Array of binding items: { path (dotted config path), tags (CSV; must include 'ws:{workspaceKey}'), value? (encrypted when kind=Secret), kind? ('Plain'|'Secret') }.")] ConfigBindingItemInput[] items,
+		[Description("Batch policy. TRUE (default) = ATOMIC: a bad item aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in, same promise as the other batch verbs): valid bindings LAND, each refused one comes back in conflicts[] with its reason. Config rows are immutable and keyed by (path, tagset) with NO version watermark, so the mode DEGENERATES here — there is no stale conflict to have, and no intra-batch references, so every item is independent. That is the point: the flag means the same thing everywhere, you never have to remember which verb is the exception.")] bool atomic = true,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
@@ -80,28 +82,42 @@ public static class ConfigTools
 		// Validate + prepare every item BEFORE touching the DB, so a bad item aborts the batch
 		// without a partial write. Secret encryption happens here (needs PETBOX_MASTER_KEY).
 		var prepared = new List<PreparedBinding>(items.Length);
+		var conflicts = new List<ConfigBindingConflict>();
 		foreach (var it in items)
 		{
-			var path = it.Path;
-			var tags = it.Tags;
-			if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("each binding item needs a path");
-			if (string.IsNullOrWhiteSpace(tags)) throw new ArgumentException("each binding item needs tags");
-			if (!tags.Contains($"ws:{workspaceKey}", StringComparison.OrdinalIgnoreCase))
-				throw new ArgumentException($"Tags must include 'ws:{workspaceKey}' (path '{path}')");
-
-			var kind = ParseKind(it.Kind);
-			var plaintext = it.Value ?? string.Empty;
-			var storedValue = plaintext;
-			string? cipher = null, iv = null, authTag = null;
-			if (kind == BindingKind.Secret)
+			try
 			{
-				if (!secrets.IsAvailable)
-					throw new InvalidOperationException("Secret bindings require PETBOX_MASTER_KEY to be configured.");
-				var bundle = secrets.Encrypt(plaintext);
-				(cipher, iv, authTag) = (bundle.Ciphertext, bundle.Iv, bundle.AuthTag);
-				storedValue = string.Empty;
+				var path = it.Path;
+				var tags = it.Tags;
+				if (string.IsNullOrWhiteSpace(path)) throw new ArgumentException("each binding item needs a path");
+				if (string.IsNullOrWhiteSpace(tags)) throw new ArgumentException("each binding item needs tags");
+				if (!tags.Contains($"ws:{workspaceKey}", StringComparison.OrdinalIgnoreCase))
+					throw new ArgumentException($"Tags must include 'ws:{workspaceKey}' (path '{path}')");
+
+				var kind = ParseKind(it.Kind);
+				var plaintext = it.Value ?? string.Empty;
+				var storedValue = plaintext;
+				string? cipher = null, iv = null, authTag = null;
+				if (kind == BindingKind.Secret)
+				{
+					if (!secrets.IsAvailable)
+						throw new InvalidOperationException("Secret bindings require PETBOX_MASTER_KEY to be configured.");
+					var bundle = secrets.Encrypt(plaintext);
+					(cipher, iv, authTag) = (bundle.Ciphertext, bundle.Iv, bundle.AuthTag);
+					storedValue = string.Empty;
+				}
+				prepared.Add(new PreparedBinding(path!, tags!, kind, storedValue, cipher, iv, authTag, Tagset(tags!)));
 			}
-			prepared.Add(new PreparedBinding(path!, tags!, kind, storedValue, cipher, iv, authTag, Tagset(tags!)));
+			// PARTIAL: the refusal becomes a per-item conflict instead of failing the call. No
+			// cascade step is needed — a config binding cannot reference another binding, so the
+			// reference graph is empty and TemporalStore's cascade would reject nothing further.
+			// The degeneracy is the CONTRACT, not a gap: `atomic:false` means the same thing here
+			// as everywhere ("valid entries land, refused ones come back with a reason"), it just
+			// has no watermark and no graph to work on.
+			catch (Exception ex) when (!atomic && ex is ArgumentException or InvalidOperationException)
+			{
+				conflicts.Add(new(it.Path ?? "", it.Tags ?? "", nameof(TemporalConflictKind.Rejected), ex.Message));
+			}
 		}
 
 		var now = DateTime.UtcNow;
@@ -155,7 +171,9 @@ public static class ConfigTools
 		}
 
 		var currentVersion = await MaxIdAsync(configDb, ct);
-		return new ConfigBindingsUpsertResult(true, currentVersion, added, updated, supersededAll, []);
+		// `applied` keeps its meaning: something landed. An atomic call that got here always did
+		// (a refusal threw); a partial call where every item was rejected wrote nothing.
+		return new ConfigBindingsUpsertResult(prepared.Count > 0 || conflicts.Count == 0, currentVersion, added, updated, supersededAll, conflicts);
 	}
 
 	[McpServerTool(Name = "config_binding_search", Title = "Read config bindings (list + search)", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ConfigBindingsSearchResult))]

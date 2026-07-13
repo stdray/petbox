@@ -131,7 +131,7 @@ internal static class AutocaptureDedup
 				Body = canonical.Body,
 				Tags = canonical.Tags,
 				Metadata = MergeMetadata(cluster, canonical),
-			}], deletes, ct);
+			}], deletes, ct: ct);
 			removed += deletes.Count;
 		}
 		if (removed > 0 && logger is not null && logger.IsEnabled(LogLevel.Information))

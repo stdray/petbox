@@ -524,7 +524,7 @@ public sealed class TemporalStoreTests : IDisposable
 	async Task<TemporalUpsertResult<PlanRow>> UpsertRacing(PlanRow row, Func<Task> onBeforeApply)
 	{
 		using var db = new DataConnection(new DataOptions().UseSQLite(_cs));
-		return await TemporalStore.UpsertAsync(db, new[] { row }, [], 0, time: null, onBeforeApply: onBeforeApply, onWithinTx: null, partition: null, ct: CancellationToken.None);
+		return await TemporalStore.UpsertAsync(db, new[] { row }, [], TemporalBatchPolicy.AllOrNothing, 0, time: null, onBeforeApply: onBeforeApply, onWithinTx: null, partition: null, ct: CancellationToken.None);
 	}
 
 	List<PlanRow> Active()

@@ -21,7 +21,7 @@ public sealed class CommentService : ICommentService
 	// ── uniform-entity verbs (comments_upsert / _search / _delta / _get) ───────────────
 
 	public async Task<CommentBatchResult> UpsertAsync(
-		string projectKey, string board, IReadOnlyList<CommentItem> items, CancellationToken ct = default)
+		string projectKey, string board, IReadOnlyList<CommentItem> items, bool atomic = true, CancellationToken ct = default)
 	{
 		using var ctx = _factory.NewEnsuredConnection(projectKey);
 
@@ -36,56 +36,73 @@ public sealed class CommentService : ICommentService
 
 		var desired = new List<CommentRow>(items.Count);
 		var itemByKey = new Dictionary<string, CommentItem>(StringComparer.Ordinal);
-		foreach (var it in items)
+		// PARTIAL mode (atomic:false): a refused item becomes a per-item Rejected conflict instead of
+		// killing the call. A comment's `parentId` must already be an ACTIVE comment (an intra-batch
+		// forward reference is not expressible — verified below), and comments carry no other
+		// cross-item reference, so the dependent-rejection cascade has nothing to walk: every item is
+		// independent. A rejected CREATE has no id yet, so its conflict is keyed by the item's
+		// POSITION (#0, #1 …) — the only handle the caller holds for it.
+		var rejected = new List<TemporalConflict>();
+		for (var i = 0; i < items.Count; i++)
 		{
-			if (string.IsNullOrWhiteSpace(it.Body)) throw new ArgumentException("comment body is required");
-			if (string.IsNullOrEmpty(it.Id))
+			var it = items[i];
+			try
 			{
-				// CREATE
-				if (string.IsNullOrWhiteSpace(it.NodeId)) throw new ArgumentException("nodeId is required to create a comment");
-				if (string.IsNullOrWhiteSpace(it.Author)) throw new ArgumentException("author is required to create a comment");
-				if (!string.IsNullOrEmpty(it.ParentId))
+				if (string.IsNullOrWhiteSpace(it.Body)) throw new ArgumentException("comment body is required");
+				if (string.IsNullOrEmpty(it.Id))
 				{
-					// A reply must hang under an active comment of the SAME thread (board+node). An
-					// intra-batch parent (a reply to another item created in the same call) is not
-					// supported — the parent must already exist.
-					var parent = await ctx.GetTable<CommentRow>()
-						.FirstOrDefaultAsync(c => c.Key == it.ParentId && c.ActiveTo == null, ct);
-					if (parent is null || parent.Board != board || parent.NodeId != it.NodeId)
-						throw new ArgumentException($"parentId '{it.ParentId}' is not an active comment under this node");
+					// CREATE
+					if (string.IsNullOrWhiteSpace(it.NodeId)) throw new ArgumentException("nodeId is required to create a comment");
+					if (string.IsNullOrWhiteSpace(it.Author)) throw new ArgumentException("author is required to create a comment");
+					if (!string.IsNullOrEmpty(it.ParentId))
+					{
+						// A reply must hang under an active comment of the SAME thread (board+node). An
+						// intra-batch parent (a reply to another item created in the same call) is not
+						// supported — the parent must already exist.
+						var parent = await ctx.GetTable<CommentRow>()
+							.FirstOrDefaultAsync(c => c.Key == it.ParentId && c.ActiveTo == null, ct);
+						if (parent is null || parent.Board != board || parent.NodeId != it.NodeId)
+							throw new ArgumentException($"parentId '{it.ParentId}' is not an active comment under this node");
+					}
+					var id = Guid.NewGuid().ToString("N");
+					desired.Add(new CommentRow
+					{
+						Key = id,
+						Version = it.Version,
+						Board = board,
+						NodeId = it.NodeId!,
+						ParentId = string.IsNullOrEmpty(it.ParentId) ? null : it.ParentId,
+						Author = it.Author ?? string.Empty,
+						Body = it.Body,
+					});
+					itemByKey[id] = it;
 				}
-				var id = Guid.NewGuid().ToString("N");
-				desired.Add(new CommentRow
+				else
 				{
-					Key = id,
-					Version = it.Version,
-					Board = board,
-					NodeId = it.NodeId!,
-					ParentId = string.IsNullOrEmpty(it.ParentId) ? null : it.ParentId,
-					Author = it.Author ?? string.Empty,
-					Body = it.Body,
-				});
-				itemByKey[id] = it;
+					// PATCH
+					if (!currentById.TryGetValue(it.Id!, out var cur))
+						throw new ArgumentException($"comment '{it.Id}' not found or already deleted");
+					desired.Add(cur with { Version = it.Version, Body = it.Body });
+					itemByKey[it.Id!] = it;
+				}
 			}
-			else
+			catch (ArgumentException ex) when (!atomic)
 			{
-				// PATCH
-				if (!currentById.TryGetValue(it.Id!, out var cur))
-					throw new ArgumentException($"comment '{it.Id}' not found or already deleted");
-				desired.Add(cur with { Version = it.Version, Body = it.Body });
-				itemByKey[it.Id!] = it;
+				rejected.Add(new(it.Id ?? $"#{i}", TemporalConflictKind.Rejected, it.Version, null, ex.Message));
 			}
 		}
 
 		// One atomic temporal batch (partitioned by board, so `currentVersion` is the board's
 		// comment cursor). FTS is re-indexed inside the tx — the same Class-A discipline as Add/Edit.
 		var fts = new SqliteFtsIndex(() => ctx);
-		var r = await TemporalStore.UpsertAsync(ctx, desired, partition: x => x.Board == board,
+		var r = await TemporalStore.UpsertAsync(ctx, desired, [],
+			new TemporalBatchPolicy(atomic, rejected), 0,
 			onWithinTx: async (tx, upserted, _, c) =>
 			{
 				foreach (var u in upserted)
 					await fts.IndexAsync(tx, TasksSearchDocs.CommentToDoc(u, projectKey), c);
-			}, ct: ct);
+			},
+			partition: x => x.Board == board, ct: ct);
 
 		// r.Added/r.Updated are the delta since sinceVersion (0 here → the whole board's active
 		// comments). The ECHO must cover ONLY this call (like tasks_upsert/memory_upsert): keep just

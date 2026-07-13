@@ -69,6 +69,33 @@ public sealed record TemporalUpsertResult<TRow>(
 	public bool HasConflicts => Conflicts.Count > 0;
 }
 
+// How a batch decides between all-or-nothing and per-entry (partial) application.
+//
+// ATOMIC (the default, and the only behavior a caller gets without asking): any conflict
+// aborts the WHOLE batch — nothing is written. Bit-for-bit the historical contract.
+//
+// PARTIAL (`Atomic: false`, an explicit opt-in): a conflict rejects THAT ENTRY only; the
+// rest of the batch lands. The rejection SCOPE changes — the conflict POLICY does not: a
+// Stale row is still exactly what the watermark says is stale (and an auto-resolved row is
+// still applied, never rejected). Three inputs shape it:
+//   * Rejected — domain-guard refusals the SERVICE already decided (kind Rejected, one per
+//     key, with the reason). They ride the same shape as concurrency conflicts, so a caller
+//     reads one `conflicts[]` for both;
+//   * DependsOn — INTRA-BATCH references: key -> the keys of THIS batch it points at. A
+//     rejected key cascades to everything that depends on it, directly or transitively, so a
+//     partial apply never leaves a dangling reference. Cycle-safe (fixpoint over a growing
+//     rejected set: a cycle with no rejected member simply never fires).
+//     Null/empty = no intra-batch references, so the cascade degenerates to "every entry is
+//     independent" — the correct, not the deficient, behavior for a store whose rows cannot
+//     reference each other (config bindings, memory entries).
+public sealed record TemporalBatchPolicy(
+	bool Atomic = true,
+	IReadOnlyList<TemporalConflict>? Rejected = null,
+	IReadOnlyDictionary<string, IReadOnlyList<string>>? DependsOn = null)
+{
+	public static readonly TemporalBatchPolicy AllOrNothing = new();
+}
+
 // Declarative, append-only upsert for a batch of keyed rows.
 //
 // Each desired row carries a WATERMARK baseline in Version: the version the author
@@ -122,7 +149,7 @@ public static class TemporalStore
 		Expression<Func<TRow, bool>>? partition = null,
 		CancellationToken ct = default)
 		where TRow : TemporalRow =>
-		UpsertAsync(db, desired, [], sinceVersion, time, onBeforeApply: null, onWithinTx, partition, ct);
+		UpsertAsync(db, desired, [], TemporalBatchPolicy.AllOrNothing, sinceVersion, time, onBeforeApply: null, onWithinTx, partition, ct);
 
 	// Overload that also soft-deletes (closes the active row with no new revision) the
 	// given keys — used by memory_upsert's `deleted:true`. version 0 = delete the
@@ -138,7 +165,24 @@ public static class TemporalStore
 		Expression<Func<TRow, bool>>? partition = null,
 		CancellationToken ct = default)
 		where TRow : TemporalRow =>
-		UpsertAsync(db, desired, delete, sinceVersion, time, onBeforeApply: null, onWithinTx, partition, ct);
+		UpsertAsync(db, desired, delete, TemporalBatchPolicy.AllOrNothing, sinceVersion, time, onBeforeApply: null, onWithinTx, partition, ct);
+
+	// The policy overload: the SAME engine, told whether the batch is all-or-nothing (the
+	// default) or partial-apply, plus the service's own guard rejections and the intra-batch
+	// reference graph the cascade rides. Every batch-upsert verb goes through this one seam —
+	// the topological cascade and the conflicts[] shape are never re-implemented per verb.
+	public static Task<TemporalUpsertResult<TRow>> UpsertAsync<TRow>(
+		DataConnection db,
+		IReadOnlyList<TRow> desired,
+		IReadOnlyList<(string Key, long Version)> delete,
+		TemporalBatchPolicy policy,
+		long sinceVersion = 0,
+		Func<DataConnection, IReadOnlyList<TRow>, IReadOnlyList<string>, CancellationToken, Task>? onWithinTx = null,
+		TimeProvider? time = null,
+		Expression<Func<TRow, bool>>? partition = null,
+		CancellationToken ct = default)
+		where TRow : TemporalRow =>
+		UpsertAsync(db, desired, delete, policy, sinceVersion, time, onBeforeApply: null, onWithinTx, partition, ct);
 
 	// onBeforeApply is a test-only seam: it fires after classification but before
 	// the close+insert transaction, to drive the CloseRace branch deterministically.
@@ -146,6 +190,7 @@ public static class TemporalStore
 		DataConnection db,
 		IReadOnlyList<TRow> desired,
 		IReadOnlyList<(string Key, long Version)> delete,
+		TemporalBatchPolicy policy,
 		long sinceVersion,
 		TimeProvider? time,
 		Func<Task>? onBeforeApply,
@@ -167,37 +212,76 @@ public static class TemporalStore
 		// from a bookkeeping rewrite (payload identical → the write auto-resolves).
 		var baselines = await BaselineRevisionsAsync(table, desired, delete, active, partition, ct);
 
-		var batch = Classify(desired, active, baselines, fromVersion, nextVersion, now);
-
-		// Soft-delete: close the active row, no replacement revision -> shows up in
-		// the delta's `removed`. Same watermark rules as an edit: a baseline above the
-		// scope cursor is FutureBaseline; a baseline that predates the entity's current
-		// revision is Stale unless the payload never semantically moved since the read;
-		// anything ≥ the current revision (0 = delete regardless) closes.
-		foreach (var (key, version) in delete)
+		// One classification pass over a (sub)set of the call — pure, in-memory, and re-runnable:
+		// partial-apply re-runs it on the survivors so ToInsert/ToClose can never disagree with
+		// the set of entries that were actually kept.
+		Batch<TRow> BuildBatch(IReadOnlyList<TRow> rows, IReadOnlyList<(string Key, long Version)> dels)
 		{
-			active.TryGetValue(key, out var current);
-			if (current is null)
-				continue; // idempotent: already gone
-			if (version > fromVersion)
-				batch.Conflicts.Add(new(key, TemporalConflictKind.FutureBaseline, version, fromVersion, FutureBaselineReason(version, fromVersion)));
-			else if (version != 0 && version < current.Version)
+			var b = Classify(rows, active, baselines, fromVersion, nextVersion, now);
+
+			// Soft-delete: close the active row, no replacement revision -> shows up in
+			// the delta's `removed`. Same watermark rules as an edit: a baseline above the
+			// scope cursor is FutureBaseline; a baseline that predates the entity's current
+			// revision is Stale unless the payload never semantically moved since the read;
+			// anything ≥ the current revision (0 = delete regardless) closes.
+			foreach (var (key, version) in dels)
 			{
-				var read = baselines.GetValueOrDefault(key);
-				if (read is not null && read.SamePayload(current))
+				active.TryGetValue(key, out var current);
+				if (current is null)
+					continue; // idempotent: already gone
+				if (version > fromVersion)
+					b.Conflicts.Add(new(key, TemporalConflictKind.FutureBaseline, version, fromVersion, FutureBaselineReason(version, fromVersion)));
+				else if (version != 0 && version < current.Version)
 				{
-					batch.ToClose.Add((key, current.Version));
-					batch.AutoResolved.Add(key);
+					var read = baselines.GetValueOrDefault(key);
+					if (read is not null && read.SamePayload(current))
+					{
+						b.ToClose.Add((key, current.Version));
+						b.AutoResolved.Add(key);
+					}
+					else
+						b.Conflicts.Add(StaleConflict(key, version, current, read));
 				}
 				else
-					batch.Conflicts.Add(StaleConflict(key, version, current, read));
+					b.ToClose.Add((key, current.Version));
 			}
-			else
-				batch.ToClose.Add((key, current.Version));
+			return b;
 		}
 
-		var conflicts = batch.Conflicts;
-		var applied = conflicts.Count == 0;
+		var batch = BuildBatch(desired, delete);
+
+		// The call's conflicts = what classification refused (Stale/FutureBaseline/…) PLUS the
+		// domain-guard refusals the service already decided. Both shapes, one list.
+		var conflicts = new List<TemporalConflict>(batch.Conflicts);
+		if (policy.Rejected is { Count: > 0 })
+			conflicts.AddRange(policy.Rejected);
+
+		bool applied;
+		if (policy.Atomic)
+		{
+			// All-or-nothing: any conflict aborts the whole batch — unchanged, bit for bit.
+			applied = conflicts.Count == 0;
+		}
+		else if (conflicts.Count == 0)
+		{
+			applied = true; // nothing to reject — partial mode collapses to the ordinary write
+		}
+		else
+		{
+			// Partial: the rejected entries (and, transitively, everything in THIS batch that
+			// references them) drop out; the batch is re-classified over the survivors and the
+			// cascade reasons join conflicts[]. An entry auto-resolved by the watermark is NOT
+			// rejected, so it neither drops out nor cascades.
+			var rejected = RejectedKeys(desired, delete, conflicts);
+			conflicts.AddRange(CascadeRejections(desired, delete, rejected, policy.DependsOn));
+
+			var survivors = desired.Where(d => !IsRejected(d, rejected)).ToList();
+			var survivingDeletes = delete.Where(t => !rejected.Contains(t.Key)).ToList();
+			batch = BuildBatch(survivors, survivingDeletes);
+			batch.Conflicts.Clear(); // survivors classify clean by construction — their refusals are already in `conflicts`
+			applied = !batch.IsEmpty; // nothing survived => nothing landed
+		}
+
 		var inserted = 0;
 		var closed = 0;
 
@@ -209,7 +293,9 @@ public static class TemporalStore
 			var race = await ApplyAsync(db, table, batch, nextVersion, now, onWithinTx, partition, ct);
 			if (race is not null)
 			{
-				conflicts = [race];
+				// A lost close race kills the write that was actually attempted — in partial mode
+				// the per-entry refusals stay in the list, with the race appended to them.
+				conflicts = policy.Atomic ? [race] : [.. conflicts, race];
 				applied = false;
 			}
 			else
@@ -223,7 +309,8 @@ public static class TemporalStore
 		var currentVersion = await MaxVersionAsync(table, partition, ct);
 
 		// AutoResolved is only meaningful when the batch landed (a conflict elsewhere aborts
-		// the whole batch, so a "resolved" row was not actually written).
+		// the whole batch, so a "resolved" row was not actually written). In partial mode
+		// `batch` is already the surviving subset, so this names exactly the rows that landed.
 		var autoResolved = applied ? (IReadOnlyList<string>)batch.AutoResolved : [];
 		return new TemporalUpsertResult<TRow>(applied, currentVersion, inserted, closed, conflicts, added, updated, removed, autoResolved);
 	}
@@ -240,6 +327,77 @@ public static class TemporalStore
 		var (added, updated, removed) = await DeltaAsync(table, sinceVersion, partition, ct);
 		var current = await MaxVersionAsync(table, partition, ct);
 		return (added, updated, removed, current);
+	}
+
+	// ── 1b. partial-apply: who is rejected, and who depends on them ──────────
+
+	// The batch keys a conflict names. A conflict on a RENAME quotes the source (PrevKey) —
+	// the entry that carries it is keyed by its new Key, so both spellings map back to it.
+	static HashSet<string> RejectedKeys<TRow>(
+		IReadOnlyList<TRow> desired, IReadOnlyList<(string Key, long Version)> delete, List<TemporalConflict> conflicts)
+		where TRow : TemporalRow
+	{
+		var named = conflicts.Select(c => c.Key).ToHashSet(StringComparer.Ordinal);
+		var rejected = new HashSet<string>(StringComparer.Ordinal);
+		foreach (var d in desired)
+			if (named.Contains(d.Key) || (d.PrevKey is not null && named.Contains(d.PrevKey)))
+				rejected.Add(d.Key);
+		foreach (var (key, _) in delete)
+			if (named.Contains(key)) rejected.Add(key);
+		return rejected;
+	}
+
+	static bool IsRejected<TRow>(TRow d, HashSet<string> rejected) where TRow : TemporalRow =>
+		rejected.Contains(d.Key) || (d.PrevKey is not null && rejected.Contains(d.PrevKey));
+
+	static List<TemporalConflict> CascadeRejections<TRow>(
+		IReadOnlyList<TRow> desired, IReadOnlyList<(string Key, long Version)> delete,
+		HashSet<string> rejected, IReadOnlyDictionary<string, IReadOnlyList<string>>? dependsOn)
+		where TRow : TemporalRow
+	{
+		var baseline = new Dictionary<string, long>(StringComparer.Ordinal);
+		foreach (var d in desired) baseline[d.Key] = d.Version;
+		foreach (var (key, version) in delete) baseline.TryAdd(key, version);
+		var order = desired.Select(d => d.Key).Concat(delete.Select(t => t.Key))
+			.Distinct(StringComparer.Ordinal).ToList();
+		return Cascade(order, k => baseline.GetValueOrDefault(k), rejected, dependsOn);
+	}
+
+	// THE cascade — the one implementation, shared by the engine and by any service that must
+	// reject entries BEFORE the batch reaches the store (a domain guard that runs on resolved
+	// references cannot re-run meaningfully once a referenced entry is gone, so it drops the
+	// dependents up front, with THIS reason rather than a misleading "unresolved ref").
+	//
+	// An entry that points (directly or through a chain) at a rejected entry of the SAME call is
+	// itself rejected: applying it would leave a dangling reference. Fixpoint over a
+	// monotonically growing rejected set, so a reference CYCLE cannot spin — a cycle whose
+	// members are all clean never fires; a cycle that touches a rejected key collapses in one
+	// sweep. `rejected` is MUTATED to the full transitive closure.
+	public static List<TemporalConflict> Cascade(
+		IReadOnlyList<string> order,
+		Func<string, long> baselineOf,
+		HashSet<string> rejected,
+		IReadOnlyDictionary<string, IReadOnlyList<string>>? dependsOn)
+	{
+		var cascade = new List<TemporalConflict>();
+		if (dependsOn is not { Count: > 0 }) return cascade; // no intra-batch refs — every entry is independent
+
+		for (var moved = true; moved;)
+		{
+			moved = false;
+			foreach (var key in order)
+			{
+				if (rejected.Contains(key)) continue;
+				if (!dependsOn.TryGetValue(key, out var deps)) continue;
+				var on = deps.FirstOrDefault(rejected.Contains);
+				if (on is null) continue;
+				rejected.Add(key);
+				moved = true;
+				cascade.Add(new(key, TemporalConflictKind.Rejected, baselineOf(key), null,
+					$"depends on '{on}', which this batch rejected — applying it would leave a dangling reference"));
+			}
+		}
+		return cascade;
 	}
 
 	// ── 1. read current state ────────────────────────────────────────────────

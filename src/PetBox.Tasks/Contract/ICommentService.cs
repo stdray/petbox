@@ -10,10 +10,16 @@ public interface ICommentService
 	// Batch declarative upsert of comments on a board (uniform-entity-verbs, mirrors
 	// tasks_upsert). Each item with a null/empty Id is a CREATE (needs a RESOLVED NodeId +
 	// author; ParentId optional = reply); an item with an Id is a PATCH of body/tags under a
-	// `version` WATERMARK. One atomic batch: any conflict aborts it, none is written. NodeId
-	// is the already-resolved 32-hex owner (the adapter resolves a slug on `board`).
+	// `version` WATERMARK. NodeId is the already-resolved 32-hex owner (the adapter resolves a
+	// slug on `board`).
+	// `atomic` (default TRUE) = one all-or-nothing batch: any conflict aborts it, none is written.
+	// `atomic: false` opts into PARTIAL apply — valid items land, each refused item (a stale
+	// baseline included) comes back in `conflicts[]` with its own reason. A comment's parentId must
+	// address an ALREADY-ACTIVE comment (an intra-batch forward reference is not expressible), so
+	// nothing cascades here: every item is independent. A rejected CREATE has no id yet, so its
+	// conflict is keyed by the item's POSITION ("#0", "#1", …).
 	Task<CommentBatchResult> UpsertAsync(
-		string projectKey, string board, IReadOnlyList<CommentItem> items, CancellationToken ct = default);
+		string projectKey, string board, IReadOnlyList<CommentItem> items, bool atomic = true, CancellationToken ct = default);
 
 	// THE comment read verb (list = search without a query). Without `query`: a deterministic
 	// chronological listing of the active comments (optionally scoped to one `board` and/or one

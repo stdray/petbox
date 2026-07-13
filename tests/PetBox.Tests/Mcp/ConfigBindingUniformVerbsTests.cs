@@ -55,6 +55,53 @@ public sealed class ConfigBindingUniformVerbsTests : IDisposable
 	Task<ConfigBindingsUpsertResult> Upsert(IHttpContextAccessor http, params ConfigBindingItemInput[] items) =>
 		ConfigTools.BindingUpsertAsync(http, _factory, _secrets, Ws, items);
 
+	// atomic:false on config — the DEGENERATE case of the partial-apply contract (spec
+	// batch-write-partial-apply / batch-write-partial-entries-apply / -per-entry-reject-reason).
+	// There is no watermark to be stale against and no intra-batch reference to cascade over, so
+	// what remains is exactly "valid items land, invalid ones come back with a reason" — and that
+	// is the whole point of accepting the flag here: the client never has to remember that one of
+	// the four batch verbs behaves differently.
+	[Fact]
+	public async Task Upsert_Partial_ValidBindingLands_InvalidRejectedWithReason()
+	{
+		var http = Http();
+		var good = $"a/{Guid.NewGuid():N}"[..12];
+
+		var r = await ConfigTools.BindingUpsertAsync(http, _factory, _secrets, Ws,
+			[
+				Item(good, "1"),
+				new ConfigBindingItemInput { Path = "orphan", Tags = "ws:someone-else", Value = "x" }, // tagset lacks ws:w
+				new ConfigBindingItemInput { Path = "", Tags = $"ws:{Ws}", Value = "y" },               // no path
+			],
+			atomic: false);
+
+		r.Applied.Should().BeTrue();                                   // the valid item DID land
+		r.Added.Should().ContainSingle(x => x.Path == good);
+		r.Conflicts.Should().HaveCount(2);
+		r.Conflicts.Should().OnlyContain(c => c.Kind == "Rejected");   // no Stale exists in config — by nature
+		r.Conflicts.Single(c => c.Path == "orphan").Reason.Should().Contain($"ws:{Ws}");
+		r.Conflicts.Single(c => c.Path == "").Reason.Should().Contain("needs a path");
+
+		// The rejected items are NOT in the store; the valid one is.
+		var rows = await ConfigTools.BindingSearchAsync(http, _factory, Ws);
+		rows.Bindings.Select(b => b.Path).Should().Contain(good).And.NotContain("orphan");
+	}
+
+	// Without the flag the historical behavior stands: one bad item throws and NOTHING is written.
+	[Fact]
+	public async Task Upsert_WithoutTheFlag_OneBadItem_AbortsTheWholeBatch()
+	{
+		var http = Http();
+		var good = $"z/{Guid.NewGuid():N}"[..12];
+
+		var act = () => Upsert(http, Item(good, "1"),
+			new ConfigBindingItemInput { Path = "nope", Tags = "ws:other", Value = "x" });
+
+		await act.Should().ThrowAsync<ArgumentException>();
+		var rows = await ConfigTools.BindingSearchAsync(http, _factory, Ws);
+		rows.Bindings.Select(b => b.Path).Should().NotContain(good); // the valid sibling did not land either
+	}
+
 	[Fact]
 	public async Task Upsert_Batch_Creates_Then_PutSupersedes()
 	{

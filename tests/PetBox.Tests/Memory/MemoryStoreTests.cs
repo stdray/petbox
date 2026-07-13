@@ -123,6 +123,74 @@ public sealed class MemoryStoreTests : IDisposable
 		active[0].Body.Should().Be("pointers");
 	}
 
+	// atomic:false on memory (spec batch-write-partial-apply). Memory entries carry no
+	// intra-batch references, so the cascade degenerates: every entry is independent. What
+	// remains is the core promise — valid entries land, refused ones come back with a reason,
+	// and a STALE baseline refuses THAT ENTRY, not the call.
+	[Fact]
+	public async Task Upsert_Partial_ValidEntryLands_InvalidRejectedWithReason()
+	{
+		var memory = new MemoryService(_store);
+
+		var r = await memory.UpsertAsync("proj", "notes",
+			[
+				new MemoryEntryInput { Key = "good", Type = "Project", Body = "keep" },
+				new MemoryEntryInput { Key = "no-type", Body = "a new entry without a type" },  // type is required on a create
+			],
+			[], atomic: false);
+
+		r.Result.Applied.Should().BeTrue();
+		r.Result.Added.Select(e => e.Key).Should().Equal("good");
+		var c = r.Result.Conflicts.Should().ContainSingle().Subject;
+		c.Key.Should().Be("no-type");
+		c.Kind.Should().Be(TemporalConflictKind.Rejected);
+		c.Reason.Should().Contain("type is required");
+
+		var ctx = _store.GetContext("proj");
+		ctx.Entries.Where(e => e.ActiveTo == null).Select(e => e.Key).ToList().Should().Equal("good");
+	}
+
+	[Fact]
+	public async Task Upsert_Partial_StaleEntry_RejectsOnlyItself_SiblingStillLands()
+	{
+		var memory = new MemoryService(_store);
+		await memory.UpsertAsync("proj", "notes", [new MemoryEntryInput { Key = "e", Type = "Project", Body = "v1" }], []);
+		await memory.UpsertAsync("proj", "notes", [new MemoryEntryInput { Key = "e", Type = "Project", Body = "v2", Version = 1 }], []);
+
+		// Baseline 1 while the entry is at v2 and its payload MOVED => a genuine Stale.
+		var r = await memory.UpsertAsync("proj", "notes",
+			[
+				new MemoryEntryInput { Key = "e", Type = "Project", Body = "mine", Version = 1 },
+				new MemoryEntryInput { Key = "fresh", Type = "Project", Body = "new" },
+			],
+			[], atomic: false);
+
+		r.Result.Applied.Should().BeTrue();
+		r.Result.Added.Select(e => e.Key).Should().Equal("fresh");        // the clean entry landed
+		r.Result.Conflicts.Should().ContainSingle()
+			.Which.Kind.Should().Be(TemporalConflictKind.Stale);          // the stale one refused ITSELF
+		var ctx = _store.GetContext("proj");
+		ctx.Entries.Single(e => e.ActiveTo == null && e.Key == "e").Body.Should().Be("v2"); // never clobbered
+	}
+
+	// The default is untouched: one bad entry still aborts the whole batch.
+	[Fact]
+	public async Task Upsert_WithoutTheFlag_OneInvalidEntry_AbortsTheWholeBatch()
+	{
+		var memory = new MemoryService(_store);
+
+		var act = () => memory.UpsertAsync("proj", "notes",
+			[
+				new MemoryEntryInput { Key = "good", Type = "Project", Body = "keep" },
+				new MemoryEntryInput { Key = "no-type", Body = "x" },
+			],
+			[]);
+
+		await act.Should().ThrowAsync<ArgumentException>();
+		var ctx = _store.GetContext("proj");
+		ctx.Entries.Count(e => e.ActiveTo == null).Should().Be(0); // not even `good`
+	}
+
 	[Fact]
 	public async Task MemoryEntry_TemporalRoundtrip_ThroughStoreFile()
 	{

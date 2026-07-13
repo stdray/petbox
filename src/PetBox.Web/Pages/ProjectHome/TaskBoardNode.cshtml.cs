@@ -206,7 +206,7 @@ public sealed class TaskBoardNodeModel : PageModel
 		{
 			// The interactive UI is the cookie-authenticated owner — an APPROVING actor:
 			// methodology-enforced approval gates (enforceApproval) are the owner's call.
-			var outcome = await _tasks.UpsertAsync(ProjectKey, detail.Board, [patch], TasksActor.Approver, ct);
+			var outcome = await _tasks.UpsertAsync(ProjectKey, detail.Board, [patch], TasksActor.Approver, ct: ct);
 			if (outcome.Result.Conflicts.Count > 0)
 			{
 				// A Stale conflict now names the moved fields (Reason) — surface them so the
