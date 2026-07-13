@@ -80,4 +80,87 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		user!.PasswordHash.Should().NotBeNullOrEmpty();
 		_db.WorkspaceMembers.Count(m => m.UserId == user.Id && m.WorkspaceKey == Ws && m.Role == WorkspaceRole.Admin).Should().Be(1);
 	}
+
+	// workspace-member-role-edit: changing a member's role in place — no more remove+re-add.
+	[Fact]
+	public async Task SetRole_changes_a_members_role_in_the_db()
+	{
+		var userId = await _db.InsertWithInt64IdentityAsync(
+			new User { Username = "dave", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
+		await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = Ws, Role = WorkspaceRole.Member });
+
+		var page = Page();
+		var result = await page.OnPostSetRoleAsync(Ws, userId, WorkspaceRole.Viewer);
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		_db.WorkspaceMembers.First(m => m.UserId == userId && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Viewer);
+	}
+
+	// The last-admin guard: demoting the sole admin would leave the workspace with nobody able to
+	// administer it (only a sysadmin could recover it) — reject in place, same as Remove below.
+	[Fact]
+	public async Task SetRole_refuses_to_demote_the_last_admin()
+	{
+		var userId = await _db.InsertWithInt64IdentityAsync(
+			new User { Username = "solo-admin", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
+		await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
+
+		var page = Page();
+		var result = await page.OnPostSetRoleAsync(Ws, userId, WorkspaceRole.Member);
+
+		result.Should().BeOfType<PageResult>();
+		page.ErrorMessage.Should().NotBeNullOrEmpty();
+		_db.WorkspaceMembers.First(m => m.UserId == userId && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Admin,
+			"the demote must be rejected, not merely warned about");
+	}
+
+	// The guard is about the LAST admin, not admin-demotion in general — a second admin remaining
+	// makes the demote safe.
+	[Fact]
+	public async Task SetRole_allows_demoting_an_admin_when_another_admin_remains()
+	{
+		var admin1 = await _db.InsertWithInt64IdentityAsync(new User { Username = "a1", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
+		var admin2 = await _db.InsertWithInt64IdentityAsync(new User { Username = "a2", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
+		await _db.InsertAsync(new WorkspaceMember { UserId = admin1, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
+		await _db.InsertAsync(new WorkspaceMember { UserId = admin2, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
+
+		var page = Page();
+		var result = await page.OnPostSetRoleAsync(Ws, admin1, WorkspaceRole.Member);
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		_db.WorkspaceMembers.First(m => m.UserId == admin1 && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Member);
+	}
+
+	// Same hole, the other door: Remove used to have NO last-admin guard at all — this is the bug
+	// the card called out ("проверь!"). It existed before this change.
+	[Fact]
+	public async Task Remove_refuses_to_remove_the_last_admin()
+	{
+		var userId = await _db.InsertWithInt64IdentityAsync(
+			new User { Username = "solo-admin2", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
+		await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
+
+		var page = Page();
+		var result = await page.OnPostRemoveAsync(Ws, userId);
+
+		result.Should().BeOfType<PageResult>();
+		page.ErrorMessage.Should().NotBeNullOrEmpty();
+		_db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == Ws).Should().BeTrue(
+			"the last admin must still be a member — the removal must be rejected");
+	}
+
+	[Fact]
+	public async Task Remove_allows_removing_an_admin_when_another_admin_remains()
+	{
+		var admin1 = await _db.InsertWithInt64IdentityAsync(new User { Username = "b1", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
+		var admin2 = await _db.InsertWithInt64IdentityAsync(new User { Username = "b2", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
+		await _db.InsertAsync(new WorkspaceMember { UserId = admin1, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
+		await _db.InsertAsync(new WorkspaceMember { UserId = admin2, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
+
+		var page = Page();
+		var result = await page.OnPostRemoveAsync(Ws, admin1);
+
+		result.Should().BeOfType<RedirectToPageResult>();
+		_db.WorkspaceMembers.Any(m => m.UserId == admin1 && m.WorkspaceKey == Ws).Should().BeFalse();
+	}
 }

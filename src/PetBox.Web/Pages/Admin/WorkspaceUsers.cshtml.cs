@@ -79,8 +79,56 @@ public sealed class WorkspaceUsersModel : PageModel
 	public async Task<IActionResult> OnPostRemoveAsync([FromRoute(Name = "workspaceKey")] string workspaceKey, long userId)
 	{
 		using var db = _f.Open();
+		var member = db.WorkspaceMembers.FirstOrDefault(m => m.UserId == userId && m.WorkspaceKey == workspaceKey);
+		if (member is null)
+		{
+			this.NotifySuccess("Member removed.");
+			return RedirectToPage();
+		}
+
+		if (member.Role == WorkspaceRole.Admin && IsLastAdmin(db, workspaceKey))
+		{
+			ErrorMessage = "Cannot remove the last admin of this workspace.";
+			LoadMembers(workspaceKey);
+			return Page();
+		}
+
 		await db.WorkspaceMembers.Where(m => m.UserId == userId && m.WorkspaceKey == workspaceKey).DeleteAsync();
 		this.NotifySuccess("Member removed.");
 		return RedirectToPage();
 	}
+
+	// workspace-member-role-edit: a workspace left with zero admins is unmanageable by its own
+	// members — only a sysadmin could recover it. Guards both the demote-in-place path
+	// (OnPostSetRoleAsync) and the remove path (OnPostRemoveAsync), which had the same hole:
+	// removing the sole admin silently orphaned the workspace exactly like a demotion would.
+	public async Task<IActionResult> OnPostSetRoleAsync([FromRoute(Name = "workspaceKey")] string workspaceKey, long userId, WorkspaceRole Role)
+	{
+		using var db = _f.Open();
+		var member = db.WorkspaceMembers.FirstOrDefault(m => m.UserId == userId && m.WorkspaceKey == workspaceKey);
+		if (member is null)
+		{
+			ErrorMessage = "Member not found.";
+			LoadMembers(workspaceKey);
+			return Page();
+		}
+
+		if (member.Role == WorkspaceRole.Admin && Role != WorkspaceRole.Admin && IsLastAdmin(db, workspaceKey))
+		{
+			ErrorMessage = "Cannot demote the last admin of this workspace.";
+			LoadMembers(workspaceKey);
+			return Page();
+		}
+
+		await db.WorkspaceMembers
+			.Where(m => m.UserId == userId && m.WorkspaceKey == workspaceKey)
+			.Set(m => m.Role, Role)
+			.UpdateAsync();
+
+		this.NotifySuccess("Role updated.");
+		return RedirectToPage();
+	}
+
+	static bool IsLastAdmin(PetBoxDb db, string workspaceKey) =>
+		db.WorkspaceMembers.Count(m => m.WorkspaceKey == workspaceKey && m.Role == WorkspaceRole.Admin) <= 1;
 }
