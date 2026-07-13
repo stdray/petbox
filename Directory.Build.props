@@ -19,4 +19,33 @@
 		<AssemblyName>$(MSBuildProjectName)</AssemblyName>
 	</PropertyGroup>
 
+	<!--
+		A table with ONE owning service, enforced by the compiler rather than by convention.
+
+		C# access modifiers cannot express this: `internal` is per-ASSEMBLY, and the callers we
+		need to keep out (UserAdminService, AdminBootstrapper) live in the SAME assembly as the
+		table — while the test project would need InternalsVisibleTo anyway, which reopens the
+		door for exactly the code that most needs it shut. `internal` on the ITable<> property
+		would not even stop `db.GetTable<WorkspaceMember>()`.
+
+		So the ban is on the SYMBOL (RS0030, BannedApiAnalyzers) and it applies to EVERY project —
+		src/** and tests/** alike. The tests are not an afterthought here, they are the point: a
+		test that seeds a membership with a raw insert never walks the production path, so the bug
+		it is meant to catch cannot manifest where the assertion looks. Owners opt back in with a
+		narrowly-scoped `#pragma warning disable RS0030` that must say WHY it is the exception.
+
+		BannedSymbols.txt (repo root) is the list; the severity is pinned to `error` in
+		.editorconfig — a warning is a suggestion, and this is a refusal.
+
+		The ItemGroup is conditioned on central package management being in effect, which is true for
+		every real .csproj (Directory.Packages.props pins the version) and false for the file-based
+		Cake script `build.cs` — a `dotnet run` app that inherits this props file but NOT the central
+		versions, so an unconditional PackageReference here fails its restore with NU1015.
+	-->
+	<ItemGroup Condition="'$(ManagePackageVersionsCentrally)' == 'true'">
+		<PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all"
+		                  IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive" />
+		<AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+	</ItemGroup>
+
 </Project>

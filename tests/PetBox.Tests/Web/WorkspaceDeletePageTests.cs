@@ -71,7 +71,7 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 		_db.Insert(new Project { Key = "web", WorkspaceKey = "acme", Name = "Web", Description = "" });
 		var uid = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "u1", PasswordHash = "x", CreatedAt = DateTime.UtcNow });
-		_db.Insert(new WorkspaceMember { UserId = uid, WorkspaceKey = "acme", Role = WorkspaceRole.Admin });
+		await _db.SeedMemberAsync(uid, "acme", WorkspaceRole.Admin);
 
 		var page = Page();
 		var result = await page.OnPostDeleteAsync("acme");
@@ -79,7 +79,7 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 		result.Should().BeOfType<PageResult>();
 		page.ErrorMessage.Should().Contain("1 project");
 		_db.Workspaces.Any(w => w.Key == "acme").Should().BeTrue("a non-empty workspace is not deleted");
-		_db.WorkspaceMembers.Any(m => m.WorkspaceKey == "acme").Should().BeTrue("memberships are untouched on rejection");
+		_db.MembershipRows().Any(m => m.WorkspaceKey == "acme").Should().BeTrue("memberships are untouched on rejection");
 	}
 
 	// workspace-delete-blocked-by-own-container: the workspace is created through the PRODUCTION
@@ -105,7 +105,7 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 		result.Should().BeOfType<RedirectToPageResult>();
 		_db.Workspaces.Any(w => w.Key == "solo").Should().BeFalse();
 		_db.Projects.Any(p => p.WorkspaceKey == "solo").Should().BeFalse("the ws memory container dies with its workspace");
-		_db.WorkspaceMembers.Any(m => m.WorkspaceKey == "solo").Should().BeFalse("empty-ws delete cleans memberships");
+		_db.MembershipRows().Any(m => m.WorkspaceKey == "solo").Should().BeFalse("empty-ws delete cleans memberships");
 	}
 
 	// A deleted workspace must give its quota slot back — the allowance counts owned workspaces, so

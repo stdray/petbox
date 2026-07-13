@@ -49,7 +49,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		result.Should().BeOfType<RedirectToPageResult>();
 		page.ErrorMessage.Should().BeNull();
 
-		_db.WorkspaceMembers.Count(m => m.UserId == userId && m.WorkspaceKey == Ws).Should().Be(1);
+		_db.MembershipRows().Count(m => m.UserId == userId && m.WorkspaceKey == Ws).Should().Be(1);
 		// Password must not be touched for an existing account.
 		_db.Users.First(u => u.Id == userId).PasswordHash.Should().Be(ExistingHash);
 		// No duplicate account was created.
@@ -66,7 +66,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		page.ErrorMessage.Should().NotBeNullOrEmpty();
 
 		_db.Users.Any(u => u.Username == "bob").Should().BeFalse();
-		_db.WorkspaceMembers.Any(m => m.WorkspaceKey == Ws).Should().BeFalse();
+		_db.MembershipRows().Any(m => m.WorkspaceKey == Ws).Should().BeFalse();
 	}
 
 	[Fact]
@@ -79,7 +79,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		var user = _db.Users.FirstOrDefault(u => u.Username == "carol");
 		user.Should().NotBeNull();
 		user!.PasswordHash.Should().NotBeNullOrEmpty();
-		_db.WorkspaceMembers.Count(m => m.UserId == user.Id && m.WorkspaceKey == Ws && m.Role == WorkspaceRole.Admin).Should().Be(1);
+		_db.MembershipRows().Count(m => m.UserId == user.Id && m.WorkspaceKey == Ws && m.Role == WorkspaceRole.Admin).Should().Be(1);
 	}
 
 	// workspace-member-role-edit: changing a member's role in place — no more remove+re-add.
@@ -88,13 +88,13 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 	{
 		var userId = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "dave", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
-		await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = Ws, Role = WorkspaceRole.Member });
+		await _db.SeedMemberAsync(userId, Ws, WorkspaceRole.Member);
 
 		var page = Page();
 		var result = await page.OnPostSetRoleAsync(Ws, userId, WorkspaceRole.Viewer, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
-		_db.WorkspaceMembers.First(m => m.UserId == userId && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Viewer);
+		_db.MembershipRows().First(m => m.UserId == userId && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Viewer);
 	}
 
 	// The last-admin guard: demoting the sole admin would leave the workspace with nobody able to
@@ -104,14 +104,14 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 	{
 		var userId = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "solo-admin", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
-		await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
+		await _db.SeedMemberAsync(userId, Ws, WorkspaceRole.Admin);
 
 		var page = Page();
 		var result = await page.OnPostSetRoleAsync(Ws, userId, WorkspaceRole.Member, default);
 
 		result.Should().BeOfType<PageResult>();
 		page.ErrorMessage.Should().NotBeNullOrEmpty();
-		_db.WorkspaceMembers.First(m => m.UserId == userId && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Admin,
+		_db.MembershipRows().First(m => m.UserId == userId && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Admin,
 			"the demote must be rejected, not merely warned about");
 	}
 
@@ -122,14 +122,14 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 	{
 		var admin1 = await _db.InsertWithInt64IdentityAsync(new User { Username = "a1", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
 		var admin2 = await _db.InsertWithInt64IdentityAsync(new User { Username = "a2", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
-		await _db.InsertAsync(new WorkspaceMember { UserId = admin1, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
-		await _db.InsertAsync(new WorkspaceMember { UserId = admin2, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
+		await _db.SeedMemberAsync(admin1, Ws, WorkspaceRole.Admin);
+		await _db.SeedMemberAsync(admin2, Ws, WorkspaceRole.Admin);
 
 		var page = Page();
 		var result = await page.OnPostSetRoleAsync(Ws, admin1, WorkspaceRole.Member, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
-		_db.WorkspaceMembers.First(m => m.UserId == admin1 && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Member);
+		_db.MembershipRows().First(m => m.UserId == admin1 && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Member);
 	}
 
 	// Same hole, the other door: Remove used to have NO last-admin guard at all — this is the bug
@@ -139,14 +139,14 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 	{
 		var userId = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "solo-admin2", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
-		await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
+		await _db.SeedMemberAsync(userId, Ws, WorkspaceRole.Admin);
 
 		var page = Page();
 		var result = await page.OnPostRemoveAsync(Ws, userId, default);
 
 		result.Should().BeOfType<PageResult>();
 		page.ErrorMessage.Should().NotBeNullOrEmpty();
-		_db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == Ws).Should().BeTrue(
+		_db.MembershipRows().Any(m => m.UserId == userId && m.WorkspaceKey == Ws).Should().BeTrue(
 			"the last admin must still be a member — the removal must be rejected");
 	}
 
@@ -155,13 +155,13 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 	{
 		var admin1 = await _db.InsertWithInt64IdentityAsync(new User { Username = "b1", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
 		var admin2 = await _db.InsertWithInt64IdentityAsync(new User { Username = "b2", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
-		await _db.InsertAsync(new WorkspaceMember { UserId = admin1, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
-		await _db.InsertAsync(new WorkspaceMember { UserId = admin2, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
+		await _db.SeedMemberAsync(admin1, Ws, WorkspaceRole.Admin);
+		await _db.SeedMemberAsync(admin2, Ws, WorkspaceRole.Admin);
 
 		var page = Page();
 		var result = await page.OnPostRemoveAsync(Ws, admin1, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
-		_db.WorkspaceMembers.Any(m => m.UserId == admin1 && m.WorkspaceKey == Ws).Should().BeFalse();
+		_db.MembershipRows().Any(m => m.UserId == admin1 && m.WorkspaceKey == Ws).Should().BeFalse();
 	}
 }

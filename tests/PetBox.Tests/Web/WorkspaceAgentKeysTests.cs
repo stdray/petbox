@@ -84,7 +84,7 @@ public sealed class WorkspaceAgentKeysFixture : IAsyncLifetime
 			PasswordHash = PasswordHash,
 			CreatedAt = DateTime.UtcNow,
 		});
-		await db.InsertAsync(new WorkspaceMember { UserId = id, WorkspaceKey = ws, Role = role });
+		await db.SeedMemberAsync(id, ws, role);
 	}
 
 	// A fresh key per test — the revoke tests are destructive.

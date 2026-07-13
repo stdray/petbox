@@ -54,7 +54,7 @@ public sealed class AdminBootstrapperConcurrencyTests : IDisposable
 
 		using var verify = new PetBoxDb(PetBoxDb.CreateOptions(_cs));
 		verify.Users.Count(u => u.Username == "admin").Should().Be(1, "concurrent first-boot calls must not duplicate the admin user");
-		verify.WorkspaceMembers.Count(m => m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin).Should().Be(1,
+		verify.MembershipRows().Count(m => m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin).Should().Be(1,
 			"concurrent first-boot calls must not duplicate the $system/Admin membership");
 	}
 }

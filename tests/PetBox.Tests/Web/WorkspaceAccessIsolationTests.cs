@@ -101,7 +101,7 @@ public sealed class WorkspaceAccessIsolationFixture : IAsyncLifetime
 			PasswordHash = PasswordHash,
 			CreatedAt = DateTime.UtcNow,
 		});
-		await db.InsertAsync(new WorkspaceMember { UserId = eveId, WorkspaceKey = "wsa", Role = WorkspaceRole.Member });
+		await db.SeedMemberAsync(eveId, "wsa", WorkspaceRole.Member);
 
 		// latecomer: no membership yet — one is granted mid-test to prove claims are not frozen
 		// at sign-in (the invite path used to need a re-login).
@@ -115,7 +115,7 @@ public sealed class WorkspaceAccessIsolationFixture : IAsyncLifetime
 			PasswordHash = PasswordHash,
 			CreatedAt = DateTime.UtcNow,
 		});
-		await db.InsertAsync(new WorkspaceMember { UserId = viewerId, WorkspaceKey = "wsa", Role = WorkspaceRole.Viewer });
+		await db.SeedMemberAsync(viewerId, "wsa", WorkspaceRole.Viewer);
 
 		// A real board in proja (wsa) so the mutation tests exercise the ROLE guard itself, not a
 		// "board not found" 404 that would otherwise be indistinguishable from a denial.
@@ -332,7 +332,7 @@ public sealed class WorkspaceAccessIsolationTests : IClassFixture<WorkspaceAcces
 		{
 			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			var userId = db.Users.First(u => u.Username == "latecomer").Id;
-			await db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = "wsa", Role = WorkspaceRole.Member });
+			await db.SeedMemberAsync(userId, "wsa", WorkspaceRole.Member);
 		}
 
 		using var after = await GetAsync("/ui/wsa", auth);

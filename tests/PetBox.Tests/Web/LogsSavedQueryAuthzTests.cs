@@ -89,7 +89,7 @@ public sealed class LogsSavedQueryAuthzFixture : IAsyncLifetime
 
 		// eve is a Member of wsa (has proja + proja2) but NOT of wsb.
 		var eveId = await db.InsertWithInt64IdentityAsync(new User { Username = "eve4", PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = eveId, WorkspaceKey = "wsa", Role = WorkspaceRole.Member });
+		await db.SeedMemberAsync(eveId, "wsa", WorkspaceRole.Member);
 	}
 
 	public async Task DisposeAsync()

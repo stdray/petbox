@@ -1,0 +1,2 @@
+P:PetBox.Core.Data.PetBoxDb.WorkspaceMembers;WorkspaceMembers is owned by IWorkspaceMembershipService — ask it, do not touch the table.
+T:PetBox.Core.Models.WorkspaceMember;WorkspaceMembers is owned by IWorkspaceMembershipService — ask it, do not touch the table. Seeding a membership with a raw insert (in a TEST too) bypasses the production path — that is how three bugs stayed green.

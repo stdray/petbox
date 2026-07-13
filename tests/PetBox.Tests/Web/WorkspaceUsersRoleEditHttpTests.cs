@@ -53,13 +53,13 @@ public sealed class WorkspaceUsersRoleEditFixture : IAsyncLifetime
 		await db.InsertAsync(new Workspace { Key = "wsr", Name = "Wsr", Description = "", CreatedAt = DateTime.UtcNow });
 
 		var adminId = await db.InsertWithInt64IdentityAsync(new User { Username = "wsr-admin", PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = adminId, WorkspaceKey = "wsr", Role = WorkspaceRole.Admin });
+		await db.SeedMemberAsync(adminId, "wsr", WorkspaceRole.Admin);
 
 		var memberId = await db.InsertWithInt64IdentityAsync(new User { Username = "wsr-member", PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = memberId, WorkspaceKey = "wsr", Role = WorkspaceRole.Member });
+		await db.SeedMemberAsync(memberId, "wsr", WorkspaceRole.Member);
 
 		var viewerId = await db.InsertWithInt64IdentityAsync(new User { Username = "wsr-viewer", PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = viewerId, WorkspaceKey = "wsr", Role = WorkspaceRole.Viewer });
+		await db.SeedMemberAsync(viewerId, "wsr", WorkspaceRole.Viewer);
 	}
 
 	public async Task DisposeAsync()
@@ -157,7 +157,7 @@ public sealed class WorkspaceUsersRoleEditHttpTests : IClassFixture<WorkspaceUse
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		var userId = db.Users.First(u => u.Username == username).Id;
-		return db.WorkspaceMembers.First(m => m.UserId == userId && m.WorkspaceKey == workspaceKey).Role;
+		return db.MembershipRows().First(m => m.UserId == userId && m.WorkspaceKey == workspaceKey).Role;
 	}
 
 	[Fact]
@@ -187,7 +187,7 @@ public sealed class WorkspaceUsersRoleEditHttpTests : IClassFixture<WorkspaceUse
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		var demoteeId = await db.InsertWithInt64IdentityAsync(
 			new User { Username = "wsr-demotee", PasswordHash = WorkspaceUsersRoleEditFixture.PasswordHash, CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = demoteeId, WorkspaceKey = "wsr", Role = WorkspaceRole.Member });
+		await db.SeedMemberAsync(demoteeId, "wsr", WorkspaceRole.Member);
 
 		var demoteeCookie = await LoginAsync("wsr-demotee");
 		using (var before = await GetAsync("/ui/admin/ws/wsr", demoteeCookie))

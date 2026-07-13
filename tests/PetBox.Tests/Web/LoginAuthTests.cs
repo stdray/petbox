@@ -62,8 +62,13 @@ public sealed class LoginAuthFixture : IAsyncLifetime
 	public async Task ResetAsync()
 	{
 		using var scope = Factory.Services.CreateScope();
-		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
-		await db.WorkspaceMembers.DeleteAsync();
+		var dbf = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>();
+
+		// Memberships first (they reference users), through the service that owns them — then the
+		// users, then re-run the startup bootstrapper so the env-admin User + $system-admin
+		// membership rows exist again exactly as on first boot.
+		await dbf.ClearMembershipsAsync();
+		using var db = dbf.Open();
 		await db.Users.DeleteAsync();
 		AdminBootstrapper.EnsureAdminUser(db, scope.ServiceProvider.GetRequiredService<IOptions<AdminOptions>>());
 	}
@@ -123,7 +128,7 @@ public sealed class LoginAuthTests : IClassFixture<LoginAuthFixture>, IAsyncLife
 		using var scope = _factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		var id = await db.InsertWithInt64IdentityAsync(new User { Username = username, PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = id, WorkspaceKey = "$system", Role = WorkspaceRole.Admin });
+		await db.SeedMemberAsync(id, "$system", WorkspaceRole.Admin);
 	}
 
 	[Fact]

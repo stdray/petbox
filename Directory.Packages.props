@@ -42,6 +42,10 @@
 		     client DOMPurify path) — strips <script>/event handlers, restricts URL schemes. -->
 		<PackageVersion Include="Markdig" Version="0.42.0" />
 		<PackageVersion Include="HtmlSanitizer" Version="9.0.892" />
+		<!-- RS0030: bans a SYMBOL outright, so "this table has one owning service" is a compile
+		     error rather than a convention. Wired for every project in Directory.Build.props; the
+		     banned list (and the message each violation gets) is BannedSymbols.txt at the repo root. -->
+		<PackageVersion Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" Version="4.14.0" />
 	</ItemGroup>
 
 	<ItemGroup>
