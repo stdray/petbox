@@ -1,202 +1,87 @@
 using System.Globalization;
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Microsoft.Extensions.Options;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
-using PetBox.Core.Models;
 
 namespace PetBox.Web.Pages.Admin;
 
+// The sysadmin accounts table. It holds NO rule of its own: every guard that used to live here —
+// the allowance may not be silently defaulted, an admin may not delete themselves, the bootstrap
+// account and the last $system admin may not be deleted — now lives in IUserAdminService, welded to
+// the writes it guards (db-out-of-pages-into-services). What is left is this page's actual job:
+// turn a UserChangeResult into something a human reads.
 [Authorize(Policy = "SysAdmin")]
 public sealed class UsersModel : PageModel
 {
-	readonly ICoreDbFactory _f;
-	readonly AdminOptions _adminOptions;
+	readonly IUserAdminService _users;
 
-	public UsersModel(ICoreDbFactory f, IOptions<AdminOptions> adminOptions)
-	{
-		_f = f;
-		_adminOptions = adminOptions.Value;
-	}
+	public UsersModel(IUserAdminService users) => _users = users;
 
-	public sealed record UserRow(
-		long Id,
-		string Username,
-		DateTime CreatedAt,
-		bool IsBootstrapAdmin,
-		int WorkspaceQuota,
-		int WorkspacesOwned,
-		IReadOnlyList<MembershipRow> Memberships);
-	public sealed record MembershipRow(string WorkspaceKey, WorkspaceRole Role);
-
-	public IReadOnlyList<UserRow> Users { get; private set; } = [];
+	public IReadOnlyList<UserAccount> Users { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet() => Load();
+	public async Task OnGetAsync() => await LoadAsync();
 
-	void Load()
-	{
-		using var db = _f.Open();
-		var users = db.Users.OrderBy(u => u.Username).ToList();
-		var members = db.WorkspaceMembers.ToList();
-
-		Users = [.. users.Select(u => new UserRow(
-			u.Id,
-			u.Username,
-			u.CreatedAt,
-			IsBootstrapAdmin(u.Username),
-			u.WorkspaceQuota,
-			// "used" is shown next to the quota so the admin sets a number against a fact, not a guess.
-			// Same criterion the quota is enforced by (WorkspaceProvisioning.CountOwnedWorkspacesAsync):
-			// workspaces the account is Admin of, excluding the seeded $system.
-			members.Count(m => m.UserId == u.Id
-				&& m.Role == WorkspaceRole.Admin
-				&& m.WorkspaceKey != WorkspaceMemory.SystemWorkspace),
-			[.. members
-				.Where(m => m.UserId == u.Id)
-				.OrderBy(m => m.WorkspaceKey)
-				.Select(m => new MembershipRow(m.WorkspaceKey, m.Role))]))];
-	}
-
-	bool IsBootstrapAdmin(string username) =>
-		!string.IsNullOrEmpty(_adminOptions.Username)
-		&& string.Equals(username, _adminOptions.Username, StringComparison.Ordinal);
+	async Task LoadAsync() => Users = await _users.ListAsync();
 
 	long CurrentUserId =>
 		long.TryParse(User.FindFirst(PetBoxClaims.UserId)?.Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
 			? id
 			: -1;
 
-	// `workspaceQuota` is deliberately NULLABLE and has NO default: the form field ships empty and the
-	// admin must type a number (spec workspace-create-permission — the right is granted explicitly).
-	// A missing value is an error, NOT a silent 0: "nobody decided" and "decided: none" are different
-	// facts, and only the second one may be written to an account.
+	// The allowance field ships EMPTY and is required — the service refuses a missing value rather
+	// than writing a silent 0 (spec workspace-create-permission). The page only shows the refusal.
 	public async Task<IActionResult> OnPostCreateAsync(string? username, string? password, int? workspaceQuota)
 	{
-		using var db = _f.Open();
-		if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
-		{
-			ErrorMessage = "Username and password are required.";
-			Load();
-			return Page();
-		}
+		var result = await _users.CreateAsync(username, password, workspaceQuota);
+		if (result is UserChangeResult.Refused refused)
+			return await RefuseAsync(refused.Reason);
 
-		if (workspaceQuota is not { } quota)
-		{
-			ErrorMessage = "Workspace allowance is required — enter 0 if this account may not create workspaces.";
-			Load();
-			return Page();
-		}
-
-		if (quota < 0)
-		{
-			ErrorMessage = "Workspace allowance cannot be negative.";
-			Load();
-			return Page();
-		}
-
-		if (db.Users.Any(u => u.Username == username))
-		{
-			ErrorMessage = $"User '{username}' already exists.";
-			Load();
-			return Page();
-		}
-
-		await db.InsertWithInt64IdentityAsync(new User
-		{
-			Username = username.Trim(),
-			PasswordHash = AdminPasswordHasher.Hash(password),
-			CreatedAt = DateTime.UtcNow,
-			WorkspaceQuota = quota,
-		});
-
-		this.NotifySuccess($"User '{username.Trim()}' created.");
+		this.NotifySuccess($"User '{username!.Trim()}' created.");
 		return RedirectToPage();
 	}
 
-	// Raising or lowering an existing account's allowance. Lowering it (even to 0) does NOT touch the
-	// workspaces the account already created, nor its Admin role in them — that would leave a
-	// workspace with no administrator. It only governs the NEXT create.
-	public async Task<IActionResult> OnPostSetQuotaAsync(long userId, int? workspaceQuota)
-	{
-		using var db = _f.Open();
+	public async Task<IActionResult> OnPostSetQuotaAsync(long userId, int? workspaceQuota) =>
+		await ApplyAsync(await _users.SetQuotaAsync(userId, workspaceQuota), "Workspace allowance updated.");
 
-		if (workspaceQuota is not { } quota || quota < 0)
-		{
-			ErrorMessage = "Workspace allowance must be a number of 0 or more.";
-			Load();
-			return Page();
-		}
-
-		await db.Users
-			.Where(u => u.Id == userId)
-			.Set(u => u.WorkspaceQuota, quota)
-			.UpdateAsync();
-
-		this.NotifySuccess("Workspace allowance updated.");
-		return RedirectToPage();
-	}
-
-	public async Task<IActionResult> OnPostResetPasswordAsync(long userId, string? newPassword)
-	{
-		using var db = _f.Open();
-		if (string.IsNullOrWhiteSpace(newPassword))
-		{
-			ErrorMessage = "New password is required.";
-			Load();
-			return Page();
-		}
-
-		await db.Users
-			.Where(u => u.Id == userId)
-			.Set(u => u.PasswordHash, AdminPasswordHasher.Hash(newPassword))
-			.UpdateAsync();
-
-		this.NotifySuccess("Password reset.");
-		return RedirectToPage();
-	}
+	public async Task<IActionResult> OnPostResetPasswordAsync(long userId, string? newPassword) =>
+		await ApplyAsync(await _users.ResetPasswordAsync(userId, newPassword), "Password reset.");
 
 	public async Task<IActionResult> OnPostDeleteAsync(long userId)
 	{
-		using var db = _f.Open();
-		var user = db.Users.FirstOrDefault(u => u.Id == userId);
-		if (user is null)
-			return RedirectToPage();
+		// The name is read BEFORE the delete purely so the success notice can say who went; a row
+		// that is already gone is not an error (the table just re-renders without it), which is the
+		// behaviour a double-submit of the delete button relies on.
+		var account = await _users.GetAsync(userId);
+		if (account is null) return RedirectToPage();
 
-		if (userId == CurrentUserId)
+		return await ApplyAsync(
+			await _users.DeleteAsync(userId, CurrentUserId), $"User '{account.Username}' deleted.");
+	}
+
+	async Task<IActionResult> ApplyAsync(UserChangeResult result, string success)
+	{
+		switch (result)
 		{
-			ErrorMessage = "You cannot delete your own account.";
-			Load();
-			return Page();
+			case UserChangeResult.Refused refused:
+				return await RefuseAsync(refused.Reason);
+			case UserChangeResult.NotFound:
+				// Nothing to report and nothing to fix: the account is not there, so the fresh table
+				// is the answer.
+				return RedirectToPage();
+			default:
+				this.NotifySuccess(success);
+				return RedirectToPage();
 		}
+	}
 
-		if (IsBootstrapAdmin(user.Username))
-		{
-			ErrorMessage = "The bootstrap admin account cannot be deleted from here.";
-			Load();
-			return Page();
-		}
-
-		// Guard the last sysadmin: a user is a sysadmin if they hold $system Admin.
-		var isSysAdmin = db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin);
-		if (isSysAdmin)
-		{
-			var sysAdminCount = db.WorkspaceMembers.Count(m => m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin);
-			if (sysAdminCount <= 1)
-			{
-				ErrorMessage = "Cannot delete the last system administrator.";
-				Load();
-				return Page();
-			}
-		}
-
-		await db.WorkspaceMembers.Where(m => m.UserId == userId).DeleteAsync();
-		await db.Users.Where(u => u.Id == userId).DeleteAsync();
-
-		this.NotifySuccess($"User '{user.Username}' deleted.");
-		return RedirectToPage();
+	// A refusal is shown ON the table (not carried across a redirect): the admin sees why, with the
+	// form they submitted still in front of them.
+	async Task<IActionResult> RefuseAsync(string reason)
+	{
+		ErrorMessage = reason;
+		await LoadAsync();
+		return Page();
 	}
 }

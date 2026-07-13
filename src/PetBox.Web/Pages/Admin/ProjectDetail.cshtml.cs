@@ -6,19 +6,28 @@ using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
+// The project settings page. Its PROJECT reads and writes go through IProjectDirectory
+// (db-out-of-pages-into-services). It still opens core.db directly for the things that have no
+// service yet — api keys, health endpoints and the settings override row. That is deliberate and
+// scoped: inventing a half-service here for each of them, only for the real one to land next wave,
+// would cost a second migration of the same call sites. The factory stays in the ctor until then.
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectDetailModel : PageModel
 {
 	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly ISettingsResolver _settings;
 
-	public ProjectDetailModel(ICoreDbFactory f, FeatureFlags features, ISettingsResolver settings)
+	public ProjectDetailModel(
+		ICoreDbFactory f, IProjectDirectory projects, FeatureFlags features, ISettingsResolver settings)
 	{
 		_f = f;
+		_projects = projects;
 		_features = features;
 		_settings = settings;
 	}
@@ -58,9 +67,10 @@ public sealed class ProjectDetailModel : PageModel
 
 	public async Task OnGetAsync()
 	{
-		using var db = _f.Open();
-		Project = db.Projects.FirstOrDefault(p => p.Key == ProjectKey);
+		Project = await _projects.GetAsync(ProjectKey);
 		if (Project is null) return;
+
+		using var db = _f.Open();
 
 		// A just-minted key rides here across the Post/Redirect/Get from OnPostCreateKey and is
 		// shown once; a refresh (no TempData) drops it. See Notice.CarryNewKey.
@@ -258,27 +268,27 @@ public sealed class ProjectDetailModel : PageModel
 	}
 
 	// Delete the project and everything it owns in the Core DB (keys, health endpoints,
-	// data/log/board/memory metadata, relations, settings). See ProjectDeletion for the
-	// exact cascade + the file-level scope boundary. Reserved built-ins refuse deletion.
+	// data/log/board/memory metadata, relations, settings). The cascade, the reserved-project
+	// refusal and the workspace ownership check all live in IProjectDirectory.DeleteAsync — the
+	// workspace is part of the ADDRESS there, so a forged POST naming another tenant's project
+	// matches nothing.
 	public async Task<IActionResult> OnPostDeleteAsync()
 	{
-		using var db = _f.Open();
-		if (ProjectDeletion.IsReserved(ProjectKey))
-		{
-			ErrorMessage = $"Cannot delete the reserved project '{ProjectKey}'.";
-			await OnGetAsync();
-			return Page();
-		}
+		var result = await _projects.DeleteAsync(WorkspaceKey, ProjectKey);
 
-		var deleted = await ProjectDeletion.DeleteAsync(db, ProjectKey);
-		if (!deleted)
+		switch (result)
 		{
-			ErrorMessage = "Project not found.";
-			await OnGetAsync();
-			return Page();
+			case ProjectChangeResult.Refused refused:
+				ErrorMessage = refused.Reason;
+				await OnGetAsync();
+				return Page();
+			case ProjectChangeResult.NotFound:
+				ErrorMessage = "Project not found.";
+				await OnGetAsync();
+				return Page();
+			default:
+				this.NotifySuccess($"Project '{ProjectKey}' deleted.");
+				return Redirect(Routes.WorkspaceAdminProjects(WorkspaceKey));
 		}
-
-		this.NotifySuccess($"Project '{ProjectKey}' deleted.");
-		return Redirect(Routes.WorkspaceAdminProjects(WorkspaceKey));
 	}
 }

@@ -730,9 +730,11 @@ public partial class Program
 
 		using (var scope = app.Services.CreateScope())
 		{
-			using var db = coreDbFactory.Open();
-			var adminOptions = scope.ServiceProvider.GetRequiredService<IOptions<AdminOptions>>();
-			AdminBootstrapper.EnsureAdminUser(db, adminOptions);
+			// The first-boot admin seed through its service door: startup code is not the service
+			// layer and does not open core.db itself (AGENTS.md). The seed itself is still
+			// AdminBootstrapper's, on its own connection — see IUserAdminService.EnsureBootstrapAdminAsync.
+			scope.ServiceProvider.GetRequiredService<PetBox.Core.Auth.IUserAdminService>()
+				.EnsureBootstrapAdminAsync().GetAwaiter().GetResult();
 
 			// The petbox self-log is the one log created automatically — petbox's
 			// own ILogger + Seq self-log write here. User logs are created explicitly.

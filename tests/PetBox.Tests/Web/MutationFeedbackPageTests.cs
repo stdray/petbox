@@ -103,7 +103,8 @@ public sealed class MutationFeedbackPageTests : IDisposable
 		var victimId = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "victim", PasswordHash = "x", CreatedAt = DateTime.UtcNow });
 
-		var page = new UsersModel(_db.Factory(), adminOptions);
+		var page = new UsersModel(new UserAdminService(
+			_db.Factory(), adminOptions, new WorkspaceMembershipService(_db.Factory())));
 		Wire(page, userId: 999); // current user is someone else, so the self-delete guard passes
 
 		var result = await page.OnPostDeleteAsync(victimId);
@@ -132,7 +133,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task ProjectDetail_create_key_redirects_to_clean_url_and_carries_the_key()
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
-		var page = new ProjectDetailModel(_db.Factory(), Features(), new NullSettingsResolver())
+		var page = new ProjectDetailModel(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new NullSettingsResolver())
 		{
 			WorkspaceKey = "ws",
 			ProjectKey = "proj",
@@ -151,7 +152,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task ProjectDetail_create_key_with_blank_name_re_renders_and_carries_nothing()
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
-		var page = new ProjectDetailModel(_db.Factory(), Features(), new NullSettingsResolver())
+		var page = new ProjectDetailModel(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new NullSettingsResolver())
 		{
 			WorkspaceKey = "ws",
 			ProjectKey = "proj",
@@ -210,7 +211,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
 		_db.Insert(new ApiKey { Key = "yb_key_z", ProjectKey = "proj", Scopes = ApiKeyScopes.TasksRead, Name = "ci", CreatedAt = DateTime.UtcNow });
-		var page = new ProjectDetailModel(_db.Factory(), Features(), new NullSettingsResolver())
+		var page = new ProjectDetailModel(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new NullSettingsResolver())
 		{
 			WorkspaceKey = "ws",
 			ProjectKey = "proj",

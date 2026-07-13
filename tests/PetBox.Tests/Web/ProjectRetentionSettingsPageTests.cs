@@ -8,6 +8,7 @@ using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Web;
+using PetBox.Web.Auth;
 using PetBox.Web.Pages.Admin;
 using PetBox.Web.Settings;
 
@@ -58,7 +59,7 @@ public sealed class ProjectRetentionSettingsPageTests : IDisposable
 		new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build());
 
 	ProjectDetailModel InfoPage() =>
-		new(_db.Factory(), Features(), new SettingsResolver(_db.Factory(), new NoSecrets())) { WorkspaceKey = Ws, ProjectKey = Proj };
+		new(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new SettingsResolver(_db.Factory(), new NoSecrets())) { WorkspaceKey = Ws, ProjectKey = Proj };
 
 	void SetSetting(string scope, string scopeKey, string value) =>
 		_db.Insert(new Setting
