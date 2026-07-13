@@ -59,7 +59,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	[Fact]
 	public async Task Workspace_create_redirects_clean_and_sets_success_notice()
 	{
-		var page = new WorkspacesModel(_db.Factory());
+		var page = new WorkspacesModel(_db.Factory(), new WorkspaceProvisioning(_db.Factory()));
 		Wire(page);
 
 		var result = await page.OnPostCreateAsync("acme", "Acme", "desc");
@@ -74,7 +74,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task Workspace_delete_redirects_clean_and_sets_success_notice()
 	{
 		_db.Insert(new Workspace { Key = "solo", Name = "Solo", Description = "", CreatedAt = DateTime.UtcNow });
-		var page = new WorkspacesModel(_db.Factory());
+		var page = new WorkspacesModel(_db.Factory(), new WorkspaceProvisioning(_db.Factory()));
 		Wire(page);
 
 		var result = await page.OnPostDeleteAsync("solo");

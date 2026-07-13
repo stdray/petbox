@@ -125,6 +125,10 @@ public partial class Program
 		// registration is gone now, and DbInjectionGuardTests asserts it stays gone. SINGLETON here:
 		// the factory holds only DataOptions, never a connection.
 		builder.Services.AddSingleton<ICoreDbFactory>(sp => new CoreDbFactory(ResolveCs(sp)));
+		// Workspace creation + the allowance that gates it. The page handlers get THIS, not a
+		// connection: core.db stops at the service boundary, and the quota is enforced by the write
+		// itself (the check is welded into the INSERT), not by whoever rendered the button.
+		builder.Services.AddSingleton<WorkspaceProvisioning>();
 		// The catalog of projects/entities (core.db) — the SOURCE OF TRUTH the background enrichment
 		// jobs ask "which projects exist" (spec: catalog-is-source-of-truth). Per-project SQLite files
 		// are created lazily, so a job that enumerated `{tier}/*.db` was blind to a project without a
@@ -537,10 +541,22 @@ public partial class Program
 				p.AddAuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme);
 				p.RequireAuthenticatedUser();
 				p.AddRequirements(new WorkspaceRoleRequirement(WorkspaceRole.Viewer));
+			})
+			// Self-service workspace creation: the account's explicit numeric quota still exceeds the
+			// number of workspaces it owns (spec workspace-create-permission). Evaluated against the DB
+			// per ask — see WorkspaceCreateAuthorizationHandler for why it is not a claim.
+			.AddPolicy("CanCreateWorkspace", p =>
+			{
+				p.AddAuthenticationSchemes(CookieAuthenticationDefaults.AuthenticationScheme);
+				p.RequireAuthenticatedUser();
+				p.AddRequirements(new WorkspaceCreateRequirement());
 			});
 		builder.Services.AddHttpContextAccessor();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, ScopeAuthorizationHandler>();
 		builder.Services.AddSingleton<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, WorkspaceRoleAuthorizationHandler>();
+		// Scoped, not singleton: it opens a core-db connection per evaluation (ICoreDbFactory is the
+		// only way in — no DataConnection is injectable).
+		builder.Services.AddScoped<Microsoft.AspNetCore.Authorization.IAuthorizationHandler, WorkspaceCreateAuthorizationHandler>();
 		// Rebuilds the workspace-membership claims from the DB on every cookie-authenticated
 		// request, so an added/removed membership takes effect without a re-login.
 		builder.Services.AddScoped<Microsoft.AspNetCore.Authentication.IClaimsTransformation,

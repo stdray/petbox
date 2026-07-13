@@ -13,8 +13,13 @@ namespace PetBox.Web.Pages.Admin;
 public sealed class WorkspacesModel : PageModel
 {
 	readonly ICoreDbFactory _f;
+	readonly WorkspaceProvisioning _provisioning;
 
-	public WorkspacesModel(ICoreDbFactory f) => _f = f;
+	public WorkspacesModel(ICoreDbFactory f, WorkspaceProvisioning provisioning)
+	{
+		_f = f;
+		_provisioning = provisioning;
+	}
 
 	public IReadOnlyList<Workspace> Workspaces { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
@@ -25,62 +30,30 @@ public sealed class WorkspacesModel : PageModel
 		Workspaces = db.Workspaces.OrderBy(w => w.Key).ToList();
 	}
 
+	// The create act itself lives in WorkspaceProvisioning — this page and the self-service page are
+	// two doors into the same room. bypassQuota: true because the page is SysAdmin-gated and a
+	// sysadmin's creates are not counted against a quota.
 	public async Task<IActionResult> OnPostCreateAsync(string Key, string Name, string Description)
 	{
-		using var db = _f.Open();
-		if (string.IsNullOrWhiteSpace(Key) || string.IsNullOrWhiteSpace(Name))
+		long? creator = long.TryParse(
+			User.FindFirst(PetBoxClaims.UserId)?.Value,
+			NumberStyles.Integer,
+			CultureInfo.InvariantCulture,
+			out var userId)
+				? userId
+				: null;
+
+		var result = await _provisioning.CreateAsync(
+			Key, Name, Description, creator, bypassQuota: true, HttpContext.RequestAborted);
+
+		if (!result.Ok)
 		{
-			ErrorMessage = "Key and Name are required.";
+			ErrorMessage = result.Error;
 			OnGet();
 			return Page();
 		}
 
-		// Allowlist before insert: keys become URL segments and $ws-{key} file paths.
-		// Do NOT put this throw on the layout render path — gate creation only.
-		if (!WorkspaceMemory.IsCreatableWorkspaceKey(Key))
-		{
-			ErrorMessage = "Workspace key must match ^[a-z0-9][a-z0-9-]*$ (lowercase letters, digits, hyphens; 'sys' is reserved).";
-			OnGet();
-			return Page();
-		}
-
-		var exists = db.Workspaces.Any(w => w.Key == Key);
-		if (exists)
-		{
-			ErrorMessage = $"Workspace '{Key}' already exists.";
-			OnGet();
-			return Page();
-		}
-
-		await db.InsertAsync(new Workspace
-		{
-			Key = Key,
-			Name = Name,
-			Description = Description ?? string.Empty,
-			CreatedAt = DateTime.UtcNow,
-		});
-
-		// Provision the workspace memory container so Shared-memory nav works immediately
-		// (without waiting for the first MCP write or dashboard ensure).
-		await WorkspaceMemory.EnsureContainerAsync(db, Key);
-
-		// Auto-add the creator as Admin so they can switch into the workspace immediately.
-		var userIdRaw = User.FindFirst(PetBoxClaims.UserId)?.Value;
-		if (long.TryParse(userIdRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId))
-		{
-			var alreadyMember = db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == Key);
-			if (!alreadyMember)
-			{
-				await db.InsertAsync(new WorkspaceMember
-				{
-					UserId = userId,
-					WorkspaceKey = Key,
-					Role = WorkspaceRole.Admin,
-				});
-			}
-		}
-
-		this.NotifySuccess($"Workspace '{Key}' created.");
+		this.NotifySuccess($"Workspace '{Key.Trim()}' created.");
 		return RedirectToPage();
 	}
 

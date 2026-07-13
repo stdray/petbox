@@ -1,0 +1,49 @@
+@page "/ui/me/workspaces/new"
+@model PetBox.Web.Pages.Me.NewWorkspaceModel
+@{
+	ViewData["Title"] = "New workspace";
+	Layout = "_AccountLayout";
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="new-workspace-title">New workspace</h1>
+	<p class="text-sm opacity-60">Your account has an allowance to create a workspace. You become its administrator, and can add projects and members to it right away.</p>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3 text-sm" data-testid="new-workspace-error">@Model.ErrorMessage</div>
+}
+
+<form method="post" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="new-workspace-form">
+	@Html.AntiForgeryToken()
+	<div class="card-body p-4">
+		<div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+			<label class="form-control">
+				<span class="label-text">Key</span>
+				<input type="text" name="key" required
+					class="input input-bordered input-sm font-mono"
+					placeholder="my-workspace"
+					pattern="[a-z0-9][a-z0-9\-]*"
+					data-testid="new-workspace-key" />
+				<span class="text-xs opacity-60 mt-1">lowercase letters, digits, hyphens — it becomes part of every URL in the workspace</span>
+			</label>
+			<label class="form-control">
+				<span class="label-text">Name</span>
+				<input type="text" name="name" required
+					class="input input-bordered input-sm"
+					placeholder="My Workspace"
+					data-testid="new-workspace-name" />
+			</label>
+		</div>
+		<label class="form-control mt-3">
+			<span class="label-text">Description</span>
+			<input type="text" name="description"
+				class="input input-bordered input-sm"
+				data-testid="new-workspace-desc" />
+		</label>
+		<div class="card-actions mt-3">
+			<button type="submit" class="btn btn-sm btn-primary" data-testid="new-workspace-submit">Create workspace</button>
+		</div>
+	</div>
+</form>

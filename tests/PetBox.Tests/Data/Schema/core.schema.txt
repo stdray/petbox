@@ -152,6 +152,7 @@ TABLE Users
   COL Id INTEGER NOT NULL PK1
   COL PasswordHash TEXT NOT NULL
   COL Username TEXT NOT NULL
+  COL WorkspaceQuota INTEGER NOT NULL DEFAULT 0
   INDEX IX_Users_Username UNIQUE origin=c (Username)
   INDEX sqlite_autoindex_Users_1 UNIQUE origin=u (Username)
 
