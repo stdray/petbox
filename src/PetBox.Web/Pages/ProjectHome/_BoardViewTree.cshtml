@@ -29,7 +29,7 @@ else
 			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);
 			var hasChildren = parentIds.Contains(n.NodeId);
 			Model.CommentThreads.TryGetValue(n.NodeId, out var thread);
-			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread, Model.CommitUrlTemplate, Model.NodeRefs)" />
+			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread, Model.CommitUrlTemplate, Model.NodeRefs, Model.MemoryRefs)" />
 		}
 	</ul>
 }

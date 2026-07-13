@@ -48,7 +48,7 @@
 			@* Body is markdown, hydrated client-side (ts/markdown.ts) and clipped on the
 			   board — the full text lives on the node detail page (board-body-truncate). *@
 			<div class="mt-1">
-				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-24 overflow-hidden", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs })" />
+				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-24 overflow-hidden", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
 				<a href="@nodeUrl" class="text-xs link link-hover opacity-60" data-testid="node-body-more">full ↗</a>
 			</div>
 		}
@@ -81,6 +81,6 @@
 		@* List-view card (tree/tags/kanban/table): show existing comments, but suppress the
 		   root add-comment form (board-comment-form-list-noise) — commenting is a node-detail
 		   operation, not a per-card affordance under every node on the board. *@
-		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread ?? [], n.NodeId, Model.CommitUrlTemplate, Model.NodeRefs, ShowAddForm: false))" />
+		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread ?? [], n.NodeId, Model.CommitUrlTemplate, Model.NodeRefs, ShowAddForm: false, MemoryRefs: Model.MemoryRefs))" />
 	</div>
 </li>

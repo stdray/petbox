@@ -21,14 +21,29 @@ public sealed class TaskBoardModel : PageModel
 	readonly ITasksService _tasks;
 	readonly ICommentService _comments;
 	readonly ISettingsResolver _settings;
+	// Optional ctor param (the SearchRerankOptions pattern): DI always supplies it — IMemoryService
+	// is registered unconditionally — and a page-model unit test that doesn't exercise memory
+	// autolinking may omit it. Null = no memory refs, keys render literal.
+	readonly PetBox.Memory.Contract.IMemoryService? _memory;
 
-	public TaskBoardModel(FeatureFlags features, ITasksService tasks, ICommentService comments, ISettingsResolver settings)
+	public TaskBoardModel(FeatureFlags features, ITasksService tasks, ICommentService comments,
+		ISettingsResolver settings, PetBox.Memory.Contract.IMemoryService? memory = null)
 	{
 		_features = features;
 		_tasks = tasks;
 		_comments = comments;
 		_settings = settings;
+		_memory = memory;
 	}
+
+	// Memory-key autolinking is a Memory-module affordance: with the feature off there is no store
+	// page to link to, so the map stays empty and every key renders as literal text. (The flag gates
+	// pages, not DI — IMemoryService itself is registered unconditionally.)
+	Task<IReadOnlyDictionary<string, NodeRefTarget>> BuildMemoryRefsAsync(IEnumerable<string?> bodies, CancellationToken ct) =>
+		_memory is not null && _features.IsEnabled(Feature.Memory)
+			? MemoryRefMap.BuildAsync(_memory, WorkspaceKey, ProjectKey, bodies, ct)
+			: Task.FromResult<IReadOnlyDictionary<string, NodeRefTarget>>(
+				new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal));
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
 	[FromRoute(Name = "workspaceKey")]
@@ -116,6 +131,12 @@ public sealed class TaskBoardModel : PageModel
 	public IReadOnlyDictionary<string, NodeRefTarget> NodeRefs { get; private set; }
 		= new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal);
 
+	// Resolved memory-entry keys across all card bodies + comment bodies (memory-key-mention-link),
+	// keyed by the mentioned key. Two queries for the whole page (project + workspace container);
+	// unresolved/ambiguous keys are absent and stay literal. Empty when Memory is off.
+	public IReadOnlyDictionary<string, NodeRefTarget> MemoryRefs { get; private set; }
+		= new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal);
+
 	// The board's EFFECTIVE process, resolved through MethodologyRuntime — the same seam
 	// the MCP tools / TasksService use (project definition first, preset fallback), so a
 	// definition-declared custom kind renders its own statuses/terminality instead of
@@ -155,7 +176,8 @@ public sealed class TaskBoardModel : PageModel
 		string? KindSlug, PlanNodeView Node,
 		int Depth, bool Closed, bool KeepVisible, bool HasChildren,
 		IReadOnlyList<CommentLine>? Thread, string? CommitUrlTemplate = null,
-		IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs = null);
+		IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs = null,
+		IReadOnlyDictionary<string, NodeRefTarget>? MemoryRefs = null);
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
@@ -180,6 +202,7 @@ public sealed class TaskBoardModel : PageModel
 
 		var commitUrlTemplate = (await _settings.GetAsync<RepoSettings>(Scope.Project, ProjectKey, ct)).CommitUrlTemplate;
 		var nodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey, [detail.Node.Body], ct);
+		var memoryRefs = await BuildMemoryRefsAsync([detail.Node.Body], ct);
 
 		return Partial("_MdBody", new MdBodyModel
 		{
@@ -187,6 +210,7 @@ public sealed class TaskBoardModel : PageModel
 			TestId = "outline-body-content",
 			CommitUrlTemplate = commitUrlTemplate,
 			NodeRefs = nodeRefs,
+			MemoryRefs = memoryRefs,
 		});
 	}
 
@@ -311,8 +335,12 @@ public sealed class TaskBoardModel : PageModel
 		// Resolve `[[slug]]` mentions across every card body + every comment body in ONE batch
 		// (node-ref-autolink), so each card's renderer can link resolvable mentions.
 		var bodies = Nodes.Select(n => (string?)n.Body)
-			.Concat(byNode.SelectMany(g => g).Select(c => (string?)c.Body));
+			.Concat(byNode.SelectMany(g => g).Select(c => (string?)c.Body))
+			.ToList();
 		NodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey, bodies, ct);
+		// Same shape for memory-entry keys (memory-key-mention-link): the whole page's candidate
+		// keys resolve in one batch per container, never per card.
+		MemoryRefs = await BuildMemoryRefsAsync(bodies, ct);
 
 		// Tag-groups projection: only when the RESOLVED mode is tags with a valid dimension
 		// list. Bad/empty `by` silently falls back to the tree (the service would reject it)

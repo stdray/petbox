@@ -30,6 +30,14 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	// that resolves to nothing is silently absent from the result (never an error), and an empty
 	// ask is an empty result. Not-found is therefore the CALLER's decision, not this method's.
 	Task<IReadOnlyList<MemoryEntryView>> GetManyAsync(string projectKey, string store, IReadOnlyList<string> keys, CancellationToken ct = default);
+	// BATCH key→store resolution across the container (spec: memory-key-mention-link). For each of
+	// `keys`, the NON-SENSITIVE stores (MemoryStores.IsSensitive) that hold an ACTIVE entry under
+	// that key — a key found in several stores comes back with several store names, so the caller
+	// can refuse an ambiguous mention; a key found nowhere is absent from the map. Every key is
+	// resolved in ONE entries query (the container's stores share one file), so a page full of
+	// mentions costs one query, not one per key. A container with no (non-sensitive) store resolves
+	// to an empty map without touching the file.
+	Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> ResolveKeysAsync(string projectKey, IReadOnlyCollection<string> keys, CancellationToken ct = default);
 	// Hybrid search over active entries (lexical FTS5 ⊕ semantic vectors, RRF-fused),
 	// ranked; optional taxonomy filter. `lexical`/`semantic` (null = enabled) toggle each
 	// retriever; semantic is silently off when no embedding capability is available. The

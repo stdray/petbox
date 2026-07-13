@@ -117,7 +117,7 @@
 			@if (!string.IsNullOrEmpty(node.Body))
 			{
 				<article class="mt-3 rounded-lg border border-base-300/70 bg-base-100/40 p-4">
-					<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "node-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs })" />
+					<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = node.Body, TestId = "node-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
 				</article>
 			}
 			else
@@ -174,7 +174,7 @@
 			}
 		}
 
-		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, Model.NodeRefs))" />
+		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread, node.NodeId, Model.CommitUrlTemplate, Model.NodeRefs, MemoryRefs: Model.MemoryRefs))" />
 	</div>
 </div>
 

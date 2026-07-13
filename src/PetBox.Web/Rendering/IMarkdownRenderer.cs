@@ -11,8 +11,13 @@ public interface IMarkdownRenderer
 	// template (non-empty, carrying a literal {sha}), standalone 7–40-hex commit hashes in plain
 	// text runs are autolinked to the commit view. When `nodeRefs` maps a slug to a target, a
 	// `[[slug]]` mention in a plain text run becomes a link to that node (link text = the bare
-	// slug; an unmapped mention stays literal). Both transforms exclude code spans/blocks and
-	// existing links. With neither context the output is byte-identical to the plain path.
+	// slug; an unmapped mention stays literal). When `memoryRefs` maps a memory-entry key
+	// (`m-<32hex>` / `ac-<12hex>`) to a target, that key in a plain text run becomes a link to the
+	// entry (memory-key-mention-link); a key the caller could not resolve UNAMBIGUOUSLY — missing,
+	// present in several stores/scopes, or living in a sensitive store — is simply not in the map
+	// and stays literal. All three transforms exclude code spans/blocks and existing links. With no
+	// context at all the output is byte-identical to the plain path.
 	string RenderToHtml(string? markdown, string? commitUrlTemplate = null,
-		IReadOnlyDictionary<string, NodeRefTarget>? nodeRefs = null);
+		IReadOnlyDictionary<string, NodeRefTarget>? nodeRefs = null,
+		IReadOnlyDictionary<string, NodeRefTarget>? memoryRefs = null);
 }
