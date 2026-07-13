@@ -1,9 +1,9 @@
 using LinqToDB;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
-using PetBox.Web.Auth;
 using PetBox.Web.Pages.Admin;
 
 namespace PetBox.Tests.Web;
