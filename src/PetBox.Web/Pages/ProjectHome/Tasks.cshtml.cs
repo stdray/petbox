@@ -1,11 +1,10 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Tasks.Contract;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -18,13 +17,13 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class TasksModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
 
-	public TasksModel(ICoreDbFactory f, FeatureFlags features, ITasksService tasks)
+	public TasksModel(IProjectDirectory projects, FeatureFlags features, ITasksService tasks)
 	{
-		_f = f;
+		_projects = projects;
 		_features = features;
 		_tasks = tasks;
 	}
@@ -41,10 +40,10 @@ public sealed class TasksModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
-		// The route workspace is proved by ProjectWorkspaceBindingFilter before this runs (see
-		// ProjectHome/Index) — resolve by key alone.
-		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		// The route workspace is welded into the lookup: ProjectWorkspaceBindingFilter has already
+		// 404'd a project of another workspace before this runs, and this is the second rubicon — a
+		// page that asked by key alone is how the {ws}/{project} IDOR class got in (see ProjectHome/Index).
+		Project = await _projects.GetInWorkspaceAsync(WorkspaceKey, ProjectKey, ct);
 		if (Project is null || !TasksEnabled) return;
 
 		Boards = await _tasks.ListBoardsAsync(ProjectKey, ct);

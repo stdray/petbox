@@ -1,12 +1,11 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Sessions.Contract;
 using PetBox.Sessions.Data;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -20,13 +19,13 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class SessionsModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly ISessionStore _store;
 
-	public SessionsModel(ICoreDbFactory f, FeatureFlags features, ISessionStore store)
+	public SessionsModel(IProjectDirectory projects, FeatureFlags features, ISessionStore store)
 	{
-		_f = f;
+		_projects = projects;
 		_features = features;
 		_store = store;
 	}
@@ -55,10 +54,9 @@ public sealed class SessionsModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
-		// The route workspace is proved by ProjectWorkspaceBindingFilter before this runs (see
-		// ProjectHome/Index) — resolve by key alone.
-		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		// The route workspace is welded into the lookup — the second rubicon behind
+		// ProjectWorkspaceBindingFilter, not a replacement for it (see ProjectHome/Index).
+		Project = await _projects.GetInWorkspaceAsync(WorkspaceKey, ProjectKey, ct);
 		if (Project is null || !SessionsEnabled) return;
 
 		if (PageNum < 0) PageNum = 0;

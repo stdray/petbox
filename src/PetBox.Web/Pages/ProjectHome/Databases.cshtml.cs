@@ -6,6 +6,7 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -19,11 +20,13 @@ namespace PetBox.Web.Pages.ProjectHome;
 public sealed class DatabasesModel : PageModel
 {
 	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 
-	public DatabasesModel(ICoreDbFactory f, FeatureFlags features)
+	public DatabasesModel(ICoreDbFactory f, IProjectDirectory projects, FeatureFlags features)
 	{
 		_f = f;
+		_projects = projects;
 		_features = features;
 	}
 
@@ -42,13 +45,14 @@ public sealed class DatabasesModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
 		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
-		// The route workspace is proved by ProjectWorkspaceBindingFilter before this runs (see
-		// ProjectHome/Index) — resolve by key alone.
-		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		// The route workspace is welded into the lookup — the second rubicon behind
+		// ProjectWorkspaceBindingFilter, not a replacement for it (see ProjectHome/Index).
+		Project = await _projects.GetInWorkspaceAsync(WorkspaceKey, ProjectKey, ct);
 		if (Project is null || !DataEnabled) return;
 
+		// The data-db catalog has no service door yet — this page still reads it itself.
+		using var db = _f.Open();
 		Dbs = await db.DataDbs
 			.Where(d => d.ProjectKey == ProjectKey)
 			.OrderBy(d => d.Name)

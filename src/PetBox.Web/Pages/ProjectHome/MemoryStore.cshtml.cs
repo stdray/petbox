@@ -1,11 +1,10 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
+using PetBox.Web.Auth;
 using PetBox.Web.Memory;
 
 namespace PetBox.Web.Pages.ProjectHome;
@@ -17,13 +16,13 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class MemoryStoreModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly IMemoryService _memory;
 
-	public MemoryStoreModel(ICoreDbFactory f, FeatureFlags features, IMemoryService memory)
+	public MemoryStoreModel(IProjectDirectory projects, FeatureFlags features, IMemoryService memory)
 	{
-		_f = f;
+		_projects = projects;
 		_features = features;
 		_memory = memory;
 	}
@@ -73,11 +72,11 @@ public sealed class MemoryStoreModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Memory)) return NotFound();
-		var project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
-		if (project is null || !string.Equals(project.WorkspaceKey, WorkspaceKey, StringComparison.Ordinal))
-			return NotFound();
+		// "Not there" and "not yours" are the same 404: the workspace is part of the lookup, so the
+		// route cannot be used to probe for another tenant's project.
+		var project = await _projects.GetInWorkspaceAsync(WorkspaceKey, ProjectKey, ct);
+		if (project is null) return NotFound();
 		if (!await _memory.StoreExistsAsync(ProjectKey, Store, ct)) return NotFound();
 
 		if (PageNum < 0) PageNum = 0;

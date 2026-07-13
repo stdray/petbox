@@ -1,12 +1,11 @@
 using System.Globalization;
-using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
-using PetBox.Core.Data;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Navigation;
 
@@ -26,14 +25,16 @@ public static class ProjectSwitchEndpoint
 			.DisableAntiforgery();
 	}
 
+	// An endpoint lambda is pipeline code: it asks services, it does not open core.db (AGENTS.md —
+	// the database is visible only in the service layer).
 	static async Task<IResult> Switch(
 		HttpContext ctx,
-		ICoreDbFactory dbf,
+		IProjectDirectory projects,
+		IWorkspaceMembershipService memberships,
 		[FromForm] string? ws,
 		[FromForm] string? key,
 		[FromForm] string? zone)
 	{
-		using var db = dbf.Open();
 		// Both nullable so an empty-form POST (Alpine/onchange firing before a value is
 		// selected) surfaces as a clean 400, not an unhandled BadHttpRequestException.
 		if (string.IsNullOrWhiteSpace(ws))
@@ -46,16 +47,15 @@ public static class ProjectSwitchEndpoint
 		var userIdRaw = ctx.User.FindFirst(PetBoxClaims.UserId)?.Value;
 		if (!isSysAdmin && long.TryParse(userIdRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId))
 		{
-			var member = await db.WorkspaceMembers
-				.FirstOrDefaultAsync((Core.Models.WorkspaceMember m) => m.UserId == userId && m.WorkspaceKey == ws);
-			if (member is null)
+			var roles = await memberships.GetRolesAsync(userId);
+			if (!roles.Any(m => string.Equals(m.WorkspaceKey, ws, StringComparison.Ordinal)))
 				return Results.Forbid();
 		}
 
-		// The project must actually live in that workspace — otherwise the cookie would
-		// point at a phantom pair and the sidebar's resolver would silently drop it.
-		var project = await db.Projects
-			.FirstOrDefaultAsync((Core.Models.Project p) => p.WorkspaceKey == ws && p.Key == key);
+		// The project must actually live in that workspace — otherwise the cookie would point at a
+		// phantom pair and the sidebar's resolver would silently drop it. The workspace is welded into
+		// the lookup, so another tenant's project is simply not there.
+		var project = await projects.GetInWorkspaceAsync(ws, key);
 		if (project is null)
 			return Results.BadRequest(new ErrorResponse("unknown project for workspace"));
 

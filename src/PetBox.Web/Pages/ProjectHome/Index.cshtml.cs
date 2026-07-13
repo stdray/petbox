@@ -9,6 +9,7 @@ using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -21,6 +22,7 @@ namespace PetBox.Web.Pages.ProjectHome;
 public sealed class IndexModel : PageModel
 {
 	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly ISettingsResolver _settings;
 	readonly IConfigDbFactory _configFactory;
 	readonly ITasksService _tasks;
@@ -28,12 +30,14 @@ public sealed class IndexModel : PageModel
 
 	public IndexModel(
 		ICoreDbFactory f,
+		IProjectDirectory projects,
 		ISettingsResolver settings,
 		IConfigDbFactory configFactory,
 		ITasksService tasks,
 		FeatureFlags features)
 	{
 		_f = f;
+		_projects = projects;
 		_settings = settings;
 		_configFactory = configFactory;
 		_tasks = tasks;
@@ -66,13 +70,17 @@ public sealed class IndexModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
 		// The project↔workspace binding — a member of wsA reading wsB's project via /ui/wsA/proj-of-wsB
 		// — is enforced for EVERY page carrying both route values by ProjectWorkspaceBindingFilter
-		// (Program.cs), which 404s before this handler runs. Pages therefore resolve the project by KEY
-		// alone; they do not re-check the workspace (db-access-layer-cleanup removed ten such copies).
-		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		// (Program.cs), which 404s before this handler runs. The directory welds the workspace into the
+		// lookup anyway: the filter is pipeline code, this is the statement itself, and the ten hand-
+		// written copies of this rule that drifted are exactly why it now lives in one service.
+		Project = await _projects.GetInWorkspaceAsync(WorkspaceKey, ProjectKey, ct);
 		if (Project is null) return;
+
+		// The counters below have no service door yet (logs, data dbs, api keys, health reports), so
+		// this page still opens core.db for them — ONE connection, after the project is known.
+		using var db = _f.Open();
 
 		LogCount = await db.Logs.CountAsync(l => l.ProjectKey == ProjectKey, ct);
 		DbCount = await db.DataDbs.CountAsync(d => d.ProjectKey == ProjectKey, ct);
