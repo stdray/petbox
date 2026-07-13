@@ -1,12 +1,10 @@
 using System.Text.Json;
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Contract;
-using PetBox.Core.Data;
-using PetBox.Core.Models;
 using PetBox.Core.Services;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
@@ -23,12 +21,12 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectAgentDefsModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly IAgentDefinitionService _defs;
 
-	public ProjectAgentDefsModel(ICoreDbFactory f, IAgentDefinitionService defs)
+	public ProjectAgentDefsModel(IProjectDirectory projects, IAgentDefinitionService defs)
 	{
-		_f = f;
+		_projects = projects;
 		_defs = defs;
 	}
 
@@ -149,8 +147,7 @@ public sealed class ProjectAgentDefsModel : PageModel
 	// (Program.cs) before any handler here runs, so this only resolves it by key.
 	async Task<bool> LoadStateAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
-		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
+		var project = await _projects.GetAsync(ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return false; }
 
 		Items = await _defs.ListAsync(ProjectKey, ct);
