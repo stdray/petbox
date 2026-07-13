@@ -267,7 +267,7 @@ public sealed class DbLayerGuardTests
 	// ── THE SERVICE-LOCATOR PLANE ────────────────────────────────────────────────────────────────
 	//
 	// Everything above reasons about TYPES: what a class takes, holds, or accepts. There is one way to
-	// get a factory that leaves no trace in any of those, and ApiKeyAuthMiddleware used to use it:
+	// get a factory that leaves no trace in any of those — a local, pulled from the container mid-method:
 	//
 	//     var factory = context.RequestServices.GetRequiredService<ICoreDbFactory>();
 	//
@@ -299,12 +299,18 @@ public sealed class DbLayerGuardTests
 	// The composition root — the one file allowed to pull factories out of the container.
 	const string CompositionRootFile = "Program.cs";
 
-	// ALLOWLIST — EMPTY, same contract as the type allowlist above. Its one entry was
-	// ApiKeyAuthMiddleware, which now takes IApiKeyLookup as an invoke parameter (it cannot take one in
-	// the ctor: conventional middleware is a singleton and the lookup is scoped — that is a captive
-	// dependency, and CaptiveDependencyTests says so). The conversion was MEASURED, as that entry
-	// demanded: 20.5 vs 21.4 µs per verification, median over 8x5000 alternating rounds — the extra hop
-	// is a virtual call against a db round trip, and it disappears in the noise.
+	// ALLOWLIST — EMPTY, same contract as the type allowlist above.
+	//
+	// Its one entry was ApiKeyAuthMiddleware, and the entry told a story that turned out to be fiction:
+	// "the hottest core.db reader in the app — convert it WITH A MEASUREMENT, not on principle". The file
+	// was never registered, in the entire history of the repository. It read the X-Api-Key header itself
+	// and knew nothing of expiry, sandboxOnly, or claims; the auth SCHEME that superseded it 96 minutes
+	// after it was written is what every real request has always gone through. So its per-request cost
+	// was not "hot", it was ZERO, and the caution in this allowlist was guarding code that never ran.
+	// It is deleted (intake `apikey-auth-middleware-is-dead-code`).
+	//
+	// The lesson worth keeping: this allowlist's comments are the only place some of these claims are
+	// written down, and nothing checks them. Measure before you repeat one.
 	static readonly IReadOnlyDictionary<string, string> ServiceLocatorAllowlist =
 		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 		{
@@ -395,7 +401,15 @@ public sealed class DbLayerGuardTests
 		// And the specific shapes that are easy to break silently.
 		byCategory["Razor PageModel"].Should().Contain(typeof(PetBox.Web.Pages.Admin.ProjectDetailModel),
 			"the page this wave converted must still be CLASSIFIED (it is now clean, not unseen)");
-		byCategory["middleware"].Should().Contain(typeof(PetBox.Core.Auth.ApiKeyAuthMiddleware),
+		// Conventional middleware implements no interface, so the RequestDelegate-ctor rule is the only
+		// thing that catches it — and this anchor is what proves that rule still fires. It used to point
+		// at ApiKeyAuthMiddleware, which was DELETED as dead code (never registered, in the whole history
+		// of the repo; see intake `apikey-auth-middleware-is-dead-code`). That is the inversion this line
+		// now avoids: an anchor pinned to unused code is a test keeping a corpse warm, and it is why the
+		// corpse survived two refactors. KeyUsageStampMiddleware is pinned instead because it is LIVE —
+		// Program.cs registers it, a real feature (key last-used stamping) needs it, so it cannot quietly
+		// become dead the way its predecessor did.
+		byCategory["middleware"].Should().Contain(typeof(PetBox.Core.Auth.KeyUsageStampMiddleware),
 			"conventional middleware implements no interface — the RequestDelegate-ctor rule must catch it");
 		byCategory["minimal-API endpoint class"].Should().Contain(typeof(PetBox.Data.DataDbsApi),
 			"a static *Api class maps endpoints via IEndpointRouteBuilder and must be swept");
