@@ -20,6 +20,9 @@ public sealed class ProvisioningToolsFixture : IAsyncLifetime
 	public const string Workspace = "wsprov";
 	public const string AgentKey = "yb_key_agent_prov";
 	public const string NoScopeKey = "yb_key_no_prov";
+	// Declared in Auth:ApiKeys (below) — the config source owns it, so apikey_update must refuse it
+	// (spec apikey-update-config-key-refused). There is no row for it in the DB, on purpose.
+	public const string ConfigDeclaredKey = "yb_key_config_declared";
 
 	HttpClient _http = null!;
 
@@ -46,6 +49,12 @@ public sealed class ProvisioningToolsFixture : IAsyncLifetime
 						["ConnectionStrings:PetBox"] = TestSchema.NewTempConnectionString(),
 						["Host:BackgroundServices"] = "false",
 						["Features:Config"] = "true",
+						// A config-declared key (ConfigApiKeyLookup): immutable by construction — the
+						// file owns its lifecycle. apikey_update refuses it rather than writing a DB
+						// row that the composite lookup would never read back.
+						["Auth:ApiKeys:0:Key"] = ConfigDeclaredKey,
+						["Auth:ApiKeys:0:ProjectKey"] = "$system",
+						["Auth:ApiKeys:0:Scopes"] = "config:read",
 					});
 				});
 			});
@@ -84,12 +93,19 @@ public sealed class ProvisioningToolsFixture : IAsyncLifetime
 	}
 }
 
+// Shared as a COLLECTION fixture, not just a class fixture: ApiKeyUpdateToolTests needs the same
+// host (an MCP client + a $system admin:provision key), and xUnit news a class fixture per class —
+// two classes would have booted two WebApplicationFactories. One host, two classes.
+[CollectionDefinition("ProvisioningTools")]
+public sealed class ProvisioningToolsCollectionDef : ICollectionFixture<ProvisioningToolsFixture>;
+
 // WS6.2 — agent-provisioning MCP tools, now typed per-type (typed-surface Phase 4):
 // project_create/list, apikey_create/list/delete (replacing the generic entity.* dispatch).
 // An agent key with admin:provision can create a project and mint a downstream key; a key
 // without the scope is rejected. Every tool surfaces failures as a structured {error}
 // payload (GuardAsync), so we assert error CONTENT, not just IsError.
-public sealed class ProvisioningToolsTests : IClassFixture<ProvisioningToolsFixture>
+[Collection("ProvisioningTools")]
+public sealed class ProvisioningToolsTests
 {
 	const string Workspace = ProvisioningToolsFixture.Workspace;
 	const string NoScopeKey = ProvisioningToolsFixture.NoScopeKey;
