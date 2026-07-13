@@ -180,4 +180,36 @@ public sealed class TracesListFilterTests : IDisposable
 		emptyLog.SelectedLog.Should().Be("app");
 		emptyLog.Traces.Should().BeEmpty();
 	}
+
+	// A trace with SEVERAL parentless spans crashed the page with a 500 ("An item with the same
+	// key has already been added") — ToDictionary assumed exactly one root per TraceId. Real data
+	// breaks that: the smoke fixtures reuse one constant trace id, and a partially-exported trace
+	// looks identical. The page must render, picking the earliest root deterministically.
+	[Fact]
+	public async Task TraceWithSeveralRootSpans_Renders_InsteadOfThrowing()
+	{
+		await _store.CreateAsync(Proj, "app", null);
+		var ctx = _store.GetContext(Proj, "app");
+		foreach (var (span, start, name) in new[]
+		{
+			("sp-late", 9_000_000_000L, "later-root"),
+			("sp-early", 1_000_000_000L, "earliest-root"),
+		})
+		{
+			await ctx.InsertAsync(new SpanRecord
+			{
+				SpanId = span,
+				TraceId = "aabbccddeeff00112233445566778899", // the id the live smoke data reuses
+				ParentSpanId = null,
+				Name = name,
+				StartUnixNs = start,
+				EndUnixNs = start + 5_000_000L,
+			});
+		}
+
+		var model = NewModel();
+		await model.OnGetAsync(default);
+
+		model.Traces.Should().ContainSingle().Which.RootName.Should().Be("earliest-root");
+	}
 }
