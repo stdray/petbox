@@ -48,7 +48,18 @@ else
 								@k.ProjectKey
 							}
 						</td>
-						<td class="font-mono text-xs">@k.Scopes</td>
+						<td class="text-xs max-w-xs">
+							@* Wrap into badges instead of one unbroken comma string — a long scope list used to
+								widen the table (and with it the whole page body) into a horizontal scroll
+								(agent-keys-scopes-wrap). Bounding the cell width + flex-wrap makes it wrap like
+								every other wide-content surface in the app instead. *@
+							<div class="flex flex-wrap gap-1">
+								@foreach (var scope in current)
+								{
+									<span class="badge badge-outline badge-xs font-mono">@scope</span>
+								}
+							</div>
+						</td>
 						<td class="text-xs">
 							@* A key that has never authenticated SAYS so. An empty cell would read as "unknown",
 								and a zero DateTime would render as 1970/0001 — a date that never happened. *@
