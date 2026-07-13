@@ -16,13 +16,16 @@
    data-priority/title/created/updated (board-sort-impl) feed the client sort toggle — CreatedAt/
    UpdatedAt come straight off the active PlanNode revision, so they're only meaningful here in
    the tree pane. *@
-<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@Model.Depth" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-closed="@Model.Closed.ToString().ToLowerInvariant()" data-keep-visible="@Model.KeepVisible.ToString().ToLowerInvariant()" data-status="@n.Status" data-type="@n.Type" data-search="@search" data-priority="@n.Priority" data-title="@n.Title" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" style="margin-left:@(Model.Depth * 1.5)rem">
+<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@Model.Depth" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-closed="@Model.Closed.ToString().ToLowerInvariant()" data-keep-visible="@Model.KeepVisible.ToString().ToLowerInvariant()" data-status="@n.Status" data-type="@n.Type" data-search="@search" data-priority="@n.Priority" data-title="@n.Title" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" style="margin-left:@(Model.Depth * 1.5)rem;display:@(Model.Hidden ? "none" : "")">
 	<div class="card-body p-3">
 		<div class="flex items-baseline justify-between gap-2">
 			<div class="min-w-0 flex items-baseline gap-2 flex-wrap">
+				@* board-filters-server-state: the caret glyph and data-collapsed both come off the
+				   server-resolved collapse cookie now — ts/board.ts no longer sets the glyph after
+				   paint, it only flips it (and Model.Hidden's descendants) on a click. *@
 				@if (Model.HasChildren)
 				{
-					<button type="button" data-collapse-toggle class="btn btn-ghost btn-xs px-1 leading-none font-mono shrink-0" title="collapse / expand subtree" aria-label="collapse or expand">▾</button>
+					<button type="button" data-collapse-toggle data-collapsed="@Model.CollapsedSelf.ToString().ToLowerInvariant()" class="btn btn-ghost btn-xs px-1 leading-none font-mono shrink-0" title="collapse / expand subtree" aria-label="collapse or expand">@(Model.CollapsedSelf ? "▸" : "▾")</button>
 				}
 				@if (!string.IsNullOrEmpty(n.Title))
 				{

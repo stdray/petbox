@@ -848,6 +848,7 @@ public partial class Program
 		app.MapAuthEndpoints();
 		app.MapWorkspaceSwitch();
 		app.MapProjectSwitch();
+		PetBox.Web.Settings.BoardFilterPrefsEndpoint.MapBoardFilterPrefs(app);
 		app.MapRazorPages();
 
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Config))

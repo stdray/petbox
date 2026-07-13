@@ -101,4 +101,31 @@ public sealed class UiStateTypeSyncTests
 
 		TsRecordSync.Diff(typeof(EnumFixture), ts, "Fixture").Should().BeEmpty();
 	}
+
+	// board-filters-server-state: CollapsedByBoard is the first Dictionary-shaped [BrowserState]
+	// property — proves the comparator's Record<string, ...> mapping (added for it) round-trips
+	// before relying on it against the real BrowserState/ui-state.ts pair below.
+	public sealed record DictionaryFixture
+	{
+		[BrowserState(Key = "collapsedByBoard")]
+		public Dictionary<string, string[]> CollapsedByBoard { get; init; } = new();
+	}
+
+	[Fact]
+	public void Diff_Dictionary_MapsToTsRecord()
+	{
+		const string ts = "export interface Fixture {\n\tcollapsedByBoard?: Record<string, string[]>;\n}\n";
+
+		TsRecordSync.Diff(typeof(DictionaryFixture), ts, "Fixture").Should().BeEmpty();
+	}
+
+	[Fact]
+	public void Diff_Dictionary_TypeMismatch_ReportsIt()
+	{
+		const string ts = "export interface Fixture {\n\tcollapsedByBoard?: Record<string, number[]>;\n}\n";
+
+		var diffs = TsRecordSync.Diff(typeof(DictionaryFixture), ts, "Fixture");
+
+		diffs.Should().ContainSingle(d => d.Contains("collapsedByBoard", StringComparison.Ordinal));
+	}
 }

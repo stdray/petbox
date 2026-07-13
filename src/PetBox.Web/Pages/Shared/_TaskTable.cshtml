@@ -21,7 +21,7 @@
 }
 else
 {
-	var filterSortModel = new BoardFilterSortModel(Fields: fields, ViewMode: viewMode, SortHint: "sort rows:");
+	var filterSortModel = new BoardFilterSortModel(Fields: fields, ViewMode: viewMode, SortHint: "sort rows:", ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<div class="overflow-x-auto">
 		<table class="table table-sm" data-testid="board-table">
@@ -52,7 +52,8 @@ else
 						data-node-id="@row.NodeId" data-node-key="@row.Key"
 						data-status="@row.StatusSlug" data-type="@row.Type" data-priority="@row.Priority" data-title="@row.Title"
 						data-created="@(row.CreatedAt?.ToString("o") ?? "")" data-updated="@(row.UpdatedAt?.ToString("o") ?? "")"
-						data-search="@search" data-closed="@row.Closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@row.TerminalCancel.ToString().ToLowerInvariant()">
+						data-search="@search" data-closed="@row.Closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@row.TerminalCancel.ToString().ToLowerInvariant()"
+						style="display:@(row.Hidden ? "none" : "")">
 						@if (Model.ShowScopeColumns)
 						{
 							<td class="font-mono text-xs opacity-70" data-testid="row-workspace">@row.Workspace</td>

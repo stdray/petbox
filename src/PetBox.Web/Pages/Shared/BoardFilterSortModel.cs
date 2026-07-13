@@ -27,9 +27,20 @@ namespace PetBox.Web.Pages.Shared;
 // body inline (wiki-like boards would ship megabytes on load) regardless of the dialog checkbox.
 // Every other caller (Kanban/Table/Tree) leaves it false; the dialog just disables the Body
 // checkbox and says why instead of silently ignoring a selection the user can still make.
+// board-filters-server-state: ActiveOnly/SortBy/SortDesc are the SERVER-RESOLVED control state
+// (TaskBoardModel.ActiveOnly/SortBy/SortDesc — a global, cross-device [Setting]) — the bar renders
+// the checkbox `checked`/select `selected`/arrow glyph from these directly, so the FIRST response
+// already shows what the user last chose instead of ts/board.ts correcting the controls (and the
+// rows they describe) after paint. Defaults (true/"priority"/false) match BrowserState's own
+// record defaults, so a caller that doesn't thread them through (there is none left — every
+// _BoardFilterSort caller passes the resolved values) degrades to the same appearance a first-time
+// visitor already gets.
 public sealed record BoardFilterSortModel(
 	PetBox.Web.Rendering.BoardFieldConfig Fields,
 	string ViewMode,
 	string SortHint = "sort:",
 	string? By = null,
-	bool BodyUnavailable = false);
+	bool BodyUnavailable = false,
+	bool ActiveOnly = true,
+	string SortBy = "priority",
+	bool SortDesc = false);

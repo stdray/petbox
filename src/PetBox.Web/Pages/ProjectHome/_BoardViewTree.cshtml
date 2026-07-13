@@ -11,10 +11,13 @@
 else
 {
 	// A node has children when some other node's part_of parent is its NodeId — only those
-	// get a collapse caret. (Visibility/collapse/filter is applied client-side by ts/board.ts;
-	// active-only + collapsed state persist in localStorage.)
+	// get a collapse caret. board-filters-server-state: visibility/collapse/sort are now resolved
+	// SERVER-SIDE (Model.ActiveOnly/CollapsedNodeIds/IsHiddenByCollapse, Model.Nodes already in
+	// sort order) — ts/board.ts still wires the SAME client interactivity for instant toggling, it
+	// just no longer computes the INITIAL state from localStorage (see initBoardPage's header
+	// comment).
 	var parentIds = Model.Nodes.Where(x => x.ParentNodeId is not null).Select(x => x.ParentNodeId!).ToHashSet(StringComparer.Ordinal);
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Tree, SortHint: "sort branches:");
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Tree, SortHint: "sort branches:", ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
 
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	@* data-sort-scope (board-sort): the DFS-flat <li> list IS the single reorder scope for this
@@ -28,8 +31,11 @@ else
 			// descendants, in which case it stays so its children aren't orphaned.
 			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);
 			var hasChildren = parentIds.Contains(n.NodeId);
+			var hiddenByActive = Model.ActiveOnly && closed && !keepVisible;
+			var hidden = hiddenByActive || Model.IsHiddenByCollapse(n.ParentNodeId);
+			var collapsedSelf = Model.CollapsedNodeIds.Contains(n.NodeId);
 			Model.CommentThreads.TryGetValue(n.NodeId, out var thread);
-			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread, Model.Fields, Model.CommitUrlTemplate, Model.NodeRefs, Model.MemoryRefs)" />
+			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread, Model.Fields, Model.CommitUrlTemplate, Model.NodeRefs, Model.MemoryRefs, hidden, collapsedSelf)" />
 		}
 	</ul>
 }

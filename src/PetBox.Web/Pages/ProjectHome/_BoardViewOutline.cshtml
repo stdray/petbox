@@ -31,7 +31,7 @@
 else
 {
 	var navigate = string.Equals(Model.OutlineRevealMode, OutlineRevealModeNames.Navigate, StringComparison.Ordinal);
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate);
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<ul class="flex flex-col gap-1" data-testid="board-outline" data-reveal-mode="@Model.OutlineRevealMode" data-sort-scope>
 		@foreach (var n in Model.Nodes)
@@ -58,7 +58,12 @@ else
 			// misjudge once a few sibling groups stack up.
 			var edgeClass = n.Depth > 0 ? "border-l-2 border-base-300/60 pl-2" : "";
 			var titleClass = "font-semibold link link-hover" + (terminalCancel ? " line-through opacity-60" : "");
-			<li data-testid="outline-row" data-node-key="@n.Key" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-depth="@n.Depth" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="@keepVisible.ToString().ToLowerInvariant()" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" class="@edgeClass" style="margin-left:@(n.Depth * 1.5)rem">
+			// board-filters-server-state: same hide computation as the tree pane's PlanNodeCard —
+			// outline rows carry a real data-parent-id (unlike kanban/table), so a node collapsed
+			// via the tree pane stays hidden here too on the SAME board.
+			var hiddenByActive = Model.ActiveOnly && closed && !keepVisible;
+			var hidden = hiddenByActive || Model.IsHiddenByCollapse(n.ParentNodeId);
+			<li data-testid="outline-row" data-node-key="@n.Key" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-depth="@n.Depth" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="@keepVisible.ToString().ToLowerInvariant()" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" class="@edgeClass" style="margin-left:@(n.Depth * 1.5)rem;display:@(hidden ? "none" : "")">
 				@if (eager)
 				{
 					<details open data-testid="outline-node-eager">

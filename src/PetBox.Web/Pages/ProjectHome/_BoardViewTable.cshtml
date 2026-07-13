@@ -6,19 +6,29 @@
    page renders (with its extra workspace/project/board columns switched on) — one table
    component, not two. *@
 @{
-	var rows = Model.Nodes.Select(n =>
+	// board-filters-server-state: table is ONE FLAT sort scope (unlike tree/outline's DFS sibling
+	// order) — Model.Nodes is already DFS-ordered for the hierarchical panes, so table re-sorts it
+	// flat here, matching what the client's own reorderDom always did for this view (roots-only,
+	// no part_of nesting to respect).
+	var sortComparer = PetBox.Web.Pages.ProjectHome.TaskBoardModel.SortComparer(Model.SortBy, Model.SortDesc);
+	var rows = Model.Nodes.OrderBy(n => n, sortComparer).ThenBy(n => n.Key, StringComparer.Ordinal).Select(n =>
 	{
 		var badge = new StatusBadgeModel(Model.Runtime, Model.KindSlug, n.Status);
+		var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
 		return new TaskTableRow(
 			NodeId: n.NodeId, Key: n.Key, Title: n.Title,
 			Url: Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key),
 			Type: n.Type,
 			StatusSlug: n.Status, StatusDisplay: badge.Display, StatusCssClass: badge.CssClass, StatusShow: badge.Show,
-			Closed: Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status),
+			Closed: closed,
 			Priority: n.Priority, Tags: n.Tags, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
 			Delivery: n.Delivery,
 			TerminalCancel: Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel,
-			BlockedBy: n.BlockedBy, Body: n.Body);
+			BlockedBy: n.BlockedBy, Body: n.Body,
+			// board-filters-server-state: table has no hierarchy to orphan a child out of, so
+			// (unlike PlanNodeCard) there's no keepVisible exception — a closed row hides under
+			// active-only, period. No collapse either (table never showed one).
+			Hidden: Model.ActiveOnly && closed);
 	}).ToList();
 }
-<partial name="_TaskTable" model="new TaskTableModel(rows, ShowScopeColumns: false, Fields: Model.Fields, WorkspaceKey: Model.WorkspaceKey, ProjectKey: Model.ProjectKey)" />
+<partial name="_TaskTable" model="new TaskTableModel(rows, ShowScopeColumns: false, Fields: Model.Fields, WorkspaceKey: Model.WorkspaceKey, ProjectKey: Model.ProjectKey, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc)" />

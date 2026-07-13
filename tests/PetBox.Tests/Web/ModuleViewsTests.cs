@@ -168,7 +168,9 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"board-view-controls\"");
 		html.Should().Contain("data-testid=\"board-view-meta\"");
-		html.Should().Contain("data-resolved-view=\"tree\"");
+		// The tree pane's own content — either its node list or its empty state — proves
+		// _BoardViewTree actually rendered (roadmap's node count varies across shared-fixture runs).
+		(html.Contains("data-testid=\"board-nodes\"") || html.Contains("data-testid=\"board-empty\"")).Should().BeTrue();
 	}
 
 	[Fact]
@@ -191,7 +193,6 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"board-tag-groups\"");
-		html.Should().Contain("data-resolved-view=\"tags\"");
 	}
 
 	// An unknown mode (typo'd URL) must silently degrade to the tree partial — never a 500.
@@ -201,7 +202,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		using var resp = await GetAuthedAsync("/ui/$system/$system/tasks/roadmap?view=bogus");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("data-resolved-view=\"tree\"");
+		(html.Contains("data-testid=\"board-nodes\"") || html.Contains("data-testid=\"board-empty\"")).Should().BeTrue(); // fell back to the tree pane
 	}
 
 	// board-view-modes-highlight-degrade regression: `?view=tags` with no `by` renders the tree
@@ -227,8 +228,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tags");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("data-resolved-view=\"tags\"");
-		html.Should().Contain("data-testid=\"board-nodes\""); // the tree pane actually rendered
+		html.Should().Contain("data-testid=\"board-nodes\""); // the tree pane actually rendered (degraded from tags)
 
 		var controlsStart = html.IndexOf("data-testid=\"board-view-controls\"", StringComparison.Ordinal);
 		controlsStart.Should().BeGreaterThan(-1);
@@ -254,7 +254,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		var controlsStart = switcherHtml.IndexOf("data-testid=\"board-view-controls\"", StringComparison.Ordinal);
 		var controlsEnd = switcherHtml.IndexOf("</div>", controlsStart, StringComparison.Ordinal);
 		var controls = switcherHtml[controlsStart..controlsEnd];
-		controls.Should().NotContain("data-view-mode=\"tags\"", "the tags preset buttons must not appear in the switcher");
+		controls.Should().NotContain("data-testid=\"view-tags\"", "the tags preset buttons must not appear in the switcher");
 		controls.Should().NotContain("tags:", "the tag-namespace preset fan-out label must not appear either");
 		// The other four modes are unaffected — still offered.
 		controls.Should().Contain("data-testid=\"view-tree\"");
@@ -278,7 +278,6 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		directResp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var directHtml = await directResp.Content.ReadAsStringAsync();
 		directHtml.Should().Contain("data-testid=\"board-tag-groups\"");
-		directHtml.Should().Contain("data-resolved-view=\"tags\"");
 	}
 
 	// board-view-mode-framework: kanban/outline/table HTTP-level smoke — same "only an actual
@@ -302,7 +301,6 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("data-resolved-view=\"kanban\"");
 		html.Should().Contain("data-testid=\"board-kanban\"");
 		// Simple kind's OWN statuses (Todo/InProgress/Blocked/Done/Cancelled) — not a hardcoded
 		// column set (a work-kind board would show Pending/InProgress/Review/… instead).
@@ -370,7 +368,6 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("data-resolved-view=\"outline\"");
 		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"navigate\"");
 		html.Should().NotContain("a wiki-length body that must not ship inline");
 	}
@@ -516,7 +513,6 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=table");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("data-resolved-view=\"table\"");
 		html.Should().Contain("data-testid=\"board-table\"");
 		html.Should().Contain("data-node-key=\"t1\"");
 		html.Should().Contain(">area:ui<");

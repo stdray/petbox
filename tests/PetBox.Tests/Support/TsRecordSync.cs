@@ -80,6 +80,18 @@ public static class TsRecordSync
 		// and should be declared in TS — as strings (or a string-literal union; callers that need
 		// that precision compare it themselves, this guard only checks the "string" floor).
 		if (underlying.IsEnum) return "string";
+		// board-filters-server-state: CollapsedByBoard is a Dictionary<string, string[]> — recurse
+		// on the element/value type so a future Dictionary<string, SomethingElse> or T[] doesn't need
+		// its own special case, only a mapping for whatever SomethingElse resolves to.
+		if (underlying.IsArray)
+			return CsTypeToTs(underlying.GetElementType()!) + "[]";
+		if (underlying.IsGenericType && underlying.GetGenericTypeDefinition() == typeof(Dictionary<,>))
+		{
+			var args = underlying.GetGenericArguments();
+			if (args[0] != typeof(string))
+				throw new NotSupportedException("TsRecordSync only maps a Dictionary with a string key (TS Record<string, ...>).");
+			return $"Record<string, {CsTypeToTs(args[1])}>";
+		}
 		throw new NotSupportedException($"No TS type mapping registered for CLR type {underlying.Name}. Add one to TsRecordSync.CsTypeToTs.");
 	}
 }

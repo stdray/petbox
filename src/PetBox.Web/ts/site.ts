@@ -3,7 +3,7 @@ import Alpine from "alpinejs";
 
 import "./logs";
 import "./sidebar";
-import { initBoardFieldsDialog, initBoardPage, initBoardViewPersistence } from "./board";
+import { initBoardFieldsDialog, initBoardPage } from "./board";
 import { initCommentThreads } from "./commentThread";
 import { initConfigPage } from "./config";
 import { initConfirmForms } from "./confirm";
@@ -14,7 +14,6 @@ import { initWorkflowViz } from "./workflow-viz";
 
 Alpine.start();
 initConfigPage();
-initBoardViewPersistence();
 initBoardFieldsDialog();
 initBoardPage();
 initNodeEdit();

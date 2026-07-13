@@ -37,9 +37,10 @@ public enum Theme { Dark, Light, System, Nord, Retro }
 // eagerly rendering their lazy content, which is a materially bigger feature than "wire up a
 // cookie read").
 //
-// Remaining follow-ups — board view mode, board filters — each add THEIR own property here
-// (tagged [Setting] or [BrowserState] per the storage-boundary call in their own spec) instead of
-// standing up a parallel resolver or an extra cookie.
+// board-filters-server-state: CollapsedByBoard is the ONLY board-related field living here — see
+// BoardPreferences.cs for why the board VIEW/FIELDS/ACTIVE-ONLY/SORT properties deliberately do
+// NOT live on this record even though they're all resolved through the same [Setting]/
+// ISettingsResolver mechanism.
 public sealed record BrowserState
 {
 	// DB branch, Scope.User, cross-device. Default is Theme.System — deliberately not Theme.Dark
@@ -70,4 +71,20 @@ public sealed record BrowserState
 	// panel as before.
 	[BrowserState(Key = "kqlPanelPinned")]
 	public bool KqlPanelPinned { get; init; } = false;
+
+	// board-filters-server-state: WHICH plan nodes are collapsed (their subtree hidden) on the
+	// tree/outline panes. Cookie branch, not DB — this is window/device state (the brief's own call:
+	// "collapsed-node set looks like window state"), not a preference someone wants following them to
+	// a second device. Keyed per (project,board) — collapsing node X on board A saying nothing about
+	// board B is the whole point (node ids are globally unique, so the OLD single global localStorage
+	// key only ever grew, forever, across every board ever visited, node ids from other boards
+	// included, with nothing ever pruning it — this is bounded to boards actually interacted with
+	// instead). string[] (not a Set/HashSet) because that's what round-trips through JSON both
+	// directions (System.Text.Json has no native Set<T> collection support as clean as
+	// List<T>/array). Lives on BrowserState (unlike its DB-branch board siblings — see
+	// BoardPreferences.cs) because [BrowserState]-tagged properties are already invisible to
+	// SettingsFormFieldSelector (it only walks [Setting] attributes), so there is no leak risk
+	// keeping it on the ONE record every layout already resolves.
+	[BrowserState(Key = "collapsedByBoard")]
+	public Dictionary<string, string[]> CollapsedByBoard { get; init; } = new(StringComparer.Ordinal);
 }

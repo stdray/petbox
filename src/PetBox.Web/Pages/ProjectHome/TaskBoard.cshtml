@@ -3,13 +3,6 @@
 @{
 	ViewData["Title"] = $"{Model.Board} — Tasks";
 
-	// Tag-grouping `by` (board-tag-grouping): the ordered tag-namespace list a direct
-	// `?view=tags&by=...` request applied — the projection is a pure view (tag-grouping-is-
-	// projection). Still computed (board-view-meta below needs it for the client reconcile) even
-	// though the switcher no longer offers preset buttons to pick it (board-tag-grouping-hidden:
-	// Tags is a Hidden entry in BoardViewModeRegistry — direct URL access keeps working).
-	var curBy = string.Join(",", Model.GroupDims);
-
 	// Effective kind via MethodologyRuntime (definition first, preset fallback) — a
 	// definition-declared custom kind shows its own slug, not the Simple fallback.
 	var kindName = Model.KindName;
@@ -72,10 +65,11 @@
    in the switcher without this markup ever naming it — Tags is Hidden today (its presets
    worked poorly enough to pull from discovery pending a redesign), but `?view=tags&by=...`
    still resolves/renders exactly as before (BoardViewModeRegistry.Resolve/Find scan the FULL
-   Entries list, hidden or not — only this loop filters). Explicit query-string links (no
-   implicit persistence server-side — ts/board.ts saves the click to localStorage keyed by
-   board, see board-view-meta below) — switching is reversible and never mutates part_of
-   (tag-grouping-is-projection). *@
+   Entries list, hidden or not — only this loop filters).
+   board-view-cross-device: a click is a PLAIN navigation (`<a href>`, never intercepted) —
+   TaskBoardModel.LoadAsync persists the `?view=` it lands with into the per-(project,board) DB
+   preference server-side, so there is nothing left for client JS to save (no more
+   data-view-link/data-view-mode click-to-localStorage handler, no reconcile-redirect). *@
 <div class="mb-3 flex flex-wrap items-center gap-1" data-testid="board-view-controls">
 	<span class="text-xs opacity-60 mr-1">view:</span>
 	@foreach (var entry in PetBox.Web.Rendering.BoardViewModeRegistry.Entries.Where(e => !e.Hidden))
@@ -88,17 +82,16 @@
 		// always equals exactly one entry's PartialName (a degrade included — e.g. it becomes
 		// "_BoardViewTree", matching the tree entry here).
 		var active = entry.PartialName == Model.ContentPartialName;
-		<a href="?view=@entry.Key" class="btn btn-xs @(active ? "btn-active" : "btn-ghost")" data-testid="view-@entry.Key" data-view-link data-view-mode="@entry.Key">@entry.Label</a>
+		<a href="?view=@entry.Key" class="btn btn-xs @(active ? "btn-active" : "btn-ghost")" data-testid="view-@entry.Key">@entry.Label</a>
 	}
 </div>
 
-@* board-view-persistence: the key ts/board.ts saves the chosen mode under (scoped per board,
-   since defaultView differs by kind) and what the server actually resolved/rendered this
-   load, so the client can reconcile a saved-but-different choice on the NEXT navigation
-   without the server needing to read localStorage. data-resolved-fields is board-view-fields'
-   own reconcile baseline, the same board-scoped mechanism (see ts/board.ts LS_FIELDS_PREFIX).
-   Hidden — data only, no visible content. *@
-<div class="hidden" data-testid="board-view-meta" data-board-key="@Model.ProjectKey/@Model.Board" data-resolved-view="@Model.ResolvedViewMode" data-resolved-by="@curBy" data-resolved-fields="@Model.Fields.ToCsv()"></div>
+@* board-filters-server-state: the (project,board) key ts/board.ts's collapse-toggle handler
+   merges into the petbox.ui cookie's collapsedByBoard map (BrowserState.CollapsedByBoard) — the
+   ONE remaining bit of board client-side state that needs a page-carried key. No resolved-view/
+   by/fields markers anymore: those drove the old client reconcile-redirect, which no longer
+   exists (the server resolves the same preference before it renders). Hidden — data only. *@
+<div class="hidden" data-testid="board-view-meta" data-board-key="@Model.ProjectKey/@Model.Board"></div>
 
 <partial name="@Model.ContentPartialName" model="Model" />
 

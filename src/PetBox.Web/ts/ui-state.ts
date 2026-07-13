@@ -8,14 +8,25 @@
 // The whole app writes ONE cookie, `petbox.ui`, carrying a flat JSON object keyed by each
 // [BrowserState] property's `Key` — never one cookie per feature (that grows every request's
 // header on each new preference). `sidebarPinned` (work `sidebar-pin-server-state`) and
-// `kqlPanelPinned` (work `kql-panel-pin-server-state`) are the first two fields; the remaining
-// follow-ups (board view, board filters) each add their own key here and to BrowserState.cs, and
-// read/write it through readUiState/writeUiState below instead of inventing their own cookie-merge
-// logic. The dead `petbox.sidebar.tree` cookie sidebar.ts used to write was deleted, not migrated
-// here (work `sidebar-tree-cookie-dead`) — nothing in the markup ever consumed it.
+// `kqlPanelPinned` (work `kql-panel-pin-server-state`) are the first two fields; `collapsedByBoard`
+// (work `board-filters-server-state`) is the third. View mode/tag-`by`/fields (work
+// `board-view-cross-device`) and active-only/sort (work `board-filters-server-state`) are NOT here
+// — they're cross-device preferences, so they live in the DB branch (BrowserState.cs's
+// [Setting]-tagged properties), read/written through TaskBoardModel + the
+// `/api/ui/board-filter-prefs` endpoint, never through this cookie. The dead `petbox.sidebar.tree`
+// cookie sidebar.ts used to write was deleted, not migrated here (work `sidebar-tree-cookie-dead`)
+// — nothing in the markup ever consumed it.
 export interface BrowserState {
 	sidebarPinned?: boolean;
 	kqlPanelPinned?: boolean;
+	// board-filters-server-state: which plan-node subtrees are collapsed, per (project,board) key
+	// (literally "projectKey/board", the same composite key BoardViewPreferences uses server-side)
+	// — a TOP-LEVEL cookie key holding the WHOLE map for every board the user has touched, since
+	// MergeCookieValue only merges at the top level (one [BrowserState] property = one cookie key);
+	// board.ts is responsible for reading the current map out, updating ONE board's entry, and
+	// writing the whole map back (see persistCollapsed in board.ts) — the same read-modify-write
+	// shape BoardViewPreferences uses on the DB side.
+	collapsedByBoard?: Record<string, string[]>;
 }
 
 const COOKIE_NAME = "petbox.ui";

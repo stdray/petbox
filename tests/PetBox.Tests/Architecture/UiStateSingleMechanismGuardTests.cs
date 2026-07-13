@@ -28,13 +28,14 @@ public sealed class UiStateSingleMechanismGuardTests
 	// enforced, not merely asked for.
 	static readonly IReadOnlyDictionary<string, string> Allowlist = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 	{
-		// tasksView:*, tasksActiveOnly, tasksCollapsed, tasksSort — all via raw localStorage.
-		// Migrates in work `board-view-cross-device` and `board-filters-server-state`. A parallel
-		// change was in flight on this file as of this guard landing — do not edit board.ts to close
-		// this entry without checking those work nodes first; only the allowlist entry is this
-		// guard's business.
-		["board.ts"] = "tasksView:*/tasksActiveOnly/tasksCollapsed/tasksSort via localStorage — "
-			+ "migrates in board-view-cross-device and board-filters-server-state.",
+		// board.ts's entry (tasksView:*/tasksActiveOnly/tasksCollapsed/tasksSort via localStorage)
+		// is GONE as of work `board-view-cross-device` + `board-filters-server-state`: view mode/
+		// tag-`by`/field selection moved to a per-(project,board) DB [Setting] (BrowserState.
+		// BoardViewPreferences), active-only/sort to global DB [Setting]s (TasksActiveOnly/
+		// TasksSortBy/TasksSortDesc), and the collapsed-node set to a per-board cookie key
+		// (BrowserState.CollapsedByBoard, through ui-state.ts like everything else in the cookie
+		// branch) — board.ts is now clean, the LAST holdout in this allowlist is closed, and the
+		// maintainer's "exactly one mechanism" invariant has nothing left excepted from it.
 
 		// petbox.pendingToast via sessionStorage — a message deferred across exactly ONE form
 		// submit so the hotkey toast survives the htmx swap that follows Ctrl+Enter. Judgment call,
