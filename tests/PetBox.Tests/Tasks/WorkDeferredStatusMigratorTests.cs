@@ -114,7 +114,38 @@ public sealed class WorkDeferredStatusMigratorTests : IDisposable
 	// Migrate() discovers the projects to scan from Core's TaskBoards catalog (same as
 	// MethodologyInstanceBackfill) — a project with no board at all never gets visited. Every
 	// test that expects the migrator to actually reach `Proj` seeds one board first.
-	async Task SeedProjectBoard() => await _boards.CreateAsync(Proj, "work", description: null, kind: "work");
+	// `methodologyInstance` binds the board into a named instance's scope (needed for the
+	// node-move tests — the migrator scopes an instance's node search to its member boards).
+	async Task SeedProjectBoard(string? methodologyInstance = null) =>
+		await _boards.CreateAsync(Proj, "work", description: null, kind: "work", methodologyInstance: methodologyInstance);
+
+	// Hand-writes an active PlanNode directly (bypassing the FSM-guarded upsert path — the
+	// point is to plant a node in a status the CURRENT definition may not even have an edge
+	// into, exactly the "found a straggler" scenario the migrator exists to fix).
+	async Task<string> SeedNode(string board, string key, string status, string type = "feature")
+	{
+		var nodeId = Guid.NewGuid().ToString("N");
+		using var ctx = _factory.NewEnsuredConnection(Proj);
+		var r = await TemporalStore.UpsertAsync(ctx, new[]
+		{
+			new PlanNode { Key = key, Version = 0, Board = board, NodeId = nodeId, Status = status, Type = type, Name = key, Body = "" },
+		}, partition: n => n.Board == board);
+		r.Applied.Should().BeTrue();
+		return nodeId;
+	}
+
+	async Task<PlanNode> ReadNode(string board, string key)
+	{
+		using var ctx = _factory.NewEnsuredConnection(Proj);
+		var rows = await ctx.GetTable<PlanNode>().Where(n => n.Board == board && n.Key == key && n.ActiveTo == null).ToListAsync();
+		return rows.Single();
+	}
+
+	async Task<List<CommentRow>> ReadComments(string nodeId)
+	{
+		using var ctx = _factory.NewEnsuredConnection(Proj);
+		return await ctx.GetTable<CommentRow>().Where(c => c.NodeId == nodeId && c.ActiveTo == null).ToListAsync();
+	}
 
 	async Task SeedInstance(string key, MethodologyDefinition def)
 	{
@@ -241,6 +272,68 @@ public sealed class WorkDeferredStatusMigratorTests : IDisposable
 		await SeedInstance("quartet", current);
 
 		Migrator().Migrate().Should().Be(0);
+	}
+
+	// The maintainer's call (work-preset-drop-deferred): a straggler node in `Deferred` on an
+	// untouched-copy-of-our-preset document is moved to `Cancelled` — with a recorded reason —
+	// BEFORE the status is stripped from the definition, so there is never a node pointing at a
+	// status the definition no longer has.
+	[Fact]
+	public async Task OldMaterializedInstance_WithDeferredNodes_MovesThemToCancelledWithReason_ThenStripsStatus()
+	{
+		await SeedProjectBoard(methodologyInstance: "quartet");
+		await SeedInstance("quartet", OldQuartet);
+		var nodeId1 = await SeedNode("work", "f1", "Deferred");
+		var nodeId2 = await SeedNode("work", "f2", "Deferred", type: "bug");
+		// A node in some OTHER status must not be touched at all.
+		await SeedNode("work", "f3", "Pending");
+
+		Migrator().Migrate().Should().Be(1, "one document (the instance) was rewritten");
+
+		(await ReadNode("work", "f1")).Status.Should().Be("Cancelled");
+		(await ReadNode("work", "f2")).Status.Should().Be("Cancelled");
+		(await ReadNode("work", "f3")).Status.Should().Be("Pending", "only Deferred nodes are touched");
+
+		var comments1 = await ReadComments(nodeId1);
+		comments1.Should().ContainSingle(c => c.Body.Contains("Deferred", StringComparison.Ordinal) && c.Author == "system");
+		var comments2 = await ReadComments(nodeId2);
+		comments2.Should().ContainSingle(c => c.Body.Contains("Deferred", StringComparison.Ordinal));
+
+		AssertDeferredGone(await ReadInstance("quartet"));
+	}
+
+	// The core of this review round: a `work` kind that CARRIES `Deferred` but does NOT match
+	// our old preset exactly (customized, or a project's own methodology) must be left
+	// completely alone — the document AND every node on it, Deferred or not.
+	[Fact]
+	public async Task CustomizedWorkKind_WithDeferredNodes_DocumentAndNodesUntouched()
+	{
+		// Same statuses as the old preset, but ONE extra status added to the block — no longer
+		// a byte-for-byte match, so this reads as a project's OWN customization, not our copy.
+		var customizedWorkKind = OldWorkKind with
+		{
+			Workflows =
+			[
+				OldWorkKind.Workflows[0] with
+				{
+					Statuses = [.. OldWorkKind.Workflows[0].Statuses, new WorkflowStatus("Icebox", "Icebox", StatusKind.Open)],
+				},
+			],
+		};
+		var customDef = new MethodologyDefinition("custom-flow", [customizedWorkKind]);
+
+		await SeedProjectBoard(methodologyInstance: "custom");
+		await SeedInstance("custom", customDef);
+		var nodeId = await SeedNode("work", "f1", "Deferred");
+
+		Migrator().Migrate().Should().Be(0, "a customized work kind is not our verbatim copy — nothing is rewritten");
+
+		(await ReadNode("work", "f1")).Status.Should().Be("Deferred", "an untouched document keeps its nodes untouched too");
+		(await ReadComments(nodeId)).Should().BeEmpty("no reason comment is added when nothing is migrated");
+
+		var read = await ReadInstance("custom");
+		read.Kinds.Single(k => k.Kind == "work").Workflows.Single().Statuses
+			.Should().Contain(s => s.Slug == "Deferred", "the customized document is untouched, Deferred and all");
 	}
 
 	// The other half of the acceptance bar: a BRAND NEW instance, created through the real
