@@ -37,6 +37,7 @@ public sealed class UiStateTests
 		public required bool IsAuthenticated { get; init; }
 		public string? Username => null;
 		public string CurrentWorkspaceKey => "$system";
+		public bool HasWorkspace => true;
 		public string? CurrentProjectKey => null;
 		public IReadOnlyList<WorkspaceOption> AvailableWorkspaces => [];
 		public IReadOnlyList<Project> ProjectsInCurrentWorkspace => [];
