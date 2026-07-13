@@ -19,11 +19,12 @@ import {
 } from "./apply-artifacts.ts";
 import { hasPetboxMarker } from "./origin-marker.ts";
 import { HARNESS_IDS, harnessCapabilities, hasCapability } from "./harness-capabilities.ts";
-import { allowedModels, isResolvableModel } from "./harness-models.ts";
+import { allowedModels, classifyModel, isResolvableModel } from "./harness-models.ts";
 import {
   checkTruthfulness,
   formatViolations,
   isModelViolation,
+  modelShapeWarning,
   type ModelViolation,
 } from "./truthfulness.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
@@ -270,8 +271,12 @@ test("model gate: claude-code role bound to a droid id is BLOCKED (not written)"
   assert.match(msg, /worker/);
   assert.match(msg, /custom:DeepSeek-V4-Pro-0/);
   assert.match(msg, /claude-code/);
-  assert.match(msg, /SILENTLY inherit the session model/);
-  assert.match(msg, /Allowed: .*sonnet/);
+  // Revised 2026-07-13: the gate no longer claims CC silently inherits on a bad id (a live
+  // measurement disproved that — CC fails LOUD at runtime). The message now says the id looks
+  // like another harness's, not this one's.
+  assert.match(msg, /looks like ANOTHER harness's model id/);
+  assert.doesNotMatch(msg, /SILENTLY inherit/);
+  assert.match(msg, /Known claude-code aliases: .*sonnet/);
 
   // apply's exit contract: a blocked role ⇒ non-zero (3), same as a capability violation.
   const hadTruthfulnessBlock = plan.violations.length > 0;
@@ -279,26 +284,69 @@ test("model gate: claude-code role bound to a droid id is BLOCKED (not written)"
   assert.notEqual(WIRE_EXIT.truthfulness, 0);
 });
 
-test("model gate: every claude-code alias in the live roster resolves; junk does not", () => {
+test("model gate tier 1 (known): every claude-code alias in the live roster classifies known", () => {
   // .claude/agents/*.md of this repo (verified 2026-07-12): opus/sonnet/haiku/fable.
   for (const m of ["opus", "sonnet", "haiku", "fable", "inherit", "OPUS"]) {
+    assert.equal(classifyModel("claude-code", m), "known", `${m} must be known`);
     assert.equal(isResolvableModel("claude-code", m), true, `${m} must resolve`);
-  }
-  // Concrete Anthropic ids (claude-api canon), incl. the 1M-context suffix form.
-  for (const m of ["claude-opus-4-8", "claude-sonnet-5", "claude-opus-4-8[1m]"]) {
-    assert.equal(isResolvableModel("claude-code", m), true, `${m} must resolve`);
-  }
-  for (const m of [
-    "custom:DeepSeek-V4-Pro-0",
-    "custom:Qwen3.7-Max-[1M-ctx-·-orchestrator]-0",
-    "deepseek/deepseek-v4-pro",
-    "anthropic/claude-sonnet-4",
-    "claude-sonnet-4.6", // typo'd id
-    "gpt-5",
-  ]) {
-    assert.equal(isResolvableModel("claude-code", m), false, `${m} must NOT resolve`);
   }
   assert.ok(allowedModels("claude-code")!.length > 0);
+});
+
+test("model gate tier 2 (unknown, non-blocking): shape-valid claude-* ids not on the alias list warn, never block", () => {
+  // Revised 2026-07-13 (model-gate-revision-premise-falsified): a live measurement disproved
+  // the "CC silently inherits on a bad id" premise the old closed list was built on, and showed
+  // CC fails LOUD at runtime instead. A concrete Anthropic id — real (claude-opus-4-8, incl. the
+  // 1M-context suffix form) or a plain TYPO (claude-sonnet-4.6) — is now "unknown": shape-valid,
+  // not on the small known-alias list, NOT blocked. The gate can no longer tell a typo from a
+  // real id it just hasn't heard of yet; that tradeoff is deliberate (see harness-models.ts).
+  for (const m of ["claude-opus-4-8", "claude-sonnet-5", "claude-opus-4-8[1m]", "claude-sonnet-4.6"]) {
+    assert.equal(classifyModel("claude-code", m), "unknown", `${m} must be unknown (shape-valid, unlisted)`);
+    assert.equal(isResolvableModel("claude-code", m), true, `${m} must not be blocked`);
+  }
+});
+
+test("model gate tier 3 (foreign, blocking): another harness's id shape, or no recognizable shape, is refused", () => {
+  for (const m of [
+    "custom:DeepSeek-V4-Pro-0", // droid BYOK scheme
+    "custom:Qwen3.7-Max-[1M-ctx-·-orchestrator]-0",
+    "deepseek/deepseek-v4-pro", // opencode provider/model shape
+    "opencode/some-model",
+    "anthropic/claude-sonnet-4", // provider-prefixed — still opencode's shape, not CC's
+    "gpt-5", // no recognizable shape at all — not claude-*, not provider/model or scheme:id
+  ]) {
+    assert.equal(classifyModel("claude-code", m), "foreign", `${m} must be foreign`);
+    assert.equal(isResolvableModel("claude-code", m), false, `${m} must NOT resolve`);
+  }
+});
+
+test("model gate: planApply WRITES a role bound to an unknown-tier model, with a non-blocking warning", () => {
+  // The whole point of the revision: a real-but-unlisted id (e.g. a future claude-opus-5) must
+  // not be blocked the way the old closed list would have blocked it.
+  const portable: AgentDefinition = {
+    name: "p",
+    roles: [{ slug: "worker", tier: "worker", requiredCapabilities: [] }],
+  };
+  const plan = planApply(portable, "claude-code", { worker: "claude-opus-5" });
+  assert.equal(plan.violations.length, 0, formatViolations(plan.violations));
+  assert.deepEqual(plan.skippedRoles, []);
+  const worker = plan.files.find((f) => f.relativePath.endsWith("worker.md"));
+  assert.ok(worker, "unknown-tier model must still be written, not blocked");
+  assert.match(worker!.content, /model: claude-opus-5/);
+  assert.equal(plan.warnings.length, 1);
+  assert.match(plan.warnings[0]!, /not on the harness's known-alias list/);
+  assert.match(plan.warnings[0]!, /fails LOUD at runtime/);
+
+  // Same fact via the pure helper directly.
+  const role = portable.roles[0]!;
+  const warning = modelShapeWarning(role, "claude-code", "claude-opus-5");
+  assert.ok(warning);
+  assert.equal(modelShapeWarning(role, "claude-code", "sonnet"), null, "known tier warns nothing");
+  assert.equal(
+    modelShapeWarning(role, "claude-code", "custom:DeepSeek-V4-Pro-0"),
+    null,
+    "foreign tier is a violation, not a warning — modelShapeWarning stays silent on it",
+  );
 });
 
 test("model gate: droid/opencode id spaces stay open (no invented allow-list)", () => {
