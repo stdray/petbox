@@ -128,7 +128,14 @@ public partial class Program
 		// Workspace creation + the allowance that gates it. The page handlers get THIS, not a
 		// connection: core.db stops at the service boundary, and the quota is enforced by the write
 		// itself (the check is welded into the INSERT), not by whoever rendered the button.
-		builder.Services.AddSingleton<WorkspaceProvisioning>();
+		//
+		// SCOPED, not singleton: it now claims the quota slot through IWorkspaceMembershipService
+		// (which is scoped — it is the one door to WorkspaceMembers, and the seam a cache would live
+		// behind), and a singleton holding a scoped service is a captive dependency —
+		// CaptiveDependencyTests fails the build on one. It is stateless, so a per-request instance
+		// costs nothing; every consumer (the create pages, WorkspaceAdminService, the
+		// WorkspaceCreate authorization handler) is already scoped.
+		builder.Services.AddScoped<WorkspaceProvisioning>();
 		// The catalog of projects/entities (core.db) — the SOURCE OF TRUTH the background enrichment
 		// jobs ask "which projects exist" (spec: catalog-is-source-of-truth). Per-project SQLite files
 		// are created lazily, so a job that enumerated `{tier}/*.db` was blind to a project without a

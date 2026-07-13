@@ -4,8 +4,10 @@ using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Mvc.ViewFeatures;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Web.Auth;
 using PetBox.Web.Pages.Admin;
 
 namespace PetBox.Tests.Web;
@@ -33,9 +35,19 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
+	// The page holds no connection any more — the gate, the cascade and the create all live in
+	// IWorkspaceAdminService (AGENTS.md: the database is visible only in the service layer). The
+	// fixture therefore composes the REAL service over the same core.db, so these tests still exercise
+	// the production write path end to end; not a single assertion below changed.
+	WorkspaceProvisioning Provisioning() =>
+		new(_db.Factory(), new WorkspaceMembershipService(_db.Factory()));
+
 	WorkspacesModel Page()
 	{
-		var page = new WorkspacesModel(_db.Factory(), new WorkspaceProvisioning(_db.Factory()));
+		var dbf = _db.Factory();
+		var members = new WorkspaceMembershipService(dbf);
+		var page = new WorkspacesModel(new WorkspaceAdminService(
+			dbf, new ProjectDirectory(dbf), members, new WorkspaceProvisioning(dbf, members)));
 		var http = new DefaultHttpContext
 		{
 			User = new ClaimsPrincipal(new ClaimsIdentity(
@@ -82,7 +94,7 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 		var uid = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "u2", PasswordHash = "x", CreatedAt = DateTime.UtcNow, WorkspaceQuota = 1 });
 
-		var created = await new WorkspaceProvisioning(_db.Factory())
+		var created = await Provisioning()
 			.CreateAsync("solo", "Solo", "", uid, bypassQuota: false);
 		created.Ok.Should().BeTrue();
 		_db.Projects.Any(p => p.Key == "$ws-solo").Should().BeTrue("the production create path provisions the container");
@@ -103,7 +115,7 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 	{
 		var uid = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "u3", PasswordHash = "x", CreatedAt = DateTime.UtcNow, WorkspaceQuota = 1 });
-		var provisioning = new WorkspaceProvisioning(_db.Factory());
+		var provisioning = Provisioning();
 
 		(await provisioning.CreateAsync("first", "First", "", uid, bypassQuota: false)).Ok.Should().BeTrue();
 		(await provisioning.CanCreateAsync(uid)).Should().BeFalse("the allowance of 1 is spent");
@@ -122,7 +134,7 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 	{
 		var uid = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "u4", PasswordHash = "x", CreatedAt = DateTime.UtcNow, WorkspaceQuota = 1 });
-		(await new WorkspaceProvisioning(_db.Factory())
+		(await Provisioning()
 			.CreateAsync("corp", "Corp", "", uid, bypassQuota: false)).Ok.Should().BeTrue();
 		_db.Insert(new Project { Key = "web", WorkspaceKey = "corp", Name = "Web", Description = "" });
 
