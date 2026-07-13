@@ -310,6 +310,64 @@ public static partial class KqlTransformer
 		return ApplyPipeline(source, operators.Skip(1).ToList(), EventsSpec(now).MakeContext);
 	}
 
+	// The live-tail row filter (live-tail-sse-transport-broken, phase 2: a live tail that ignores the
+	// table's ?kql= is a filter that silently stops working at the ONE moment it is needed — the user
+	// just armed it and is watching). This reuses the SAME predicate compiler the table query and the
+	// share pages use (KqlScalar.Compile via ApplyWhere below) — there is no second KQL implementation
+	// and no hand-rolled C# string filter to drift from it.
+	//
+	// Only `where` clauses are honored. `order by` / `take` / `top` are silently DROPPED, not applied and
+	// not rejected: they govern a ONE-SHOT materialized result, and have no defined meaning against an
+	// unbounded append-only stream — LiveTailAsync already owns ordering (the (Timestamp,Id) cursor) and
+	// batching (its own page size) for the stream, so a KQL `take 20` composing with those would either
+	// silently cap the tail at 20 events ever, or be a no-op depending on where it landed in the pipe; a
+	// dropped `take`/`order` is a well-defined, documented "the table's row bound isn't a thing here",
+	// not a landmine. `where Level >= 3 | take 20 | where ServiceKey == "x"` still applies BOTH where
+	// clauses (their conjunction) — dropping take/order does not touch filtering correctness.
+	//
+	// A query carrying a SHAPE-CHANGING operator (summarize/project/distinct/join/lookup/mv-expand/parse/
+	// count) has no per-row form to stream at all — "the live tail of an aggregate" is not a stream, it is
+	// a moving target that would need to be recomputed from scratch on every event. Callers MUST reject
+	// those before calling this (LiveTailAsync does, via HasShapeChangingOps, with a 400 explaining why);
+	// this method throws UnsupportedKqlException for one that slips through, exactly like ApplyPipeline
+	// does for any operator kind it does not recognize — a live tail never falls back to unfiltered on an
+	// operator it cannot honor.
+	public static IQueryable<LogEntryRecord> ApplyRowFilters(IQueryable<LogEntryRecord> source, KustoCode code, TimeProvider? clock = null)
+	{
+		var parseErrors = code.GetDiagnostics().Where(d => d.Severity == "Error").ToList();
+		if (parseErrors.Count > 0)
+			throw new UnsupportedKqlException("KQL parse error: " + string.Join("; ", parseErrors.Select(d => d.Message)));
+
+		var operators = FlattenPipeline(code.Syntax).ToList();
+		if (operators.Count == 0)
+			throw new UnsupportedKqlException("empty query");
+
+		if (operators[0] is not NameReference tableName)
+			throw new UnsupportedKqlException($"expected table reference, got {operators[0].GetType().Name}");
+		// Live tail is an events-only surface — the Logs page already hides the toggle for a spans/metrics
+		// query (IsShapeChanged is forced true for those), so reaching here with another root means a
+		// hand-built request, and it is rejected the same way Apply rejects it.
+		if (!string.Equals(tableName.SimpleName, EventsTable, StringComparison.Ordinal))
+			throw new UnsupportedKqlException(
+				$"unknown table '{tableName.SimpleName}'; only '{EventsTable}' is supported here");
+
+		var now = (clock ?? TimeProvider.System).GetUtcNow().UtcDateTime;
+		var makeCtx = EventsSpec(now).MakeContext;
+
+		var q = source;
+		foreach (var op in operators.Skip(1))
+		{
+			q = op switch
+			{
+				FilterOperator f => ApplyWhere(q, f, makeCtx),
+				// order/take/top: see the method doc above — dropped, not applied, not an error.
+				TakeOperator or SortOperator or TopOperator => q,
+				_ => throw new UnsupportedKqlException($"operator '{op.Kind}' not supported in a live-tail filter"),
+			};
+		}
+		return q;
+	}
+
 	// Kusto names an un-aliased `by bin(Col, …)` after Col; fall back to the function name.
 	static string DefaultKeyName(FunctionCallExpression f) =>
 		f.ArgumentList.Expressions.Count > 0 && f.ArgumentList.Expressions[0].Element is NameReference n

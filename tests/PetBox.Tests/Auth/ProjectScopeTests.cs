@@ -135,5 +135,7 @@ public sealed class ProjectScopeSandboxTests
 			throw new NotSupportedException();
 		public Task<bool> IsSandboxAsync(string projectKey, CancellationToken ct = default) =>
 			Task.FromResult(sandboxProjects.Contains(projectKey));
+		public Task<string?> WorkspaceKeyOfAsync(string projectKey, CancellationToken ct = default) =>
+			throw new NotSupportedException();
 	}
 }

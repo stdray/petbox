@@ -76,7 +76,17 @@ public static class LogApi
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
 			.Produces<KqlExecutionErrorResponse>(StatusCodes.Status500InternalServerError)
 			.RequireAuthorization("ApiKey");
-		app.MapGet("/api/logs/{projectKey}/{logName}/live-tail", LiveTailAsync).RequireAuthorization("ApiKey");
+		// The ONLY log route a BROWSER opens directly, and the only one on the ApiKeyOrCookie policy: a
+		// browser's EventSource cannot send headers, so it arrives with the session cookie and nothing
+		// else — under the header-only "ApiKey" policy every live tail in the UI 401'd, which is why the
+		// feature never delivered a single event (live-tail-sse-transport-broken). The policy admits BOTH
+		// schemes; which one authenticated then decides which authorization applies — see
+		// AuthorizeLiveTailAsync, where the two principals are kept strictly apart.
+		app.MapGet("/api/logs/{projectKey}/{logName}/live-tail", LiveTailAsync)
+			.Produces(StatusCodes.Status200OK, contentType: "text/event-stream")
+			.Produces<ErrorResponse>(StatusCodes.Status400BadRequest)
+			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
+			.RequireAuthorization("ApiKeyOrCookie");
 		app.MapGet("/api/logs/{projectKey}/{logName}/services", GetServicesAsync)
 			.Produces<List<string>>()
 			.Produces<ErrorResponse>(StatusCodes.Status404NotFound)
@@ -139,6 +149,49 @@ public static class LogApi
 
 	static bool HasScope(HttpContext ctx, string required) =>
 		HasScope(ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "", required);
+
+	// Live-tail's authorization, and the ONE place that knows the two principals are not
+	// interchangeable. The route accepts both schemes (a browser EventSource can only bring a cookie),
+	// but they prove entirely different things and each keeps its own gate:
+	//
+	//   api key — carries `project` + `scopes`. Unchanged from before this endpoint accepted cookies:
+	//             ProjectScope (project claim + sandbox containment) AND the logs:query scope, exactly
+	//             what QueryLogsAsync demands. Nothing here weakens the key path.
+	//   cookie  — carries NEITHER a project claim nor scopes; it carries workspace-role claims. So it
+	//             is authorized the way the logs PAGE authorizes it: the project's OWNING workspace
+	//             (asked of the catalog — the route has no {workspaceKey} to bind against, unlike the
+	//             pages ProjectWorkspaceBindingFilter covers) must be one this session holds at least
+	//             Viewer in; sysadmin keeps its free pass. A session with no role in that workspace is
+	//             refused — this is the cross-tenant surface of the whole change.
+	//
+	// Crossing the two would be the hole: run a cookie session through the scope gate and every browser
+	// is denied (a cookie has no scopes at all); run an api key through the workspace gate and a key
+	// lacking logs:query walks in through a door meant for humans.
+	static async Task<IResult?> AuthorizeLiveTailAsync(
+		HttpContext ctx, string projectKey, IProjectCatalog catalog, CancellationToken ct)
+	{
+		if (IsApiKeyPrincipal(ctx))
+		{
+			if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
+			return HasScope(ctx, ApiKeyScopes.LogsQuery) ? null : Results.Forbid();
+		}
+
+		var workspaceKey = await catalog.WorkspaceKeyOfAsync(projectKey, ct);
+		// IsNullOrEmpty, not `is null`: a project row's WorkspaceKey defaults to "" in the model, not
+		// null. Fail-closed either way today (no membership carries an empty workspace key, so
+		// HasWorkspaceRoleAtLeast("") would find no role and Forbid regardless) — this just removes the
+		// dependency on that being true forever, so a future default change can't quietly open the gate.
+		if (string.IsNullOrEmpty(workspaceKey)) return Results.Forbid();
+		return ctx.User.HasWorkspaceRoleAtLeast(workspaceKey, WorkspaceRole.Viewer) ? null : Results.Forbid();
+	}
+
+	// An api-key request is one the ApiKey SCHEME authenticated — asked of the identity, not of the
+	// presence of a claim: `ClaimsPrincipal.Identity` is merely the FIRST identity, and a policy that
+	// lists two schemes merges both when both authenticate, so which one lands first is an ordering
+	// detail no authorization decision may rest on.
+	static bool IsApiKeyPrincipal(HttpContext ctx) =>
+		ctx.User.Identities.Any(i => i.IsAuthenticated
+			&& string.Equals(i.AuthenticationType, ApiKeyAuthenticationHandler.SchemeName, StringComparison.Ordinal));
 
 	static bool HasScope(string scopes, string required) =>
 		(scopes ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
@@ -516,16 +569,79 @@ public static class LogApi
 		return Results.Ok();
 	}
 
+	// Rows are re-read from the DB in pages of this size, so a long catch-up streams instead of
+	// materializing the whole gap at once.
+	const int LiveTailBatch = 200;
+
 	static async Task<IResult> LiveTailAsync(
 		HttpContext ctx,
 		string projectKey,
 		string logName,
 		ITailBroadcaster broadcaster,
+		ILogStore store,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		if (await AuthorizeProjectAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
-		if (!HasScope(ctx, ApiKeyScopes.LogsQuery)) return Results.Forbid();
+		if (await AuthorizeLiveTailAsync(ctx, projectKey, catalog, ct) is { } forbid) return forbid;
+		if (!await store.ExistsAsync(projectKey, logName, ct))
+			return Results.NotFound(new ErrorResponse($"log '{logName}' not found in project '{projectKey}'"));
+
+		// The SAME ?kql= the table applies (ts/logs.ts's newestRenderedCursor caller passes
+		// target.dataset["kql"], the exact text on screen). Ignoring it used to mean the tail fired a
+		// firehose of every event regardless of the filter the user just switched it on to watch through
+		// — the filter breaking at exactly the moment it is needed. Validated BEFORE any SSE header is
+		// written, so a rejected query gets a normal 400 JSON body instead of an aborted stream.
+		var kqlText = ctx.Request.Query["kql"].FirstOrDefault();
+		var kql = string.IsNullOrWhiteSpace(kqlText) ? KqlTransformer.EventsTable : kqlText.Trim();
+		KustoCode code;
+		try { code = KustoCode.Parse(kql); }
+		catch (Exception ex) { return Results.BadRequest(new ErrorResponse(ex.Message)); }
+		var parseErrors = code.GetDiagnostics().Where(d => d.Severity == "Error").ToList();
+		if (parseErrors.Count > 0)
+			return Results.BadRequest(new ErrorResponse("KQL parse error: " + string.Join("; ", parseErrors.Select(d => d.Message))));
+		var root = KqlTransformer.GetRootTableName(code);
+		if (root is not null && !string.Equals(root, KqlTransformer.EventsTable, StringComparison.Ordinal))
+			return Results.BadRequest(new ErrorResponse(KqlTransformer.UnknownTableMessage(root)));
+		// summarize/project/distinct/join/lookup/mv-expand/parse/count reshape or aggregate rows — there
+		// is no per-row form of an aggregate to stream (a live tail of "count by Level" is not a stream,
+		// it is a moving total that would need recomputing from scratch on every event). The Logs page
+		// already hides the live-tail toggle for such a query (Index.cshtml's `@if
+		// (!Model.IsShapeChanged)`), so reaching this branch means a hand-built request; it is refused the
+		// same way the page would refuse to offer it, with the reason spelled out rather than silently
+		// falling back to an unfiltered firehose.
+		if (KqlTransformer.HasShapeChangingOps(code))
+			return Results.BadRequest(new ErrorResponse(
+				"live tail applies row-level filters ('where') only; this query changes the row shape "
+				+ "(summarize/project/distinct/join/lookup/mv-expand/parse/count) and has no per-row form to "
+				+ "stream — remove it to use live tail, or read this query from the table instead"));
+
+		// Where to resume from. Last-Event-ID beats ?since=: the browser sends it on its OWN automatic
+		// reconnect and it is the id: of the last event that actually arrived, which is strictly fresher
+		// than the ?since= frozen into the sse-connect URL when the tail was switched on. Both carry the
+		// same LogCursor the logs table pages by, so "everything newer than the last row on screen" is
+		// one comparison, not a per-surface reinvention.
+		var cursor = LogCursor.TryDecode(ctx.Request.Headers["Last-Event-ID"].FirstOrDefault())
+			?? LogCursor.TryDecode(ctx.Request.Query["since"].FirstOrDefault());
+
+		using var logDb = store.NewEnsuredContext(projectKey, logName);
+		using var link = CancellationTokenSource.CreateLinkedTokenSource(ct);
+
+		// Subscribe BEFORE reading anything, and treat the broadcast purely as a WAKE-UP: every row that
+		// goes out is read back from the DB past the cursor, never taken from the broadcast record (a
+		// BulkCopy'd LogEntryRecord never gets its identity back — its Id is 0, so it can be neither a
+		// row id nor a cursor). The ingestion pipeline INSERTS before it publishes, so with the
+		// subscription registered first an event is either already committed (the drain below reads it)
+		// or published after the drain (a signal wakes us and the next drain reads it). No third case —
+		// that is what closes the gap between the last row the page rendered and the stream opening.
+		// It is MoveNextAsync (not GetAsyncEnumerator) that registers the subscriber: the iterator body
+		// runs synchronously up to its first await, and it joins the subscriber list before that await.
+		await using var signals = broadcaster.Subscribe(projectKey, logName, link.Token).GetAsyncEnumerator(link.Token);
+		var pending = signals.MoveNextAsync().AsTask();
+
+		// No cursor = nothing on screen (an empty table, or a filtered view that matched nothing): start
+		// at the log's CURRENT tip, i.e. only what happens from now on. That is the old behavior, and the
+		// only one that makes sense with nothing rendered to catch up to.
+		cursor ??= await TipAsync(logDb, ct);
 
 		ctx.Response.Headers.ContentType = "text/event-stream";
 		ctx.Response.Headers.CacheControl = "no-cache";
@@ -534,34 +650,103 @@ public static class LogApi
 
 		try
 		{
-			await foreach (var record in broadcaster.Subscribe(projectKey, logName, ct).ConfigureAwait(false))
+			cursor = await DrainAsync(ctx, logDb, cursor.Value, code, ct);
+			while (await pending)
 			{
-				var sb = new System.Text.StringBuilder();
-				sb.Append("event: event\n");
-				sb.Append("data: ");
-				sb.Append("<tr class=\"event-live\" data-event-id=\"");
-				sb.Append(record.Id);
-				// data-ms matches every other log/trace row template (_EventRow.cshtml, Traces.cshtml,
-				// Trace.cshtml) — sub-second precision is data here (event ordering within a second),
-				// not noise; see localTime.ts's renderLocalTimes, which reads this attribute per-element.
-				sb.Append("\"><td><time class=\"local-time\" data-ms datetime=\"");
-				var dt = DateTimeOffset.FromUnixTimeMilliseconds(record.TimestampMs);
-				sb.Append(dt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
-				sb.Append("\">");
-				sb.Append(dt.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture));
-				sb.Append("</time></td><td><span class=\"badge badge-xs\">");
-				sb.Append(record.Level);
-				sb.Append("</span></td><td class=\"text-sm\">");
-				sb.Append(WebUtility.HtmlEncode(record.Message ?? string.Empty));
-				sb.Append("</td><td class=\"font-mono text-xs\">");
-				sb.Append(WebUtility.HtmlEncode(record.ServiceKey ?? string.Empty));
-				sb.Append("</td></tr>\n\n");
-				await ctx.Response.WriteAsync(sb.ToString(), ct);
-				await ctx.Response.Body.FlushAsync(ct);
+				pending = signals.MoveNextAsync().AsTask();
+				cursor = await DrainAsync(ctx, logDb, cursor.Value, code, ct);
 			}
 		}
 		catch (OperationCanceledException) { }
+		finally
+		{
+			// A drain that threw (a dead response socket) leaves a MoveNextAsync in flight; disposing the
+			// iterator underneath it is undefined. Cancel, let it observe the cancel, then dispose. The
+			// Task form is what makes this safe — a consumed ValueTask must not be awaited twice.
+			await link.CancelAsync();
+			try { await pending; } catch (OperationCanceledException) { }
+		}
 
 		return Results.Empty;
+	}
+
+	// The newest committed row, by the table's own ordering key.
+	static async Task<LogCursor> TipAsync(LogDb logDb, CancellationToken ct)
+	{
+		var tip = await logDb.LogEntries
+			.OrderByDescending(e => e.TimestampMs)
+			.ThenByDescending(e => e.Id)
+			.FirstOrDefaultAsync(ct);
+		return tip is null ? default : new LogCursor(tip.TimestampMs, tip.Id);
+	}
+
+	// Everything committed strictly past `cursor` AND matching `kql`'s row filter, oldest first, in
+	// pages — and the cursor it ends on. The strict (Timestamp, Id) comparison is what makes equal
+	// timestamps safe: rows sharing a millisecond are separated by Id, so none is served twice and none
+	// is skipped. Ascending order + the client's hx-swap="afterbegin" puts the newest on top — the same
+	// order the table renders.
+	//
+	// The kql predicate composes with the cursor predicate as ONE query (ApplyRowFilters adds a further
+	// .Where() on top of the cursor's), so `Take(LiveTailBatch)` bounds MATCHING rows, not raw rows — a
+	// selective filter over a long backlog may scan well past LiveTailBatch raw rows per round trip, but
+	// never returns more than LiveTailBatch. The cursor always advances to the last MATCHING row actually
+	// sent, so a row that failed the filter is still "passed over" for good once a later matching row
+	// moves the cursor beyond it — it is not re-scanned, only never re-considered as a hit.
+	static async Task<LogCursor> DrainAsync(HttpContext ctx, LogDb logDb, LogCursor cursor, KustoCode kql, CancellationToken ct)
+	{
+		while (true)
+		{
+			var ts = cursor.TimestampMs;
+			var id = cursor.Id;
+			IQueryable<LogEntryRecord> filtered = logDb.LogEntries
+				.Where(e => e.TimestampMs > ts || (e.TimestampMs == ts && e.Id > id));
+			filtered = KqlTransformer.ApplyRowFilters(filtered, kql);
+			var batch = await filtered
+				.OrderBy(e => e.TimestampMs)
+				.ThenBy(e => e.Id)
+				.Take(LiveTailBatch)
+				.ToListAsync(ct);
+
+			if (batch.Count == 0) return cursor;
+
+			foreach (var record in batch)
+			{
+				cursor = new LogCursor(record.TimestampMs, record.Id);
+				await ctx.Response.WriteAsync(RenderEvent(record, cursor), ct);
+			}
+			await ctx.Response.Body.FlushAsync(ct);
+
+			if (batch.Count < LiveTailBatch) return cursor;
+		}
+	}
+
+	// One SSE frame. The `id:` field is the row's cursor, so the browser echoes it back as
+	// Last-Event-ID when it auto-reconnects and the stream resumes exactly where it stopped.
+	static string RenderEvent(LogEntryRecord record, LogCursor cursor)
+	{
+		var sb = new System.Text.StringBuilder();
+		sb.Append("id: ");
+		sb.Append(cursor.Encode());
+		sb.Append('\n');
+		sb.Append("event: event\n");
+		sb.Append("data: ");
+		sb.Append("<tr class=\"event-live\" data-event-id=\"");
+		sb.Append(record.Id);
+		// data-ms matches every other log/trace row template (_EventRow.cshtml, Traces.cshtml,
+		// Trace.cshtml) — sub-second precision is data here (event ordering within a second),
+		// not noise; see localTime.ts's renderLocalTimes, which reads this attribute per-element.
+		sb.Append("\"><td><time class=\"local-time\" data-ms datetime=\"");
+		var dt = DateTimeOffset.FromUnixTimeMilliseconds(record.TimestampMs);
+		sb.Append(dt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
+		sb.Append("\">");
+		sb.Append(dt.ToString("yyyy-MM-dd HH:mm:ss.fff", CultureInfo.InvariantCulture));
+		sb.Append("</time></td><td><span class=\"badge badge-xs\">");
+		sb.Append(record.Level);
+		sb.Append("</span></td><td class=\"text-sm\">");
+		sb.Append(WebUtility.HtmlEncode(record.Message ?? string.Empty));
+		sb.Append("</td><td class=\"font-mono text-xs\">");
+		sb.Append(WebUtility.HtmlEncode(record.ServiceKey ?? string.Empty));
+		sb.Append("</td></tr>\n\n");
+		return sb.ToString();
 	}
 }
