@@ -1,8 +1,13 @@
 @* Sidebar pin toggle — pins the sidebar docked open at all widths, or lets it
-   collapse into a floating drawer. State persists in localStorage and applies to
-   every zone (/ui, /ui/admin, /ui/me); behaviour lives in ts/sidebar.ts. *@
-<button type="button" class="btn btn-sm btn-ghost btn-square" data-sidebar-pin
-	aria-pressed="true" title="Pin sidebar open" data-testid="nav-sidebar-pin">
+   collapse into a floating drawer. State lives in the `petbox.ui` cookie (ui-state-framework,
+   BrowserState.SidebarPinned) so the server renders aria-pressed/btn-active correctly on the
+   FIRST response — no post-load correction. Applies to every zone (/ui, /ui/admin, /ui/me);
+   click behaviour lives in ts/sidebar.ts. *@
+@{
+	var pinned = (ViewData["UiState"] as PetBox.Core.Settings.BrowserState)?.SidebarPinned ?? true;
+}
+<button type="button" class="btn btn-sm btn-ghost btn-square @(pinned ? "btn-active" : "")" data-sidebar-pin
+	aria-pressed="@(pinned ? "true" : "false")" title="Pin sidebar open" data-testid="nav-sidebar-pin">
 	<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
 		<path d="M14 4v5c0 1.12.37 2.16 1 3H9c.65-.86 1-1.9 1-3V4h4m3-2H7c-.55 0-1 .45-1 1s.45 1 1 1h1v5c0 1.66-1.34 3-3 3v2h5.97v7l1 1 1-1v-7H19v-2c-1.66 0-3-1.34-3-3V4h1c.55 0 1-.45 1-1s-.45-1-1-1z" />
 	</svg>

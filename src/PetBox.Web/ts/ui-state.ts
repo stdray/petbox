@@ -7,12 +7,13 @@
 //
 // The whole app writes ONE cookie, `petbox.ui`, carrying a flat JSON object keyed by each
 // [BrowserState] property's `Key` — never one cookie per feature (that grows every request's
-// header on each new preference). The interface ships with zero fields today: each follow-up
-// (sidebar pin, board view, board filters, kql panel pin, dead-tree cookie) adds its own key here
-// and to BrowserState.cs, and reads/writes it through readUiState/writeUiState below instead of
-// inventing its own cookie-merge logic.
-// biome-ignore lint/suspicious/noEmptyInterface: intentionally empty scaffold, kept an `interface` (not a type alias) because UiStateTypeSyncTests parses `interface Name {` — each follow-up adds its field here and to BrowserState.cs.
-export interface BrowserState {}
+// header on each new preference). `sidebarPinned` is the first field (work
+// `sidebar-pin-server-state`); the remaining follow-ups (board view, board filters, kql panel
+// pin, dead-tree cookie) each add their own key here and to BrowserState.cs, and read/write it
+// through readUiState/writeUiState below instead of inventing their own cookie-merge logic.
+export interface BrowserState {
+	sidebarPinned?: boolean;
+}
 
 const COOKIE_NAME = "petbox.ui";
 

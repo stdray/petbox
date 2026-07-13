@@ -21,11 +21,11 @@ public sealed class UiStateTypeSyncTests
 	}
 
 	// The REAL guard: PetBox.Core.Settings.BrowserState vs the hand-written ui-state.ts interface.
-	// Vacuously green today — BrowserState ships with zero [BrowserState] properties by design (see
-	// its doc comment: this work node is the mechanism, its five follow-ups add the fields). It
-	// starts guarding for real the moment a follow-up adds a property to one side and forgets the
-	// other. The synthetic fixtures below prove the comparator itself DOES fail loudly — the real
-	// pair can't demonstrate that while it's empty on both sides.
+	// No longer vacuous as of work `sidebar-pin-server-state`: BrowserState.SidebarPinned is the
+	// first [BrowserState] property, so this now actually compares a non-empty pair (previously
+	// 0 vs 0). The synthetic fixtures below additionally prove the comparator fails loudly on a
+	// missing property, an extra property, and a type mismatch — independent of what the real
+	// pair currently declares.
 	[Fact]
 	public void BrowserState_MatchesTheHandWrittenTsInterface()
 	{

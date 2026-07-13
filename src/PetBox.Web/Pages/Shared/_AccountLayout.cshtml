@@ -6,6 +6,12 @@
 	var backLabel = $"Back to {currentWs}";
 
 	var (dataTheme, systemScript) = await PetBox.Web.Settings.ThemeHelper.ResolveForCurrentUserAsync(Nav, Settings, Context);
+
+	// Combined DB+cookie UI-state record (ui-state-framework), resolved BEFORE render exactly like
+	// the theme above — sidebarPinned drives the drawer-open class below so the account zone's
+	// first response already carries the right class too (SidebarPinTests covers this zone).
+	var uiState = await PetBox.Web.Settings.UiStateResolver.ResolveForCurrentUserAsync<PetBox.Core.Settings.BrowserState>(Nav, Settings, Context);
+	ViewData["UiState"] = uiState;
 }
 <!DOCTYPE html>
 <html lang="en" data-theme="@dataTheme" class="h-full">
@@ -23,7 +29,7 @@
 	<script type="module" src="~/js/site.js" asp-append-version="true"></script>
 </head>
 <body class="min-h-full bg-base-100">
-	<div class="drawer drawer-open">
+	<div class="drawer @(uiState.SidebarPinned ? "drawer-open" : "")">
 		<input id="account-sidebar-toggle" type="checkbox" class="drawer-toggle" />
 		<div class="drawer-content flex flex-col min-h-screen">
 			<header class="navbar bg-base-200 border-b border-base-300 px-2 lg:px-4 min-h-12" data-testid="account-navbar">

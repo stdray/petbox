@@ -7,12 +7,17 @@ namespace PetBox.Core.Settings;
 //   - a property marked [BrowserState] resolves from the single `petbox.ui` JSON cookie —
 //     window/device state, visible to the server before HTML is sent.
 //
-// Ships with ZERO properties: this work node (ui-state-framework) is the mechanism only. Its
-// five blocked follow-ups — sidebar pin, board view mode, board filters, kql panel pin, the dead
-// sidebar-tree cookie — each add THEIR property here (tagged [Setting] or [BrowserState] per the
-// storage-boundary call in their own spec) instead of standing up a parallel resolver or an extra
-// cookie. Do not add a demo/placeholder property to prove the mechanism works — UiStateResolverTests
-// and UiStateTypeSyncTests exercise it against synthetic fixture types instead, the same way
-// FluentMappingCompletenessTests and SettingsResolverTests prove their guards without requiring
-// production data to already exhibit the scar.
-public sealed record BrowserState;
+// SidebarPinned is the first real consumer (work `sidebar-pin-server-state`): whether the
+// sidebar drawer is docked open (pinned) or a floating collapsible overlay. Window/device state,
+// not a cross-device preference, so it lives in the cookie branch. Four more follow-ups — board
+// view mode, board filters, kql panel pin, the dead sidebar-tree cookie — each add THEIR own
+// property here (tagged [Setting] or [BrowserState] per the storage-boundary call in their own
+// spec) instead of standing up a parallel resolver or an extra cookie.
+public sealed record BrowserState
+{
+	// Docked-open drawer (true) vs a floating collapsible overlay (false). Default true matches
+	// the pre-existing hardcoded `drawer-open` every layout used to always print, so an
+	// anonymous/first-time visitor (no cookie yet) still sees the drawer open, unchanged.
+	[BrowserState(Key = "sidebarPinned")]
+	public bool SidebarPinned { get; init; } = true;
+}
