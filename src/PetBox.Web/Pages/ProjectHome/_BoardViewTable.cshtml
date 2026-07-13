@@ -16,7 +16,10 @@
 		var badge = new StatusBadgeModel(Model.Runtime, Model.KindSlug, n.Status);
 		var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
 		// board-terminal-negative-visible review finding: strikethrough scoped to the spec board.
-		var isSpecBoard = Model.Runtime.PresetKind(Model.KindSlug) == BoardKind.Spec;
+		// IsSpecKind, NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07):
+		// PresetKind nulls out for any DEFINED kind, and a real project's spec board is
+		// virtually always definition-resolved — see MethodologyRuntime.IsSpecKind's own comment.
+		var isSpecBoard = Model.Runtime.IsSpecKind(Model.KindSlug);
 		return new TaskTableRow(
 			NodeId: n.NodeId, Key: n.Key, Title: n.Title,
 			Url: Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key),

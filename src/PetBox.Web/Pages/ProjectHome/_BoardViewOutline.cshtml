@@ -32,7 +32,10 @@ else
 {
 	var navigate = string.Equals(Model.OutlineRevealMode, OutlineRevealModeNames.Navigate, StringComparison.Ordinal);
 	// board-terminal-negative-visible review finding: strikethrough scoped to the spec board only.
-	var isSpecBoard = Model.Runtime.PresetKind(Model.KindSlug) == BoardKind.Spec;
+	// IsSpecKind, NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07):
+	// PresetKind nulls out for any DEFINED kind, and a real project's spec board is virtually
+	// always definition-resolved — see MethodologyRuntime.IsSpecKind's own comment.
+	var isSpecBoard = Model.Runtime.IsSpecKind(Model.KindSlug);
 	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<ul class="flex flex-col gap-1" data-testid="board-outline" data-reveal-mode="@Model.OutlineRevealMode" data-sort-scope>
