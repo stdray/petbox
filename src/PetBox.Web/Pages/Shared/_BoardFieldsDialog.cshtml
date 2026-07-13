@@ -30,9 +30,15 @@
 				<input type="hidden" name="fieldsSet" value="1" />
 				@foreach (var (key, label) in BoardFieldNames.Options)
 				{
-					<label class="label cursor-pointer justify-start gap-2">
-						<input type="checkbox" name="fields" value="@key" class="checkbox checkbox-sm" data-testid="field-@key" checked="@(Model.Fields.Has(key) ? "checked" : null)" />
-						<span class="label-text">@label</span>
+					// board-view-outline-show-bodies: Body is disabled (not just unchecked) when the
+					// current board's outline is Navigate — checking it would have zero effect on the
+					// render, so a live checkbox would be a lie. Still posts nothing when disabled
+					// (browsers never submit a disabled control), matching what the outline actually
+					// does with it.
+					var disabled = Model.BodyUnavailable && key == BoardFieldNames.Body;
+					<label class="label cursor-pointer justify-start gap-2 @(disabled ? "opacity-50" : "")">
+						<input type="checkbox" name="fields" value="@key" class="checkbox checkbox-sm" data-testid="field-@key" checked="@(Model.Fields.Has(key) ? "checked" : null)" disabled="@(disabled ? "disabled" : null)" />
+						<span class="label-text">@label@(disabled ? " (opens on its own page here)" : "")</span>
 					</label>
 				}
 				<div class="mt-2 flex items-center gap-2">

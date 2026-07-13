@@ -2,15 +2,25 @@
 @* Outline view mode (board-view-mode-framework): a heading-hierarchy table of contents over the
    SAME DFS-ordered nodes the tree pane uses (part_of depth, via n.Depth) — just headings, not
    full cards. ONE partial serves every board kind.
-   board-view-fields: Model.Fields.Body is what actually decides whether a row gets the lazy-expand
-   affordance — Model.OutlineRevealMode only seeds Fields' DEFAULT (BoardFieldConfig.Default), so a
-   board whose kind defaults outline bodies off (everything but spec today) can still opt them in
-   via the dialog, same as every other field. The fetch itself (OnGetNodeBodyAsync) doesn't care
-   which kind asked — expanding always works once Body is on:
-     - <details>'s native `toggle` event fires an htmx GET at OnGetNodeBodyAsync, which fetches and
-       renders JUST that node's body on demand — no body ships in this page's initial HTML
-       (board-body-truncate: inline body only on explicit reveal).
-     - Body off: no expand affordance — the heading link goes straight to the node page.
+   board-view-fields / board-view-outline-show-bodies: a row's body rendering is decided by TWO
+   signals — Model.Fields.Body (the dialog toggle, shared vocabulary with every other view mode)
+   and Model.OutlineRevealMode (DATA on the kind, Runtime.OutlineReveal) — giving THREE states:
+     - navigate kind (wiki-like boards, potentially long bodies) — Body is IGNORED here no matter
+       what the dialog says: rendering every body inline would ship megabytes on page load. The
+       heading link goes straight to the node page; the fields dialog (_BoardFieldsDialog, via
+       BodyUnavailable below) disables the checkbox and says why, so the ignore is visible, not
+       silent.
+     - Body OFF, non-navigate kind — the lazy per-node mechanism: a `<details>` whose native
+       `toggle` event fires an htmx GET at OnGetNodeBodyAsync on first expand — no body ships in
+       this page's initial HTML (board-body-truncate). Point-wise "peek at one node" without
+       turning bodies on for the whole board.
+     - Body ON, non-navigate kind — EAGER: TasksService.GetAsync already loaded every node's Body
+       server-side regardless of this flag (board-read-loads-all-bodies, a known hole this reuses
+       rather than fixes), so there's nothing to defer — every body renders straight into the
+       initial HTML, open by default, with ZERO `?handler=NodeBody` requests. Spec's kind defaults
+       to exactly this (inline-lazy reveal + Body on, BoardFieldConfig.Default) because spec
+       bodies are one short normative line each — reading the whole tree sequentially is the
+       common case there.
    board-node-filter / board-sort: the shared _BoardFilterSort bar plus the same ts/board.ts
    data-* contract _PlanNodeCard carries — the outline row list is DFS-flat exactly like the tree
    pane (indentation via margin-left, no actual DOM nesting), so it's ONE reorder scope. *@
@@ -20,21 +30,27 @@
 }
 else
 {
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:");
+	var navigate = string.Equals(Model.OutlineRevealMode, OutlineRevealModeNames.Navigate, StringComparison.Ordinal);
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate);
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<ul class="flex flex-col gap-1" data-testid="board-outline" data-reveal-mode="@Model.OutlineRevealMode" data-sort-scope>
 		@foreach (var n in Model.Nodes)
 		{
 			var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
 			var hasBody = !string.IsNullOrEmpty(n.Body);
+			// board-view-outline-show-bodies: eager (serve n.Body straight, already in hand) beats
+			// lazy (fetch-on-expand) when Body is on; navigate overrides both to plain — see the
+			// header comment for the full state table.
+			var eager = !navigate && Model.Fields.Body && hasBody;
+			var lazy = !navigate && !Model.Fields.Body && hasBody;
 			var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
 			// board-terminal-negative-visible: independent of Model.Fields.Status — the title
 			// strikethrough is an invariant over the data, not a dialog checkbox.
 			var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
 			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);
-			// board-body-truncate: unlike the tree card, outline never ships the body inline (it's
-			// fetched lazily on expand, or never at all with Body off) — data-search must NOT leak
-			// it into the initial HTML, so this omits n.Body where _PlanNodeCard includes it.
+			// board-body-truncate: data-search never carries body text, even in the eager branch —
+			// the body already sits in visible HTML there, so client-side search matching it via
+			// the row's own text content works without duplicating it into the attribute.
 			var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
 			// Tree edges (outline-tree-edges, live UI review finding): a left border per
 			// indented row is the same nesting-guide convention _CommentThread already uses for
@@ -43,7 +59,20 @@ else
 			var edgeClass = n.Depth > 0 ? "border-l-2 border-base-300/60 pl-2" : "";
 			var titleClass = "font-semibold link link-hover" + (terminalCancel ? " line-through opacity-60" : "");
 			<li data-testid="outline-row" data-node-key="@n.Key" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-depth="@n.Depth" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="@keepVisible.ToString().ToLowerInvariant()" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" class="@edgeClass" style="margin-left:@(n.Depth * 1.5)rem">
-				@if (Model.Fields.Body && hasBody)
+				@if (eager)
+				{
+					<details open data-testid="outline-node-eager">
+						<summary class="cursor-pointer flex items-baseline gap-2 flex-wrap">
+							<a href="@nodeUrl" class="@titleClass" data-testid="node-name">@n.Title</a>
+							<span class="font-mono text-xs opacity-50">@n.Key</span>
+							<partial name="_OutlineFieldChips" model="new PetBox.Web.Pages.ProjectHome.OutlineFieldChipsModel(Model.Runtime, Model.KindSlug, Model.Fields, n, Model.WorkspaceKey, Model.ProjectKey)" />
+						</summary>
+						<div class="mt-1 ml-2" data-outline-body data-testid="outline-body">
+							<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = n.Body, TestId = "outline-body-content", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
+						</div>
+					</details>
+				}
+				else if (lazy)
 				{
 					var bodyUrl = $"?handler=NodeBody&nodeId={Uri.EscapeDataString(n.NodeId)}";
 					<details data-testid="outline-node-lazy" hx-get="@bodyUrl" hx-trigger="toggle once" hx-target="find [data-outline-body]" hx-swap="innerHTML">
