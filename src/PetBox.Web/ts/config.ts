@@ -31,7 +31,7 @@ async function revealSecret(bindingId: string): Promise<void> {
 		const resp = await fetch(url, {
 			method: "POST",
 			headers: {
-				"RequestVerificationToken": getAntiforgeryToken(),
+				RequestVerificationToken: getAntiforgeryToken(),
 				"X-Requested-With": "fetch",
 			},
 		});
@@ -55,7 +55,7 @@ async function revealSecret(bindingId: string): Promise<void> {
 			cellSpan.dataset["revealed"] = "false";
 			if (button) button.disabled = false;
 		}, REVEAL_WINDOW_MS);
-	} catch (err) {
+	} catch (_err) {
 		cellSpan.textContent = "(error)";
 		setTimeout(() => {
 			cellSpan.textContent = original;

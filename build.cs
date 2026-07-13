@@ -40,6 +40,12 @@ var tsWireDir = "./src/clients-ts/petbox-wire";
 // Python SDK — published to public PyPI via `pypi` tag push.
 var pyClientDir = "./src/clients-py/petbox-client";
 
+// PetBox.Web frontend — the TS/CSS that actually ships to the browser (bundled by the
+// project's own `BuildFrontend` MSBuild target on Release build). Distinct from tsSdkDir:
+// this is app code, not a published package, so it has no *Pack/*Publish tasks — only the
+// lint gate (WebTsLint), wired into Test below.
+var webDir = "./src/PetBox.Web";
+
 GitVersion gitVersion = null;
 var computedDockerTag = "latest";
 
@@ -111,9 +117,17 @@ Task("Build")
 // meant the dev loop ran a strictly weaker gate than the pipeline: the sandbox-write-gate branch
 // was green on `Test` locally and failed the deploy tag run on whitespace it never saw. A new
 // check goes here, once, and every caller — dev loop, CI, Verify — picks it up.
+//
+// WebTsLint rides along here, not under SdkChecks: SdkChecks is specifically the published-SDK
+// gate (its own CI job, bun+uv toolchains, parallel with this one) — src/PetBox.Web/ts is app
+// code that ships in the Docker image, not an SDK, and Build already needs bun for it (the
+// project's `BuildFrontend` MSBuild target runs `bun install`/`bun run build` on Release build),
+// so the `test` CI job already has the toolchain this needs. Before this, biome only ever ran
+// against src/clients-ts — the browser-shipped frontend had no lint gate anywhere, local or CI.
 Task("Test")
 	.IsDependentOn("Build")
 	.IsDependentOn("FormatVerify")
+	.IsDependentOn("WebTsLint")
 	.Does(() =>
 	{
 		// Ensure Playwright browser binaries are installed for the E2E suite.
@@ -537,8 +551,6 @@ Task("Dev")
 	.Description("Run bun + dotnet watchers side by side. Ctrl+C to stop both.")
 	.Does(() =>
 	{
-		var webDir = "./src/PetBox.Web";
-
 		Information("Installing frontend deps (bun install)...");
 		var bunInstallExit = StartProcess("bun", new ProcessSettings
 		{
@@ -599,6 +611,19 @@ Task("FormatVerify")
 			throw new CakeException(
 				$"dotnet format whitespace --verify-no-changes failed with exit code {formatExit} — run `dotnet format whitespace` and commit the result");
 	});
+
+// biome against the browser-shipped frontend (src/PetBox.Web/ts) — previously biome only ever
+// ran against src/clients-ts (the published TS SDK), so this tree accumulated lint debt
+// (noForEach, noExplicitAny, noUnusedVariables, formatting drift) with nothing to catch it,
+// local or CI. Own Install step (not reusing BuildFrontend's) mirrors the TsSdk*/PyClient*
+// pattern below — a plain `bun install --frozen-lockfile` + `bun run lint`, cheap enough not to
+// need Build's full solution compile as a prerequisite.
+Task("WebTsInstall")
+	.Does(() => RunBun("install --frozen-lockfile", webDir));
+
+Task("WebTsLint")
+	.IsDependentOn("WebTsInstall")
+	.Does(() => RunBun("run lint", webDir));
 
 // `SdkChecks` IS the client-SDK gate — lint + typecheck + test for the TS and Python SDKs we
 // publish to npm/PyPI, and nothing from the .NET chain. It exists as its own target so CI can
