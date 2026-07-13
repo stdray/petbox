@@ -296,6 +296,23 @@ Two rules that survive the refactor:
 - Never call another core-db service while holding an open core transaction: core.db runs
   `Cache=Shared`, and the `SQLITE_LOCKED` it raises is not retried by the busy handler.
 
+**The database is visible only in the service layer.** Query it with LinqToDB, reach it
+through the factory, and open it *inside a service* — a Razor PageModel, a page filter,
+middleware, an `IClaimsTransformation` or an endpoint lambda asks a service, it does not
+call `.Open()` itself. `AgentKeyAdminService` is the shape to copy: factory in the ctor,
+`using var db` inside, and the ownership predicate welded into the statement rather than
+applied by filtering what was rendered.
+
+Two reasons, and the second is the one that bites. A rule that lives in ten pages is a rule
+a new page forgets — that is how ten copies of "is this project in this route's workspace?"
+drifted into an IDOR nobody noticed. And there is no cache over core.db anywhere: a GET of
+a project page opens it 7–9 times, and nothing can be memoised or invalidated while the
+readers and writers are scattered across pages. Extracting the service is the precondition
+for fixing that, not a matter of taste.
+
+Most of `Pages/**` predates this rule and still opens core.db directly (see
+`db-out-of-pages-into-services` on the work board). New code does not add to the pile.
+
 ## Module architecture
 
 PetBox is a module monolith. Each subsystem is feature-toggled via `appsettings.json`:
