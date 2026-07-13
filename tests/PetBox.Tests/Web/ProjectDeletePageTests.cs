@@ -6,6 +6,7 @@ using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Web.Auth;
 using PetBox.Web.Pages.Admin;
 
 namespace PetBox.Tests.Web;
@@ -45,7 +46,7 @@ public sealed class ProjectDeletePageTests : IDisposable
 	}
 
 	ProjectDetailModel Page(string projectKey) =>
-		new(_db.Factory(), Features(), new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = projectKey };
+		new(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = projectKey };
 
 	// Seed one owned row in every table the cascade touches, for the given project key.
 	void SeedOwnedResources(string projectKey)
