@@ -209,16 +209,29 @@ public sealed class WorkspaceSelfProvisioningTests : IClassFixture<WorkspaceSelf
 		return await _client.SendAsync(req);
 	}
 
+	// The antiforgery pair, minted on a page the account CAN open (/ui/me/account) — the token is
+	// per-session, not per-page. Split out from PostAsync so a test that fires several posts at once
+	// can mint ONCE and let them start together: minting inside each post would stagger them behind
+	// their own round-trip and quietly un-race the race.
+	async Task<(string Token, string Cookie)> MintAntiforgeryAsync(string authCookie)
+	{
+		var req = new HttpRequestMessage(HttpMethod.Get, "/ui/me/account");
+		req.Headers.Add("Cookie", authCookie);
+		using var resp = await _client.SendAsync(req);
+		return ExtractAntiforgery(resp, await resp.Content.ReadAsStringAsync());
+	}
+
 	// A POST that does NOT depend on being able to GET the target page first — the whole point of the
-	// "direct POST" tests is that the account is denied the GET. The antiforgery pair is minted on a
-	// page the account CAN open (/ui/me/account); the token is per-session, not per-page.
+	// "direct POST" tests is that the account is denied the GET.
 	async Task<HttpResponseMessage> PostAsync(string url, string authCookie, IDictionary<string, string> fields)
 	{
-		var getReq = new HttpRequestMessage(HttpMethod.Get, "/ui/me/account");
-		getReq.Headers.Add("Cookie", authCookie);
-		using var getResp = await _client.SendAsync(getReq);
-		var (token, afCookie) = ExtractAntiforgery(getResp, await getResp.Content.ReadAsStringAsync());
+		var (token, afCookie) = await MintAntiforgeryAsync(authCookie);
+		return await PostAsync(url, authCookie, token, afCookie, fields);
+	}
 
+	async Task<HttpResponseMessage> PostAsync(
+		string url, string authCookie, string token, string afCookie, IDictionary<string, string> fields)
+	{
 		fields["__RequestVerificationToken"] = token;
 		var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = new FormUrlEncodedContent(fields) };
 		req.Headers.Add("Cookie", $"{authCookie}; {afCookie}");
@@ -239,6 +252,28 @@ public sealed class WorkspaceSelfProvisioningTests : IClassFixture<WorkspaceSelf
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		return db.Workspaces.Any(w => w.Key == key);
+	}
+
+	// What the quota actually counts: workspaces this account is Admin of, $system aside.
+	int OwnedWorkspaceCount(long userId)
+	{
+		using var scope = _fx.Factory.Services.CreateScope();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
+		return db.WorkspaceMembers.Count(m =>
+			m.UserId == userId && m.Role == WorkspaceRole.Admin && m.WorkspaceKey != "$system");
+	}
+
+	long CreateUser(string username, int quota)
+	{
+		using var scope = _fx.Factory.Services.CreateScope();
+		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
+		return db.InsertWithInt64Identity(new User
+		{
+			Username = username,
+			PasswordHash = WorkspaceSelfProvisioningFixture.PasswordHash,
+			CreatedAt = DateTime.UtcNow,
+			WorkspaceQuota = quota,
+		});
 	}
 
 	// ---- quota 0: the page AND the write are both closed ----
@@ -404,6 +439,53 @@ public sealed class WorkspaceSelfProvisioningTests : IClassFixture<WorkspaceSelf
 		using var second = await PostAsync(CreatePage, auth, Form("founder-ws-2", "Second"));
 		ShouldBeDenied(second, "quota 1 was consumed by founder-ws");
 		WorkspaceExists("founder-ws-2").Should().BeFalse();
+	}
+
+	// ---- double-submit: an allowance a second click can outrun is not an allowance ----
+
+	// Two tabs, one impatient double-click, or a scripted client: N creates from ONE account, in
+	// flight at the same time. Each request runs on its OWN connection, and each asked the DB "how
+	// many workspaces do you already own?" before any of them had written its membership row — so
+	// every one of them got 0, every one saw room under a quota of 1, and an account allowed a single
+	// workspace walked away with N. The count and the insert have to be the SAME statement; checking
+	// first and writing after leaves exactly this window open, however narrow it looks.
+	//
+	// Distinct keys, on purpose. Re-posting the SAME key is caught for free by the Workspaces primary
+	// key — that race is not the interesting one. The one that matters is the one nothing else stops:
+	// N *different* keys, where the only thing between the account and N workspaces is the quota.
+	[Fact]
+	public async Task Parallel_creates_from_one_account_cannot_outrun_the_allowance()
+	{
+		const int racers = 8;
+		const int rounds = 3;
+
+		for (var round = 0; round < rounds; round++)
+		{
+			var username = $"racer{round}";
+			var userId = CreateUser(username, quota: 1);
+			var auth = await LoginAsync(username);
+			var (token, afCookie) = await MintAntiforgeryAsync(auth);
+
+			var keys = Enumerable.Range(0, racers).Select(i => $"race-{round}-{i}").ToArray();
+
+			// A start gate, so the posts are genuinely CONCURRENT and not merely "issued in a loop":
+			// every task is spun up first, parks on the same TCS, and they are released together.
+			var gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+			var posts = keys.Select(key => Task.Run(async () =>
+			{
+				await gate.Task;
+				(await PostAsync(CreatePage, auth, token, afCookie, Form(key, key))).Dispose();
+			})).ToArray();
+			gate.SetResult();
+			await Task.WhenAll(posts);
+
+			OwnedWorkspaceCount(userId).Should().Be(1,
+				$"round {round}: the allowance is 1, and {racers} simultaneous creates must not turn it into "
+				+ "more — the quota has to be enforced by the write itself, not by a check another request "
+				+ "can slip between");
+			keys.Count(WorkspaceExists).Should().Be(1,
+				$"round {round}: exactly one of the {racers} racing keys may become a workspace");
+		}
 	}
 
 	// ---- the account with no allowance is told what to do instead ----

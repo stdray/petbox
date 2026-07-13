@@ -13,8 +13,13 @@ namespace PetBox.Web.Pages.Admin;
 public sealed class WorkspacesModel : PageModel
 {
 	readonly ICoreDbFactory _f;
+	readonly WorkspaceProvisioning _provisioning;
 
-	public WorkspacesModel(ICoreDbFactory f) => _f = f;
+	public WorkspacesModel(ICoreDbFactory f, WorkspaceProvisioning provisioning)
+	{
+		_f = f;
+		_provisioning = provisioning;
+	}
 
 	public IReadOnlyList<Workspace> Workspaces { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
@@ -30,8 +35,6 @@ public sealed class WorkspacesModel : PageModel
 	// sysadmin's creates are not counted against a quota.
 	public async Task<IActionResult> OnPostCreateAsync(string Key, string Name, string Description)
 	{
-		using var db = _f.Open();
-
 		long? creator = long.TryParse(
 			User.FindFirst(PetBoxClaims.UserId)?.Value,
 			NumberStyles.Integer,
@@ -40,8 +43,8 @@ public sealed class WorkspacesModel : PageModel
 				? userId
 				: null;
 
-		var result = await WorkspaceProvisioning.CreateAsync(
-			db, Key, Name, Description, creator, bypassQuota: true, HttpContext.RequestAborted);
+		var result = await _provisioning.CreateAsync(
+			Key, Name, Description, creator, bypassQuota: true, HttpContext.RequestAborted);
 
 		if (!result.Ok)
 		{

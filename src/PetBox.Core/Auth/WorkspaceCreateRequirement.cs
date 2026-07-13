@@ -17,7 +17,7 @@ namespace PetBox.Core.Auth;
 // run: one Users row, one WorkspaceMembers count.
 public sealed class WorkspaceCreateRequirement : IAuthorizationRequirement;
 
-public sealed class WorkspaceCreateAuthorizationHandler(ICoreDbFactory dbf)
+public sealed class WorkspaceCreateAuthorizationHandler(WorkspaceProvisioning provisioning)
 	: AuthorizationHandler<WorkspaceCreateRequirement>
 {
 	protected override async Task HandleRequirementAsync(
@@ -35,8 +35,7 @@ public sealed class WorkspaceCreateAuthorizationHandler(ICoreDbFactory dbf)
 		if (!long.TryParse(context.User.FindFirst(PetBoxClaims.UserId)?.Value, out var userId))
 			return;
 
-		using var db = dbf.Open();
-		if (await WorkspaceProvisioning.CanCreateAsync(db, userId))
+		if (await provisioning.CanCreateAsync(userId))
 			context.Succeed(requirement);
 	}
 }

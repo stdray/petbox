@@ -125,6 +125,10 @@ public partial class Program
 		// registration is gone now, and DbInjectionGuardTests asserts it stays gone. SINGLETON here:
 		// the factory holds only DataOptions, never a connection.
 		builder.Services.AddSingleton<ICoreDbFactory>(sp => new CoreDbFactory(ResolveCs(sp)));
+		// Workspace creation + the allowance that gates it. The page handlers get THIS, not a
+		// connection: core.db stops at the service boundary, and the quota is enforced by the write
+		// itself (the check is welded into the INSERT), not by whoever rendered the button.
+		builder.Services.AddSingleton<WorkspaceProvisioning>();
 		// The catalog of projects/entities (core.db) — the SOURCE OF TRUTH the background enrichment
 		// jobs ask "which projects exist" (spec: catalog-is-source-of-truth). Per-project SQLite files
 		// are created lazily, so a job that enumerated `{tier}/*.db` was blind to a project without a
