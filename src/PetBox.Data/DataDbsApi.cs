@@ -1,12 +1,9 @@
-using System.Text.RegularExpressions;
-using LinqToDB;
-using LinqToDB.Async;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
-using PetBox.Core.Models;
+using PetBox.Data.Contract;
 
 namespace PetBox.Data;
 
@@ -20,22 +17,13 @@ namespace PetBox.Data;
 // All endpoints require `data:schema` scope EXCEPT GET which uses `data:read`
 // (listing is harmless reconnaissance).
 //
-// The project itself must exist in PetBoxDb.Projects — petbox is the source
-// of truth for project identity. ApiKey carries ProjectKey claim; we cross-
-// check it against the URL to prevent cross-project access via crafted URLs.
-public static partial class DataDbsApi
+// This is a thin adapter over IDataDbCatalog: auth (ApiKey ProjectKey claim
+// cross-checked against the URL) and HTTP status mapping live here; the name
+// rules (regex, reserved names, quota floor), the project-existence check and
+// the row+file lifecycle live in the CATALOG, so every caller — REST, pages,
+// MCP db_create — gets the same rules. No db factory is opened here.
+public static class DataDbsApi
 {
-	// Matches the SQLite reserved-name spec we settled on in plan:
-	//   - starts with a-z
-	//   - followed by a-z, 0-9, '_' or '-'
-	[GeneratedRegex(@"^[a-z][a-z0-9_-]{0,99}$")]
-	private static partial Regex DbNameRegex();
-
-	static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
-	{
-		"__schema_versions",
-	};
-
 	public static void MapDataDbsEndpoints(this IEndpointRouteBuilder app)
 	{
 		app.MapPost("/api/data/{projectKey}/dbs", CreateAsync)
@@ -61,95 +49,62 @@ public static partial class DataDbsApi
 		HttpContext ctx,
 		string projectKey,
 		CreateDbRequest req,
-		ICoreDbFactory dbf,
-		IDataDbFactory factory,
+		IDataDbCatalog dataDbs,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		using var db = dbf.Open();
 		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
 		if (!authOk) return forbid!;
-		if (req is null || string.IsNullOrWhiteSpace(req.Name))
+		if (req is null)
 			return Results.BadRequest(new ErrorResponse("name is required"));
-		if (!DbNameRegex().IsMatch(req.Name))
-			return Results.BadRequest(new ErrorResponse("invalid name; must match ^[a-z][a-z0-9_-]{0,99}$"));
-		if (ReservedNames.Contains(req.Name))
-			return Results.BadRequest(new ErrorResponse($"'{req.Name}' is reserved"));
 
-		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == projectKey, ct);
-		if (project is null) return Results.NotFound(new ErrorResponse("project not found"));
-
-		var exists = await db.DataDbs.AnyAsync((DataDb d) => d.ProjectKey == projectKey && d.Name == req.Name, ct);
-		if (exists) return Results.Conflict(new ErrorResponse($"DataDb '{req.Name}' already exists"));
-
-		var maxPageCount = req.MaxPageCount ?? DataDbFactory.DefaultMaxPageCount;
-		if (maxPageCount < 1024)
-			return Results.BadRequest(new ErrorResponse("maxPageCount must be >= 1024 (4 MB at 4KB pages)"));
-
-		await factory.CreateAsync(projectKey, req.Name, maxPageCount, ct);
-
-		var now = DateTime.UtcNow;
-		await db.InsertAsync(new DataDb
+		// Name/quota/uniqueness rules are the catalog's, not ours — see the class comment.
+		var result = await dataDbs.CreateAsync(projectKey, req.Name, req.Description, req.MaxPageCount, ct);
+		return result switch
 		{
-			ProjectKey = projectKey,
-			Name = req.Name,
-			Description = req.Description,
-			MaxPageCount = maxPageCount,
-			CreatedAt = now,
-			UpdatedAt = now,
-		}, token: ct);
-
-		return Results.Created(
-			$"/api/data/{projectKey}/dbs/{req.Name}",
-			new DbInfo(req.Name, req.Description, maxPageCount, now, now));
+			DataDbChangeResult.Created c => Results.Created(
+				$"/api/data/{projectKey}/dbs/{c.Db.Name}",
+				new DbInfo(c.Db.Name, c.Db.Description, c.Db.MaxPageCount, c.Db.CreatedAt, c.Db.UpdatedAt)),
+			DataDbChangeResult.NotFound => Results.NotFound(new ErrorResponse("project not found")),
+			DataDbChangeResult.Conflict k => Results.Conflict(new ErrorResponse(k.Reason)),
+			DataDbChangeResult.Refused r => Results.BadRequest(new ErrorResponse(r.Reason)),
+			_ => Results.StatusCode(StatusCodes.Status500InternalServerError),
+		};
 	}
 
 	static async Task<IResult> ListAsync(
 		HttpContext ctx,
 		string projectKey,
-		ICoreDbFactory dbf,
+		IDataDbCatalog dataDbs,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		using var db = dbf.Open();
 		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
 		if (!authOk) return forbid!;
 
-		var rows = await db.DataDbs
-			.Where(d => d.ProjectKey == projectKey)
-			.OrderBy(d => d.Name)
+		var rows = await dataDbs.ListAsync(projectKey, ct);
+		return Results.Ok(rows
 			.Select(d => new DbInfo(d.Name, d.Description, d.MaxPageCount, d.CreatedAt, d.UpdatedAt))
-			.ToListAsync(ct);
-
-		return Results.Ok(rows);
+			.ToList());
 	}
 
 	static async Task<IResult> DeleteAsync(
 		HttpContext ctx,
 		string projectKey,
 		string name,
-		ICoreDbFactory dbf,
-		IDataDbFactory factory,
+		IDataDbCatalog dataDbs,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		using var db = dbf.Open();
 		var (authOk, forbid) = await DataAuth.AuthorizeProjectAsync(ctx, projectKey, catalog, ct);
 		if (!authOk) return forbid!;
 
-		var deleted = await db.DataDbs
-			.Where(d => d.ProjectKey == projectKey && d.Name == name)
-			.DeleteAsync(ct);
-
-		if (deleted == 0)
-			return Results.NotFound(new ErrorResponse("DataDb not found"));
-
-		// Best-effort file removal. If locked (in-flight query), orphan cleanup
-		// service retries on its next tick — the metadata row is gone so the
-		// (projectKey, name) slot is free immediately.
-		factory.TryDelete(projectKey, name);
-
-		return Results.NoContent();
+		// The catalog deletes the row immediately and the file best-effort (orphan cleanup
+		// retries a locked file); (projectKey, name) is the address, so another project's
+		// DataDb simply is not found.
+		var result = await dataDbs.DeleteAsync(projectKey, name, ct);
+		return result is DataDbChangeResult.Deleted
+			? Results.NoContent()
+			: Results.NotFound(new ErrorResponse("DataDb not found"));
 	}
-
 }

@@ -153,10 +153,16 @@ public partial class Program
 				cs => new LogDb(LogDb.CreateOptions(cs)), LogSchema.Ensure));
 		builder.Services.AddScoped<ILogStore, LogStore>();
 		builder.Services.AddScoped<PetBox.Log.Core.Query.ILogQueryService, PetBox.Log.Core.Query.LogQueryService>();
+		// The saved-KQL-query door (Pages/Logs/Index.cshtml.cs) — SavedQueries had no owner before this.
+		builder.Services.AddScoped<PetBox.Log.Core.Data.ISavedQueryStore, PetBox.Log.Core.Data.SavedQueryStore>();
 		builder.Services.AddSingleton<IScopedDbFactory<ConfigDb>>(sp => new ScopedDbFactory<ConfigDb>(
 				Path.Combine(ResolveDataDir(sp), "config"), PetBox.Core.Settings.Scope.Workspace,
 				cs => new ConfigDb(ConfigDb.CreateOptions(cs)), ConfigSchema.Ensure));
 		builder.Services.AddSingleton<IConfigDbFactory>(sp => new ConfigDbFactory(sp.GetRequiredService<IScopedDbFactory<ConfigDb>>()));
+		// THE service layer for PetBox.Config (SavedConfigFilters in core.db + ConfigBinding CRUD/
+		// resolve in ConfigDb) — Pages.Config.IndexModel and ConfigApi's REST surface both go
+		// through this instead of holding a factory (db-out-of-pages-remaining-24).
+		builder.Services.AddScoped<PetBox.Config.IConfigDirectory, PetBox.Config.ConfigDirectory>();
 		builder.Services.AddSingleton<PetBox.Data.IDataDbFactory>(sp => new PetBox.Data.DataDbFactory(Path.Combine(ResolveDataDir(sp), "db")));
 		builder.Services.AddSingleton<PetBox.Data.Schema.SchemaRunner>();
 		builder.Services.AddScoped<PetBox.Data.Contract.IDataSqlService, PetBox.Data.Services.DataSqlService>();
@@ -614,17 +620,31 @@ public partial class Program
 		// WorkspaceProvisioning are Core writers of WorkspaceMembers and must be able to reach them.
 		builder.Services.AddScoped<PetBox.Core.Auth.IWorkspaceMembershipService, PetBox.Core.Auth.WorkspaceMembershipService>();
 		builder.Services.AddScoped<PetBox.Core.Auth.IUserAdminService, PetBox.Core.Auth.UserAdminService>();
+		// The two NARROW auth doors. Neither is IUserAdminService, and that is the whole point: the
+		// login page is anonymous and /Me/Security is reachable by every logged-in user, while the admin
+		// service can reset ANY account's password. ICredentialAuthenticator can only CHECK a password
+		// it was handed (and owns the bootstrap-admin lockdown rule); IAccountSelfService can only
+		// change the password of the account the request is authenticated as — it takes no user id.
+		builder.Services.AddScoped<PetBox.Core.Auth.ICredentialAuthenticator, PetBox.Core.Auth.CredentialAuthenticator>();
+		builder.Services.AddScoped<PetBox.Core.Auth.IAccountSelfService, PetBox.Core.Auth.AccountSelfService>();
 		builder.Services.AddScoped<PetBox.Web.Auth.IWorkspaceAdminService, PetBox.Web.Auth.WorkspaceAdminService>();
 		// The doors the MCP tools ask instead of opening core.db themselves (db-access-layer-cleanup):
 		// the DataDbs catalog (db_* tools), the HealthReports reader (health_search) and the workspace
 		// memory containers (memory_* tools — resolve, lazily ensure, and the reachability predicate).
 		builder.Services.AddScoped<PetBox.Data.Contract.IDataDbCatalog, PetBox.Data.Services.DataDbCatalog>();
 		builder.Services.AddScoped<PetBox.Core.Health.IHealthReportService, PetBox.Core.Health.HealthReportService>();
+		// The COUNTS door: Admin/Dashboard/ProjectHome landing pages ask this instead of opening
+		// core.db themselves (db-out-of-pages-remaining-24 group B). One connection per page's whole
+		// rollup — the thing that finally makes core.db cacheable (db-cache-behind-services).
+		builder.Services.AddScoped<PetBox.Core.Data.ICoreDbRollupService, PetBox.Core.Data.CoreDbRollupService>();
 		// The pull-mode endpoint list — a DIFFERENT table from HealthReports above, and one that had no
 		// door at all until Pages/Admin/ProjectDetail stopped opening core.db for it. Same namespace as
 		// the reports door on purpose: a caller who finds one finds the other (commit ce12100).
 		builder.Services.AddScoped<PetBox.Core.Health.IHealthEndpointDirectory, PetBox.Core.Health.HealthEndpointDirectory>();
 		builder.Services.AddScoped<PetBox.Core.Data.IWorkspaceMemoryDirectory, PetBox.Core.Data.WorkspaceMemoryDirectory>();
+		// The share-token door: ShareLinks had no owner (Pages.ShareModel's anonymous resolve page and
+		// PetBox.Log.Core.ShareApi's create/TSV endpoints both opened core.db directly for it).
+		builder.Services.AddScoped<PetBox.Core.Data.IShareLinkDirectory, PetBox.Core.Data.ShareLinkDirectory>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.

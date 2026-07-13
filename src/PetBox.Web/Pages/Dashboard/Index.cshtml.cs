@@ -1,4 +1,3 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -6,6 +5,7 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
+using PetBox.Web.Auth;
 using PetBox.Web.Navigation;
 
 namespace PetBox.Web.Pages.Dashboard;
@@ -16,13 +16,22 @@ namespace PetBox.Web.Pages.Dashboard;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class IndexModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly ICoreDbRollupService _rollup;
+	readonly IProjectDirectory _projects;
+	readonly IWorkspaceMemoryDirectory _workspaceMemory;
 	readonly INavigationContext _nav;
 	readonly ISettingsResolver _settings;
 
-	public IndexModel(ICoreDbFactory f, INavigationContext nav, ISettingsResolver settings)
+	public IndexModel(
+		ICoreDbRollupService rollup,
+		IProjectDirectory projects,
+		IWorkspaceMemoryDirectory workspaceMemory,
+		INavigationContext nav,
+		ISettingsResolver settings)
 	{
-		_f = f;
+		_rollup = rollup;
+		_projects = projects;
+		_workspaceMemory = workspaceMemory;
 		_nav = nav;
 		_settings = settings;
 	}
@@ -47,7 +56,6 @@ public sealed class IndexModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
 		// The /ui/{workspaceKey} catch-all must NOT silently render the resolved default
 		// workspace (previously $system) for an unknown or non-member key. NavigationContext
 		// only resolves the route key when the user is a member of it (ResolveWorkspace step 1);
@@ -64,43 +72,26 @@ public sealed class IndexModel : PageModel
 		var wsKey = WorkspaceKey;
 		// Ensure the workspace memory container exists before the "Shared memory" card links
 		// to it — non-$system workspaces are lazy-created (MCP write or this render path);
-		// $system is already seeded by M028/M031 so this is a no-op there.
-		await WorkspaceMemory.EnsureContainerAsync(db, wsKey, ct);
-		// Workspace memory containers ($workspace / $ws-*) are not user projects — keep them
-		// out of the project grid (no logs/dbs/keys) and surface the current one as the
-		// dedicated "Shared memory" entry the view renders instead.
-		Projects = (await db.Projects
-				.Where(p => p.WorkspaceKey == wsKey)
-				.OrderBy(p => p.Key).ToListAsync(ct))
-			.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p.Key))
-			.ToList();
+		// $system is already seeded by M028/M031 so this is a no-op there. The route workspace
+		// is already proven to exist (NavigationContext resolved it above), so the extra
+		// existence check EnsureAddressedContainerAsync does is a no-op safety net, not new work.
+		await _workspaceMemory.EnsureAddressedContainerAsync(WorkspaceMemory.ContainerKeyFor(wsKey), ct);
+		// Workspace memory containers ($workspace / $ws-*) are not user projects — IProjectDirectory
+		// excludes them by default, keeping them out of the project grid; the current one is
+		// surfaced separately as the dedicated "Shared memory" entry the view renders instead.
+		Projects = await _projects.ListAsync(wsKey, ct: ct);
 		var projectKeys = Projects.Select(p => p.Key).ToHashSet(StringComparer.Ordinal);
 
 		var dash = await _settings.GetAsync<DashboardSettings>(Scope.System, "$", ct);
 		StaleSeconds = dash.StaleSeconds;
 
-		LogCount = await CountByProjectAsync(db.Logs.Where(l => projectKeys.Contains(l.ProjectKey)).Select(l => l.ProjectKey), ct);
-		DbCount = await CountByProjectAsync(db.DataDbs.Where(d => projectKeys.Contains(d.ProjectKey)).Select(d => d.ProjectKey), ct);
-		KeyCount = await CountByProjectAsync(db.ApiKeys.Where(k => projectKeys.Contains(k.ProjectKey)).Select(k => k.ProjectKey), ct);
-
-		// Latest report per service. Identity is (project tag, Svc) — the rest of the
-		// tags (host, elapsedMs, reason, …) are volatile payload of a single report, so
-		// grouping by the raw Tags string would resurface the whole history. The project
-		// tag lives inside Tags, hence the in-memory pass. Id is identity-ascending:
-		// max Id = newest.
-		var slim = await db.HealthReports
-			.Select(r => new { r.Id, r.Svc, r.Tags })
-			.ToListAsync(ct);
-		var maxIds = slim
-			.GroupBy(r => (r.Svc, Project: HealthTags.Parse(r.Tags).GetValueOrDefault("project", "")))
-			.Select(g => g.Max(x => x.Id))
-			.ToList();
-		var latest = maxIds.Count == 0
-			? []
-			: await db.HealthReports.Where(r => maxIds.Contains(r.Id)).ToListAsync(ct);
+		var rollup = await _rollup.GetWorkspaceRollupAsync(projectKeys, ct);
+		LogCount = rollup.LogCount;
+		DbCount = rollup.DbCount;
+		KeyCount = rollup.KeyCount;
 
 		var byProject = new Dictionary<string, List<HealthRow>>(StringComparer.Ordinal);
-		foreach (var r in latest)
+		foreach (var r in rollup.LatestHealthReports)
 		{
 			var tags = HealthTags.Parse(r.Tags);
 			if (!tags.TryGetValue("project", out var proj) || !projectKeys.Contains(proj)) continue;
@@ -116,14 +107,5 @@ public sealed class IndexModel : PageModel
 			StringComparer.Ordinal);
 
 		return Page();
-	}
-
-	static async Task<IReadOnlyDictionary<string, int>> CountByProjectAsync(IQueryable<string> projectKeys, CancellationToken ct)
-	{
-		var rows = await projectKeys
-			.GroupBy(k => k)
-			.Select(g => new { Key = g.Key, Count = g.Count() })
-			.ToListAsync(ct);
-		return rows.ToDictionary(r => r.Key, r => r.Count, StringComparer.Ordinal);
 	}
 }

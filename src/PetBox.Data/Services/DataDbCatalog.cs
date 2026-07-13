@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.Data.Sqlite;
@@ -12,8 +13,25 @@ namespace PetBox.Data.Services;
 // Core.db is reached through the FACTORY, opened inside this service and nowhere else, and each open
 // is short: the file create/delete calls of IDataDbFactory happen with no core connection held (core
 // runs Cache=Shared, and a SQLITE_LOCKED raised under a held connection is not retried).
-public sealed class DataDbCatalog(ICoreDbFactory core, IDataDbFactory factory) : IDataDbCatalog
+//
+// The DataDb NAME rules live HERE, not in any adapter: a DataDb name becomes an on-disk file name
+// ({baseDir}/{projectKey}/{name}.db) and a SQL identifier, and identifiers cannot be parameterized —
+// this validation IS the injection/path-traversal defence, and it must hold for EVERY caller of the
+// catalog (REST, pages, MCP db_create), not just whichever adapter remembered to check.
+public sealed partial class DataDbCatalog(ICoreDbFactory core, IDataDbFactory factory) : IDataDbCatalog
 {
+	// The SQLite reserved-name spec settled in plan: starts with a-z, then a-z / 0-9 / '_' / '-',
+	// 100 chars total max. (Moved from the REST endpoint — see the class comment.)
+	[GeneratedRegex(@"^[a-z][a-z0-9_-]{0,99}$")]
+	private static partial Regex DbNameRegex();
+
+	// Names the Data module claims for itself inside a DataDb. Kept case-insensitive and kept even
+	// though the regex already rejects a leading '_' — belt and braces on an injection surface.
+	static readonly HashSet<string> ReservedNames = new(StringComparer.OrdinalIgnoreCase)
+	{
+		"__schema_versions",
+	};
+
 	public async Task<IReadOnlyList<DataDbInfo>> ListAsync(string projectKey, CancellationToken ct = default)
 	{
 		using var db = core.Open();
@@ -37,14 +55,27 @@ public sealed class DataDbCatalog(ICoreDbFactory core, IDataDbFactory factory) :
 	{
 		if (string.IsNullOrWhiteSpace(name))
 			return new DataDbChangeResult.Refused("name is required");
+		if (!DbNameRegex().IsMatch(name))
+			return new DataDbChangeResult.Refused("invalid name; must match ^[a-z][a-z0-9_-]{0,99}$");
+		if (ReservedNames.Contains(name))
+			return new DataDbChangeResult.Refused($"'{name}' is reserved");
 
 		var quota = maxPageCount ?? DataDbFactory.DefaultMaxPageCount;
 
 		using (var db = core.Open())
 		{
+			// petbox is the source of truth for project identity: no DataDbs row may name a project
+			// that is not in Projects. (Adapters map this NotFound — REST: 404 "project not found".)
+			if (!await db.Projects.AnyAsync((Project p) => p.Key == projectKey, ct))
+				return new DataDbChangeResult.NotFound();
 			if (await db.DataDbs.AnyAsync((DataDb d) => d.ProjectKey == projectKey && d.Name == name, ct))
 				return new DataDbChangeResult.Conflict($"DataDb '{name}' already exists");
 		}
+
+		// Below this the quota silently would not exist: max_page_count is a page COUNT, and 1024
+		// pages at 4 KB is the 4 MB floor the REST surface always enforced.
+		if (quota < 1024)
+			return new DataDbChangeResult.Refused("maxPageCount must be >= 1024 (4 MB at 4KB pages)");
 
 		// The file first, then the row: a row whose file failed to materialize would advertise a DataDb
 		// nothing can open. (The reverse leaves a file with no row — an orphan the cleanup service sweeps.)
@@ -121,5 +152,41 @@ public sealed class DataDbCatalog(ICoreDbFactory core, IDataDbFactory factory) :
 			tables.Add(new DataDbTableInfo(tableName, cols));
 		}
 		return tables;
+	}
+
+	public async Task<IReadOnlyList<DataDbMigrationInfo>?> ListMigrationsAsync(
+		string projectKey, string name, CancellationToken ct = default)
+	{
+		// Same address rule as DescribeAsync: existence is proven against THIS project's catalog row,
+		// so no project can introspect another project's file by naming it. The row also carries the
+		// quota, which factory.OpenAsync re-applies (per-connection state) like every other open.
+		var row = await GetAsync(projectKey, name, ct);
+		if (row is null) return null;
+
+		await using var conn = await factory.OpenAsync(projectKey, name, row.MaxPageCount, ct);
+
+		// __SchemaVersions may not exist yet if no migrations have been applied. The table name is
+		// the SchemaRunner CONSTANT, never caller input — the only identifier interpolated here.
+		await using (var existsCmd = conn.CreateCommand())
+		{
+			existsCmd.CommandText =
+				$"SELECT name FROM sqlite_master WHERE type='table' AND name='{SchemaRunner.JournalTableName}'";
+			if (await existsCmd.ExecuteScalarAsync(ct) is null) return [];
+		}
+
+		await using var cmd = conn.CreateCommand();
+		cmd.CommandText =
+			$"SELECT SchemaVersionID, ScriptName, Applied, Hash FROM {SchemaRunner.JournalTableName} ORDER BY SchemaVersionID";
+		await using var reader = await cmd.ExecuteReaderAsync(ct);
+		var entries = new List<DataDbMigrationInfo>();
+		while (await reader.ReadAsync(ct))
+		{
+			entries.Add(new DataDbMigrationInfo(
+				Id: reader.GetInt64(0),
+				ScriptName: reader.GetString(1),
+				Applied: reader.GetDateTime(2),
+				Hash: reader.GetString(3)));
+		}
+		return entries;
 	}
 }

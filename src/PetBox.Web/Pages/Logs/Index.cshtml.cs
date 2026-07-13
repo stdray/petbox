@@ -5,10 +5,10 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Query;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Logs;
 
@@ -20,12 +20,14 @@ namespace PetBox.Web.Pages.Logs;
 public sealed class IndexModel : PageModel
 {
 	readonly ILogStore _logStore;
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
+	readonly ISavedQueryStore _savedQueries;
 
-	public IndexModel(ILogStore logStore, ICoreDbFactory f)
+	public IndexModel(ILogStore logStore, IProjectDirectory projects, ISavedQueryStore savedQueries)
 	{
 		_logStore = logStore;
-		_f = f;
+		_projects = projects;
+		_savedQueries = savedQueries;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "kql")]
@@ -82,13 +84,11 @@ public sealed class IndexModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
 		var projectFilter = ProjectKeyRoute;
 		if (string.IsNullOrWhiteSpace(projectFilter))
 			return Page();
 
-		var project = await db.Projects
-			.FirstOrDefaultAsync((Project p) => p.Key == projectFilter, ct);
+		var project = await _projects.GetAsync(projectFilter, ct);
 		if (project is null)
 			return Page();
 
@@ -108,16 +108,11 @@ public sealed class IndexModel : PageModel
 		}
 
 		// Saved queries are project-scoped (shared across the project's logs).
-		var pk = ProjectKey;
-		SavedQueries = await db.SavedQueries
-			.Where(q => q.ProjectKey == pk)
-			.OrderBy(q => q.Name)
-			.ToListAsync(ct);
+		SavedQueries = [.. await _savedQueries.ListAsync(ProjectKey, ct)];
 
 		if (!string.IsNullOrWhiteSpace(SavedName))
 		{
-			var saved = await db.SavedQueries
-				.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == pk && q.Name == SavedName, ct);
+			var saved = await _savedQueries.FindAsync(ProjectKey, SavedName, ct);
 			if (saved is not null)
 			{
 				RawKql = saved.Kql;
@@ -252,31 +247,10 @@ public sealed class IndexModel : PageModel
 		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey ?? string.Empty, WorkspaceRole.Member))
 			return Forbid();
 
-		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(ProjectKeyRoute) || string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(kql))
 			return RedirectToProject();
 
-		var existing = await db.SavedQueries
-			.FirstOrDefaultAsync((SavedQuery q) => q.ProjectKey == ProjectKeyRoute && q.Name == name.Trim(), ct);
-		if (existing is not null)
-		{
-#pragma warning disable CA2016
-			await db.UpdateAsync(existing with { Kql = kql, UpdatedAt = DateTime.UtcNow });
-#pragma warning restore CA2016
-		}
-		else
-		{
-#pragma warning disable CA2016
-			await db.InsertAsync(new SavedQuery
-			{
-				Name = name.Trim(),
-				Kql = kql,
-				ProjectKey = ProjectKeyRoute,
-				CreatedAt = DateTime.UtcNow,
-				UpdatedAt = DateTime.UtcNow,
-			});
-#pragma warning restore CA2016
-		}
+		await _savedQueries.SaveAsync(ProjectKeyRoute, name, kql, ct);
 
 		this.NotifySuccess("Saved query saved.");
 		return RedirectToProject(name.Trim());
@@ -289,17 +263,13 @@ public sealed class IndexModel : PageModel
 		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey ?? string.Empty, WorkspaceRole.Member))
 			return Forbid();
 
-		using var db = _f.Open();
 		// Defense in depth: scope the delete to the ROUTE project too, not just the id — even
 		// with ProjectKeyRoute now route-locked, an id alone spans every project in every
 		// workspace, so without this filter a same-workspace member could delete another
-		// project's saved query by guessing/enumerating its id.
-		var pk = ProjectKeyRoute;
-#pragma warning disable CA2016
-		await db.SavedQueries
-			.Where(q => q.Id == savedId && q.ProjectKey == pk)
-			.DeleteAsync();
-#pragma warning restore CA2016
+		// project's saved query by guessing/enumerating its id. ISavedQueryStore welds that
+		// scope into the delete's address rather than leaving it to a filter here.
+		if (!string.IsNullOrWhiteSpace(ProjectKeyRoute))
+			await _savedQueries.DeleteAsync(ProjectKeyRoute, savedId, ct);
 
 		this.NotifySuccess("Saved query deleted.");
 		return RedirectToProject();

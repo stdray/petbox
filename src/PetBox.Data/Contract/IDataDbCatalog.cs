@@ -8,6 +8,9 @@ public sealed record DataDbInfo(
 public sealed record DataDbTableInfo(string Name, IReadOnlyList<DataDbColumnInfo> Columns);
 public sealed record DataDbColumnInfo(string Name, string Type, bool NotNull, bool PrimaryKey);
 
+// One row of a DataDb's __SchemaVersions journal — what GET /migrations renders.
+public sealed record DataDbMigrationInfo(long Id, string ScriptName, DateTime Applied, string Hash);
+
 // The outcome of a catalog write. Refused carries a reason; Conflict is the already-taken
 // (project, name) slot; NotFound is a DataDb (or project) that is not there.
 public abstract record DataDbChangeResult
@@ -43,5 +46,11 @@ public interface IDataDbCatalog
 
 	// The tables + columns of one DataDb. NotFound (as a null) when the DataDb is not this project's.
 	Task<IReadOnlyList<DataDbTableInfo>?> DescribeAsync(
+		string projectKey, string name, CancellationToken ct = default);
+
+	// The applied migrations of one DataDb, in application order (journal id). Null when the
+	// DataDb is not this project's (same address rule as DescribeAsync); empty when nothing has
+	// been applied yet — the journal table does not exist until the first migration creates it.
+	Task<IReadOnlyList<DataDbMigrationInfo>?> ListMigrationsAsync(
 		string projectKey, string name, CancellationToken ct = default);
 }

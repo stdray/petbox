@@ -1,28 +1,32 @@
-using System.Globalization;
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
 
 namespace PetBox.Web.Pages.Me;
 
 [Authorize]
 public sealed class SecurityModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	// IAccountSelfService, NOT IUserAdminService: EVERY logged-in user reaches this page, and the
+	// admin service can reset ANY account's password. This door takes no user id and no username —
+	// the account is read off the authenticated principal inside the service, so no form field on
+	// this page can ever name somebody else's row.
+	readonly IAccountSelfService _accounts;
 
-	public SecurityModel(ICoreDbFactory f) => _f = f;
+	public SecurityModel(IAccountSelfService accounts) => _accounts = accounts;
 
 	public string? SuccessMessage { get; set; }
 	public string? ErrorMessage { get; set; }
 
 	public void OnGet() { }
 
-	public async Task<IActionResult> OnPostChangePasswordAsync(string? currentPassword, string? newPassword, string? confirmPassword)
+	public async Task<IActionResult> OnPostChangePasswordAsync(
+		string? currentPassword, string? newPassword, string? confirmPassword)
 	{
-		using var db = _f.Open();
+		// The confirmation field is a FORM concern (it never reaches the database and there is
+		// nothing to authorize about it), so it stays here. Everything that touches the account —
+		// which account, its current password, the strength rule, the write — is the service's.
 		if (string.IsNullOrEmpty(currentPassword) || string.IsNullOrEmpty(newPassword) || string.IsNullOrEmpty(confirmPassword))
 		{
 			ErrorMessage = "All three fields are required.";
@@ -33,34 +37,16 @@ public sealed class SecurityModel : PageModel
 			ErrorMessage = "New password and confirmation do not match.";
 			return Page();
 		}
-		if (newPassword.Length < 8)
+
+		// `User` is the authenticated principal — the ONLY identity this page can hand over.
+		var result = await _accounts.ChangeOwnPasswordAsync(
+			User, currentPassword, newPassword, HttpContext.RequestAborted);
+
+		if (result is PasswordChangeResult.Refused refused)
 		{
-			ErrorMessage = "New password must be at least 8 characters.";
+			ErrorMessage = refused.Reason;
 			return Page();
 		}
-
-		var userIdRaw = User.FindFirst(PetBoxClaims.UserId)?.Value;
-		if (!long.TryParse(userIdRaw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var userId))
-		{
-			ErrorMessage = "Session is missing user id. Sign out and back in.";
-			return Page();
-		}
-
-		var user = db.Users.FirstOrDefault(u => u.Id == userId);
-		if (user is null)
-		{
-			ErrorMessage = "User not found.";
-			return Page();
-		}
-
-		if (!AdminPasswordHasher.Verify(currentPassword, user.PasswordHash))
-		{
-			ErrorMessage = "Current password is incorrect.";
-			return Page();
-		}
-
-		var newHash = AdminPasswordHasher.Hash(newPassword);
-		await db.Users.Where(u => u.Id == userId).Set(u => u.PasswordHash, newHash).UpdateAsync();
 
 		SuccessMessage = "Password updated.";
 		return Page();

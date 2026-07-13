@@ -42,12 +42,11 @@ public static class ShareApi
 
 	static async Task<IResult> CreateShareAsync(
 		HttpContext ctx,
-		ICoreDbFactory dbf,
+		IShareLinkDirectory shareLinks,
 		ShareCreateRequest req,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		using var db = dbf.Open();
 		if (string.IsNullOrWhiteSpace(req.ProjectKey) || string.IsNullOrWhiteSpace(req.Kql))
 			return Results.BadRequest(new ErrorResponse("ProjectKey and Kql required"));
 
@@ -81,19 +80,18 @@ public static class ShareApi
 			CreatedBy = ctx.User.Identity?.Name ?? "system",
 		};
 
-		await db.InsertAsync(entity, token: ct);
+		await shareLinks.CreateAsync(entity, ct);
 		return Results.Ok(new ShareCreatedResponse(id, entity.ExpiresAt));
 	}
 
 	static async Task<IResult> GetTsvAsync(
 		HttpContext ctx,
-		ICoreDbFactory dbf,
+		IShareLinkDirectory shareLinks,
 		ILogStore store,
 		string token,
 		CancellationToken ct)
 	{
-		using var db = dbf.Open();
-		var share = await db.ShareLinks.FirstOrDefaultAsync((ShareLink s) => s.Id == token, ct);
+		var share = await shareLinks.FindAsync(token, ct);
 		if (share is null) return Results.NotFound();
 		if (share.ExpiresAt < DateTime.UtcNow) return Results.NotFound(new ErrorResponse("link expired"));
 

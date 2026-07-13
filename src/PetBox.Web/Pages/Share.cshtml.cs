@@ -2,7 +2,6 @@ using System.Collections.Immutable;
 using System.Globalization;
 using System.Text.Json;
 using Kusto.Language;
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
@@ -17,12 +16,12 @@ namespace PetBox.Web.Pages;
 [AllowAnonymous]
 public sealed class ShareModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IShareLinkDirectory _shareLinks;
 	readonly ILogStore _logStore;
 
-	public ShareModel(ICoreDbFactory f, ILogStore logStore)
+	public ShareModel(IShareLinkDirectory shareLinks, ILogStore logStore)
 	{
-		_f = f;
+		_shareLinks = shareLinks;
 		_logStore = logStore;
 	}
 
@@ -38,8 +37,7 @@ public sealed class ShareModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
-		var share = await db.ShareLinks.FirstOrDefaultAsync((ShareLink s) => s.Id == Token, ct);
+		var share = await _shareLinks.FindAsync(Token, ct);
 		if (share is null)
 		{
 			ShareNotFound = true;

@@ -431,7 +431,7 @@ public static class LogApi
 	// to petbox's system log instead of the project's.
 	static async Task<IResult> SeqIngestAsync(
 		HttpContext ctx,
-		ICoreDbFactory dbf,
+		IApiKeyLookup lookup,
 		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
@@ -439,7 +439,6 @@ public static class LogApi
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		using var yobaBoxDb = dbf.Open();
 		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(apiKey))
 			return Results.Unauthorized();
@@ -458,8 +457,13 @@ public static class LogApi
 		}
 		else
 		{
-			var key = await yobaBoxDb.ApiKeys
-				.FirstOrDefaultAsync((ApiKey k) => k.Key == apiKey, CancellationToken.None);
+			// Same door every OTHER handler in this file authenticates through (via the "ApiKey"
+			// scheme's ApiKeyAuthenticationHandler) — this endpoint is AllowAnonymous and reads a
+			// Seq-specific header instead of X-Api-Key, so it cannot go through the scheme, but the
+			// lookup itself is identical: one indexed core.db read behind IApiKeyLookup (config keys
+			// first, in-memory, then DbApiKeyLookup's fresh caller-owned connection) — same cost as
+			// the pre-conversion `dbf.Open()` + `ApiKeys.FirstOrDefaultAsync`, not a new hop.
+			var key = lookup.FindByKey(apiKey);
 			if (key is null || (key.ExpiresAt is { } exp && exp <= DateTime.UtcNow))
 				return Results.Unauthorized();
 			// Explicit 403 (not Results.Forbid(), which on this AllowAnonymous endpoint
@@ -515,20 +519,21 @@ public static class LogApi
 		HttpContext ctx,
 		string projectKey,
 		string logName,
-		ICoreDbFactory dbf,
+		IApiKeyLookup lookup,
 		ILogStore store,
 		CleFParser parser,
 		IIngestionPipeline pipeline,
 		IProjectCatalog catalog,
 		CancellationToken ct)
 	{
-		using var yobaBoxDb = dbf.Open();
 		var apiKey = ctx.Request.Headers["X-Seq-ApiKey"].FirstOrDefault();
 		if (string.IsNullOrWhiteSpace(apiKey))
 			return Results.Unauthorized();
 
-		var key = await yobaBoxDb.ApiKeys
-			.FirstOrDefaultAsync((ApiKey k) => k.Key == apiKey, CancellationToken.None);
+		// Same IApiKeyLookup door as SeqIngestAsync's else-branch — see its comment for why this
+		// AllowAnonymous, Seq-header-authenticated handler can't go through the "ApiKey" scheme but
+		// costs the identical one-lookup-per-request as the `dbf.Open()` call it replaces.
+		var key = lookup.FindByKey(apiKey);
 		if (key is null || (key.ExpiresAt is { } exp && exp <= DateTime.UtcNow))
 			return Results.Unauthorized();
 		// Explicit 403s (not Results.Forbid(), which on this AllowAnonymous endpoint
