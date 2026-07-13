@@ -33,7 +33,7 @@ else
 			<thead>
 				<tr>
 					<th>Username</th>
-					<th class="w-24">Role</th>
+					<th class="w-48">Role</th>
 					<th class="w-32"></th>
 				</tr>
 			</thead>
@@ -43,7 +43,15 @@ else
 					<tr data-testid="workspace-user-row">
 						<td class="font-mono text-sm">@username</td>
 						<td>
-							<span class="badge badge-sm @(member.Role == PetBox.Core.Models.WorkspaceRole.Admin ? "badge-primary" : "badge-ghost")">@member.Role</span>
+							<form method="post" asp-page-handler="SetRole" asp-route-userId="@member.UserId" class="flex items-center gap-1">
+								@Html.AntiForgeryToken()
+								<select name="Role" class="select select-bordered select-xs" data-testid="workspace-user-role-select">
+									<option value="Admin" selected="@(member.Role == PetBox.Core.Models.WorkspaceRole.Admin)">Admin</option>
+									<option value="Member" selected="@(member.Role == PetBox.Core.Models.WorkspaceRole.Member)">Member</option>
+									<option value="Viewer" selected="@(member.Role == PetBox.Core.Models.WorkspaceRole.Viewer)">Viewer</option>
+								</select>
+								<button type="submit" class="btn btn-xs btn-ghost" data-testid="workspace-user-role-save">Save</button>
+							</form>
 						</td>
 						<td>
 							<form method="post" asp-page-handler="Remove" asp-route-userId="@member.UserId"
