@@ -52,6 +52,11 @@ public sealed class TracesModel : PageModel
 	public bool HasNext { get; private set; }
 	public bool SchemaMissing { get; private set; }
 
+	// Distinct from SchemaMissing: the project has NO logs at all yet (nothing to select),
+	// vs. a log being selected but its spans table not (yet) existing. Rendered as its own
+	// alert with a "create a log" CTA, mirroring Pages/Logs/Index's NoLogs (logs-traces-default-log).
+	public bool NoLogs { get; private set; }
+
 	public sealed record TraceSummary(string TraceId, string RootName, DateTime StartTime, TimeSpan Duration, int SpanCount, int WorstStatus);
 
 	public async Task OnGetAsync(CancellationToken ct)
@@ -67,12 +72,10 @@ public sealed class TracesModel : PageModel
 		if (project is null) { SchemaMissing = true; return; }
 		ProjectName = project.Name;
 
-		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
-		AvailableLogs = logs;
-		SelectedLog = !string.IsNullOrWhiteSpace(LogName) && logs.Contains(LogName, StringComparer.Ordinal)
-			? LogName
-			: logs.Contains(LogNames.Default, StringComparer.Ordinal) ? LogNames.Default : logs.FirstOrDefault();
-		if (SelectedLog is null) { SchemaMissing = true; return; }
+		var logMetas = await _logStore.ListAsync(EffectiveProjectKey, ct);
+		AvailableLogs = logMetas.Select(l => l.Name).ToList();
+		SelectedLog = DefaultLogSelector.Resolve(logMetas, LogName);
+		if (SelectedLog is null) { NoLogs = true; return; }
 
 		if (PageNum < 0) PageNum = 0;
 		using var logDb = _logStore.NewEnsuredContext(EffectiveProjectKey, SelectedLog);
