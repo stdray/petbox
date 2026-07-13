@@ -29,9 +29,13 @@ public sealed class SettingsResolverTransactionTests : IDisposable
 		var cs = $"Data Source={Path.Combine(_dir, "petbox.db")}";
 		TestSchema.Core(cs);
 		_db = new PetBoxDb(PetBoxDb.CreateOptions(cs));
-		// IsAvailable = false, so Encode() throws on the SECRET property — mid-loop, after the plain
-		// property ahead of it has already been written inside the transaction.
-		_resolver = new SettingsResolver(_db.Factory(), new NoSecrets());
+		// IsAvailable = false, so Encode() throws on the SECRET property while the plain property
+		// ahead of it has already been encoded — the throw lands mid-save, which is the whole point.
+		// (The resolver now encodes the entire diff BEFORE handing it to the store, so the throw
+		// happens with nothing open at all; the store's transaction is the second line of defence,
+		// not the first. Either way the observable contract is the one asserted below: NOTHING is
+		// written.)
+		_resolver = new SettingsResolver(new SettingsStore(_db.Factory()), new NoSecrets());
 	}
 
 	// The regression: a save that dies partway writes NOTHING.

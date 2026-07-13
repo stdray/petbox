@@ -48,7 +48,7 @@ public sealed class BoardFilterPersistenceTests : IDisposable
 			c => new TasksDb(TasksDb.CreateOptions(c)), TasksSchema.Ensure);
 		_store = new TaskBoardStore(_db.Factory(), _factory);
 		_tasks = new TasksService(_store, new RelationStore(_factory), new TagStore(_factory), new CommentService(_factory));
-		_settings = new SettingsResolver(_db.Factory(), new NoSecrets());
+		_settings = new SettingsResolver(new SettingsStore(_db.Factory()), new NoSecrets());
 	}
 
 	public void Dispose()

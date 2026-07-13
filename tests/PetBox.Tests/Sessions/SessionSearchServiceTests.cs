@@ -54,7 +54,7 @@ public sealed class SessionSearchServiceTests : IDisposable
 		_episodic = new DuckDbSessionEpisodicIndex(_sessionsFactory);
 		_termIndex = new SessionTermIndex(_sessionsFactory, new ProjectCatalog(_db.Factory()), _sessions);
 		_fullScanIndex = new SessionFullScanIndex(_sessions);
-		_settingsResolver = new SettingsResolver(_db.Factory(), new NoSecrets());
+		_settingsResolver = new SettingsResolver(new SettingsStore(_db.Factory()), new NoSecrets());
 		_search = new SessionSearchService(_memory, _episodic, _termIndex, _fullScanIndex, _settingsResolver, _sessions);
 	}
 

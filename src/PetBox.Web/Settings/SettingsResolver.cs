@@ -1,28 +1,33 @@
 using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
-using LinqToDB;
 using PetBox.Config;
-using PetBox.Core.Data;
 using PetBox.Core.Settings;
 
 namespace PetBox.Web.Settings;
 
-public sealed class SettingsResolver(ICoreDbFactory factory, ISecretEncryptor encryptor) : ISettingsResolver
+// The TYPED half of settings: reflection over [Setting] properties, the TopLevel cap, and the
+// encode/decode of a CLR value to the stored (Type, Value) pair. The DATABASE half lives behind
+// ISettingsStore, and this class holds no factory — it cannot open core.db even by accident, which
+// is AGENTS.md's "the database is visible only in the service layer" applied here.
+//
+// That split is not bookkeeping. GetAsync is the hottest read in the app (a cross-scope search
+// drives CapabilityRouter -> LlmRegistryLevelResolver -> GetAsync on EVERY embed, i.e. on every
+// query), and while the SQL was inlined here it was an N+1 over the scope cascade: PER PROPERTY, one
+// chain-building query plus a row query per link. The chain is the same for every property of a
+// record — only the TopLevel CAP differs, and that is a FILTER over the chain, not a different one —
+// so the store now takes the whole cascade in one snapshot and every property is answered from
+// memory. Same one connection per call as before; the round-trips inside it collapse to two.
+//
+// The WRITE path used to stay on an injected scoped connection, justified by a comment claiming it
+// "must remain able to join whatever the request's connection is doing". That was never true:
+// SetAsync opened no transaction, so each property was its own autocommit and there was nothing to
+// join. Worse — that made a MULTI-PROPERTY SAVE NON-ATOMIC: a throw on the 3rd of 5 properties (an
+// unencryptable secret, a bad cast) left the first two committed and the rest not, i.e. the admin
+// page silently half-applied. So the whole diff is now ENCODED first — that is where Encode() can
+// throw, before anything is open — and handed to the store as one all-or-nothing write.
+public sealed class SettingsResolver(ISettingsStore store, ISecretEncryptor encryptor) : ISettingsResolver
 {
-	// EVERY path — read and write — takes a fresh, call-owned connection from the factory. A linq2db
-	// DataConnection is NOT thread-safe, and GetAsync is reached from parallel branches of one request
-	// scope: the cross-scope search fan-out drives CapabilityRouter -> LlmRegistryLevelResolver ->
-	// ISettingsResolver.GetAsync on EVERY embed, i.e. on every query.
-	//
-	// The WRITE path used to stay on the injected scoped connection, justified by a comment claiming
-	// it "must remain able to join whatever the request's connection is doing". That was never true:
-	// SetAsync opened no transaction, so each property was its own autocommit and there was nothing to
-	// join. Worse — that made a MULTI-PROPERTY SAVE NON-ATOMIC: a throw on the 3rd of 5 properties
-	// (an unencryptable secret, a bad cast) left the first two committed and the rest not, i.e. the
-	// admin page silently half-applied. So the write path now opens ONE connection per CALL and wraps
-	// the whole property loop in ONE transaction: all properties, or none.
-
 	public async Task<T> GetAsync<T>(Scope deepestScope, string deepestScopeKey, CancellationToken ct = default)
 		where T : new()
 	{
@@ -30,20 +35,22 @@ public sealed class SettingsResolver(ICoreDbFactory factory, ISecretEncryptor en
 		var props = SettingPropertyCache.Get(typeof(T));
 		if (props.Count == 0) return result;
 
-		using var read = factory.Open();
+		var snapshot = await store.LoadChainAsync(deepestScope, deepestScopeKey, ct);
 
 		foreach (var prop in props)
 		{
-			var chain = await BuildChainAsync(read, deepestScope, deepestScopeKey, prop.Attribute.TopLevel, ct);
-			foreach (var (scope, scopeKey) in chain)
+			foreach (var (scope, scopeKey) in snapshot.Chain)
 			{
-				var row = await read.Settings.FirstOrDefaultAsync(
-					s => s.Scope == scope.ToString()
-						&& s.ScopeKey == scopeKey
-						&& s.Path == prop.Attribute.Key,
-					ct);
+				// The property's TopLevel cap: a scope FINER than it is not reachable for this
+				// property, so it is skipped rather than consulted. (The chain itself is shared by
+				// every property — this is the only per-property part of the walk.)
+				if (!IsReachable(prop.Attribute.TopLevel, scope)) continue;
+
+				var row = snapshot.Find(scope, scopeKey, prop.Attribute.Key);
 				if (row is null) continue;
 
+				// First row wins: the chain is ordered deepest-first, so the nearest override is
+				// the one that lands, and the rest of the cascade is not consulted.
 				var value = Decode(prop.Property.PropertyType, row.Type, row.Value, prop.Attribute.IsSecret);
 				prop.Property.SetValue(result, value);
 				break;
@@ -57,15 +64,13 @@ public sealed class SettingsResolver(ICoreDbFactory factory, ISecretEncryptor en
 		where T : notnull
 	{
 		var props = SettingPropertyCache.Get(typeof(T));
-		var now = DateTime.UtcNow;
 
-		// ONE connection and ONE transaction for the whole save: a settings form is a SINGLE edit by
-		// the user, and applying half of it is never a state they asked for. Encode() throws on a
-		// secret with no master key configured and on a bad cast, and before this it threw MIDWAY —
-		// after earlier properties had already autocommitted.
-		using var db = factory.Open();
-		await using var tx = await db.BeginTransactionAsync(ct);
-
+		// EVERYTHING is encoded before the store is touched. Encode() throws on a secret with no
+		// master key configured and on a bad cast; doing it here means such a throw happens with no
+		// connection open and no transaction started, so a failed save writes NOTHING and cannot
+		// half-apply. (A settings form is a SINGLE edit by the user — half of it is never a state
+		// they asked for.)
+		var writes = new List<SettingWrite>();
 		foreach (var prop in props)
 		{
 			var newVal = prop.Property.GetValue(newValues);
@@ -73,41 +78,10 @@ public sealed class SettingsResolver(ICoreDbFactory factory, ISecretEncryptor en
 			if (Equals(newVal, oldVal)) continue;
 
 			var (typeTag, encoded) = Encode(prop.Property.PropertyType, newVal, prop.Attribute.IsSecret);
-
-			var existing = await db.Settings.FirstOrDefaultAsync(
-				s => s.Scope == scope.ToString()
-					&& s.ScopeKey == scopeKey
-					&& s.Path == prop.Attribute.Key,
-				ct);
-
-			if (existing is null)
-			{
-				await db.InsertAsync(new Setting
-				{
-					Scope = scope.ToString(),
-					ScopeKey = scopeKey,
-					Path = prop.Attribute.Key,
-					Type = typeTag,
-					Value = encoded,
-					UpdatedAt = now,
-					UpdatedBy = updatedBy,
-				}, token: ct);
-			}
-			else
-			{
-				await db.Settings
-					.Where(s => s.Scope == scope.ToString() && s.ScopeKey == scopeKey && s.Path == prop.Attribute.Key)
-					.Set(s => s.Type, typeTag)
-					.Set(s => s.Value, encoded)
-					.Set(s => s.UpdatedAt, now)
-					.Set(s => s.UpdatedBy, updatedBy)
-					.UpdateAsync(ct);
-			}
+			writes.Add(new SettingWrite(prop.Attribute.Key, typeTag, encoded));
 		}
 
-		// Not reached if the loop threw: the `await using` rolls the transaction back, so a failed
-		// save writes NOTHING.
-		await tx.CommitAsync(ct);
+		await store.WriteAsync(scope, scopeKey, writes, updatedBy, ct);
 	}
 
 	public async Task ResetAsync<T>(Scope scope, string scopeKey, string propertyName, CancellationToken ct = default)
@@ -117,78 +91,13 @@ public sealed class SettingsResolver(ICoreDbFactory factory, ISecretEncryptor en
 		var match = props.FirstOrDefault(p => p.Property.Name == propertyName)
 			?? throw new ArgumentException($"Property {propertyName} on {typeof(T).Name} is not a [Setting].", nameof(propertyName));
 
-		// A single statement — atomic on its own, no explicit transaction needed.
-		using var db = factory.Open();
-		await db.Settings
-			.Where(s => s.Scope == scope.ToString() && s.ScopeKey == scopeKey && s.Path == match.Attribute.Key)
-			.DeleteAsync(ct);
+		await store.DeleteAsync(scope, scopeKey, match.Attribute.Key, ct);
 	}
 
-	// `read` is the caller's own connection (see GetAsync) — never the shared scoped one.
-	static async Task<List<(Scope Scope, string ScopeKey)>> BuildChainAsync(PetBoxDb read, Scope deepest, string deepestKey, Scope topLevel, CancellationToken ct)
-	{
-		// Skip scopes finer than the property's TopLevel — they're not reachable for this property.
-		var chain = new List<(Scope, string)>();
-		if ((int)topLevel <= (int)deepest)
-			chain.Add((deepest, deepestKey));
-
-		switch (deepest)
-		{
-			case Scope.System:
-				break;
-			case Scope.Workspace:
-				AddIfReachable(chain, Scope.System, "$", topLevel);
-				break;
-			case Scope.Project:
-				var ws = await read.Projects
-					.Where(p => p.Key == deepestKey)
-					.Select(p => p.WorkspaceKey)
-					.FirstOrDefaultAsync(ct);
-				if (ws is not null)
-					AddIfReachable(chain, Scope.Workspace, ws, topLevel);
-				AddIfReachable(chain, Scope.System, "$", topLevel);
-				break;
-			case Scope.Service:
-				// ScopeKey format: "{projectKey}/{serviceKey}"
-				var slash = deepestKey.IndexOf('/');
-				if (slash > 0)
-				{
-					var projKey = deepestKey[..slash];
-					AddIfReachable(chain, Scope.Project, projKey, topLevel);
-					var svcWs = await read.Projects
-						.Where(p => p.Key == projKey)
-						.Select(p => p.WorkspaceKey)
-						.FirstOrDefaultAsync(ct);
-					if (svcWs is not null)
-						AddIfReachable(chain, Scope.Workspace, svcWs, topLevel);
-				}
-				AddIfReachable(chain, Scope.System, "$", topLevel);
-				break;
-			case Scope.User:
-				AddIfReachable(chain, Scope.System, "$", topLevel);
-				break;
-			case Scope.Membership:
-				// ScopeKey format: "{userId}:{workspaceKey}"
-				var colon = deepestKey.IndexOf(':');
-				if (colon > 0)
-				{
-					var userPart = deepestKey[..colon];
-					var wsPart = deepestKey[(colon + 1)..];
-					AddIfReachable(chain, Scope.User, userPart, topLevel);
-					AddIfReachable(chain, Scope.Workspace, wsPart, topLevel);
-				}
-				AddIfReachable(chain, Scope.System, "$", topLevel);
-				break;
-		}
-
-		return chain;
-	}
-
-	static void AddIfReachable(List<(Scope, string)> chain, Scope scope, string key, Scope topLevel)
-	{
-		if ((int)topLevel <= (int)scope)
-			chain.Add((scope, key));
-	}
+	// Scope is ordered coarse -> fine (System = 0 ... Membership = 5), so a property whose TopLevel
+	// is Project is not readable at System or Workspace: the cap names the COARSEST scope that may
+	// carry it.
+	static bool IsReachable(Scope topLevel, Scope scope) => (int)topLevel <= (int)scope;
 
 	(string TypeTag, string Encoded) Encode(Type clrType, object? value, bool isSecret)
 	{

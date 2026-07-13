@@ -1,11 +1,10 @@
-using LinqToDB;
-using LinqToDB.Async;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Memory.Contract;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Memory;
 
@@ -35,10 +34,12 @@ public static class MemoryApi
 			.RequireAuthorization("ApiKey");
 	}
 
+	// The handler opens no database: the canon comes from IMemoryService and the project's workspace
+	// from IProjectDirectory (the catalog of projects — see AGENTS.md, "the database is visible only
+	// in the service layer"; an endpoint lambda asks a service, it does not call .Open() itself).
 	static async Task<IResult> CanonAsync(
-		HttpContext ctx, string projectKey, IMemoryService memory, ICoreDbFactory dbf, IProjectCatalog catalog, CancellationToken ct)
+		HttpContext ctx, string projectKey, IMemoryService memory, IProjectDirectory projects, IProjectCatalog catalog, CancellationToken ct)
 	{
-		using var db = dbf.Open();
 		if (!await ProjectScope.AuthorizesAsync(ctx.User, projectKey, catalog, ct))
 			return TypedResults.Forbid();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
@@ -47,12 +48,11 @@ public static class MemoryApi
 
 		var project = await ReadCanonAsync(memory, projectKey, CanonKey, ct);
 
-		// Workspace leg = the project's own workspace container — never a hardcoded global.
+		// Workspace leg = the project's own workspace container — never a hardcoded global. An
+		// unknown project has no row, so the workspace part simply stays null (still 200), exactly
+		// as before.
 		CanonPart? workspace = null;
-		var wsKey = await db.Projects
-			.Where(p => p.Key == projectKey)
-			.Select(p => p.WorkspaceKey)
-			.FirstOrDefaultAsync(ct);
+		var wsKey = (await projects.GetAsync(projectKey, ct))?.WorkspaceKey;
 		if (wsKey is not null)
 		{
 			var container = WorkspaceMemory.ContainerKeyFor(wsKey);
