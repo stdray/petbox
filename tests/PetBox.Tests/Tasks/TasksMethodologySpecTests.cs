@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace PetBox.Tests.Tasks;
 
 // Methodology smoke, theme 2/4: the SPEC board and the idea gate in front of it — the spec tree,
@@ -113,6 +115,63 @@ public sealed class TasksMethodologySpecTests : TasksMethodologySmokeBase, IClas
 		FieldOf(s, "leaf2", "delivery").Should().Be("not_started", "a leaf with no linked tasks is not_started, not silently absent from the rollup");
 		FieldOf(s, "leaf3", "delivery").Should().Be("not_started");
 		FieldOf(s, "umbrella", "delivery").Should().Be("in_progress", "one done leaf + two not-started leaves must NOT roll up to done");
+	}
+
+	// presetkind-spec-blind-spot: a spec node's `linkedTasks` field (the inbound task_spec edges —
+	// the work tasks that implement it) is gated in TasksService.GetAsync on `presetKind ==
+	// BoardKind.Spec`, the SAME anti-pattern the strikethrough regression (board-ui-review-findings
+	// #2, PR #21/#22) already broke: PresetKind nulls out for any DEFINED kind, and this bare-preset
+	// board (kind "spec" with no methodology instance) is the ONLY shape that ever exercised
+	// `linkedTasks` before — IsDefinedKind("spec") is false here, so the old
+	// `presetKind == BoardKind.Spec` check happened to still work. Kept as the preset-shape half of
+	// the pair; see the definition-resolved sibling below for the shape that actually broke in
+	// production.
+	[Fact]
+	public async Task SpecNode_LinkedTasks_ListsWorkTaskLinkedViaSpecRef()
+	{
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "spec", kind = "spec" });
+		var ir = await AcceptedIdeaId();
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", ideaRef = ir }) });
+		var specId = NodeId(spec, "login");
+
+		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "work", kind = "work" });
+		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", specRef = specId }) });
+
+		var s = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
+		using var doc = JsonDocument.Parse(Text(s));
+		var loginEl = Descend(doc.RootElement).Single(e =>
+			e.ValueKind == JsonValueKind.Object && e.TryGetProperty("key", out var k) && k.GetString() == "login");
+		loginEl.TryGetProperty("linkedTasks", out var lt).Should().BeTrue(
+			"a spec node with an inbound task_spec edge must report linkedTasks (bare-preset spec board shape)");
+		lt.EnumerateArray().Select(x => x.GetProperty("slug").GetString()).Should().Contain("f");
+	}
+
+	// THE regression: same scenario, but spec/work are provisioned as ONE REAL quartet methodology
+	// instance (tasks_methodology_create, source=builtin/quartet) — the shape $system's boards
+	// actually have (RenderPresetDefinition copies the quartet kinds, including `spec`, VERBATIM
+	// into the instance's stored definition at creation time, so IsDefinedKind("spec") is TRUE).
+	// On that shape `presetKind` (TasksService.GetAsync) reads null, so the old
+	// `presetKind == BoardKind.Spec` gate at TasksService.cs:653 was NEVER true — `linkedTasks`
+	// silently dropped off every real spec node's response, for every project using the standard
+	// quartet methodology (not a hypothetical: this is $system's own shape).
+	[Fact]
+	public async Task SpecNode_LinkedTasks_ListsWorkTaskLinkedViaSpecRef_OnQuartetDefinitionResolvedBoards()
+	{
+		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, name = "spquartet", source = "builtin", sourceKey = "quartet" });
+		var ir = await AcceptedIdeaId(createBoard: false);
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "login", status = "defined", title = "Login", body = "x", ideaRef = ir }) });
+		var specId = NodeId(spec, "login");
+
+		await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "work", nodes = Nodes(new { key = "f", type = "feature", status = "Review", title = "F", body = "x", specRef = specId }) });
+
+		var s = await Agent("tasks_search", new { projectKey = ProjectKey, board = "spec" });
+		using var doc = JsonDocument.Parse(Text(s));
+		var loginEl = Descend(doc.RootElement).Single(e =>
+			e.ValueKind == JsonValueKind.Object && e.TryGetProperty("key", out var k) && k.GetString() == "login");
+		loginEl.TryGetProperty("linkedTasks", out var lt).Should().BeTrue(
+			"a DEFINITION-RESOLVED spec board (the shape $system actually has) must still report linkedTasks — " +
+			"PresetKind nulling out for a defined kind must not silently drop this field (presetkind-spec-blind-spot)");
+		lt.EnumerateArray().Select(x => x.GetProperty("slug").GetString()).Should().Contain("f");
 	}
 
 	// 22. spec-write-needs-accepted-idea: a spec node without ideaRef is rejected.

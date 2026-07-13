@@ -113,6 +113,37 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 		Text(r).Should().Contain("block");
 	}
 
+	// THE regression: same scenario, but spec/work are provisioned as ONE REAL quartet methodology
+	// instance (tasks_methodology_create, source=builtin/quartet) — the shape $system's own `work`
+	// board actually has (RenderPresetDefinition copies the quartet kinds, including `work`,
+	// VERBATIM into the instance's stored definition, so IsDefinedKind("work") is TRUE there).
+	// TasksService.RequireBlockersAsync gates the "Blocked needs a blocker" invariant on
+	// `presetKind == BoardKind.Work` — the SAME anti-pattern as the presetkind-spec-blind-spot
+	// bug (PresetKind nulls out for any DEFINED kind), found by that bug's sweep. On this shape
+	// the guard was NEVER true, so a Blocked work task could be created WITHOUT naming a blocker
+	// on any real quartet-provisioned project, not just the bare-preset shape the test above
+	// exercises.
+	[Fact]
+	public async Task Blocked_WithoutBlocker_Rejected_OnQuartetDefinitionResolvedWorkBoard()
+	{
+		await Agent("tasks_methodology_create", new { projectKey = ProjectKey, name = "wfquartet", source = "builtin", sourceKey = "quartet" });
+		var ir = await AcceptedIdeaId(createBoard: false);
+		var spec = await Agent("tasks_upsert", new { projectKey = ProjectKey, board = "spec", nodes = Nodes(new { key = "f", status = "defined", title = "F", body = "x", ideaRef = ir }) });
+		var specId = NodeId(spec, "f");
+
+		var r = await Agent("tasks_upsert", new
+		{
+			projectKey = ProjectKey,
+			board = "work",
+			nodes = Nodes(new { key = "t", type = "feature", status = "Blocked", title = "T", body = "x", specRef = specId }),
+		});
+		IsErr(r).Should().BeTrue(
+			"a Blocked work task must still name a blocker on a REAL quartet-provisioned " +
+			"(definition-resolved) work board, not just the bare-preset shape the test above exercises " +
+			"(presetkind-spec-blind-spot follow-up)");
+		Text(r).Should().Contain("block");
+	}
+
 	// 12. blockedBy creates a `blocks` edge; when the blocker reaches Done, the blocked task auto-unblocks.
 	[Fact]
 	public async Task Block_AutoUnblocksWhenBlockerDone()
