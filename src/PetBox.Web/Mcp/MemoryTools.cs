@@ -213,6 +213,8 @@ public static class MemoryTools
 		soft-closed (history kept) and appears in the result's `removed`.
 		Store durable facts not derivable from code/git/config; actionable work goes to a
 		task board, not here.
+		Cyrillic bodies: send raw UTF-8, not \uXXXX escapes (triples the byte size) — an oversized
+		call is silently truncated before the server sees it. Split large batches.
 		Returns the pure write-ack { applied, currentVersion, inserted, closed, conflicts[],
 		added[], updated[], removed[], autoResolved[] }. `applied` is the SINGLE source of truth:
 		FALSE = nothing
@@ -317,6 +319,8 @@ public static class MemoryTools
 		workspace). `type` taxonomy (User|Feedback|Project|Reference) — pick explicitly.
 		Store durable facts not derivable from code/git/config; actionable work goes to a
 		task board. Requires memory:write.
+		Cyrillic text: send raw UTF-8, not \uXXXX escapes (triples the byte size) — a long
+		call is silently truncated before the server sees it.
 		[[full]]
 		CREATE one durable fact, verbatim (always a new entry; edits go via memory_upsert).
 		The low-ceremony way to store a learning.
