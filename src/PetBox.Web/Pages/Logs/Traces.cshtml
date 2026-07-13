@@ -45,9 +45,17 @@
 	</form>
 }
 
-@if (Model.SchemaMissing)
+@if (Model.NoLogs)
 {
-	<div class="alert" data-testid="traces-empty">No spans ingested yet.</div>
+	<div class="alert" data-testid="traces-none">
+		<span>No logs in this project yet.</span>
+		<a href="@Routes.ProjectLogsAdmin(Model.WorkspaceKey ?? "", Model.EffectiveProjectKey)"
+			class="btn btn-sm btn-primary" data-testid="traces-create-link">Create a log</a>
+	</div>
+}
+else if (Model.SchemaMissing)
+{
+	<div class="alert" data-testid="traces-schema-missing">No spans ingested yet.</div>
 }
 else if (Model.Traces.Count == 0)
 {

@@ -123,4 +123,60 @@ public sealed class TracesListFilterTests : IDisposable
 		m.SelectedLog.Should().Be("worker");
 		m.Traces.Select(t => t.TraceId).Should().BeEquivalentTo("worker-t001", "worker-t002");
 	}
+
+	// logs-traces-default-log: THE regression that fooled the maintainer. A project with an
+	// existing, populated log must render its traces with NO ?log= at all — not the blank that
+	// used to be indistinguishable from "there is no telemetry".
+	[Fact]
+	public async Task NoQueryString_RendersTheOnlyLogsTraces_TheMaintainerRegression()
+	{
+		await _store.CreateAsync(Proj, "petbox", "self-log");
+		await SeedTrace("petbox", 1, status: 1);
+
+		var m = NewModel(); // LogName left null — the plain /traces URL
+		await m.OnGetAsync(default);
+
+		m.NoLogs.Should().BeFalse();
+		m.SelectedLog.Should().Be("petbox");
+		m.Traces.Should().ContainSingle();
+	}
+
+	// Reproduces the exact production shape (work logs-traces-default-log): three logs, none
+	// named "default", none requested via ?log=. The OLD rule (alphabetically first) picked
+	// "cc-telemetry" — a log with zero spans — and rendered "No traces." even though "petbox"
+	// (the oldest of the three) had 51 of them. The new rule picks the OLDEST log.
+	[Fact]
+	public async Task NoQueryString_WithSeveralLogs_PicksTheOldestNotTheAlphabeticallyFirst()
+	{
+		await _store.CreateAsync(Proj, "petbox", null); // created FIRST (oldest) — has the spans
+		await _store.CreateAsync(Proj, "cc-telemetry", null); // alphabetically first, zero spans
+		await _store.CreateAsync(Proj, "prompt-rag-audit", null);
+		await SeedTrace("petbox", 1, status: 1);
+
+		var m = NewModel();
+		await m.OnGetAsync(default);
+
+		m.SelectedLog.Should().Be("petbox");
+		m.Traces.Should().ContainSingle();
+	}
+
+	// The three states a viewer can land on must be distinguishable: no logs in the project at
+	// all (nothing to select) is NOT the same state as a log being selected but genuinely having
+	// no spans yet.
+	[Fact]
+	public async Task State_NoLogsInProject_IsDistinctFromASelectedEmptyLog()
+	{
+		var noLogs = NewModel(); // zero _store.CreateAsync calls — the project has no logs at all
+		await noLogs.OnGetAsync(default);
+		noLogs.NoLogs.Should().BeTrue();
+		noLogs.SelectedLog.Should().BeNull();
+		noLogs.SchemaMissing.Should().BeFalse();
+
+		await _store.CreateAsync(Proj, "app", null); // schema created, never ingested into
+		var emptyLog = NewModel();
+		await emptyLog.OnGetAsync(default);
+		emptyLog.NoLogs.Should().BeFalse("a log DOES exist in the project — distinct from zero logs");
+		emptyLog.SelectedLog.Should().Be("app");
+		emptyLog.Traces.Should().BeEmpty();
+	}
 }

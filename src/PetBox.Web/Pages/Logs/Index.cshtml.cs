@@ -95,10 +95,12 @@ public sealed class IndexModel : PageModel
 		ProjectKey = project.Key;
 		ProjectName = project.Name;
 
-		// Named logs available in this project; pick the requested one, else the
-		// conventional `default`, else the first alphabetically.
-		AvailableLogs = (await _logStore.ListAsync(ProjectKey, ct)).Select(l => l.Name).ToList();
-		SelectedLog = ResolveSelectedLog();
+		// Named logs available in this project; pick the requested one, else the sole log,
+		// else the conventional `default`, else the oldest (see DefaultLogSelector for why
+		// "oldest", not "alphabetically first" — logs-traces-default-log).
+		var logMetas = await _logStore.ListAsync(ProjectKey, ct);
+		AvailableLogs = logMetas.Select(l => l.Name).ToList();
+		SelectedLog = DefaultLogSelector.Resolve(logMetas, LogNameRoute);
 		if (SelectedLog is null)
 		{
 			NoLogs = true;
@@ -238,17 +240,6 @@ public sealed class IndexModel : PageModel
 			return Partial("_RowsFragment", this);
 
 		return Page();
-	}
-
-	string? ResolveSelectedLog()
-	{
-		if (AvailableLogs.Count == 0)
-			return null;
-		if (!string.IsNullOrWhiteSpace(LogNameRoute) && AvailableLogs.Contains(LogNameRoute, StringComparer.Ordinal))
-			return LogNameRoute;
-		if (AvailableLogs.Contains(LogNames.Default, StringComparer.Ordinal))
-			return LogNames.Default;
-		return AvailableLogs[0];
 	}
 
 	public async Task<IActionResult> OnPostSaveAsync(
