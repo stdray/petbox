@@ -12,6 +12,7 @@ using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.LlmRouter.Contract;
 using PetBox.LlmRouter.Registry;
+using PetBox.Web.Auth;
 using PetBox.Web.Mcp;
 using PetBox.Web.Pages.Llm;
 using PetBox.Web.Settings;
@@ -161,7 +162,7 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		reordered.Routes[1].Id.Should().Be(editedId);
 
 		// Now the user's form arrives, carrying the id it was rendered with (NOT an index).
-		var page = new IndexModel(_editor, Flags(), _db.Factory()) { WorkspaceKey = Ws, ProjectKey = Proj };
+		var page = new IndexModel(_editor, Flags(), new ProjectDirectory(_db.Factory())) { WorkspaceKey = Ws, ProjectKey = Proj };
 		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "chat-model-v2", 50, null, null, editedId);
 
 		var after = await _editor.ViewAsync(Proj);
@@ -181,7 +182,7 @@ public sealed class LlmRegistryEditorTests : IDisposable
 		var view = await _editor.ViewAsync(Proj);
 		var doomed = view.Routes.Single(r => r.Route.Model == "embed-model").Id;
 
-		var page = new IndexModel(_editor, Flags(), _db.Factory()) { WorkspaceKey = Ws, ProjectKey = Proj };
+		var page = new IndexModel(_editor, Flags(), new ProjectDirectory(_db.Factory())) { WorkspaceKey = Ws, ProjectKey = Proj };
 		await page.OnPostDeleteRouteAsync(doomed);
 
 		var resolved = await _resolver.ResolveAsync(Proj);
@@ -214,7 +215,7 @@ public sealed class LlmRegistryEditorTests : IDisposable
 			NoKeys);
 
 		var view = await _editor.ViewAsync(Proj);
-		var page = new IndexModel(_editor, Flags(), _db.Factory()) { WorkspaceKey = Ws, ProjectKey = Proj };
+		var page = new IndexModel(_editor, Flags(), new ProjectDirectory(_db.Factory())) { WorkspaceKey = Ws, ProjectKey = Proj };
 
 		await page.OnPostSaveRouteAsync(LlmCapability.Chat, "home", "hijacked", 1, null, null, view.Routes[0].Id);
 

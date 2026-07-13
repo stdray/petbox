@@ -9,6 +9,7 @@ using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Memory.Data;
 using PetBox.Memory.Services;
+using PetBox.Web.Auth;
 using PetBox.Web.Pages.Admin;
 
 namespace PetBox.Tests.Web;
@@ -56,7 +57,7 @@ public sealed class ProjectMemoryAdminPageTests : IDisposable
 	}
 
 	ProjectMemoryModel Page() =>
-		new(_db.Factory(), Features(), _memory) { WorkspaceKey = "ws", ProjectKey = Proj };
+		new(new ProjectDirectory(_db.Factory()), Features(), _memory) { WorkspaceKey = "ws", ProjectKey = Proj };
 
 	[Fact]
 	public async Task Delete_OrdinaryStore_Removes()

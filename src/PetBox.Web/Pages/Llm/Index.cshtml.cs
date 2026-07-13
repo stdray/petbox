@@ -2,9 +2,9 @@ using FluentValidation;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.LlmRouter.Contract;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Llm;
 
@@ -33,13 +33,13 @@ public sealed class IndexModel : PageModel
 {
 	readonly ILlmRegistryEditor _registry;
 	readonly FeatureFlags _features;
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 
-	public IndexModel(ILlmRegistryEditor registry, FeatureFlags features, ICoreDbFactory f)
+	public IndexModel(ILlmRegistryEditor registry, FeatureFlags features, IProjectDirectory projects)
 	{
 		_registry = registry;
 		_features = features;
-		_f = f;
+		_projects = projects;
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -211,9 +211,6 @@ public sealed class IndexModel : PageModel
 		InheritedFrom = view.InheritedFrom;
 	}
 
-	async Task<bool> ProjectExistsAsync(CancellationToken ct)
-	{
-		using var db = _f.Open();
-		return await db.Projects.AnyAsync(p => p.Key == ProjectKey, ct);
-	}
+	async Task<bool> ProjectExistsAsync(CancellationToken ct) =>
+		await _projects.ExistsAsync(ProjectKey, ct);
 }

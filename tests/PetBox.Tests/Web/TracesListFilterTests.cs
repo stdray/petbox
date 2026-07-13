@@ -4,6 +4,7 @@ using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Tracing;
+using PetBox.Web.Auth;
 using PetBox.Web.Pages.Logs;
 
 namespace PetBox.Tests.Web;
@@ -57,7 +58,7 @@ public sealed class TracesListFilterTests : IDisposable
 		});
 	}
 
-	TracesModel NewModel() => new(_db.Factory(), _store)
+	TracesModel NewModel() => new(new ProjectDirectory(_db.Factory()), _store)
 	{
 		WorkspaceKey = "ws",
 		ProjectKey = Proj,

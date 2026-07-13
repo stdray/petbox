@@ -2,10 +2,9 @@ using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
-using PetBox.Core.Models;
 using PetBox.Log.Core.Data;
 using PetBox.Log.Core.Tracing;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Logs;
 
@@ -15,12 +14,12 @@ namespace PetBox.Web.Pages.Logs;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class TracesModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly ILogStore _logStore;
 
-	public TracesModel(ICoreDbFactory f, ILogStore logStore)
+	public TracesModel(IProjectDirectory projects, ILogStore logStore)
 	{
-		_f = f;
+		_projects = projects;
 		_logStore = logStore;
 	}
 
@@ -61,14 +60,12 @@ public sealed class TracesModel : PageModel
 
 	public async Task OnGetAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
 		EffectiveProjectKey = ProjectKey ?? "";
 		if (string.IsNullOrEmpty(EffectiveProjectKey)) { SchemaMissing = true; return; }
 
 		// The route workspace is proved by ProjectWorkspaceBindingFilter before this runs (see
 		// ProjectHome/Index) — resolve by key alone; the row is still needed for ProjectName.
-		var project = await db.Projects.FirstOrDefaultAsync(
-			(Project p) => p.Key == EffectiveProjectKey, ct);
+		var project = await _projects.GetAsync(EffectiveProjectKey, ct);
 		if (project is null) { SchemaMissing = true; return; }
 		ProjectName = project.Name;
 

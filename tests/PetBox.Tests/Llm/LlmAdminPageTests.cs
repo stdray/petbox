@@ -8,6 +8,7 @@ using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.LlmRouter.Contract;
+using PetBox.Web.Auth;
 using PetBox.Web.Pages.Llm;
 
 namespace PetBox.Tests.Llm;
@@ -47,7 +48,7 @@ public sealed class LlmAdminPageTests : IDisposable
 	}
 
 	IndexModel Page(FakeEditor reg, bool feature = true) =>
-		new(reg, Features(feature), _db.Factory()) { WorkspaceKey = "ws", ProjectKey = Proj };
+		new(reg, Features(feature), new ProjectDirectory(_db.Factory())) { WorkspaceKey = "ws", ProjectKey = Proj };
 
 	[Fact]
 	public async Task Feature_disabled_returns_NotFound()

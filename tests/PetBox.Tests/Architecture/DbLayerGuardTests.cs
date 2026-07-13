@@ -90,44 +90,6 @@ public sealed class DbLayerGuardTests
 			+ "NEEDS A DOOR: every one of those tables has a service, but none of them COUNTS. A rollup/"
 			+ "stats door is the missing piece (and is the thing that finally makes core.db cacheable).",
 
-		["PetBox.Web.Pages.Admin.ProjectAgentDefsModel"] =
-			"Reads Projects only (AgentDefs itself already goes through AgentDefinitionService). "
-			+ "DOOR EXISTS: IProjectDirectory. Mechanical.",
-
-		["PetBox.Web.Pages.Admin.ProjectConnectModel"] =
-			"Reads Projects and INSERTS an ApiKey (the onboarding snippet mints a key). "
-			+ "DOOR EXISTS: IProjectDirectory + AgentKeyAdminService.MintAsync — both are exactly the "
-			+ "calls ProjectDetail now makes. Should fall next, and cheaply.",
-
-		["PetBox.Web.Pages.Admin.ProjectDataModel"] =
-			"Reads Projects + DataDbs and inserts a DataDb. DOOR EXISTS: IProjectDirectory + "
-			+ "IDataDbCatalog (List/Get/Create/Delete/Describe — it covers this page's whole shape).",
-
-		["PetBox.Web.Pages.Admin.ProjectDataDbModel"] =
-			"Reads DataDbs. DOOR EXISTS: IDataDbCatalog.",
-
-		["PetBox.Web.Pages.Admin.ProjectLogsModel"] =
-			"Reads Projects. DOOR EXISTS: IProjectDirectory. Mechanical.",
-
-		["PetBox.Web.Pages.Admin.ProjectMemoryModel"] =
-			"Reads Projects. DOOR EXISTS: IProjectDirectory. Mechanical.",
-
-		["PetBox.Web.Pages.Admin.ProjectMethodologyModel"] =
-			"Reads Projects. DOOR EXISTS: IProjectDirectory. Mechanical.",
-
-		["PetBox.Web.Pages.Admin.ProjectTasksModel"] =
-			"Reads Projects. DOOR EXISTS: IProjectDirectory. Mechanical.",
-
-		["PetBox.Web.Pages.Admin.WorkspaceAdminModel"] =
-			"Reads Projects + Workspaces + WorkspaceMembers. DOOR EXISTS: IProjectDirectory + "
-			+ "IWorkspaceAdminService + IWorkspaceMembershipService — all three landed in wave 2.",
-
-		["PetBox.Web.Pages.ProjectHome.DatabaseModel"] =
-			"Reads DataDbs. DOOR EXISTS: IDataDbCatalog.",
-
-		["PetBox.Web.Pages.ProjectHome.DatabasesModel"] =
-			"Reads DataDbs. DOOR EXISTS: IDataDbCatalog.",
-
 		["PetBox.Web.Pages.ProjectHome.IndexModel"] =
 			"Reads ApiKeys + DataDbs + HealthReports + Logs — the project-home rollup, and THE page "
 			+ "AGENTS.md means by 'a GET of a project page opens core.db 7-9 times'. Each table now has a "
@@ -141,9 +103,6 @@ public sealed class DbLayerGuardTests
 			+ "comment ('provisioning a container has no service door yet'). IWorkspaceMemoryDirectory "
 			+ "resolves containers but does not PROVISION one.",
 
-		["PetBox.Web.Pages.ProjectHome.TableModel"] =
-			"Reads DataDbs. DOOR EXISTS: IDataDbCatalog.",
-
 		["PetBox.Web.Pages.Config.IndexModel"] =
 			"Reads/writes SavedConfigFilters via IScopedDbFactory<ConfigDb>. NEEDS A DOOR: PetBox.Config "
 			+ "has no service layer at all — the module reads its db inline everywhere.",
@@ -151,9 +110,6 @@ public sealed class DbLayerGuardTests
 		["PetBox.Web.Pages.Dashboard.IndexModel"] =
 			"Reads ApiKeys + DataDbs + HealthReports + Logs + Projects — the fleet rollup. Same shape and "
 			+ "same missing piece as ProjectHome.IndexModel: NEEDS A DOOR (a rollup, not five reads).",
-
-		["PetBox.Web.Pages.Llm.IndexModel"] =
-			"Reads Projects. DOOR EXISTS: IProjectDirectory. Mechanical.",
 
 		["PetBox.Web.Pages.LoginModel"] =
 			"Reads Users + WorkspaceMembers to AUTHENTICATE (name -> password hash). NEEDS A DOOR: "
@@ -163,9 +119,6 @@ public sealed class DbLayerGuardTests
 		["PetBox.Web.Pages.Logs.IndexModel"] =
 			"Reads Projects + reads/writes SavedQueries. IProjectDirectory covers the first half; NEEDS A "
 			+ "DOOR for SavedQueries (nothing owns that table).",
-
-		["PetBox.Web.Pages.Logs.TracesModel"] =
-			"Reads Projects. DOOR EXISTS: IProjectDirectory. Mechanical.",
 
 		["PetBox.Web.Pages.Me.SecurityModel"] =
 			"Reads/writes the CURRENT user's own row (password change). NEEDS A DOOR: a self-service "
