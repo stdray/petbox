@@ -1146,12 +1146,13 @@ public sealed partial class TasksService : ITasksService
 			// of the true one ("'x' was rejected"). Each pass drops at least one patch, so this
 			// terminates. In ATOMIC mode the filter is false and the refusal propagates exactly as
 			// it always did.
-			catch (Exception ex) when (!atomic && ex is INodeRejection nr && live.Any(p => string.Equals(p.Key, nr.Key, StringComparison.Ordinal)))
+			catch (Exception ex) when (!atomic && ex.RejectedNode() is { } refused
+				&& live.Any(p => string.Equals(p.Key, refused, StringComparison.Ordinal)))
 			{
-				var refusal = (INodeRejection)ex;
-				rejectedGuardKeys.Add(refusal.Key);
-				rejected.Add(new(refusal.Key, TemporalConflictKind.Rejected, baselineOf.GetValueOrDefault(refusal.Key),
-					prior.GetValueOrDefault(refusal.Key)?.Version, refusal.Message));
+				var refused2 = ex.RejectedNode()!;
+				rejectedGuardKeys.Add(refused2);
+				rejected.Add(new(refused2, TemporalConflictKind.Rejected, baselineOf.GetValueOrDefault(refused2),
+					prior.GetValueOrDefault(refused2)?.Version, ex.Message));
 				rejected.AddRange(TemporalStore.Cascade(batchKeys, k => baselineOf.GetValueOrDefault(k), rejectedGuardKeys, dependsOn));
 				live = live.Where(p => !rejectedGuardKeys.Contains(p.Key)).ToList();
 			}
@@ -1746,12 +1747,10 @@ public sealed partial class TasksService : ITasksService
 
 			var tag = $"artifact:{artifact}";
 			if (p is null || p.NodeId.Length == 0)
-				throw new NodeGateException(d.Key,
-					$"node '{d.Key}' can't be created directly in '{d.Status}' — transition {transition} requires an {tag} comment; create the node, add the comment, then transition");
+				throw new InvalidOperationException($"node '{d.Key}' can't be created directly in '{d.Status}' — transition {transition} requires an {tag} comment; create the node, add the comment, then transition").ForNode(d.Key);
 			var comments = await _comments.ListForNodeAsync(projectKey, board, p.NodeId, ct);
 			if (!comments.Any(c => c.Tags.Any(t => string.Equals(t, tag, StringComparison.OrdinalIgnoreCase))))
-				throw new NodeGateException(d.Key,
-					$"transition {transition} on node '{d.Key}' requires an {tag} comment (the transition's precondition artifact) — add the comment, then retry");
+				throw new InvalidOperationException($"transition {transition} on node '{d.Key}' requires an {tag} comment (the transition's precondition artifact) — add the comment, then retry").ForNode(d.Key);
 		}
 	}
 
@@ -1770,7 +1769,7 @@ public sealed partial class TasksService : ITasksService
 		{
 			type ??= "task";
 			if (!MethodologyPresets.SimpleTypes.Contains(type))
-				throw new NodeRejectedException(node.Key, $"invalid type '{type}' for a simple board; valid: {MethodologyPresets.ValidTypes(BoardKind.Simple)}");
+				throw new ArgumentException($"invalid type '{type}' for a simple board; valid: {MethodologyPresets.ValidTypes(BoardKind.Simple)}").ForNode(node.Key);
 		}
 		var wf = runtime.For(kindSlug, type);
 		// Materialize the resolved default type at WRITE time (spec quick-add-stores-default-
@@ -1799,7 +1798,7 @@ public sealed partial class TasksService : ITasksService
 		// RequiresReason is gated on the call-scoped `reason` field — never the node body.
 		var res = WorkflowEngine.Validate(wf, runtime.KindName(kindSlug), runtime.ValidTypes(kindSlug),
 			type, from, n.Status, actorCanApprove: actor.CanApprove, hasReason: !string.IsNullOrWhiteSpace(reason));
-		if (!res.Ok) throw new NodeRejectedException(n.Key, res.Error!);
+		if (!res.Ok) throw new ArgumentException(res.Error!).ForNode(n.Key);
 		return n;
 	}
 
@@ -1841,7 +1840,7 @@ public sealed partial class TasksService : ITasksService
 				?? (n.PrevKey is not null ? prior.GetValueOrDefault(n.PrevKey) : null);
 			var result = ChangeValidator.Validate(new EntityChange<PlanNode>(old, n));
 			if (!result.IsValid)
-				throw new NodeRejectedException(n.Key, result.Errors[0].ErrorMessage);
+				throw new ArgumentException(result.Errors[0].ErrorMessage).ForNode(n.Key);
 		}
 	}
 
@@ -1857,11 +1856,11 @@ public sealed partial class TasksService : ITasksService
 			var v = raw.Trim();
 			if (NodeRefResolver.LooksLikeNodeId(v)) { specRefs[key] = v; continue; }
 			if (board.SpecBoard is not { Length: > 0 } sb)
-				throw new NodeRejectedException(key, $"specRef '{raw}' (node '{key}') is a slug, but this board has no linked spec board — provide the spec node's NodeId");
+				throw new ArgumentException($"specRef '{raw}' (node '{key}') is a slug, but this board has no linked spec board — provide the spec node's NodeId").ForNode(key);
 			var slug = v.ToLowerInvariant();
 			var target = ctx.PlanNodes.Where(n => n.Board == sb && n.ActiveTo == null && n.Key == slug).ToList().FirstOrDefault();
 			if (target is null || target.NodeId.Length == 0)
-				throw new NodeRejectedException(key, $"specRef '{raw}' (node '{key}') does not match any node on spec board '{sb}'");
+				throw new ArgumentException($"specRef '{raw}' (node '{key}') does not match any node on spec board '{sb}'").ForNode(key);
 			specRefs[key] = target.NodeId;
 		}
 		return specRefs;
@@ -1902,7 +1901,7 @@ public sealed partial class TasksService : ITasksService
 
 		var (firstKey, firstRaw) = slugRefs[0];
 		if (ideaBoards.Count == 0)
-			throw new NodeRejectedException(firstKey, $"ideaRef '{firstRaw}' (node '{firstKey}') is a slug, but no active {targetKind} board exists alongside board '{board.Name}'{InstanceSuffix(instance)} — create one or provide the idea node's NodeId");
+			throw new ArgumentException($"ideaRef '{firstRaw}' (node '{firstKey}') is a slug, but no active {targetKind} board exists alongside board '{board.Name}'{InstanceSuffix(instance)} — create one or provide the idea node's NodeId").ForNode(firstKey);
 
 		var boardList = string.Join(", ", ideaBoards);
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
@@ -1917,8 +1916,8 @@ public sealed partial class TasksService : ITasksService
 			ideaRefs[key] = hits.Count switch
 			{
 				1 => hits[0].NodeId,
-				0 => throw new NodeRejectedException(key, $"ideaRef '{raw}' (node '{key}') does not match any node on {targetKind} board{(ideaBoards.Count > 1 ? "s" : "")} '{boardList}'"),
-				_ => throw new NodeRejectedException(key, $"ambiguous ideaRef '{raw}' (node '{key}') — the slug matches nodes on boards: [{string.Join(", ", hits.Select(h => h.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the idea node's NodeId instead"),
+				0 => throw new ArgumentException($"ideaRef '{raw}' (node '{key}') does not match any node on {targetKind} board{(ideaBoards.Count > 1 ? "s" : "")} '{boardList}'").ForNode(key),
+				_ => throw new ArgumentException($"ambiguous ideaRef '{raw}' (node '{key}') — the slug matches nodes on boards: [{string.Join(", ", hits.Select(h => h.Board).OrderBy(b => b, StringComparer.Ordinal))}]; pass the idea node's NodeId instead").ForNode(key),
 			};
 		}
 		return ideaRefs;
@@ -1944,7 +1943,7 @@ public sealed partial class TasksService : ITasksService
 			var v = raw.Trim();
 			if (NodeRefResolver.LooksLikeNodeId(v)) { blockedBy[key] = v; continue; }
 			if (!slugToId.TryGetValue(v.ToLowerInvariant(), out var id))
-				throw new NodeRejectedException(key, $"blockedBy '{raw}' (node '{key}') does not match any node on board '{board}' — a blocker's slug resolves on the same board; pass a NodeId to reference a node on another board");
+				throw new ArgumentException($"blockedBy '{raw}' (node '{key}') does not match any node on board '{board}' — a blocker's slug resolves on the same board; pass a NodeId to reference a node on another board").ForNode(key);
 			blockedBy[key] = id;
 		}
 		return blockedBy;
@@ -1974,7 +1973,7 @@ public sealed partial class TasksService : ITasksService
 		if (board.SpecBoard is { Length: > 0 } sb)
 			foreach (var (key, refId) in specRefs)
 				if (index.TryGetValue(refId, out var t) && t.Board != sb)
-					throw new NodeRejectedException(key, $"specRef '{refId}' (node '{key}') is on board '{t.Board}', but this work board links spec board '{sb}'");
+					throw new ArgumentException($"specRef '{refId}' (node '{key}') is on board '{t.Board}', but this work board links spec board '{sb}'").ForNode(key);
 
 		void ValidateRefs(string field, string link, Dictionary<string, string> refs)
 		{
@@ -1987,12 +1986,12 @@ public sealed partial class TasksService : ITasksService
 			foreach (var (key, refId) in refs)
 			{
 				if (!index.TryGetValue(refId, out var t))
-					throw new NodeRejectedException(key, $"{field} '{refId}' (node '{key}') does not resolve to any node");
+					throw new ArgumentException($"{field} '{refId}' (node '{key}') does not resolve to any node").ForNode(key);
 				if (rule is null) continue;
 				if (rule.TargetKind is not null && !string.Equals(runtime.KindName(t.BoardKind), rule.TargetKind, StringComparison.OrdinalIgnoreCase))
-					throw new NodeRejectedException(key, $"{field} '{refId}' (node '{key}') points to board '{t.Board}', which is not a {rule.TargetKind} board");
+					throw new ArgumentException($"{field} '{refId}' (node '{key}') points to board '{t.Board}', which is not a {rule.TargetKind} board").ForNode(key);
 				if (rule.TargetStatuses is { Count: > 0 } ts && !ts.Contains(t.Status, StringComparer.OrdinalIgnoreCase))
-					throw new NodeRejectedException(key, $"{field} '{refId}' (node '{key}') target is '{t.Status}', not {string.Join("|", ts)} — a {runtime.KindName(kindSlug)} change needs a {rule.TargetKind ?? link} node in status {string.Join("|", ts)}");
+					throw new ArgumentException($"{field} '{refId}' (node '{key}') target is '{t.Status}', not {string.Join("|", ts)} — a {runtime.KindName(kindSlug)} change needs a {rule.TargetKind ?? link} node in status {string.Join("|", ts)}").ForNode(key);
 			}
 		}
 	}
@@ -2066,7 +2065,7 @@ public sealed partial class TasksService : ITasksService
 			if (blockedBy.ContainsKey(n.Key)) continue;
 			var hasActiveBlocker = (await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct)).Any(e => e.Kind == "blocks");
 			if (!hasActiveBlocker)
-				throw new NodeRejectedException(n.Key, $"a Blocked task must name a blocker — provide blockedBy (node '{n.Key}')");
+				throw new ArgumentException($"a Blocked task must name a blocker — provide blockedBy (node '{n.Key}')").ForNode(n.Key);
 		}
 	}
 
@@ -2128,7 +2127,7 @@ public sealed partial class TasksService : ITasksService
 							: $"a {kindName} {n.Type} must carry a {c.Link} link on every write — provide ideaRef (node '{n.Key}')",
 					_ => null,
 				};
-				if (message is not null) throw new NodeRejectedException(n.Key, message);
+				if (message is not null) throw new ArgumentException(message).ForNode(n.Key);
 			}
 		}
 	}
