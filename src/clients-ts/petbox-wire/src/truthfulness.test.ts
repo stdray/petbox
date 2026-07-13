@@ -17,6 +17,7 @@ import {
   renderDroidMarkdown,
   renderOpencodeAgentMarkdown,
 } from "./apply-artifacts.ts";
+import { hasPetboxMarker } from "./origin-marker.ts";
 import { HARNESS_IDS, harnessCapabilities, hasCapability } from "./harness-capabilities.ts";
 import { allowedModels, isResolvableModel } from "./harness-models.ts";
 import {
@@ -138,16 +139,24 @@ test("planApply: paths for claude-code, opencode, droid (.factory/droids)", () =
   };
   const cc = planApply(portable, "claude-code", {});
   assert.equal(cc.violations.length, 0);
-  assert.ok(cc.files.some((f) => f.relativePath === ".claude/agents/worker.md"));
+  assert.ok(cc.files.some((f) => f.relativePath === ".claude/agents/petbox-worker.md"));
+  // Namespacing rename: the pre-prefix name is carried alongside so the writer can clean up
+  // an OWNED leftover from before the rename (never a foreign file — see apply-write.ts).
+  assert.ok(
+    cc.files.some((f) => f.legacyRelativePath === ".claude/agents/worker.md"),
+    "legacyRelativePath must point at the bare pre-namespacing name",
+  );
 
   const oc = planApply(portable, "opencode", {});
   assert.equal(oc.violations.length, 0);
   assert.ok(oc.files.every((f) => f.relativePath.startsWith(".opencode/agent/")));
+  assert.ok(oc.files.some((f) => f.relativePath === ".opencode/agent/petbox-worker.md"));
 
   const dr = planApply(portable, "droid", {});
   assert.equal(dr.violations.length, 0);
   assert.ok(dr.files.every((f) => f.relativePath.startsWith(".factory/droids/")));
-  assert.ok(dr.files.some((f) => f.relativePath === ".factory/droids/worker.md"));
+  assert.ok(dr.files.some((f) => f.relativePath === ".factory/droids/petbox-worker.md"));
+  assert.ok(dr.files.some((f) => f.legacyRelativePath === ".factory/droids/worker.md"));
 });
 
 test("planApply DEFAULT writes all three harnesses including droid droids", () => {
@@ -161,15 +170,16 @@ test("planApply DEFAULT writes all three harnesses including droid droids", () =
   });
   const orch = droid.files.find((f) => f.relativePath.includes("orchestrator"));
   assert.ok(orch);
-  assert.match(orch!.content, /^---\nname: orchestrator\n/m);
+  assert.match(orch!.content, /^---\nname: petbox-orchestrator\n/m);
   assert.match(orch!.content, /model: custom:deepseek-v4-pro/);
   assert.match(orch!.content, /mcpServers: \["petbox"\]/);
+  assert.ok(hasPetboxMarker(orch!.content), "every generated file carries the origin marker");
 });
 
 test("renderDroidMarkdown: unbound model is inherit; bound uses roles.json value", () => {
   const role = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "worker")!;
   const inherit = renderDroidMarkdown(role);
-  assert.match(inherit, /name: worker/);
+  assert.match(inherit, /name: petbox-worker/);
   assert.match(inherit, /model: inherit/);
 
   const pinned = renderDroidMarkdown(role, "claude-sonnet-4-5-20250929");
@@ -214,12 +224,12 @@ test("planApply: bound model in claude-code frontmatter; unbound omits model (+w
   assert.equal(withModel.violations.length, 0);
   const worker = withModel.files.find((f) => f.relativePath.endsWith("worker.md"));
   assert.ok(worker);
-  assert.match(worker!.content, /^---\nname: worker\nmodel: sonnet\n/m);
+  assert.match(worker!.content, /^---\nname: petbox-worker\nmodel: sonnet\n/m);
   assert.deepEqual(withModel.warnings, []);
 
   const unbound = planApply(portable, "claude-code", {});
   const body = unbound.files[0]!.content;
-  assert.match(body, /^---\nname: worker\n/m, "name: is always emitted");
+  assert.match(body, /^---\nname: petbox-worker\n/m, "name: is always emitted");
   assert.ok(!/^model:/m.test(body.split("---")[1] ?? ""), "no invented model");
   // Unbound is legal (inherit) but must not be silent.
   assert.equal(unbound.violations.length, 0);
@@ -334,7 +344,7 @@ test("planOpencodeApply: bound model in frontmatter; unbound omits model", () =>
   assert.equal(withModel.violations.length, 0);
   const worker = withModel.files.find((f) => f.relativePath.endsWith("worker.md"));
   assert.ok(worker);
-  assert.match(worker!.content, /^---\nname: worker\nmodel: deepseek\/deepseek-v4-pro\n/m);
+  assert.match(worker!.content, /^---\nname: petbox-worker\nmodel: deepseek\/deepseek-v4-pro\n/m);
 });
 
 test("renderOpencodeAgentMarkdown explore body does not forbid inheritance", () => {
@@ -395,10 +405,46 @@ test("validateAgentDefinition rejects role.model and nested model", () => {
 test("renderAgentMarkdown: generated claude-code role file carries name: as first frontmatter key", () => {
   const role = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "worker")!;
   const md = renderAgentMarkdown(role);
-  assert.match(md, /^---\nname: worker\n/, "name: must be the first frontmatter key");
+  assert.match(md, /^---\nname: petbox-worker\n/, "name: must be the first frontmatter key, namespaced");
   // No tools: key — omission means the file inherits the harness's full tool set,
   // including MCP (that is the intended policy; see harness-capabilities.ts).
   assert.ok(!/^tools:/m.test(md), "must not emit a tools: key");
+  assert.ok(hasPetboxMarker(md), "generated file must carry the origin marker");
+});
+
+test("emitted agent names are namespaced petbox-<slug> across the whole default roster, every harness", () => {
+  // chore: petbox-namespaced-agent-names — role.slug (internal) stays bare; only the render
+  // is prefixed. Assert it holds for every role x harness, not just worker.
+  for (const harness of HARNESS_IDS) {
+    const plan = planApply(DEFAULT_AGENT_DEFINITION, harness, {});
+    assert.equal(plan.violations.length, 0, formatViolations(plan.violations));
+    for (const role of DEFAULT_AGENT_DEFINITION.roles) {
+      const file = plan.files.find((f) => f.relativePath.includes(`petbox-${role.slug}`));
+      assert.ok(file, `${harness}: expected a petbox-${role.slug} file`);
+      assert.match(file!.content, new RegExp(`name: petbox-${role.slug}\\b`));
+      assert.ok(hasPetboxMarker(file!.content));
+      // Never emit the bare, unprefixed name as the CURRENT (non-legacy) path.
+      assert.ok(
+        !plan.files.some((f) => f.relativePath.endsWith(`/${role.slug}.md`)),
+        `${harness}: must not also emit an unprefixed ${role.slug}.md as a current artifact`,
+      );
+    }
+  }
+});
+
+test("orchestrator body's spawn/escalation prose names the NAMESPACED target roles, not bare slugs", () => {
+  // protocol.ts:62-style bug, generalized: any prose naming a spawn/escalation target must
+  // render the computed identity — never role.slug directly — or a generated file points at
+  // a subagent_type that does not exist on disk.
+  const orchestrator = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "orchestrator")!;
+  const md = renderAgentMarkdown(orchestrator);
+  assert.match(md, /Target roles:.*`petbox-worker`/);
+  assert.match(md, /Target roles:.*`petbox-utility`/);
+  assert.ok(!/Target roles:.*`worker`[,.]/.test(md), "must not list the bare slug");
+
+  const worker = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "worker")!;
+  const workerMd = renderAgentMarkdown(worker);
+  assert.match(workerMd, /Escalation[\s\S]*`petbox-orchestrator`/);
 });
 
 test("renderAgentMarkdown / renderDroidMarkdown: role.notes land in the rendered body", () => {
