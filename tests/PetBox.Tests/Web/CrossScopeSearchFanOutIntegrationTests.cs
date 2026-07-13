@@ -88,6 +88,11 @@ public sealed class CrossScopeSearchFanOutIntegrationTests : IDisposable
 		services.AddScoped<ICommentService, CommentService>();
 		services.AddScoped<ITasksService, TasksService>();
 		services.AddSingleton<ISecretEncryptor>(secrets);
+		// SettingsResolver holds no factory any more — the DB half of settings is ISettingsStore, and
+		// it is the store that takes a fresh caller-owned connection per call. Registering both is
+		// Program.cs's shape, and it keeps this test's point intact: the fan-out branches drive
+		// GetAsync concurrently and must not end up sharing one connection.
+		services.AddScoped<ISettingsStore, SettingsStore>();
 		services.AddScoped<ISettingsResolver, SettingsResolver>();
 		// Registered BEFORE AddLlmRouter, whose TryAddSingleton then leaves it alone: the only stub
 		// in the graph is the network hop itself.
