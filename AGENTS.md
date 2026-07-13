@@ -71,18 +71,36 @@ records**, not the working plan — do not treat them as current state.
    committed from the shared tree. Move it out FIRST: `git stash push -u` → create the
    worktree → `git stash pop` inside it (the stash is repo-level, so it pops wherever
    you are).
-3. **Tests:** run via Cake (`./build.ps1 -Target Test`, or `./build.sh --target=Test`)
-   or a filtered `dotnet test`; pipe output to `.tmp/test-run.log` and read the log
-   instead of scrolling the console. For readable FAILURE detail (a quiet log drops the
-   assertion messages), add `--logger "trx;LogFileName=res.trx"` and render it with
-   **`dotnet trx`** (the `dotnet-trx` local tool, in `.config/dotnet-tools.json`; run
-   `dotnet tool restore` once). It auto-discovers `*.trx` under the cwd and prints each
-   failed test's message + stack (`--path <dir>` to scope, `-v verbose` for all).
-   Set **both** `NO_COLOR=1` and `TERM=dumb` for it (PowerShell: `$env:NO_COLOR='1'`,
-   `$env:TERM='dumb'`) — otherwise the render carries ANSI color and OSC-8 hyperlink
-   escapes that are pure noise in a captured log; `NO_COLOR` alone leaves the hyperlinks.
-   For TIMING analysis (per-class totals, wall-clock critical path of a parallel run)
-   use `dotnet run scripts/trx-timings.cs -- <run.trx>` — don't re-write that parser.
+3. **Tests:** `./build.ps1 -Target Test` (or `./build.sh --target=Test`) **is the gate** —
+   it is what must be green before a commit is pushed / a card moves to Review. The Cake
+   `Test` target depends on `Build`, `FormatVerify`, and `WebTsLint` (`build.cs`), so a
+   green Cake `Test` run already proves formatting and the frontend lint, not just the
+   .NET suite passing. A filtered `dotnet test` is fine for the FAST INNER LOOP while
+   iterating on one failing test — it runs NONE of those dependencies, so being green on
+   it proves nothing about mergeability; always finish on the Cake gate before pushing.
+   This has bitten main twice from running less than the gate: it went red on formatting
+   (`0c768826` "style(tests): format MutationFeedbackPageTests, unbreaking main" — the
+   deploy tag run correctly refused to deploy that state), and on 2026-07-13 the deploy
+   tag run for `4ceb0d25` passed `test` and `sdk` and died in `publish` (`CSC : error
+   CS2001: Source file '/src/BannedSymbols.txt' could not be found`) — a new analyzer
+   ban-list file lived at the repo root, declared in `Directory.Build.props`, but the
+   Dockerfile copies a curated subset of the tree and nobody had added it there (fixed in
+   `57072c38`). **A green local gate still does not prove the image builds**: anything the
+   build needs that lives outside the paths the Dockerfile `COPY`s is invisible to every
+   local check — the Cake gate builds the whole source tree, the image build does not. If
+   a change adds a root-level build input (a new props/analyzer file, a new top-level
+   directory), build the image (`docker build .`) before moving the deploy tag.
+   Pipe test output to `.tmp/test-run.log` and read the log instead of scrolling the
+   console. For readable FAILURE detail (a quiet log drops the assertion messages), add
+   `--logger "trx;LogFileName=res.trx"` and render it with **`dotnet trx`** (the
+   `dotnet-trx` local tool, in `.config/dotnet-tools.json`; run `dotnet tool restore`
+   once). It auto-discovers `*.trx` under the cwd and prints each failed test's message +
+   stack (`--path <dir>` to scope, `-v verbose` for all). Set **both** `NO_COLOR=1` and
+   `TERM=dumb` for it (PowerShell: `$env:NO_COLOR='1'`, `$env:TERM='dumb'`) — otherwise
+   the render carries ANSI color and OSC-8 hyperlink escapes that are pure noise in a
+   captured log; `NO_COLOR` alone leaves the hyperlinks. For TIMING analysis (per-class
+   totals, wall-clock critical path of a parallel run) use `dotnet run
+   scripts/trx-timings.cs -- <run.trx>` — don't re-write that parser.
 4. **Finish = branch + commit + push:** completed work is committed on a feature
    branch and pushed BEFORE the card moves to `Review` (add commits to the card via `commits[]`);
    never leave finished edits uncommitted in a working tree. This repo's process
@@ -114,19 +132,25 @@ records**, not the working plan — do not treat them as current state.
    the merge is on `main`, move the tag IMMEDIATELY and watch only the tag run. Do NOT
    wait for `main`'s own CI first: it runs the same tests, and the tag run re-runs them
    anyway (it will not deploy on a red build) — waiting just burns ~6 minutes twice.
-   **A smoke NEVER writes into a real project.** Its target is the sandbox project
-   `smoke` (workspace `sandbox`), and it authenticates with a `sandboxOnly` key — never
-   your session's `$system` key, never a customer project's. Read-only probes (`/health`,
-   `/version`, a search) may hit anything; anything that CREATES a board, project,
-   session, memory entry or task goes to the sandbox. This is enforced, not merely asked:
-   a `sandboxOnly` key is rejected against any project without the `sandbox` flag, on MCP
-   and REST alike (even a wildcard `*` key — the check is on the TARGET, not the claim).
-   The rule exists because it was broken: six `smoke-*` boards took up residence next to
-   `work`/`spec` in `$system`, and two one-line probes ("Reply with exactly: PONG") landed
-   in the customer project `yobapub`, where `SessionDigestJob` tried to digest them and
-   burned ~1462 LLM calls. Background jobs run in the sandbox exactly as in production —
-   that is the point, a smoke must be able to prove them — so the sandbox is a real
-   target, not a null sink: clean up after yourself there.
+   **A smoke NEVER writes into a real project.** Its target is the project `smoke`
+   (workspace `$system`), which carries the **`sandbox=true`** flag — that flag, not a
+   workspace, is what makes it a legal smoke target; **no workspace named `sandbox`
+   exists** (`project_create(workspaceKey: "sandbox", …)` throws `InvalidOperationException:
+   Workspace 'sandbox' not found` — verify with `project_list` before trusting this doc).
+   A smoke authenticates with a `sandboxOnly` key — never your session's `$system` key,
+   never a customer project's. Read-only probes (`/health`, `/version`, a search) may hit
+   anything; anything that CREATES a board, project, session, memory entry or task goes
+   to `smoke`. This is enforced, not merely asked: a `sandboxOnly` key is rejected against
+   any project without the `sandbox` flag, on MCP and REST alike (even a wildcard `*` key
+   — the check is on the TARGET's flag, not the claim). The rule exists because it was
+   broken: six `smoke-*` boards took up residence next to `work`/`spec` in `$system`, and
+   two one-line probes ("Reply with exactly: PONG") landed in the customer project
+   `yobapub`, where `SessionDigestJob` tried to digest them and burned ~1462 LLM calls.
+   Background jobs run in `smoke` exactly as in production — that is the point, a smoke
+   must be able to prove them — so it is a real target, not a null sink: clean up after
+   yourself there. There is currently **no `project_delete` MCP tool** (`tool_describe`
+   on it returns `unknown tool`) — a project created during a smoke can only be removed
+   through the admin UI's Danger zone.
 8. **Clean up when the card closes — the worktree's life ends with the card, not with
    the push:** once a card reaches a terminal status (`Done`/`Cancelled`) and its branch
    is merged, remove the worktree (`git worktree remove <dir>`) and delete the branch
