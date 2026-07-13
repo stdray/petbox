@@ -26,7 +26,10 @@ public sealed record CommentThreadModel(
 	string NodeId,
 	string? CommitUrlTemplate = null,
 	IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs = null,
-	bool ShowAddForm = true);
+	bool ShowAddForm = true,
+	// Memory-key mentions in comment bodies link exactly as they do in node bodies
+	// (memory-key-mention-link); null = plain text.
+	IReadOnlyDictionary<string, NodeRefTarget>? MemoryRefs = null);
 
 // Shared thread flattener used by both the board page and the node detail page (so the two
 // surfaces render the SAME thread shape via the _CommentThread partial). Pure/static.

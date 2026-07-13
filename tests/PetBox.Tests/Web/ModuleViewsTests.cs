@@ -759,6 +759,34 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-store-name=\"notes\"");
 	}
 
+	// memory-entry-url: every entry card carries id={key}, so …/memory/{store}#{key} lands on
+	// (and, via `.memory-entry:target` in app.css, highlights) that card. A key that matches no
+	// entry simply has no anchor — the store page still renders 200.
+	[Fact]
+	public async Task MemoryStore_EntryCard_CarriesKeyAnchor()
+	{
+		const string key = "m-0123456789abcdef0123456789abcd01";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var memory = scope.ServiceProvider.GetRequiredService<PetBox.Memory.Contract.IMemoryService>();
+			await memory.UpsertAsync("$system", "notes",
+				[new PetBox.Memory.Contract.MemoryEntryInput
+				{
+					Key = key, Version = 0, Type = "Project",
+					Description = "anchored entry", Body = "body",
+				}],
+				[]);
+		}
+
+		using var resp = await GetAuthedAsync("/ui/$system/$system/memory/notes");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain($"id=\"{key}\"");           // the fragment target
+		html.Should().Contain("class=\"memory-entry ");   // the :target highlight hook
+		html.Should().NotContain("id=\"m-doesnotexist\""); // an unknown key anchors nothing
+	}
+
 	[Fact]
 	public async Task MemoryStore_UnknownStore_Returns404()
 	{

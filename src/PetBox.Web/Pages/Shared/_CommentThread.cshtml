@@ -45,7 +45,7 @@
 				</span>
 			</div>
 			<div data-testid="comment-read-body">
-				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs })" />
+				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = c.Body, TestId = "comment-body", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
 			</div>
 
 			@* Edit form — same comment, in place. `version` is the watermark baseline read on

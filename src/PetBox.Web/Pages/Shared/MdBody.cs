@@ -36,4 +36,10 @@ public sealed record MdBodyModel
 	// server renderer turns a mention that resolves to a project node into a link to its detail
 	// page; unmapped mentions stay literal. Null on the live edit preview (ServerRender=false).
 	public IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs { get; init; }
+
+	// Optional key→target map for memory-entry mentions (`m-<32hex>` / `ac-<12hex>`,
+	// memory-key-mention-link). When set, the server renderer links a key that resolved
+	// unambiguously to a non-sensitive store; an unresolved/ambiguous key stays literal. Null on the
+	// live edit preview (ServerRender=false).
+	public IReadOnlyDictionary<string, NodeRefTarget>? MemoryRefs { get; init; }
 }

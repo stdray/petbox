@@ -137,6 +137,44 @@ public sealed class MemoryService : IMemoryService
 		return wanted.Where(found.ContainsKey).Select(k => View(found[k])).ToList();
 	}
 
+	// Batch key→store resolution for the autolink surfaces (spec memory-key-mention-link). ONE
+	// entries query for ALL keys — every store of a container lives in the same file, partitioned by
+	// the Store column, so "which stores hold key K?" is a single `Store IN (…) AND Key IN (…)` scan
+	// no matter how many mentions a page carries (no N+1). SENSITIVE stores are filtered out of the
+	// candidate set here, at the door: a key that exists only in `ops` resolves to nothing, so no
+	// caller can build a link into it. A key in several stores comes back with several names — that
+	// is the AMBIGUITY the caller must refuse, not a pick-the-first situation.
+	public async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> ResolveKeysAsync(
+		string projectKey, IReadOnlyCollection<string> keys, CancellationToken ct = default)
+	{
+		var wanted = keys.Where(k => !string.IsNullOrWhiteSpace(k)).Select(k => k.Trim())
+			.Distinct(StringComparer.Ordinal).ToList();
+		if (wanted.Count == 0) return EmptyResolution;
+
+		var stores = (await _stores.ListAsync(projectKey, ct))
+			.Select(s => s.Name)
+			.Where(n => !MemoryStores.IsSensitive(n))
+			.ToList();
+		if (stores.Count == 0) return EmptyResolution;
+
+		using var ctx = _stores.NewEnsuredConnection(projectKey);
+		var rows = ctx.Entries
+			.Where(e => e.ActiveTo == null && stores.Contains(e.Store) && wanted.Contains(e.Key))
+			.Select(e => new { e.Key, e.Store })
+			.ToList();
+		if (rows.Count == 0) return EmptyResolution;
+
+		return rows
+			.GroupBy(r => r.Key, StringComparer.Ordinal)
+			.ToDictionary(
+				g => g.Key,
+				g => (IReadOnlyList<string>)g.Select(r => r.Store).Distinct(StringComparer.Ordinal).OrderBy(s => s, StringComparer.Ordinal).ToList(),
+				StringComparer.Ordinal);
+	}
+
+	static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> EmptyResolution =
+		new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+
 	public async Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
@@ -169,8 +207,11 @@ public sealed class MemoryService : IMemoryService
 	// stores in default recall). Protected system stores that ARE knowledge — canon, autocaptured —
 	// stay in the sweep, so default memory_search still returns them. An explicit Filter.Store
 	// still reaches any store; only the implicit sweep excludes (spec: memoverhaul store taxonomy).
+	// The sensitive leg is NOT re-listed here — it is MemoryStores.SensitiveNames (Contract), the
+	// single marker the link/autolink surfaces also consult; this set adds the recall-only exclusion
+	// on top of it.
 	static readonly HashSet<string> SweepExcludedStores =
-		new(StringComparer.OrdinalIgnoreCase) { "ops", "session-digests" };
+		new(MemoryStores.SensitiveNames.Append("session-digests"), StringComparer.OrdinalIgnoreCase);
 
 	// The generic uniform-read seam (implemented EXPLICITLY — the contract is a shared shape,
 	// not a DI dispatch point): the plain envelope of the rich SearchEntriesAsync. Budget
