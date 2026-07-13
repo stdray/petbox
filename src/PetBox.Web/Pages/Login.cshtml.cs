@@ -5,24 +5,19 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using Microsoft.Extensions.Options;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
-using PetBox.Core.Models;
 
 namespace PetBox.Web.Pages;
 
 [AllowAnonymous]
 public sealed class LoginModel : PageModel
 {
-	readonly ICoreDbFactory _f;
-	readonly AdminOptions _adminOptions;
+	// ICredentialAuthenticator, NOT IUserAdminService: this page is reachable by anyone at all, and
+	// the admin service can reset any account's password. The door this page holds can do exactly one
+	// thing — check a password it was handed — and it hands back no hash. See CredentialAuthenticator.
+	readonly ICredentialAuthenticator _credentials;
 
-	public LoginModel(ICoreDbFactory f, IOptions<AdminOptions> adminOptions)
-	{
-		_f = f;
-		_adminOptions = adminOptions.Value;
-	}
+	public LoginModel(ICredentialAuthenticator credentials) => _credentials = credentials;
 
 	[BindProperty(SupportsGet = true)]
 	public string? ReturnUrl { get; set; }
@@ -40,50 +35,26 @@ public sealed class LoginModel : PageModel
 
 	public async Task<IActionResult> OnPostAsync(string? username, string? password, string? returnUrl)
 	{
-		using var db = _f.Open();
 		Username = username;
 		ReturnUrl = returnUrl;
 
-		if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
+		// Empty fields, an unknown name, a wrong password, and the bootstrap-admin lockdown are all
+		// the same kind of answer — the service decides, this page renders. (The lockdown rule moved
+		// with it: once another $system admin exists, PETBOX_ADMIN_* can no longer sign in.)
+		var result = await _credentials.AuthenticateAsync(username, password, HttpContext.RequestAborted);
+		if (result is not CredentialResult.Authenticated(var user))
 		{
-			ErrorMessage = "Enter a username and password.";
+			ErrorMessage = ((CredentialResult.Rejected)result).Reason;
 			return Page();
 		}
-
-		var user = db.Users.FirstOrDefault(u => u.Username == username);
-		if (user is null || !AdminPasswordHasher.Verify(password, user.PasswordHash))
-		{
-			ErrorMessage = "Invalid username or password.";
-			return Page();
-		}
-
-		// Bootstrap-admin lockdown: once another $system administrator exists, the env-admin
-		// (PETBOX_ADMIN_*) account can no longer sign in. Set PETBOX_ADMIN_FORCE=true to re-enable
-		// it for recovery. See AGENTS.md. No lockout risk: if env-admin is the only admin, nothing changes.
-		var isBootstrapAdmin = !string.IsNullOrEmpty(_adminOptions.Username)
-			&& string.Equals(user.Username, _adminOptions.Username, StringComparison.Ordinal);
-		if (isBootstrapAdmin && !AdminForceEnabled())
-		{
-			var otherSysAdminExists = db.WorkspaceMembers
-				.Any(m => m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin && m.UserId != user.Id);
-			if (otherSysAdminExists)
-			{
-				ErrorMessage = "The bootstrap admin account is disabled because another administrator exists. Sign in with your own account.";
-				return Page();
-			}
-		}
-
-		var memberships = db.WorkspaceMembers
-			.Where(m => m.UserId == user.Id)
-			.ToList();
 
 		// No membership → NO active workspace. The old `?? "$system"` fallback handed every fresh
 		// account a claim (and a yb_ws cookie) for a workspace it had no membership in — which is
 		// how a brand-new user landed on /ui/$system/$system. Null here; the landing page renders
 		// the "no workspaces" empty state instead (auth-denied-and-empty-state).
-		var activeWs = memberships.FirstOrDefault()?.WorkspaceKey;
+		var activeWs = user.Memberships.Count > 0 ? user.Memberships[0].WorkspaceKey : null;
 		var rolesClaim = WorkspaceRoleAuthorizationHandler.SerializeRoles(
-			memberships.Select(m => (m.WorkspaceKey, m.Role)));
+			user.Memberships.Select(m => (m.WorkspaceKey, m.Role)));
 
 		var claims = new List<Claim>
 		{
@@ -96,11 +67,8 @@ public sealed class LoginModel : PageModel
 
 		// Bootstrap admin (username matches Admin:Username from appsettings) gets the sysadmin claim.
 		// See doc/settings-taxonomy.md §4 for the permission model.
-		if (!string.IsNullOrEmpty(_adminOptions.Username)
-			&& string.Equals(user.Username, _adminOptions.Username, StringComparison.Ordinal))
-		{
+		if (user.IsBootstrapAdmin)
 			claims.Add(new Claim(PetBoxClaims.IsSysAdmin, "true"));
-		}
 
 		var identity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
 		// IsPersistent makes the browser write Expires/Max-Age (driven by ExpireTimeSpan),
@@ -129,7 +97,4 @@ public sealed class LoginModel : PageModel
 			? LocalRedirect(returnUrl)
 			: RedirectToPage("/Index");
 	}
-
-	static bool AdminForceEnabled() =>
-		string.Equals(Environment.GetEnvironmentVariable("PETBOX_ADMIN_FORCE"), "true", StringComparison.OrdinalIgnoreCase);
 }
