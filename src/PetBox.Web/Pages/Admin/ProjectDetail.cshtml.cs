@@ -1,35 +1,56 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
+using PetBox.Core.Health;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
-// The project settings page. Its PROJECT reads and writes go through IProjectDirectory
-// (db-out-of-pages-into-services). It still opens core.db directly for the things that have no
-// service yet — api keys, health endpoints and the settings override row. That is deliberate and
-// scoped: inventing a half-service here for each of them, only for the real one to land next wave,
-// would cost a second migration of the same call sites. The factory stays in the ctor until then.
+// The project settings page. It holds NO db factory and opens NO connection: every read and write
+// goes through a service (AGENTS.md, "the database is visible only in the service layer"; work
+// `db-out-of-pages-into-services'). The four surfaces it needs, and who owns each:
+//
+//   projects          -> IProjectDirectory
+//   api keys          -> AgentKeyAdminService      (project-confined: ListByProject/Mint/Revoke/SetScopes)
+//   health endpoints  -> IHealthEndpointDirectory  (the pull-mode source list)
+//   settings          -> ISettingsResolver (the cascade) + ISettingsStore (is there an OVERRIDE row?)
+//
+// The two settings doors are not redundant. The RESOLVER answers "what value applies here", walking
+// the cascade; it cannot answer "did THIS project override it", because a resolved value that equals
+// the default is indistinguishable from an absent override — and that distinction is the whole
+// content of the Clear-override button. The STORE's snapshot can, without a second query: it carries
+// every row on the chain, so `Find(Scope.Project, key, path)` is a lookup in memory.
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectDetailModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	// The stored path of LogSettings.RetentionDays — see its [Setting(Key = ...)]. It names the ROW
+	// whose presence is the override.
+	const string RetentionPath = "log.retention.days";
+
 	readonly IProjectDirectory _projects;
+	readonly AgentKeyAdminService _keys;
+	readonly IHealthEndpointDirectory _health;
 	readonly FeatureFlags _features;
 	readonly ISettingsResolver _settings;
+	readonly ISettingsStore _settingsStore;
 
 	public ProjectDetailModel(
-		ICoreDbFactory f, IProjectDirectory projects, FeatureFlags features, ISettingsResolver settings)
+		IProjectDirectory projects,
+		AgentKeyAdminService keys,
+		IHealthEndpointDirectory health,
+		FeatureFlags features,
+		ISettingsResolver settings,
+		ISettingsStore settingsStore)
 	{
-		_f = f;
 		_projects = projects;
+		_keys = keys;
+		_health = health;
 		_features = features;
 		_settings = settings;
+		_settingsStore = settingsStore;
 	}
 
 	public bool DataEnabled => _features.IsEnabled(Feature.Data);
@@ -70,14 +91,16 @@ public sealed class ProjectDetailModel : PageModel
 		Project = await _projects.GetAsync(ProjectKey);
 		if (Project is null) return;
 
-		using var db = _f.Open();
-
 		// A just-minted key rides here across the Post/Redirect/Get from OnPostCreateKey and is
 		// shown once; a refresh (no TempData) drops it. See Notice.CarryNewKey.
 		NewKey = this.TakeNewKey();
 
-		HealthEndpoints = db.HealthEndpoints.Where(e => e.ProjectKey == ProjectKey).OrderBy(e => e.Url).ToList();
-		Keys = db.ApiKeys.Where(k => k.ProjectKey == ProjectKey).OrderByDescending(k => k.CreatedAt).ToList();
+		HealthEndpoints = await _health.ListForProjectAsync(ProjectKey);
+
+		// Newest first. The service orders by CreatedAt ascending (its MCP callers page through keys
+		// chronologically); reversing it is a rendering choice, made here, over rows already in hand —
+		// not a second query.
+		Keys = [.. (await _keys.ListByProjectAsync(ProjectKey)).OrderByDescending(k => k.CreatedAt)];
 
 		// Effective LogSettings via cascade (project → workspace → system).
 		var isSystem = string.Equals(ProjectKey, "$system", StringComparison.Ordinal);
@@ -89,9 +112,10 @@ public sealed class ProjectDetailModel : PageModel
 		var fallback = await _settings.GetAsync<LogSettings>(Scope.Workspace, WorkspaceKey);
 		DefaultRetentionDays = isSystem ? fallback.SystemRetainDays : fallback.RetentionDays;
 
-		// Has the project explicitly overridden its own retention?
-		var overrideRow = db.Settings.FirstOrDefault(s =>
-			s.Scope == "Project" && s.ScopeKey == ProjectKey && s.Path == "log.retention.days");
+		// Has the project explicitly overridden its own retention? The snapshot's Find is a dictionary
+		// hit, not a query — it holds every row on the chain already.
+		var chain = await _settingsStore.LoadChainAsync(Scope.Project, ProjectKey);
+		var overrideRow = chain.Find(Scope.Project, ProjectKey, RetentionPath);
 		RetentionOverrideDays = overrideRow is null
 			? null
 			: int.TryParse(overrideRow.Value, out var d) ? d : null;
@@ -160,38 +184,31 @@ public sealed class ProjectDetailModel : PageModel
 
 	public async Task<IActionResult> OnPostCreateHealthEndpointAsync(string url, int? intervalSeconds)
 	{
-		using var db = _f.Open();
-		if (string.IsNullOrWhiteSpace(url) || !Uri.TryCreate(url, UriKind.Absolute, out _))
+		// The URL rule and the interval floor live in the directory — they are properties of what the
+		// poller can honour, not of this form.
+		var result = await _health.AddAsync(ProjectKey, url, intervalSeconds, User.Identity?.Name);
+		if (result is HealthEndpointAddResult.Refused refused)
 		{
-			ErrorMessage = "A valid absolute URL is required.";
+			ErrorMessage = refused.Reason;
 			await OnGetAsync();
 			return Page();
 		}
 
-		await db.InsertAsync(new HealthEndpoint
-		{
-			ProjectKey = ProjectKey,
-			Url = url.Trim(),
-			Enabled = true,
-			IntervalSeconds = intervalSeconds is { } s && s >= 5 ? s : 60,
-			CreatedAt = DateTime.UtcNow,
-			CreatedBy = User.Identity?.Name,
-		});
 		this.NotifySuccess("Health endpoint added.");
 		return Self();
 	}
 
 	public async Task<IActionResult> OnPostDeleteHealthEndpointAsync(long id)
 	{
-		using var db = _f.Open();
-		await db.HealthEndpoints.Where(e => e.Id == id && e.ProjectKey == ProjectKey).DeleteAsync();
+		// The project is welded into the DELETE inside the directory — a forged id belonging to another
+		// project matches nothing.
+		await _health.DeleteAsync(id, ProjectKey);
 		this.NotifySuccess("Health endpoint deleted.");
 		return Self();
 	}
 
 	public async Task<IActionResult> OnPostCreateKeyAsync(string name, string[]? scopes)
 	{
-		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(name))
 		{
 			ErrorMessage = "Name is required.";
@@ -199,6 +216,9 @@ public sealed class ProjectDetailModel : PageModel
 			return Page();
 		}
 
+		// Scopes are canonicalized before the mint — AgentKeyAdminService.MintAsync takes an already
+		// validated set (the same contract its MCP callers honour), and the checkbox list is the only
+		// intended input, so a typed one gets told so.
 		var raw = scopes is null ? "" : string.Join(",", scopes);
 		var (valid, invalid) = PetBox.Core.Auth.ApiKeyScopes.Validate(raw);
 		if (invalid.Count > 0)
@@ -215,54 +235,47 @@ public sealed class ProjectDetailModel : PageModel
 			return Page();
 		}
 
-		var keyValue = $"yb_key_{Guid.NewGuid():N}";
-		await db.InsertAsync(new ApiKey
+		var minted = await _keys.MintAsync(new AgentKeyMint(name, valid, ProjectKey));
+		switch (minted)
 		{
-			Key = keyValue,
-			ProjectKey = ProjectKey,
-			Scopes = string.Join(",", valid),
-			Name = name.Trim(),
-			CreatedAt = DateTime.UtcNow,
-		});
-
-		// PRG: carry the one-time key across a redirect to the clean project URL (no lingering
-		// ?handler=CreateKey a refresh would re-POST) — the key still shows exactly once.
-		this.CarryNewKey(keyValue);
-		return Self();
+			case KeyMintResult.Minted m:
+				// PRG: carry the one-time key across a redirect to the clean project URL (no lingering
+				// ?handler=CreateKey a refresh would re-POST) — the key still shows exactly once.
+				this.CarryNewKey(m.Key.Key);
+				return Self();
+			case KeyMintResult.NotFound nf:
+				ErrorMessage = nf.Reason;
+				await OnGetAsync();
+				return Page();
+			default:
+				ErrorMessage = ((KeyMintResult.Refused)minted).Reason;
+				await OnGetAsync();
+				return Page();
+		}
 	}
 
 	public async Task<IActionResult> OnPostRevokeKeyAsync(string keyValue)
 	{
-		using var db = _f.Open();
-		await db.ApiKeys.Where(k => k.Key == keyValue && k.ProjectKey == ProjectKey).DeleteAsync();
+		// Project-confined inside the DELETE: a forged POST naming a SIBLING project's key (this admin
+		// may hold WorkspaceAdmin over a dozen) matches zero rows.
+		await _keys.RevokeForProjectAsync(keyValue, ProjectKey);
 		this.NotifySuccess("API key revoked.");
 		return Self();
 	}
 
 	// Edit the scopes of an existing key in place (scopes were previously fixed at
-	// mint time — finding D5). Same validation as minting: known scopes, at least one.
+	// mint time — finding D5). Same validation as minting: known scopes, at least one — enforced in
+	// the service, so this page cannot forget it and neither can the next caller.
 	public async Task<IActionResult> OnPostUpdateKeyScopesAsync(string keyValue, string[]? scopes)
 	{
-		using var db = _f.Open();
-		var raw = scopes is null ? "" : string.Join(",", scopes);
-		var (valid, invalid) = PetBox.Core.Auth.ApiKeyScopes.Validate(raw);
-		if (invalid.Count > 0)
+		var result = await _keys.SetScopesForProjectAsync(keyValue, ProjectKey, scopes ?? []);
+		if (result is KeyUpdateResult.Refused refused)
 		{
-			ErrorMessage = "Unknown scope(s): " + string.Join(", ", invalid);
-			await OnGetAsync();
-			return Page();
-		}
-		if (valid.Count == 0)
-		{
-			ErrorMessage = "At least one scope is required.";
+			ErrorMessage = refused.Reason;
 			await OnGetAsync();
 			return Page();
 		}
 
-		await db.ApiKeys
-			.Where(k => k.Key == keyValue && k.ProjectKey == ProjectKey)
-			.Set(k => k.Scopes, string.Join(",", valid))
-			.UpdateAsync();
 		this.NotifySuccess("Key scopes updated.");
 		return Self();
 	}

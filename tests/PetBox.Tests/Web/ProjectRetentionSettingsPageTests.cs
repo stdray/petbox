@@ -58,8 +58,17 @@ public sealed class ProjectRetentionSettingsPageTests : IDisposable
 	static FeatureFlags Features() =>
 		new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build());
 
+	// The page asks ISettingsStore directly for the OVERRIDE ROW (is there one at Project scope?) and
+	// the resolver for the effective VALUE — the two answer different questions, so both are wired.
 	ProjectDetailModel InfoPage() =>
-		new(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new SettingsResolver(new SettingsStore(_db.Factory()), new NoSecrets())) { WorkspaceKey = Ws, ProjectKey = Proj };
+		new(
+			new ProjectDirectory(_db.Factory()),
+			_db.Factory().AgentKeys(),
+			_db.Factory().HealthEndpoints(),
+			Features(),
+			new SettingsResolver(new SettingsStore(_db.Factory()), new NoSecrets()),
+			new SettingsStore(_db.Factory()))
+		{ WorkspaceKey = Ws, ProjectKey = Proj };
 
 	void SetSetting(string scope, string scopeKey, string value) =>
 		_db.Insert(new Setting

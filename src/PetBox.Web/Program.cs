@@ -605,6 +605,10 @@ public partial class Program
 		// memory containers (memory_* tools — resolve, lazily ensure, and the reachability predicate).
 		builder.Services.AddScoped<PetBox.Data.Contract.IDataDbCatalog, PetBox.Data.Services.DataDbCatalog>();
 		builder.Services.AddScoped<PetBox.Core.Health.IHealthReportService, PetBox.Core.Health.HealthReportService>();
+		// The pull-mode endpoint list — a DIFFERENT table from HealthReports above, and one that had no
+		// door at all until Pages/Admin/ProjectDetail stopped opening core.db for it. Same namespace as
+		// the reports door on purpose: a caller who finds one finds the other (commit ce12100).
+		builder.Services.AddScoped<PetBox.Core.Health.IHealthEndpointDirectory, PetBox.Core.Health.HealthEndpointDirectory>();
 		builder.Services.AddScoped<PetBox.Core.Data.IWorkspaceMemoryDirectory, PetBox.Core.Data.WorkspaceMemoryDirectory>();
 		builder.Services.AddRazorPages(options =>
 		{

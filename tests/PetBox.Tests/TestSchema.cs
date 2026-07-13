@@ -33,6 +33,10 @@ public static class TestCoreDb
 	public static PetBox.Core.Health.IHealthReportService HealthReports(this ICoreDbFactory dbf) =>
 		new PetBox.Core.Health.HealthReportService(dbf);
 
+	// The pull-endpoint list — a different table from HealthReports above, and its own door.
+	public static PetBox.Core.Health.IHealthEndpointDirectory HealthEndpoints(this ICoreDbFactory dbf) =>
+		new PetBox.Core.Health.HealthEndpointDirectory(dbf);
+
 	// ApiKeys' one door. The config-key lookup is EMPTY here (no Auth:ApiKeys section in a unit
 	// test) — a config-declared key is a host-level concern and has its own integration coverage.
 	public static PetBox.Web.Auth.AgentKeyAdminService AgentKeys(this ICoreDbFactory dbf) =>
