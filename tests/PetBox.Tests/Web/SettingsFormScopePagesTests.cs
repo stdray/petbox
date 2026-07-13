@@ -308,6 +308,10 @@ public sealed class SettingsFormScopePagesTests : IClassFixture<SettingsFormScop
 	async Task LogInAsync(CookieJar jar)
 	{
 		var login = await GetAsync("/Login", jar);
+		// The class's HttpClient keeps its cookie container across tests, so by the second test the
+		// session is already signed in — and /Login now REDIRECTS an authenticated visitor to "/"
+		// instead of re-rendering the form (auth-denied-and-empty-state). Nothing left to do.
+		if (login.StatusCode == HttpStatusCode.Redirect) return;
 		var token = ExtractToken(await login.Content.ReadAsStringAsync());
 		var resp = await PostAsync("/Login?returnUrl=/", jar, new()
 		{

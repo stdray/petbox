@@ -143,8 +143,9 @@ public sealed class MemoryWorkspaceAuthzTests : IClassFixture<MemoryWorkspaceAut
 		var req = new HttpRequestMessage(HttpMethod.Get, "/ui/wsb/$ws-wsb/memory");
 		req.Headers.Add("Cookie", auth);
 		using var resp = await _client.SendAsync(req);
-		// WorkspaceViewer denies → challenge redirect to Login (not 200 with body).
+		// WorkspaceViewer denies → redirect to the 403 page (not 200 with body, and NOT /Login:
+		// showing the sign-in form to a signed-in user was the redirect loop).
 		resp.StatusCode.Should().Be(HttpStatusCode.Redirect);
-		resp.Headers.Location!.ToString().Should().Contain("/Login");
+		resp.Headers.Location!.ToString().Should().Contain("/AccessDenied");
 	}
 }

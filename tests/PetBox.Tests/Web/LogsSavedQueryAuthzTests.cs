@@ -163,7 +163,7 @@ public sealed class LogsSavedQueryAuthzTests : IClassFixture<LogsSavedQueryAuthz
 
 		deleteResp.StatusCode.Should().Be(HttpStatusCode.Redirect,
 			"the WorkspaceMember policy must deny eve (Member of wsa only) acting on wsb");
-		deleteResp.Headers.Location!.ToString().Should().Contain("/Login");
+		deleteResp.Headers.Location!.ToString().Should().Contain("/AccessDenied");
 
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();

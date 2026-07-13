@@ -142,11 +142,12 @@ public sealed class AdminProjectsAuthzTests : IClassFixture<AdminProjectsAuthzFi
 		createReq.Headers.Add("Cookie", $"{authCookie}; {afCookie}");
 		using var createResp = await _client.SendAsync(createReq);
 
-		// AccessDeniedPath == LoginPath == "/Login" (Program.cs cookie config), so an
-		// authenticated-but-unauthorized request is redirected there rather than getting a bare 403.
+		// AccessDeniedPath is /AccessDenied (Program.cs cookie config), so an authenticated-but-
+		// unauthorized request is redirected to the 403 page — never to /Login, which used to
+		// re-render the sign-in form to a signed-in user (auth-denied-and-empty-state).
 		createResp.StatusCode.Should().Be(HttpStatusCode.Redirect,
 			"the WorkspaceAdmin policy must deny eve (Admin of wsa only) acting on wsb");
-		createResp.Headers.Location!.ToString().Should().Contain("/Login");
+		createResp.Headers.Location!.ToString().Should().Contain("/AccessDenied");
 
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
@@ -226,7 +227,7 @@ public sealed class AdminProjectsAuthzTests : IClassFixture<AdminProjectsAuthzFi
 		using var createResp = await _client.SendAsync(createReq);
 
 		createResp.StatusCode.Should().Be(HttpStatusCode.Redirect, "an in-workspace admin's create must succeed");
-		createResp.Headers.Location!.ToString().Should().NotContain("/Login");
+		createResp.Headers.Location!.ToString().Should().NotContain("/AccessDenied");
 
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();

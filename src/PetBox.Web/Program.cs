@@ -470,7 +470,10 @@ public partial class Program
 			.AddCookie(o =>
 			{
 				o.LoginPath = "/Login";
-				o.AccessDeniedPath = "/Login";
+				// 403 must NOT be dressed up as "you are not signed in": /Login is [AllowAnonymous],
+				// so an already-authenticated user forbidden from a page was shown the sign-in form
+				// and looped through it forever (auth-denied-and-empty-state). /AccessDenied says so.
+				o.AccessDeniedPath = "/AccessDenied";
 				o.ExpireTimeSpan = TimeSpan.FromDays(7);
 				o.SlidingExpiration = true;
 			})

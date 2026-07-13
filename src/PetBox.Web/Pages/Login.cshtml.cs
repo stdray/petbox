@@ -30,7 +30,13 @@ public sealed class LoginModel : PageModel
 	public string? Username { get; set; }
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet() { }
+	// Already signed in → there is nothing to do here. Showing the form to an authenticated user
+	// is what made a 403 look like a session expiry (the old AccessDeniedPath pointed here) and
+	// what made re-logging-in feel like an endless loop.
+	public IActionResult OnGet() =>
+		User.Identity?.IsAuthenticated == true
+			? Redirect("/")
+			: Page();
 
 	public async Task<IActionResult> OnPostAsync(string? username, string? password, string? returnUrl)
 	{
