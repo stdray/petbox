@@ -31,6 +31,8 @@
 else
 {
 	var navigate = string.Equals(Model.OutlineRevealMode, OutlineRevealModeNames.Navigate, StringComparison.Ordinal);
+	// board-terminal-negative-visible review finding: strikethrough scoped to the spec board only.
+	var isSpecBoard = Model.Runtime.PresetKind(Model.KindSlug) == BoardKind.Spec;
 	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Outline, SortHint: "sort branches:", BodyUnavailable: navigate, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<ul class="flex flex-col gap-1" data-testid="board-outline" data-reveal-mode="@Model.OutlineRevealMode" data-sort-scope>
@@ -57,7 +59,7 @@ else
 			// reply depth — without it, depth reads only from indentation, which is easy to
 			// misjudge once a few sibling groups stack up.
 			var edgeClass = n.Depth > 0 ? "border-l-2 border-base-300/60 pl-2" : "";
-			var titleClass = "font-semibold link link-hover" + (terminalCancel ? " line-through opacity-60" : "");
+			var titleClass = "font-semibold link link-hover" + (terminalCancel && isSpecBoard ? " line-through opacity-60" : "");
 			// board-filters-server-state: same hide computation as the tree pane's PlanNodeCard —
 			// outline rows carry a real data-parent-id (unlike kanban/table), so a node collapsed
 			// via the tree pane stays hidden here too on the SAME board.

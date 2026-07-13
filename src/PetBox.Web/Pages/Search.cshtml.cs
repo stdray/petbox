@@ -46,6 +46,10 @@ public sealed class SearchModel(CrossScopeTaskSearchService search) : PageModel
 			Delivery: h.Delivery,
 			// board-terminal-negative-visible: same project-wide preset approximation Closed
 			// already uses above (no per-project MethodologyRuntime available at this fan-out).
+			// IsSpecBoard is left at its default false (review finding: strikethrough is spec-only
+			// now) — cheaply telling a spec hit from any other kind would need a per-project runtime
+			// this fan-out doesn't have, and Status is already always shown here (StatusShow: true
+			// above), so the redundancy argument holds without it too.
 			TerminalCancel: MethodologyPresets.KindOfSlug(h.Status) == StatusKind.TerminalCancel,
 			Workspace: h.Workspace, ProjectKey: h.ProjectKey, Board: h.Board)).ToList();
 	}

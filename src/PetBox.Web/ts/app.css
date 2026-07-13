@@ -2,6 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+/* board-ui-review-findings #3 ("switching board view flickers the sidebar"): every board view
+   switch (table<->kanban<->tree<->outline) is a PLAIN full-document navigation (board-view-
+   cross-device removed the client redirect, and the drawer-open class is resolved server-side
+   before render — see _Layout.cshtml — so neither a wrong SSR class nor a post-load JS
+   correction is in play; confirmed empirically: the raw first response carries the identical,
+   correct `drawer drawer-open` class on every view, and the drawer's own layout never overflows
+   (kanban-body-scrolls-not-ribbon's min-w-0 already contains a wide ribbon/table). What's left is
+   the browser's OWN default behavior for any cross-document navigation: it hard-cuts to a blank
+   frame before painting the new document, and repaints EVERYTHING — including chrome that never
+   actually changed (the sidebar is pixel-identical across every view of the same board) — which
+   reads as the sidebar "disappearing and reappearing" on every click, most noticeable when
+   flipping between views back-to-back. The Chromium View Transitions API (navigation:auto) opts
+   the whole app into a native cross-document crossfade: old/new page snapshots blend instead of
+   hard-cutting, so a region that didn't change (the sidebar) renders visually STATIC through the
+   transition instead of blinking out. Progressive enhancement only — an unsupported browser
+   (Firefox/Safari) falls back to exactly today's behavior, never worse. */
+@view-transition {
+	/* biome-ignore lint/correctness/noUnknownProperty: `navigation` inside @view-transition is a
+	   real, standard CSS property (the cross-document View Transitions opt-in) — biome's CSS
+	   schema doesn't know this at-rule/property pair yet. */
+	navigation: auto;
+}
+
 @layer components {
 	.event-live {
 		animation: event-live-flash 1.4s ease-out;

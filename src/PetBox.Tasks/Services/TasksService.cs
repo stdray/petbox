@@ -647,6 +647,9 @@ public sealed partial class TasksService : ITasksService
 			var toEdges = n.NodeId.Length > 0 ? await _relations.ListAsync(projectKey, n.NodeId, "to", ct: ct) : [];
 			var spec = fromEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var blockedBy = toEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.FromNodeId, index)).ToList();
+			// Symmetric counterpart (kanban-blocked-signal review finding): this node's OWN
+			// outgoing "blocks" edges — the nodes IT holds up, not the nodes holding it up.
+			var blocks = fromEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var linkedTasks = presetKind == BoardKind.Spec ? toEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
 			var supersedes = fromEdges.Where(e => e.Kind == "supersedes").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var parentId = parentOf.GetValueOrDefault(n.NodeId);
@@ -674,7 +677,8 @@ public sealed partial class TasksService : ITasksService
 				// (node-slug-addressable). board/key are validated slugs → URL-safe.
 				Url: urlPrefix is null ? null : urlPrefix + board + "/" + n.Key,
 				CreatedAt: n.Created,
-				UpdatedAt: n.Updated));
+				UpdatedAt: n.Updated,
+				Blocks: blocks.Count > 0 ? blocks : null));
 		}
 		return new PlanBoardView(current, runtime.KindName(meta.Kind), meta.SpecBoard, nodes);
 	}

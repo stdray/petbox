@@ -80,6 +80,68 @@ public sealed class SidebarPinTests(WebAppFixture app, ITestOutputHelper output)
 		await Expect(_page.Locator(".drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
 	}
 
+	// board-ui-review-findings #4 (sidebar-unpin-admin-trap): root cause was `_AdminLayout.cshtml`
+	// wrapping its hamburger toggle in `<div class="flex-none lg:hidden">` — invisible at this
+	// test's desktop viewport (Playwright's default 1280x720, well past Tailwind's 1024px `lg`
+	// breakpoint) — so once unpinned, the drawer (and the pin button living inside it,
+	// _AdminSidebar → _ZoneSelectors → _SidebarPin) had NO way back open without navigating away
+	// to /ui and re-pinning there. `_AccountLayout.cshtml` had the identical trap. Fixed by
+	// dropping `lg:hidden`, matching `_Layout.cshtml`'s own toggle (never gated to mobile). This
+	// test is the ACTUAL regression guard the brief asked for: unpin, then reopen + re-pin
+	// WITHOUT ever leaving the admin zone — the old code could not do this at desktop width.
+	[Fact]
+	public async Task Unpin_In_Admin_Reopen_And_RePin_Without_Leaving_Admin()
+	{
+		const string adminUrl = "/ui/admin/sys/users";
+		await _page!.GotoAsync(adminUrl);
+		var pin = _page.GetByTestId("nav-sidebar-pin");
+		var toggle = _page.GetByTestId("admin-nav-toggle");
+		await Expect(pin).ToHaveAttributeAsync("aria-pressed", "true");
+
+		// Unpin: the drawer closes and the pin button (inside it) goes along with it.
+		await pin.ClickAsync();
+		await Expect(_page.Locator(".drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+
+		// The hamburger toggle must be there AND actually visible at this (desktop) viewport —
+		// `lg:hidden` would make Playwright's own visibility check fail here, which is exactly
+		// the trap: the element exists in the DOM but a real user could never click it.
+		await Expect(toggle).ToBeVisibleAsync();
+
+		// Reopen as an overlay (the checkbox-driven drawer-side, independent of drawer-open).
+		await toggle.ClickAsync();
+		await Expect(pin).ToBeVisibleAsync();
+
+		// Re-pin from inside that overlay — no navigation happened at any point.
+		await pin.ClickAsync();
+		await Expect(pin).ToHaveAttributeAsync("aria-pressed", "true");
+		await Expect(_page.Locator(".drawer")).ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+		_page.Url.Should().Contain(adminUrl, "the whole unpin/reopen/re-pin cycle must stay inside the admin zone — no trip to /ui required");
+	}
+
+	// Same trap, same fix, in the account zone (_AccountLayout.cshtml had the identical
+	// `lg:hidden` wrapper) — the brief's own "check _AccountLayout too" note.
+	[Fact]
+	public async Task Unpin_In_Account_Reopen_And_RePin_Without_Leaving_Account()
+	{
+		const string accountUrl = "/ui/me/account";
+		await _page!.GotoAsync(accountUrl);
+		var pin = _page.GetByTestId("nav-sidebar-pin");
+		var toggle = _page.GetByTestId("account-nav-toggle");
+		await Expect(pin).ToHaveAttributeAsync("aria-pressed", "true");
+
+		await pin.ClickAsync();
+		await Expect(_page.Locator(".drawer")).Not.ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+		await Expect(toggle).ToBeVisibleAsync();
+
+		await toggle.ClickAsync();
+		await Expect(pin).ToBeVisibleAsync();
+
+		await pin.ClickAsync();
+		await Expect(pin).ToHaveAttributeAsync("aria-pressed", "true");
+		await Expect(_page.Locator(".drawer")).ToHaveClassAsync(new Regex(@"\bdrawer-open\b"));
+		_page.Url.Should().Contain(accountUrl, "the whole unpin/reopen/re-pin cycle must stay inside the account zone");
+	}
+
 	// THE test for the FOUC fix. Everything above could pass even in the old, broken world (post
 	// hydration the JS forced the DOM to agree) — that is exactly what made the flicker invisible
 	// to a DOM-only assertion. This test inspects the raw HTTP response body instead: whatever

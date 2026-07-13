@@ -602,6 +602,10 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		// strikethrough marker, reqa's does not (both attributes live on the SAME row element).
 		html.Should().MatchRegex("data-node-key=\"reqa\"[^>]*data-terminal-cancel=\"false\"");
 		html.Should().MatchRegex("data-node-key=\"reqb\"[^>]*data-terminal-cancel=\"true\"");
+		// board-ui-review-findings #2: on the SPEC board the strikethrough class actually renders
+		// on reqb's OWN title (scoped to its row, not just "line-through" appearing anywhere on
+		// the page — the footer also uses that class for a disabled-feature badge, unrelated).
+		html.Should().MatchRegex("data-node-key=\"reqb\"[\\s\\S]{0,800}line-through");
 
 		// Explicit opt-in (fields=status) restores the ORIGINAL spec-board-status-noise
 		// suppression: `defined` (the near-universal default) still stays silent; `deprecated`
@@ -818,16 +822,21 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().NotContain("data-testid=\"task-create\"");
 	}
 
-	// board-terminal-negative-visible: the strikethrough invariant is driven by StatusKind DATA
+	// board-terminal-negative-visible: the data-terminal-cancel FACT is driven by StatusKind DATA
 	// (StatusKind.TerminalCancel), never a hardcoded status name — this methodology names its
 	// terminal-cancel status "archived" (not "deprecated"/"Cancelled"/"wontfix", every name the
 	// builtin presets happen to use) specifically so a name-matching implementation would fail
 	// this test while a StatusKind-driven one passes. Exercises all four board views (tree default,
-	// kanban, outline, table) plus the node detail page in one pass, and proves the strikethrough
-	// survives even when the Status FIELD itself is off (tree's default) — the whole point of the
-	// invariant being "over the setting", not a dialog checkbox.
+	// kanban, outline, table) plus the node detail page in one pass.
+	//
+	// board-ui-review-findings #2 (review, 2026-07): the VISUAL strikethrough itself is now
+	// scoped to the spec board only — this board's kind is "archivist" (not spec), so `dead`
+	// must carry data-terminal-cancel="true" (the raw fact, unchanged) everywhere, WITHOUT
+	// line-through ever actually rendering on it, on any view or the detail page. The spec-board
+	// counterpart (SpecBoard_SuppressesDefaultDefinedStatus_ShowsTerminalDeprecated above) proves
+	// the positive case.
 	[Fact]
-	public async Task TerminalCancelStrikethrough_DrivenByStatusKindData_NotHardcodedStatusNames()
+	public async Task TerminalCancelFact_TracksStatusKindData_ButStrikethroughIsSpecBoardOnly()
 	{
 		const string board = "archiveboard";
 		using (var scope = _factory.Services.CreateScope())
@@ -864,7 +873,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			}, partition: n => n.Board == board);
 		}
 
-		// Tree default view: Status field defaults OFF, but the strikethrough still fires.
+		// Tree default view: Status field defaults OFF, and — non-spec board — no strikethrough.
 		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tree"))
 		{
 			var html = await resp.Content.ReadAsStringAsync();
@@ -872,14 +881,17 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			html.Should().MatchRegex("data-node-key=\"live\"[^>]*data-terminal-cancel=\"false\"");
 			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\""); // TerminalOk, NOT struck
 			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+			html.Should().NotMatchRegex("data-node-key=\"dead\"[\\s\\S]{0,400}line-through",
+				"this board's kind is not spec — the fact is recorded but no longer rendered as a strikethrough");
 		}
 
-		// Kanban view: same invariant, same distinction between terminal-ok and terminal-cancel.
+		// Kanban view: same fact-tracking, but no visual strikethrough (not the spec board).
 		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban"))
 		{
 			var html = await resp.Content.ReadAsStringAsync();
 			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
 			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+			html.Should().NotMatchRegex("data-node-key=\"dead\"[\\s\\S]{0,400}line-through");
 		}
 
 		// Outline view.
@@ -888,6 +900,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var html = await resp.Content.ReadAsStringAsync();
 			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
 			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+			html.Should().NotMatchRegex("data-node-key=\"dead\"[\\s\\S]{0,400}line-through");
 		}
 
 		// Table view.
@@ -896,14 +909,16 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			var html = await resp.Content.ReadAsStringAsync();
 			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
 			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+			html.Should().NotMatchRegex("data-node-key=\"dead\"[\\s\\S]{0,400}line-through");
 		}
 
-		// Node detail page — the same invariant applies there too.
+		// Node detail page — the fact still records, the strikethrough does not (not spec).
 		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}/dead"))
 		{
 			var html = await resp.Content.ReadAsStringAsync();
 			html.Should().Contain("data-testid=\"node-detail\"");
 			html.Should().MatchRegex("data-testid=\"node-detail\"[^>]*data-terminal-cancel=\"true\"");
+			html.Should().NotMatchRegex("data-testid=\"node-detail\"[\\s\\S]{0,600}line-through");
 		}
 	}
 
@@ -917,6 +932,11 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// the signal survives Model.Fields.BlockedBy being off (kanban's own default): board-view-
 	// fields governs the DETAIL — who's blocking, via the chip link — not the fact of being
 	// blocked at all.
+	//
+	// board-ui-review-findings #1 (review, 2026-07): the old border-warning/badge-warning
+	// treatment is gone (quiet badge-outline chips, same weight as tags/dates, no card frame) —
+	// and the BLOCKING side ("gate" holds "waiting" up) now carries its own symmetric chip, off
+	// the same data (n.Blocks, the mirror of n.BlockedBy) — this test extends to cover both.
 	[Fact]
 	public async Task KanbanBlockedSignal_DrivenByBlockedByData_NotStatusName()
 	{
@@ -969,6 +989,20 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 			html.Should().Contain("data-testid=\"node-blocked-badge\"");
 			// The chip (who's blocking) stays off with the field — only the invariant signal fires.
 			html.Should().NotContain("data-testid=\"node-blocked-by\"");
+
+			// board-ui-review-findings #1: no card-frame highlight and no loud/saturated
+			// background anywhere on this board — every kanban card uses the same quiet
+			// border-base-300 + badge-outline treatment regardless of blocked/blocking state.
+			html.Should().NotContain("border-warning");
+			html.Should().NotContain("badge-warning\" data-testid=\"node-blocked-badge\"");
+			html.Should().NotContain("badge-warning\" data-testid=\"node-blocking-badge\"");
+
+			// board-ui-review-findings #1: "gate" BLOCKS "waiting" — the symmetric signal fires
+			// on the BLOCKER, off the same data (n.Blocks, the mirror of n.BlockedBy), never off
+			// a status name.
+			html.Should().MatchRegex("data-node-key=\"gate\"[^>]*data-blocking=\"true\"");
+			html.Should().MatchRegex("data-node-key=\"waiting\"[^>]*data-blocking=\"false\"");
+			html.Should().Contain("data-testid=\"node-blocking-badge\"");
 		}
 
 		// Explicitly turning BlockedBy on surfaces the chip, linking to the actual blocker.
@@ -1649,5 +1683,31 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().MatchRegex("""<a href="/ui/admin/sys/agent-keys"[^>]*data-testid="sys-card-agent-keys""");
 		html.Should().MatchRegex("""<a href="/ui/admin/sys/defaults"[^>]*data-testid="sys-card-defaults""");
 		html.Should().MatchRegex("""<a href="/ui/admin/sys/workspaces"[^>]*data-testid="sys-card-projects""");
+	}
+
+	// board-ui-review-findings #3 ("switching view flickers the sidebar"): rules OUT the
+	// candidate that the raw server response itself renders a different/wrong drawer class per
+	// view (which would itself explain a flicker independent of any browser-level fix). Every
+	// view of the same board must hand back the exact same `#app-drawer` class on its FIRST
+	// response — confirmed here across all four view modes. The actual fix (a native
+	// cross-document View Transition, `@view-transition` in app.css) is proven separately by
+	// PetBox.E2ETests.BoardViewTransitionTests, which needs a real browser to observe.
+	[Fact]
+	public async Task ViewSwitch_RendersTheIdenticalDrawerClass_OnEveryView()
+	{
+		string[] views = ["tree", "table", "kanban", "outline"];
+		var drawerClasses = new List<string>();
+		foreach (var view in views)
+		{
+			using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/roadmap?view={view}");
+			resp.StatusCode.Should().Be(HttpStatusCode.OK);
+			var html = await resp.Content.ReadAsStringAsync();
+			var match = System.Text.RegularExpressions.Regex.Match(html, "id=\"app-drawer\" class=\"[^\"]*\"");
+			match.Success.Should().BeTrue($"the {view} view's response must render the #app-drawer element");
+			drawerClasses.Add(match.Value);
+		}
+		drawerClasses.Distinct().Should().ContainSingle(
+			"every view mode of the same board must render the identical drawer class on its first response — " +
+			"a mismatch here would be a genuine server-side cause of the sidebar appearing to change on a view switch");
 	}
 }

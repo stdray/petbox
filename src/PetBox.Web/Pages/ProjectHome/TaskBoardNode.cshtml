@@ -14,7 +14,12 @@
 	// board-terminal-negative-visible: the same invariant the board views enforce — a node in a
 	// terminal-cancel status reads as dead on its own detail page too, independent of the status
 	// badge's own visibility (StatusBadgeModel.Show, spec-board-status-noise).
+	// SCOPED TO THE SPEC BOARD ONLY (review finding, 2026-07): same rule as every board view —
+	// on a non-spec board the status badge above is always visible (StatusBadgeModel.Show is
+	// unconditionally true there), so the strikethrough was redundant.
 	var nodeTerminalCancel = Model.Runtime.StatusKindOf(Model.Detail.Kind, node.Status) == PetBox.Tasks.Workflow.StatusKind.TerminalCancel;
+	var nodeIsSpecBoard = Model.Runtime.PresetKind(Model.Detail.Kind) == PetBox.Tasks.Workflow.BoardKind.Spec;
+	var nodeStrikethrough = nodeTerminalCancel && nodeIsSpecBoard;
 }
 
 @* Breadcrumb: tasks / {board} / {ancestors…} / {this node}. The node is addressed by its
@@ -51,7 +56,7 @@
 		}
 
 		<div class="flex items-baseline justify-between gap-2 flex-wrap">
-			<h1 class="text-2xl font-semibold @(nodeTerminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@(string.IsNullOrEmpty(node.Title) ? node.Key : node.Title)</h1>
+			<h1 class="text-2xl font-semibold @(nodeStrikethrough ? "line-through opacity-60" : "")" data-testid="node-name">@(string.IsNullOrEmpty(node.Title) ? node.Key : node.Title)</h1>
 			<div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
 				@if (!string.IsNullOrEmpty(node.Type))
 				{
