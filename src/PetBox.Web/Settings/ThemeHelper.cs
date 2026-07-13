@@ -21,6 +21,12 @@ public static class ThemeHelper
 	{
 		Theme.Light => ("light", false),
 		Theme.Dark => ("dark", false),
+		// Nord/Retro (work `ui-theme-palette-expand`): explicit non-white light picks, same
+		// no-script rendering as Light — the follow-system branch is left mapping only to
+		// dark/light (see below); it is NOT extended to offer Nord/Retro as a system default,
+		// that is the open question left to the maintainer.
+		Theme.Nord => ("nord", false),
+		Theme.Retro => ("retro", false),
 		// System follows the OS preference client-side, before paint.
 		_ => ("dark", true),
 	};

@@ -1,6 +1,11 @@
 namespace PetBox.Core.Settings;
 
-public enum Theme { Dark, Light, System }
+// Dark/Light/System are the ORIGINAL members — never renamed or reordered (values persist in the
+// DB as strings via JsonStringEnumConverter; existing user rows must keep resolving). Nord and
+// Retro (work `ui-theme-palette-expand`) are the maintainer's two non-white light-theme
+// candidates to trial side by side — appended, not inserted, for the same reason. Whichever loses
+// gets dropped later; do not remove either without the maintainer's call.
+public enum Theme { Dark, Light, System, Nord, Retro }
 
 // The single per-request UI-state record resolved before the layout renders (see
 // PetBox.Web.Settings.UiStateResolver, and _Layout.cshtml where it's resolved before RenderBody).
