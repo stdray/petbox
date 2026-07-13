@@ -1,6 +1,7 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
 @inject PetBox.Core.Settings.ISettingsResolver Settings
 @inject PetBox.Tasks.Contract.ITasksService Tasks
+@inject PetBox.Web.Settings.IUiState UiState
 @{
 	var currentWs = Nav.CurrentWorkspaceKey;
 	var currentProject = Nav.CurrentProjectKey;
@@ -23,11 +24,11 @@
 
 	var (dataTheme, systemScript) = await PetBox.Web.Settings.ThemeHelper.ResolveForCurrentUserAsync(Nav, Settings, Context);
 
-	// Combined DB+cookie UI-state record (ui-state-framework), resolved BEFORE render exactly like
-	// the theme above — sidebarPinned (ui-state-cookie-consumer #1) drives the drawer-open class
-	// below, so the FIRST response already carries the right class: no post-load correction.
-	var uiState = await PetBox.Web.Settings.UiStateResolver.ResolveForCurrentUserAsync<PetBox.Core.Settings.BrowserState>(Nav, Settings, Context);
-	ViewData["UiState"] = uiState;
+	// Combined DB+cookie UI-state record (ui-state-framework), resolved via the injected IUiState
+	// service — typed, memoized per request — instead of the ViewData bag: sidebarPinned drives the
+	// drawer-open class below, so the FIRST response already carries the right class: no post-load
+	// correction, no cast, no dependence on this layout remembering to stash anything for a partial.
+	var browserState = await UiState.GetAsync();
 }
 <!DOCTYPE html>
 <html lang="en" data-theme="@dataTheme" class="h-full">
@@ -45,7 +46,7 @@
 	<script type="module" src="~/js/site.js" asp-append-version="true"></script>
 </head>
 <body class="min-h-full">
-	<div id="app-drawer" class="drawer @(uiState.SidebarPinned ? "drawer-open" : "")">
+	<div id="app-drawer" class="drawer @(browserState.SidebarPinned ? "drawer-open" : "")">
 		<input id="sidebar-toggle" type="checkbox" class="drawer-toggle" />
 		@* min-w-0: a flex/grid item defaults to min-width:auto, so it won't shrink below its
 		   content's intrinsic width. Without it, a wide row (e.g. the kanban view's column

@@ -2,9 +2,14 @@
    collapse into a floating drawer. State lives in the `petbox.ui` cookie (ui-state-framework,
    BrowserState.SidebarPinned) so the server renders aria-pressed/btn-active correctly on the
    FIRST response — no post-load correction. Applies to every zone (/ui, /ui/admin, /ui/me);
-   click behaviour lives in ts/sidebar.ts. *@
+   click behaviour lives in ts/sidebar.ts.
+   Reads BrowserState via the injected IUiState service (memoized per request) rather than
+   ViewData — the parent layout already resolved it, so this reuses that same result instead of
+   re-hitting the DB; no cast, no `?? true` default duplicating BrowserState.SidebarPinned's own
+   record default. *@
+@inject PetBox.Web.Settings.IUiState UiState
 @{
-	var pinned = (ViewData["UiState"] as PetBox.Core.Settings.BrowserState)?.SidebarPinned ?? true;
+	var pinned = (await UiState.GetAsync()).SidebarPinned;
 }
 <button type="button" class="btn btn-sm btn-ghost btn-square @(pinned ? "btn-active" : "")" data-sidebar-pin
 	aria-pressed="@(pinned ? "true" : "false")" title="Pin sidebar open" data-testid="nav-sidebar-pin">

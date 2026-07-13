@@ -1,5 +1,6 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
 @inject PetBox.Core.Settings.ISettingsResolver Settings
+@inject PetBox.Web.Settings.IUiState UiState
 @{
 	var currentWs = Nav.CurrentWorkspaceKey;
 	var path = Context.Request.Path.Value ?? string.Empty;
@@ -12,11 +13,11 @@
 
 	var (dataTheme, systemScript) = await PetBox.Web.Settings.ThemeHelper.ResolveForCurrentUserAsync(Nav, Settings, Context);
 
-	// Combined DB+cookie UI-state record (ui-state-framework), resolved BEFORE render exactly like
-	// the theme above — sidebarPinned drives the drawer-open class below so the admin zone's first
-	// response already carries the right class too (SidebarPinTests covers this zone).
-	var uiState = await PetBox.Web.Settings.UiStateResolver.ResolveForCurrentUserAsync<PetBox.Core.Settings.BrowserState>(Nav, Settings, Context);
-	ViewData["UiState"] = uiState;
+	// Combined DB+cookie UI-state record (ui-state-framework), resolved via the injected IUiState
+	// service (typed, memoized per request) — sidebarPinned drives the drawer-open class below so
+	// the admin zone's first response already carries the right class too (SidebarPinTests covers
+	// this zone).
+	var browserState = await UiState.GetAsync();
 }
 <!DOCTYPE html>
 <html lang="en" data-theme="@dataTheme" class="h-full">
@@ -34,7 +35,7 @@
 	<script type="module" src="~/js/site.js" asp-append-version="true"></script>
 </head>
 <body class="min-h-full bg-base-100">
-	<div class="drawer @(uiState.SidebarPinned ? "drawer-open" : "")">
+	<div class="drawer @(browserState.SidebarPinned ? "drawer-open" : "")">
 		<input id="admin-sidebar-toggle" type="checkbox" class="drawer-toggle" />
 		<div class="drawer-content flex flex-col min-h-screen">
 			<header class="navbar bg-warning/10 border-b border-warning/40 px-2 lg:px-4 min-h-12" data-testid="admin-navbar">
