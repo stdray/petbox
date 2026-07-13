@@ -42,9 +42,9 @@ public sealed class TasksModel : PageModel
 	public async Task OnGetAsync(CancellationToken ct)
 	{
 		using var db = _f.Open();
-		// Bind the project to the ROUTE workspace (see ProjectHome/Index) — rejects /ui/wsA/proj-of-wsB.
-		Project = await db.Projects.FirstOrDefaultAsync(
-			p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
+		// The route workspace is proved by ProjectWorkspaceBindingFilter before this runs (see
+		// ProjectHome/Index) — resolve by key alone.
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null || !TasksEnabled) return;
 
 		Boards = await _tasks.ListBoardsAsync(ProjectKey, ct);

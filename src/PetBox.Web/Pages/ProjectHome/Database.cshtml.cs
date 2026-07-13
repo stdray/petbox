@@ -51,9 +51,9 @@ public sealed class DatabaseModel : PageModel
 		using var db = _f.Open();
 		if (!DataEnabled) return Page();
 
-		// Bind the project to the ROUTE workspace (see ProjectHome/Index) — rejects /ui/wsA/proj-of-wsB.
-		Project = await db.Projects.FirstOrDefaultAsync(
-			p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
+		// The route workspace is proved by ProjectWorkspaceBindingFilter before this runs (see
+		// ProjectHome/Index) — resolve by key alone.
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null) return Page();
 
 		Db = await db.DataDbs.FirstOrDefaultAsync(

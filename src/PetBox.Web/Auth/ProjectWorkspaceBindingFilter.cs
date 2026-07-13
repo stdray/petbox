@@ -1,9 +1,7 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Routing;
-using PetBox.Core.Data;
 
 namespace PetBox.Web.Auth;
 
@@ -28,7 +26,12 @@ namespace PetBox.Web.Auth;
 // page with only {workspaceKey} (the workspace dashboard) or only {projectKey} (none exist) is a
 // no-op. 404s a mismatch or a nonexistent project — the same response shape every affected page
 // already gave for "unknown project", now enforced once instead of on each new page.
-public sealed class ProjectWorkspaceBindingFilter(ICoreDbFactory dbf) : IAsyncPageFilter
+//
+// The binding question is asked of IProjectDirectory, not of core.db: a filter is pipeline code and
+// the DB belongs to the service layer. Since this is the SOLE enforcement point, the ten per-page
+// `p.WorkspaceKey == WorkspaceKey` copies it replaced were deleted (db-access-layer-cleanup) — do
+// not "restore" one to a page, restore it here.
+public sealed class ProjectWorkspaceBindingFilter(IProjectDirectory projects) : IAsyncPageFilter
 {
 	public Task OnPageHandlerSelectionAsync(PageHandlerSelectedContext context) => Task.CompletedTask;
 
@@ -39,10 +42,8 @@ public sealed class ProjectWorkspaceBindingFilter(ICoreDbFactory dbf) : IAsyncPa
 
 		if (!string.IsNullOrEmpty(workspaceKey) && !string.IsNullOrEmpty(projectKey))
 		{
-			using var db = dbf.Open();
-			var belongs = await db.Projects.AnyAsync(
-				p => p.Key == projectKey && p.WorkspaceKey == workspaceKey,
-				context.HttpContext.RequestAborted);
+			var belongs = await projects.BelongsAsync(
+				projectKey, workspaceKey, context.HttpContext.RequestAborted);
 			if (!belongs)
 			{
 				context.Result = new NotFoundResult();

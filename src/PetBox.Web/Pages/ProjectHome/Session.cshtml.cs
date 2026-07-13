@@ -19,13 +19,11 @@ public sealed class SessionModel : PageModel
 {
 	readonly FeatureFlags _features;
 	readonly ISessionStore _store;
-	readonly ICoreDbFactory _f;
 
-	public SessionModel(FeatureFlags features, ISessionStore store, ICoreDbFactory f)
+	public SessionModel(FeatureFlags features, ISessionStore store)
 	{
 		_features = features;
 		_store = store;
-		_f = f;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -43,15 +41,9 @@ public sealed class SessionModel : PageModel
 	{
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 
-		// Bind the project to the ROUTE workspace: the WorkspaceViewer policy only proves membership
-		// in {workspaceKey}, so without this a member of wsA could read wsB's session TRANSCRIPTS via
-		// /ui/wsA/proj-of-wsB/sessions/{id} (workspace-access-isolation).
-		using (var core = _f.Open())
-		{
-			var inWorkspace = await core.Projects.AnyAsync(
-				p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
-			if (!inWorkspace) return NotFound();
-		}
+		// The project↔workspace binding (a member of wsA must not read wsB's transcripts via
+		// /ui/wsA/proj-of-wsB/sessions/{id}) is enforced for EVERY page carrying both route values by
+		// ProjectWorkspaceBindingFilter, before this handler runs — so it is not re-checked here.
 
 		// Accept a full id or a unique prefix (the short form used in digests/search snippets);
 		// a miss or an ambiguous prefix has no single page to show → NotFound.

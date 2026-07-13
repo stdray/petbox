@@ -56,10 +56,9 @@ public sealed class SessionsModel : PageModel
 	public async Task OnGetAsync(CancellationToken ct)
 	{
 		using var db = _f.Open();
-		// Bind the project to the ROUTE workspace (see ProjectHome/Index) — rejects /ui/wsA/proj-of-wsB,
-		// i.e. reading another tenant's session transcripts.
-		Project = await db.Projects.FirstOrDefaultAsync(
-			p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
+		// The route workspace is proved by ProjectWorkspaceBindingFilter before this runs (see
+		// ProjectHome/Index) — resolve by key alone.
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null || !SessionsEnabled) return;
 
 		if (PageNum < 0) PageNum = 0;

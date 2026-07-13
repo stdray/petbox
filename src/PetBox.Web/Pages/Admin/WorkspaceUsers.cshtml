@@ -38,10 +38,10 @@ else
 				</tr>
 			</thead>
 			<tbody>
-				@foreach (var (member, username) in Model.Members)
+				@foreach (var member in Model.Members)
 				{
 					<tr data-testid="workspace-user-row">
-						<td class="font-mono text-sm">@username</td>
+						<td class="font-mono text-sm">@member.Username</td>
 						<td>
 							<form method="post" asp-page-handler="SetRole" asp-route-userId="@member.UserId" class="flex items-center gap-1">
 								@Html.AntiForgeryToken()
@@ -55,7 +55,7 @@ else
 						</td>
 						<td>
 							<form method="post" asp-page-handler="Remove" asp-route-userId="@member.UserId"
-								onsubmit="return confirm('Remove @username from this workspace?')" style="display:inline">
+								onsubmit="return confirm('Remove @member.Username from this workspace?')" style="display:inline">
 								@Html.AntiForgeryToken()
 								<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="workspace-user-remove">Remove</button>
 							</form>

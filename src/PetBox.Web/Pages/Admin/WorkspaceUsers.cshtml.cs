@@ -1,134 +1,90 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Auth;
-using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
+// Thin: every membership read and write goes through IWorkspaceMembershipService, which owns the
+// core.db access and the "never orphan a workspace" rule. The page only maps outcomes to UI text.
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class WorkspaceUsersModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IWorkspaceMembershipService _members;
 
-	public WorkspaceUsersModel(ICoreDbFactory f) => _f = f;
+	public WorkspaceUsersModel(IWorkspaceMembershipService members) => _members = members;
 
-	public IReadOnlyList<(WorkspaceMember Member, string Username)> Members { get; private set; } = [];
+	public IReadOnlyList<WorkspaceMemberRow> Members { get; private set; } = [];
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet([FromRoute(Name = "workspaceKey")] string workspaceKey)
+	public async Task OnGetAsync([FromRoute(Name = "workspaceKey")] string workspaceKey, CancellationToken ct)
 	{
-		LoadMembers(workspaceKey);
+		await LoadMembersAsync(workspaceKey, ct);
 	}
 
-	void LoadMembers(string workspaceKey)
-	{
-		using var db = _f.Open();
-		var members = db.WorkspaceMembers.Where(m => m.WorkspaceKey == workspaceKey).ToList();
-		var userIds = members.Select(m => m.UserId).ToHashSet();
-		var users = db.Users.Where(u => userIds.Contains(u.Id)).ToList();
-		var userMap = users.ToDictionary(u => u.Id, u => u.Username);
-		Members = members.Select(m => (m, userMap.GetValueOrDefault(m.UserId, "?"))).ToList();
-	}
+	async Task LoadMembersAsync(string workspaceKey, CancellationToken ct) =>
+		Members = await _members.ListMembersAsync(workspaceKey, ct);
 
 	// authz-bypass-project-create: [FromRoute] pins this to the ROUTE workspace — never a
 	// form-supplied "workspaceKey" field, which the default composite provider (Form -> Route ->
 	// Query) would otherwise let override the route after the WorkspaceAdmin policy check passed.
-	public async Task<IActionResult> OnPostAddAsync([FromRoute(Name = "workspaceKey")] string workspaceKey, string Username, string? Password, WorkspaceRole Role)
+	public async Task<IActionResult> OnPostAddAsync(
+		[FromRoute(Name = "workspaceKey")] string workspaceKey, string Username, string? Password, WorkspaceRole Role, CancellationToken ct)
 	{
-		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(Username))
 		{
 			ErrorMessage = "Username is required.";
-			LoadMembers(workspaceKey);
+			await LoadMembersAsync(workspaceKey, ct);
 			return Page();
 		}
 
-		var existing = db.Users.FirstOrDefault(u => u.Username == Username);
-		long userId;
-		if (existing is not null)
+		var outcome = await _members.AddMemberAsync(workspaceKey, Username, Password, Role, ct);
+		if (outcome == AddMemberOutcome.PasswordRequired)
 		{
-			// Existing account: ignore any supplied password — never overwrite it; add membership only.
-			userId = existing.Id;
-		}
-		else
-		{
-			// New account: a password is mandatory so the user is loginable (an empty PasswordHash
-			// cannot authenticate — see M008_Users), matching the Admin › Users create flow.
-			if (string.IsNullOrWhiteSpace(Password))
-			{
-				ErrorMessage = "A password is required to create a new user.";
-				LoadMembers(workspaceKey);
-				return Page();
-			}
-
-			var hash = AdminPasswordHasher.Hash(Password);
-			var newId = await db.InsertWithInt64IdentityAsync(new User { Username = Username, PasswordHash = hash, CreatedAt = DateTime.UtcNow });
-			userId = newId;
+			ErrorMessage = "A password is required to create a new user.";
+			await LoadMembersAsync(workspaceKey, ct);
+			return Page();
 		}
 
-		var already = db.WorkspaceMembers.Any(m => m.UserId == userId && m.WorkspaceKey == workspaceKey);
-		if (!already)
-			await db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = workspaceKey, Role = Role });
-
+		// AlreadyMember is a success for the caller: the user IS in the workspace afterwards.
 		this.NotifySuccess("Member added.");
 		return RedirectToPage();
 	}
 
-	public async Task<IActionResult> OnPostRemoveAsync([FromRoute(Name = "workspaceKey")] string workspaceKey, long userId)
+	public async Task<IActionResult> OnPostRemoveAsync(
+		[FromRoute(Name = "workspaceKey")] string workspaceKey, long userId, CancellationToken ct)
 	{
-		using var db = _f.Open();
-		var member = db.WorkspaceMembers.FirstOrDefault(m => m.UserId == userId && m.WorkspaceKey == workspaceKey);
-		if (member is null)
-		{
-			this.NotifySuccess("Member removed.");
-			return RedirectToPage();
-		}
-
-		if (member.Role == WorkspaceRole.Admin && IsLastAdmin(db, workspaceKey))
+		var outcome = await _members.RemoveMemberAsync(workspaceKey, userId, ct);
+		if (outcome == MemberChangeOutcome.LastAdmin)
 		{
 			ErrorMessage = "Cannot remove the last admin of this workspace.";
-			LoadMembers(workspaceKey);
+			await LoadMembersAsync(workspaceKey, ct);
 			return Page();
 		}
 
-		await db.WorkspaceMembers.Where(m => m.UserId == userId && m.WorkspaceKey == workspaceKey).DeleteAsync();
+		// NotFound is a success too — the member is gone either way (idempotent remove).
 		this.NotifySuccess("Member removed.");
 		return RedirectToPage();
 	}
 
 	// workspace-member-role-edit: a workspace left with zero admins is unmanageable by its own
-	// members — only a sysadmin could recover it. Guards both the demote-in-place path
-	// (OnPostSetRoleAsync) and the remove path (OnPostRemoveAsync), which had the same hole:
-	// removing the sole admin silently orphaned the workspace exactly like a demotion would.
-	public async Task<IActionResult> OnPostSetRoleAsync([FromRoute(Name = "workspaceKey")] string workspaceKey, long userId, WorkspaceRole Role)
+	// members — only a sysadmin could recover it. The service guards both the demote-in-place path
+	// and the remove path, which had the same hole.
+	public async Task<IActionResult> OnPostSetRoleAsync(
+		[FromRoute(Name = "workspaceKey")] string workspaceKey, long userId, WorkspaceRole Role, CancellationToken ct)
 	{
-		using var db = _f.Open();
-		var member = db.WorkspaceMembers.FirstOrDefault(m => m.UserId == userId && m.WorkspaceKey == workspaceKey);
-		if (member is null)
+		var outcome = await _members.SetRoleAsync(workspaceKey, userId, Role, ct);
+		if (outcome != MemberChangeOutcome.Changed)
 		{
-			ErrorMessage = "Member not found.";
-			LoadMembers(workspaceKey);
+			ErrorMessage = outcome == MemberChangeOutcome.LastAdmin
+				? "Cannot demote the last admin of this workspace."
+				: "Member not found.";
+			await LoadMembersAsync(workspaceKey, ct);
 			return Page();
 		}
-
-		if (member.Role == WorkspaceRole.Admin && Role != WorkspaceRole.Admin && IsLastAdmin(db, workspaceKey))
-		{
-			ErrorMessage = "Cannot demote the last admin of this workspace.";
-			LoadMembers(workspaceKey);
-			return Page();
-		}
-
-		await db.WorkspaceMembers
-			.Where(m => m.UserId == userId && m.WorkspaceKey == workspaceKey)
-			.Set(m => m.Role, Role)
-			.UpdateAsync();
 
 		this.NotifySuccess("Role updated.");
 		return RedirectToPage();
 	}
-
-	static bool IsLastAdmin(PetBoxDb db, string workspaceKey) =>
-		db.WorkspaceMembers.Count(m => m.WorkspaceKey == workspaceKey && m.Role == WorkspaceRole.Admin) <= 1;
 }
