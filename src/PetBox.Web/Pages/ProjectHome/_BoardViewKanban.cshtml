@@ -3,7 +3,13 @@
    Columns come from Model.KanbanColumns (TaskBoardModel.LoadAsync, sourced from WorkflowBlocks)
    — NEVER hardcoded, so this ONE partial renders correctly for any methodology's own statuses,
    not just work's Pending/InProgress/Review/Done. View only: no drag-and-drop (a status change
-   is a write through the FSM guards — a separate story). *@
+   is a write through the FSM guards — a separate story).
+   board-node-filter / board-sort: the SAME filter+sort bar every mode gets (_BoardFilterSort),
+   plus the full ts/board.ts data-* contract on every card (_PlanNodeCard's shape, restated here
+   since a kanban card isn't a _PlanNodeCard) so filtering/active-only/sort work identically to
+   tree/table. Sort is PER COLUMN: each column's own <ul data-sort-scope> is an independent
+   reorder scope (board.ts groups scopes by DOM containment) — cards have no data-parent-id, so
+   within a scope they're all "roots" and sort flat, matching "order of cards within column". *@
 @if (Model.Nodes.Count == 0)
 {
 	<div class="alert" data-testid="board-empty">This board has no active plan nodes.</div>
@@ -20,7 +26,9 @@ else
 	// declares) still needs a home on the board — an extra "other" column rather than a silently
 	// dropped card.
 	var strayCount = Model.Nodes.Count(n => !knownSlugs.Contains(n.Status));
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(SortHint: "sort within column:");
 
+	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<div class="flex gap-3 overflow-x-auto pb-2" data-testid="board-kanban">
 		@foreach (var col in Model.KanbanColumns)
 		{
@@ -36,11 +44,15 @@ else
 					<span>@col.Name</span>
 					<span class="badge badge-ghost badge-xs" data-testid="kanban-column-count">@nodesInCol.Count</span>
 				</div>
-				<ul class="flex flex-col gap-2 min-h-8">
+				<ul class="flex flex-col gap-2 min-h-8" data-sort-scope>
 					@foreach (var n in nodesInCol)
 					{
 						var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
-						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId">
+						var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
+						// board-body-truncate: a kanban card never renders the body (unlike the tree
+						// card) — data-search omits n.Body so filtering can't leak it into the HTML.
+						var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
+						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false">
 							<div class="card-body p-2 gap-1">
 								<a href="@nodeUrl" class="font-semibold link link-hover text-sm" data-testid="node-name">@n.Title</a>
 								<div class="flex items-center gap-1 flex-wrap text-xs opacity-70">
@@ -70,11 +82,15 @@ else
 		{
 			<div class="flex-none w-72" data-testid="kanban-column" data-status="">
 				<div class="font-semibold text-sm mb-2 pl-4 opacity-60">other</div>
-				<ul class="flex flex-col gap-2 min-h-8">
+				<ul class="flex flex-col gap-2 min-h-8" data-sort-scope>
 					@foreach (var n in Model.Nodes.Where(n => !knownSlugs.Contains(n.Status)).OrderBy(n => n.Priority).ThenBy(n => n.Key, StringComparer.Ordinal))
 					{
 						var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
-						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId">
+						var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
+						// board-body-truncate: a kanban card never renders the body (unlike the tree
+						// card) — data-search omits n.Body so filtering can't leak it into the HTML.
+						var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
+						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false">
 							<div class="card-body p-2 gap-1">
 								<a href="@nodeUrl" class="font-semibold link link-hover text-sm" data-testid="node-name">@n.Title</a>
 								<span class="font-mono text-xs opacity-70" title="unrecognized status">@n.Status</span>

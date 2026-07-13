@@ -49,4 +49,31 @@ public sealed class BoardViewModeRegistryTests
 		BoardViewModeNames.IsKnown(mode).Should().BeTrue();
 		BoardViewModeRegistry.IsRenderable(mode).Should().BeTrue();
 	}
+
+	// board-tag-grouping-hidden: Tags is pulled from the switcher (TaskBoard.cshtml filters
+	// `Entries.Where(e => !e.Hidden)`) but MUST stay exactly as renderable/resolvable as any
+	// other entry — Hidden is a switcher-display concern only, never a Find/Resolve concern.
+	[Fact]
+	public void TagsEntry_IsHidden_ButFullyRenderableAndResolvable()
+	{
+		var tags = BoardViewModeRegistry.Find(BoardViewModeNames.Tags);
+		tags.Should().NotBeNull();
+		tags!.Hidden.Should().BeTrue();
+
+		BoardViewModeRegistry.IsRenderable(BoardViewModeNames.Tags).Should().BeTrue();
+		BoardViewModeRegistry.Resolve(requested: "tags", methodologyDefault: null).Should().Be("tags");
+		// A methodology defaultView of "tags" (a hidden-but-real mode) must still resolve to it —
+		// Hidden must never leak into the resolution chain, only the switcher's own render loop.
+		BoardViewModeRegistry.Resolve(requested: null, methodologyDefault: "tags").Should().Be("tags");
+	}
+
+	[Fact]
+	public void OnlyTagsIsHidden_TheOtherFourModesStayInTheSwitcher()
+	{
+		// Pins today's contract so a future addition doesn't silently hide itself by copy-paste
+		// (e.g. cloning the Tags entry as a starting point for a new one and forgetting to flip
+		// Hidden back to false).
+		BoardViewModeRegistry.Entries.Where(e => e.Hidden).Select(e => e.Key)
+			.Should().Equal(BoardViewModeNames.Tags);
+	}
 }

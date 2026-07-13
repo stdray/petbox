@@ -14,28 +14,13 @@ else
 	// get a collapse caret. (Visibility/collapse/filter is applied client-side by ts/board.ts;
 	// active-only + collapsed state persist in localStorage.)
 	var parentIds = Model.Nodes.Where(x => x.ParentNodeId is not null).Select(x => x.ParentNodeId!).ToHashSet(StringComparer.Ordinal);
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(SortHint: "sort branches:");
 
-	<div class="mb-3 flex flex-wrap items-center gap-2" data-testid="board-filter">
-		<input type="search" class="input input-bordered input-xs w-48" placeholder="filter…" data-testid="board-filter-text" aria-label="Filter text" />
-		<select class="select select-bordered select-xs" data-testid="board-filter-status" aria-label="Filter by status"><option value="">status: any</option></select>
-		<select class="select select-bordered select-xs" data-testid="board-filter-type" aria-label="Filter by type"><option value="">type: any</option></select>
-		<label class="label cursor-pointer justify-start gap-2 text-xs">
-			<input type="checkbox" class="toggle toggle-xs" data-testid="active-only-toggle" />
-			<span>active only</span>
-		</label>
-		@* Client-side row-order toggle (board-sort-impl): reorders the rendered <li>s in place
-		   (siblings only — the part_of nesting itself is untouched, per finding D11 on the
-		   server ordering) and persists the choice to localStorage["tasksSort"]. *@
-		<span class="text-xs opacity-60 ml-1">sort:</span>
-		<select class="select select-bordered select-xs" data-testid="board-sort-by" aria-label="Sort by">
-			<option value="priority">priority</option>
-			<option value="created">created</option>
-			<option value="updated">updated</option>
-			<option value="title">title</option>
-		</select>
-		<button type="button" class="btn btn-ghost btn-xs font-mono" data-testid="board-sort-dir" aria-label="Toggle sort direction" title="toggle ascending / descending">↑</button>
-	</div>
-	<ul class="flex flex-col gap-2" data-testid="board-nodes">
+	<partial name="_BoardFilterSort" model="filterSortModel" />
+	@* data-sort-scope (board-sort): the DFS-flat <li> list IS the single reorder scope for this
+	   pane — ts/board.ts walks it depth-first via each row's data-parent-id, so "sort" reorders
+	   sibling branches in place without touching the part_of nesting (finding D11). *@
+	<ul class="flex flex-col gap-2" data-testid="board-nodes" data-sort-scope>
 		@foreach (var n in Model.Nodes)
 		{
 			var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);

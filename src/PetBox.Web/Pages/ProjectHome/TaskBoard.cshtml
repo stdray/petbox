@@ -3,15 +3,11 @@
 @{
 	ViewData["Title"] = $"{Model.Board} — Tasks";
 
-	// Tag-grouping presets: each is an ordered list of tag namespaces (board-tag-grouping).
-	// Order sets nesting; the projection is a pure view (tag-grouping-is-projection).
-	var presets = new (string By, string Label)[]
-	{
-		("area", "area"),
-		("concern", "concern"),
-		("area,concern", "area → concern"),
-		("concern,area", "concern → area"),
-	};
+	// Tag-grouping `by` (board-tag-grouping): the ordered tag-namespace list a direct
+	// `?view=tags&by=...` request applied — the projection is a pure view (tag-grouping-is-
+	// projection). Still computed (board-view-meta below needs it for the client reconcile) even
+	// though the switcher no longer offers preset buttons to pick it (board-tag-grouping-hidden:
+	// Tags is a Hidden entry in BoardViewModeRegistry — direct URL access keeps working).
 	var curBy = string.Join(",", Model.GroupDims);
 
 	// Effective kind via MethodologyRuntime (definition first, preset fallback) — a
@@ -70,36 +66,29 @@
 	</form>
 }
 
-@* View switch (board-view-modes): one button per BoardViewModeRegistry entry — a new mode
-   (kanban/outline/table, once its partial ships) needs no edit here, it just appears. Tags
-   additionally fans out into the tag-namespace presets. Explicit query-string links (no
+@* View switch (board-view-modes): one button per NON-HIDDEN BoardViewModeRegistry entry — a
+   new mode (kanban/outline/table, once its partial ships) needs no edit here, it just appears.
+   Filtering on `!entry.Hidden` (board-tag-grouping-hidden) is how a mode stops offering itself
+   in the switcher without this markup ever naming it — Tags is Hidden today (its presets
+   worked poorly enough to pull from discovery pending a redesign), but `?view=tags&by=...`
+   still resolves/renders exactly as before (BoardViewModeRegistry.Resolve/Find scan the FULL
+   Entries list, hidden or not — only this loop filters). Explicit query-string links (no
    implicit persistence server-side — ts/board.ts saves the click to localStorage keyed by
    board, see board-view-meta below) — switching is reversible and never mutates part_of
    (tag-grouping-is-projection). *@
 <div class="mb-3 flex flex-wrap items-center gap-1" data-testid="board-view-controls">
 	<span class="text-xs opacity-60 mr-1">view:</span>
-	@foreach (var entry in PetBox.Web.Rendering.BoardViewModeRegistry.Entries)
+	@foreach (var entry in PetBox.Web.Rendering.BoardViewModeRegistry.Entries.Where(e => !e.Hidden))
 	{
-		@if (entry.Key == PetBox.Tasks.Workflow.BoardViewModeNames.Tags)
-		{
-			<span class="text-xs opacity-40 mx-1">tags:</span>
-			@foreach (var p in presets)
-			{
-				var active = Model.IsTagView && curBy == p.By;
-				<a href="?view=tags&by=@Uri.EscapeDataString(p.By)" class="btn btn-xs @(active ? "btn-active" : "btn-ghost")" data-testid="view-tags" data-view-link data-view-mode="tags" data-view-by="@p.By">@p.Label</a>
-			}
-		}
-		else
-		{
-			// Highlight tracks what's ACTUALLY rendered (Model.ContentPartialName), not the
-			// requested/resolved mode name: `?view=tags` with no/invalid `by` degrades the
-			// content pane to tree (IsTagView false) while ResolvedViewMode still reports
-			// "tags" — comparing against ResolvedViewMode left every button dark in that case.
-			// ContentPartialName always equals exactly one entry's PartialName (the tags
-			// degrade included — it becomes "_BoardViewTree", matching the tree entry here).
-			var active = entry.PartialName == Model.ContentPartialName;
-			<a href="?view=@entry.Key" class="btn btn-xs @(active ? "btn-active" : "btn-ghost")" data-testid="view-@entry.Key" data-view-link data-view-mode="@entry.Key">@entry.Label</a>
-		}
+		// Highlight tracks what's ACTUALLY rendered (Model.ContentPartialName), not the
+		// requested/resolved mode name: a resolved mode whose content pane degrades (e.g. tags
+		// with no/invalid `by` — still reachable by direct URL even though hidden from the
+		// switcher) renders a DIFFERENT partial than its own entry, so comparing against
+		// ResolvedViewMode would leave every visible button dark in that case. ContentPartialName
+		// always equals exactly one entry's PartialName (a degrade included — e.g. it becomes
+		// "_BoardViewTree", matching the tree entry here).
+		var active = entry.PartialName == Model.ContentPartialName;
+		<a href="?view=@entry.Key" class="btn btn-xs @(active ? "btn-active" : "btn-ghost")" data-testid="view-@entry.Key" data-view-link data-view-mode="@entry.Key">@entry.Label</a>
 	}
 </div>
 

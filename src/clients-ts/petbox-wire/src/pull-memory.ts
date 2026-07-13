@@ -26,9 +26,15 @@ import { buildProtocol, mcpPetboxTool } from "./protocol.ts";
 import { resolveProject } from "./registry.ts";
 
 // Shared wall-clock budget for BOTH fetches combined (agent-def, then canon) — see the
-// module comment above. Same magnitude as the two fetches' own prior 8s timeouts so the
-// happy-path and degraded-path behavior don't regress, just no longer stack.
-const SESSION_FETCH_BUDGET_MS = 8000;
+// module comment above.
+//
+// Deliberately SHORT. Waiting long for the server only pays off when the alternative is
+// nothing — and it isn't: the LKG cache holds the same definition and canon, which change
+// on the order of weeks, not sessions. So a slow server (a redeploy restarting the
+// container is the common case) must cost the session start ~2s, not ~8s. Freshness is
+// only lost in the narrow window where the documents changed AND the server is down right
+// now; staleness there is cheap, an 8s stall on every session start is not.
+const SESSION_FETCH_BUDGET_MS = 2000;
 
 type HookInput = { cwd?: string; source?: string };
 

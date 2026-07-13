@@ -9,7 +9,7 @@
 }
 <tr class="@rowClasses" data-testid="events-row" data-event-id="@(Model.IsLive ? null : Model.Id.ToString(System.Globalization.CultureInfo.InvariantCulture))">
 	<td class="font-mono text-xs opacity-70 whitespace-nowrap relative group">
-		<time class="local-time" datetime="@LogEntryViewModel.IsoUtc(Model.Timestamp)" title="UTC: @LogEntryViewModel.IsoUtc(Model.Timestamp)">@LogEntryViewModel.IsoUtc(Model.Timestamp)</time>
+		<time class="local-time" data-ms datetime="@LogEntryViewModel.IsoUtc(Model.Timestamp)" title="UTC: @LogEntryViewModel.IsoUtc(Model.Timestamp)">@LogEntryViewModel.IsoUtc(Model.Timestamp)</time>
 		@if (showChips)
 		{
 			<span class="absolute inset-y-0 right-1 hidden group-hover:inline-flex items-center gap-1 bg-base-300 rounded px-1 shadow">
@@ -71,7 +71,7 @@
 
 				<dt class="opacity-60">Timestamp</dt>
 				<dd class="flex items-center gap-2 group/field">
-					<time class="local-time" datetime="@LogEntryViewModel.IsoUtc(Model.Timestamp)" title="UTC: @LogEntryViewModel.IsoUtc(Model.Timestamp)">@LogEntryViewModel.IsoUtc(Model.Timestamp)</time>
+					<time class="local-time" data-ms datetime="@LogEntryViewModel.IsoUtc(Model.Timestamp)" title="UTC: @LogEntryViewModel.IsoUtc(Model.Timestamp)">@LogEntryViewModel.IsoUtc(Model.Timestamp)</time>
 					<span class="hidden group-hover/field:inline-flex items-center gap-1">
 						<button type="button" class="filter-chip text-success text-xs font-semibold leading-none px-1"
 							data-filter-field="Timestamp" data-filter-op="ge" data-filter-value="@LogEntryViewModel.KqlDatetime(Model.Timestamp)"
