@@ -74,7 +74,8 @@ public sealed class PetBoxDb : DataConnection
 			.HasIdentity(u => u.Id)
 			.Property(u => u.Id).IsPrimaryKey()
 			.Property(u => u.Username).HasLength(100).IsNullable(false)
-			.Property(u => u.PasswordHash).HasLength(200).IsNullable(false);
+			.Property(u => u.PasswordHash).HasLength(200).IsNullable(false)
+			.Property(u => u.WorkspaceQuota).HasDataType(DataType.Int32).IsNullable(false);
 
 		builder.Entity<WorkspaceMember>()
 			.HasTableName("WorkspaceMembers")

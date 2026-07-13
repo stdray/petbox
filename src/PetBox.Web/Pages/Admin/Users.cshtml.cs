@@ -22,7 +22,14 @@ public sealed class UsersModel : PageModel
 		_adminOptions = adminOptions.Value;
 	}
 
-	public sealed record UserRow(long Id, string Username, DateTime CreatedAt, bool IsBootstrapAdmin, IReadOnlyList<MembershipRow> Memberships);
+	public sealed record UserRow(
+		long Id,
+		string Username,
+		DateTime CreatedAt,
+		bool IsBootstrapAdmin,
+		int WorkspaceQuota,
+		int WorkspacesOwned,
+		IReadOnlyList<MembershipRow> Memberships);
 	public sealed record MembershipRow(string WorkspaceKey, WorkspaceRole Role);
 
 	public IReadOnlyList<UserRow> Users { get; private set; } = [];
@@ -41,6 +48,13 @@ public sealed class UsersModel : PageModel
 			u.Username,
 			u.CreatedAt,
 			IsBootstrapAdmin(u.Username),
+			u.WorkspaceQuota,
+			// "used" is shown next to the quota so the admin sets a number against a fact, not a guess.
+			// Same criterion the quota is enforced by (WorkspaceProvisioning.CountOwnedWorkspacesAsync):
+			// workspaces the account is Admin of, excluding the seeded $system.
+			members.Count(m => m.UserId == u.Id
+				&& m.Role == WorkspaceRole.Admin
+				&& m.WorkspaceKey != WorkspaceMemory.SystemWorkspace),
 			[.. members
 				.Where(m => m.UserId == u.Id)
 				.OrderBy(m => m.WorkspaceKey)
@@ -56,12 +70,30 @@ public sealed class UsersModel : PageModel
 			? id
 			: -1;
 
-	public async Task<IActionResult> OnPostCreateAsync(string? username, string? password)
+	// `workspaceQuota` is deliberately NULLABLE and has NO default: the form field ships empty and the
+	// admin must type a number (spec workspace-create-permission — the right is granted explicitly).
+	// A missing value is an error, NOT a silent 0: "nobody decided" and "decided: none" are different
+	// facts, and only the second one may be written to an account.
+	public async Task<IActionResult> OnPostCreateAsync(string? username, string? password, int? workspaceQuota)
 	{
 		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
 		{
 			ErrorMessage = "Username and password are required.";
+			Load();
+			return Page();
+		}
+
+		if (workspaceQuota is not { } quota)
+		{
+			ErrorMessage = "Workspace allowance is required — enter 0 if this account may not create workspaces.";
+			Load();
+			return Page();
+		}
+
+		if (quota < 0)
+		{
+			ErrorMessage = "Workspace allowance cannot be negative.";
 			Load();
 			return Page();
 		}
@@ -78,9 +110,33 @@ public sealed class UsersModel : PageModel
 			Username = username.Trim(),
 			PasswordHash = AdminPasswordHasher.Hash(password),
 			CreatedAt = DateTime.UtcNow,
+			WorkspaceQuota = quota,
 		});
 
 		this.NotifySuccess($"User '{username.Trim()}' created.");
+		return RedirectToPage();
+	}
+
+	// Raising or lowering an existing account's allowance. Lowering it (even to 0) does NOT touch the
+	// workspaces the account already created, nor its Admin role in them — that would leave a
+	// workspace with no administrator. It only governs the NEXT create.
+	public async Task<IActionResult> OnPostSetQuotaAsync(long userId, int? workspaceQuota)
+	{
+		using var db = _f.Open();
+
+		if (workspaceQuota is not { } quota || quota < 0)
+		{
+			ErrorMessage = "Workspace allowance must be a number of 0 or more.";
+			Load();
+			return Page();
+		}
+
+		await db.Users
+			.Where(u => u.Id == userId)
+			.Set(u => u.WorkspaceQuota, quota)
+			.UpdateAsync();
+
+		this.NotifySuccess("Workspace allowance updated.");
 		return RedirectToPage();
 	}
 

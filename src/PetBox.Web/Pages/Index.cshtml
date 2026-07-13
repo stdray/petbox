@@ -11,12 +11,28 @@
    workspace it has no membership in. *@
 <div class="card w-96 max-w-full bg-base-200 p-6 shadow-xl text-center" data-testid="no-workspaces-card">
 	<h1 class="text-xl font-semibold mb-2" data-testid="no-workspaces-title">No workspaces yet</h1>
-	<p class="opacity-70 mb-4" data-testid="no-workspaces-message">
-		You are signed in@(string.IsNullOrEmpty(Model.Username) ? "" : $" as {Model.Username}"), but you do not have
-		access to any workspace yet. Ask an administrator to add you to one.
-	</p>
+	@if (Model.CanCreateWorkspace)
+	{
+		<p class="opacity-70 mb-4" data-testid="no-workspaces-message">
+			You are signed in@(string.IsNullOrEmpty(Model.Username) ? "" : $" as {Model.Username}"), and your account
+			may create a workspace of its own. You will be its administrator.
+		</p>
+	}
+	else
+	{
+		<p class="opacity-70 mb-4" data-testid="no-workspaces-message">
+			You are signed in@(string.IsNullOrEmpty(Model.Username) ? "" : $" as {Model.Username}"), but you do not have
+			access to any workspace yet. Ask an administrator to add you to one.
+		</p>
+	}
 	<div class="flex flex-col gap-2">
-		<a href="/ui/me/account" class="btn btn-primary btn-sm" data-testid="no-workspaces-account">Your account</a>
+		@* Shown only to an account whose quota allows it — the same policy gates the page it links to,
+		   so this is never a link into a 403. Everyone else is told to ask an administrator. *@
+		@if (Model.CanCreateWorkspace)
+		{
+			<a href="@Routes.NewWorkspace()" class="btn btn-primary btn-sm" data-testid="no-workspaces-create">Create workspace</a>
+		}
+		<a href="/ui/me/account" class="btn btn-sm @(Model.CanCreateWorkspace ? "btn-ghost" : "btn-primary")" data-testid="no-workspaces-account">Your account</a>
 		<form method="post" action="@Routes.Logout()" class="m-0">
 			@Html.AntiForgeryToken()
 			<button type="submit" class="btn btn-ghost btn-sm w-full" data-testid="no-workspaces-signout">Sign out</button>

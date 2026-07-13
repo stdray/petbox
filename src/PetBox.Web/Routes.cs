@@ -23,6 +23,10 @@ public static class Routes
 	public static string SysDeploy() => $"{AdminPrefix}/sys/deploy";
 	public static string SysDefaults() => $"{AdminPrefix}/sys/defaults";
 
+	// Account level (/ui/me/*) — self-service workspace creation, gated by the account's quota
+	// (CanCreateWorkspace policy).
+	public static string NewWorkspace() => $"{UiPrefix}/me/workspaces/new";
+
 	// Workspace level
 	public static string Workspace(string ws) => $"{UiPrefix}/{ws}";
 	public static string WorkspaceTasks(string ws) => $"{UiPrefix}/{ws}/tasks";

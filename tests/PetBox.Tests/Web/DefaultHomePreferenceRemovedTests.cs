@@ -1,4 +1,6 @@
 using System.Reflection;
+using System.Security.Claims;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using PetBox.Core.Models;
 using PetBox.Core.Settings;
@@ -49,14 +51,26 @@ public sealed class DefaultHomePreferenceRemovedTests
 	}
 
 	[Fact]
-	public void Root_RedirectsToWorkspaceStatus()
+	public async Task Root_RedirectsToWorkspaceStatus()
 	{
-		var page = new IndexModel(new FakeNav("acme"));
+		// The authorization service is never consulted on this path — a user WITH a workspace is
+		// redirected before the CanCreateWorkspace policy (and its db reads) is ever asked. Passing a
+		// service that would throw makes that an assertion rather than a hope.
+		var page = new IndexModel(new FakeNav("acme"), new NeverAskedAuthz());
 
-		var result = page.OnGet();
+		var result = await page.OnGetAsync();
 
 		var redirect = result.Should().BeOfType<RedirectResult>().Subject;
 		redirect.Url.Should().Be(Routes.Workspace("acme"));
+	}
+
+	sealed class NeverAskedAuthz : IAuthorizationService
+	{
+		public Task<AuthorizationResult> AuthorizeAsync(ClaimsPrincipal user, object? resource, IEnumerable<IAuthorizationRequirement> requirements) =>
+			throw new InvalidOperationException("the landing page must not evaluate a policy when the user already has a workspace");
+
+		public Task<AuthorizationResult> AuthorizeAsync(ClaimsPrincipal user, object? resource, string policyName) =>
+			throw new InvalidOperationException("the landing page must not evaluate a policy when the user already has a workspace");
 	}
 
 	// IndexModel only reads CurrentWorkspaceKey; the rest is inert.
