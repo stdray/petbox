@@ -555,6 +555,7 @@ public partial class Program
 		// the single source those pages render through the shared renderer. Stateless — singleton.
 		builder.Services.AddSingleton<PetBox.Web.Pages.Doc.DocContent>();
 		builder.Services.AddScoped<PetBox.Web.Auth.ProjectWorkspaceBindingFilter>();
+		builder.Services.AddScoped<PetBox.Web.Auth.AgentKeyAdminService>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.

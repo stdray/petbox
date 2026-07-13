@@ -1,0 +1,19 @@
+@page "/ui/admin/ws/{workspaceKey}/agent-keys"
+@model PetBox.Web.Pages.Admin.WorkspaceAgentKeysModel
+@{
+	ViewData["Title"] = "Agent keys";
+	Layout = "_AdminLayout";
+	var table = new PetBox.Web.Pages.Shared.AgentKeysTableView(Model.Keys, "ws-agent-keys-table", "ws-agent-keys-empty");
+}
+
+<div class="mb-4">
+	<h1 class="text-2xl font-semibold" data-testid="ws-agent-keys-title">Agent keys</h1>
+	<p class="text-sm opacity-60">The DB-minted API keys of this workspace's projects — review what exists and revoke what leaked or went stale. Mint new ones from a project's <a class="link" href="@Routes.WorkspaceAdminProjects(Model.WorkspaceKey)">Connect</a> page.</p>
+</div>
+
+<div class="flex items-center gap-3 mb-3">
+	<h2 class="text-lg font-semibold">Active &amp; expired keys</h2>
+	<span class="badge badge-ghost" data-testid="ws-agent-keys-count">@Model.Keys.Count</span>
+</div>
+
+<partial name="_AgentKeysTable" model="table" />

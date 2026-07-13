@@ -44,6 +44,9 @@ public static class Routes
 	public static string WorkspaceAdminProjects(string ws) => $"{AdminPrefix}/ws/{ws}/projects";
 	public static string WorkspaceAdminInfo(string ws) => $"{AdminPrefix}/ws/{ws}/info";
 	public static string WorkspaceAdminDefaults(string ws) => $"{AdminPrefix}/ws/{ws}/defaults";
+	// The workspace-scoped twin of SysAgentKeys(): only the keys of THIS workspace's projects
+	// (workspace-admin-owns-keys — the admin who mints them must be able to revoke them).
+	public static string WorkspaceAdminAgentKeys(string ws) => $"{AdminPrefix}/ws/{ws}/agent-keys";
 
 	// Project level — /ui/{ws}/{key} IS the Logs view directly (no redirect).
 	// A project has many named logs; /ui/{ws}/{key}/logs/{log} views a specific one,

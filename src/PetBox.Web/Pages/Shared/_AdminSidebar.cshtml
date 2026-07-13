@@ -48,6 +48,11 @@
 			<li>
 				<a href="@Routes.WorkspaceAdminProjects(currentWs)" class="@(At(Routes.WorkspaceAdminProjects(currentWs)) ? "active" : "")" data-testid="admin-side-ws-projects">Projects</a>
 			</li>
+			@* Sits beside Projects/Connect on purpose: the same workspace admin who mints a
+			   project key on its Connect page revokes it here (workspace-admin-owns-keys). *@
+			<li>
+				<a href="@Routes.WorkspaceAdminAgentKeys(currentWs)" class="@(At(Routes.WorkspaceAdminAgentKeys(currentWs)) ? "active" : "")" data-testid="admin-side-ws-agent-keys">Agent keys</a>
+			</li>
 
 			<li class="menu-title text-xs opacity-50 uppercase tracking-wide mt-2" data-testid="admin-side-proj-heading">
 				<span>Project</span>
