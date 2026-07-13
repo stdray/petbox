@@ -63,106 +63,27 @@ public sealed class DbLayerGuardTests
 		typeof(IScopedDbFactory<>),
 	];
 
-	// ── THE ALLOWLIST — IT SHRINKS, IT DOES NOT GROW ──────────────────────────────────────────────
+	// ── THE ALLOWLIST — AND IT IS EMPTY ───────────────────────────────────────────────────────────
 	//
-	// `db-out-of-pages-into-services` is IN PROGRESS: most of Pages/** predates the rule (AGENTS.md
-	// says so in as many words) and still holds a factory. This guard has to be GREEN on today's
-	// main or it could not be merged at all, so every not-yet-converted holdout is listed here WITH
-	// THE SERVICE IT IS WAITING FOR. The entry is a debt marker, not a dispensation.
+	// It used to hold 30 entries: every page, endpoint and middleware that predated the rule and still
+	// opened a database itself. `db-out-of-pages-into-services` drained fourteen of them (the doors
+	// already existed), and `db-out-of-pages-remaining-24` wrote the doors the other sixteen were
+	// waiting for — the rollup/counts service, the credential and self-service account doors, a service
+	// layer for Config and for Logging's SavedQueries, an owner for ShareLinks, and the name rules that
+	// DataDbsApi kept to itself lifted into IDataDbCatalog.
 	//
-	// NEVER add an entry to make a NEW violation pass. New presentation code asks a service; if the
-	// service does not exist, the work is to open the door, not to widen this list.
+	// EMPTY IS THE POINT, and it is why the two tests below now read as they do: there is no
+	// presentation type left that holds a db factory, so `NoPresentationType_TakesADbFactory` asserts
+	// the rule with no exceptions, and `AllowlistEntries_AreStillNeeded` has nothing left to keep
+	// honest. Do not read the emptiness as "this guard checks nothing" — read
+	// TheGuard_ActuallyInspectsSomething, which exists to prove the sweep still sees the code.
 	//
-	// The list cannot silently rot in either direction, and BOTH directions are tested:
-	//   - a file that leaks but is NOT listed          -> NoPresentationType_TakesADbFactory fails
-	//   - a file that is listed but is ALREADY CLEAN   -> AllowlistEntries_AreStillNeeded fails
-	// The second is the one that matters most: a stale entry HIDES WORK SOMEBODY ALREADY DID and
-	// re-opens the door for free. When you convert a page, DELETE ITS LINE — the build makes you.
-	// Each entry names the TABLES the type actually opens core.db for, and what must exist before the
-	// line can be deleted. Two kinds of debt, and they are NOT the same size — the comment says which:
-	//   "DOOR EXISTS"  -> the service is already there; this is a mechanical conversion nobody did yet.
-	//   "NEEDS A DOOR" -> no service owns that table; converting means writing one first.
+	// NEVER add an entry to make a new violation pass. That was true when the list was long and it is
+	// truer now: an entry here would be the first one in the file's history to mark debt that was
+	// CREATED rather than inherited. New presentation code asks a service; if the service does not
+	// exist, the work is to open the door.
 	static readonly IReadOnlyDictionary<string, string> Allowlist = new Dictionary<string, string>(StringComparer.Ordinal)
 	{
-		// ── Razor PageModels ─────────────────────────────────────────────────────────────────────
-		["PetBox.Web.Pages.Admin.IndexModel"] =
-			"Reads ApiKeys + Projects + Settings + Users + Workspaces — the sysadmin landing's COUNTS. "
-			+ "NEEDS A DOOR: every one of those tables has a service, but none of them COUNTS. A rollup/"
-			+ "stats door is the missing piece (and is the thing that finally makes core.db cacheable).",
-
-		["PetBox.Web.Pages.ProjectHome.IndexModel"] =
-			"Reads ApiKeys + DataDbs + HealthReports + Logs — the project-home rollup, and THE page "
-			+ "AGENTS.md means by 'a GET of a project page opens core.db 7-9 times'. Each table now has a "
-			+ "door (AgentKeyAdminService / IDataDbCatalog / IHealthReportService), but the page wants ONE "
-			+ "rollup, not four round trips. NEEDS A DOOR: the project-rollup read this work item exists "
-			+ "to make possible.",
-
-		["PetBox.Web.Pages.ProjectHome.MemoryModel"] =
-			"Opens core.db for exactly one thing: WorkspaceMemory.EnsureContainerAsync(db, ...) — lazily "
-			+ "provisioning a workspace-memory container. NEEDS A DOOR: the page says so itself in a "
-			+ "comment ('provisioning a container has no service door yet'). IWorkspaceMemoryDirectory "
-			+ "resolves containers but does not PROVISION one.",
-
-		["PetBox.Web.Pages.Config.IndexModel"] =
-			"Reads/writes SavedConfigFilters via IScopedDbFactory<ConfigDb>. NEEDS A DOOR: PetBox.Config "
-			+ "has no service layer at all — the module reads its db inline everywhere.",
-
-		["PetBox.Web.Pages.Dashboard.IndexModel"] =
-			"Reads ApiKeys + DataDbs + HealthReports + Logs + Projects — the fleet rollup. Same shape and "
-			+ "same missing piece as ProjectHome.IndexModel: NEEDS A DOOR (a rollup, not five reads).",
-
-		["PetBox.Web.Pages.LoginModel"] =
-			"Reads Users + WorkspaceMembers to AUTHENTICATE (name -> password hash). NEEDS A DOOR: "
-			+ "IUserAdminService is admin-scoped and must not be handed to the anonymous login page; the "
-			+ "credential lookup wants its own door in PetBox.Core.Auth.",
-
-		["PetBox.Web.Pages.Logs.IndexModel"] =
-			"Reads Projects + reads/writes SavedQueries. IProjectDirectory covers the first half; NEEDS A "
-			+ "DOOR for SavedQueries (nothing owns that table).",
-
-		["PetBox.Web.Pages.Me.SecurityModel"] =
-			"Reads/writes the CURRENT user's own row (password change). NEEDS A DOOR: a self-service "
-			+ "account door. IUserAdminService is admin-scoped — handing it to a page any logged-in user "
-			+ "reaches would be a privilege widening, not a conversion.",
-
-		["PetBox.Web.Pages.Nav.TreeModel"] =
-			"Reads DataDbs + Logs to decide which nav nodes to show. DOOR EXISTS for DataDbs "
-			+ "(IDataDbCatalog); the log-catalog half NEEDS A DOOR (PetBox.Logging has no service layer).",
-
-		["PetBox.Web.Pages.ShareModel"] =
-			"Resolves a share token against ShareLinks. NEEDS A DOOR: nothing owns ShareLinks today.",
-
-		// NOTE: ApiKeyAuthMiddleware is NOT here. It does not TAKE a factory — it RESOLVES one from the
-		// container mid-method (a service locator), which no ctor/field/parameter sweep can see. It is
-		// caught in the source plane instead: see ServiceLocatorAllowlist below.
-
-		// ── Minimal-API endpoint classes ─────────────────────────────────────────────────────────
-		// These are the `.MapGet(..., (ICoreDbFactory dbf) => ...)` handlers — the factory arrives as a
-		// LAMBDA PARAMETER, which is why this guard sweeps methods and closure fields, not just ctors.
-		["PetBox.Data.DataDbsApi"] =
-			"The data-module REST surface. It carries its OWN db/table NAME rules and applies them in the "
-			+ "same statement as the write; lifting it to IDataDbCatalog without carrying those rules "
-			+ "across is how they get quietly dropped. The largest single conversion left, and explicitly "
-			+ "NOT in this wave.",
-
-		["PetBox.Data.SchemaApi"] =
-			"Schema apply/introspect REST. Same door (IDataDbCatalog, extended) and same naming-rule "
-			+ "hazard as PetBox.Data.DataDbsApi.",
-
-		["PetBox.Core.Auth.AuthApi"] =
-			"Login/logout/whoami REST. NEEDS A DOOR: the same credential lookup as Pages.LoginModel.",
-
-		["PetBox.Config.ConfigApi"] =
-			"Config REST (Conf/Create/Delete). NEEDS A DOOR: PetBox.Config has no service layer — same "
-			+ "gap as Pages.Config.IndexModel.",
-
-		["PetBox.Log.Core.LogApi"] =
-			"Log ingest REST (the Seq-compatible ingest paths). NEEDS A DOOR: PetBox.Logging has no "
-			+ "service layer — same gap as Pages.Logs.IndexModel.",
-
-		["PetBox.Log.Core.ShareApi"] =
-			"Log-share REST (create a share link, serve its TSV). NEEDS A DOOR: ShareLinks — the same "
-			+ "table, and the same missing owner, as Pages.ShareModel.",
 	};
 
 	// Every PetBox product assembly, anchored on Web (the composition root references them all) —
@@ -346,13 +267,19 @@ public sealed class DbLayerGuardTests
 	// ── THE SERVICE-LOCATOR PLANE ────────────────────────────────────────────────────────────────
 	//
 	// Everything above reasons about TYPES: what a class takes, holds, or accepts. There is one way to
-	// get a factory that leaves no trace in any of those, and ApiKeyAuthMiddleware uses it:
+	// get a factory that leaves no trace in any of those, and ApiKeyAuthMiddleware used to use it:
 	//
 	//     var factory = context.RequestServices.GetRequiredService<ICoreDbFactory>();
 	//
 	// No ctor parameter, no declared field, no method parameter — a local, pulled out of the container
 	// mid-method. Reflection cannot see it (see IsAsyncStateMachine for the Debug/Release trap that
 	// made this look catchable when it is not), so it is caught HERE, in the source.
+	//
+	// A WARNING PAID FOR IN A FALSE GREEN: this plane is a TEXT scan, so it matches the pattern
+	// wherever it appears — including inside a COMMENT. A converted file whose comment quoted the call
+	// it no longer makes ("this used to say GetRequiredService<ICoreDbFactory>()") kept matching, and
+	// ServiceLocatorAllowlistEntries_AreStillNeeded stayed green over work that was already finished.
+	// Describe the old call, do not spell it.
 	//
 	// The rule this scan enforces is broader than the presentation layer, and deliberately so: NOTHING
 	// outside the composition root resolves a db factory from the container. A SERVICE takes its factory
@@ -372,17 +299,15 @@ public sealed class DbLayerGuardTests
 	// The composition root — the one file allowed to pull factories out of the container.
 	const string CompositionRootFile = "Program.cs";
 
-	// ALLOWLIST — SHRINKS ONLY, same contract as the type allowlist above.
+	// ALLOWLIST — EMPTY, same contract as the type allowlist above. Its one entry was
+	// ApiKeyAuthMiddleware, which now takes IApiKeyLookup as an invoke parameter (it cannot take one in
+	// the ctor: conventional middleware is a singleton and the lookup is scoped — that is a captive
+	// dependency, and CaptiveDependencyTests says so). The conversion was MEASURED, as that entry
+	// demanded: 20.5 vs 21.4 µs per verification, median over 8x5000 alternating rounds — the extra hop
+	// is a virtual call against a db round trip, and it disappears in the noise.
 	static readonly IReadOnlyDictionary<string, string> ServiceLocatorAllowlist =
 		new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 		{
-			["ApiKeyAuthMiddleware.cs"] =
-				"API-key authentication, on EVERY authenticated request: it pulls ICoreDbFactory out of "
-				+ "RequestServices and opens core.db to verify the key. NEEDS A DOOR — the credential lookup "
-				+ "Pages.LoginModel and Core.Auth.AuthApi are also waiting on. Convert it WITH A MEASUREMENT "
-				+ "rather than on principle: this is the hottest core.db reader in the app, and it is the one "
-				+ "place where an extra service hop is not obviously free. Until then it must at least be "
-				+ "VISIBLE, which is what this entry buys.",
 		};
 
 	static string SrcDir()
@@ -480,17 +405,39 @@ public sealed class DbLayerGuardTests
 		IsGuarded(typeof(IScopedDbFactory<PetBox.Tasks.Data.TasksDb>)).Should()
 			.BeTrue("IScopedDbFactory<> is matched as an OPEN generic, so every context is covered");
 
-		// The offender sweep itself must be finding things — the allowlist is non-empty today, and if
-		// Offenders() returned nothing then AllowlistEntries_AreStillNeeded would be the only thing
-		// failing and NoPresentationType_TakesADbFactory would be vacuously green.
-		Offenders().Should().NotBeEmpty("the conversion is still in progress — the allowlist is non-empty");
+		// THE MEMBER SWEEP MUST STILL SEE A FACTORY WHEN THERE IS ONE. This assertion used to read
+		// `Offenders().Should().NotBeEmpty()` — the offenders WERE the proof the sweep worked. Both
+		// allowlists are empty now, so that proof is gone with them, and its absence is exactly how this
+		// guard would rot into a green that means nothing: break GuardedMembersOf, and every assertion
+		// above passes by vacuity.
+		//
+		// So the sweep is now pointed at a type that legally holds a factory and always will: a SERVICE.
+		// ProjectDirectory takes ICoreDbFactory in its constructor — that is the shape the guard forbids
+		// in a page and requires in a service, and if the sweep cannot see it there, it would not see it
+		// in a page either.
+		GuardedMembersOf(typeof(PetBox.Web.Auth.ProjectDirectory)).Should().NotBeEmpty(
+			"a service TAKES a db factory in its ctor — if the member sweep cannot see it here, where it "
+			+ "is legal, it cannot see it in a page, where it is not, and every 'is empty' above is vacuous");
+		Presentation(typeof(PetBox.Web.Auth.ProjectDirectory)).Should().BeNull(
+			"and that same type must NOT be classified as presentation — the sweep sees it, the rule spares it");
 
 		// The source plane must actually be reading the tree (a moved src/, a test host that does not
 		// ship the sources next to the binaries) — otherwise the service-locator guard is vacuous.
 		ProductSourceFiles().Should().HaveCountGreaterThan(200, "the source scan must see the real tree");
 		ProductSourceFiles().Select(Path.GetFileName).Should().Contain(CompositionRootFile);
-		ServiceLocatorOffenders().Should().Contain("ApiKeyAuthMiddleware.cs",
-			"the one known service-locator holdout must be SEEN by the scan (it is allowlisted, not invisible)");
+
+		// Same rot, same fix, on the source plane: its anchor used to be ApiKeyAuthMiddleware.cs, the one
+		// known holdout, and that file is converted. What is left to anchor on is the composition root —
+		// the file that resolves factories BY RIGHT. The scan must find the pattern in it (proving the
+		// scan reads real text) while ServiceLocatorOffenders excludes it BY NAME (proving the exemption
+		// is deliberate, not luck). If Program.cs ever stops resolving a factory, this assertion is the
+		// one that should be re-pointed — not deleted.
+		var compositionRoot = ProductSourceFiles().Single(p => Path.GetFileName(p) == CompositionRootFile);
+		ServiceLocatorPattern.IsMatch(File.ReadAllText(compositionRoot)).Should().BeTrue(
+			"the composition root resolves db factories — if the scan cannot see them THERE, it is not "
+			+ "reading source at all, and NoCodeOutsideTheCompositionRoot is green over nothing");
+		ServiceLocatorOffenders().Should().NotContain(CompositionRootFile,
+			"and the composition root is excluded by name, not by the pattern failing to match it");
 
 		// And the pattern must not merely be matching everything: the composition root is the file that
 		// legitimately resolves factories, and it is excluded by name rather than by luck.
