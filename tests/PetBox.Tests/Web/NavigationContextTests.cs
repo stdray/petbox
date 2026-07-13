@@ -92,7 +92,7 @@ public sealed class NavigationContextTests
 		return new NavigationContext(
 			new FakeAccessor(ctx),
 			new ProjectDirectory(dbf),
-			new WorkspaceAdminService(dbf, new ProjectDirectory(dbf), new WorkspaceMembershipService(dbf), new WorkspaceProvisioning(dbf)),
+			new WorkspaceAdminService(dbf, new ProjectDirectory(dbf), new WorkspaceMembershipService(dbf), new WorkspaceProvisioning(dbf, new WorkspaceMembershipService(dbf))),
 			new WorkspaceMembershipService(dbf),
 			Features());
 	}
