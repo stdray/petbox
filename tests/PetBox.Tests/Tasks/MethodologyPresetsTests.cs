@@ -41,7 +41,6 @@ public sealed class MethodologyPresetsTests
 		new("Review", "Review", StatusKind.Open),
 		new("Done", "Done", StatusKind.TerminalOk),
 		new("Blocked", "Blocked", StatusKind.Open),
-		new("Deferred", "Deferred", StatusKind.Open),
 		new("Cancelled", "Cancelled", StatusKind.TerminalCancel),
 	];
 
@@ -53,8 +52,6 @@ public sealed class MethodologyPresetsTests
 		new("Review", "Done", RequiresApproval: true),
 		new("InProgress", "Blocked"),
 		new("Blocked", "InProgress"),
-		new("Pending", "Deferred"),
-		new("Deferred", "Pending"),
 		new("Pending", "Cancelled"),
 		new("InProgress", "Cancelled"),
 		new("Review", "Cancelled"),

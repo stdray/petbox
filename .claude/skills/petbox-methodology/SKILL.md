@@ -88,7 +88,7 @@ tasks_upsert($system, spec, [
 - **Link a task to EACH requirement it delivers (M:N)**, not just the umbrella — else the
   leaves read `not_started` and per-requirement `delivery` is hidden. Use `specRef` for one +
   `relations_create(kind:"task_spec", from:<task>, to:<leaf>)` for the rest.
-- FSM: `Pending → InProgress → Review → Done` (+ Blocked/Deferred/Cancelled).
+- FSM: `Pending → InProgress → Review → Done` (+ Blocked/Cancelled).
   **The agent's ceiling is `Review`; the maintainer confirms `Done`.** Move to Review when
   implemented + tests green + deployed; STOP — and give the maintainer the task's `url`
   (include_url:true) so they can open it to confirm Done.

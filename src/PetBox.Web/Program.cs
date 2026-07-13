@@ -647,6 +647,18 @@ public partial class Program
 			new PetBox.Tasks.Data.MethodologyInstanceBackfill(coreDbFactory, tasksFactory, backfillLog).Migrate();
 		}
 
+		// One-time, idempotent (work-preset-drop-deferred): the `work` kind's builtin preset
+		// no longer declares the `Deferred` status. A preset code change alone does not reach
+		// a definition/instance already materialized (verbatim-copied) into a project's stored
+		// methodology document before this change — this strips `Deferred` (status +
+		// referencing transitions) from every stored document that still carries it. Runs
+		// after the instance backfill so every project's documents are in their per-project
+		// tasks file already.
+		{
+			var deferredLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.WorkDeferredStatusMigrator");
+			new PetBox.Tasks.Data.WorkDeferredStatusMigrator(coreDbFactory, tasksFactory, deferredLog).Migrate();
+		}
+
 		// One-time, idempotent (llm-registry-own-store): copy the live LLM registry out of the Config
 		// module (config/$system.db: the `llm/registry` JSON binding + one `llm/secret/{endpoint}`
 		// binding per api key) into core.db's llm_endpoints/llm_routes at level System:$. A startup
