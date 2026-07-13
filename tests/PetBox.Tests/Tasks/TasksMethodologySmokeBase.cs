@@ -229,7 +229,7 @@ public abstract class TasksMethodologySmokeBase : IAsyncLifetime
 		throw new Xunit.Sdk.XunitException($"no nodeId for key '{key}' in: {Text(r)}");
 	}
 
-	static IEnumerable<JsonElement> Descend(JsonElement e)
+	protected static IEnumerable<JsonElement> Descend(JsonElement e)
 	{
 		yield return e;
 		if (e.ValueKind == JsonValueKind.Object)
@@ -264,10 +264,15 @@ public abstract class TasksMethodologySmokeBase : IAsyncLifetime
 
 	// Spec writes require an `accepted` idea (ideaRef). Drive one through the gate
 	// (exploring → review[+spec_plan] → accepted) and return its NodeId. Creates the
-	// project's ideas board (singleton) on first use; call once per test.
-	protected async Task<string> AcceptedIdeaId(string key = "drv")
+	// project's ideas board (singleton) on first use; call once per test. `createBoard:
+	// false` skips that board_create call for a board a quartet methodology instance
+	// already provisioned (tasks_board_create errors on a name that already exists) —
+	// used by the presetkind-spec-blind-spot definition-resolved regression tests, which
+	// provision ideas/spec/work as one real instance via tasks_methodology_create first.
+	protected async Task<string> AcceptedIdeaId(string key = "drv", bool createBoard = true)
 	{
-		await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "ideas", kind = "ideas" });
+		if (createBoard)
+			await Agent("tasks_board_create", new { projectKey = ProjectKey, board = "ideas", kind = "ideas" });
 		var ideaId = NodeId(await Agent("tasks_upsert", new
 		{
 			projectKey = ProjectKey,

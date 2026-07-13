@@ -182,6 +182,19 @@ public sealed class MethodologyRuntime
 	public bool IsSpecKind(string? kindSlug) =>
 		string.Equals(KindName(kindSlug), "spec", StringComparison.OrdinalIgnoreCase);
 
+	// Whether a board's EFFECTIVE kind is `work` — the SAME effective-kind pattern as IsSpecKind
+	// just above (presetkind-spec-blind-spot follow-up, found by that bug's sweep rather than
+	// named in it): `work` is one of the quartet's four kinds, so RenderPresetDefinition renders
+	// it VERBATIM into a real quartet-provisioned project's stored definition exactly like
+	// `spec` — IsDefinedKind("work") is TRUE there, so `PresetKind(...) == BoardKind.Work` reads
+	// null and never matches. TasksService.RequireBlockersAsync gated the "a Blocked task must
+	// name a blocker" invariant on exactly that comparison, so it silently never fired on any
+	// real project's work board (only on the bare-preset shape a hand-built test uses). Use this
+	// wherever the question is "is this board's effective kind `work`", never PresetKind(...) ==
+	// BoardKind.Work.
+	public bool IsWorkKind(string? kindSlug) =>
+		string.Equals(KindName(kindSlug), "work", StringComparison.OrdinalIgnoreCase);
+
 	// The preset kinds in guide order: the quartet pipeline first, then the standalone
 	// kinds (`classic`, `simple` last).
 	static readonly BoardKind[] PipelineOrder = [BoardKind.Intake, BoardKind.Ideas, BoardKind.Spec, BoardKind.Work, BoardKind.Classic, BoardKind.Simple];

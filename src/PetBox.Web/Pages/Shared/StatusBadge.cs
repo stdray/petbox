@@ -9,12 +9,17 @@ namespace PetBox.Web.Pages.Shared;
 // with WHICH daisyUI colour. Presentation only — the domain owns StatusKind/terminality.
 public sealed record StatusBadgeModel(MethodologyRuntime Runtime, string? KindSlug, string Status)
 {
-	// Spec PRESET boards suppress the status badge for every non-terminal status: on a spec board
+	// Spec boards suppress the status badge for every non-terminal status: on a spec board
 	// `defined` is the ~universal default → pure noise, so a badge shows only for a non-default
-	// (terminal `deprecated`) state (spec-board-status-noise #9). Every other board — and a defined
-	// custom kind, for which PresetKind is null — always shows the status.
+	// (terminal `deprecated`) state (spec-board-status-noise #9). Every other board always shows
+	// the status. IsSpecKind, NOT PresetKind(...) == BoardKind.Spec (production regression,
+	// 2026-07, presetkind-spec-blind-spot): PresetKind nulls out for any DEFINED kind, and a real
+	// project's spec board is virtually always definition-resolved — see
+	// MethodologyRuntime.IsSpecKind's own comment. The old guard read `null != BoardKind.Spec`
+	// == true there, so `Show` was ALWAYS true regardless of terminality on $system's real spec
+	// board — the noise suppression silently never fired.
 	public bool Show =>
-		Runtime.PresetKind(KindSlug) != BoardKind.Spec || Runtime.IsTerminalStatus(KindSlug, Status);
+		!Runtime.IsSpecKind(KindSlug) || Runtime.IsTerminalStatus(KindSlug, Status);
 
 	// Human label for the badge — the stored slug resolved to its declared status Name via the
 	// runtime (e.g. `InProgress` → "In progress", `defined` → "Defined"). Slug is unchanged; the

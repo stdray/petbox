@@ -620,7 +620,6 @@ public sealed partial class TasksService : ITasksService
 
 		var meta = (await _boards.FindAsync(projectKey, board, ct))!;
 		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
-		var presetKind = runtime.PresetKind(meta.Kind); // null = definition-resolved kind
 		var parentOf = await ParentMapAsync(projectKey, ct);
 		// Delivery is gated by kind DATA (MethodologyDeliveryDef), not BoardKind.Spec.
 		var deliveryDef = runtime.DeliveryOf(meta.Kind);
@@ -650,7 +649,13 @@ public sealed partial class TasksService : ITasksService
 			// Symmetric counterpart (kanban-blocked-signal review finding): this node's OWN
 			// outgoing "blocks" edges — the nodes IT holds up, not the nodes holding it up.
 			var blocks = fromEdges.Where(e => e.Kind == "blocks").Select(e => LinkRef(e.ToNodeId, index)).ToList();
-			var linkedTasks = presetKind == BoardKind.Spec ? toEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
+			// IsSpecKind, NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07,
+			// presetkind-spec-blind-spot): PresetKind nulls out for any DEFINED kind, and a real
+			// project's spec board is virtually always definition-resolved — see
+			// MethodologyRuntime.IsSpecKind's own comment. The old guard read `null != BoardKind.Spec`
+			// (actually `== BoardKind.Spec` was always false) on $system's real spec board, so
+			// linkedTasks silently dropped off every spec node's response there.
+			var linkedTasks = runtime.IsSpecKind(meta.Kind) ? toEdges.Where(e => e.Kind == "task_spec").Select(e => LinkRef(e.FromNodeId, index)).ToList() : null;
 			var supersedes = fromEdges.Where(e => e.Kind == "supersedes").Select(e => LinkRef(e.ToNodeId, index)).ToList();
 			var parentId = parentOf.GetValueOrDefault(n.NodeId);
 			nodes.Add(new PlanNodeView(
@@ -1082,7 +1087,6 @@ public sealed partial class TasksService : ITasksService
 
 		var runtime = await RuntimeForBoardAsync(projectKey, meta, ct);
 		var kindSlug = meta.Kind;
-		var presetKind = runtime.PresetKind(kindSlug); // null = definition-resolved kind
 		using var ctx = _boards.NewEnsuredConnection(projectKey);
 		var prior = ctx.PlanNodes.Where(n => n.Board == board && n.ActiveTo == null).ToList()
 			.ToDictionary(n => n.Key, n => n, StringComparer.Ordinal);
@@ -1138,7 +1142,7 @@ public sealed partial class TasksService : ITasksService
 				{
 					RequireDefinitionLinks(runtime, kindSlug, desired, prior, specRefs, blockedBy, ideaRefs);
 					await ValidateLinkTargetsAsync(projectKey, meta, kindSlug, runtime, specRefs, ideaRefs, ct);
-					await RequireBlockersAsync(presetKind, projectKey, desired, blockedBy, ct);
+					await RequireBlockersAsync(runtime, kindSlug, projectKey, desired, blockedBy, ct);
 					await RequirePreconditionArtifactsAsync(runtime, kindSlug, projectKey, board, desired, prior, ct);
 				}
 				break;
@@ -2060,9 +2064,15 @@ public sealed partial class TasksService : ITasksService
 
 	// Invariant: a work task in `Blocked` must name a blocker (blockedBy in this call, or
 	// an already-active `blocks` edge into it). "Blocked requires a link."
-	async Task RequireBlockersAsync(BoardKind? kind, string projectKey, PlanNode[] desired, Dictionary<string, string> blockedBy, CancellationToken ct)
+	// IsWorkKind, NOT PresetKind(...) == BoardKind.Work (presetkind-spec-blind-spot follow-up,
+	// same anti-pattern as the named production regression): PresetKind nulls out for any DEFINED
+	// kind, and `work` is one of the quartet's four kinds — RenderPresetDefinition renders it
+	// VERBATIM into a real quartet-provisioned project's stored definition exactly like `spec`, so
+	// the old `kind != BoardKind.Work` comparison was ALWAYS true (kind always null) and this guard
+	// silently never fired on any real project's work board.
+	async Task RequireBlockersAsync(MethodologyRuntime runtime, string? kindSlug, string projectKey, PlanNode[] desired, Dictionary<string, string> blockedBy, CancellationToken ct)
 	{
-		if (kind != BoardKind.Work) return;
+		if (!runtime.IsWorkKind(kindSlug)) return;
 		foreach (var n in desired)
 		{
 			if (!string.Equals(n.Status, "Blocked", StringComparison.OrdinalIgnoreCase)) continue;
