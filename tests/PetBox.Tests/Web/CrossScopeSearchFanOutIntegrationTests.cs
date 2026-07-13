@@ -173,7 +173,8 @@ public sealed class CrossScopeSearchFanOutIntegrationTests : IDisposable
 	{
 		public bool IsAuthenticated => throw new NotSupportedException();
 		public string? Username => throw new NotSupportedException();
-		public string CurrentWorkspaceKey => throw new NotSupportedException();
+		public string? CurrentWorkspaceKey => throw new NotSupportedException();
+		public bool HasWorkspace => throw new NotSupportedException();
 		public string? CurrentProjectKey => throw new NotSupportedException();
 		public IReadOnlyList<WorkspaceOption> AvailableWorkspaces => throw new NotSupportedException();
 		public IReadOnlyList<Project> ProjectsInCurrentWorkspace => throw new NotSupportedException();

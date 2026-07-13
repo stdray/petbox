@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
 using PetBox.Core.Features;
+using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
@@ -16,7 +17,10 @@ namespace PetBox.Web.Pages.ProjectHome;
 // the currently-active plan nodes (ActiveTo == null) in plan-tree order. Reads and
 // the quick-add write both go through ITasksService — the page never opens the DB
 // context itself, so quick-add gets the same NodeId/status handling the MCP path does.
-[Authorize(Policy = "WorkspaceMember")]
+// viewer-member-consistency: the class policy is WorkspaceViewer — a Viewer must be able to READ
+// the board — but every OnPost* handler here is a MUTATION (comment add/edit/delete, quick-add)
+// and guards itself to Member+ (see each handler below).
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class TaskBoardModel : PageModel
 {
 	readonly FeatureFlags _features;
@@ -308,6 +312,7 @@ public sealed class TaskBoardModel : PageModel
 	// the low-ceremony UI door (the comments_upsert MCP verb shares the same guards).
 	public async Task<IActionResult> OnPostCommentAddAsync(string nodeId, string? parentId, string body, CancellationToken ct)
 	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
@@ -329,6 +334,7 @@ public sealed class TaskBoardModel : PageModel
 	// form rendered with; a stale one (Applied:false) is surfaced as Error, not clobbered.
 	public async Task<IActionResult> OnPostCommentEditAsync(string id, string body, long version, CancellationToken ct)
 	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
@@ -349,6 +355,7 @@ public sealed class TaskBoardModel : PageModel
 	// still has active replies — surfaced inline instead of a raw 500.
 	public async Task<IActionResult> OnPostCommentDeleteAsync(string id, CancellationToken ct)
 	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 
@@ -637,6 +644,7 @@ public sealed class TaskBoardModel : PageModel
 	// MCP upsert uses), so a kinded board gets a valid initial status, not a cold "Pending".
 	public async Task<IActionResult> OnPostCreateAsync(string name, string? body, long priority, CancellationToken ct)
 	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		if (!await _tasks.BoardExistsAsync(ProjectKey, Board, ct)) return NotFound();
 

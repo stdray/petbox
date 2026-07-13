@@ -5,7 +5,7 @@
 	bool At(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
 	bool Under(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
 
-	var currentWs = Nav.CurrentWorkspaceKey;
+	var currentWs = Nav.CurrentWorkspaceKey ?? string.Empty;
 	var currentProject = Nav.CurrentProjectKey;
 	var isAuthenticated = Nav.IsAuthenticated;
 	var isSysAdmin = isAuthenticated

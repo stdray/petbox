@@ -65,7 +65,8 @@ public sealed class DefaultHomePreferenceRemovedTests
 	{
 		public bool IsAuthenticated => true;
 		public string? Username => null;
-		public string CurrentWorkspaceKey => ws;
+		public string? CurrentWorkspaceKey => ws;
+		public bool HasWorkspace => ws is not null;
 		public string? CurrentProjectKey => null;
 		public IReadOnlyList<WorkspaceOption> AvailableWorkspaces => [];
 		public IReadOnlyList<Project> ProjectsInCurrentWorkspace => [];

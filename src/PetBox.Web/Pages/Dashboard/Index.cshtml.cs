@@ -10,7 +10,10 @@ using PetBox.Web.Navigation;
 
 namespace PetBox.Web.Pages.Dashboard;
 
-[Authorize]
+// WorkspaceViewer: membership in the ROUTE workspace ({workspaceKey}), sysadmin free-pass.
+// A bare [Authorize] here let ANY signed-in user read another tenant's data by typing the URL
+// (workspace-access-isolation).
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class IndexModel : PageModel
 {
 	readonly ICoreDbFactory _f;
@@ -52,9 +55,10 @@ public sealed class IndexModel : PageModel
 		// so the resolved key differs from the route key → treat it as not found. A VALID user
 		// on a real key they belong to resolves back to that same key and renders normally.
 		var routeKey = RouteData.Values["workspaceKey"]?.ToString();
-		WorkspaceKey = _nav.CurrentWorkspaceKey;
-		if (string.IsNullOrEmpty(routeKey) || !string.Equals(WorkspaceKey, routeKey, StringComparison.Ordinal))
+		var resolved = _nav.CurrentWorkspaceKey;
+		if (string.IsNullOrEmpty(routeKey) || !string.Equals(resolved, routeKey, StringComparison.Ordinal))
 			return NotFound();
+		WorkspaceKey = routeKey;
 
 		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
 		var wsKey = WorkspaceKey;

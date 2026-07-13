@@ -1,0 +1,43 @@
+@page
+@model AccessDeniedModel
+@{
+	ViewData["Title"] = "Access denied — PetBox";
+	ViewData["BodyClass"] = "min-h-full flex items-center justify-center bg-base-300 p-6";
+	Layout = "_PublicLayout";
+}
+
+<div class="card w-96 max-w-full bg-base-200 p-6 shadow-xl text-center" data-testid="access-denied-card">
+	<p class="text-5xl font-bold text-error mb-2" data-testid="access-denied-status">403</p>
+	<h1 class="text-xl font-semibold mb-2" data-testid="access-denied-title">Access denied</h1>
+	<p class="opacity-70 mb-2" data-testid="access-denied-message">
+		You are signed in@(string.IsNullOrEmpty(Model.Username) ? "" : $" as {Model.Username}"), but this page belongs to a workspace you are not a member of.
+	</p>
+	@if (!Model.HasWorkspace)
+	{
+		<p class="opacity-70 mb-2" data-testid="access-denied-no-workspace">
+			Your account has no workspace membership yet. Ask an administrator to add you to a workspace.
+		</p>
+	}
+	@if (!string.IsNullOrEmpty(Model.ReturnUrl))
+	{
+		<p class="text-xs opacity-50 mb-4" data-testid="access-denied-target">
+			Requested: <code>@Model.ReturnUrl</code>
+		</p>
+	}
+
+	<div class="flex flex-col gap-2">
+		@if (Model.HomeUrl is not null)
+		{
+			<a href="@Model.HomeUrl" class="btn btn-primary" data-testid="access-denied-home">Back to your workspace</a>
+		}
+		else
+		{
+			<a href="@Routes.Home()" class="btn btn-primary" data-testid="access-denied-home">Back to home</a>
+		}
+		<a href="/ui/me/account" class="btn btn-ghost btn-sm" data-testid="access-denied-account">Your account</a>
+		<form method="post" action="@Routes.Logout()" class="m-0">
+			@Html.AntiForgeryToken()
+			<button type="submit" class="btn btn-ghost btn-sm w-full" data-testid="access-denied-signout">Sign out</button>
+		</form>
+	</div>
+</div>

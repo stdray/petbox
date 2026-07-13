@@ -1,9 +1,11 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
 @inject PetBox.Web.Settings.IUiState UiState
 @{
+	// A user with no membership has no workspace to go "back" to — the account pages are reachable
+	// for them, so the back link falls back to the landing page (which renders the empty state).
 	var currentWs = Nav.CurrentWorkspaceKey;
-	var backUrl = Routes.Workspace(currentWs);
-	var backLabel = $"Back to {currentWs}";
+	var backUrl = currentWs is null ? Routes.Home() : Routes.Workspace(currentWs);
+	var backLabel = currentWs is null ? "Back to home" : $"Back to {currentWs}";
 
 	// Combined DB+cookie UI-state record (ui-state-framework + ui-state-theme-unify) — the ONE
 	// mechanism for both, resolved via the injected IUiState service (typed, memoized per request):

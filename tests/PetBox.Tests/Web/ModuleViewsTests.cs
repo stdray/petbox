@@ -1211,8 +1211,11 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 
 	// Field IDOR guard: Project.WorkspaceKey must match route.workspaceKey.
 	// Seed $ws-other-ws (WorkspaceKey=other-ws) so the page finds a row — without the
-	// guard it would list that container's stores under the $system URL. With the guard,
-	// Project is nulled and the empty/notfound state is shown.
+	// guard it would list that container's stores under the $system URL. The guard now sits in
+	// the global ProjectWorkspaceBindingFilter (workspace-access-isolation follow-up,
+	// same-class-cross-tenant-field-id-4c0359) and runs BEFORE the handler, so a mismatch is a
+	// hard 404 — the page's own "memory-notfound" in-page banner (kept as defense in depth) is
+	// unreachable for this case now that the filter intercepts it first.
 	[Fact]
 	public async Task Memory_MismatchedWorkspaceContainer_ShowsNotFound()
 	{
@@ -1238,9 +1241,7 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		}
 
 		using var resp = await GetAuthedAsync("/ui/$system/$ws-other-ws/memory");
-		resp.StatusCode.Should().Be(HttpStatusCode.OK);
-		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain("memory-notfound");
+		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
 	}
 
 	// The workspace dashboard surfaces a first-class "Workspace memory" entry linking to the

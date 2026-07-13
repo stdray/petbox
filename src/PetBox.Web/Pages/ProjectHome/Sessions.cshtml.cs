@@ -14,7 +14,10 @@ namespace PetBox.Web.Pages.ProjectHome;
 // list of the currently-active agent session plans. There is no catalog: one
 // sessions file per project, written by agents via the session MCP tools.
 // Gated on Feature.Tasks (sessions ship with the Tasks module).
-[Authorize]
+// WorkspaceViewer: membership in the ROUTE workspace ({workspaceKey}), sysadmin free-pass.
+// A bare [Authorize] here let ANY signed-in user read another tenant's data by typing the URL
+// (workspace-access-isolation).
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class SessionsModel : PageModel
 {
 	readonly ICoreDbFactory _f;
@@ -53,7 +56,10 @@ public sealed class SessionsModel : PageModel
 	public async Task OnGetAsync(CancellationToken ct)
 	{
 		using var db = _f.Open();
-		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		// Bind the project to the ROUTE workspace (see ProjectHome/Index) — rejects /ui/wsA/proj-of-wsB,
+		// i.e. reading another tenant's session transcripts.
+		Project = await db.Projects.FirstOrDefaultAsync(
+			p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
 		if (Project is null || !SessionsEnabled) return;
 
 		if (PageNum < 0) PageNum = 0;

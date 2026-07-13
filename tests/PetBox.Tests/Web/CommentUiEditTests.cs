@@ -1,8 +1,10 @@
+using System.Security.Claims;
 using LinqToDB;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -64,8 +66,19 @@ public sealed class CommentUiEditTests : IDisposable
 
 	// Give the bare PageModel an HttpContext so `User.Identity?.Name` (the comment author) reads
 	// without an NRE outside a real request pipeline — same need as MutationFeedbackPageTests.
-	static void Wire(PageModel page) =>
-		page.PageContext = new PageContext { HttpContext = new DefaultHttpContext() };
+	// Sysadmin claim: these tests exercise comment-mutation WIRING (redirect/PRG, error surfacing,
+	// service-level guard rejection) — since viewer-member-consistency added a Member+ role check
+	// to every OnPost* handler, an anonymous DefaultHttpContext.User now fails it before reaching
+	// the code under test. Sysadmin is the free-pass every role check honours, so it stays out of
+	// the way here exactly like it did before the check existed.
+	static void Wire(PageModel page)
+	{
+		var identity = new ClaimsIdentity([new Claim(PetBoxClaims.IsSysAdmin, "true")], "Test");
+		page.PageContext = new PageContext
+		{
+			HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(identity) },
+		};
+	}
 
 	TaskBoardNodeModel NodePage(bool tasks = true)
 	{

@@ -12,7 +12,12 @@ public interface INavigationContext
 {
 	bool IsAuthenticated { get; }
 	string? Username { get; }
-	string CurrentWorkspaceKey { get; }
+	// NULL when the signed-in user belongs to no workspace at all (a fresh Regular account with
+	// no membership). It used to fall back to "$system", which handed a non-member a workspace
+	// they had no right to and neutralised the dashboard's not-found guard — see
+	// workspace-access-isolation. Callers that need a rendered link must check HasWorkspace.
+	string? CurrentWorkspaceKey { get; }
+	bool HasWorkspace { get; }
 	string? CurrentProjectKey { get; }
 	IReadOnlyList<WorkspaceOption> AvailableWorkspaces { get; }
 	IReadOnlyList<Project> ProjectsInCurrentWorkspace { get; }
@@ -43,6 +48,7 @@ public sealed class NavigationContext(
 	IReadOnlyList<Project>? _projects;
 	IReadOnlyDictionary<string, IReadOnlyList<Project>>? _projectsByWs;
 	string? _resolvedWorkspace;
+	bool _workspaceResolved;
 	string? _resolvedProject;
 	bool _projectResolved;
 
@@ -56,7 +62,18 @@ public sealed class NavigationContext(
 	public bool MemoryEnabled => features.IsEnabled(Feature.Memory);
 	public bool LlmRouterEnabled => features.IsEnabled(Feature.LlmRouter);
 
-	public string CurrentWorkspaceKey => _resolvedWorkspace ??= ResolveWorkspace();
+	public string? CurrentWorkspaceKey
+	{
+		get
+		{
+			if (_workspaceResolved) return _resolvedWorkspace;
+			_resolvedWorkspace = ResolveWorkspace();
+			_workspaceResolved = true;
+			return _resolvedWorkspace;
+		}
+	}
+
+	public bool HasWorkspace => CurrentWorkspaceKey is not null;
 
 	// Resolution order (mirrors ResolveWorkspace): explicit URL segment → yb_project cookie
 	// (validated against the current workspace) → first available project. The cookie fallback
@@ -155,6 +172,7 @@ public sealed class NavigationContext(
 		{
 			if (_projects is not null) return _projects;
 			var wsKey = CurrentWorkspaceKey;
+			if (wsKey is null) return _projects = [];
 			using var db = dbf.Open();
 			// Workspace memory containers ($workspace / $ws-*) are not user projects — they have
 			// no logs/dbs/tasks, so they don't belong in the project tree. The workspace dashboard
@@ -187,7 +205,9 @@ public sealed class NavigationContext(
 		}
 	}
 
-	string ResolveWorkspace()
+	// Never invents a workspace: a user with no membership resolves to null (empty state), not
+	// to "$system" — the fallback that let a fresh account land on someone else's dashboard.
+	string? ResolveWorkspace()
 	{
 		// 1. Route param wins (page explicitly scoped to a workspace)
 		var routeWs = Http?.GetRouteValue("workspaceKey")?.ToString();
@@ -216,9 +236,9 @@ public sealed class NavigationContext(
 		if (!string.IsNullOrEmpty(claimWs) && IsMember(claimWs))
 			return claimWs;
 
-		// 5. First available membership
+		// 5. First available membership — or none at all.
 		var workspaces = AvailableWorkspaces;
-		return workspaces.Count > 0 ? workspaces[0].Key : "$system";
+		return workspaces.Count > 0 ? workspaces[0].Key : null;
 	}
 
 	bool IsMember(string wsKey)

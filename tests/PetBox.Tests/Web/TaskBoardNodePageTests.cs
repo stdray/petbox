@@ -1,7 +1,10 @@
+using System.Security.Claims;
 using LinqToDB;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -58,8 +61,25 @@ public sealed class TaskBoardNodePageTests : IDisposable
 	string NodeId(string board, string key) =>
 		_store.GetContext(Proj).PlanNodes.Where(n => n.Board == board && n.Key == key && n.ActiveTo == null).ToList().Single().NodeId;
 
-	TaskBoardNodeModel Page(bool tasks = true) =>
-		new(Flags(tasks), _tasks, _comments, new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = Proj };
+	// Sysadmin claim: OnPost* handlers now guard themselves to Member+ (viewer-member-consistency)
+	// via User.HasWorkspaceRoleAtLeast, so an unwired PageModel's PageContext (null) or an
+	// anonymous one both fail that check before reaching the FSM/guard logic these tests target.
+	// Sysadmin is the universal free-pass, so it keeps the tests exercising what they always did.
+	static void Wire(PageModel page)
+	{
+		var identity = new ClaimsIdentity([new Claim(PetBoxClaims.IsSysAdmin, "true")], "Test");
+		page.PageContext = new PageContext
+		{
+			HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(identity) },
+		};
+	}
+
+	TaskBoardNodeModel Page(bool tasks = true)
+	{
+		var page = new TaskBoardNodeModel(Flags(tasks), _tasks, _comments, new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = Proj };
+		Wire(page);
+		return page;
+	}
 
 	[Fact]
 	public async Task GetNodeAsync_ResolvesByIdAcrossBoards_WithoutKnowingTheBoard()
