@@ -70,20 +70,69 @@ public sealed class WorkspaceDeletePageTests : IDisposable
 		_db.WorkspaceMembers.Any(m => m.WorkspaceKey == "acme").Should().BeTrue("memberships are untouched on rejection");
 	}
 
+	// workspace-delete-blocked-by-own-container: the workspace is created through the PRODUCTION
+	// path (WorkspaceProvisioning.CreateAsync), so it carries the `$ws-<key>` memory container that
+	// EnsureContainerAsync provisions with every workspace. That container is a Projects row, and
+	// the has-projects gate used to count it — which made EVERY workspace permanently undeletable.
+	// Building the fixture with a bare `_db.Insert(new Workspace …)` is what hid the bug: no
+	// container, so the gate had nothing to miscount and the test stayed green on broken code.
 	[Fact]
-	public async Task Delete_empty_workspace_removes_it_and_its_memberships()
+	public async Task Delete_empty_workspace_removes_it_its_container_and_its_memberships()
 	{
-		_db.Insert(new Workspace { Key = "solo", Name = "Solo", Description = "", CreatedAt = DateTime.UtcNow });
 		var uid = await _db.InsertWithInt64IdentityAsync(
-			new User { Username = "u2", PasswordHash = "x", CreatedAt = DateTime.UtcNow });
-		_db.Insert(new WorkspaceMember { UserId = uid, WorkspaceKey = "solo", Role = WorkspaceRole.Admin });
+			new User { Username = "u2", PasswordHash = "x", CreatedAt = DateTime.UtcNow, WorkspaceQuota = 1 });
+
+		var created = await new WorkspaceProvisioning(_db.Factory())
+			.CreateAsync("solo", "Solo", "", uid, bypassQuota: false);
+		created.Ok.Should().BeTrue();
+		_db.Projects.Any(p => p.Key == "$ws-solo").Should().BeTrue("the production create path provisions the container");
 
 		var page = Page();
 		var result = await page.OnPostDeleteAsync("solo");
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		_db.Workspaces.Any(w => w.Key == "solo").Should().BeFalse();
+		_db.Projects.Any(p => p.WorkspaceKey == "solo").Should().BeFalse("the ws memory container dies with its workspace");
 		_db.WorkspaceMembers.Any(m => m.WorkspaceKey == "solo").Should().BeFalse("empty-ws delete cleans memberships");
+	}
+
+	// A deleted workspace must give its quota slot back — the allowance counts owned workspaces, so
+	// an orphaned Admin membership would turn a limit of 1 into a one-shot ticket.
+	[Fact]
+	public async Task Deleting_a_workspace_frees_the_owner_quota_slot()
+	{
+		var uid = await _db.InsertWithInt64IdentityAsync(
+			new User { Username = "u3", PasswordHash = "x", CreatedAt = DateTime.UtcNow, WorkspaceQuota = 1 });
+		var provisioning = new WorkspaceProvisioning(_db.Factory());
+
+		(await provisioning.CreateAsync("first", "First", "", uid, bypassQuota: false)).Ok.Should().BeTrue();
+		(await provisioning.CanCreateAsync(uid)).Should().BeFalse("the allowance of 1 is spent");
+
+		(await Page().OnPostDeleteAsync("first")).Should().BeOfType<RedirectToPageResult>();
+
+		(await provisioning.CanCreateAsync(uid)).Should().BeTrue("deleting the workspace returns the slot");
+		(await provisioning.CreateAsync("second", "Second", "", uid, bypassQuota: false))
+			.Ok.Should().BeTrue("and the owner can create a new workspace with it");
+	}
+
+	// The gate itself must survive the fix: a REAL user project still blocks the delete. The
+	// container is not a project for this purpose; `web` is.
+	[Fact]
+	public async Task Delete_workspace_with_a_real_project_is_still_rejected_despite_the_container()
+	{
+		var uid = await _db.InsertWithInt64IdentityAsync(
+			new User { Username = "u4", PasswordHash = "x", CreatedAt = DateTime.UtcNow, WorkspaceQuota = 1 });
+		(await new WorkspaceProvisioning(_db.Factory())
+			.CreateAsync("corp", "Corp", "", uid, bypassQuota: false)).Ok.Should().BeTrue();
+		_db.Insert(new Project { Key = "web", WorkspaceKey = "corp", Name = "Web", Description = "" });
+
+		var page = Page();
+		var result = await page.OnPostDeleteAsync("corp");
+
+		result.Should().BeOfType<PageResult>();
+		page.ErrorMessage.Should().Contain("1 project", "the container is not counted, the real project is");
+		_db.Workspaces.Any(w => w.Key == "corp").Should().BeTrue();
+		_db.Projects.Any(p => p.Key == "$ws-corp").Should().BeTrue("a rejected delete removes nothing");
 	}
 
 	[Fact]

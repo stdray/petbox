@@ -67,20 +67,41 @@ public sealed class WorkspacesModel : PageModel
 			return Page();
 		}
 
-		// Forbid deleting a non-empty workspace — projects own heavy data (DBs, boards,
-		// memory, logs). The operator must delete or move them first (variant A).
-		var projectCount = await db.Projects.CountAsync(p => p.WorkspaceKey == key);
-		if (projectCount > 0)
+		var ct = HttpContext.RequestAborted;
+		var projects = await db.Projects
+			.Where(p => p.WorkspaceKey == key)
+			.Select(p => p.Key)
+			.ToListAsync(ct);
+
+		// "Empty" means no USER projects. A workspace's own `$ws-<key>` memory container is a
+		// Projects row too — provisioned with the workspace itself (WorkspaceMemory
+		// .EnsureContainerAsync, spec reserved-workspace-project) — and counting it here meant a
+		// freshly created, entirely empty workspace already reported "1 project(s)" and could never
+		// be deleted by anyone, sysadmin included, since the container has no delete button of its
+		// own. So the gate asks about projects a human made, and the container is not one.
+		var userProjects = projects.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p)).ToList();
+		if (userProjects.Count > 0)
 		{
-			ErrorMessage = $"This workspace has {projectCount} project(s). Delete or move them first.";
+			// Forbid deleting a non-empty workspace — projects own heavy data (DBs, boards,
+			// memory, logs). The operator must delete or move them first (variant A).
+			ErrorMessage = $"This workspace has {userProjects.Count} project(s). Delete or move them first.";
 			OnGet();
 			return Page();
 		}
 
-		// The workspace is empty: drop its memberships so no orphaned WorkspaceMember rows
-		// survive the workspace, then delete the workspace itself.
-		await db.WorkspaceMembers.Where(m => m.WorkspaceKey == key).DeleteAsync();
-		await db.Workspaces.Where(w => w.Key == key).DeleteAsync();
+		// The workspace is empty of user projects: its container is the workspace's own belonging,
+		// so it dies WITH it rather than blocking it — full cascade (ProjectDeletion), so the
+		// container's memory stores/boards/keys go too and its files are reclaimed by the orphan
+		// sweepers. ProjectDeletion.IsReserved would refuse this key; that guard protects a
+		// container whose workspace still LIVES, which is exactly what is ending here.
+		foreach (var container in projects)
+			await ProjectDeletion.DeleteAsync(db, container, ct);
+
+		// Drop the memberships so no orphaned WorkspaceMember rows survive the workspace (they also
+		// ARE the owner's quota ledger — leaving them would make an allowance a one-shot ticket),
+		// then delete the workspace itself.
+		await db.WorkspaceMembers.Where(m => m.WorkspaceKey == key).DeleteAsync(ct);
+		await db.Workspaces.Where(w => w.Key == key).DeleteAsync(ct);
 		this.NotifySuccess($"Workspace '{key}' deleted.");
 		return RedirectToPage();
 	}
