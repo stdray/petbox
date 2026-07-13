@@ -96,6 +96,10 @@ Hard invariants live in `AGENTS.md` ("Hard invariants" section) — localization
 - **Plain forms** for: GET filters, POST CRUD. Default.
 - **No inline JS in `.cshtml`**. All client logic in `ts/`. `site.ts` is the entry; add per-page init function and call it from there.
 
+## Client UI state
+
+Exactly one mechanism: `PetBox.Core.Settings.BrowserState` + `IUiState` (server) / `ts/ui-state.ts` (client). DB `[Setting]` = a cross-device preference (follows the user); `[BrowserState]` = the single `petbox.ui` cookie, per-device state the server must read *before* it renders (so the correct class/`aria-pressed`/etc. is in the first response, no post-load flicker). Raw `localStorage`/`sessionStorage` may only ever hold state that cannot affect first paint — anything the server needs to render correctly goes in the cookie, not storage. `UiStateSingleMechanismGuardTests` (tests/PetBox.Tests/Architecture) fails the build on a raw `localStorage`/`sessionStorage`/`document.cookie` call anywhere in `ts/` outside `ui-state.ts`, against an explicit, shrink-only allowlist for still-migrating call sites.
+
 ## KQL editor
 
 Already implemented (see `_KqlCompletions.cshtml`, `ts/logs.ts`). Don't redesign. Reuse as-is when adding new query surfaces.
