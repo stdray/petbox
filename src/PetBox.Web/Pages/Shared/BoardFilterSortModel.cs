@@ -22,8 +22,14 @@ namespace PetBox.Web.Pages.Shared;
 // current Fields/ViewMode/By, the bar draws the SAME dialog markup for every mode). ViewMode/By are
 // the hidden fields the dialog's GET form round-trips so applying a field selection doesn't also
 // reset the view the user is currently looking at.
+// board-view-outline-show-bodies: BodyUnavailable is Outline's own honesty signal — true only
+// when that board's kind is OutlineRevealModeNames.Navigate, where the outline never renders a
+// body inline (wiki-like boards would ship megabytes on load) regardless of the dialog checkbox.
+// Every other caller (Kanban/Table/Tree) leaves it false; the dialog just disables the Body
+// checkbox and says why instead of silently ignoring a selection the user can still make.
 public sealed record BoardFilterSortModel(
 	PetBox.Web.Rendering.BoardFieldConfig Fields,
 	string ViewMode,
 	string SortHint = "sort:",
-	string? By = null);
+	string? By = null,
+	bool BodyUnavailable = false);

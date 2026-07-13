@@ -407,19 +407,23 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().NotContain("a wiki-length body that must not ship inline or leak into data-search");
 	}
 
+	// board-view-outline-show-bodies: spec's kind defaults Body ON (BoardFieldConfig.Default,
+	// inline-lazy reveal) — and the whole point of the task is that spec's DEFAULT render ships
+	// every body eagerly, server-side (TasksService.GetAsync already loaded them regardless), so
+	// reading the spec tree is one page load with zero `?handler=NodeBody` round-trips.
 	[Fact]
-	public async Task TaskBoard_OutlineView_SpecKind_UsesInlineLazy_BodyNotInInitialRender()
+	public async Task TaskBoard_OutlineView_SpecKind_DefaultRendersBodiesEagerly_NoLazyFetchNeeded()
 	{
-		const string board = "viewmodeoutlinespec";
+		const string board = "viewmodeoutlinespeceager";
 		using (var scope = _factory.Services.CreateScope())
 		{
 			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
 			if (!await boards.ExistsAsync("$system", board))
-				await boards.CreateAsync("$system", board, "outline spec smoke", "spec");
+				await boards.CreateAsync("$system", board, "outline spec eager smoke", "spec");
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "sreq", NodeId = "id-sreq", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "sreq", NodeId = "id-sreq-eager", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
 			}, partition: n => n.Board == board);
 		}
 
@@ -427,8 +431,70 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"inline-lazy\"");
+		html.Should().Contain("data-testid=\"outline-node-eager\"");
+		html.Should().NotContain("data-testid=\"outline-node-lazy\"");
+		html.Should().Contain("a one-line normative statement"); // shipped in the initial HTML, no fetch needed
+	}
+
+	// The other half of the same contract: turning the Body field OFF (even on spec, whose kind
+	// is inline-lazy) still offers the per-node lazy peek — the mechanism from before this task,
+	// preserved for "point at one node" without opting the whole board into eager bodies.
+	[Fact]
+	public async Task TaskBoard_OutlineView_SpecKind_BodyFieldOff_StillOffersLazyPerNodeExpand()
+	{
+		const string board = "viewmodeoutlinespeclazy";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "outline spec lazy smoke", "spec");
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "sreq", NodeId = "id-sreq-lazy", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
+			}, partition: n => n.Board == board);
+		}
+
+		// fieldsSet=1 with no `fields=body` is a deliberately empty-of-body selection (unchecked
+		// checkboxes don't post) — TaskBoardModel.FieldsSetParam distinguishes this from "no
+		// fields in the URL at all", which would fall back to the ON-by-default spec preset.
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline&fieldsSet=1");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"inline-lazy\"");
 		html.Should().Contain("data-testid=\"outline-node-lazy\"");
+		html.Should().NotContain("data-testid=\"outline-node-eager\"");
 		html.Should().NotContain("a one-line normative statement"); // fetched only on expand
+	}
+
+	// Navigate mode ignores the Body field entirely, even when explicitly turned on — the fields
+	// dialog must say so (disabled checkbox with a reason) rather than silently accepting a
+	// selection that has zero effect on the render.
+	[Fact]
+	public async Task TaskBoard_OutlineView_NavigateMode_DisablesBodyCheckboxInFieldsDialog_EvenWhenRequested()
+	{
+		const string board = "viewmodeoutlinenavbody";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "outline navigate body smoke"); // simple kind → navigate
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "onb1", Title = "ONB1", Body = "a wiki-length body that must never ship inline" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline&fieldsSet=1&fields=body");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"navigate\"");
+		html.Should().NotContain("data-testid=\"outline-node-eager\"");
+		html.Should().NotContain("data-testid=\"outline-node-lazy\"");
+		html.Should().NotContain("a wiki-length body that must never ship inline");
+		html.Should().Contain("data-testid=\"field-body\"");
+		html.Should().MatchRegex("data-testid=\"field-body\"[^>]*disabled=\"disabled\"");
 	}
 
 	[Fact]
