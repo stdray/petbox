@@ -620,6 +620,10 @@ public partial class Program
 		// memory containers (memory_* tools — resolve, lazily ensure, and the reachability predicate).
 		builder.Services.AddScoped<PetBox.Data.Contract.IDataDbCatalog, PetBox.Data.Services.DataDbCatalog>();
 		builder.Services.AddScoped<PetBox.Core.Health.IHealthReportService, PetBox.Core.Health.HealthReportService>();
+		// The COUNTS door: Admin/Dashboard/ProjectHome landing pages ask this instead of opening
+		// core.db themselves (db-out-of-pages-remaining-24 group B). One connection per page's whole
+		// rollup — the thing that finally makes core.db cacheable (db-cache-behind-services).
+		builder.Services.AddScoped<PetBox.Core.Data.ICoreDbRollupService, PetBox.Core.Data.CoreDbRollupService>();
 		// The pull-mode endpoint list — a DIFFERENT table from HealthReports above, and one that had no
 		// door at all until Pages/Admin/ProjectDetail stopped opening core.db for it. Same namespace as
 		// the reports door on purpose: a caller who finds one finds the other (commit ce12100).
