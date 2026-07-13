@@ -1,14 +1,11 @@
 using System.Security.Cryptography;
 using System.Text;
-using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Config.Contract;
-using PetBox.Config.Data;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
-using PetBox.Core.Data;
 using PetBox.Core.Models;
 
 namespace PetBox.Config;
@@ -42,18 +39,15 @@ public static class ConfigApi
 	// Resolves every config path visible to the calling API key's project, shaped by template.
 	// Workspace is derived from the key's project (ApiKey is project-scoped); tags come from the
 	// query string plus auto ws:/project: tags.
-	static IResult Conf(HttpContext context, ICoreDbFactory dbf, IConfigDbFactory configFactory, ISecretEncryptor encryptor)
+	static async Task<IResult> Conf(HttpContext context, IConfigDirectory config, ISecretEncryptor encryptor)
 	{
-		using var db = dbf.Open();
 		var projectKey = context.User.FindFirst("project")?.Value;
 		if (string.IsNullOrEmpty(projectKey))
 			return Results.Unauthorized();
 
-		var project = db.Projects.FirstOrDefault(p => p.Key == projectKey);
-		if (project is null)
+		var workspaceKey = await config.GetProjectWorkspaceAsync(projectKey, context.RequestAborted);
+		if (workspaceKey is null)
 			return Results.NotFound(new ConfigProjectNotFoundResponse("project not found", projectKey));
-
-		var workspaceKey = project.WorkspaceKey;
 
 		string? template = null;
 		var requestTags = new List<string> { $"ws:{workspaceKey}", $"project:{projectKey}" };
@@ -67,13 +61,10 @@ public static class ConfigApi
 			requestTags.Add($"{key}:{vals}");
 		}
 
-		using var configDb = configFactory.NewConfigDb(workspaceKey);
-		var bindings = configDb.Bindings.ToList();
-
 		IReadOnlyList<ResolveMatch> matches;
 		try
 		{
-			matches = ResolvePipeline.ResolveAll(requestTags, bindings);
+			matches = await config.ResolveAllAsync(workspaceKey, requestTags, context.RequestAborted);
 		}
 		catch (AmbiguousConfigException ex)
 		{
@@ -125,52 +116,27 @@ public static class ConfigApi
 		return $"\"{Convert.ToHexStringLower(hash[..16])}\"";
 	}
 
-	static async Task<IResult> Create(HttpContext context, ICoreDbFactory dbf, IConfigDbFactory configFactory, string workspaceKey, ConfigBindingDto dto)
+	static async Task<IResult> Create(HttpContext context, IConfigDirectory config, string workspaceKey, ConfigBindingDto dto)
 	{
-		using var db = dbf.Open();
-		if (!AuthorizeWorkspace(context, db, workspaceKey, out var forbid)) return forbid;
+		if (await AuthorizeWorkspaceAsync(context, config, workspaceKey) is { } forbid) return forbid;
 		if (string.IsNullOrWhiteSpace(dto.Path))
 			return Results.BadRequest(new ErrorResponse("path is required"));
 		if (!dto.Tags.Contains($"ws:{workspaceKey}", StringComparison.OrdinalIgnoreCase))
 			return Results.BadRequest(new ErrorResponse($"Tags must include 'ws:{workspaceKey}'"));
 
-		var now = DateTime.UtcNow;
 		var value = dto.Value ?? string.Empty;
-		var binding = new ConfigBinding
-		{
-			Path = dto.Path,
-			Value = value,
-			Tags = dto.Tags,
-			Kind = dto.Kind,
-			Version = 1,
-			ContentHash = BindingContentHash.Compute(dto.Path, dto.Tags, dto.Kind, value, null),
-			CreatedAt = now,
-			UpdatedAt = now,
-		};
-
-		using var configDb = configFactory.NewConfigDb(workspaceKey);
-#pragma warning disable CA2016
-		var id = Convert.ToInt64(await configDb.InsertWithIdentityAsync(binding));
-#pragma warning restore CA2016
-		return Results.Ok(new ConfigBindingCreatedResponse(id, binding.Path, binding.Tags));
+		var binding = await config.CreateBindingAsync(workspaceKey, dto.Path, value, dto.Tags, dto.Kind, context.RequestAborted);
+		return Results.Ok(new ConfigBindingCreatedResponse(binding.Id, binding.Path, binding.Tags));
 	}
 
 	// Soft-delete: mark IsDeleted=1, keep the row. Resolve filters it out.
 	// UI's history page can offer "Undelete" for the last deleted version.
-	static async Task<IResult> Delete(HttpContext context, ICoreDbFactory dbf, IConfigDbFactory configFactory, string workspaceKey, string path, string tags)
+	static async Task<IResult> Delete(HttpContext context, IConfigDirectory config, string workspaceKey, string path, string tags)
 	{
-		using var db = dbf.Open();
-		if (!AuthorizeWorkspace(context, db, workspaceKey, out var forbid)) return forbid;
-		using var configDb = configFactory.NewConfigDb(workspaceKey);
-		var now = DateTime.UtcNow;
-		var deleted = await configDb.Bindings
-			.Where(b => b.Path == path && b.Tags == tags && !b.IsDeleted)
-			.Set(b => b.IsDeleted, true)
-			.Set(b => b.DeletedAt, (DateTime?)now)
-			.Set(b => b.UpdatedAt, now)
-			.UpdateAsync();
+		if (await AuthorizeWorkspaceAsync(context, config, workspaceKey) is { } forbid) return forbid;
+		var deleted = await config.DeleteBindingByPathTagsAsync(workspaceKey, path, tags, context.RequestAborted);
 
-		return deleted > 0
+		return deleted
 			? Results.Ok(new DeletedResponse(true))
 			: Results.NotFound(new ErrorResponse("binding not found"));
 	}
@@ -183,24 +149,21 @@ public static class ConfigApi
 	// to match the target route segment. A wildcard "*" project claim (cross-project key) is
 	// authorized for every workspace too, mirroring ProjectScope.Authorizes' treatment of "*" for
 	// every other project-scoped REST handler (LogApi/DataAuth's AuthorizeProject helpers).
-	static bool AuthorizeWorkspace(HttpContext context, PetBoxDb db, string workspaceKey, out IResult forbid)
+	// Returns null when the caller is authorized for `workspaceKey`, else the IResult to return
+	// (Forbid). `out` can't be combined with `async`, so this replaces the old (bool, out forbid)
+	// shape with a nullable return the caller checks instead.
+	static async Task<IResult?> AuthorizeWorkspaceAsync(HttpContext context, IConfigDirectory config, string workspaceKey)
 	{
 		var claim = context.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
 		if (string.IsNullOrEmpty(claim))
-		{
-			forbid = Results.Forbid();
-			return false;
-		}
+			return Results.Forbid();
+
 		if (claim != ProjectScope.AllProjects)
 		{
-			var project = db.Projects.FirstOrDefault(p => p.Key == claim);
-			if (project is null || !string.Equals(project.WorkspaceKey, workspaceKey, StringComparison.Ordinal))
-			{
-				forbid = Results.Forbid();
-				return false;
-			}
+			var claimWorkspace = await config.GetProjectWorkspaceAsync(claim, context.RequestAborted);
+			if (claimWorkspace is null || !string.Equals(claimWorkspace, workspaceKey, StringComparison.Ordinal))
+				return Results.Forbid();
 		}
-		forbid = null!;
-		return true;
+		return null;
 	}
 }

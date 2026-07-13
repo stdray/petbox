@@ -157,6 +157,10 @@ public partial class Program
 				Path.Combine(ResolveDataDir(sp), "config"), PetBox.Core.Settings.Scope.Workspace,
 				cs => new ConfigDb(ConfigDb.CreateOptions(cs)), ConfigSchema.Ensure));
 		builder.Services.AddSingleton<IConfigDbFactory>(sp => new ConfigDbFactory(sp.GetRequiredService<IScopedDbFactory<ConfigDb>>()));
+		// THE service layer for PetBox.Config (SavedConfigFilters in core.db + ConfigBinding CRUD/
+		// resolve in ConfigDb) — Pages.Config.IndexModel and ConfigApi's REST surface both go
+		// through this instead of holding a factory (db-out-of-pages-remaining-24).
+		builder.Services.AddScoped<PetBox.Config.IConfigDirectory, PetBox.Config.ConfigDirectory>();
 		builder.Services.AddSingleton<PetBox.Data.IDataDbFactory>(sp => new PetBox.Data.DataDbFactory(Path.Combine(ResolveDataDir(sp), "db")));
 		builder.Services.AddSingleton<PetBox.Data.Schema.SchemaRunner>();
 		builder.Services.AddScoped<PetBox.Data.Contract.IDataSqlService, PetBox.Data.Services.DataSqlService>();
