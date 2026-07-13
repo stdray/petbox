@@ -1,0 +1,41 @@
+@inject PetBox.Web.Navigation.INavigationContext Nav
+@{
+	// Split out of the former _ZoneSelectors (nav-project-selector-placement): the workspace
+	// selector + pin stay together at the top of every sidebar (/ui, /ui/admin) — this is
+	// zone-wide chrome, not scoped to any one of the admin sidebar's three collapsible sections
+	// (admin-sidebar-sections), so it must stay visible regardless of which section is
+	// collapsed. The project selector is the sibling _ProjectSelector partial, placed instead
+	// next to the project's OWN section in each zone.
+	var currentWs = Nav.CurrentWorkspaceKey ?? string.Empty;
+	var workspaces = Nav.AvailableWorkspaces;
+
+	// Zone-preserving switching: the switch endpoint redirects to the same zone the user is
+	// currently in. Admin pages live under /ui/admin/...; everything else is the /ui zone.
+	var path = Context.Request.Path.Value ?? string.Empty;
+	var zone = path.StartsWith("/ui/admin", StringComparison.OrdinalIgnoreCase) ? "admin" : "ui";
+}
+<div class="px-2 pt-2" data-testid="nav-workspace-selector">
+	<div class="flex items-center gap-1">
+		<form method="post" action="/api/ui/workspace" data-testid="nav-workspace-switch" class="flex-1 min-w-0">
+			<input type="hidden" name="zone" value="@zone" data-testid="nav-workspace-zone" />
+			@if (workspaces.Count == 0)
+			{
+				<select disabled aria-label="Select workspace" title="You are not a member of any workspace"
+					class="select select-sm select-bordered w-full font-mono text-xs opacity-60" data-testid="nav-workspace-select">
+					<option>no workspaces</option>
+				</select>
+			}
+			else
+			{
+				<select name="ws" onchange="this.form.submit()" aria-label="Switch workspace" title="Switch workspace"
+					class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-workspace-select">
+					@foreach (var w in workspaces)
+					{
+						<option value="@w.Key" selected="@(string.Equals(w.Key, currentWs, StringComparison.Ordinal))">@w.Key</option>
+					}
+				</select>
+			}
+		</form>
+		<partial name="_SidebarPin" />
+	</div>
+</div>

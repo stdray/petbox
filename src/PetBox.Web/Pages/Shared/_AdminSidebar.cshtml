@@ -1,5 +1,6 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
 @inject PetBox.Core.Features.FeatureFlags Features
+@inject PetBox.Web.Settings.IUiState UiState
 @{
 	var path = Context.Request.Path.Value ?? string.Empty;
 	bool At(string url) => string.Equals(path, url, StringComparison.OrdinalIgnoreCase);
@@ -10,115 +11,40 @@
 	var isAuthenticated = Nav.IsAuthenticated;
 	var isSysAdmin = isAuthenticated
 		&& Context.User.FindFirst(PetBox.Core.Auth.PetBoxClaims.IsSysAdmin)?.Value == "true";
+
+	// admin-sidebar-sections (item 4): collapsed/expanded state of the three named sections,
+	// resolved server-side BEFORE render via the SAME BrowserState/IUiState mechanism the
+	// sidebar pin already uses (UiState.GetAsync() is memoized per request, so this reuses
+	// _AdminLayout's earlier resolve rather than paying a second DB round trip) — the FIRST
+	// response already carries the right `open` attribute, no post-load class correction.
+	var collapsed = (await UiState.GetAsync()).AdminSectionsCollapsed;
+	bool IsOpen(string section) => !collapsed.GetValueOrDefault(section, false);
 }
 <aside class="bg-base-200 w-64 min-h-full border-r border-base-300 flex flex-col" data-testid="admin-sidebar">
 	@if (isAuthenticated)
 	{
-		@* Unified zone header shared with the /ui sidebar: workspace + project selectors + pin.
-		   The selectors post with zone=admin, so switching keeps you inside the admin zone of the
-		   newly-selected workspace/project (see _ZoneSelectors + the switch endpoints). *@
-		<partial name="_ZoneSelectors" />
+		@* Workspace selector + pin only — zone-wide chrome, not scoped to any one of the three
+		   sections below, so it stays visible regardless of which section is collapsed. The
+		   project selector is placed instead with Project administration (nav-project-selector-
+		   placement, item 1) — see _ProjectSelector below. *@
+		<partial name="_WorkspaceSelector" />
 
-		@* Flat, single-project section list — mirrors the /ui sidebar. The workspace and project
-		   are chosen by the selectors above, so there is no all-workspaces / per-project disclosure
-		   tree; only the admin sections of the workspace and project currently in context. The
-		   sysadmin branch below stays a tree (it is instance-wide, not project-scoped). *@
+		@* Three explicitly-named, independently collapsible sections, in a fixed order — server
+		   → workspace → project (item 4) — each remembering its own open/collapsed state via
+		   AdminSectionsCollapsed above. Flat, single-project lists inside workspace/project (no
+		   all-workspaces / per-project disclosure tree): the workspace and project are chosen by
+		   the selectors, so only the sections of whichever is currently in context render. *@
 		<ul class="menu menu-sm w-full p-2 gap-0.5 mt-2" data-testid="admin-side-tree">
-			<li class="menu-title text-xs opacity-50 uppercase tracking-wide" data-testid="admin-side-ws-heading">
-				<span class="font-mono normal-case">@currentWs</span>
-			</li>
-			<li>
-				<a href="@Routes.WorkspaceAdmin(currentWs)" class="@(At(Routes.WorkspaceAdmin(currentWs)) ? "active" : "")" data-testid="admin-side-ws-overview">Overview</a>
-			</li>
-			<li>
-				<a href="@Routes.WorkspaceAdminMembers(currentWs)" class="@(At(Routes.WorkspaceAdminMembers(currentWs)) ? "active" : "")" data-testid="admin-side-ws-members">Members</a>
-			</li>
-			@if (Features.IsEnabled(Feature.Config))
-			{
-				<li>
-					<a href="@Routes.SharedConfig(currentWs)" class="@(Under(Routes.SharedConfig(currentWs)) ? "active" : "")" data-testid="admin-side-ws-config">Shared config</a>
-				</li>
-			}
-			<li>
-				<a href="@Routes.WorkspaceAdminDefaults(currentWs)" class="@(At(Routes.WorkspaceAdminDefaults(currentWs)) ? "active" : "")" data-testid="admin-side-ws-defaults">Settings</a>
-			</li>
-			<li>
-				<a href="@Routes.WorkspaceAdminInfo(currentWs)" class="@(At(Routes.WorkspaceAdminInfo(currentWs)) ? "active" : "")" data-testid="admin-side-ws-info">Info</a>
-			</li>
-			<li>
-				<a href="@Routes.WorkspaceAdminProjects(currentWs)" class="@(At(Routes.WorkspaceAdminProjects(currentWs)) ? "active" : "")" data-testid="admin-side-ws-projects">Projects</a>
-			</li>
-			@* Sits beside Projects/Connect on purpose: the same workspace admin who mints a
-			   project key on its Connect page revokes it here (workspace-admin-owns-keys). *@
-			<li>
-				<a href="@Routes.WorkspaceAdminAgentKeys(currentWs)" class="@(At(Routes.WorkspaceAdminAgentKeys(currentWs)) ? "active" : "")" data-testid="admin-side-ws-agent-keys">Agent keys</a>
-			</li>
-
-			<li class="menu-title text-xs opacity-50 uppercase tracking-wide mt-2" data-testid="admin-side-proj-heading">
-				<span>Project</span>
-			</li>
-			@if (string.IsNullOrEmpty(currentProject))
-			{
-				<li class="text-xs opacity-50 italic px-3 py-1" data-testid="admin-side-no-projects">No projects in this workspace.</li>
-			}
-			else
-			{
-				<li class="hidden" data-testid="admin-side-project" data-project-key="@currentProject"></li>
-				<li>
-					<a href="@Routes.ProjectSettings(currentWs, currentProject)" class="@(At(Routes.ProjectSettings(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-info">Info</a>
-				</li>
-				@if (Features.IsEnabled(Feature.Logging))
-				{
-					<li>
-						<a href="@Routes.ProjectLogsAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectLogsAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-logs">Logs</a>
-					</li>
-				}
-				@if (Features.IsEnabled(Feature.Data))
-				{
-					<li>
-						<a href="@Routes.ProjectData(currentWs, currentProject)" class="@(At(Routes.ProjectData(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-data">Databases</a>
-					</li>
-				}
-				@if (Features.IsEnabled(Feature.Tasks))
-				{
-					<li>
-						<a href="@Routes.ProjectTasksAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectTasksAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-tasks">Tasks</a>
-					</li>
-					<li>
-						<a href="@Routes.ProjectMethodologyAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectMethodologyAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-methodology">Methodology</a>
-					</li>
-				}
-				@if (Features.IsEnabled(Feature.Memory))
-				{
-					<li>
-						<a href="@Routes.ProjectMemoryAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectMemoryAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-memory">Memory</a>
-					</li>
-				}
-				@* Portable agent definitions (agent-definition-as-data) — always on, no feature flag. *@
-				<li>
-					<a href="@Routes.ProjectAgentDefsAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectAgentDefsAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-agent-defs">Agent definitions</a>
-				</li>
-				<li>
-					<a href="@Routes.ProjectSettingsAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectSettingsAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-settings">Settings</a>
-				</li>
-				@if (Features.IsEnabled(Feature.Tasks) || Features.IsEnabled(Feature.Memory))
-				{
-					<li>
-						<a href="@Routes.ProjectConnect(currentWs, currentProject)" class="@(At(Routes.ProjectConnect(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-connect">Issue key</a>
-					</li>
-				}
-			}
-
 			@if (isSysAdmin)
 			{
 				<li>
-					<details open data-testid="admin-side-sys-tree">
-						<summary class="font-semibold mt-2">
+					<details open="@IsOpen("server")" data-testid="admin-side-server-section" data-admin-section="server">
+						<summary class="font-semibold">
 							<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
 								<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
 							</svg>
-							<span>Server administration</span>
+							<span data-testid="admin-side-server-heading">Server administration</span>
 						</summary>
 						<ul>
 							<li>
@@ -146,6 +72,107 @@
 					</details>
 				</li>
 			}
+
+			<li>
+				<details open="@IsOpen("workspace")" data-testid="admin-side-workspace-section" data-admin-section="workspace">
+					<summary class="font-semibold">
+						<span data-testid="admin-side-ws-heading">Workspace administration</span>
+						<span class="font-mono normal-case opacity-60 text-xs">@currentWs</span>
+					</summary>
+					<ul>
+						<li>
+							<a href="@Routes.WorkspaceAdmin(currentWs)" class="@(At(Routes.WorkspaceAdmin(currentWs)) ? "active" : "")" data-testid="admin-side-ws-overview">Overview</a>
+						</li>
+						<li>
+							<a href="@Routes.WorkspaceAdminMembers(currentWs)" class="@(At(Routes.WorkspaceAdminMembers(currentWs)) ? "active" : "")" data-testid="admin-side-ws-members">Members</a>
+						</li>
+						@if (Features.IsEnabled(Feature.Config))
+						{
+							<li>
+								<a href="@Routes.SharedConfig(currentWs)" class="@(Under(Routes.SharedConfig(currentWs)) ? "active" : "")" data-testid="admin-side-ws-config">Shared config</a>
+							</li>
+						}
+						<li>
+							<a href="@Routes.WorkspaceAdminDefaults(currentWs)" class="@(At(Routes.WorkspaceAdminDefaults(currentWs)) ? "active" : "")" data-testid="admin-side-ws-defaults">Settings</a>
+						</li>
+						<li>
+							<a href="@Routes.WorkspaceAdminInfo(currentWs)" class="@(At(Routes.WorkspaceAdminInfo(currentWs)) ? "active" : "")" data-testid="admin-side-ws-info">Info</a>
+						</li>
+						<li>
+							<a href="@Routes.WorkspaceAdminProjects(currentWs)" class="@(At(Routes.WorkspaceAdminProjects(currentWs)) ? "active" : "")" data-testid="admin-side-ws-projects">Projects</a>
+						</li>
+						@* Sits beside Projects/Connect on purpose: the same workspace admin who mints a
+						   project key on its Connect page revokes it here (workspace-admin-owns-keys). *@
+						<li>
+							<a href="@Routes.WorkspaceAdminAgentKeys(currentWs)" class="@(At(Routes.WorkspaceAdminAgentKeys(currentWs)) ? "active" : "")" data-testid="admin-side-ws-agent-keys">Agent keys</a>
+						</li>
+					</ul>
+				</details>
+			</li>
+
+			<li>
+				<details open="@IsOpen("project")" data-testid="admin-side-project-section" data-admin-section="project">
+					<summary class="font-semibold">
+						<span data-testid="admin-side-proj-heading">Project administration</span>
+					</summary>
+					@* nav-project-selector-placement (item 1): the project selector sits right here, next
+					   to the project's own section, instead of up top next to the workspace selector. *@
+					<partial name="_ProjectSelector" />
+					<ul>
+						@if (string.IsNullOrEmpty(currentProject))
+						{
+							<li class="text-xs opacity-50 italic px-3 py-1" data-testid="admin-side-no-projects">No projects in this workspace.</li>
+						}
+						else
+						{
+							<li class="hidden" data-testid="admin-side-project" data-project-key="@currentProject"></li>
+							<li>
+								<a href="@Routes.ProjectSettings(currentWs, currentProject)" class="@(At(Routes.ProjectSettings(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-info">Info</a>
+							</li>
+							@if (Features.IsEnabled(Feature.Logging))
+							{
+								<li>
+									<a href="@Routes.ProjectLogsAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectLogsAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-logs">Logs</a>
+								</li>
+							}
+							@if (Features.IsEnabled(Feature.Data))
+							{
+								<li>
+									<a href="@Routes.ProjectData(currentWs, currentProject)" class="@(At(Routes.ProjectData(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-data">Databases</a>
+								</li>
+							}
+							@if (Features.IsEnabled(Feature.Tasks))
+							{
+								<li>
+									<a href="@Routes.ProjectTasksAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectTasksAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-tasks">Tasks</a>
+								</li>
+								<li>
+									<a href="@Routes.ProjectMethodologyAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectMethodologyAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-methodology">Methodology</a>
+								</li>
+							}
+							@if (Features.IsEnabled(Feature.Memory))
+							{
+								<li>
+									<a href="@Routes.ProjectMemoryAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectMemoryAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-memory">Memory</a>
+								</li>
+							}
+							@* Portable agent definitions (agent-definition-as-data) — always on, no feature flag. *@
+							<li>
+								<a href="@Routes.ProjectAgentDefsAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectAgentDefsAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-agent-defs">Agent definitions</a>
+							</li>
+							<li>
+								<a href="@Routes.ProjectSettingsAdmin(currentWs, currentProject)" class="@(At(Routes.ProjectSettingsAdmin(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-settings">Settings</a>
+							</li>
+							@if (Features.IsEnabled(Feature.Tasks) || Features.IsEnabled(Feature.Memory))
+							{
+								<li>
+									<a href="@Routes.ProjectConnect(currentWs, currentProject)" class="@(At(Routes.ProjectConnect(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-connect">Issue key</a>
+								</li>
+							}
+						}
+					</ul>
+				</details>
+			</li>
 		</ul>
 	}
 </aside>
