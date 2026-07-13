@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
+using PetBox.Web.Auth;
 using PetBox.Web.Pages.Admin;
 
 namespace PetBox.Tests.Web;
@@ -34,7 +35,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		TestDirs.CleanupOrDefer(_dir);
 	}
 
-	WorkspaceUsersModel Page() => new(_db.Factory());
+	WorkspaceUsersModel Page() => new(new WorkspaceMembershipService(_db.Factory()));
 
 	[Fact]
 	public async Task Add_existing_user_without_password_succeeds_and_keeps_password()
@@ -43,7 +44,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 			new User { Username = "alice", PasswordHash = ExistingHash, CreatedAt = DateTime.UtcNow });
 
 		var page = Page();
-		var result = await page.OnPostAddAsync(Ws, "alice", Password: null, WorkspaceRole.Member);
+		var result = await page.OnPostAddAsync(Ws, "alice", Password: null, WorkspaceRole.Member, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		page.ErrorMessage.Should().BeNull();
@@ -59,7 +60,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 	public async Task Add_new_user_without_password_shows_visible_error_and_creates_nothing()
 	{
 		var page = Page();
-		var result = await page.OnPostAddAsync(Ws, "bob", Password: "   ", WorkspaceRole.Member);
+		var result = await page.OnPostAddAsync(Ws, "bob", Password: "   ", WorkspaceRole.Member, default);
 
 		result.Should().BeOfType<PageResult>();
 		page.ErrorMessage.Should().NotBeNullOrEmpty();
@@ -72,7 +73,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 	public async Task Add_new_user_with_password_creates_loginable_account_and_membership()
 	{
 		var page = Page();
-		var result = await page.OnPostAddAsync(Ws, "carol", "s3cret", WorkspaceRole.Admin);
+		var result = await page.OnPostAddAsync(Ws, "carol", "s3cret", WorkspaceRole.Admin, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		var user = _db.Users.FirstOrDefault(u => u.Username == "carol");
@@ -90,7 +91,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = Ws, Role = WorkspaceRole.Member });
 
 		var page = Page();
-		var result = await page.OnPostSetRoleAsync(Ws, userId, WorkspaceRole.Viewer);
+		var result = await page.OnPostSetRoleAsync(Ws, userId, WorkspaceRole.Viewer, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		_db.WorkspaceMembers.First(m => m.UserId == userId && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Viewer);
@@ -106,7 +107,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
 
 		var page = Page();
-		var result = await page.OnPostSetRoleAsync(Ws, userId, WorkspaceRole.Member);
+		var result = await page.OnPostSetRoleAsync(Ws, userId, WorkspaceRole.Member, default);
 
 		result.Should().BeOfType<PageResult>();
 		page.ErrorMessage.Should().NotBeNullOrEmpty();
@@ -125,7 +126,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		await _db.InsertAsync(new WorkspaceMember { UserId = admin2, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
 
 		var page = Page();
-		var result = await page.OnPostSetRoleAsync(Ws, admin1, WorkspaceRole.Member);
+		var result = await page.OnPostSetRoleAsync(Ws, admin1, WorkspaceRole.Member, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		_db.WorkspaceMembers.First(m => m.UserId == admin1 && m.WorkspaceKey == Ws).Role.Should().Be(WorkspaceRole.Member);
@@ -141,7 +142,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		await _db.InsertAsync(new WorkspaceMember { UserId = userId, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
 
 		var page = Page();
-		var result = await page.OnPostRemoveAsync(Ws, userId);
+		var result = await page.OnPostRemoveAsync(Ws, userId, default);
 
 		result.Should().BeOfType<PageResult>();
 		page.ErrorMessage.Should().NotBeNullOrEmpty();
@@ -158,7 +159,7 @@ public sealed class WorkspaceUsersPageTests : IDisposable
 		await _db.InsertAsync(new WorkspaceMember { UserId = admin2, WorkspaceKey = Ws, Role = WorkspaceRole.Admin });
 
 		var page = Page();
-		var result = await page.OnPostRemoveAsync(Ws, admin1);
+		var result = await page.OnPostRemoveAsync(Ws, admin1, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		_db.WorkspaceMembers.Any(m => m.UserId == admin1 && m.WorkspaceKey == Ws).Should().BeFalse();

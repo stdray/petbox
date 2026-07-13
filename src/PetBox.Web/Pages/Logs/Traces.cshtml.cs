@@ -60,10 +60,10 @@ public sealed class TracesModel : PageModel
 		EffectiveProjectKey = ProjectKey ?? "";
 		if (string.IsNullOrEmpty(EffectiveProjectKey)) { SchemaMissing = true; return; }
 
-		// Bind the project to the ROUTE workspace: WorkspaceViewer only proves membership in
-		// {workspaceKey}, so a member of wsA could otherwise read wsB's traces via /ui/wsA/proj-of-wsB.
+		// The route workspace is proved by ProjectWorkspaceBindingFilter before this runs (see
+		// ProjectHome/Index) — resolve by key alone; the row is still needed for ProjectName.
 		var project = await db.Projects.FirstOrDefaultAsync(
-			(Project p) => p.Key == EffectiveProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
+			(Project p) => p.Key == EffectiveProjectKey, ct);
 		if (project is null) { SchemaMissing = true; return; }
 		ProjectName = project.Name;
 

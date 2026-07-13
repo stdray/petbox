@@ -145,12 +145,12 @@ public sealed class ProjectAgentDefsModel : PageModel
 		}
 	}
 
-	// The project must exist AND live in the route workspace — the route is the only authority.
+	// The project must live in the route workspace — that is proved by ProjectWorkspaceBindingFilter
+	// (Program.cs) before any handler here runs, so this only resolves it by key.
 	async Task<bool> LoadStateAsync(CancellationToken ct)
 	{
 		using var db = _f.Open();
-		var project = await db.Projects.FirstOrDefaultAsync(
-			(Project p) => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
+		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return false; }
 
 		Items = await _defs.ListAsync(ProjectKey, ct);

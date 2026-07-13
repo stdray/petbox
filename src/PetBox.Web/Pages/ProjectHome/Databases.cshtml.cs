@@ -44,10 +44,9 @@ public sealed class DatabasesModel : PageModel
 	{
 		using var db = _f.Open();
 		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
-		// Bind the project to the ROUTE workspace (see ProjectHome/Index) — rejects the field IDOR
-		// /ui/wsA/proj-of-wsB, which the workspace-membership policy alone does not catch.
-		Project = await db.Projects.FirstOrDefaultAsync(
-			p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
+		// The route workspace is proved by ProjectWorkspaceBindingFilter before this runs (see
+		// ProjectHome/Index) — resolve by key alone.
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null || !DataEnabled) return;
 
 		Dbs = await db.DataDbs

@@ -9,6 +9,7 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
+using PetBox.Web.Auth;
 using PetBox.Web.Pages;
 using PetBox.Web.Pages.Admin;
 
@@ -184,10 +185,10 @@ public sealed class MutationFeedbackPageTests : IDisposable
 		var uid = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "bob", PasswordHash = "x", CreatedAt = DateTime.UtcNow });
 		_db.Insert(new WorkspaceMember { UserId = uid, WorkspaceKey = "ws", Role = WorkspaceRole.Member });
-		var page = new WorkspaceUsersModel(_db.Factory());
+		var page = new WorkspaceUsersModel(new WorkspaceMembershipService(_db.Factory()));
 		Wire(page);
 
-		var result = await page.OnPostRemoveAsync("ws", uid);
+		var result = await page.OnPostRemoveAsync("ws", uid, default);
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		page.TempData[Notice.SuccessKey].Should().Be("Member removed.");

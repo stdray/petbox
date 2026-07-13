@@ -16,13 +16,8 @@ namespace PetBox.Web.Pages.Logs;
 public sealed class TraceModel : PageModel
 {
 	readonly ILogStore _logStore;
-	readonly ICoreDbFactory _f;
 
-	public TraceModel(ILogStore logStore, ICoreDbFactory f)
-	{
-		_logStore = logStore;
-		_f = f;
-	}
+	public TraceModel(ILogStore logStore) => _logStore = logStore;
 
 	[BindProperty(SupportsGet = true)]
 	public string? WorkspaceKey { get; set; }
@@ -98,15 +93,9 @@ public sealed class TraceModel : PageModel
 		EffectiveProjectKey = ProjectKey ?? "";
 		if (string.IsNullOrEmpty(EffectiveProjectKey)) { TraceNotFound = true; return; }
 
-		// Bind the project to the ROUTE workspace: WorkspaceViewer only proves membership in
-		// {workspaceKey}, so without this a member of wsA could read wsB's spans via
-		// /ui/wsA/proj-of-wsB/traces/{id} (workspace-access-isolation).
-		using (var core = _f.Open())
-		{
-			var inWorkspace = await core.Projects.AnyAsync(
-				p => p.Key == EffectiveProjectKey && p.WorkspaceKey == EffectiveWorkspaceKey, ct);
-			if (!inWorkspace) { TraceNotFound = true; return; }
-		}
+		// The project↔workspace binding (a member of wsA must not read wsB's spans via
+		// /ui/wsA/proj-of-wsB/traces/{id}) is enforced for EVERY page carrying both route values by
+		// ProjectWorkspaceBindingFilter, before this handler runs — so it is not re-checked here.
 
 		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
 		var selectedLog = !string.IsNullOrWhiteSpace(LogName) && logs.Contains(LogName, StringComparer.Ordinal)

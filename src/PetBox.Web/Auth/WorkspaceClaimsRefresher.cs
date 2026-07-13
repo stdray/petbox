@@ -2,7 +2,6 @@ using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
 
 namespace PetBox.Web.Auth;
 
@@ -19,43 +18,44 @@ namespace PetBox.Web.Auth;
 // cookie the mutating request does not own — the victim's session. This one closes both.
 //
 // Cookie identities only: the ApiKey scheme carries its own scope claims and never has yb:user_id.
-// One indexed core-db read per authenticated request; the principal is cached per authentication
+// One indexed membership read per authenticated request; the principal is cached per authentication
 // by the cookie handler, so it is not re-run per authorize call.
-public sealed class WorkspaceClaimsRefresher(ICoreDbFactory dbf) : IClaimsTransformation
+//
+// The read goes through IWorkspaceMembershipService — this is an IClaimsTransformation, i.e. pipeline
+// code, and the DB is the service layer's alone. That also fixed a real defect: this ran core.db
+// SYNCHRONOUSLY (.ToList() behind Task.FromResult), blocking a request thread on SQLite on EVERY
+// authenticated request. It now awaits.
+public sealed class WorkspaceClaimsRefresher(IWorkspaceMembershipService memberships) : IClaimsTransformation
 {
-	public Task<ClaimsPrincipal> TransformAsync(ClaimsPrincipal principal)
+	public async Task<ClaimsPrincipal> TransformAsync(ClaimsPrincipal principal)
 	{
 		var identity = principal.Identities.FirstOrDefault(i =>
 			i.IsAuthenticated
 			&& string.Equals(i.AuthenticationType, CookieAuthenticationDefaults.AuthenticationScheme, StringComparison.Ordinal));
 		if (identity is null)
-			return Task.FromResult(principal);
+			return principal;
 
 		var userIdRaw = identity.FindFirst(PetBoxClaims.UserId)?.Value;
 		if (!long.TryParse(userIdRaw, out var userId))
-			return Task.FromResult(principal);
+			return principal;
 
-		using var db = dbf.Open();
-		var memberships = db.WorkspaceMembers
-			.Where(m => m.UserId == userId)
-			.Select(m => new { m.WorkspaceKey, m.Role })
-			.ToList();
+		var roles = await memberships.GetRolesAsync(userId);
 
 		var fresh = WorkspaceRoleAuthorizationHandler.SerializeRoles(
-			memberships.Select(m => (m.WorkspaceKey, m.Role)));
+			roles.Select(m => (m.WorkspaceKey, m.Role)));
 
 		// The active-workspace claim is a hint for navigation, not an authorization fact — but a
 		// stale one (a workspace the user was removed from, or the old "$system" fallback) is
 		// still misleading, so it is re-pinned to a workspace the user actually belongs to.
 		var active = identity.FindFirst(PetBoxClaims.ActiveWorkspace)?.Value;
 		var stillMember = active is not null
-			&& memberships.Exists(m => string.Equals(m.WorkspaceKey, active, StringComparison.Ordinal));
-		var freshActive = stillMember ? active : memberships.Count > 0 ? memberships[0].WorkspaceKey : null;
+			&& roles.Any(m => string.Equals(m.WorkspaceKey, active, StringComparison.Ordinal));
+		var freshActive = stillMember ? active : roles.Count > 0 ? roles[0].WorkspaceKey : null;
 
 		var current = identity.FindFirst(PetBoxClaims.WorkspaceRoles)?.Value ?? "";
 		if (string.Equals(current, fresh, StringComparison.Ordinal)
 			&& string.Equals(active, freshActive, StringComparison.Ordinal))
-			return Task.FromResult(principal);
+			return principal;
 
 		var claims = identity.Claims
 			.Where(c => c.Type is not (PetBoxClaims.WorkspaceRoles or PetBoxClaims.ActiveWorkspace))
@@ -65,6 +65,6 @@ public sealed class WorkspaceClaimsRefresher(ICoreDbFactory dbf) : IClaimsTransf
 			claims.Add(new Claim(PetBoxClaims.ActiveWorkspace, freshActive));
 
 		var rebuilt = new ClaimsIdentity(claims, identity.AuthenticationType, identity.NameClaimType, identity.RoleClaimType);
-		return Task.FromResult(new ClaimsPrincipal(rebuilt));
+		return new ClaimsPrincipal(rebuilt);
 	}
 }

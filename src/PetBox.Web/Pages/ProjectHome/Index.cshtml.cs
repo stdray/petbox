@@ -67,10 +67,11 @@ public sealed class IndexModel : PageModel
 	public async Task OnGetAsync(CancellationToken ct)
 	{
 		using var db = _f.Open();
-		// Bind the project to the ROUTE workspace: WorkspaceViewer only proves membership in
-		// {workspaceKey}, so a member of wsA could otherwise read wsB's project via /ui/wsA/proj-of-wsB.
-		Project = await db.Projects.FirstOrDefaultAsync(
-			p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
+		// The project↔workspace binding — a member of wsA reading wsB's project via /ui/wsA/proj-of-wsB
+		// — is enforced for EVERY page carrying both route values by ProjectWorkspaceBindingFilter
+		// (Program.cs), which 404s before this handler runs. Pages therefore resolve the project by KEY
+		// alone; they do not re-check the workspace (db-access-layer-cleanup removed ten such copies).
+		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
 		if (Project is null) return;
 
 		LogCount = await db.Logs.CountAsync(l => l.ProjectKey == ProjectKey, ct);

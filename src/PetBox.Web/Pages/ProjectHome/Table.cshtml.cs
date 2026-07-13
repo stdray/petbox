@@ -65,13 +65,8 @@ public sealed class TableModel : PageModel
 		using var db = _f.Open();
 		if (!DataEnabled) return Page();
 
-		// Bind the project to the ROUTE workspace (see ProjectHome/Index): WorkspaceViewer proves
-		// membership in {workspaceKey} only, so without this a member of wsA could read the ROWS of
-		// wsB's table via /ui/wsA/proj-of-wsB/databases/db/table.
-		var inWorkspace = await db.Projects.AnyAsync(
-			p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
-		if (!inWorkspace) { DbNotFound = true; return Page(); }
-
+		// The project↔workspace binding is enforced by ProjectWorkspaceBindingFilter before this
+		// handler runs (see ProjectHome/Index) — the page only resolves the DB within the project.
 		var exists = await db.DataDbs.AnyAsync(
 			d => d.ProjectKey == ProjectKey && d.Name == DbName, ct);
 		if (!exists) { DbNotFound = true; return Page(); }

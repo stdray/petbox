@@ -575,6 +575,10 @@ public partial class Program
 		builder.Services.AddSingleton<PetBox.Web.Pages.Doc.DocContent>();
 		builder.Services.AddScoped<PetBox.Web.Auth.ProjectWorkspaceBindingFilter>();
 		builder.Services.AddScoped<PetBox.Web.Auth.AgentKeyAdminService>();
+		// core.db lives in the service layer only: the binding filter and the claims transformation
+		// above ask these, they never open a connection themselves (db-access-layer-cleanup).
+		builder.Services.AddScoped<PetBox.Web.Auth.IProjectDirectory, PetBox.Web.Auth.ProjectDirectory>();
+		builder.Services.AddScoped<PetBox.Web.Auth.IWorkspaceMembershipService, PetBox.Web.Auth.WorkspaceMembershipService>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.
