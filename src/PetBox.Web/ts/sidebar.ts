@@ -36,50 +36,27 @@ function apply(pinned: boolean): void {
 	});
 }
 
-// --- Tree expand memory -----------------------------------------------------
-// Persist which project nodes are expanded. State lives in a COOKIE (not
-// localStorage) so the server can read it and render `<details open>` up front —
-// no post-load reflow / flicker (the JS no longer opens nodes after paint).
-// Only nodes carrying a `data-tree-key` are tracked — the statically-rendered
-// project <details>, NOT the htmx lazy log/db/table nodes; persisting those
-// would fire a storm of lazy GETs on every page load.
-const TREE_COOKIE = "petbox.sidebar.tree";
-
-function readOpenSet(): Set<string> {
-	const m = document.cookie.match(/(?:^|;\s*)petbox\.sidebar\.tree=([^;]*)/);
-	if (!m) return new Set();
-	try {
-		return new Set(JSON.parse(decodeURIComponent(m[1] ?? "")) as string[]);
-	} catch {
-		return new Set();
-	}
-}
-
-function persistOpenSet(set: Set<string>): void {
-	const v = encodeURIComponent(JSON.stringify([...set]));
-	document.cookie = `${TREE_COOKIE}=${v};path=/;max-age=31536000;samesite=lax`;
-}
-
-function initTreeMemory(): void {
-	// Open state is rendered server-side from the cookie (no FOUC); here we only
-	// keep the cookie in sync as the user expands/collapses project nodes.
-	document.querySelectorAll<HTMLDetailsElement>("details[data-tree-key]").forEach((d) => {
-		const key = d.getAttribute("data-tree-key");
-		if (!key) return;
-		d.addEventListener("toggle", () => {
-			const set = readOpenSet();
-			if (d.open) set.add(key);
-			else set.delete(key);
-			persistOpenSet(set);
-		});
-	});
-}
+// --- Tree expand memory: DELETED, not migrated (work sidebar-tree-cookie-dead) -----------------
+// A previous version of this file wrote a SECOND cookie, `petbox.sidebar.tree`, with a JSON array
+// of expanded node keys, and promised (in this comment) that the server would read it back to
+// render `<details open>` with no reflow. Nothing ever read it: the server had no consumer, and
+// the sidebar markup carried no `data-tree-key` for it to key off of — a half-built mechanism.
+//
+// Deleted rather than finished, because finishing it properly is a much bigger feature than "wire
+// up a cookie read": the two disclosure trees that actually exist in the sidebar today (the Logs
+// and Databases nodes, _Layout.cshtml) are htmx-lazy (`hx-trigger="toggle once"`) — pre-opening
+// them from a cookie would render an empty "loading…" placeholder that never fetches (the toggle
+// event that triggers the htmx GET only fires on a user-driven state change, not on the initial
+// `open` attribute the server would have to print), which is a WORSE first paint than today's
+// collapsed-by-default, not a fix. The third `<details>` in the sidebar (the Tasks node) already
+// computes its open state from the active route (`IsActive(pTasks)`), so it needs no persistence
+// at all. Reopening this — if a real use case shows up — belongs in `BrowserState`/`petbox.ui`
+// (a `[BrowserState]` array property), never a second cookie.
 
 function init(): void {
 	// No apply(isPinned()) here on purpose: the server already rendered the correct class/aria
 	// state for this request, and re-applying it after load is exactly the post-load correction
 	// that caused the sidebar to visibly flicker on every board switch.
-	initTreeMemory();
 	document.addEventListener("click", (e) => {
 		const btn = (e.target as HTMLElement | null)?.closest("[data-sidebar-pin]");
 		if (!btn) return;

@@ -19,10 +19,22 @@ public enum Theme { Dark, Light, System }
 //
 // SidebarPinned (work `sidebar-pin-server-state`): whether the sidebar drawer is docked open
 // (pinned) or a floating collapsible overlay. Window/device state, not a cross-device preference,
-// so it lives in the cookie branch. Remaining follow-ups — board view mode, board filters, kql
-// panel pin, the dead sidebar-tree cookie — each add THEIR own property here (tagged [Setting] or
-// [BrowserState] per the storage-boundary call in their own spec) instead of standing up a
-// parallel resolver or an extra cookie.
+// so it lives in the cookie branch.
+//
+// KqlPanelPinned (work `kql-panel-pin-server-state`): same disease as SidebarPinned had — the KQL
+// search panel's sticky/shadow-lg classes used to be applied by ts/logs.ts from
+// localStorage['petbox.kqlPanelPinned'] AFTER paint. Same cure, same storage branch.
+//
+// The dead sidebar-tree cookie (`petbox.sidebar.tree`, work `sidebar-tree-cookie-dead`) was
+// DELETED rather than migrated here — see the design-decision comment on that work node for why
+// (no markup ever carried the `data-tree-key` the mechanism needed, and the two real disclosure
+// trees in the sidebar — the lazy htmx Logs/Databases nodes — can't be pre-opened without also
+// eagerly rendering their lazy content, which is a materially bigger feature than "wire up a
+// cookie read").
+//
+// Remaining follow-ups — board view mode, board filters — each add THEIR own property here
+// (tagged [Setting] or [BrowserState] per the storage-boundary call in their own spec) instead of
+// standing up a parallel resolver or an extra cookie.
 public sealed record BrowserState
 {
 	// DB branch, Scope.User, cross-device. Default is Theme.System — deliberately not Theme.Dark
@@ -46,4 +58,11 @@ public sealed record BrowserState
 	// anonymous/first-time visitor (no cookie yet) still sees the drawer open, unchanged.
 	[BrowserState(Key = "sidebarPinned")]
 	public bool SidebarPinned { get; init; } = true;
+
+	// Sticky/pinned KQL search panel on the Logs page (stays visible while scrolling the event
+	// list). Default false matches the pre-existing hardcoded `aria-pressed="false"` every Logs
+	// page used to always print, so a first-time visitor (no cookie yet) sees the same unpinned
+	// panel as before.
+	[BrowserState(Key = "kqlPanelPinned")]
+	public bool KqlPanelPinned { get; init; } = false;
 }

@@ -11,11 +11,9 @@ import { initJsonHighlight } from "./json-highlight";
 import { initMethodologyPreview } from "./methodology-preview";
 import { initNodeEdit } from "./nodeEdit";
 import { initWorkflowViz } from "./workflow-viz";
-import { initWorkspacePersistence } from "./workspace";
 
 Alpine.start();
 initConfigPage();
-initWorkspacePersistence();
 initBoardViewPersistence();
 initBoardPage();
 initNodeEdit();

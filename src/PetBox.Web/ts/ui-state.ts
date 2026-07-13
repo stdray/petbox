@@ -7,12 +7,15 @@
 //
 // The whole app writes ONE cookie, `petbox.ui`, carrying a flat JSON object keyed by each
 // [BrowserState] property's `Key` — never one cookie per feature (that grows every request's
-// header on each new preference). `sidebarPinned` is the first field (work
-// `sidebar-pin-server-state`); the remaining follow-ups (board view, board filters, kql panel
-// pin, dead-tree cookie) each add their own key here and to BrowserState.cs, and read/write it
-// through readUiState/writeUiState below instead of inventing their own cookie-merge logic.
+// header on each new preference). `sidebarPinned` (work `sidebar-pin-server-state`) and
+// `kqlPanelPinned` (work `kql-panel-pin-server-state`) are the first two fields; the remaining
+// follow-ups (board view, board filters) each add their own key here and to BrowserState.cs, and
+// read/write it through readUiState/writeUiState below instead of inventing their own cookie-merge
+// logic. The dead `petbox.sidebar.tree` cookie sidebar.ts used to write was deleted, not migrated
+// here (work `sidebar-tree-cookie-dead`) — nothing in the markup ever consumed it.
 export interface BrowserState {
 	sidebarPinned?: boolean;
+	kqlPanelPinned?: boolean;
 }
 
 const COOKIE_NAME = "petbox.ui";
@@ -49,9 +52,7 @@ export function readUiState(): Partial<BrowserState> {
 	return parseUiStateCookie(readRawCookie());
 }
 
-// Writes `patch` into the shared petbox.ui cookie, merged with whatever is already there. Matches
-// the attributes sidebar.ts already uses for its own cookie (petbox.sidebar.tree) so the two
-// cookies behave identically to callers.
+// Writes `patch` into the shared petbox.ui cookie, merged with whatever is already there.
 export function writeUiState(patch: Partial<BrowserState>): void {
 	const merged = mergeUiStateCookie(readRawCookie(), patch);
 	document.cookie = `${COOKIE_NAME}=${encodeURIComponent(merged)};path=/;max-age=31536000;samesite=lax`;
