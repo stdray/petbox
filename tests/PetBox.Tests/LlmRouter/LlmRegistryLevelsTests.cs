@@ -50,7 +50,7 @@ public sealed class LlmRegistryLevelsTests : IDisposable
 		_db.Insert(new Project { Key = OtherProj, WorkspaceKey = OtherWs, Name = "B", Description = "" });
 
 		_secrets = new AesGcmSecretEncryptor(Options.Create(new SecretEncryptorOptions { MasterKey = "test-master-key" }));
-		_settings = new SettingsResolver(_db.Factory(), _secrets);
+		_settings = new SettingsResolver(new SettingsStore(_db.Factory()), _secrets);
 		_resolver = new LlmRegistryLevelResolver(_db.Factory(), _secrets, _settings, _log);
 		_admin = new LlmRegistryLevelAdmin(_db.Factory(), _secrets);
 	}

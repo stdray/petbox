@@ -143,6 +143,9 @@ public partial class Program
 		builder.Services.AddScoped<IProjectCatalog, ProjectCatalog>();
 		// Portable agent-definition store (Core DB, always on — no feature flag).
 		builder.Services.AddScoped<PetBox.Core.Services.IAgentDefinitionService, PetBox.Core.Services.AgentDefinitionService>();
+		// Write door to the append-only HealthReports table, for the push endpoint (POST /api/health):
+		// the handler is pipeline code and does not open core.db itself.
+		builder.Services.AddScoped<PetBox.Core.Services.IHealthReportService, PetBox.Core.Services.HealthReportService>();
 		// Log dbs live under data/logs/** — the one subtree Backup deliberately skips
 		// (telemetry, not data; see Backup.ExcludedLogsDirName). Named constant, not a
 		// literal, so the two can't drift apart.
@@ -293,6 +296,9 @@ public partial class Program
 		builder.Services.AddSingleton<PetBox.Deploy.Data.IDeployDbFactory>(sp => new PetBox.Deploy.Data.DeployDbFactory(
 			$"Data Source={Path.Combine(ResolveDataDir(sp), "deploy.db")};Cache=Shared"));
 		builder.Services.AddScoped<PetBox.Deploy.Contract.IDeployService, PetBox.Deploy.Services.DeployService>();
+		// The node-agent's server-side half (poll + enroll). It straddles the deploy db, core.db and
+		// the config db, which is exactly why it is a service and not an endpoint lambda.
+		builder.Services.AddScoped<PetBox.Web.Deploy.IDeployAgentService, PetBox.Web.Deploy.DeployAgentService>();
 		if (new FeatureFlags(builder.Configuration).IsEnabled(Feature.Deploy))
 			builder.Services.AddGatedHostedService<PetBox.Deploy.Services.DeployFailoverSweeper>();
 		// Orphan file reclamation for the per-project temporal stores (tasks / memory /
@@ -570,6 +576,11 @@ public partial class Program
 			PetBox.Web.Auth.WorkspaceClaimsRefresher>();
 		builder.Services.AddScoped<INavigationContext, NavigationContext>();
 		builder.Services.AddScoped<PetBox.Web.Search.CrossScopeTaskSearchService>();
+		// The DB half of settings (the Settings table + the scope cascade) and the TYPED half
+		// (reflection over [Setting], encode/decode). SettingsResolver holds no factory: it asks the
+		// store. Both scoped — the store takes a fresh call-owned connection per call, exactly like
+		// every other core.db service.
+		builder.Services.AddScoped<PetBox.Core.Settings.ISettingsStore, PetBox.Core.Settings.SettingsStore>();
 		builder.Services.AddScoped<PetBox.Core.Settings.ISettingsResolver, PetBox.Web.Settings.SettingsResolver>();
 		// Typed, memoized-per-request view accessor over UiStateResolver — see UiState.cs. Scoped so
 		// the memoization field lives exactly one request; never resolved eagerly in middleware.

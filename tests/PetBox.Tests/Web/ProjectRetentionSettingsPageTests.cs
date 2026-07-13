@@ -59,7 +59,7 @@ public sealed class ProjectRetentionSettingsPageTests : IDisposable
 		new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>()).Build());
 
 	ProjectDetailModel InfoPage() =>
-		new(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new SettingsResolver(_db.Factory(), new NoSecrets())) { WorkspaceKey = Ws, ProjectKey = Proj };
+		new(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new SettingsResolver(new SettingsStore(_db.Factory()), new NoSecrets())) { WorkspaceKey = Ws, ProjectKey = Proj };
 
 	void SetSetting(string scope, string scopeKey, string value) =>
 		_db.Insert(new Setting

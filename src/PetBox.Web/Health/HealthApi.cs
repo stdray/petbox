@@ -1,11 +1,10 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using PetBox.Core.Auth;
 using PetBox.Core.Contract;
 using PetBox.Core.Data;
-using PetBox.Core.Models;
+using PetBox.Core.Services;
 
 namespace PetBox.Web.Health;
 
@@ -31,9 +30,12 @@ public static class HealthApi
 		string? BuildDate,
 		string Status);
 
-	static async Task<IResult> PushAsync(HttpContext ctx, ICoreDbFactory dbf, IProjectCatalog catalog, HealthPushRequest req, CancellationToken ct)
+	// Authorize, validate, delegate. The handler opens no database — it hands a validated report to
+	// IHealthReportService, which owns the table (AGENTS.md: the database is visible only in the
+	// service layer). Note the ordering that the old inline version got backwards: the connection
+	// used to be opened at the top, BEFORE the scope check, so every forbidden push paid for one.
+	static async Task<IResult> PushAsync(HttpContext ctx, IHealthReportService health, IProjectCatalog catalog, HealthPushRequest req, CancellationToken ct)
 	{
-		using var db = dbf.Open();
 		var scopes = ctx.User.Claims.FirstOrDefault(c => c.Type == "scopes")?.Value ?? "";
 		if (!scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
 				.Contains(ApiKeyScopes.HealthWrite, StringComparer.Ordinal))
@@ -50,18 +52,8 @@ public static class HealthApi
 		if (!await ProjectScope.AuthorizesAsync(ctx.User, project, catalog, ct))
 			return Results.Forbid();
 
-		await db.InsertAsync(new HealthReport
-		{
-			Svc = req.Svc.Trim(),
-			Name = req.Name,
-			Tags = HealthTags.Canonical(tags),
-			Version = req.Version,
-			Sha = req.Sha,
-			BuildDate = req.BuildDate,
-			Status = req.Status.Trim(),
-			ReceivedAt = DateTime.UtcNow,
-			Source = "push",
-		}, token: ct);
+		await health.RecordPushAsync(
+			new HealthReportInput(req.Svc, req.Name, tags, req.Version, req.Sha, req.BuildDate, req.Status), ct);
 
 		return TypedResults.Ok(new OkResponse(true));
 	}

@@ -167,7 +167,7 @@ public sealed class LlmRegistryImportTests : IDisposable
 		});
 		Importer().Import();
 
-		var resolver = new LlmRegistryLevelResolver(_db.Factory(), _secrets, new SettingsResolver(_db.Factory(), _secrets),
+		var resolver = new LlmRegistryLevelResolver(_db.Factory(), _secrets, new SettingsResolver(new SettingsStore(_db.Factory()), _secrets),
 			new CapturingLogger<LlmRegistryLevelResolver>());
 		var resolved = await resolver.ResolveAsync(SystemWs); // the built-in $system project
 
