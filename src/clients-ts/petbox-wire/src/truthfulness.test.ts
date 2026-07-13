@@ -466,3 +466,25 @@ test("leaf role body states the no-spawn rule imperatively, independent of harne
 test("claude-code declares mcp_subagent (verified live 2026-07-12)", () => {
   assert.equal(hasCapability("claude-code", "mcp_subagent"), true);
 });
+
+test("DEFAULT reserve notes: offline fallback does not invert the live semantics (bug @80 item 5)", () => {
+  // The offline fallback once taught the OPPOSITE rule: "Heavy reasoning / architecture
+  // review / stuck points only" reads as "call reserve when the work is heavy" — the live
+  // server definition says the exact reverse (hard work is a model escalation on a worker;
+  // reserve is for being STUCK, never merely for difficulty). Guard both directions so a
+  // hand-copied fallback cannot silently drift back into the inverted phrasing.
+  const reserve = DEFAULT_AGENT_DEFINITION.roles.find((r) => r.slug === "reserve")!;
+  const notes = reserve.notes ?? "";
+  assert.match(notes, /STUCK/, "reserve notes must state the stuck-trigger explicitly");
+  assert.ok(
+    !/heavy reasoning/i.test(notes),
+    "must not reintroduce 'heavy reasoning ... only' framing (the inverted rule)",
+  );
+  assert.ok(
+    /not merely when the work is hard/i.test(notes),
+    "must explicitly rule out 'hard work' as a trigger for reserve",
+  );
+  // requiredCapabilities must target the subagent surface, not mcp_main_session — reserve
+  // exists only as a subagent (finding 4 of the same node, closed alongside this fallback).
+  assert.deepEqual([...reserve.requiredCapabilities], ["mcp_subagent"]);
+});
