@@ -22,6 +22,12 @@
 	var sharedConfigUrl = Routes.SharedConfig(currentWs);
 
 	var (dataTheme, systemScript) = await PetBox.Web.Settings.ThemeHelper.ResolveForCurrentUserAsync(Nav, Settings, Context);
+
+	// Combined DB+cookie UI-state record (ui-state-framework), resolved BEFORE render exactly like
+	// the theme above. Ships with no properties yet — its five follow-ups (sidebar pin, board view,
+	// board filters, kql panel pin, dead tree cookie) each add theirs to BrowserState.cs and read it
+	// from here, instead of re-deriving this resolve-before-render wiring per feature.
+	ViewData["UiState"] = await PetBox.Web.Settings.UiStateResolver.ResolveForCurrentUserAsync<PetBox.Core.Settings.BrowserState>(Nav, Settings, Context);
 }
 <!DOCTYPE html>
 <html lang="en" data-theme="@dataTheme" class="h-full">
