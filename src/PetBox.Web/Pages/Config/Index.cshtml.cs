@@ -1,13 +1,10 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Caching.Memory;
 using PetBox.Config;
-using PetBox.Config.Data;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
 using PetBox.Core.Models;
 
 namespace PetBox.Web.Pages.Config;
@@ -15,21 +12,18 @@ namespace PetBox.Web.Pages.Config;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class IndexModel : PageModel
 {
-	readonly IConfigDbFactory _configFactory;
+	readonly IConfigDirectory _config;
 	readonly ISecretEncryptor _encryptor;
 	readonly Microsoft.Extensions.Caching.Memory.IMemoryCache _cache;
-	readonly ICoreDbFactory _f;
 
 	public IndexModel(
-		IConfigDbFactory configFactory,
+		IConfigDirectory config,
 		ISecretEncryptor encryptor,
-		Microsoft.Extensions.Caching.Memory.IMemoryCache cache,
-		ICoreDbFactory f)
+		Microsoft.Extensions.Caching.Memory.IMemoryCache cache)
 	{
-		_configFactory = configFactory;
+		_config = config;
 		_encryptor = encryptor;
 		_cache = cache;
-		_f = f;
 	}
 
 	public IReadOnlyList<SavedConfigFilter> SavedFilters { get; private set; } = [];
@@ -76,19 +70,14 @@ public sealed class IndexModel : PageModel
 		return result;
 	}
 
-	public IActionResult OnGet(string? q)
+	public async Task<IActionResult> OnGetAsync(string? q, CancellationToken ct)
 	{
-		using var db = _f.Open();
 		EffectiveWorkspaceKey = ResolveWorkspace();
 		KeyQuery = string.IsNullOrWhiteSpace(q) ? null : q.Trim();
 
-		SavedFilters = db.SavedConfigFilters
-			.Where(f => f.WorkspaceKey == EffectiveWorkspaceKey)
-			.OrderBy(f => f.Name)
-			.ToList();
+		SavedFilters = await _config.ListSavedFiltersAsync(EffectiveWorkspaceKey, ct);
 
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		var all = configDb.Bindings.Where(b => !b.IsDeleted).OrderBy(b => b.Path).ToList();
+		var all = await _config.ListActiveBindingsAsync(EffectiveWorkspaceKey, ct);
 
 		var facetKeys = new SortedSet<string>(StringComparer.Ordinal);
 		var facetValues = new Dictionary<string, SortedSet<string>>(StringComparer.Ordinal);
@@ -133,34 +122,10 @@ public sealed class IndexModel : PageModel
 		return false;
 	}
 
-	public IActionResult OnPostDelete(long id)
+	public async Task<IActionResult> OnPostDeleteAsync(long id, CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-
-		var existing = configDb.Bindings.FirstOrDefault(b => b.Id == id && !b.IsDeleted);
-		if (existing is not null)
-		{
-			var now = DateTime.UtcNow;
-			configDb.Insert(new ConfigBindingHistoryEntry
-			{
-				BindingId = existing.Id,
-				Action = "Delete",
-				Path = existing.Path,
-				Tags = existing.Tags,
-				Kind = existing.Kind,
-				OldValue = existing.Kind == Core.Models.BindingKind.Plain ? existing.Value : "(secret)",
-				NewValue = null,
-				Actor = User.Identity?.Name ?? "system",
-				At = now,
-			});
-			configDb.Bindings
-				.Where(b => b.Id == id)
-				.Set(b => b.IsDeleted, true)
-				.Set(b => b.DeletedAt, (DateTime?)now)
-				.Set(b => b.UpdatedAt, now)
-				.Update();
-		}
+		await _config.DeleteBindingByIdAsync(EffectiveWorkspaceKey, id, User.Identity?.Name ?? "system", ct);
 
 		// PRG + shared success notice (carried in TempData across the redirect), replacing the
 		// old ?deleteSuccess=1 query flag. Build the redirect URL by hand (LocalRedirect) —
@@ -170,9 +135,8 @@ public sealed class IndexModel : PageModel
 		return RedirectBack();
 	}
 
-	public IActionResult OnPostSaveFilter(string name)
+	public async Task<IActionResult> OnPostSaveFilterAsync(string name, CancellationToken ct)
 	{
-		using var db = _f.Open();
 		EffectiveWorkspaceKey = ResolveWorkspace();
 		var pairs = new List<string>();
 		foreach (var k in Request.Form.Keys)
@@ -185,22 +149,16 @@ public sealed class IndexModel : PageModel
 		{
 			var filterTags = string.Join(",", pairs.OrderBy(p => p, StringComparer.Ordinal));
 			var trimmed = name.Trim();
-			var existing = db.SavedConfigFilters.FirstOrDefault(
-				f => f.WorkspaceKey == EffectiveWorkspaceKey && f.Name == trimmed);
-			if (existing is null)
-				db.Insert(new SavedConfigFilter { WorkspaceKey = EffectiveWorkspaceKey, Name = trimmed, FilterTags = filterTags, CreatedAt = DateTime.UtcNow });
-			else
-				db.SavedConfigFilters.Where(f => f.Id == existing.Id).Set(f => f.FilterTags, filterTags).Update();
+			await _config.SaveFilterAsync(EffectiveWorkspaceKey, trimmed, filterTags, ct);
 			this.NotifySuccess($"Filter '{trimmed}' saved.");
 		}
 		return RedirectBack();
 	}
 
-	public IActionResult OnPostDeleteFilter(long id)
+	public async Task<IActionResult> OnPostDeleteFilterAsync(long id, CancellationToken ct)
 	{
-		using var db = _f.Open();
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		db.SavedConfigFilters.Where(f => f.Id == id && f.WorkspaceKey == EffectiveWorkspaceKey).Delete();
+		await _config.DeleteFilterAsync(EffectiveWorkspaceKey, id, ct);
 		this.NotifySuccess("Saved filter deleted.");
 		return RedirectBack();
 	}
@@ -224,11 +182,10 @@ public sealed class IndexModel : PageModel
 		return LocalRedirect(query.Count > 0 ? $"{path}?{string.Join("&", query)}" : path);
 	}
 
-	public IActionResult OnPostReveal(long id)
+	public async Task<IActionResult> OnPostRevealAsync(long id, CancellationToken ct)
 	{
 		EffectiveWorkspaceKey = ResolveWorkspace();
-		using var configDb = _configFactory.NewConfigDb(EffectiveWorkspaceKey);
-		var binding = configDb.Bindings.FirstOrDefault(b => b.Id == id);
+		var binding = await _config.GetBindingAsync(EffectiveWorkspaceKey, id, ct);
 
 		if (binding is null) return NotFound();
 		if (binding.Kind != Core.Models.BindingKind.Secret) return BadRequest();
@@ -252,18 +209,7 @@ public sealed class IndexModel : PageModel
 			}
 		}
 
-		configDb.Insert(new ConfigBindingHistoryEntry
-		{
-			BindingId = id,
-			Action = "Reveal",
-			Path = binding.Path,
-			Tags = binding.Tags,
-			Kind = binding.Kind,
-			OldValue = null,
-			NewValue = null,
-			Actor = userName,
-			At = DateTime.UtcNow,
-		});
+		await _config.RecordRevealAsync(EffectiveWorkspaceKey, binding, userName, ct);
 
 		return new JsonResult(new { plaintext });
 	}
