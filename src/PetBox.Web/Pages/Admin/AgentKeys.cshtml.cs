@@ -28,4 +28,25 @@ public sealed class AgentKeysModel(AgentKeyAdminService keys) : PageModel
 		this.NotifySuccess("API key revoked.");
 		return RedirectToPage();
 	}
+
+	// Rename / re-scope / set+clear the default project (spec apikey-mutable). The sysadmin's scope is
+	// the null workspace — every key, anywhere — but the outcome handling is identical to the
+	// workspace page's, because both go through the same service.
+	public async Task<IActionResult> OnPostEditAsync(string key, string name, string[] scopes, string? defaultProject)
+	{
+		var edit = new AgentKeyEdit(key, name, scopes ?? [], defaultProject);
+		switch (await keys.UpdateAsync(edit, workspaceKey: null, HttpContext.RequestAborted))
+		{
+			case KeyUpdateResult.Updated:
+				this.NotifySuccess("API key updated.");
+				return RedirectToPage();
+			case KeyUpdateResult.Refused refused:
+				// The refusal is shown, never swallowed — a redirect with nothing to say is exactly the
+				// silent form failure this feature exists to eliminate.
+				this.NotifyError(refused.Reason);
+				return RedirectToPage();
+			default:
+				return NotFound();
+		}
+	}
 }

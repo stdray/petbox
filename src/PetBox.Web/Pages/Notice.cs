@@ -12,6 +12,13 @@ static class Notice
 	// TempData key for the carried success message. Read (and thereby consumed) by _Notice.cshtml.
 	public const string SuccessKey = "Notice.Success";
 
+	// TempData key for the carried FAILURE message — the other half of Post/Redirect/Get. A mutator
+	// that refuses (a config-declared key, an invalid scope set) must still redirect, and the reason
+	// has to survive that redirect: without this channel the refusal renders as a page that simply
+	// came back unchanged, which is indistinguishable from a form that silently did nothing (spec
+	// apikey-mutable: a refusal states its reason, it is never a silent no-op).
+	public const string ErrorKey = "Notice.Error";
+
 	// TempData key for a one-time secret (a freshly minted API key) shown once after a
 	// redirect. Distinct from SuccessKey so the page can render it in its own copy-me chrome.
 	public const string NewKeyKey = "Notice.NewKey";
@@ -25,6 +32,16 @@ static class Notice
 		if (tempData is null)
 			return;
 		tempData[SuccessKey] = message;
+	}
+
+	// Record a failure message to show after the next redirect. Same no-op-without-TempData contract
+	// as NotifySuccess.
+	public static void NotifyError(this PageModel page, string message)
+	{
+		var tempData = page.TempData;
+		if (tempData is null)
+			return;
+		tempData[ErrorKey] = message;
 	}
 
 	// Carry a one-time secret across a redirect (Post/Redirect/Get for the mint flows), so a

@@ -1,3 +1,7 @@
+using LinqToDB;
+using Microsoft.Extensions.DependencyInjection;
+using PetBox.Core.Data;
+using PetBox.Core.Models;
 using PetBox.E2ETests.Infrastructure;
 
 namespace PetBox.E2ETests;
@@ -120,6 +124,101 @@ public sealed class AdminUiTests(WebAppFixture app, ITestOutputHelper output) : 
 			{ "dep-service", "dep-project", "dep-node", "dep-image", "dep-ports",
 			  "dep-volumes", "dep-restart", "dep-memory", "dep-domain", "dep-add" })
 			await Expect(_page.GetByTestId(id)).ToHaveCountAsync(1);
+	}
+
+	// admin-ui-apikey-edit-lastused, the card's acceptance, driven through the real UI:
+	// a fresh key reads "never" (not an empty cell, not 1970); the editor renames it and replaces its
+	// scope set; and on a cross-project key the default project can be both SET and CLEARED.
+	[Fact]
+	public async Task AgentKeys_LastUsed_And_Editor_RenameRescopeAndDefaultProject()
+	{
+		var name = $"e2e-edit-{System.Guid.NewGuid():N}";
+
+		await _page!.GotoAsync("/ui/admin/ws/$system/projects/$system/connect");
+		await _page.GetByTestId("connect-key-name").FillAsync(name);
+		await _page.GetByTestId("connect-mint-submit").ClickAsync();
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+
+		await _page.GotoAsync("/ui/admin/sys/agent-keys");
+		var row = _page.GetByTestId("agent-key-row").Filter(new() { HasText = name });
+		await Expect(row).ToHaveCountAsync(1);
+
+		// Freshly minted, never authenticated — the cell SAYS so.
+		await Expect(row.GetByTestId("agent-key-never-used")).ToBeVisibleAsync();
+		await Expect(row.GetByTestId("agent-key-last-used")).ToHaveCountAsync(0);
+
+		// Rename + replace the scope set through the editor.
+		var renamed = $"{name}-renamed";
+		await row.GetByTestId("agent-key-edit").ClickAsync();
+		await row.GetByTestId("agent-key-edit-name").FillAsync(renamed);
+		await row.GetByTestId("agent-key-edit-scope-tasks:read").Locator("input").CheckAsync();
+		await row.GetByTestId("agent-key-edit-submit").ClickAsync();
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+
+		var renamedRow = _page.GetByTestId("agent-key-row").Filter(new() { HasText = renamed });
+		await Expect(renamedRow).ToHaveCountAsync(1);
+		await Expect(renamedRow).ToContainTextAsync("tasks:read");
+
+		// Clean up the minted key.
+		_page.Dialog += (_, d) => d.AcceptAsync();
+		await renamedRow.GetByTestId("agent-key-revoke").ClickAsync();
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+		await Expect(_page.GetByTestId("sys-agent-keys-table").Filter(new() { HasText = renamed })).ToHaveCountAsync(0);
+	}
+
+	// The default project is a CROSS-PROJECT-key concept, and the UI cannot mint one (apikey_create
+	// only) — so the row is seeded straight into the DB, then driven through the editor. Clearing it
+	// is the half that breaks when "" is stored instead of NULL.
+	[Fact]
+	public async Task AgentKeys_Editor_SetsAndClearsDefaultProjectOnCrossProjectKey()
+	{
+		var name = $"e2e-wildcard-{System.Guid.NewGuid():N}";
+		var key = $"yb_key_{System.Guid.NewGuid():N}";
+
+		using (var scope = app.Services.CreateScope())
+		{
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
+			await db.InsertAsync(new ApiKey
+			{
+				Key = key,
+				ProjectKey = "*",
+				Scopes = "tasks:read",
+				Name = name,
+				CreatedAt = System.DateTime.UtcNow,
+				DefaultProjectKey = null,
+			});
+		}
+
+		await _page!.GotoAsync("/ui/admin/sys/agent-keys");
+		var row = _page.GetByTestId("agent-key-row").Filter(new() { HasText = name });
+		await Expect(row).ToHaveCountAsync(1);
+		await Expect(row.GetByTestId("agent-key-default-project")).ToHaveCountAsync(0);
+
+		// SET it.
+		await row.GetByTestId("agent-key-edit").ClickAsync();
+		await row.GetByTestId("agent-key-edit-default-project").FillAsync("$system");
+		await row.GetByTestId("agent-key-edit-submit").ClickAsync();
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+
+		row = _page.GetByTestId("agent-key-row").Filter(new() { HasText = name });
+		await Expect(row.GetByTestId("agent-key-default-project")).ToContainTextAsync("$system");
+
+		// CLEAR it — an empty field means NULL, not "".
+		await row.GetByTestId("agent-key-edit").ClickAsync();
+		await row.GetByTestId("agent-key-edit-default-project").FillAsync("");
+		await row.GetByTestId("agent-key-edit-submit").ClickAsync();
+		await _page.WaitForLoadStateAsync(LoadState.NetworkIdle);
+
+		row = _page.GetByTestId("agent-key-row").Filter(new() { HasText = name });
+		await Expect(row.GetByTestId("agent-key-default-project")).ToHaveCountAsync(0);
+
+		using (var scope = app.Services.CreateScope())
+		{
+			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
+			var stored = db.ApiKeys.First(k => k.Key == key);
+			stored.DefaultProjectKey.Should().BeNull("clearing the field must store NULL, never an empty string");
+			await db.ApiKeys.Where(k => k.Key == key).DeleteAsync();
+		}
 	}
 
 	[Fact]

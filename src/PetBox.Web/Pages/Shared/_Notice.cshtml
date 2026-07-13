@@ -1,12 +1,21 @@
-@* Shared post-mutation success notice. Reads (and consumes) the message carried across a
-	Post/Redirect/Get in TempData by PageModel.NotifySuccess. Rendered once by every app layout,
-	so a successful mutator's feedback shows consistently after its redirect. *@
+@* Shared post-mutation notice. Reads (and consumes) the message carried across a
+	Post/Redirect/Get in TempData by PageModel.NotifySuccess / NotifyError. Rendered once by every
+	app layout, so a mutator's feedback shows consistently after its redirect — a REFUSAL just as
+	much as a success: a handler that declines and redirects with nothing to say is a form that
+	silently did nothing. *@
 @{
 	var noticeSuccess = TempData[PetBox.Web.Pages.Notice.SuccessKey] as string;
+	var noticeError = TempData[PetBox.Web.Pages.Notice.ErrorKey] as string;
 }
 @if (!string.IsNullOrEmpty(noticeSuccess))
 {
 	<div role="status" class="alert alert-success mb-4 text-sm" data-testid="notice-success">
 		<span>@noticeSuccess</span>
+	</div>
+}
+@if (!string.IsNullOrEmpty(noticeError))
+{
+	<div role="alert" class="alert alert-error mb-4 text-sm" data-testid="notice-error">
+		<span>@noticeError</span>
 	</div>
 }

@@ -42,4 +42,28 @@ public sealed class WorkspaceAgentKeysModel(AgentKeyAdminService keys) : PageMod
 		this.NotifySuccess("API key revoked.");
 		return RedirectToPage(new { workspaceKey = WorkspaceKey });
 	}
+
+	// The same editor the sysadmin page exposes, confined to THIS workspace's keys — and confined
+	// inside the UPDATE statement (AgentKeyAdminService.UpdateAsync), not by what the list rendered.
+	// An edit is addressed by the key VALUE, so a forged POST naming another tenant's key would
+	// otherwise re-scope it to admin:provision while every rendered page looked correct — the same
+	// IDOR shape revoke already had to close, one layer down.
+	//
+	// 404 (not 403) for "not yours", for the same reason as revoke: either other answer would let a
+	// workspace admin probe for the existence of another tenant's keys.
+	public async Task<IActionResult> OnPostEditAsync(string key, string name, string[] scopes, string? defaultProject)
+	{
+		var edit = new AgentKeyEdit(key, name, scopes ?? [], defaultProject);
+		switch (await keys.UpdateAsync(edit, WorkspaceKey, HttpContext.RequestAborted))
+		{
+			case KeyUpdateResult.Updated:
+				this.NotifySuccess("API key updated.");
+				return RedirectToPage(new { workspaceKey = WorkspaceKey });
+			case KeyUpdateResult.Refused refused:
+				this.NotifyError(refused.Reason);
+				return RedirectToPage(new { workspaceKey = WorkspaceKey });
+			default:
+				return NotFound();
+		}
+	}
 }
