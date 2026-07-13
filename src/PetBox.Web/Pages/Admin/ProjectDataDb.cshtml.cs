@@ -1,11 +1,8 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Data.Sqlite;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
-using PetBox.Core.Models;
 using PetBox.Data;
 using PetBox.Data.Contract;
 using PetBox.Data.Schema;
@@ -20,14 +17,14 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectDataDbModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IDataDbCatalog _catalog;
 	readonly FeatureFlags _features;
 	readonly IDataDbFactory _factory;
 	readonly IDataSqlService _sql;
 
-	public ProjectDataDbModel(ICoreDbFactory f, FeatureFlags features, IDataDbFactory factory, IDataSqlService sql)
+	public ProjectDataDbModel(IDataDbCatalog catalog, FeatureFlags features, IDataDbFactory factory, IDataSqlService sql)
 	{
-		_f = f;
+		_catalog = catalog;
 		_features = features;
 		_factory = factory;
 		_sql = sql;
@@ -38,7 +35,7 @@ public sealed class ProjectDataDbModel : PageModel
 	[FromRoute(Name = "projectKey")] public string ProjectKey { get; set; } = string.Empty;
 	[FromRoute(Name = "dbName")] public string DbName { get; set; } = string.Empty;
 
-	public DataDb? Db { get; private set; }
+	public DataDbInfo? Db { get; private set; }
 	public bool DbNotFound { get; private set; }
 	public IReadOnlyList<TableInfo> Tables { get; private set; } = [];
 	public IReadOnlyList<MigrationRow> Migrations { get; private set; } = [];
@@ -46,11 +43,9 @@ public sealed class ProjectDataDbModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync()
 	{
-		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Data)) return base.NotFound();
 
-		Db = await db.DataDbs.FirstOrDefaultAsync(
-			(DataDb d) => d.ProjectKey == ProjectKey && d.Name == DbName);
+		Db = await _catalog.GetAsync(ProjectKey, DbName);
 		if (Db is null) { DbNotFound = true; return Page(); }
 
 		await PopulateAsync();
@@ -59,11 +54,9 @@ public sealed class ProjectDataDbModel : PageModel
 
 	public async Task<IActionResult> OnPostApplyAsync(string name, string sql)
 	{
-		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Data)) return base.NotFound();
 
-		Db = await db.DataDbs.FirstOrDefaultAsync(
-			(DataDb d) => d.ProjectKey == ProjectKey && d.Name == DbName);
+		Db = await _catalog.GetAsync(ProjectKey, DbName);
 		if (Db is null) { DbNotFound = true; return Page(); }
 
 		if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(sql))

@@ -1,13 +1,11 @@
 using System.Globalization;
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Data.Sqlite;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
-using PetBox.Core.Models;
 using PetBox.Data;
+using PetBox.Data.Contract;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -23,15 +21,15 @@ public sealed class TableModel : PageModel
 {
 	const int PageSize = 50;
 
-	readonly ICoreDbFactory _f;
 	readonly FeatureFlags _features;
 	readonly IDataDbFactory _factory;
+	readonly IDataDbCatalog _catalog;
 
-	public TableModel(ICoreDbFactory f, FeatureFlags features, IDataDbFactory factory)
+	public TableModel(FeatureFlags features, IDataDbFactory factory, IDataDbCatalog catalog)
 	{
-		_f = f;
 		_features = features;
 		_factory = factory;
+		_catalog = catalog;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -62,13 +60,11 @@ public sealed class TableModel : PageModel
 	// route-key in Razor Pages, so a ?page=N query value never binds here.
 	public async Task<IActionResult> OnGetAsync(string? sql, int? pageNum, CancellationToken ct)
 	{
-		using var db = _f.Open();
 		if (!DataEnabled) return Page();
 
 		// The project↔workspace binding is enforced by ProjectWorkspaceBindingFilter before this
 		// handler runs (see ProjectHome/Index) — the page only resolves the DB within the project.
-		var exists = await db.DataDbs.AnyAsync(
-			d => d.ProjectKey == ProjectKey && d.Name == DbName, ct);
+		var exists = await _catalog.GetAsync(ProjectKey, DbName, ct) is not null;
 		if (!exists) { DbNotFound = true; return Page(); }
 
 		Sql = string.IsNullOrWhiteSpace(sql) ? DefaultSql : sql.Trim();

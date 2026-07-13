@@ -1,12 +1,10 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Data.Sqlite;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
-using PetBox.Core.Models;
 using PetBox.Data;
+using PetBox.Data.Contract;
 using PetBox.Data.Schema;
 using PetBox.Web.Auth;
 
@@ -22,17 +20,17 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class DatabaseModel : PageModel
 {
-	readonly ICoreDbFactory _f;
 	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly IDataDbFactory _factory;
+	readonly IDataDbCatalog _catalog;
 
-	public DatabaseModel(ICoreDbFactory f, IProjectDirectory projects, FeatureFlags features, IDataDbFactory factory)
+	public DatabaseModel(IProjectDirectory projects, FeatureFlags features, IDataDbFactory factory, IDataDbCatalog catalog)
 	{
-		_f = f;
 		_projects = projects;
 		_features = features;
 		_factory = factory;
+		_catalog = catalog;
 	}
 
 	[BindProperty(SupportsGet = true, Name = "workspaceKey")]
@@ -45,7 +43,7 @@ public sealed class DatabaseModel : PageModel
 	public string DbName { get; set; } = string.Empty;
 
 	public Core.Models.Project? Project { get; private set; }
-	public DataDb? Db { get; private set; }
+	public DataDbInfo? Db { get; private set; }
 	public bool DataEnabled => _features.IsEnabled(Feature.Data);
 	public IReadOnlyList<TableRow> Tables { get; private set; } = [];
 
@@ -58,10 +56,7 @@ public sealed class DatabaseModel : PageModel
 		Project = await _projects.GetInWorkspaceAsync(WorkspaceKey, ProjectKey, ct);
 		if (Project is null) return Page();
 
-		// The data-db catalog has no service door yet — this page still reads it itself.
-		using var db = _f.Open();
-		Db = await db.DataDbs.FirstOrDefaultAsync(
-			d => d.ProjectKey == ProjectKey && d.Name == DbName, ct);
+		Db = await _catalog.GetAsync(ProjectKey, DbName, ct);
 		if (Db is null) return Page();
 
 		Tables = await IntrospectAsync(ct);

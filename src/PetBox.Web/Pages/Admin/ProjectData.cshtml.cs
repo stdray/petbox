@@ -1,11 +1,9 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
-using PetBox.Core.Models;
-using PetBox.Data;
+using PetBox.Data.Contract;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
@@ -15,15 +13,15 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectDataModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
-	readonly IDataDbFactory _factory;
+	readonly IDataDbCatalog _catalog;
 
-	public ProjectDataModel(ICoreDbFactory f, FeatureFlags features, IDataDbFactory factory)
+	public ProjectDataModel(IProjectDirectory projects, FeatureFlags features, IDataDbCatalog catalog)
 	{
-		_f = f;
+		_projects = projects;
 		_features = features;
-		_factory = factory;
+		_catalog = catalog;
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -33,29 +31,24 @@ public sealed class ProjectDataModel : PageModel
 	[FromRoute(Name = "projectKey")]
 	public string ProjectKey { get; set; } = string.Empty;
 
-	public List<DataDb> DataDbs { get; private set; } = [];
+	public List<DataDbInfo> DataDbs { get; private set; } = [];
 	public bool ProjectNotFound { get; private set; }
 	public string? ErrorMessage { get; private set; }
 
 	public async Task<IActionResult> OnGetAsync()
 	{
-		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Data))
 			return NotFound();
 
-		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
+		var project = await _projects.GetAsync(ProjectKey);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
-		DataDbs = await db.DataDbs
-			.Where(d => d.ProjectKey == ProjectKey)
-			.OrderBy(d => d.Name)
-			.ToListAsync();
+		DataDbs = [.. await _catalog.ListAsync(ProjectKey)];
 		return Page();
 	}
 
 	public async Task<IActionResult> OnPostCreateAsync(string name, string? description, long? maxPageCount)
 	{
-		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Data)) return NotFound();
 		if (string.IsNullOrWhiteSpace(name))
 		{
@@ -64,18 +57,13 @@ public sealed class ProjectDataModel : PageModel
 			return Page();
 		}
 
-		var exists = await db.DataDbs.AnyAsync((DataDb d) => d.ProjectKey == ProjectKey && d.Name == name);
-		if (exists)
-		{
-			ErrorMessage = $"DataDb '{name}' already exists.";
-			await OnGetAsync();
-			return Page();
-		}
-
-		var quota = maxPageCount ?? DataDbFactory.DefaultMaxPageCount;
+		DataDbChangeResult result;
 		try
 		{
-			await _factory.CreateAsync(ProjectKey, name, quota);
+			// The file first, then the row — the catalog's CreateAsync order (see DataDbCatalog); a
+			// throw from the file create (e.g. disk/permission failure) is reported the same way this
+			// page always reported it, rather than 500ing.
+			result = await _catalog.CreateAsync(ProjectKey, name, description, maxPageCount);
 		}
 		catch (Exception ex) when (ex is not OperationCanceledException)
 		{
@@ -84,26 +72,30 @@ public sealed class ProjectDataModel : PageModel
 			return Page();
 		}
 
-		var now = DateTime.UtcNow;
-		await db.InsertAsync(new DataDb
+		switch (result)
 		{
-			ProjectKey = ProjectKey,
-			Name = name,
-			Description = description,
-			MaxPageCount = quota,
-			CreatedAt = now,
-			UpdatedAt = now,
-		});
-		return RedirectToPage();
+			case DataDbChangeResult.Created:
+				return RedirectToPage();
+			case DataDbChangeResult.Conflict conflict:
+				ErrorMessage = conflict.Reason;
+				break;
+			case DataDbChangeResult.Refused refused:
+				ErrorMessage = refused.Reason;
+				break;
+			default:
+				ErrorMessage = "Failed to create DataDb.";
+				break;
+		}
+
+		await OnGetAsync();
+		return Page();
 	}
 
 	public async Task<IActionResult> OnPostDeleteAsync(string name)
 	{
-		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Data)) return NotFound();
 
-		await db.DataDbs.Where(d => d.ProjectKey == ProjectKey && d.Name == name).DeleteAsync();
-		_factory.TryDelete(ProjectKey, name);
+		await _catalog.DeleteAsync(ProjectKey, name);
 		this.NotifySuccess($"DataDb '{name}' deleted.");
 		return RedirectToPage();
 	}

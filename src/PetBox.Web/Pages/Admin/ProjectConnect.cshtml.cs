@@ -1,11 +1,10 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
@@ -16,12 +15,14 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectConnectModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
+	readonly AgentKeyAdminService _keys;
 	readonly FeatureFlags _features;
 
-	public ProjectConnectModel(ICoreDbFactory f, FeatureFlags features)
+	public ProjectConnectModel(IProjectDirectory projects, AgentKeyAdminService keys, FeatureFlags features)
 	{
-		_f = f;
+		_projects = projects;
+		_keys = keys;
 		_features = features;
 	}
 
@@ -77,8 +78,7 @@ public sealed class ProjectConnectModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync()
 	{
-		using var db = _f.Open();
-		Project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
+		Project = await _projects.GetAsync(ProjectKey);
 		if (Project is null) { ProjectNotFound = true; return Page(); }
 		// A just-minted key rides here across the Post/Redirect/Get from OnPostMint and is shown
 		// once; a refresh (no TempData) falls back to the mint form. See Notice.CarryNewKey.
@@ -88,8 +88,7 @@ public sealed class ProjectConnectModel : PageModel
 
 	public async Task<IActionResult> OnPostMintAsync(string name, string[]? scopes)
 	{
-		using var db = _f.Open();
-		Project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
+		Project = await _projects.GetAsync(ProjectKey);
 		if (Project is null) { ProjectNotFound = true; return Page(); }
 
 		if (string.IsNullOrWhiteSpace(name))
@@ -111,19 +110,22 @@ public sealed class ProjectConnectModel : PageModel
 			return Page();
 		}
 
-		var keyValue = $"yb_key_{Guid.NewGuid():N}";
-		await db.InsertAsync(new ApiKey
+		// Same two calls ProjectDetail's OnPostCreateKeyAsync makes — MintAsync owns the raw secret's
+		// generation and the project-existence check.
+		var minted = await _keys.MintAsync(new AgentKeyMint(name.Trim(), valid, ProjectKey));
+		switch (minted)
 		{
-			Key = keyValue,
-			ProjectKey = ProjectKey,
-			Scopes = string.Join(",", valid),
-			Name = name.Trim(),
-			CreatedAt = DateTime.UtcNow,
-		});
-
-		// PRG: carry the one-time key across a redirect to the clean connect URL, so a refresh
-		// re-POSTs nothing (no accidental second key) yet the key still shows exactly once.
-		this.CarryNewKey(keyValue);
-		return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey });
+			case KeyMintResult.Minted m:
+				// PRG: carry the one-time key across a redirect to the clean connect URL, so a refresh
+				// re-POSTs nothing (no accidental second key) yet the key still shows exactly once.
+				this.CarryNewKey(m.Key.Key);
+				return RedirectToPage(new { workspaceKey = WorkspaceKey, projectKey = ProjectKey });
+			case KeyMintResult.NotFound nf:
+				ErrorMessage = nf.Reason;
+				return Page();
+			default:
+				ErrorMessage = ((KeyMintResult.Refused)minted).Reason;
+				return Page();
+		}
 	}
 }
