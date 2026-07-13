@@ -21,7 +21,7 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class IndexModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly ICoreDbRollupService _rollup;
 	readonly IProjectDirectory _projects;
 	readonly ISettingsResolver _settings;
 	readonly IConfigDbFactory _configFactory;
@@ -29,14 +29,14 @@ public sealed class IndexModel : PageModel
 	readonly FeatureFlags _features;
 
 	public IndexModel(
-		ICoreDbFactory f,
+		ICoreDbRollupService rollup,
 		IProjectDirectory projects,
 		ISettingsResolver settings,
 		IConfigDbFactory configFactory,
 		ITasksService tasks,
 		FeatureFlags features)
 	{
-		_f = f;
+		_rollup = rollup;
 		_projects = projects;
 		_settings = settings;
 		_configFactory = configFactory;
@@ -78,13 +78,12 @@ public sealed class IndexModel : PageModel
 		Project = await _projects.GetInWorkspaceAsync(WorkspaceKey, ProjectKey, ct);
 		if (Project is null) return;
 
-		// The counters below have no service door yet (logs, data dbs, api keys, health reports), so
-		// this page still opens core.db for them — ONE connection, after the project is known.
-		using var db = _f.Open();
-
-		LogCount = await db.Logs.CountAsync(l => l.ProjectKey == ProjectKey, ct);
-		DbCount = await db.DataDbs.CountAsync(d => d.ProjectKey == ProjectKey, ct);
-		KeyCount = await db.ApiKeys.CountAsync(k => k.ProjectKey == ProjectKey, ct);
+		// Logs/DataDbs/ApiKeys counts + this project's latest health, in ONE core.db connection
+		// (ICoreDbRollupService — db-out-of-pages-remaining-24 group B).
+		var rollup = await _rollup.GetProjectRollupAsync(ProjectKey, ct);
+		LogCount = rollup.LogCount;
+		DbCount = rollup.DbCount;
+		KeyCount = rollup.KeyCount;
 		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
 
 		if (ConfigEnabled)
@@ -96,16 +95,8 @@ public sealed class IndexModel : PageModel
 		var dash = await _settings.GetAsync<DashboardSettings>(Scope.System, "$", ct);
 		StaleSeconds = dash.StaleSeconds;
 
-		var maxIds = await db.HealthReports
-			.GroupBy(r => new { r.Svc, r.Tags })
-			.Select(g => g.Max(x => x.Id))
-			.ToListAsync(ct);
-		var latest = maxIds.Count == 0
-			? []
-			: await db.HealthReports.Where(r => maxIds.Contains(r.Id)).ToListAsync(ct);
-
 		var rows = new List<HealthRow>();
-		foreach (var r in latest)
+		foreach (var r in rollup.LatestHealth)
 		{
 			var tags = HealthTags.Parse(r.Tags);
 			if (!tags.TryGetValue("project", out var proj) || proj != ProjectKey) continue;
