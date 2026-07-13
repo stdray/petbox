@@ -60,7 +60,7 @@ public sealed class LogsIndexDefaultLogTests : IDisposable
 
 	// PageContext must be wired: OnGetAsync reads Request.Headers (the HX-Request htmx check) on
 	// its normal-path return — an unwired PageModel's Request throws NullReferenceException.
-	IndexModel NewModel() => new(_store, _db.Factory())
+	IndexModel NewModel() => new(_store, _db.Factory().Projects(), _db.Factory().SavedQueries())
 	{
 		WorkspaceKey = "ws",
 		ProjectKeyRoute = Proj,
