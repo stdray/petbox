@@ -1,0 +1,39 @@
+@inject PetBox.Web.Navigation.INavigationContext Nav
+@{
+	// Split out of the former _ZoneSelectors (nav-project-selector-placement, item 1): rendered
+	// immediately next to the project's OWN section block in both zones — /ui's "Project"
+	// heading and the admin sidebar's "Project administration" section — instead of sitting up
+	// top next to the workspace selector, separated from what it controls by workspace-level
+	// nav items. See _WorkspaceSelector for the sibling ws select + pin, which stays at the top.
+	var currentWs = Nav.CurrentWorkspaceKey ?? string.Empty;
+	var currentProject = Nav.CurrentProjectKey;
+	var projects = Nav.ProjectsInCurrentWorkspace;
+
+	// Same zone-preserving switch as the workspace selector — a project change on an admin page
+	// keeps you in admin (of the newly-chosen project), and in /ui keeps you in /ui.
+	var path = Context.Request.Path.Value ?? string.Empty;
+	var zone = path.StartsWith("/ui/admin", StringComparison.OrdinalIgnoreCase) ? "admin" : "ui";
+}
+<div class="px-2" data-testid="nav-project-selector">
+	<form method="post" action="/api/ui/project" data-testid="nav-project-switch">
+		<input type="hidden" name="ws" value="@currentWs" />
+		<input type="hidden" name="zone" value="@zone" data-testid="nav-project-zone" />
+		@if (projects.Count == 0)
+		{
+			<select disabled aria-label="Select project" title="No projects in this workspace"
+				class="select select-sm select-bordered w-full font-mono text-xs opacity-60" data-testid="nav-project-select">
+				<option>no projects</option>
+			</select>
+		}
+		else
+		{
+			<select name="key" onchange="this.form.submit()" aria-label="Switch project" title="Switch project"
+				class="select select-sm select-bordered w-full font-mono text-xs" data-testid="nav-project-select">
+				@foreach (var p in projects)
+				{
+					<option value="@p.Key" selected="@(string.Equals(p.Key, currentProject, StringComparison.Ordinal))">@p.Key</option>
+				}
+			</select>
+		}
+	</form>
+</div>

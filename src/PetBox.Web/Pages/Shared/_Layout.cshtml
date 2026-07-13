@@ -1,6 +1,8 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
 @inject PetBox.Tasks.Contract.ITasksService Tasks
 @inject PetBox.Web.Settings.IUiState UiState
+@inject PetBox.Data.Contract.IDataDbCatalog DataDbCatalog
+@inject PetBox.Log.Core.Data.ILogStore LogStore
 @{
 	// Null when the user is a member of no workspace at all — the sidebar's workspace/project
 	// sections are then skipped entirely (there is nothing to link to; the old "$system" fallback
@@ -15,6 +17,28 @@
 	if (Nav.TasksEnabled && !string.IsNullOrEmpty(currentProject))
 	{
 		currentProjectBoards = await Tasks.ListBoardsAsync(currentProject, Context.RequestAborted);
+	}
+
+	// nav-hide-empty-sections (item 10): Databases and Logs are populated ONLY from the admin
+	// zone — the user-zone Databases page's own empty state says "ask a workspace admin" (its
+	// create link is even role-gated), and the Logs page's empty state points straight at the
+	// admin Logs page. Neither carries the "agents create these via MCP tools" self-service
+	// language that Tasks/Memory/Sessions do (see those pages' own empty states) — those stay
+	// visible even when empty; these two are pure noise when there is nothing to show AND the
+	// user has no way to fill them from here. Same eager-fetch shape as currentProjectBoards
+	// above (a cheap catalog metadata read, not a file open) — deciding "show the node at all"
+	// is exactly the kind of per-request decision that pattern already exists for.
+	var showDatabasesNode = false;
+	if (Nav.DataEnabled && !string.IsNullOrEmpty(currentProject))
+	{
+		var dbs = await DataDbCatalog.ListAsync(currentProject, Context.RequestAborted);
+		showDatabasesNode = dbs.Count > 0;
+	}
+	var showLogsNode = false;
+	if (!string.IsNullOrEmpty(currentProject))
+	{
+		var logs = await LogStore.ListAsync(currentProject, Context.RequestAborted);
+		showLogsNode = logs.Count > 0;
 	}
 	var path = Context.Request.Path.Value ?? string.Empty;
 	bool IsActive(string prefix) => path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
@@ -123,7 +147,7 @@
 				{
 					<div class="hidden" data-testid="nav-current-ws">@currentWs</div>
 
-					<partial name="_ZoneSelectors" />
+					<partial name="_WorkspaceSelector" />
 
 					@if (!hasWs)
 					{
@@ -164,9 +188,13 @@
 						</li>
 					</ul>
 
-					<div class="px-3 py-2 mt-2 border-t border-base-300">
+					<div class="px-3 pt-2 mt-2 border-t border-base-300">
 						<div class="text-xs opacity-50 uppercase tracking-wide">Project</div>
 					</div>
+					@* nav-project-selector-placement (item 1): the project selector sits right here, next to
+					   the project's OWN section block, instead of up top next to the workspace selector —
+					   separated from what it controls by the workspace-level items above. *@
+					<partial name="_ProjectSelector" />
 
 					@* Flat, single-project section list: the project is chosen by the selector above,
 					   so there is no per-project disclosure tree here — only the sections of the
@@ -189,14 +217,22 @@
 							var pLlm = Routes.ProjectLlmRouter(wsKey, currentProject);
 							<li class="hidden" data-testid="nav-project" data-project-key="@currentProject"></li>
 							<li><a href="@pDash" class="@(IsExactly(pDash) ? "active" : "")" data-testid="nav-proj-dashboard">Dashboard</a></li>
-							<li data-testid="nav-proj-logs-node">
-								<details hx-get="/ui/_nav/tree?handler=Logs&project=@currentProject" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
-									<summary class="@(IsActive(pLogs) ? "active" : "")"><a href="@pLogs" data-testid="nav-proj-logs">Logs</a></summary>
-									<ul class="tree-lazy"><li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-logs-loading">loading…</li></ul>
-								</details>
-							</li>
+							@* nav-hide-empty-sections (item 10): Logs is populated only from the admin Logs page
+							   (see showLogsNode's computation above) — an empty entry here is a dead end the
+							   user cannot fill from this page, so it is hidden rather than shown collapsed. *@
+							@if (showLogsNode)
+							{
+								<li data-testid="nav-proj-logs-node">
+									<details hx-get="/ui/_nav/tree?handler=Logs&project=@currentProject" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">
+										<summary class="@(IsActive(pLogs) ? "active" : "")"><a href="@pLogs" data-testid="nav-proj-logs">Logs</a></summary>
+										<ul class="tree-lazy"><li class="text-xs opacity-40 italic px-3 py-1" data-testid="nav-logs-loading">loading…</li></ul>
+									</details>
+								</li>
+							}
 							<li><a href="@pTraces" class="@(IsActive(pTraces) ? "active" : "")" data-testid="nav-proj-traces">Traces</a></li>
-							@if (Nav.DataEnabled)
+							@* Same rule for Databases — the ORIGINAL example (idea ui-polish, item 10): no
+							   databases exist → no Databases item, since creation is admin-only from here. *@
+							@if (Nav.DataEnabled && showDatabasesNode)
 							{
 								<li data-testid="nav-proj-data-node">
 									<details hx-get="/ui/_nav/tree?handler=Databases&project=@currentProject" hx-trigger="toggle once" hx-target="find ul.tree-lazy" hx-swap="innerHTML">

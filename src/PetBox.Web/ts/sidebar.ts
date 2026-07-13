@@ -1,4 +1,4 @@
-import { writeUiState } from "./ui-state";
+import { readUiState, writeUiState } from "./ui-state";
 
 // Sidebar pin toggle. "Pinned" keeps the sidebar open inline on wider viewports
 // (the `md:drawer-open` class); "floating" turns it into a collapsible drawer
@@ -55,6 +55,28 @@ function apply(pinned: boolean): void {
 // at all. Reopening this — if a real use case shows up — belongs in `BrowserState`/`petbox.ui`
 // (a `[BrowserState]` array property), never a second cookie.
 
+// admin-sidebar-sections (item 4): persists which of the admin sidebar's three named
+// `<details data-admin-section="server|workspace|project">` sections are collapsed, through
+// the shared petbox.ui cookie (BrowserState.AdminSectionsCollapsed) — same mechanism, same
+// "server already got it right, this only records the NEXT change" discipline as the pin
+// above. No apply-on-load here either: the server already rendered the correct `open`
+// attribute from the cookie before this script ever runs, so reacting to `toggle` and writing
+// the new value is the only job left — re-deriving/re-applying it after load would be the
+// exact FOUC shape SidebarPinTests' first-response test guards against for the pin.
+function initAdminSections(): void {
+	document.addEventListener(
+		"toggle",
+		(e) => {
+			const details = e.target as HTMLElement | null;
+			const section = details?.dataset["adminSection"];
+			if (!details || !section || !(details instanceof HTMLDetailsElement)) return;
+			const current = readUiState().adminSectionsCollapsed ?? {};
+			writeUiState({ adminSectionsCollapsed: { ...current, [section]: !details.open } });
+		},
+		true,
+	); // capture: native `toggle` events don't bubble
+}
+
 function init(): void {
 	// No apply(isPinned()) here on purpose: the server already rendered the correct class/aria
 	// state for this request, and re-applying it after load is exactly the post-load correction
@@ -66,6 +88,7 @@ function init(): void {
 		writeUiState({ sidebarPinned: next });
 		apply(next);
 	});
+	initAdminSections();
 }
 
 if (document.readyState === "loading") {

@@ -27,6 +27,10 @@ export interface BrowserState {
 	// writing the whole map back (see persistCollapsed in board.ts) — the same read-modify-write
 	// shape BoardViewPreferences uses on the DB side.
 	collapsedByBoard?: Record<string, string[]>;
+	// admin-sidebar-sections: collapsed state of the admin sidebar's three named sections
+	// ("server" | "workspace" | "project"), written by ts/sidebar.ts's admin-section toggle
+	// listener. Missing/false = expanded.
+	adminSectionsCollapsed?: Record<string, boolean>;
 }
 
 const COOKIE_NAME = "petbox.ui";

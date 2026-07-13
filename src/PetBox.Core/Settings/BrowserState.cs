@@ -87,4 +87,16 @@ public sealed record BrowserState
 	// keeping it on the ONE record every layout already resolves.
 	[BrowserState(Key = "collapsedByBoard")]
 	public Dictionary<string, string[]> CollapsedByBoard { get; init; } = new(StringComparer.Ordinal);
+
+	// admin-sidebar-sections: which of the admin sidebar's three named sections ("server",
+	// "workspace", "project") are collapsed. Cookie branch, not DB — window/device state, the
+	// same axis as SidebarPinned/CollapsedByBoard, not a cross-device preference. Keyed by a
+	// fixed, small set of section ids rather than three separate bool properties because the
+	// dictionary shape is already proven (CollapsedByBoard) and keeps the record from growing a
+	// new top-level property every time a fourth named section is added later. Missing key (the
+	// default empty dict, and any key never explicitly collapsed) reads as "expanded" — matching
+	// the pre-existing behaviour where the workspace/project blocks were always fully shown and
+	// only Server administration's `<details open>` existed at all.
+	[BrowserState(Key = "adminSectionsCollapsed")]
+	public Dictionary<string, bool> AdminSectionsCollapsed { get; init; } = new(StringComparer.Ordinal);
 }
