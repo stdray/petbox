@@ -201,7 +201,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 
 	// 27. tasks_workflow groups types by identical FSM: on a work board feature/bug/chore
 	// share one state machine, so the answer is ONE `workflows` block with types:[feature,
-	// bug,chore] (no triplicated FSM blob) — all seven statuses, Pending initial, Review→Done
+	// bug,chore] (no triplicated FSM blob) — all six statuses, Pending initial, Review→Done
 	// gated by requiresApproval.
 	[Fact]
 	public async Task Workflow_WorkBoard_OneGroupedFsmBlock_ForFeatureBugChore()
@@ -217,7 +217,7 @@ public sealed class TasksMethodologyWorkFsmTests : TasksMethodologySmokeBase, IC
 			.Should().BeEquivalentTo(new[] { "feature", "bug", "chore" });
 		group.GetProperty("initial").GetString().Should().Be("Pending");
 		group.GetProperty("statuses").EnumerateArray().Select(s => s.GetProperty("slug").GetString())
-			.Should().BeEquivalentTo(new[] { "Pending", "InProgress", "Review", "Done", "Blocked", "Deferred", "Cancelled" });
+			.Should().BeEquivalentTo(new[] { "Pending", "InProgress", "Review", "Done", "Blocked", "Cancelled" });
 		var reviewDone = group.GetProperty("transitions").EnumerateArray()
 			.Single(t => t.GetProperty("from").GetString() == "Review" && t.GetProperty("to").GetString() == "Done");
 		reviewDone.GetProperty("requiresApproval").GetBoolean().Should().BeTrue();
