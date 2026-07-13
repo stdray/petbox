@@ -71,7 +71,12 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	// write-ack (spec sinceversion-contract): Added/Updated/Removed cover ONLY this call's
 	// entries — no cursor parameter on a write; CurrentVersion is the store-wide cursor to
 	// feed DeltaAsync (the only delta/catch-up surface).
-	Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, CancellationToken ct = default);
+	// `atomic` (default TRUE) = all-or-nothing: any conflict or refusal aborts the WHOLE call.
+	// `atomic: false` opts into PARTIAL apply — valid entries land, each refused entry (a stale
+	// baseline included) comes back in `conflicts[]` with its own reason. Memory entries cannot
+	// reference each other, so the dependent-rejection cascade has nothing to walk here: every
+	// entry is independent. Same flag, same promise, degenerate graph.
+	Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, bool atomic = true, CancellationToken ct = default);
 	Task<MemoryUpsertOutcome> DeltaAsync(string projectKey, string store, long sinceVersion, CancellationToken ct = default);
 
 	// --- UI helper (store page renders the raw active entries) ---

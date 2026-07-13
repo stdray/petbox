@@ -69,6 +69,50 @@ public sealed class CommentsUniformVerbsTests : IDisposable
 	// unresolved (uniform-node-refs), so no board node is needed for these thread tests.
 	static string NewNode() => Guid.NewGuid().ToString("N");
 
+	// atomic:false on comments (spec batch-write-partial-apply). A comment's parentId must address
+	// an ALREADY-ACTIVE comment — an intra-batch forward reference is not expressible — so the
+	// cascade degenerates here too: every item is independent. A rejected CREATE has no id yet, so
+	// its conflict is keyed by the item's POSITION.
+	[Fact]
+	public async Task Upsert_Partial_ValidItemLands_InvalidRejectedWithReason()
+	{
+		var http = Http();
+		var node = NewNode();
+
+		var r = await CommentTools.UpsertAsync(http, Flags(), _comments, _tasks, Proj, Board,
+			[
+				Create(node, "alice", "a real comment"),
+				new CommentItemInput { NodeId = node, Author = "bob", Body = "   " },              // empty body
+				new CommentItemInput { Id = "deadbeef", Body = "patch of a ghost", Version = 1 },  // unknown id
+			],
+			atomic: false);
+
+		r.Applied.Should().BeTrue();
+		r.Added.Should().ContainSingle();                                  // the valid one landed
+		r.Conflicts.Should().HaveCount(2);
+		r.Conflicts.Should().OnlyContain(c => c.Kind == "Rejected");
+		r.Conflicts.Single(c => c.Id == "#1").Reason.Should().Contain("body is required");
+		r.Conflicts.Single(c => c.Id == "deadbeef").Reason.Should().Contain("not found");
+
+		var list = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, nodeId: node);
+		list.Items.Should().ContainSingle(); // only the valid comment exists
+	}
+
+	[Fact]
+	public async Task Upsert_WithoutTheFlag_OneInvalidItem_AbortsTheWholeBatch()
+	{
+		var http = Http();
+		var node = NewNode();
+
+		var act = () => Upsert(http,
+			Create(node, "alice", "a real comment"),
+			new CommentItemInput { NodeId = node, Author = "bob", Body = "" });
+
+		await act.Should().ThrowAsync<ArgumentException>();
+		var list = await CommentTools.SearchAsync(http, Flags(), _comments, _tasks, Proj, board: Board, nodeId: node);
+		list.Items.Should().BeEmpty(); // the valid sibling did not land either
+	}
+
 	[Fact]
 	public async Task Upsert_Create_Then_Patch_EchoesOnlyThisCall()
 	{

@@ -236,6 +236,7 @@ public static class MemoryTools
 		[Description("Array of entry objects: { key, type, description, body, tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace (default project).")] string? scope = null,
+		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid entries LAND, each refused entry comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ENTRY, not of the call. Memory entries cannot reference each other, so nothing cascades: every entry is independent.")] bool atomic = true,
 		CancellationToken ct = default)
 	{
 		using var db = dbf.Open();
@@ -244,7 +245,7 @@ public static class MemoryTools
 		await AssertMemoryProjectAsync(http, db, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var (upserts, deletes) = ParseEntries(entries);
-		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, ct), bodyLen);
+		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, atomic, ct), bodyLen);
 	}
 
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
@@ -360,7 +361,7 @@ public static class MemoryTools
 			Body = text,
 			Tags = tags,
 		};
-		await memory.UpsertAsync(container.Key, st, [input], [], ct);
+		await memory.UpsertAsync(container.Key, st, [input], [], ct: ct);
 		return new MemoryRememberResult($"{container.Key}/{st}/{key}", container.Scope, st, key);
 	}
 

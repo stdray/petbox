@@ -495,19 +495,50 @@ public sealed class MemoryService : IMemoryService
 	static string SnippetBody(string body, int bodyLen) =>
 		bodyLen <= 0 || body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
 
-	public async Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, CancellationToken ct = default)
+	public async Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, bool atomic = true, CancellationToken ct = default)
 	{
 		using var op = PetBoxActivitySources.Memory.StartActivity("memory.upsert");
 		op?.SetTag("petbox.project", projectKey);
 		op?.SetTag("petbox.store", store);
 		op?.SetTag("petbox.upsert_count", upserts.Count);
 		op?.SetTag("petbox.delete_count", deletes.Count);
+		op?.SetTag("petbox.atomic", atomic);
 
-		EnforceCanonBudget(store, upserts); // reject an oversized canon body before we vivify the store
+		// ATOMIC (default): the first bad entry throws and the whole call is refused — unchanged.
+		// PARTIAL (atomic:false): the same refusal becomes a per-entry Rejected conflict and the
+		// rest of the batch lands. Memory entries cannot reference each other, so the cascade has
+		// nothing to walk — every entry is independent, which is the degenerate-but-correct read of
+		// the same contract.
+		var rejected = new List<TemporalConflict>();
+		var live = upserts;
+		if (atomic)
+			EnforceCanonBudget(store, upserts); // reject an oversized canon body before we vivify the store
+		else
+		{
+			var ok = new List<MemoryEntryInput>(upserts.Count);
+			foreach (var u in upserts)
+				try
+				{
+					EnforceCanonBudget(store, [u]);
+					ok.Add(u);
+				}
+				catch (ArgumentException ex)
+				{
+					rejected.Add(new(u.Key ?? "", TemporalConflictKind.Rejected, u.Version, null, ex.Message));
+				}
+			live = ok;
+		}
 
 		await _stores.EnsureAsync(projectKey, store, ct); // auto-vivify on first write
 		using var ctx = _stores.NewEnsuredConnection(projectKey);
-		var desired = MergePatches(ctx, store, upserts);
+		// The payload guards (key required, type required on a new entry, unknown type) fire per
+		// entry: in partial mode they land in `rejected` instead of throwing the call away.
+		var desired = MergePatches(ctx, store, live, atomic ? null : rejected);
+		if (!atomic)
+		{
+			var refused = rejected.Select(c => c.Key).ToHashSet(StringComparer.Ordinal);
+			live = live.Where(u => !refused.Contains(u.Key ?? "")).ToList();
+		}
 		var dels = deletes.Select(d => (d.Key, d.Version)).ToArray();
 		var fts = new SqliteFtsIndex(() => ctx); // writes ride the tx below; connect unused
 
@@ -516,7 +547,11 @@ public sealed class MemoryService : IMemoryService
 		// with the entity. Class-B vectors are NOT touched here — the worker materializes them.
 		// The store is the temporal PARTITION (stores share the project file), so the version
 		// cursor, the active-key reads and the closes are all scoped to it.
-		var r = await TemporalStore.UpsertAsync(ctx, desired, dels, 0,
+		// The SAME engine decides the batch outcome as for tasks: atomicity, the guard rejections,
+		// and (here, vacuously) the cascade. Memory entries carry no intra-batch references, so no
+		// dependency graph is supplied and the cascade degenerates to "each entry is independent".
+		var r = await TemporalStore.UpsertAsync(ctx, desired, dels,
+			new TemporalBatchPolicy(atomic, rejected), 0,
 			onWithinTx: async (tx, upserted, deletedKeys, c) =>
 			{
 				foreach (var e in upserted)
@@ -573,10 +608,14 @@ public sealed class MemoryService : IMemoryService
 		if (!r.Applied)
 			return r with { Added = [], Updated = [], Removed = [] };
 
+		// A REJECTED key is never echoed, even when the call as a whole applied (partial mode).
+		// In atomic mode Applied ⟹ no conflicts, so this set is empty and the echo is unchanged.
+		var refused = r.Conflicts.Select(c => c.Key).ToHashSet(StringComparer.Ordinal);
 		var mentioned = upserts.Select(u => u.Key)
 			.Concat(upserts.Where(u => u.PrevKey is not null).Select(u => u.PrevKey!))
+			.Where(k => !refused.Contains(k))
 			.ToHashSet(StringComparer.Ordinal);
-		var deleted = deletes.Select(d => d.Key).ToHashSet(StringComparer.Ordinal);
+		var deleted = deletes.Select(d => d.Key).Where(k => !refused.Contains(k)).ToHashSet(StringComparer.Ordinal);
 		return r with
 		{
 			Added = r.Added.Where(e => mentioned.Contains(e.Key)).ToList(),
@@ -861,16 +900,31 @@ public sealed class MemoryService : IMemoryService
 	// description/body. The merge base is read at the author's baseline; if the entry moves
 	// before the write lands, TemporalStore's CAS yields a Stale conflict, so a merge against a
 	// stale base can never be committed.
-	static MemoryEntry[] MergePatches(MemoryDb ctx, string store, IReadOnlyList<MemoryEntryInput> upserts)
+	// `rejected` non-null = PARTIAL mode: a per-entry payload refusal is recorded and the entry is
+	// dropped, instead of the throw that (correctly) kills an atomic call.
+	static MemoryEntry[] MergePatches(MemoryDb ctx, string store, IReadOnlyList<MemoryEntryInput> upserts,
+		List<TemporalConflict>? rejected = null)
 	{
 		var editKeys = upserts.Where(u => u.Version != 0).Select(u => u.PrevKey ?? u.Key).Distinct().ToList();
 		var active = editKeys.Count == 0
 			? new Dictionary<string, MemoryEntry>(StringComparer.Ordinal)
 			: ctx.Entries.Where(e => e.Store == store && e.ActiveTo == null && editKeys.Contains(e.Key)).ToList()
 				.ToDictionary(e => e.Key, StringComparer.Ordinal);
-		return upserts
-			.Select(u => ToEntry(u, store, u.Version != 0 && active.TryGetValue(u.PrevKey ?? u.Key, out var c) ? c : null))
-			.ToArray();
+
+		var desired = new List<MemoryEntry>(upserts.Count);
+		foreach (var u in upserts)
+		{
+			var current = u.Version != 0 && active.TryGetValue(u.PrevKey ?? u.Key ?? "", out var c) ? c : null;
+			try
+			{
+				desired.Add(ToEntry(u, store, current));
+			}
+			catch (ArgumentException ex) when (rejected is not null)
+			{
+				rejected.Add(new(u.Key ?? "", TemporalConflictKind.Rejected, u.Version, current?.Version, ex.Message));
+			}
+		}
+		return desired.ToArray();
 	}
 
 	static MemoryEntry ToEntry(MemoryEntryInput i, string store, MemoryEntry? current) => new()

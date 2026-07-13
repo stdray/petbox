@@ -207,7 +207,13 @@ public interface ITasksService : ISearchService<TaskSearchHit, TaskNodeFilter, T
 	// methodology declares EnforceApproval demand an approving actor — the doors translate
 	// their auth (tasks:approve scope at the MCP door, the cookie-authenticated owner in
 	// the UI) into it; the module itself never reads the request.
-	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, TasksActor? actor = null, CancellationToken ct = default);
+	// `atomic` (default TRUE) is the batch policy: all-or-nothing — any conflict, guard refusal
+	// or stale baseline aborts the WHOLE call and nothing is written. `atomic: false` is an
+	// explicit opt-in to PARTIAL apply: the valid nodes land, each refused node comes back in
+	// `conflicts[]` with its own reason, and a node that references a refused node of the SAME
+	// call (partOf/blockedBy/supersedes, transitively) is refused too — so a partial write never
+	// leaves a dangling reference.
+	Task<UpsertOutcome> UpsertAsync(string projectKey, string board, IReadOnlyList<NodePatch> nodes, TasksActor? actor = null, bool atomic = true, CancellationToken ct = default);
 	// Nodes added/updated/removed since the cursor (no writes).
 	Task<UpsertOutcome> DeltaAsync(string projectKey, string board, long sinceVersion, CancellationToken ct = default);
 	// The unified tasks read (spec uniform-entity-verbs v2) behind tasks_search — the one

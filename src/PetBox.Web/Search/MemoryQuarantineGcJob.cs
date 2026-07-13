@@ -138,7 +138,7 @@ public sealed class MemoryQuarantineGcJob : IBackgroundIndexJob
 					// Soft-delete (history kept) via the service — recoverable retirement.
 					await _memory.UpsertAsync(project, Store,
 						Array.Empty<MemoryEntryInput>(),
-						candidates.Select(k => new MemoryDelete(k, 0)).ToList(), ct);
+						candidates.Select(k => new MemoryDelete(k, 0)).ToList(), ct: ct);
 					retired += candidates.Count;
 					if (_logger?.IsEnabled(LogLevel.Information) == true)
 						_logger.LogInformation(

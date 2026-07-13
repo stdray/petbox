@@ -250,7 +250,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 			if (verdict.Key is not null && await _memory.StoreExistsAsync(project, Store, ct)
 				&& await _memory.GetAsync(project, Store, verdict.Key, ct) is { } stale)
 			{
-				await _memory.UpsertAsync(project, Store, [], [new MemoryDelete(stale.Key, stale.Version)], ct);
+				await _memory.UpsertAsync(project, Store, [], [new MemoryDelete(stale.Key, stale.Version)], ct: ct);
 				return true;
 			}
 			_logger?.LogWarning("facts judge DELETE pointed at a non-quarantine or missing key for {Project}; ignored. key={Key}",
@@ -292,7 +292,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 						messages = new[] { fromVersion, toVersion },
 						seenIn = SeenIn(existing.Metadata, sessionId),
 					}),
-				}], [], ct);
+				}], [], ct: ct);
 				return true;
 			}
 		}
@@ -321,7 +321,7 @@ public sealed class SessionFactsJob : IBackgroundIndexJob
 			Body = candidate.Body ?? "",
 			Tags = tags,
 			Metadata = metadata,
-		}], [], ct);
+		}], [], ct: ct);
 		return true;
 	}
 
