@@ -169,8 +169,11 @@ public sealed class MemoryService : IMemoryService
 	// stores in default recall). Protected system stores that ARE knowledge — canon, autocaptured —
 	// stay in the sweep, so default memory_search still returns them. An explicit Filter.Store
 	// still reaches any store; only the implicit sweep excludes (spec: memoverhaul store taxonomy).
+	// The sensitive leg is NOT re-listed here — it is MemoryStores.SensitiveNames (Contract), the
+	// single marker the link/autolink surfaces also consult; this set adds the recall-only exclusion
+	// on top of it.
 	static readonly HashSet<string> SweepExcludedStores =
-		new(StringComparer.OrdinalIgnoreCase) { "ops", "session-digests" };
+		new(MemoryStores.SensitiveNames.Append("session-digests"), StringComparer.OrdinalIgnoreCase);
 
 	// The generic uniform-read seam (implemented EXPLICITLY — the contract is a shared shape,
 	// not a DI dispatch point): the plain envelope of the rich SearchEntriesAsync. Budget

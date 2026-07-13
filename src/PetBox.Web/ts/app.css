@@ -13,6 +13,15 @@
 		box-shadow: inset 2px 0 0 oklch(var(--p));
 	}
 
+	/* The memory-entry card a …/memory/{store}#{key} URL points at (memory-entry-url). The
+	   card carries id={key}, so :target is the whole highlight mechanism — no JS, and it
+	   survives a reload/share. scroll-margin keeps it clear of the sticky header. */
+	.memory-entry:target {
+		background-color: oklch(var(--p) / 0.12);
+		box-shadow: inset 2px 0 0 oklch(var(--p));
+		scroll-margin-top: 5rem;
+	}
+
 	@keyframes event-live-flash {
 		0% {
 			background-color: oklch(var(--p) / 0.35);
