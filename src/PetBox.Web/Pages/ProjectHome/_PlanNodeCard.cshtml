@@ -10,19 +10,13 @@
 	// stem index (?handler=SearchIndex) loads, mirroring the pattern _BoardViewKanban.cshtml /
 	// _BoardViewOutline.cshtml already use for the same reason.
 	var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
-	// board-terminal-negative-visible: the strikethrough is an INVARIANT over the data
-	// (StatusKind.TerminalCancel), not a dialog checkbox — a terminally-cancelled node reads as
-	// dead REGARDLESS of whether Model.Fields.Status is on, so this never consults Fields.
-	// SCOPED TO THE SPEC BOARD ONLY (review finding, 2026-07): on every other board the status is
-	// already a displayable property (toggle via the fields dialog), so the strikethrough was
-	// redundant noise there — the maintainer ruled it out everywhere except spec.
+	// board-terminal-negative-visible: the strikethrough is an INVARIANT over the status
+	// CATEGORY (StatusKind.TerminalCancel) on EVERY board kind — a terminally-cancelled node
+	// reads as dead no matter how the user turned the Status property off, and no matter which
+	// board it lives on. It was briefly scoped to the spec board only (board-ui-review-findings
+	// #2, 2026-07); live acceptance found a Cancelled work task and a rejected idea reading as
+	// ALIVE in production — exactly what the spec node forbids — so the scoping is gone.
 	var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
-	// A delivery-bearing kind (DeliveryOf(...) is not null — a spec board carries a delivery
-	// roll-up), NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07): PresetKind
-	// nulls out for any DEFINED kind, and a real project's spec board is virtually always
-	// definition-resolved.
-	var isSpecBoard = Model.Runtime.DeliveryOf(Model.KindSlug) is not null;
-	var strikethrough = terminalCancel && isSpecBoard;
 }
 
 @* One plan-node card. Reused by both the part_of tree and the tag-groups projection; the
@@ -43,7 +37,7 @@
 				}
 				@if (!string.IsNullOrEmpty(n.Title))
 				{
-					<a href="@nodeUrl" class="font-semibold link link-hover @(strikethrough ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
+					<a href="@nodeUrl" class="font-semibold link link-hover @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
 				}
 				@if (Model.Fields.Slug)
 				{

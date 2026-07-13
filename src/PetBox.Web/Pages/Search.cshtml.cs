@@ -46,10 +46,8 @@ public sealed class SearchModel(CrossScopeTaskSearchService search) : PageModel
 			Priority: h.Priority, Tags: h.Tags ?? [], CreatedAt: null, UpdatedAt: h.UpdatedAt,
 			Delivery: h.Delivery,
 			// board-terminal-negative-visible: the terminal-CANCEL half of the same authoritative
-			// per-board classification Closed reads above. IsSpecBoard is left at its default false
-			// (review finding: strikethrough is spec-only now) — cheaply telling a spec hit from any
-			// other kind would need more than the classification carried here, and Status is already
-			// always shown (StatusShow: true above), so the redundancy argument holds without it too.
+			// per-board classification Closed reads above — struck through on EVERY board kind, not
+			// only spec, matching the invariant every other view enforces.
 			TerminalCancel: h.StatusKind == StatusKind.TerminalCancel,
 			Workspace: h.Workspace, ProjectKey: h.ProjectKey, Board: h.Board)).ToList();
 	}

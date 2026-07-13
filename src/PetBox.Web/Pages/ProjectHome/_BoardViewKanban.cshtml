@@ -37,13 +37,12 @@ else
 	// flex container and wrapped onto its own line.
 	var columnsDialogModel = new BoardColumnsDialogModel(Model.KanbanColumns, Model.VisibleColumns, BoardViewModeNames.Kanban, Model.By);
 	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", ColumnsDialog: columnsDialogModel, BodyUnavailable: true, ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
-	// board-terminal-negative-visible review finding: strikethrough scoped to the spec board only
-	// — everywhere else the status is already a displayable property (fields dialog toggle).
-	// A delivery-bearing kind (DeliveryOf(...) is not null — a spec board carries a delivery
-	// roll-up), NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07): PresetKind
-	// nulls out for any DEFINED kind, and a real project's spec board is virtually always
-	// definition-resolved.
-	var isSpecBoard = Model.Runtime.DeliveryOf(Model.KindSlug) is not null;
+	// board-terminal-negative-visible: the strikethrough is an INVARIANT over the status
+	// CATEGORY (StatusKind.TerminalCancel) on EVERY board kind — a terminally-cancelled node
+	// reads as dead no matter how the user turned the Status property off, and no matter which
+	// board it lives on. It was briefly scoped to the spec board only (board-ui-review-findings
+	// #2, 2026-07); live acceptance found a Cancelled work task and a rejected idea reading as
+	// ALIVE in production — exactly what the spec node forbids — so the scoping is gone.
 
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<div class="flex gap-3 overflow-x-auto pb-2" data-testid="board-kanban">
@@ -101,7 +100,7 @@ else
 						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()" data-blocking="@blocking.ToString().ToLowerInvariant()" style="display:@(hidden ? "none" : "")">
 							<div class="card-body p-2 gap-1">
 								<div class="flex items-start gap-1">
-									<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel && isSpecBoard ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
+									<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
 									@if (blocked)
 									{
 										<span class="badge badge-outline badge-xs shrink-0" data-testid="node-blocked-badge" title="blocked">⛔ blocked</span>
@@ -190,7 +189,7 @@ else
 						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()" data-blocking="@blocking.ToString().ToLowerInvariant()" style="display:@(hidden ? "none" : "")">
 							<div class="card-body p-2 gap-1">
 								<div class="flex items-start gap-1">
-									<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel && isSpecBoard ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
+									<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
 									@if (blocked)
 									{
 										<span class="badge badge-outline badge-xs shrink-0" data-testid="node-blocked-badge" title="blocked">⛔ blocked</span>
