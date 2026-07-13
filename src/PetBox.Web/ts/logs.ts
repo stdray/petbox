@@ -7,8 +7,12 @@ import { writeUiState } from "./ui-state";
 
 renderLocalTimes(document);
 document.addEventListener("htmx:afterSwap", (event) => {
-	const detail = (event as CustomEvent).detail as { target?: Element } | undefined;
-	renderLocalTimes(detail?.target ?? document);
+	// The htmx SSE extension reports the swapped element as detail.elt (detail.target is undefined on
+	// that path); a plain swap fills detail.target. Without the elt fallback an SSE-swapped live row
+	// fell through to `document` and re-localized the whole page on every event instead of just the
+	// new row.
+	const detail = (event as CustomEvent).detail as { target?: Element; elt?: Element } | undefined;
+	renderLocalTimes(detail?.target ?? detail?.elt ?? document);
 });
 
 // ---------- Button press flash ----------
