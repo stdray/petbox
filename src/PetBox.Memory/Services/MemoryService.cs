@@ -659,6 +659,21 @@ public sealed class MemoryService : IMemoryService
 		return new MemoryEntryPage(rows, hasNext, total);
 	}
 
+	public async Task<int?> FindActiveEntryPageAsync(string projectKey, string store, string key, int pageSize,
+		CancellationToken ct = default)
+	{
+		if (pageSize <= 0 || string.IsNullOrWhiteSpace(key)) return null;
+		using var ctx = _stores.NewEnsuredConnection(projectKey);
+		var active = ctx.Entries.Where(e => e.Store == store && e.ActiveTo == null);
+		// The key must actually BE there — a stale/garbage key resolves to no page (the caller then
+		// renders page 0 with no highlight rather than inventing an offset).
+		if (!await active.AnyAsync(e => e.Key == key, ct)) return null;
+		// Rank in the listing's ordering (OrderBy Key, BINARY collation both here and there), so the
+		// page is exactly the one ListActiveEntriesPageAsync would put the entry on.
+		var before = await active.CountAsync(e => string.Compare(e.Key, key) < 0, ct);
+		return before / pageSize;
+	}
+
 	public async Task<IReadOnlyDictionary<string, MemoryUsageView>> GetUsageAsync(string projectKey, string store,
 		IReadOnlyCollection<string>? keys = null, CancellationToken ct = default)
 	{

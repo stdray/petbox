@@ -80,6 +80,49 @@ public sealed class MemoryStorePagingTests : IDisposable
 		p2.Entries.Select(e => e.Key).Should().Contain("k095");
 	}
 
+	// memory-entry-url / memory-anchor-ignores-pagination: the SERVER must be able to say which page
+	// holds a key — the deep-link half of the entry URL. Seeded at 227 entries, the size of the live
+	// `notes` store where the bug was found: with 40 per page that is 6 pages, and only the first 40
+	// keys were reachable by a bare `#{key}` fragment.
+	[Fact]
+	public async Task FindEntryPage_ResolvesTheKeysOwnPage_AcrossAWholeMultiPageStore()
+	{
+		await Seed(227);
+
+		// Every single key resolves to the page that ListActiveEntriesPageAsync actually renders it
+		// on — not just the convenient ones. This is the whole promise, checked exhaustively.
+		for (var i = 1; i <= 227; i++)
+		{
+			var key = $"k{i:000}";
+			var page = await _memory.FindActiveEntryPageAsync(Proj, "notes", key, pageSize: 40);
+			page.Should().Be((i - 1) / 40, $"{key} is entry #{i} in key order");
+
+			var rendered = await _memory.ListActiveEntriesPageAsync(Proj, "notes", null, page!.Value, pageSize: 40);
+			rendered.Entries.Select(e => e.Key).Should().Contain(key);
+		}
+
+		// The far tail (page 5) — the entries a page-0 anchor could never reach.
+		(await _memory.FindActiveEntryPageAsync(Proj, "notes", "k227", pageSize: 40)).Should().Be(5);
+		// …and page 0 genuinely does NOT contain it (the bug, stated as an assertion).
+		var p0 = await _memory.ListActiveEntriesPageAsync(Proj, "notes", null, pageNum: 0, pageSize: 40);
+		p0.Entries.Select(e => e.Key).Should().NotContain("k227");
+	}
+
+	// An unknown / deleted key resolves to NO page — the caller must not invent an offset.
+	[Fact]
+	public async Task FindEntryPage_UnknownOrDeletedKey_IsNull()
+	{
+		await Seed(95);
+
+		(await _memory.FindActiveEntryPageAsync(Proj, "notes", "k999", pageSize: 40)).Should().BeNull();
+		(await _memory.FindActiveEntryPageAsync(Proj, "notes", "", pageSize: 40)).Should().BeNull();
+
+		await _memory.UpsertAsync(Proj, "notes", [], [new MemoryDelete("k050", 0)]);
+		(await _memory.FindActiveEntryPageAsync(Proj, "notes", "k050", pageSize: 40)).Should().BeNull();
+		// …and the delete shifts every later key one slot up: k041 opened page 1, k081 now moves to 1.
+		(await _memory.FindActiveEntryPageAsync(Proj, "notes", "k081", pageSize: 40)).Should().Be(1);
+	}
+
 	[Fact]
 	public async Task ListPage_Search_NarrowsOverBodyAndKey()
 	{

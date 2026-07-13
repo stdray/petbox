@@ -6,6 +6,7 @@ using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Memory.Contract;
 using PetBox.Memory.Data;
+using PetBox.Web.Memory;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -44,6 +45,17 @@ public sealed class MemoryStoreModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "q")]
 	public string? Query { get; set; }
 
+	// The deep-link half of the stable entry URL (…/memory/{store}?key={key}#{key}, MemoryLinks):
+	// the SERVER resolves which page holds the key and renders THAT page, so the fragment has a card
+	// to land on. A bare fragment cannot: it is never sent to the server, so the entry was silently
+	// absent from the DOM for every store bigger than one page.
+	[BindProperty(SupportsGet = true, Name = MemoryLinks.KeyParam)]
+	public string? Key { get; set; }
+
+	// The key the request asked for AND that this page actually renders — the card is marked
+	// `data-highlight="true"` so the highlight does not hang on `:target` alone.
+	public string? HighlightKey { get; private set; }
+
 	const int PageSize = 40;
 
 	public IReadOnlyList<MemoryEntry> Entries { get; private set; } = [];
@@ -69,6 +81,23 @@ public sealed class MemoryStoreModel : PageModel
 		if (!await _memory.StoreExistsAsync(ProjectKey, Store, ct)) return NotFound();
 
 		if (PageNum < 0) PageNum = 0;
+
+		// A `?key=` deep-link OWNS the page number: the entry's page is computed from its rank in the
+		// listing order, so the link keeps working as the store grows (and an explicit ?pageNum is
+		// overridden — the key is the more specific ask). Resolution runs against the UNFILTERED
+		// listing, so a `?q=` narrowing is dropped for the deep-link; a key that no longer resolves
+		// (deleted entry, typo) leaves the page as-is and simply highlights nothing.
+		if (!string.IsNullOrWhiteSpace(Key))
+		{
+			Query = null;
+			var found = await _memory.FindActiveEntryPageAsync(ProjectKey, Store, Key, PageSize, ct);
+			if (found is { } p)
+			{
+				PageNum = p;
+				HighlightKey = Key;
+			}
+		}
+
 		var page = await _memory.ListActiveEntriesPageAsync(ProjectKey, Store, Query, PageNum, PageSize, ct);
 		Entries = page.Entries;
 		HasNext = page.HasNext;

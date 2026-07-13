@@ -88,10 +88,16 @@ else
 		@foreach (var e in Model.Entries)
 		{
 			@* id = the entry key: the anchor half of the stable entry URL
-			   (…/memory/{store}#{key}, MemoryLinks) — `.memory-entry:target` in app.css
-			   highlights the card the fragment points at. An unknown key simply matches no
-			   card; the store page still renders. *@
-			<li id="@e.Key" class="memory-entry card bg-base-200 border border-base-300" data-testid="memory-entry" data-entry-key="@e.Key">
+			   (…/memory/{store}?key={key}#{key}, MemoryLinks). The ?key= half already made the
+			   SERVER render the page that holds this card (MemoryStoreModel.HighlightKey) — the
+			   fragment only scrolls to it, and `.memory-entry:target` in app.css highlights it.
+			   data-highlight marks the same card server-side, so the highlight (and the test that
+			   asserts it) does not hang on `:target` alone. An unresolvable key highlights nothing;
+			   the store page still renders. *@
+			<li id="@e.Key"
+				class="memory-entry card bg-base-200 border @(e.Key == Model.HighlightKey ? "border-primary ring-2 ring-primary/40" : "border-base-300")"
+				data-testid="memory-entry" data-entry-key="@e.Key"
+				@(e.Key == Model.HighlightKey ? Html.Raw("data-highlight=\"true\"") : null)>
 				<div class="card-body p-3">
 					<div class="flex items-baseline justify-between gap-2">
 						<span class="font-mono font-semibold">@e.Key</span>

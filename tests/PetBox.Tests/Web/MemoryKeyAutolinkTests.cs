@@ -18,7 +18,7 @@ public sealed class MemoryKeyRenderTests
 {
 	const string Key = "m-0123456789abcdef0123456789abcdef";
 	const string AcKey = "ac-0123456789ab";
-	const string Url = "/ui/$system/$system/memory/notes#m-0123456789abcdef0123456789abcdef";
+	const string Url = "/ui/$system/$system/memory/notes?key=m-0123456789abcdef0123456789abcdef#m-0123456789abcdef0123456789abcdef";
 	const string CommitTemplate = "https://github.com/user/repo/commit/{sha}";
 
 	static readonly IMarkdownRenderer R = new MarkdownRenderer();
@@ -41,7 +41,7 @@ public sealed class MemoryKeyRenderTests
 	[Fact]
 	public void ResolvedAutocaptureKey_BecomesLink()
 	{
-		var html = Html($"per {AcKey}", Map((AcKey, "/ui/a/b/memory/autocaptured#" + AcKey, null)));
+		var html = Html($"per {AcKey}", Map((AcKey, $"/ui/a/b/memory/autocaptured?key={AcKey}#{AcKey}", null)));
 		html.Should().Contain($">{AcKey}</a>");
 	}
 
@@ -173,7 +173,7 @@ public sealed class MemoryRefMapTests : IDisposable
 		var map = await Build(ProjKey);
 
 		map.Should().ContainKey(ProjKey);
-		map[ProjKey].Url.Should().Be($"/ui/{Ws}/{Proj}/memory/notes#{ProjKey}");
+		map[ProjKey].Url.Should().Be($"/ui/{Ws}/{Proj}/memory/notes?key={ProjKey}#{ProjKey}");
 	}
 
 	// Workspace scope goes through its own UI entry — the reserved memory container project.
@@ -185,7 +185,7 @@ public sealed class MemoryRefMapTests : IDisposable
 		var map = await Build(WsKey);
 
 		map.Should().ContainKey(WsKey);
-		map[WsKey].Url.Should().Be($"/ui/{Ws}/{WsContainer}/memory/canon#{WsKey}");
+		map[WsKey].Url.Should().Be($"/ui/{Ws}/{WsContainer}/memory/canon?key={WsKey}#{WsKey}");
 	}
 
 	// Ambiguous WITHIN a scope: the same key in two stores of the project. No tie-break rule exists
