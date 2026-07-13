@@ -31,7 +31,7 @@
 	<div class="card bg-base-200" data-testid="dashboard-empty">
 		<div class="card-body items-center text-center">
 			<h2 class="card-title">No projects yet</h2>
-			<p class="opacity-70">Create your first project in <a asp-page="/Admin/Projects" class="link">Admin</a>.</p>
+			<p class="opacity-70">Create your first project in <a href="@Routes.WorkspaceAdminProjects(Model.WorkspaceKey)" class="link" data-testid="dashboard-empty-admin-link">Admin</a>.</p>
 		</div>
 	</div>
 }

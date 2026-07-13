@@ -78,7 +78,9 @@ else
 				{
 					<tr>
 						<td class="font-mono text-xs">@p.Key</td>
-						<td><a href="@Routes.Project(Model.Workspace.Key, p.Key)" class="link link-hover">@p.Name</a></td>
+						@* admin-zone-leak: this is the SYSADMIN's per-workspace overview — the Name link must
+						   stay in admin, not bounce out to the /ui user-zone dashboard. *@
+						<td><a href="@Routes.ProjectSettings(Model.Workspace.Key, p.Key)" class="link link-hover">@p.Name</a></td>
 						<td class="text-sm opacity-70">@p.Description</td>
 					</tr>
 				}

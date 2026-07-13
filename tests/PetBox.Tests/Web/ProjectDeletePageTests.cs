@@ -46,15 +46,16 @@ public sealed class ProjectDeletePageTests : IDisposable
 	}
 
 	// The page holds no db factory any more (db-out-of-pages-into-services): it is built from the
-	// SERVICES it asks, and these are the production implementations, not stubs.
+	// SERVICES it asks, and these are the production implementations, not stubs. Log retention
+	// (formerly needing ISettingsStore for the override lookup) moved off this page onto the generic
+	// Settings page (admin-routes-and-pages item 3), so the constructor is one dependency shorter.
 	ProjectDetailModel Page(string projectKey) =>
 		new(
 			new ProjectDirectory(_db.Factory()),
 			_db.Factory().AgentKeys(),
 			_db.Factory().HealthEndpoints(),
 			Features(),
-			new NullSettingsResolver(),
-			new SettingsStore(_db.Factory()))
+			new NullSettingsResolver())
 		{ WorkspaceKey = "ws", ProjectKey = projectKey };
 
 	// Seed one owned row in every table the cascade touches, for the given project key.

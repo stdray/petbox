@@ -44,10 +44,15 @@ public sealed class NewWorkspaceModel : PageModel
 			return Page();
 		}
 
-		// Straight into the new workspace: the creator is already its Admin (the insert above), and
+		// Land on the ADMIN overview of the new workspace, not the read-only /ui status dashboard
+		// (onboarding-first-workspace): the creator is already its Admin (the insert above) —
 		// WorkspaceClaimsRefresher rebuilds the membership claims from the DB on the very next
-		// request — so this redirect lands inside, with admin rights, on the same cookie.
+		// request, so this redirect lands inside, with admin rights, on the same cookie — and their
+		// very next move is an admin action (add a project, add a member), which the plain dashboard
+		// has no path to. Bouncing a brand-new admin out to the user zone right after they finished
+		// the first half of setup was the reported defect; landing in admin keeps them where the
+		// second half (create a project) actually lives.
 		this.NotifySuccess($"Workspace '{key!.Trim()}' created — you are its administrator.");
-		return Redirect(Routes.Workspace(key.Trim()));
+		return Redirect(Routes.WorkspaceAdmin(key.Trim()));
 	}
 }

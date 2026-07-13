@@ -104,7 +104,7 @@
 				@if (Features.IsEnabled(Feature.Tasks) || Features.IsEnabled(Feature.Memory))
 				{
 					<li>
-						<a href="@Routes.ProjectConnect(currentWs, currentProject)" class="@(At(Routes.ProjectConnect(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-connect">Connect agent</a>
+						<a href="@Routes.ProjectConnect(currentWs, currentProject)" class="@(At(Routes.ProjectConnect(currentWs, currentProject)) ? "active" : "")" data-testid="admin-side-proj-connect">Issue key</a>
 					</li>
 				}
 			}

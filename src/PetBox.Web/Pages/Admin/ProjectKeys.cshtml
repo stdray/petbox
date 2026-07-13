@@ -1,0 +1,160 @@
+@page "/ui/admin/ws/{workspaceKey}/projects/{projectKey}/keys"
+@model PetBox.Web.Pages.Admin.ProjectKeysModel
+@{
+	ViewData["Title"] = $"{Model.Project?.Name ?? Model.ProjectKey} — API keys";
+	Layout = "_AdminLayout";
+}
+
+@if (Model.Project is null)
+{
+	<div class="alert alert-error" data-testid="project-keys-error">Project not found.</div>
+	return;
+}
+
+<div class="mb-4 flex items-baseline gap-3 flex-wrap">
+	<h1 class="text-2xl font-semibold" data-testid="project-keys-title">@Model.Project.Name · API keys</h1>
+	<span class="font-mono text-sm opacity-60">@Model.Project.Key</span>
+	<a href="@Routes.ProjectSettings(Model.WorkspaceKey, Model.ProjectKey)" class="btn btn-xs btn-ghost" data-testid="project-keys-back-to-info">&larr; Info</a>
+</div>
+
+@if (!string.IsNullOrEmpty(Model.ErrorMessage))
+{
+	<div class="alert alert-error mb-3" data-testid="project-keys-error-msg">@Model.ErrorMessage</div>
+}
+@if (Model.NewKey is not null)
+{
+	<div class="alert alert-success mb-3" data-testid="project-key-created">
+		<div>
+			<div class="font-semibold">New API key — copy now, it will be hidden after refresh:</div>
+			<code class="font-mono text-sm select-all">@Model.NewKey</code>
+		</div>
+	</div>
+}
+
+<section class="mb-6" data-testid="project-keys-section">
+	<div class="flex items-center gap-3 mb-3">
+		<h2 class="text-lg font-semibold">API keys</h2>
+		<span class="badge badge-ghost">@Model.Keys.Count</span>
+	</div>
+
+	<div class="overflow-x-auto mb-3">
+		<table class="table table-sm" data-testid="project-keys-table">
+			<thead>
+				<tr>
+					<th>Name</th>
+					<th>Key (prefix)</th>
+					<th>Scopes</th>
+					<th class="w-32">Created</th>
+					<th class="w-24"></th>
+				</tr>
+			</thead>
+			<tbody>
+				@if (Model.Keys.Count == 0)
+				{
+					<tr data-testid="project-keys-empty"><td colspan="5" class="text-xs opacity-60 italic text-center">No keys issued yet.</td></tr>
+				}
+				else
+				{
+					@foreach (var k in Model.Keys)
+					{
+						<tr data-testid="key-row">
+							<td class="text-sm">@(string.IsNullOrEmpty(k.Name) ? "—" : k.Name)</td>
+							<td class="font-mono text-xs">@(k.Key.Length > 12 ? k.Key[..12] + "..." : k.Key)</td>
+							<td>
+								@{
+									var keyScopes = (k.Scopes ?? string.Empty)
+										.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+										.ToHashSet(StringComparer.Ordinal);
+								}
+								<div class="flex flex-wrap gap-1">
+									@foreach (var scope in keyScopes)
+									{
+										<span class="badge badge-outline badge-xs font-mono">@scope</span>
+									}
+								</div>
+								<details class="mt-1" data-testid="project-key-edit">
+									<summary class="text-xs opacity-60 cursor-pointer">edit scopes</summary>
+									<form method="post" asp-page-handler="UpdateKeyScopes" asp-route-keyValue="@k.Key"
+										class="mt-2 border border-base-300 rounded p-2 bg-base-200 max-w-md" data-testid="project-key-edit-form">
+										@Html.AntiForgeryToken()
+										@foreach (var module in PetBox.Core.Auth.ApiKeyScopes.All.GroupBy(s => s.Module))
+										{
+											<div class="text-xs font-semibold opacity-70 uppercase tracking-wide mt-1">@module.Key</div>
+											@foreach (var scope in module)
+											{
+												<label class="flex items-baseline gap-2 cursor-pointer hover:bg-base-300/40 rounded px-1">
+													<input type="checkbox" name="scopes" value="@scope.Value" class="checkbox checkbox-xs"
+														checked="@keyScopes.Contains(scope.Value)"
+														data-testid="project-key-edit-scope-@scope.Value" />
+													<code class="font-mono text-xs">@scope.Value</code>
+												</label>
+											}
+										}
+										<button type="submit" class="btn btn-xs btn-primary mt-2" data-testid="project-key-edit-save">Save scopes</button>
+									</form>
+								</details>
+							</td>
+							<td class="text-xs opacity-70 font-mono">@k.CreatedAt.ToString("yyyy-MM-dd")</td>
+							<td>
+								<form method="post" asp-page-handler="RevokeKey" asp-route-keyValue="@k.Key"
+									onsubmit="return confirm('Revoke key @(k.Key[..Math.Min(12, k.Key.Length)])...?')" style="display:inline">
+									@Html.AntiForgeryToken()
+									<button type="submit" class="btn btn-xs btn-ghost text-error" data-testid="project-key-revoke">Revoke</button>
+								</form>
+							</td>
+						</tr>
+					}
+				}
+			</tbody>
+		</table>
+	</div>
+
+	<form method="post" asp-page-handler="CreateKey" class="card bg-base-200 border border-base-300 max-w-3xl" data-testid="project-key-create-form">
+		@Html.AntiForgeryToken()
+		<div class="card-body p-4">
+			<h3 class="card-title text-sm">New API key</h3>
+
+			<label class="form-control">
+				<span class="label-text">Name <span class="opacity-60 text-xs">(what is this key for?)</span></span>
+				<input type="text" name="name" required maxlength="200"
+					class="input input-bordered input-sm"
+					placeholder="ci pipeline · claude code dev · ..."
+					data-testid="project-key-create-name" />
+			</label>
+
+			<div class="form-control mt-3" data-testid="project-key-create-scopes-group">
+				<div class="flex items-center justify-between">
+					<span class="label-text">Scopes</span>
+					<span class="text-xs opacity-60">Click checkboxes — typed input is not supported.</span>
+				</div>
+				@foreach (var module in PetBox.Core.Auth.ApiKeyScopes.All.GroupBy(s => s.Module))
+				{
+					<div class="mt-2">
+						<div class="text-xs font-semibold opacity-70 uppercase tracking-wide">@module.Key</div>
+						<div class="grid gap-1 mt-1">
+							@foreach (var scope in module)
+							{
+								<label class="flex items-baseline gap-2 cursor-pointer hover:bg-base-300/40 rounded px-2 py-1">
+									<input type="checkbox" name="scopes" value="@scope.Value"
+										class="checkbox checkbox-xs mt-1"
+										data-testid="project-key-scope-@scope.Value" />
+									<div class="flex-1">
+										<div class="text-sm">
+											<span class="font-medium">@scope.Title</span>
+											<code class="font-mono text-xs opacity-60 ml-2">@scope.Value</code>
+										</div>
+										<div class="text-xs opacity-60">@scope.Description</div>
+									</div>
+								</label>
+							}
+						</div>
+					</div>
+				}
+			</div>
+
+			<div class="card-actions mt-4">
+				<button type="submit" class="btn btn-sm btn-primary" data-testid="project-key-create-submit">Issue key</button>
+			</div>
+		</div>
+	</form>
+</section>

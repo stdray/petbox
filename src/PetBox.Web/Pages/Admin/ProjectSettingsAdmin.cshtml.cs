@@ -7,8 +7,9 @@ namespace PetBox.Web.Pages.Admin;
 
 // Generic Project-scope settings page (Scope.Project) — mirrors SysDefaultsModel /
 // WorkspaceDefaultsModel, one scope deeper. See Routes.ProjectSettingsAdmin for how this differs
-// from the bespoke ProjectDetail ("/info") page, which stays the owner of RepoSettings and the
-// log-retention override control.
+// from the bespoke ProjectDetail ("/info") page, which stays the owner of RepoSettings; log
+// retention (LogSettings.RetentionDays) used to be a bespoke Info control too but now renders here,
+// through the same generic engine as every other cascading setting (admin-routes-and-pages item 3).
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectSettingsAdminModel : SettingsScopePageModel
 {

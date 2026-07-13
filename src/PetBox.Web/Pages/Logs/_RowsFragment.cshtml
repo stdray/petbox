@@ -7,8 +7,8 @@
 @if (Model.NextCursor is not null)
 {
 	<tr data-testid="events-sentinel"
-		data-next-href="@Url.Page("/Logs/Index", new { projectKey = Model.ProjectKey, kql = Model.RawKql, saved = Model.ActiveSavedName, cursor = Model.NextCursor })"
-		hx-get="@Url.Page("/Logs/Index", new { projectKey = Model.ProjectKey, kql = Model.RawKql, saved = Model.ActiveSavedName, cursor = Model.NextCursor })"
+		data-next-href="@Url.Page("/Logs/Index", new { workspaceKey = Model.WorkspaceKey, projectKey = Model.ProjectKey, kql = Model.RawKql, saved = Model.ActiveSavedName, cursor = Model.NextCursor })"
+		hx-get="@Url.Page("/Logs/Index", new { workspaceKey = Model.WorkspaceKey, projectKey = Model.ProjectKey, kql = Model.RawKql, saved = Model.ActiveSavedName, cursor = Model.NextCursor })"
 		hx-trigger="intersect once"
 		hx-swap="outerHTML"
 		hx-target="this">
