@@ -845,6 +845,80 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		}
 	}
 
+	// kanban-blocked-signal: the blocked indicator (border + badge) is driven off the DATA — a
+	// non-empty BlockedBy edge list — never off the status name "Blocked", and never off
+	// BoardKind.Work's own RequireBlockersAsync guard (which only fires for kind==Work and
+	// status=="Blocked", see TasksService). This methodology's "held" status is Open-kind and
+	// isn't named "Blocked" at all, so a name-matching implementation would show nothing here
+	// while a BlockedBy-driven one still lights up the card — same reasoning as the sibling
+	// TerminalCancelStrikethrough test above, applied to the blocked signal instead. Also proves
+	// the signal survives Model.Fields.BlockedBy being off (kanban's own default): board-view-
+	// fields governs the DETAIL — who's blocking, via the chip link — not the fact of being
+	// blocked at all.
+	[Fact]
+	public async Task KanbanBlockedSignal_DrivenByBlockedByData_NotStatusName()
+	{
+		const string board = "heldboard";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			var def = new PetBox.Tasks.Workflow.MethodologyDefinition("holder",
+			[
+				new PetBox.Tasks.Workflow.MethodologyKindDef("holder", QuickAddAllowed: false,
+				[
+					new PetBox.Tasks.Workflow.MethodologyWorkflowDef(["note"],
+						[
+							new("queued", "Queued", PetBox.Tasks.Workflow.StatusKind.Open),
+							new("held", "Held", PetBox.Tasks.Workflow.StatusKind.Open),
+							new("done", "Done", PetBox.Tasks.Workflow.StatusKind.TerminalOk),
+						],
+						[new("queued", "held"), new("queued", "done"), new("held", "done")]),
+				]),
+			]);
+			if (await tasks.GetMethodologyInstanceAsync("$system", "holder-ui") is null)
+			{
+				await tasks.UpsertMethodologyTemplateAsync("$system", "holder-ui-tmpl", def, 0);
+				await tasks.CreateMethodologyInstanceAsync("$system", "holder-ui", "template", "holder-ui-tmpl");
+			}
+
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "held smoke", "holder", methodologyInstance: "holder-ui");
+
+			// "gate" blocks "waiting" via blockedBy — "waiting" sits in "held" (not "Blocked"),
+			// "free" sits in "queued" with no blocker at all.
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "gate", Title = "Gate" },
+			]);
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "waiting", Title = "Waiting", Status = "held", BlockedBy = "gate" },
+				new PetBox.Tasks.Contract.NodePatch { Key = "free", Title = "Free", Status = "queued" },
+			]);
+		}
+
+		// Default kanban fields (BlockedBy OFF by default there) — the blocked signal still fires.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().MatchRegex("data-node-key=\"waiting\"[^>]*data-blocked=\"true\"");
+			html.Should().MatchRegex("data-node-key=\"free\"[^>]*data-blocked=\"false\"");
+			html.Should().Contain("data-testid=\"node-blocked-badge\"");
+			// The chip (who's blocking) stays off with the field — only the invariant signal fires.
+			html.Should().NotContain("data-testid=\"node-blocked-by\"");
+		}
+
+		// Explicitly turning BlockedBy on surfaces the chip, linking to the actual blocker.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban&fieldsSet=1&fields=blockedBy"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().Contain("data-testid=\"node-blocked-by\"");
+			html.Should().Contain("data-testid=\"node-blocker-link\"");
+			html.Should().Contain(">gate<");
+		}
+	}
+
 	// The admin boards list resolves kind badges through the runtime too — a custom-kind
 	// board shows its declared slug, not "simple".
 	[Fact]

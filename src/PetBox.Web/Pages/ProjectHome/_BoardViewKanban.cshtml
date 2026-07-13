@@ -52,12 +52,27 @@ else
 						// board-terminal-negative-visible: same invariant as the tree card — a
 						// terminal-cancel node's title is struck through regardless of Model.Fields.Status.
 						var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
+						// kanban-blocked-signal: blocked-ness is read off the DATA (a non-empty
+						// BlockedBy edge list), never off the status name/slug — a work-preset node is
+						// only ever Blocked WITH a non-empty BlockedBy (RequireBlockersAsync enforces
+						// it), but a node can also carry blockers while sitting in another status/column
+						// under a different methodology, and the signal must still fire there. Same
+						// invariant class as terminalCancel above: it survives Model.Fields.BlockedBy
+						// being off (board-view-fields is about the DETAIL — the chip links to who's
+						// blocking — not about whether the card admits it's blocked at all).
+						var blocked = n.BlockedBy is { Count: > 0 };
 						// board-body-truncate: a kanban card never renders the body (unlike the tree
 						// card) — data-search omits n.Body so filtering can't leak it into the HTML.
 						var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
-						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()">
+						<li class="card card-compact bg-base-200 border @(blocked ? "border-warning" : "border-base-300")" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()">
 							<div class="card-body p-2 gap-1">
-								<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
+								<div class="flex items-start gap-1">
+									<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
+									@if (blocked)
+									{
+										<span class="badge badge-warning badge-xs shrink-0" data-testid="node-blocked-badge" title="blocked">⛔ blocked</span>
+									}
+								</div>
 								<div class="flex items-center gap-1 flex-wrap text-xs opacity-70">
 									@if (Model.Fields.Type)
 									{
@@ -113,13 +128,26 @@ else
 						var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
 						var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
 						var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
+						// kanban-blocked-signal: same data-driven invariant as the main columns above —
+						// a stray-status node can still carry blockers.
+						var blocked = n.BlockedBy is { Count: > 0 };
 						// board-body-truncate: a kanban card never renders the body (unlike the tree
 						// card) — data-search omits n.Body so filtering can't leak it into the HTML.
 						var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
-						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()">
+						<li class="card card-compact bg-base-200 border @(blocked ? "border-warning" : "border-base-300")" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()">
 							<div class="card-body p-2 gap-1">
-								<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
+								<div class="flex items-start gap-1">
+									<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
+									@if (blocked)
+									{
+										<span class="badge badge-warning badge-xs shrink-0" data-testid="node-blocked-badge" title="blocked">⛔ blocked</span>
+									}
+								</div>
 								<span class="font-mono text-xs opacity-70" title="unrecognized status">@n.Status</span>
+								@if (blocked && Model.Fields.BlockedBy)
+								{
+									<partial name="_BlockedByChips" model="new BlockedByChipsModel(Model.WorkspaceKey, Model.ProjectKey, n.BlockedBy)" />
+								}
 							</div>
 						</li>
 					}
