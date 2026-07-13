@@ -81,6 +81,28 @@ public sealed class TaskBoardModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "by")]
 	public string? By { get; set; }
 
+	// board-view-fields: which node properties this board's cards/rows/columns show — a
+	// PARAMETER of every view mode, not a per-mode ceiling (spec board-view-fields). Same
+	// resolution shape as ViewMode just above: an explicit `?fields=a&fields=b` (repeatable query
+	// key — ASP.NET binds it to the array) plus the `fieldsSet` marker that disambiguates "the
+	// dialog submitted zero checked boxes" from "no `fields` in the URL at all" (an empty
+	// FieldsParam alone is indistinguishable from absent — unchecked checkboxes don't post).
+	[BindProperty(SupportsGet = true, Name = "fields")]
+	public string[]? FieldsParam { get; set; }
+
+	[BindProperty(SupportsGet = true, Name = "fieldsSet")]
+	public string? FieldsSetParam { get; set; }
+
+	// The mode+kind default (board-view-fields dialog pre-check state + board.ts's reconcile
+	// baseline) — always computed, whether or not the request carried an explicit selection.
+	public BoardFieldConfig DefaultFields { get; private set; } = BoardFieldConfig.None;
+
+	// What THIS render actually shows: FieldsParam when the request explicitly declared a
+	// selection (FieldsSetParam present — including a deliberately empty one), else DefaultFields.
+	// Read by _PlanNodeCard (via PlanNodeCard.Fields below) and directly by the view partials that
+	// don't route through a PlanNodeCard (Kanban/Outline/Table).
+	public BoardFieldConfig Fields { get; private set; } = BoardFieldConfig.None;
+
 	// The mode BoardViewModeRegistry.Resolve settled on (explicit -> methodology defaultView
 	// -> Tree) — RENDERABLE by construction (Resolve never returns a mode without a partial).
 	// Exposed so the switcher can mark the active button and the client-side persistence
@@ -175,7 +197,7 @@ public sealed class TaskBoardModel : PageModel
 		string WorkspaceKey, string ProjectKey, string Board, MethodologyRuntime Runtime,
 		string? KindSlug, PlanNodeView Node,
 		int Depth, bool Closed, bool KeepVisible, bool HasChildren,
-		IReadOnlyList<CommentLine>? Thread, string? CommitUrlTemplate = null,
+		IReadOnlyList<CommentLine>? Thread, BoardFieldConfig Fields, string? CommitUrlTemplate = null,
 		IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs = null,
 		IReadOnlyDictionary<string, NodeRefTarget>? MemoryRefs = null);
 
@@ -319,6 +341,14 @@ public sealed class TaskBoardModel : PageModel
 		// still unknown by default (OutlineReveal null → the conservative `navigate` fallback)
 		// unless the definition opts in.
 		OutlineRevealMode = Runtime.OutlineReveal(KindSlug);
+
+		// board-view-fields: the mode+kind default, then the explicit override when the request
+		// carries one — FieldsSetParam is the disambiguator between "no `fields` in the URL" (use
+		// the default) and "the dialog submitted a deliberately empty selection" (FieldsParam null
+		// or []), which an absent-vs-empty check on FieldsParam alone can't tell apart (unchecked
+		// checkboxes don't post).
+		DefaultFields = BoardFieldConfig.Default(ResolvedViewMode, Runtime, KindSlug, OutlineRevealMode == OutlineRevealModeNames.InlineLazy);
+		Fields = string.IsNullOrEmpty(FieldsSetParam) ? DefaultFields : BoardFieldConfig.FromKeys(FieldsParam);
 
 		// includeClosed: we render closed nodes too (the "active only" toggle hides them
 		// client-side); GetAsync supplies each node's part_of parent + depth.

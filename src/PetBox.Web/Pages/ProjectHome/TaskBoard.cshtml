@@ -95,8 +95,10 @@
 @* board-view-persistence: the key ts/board.ts saves the chosen mode under (scoped per board,
    since defaultView differs by kind) and what the server actually resolved/rendered this
    load, so the client can reconcile a saved-but-different choice on the NEXT navigation
-   without the server needing to read localStorage. Hidden — data only, no visible content. *@
-<div class="hidden" data-testid="board-view-meta" data-board-key="@Model.ProjectKey/@Model.Board" data-resolved-view="@Model.ResolvedViewMode" data-resolved-by="@curBy"></div>
+   without the server needing to read localStorage. data-resolved-fields is board-view-fields'
+   own reconcile baseline, the same board-scoped mechanism (see ts/board.ts LS_FIELDS_PREFIX).
+   Hidden — data only, no visible content. *@
+<div class="hidden" data-testid="board-view-meta" data-board-key="@Model.ProjectKey/@Model.Board" data-resolved-view="@Model.ResolvedViewMode" data-resolved-by="@curBy" data-resolved-fields="@Model.Fields.ToCsv()"></div>
 
 <partial name="@Model.ContentPartialName" model="Model" />
 

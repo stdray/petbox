@@ -504,6 +504,10 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// suppresses that badge and shows one only for a non-default (terminal `deprecated`) state
 	// (spec-board-status-noise #9). Nodes are seeded straight through TemporalStore to bypass the
 	// idea/FSM gates — this exercises the render path, not the write path.
+	// board-view-fields: the Status FIELD itself now defaults OFF on spec's default view (outline —
+	// "it cuts the eye"), so the badge assertion moves to an explicit `fields=status` request; the
+	// DEFAULT request instead asserts board-terminal-negative-visible — reqb (terminal `deprecated`)
+	// reads as struck-through regardless, reqa (non-terminal `defined`) does not.
 	[Fact]
 	public async Task SpecBoard_SuppressesDefaultDefinedStatus_ShowsTerminalDeprecated()
 	{
@@ -528,10 +532,23 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		// Both cards render (deprecated is closed but the server emits it; the client hides it).
 		html.Should().Contain("data-node-key=\"reqa\"");
 		html.Should().Contain("data-node-key=\"reqb\"");
-		// The default `defined` gets NO status badge; the non-default `deprecated` still gets one.
-		// The badge shows the declared human Name (`deprecated` → "Deprecated"); the slug is unchanged.
+		// board-view-fields: Status defaults off on spec's default (outline) view — neither status
+		// badge renders without an explicit opt-in.
 		html.Should().NotContain("data-testid=\"node-status\">defined");
-		html.Should().Contain("data-testid=\"node-status\">Deprecated");
+		html.Should().NotContain("data-testid=\"node-status\">Deprecated");
+		// board-terminal-negative-visible: the invariant holds regardless — reqb's row carries the
+		// strikethrough marker, reqa's does not (both attributes live on the SAME row element).
+		html.Should().MatchRegex("data-node-key=\"reqa\"[^>]*data-terminal-cancel=\"false\"");
+		html.Should().MatchRegex("data-node-key=\"reqb\"[^>]*data-terminal-cancel=\"true\"");
+
+		// Explicit opt-in (fields=status) restores the ORIGINAL spec-board-status-noise
+		// suppression: `defined` (the near-universal default) still stays silent; `deprecated`
+		// still shows, with its declared human Name — the badge-level rule (StatusBadgeModel.Show)
+		// is unchanged, only its DEFAULT visibility on this view moved.
+		using var withStatusResp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline&fieldsSet=1&fields=status");
+		var withStatusHtml = await withStatusResp.Content.ReadAsStringAsync();
+		withStatusHtml.Should().NotContain("data-testid=\"node-status\">defined");
+		withStatusHtml.Should().Contain("data-testid=\"node-status\">Deprecated");
 	}
 
 	// ui-spec-status-board-node-mismatch: the node DETAIL page must apply the SAME spec-board status
@@ -713,13 +730,15 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// custom slug, the custom statuses render with definition-classified badges, the custom
 	// terminal `closed` is marked closed (data-closed drives the active-only hiding), and
 	// quick-add follows the definition (disabled here — the Simple fallback would show it).
+	// board-view-fields: the tree view's Status field defaults off, so the status-badge
+	// assertions request it explicitly (`fields=status`) — everything else here is unaffected.
 	[Fact]
 	public async Task TaskBoard_CustomDefinedKind_ResolvesProcessFromDefinition_NotPresetFallback()
 	{
 		const string board = "tickets";
 		await SeedSupportKindBoardAsync(board);
 
-		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}");
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tree&fieldsSet=1&fields=status");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 
@@ -735,6 +754,95 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().MatchRegex("data-node-key=\"t1\"[^>]*data-closed=\"false\"");
 		// Quick-add follows the definition (false); the Simple fallback would render the form.
 		html.Should().NotContain("data-testid=\"task-create\"");
+	}
+
+	// board-terminal-negative-visible: the strikethrough invariant is driven by StatusKind DATA
+	// (StatusKind.TerminalCancel), never a hardcoded status name — this methodology names its
+	// terminal-cancel status "archived" (not "deprecated"/"Cancelled"/"wontfix", every name the
+	// builtin presets happen to use) specifically so a name-matching implementation would fail
+	// this test while a StatusKind-driven one passes. Exercises all four board views (tree default,
+	// kanban, outline, table) plus the node detail page in one pass, and proves the strikethrough
+	// survives even when the Status FIELD itself is off (tree's default) — the whole point of the
+	// invariant being "over the setting", not a dialog checkbox.
+	[Fact]
+	public async Task TerminalCancelStrikethrough_DrivenByStatusKindData_NotHardcodedStatusNames()
+	{
+		const string board = "archiveboard";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			var def = new PetBox.Tasks.Workflow.MethodologyDefinition("archivist",
+			[
+				new PetBox.Tasks.Workflow.MethodologyKindDef("archivist", QuickAddAllowed: false,
+				[
+					new PetBox.Tasks.Workflow.MethodologyWorkflowDef(["note"],
+						[
+							new("triage", "Triage", PetBox.Tasks.Workflow.StatusKind.Open),
+							new("shipped", "Shipped", PetBox.Tasks.Workflow.StatusKind.TerminalOk),
+							new("archived", "Archived", PetBox.Tasks.Workflow.StatusKind.TerminalCancel),
+						],
+						[new("triage", "shipped"), new("triage", "archived")]),
+				]),
+			]);
+			if (await tasks.GetMethodologyInstanceAsync("$system", "archivist-ui") is null)
+			{
+				await tasks.UpsertMethodologyTemplateAsync("$system", "archivist-ui-tmpl", def, 0);
+				await tasks.CreateMethodologyInstanceAsync("$system", "archivist-ui", "template", "archivist-ui-tmpl");
+			}
+
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "archive smoke", "archivist", methodologyInstance: "archivist-ui");
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "live", NodeId = "id-live", Version = 0, Status = "triage", Type = "note", Name = "Live note", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "done", NodeId = "id-done", Version = 0, Status = "shipped", Type = "note", Name = "Shipped note", Body = "", Priority = 2 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "dead", NodeId = "id-dead", Version = 0, Status = "archived", Type = "note", Name = "Archived note", Body = "", Priority = 3 },
+			}, partition: n => n.Board == board);
+		}
+
+		// Tree default view: Status field defaults OFF, but the strikethrough still fires.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tree"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().NotContain("data-testid=\"node-status\""); // Status field off by default
+			html.Should().MatchRegex("data-node-key=\"live\"[^>]*data-terminal-cancel=\"false\"");
+			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\""); // TerminalOk, NOT struck
+			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+		}
+
+		// Kanban view: same invariant, same distinction between terminal-ok and terminal-cancel.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
+			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+		}
+
+		// Outline view.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
+			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+		}
+
+		// Table view.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=table"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
+			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+		}
+
+		// Node detail page — the same invariant applies there too.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}/dead"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().Contain("data-testid=\"node-detail\"");
+			html.Should().MatchRegex("data-testid=\"node-detail\"[^>]*data-terminal-cancel=\"true\"");
+		}
 	}
 
 	// The admin boards list resolves kind badges through the runtime too — a custom-kind
