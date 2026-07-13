@@ -106,7 +106,13 @@ public sealed class TracesModel : PageModel
 			var roots = await logDb.Spans
 				.Where(s => traceIds.Contains(s.TraceId) && s.ParentSpanId == null)
 				.ToListAsync(ct);
-			var rootByTrace = roots.ToDictionary(s => s.TraceId, s => s.Name);
+			// A trace is NOT guaranteed to have exactly one root span: an ingester can be handed
+			// several parentless spans under one TraceId (the smoke fixtures reuse a constant id,
+			// and a partially-exported trace looks the same). ToDictionary threw a 500 on that —
+			// group and take the earliest root instead, so the name is deterministic either way.
+			var rootByTrace = roots
+				.GroupBy(s => s.TraceId)
+				.ToDictionary(g => g.Key, g => g.OrderBy(s => s.StartUnixNs).First().Name);
 
 			Traces = grouped.Select(g => new TraceSummary(
 				g.TraceId,
