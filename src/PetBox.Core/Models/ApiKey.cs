@@ -28,4 +28,11 @@ public sealed record ApiKey
 	// the call actually names. This is what lets one smoke key span every sandbox project without
 	// also being able to reach $system / yobapub (spec work/smoke-writes-into-real-projects).
 	public bool SandboxOnly { get; init; }
+	// The last time this key successfully authenticated (spec apikey-last-used). COARSE BY DESIGN:
+	// the auth hot path stamps an in-memory singleton (IKeyStatService) and KeyStatFlusher folds the
+	// marks into this column about every 5 minutes, so the stored value trails reality by up to that
+	// window — and up to a window's worth of marks is LOST on a hard restart (a graceful shutdown
+	// flushes). Reads that must be fresh (apikey_list, the admin UI) merge this with the in-memory
+	// value and take the later of the two. NULL = never used since the column existed (M043).
+	public DateTime? LastUsedAt { get; init; }
 }

@@ -186,6 +186,9 @@ public sealed class McpOutputSchemaConformanceTests : IClassFixture<McpOutputSch
 		["relations_create"] = "pending: endpoint refs not yet wired",
 		["apikey_create"] = "pending: mint args not yet wired",
 		["apikey_delete"] = "pending: needs a minted key",
+		// Same reason as its two siblings — it addresses an EXISTING key, so the battery would have to
+		// mint one first. Its structured result is exercised end-to-end in ApiKeyUpdateToolTests.
+		["apikey_update"] = "pending: needs a minted key",
 		["report_issue"] = "pending: issue args not yet wired",
 		["llm_config_upsert"] = "pending: registry payload not yet wired",
 	};

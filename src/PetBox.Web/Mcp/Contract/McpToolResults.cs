@@ -107,10 +107,19 @@ public sealed record ProjectListResult(IReadOnlyList<ProjectRow> Projects);
 public sealed record ApiKeyCreatedResult(string Key, string ProjectKey, IReadOnlyList<string> Scopes, DateTime? ExpiresAt,
 	string? DefaultProjectKey = null, bool SandboxOnly = false);
 
+// `LastUsedAt` (spec apikey-last-used) is the MERGED value: the later of the stored column and the
+// in-memory stamp, so a call made seconds ago is visible NOW rather than after the next flush.
+// NULL = never used (distinguishable from used-long-ago, which is the point of the field).
 public sealed record ApiKeyRow(string Key, string Name, string Scopes, DateTime CreatedAt, DateTime? ExpiresAt,
-	string? DefaultProjectKey = null, bool SandboxOnly = false);
+	string? DefaultProjectKey = null, bool SandboxOnly = false, DateTime? LastUsedAt = null);
 
 public sealed record ApiKeyListResult(IReadOnlyList<ApiKeyRow> Keys);
+
+// apikey_update patches an ISSUED key in place — the secret is unchanged (and is the address, not a
+// result). `Updated` names the fields this call actually touched, so a caller can tell a real patch
+// from a no-op: an omitted field is left alone, it is NOT rewritten with a default.
+public sealed record ApiKeyUpdatedResult(string Key, string ProjectKey, IReadOnlyList<string> Scopes, DateTime? ExpiresAt,
+	string? DefaultProjectKey, bool SandboxOnly, IReadOnlyList<string> Updated);
 
 public sealed record ApiKeyDeletedResult(bool Deleted, string Key);
 

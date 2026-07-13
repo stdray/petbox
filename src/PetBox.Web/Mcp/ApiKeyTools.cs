@@ -2,6 +2,8 @@ using System.ComponentModel;
 using LinqToDB;
 using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
 using PetBox.Core.Data;
@@ -101,9 +103,9 @@ public static class ApiKeyTools
 	}
 
 	[McpServerTool(Name = "apikey_list", Title = "List API keys", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyListResult))]
-	[Description("Lists a project's API keys (key, name, scopes, created/expiry, defaultProjectKey). Requires admin:provision. Pass projectKey '*' to list the cross-project keys — `defaultProjectKey` is the project such a key falls back to when a tool's optional projectKey is omitted.")]
+	[Description("Lists a project's API keys (key, name, scopes, created/expiry, defaultProjectKey, lastUsedAt). Requires admin:provision. Pass projectKey '*' to list the cross-project keys — `defaultProjectKey` is the project such a key falls back to when a tool's optional projectKey is omitted. `lastUsedAt` is the last successful authentication with the key, null if it has never been used: it is served FRESH (the stored value merged with the in-memory stamp), so a call made seconds ago already shows — but the STORED value is coarse (persisted in ~5-minute batches), and a hard crash can lose up to that window.")]
 	public static async Task<ApiKeyListResult> ListAsync(
-		IHttpContextAccessor http, ICoreDbFactory dbf,
+		IHttpContextAccessor http, ICoreDbFactory dbf, IKeyStatService stats,
 		[Description("Project to list keys for.")] string projectKey,
 		CancellationToken ct = default)
 	{
@@ -113,10 +115,127 @@ public static class ApiKeyTools
 		var rows = await db.ApiKeys
 			.Where(k => k.ProjectKey == projectKey)
 			.OrderBy(k => k.CreatedAt)
-			.Select(k => new ApiKeyRow(k.Key, k.Name, k.Scopes, k.CreatedAt, k.ExpiresAt, k.DefaultProjectKey, k.SandboxOnly))
+			.Select(k => new ApiKeyRow(k.Key, k.Name, k.Scopes, k.CreatedAt, k.ExpiresAt, k.DefaultProjectKey, k.SandboxOnly, k.LastUsedAt))
 			.ToListAsync(ct);
-		return new ApiKeyListResult(rows);
+		// The merge that keeps the answer honest: the flusher runs every ~5 minutes, so the column
+		// alone would show a key as idle minutes after it was actually used. Take the LATER of the
+		// stored value and the live in-memory stamp (spec apikey-last-used).
+		return new ApiKeyListResult([.. rows.Select(r => r with { LastUsedAt = Later(r.LastUsedAt, stats.LastUsed(r.Key)) })]);
 	}
+
+	static DateTime? Later(DateTime? stored, DateTime? inMemory) =>
+		(stored, inMemory) switch
+		{
+			(null, var m) => m,
+			(var s, null) => s,
+			var (s, m) => s >= m ? s : m,
+		};
+
+	[McpServerTool(Name = "apikey_update", Title = "Update an API key", UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyUpdatedResult))]
+	[Description("PATCHes an ALREADY-ISSUED key in place — no re-mint, no manual DB edit. Requires admin:provision: exactly the right apikey_create needs, so an update can never grant what a mint could not. The secret itself never changes and is never returned; `key` is the address. Editable: `name`, `scopes`, expiry, `defaultProject`. A field you OMIT is left untouched (it is NOT reset to a default). The two clearable fields have an explicit sentinel, distinct from 'omitted': `expiresInSeconds:0` makes the key NON-EXPIRING, `defaultProject:\"\"` (empty string) DROPS the default project. `scopes` replaces the whole set (it is not additive) and is validated like on create — unknown scopes are rejected, an empty set is rejected. `defaultProject` obeys the same invariants as create: cross-project ('*') keys only, and the project must exist. A change takes effect on the NEXT call with that key — nothing about a key is cached per connection or per session. A key declared in appsettings (Auth:ApiKeys) CANNOT be updated: the config file owns its lifecycle and the config lookup wins on every auth, so a stored row would never be read — such a call is REFUSED, not silently ignored.")]
+	public static async Task<ApiKeyUpdatedResult> UpdateAsync(
+		IHttpContextAccessor http, ICoreDbFactory dbf,
+		[Description("The raw key value to update (the secret is not changed).")] string key,
+		[Description("New human-readable name. Omit to leave unchanged.")] string? name = null,
+		[Description("New comma-separated scope list — REPLACES the current set. Omit to leave unchanged.")] string? scopes = null,
+		[Description("New TTL in seconds from now. 0 = clear the expiry (never expires). Omit to leave unchanged.")] long? expiresInSeconds = null,
+		[Description("New fallback project (cross-project keys only). \"\" = drop it. Omit to leave unchanged.")] string? defaultProject = null,
+		CancellationToken ct = default)
+	{
+		using var db = dbf.Open();
+		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
+		if (string.IsNullOrWhiteSpace(key)) throw new ArgumentException("key is required");
+
+		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
+
+		// A config-declared key is refused BEFORE anything is written. CompositeApiKeyLookup asks
+		// config FIRST and the DB only on a miss, so a stored row for a config key would never be
+		// read back — the update would look like it worked and change nothing. That is exactly the
+		// silent no-op spec apikey-update-config-key-refused forbids.
+		var configKeys = ctx.RequestServices.GetRequiredService<ConfigApiKeyLookup>();
+		if (configKeys.FindByKey(key) is not null)
+			throw new InvalidOperationException(
+				"This key is declared in configuration (Auth:ApiKeys) — its lifecycle belongs to the config file, "
+				+ "not the database. A stored change would never take effect (config wins on every auth lookup), "
+				+ "so it is refused: edit appsettings (or mint a DB key with apikey_create) instead.");
+
+		var existing = await db.ApiKeys.FirstOrDefaultAsync((ApiKey k) => k.Key == key, ct)
+			?? throw new InvalidOperationException("ApiKey not found");
+
+		// Patch onto the LOADED row, so every field the caller did not name keeps its stored value
+		// bit-for-bit — the UPDATE below writes all mapped columns, and they carry `existing`'s data.
+		var updated = existing;
+		var touched = new List<string>();
+
+		if (name is not null)
+		{
+			if (string.IsNullOrWhiteSpace(name))
+				throw new ArgumentException("name cannot be blank (omit it to leave the name unchanged)");
+			updated = updated with { Name = name.Trim() };
+			touched.Add("name");
+		}
+
+		if (scopes is not null)
+		{
+			var (valid, invalid) = ApiKeyScopes.Validate(scopes);
+			if (invalid.Count > 0) throw new ArgumentException($"Unknown scopes: {string.Join(", ", invalid)}");
+			if (valid.Count == 0) throw new ArgumentException("At least one valid scope is required");
+			updated = updated with { Scopes = string.Join(',', valid) };
+			touched.Add("scopes");
+		}
+
+		if (expiresInSeconds is { } secs)
+		{
+			if (secs < 0)
+				throw new ArgumentException("expiresInSeconds must be >= 0 (0 clears the expiry — the key stops expiring)");
+			updated = updated with { ExpiresAt = secs == 0 ? null : DateTime.UtcNow.AddSeconds(secs) };
+			touched.Add("expiry");
+		}
+
+		if (defaultProject is not null)
+		{
+			var dflt = defaultProject.Trim();
+			if (dflt.Length == 0)
+			{
+				// The explicit clear — distinct from omitting the argument, which changes nothing.
+				updated = updated with { DefaultProjectKey = null };
+			}
+			else
+			{
+				// The create-time invariants, reused verbatim: a default project is meaningful only on a
+				// cross-project key (a project-scoped one already defaults to its own claim), and it must
+				// name a project that exists.
+				if (existing.ProjectKey != ProjectScope.AllProjects)
+					throw new ArgumentException("defaultProject is only valid on a cross-project ('*') key (a project-scoped key already defaults to its own project)");
+				if (!await db.Projects.AnyAsync((Project p) => p.Key == dflt, ct))
+					throw new InvalidOperationException($"Project '{dflt}' not found");
+				updated = updated with { DefaultProjectKey = dflt };
+			}
+			touched.Add("defaultProject");
+		}
+
+		if (touched.Count == 0)
+			throw new ArgumentException("Nothing to update — pass at least one of name / scopes / expiresInSeconds / defaultProject");
+
+		await db.UpdateAsync(updated, token: ct);
+
+		// spec access-attribution: the change is attributable to the key that made it. Neither key is
+		// logged in full — a suffix identifies the row without putting a live secret in the log.
+		var logger = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("PetBox.Web.Mcp.ApiKeyTools");
+		if (logger.IsEnabled(LogLevel.Information))
+			logger.LogInformation("apikey_update target={TargetKey} fields={Fields} actor={ActorKey} actorProject={ActorProject}",
+				Tail(key), string.Join(',', touched), Tail(ctx.Request.Headers[ApiKeyAuthenticationHandler.ApiKeyHeader].FirstOrDefault()),
+				ctx.User.FindFirst("project")?.Value);
+
+		return new ApiKeyUpdatedResult(
+			updated.Key, updated.ProjectKey,
+			ApiKeyScopes.Validate(updated.Scopes).Valid,
+			updated.ExpiresAt, updated.DefaultProjectKey, updated.SandboxOnly, touched);
+	}
+
+	// Last 6 chars of a key — enough to identify the row in a log line, never the secret itself.
+	static string Tail(string? key) =>
+		string.IsNullOrEmpty(key) ? "(none)" : key.Length <= 6 ? "…" : $"…{key[^6..]}";
 
 	[McpServerTool(Name = "apikey_delete", Title = "Delete an API key", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyDeletedResult))]
 	[Description("Deletes (revokes) an API key by its raw key value. Requires admin:provision.")]

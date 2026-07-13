@@ -371,6 +371,10 @@ public partial class Program
 		builder.Services.AddSingleton<ConfigApiKeyLookup>();
 		builder.Services.AddScoped<DbApiKeyLookup>();
 		builder.Services.AddScoped<IApiKeyLookup, CompositeApiKeyLookup>();
+		// spec apikey-last-used — the singleton the auth middleware stamps into, and the background
+		// flusher that folds the marks into ApiKeys.LastUsedAt in one batched statement (~5 min).
+		builder.Services.AddSingleton<IKeyStatService, KeyStatService>();
+		builder.Services.AddGatedHostedService<KeyStatFlusher>();
 
 		builder.Logging.Configure(o => o.ActivityTrackingOptions =
 			ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
@@ -712,6 +716,13 @@ public partial class Program
 		app.UseStaticFiles();
 		app.UseRouting();
 		app.UseAuthentication();
+
+		// spec apikey-last-used: record the key's use IN MEMORY (KeyStatService), never in SQLite —
+		// the auth hot path stays a single indexed read. KeyStatFlusher persists the batch every
+		// ~5 min. Sits above UseAuthorization so a call refused for a missing SCOPE still counts as
+		// a use of the key (it authenticated); a bogus key does not.
+		app.UseMiddleware<PetBox.Core.Auth.KeyUsageStampMiddleware>();
+
 		app.UseAuthorization();
 
 		// App-wide request logging into the self-log (after auth so the project claim is
