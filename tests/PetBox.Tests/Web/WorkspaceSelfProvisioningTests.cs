@@ -387,7 +387,10 @@ public sealed class WorkspaceSelfProvisioningTests : IClassFixture<WorkspaceSelf
 		using (var create = await PostAsync(CreatePage, auth, Form("founder-ws", "Founder WS")))
 		{
 			create.StatusCode.Should().Be(HttpStatusCode.Redirect, "a successful create redirects into the workspace");
-			create.Headers.Location!.ToString().Should().Be("/ui/founder-ws");
+			// onboarding-first-workspace: lands on the ADMIN overview, not the read-only /ui dashboard —
+			// the creator's very next move (add a project) is an admin action, and bouncing them to the
+			// user zone right after finishing half of setup was the reported defect.
+			create.Headers.Location!.ToString().Should().Be("/ui/admin/ws/founder-ws");
 		}
 
 		// Admin of it in the DB — the creator IS the administrator (spec workspace-creator-is-admin).
@@ -426,6 +429,9 @@ public sealed class WorkspaceSelfProvisioningTests : IClassFixture<WorkspaceSelf
 		{
 			proj.StatusCode.Should().Be(HttpStatusCode.Redirect, "creating a project in one's own workspace must succeed");
 			proj.Headers.Location!.ToString().Should().NotContain("/AccessDenied");
+			// onboarding-first-workspace: project creation must ALSO stay in the admin zone (lands on
+			// the new project's admin info page), not bounce the founder out to /ui.
+			proj.Headers.Location!.ToString().Should().Be("/ui/admin/ws/founder-ws/projects/founder-proj/info");
 		}
 
 		using (var scope = _fx.Factory.Services.CreateScope())

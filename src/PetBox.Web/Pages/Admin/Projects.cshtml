@@ -42,10 +42,13 @@
 				{
 					<tr data-testid="project-row" data-project-key="@p.Key">
 						<td class="font-mono text-xs">@p.Key</td>
-						<td><a href="@Routes.Project(Model.WorkspaceKey, p.Key)" class="link link-hover" data-testid="admin-project-link">@p.Name</a></td>
+						@* admin-zone-leak: the primary Name link must stay IN admin — this table's whole reason
+						   to exist is admin actions on the project. It used to point at the /ui user-zone
+						   dashboard, silently bouncing an admin out of the zone they were just working in. *@
+						<td><a href="@Routes.ProjectSettings(Model.WorkspaceKey, p.Key)" class="link link-hover" data-testid="admin-project-link">@p.Name</a></td>
 						<td class="text-sm opacity-70">@p.Description</td>
 						<td>
-							<a href="@Routes.ProjectSettings(Model.WorkspaceKey, p.Key)" class="btn btn-xs btn-ghost" data-testid="admin-project-settings">Settings</a>
+							<a href="@Routes.ProjectSettingsAdmin(Model.WorkspaceKey, p.Key)" class="btn btn-xs btn-ghost" data-testid="admin-project-settings">Settings</a>
 						</td>
 					</tr>
 				}
