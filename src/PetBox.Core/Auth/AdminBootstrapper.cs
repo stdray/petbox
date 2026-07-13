@@ -6,6 +6,24 @@ using PetBox.Core.Models;
 
 namespace PetBox.Core.Auth;
 
+// RS0030 exempt — the FIRST-BOOT seed, and the one writer of WorkspaceMembers that cannot come
+// through IWorkspaceMembershipService. Two reasons, and the first is not negotiable:
+//
+//  1. Its correctness IS the transaction. The User row and the WorkspaceMember row must commit as
+//     ONE pair on ONE connection (see EnsureAdminUser: the check-then-insert is made safe by the
+//     M035 unique index plus this transaction, and AdminBootstrapperConcurrencyTests fires a real
+//     volley at it). The membership service opens its OWN connection — calling it from inside this
+//     open transaction is precisely what core.db (Cache=Shared) answers with an un-retried
+//     SQLITE_LOCKED, which AGENTS.md forbids outright. Routing it through the service would not
+//     move the write behind the door, it would break the write.
+//
+//  2. Nothing is smuggled past the ledger. The only row it writes is the $system Admin — the ONE
+//     membership OwnedWorkspaces() deliberately EXCLUDES from the workspace-quota count. So this
+//     write spends no allowance and there is no ledger for it to desynchronize.
+//
+// It is reached only through IUserAdminService.EnsureBootstrapAdminAsync, which is its door into the
+// service layer: the fast-path check and the post-seed confirmation both ask the membership service.
+// This static is the last raw writer, and it stays raw because a transaction cannot be handed away.
 public static class AdminBootstrapper
 {
 	// SQLite's own SQLITE_CONSTRAINT error code — raised when an INSERT hits a UNIQUE index.
@@ -67,12 +85,16 @@ public static class AdminBootstrapper
 				}
 			}
 
+			// RS0030: the seed write itself — inside the transaction it must share with the User
+			// insert above. See the note on the class for why this one cannot go through the service.
+#pragma warning disable RS0030
 			db.Insert(new WorkspaceMember
 			{
 				UserId = userId,
 				WorkspaceKey = "$system",
 				Role = WorkspaceRole.Admin,
 			});
+#pragma warning restore RS0030
 
 			tx.Commit();
 		}
@@ -86,6 +108,11 @@ public static class AdminBootstrapper
 		}
 	}
 
+	// RS0030: the re-check INSIDE the transaction, on the transaction's own connection — asking the
+	// membership service here would read a DIFFERENT connection, which cannot see this uncommitted
+	// transaction and so would answer the wrong question. It must be this connection or none.
+#pragma warning disable RS0030
 	static bool HasSystemAdmin(PetBoxDb db) =>
 		db.WorkspaceMembers.Any(m => m.WorkspaceKey == "$system" && m.Role == WorkspaceRole.Admin);
+#pragma warning restore RS0030
 }

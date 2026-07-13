@@ -92,6 +92,10 @@ public interface IWorkspaceMembershipService
 	Task<int> RemoveUserAsync(long userId, CancellationToken ct = default);
 }
 
+// RS0030 exempt — THE owner. This class is the one place entitled to touch WorkspaceMembers; the ban
+// exists to make every OTHER caller come through the interface above. The pragma is the door, and it
+// opens exactly here.
+#pragma warning disable RS0030
 public sealed class WorkspaceMembershipService(ICoreDbFactory dbf) : IWorkspaceMembershipService
 {
 	public async Task<IReadOnlyList<WorkspaceMembership>> GetRolesAsync(long userId, CancellationToken ct = default)
@@ -307,3 +311,4 @@ public sealed class WorkspaceMembershipService(ICoreDbFactory dbf) : IWorkspaceM
 		await db.WorkspaceMembers
 			.CountAsync(m => m.WorkspaceKey == workspaceKey && m.Role == WorkspaceRole.Admin, ct) <= 1;
 }
+#pragma warning restore RS0030

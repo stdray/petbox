@@ -61,11 +61,8 @@ public sealed class NavigationContextTests
 		return db.InsertWithInt64Identity(new User { Username = name, PasswordHash = "x", CreatedAt = DateTime.UtcNow });
 	}
 
-	static void SeedMember(ICoreDbFactory dbf, long userId, string ws, WorkspaceRole role = WorkspaceRole.Member)
-	{
-		using var db = dbf.Open();
-		db.Insert(new WorkspaceMember { UserId = userId, WorkspaceKey = ws, Role = role });
-	}
+	static Task SeedMember(ICoreDbFactory dbf, long userId, string ws, WorkspaceRole role = WorkspaceRole.Member) =>
+		dbf.SeedMemberAsync(userId, ws, role);
 
 	// `roles` mirrors what WorkspaceClaimsRefresher stamps on the identity each request; null means the
 	// claim is ABSENT (a non-cookie identity), which must send the context to the database instead.
@@ -138,7 +135,7 @@ public sealed class NavigationContextTests
 	}
 
 	[Fact]
-	public void A_member_sees_only_their_own_workspaces()
+	public async Task A_member_sees_only_their_own_workspaces()
 	{
 		var dbf = NewDb();
 		SeedWorkspace(dbf, "alpha");
@@ -146,7 +143,7 @@ public sealed class NavigationContextTests
 		SeedProject(dbf, "app", "alpha");
 		SeedProject(dbf, "secret", "beta");
 		var uid = SeedUser(dbf, "eve");
-		SeedMember(dbf, uid, "alpha");
+		await SeedMember(dbf, uid, "alpha");
 
 		var nav = Nav(dbf, uid, roles: [("alpha", WorkspaceRole.Member)], routeWorkspace: "alpha");
 
@@ -178,13 +175,13 @@ public sealed class NavigationContextTests
 	// ...and when the claim is absent (an identity the cookie refresher never touched), the database is
 	// still the answer — the claim is an optimisation, never the only source of truth.
 	[Fact]
-	public void Membership_falls_back_to_the_database_when_the_claim_is_absent()
+	public async Task Membership_falls_back_to_the_database_when_the_claim_is_absent()
 	{
 		var dbf = NewDb();
 		SeedWorkspace(dbf, "alpha");
 		SeedWorkspace(dbf, "beta");
 		var uid = SeedUser(dbf, "eve");
-		SeedMember(dbf, uid, "beta");
+		await SeedMember(dbf, uid, "beta");
 
 		var nav = Nav(dbf, uid, roles: null);
 
@@ -192,14 +189,14 @@ public sealed class NavigationContextTests
 	}
 
 	[Fact]
-	public void Workspace_memory_containers_are_not_projects()
+	public async Task Workspace_memory_containers_are_not_projects()
 	{
 		var dbf = NewDb();
 		SeedWorkspace(dbf, "alpha");
 		SeedProject(dbf, "app", "alpha");
 		SeedProject(dbf, "$ws-alpha", "alpha");
 		var uid = SeedUser(dbf, "eve");
-		SeedMember(dbf, uid, "alpha");
+		await SeedMember(dbf, uid, "alpha");
 
 		var nav = Nav(dbf, uid, roles: [("alpha", WorkspaceRole.Member)], routeWorkspace: "alpha");
 
@@ -211,13 +208,13 @@ public sealed class NavigationContextTests
 	// The container HAS routes (/ui/{ws}/$ws-{ws}/memory) even though it is not in the tree, so the
 	// workspace must still resolve from it — the cold path that asks the directory by key.
 	[Fact]
-	public void A_container_route_still_resolves_its_workspace()
+	public async Task A_container_route_still_resolves_its_workspace()
 	{
 		var dbf = NewDb();
 		SeedWorkspace(dbf, "alpha");
 		SeedProject(dbf, "$ws-alpha", "alpha");
 		var uid = SeedUser(dbf, "eve");
-		SeedMember(dbf, uid, "alpha");
+		await SeedMember(dbf, uid, "alpha");
 
 		var nav = Nav(dbf, uid, roles: [("alpha", WorkspaceRole.Member)], routeProject: "$ws-alpha");
 
@@ -226,15 +223,15 @@ public sealed class NavigationContextTests
 	}
 
 	[Fact]
-	public void A_project_route_resolves_the_workspace_without_a_route_workspace()
+	public async Task A_project_route_resolves_the_workspace_without_a_route_workspace()
 	{
 		var dbf = NewDb();
 		SeedWorkspace(dbf, "alpha");
 		SeedWorkspace(dbf, "beta");
 		SeedProject(dbf, "app", "beta");
 		var uid = SeedUser(dbf, "eve");
-		SeedMember(dbf, uid, "alpha");
-		SeedMember(dbf, uid, "beta");
+		await SeedMember(dbf, uid, "alpha");
+		await SeedMember(dbf, uid, "beta");
 
 		var nav = Nav(
 			dbf, uid,

@@ -1,4 +1,5 @@
 using LinqToDB;
+using Microsoft.Extensions.Caching.Memory;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 
@@ -26,7 +27,8 @@ public abstract record ProjectChangeResult
 // in the service layer. It is now the whole directory, for the second reason in AGENTS.md: a GET of
 // a project page opens core.db 7-9 times and NOTHING can be memoised while the readers are scattered
 // across pages. This is the one implementation a cache would go into, with no caller reaching around
-// it. (No cache today — deliberately. Nothing here assumes one.)
+// it — and it now CARRIES that cache (db-cache-behind-services); see the class comment below for
+// what makes it safe.
 //
 // Workspace memory containers ("$workspace" / "$ws-*") are Projects rows but are NOT user projects:
 // they have no logs, dbs or boards and never belong in a project tree or a project count. Every list
@@ -85,44 +87,88 @@ public interface IProjectDirectory
 	Task<ProjectChangeResult> DeleteAsync(string workspaceKey, string projectKey, CancellationToken ct = default);
 }
 
-public sealed class ProjectDirectory(ICoreDbFactory dbf) : IProjectDirectory
+// THE CACHE (db-cache-behind-services). ProjectDirectory is a SINGLETON holding an IMemoryCache of
+// (a) single project rows by key and (b) the per-workspace USER-project list (the sidebar's unit).
+// It is the hottest core.db reader of a page GET — the binding filter asks BelongsAsync on every
+// project-scoped request, NavigationContext asks ListByWorkspaceAsync on every rendered page, the
+// page itself asks GetInWorkspaceAsync/GetAsync — and all of those are answered from memory once
+// warm.
+//
+// What makes the cache SAFE, in order of importance:
+//
+//   1. POSITIVE answers only, never negatives. A missing project is re-asked of the db every time,
+//      so a create-then-read race can never serve a stale "no such project" — which matters because
+//      there IS an out-of-band project writer: WorkspaceMemory.EnsureContainerAsync INSERTs a $ws-*
+//      container row without going through this class. Positive-only makes that insert harmless.
+//      (The cached per-workspace lists EXCLUDE containers by definition, so the container insert
+//      cannot make a cached list stale either.)
+//
+//   2. Explicit invalidation in CreateAsync/DeleteAsync. Every USER-project writer in the codebase
+//      is a method of THIS class, so the invalidation is complete BY CONSTRUCTION today — that
+//      property, not the TTL, is what makes the cache correct. A future writer of the Projects
+//      table added anywhere else (a rename page, a bulk import, a move-between-workspaces) MUST
+//      either go through this class or invalidate here, or its effect is invisible for up to a TTL.
+//
+//   3. A short TTL (~30s) as the backstop for the writers rule 2 cannot see. Known residents of
+//      that window: WorkspaceAdminService.DeleteAsync cascades the $ws-* container project away when
+//      a workspace dies (a cached container ROW may outlive it by up to a TTL — user projects block
+//      workspace deletion, so no user project can be affected), and the tiny read-then-invalidate
+//      race where a reader caches a row it loaded just before a concurrent DeleteAsync invalidated.
+//
+// Thread safety: IMemoryCache is thread-safe, and every entry is an immutable snapshot (a Project
+// row / a materialized list) — never a connection. Concurrent misses of one key may each load from
+// the db (no single-flight lock — a lock held across a db call is exactly what this repo forbids);
+// they all write the same answer, and once warm the reads cost zero opens.
+//
+// ListAllAsync and the includeContainers variants are deliberately NOT cached: they are admin /
+// provisioning / delete-cascade surfaces that want the fresh truth (and DO see containers, whose
+// out-of-band insert would make a cached answer wrong), and none of them is on the per-request
+// hot path.
+public sealed class ProjectDirectory(ICoreDbFactory dbf, IMemoryCache cache, TimeSpan? ttl = null)
+	: IProjectDirectory
 {
+	// Tests construct the directory over a bare factory; each instance then owns a private cache,
+	// which preserves the pre-cache behavior for everything built this way (the DI registration
+	// uses the primary constructor and the app-wide cache).
+	public ProjectDirectory(ICoreDbFactory dbf) : this(dbf, new MemoryCache(new MemoryCacheOptions())) { }
+
 	// Project keys that would collide with a URL segment of the /ui tree.
 	static readonly HashSet<string> ReservedKeys = new(StringComparer.OrdinalIgnoreCase)
 	{
 		"logs", "traces", "config", "admin", "projects", "sys", "tasks", "data", "settings",
 	};
 
-	public async Task<bool> BelongsAsync(string projectKey, string workspaceKey, CancellationToken ct = default)
+	readonly TimeSpan _ttl = ttl ?? TimeSpan.FromSeconds(30);
+
+	// Typed cache keys: IMemoryCache is the app-shared instance, so a raw string key could collide
+	// with another feature's entry. A record struct cannot.
+	readonly record struct ProjectRowKey(string ProjectKey);
+	readonly record struct WorkspaceListKey(string WorkspaceKey);
+
+	// The one cached row read. Positive-only: a found row is cached for a TTL, a miss is asked of
+	// the db again next time (see the class comment for why negatives are never cached).
+	async Task<Project?> RowAsync(string projectKey, CancellationToken ct)
 	{
+		var key = new ProjectRowKey(projectKey);
+		if (cache.TryGetValue(key, out Project? hit))
+			return hit;
+
 		using var db = dbf.Open();
-		return await db.Projects.AnyAsync(
-			p => p.Key == projectKey && p.WorkspaceKey == workspaceKey, ct);
+		var row = await db.Projects.FirstOrDefaultAsync(p => p.Key == projectKey, ct);
+		if (row is not null)
+			cache.Set(key, row, _ttl);
+		return row;
 	}
 
-	public async Task<bool> ExistsAsync(string projectKey, CancellationToken ct = default)
+	// The cached per-workspace USER-project list (containers excluded, ordered by key) — the unit
+	// the sidebar consumes. An empty list IS cached: it can only become wrong through CreateAsync
+	// (which invalidates it) — the out-of-band container insert is excluded from it by definition.
+	async Task<IReadOnlyList<Project>> WorkspaceListAsync(string workspaceKey, CancellationToken ct)
 	{
-		using var db = dbf.Open();
-		return await db.Projects.AnyAsync(p => p.Key == projectKey, ct);
-	}
+		var key = new WorkspaceListKey(workspaceKey);
+		if (cache.TryGetValue(key, out IReadOnlyList<Project>? hit))
+			return hit!;
 
-	public async Task<Project?> GetAsync(string projectKey, CancellationToken ct = default)
-	{
-		using var db = dbf.Open();
-		return await db.Projects.FirstOrDefaultAsync(p => p.Key == projectKey, ct);
-	}
-
-	public async Task<Project?> GetInWorkspaceAsync(
-		string workspaceKey, string projectKey, CancellationToken ct = default)
-	{
-		using var db = dbf.Open();
-		return await db.Projects.FirstOrDefaultAsync(
-			p => p.Key == projectKey && p.WorkspaceKey == workspaceKey, ct);
-	}
-
-	public async Task<IReadOnlyList<Project>> ListAsync(
-		string workspaceKey, bool includeContainers = false, CancellationToken ct = default)
-	{
 		using var db = dbf.Open();
 		var rows = await db.Projects
 			.Where(p => p.WorkspaceKey == workspaceKey)
@@ -132,9 +178,42 @@ public sealed class ProjectDirectory(ICoreDbFactory dbf) : IProjectDirectory
 		// Filtered in memory, not in SQL: IsWorkspaceContainer is the ONE definition of what a
 		// container key is (WorkspaceMemory), and re-expressing it as a translatable predicate would
 		// be a second one — free to drift from the first.
-		return includeContainers
-			? rows
-			: [.. rows.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p.Key))];
+		IReadOnlyList<Project> list = [.. rows.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p.Key))];
+		cache.Set(key, list, _ttl);
+		return list;
+	}
+
+	public async Task<bool> BelongsAsync(string projectKey, string workspaceKey, CancellationToken ct = default) =>
+		string.Equals((await RowAsync(projectKey, ct))?.WorkspaceKey, workspaceKey, StringComparison.Ordinal);
+
+	public async Task<bool> ExistsAsync(string projectKey, CancellationToken ct = default) =>
+		await RowAsync(projectKey, ct) is not null;
+
+	public Task<Project?> GetAsync(string projectKey, CancellationToken ct = default) =>
+		RowAsync(projectKey, ct);
+
+	public async Task<Project?> GetInWorkspaceAsync(
+		string workspaceKey, string projectKey, CancellationToken ct = default)
+	{
+		var row = await RowAsync(projectKey, ct);
+		return row is not null && string.Equals(row.WorkspaceKey, workspaceKey, StringComparison.Ordinal)
+			? row
+			: null;
+	}
+
+	public async Task<IReadOnlyList<Project>> ListAsync(
+		string workspaceKey, bool includeContainers = false, CancellationToken ct = default)
+	{
+		if (!includeContainers)
+			return await WorkspaceListAsync(workspaceKey, ct);
+
+		// Containers included → the admin project table / delete cascade. Uncached: the container
+		// rows are written out-of-band (WorkspaceMemory.EnsureContainerAsync), so only the db knows.
+		using var db = dbf.Open();
+		return await db.Projects
+			.Where(p => p.WorkspaceKey == workspaceKey)
+			.OrderBy(p => p.Key)
+			.ToListAsync(ct);
 	}
 
 	public async Task<IReadOnlyList<Project>> ListAllAsync(
@@ -150,21 +229,57 @@ public sealed class ProjectDirectory(ICoreDbFactory dbf) : IProjectDirectory
 	public async Task<IReadOnlyDictionary<string, IReadOnlyList<Project>>> ListByWorkspaceAsync(
 		IReadOnlyCollection<string> workspaceKeys, CancellationToken ct = default)
 	{
+		var result = new Dictionary<string, IReadOnlyList<Project>>(StringComparer.Ordinal);
 		if (workspaceKeys.Count == 0)
-			return new Dictionary<string, IReadOnlyList<Project>>(StringComparer.Ordinal);
+			return result;
 
-		var keys = workspaceKeys.ToHashSet(StringComparer.Ordinal);
+		// Composed from the per-workspace cached lists; the workspaces not in cache are fetched in
+		// ONE query (the read this method exists to keep single), then cached individually so the
+		// next sidebar render is free.
+		var missing = new List<string>();
+		foreach (var wsKey in workspaceKeys.Distinct(StringComparer.Ordinal))
+		{
+			if (cache.TryGetValue(new WorkspaceListKey(wsKey), out IReadOnlyList<Project>? hit))
+			{
+				if (hit!.Count > 0)
+					result[wsKey] = hit;
+			}
+			else
+			{
+				missing.Add(wsKey);
+			}
+		}
 
-		using var db = dbf.Open();
-		var rows = await db.Projects
-			.Where(p => keys.Contains(p.WorkspaceKey))
-			.OrderBy(p => p.Key)
-			.ToListAsync(ct);
+		if (missing.Count == 0)
+			return result;
 
-		return rows
+		var keys = missing.ToHashSet(StringComparer.Ordinal);
+		List<Project> rows;
+		using (var db = dbf.Open())
+		{
+			rows = await db.Projects
+				.Where(p => keys.Contains(p.WorkspaceKey))
+				.OrderBy(p => p.Key)
+				.ToListAsync(ct);
+		}
+
+		var grouped = rows
 			.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p.Key))
 			.GroupBy(p => p.WorkspaceKey, StringComparer.Ordinal)
 			.ToDictionary(g => g.Key, g => (IReadOnlyList<Project>)[.. g], StringComparer.Ordinal);
+
+		// EVERY asked-for workspace gets a cache entry — an empty one too, or a projectless
+		// workspace would re-query on every render; the result dictionary keeps the historical
+		// contract of OMITTING empty workspaces.
+		foreach (var wsKey in missing)
+		{
+			var list = grouped.TryGetValue(wsKey, out var l) ? l : [];
+			cache.Set(new WorkspaceListKey(wsKey), list, _ttl);
+			if (list.Count > 0)
+				result[wsKey] = list;
+		}
+
+		return result;
 	}
 
 	public async Task<int> CountAsync(
@@ -176,7 +291,7 @@ public sealed class ProjectDirectory(ICoreDbFactory dbf) : IProjectDirectory
 			return await db.Projects.CountAsync(p => p.WorkspaceKey == workspaceKey, ct);
 		}
 
-		return (await ListAsync(workspaceKey, includeContainers: false, ct)).Count;
+		return (await WorkspaceListAsync(workspaceKey, ct)).Count;
 	}
 
 	public async Task<ProjectChangeResult> CreateAsync(
@@ -222,6 +337,11 @@ public sealed class ProjectDirectory(ICoreDbFactory dbf) : IProjectDirectory
 			Sandbox = sandbox,
 		};
 		await db.InsertAsync(project, token: ct);
+
+		// Invalidate the workspace's cached list so the created project is visible IMMEDIATELY (the
+		// row cache needs nothing: negatives are never cached, so the next lookup asks the db). This
+		// works because every user-project writer is a method of this class — see the class comment.
+		cache.Remove(new WorkspaceListKey(workspaceKey));
 		return new ProjectChangeResult.Created(project);
 	}
 
@@ -240,6 +360,11 @@ public sealed class ProjectDirectory(ICoreDbFactory dbf) : IProjectDirectory
 			return new ProjectChangeResult.NotFound();
 
 		var deleted = await ProjectDeletion.DeleteAsync(db, projectKey, ct);
+
+		// Invalidate BOTH facets: the cached row (or BelongsAsync would keep admitting the route for
+		// a TTL) and the workspace's cached list (or the sidebar would keep showing the corpse).
+		cache.Remove(new ProjectRowKey(projectKey));
+		cache.Remove(new WorkspaceListKey(workspaceKey));
 		return deleted ? new ProjectChangeResult.Deleted() : new ProjectChangeResult.NotFound();
 	}
 }

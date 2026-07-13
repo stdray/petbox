@@ -232,17 +232,20 @@ public sealed class UserAdminService(
 			return false;
 
 		// Cheap fast-path OUTSIDE any transaction: the common case (every boot after the first) never
-		// touches the write lock. The seed itself is AdminBootstrapper's, transaction and unique-index
-		// backstop included — this is its door into the service layer, not a second implementation of
-		// it, so there is exactly one first-boot seed and it keeps its race test.
-		using var db = dbf.Open();
-		if (await db.WorkspaceMembers.AnyAsync(
-			m => m.WorkspaceKey == WorkspaceMemory.SystemWorkspace && m.Role == WorkspaceRole.Admin, ct))
+		// touches the write lock. "Does a $system admin exist?" is a MEMBERSHIP question, so it is
+		// asked of the membership service — the one door to WorkspaceMembers — and not of the table.
+		if (await members.CountAdminsAsync(WorkspaceMemory.SystemWorkspace, ct) > 0)
 			return false;
 
-		AdminBootstrapper.EnsureAdminUser(db, adminOptions);
+		// The seed itself is AdminBootstrapper's, transaction and unique-index backstop included —
+		// this is its door into the service layer, not a second implementation of it, so there is
+		// exactly one first-boot seed and it keeps its race test. Its connection is scoped to the
+		// call and CLOSED before the read below: the service opens its own, and core.db runs
+		// Cache=Shared, where a second connection reached while a transaction is open raises an
+		// un-retried SQLITE_LOCKED (AGENTS.md).
+		using (var db = dbf.Open())
+			AdminBootstrapper.EnsureAdminUser(db, adminOptions);
 
-		return await db.WorkspaceMembers.AnyAsync(
-			m => m.WorkspaceKey == WorkspaceMemory.SystemWorkspace && m.Role == WorkspaceRole.Admin, ct);
+		return await members.CountAdminsAsync(WorkspaceMemory.SystemWorkspace, ct) > 0;
 	}
 }

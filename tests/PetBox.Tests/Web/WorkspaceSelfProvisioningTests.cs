@@ -117,7 +117,7 @@ public sealed class WorkspaceSelfProvisioningFixture : IAsyncLifetime
 			WorkspaceQuota = 1,
 		});
 		await db.InsertAsync(new Workspace { Key = "spent-ws", Name = "Spent", Description = "", CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = spenderId, WorkspaceKey = "spent-ws", Role = WorkspaceRole.Admin });
+		await db.SeedMemberAsync(spenderId, "spent-ws", WorkspaceRole.Admin);
 
 		// dollar / dollarkey: quota 1 each, so 'founder' keeps its one shot. Two accounts, because one
 		// test SPENDS its allowance (proving a rejected key did not) and the other must still be able to
@@ -259,7 +259,7 @@ public sealed class WorkspaceSelfProvisioningTests : IClassFixture<WorkspaceSelf
 	{
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
-		return db.WorkspaceMembers.Count(m =>
+		return db.MembershipRows().Count(m =>
 			m.UserId == userId && m.Role == WorkspaceRole.Admin && m.WorkspaceKey != "$system");
 	}
 
@@ -343,7 +343,7 @@ public sealed class WorkspaceSelfProvisioningTests : IClassFixture<WorkspaceSelf
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 		var dollarId = db.Users.First(u => u.Username == "dollarkey").Id;
-		db.WorkspaceMembers.Any(m => m.UserId == dollarId && m.WorkspaceKey == key).Should().BeFalse(
+		db.MembershipRows().Any(m => m.UserId == dollarId && m.WorkspaceKey == key).Should().BeFalse(
 			"'$' is the prefix of the reserved containers ($system / $workspace / $ws-*) — a user-chosen key "
 			+ "must never be able to collide with them, let alone make its author an admin of one");
 	}
@@ -398,7 +398,7 @@ public sealed class WorkspaceSelfProvisioningTests : IClassFixture<WorkspaceSelf
 		{
 			using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
 			var userId = db.Users.First(u => u.Username == "founder").Id;
-			db.WorkspaceMembers
+			db.MembershipRows()
 				.Any(m => m.UserId == userId && m.WorkspaceKey == "founder-ws" && m.Role == WorkspaceRole.Admin)
 				.Should().BeTrue();
 
