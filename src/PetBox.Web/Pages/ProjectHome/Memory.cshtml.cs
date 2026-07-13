@@ -17,14 +17,15 @@ namespace PetBox.Web.Pages.ProjectHome;
 [Authorize(Policy = "WorkspaceViewer")]
 public sealed class MemoryModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IWorkspaceMemoryDirectory _workspaceMemory;
 	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly IMemoryService _memory;
 
-	public MemoryModel(ICoreDbFactory f, IProjectDirectory projects, FeatureFlags features, IMemoryService memory)
+	public MemoryModel(
+		IWorkspaceMemoryDirectory workspaceMemory, IProjectDirectory projects, FeatureFlags features, IMemoryService memory)
 	{
-		_f = f;
+		_workspaceMemory = workspaceMemory;
 		_projects = projects;
 		_features = features;
 		_memory = memory;
@@ -46,15 +47,12 @@ public sealed class MemoryModel : PageModel
 		// lazy-ensure the container so the first UI navigation is not a "Project not found"
 		// before any MCP write. No-op when the row already exists (incl. M028 $workspace).
 		//
-		// The one core.db open left on this page, and it is opened INSIDE the container branch — a
-		// normal project page never reaches it. Provisioning a container has no service door yet
-		// (WorkspaceMemory is the writer everyone shares); when it grows one, this goes through it and
-		// the page stops seeing the database at all.
+		// Provisioning goes through IWorkspaceMemoryDirectory — the page no longer opens core.db
+		// itself; EnsureWorkspaceContainerAsync is idempotent under concurrent GETs (see its doc).
 		if (WorkspaceMemory.IsWorkspaceContainer(ProjectKey)
 			&& string.Equals(WorkspaceMemory.WorkspaceKeyOfContainer(ProjectKey), WorkspaceKey, StringComparison.Ordinal))
 		{
-			using var db = _f.Open();
-			await WorkspaceMemory.EnsureContainerAsync(db, WorkspaceKey, ct);
+			await _workspaceMemory.EnsureWorkspaceContainerAsync(WorkspaceKey, ct);
 		}
 
 		// The route workspace is welded into the lookup — this is the field IDOR
