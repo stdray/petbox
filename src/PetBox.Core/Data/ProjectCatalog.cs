@@ -50,6 +50,15 @@ public interface IProjectCatalog
 	// at all is NOT sandbox (false, not an error) — ProjectScope.AuthorizesAsync then denies, same
 	// as any other unknown-project write, and callers don't need a separate not-found branch.
 	Task<bool> IsSandboxAsync(string projectKey, CancellationToken ct = default);
+
+	// The workspace that owns `projectKey`, or null when no such project exists. This is what a
+	// COOKIE principal has to be authorized against on a project-scoped API route: a signed-in user
+	// carries workspace-role claims (yb:ws_roles), not the `project` claim an api key carries, so
+	// "may this session read this project?" is "is this session a member of the project's workspace?"
+	// (LogApi's live-tail — the one API endpoint a browser's EventSource reaches with nothing but a
+	// cookie). The route itself cannot answer it: /api/logs/{projectKey}/… has no {workspaceKey} to
+	// bind against, unlike the Razor pages that ProjectWorkspaceBindingFilter covers.
+	Task<string?> WorkspaceKeyOfAsync(string projectKey, CancellationToken ct = default);
 }
 
 // Every method is one self-contained read, so each opens its own connection and disposes it. The
@@ -90,5 +99,14 @@ public sealed class ProjectCatalog : IProjectCatalog
 	{
 		using var db = _factory.Open();
 		return await db.Projects.AnyAsync(p => p.Key == projectKey && p.Sandbox, ct);
+	}
+
+	public async Task<string?> WorkspaceKeyOfAsync(string projectKey, CancellationToken ct = default)
+	{
+		using var db = _factory.Open();
+		return await db.Projects
+			.Where(p => p.Key == projectKey)
+			.Select(p => p.WorkspaceKey)
+			.FirstOrDefaultAsync(ct);
 	}
 }

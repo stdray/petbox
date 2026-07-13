@@ -168,7 +168,8 @@
 		{
 			<label class="label cursor-pointer gap-2">
 				<span class="label-text text-xs">Live tail</span>
-				<input type="checkbox" id="live-tail-toggle" class="toggle toggle-sm toggle-primary"
+				<input type="checkbox" id="live-tail-toggle" data-testid="live-tail-toggle"
+					class="toggle toggle-sm toggle-primary"
 					data-project="@Model.ProjectKey"
 					data-log="@Model.SelectedLog"
 					data-kql="@Model.UserKql" />
@@ -242,19 +243,24 @@ else if (Model.IsShapeChanged)
 		</div>
 	}
 }
-else if (Model.Events.Count == 0)
-{
-	@if (Model.EventRowId is { } missingId)
-	{
-		<div data-testid="event-notfound" class="alert alert-warning">Event @missingId was not found — it may have been removed by retention.</div>
-	}
-	else
-	{
-		<div data-testid="events-empty" class="alert">No events match the query.</div>
-	}
-}
 else
 {
+	@if (Model.Events.Count == 0)
+	{
+		@if (Model.EventRowId is { } missingId)
+		{
+			<div data-testid="event-notfound" class="alert alert-warning">Event @missingId was not found — it may have been removed by retention.</div>
+		}
+		else
+		{
+			<div data-testid="events-empty" class="alert mb-4">No events match the query.</div>
+		}
+	}
+	@* The table shell is rendered even with zero rows: #events-body is the live tail's swap target, and
+	   when the empty state replaced the whole table the toggle had nothing to attach to — switching the
+	   tail on over an empty result was a dead switch, so the ONE case where a user is most likely to sit
+	   and wait for the next event delivered nothing (live-tail-sse-transport-broken). Rows stream into
+	   this tbody; the empty-state alert above is about the QUERY's result, not about the stream. *@
 	<div class="overflow-x-auto rounded-box border border-base-300 bg-base-200">
 		<table class="table table-sm">
 			<thead>

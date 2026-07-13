@@ -24,6 +24,7 @@
 	"dependencies": {
 		"alpinejs": "3.14.1",
 		"dompurify": "^3.4.8",
+		"htmx-ext-sse": "^2.2.4",
 		"htmx.org": "2.0.4",
 		"marked": "^18.0.4"
 	}

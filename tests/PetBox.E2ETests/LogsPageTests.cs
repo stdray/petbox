@@ -97,6 +97,35 @@ public sealed class LogsPageTests(WebAppFixture app, ITestOutputHelper output) :
 		pinnedHtml.Should().Contain("aria-pressed=\"true\"");
 	}
 
+	// live-tail-sse-transport-broken, the half only a REAL browser can prove: site.ts imported htmx's
+	// core and nothing else, so hx-ext="sse" / sse-connect were inert attributes — the toggle flipped,
+	// the container was inserted, and no EventSource was ever opened. Delivery semantics are pinned in
+	// the integration suite (LogLiveTailTests), where they are deterministic; what is asserted HERE is
+	// the thing that was actually broken and that only a browser executes: the bundled extension
+	// registers, htmx processes the runtime-inserted container, and an EventSource connection is really
+	// made — and answered (200 text/event-stream), which also proves the cookie session authenticates
+	// against the endpoint that used to 401 every browser.
+	[Fact]
+	public async Task LiveTail_Toggle_Opens_An_Authenticated_EventSource()
+	{
+		await _page!.GotoAsync("/ui/$system/$system/logs");
+
+		var stream = _page.WaitForResponseAsync(
+			r => r.Url.Contains("/live-tail", StringComparison.Ordinal),
+			new PageWaitForResponseOptions { Timeout = 15_000 });
+
+		// Deliberately on an EMPTY table: the empty state used to replace the whole table, so
+		// #events-body — the tail's swap target — did not exist and the toggle was a dead switch
+		// exactly where a user is most likely to sit waiting for the next event.
+		await _page.GetByTestId("live-tail-toggle").CheckAsync();
+
+		var response = await stream;
+		response.Status.Should().Be(200,
+			"an EventSource cannot send X-Api-Key — the browser's cookie session must be accepted here");
+		(await response.HeaderValueAsync("content-type"))
+			.Should().Contain("text/event-stream", "the stream must actually be an SSE stream");
+	}
+
 	[Fact]
 	public async Task LogsPage_KqlError_On_Bad_Syntax()
 	{

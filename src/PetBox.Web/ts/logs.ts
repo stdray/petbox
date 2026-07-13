@@ -444,6 +444,30 @@ document.addEventListener("click", (event) => {
 	window.scrollTo({ top: 0, behavior: "smooth" });
 });
 
+// The cursor of the NEWEST row currently on screen, in the same (TimestampMs, Id) key — and the same
+// 16-byte big-endian base64 encoding — the server pages the table by (LogCursor.cs). The table renders
+// newest-first, so that is the topmost row carrying a data-event-id (the banner row has none). Sending
+// it as ?since= is what closes the gap between the moment the table was rendered and the moment the
+// EventSource opens: without it the stream starts "now" and everything ingested in between is lost.
+// Nothing on screen → no cursor → the server starts at the log's tip, i.e. only new events.
+function encodeLogCursor(timestampMs: number, id: number): string {
+	const bytes = new Uint8Array(16);
+	const view = new DataView(bytes.buffer);
+	view.setBigInt64(0, BigInt(timestampMs));
+	view.setBigInt64(8, BigInt(id));
+	return btoa(String.fromCharCode(...bytes));
+}
+
+function newestRenderedCursor(): string | null {
+	const row = document.querySelector<HTMLElement>("#events-body tr[data-event-id]");
+	const id = Number(row?.dataset["eventId"]);
+	const iso = row?.querySelector("time[datetime]")?.getAttribute("datetime");
+	if (!row || !iso || !Number.isFinite(id)) return null;
+	const ms = Date.parse(iso);
+	if (!Number.isFinite(ms)) return null;
+	return encodeLogCursor(ms, id);
+}
+
 // Live-tail toggle → SSE connect/disconnect
 document.addEventListener("change", (event) => {
 	const target = event.target as HTMLInputElement | null;
@@ -464,7 +488,9 @@ document.addEventListener("change", (event) => {
 
 	if (!target.checked) return;
 
-	const url = `/api/logs/${encodeURIComponent(project)}/${encodeURIComponent(log)}/live-tail?kql=${encodeURIComponent(kql)}`;
+	const since = newestRenderedCursor();
+	const sinceParam = since ? `&since=${encodeURIComponent(since)}` : "";
+	const url = `/api/logs/${encodeURIComponent(project)}/${encodeURIComponent(log)}/live-tail?kql=${encodeURIComponent(kql)}${sinceParam}`;
 	const container = document.createElement("div");
 	container.id = containerId;
 	container.setAttribute("hx-ext", "sse");
@@ -472,12 +498,10 @@ document.addEventListener("change", (event) => {
 	container.setAttribute("sse-retry", "3000");
 	container.innerHTML = '<div sse-swap="event" hx-target="#events-body" hx-swap="afterbegin"></div>';
 	tbody.parentElement.parentElement?.insertBefore(container, tbody.parentElement);
-	// window.htmx is an untyped global set by the `import "htmx.org"` side-effect in site.ts —
-	// no ambient Window.htmx declaration exists anywhere in this codebase yet. Adding one is a
-	// real (if small) design decision (shared ambient .d.ts vs. local ad-hoc type, how much of
-	// the htmx API surface to expose) that belongs to its own change, not this lint-debt cleanup.
-	// biome-ignore lint/suspicious/noExplicitAny: see comment above — left as-is, not typed here.
-	(window as any).htmx?.process(container);
+	// htmx must be told about a container that was never in the initial DOM, or hx-ext/sse-connect on
+	// it are never processed. window.htmx is published by ts/htmx-global.ts (the ESM htmx build does
+	// not set it itself) — that module is also what lets the SSE extension register at all.
+	window.htmx.process(container);
 });
 
 // Reconnect live-tail on page reload

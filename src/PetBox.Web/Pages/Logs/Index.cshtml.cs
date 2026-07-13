@@ -1,4 +1,3 @@
-using System.Buffers.Binary;
 using System.Globalization;
 using System.Text;
 using Kusto.Language;
@@ -338,28 +337,12 @@ public sealed class IndexModel : PageModel
 		return sb.ToString();
 	}
 
-	static (long TimestampMs, long Id)? DecodeCursor(string? s)
-	{
-		if (string.IsNullOrEmpty(s)) return null;
-		try
-		{
-			var bytes = Convert.FromBase64String(s);
-			if (bytes.Length != 16) return null;
-			var ts = BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(0, 8));
-			var id = BinaryPrimitives.ReadInt64BigEndian(bytes.AsSpan(8, 8));
-			return (ts, id);
-		}
-		catch (FormatException) { return null; }
-	}
+	// The paging cursor and live-tail's catch-up cursor are the SAME (TimestampMs, Id) key in the
+	// SAME encoding — LogCursor owns both, so the two surfaces cannot drift apart on how a tie in
+	// the millisecond is broken (live-tail-sse-transport-broken).
+	static LogCursor? DecodeCursor(string? s) => LogCursor.TryDecode(s);
 
-	static string EncodeCursor(DateTime timestamp, long id)
-	{
-		var dto = new DateTimeOffset(timestamp, TimeSpan.Zero);
-		var bytes = new byte[16];
-		BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(0, 8), dto.ToUnixTimeMilliseconds());
-		BinaryPrimitives.WriteInt64BigEndian(bytes.AsSpan(8, 8), id);
-		return Convert.ToBase64String(bytes);
-	}
+	static string EncodeCursor(DateTime timestamp, long id) => LogCursor.From(timestamp, id).Encode();
 
 	public IActionResult OnGetKqlCompletions(string q, int pos)
 	{
