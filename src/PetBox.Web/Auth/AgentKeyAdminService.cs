@@ -242,6 +242,49 @@ public sealed class AgentKeyAdminService(
 		return affected > 0 ? new KeyUpdateResult.Updated() : new KeyUpdateResult.NotFound();
 	}
 
+	// ── the PROJECT-confined pair (the per-project settings page) ─────────────────────────────
+	//
+	// The project settings page (Pages/Admin/ProjectDetail) lists exactly ONE project's keys and
+	// revokes / re-scopes them BY KEY VALUE. Routing those two writes through the workspace-confined
+	// pair above would be a real WIDENING, not a simplification: that page's admin typically holds
+	// WorkspaceAdmin over a dozen projects, so `Owned(..., workspaceKey)` would happily honour a
+	// forged POST naming a SIBLING project's key — a key the page never rendered and the admin was
+	// not looking at. The predicate this surface actually needs is the PROJECT, so it is welded into
+	// the statement here: the same shape as `Owned`, one level finer. The page filtered its rendered
+	// list; the rendered list was never the guard.
+	//
+	// The scope rules are welded in too (an edit must never grant what a mint could not), so the page
+	// cannot re-derive — or forget — them.
+
+	public async Task<bool> RevokeForProjectAsync(string key, string projectKey, CancellationToken ct = default)
+	{
+		using var db = dbf.Open();
+		return await db.ApiKeys
+			.Where(k => k.Key == key && k.ProjectKey == projectKey)
+			.DeleteAsync(ct) > 0;
+	}
+
+	// Replace the scopes of one of `projectKey`'s keys. NotFound when the key does not exist OR is not
+	// this project's — indistinguishable on purpose, so the page cannot be used to probe for the
+	// existence of a sibling project's key.
+	public async Task<KeyUpdateResult> SetScopesForProjectAsync(
+		string key, string projectKey, IReadOnlyList<string> scopes, CancellationToken ct = default)
+	{
+		var (valid, invalid) = ApiKeyScopes.Validate(string.Join(',', scopes));
+		if (invalid.Count > 0)
+			return new KeyUpdateResult.Refused("Unknown scope(s): " + string.Join(", ", invalid));
+		if (valid.Count == 0)
+			return new KeyUpdateResult.Refused("At least one scope is required.");
+
+		using var db = dbf.Open();
+		var affected = await db.ApiKeys
+			.Where(k => k.Key == key && k.ProjectKey == projectKey)
+			.Set(k => k.Scopes, string.Join(',', valid))
+			.UpdateAsync(ct);
+
+		return affected > 0 ? new KeyUpdateResult.Updated() : new KeyUpdateResult.NotFound();
+	}
+
 	// ── the PROVISIONING surface (apikey_* MCP tools, admin:provision) ────────────────────────
 	//
 	// These are NOT workspace-confined: admin:provision is the fleet-wide onboarding scope (it is

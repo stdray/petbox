@@ -9,6 +9,7 @@ using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
+using PetBox.Core.Settings;
 using PetBox.Web.Auth;
 using PetBox.Web.Pages;
 using PetBox.Web.Pages.Admin;
@@ -133,7 +134,13 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task ProjectDetail_create_key_redirects_to_clean_url_and_carries_the_key()
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
-		var page = new ProjectDetailModel(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new NullSettingsResolver())
+		var page = new ProjectDetailModel(
+			new ProjectDirectory(_db.Factory()),
+			_db.Factory().AgentKeys(),
+			_db.Factory().HealthEndpoints(),
+			Features(),
+			new NullSettingsResolver(),
+			new SettingsStore(_db.Factory()))
 		{
 			WorkspaceKey = "ws",
 			ProjectKey = "proj",
@@ -152,7 +159,13 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task ProjectDetail_create_key_with_blank_name_re_renders_and_carries_nothing()
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
-		var page = new ProjectDetailModel(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new NullSettingsResolver())
+		var page = new ProjectDetailModel(
+			new ProjectDirectory(_db.Factory()),
+			_db.Factory().AgentKeys(),
+			_db.Factory().HealthEndpoints(),
+			Features(),
+			new NullSettingsResolver(),
+			new SettingsStore(_db.Factory()))
 		{
 			WorkspaceKey = "ws",
 			ProjectKey = "proj",
@@ -211,7 +224,13 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
 		_db.Insert(new ApiKey { Key = "yb_key_z", ProjectKey = "proj", Scopes = ApiKeyScopes.TasksRead, Name = "ci", CreatedAt = DateTime.UtcNow });
-		var page = new ProjectDetailModel(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new NullSettingsResolver())
+		var page = new ProjectDetailModel(
+			new ProjectDirectory(_db.Factory()),
+			_db.Factory().AgentKeys(),
+			_db.Factory().HealthEndpoints(),
+			Features(),
+			new NullSettingsResolver(),
+			new SettingsStore(_db.Factory()))
 		{
 			WorkspaceKey = "ws",
 			ProjectKey = "proj",

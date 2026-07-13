@@ -45,8 +45,17 @@ public sealed class ProjectDeletePageTests : IDisposable
 		return new FeatureFlags(cfg);
 	}
 
+	// The page holds no db factory any more (db-out-of-pages-into-services): it is built from the
+	// SERVICES it asks, and these are the production implementations, not stubs.
 	ProjectDetailModel Page(string projectKey) =>
-		new(_db.Factory(), new ProjectDirectory(_db.Factory()), Features(), new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = projectKey };
+		new(
+			new ProjectDirectory(_db.Factory()),
+			_db.Factory().AgentKeys(),
+			_db.Factory().HealthEndpoints(),
+			Features(),
+			new NullSettingsResolver(),
+			new SettingsStore(_db.Factory()))
+		{ WorkspaceKey = "ws", ProjectKey = projectKey };
 
 	// Seed one owned row in every table the cascade touches, for the given project key.
 	void SeedOwnedResources(string projectKey)
