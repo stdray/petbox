@@ -145,7 +145,6 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Core.Services.IAgentDefinitionService, PetBox.Core.Services.AgentDefinitionService>();
 		// Write door to the append-only HealthReports table, for the push endpoint (POST /api/health):
 		// the handler is pipeline code and does not open core.db itself.
-		builder.Services.AddScoped<PetBox.Core.Services.IHealthReportService, PetBox.Core.Services.HealthReportService>();
 		// Log dbs live under data/logs/** — the one subtree Backup deliberately skips
 		// (telemetry, not data; see Backup.ExcludedLogsDirName). Named constant, not a
 		// literal, so the two can't drift apart.

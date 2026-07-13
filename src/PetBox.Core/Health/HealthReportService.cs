@@ -15,16 +15,51 @@ namespace PetBox.Core.Health;
 // caller that filtered it itself was one forgotten line away from serving another project's fleet.
 // The caller names a project and gets THAT project's rows; there is no method that hands back the
 // unfiltered table.
+// One health report as a CALLER states it: the tags are still a raw dictionary, because
+// canonicalising them is the report's own rule, not the caller's — see HealthTags.Canonical, and
+// note that (Svc, canonical Tags) is the IDENTITY the status page groups by. A push that
+// canonicalised its own tags would be free to canonicalise them differently from the poller's.
+public sealed record HealthReportInput(
+	string Svc,
+	string? Name,
+	IReadOnlyDictionary<string, string> Tags,
+	string? Version,
+	string? Sha,
+	string? BuildDate,
+	string Status);
+
 public interface IHealthReportService
 {
 	// Every report of `projectKey`, optionally narrowed to one service name. Ordered by Id (identity-
 	// ascending = chronological), so the caller's grouping can take the max Id in a group as "latest".
 	Task<IReadOnlyList<HealthReport>> ListForProjectAsync(
 		string projectKey, string? svc = null, CancellationToken ct = default);
+
+	// Append one report, stamped as received now and marked Source = "push". Never an update: the
+	// table is a LOG — the status page shows the latest per (Svc, Tags) and retention sweeps the
+	// rest — so a second report from the same service is a new row, not an overwrite.
+	Task RecordPushAsync(HealthReportInput input, CancellationToken ct = default);
 }
 
 public sealed class HealthReportService(ICoreDbFactory dbf) : IHealthReportService
 {
+	public async Task RecordPushAsync(HealthReportInput input, CancellationToken ct = default)
+	{
+		using var db = dbf.Open();
+		await db.InsertAsync(new HealthReport
+		{
+			Svc = input.Svc.Trim(),
+			Name = input.Name,
+			Tags = HealthTags.Canonical(input.Tags),
+			Version = input.Version,
+			Sha = input.Sha,
+			BuildDate = input.BuildDate,
+			Status = input.Status.Trim(),
+			ReceivedAt = DateTime.UtcNow,
+			Source = "push",
+		}, token: ct);
+	}
+
 	public async Task<IReadOnlyList<HealthReport>> ListForProjectAsync(
 		string projectKey, string? svc = null, CancellationToken ct = default)
 	{

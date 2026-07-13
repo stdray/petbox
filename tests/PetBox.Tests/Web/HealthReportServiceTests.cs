@@ -1,7 +1,7 @@
 using LinqToDB;
 using LinqToDB.Async;
 using PetBox.Core.Data;
-using PetBox.Core.Services;
+using PetBox.Core.Health;
 
 namespace PetBox.Tests.Web;
 
