@@ -1,6 +1,10 @@
+using System.Security.Claims;
 using LinqToDB;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -49,11 +53,25 @@ public sealed class TaskBoardQuickAddTests : IDisposable
 		new(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
 		{ ["Features:Tasks"] = "true" }).Build());
 
+	// Sysadmin claim: OnPostCreateAsync now guards itself to Member+ (viewer-member-consistency) via
+	// User.HasWorkspaceRoleAtLeast — an unwired PageModel has no PageContext at all. Sysadmin is the
+	// universal free-pass, so it stays out of the way of the catalog-policy gate under test here.
+	static void Wire(PageModel page)
+	{
+		var identity = new ClaimsIdentity([new Claim(PetBoxClaims.IsSysAdmin, "true")], "Test");
+		page.PageContext = new PageContext
+		{
+			HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(identity) },
+		};
+	}
+
 	async Task<TaskBoardModel> Board(BoardKind kind)
 	{
 		var board = "b-" + kind.ToString().ToLowerInvariant();
 		await _store.CreateAsync("proj", board, null, kind.ToString());
-		return new TaskBoardModel(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
+		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver()) { WorkspaceKey = "ws", ProjectKey = "proj", Board = board };
+		Wire(model);
+		return model;
 	}
 
 	int ActiveNodeCount(string board) =>

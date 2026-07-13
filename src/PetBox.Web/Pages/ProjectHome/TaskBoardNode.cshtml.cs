@@ -1,7 +1,9 @@
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Features;
+using PetBox.Core.Models;
 using PetBox.Core.Settings;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
@@ -18,7 +20,10 @@ namespace PetBox.Web.Pages.ProjectHome;
 // ITasksService / ICommentService — the page never opens the DB context itself, and the edit
 // handlers route through UpsertAsync so a UI edit hits the SAME guards (FSM, ideaRef, concurrency)
 // as the MCP path (spec edit-respects-guards). NetArchTest enforces the door.
-[Authorize(Policy = "WorkspaceMember")]
+// viewer-member-consistency: the class policy is WorkspaceViewer (a Viewer must be able to READ
+// the node) — every OnPost* handler (status change, title/body edit, comments) is a MUTATION and
+// guards itself to Member+.
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class TaskBoardNodeModel : PageModel
 {
 	readonly FeatureFlags _features;
@@ -106,6 +111,7 @@ public sealed class TaskBoardNodeModel : PageModel
 	// service re-validates the transition (and runs the FSM effects) — the UI can't bypass it.
 	public async Task<IActionResult> OnPostStatusAsync(string status, long version, CancellationToken ct)
 	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		return await ApplyAsync(p => p with { Status = status }, version, ct);
 	}
@@ -113,6 +119,7 @@ public sealed class TaskBoardNodeModel : PageModel
 	// edit-title-body: replace the node's title and body (markdown). An empty field clears it.
 	public async Task<IActionResult> OnPostEditAsync(string? title, string? body, long version, CancellationToken ct)
 	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		return await ApplyAsync(p => p with { Title = title ?? string.Empty, Body = body ?? string.Empty }, version, ct);
 	}
@@ -124,6 +131,7 @@ public sealed class TaskBoardNodeModel : PageModel
 	// is always the one this page already resolves itself, never client-supplied.
 	public async Task<IActionResult> OnPostCommentAddAsync(string? parentId, string body, CancellationToken ct)
 	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		var detail = await ResolveAsync(ct);
 		if (detail is null) return NotFound();
@@ -147,6 +155,7 @@ public sealed class TaskBoardNodeModel : PageModel
 	// page Error rather than silently clobbering a comment that moved on since the render.
 	public async Task<IActionResult> OnPostCommentEditAsync(string id, string body, long version, CancellationToken ct)
 	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		var detail = await ResolveAsync(ct);
 		if (detail is null) return NotFound();
@@ -169,6 +178,7 @@ public sealed class TaskBoardNodeModel : PageModel
 	// instead of a raw 500.
 	public async Task<IActionResult> OnPostCommentDeleteAsync(string id, CancellationToken ct)
 	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey, WorkspaceRole.Member)) return Forbid();
 		if (!_features.IsEnabled(Feature.Tasks)) return NotFound();
 		var detail = await ResolveAsync(ct);
 		if (detail is null) return NotFound();

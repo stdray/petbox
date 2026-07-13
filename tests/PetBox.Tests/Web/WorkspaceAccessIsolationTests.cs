@@ -106,6 +106,21 @@ public sealed class WorkspaceAccessIsolationFixture : IAsyncLifetime
 		// latecomer: no membership yet — one is granted mid-test to prove claims are not frozen
 		// at sign-in (the invite path used to need a re-login).
 		await db.InsertAsync(new User { Username = "latecomer", PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
+
+		// viewer: Viewer (read-only) role in wsa — proves viewer-member-consistency: a Viewer reads
+		// a board/log page but a MUTATION handler on that same page still requires Member+.
+		var viewerId = await db.InsertWithInt64IdentityAsync(new User
+		{
+			Username = "viewer-iso",
+			PasswordHash = PasswordHash,
+			CreatedAt = DateTime.UtcNow,
+		});
+		await db.InsertAsync(new WorkspaceMember { UserId = viewerId, WorkspaceKey = "wsa", Role = WorkspaceRole.Viewer });
+
+		// A real board in proja (wsa) so the mutation tests exercise the ROLE guard itself, not a
+		// "board not found" 404 that would otherwise be indistinguishable from a denial.
+		var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+		await boards.EnsureAsync("proja", "board1");
 	}
 
 	public async Task DisposeAsync()
@@ -142,6 +157,11 @@ public sealed class WorkspaceAccessIsolationTests : IClassFixture<WorkspaceAcces
 		data.Add("/ui/{ws}/{p}/sessions/abc123");
 		data.Add("/ui/{ws}/{p}/traces");
 		data.Add("/ui/{ws}/{p}/traces/deadbeef");
+		// same-class-cross-tenant-field-id-4c0359 tail: these three shipped with a bare
+		// [Authorize(Policy = "WorkspaceMember")] but NO project↔route-workspace bind at all.
+		data.Add("/ui/{ws}/{p}/logs");
+		data.Add("/ui/{ws}/{p}/tasks/board1");
+		data.Add("/ui/{ws}/{p}/tasks/board1/anyslug");
 		return data;
 	}
 
@@ -239,20 +259,41 @@ public sealed class WorkspaceAccessIsolationTests : IClassFixture<WorkspaceAcces
 	}
 
 	// The project is bound to the ROUTE workspace: membership in wsa is not a licence to read
-	// wsb's project by pointing wsa's URL at it.
+	// wsb's project by pointing wsa's URL at it. Enforced by the global
+	// ProjectWorkspaceBindingFilter (Program.cs) BEFORE any page handler runs, so the mismatch is
+	// a hard 404 — not the in-page "not found" banner a page's own null-check would render.
 	[Theory]
-	[InlineData("/ui/wsa/projb", "project-dashboard-notfound")]
-	[InlineData("/ui/wsa/projb/databases", "databases-notfound")]
-	[InlineData("/ui/wsa/projb/tasks", "tasks-notfound")]
-	[InlineData("/ui/wsa/projb/sessions", "sessions-notfound")]
-	public async Task Member_of_wsa_cannot_reach_a_wsb_project_through_a_wsa_url(string url, string notFoundMarker)
+	[InlineData("/ui/wsa/projb")]
+	[InlineData("/ui/wsa/projb/databases")]
+	[InlineData("/ui/wsa/projb/tasks")]
+	[InlineData("/ui/wsa/projb/sessions")]
+	[InlineData("/ui/wsa/projb/traces")]
+	public async Task Member_of_wsa_cannot_reach_a_wsb_project_through_a_wsa_url(string url)
 	{
 		var auth = await LoginAsync("eve-iso");
 		using var resp = await GetAsync(url, auth);
-		resp.StatusCode.Should().Be(HttpStatusCode.OK, "the route workspace is wsa, which eve may view");
-		var html = await resp.Content.ReadAsStringAsync();
-		html.Should().Contain(notFoundMarker,
-			"a project that lives in ANOTHER workspace than the route's must not resolve");
+		resp.StatusCode.Should().Be(HttpStatusCode.NotFound,
+			"a project that lives in ANOTHER workspace than the route's must not resolve, even though " +
+			"the route workspace (wsa) is one eve may otherwise view");
+	}
+
+	// Same field-IDOR guard on the two WorkspaceAdmin-gated pages (Llm/Index, Config/Index) — a
+	// same-class hole found and closed in this follow-up (same-class-cross-tenant-field-id-4c0359):
+	// Llm/Index resolved its project by KEY ALONE (db.Projects.AnyAsync(p => p.Key == ProjectKey)),
+	// so an admin of wsA could read/replace another tenant's LLM provider registry — INCLUDING its
+	// api keys — via /ui/wsA/{project-of-wsB}/llm. Uses sysadmin so the WorkspaceAdmin POLICY itself
+	// (which checks the ROUTE workspace only) always passes, isolating the assertion to the
+	// project-binding filter: sysadmin's workspace free-pass must NOT extend to a project that does
+	// not belong to the route workspace.
+	[Theory]
+	[InlineData("/ui/wsa/projb/config")]
+	[InlineData("/ui/wsa/projb/llm")]
+	public async Task Sysadmin_cannot_reach_a_wsb_project_through_a_wsa_url_on_admin_gated_pages(string url)
+	{
+		var auth = await LoginAsync("admin");
+		using var resp = await GetAsync(url, auth);
+		resp.StatusCode.Should().Be(HttpStatusCode.NotFound,
+			"a project that lives in ANOTHER workspace than the route's must not resolve, even for sysadmin");
 	}
 
 	[Fact]
@@ -316,6 +357,72 @@ public sealed class WorkspaceAccessIsolationTests : IClassFixture<WorkspaceAcces
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("access-denied-card");
 		html.Should().NotContain("id=\"login-form\"", "it must not be the sign-in form");
+	}
+
+	// viewer-member-consistency: a Viewer can READ a board/log page (the class-wide policy is
+	// WorkspaceViewer now), but the page's own MUTATION handlers still require Member+ — a Viewer
+	// posting to them must be denied exactly like a non-member, and a Member must still succeed.
+	async Task<HttpResponseMessage> PostAsync(string url, string authCookie, IDictionary<string, string> fields)
+	{
+		var getReq = new HttpRequestMessage(HttpMethod.Get, url);
+		getReq.Headers.Add("Cookie", authCookie);
+		using var getResp = await _client.SendAsync(getReq);
+		var (token, afCookie) = ExtractAntiforgery(getResp, await getResp.Content.ReadAsStringAsync());
+
+		fields["__RequestVerificationToken"] = token;
+		var req = new HttpRequestMessage(HttpMethod.Post, url) { Content = new FormUrlEncodedContent(fields) };
+		req.Headers.Add("Cookie", $"{authCookie}; {afCookie}");
+		return await _client.SendAsync(req);
+	}
+
+	[Fact]
+	public async Task Viewer_of_wsa_can_read_the_board_but_cannot_quick_add()
+	{
+		var auth = await LoginAsync("viewer-iso");
+
+		using (var read = await GetAsync("/ui/wsa/proja/tasks/board1", auth))
+			read.StatusCode.Should().Be(HttpStatusCode.OK, "a Viewer must be able to READ a board in their own workspace");
+
+		using var post = await PostAsync("/ui/wsa/proja/tasks/board1?handler=Create", auth,
+			new Dictionary<string, string> { ["name"] = "should not be created", ["priority"] = "100" });
+		ShouldBeDenied(post, "quick-add is a MUTATION — a Viewer must not be able to create a task");
+	}
+
+	[Fact]
+	public async Task Member_of_wsa_can_quick_add_to_the_board()
+	{
+		var auth = await LoginAsync("eve-iso");
+
+		using var post = await PostAsync("/ui/wsa/proja/tasks/board1?handler=Create", auth,
+			new Dictionary<string, string> { ["name"] = "member-created-task", ["priority"] = "100" });
+		post.StatusCode.Should().Be(HttpStatusCode.Redirect, "a Member's quick-add must succeed (PRG back to the board)");
+		post.Headers.Location!.ToString().Should().NotContain("/AccessDenied",
+			"a Member is not denied — this is the mutation Member+ exists to allow");
+	}
+
+	[Fact]
+	public async Task Viewer_of_wsa_cannot_save_a_query_but_can_read_the_logs_page()
+	{
+		var auth = await LoginAsync("viewer-iso");
+
+		using (var read = await GetAsync("/ui/wsa/proja/logs", auth))
+			read.StatusCode.Should().Be(HttpStatusCode.OK, "a Viewer must be able to READ the logs page");
+
+		using var post = await PostAsync("/ui/wsa/proja/logs?handler=Save", auth,
+			new Dictionary<string, string> { ["name"] = "should-not-save", ["kql"] = "events" });
+		ShouldBeDenied(post, "saving a query is a MUTATION — a Viewer must not be able to create one");
+	}
+
+	[Fact]
+	public async Task Member_of_wsa_can_save_a_query()
+	{
+		var auth = await LoginAsync("eve-iso");
+
+		using var post = await PostAsync("/ui/wsa/proja/logs?handler=Save", auth,
+			new Dictionary<string, string> { ["name"] = "member-saved-query", ["kql"] = "events" });
+		post.StatusCode.Should().Be(HttpStatusCode.Redirect, "a Member's save must succeed (PRG back to the logs page)");
+		post.Headers.Location!.ToString().Should().NotContain("/AccessDenied",
+			"a Member is not denied — this is the mutation Member+ exists to allow");
 	}
 
 	[Fact]

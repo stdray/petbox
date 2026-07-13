@@ -554,6 +554,7 @@ public partial class Program
 		// Loads the public /doc page bodies from their markdown canon (Pages/Doc/content/*.md),
 		// the single source those pages render through the shared renderer. Stateless — singleton.
 		builder.Services.AddSingleton<PetBox.Web.Pages.Doc.DocContent>();
+		builder.Services.AddScoped<PetBox.Web.Auth.ProjectWorkspaceBindingFilter>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.
@@ -566,6 +567,14 @@ public partial class Program
 			// "node" segment outranks {board}, and `node` is a reserved board name, so they never
 			// collide. The page model binds either (board, slug) or nodeId.
 			options.Conventions.AddPageRoute("/ProjectHome/TaskBoardNode", "/ui/{workspaceKey}/{projectKey}/tasks/{board}/{slug}");
+
+			// Global gate for the whole {workspaceKey}/{projectKey} IDOR class (workspace-access-
+			// isolation follow-up, same-class-cross-tenant-field-id-4c0359): a Workspace* policy only
+			// proves membership of the route WORKSPACE, never that the route PROJECT lives in it. One
+			// filter on every page beats a per-page `p.WorkspaceKey == WorkspaceKey` check that a new
+			// page can forget to copy.
+			options.Conventions.ConfigureFilter(
+				new Microsoft.AspNetCore.Mvc.ServiceFilterAttribute(typeof(PetBox.Web.Auth.ProjectWorkspaceBindingFilter)));
 		});
 	}
 

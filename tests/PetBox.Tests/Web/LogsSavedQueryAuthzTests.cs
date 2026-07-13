@@ -14,8 +14,10 @@ namespace PetBox.Tests.Web;
 // SavedQuery by id with NO project filter at all (`_db.SavedQueries.Where(q => q.Id ==
 // savedId)`), so ANY logged-in user could delete ANY project's saved query by guessing/enumerating
 // its id — worse than the usual form-override hole, since there wasn't even a bound key to
-// override. The page is now [Authorize(Policy = "WorkspaceMember")] (route-checked), ProjectKeyRoute
-// is [FromRoute] (route-only, unspoofable), and OnPostDeleteAsync additionally filters
+// override. The page is now [Authorize(Policy = "WorkspaceViewer")] — a Viewer can READ the page
+// (viewer-member-consistency) — with OnPostDeleteAsync/OnPostSaveAsync each guarding themselves to
+// Member+ since deleting/saving a query is a MUTATION. ProjectKeyRoute is [FromRoute] (route-only,
+// unspoofable), and OnPostDeleteAsync additionally filters
 // `q.ProjectKey == ProjectKeyRoute` (defense in depth — a same-workspace member of a DIFFERENT
 // project must not be able to delete this project's saved query either). These tests drive the
 // real HTTP pipeline (cookie auth + antiforgery), mirroring AdminProjectsAuthzTests.cs.

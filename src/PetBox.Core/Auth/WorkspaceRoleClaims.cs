@@ -19,6 +19,20 @@ public static class WorkspaceRoleClaims
 		return GetWorkspaceRole(user, workspaceKey) == WorkspaceRole.Admin;
 	}
 
+	// True when the principal holds AT LEAST minRole in the given workspace (sysadmin free-pass;
+	// lower ordinal = stronger role — see WorkspaceRole). For a page whose class-wide [Authorize]
+	// policy is intentionally the WEAKEST role reachable on the page (WorkspaceViewer, so a Viewer
+	// can read a board/log/trace) but one specific POST handler on that same page is a MUTATION
+	// that needs Member+ (workspace-access-isolation follow-up: viewer-member-consistency). Reads
+	// the SAME yb:ws_roles claim WorkspaceRoleAuthorizationHandler checks — kept fresh per request
+	// by WorkspaceClaimsRefresher, so this reflects current membership, not a stale sign-in snapshot.
+	public static bool HasWorkspaceRoleAtLeast(this ClaimsPrincipal user, string workspaceKey, WorkspaceRole minRole)
+	{
+		if (user.HasClaim(PetBoxClaims.IsSysAdmin, "true"))
+			return true;
+		return GetWorkspaceRole(user, workspaceKey) is { } role && role <= minRole;
+	}
+
 	// The principal's role in the given workspace, or null if none is recorded in the claim.
 	public static WorkspaceRole? GetWorkspaceRole(this ClaimsPrincipal user, string workspaceKey)
 	{
