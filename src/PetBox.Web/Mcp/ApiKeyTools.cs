@@ -103,9 +103,9 @@ public static class ApiKeyTools
 	}
 
 	[McpServerTool(Name = "apikey_list", Title = "List API keys", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyListResult))]
-	[Description("Lists a project's API keys (key, name, scopes, created/expiry, defaultProjectKey). Requires admin:provision. Pass projectKey '*' to list the cross-project keys — `defaultProjectKey` is the project such a key falls back to when a tool's optional projectKey is omitted.")]
+	[Description("Lists a project's API keys (key, name, scopes, created/expiry, defaultProjectKey, lastUsedAt). Requires admin:provision. Pass projectKey '*' to list the cross-project keys — `defaultProjectKey` is the project such a key falls back to when a tool's optional projectKey is omitted. `lastUsedAt` is the last successful authentication with the key, null if it has never been used: it is served FRESH (the stored value merged with the in-memory stamp), so a call made seconds ago already shows — but the STORED value is coarse (persisted in ~5-minute batches), and a hard crash can lose up to that window.")]
 	public static async Task<ApiKeyListResult> ListAsync(
-		IHttpContextAccessor http, ICoreDbFactory dbf,
+		IHttpContextAccessor http, ICoreDbFactory dbf, IKeyStatService stats,
 		[Description("Project to list keys for.")] string projectKey,
 		CancellationToken ct = default)
 	{
@@ -115,10 +115,21 @@ public static class ApiKeyTools
 		var rows = await db.ApiKeys
 			.Where(k => k.ProjectKey == projectKey)
 			.OrderBy(k => k.CreatedAt)
-			.Select(k => new ApiKeyRow(k.Key, k.Name, k.Scopes, k.CreatedAt, k.ExpiresAt, k.DefaultProjectKey, k.SandboxOnly))
+			.Select(k => new ApiKeyRow(k.Key, k.Name, k.Scopes, k.CreatedAt, k.ExpiresAt, k.DefaultProjectKey, k.SandboxOnly, k.LastUsedAt))
 			.ToListAsync(ct);
-		return new ApiKeyListResult(rows);
+		// The merge that keeps the answer honest: the flusher runs every ~5 minutes, so the column
+		// alone would show a key as idle minutes after it was actually used. Take the LATER of the
+		// stored value and the live in-memory stamp (spec apikey-last-used).
+		return new ApiKeyListResult([.. rows.Select(r => r with { LastUsedAt = Later(r.LastUsedAt, stats.LastUsed(r.Key)) })]);
 	}
+
+	static DateTime? Later(DateTime? stored, DateTime? inMemory) =>
+		(stored, inMemory) switch
+		{
+			(null, var m) => m,
+			(var s, null) => s,
+			var (s, m) => s >= m ? s : m,
+		};
 
 	[McpServerTool(Name = "apikey_update", Title = "Update an API key", UseStructuredContent = true, OutputSchemaType = typeof(ApiKeyUpdatedResult))]
 	[Description("PATCHes an ALREADY-ISSUED key in place — no re-mint, no manual DB edit. Requires admin:provision: exactly the right apikey_create needs, so an update can never grant what a mint could not. The secret itself never changes and is never returned; `key` is the address. Editable: `name`, `scopes`, expiry, `defaultProject`. A field you OMIT is left untouched (it is NOT reset to a default). The two clearable fields have an explicit sentinel, distinct from 'omitted': `expiresInSeconds:0` makes the key NON-EXPIRING, `defaultProject:\"\"` (empty string) DROPS the default project. `scopes` replaces the whole set (it is not additive) and is validated like on create — unknown scopes are rejected, an empty set is rejected. `defaultProject` obeys the same invariants as create: cross-project ('*') keys only, and the project must exist. A change takes effect on the NEXT call with that key — nothing about a key is cached per connection or per session. A key declared in appsettings (Auth:ApiKeys) CANNOT be updated: the config file owns its lifecycle and the config lookup wins on every auth, so a stored row would never be read — such a call is REFUSED, not silently ignored.")]

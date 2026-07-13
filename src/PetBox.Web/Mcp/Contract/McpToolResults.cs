@@ -107,8 +107,11 @@ public sealed record ProjectListResult(IReadOnlyList<ProjectRow> Projects);
 public sealed record ApiKeyCreatedResult(string Key, string ProjectKey, IReadOnlyList<string> Scopes, DateTime? ExpiresAt,
 	string? DefaultProjectKey = null, bool SandboxOnly = false);
 
+// `LastUsedAt` (spec apikey-last-used) is the MERGED value: the later of the stored column and the
+// in-memory stamp, so a call made seconds ago is visible NOW rather than after the next flush.
+// NULL = never used (distinguishable from used-long-ago, which is the point of the field).
 public sealed record ApiKeyRow(string Key, string Name, string Scopes, DateTime CreatedAt, DateTime? ExpiresAt,
-	string? DefaultProjectKey = null, bool SandboxOnly = false);
+	string? DefaultProjectKey = null, bool SandboxOnly = false, DateTime? LastUsedAt = null);
 
 public sealed record ApiKeyListResult(IReadOnlyList<ApiKeyRow> Keys);
 

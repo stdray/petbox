@@ -114,7 +114,9 @@ public sealed class DefaultProjectResolutionTests : IDisposable
 		created.DefaultProjectKey.Should().Be("kpvotes");
 		_db.ApiKeys.Single(k => k.Key == created.Key).DefaultProjectKey.Should().Be("kpvotes");
 
-		var listed = await ApiKeyTools.ListAsync(Admin(), _db.Factory(), ProjectScope.AllProjects);
+		// The list merges lastUsedAt against the in-memory stat singleton (spec apikey-last-used) —
+		// a fresh one here means "nothing stamped", i.e. the stored column decides.
+		var listed = await ApiKeyTools.ListAsync(Admin(), _db.Factory(), new KeyStatService(), ProjectScope.AllProjects);
 		listed.Keys.Single(k => k.Key == created.Key).DefaultProjectKey.Should().Be("kpvotes");
 	}
 
