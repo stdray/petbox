@@ -11,19 +11,22 @@
 	<select class="select select-bordered select-xs" data-testid="board-filter-status" aria-label="Filter by status"><option value="">status: any</option></select>
 	<select class="select select-bordered select-xs" data-testid="board-filter-type" aria-label="Filter by type"><option value="">type: any</option></select>
 	<label class="label cursor-pointer justify-start gap-2 text-xs">
-		<input type="checkbox" class="toggle toggle-xs" data-testid="active-only-toggle" />
+		<input type="checkbox" class="toggle toggle-xs" data-testid="active-only-toggle" checked="@(Model.ActiveOnly ? "checked" : null)" />
 		<span>active only</span>
 	</label>
-	@* Client-side sort toggle (board-sort-impl): reorders rows/cards within each of the page's
-	   `[data-sort-scope]` containers (siblings only — see ts/board.ts reorderDom) and persists
-	   the choice to localStorage["tasksSort"]. *@
+	@* board-filters-server-state: ActiveOnly/SortBy/SortDesc are TaskBoardModel's server-resolved
+	   [Setting] values (Scope.User, board-independent — a global habit, not a per-board choice) —
+	   rendering `checked`/`selected`/the arrow glyph from them means the FIRST response already
+	   matches what ts/board.ts's initBoardPage reads off the DOM on load (no post-paint correction).
+	   A change fires a fire-and-forget POST to /api/ui/board-filter-prefs (board.ts's
+	   persistFilterPrefs) instead of writing localStorage["tasksSort"]. *@
 	<span class="text-xs opacity-60 ml-1">@Model.SortHint</span>
 	<select class="select select-bordered select-xs" data-testid="board-sort-by" aria-label="Sort by">
-		<option value="priority">priority</option>
-		<option value="created">created</option>
-		<option value="updated">updated</option>
-		<option value="title">title</option>
+		<option value="priority" selected="@(Model.SortBy == "priority" ? "selected" : null)">priority</option>
+		<option value="created" selected="@(Model.SortBy == "created" ? "selected" : null)">created</option>
+		<option value="updated" selected="@(Model.SortBy == "updated" ? "selected" : null)">updated</option>
+		<option value="title" selected="@(Model.SortBy == "title" ? "selected" : null)">title</option>
 	</select>
-	<button type="button" class="btn btn-ghost btn-xs font-mono" data-testid="board-sort-dir" aria-label="Toggle sort direction" title="toggle ascending / descending">↑</button>
+	<button type="button" class="btn btn-ghost btn-xs font-mono" data-testid="board-sort-dir" aria-label="Toggle sort direction" title="toggle ascending / descending">@(Model.SortDesc ? "↓" : "↑")</button>
 	<partial name="_BoardFieldsDialog" model="Model" />
 </div>

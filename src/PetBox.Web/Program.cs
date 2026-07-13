@@ -548,6 +548,9 @@ public partial class Program
 		builder.Services.AddScoped<INavigationContext, NavigationContext>();
 		builder.Services.AddScoped<PetBox.Web.Search.CrossScopeTaskSearchService>();
 		builder.Services.AddScoped<PetBox.Core.Settings.ISettingsResolver, PetBox.Web.Settings.SettingsResolver>();
+		// Typed, memoized-per-request view accessor over UiStateResolver — see UiState.cs. Scoped so
+		// the memoization field lives exactly one request; never resolved eagerly in middleware.
+		builder.Services.AddScoped<PetBox.Web.Settings.IUiState, PetBox.Web.Settings.UiState>();
 		// Server-side markdown renderer for read surfaces (reader-view detectability). Singleton:
 		// the Markdig pipeline + HtmlSanitizer are built once and are thread-safe to reuse.
 		builder.Services.AddSingleton<PetBox.Web.Rendering.IMarkdownRenderer, PetBox.Web.Rendering.MarkdownRenderer>();
@@ -862,6 +865,7 @@ public partial class Program
 		app.MapAuthEndpoints();
 		app.MapWorkspaceSwitch();
 		app.MapProjectSwitch();
+		PetBox.Web.Settings.BoardFilterPrefsEndpoint.MapBoardFilterPrefs(app);
 		app.MapRazorPages();
 
 		if (new FeatureFlags(app.Configuration).IsEnabled(Feature.Config))

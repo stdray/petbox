@@ -3,6 +3,7 @@
 // localTime.test.ts can import them under `node --test` without a DOM). Wiring below is the
 // only part that touches `document`.
 import { renderLocalTimes } from "./localTime";
+import { writeUiState } from "./ui-state";
 
 renderLocalTimes(document);
 document.addEventListener("htmx:afterSwap", (event) => {
@@ -248,7 +249,19 @@ document.addEventListener("click", (event) => {
 });
 
 // ---------- Pin search panel ----------
-const KqlPinKey = "petbox.kqlPanelPinned";
+// State lives in the shared `petbox.ui` cookie (BrowserState.KqlPanelPinned, ui-state.ts) — window/
+// device state, not a cross-device preference — so the SERVER renders the sticky/shadow-lg classes
+// and aria-pressed on the very first response (Pages/Logs/Index.cshtml). This module therefore
+// never applies the pinned state on load (that was the FOUC bug: localStorage was read and the
+// classes were applied AFTER paint, work `kql-panel-pin-server-state`) — it only reacts to a click
+// and writes the new value through the cookie helper so the NEXT server response already agrees.
+// Mirrors ts/sidebar.ts's pin toggle exactly.
+
+// Current state is read from the DOM the server just rendered — never from storage — so a toggle
+// always flips whatever is actually showing.
+function isKqlPinned(): boolean {
+	return document.getElementById("kql-pin-toggle")?.getAttribute("aria-pressed") === "true";
+}
 
 function applyKqlPinState(pinned: boolean): void {
 	const form = document.getElementById("kql-search-form");
@@ -265,25 +278,13 @@ function applyKqlPinState(pinned: boolean): void {
 	}
 }
 
-(() => {
-	try {
-		if (localStorage.getItem(KqlPinKey) === "1") applyKqlPinState(true);
-	} catch {
-		// localStorage unavailable — start unpinned.
-	}
-})();
-
 document.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement | null;
 	const btn = target?.closest("#kql-pin-toggle") as HTMLButtonElement | null;
 	if (!btn) return;
 	event.preventDefault();
-	const pinned = btn.getAttribute("aria-pressed") !== "true";
-	try {
-		localStorage.setItem(KqlPinKey, pinned ? "1" : "0");
-	} catch {
-		// localStorage unavailable — apply state for this session only.
-	}
+	const pinned = !isKqlPinned();
+	writeUiState({ kqlPanelPinned: pinned });
 	applyKqlPinState(pinned);
 });
 

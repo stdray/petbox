@@ -62,8 +62,7 @@ Every configurable thing in PetBox today, grouped by the entity it belongs to.
 |---|---|---|---|---|
 | Username | string | `Users` table | `/ui/me/account` | self |
 | Password hash | string | `Users` table | `/ui/me/security` | self |
-| `UiSettings.theme` | enum (dark / light / system) | `Settings` (scope=user) | `/ui/me/preferences` | self |
-| `UiSettings.defaultHome` | enum (status / last-project / all-logs) | `Settings` (scope=user) | `/ui/me/preferences` | self |
+| `BrowserState.theme` | enum (dark / light / system) | `Settings` (scope=user) | `/ui/me/preferences` | self |
 | `AiSettings.personalKey` (future) | secret | `Settings` (scope=user, type=secret) | `/ui/me/ai-providers` | self |
 
 ### (User × Workspace) — membership
@@ -265,12 +264,17 @@ Active section is determined by URL prefix. Sections the user can't access are h
 
 **Scenario A: new behavioural setting (`ui.editor.theme`)**
 
-1. Add a property to existing `record UiSettings`:
+1. Add a property to `PetBox.Core.Settings.BrowserState` — the single record behind
+   `/ui/me/preferences` AND the `ui-state-framework`/`IUiState` mechanism (its `[Setting]`
+   properties are the DB/cross-device branch; its `[BrowserState]` properties are the
+   `petbox.ui`-cookie/window branch — see the record's own doc comment):
    ```csharp
    [Setting(TopLevel = Scope.User, Key = "ui.editor.theme")]
    public EditorTheme EditorTheme { get; init; } = EditorTheme.Default;
    ```
-2. Done. The setting appears at `/ui/me/preferences` automatically. No DB migration.
+2. Done. `SettingsFormFieldSelector` only surfaces `[Setting]`-tagged properties, so the setting
+   appears at `/ui/me/preferences` automatically (the `[BrowserState]`-tagged cookie properties on
+   the same record never leak into that form). No DB migration.
 
 **Scenario B: new group of settings (`AiSettings` for the Tasks module)**
 

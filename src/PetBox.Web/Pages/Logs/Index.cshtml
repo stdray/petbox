@@ -1,11 +1,18 @@
 @page "/ui/{workspaceKey}/{projectKey}/logs/{logName?}"
 @model PetBox.Web.Pages.Logs.IndexModel
+@inject PetBox.Web.Settings.IUiState UiState
 @{
 	ViewData["Title"] = Model.ProjectName is not null ? $"Logs — {Model.ProjectName}" : "Logs";
 	var ws = Model.WorkspaceKey ?? "";
 	var logBase = Model.ProjectKey is not null && Model.SelectedLog is not null
 		? Routes.ProjectLog(ws, Model.ProjectKey, Model.SelectedLog)
 		: null;
+
+	// KQL panel pin (work kql-panel-pin-server-state): resolved from the shared petbox.ui cookie
+	// via IUiState the same way _SidebarPin.cshtml resolves SidebarPinned — the sticky/shadow-lg
+	// classes and aria-pressed below are correct on the FIRST response, no post-load correction
+	// (ts/logs.ts no longer reads localStorage on load).
+	var kqlPinned = (await UiState.GetAsync()).KqlPanelPinned;
 }
 
 <div class="mb-2 flex items-baseline gap-3 flex-wrap">
@@ -126,7 +133,7 @@
 	</div>
 }
 
-<form method="get" id="kql-search-form" class="mb-4 bg-base-200 border border-base-300 rounded-box p-4 flex flex-col gap-3">
+<form method="get" id="kql-search-form" class="mb-4 bg-base-200 border border-base-300 rounded-box p-4 flex flex-col gap-3 @(kqlPinned ? "sticky top-0 z-20 shadow-lg" : "")">
 	<div class="relative" id="kql-editor">
 		<textarea name="kql" rows="6" id="kql-textarea"
 			data-testid="kql-input"
@@ -145,9 +152,9 @@
 		<button type="submit" data-testid="kql-apply" class="btn btn-sm btn-primary">Apply</button>
 		<a href="@logBase" class="btn btn-sm btn-ghost">Reset</a>
 		<button type="button" id="kql-pin-toggle" data-testid="kql-pin-toggle"
-			class="btn btn-ghost btn-sm"
-			aria-pressed="false"
-			title="Keep search panel visible when scrolling">Pin</button>
+			class="btn btn-ghost btn-sm @(kqlPinned ? "btn-active" : "")"
+			aria-pressed="@(kqlPinned ? "true" : "false")"
+			title="Keep search panel visible when scrolling">@(kqlPinned ? "Unpin" : "Pin")</button>
 		@if (Model.Services.Count > 0)
 		{
 			<span class="text-xs opacity-60 ml-auto">Services:</span>

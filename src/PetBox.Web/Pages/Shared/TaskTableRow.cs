@@ -24,7 +24,12 @@ public sealed record TaskTableRow(
 	string? Body = null,
 	// Populated only when ShowScopeColumns is true (cross-scope search) — a board-scoped table
 	// leaves these null; the board itself already says where every row lives.
-	string? Workspace = null, string? ProjectKey = null, string? Board = null);
+	string? Workspace = null, string? ProjectKey = null, string? Board = null,
+	// board-filters-server-state: server-computed active-only hide, matching PlanNodeCard.Hidden's
+	// tree-view counterpart — an inline `display:none` on the <tr> so the first response already
+	// shows the filtered table (no post-load hide/reflow). Default false: Search's cross-scope table
+	// never sets it (search has no active-only concept), so its rows are unaffected.
+	bool Hidden = false);
 
 // ShowScopeColumns=true renders workspace/project/board columns ahead of key (cross-scope
 // search, where a row's location isn't implicit from the page it's on); false omits them
@@ -34,7 +39,13 @@ public sealed record TaskTableRow(
 // ProjectKey are the SINGLE board's scope (only meaningful — and only ever read — when Fields is
 // non-null: the BlockedBy column's link routing; a cross-scope search row already carries its own
 // per-row Workspace/ProjectKey and never opts BlockedBy in).
+// board-filters-server-state: ActiveOnly/SortBy/SortDesc default to BrowserState's own record
+// defaults (true/"priority"/false) — Search doesn't resolve or pass these (its active-only/sort
+// controls are session-only now, not persisted; see _BoardViewTable.cshtml's own comment for why
+// that's an accepted, deliberately out-of-scope-here degradation), so its table renders exactly the
+// same default appearance a first-time board visitor gets.
 public sealed record TaskTableModel(
 	IReadOnlyList<TaskTableRow> Rows, bool ShowScopeColumns,
 	PetBox.Web.Rendering.BoardFieldConfig? Fields = null,
-	string? WorkspaceKey = null, string? ProjectKey = null);
+	string? WorkspaceKey = null, string? ProjectKey = null,
+	bool ActiveOnly = true, string SortBy = "priority", bool SortDesc = false);

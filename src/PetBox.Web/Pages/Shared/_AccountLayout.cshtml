@@ -1,5 +1,5 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
-@inject PetBox.Core.Settings.ISettingsResolver Settings
+@inject PetBox.Web.Settings.IUiState UiState
 @{
 	// A user with no membership has no workspace to go "back" to — the account pages are reachable
 	// for them, so the back link falls back to the landing page (which renders the empty state).
@@ -7,7 +7,12 @@
 	var backUrl = currentWs is null ? Routes.Home() : Routes.Workspace(currentWs);
 	var backLabel = currentWs is null ? "Back to home" : $"Back to {currentWs}";
 
-	var (dataTheme, systemScript) = await PetBox.Web.Settings.ThemeHelper.ResolveForCurrentUserAsync(Nav, Settings, Context);
+	// Combined DB+cookie UI-state record (ui-state-framework + ui-state-theme-unify) — the ONE
+	// mechanism for both, resolved via the injected IUiState service (typed, memoized per request):
+	// sidebarPinned drives the drawer-open class below (SidebarPinTests covers this zone) and Theme
+	// drives data-theme, both from this SAME resolve.
+	var browserState = await UiState.GetAsync();
+	var (dataTheme, systemScript) = PetBox.Web.Settings.ThemeHelper.Resolve(browserState.Theme);
 }
 <!DOCTYPE html>
 <html lang="en" data-theme="@dataTheme" class="h-full">
@@ -21,11 +26,10 @@
 	{
 		<partial name="_ThemeScript" />
 	}
-	<meta name="yb-current-ws" content="@currentWs" />
 	<script type="module" src="~/js/site.js" asp-append-version="true"></script>
 </head>
 <body class="min-h-full bg-base-100">
-	<div class="drawer drawer-open">
+	<div class="drawer @(browserState.SidebarPinned ? "drawer-open" : "")">
 		<input id="account-sidebar-toggle" type="checkbox" class="drawer-toggle" />
 		<div class="drawer-content flex flex-col min-h-screen">
 			<header class="navbar bg-base-200 border-b border-base-300 px-2 lg:px-4 min-h-12" data-testid="account-navbar">

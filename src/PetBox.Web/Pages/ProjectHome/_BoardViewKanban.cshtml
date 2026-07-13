@@ -16,17 +16,20 @@
 }
 else
 {
+	// board-filters-server-state: sort WITHIN each column uses the server-resolved comparator
+	// (default reproduces the old hardcoded Priority-then-Key order exactly).
+	var sortComparer = PetBox.Web.Pages.ProjectHome.TaskBoardModel.SortComparer(Model.SortBy, Model.SortDesc);
 	var byStatus = Model.Nodes
 		.GroupBy(n => n.Status, StringComparer.OrdinalIgnoreCase)
 		.ToDictionary(g => g.Key, g => (IReadOnlyList<PlanNodeView>)g
-			.OrderBy(n => n.Priority).ThenBy(n => n.Key, StringComparer.Ordinal).ToList(),
+			.OrderBy(n => n, sortComparer).ThenBy(n => n.Key, StringComparer.Ordinal).ToList(),
 			StringComparer.OrdinalIgnoreCase);
 	var knownSlugs = Model.KanbanColumns.Select(c => c.Slug).ToHashSet(StringComparer.OrdinalIgnoreCase);
 	// A node whose status isn't in ANY workflow block (a stale/legacy slug the FSM no longer
 	// declares) still needs a home on the board — an extra "other" column rather than a silently
 	// dropped card.
 	var strayCount = Model.Nodes.Count(n => !knownSlugs.Contains(n.Status));
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:");
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:", ActiveOnly: Model.ActiveOnly, SortBy: Model.SortBy, SortDesc: Model.SortDesc);
 
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<div class="flex gap-3 overflow-x-auto pb-2" data-testid="board-kanban">
@@ -64,7 +67,11 @@ else
 						// board-body-truncate: a kanban card never renders the body (unlike the tree
 						// card) — data-search omits n.Body so filtering can't leak it into the HTML.
 						var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
-						<li class="card card-compact bg-base-200 border @(blocked ? "border-warning" : "border-base-300")" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()">
+						// board-filters-server-state: active-only only — kanban never showed a
+						// hierarchy (no data-parent-id on a card), so collapse doesn't apply here,
+						// matching what the client-side mechanism this replaces actually did.
+						var hidden = Model.ActiveOnly && closed;
+						<li class="card card-compact bg-base-200 border @(blocked ? "border-warning" : "border-base-300")" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()" style="display:@(hidden ? "none" : "")">
 							<div class="card-body p-2 gap-1">
 								<div class="flex items-start gap-1">
 									<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
@@ -123,7 +130,7 @@ else
 			<div class="flex-none w-72" data-testid="kanban-column" data-status="">
 				<div class="font-semibold text-sm mb-2 pl-4 opacity-60">other</div>
 				<ul class="flex flex-col gap-2 min-h-8" data-sort-scope>
-					@foreach (var n in Model.Nodes.Where(n => !knownSlugs.Contains(n.Status)).OrderBy(n => n.Priority).ThenBy(n => n.Key, StringComparer.Ordinal))
+					@foreach (var n in Model.Nodes.Where(n => !knownSlugs.Contains(n.Status)).OrderBy(n => n, sortComparer).ThenBy(n => n.Key, StringComparer.Ordinal))
 					{
 						var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
 						var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
@@ -134,7 +141,8 @@ else
 						// board-body-truncate: a kanban card never renders the body (unlike the tree
 						// card) — data-search omits n.Body so filtering can't leak it into the HTML.
 						var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
-						<li class="card card-compact bg-base-200 border @(blocked ? "border-warning" : "border-base-300")" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()">
+						var hidden = Model.ActiveOnly && closed;
+						<li class="card card-compact bg-base-200 border @(blocked ? "border-warning" : "border-base-300")" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" data-blocked="@blocked.ToString().ToLowerInvariant()" style="display:@(hidden ? "none" : "")">
 							<div class="card-body p-2 gap-1">
 								<div class="flex items-start gap-1">
 									<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>

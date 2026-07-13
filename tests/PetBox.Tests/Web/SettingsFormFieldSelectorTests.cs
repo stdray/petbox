@@ -59,14 +59,17 @@ public sealed class SettingsFormFieldSelectorTests
 	}
 
 	[Fact]
-	public void UiSettings_AtUserScope_ShowsTheme_TheOnlyLive_SettingsForm_Caller()
+	public void BrowserState_AtUserScope_ShowsTheme_TheOnlyLive_SettingsForm_Caller()
 	{
 		// Pages/Me/Preferences.cshtml is the only current caller of _SettingsForm (full form incl.
 		// Save button), at Scope.User — outside B's System/Workspace/Project range, so this keeps the
-		// original TopLevel-ceiling behavior untouched.
-		var visible = SettingsFormFieldSelector.GetEditable(typeof(UiSettings), Scope.User);
+		// original TopLevel-ceiling behavior untouched. BrowserState also carries SidebarPinned, but
+		// that's [BrowserState]-tagged (cookie branch), not [Setting] — GetEditable only walks
+		// [Setting] properties, so Theme is still the only field this page renders (work
+		// `ui-state-theme-unify` folded Theme in from the retired UiSettings).
+		var visible = SettingsFormFieldSelector.GetEditable(typeof(BrowserState), Scope.User);
 
-		visible.Select(v => v.Property.Name).Should().BeEquivalentTo([nameof(UiSettings.Theme)]);
+		visible.Select(v => v.Property.Name).Should().BeEquivalentTo([nameof(BrowserState.Theme)]);
 	}
 
 	[Fact]

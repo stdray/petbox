@@ -77,6 +77,27 @@ public sealed class ThemeTests(WebAppFixture app, ITestOutputHelper output) : IA
 		lightness.Should().BeGreaterThan(0.5, "the light theme must paint a light background");
 	}
 
+	// Nord/retro (work `ui-theme-palette-expand`): the maintainer's two non-white light-theme
+	// trial candidates. Round-trip proof for each: selectable in /ui/me/preferences, persisted
+	// server-side (survives a fresh load), and rendered as the matching data-theme on <html> in
+	// the FIRST response — same guarantee Selecting_Light_Theme_... proves for Light, extended
+	// rather than duplicated into a parallel suite.
+	[Theory]
+	[InlineData("Nord", "nord")]
+	[InlineData("Retro", "retro")]
+	public async Task Selecting_A_New_Palette_Theme_Persists_And_Applies_Its_DataTheme(string optionValue, string dataTheme)
+	{
+		await SetThemeAsync(optionValue);
+
+		// Fresh load: the stored preference must render server-side with the matching data-theme —
+		// proves persistence at key `ui.theme` round-tripped through the DB, not just a client swap.
+		await _page!.GotoAsync("/ui/me/preferences");
+		await Expect(_page.Locator($"html[data-theme='{dataTheme}']")).ToHaveCountAsync(1);
+
+		// …and the select still reflects the persisted value (selectable, not merely accepted).
+		await Expect(_page.GetByTestId("setting-input-Theme")).ToHaveValueAsync(optionValue);
+	}
+
 	[Fact]
 	public async Task Node_Body_And_Comment_Body_Render_Same_Font_Size()
 	{

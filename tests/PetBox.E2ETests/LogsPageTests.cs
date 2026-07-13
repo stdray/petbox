@@ -61,9 +61,40 @@ public sealed class LogsPageTests(WebAppFixture app, ITestOutputHelper output) :
 
 		await toggle.ClickAsync();
 		await Expect(toggle).ToHaveAttributeAsync("aria-pressed", "true");
+	}
 
-		// Clean up localStorage so sibling tests start from fresh default.
-		await E2EHelpers.ClearLocalStorageAsync(_page);
+	// THE test for the FOUC fix (work kql-panel-pin-server-state), mirroring
+	// SidebarPinTests.Server_Renders_Correct_DrawerClass_In_The_First_Response. The toggle test
+	// above could pass even in the old, broken world (post-hydration JS forced the DOM to agree
+	// with localStorage) — that is exactly what made the flicker invisible to a DOM-only
+	// assertion. This test inspects the raw HTTP response body instead.
+	[Fact]
+	public async Task Server_Renders_Correct_PinClasses_In_The_First_Response()
+	{
+		// No cookie yet (first visit): server default is unpinned.
+		var unpinnedResponse = await _page!.GotoAsync("/ui/$system/$system/logs");
+		var unpinnedHtml = await unpinnedResponse!.TextAsync();
+		unpinnedHtml.Should().NotContain("sticky top-0 z-20 shadow-lg",
+			"a first-time visitor has no petbox.ui cookie yet, so the server must fall back to the unpinned default");
+
+		// Set the cookie the framework itself reads/writes — no browser JS ever ran to produce
+		// this value, it is set directly on the context, the same way a returning visitor's
+		// browser would already be carrying it into the request.
+		await _ctx!.AddCookiesAsync(
+		[
+			new Cookie
+			{
+				Name = "petbox.ui",
+				Value = Uri.EscapeDataString("""{"kqlPanelPinned":true}"""),
+				Url = app.BaseUrl,
+			}
+		]);
+
+		var pinnedResponse = await _page.GotoAsync("/ui/$system/$system/logs");
+		var pinnedHtml = await pinnedResponse!.TextAsync();
+		pinnedHtml.Should().Contain("sticky top-0 z-20 shadow-lg",
+			"the server must honor the cookie's kqlPanelPinned:true on the very first response, not print the unpinned form and let a script correct it after paint");
+		pinnedHtml.Should().Contain("aria-pressed=\"true\"");
 	}
 
 	[Fact]

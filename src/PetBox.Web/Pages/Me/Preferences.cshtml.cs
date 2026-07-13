@@ -15,7 +15,11 @@ public sealed class PreferencesModel : PageModel
 
 	public PreferencesModel(ISettingsResolver resolver) => _resolver = resolver;
 
-	public UiSettings Current { get; private set; } = new();
+	// BrowserState, not the retired UiSettings (work `ui-state-theme-unify`): Theme is now a
+	// [Setting] property on the SAME combined record IUiState resolves everywhere else.
+	// SettingsFormFieldSelector only surfaces [Setting]-tagged properties (Theme), never the
+	// [BrowserState]-tagged cookie ones (SidebarPinned), so this page still shows exactly one field.
+	public BrowserState Current { get; private set; } = new();
 	public string UserIdString { get; private set; } = string.Empty;
 	public string? SuccessMessage { get; set; }
 	public string? ErrorMessage { get; set; }
@@ -26,7 +30,7 @@ public sealed class PreferencesModel : PageModel
 			return RedirectToPage("/Login");
 
 		UserIdString = userIdString;
-		Current = await _resolver.GetAsync<UiSettings>(Scope.User, userIdString);
+		Current = await _resolver.GetAsync<BrowserState>(Scope.User, userIdString);
 		return Page();
 	}
 
@@ -36,7 +40,7 @@ public sealed class PreferencesModel : PageModel
 			return RedirectToPage("/Login");
 
 		UserIdString = userIdString;
-		var old = await _resolver.GetAsync<UiSettings>(Scope.User, userIdString);
+		var old = await _resolver.GetAsync<BrowserState>(Scope.User, userIdString);
 		var updated = old with { Theme = Theme };
 
 		await _resolver.SetAsync(Scope.User, userIdString, updated, old, userId);

@@ -9,6 +9,7 @@ using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
 using PetBox.Web.Pages.Shared;
 using PetBox.Web.Rendering;
+using PetBox.Web.Settings;
 
 namespace PetBox.Web.Pages.ProjectHome;
 
@@ -98,15 +99,71 @@ public sealed class TaskBoardModel : PageModel
 	[BindProperty(SupportsGet = true, Name = "fieldsSet")]
 	public string? FieldsSetParam { get; set; }
 
-	// The mode+kind default (board-view-fields dialog pre-check state + board.ts's reconcile
-	// baseline) — always computed, whether or not the request carried an explicit selection.
+	// The mode+kind default (board-view-fields dialog pre-check state) — always computed, whether
+	// or not the request carried an explicit selection.
 	public BoardFieldConfig DefaultFields { get; private set; } = BoardFieldConfig.None;
 
 	// What THIS render actually shows: FieldsParam when the request explicitly declared a
-	// selection (FieldsSetParam present — including a deliberately empty one), else DefaultFields.
-	// Read by _PlanNodeCard (via PlanNodeCard.Fields below) and directly by the view partials that
-	// don't route through a PlanNodeCard (Kanban/Outline/Table).
+	// selection (FieldsSetParam present — including a deliberately empty one), else the saved
+	// per-board DB preference (board-view-cross-device), else DefaultFields. Read by _PlanNodeCard
+	// (via PlanNodeCard.Fields below) and directly by the view partials that don't route through a
+	// PlanNodeCard (Kanban/Outline/Table).
 	public BoardFieldConfig Fields { get; private set; } = BoardFieldConfig.None;
+
+	// board-filters-server-state: active-only / sort — GLOBAL (board-independent) [Setting]
+	// preferences resolved from BrowserState. Rendered into _BoardFilterSort's controls (checked/
+	// selected/arrow) AND used to compute each row's Hidden flag / DFS sort order server-side, so
+	// the first response already matches what ts/board.ts's initBoardPage reads off the DOM on
+	// load — no post-paint filter/reorder.
+	public bool ActiveOnly { get; private set; } = true;
+	public string SortBy { get; private set; } = BoardSortKeys.Priority;
+	public bool SortDesc { get; private set; }
+
+	// board-filters-server-state: which nodes are collapsed on THIS board (cookie branch, per
+	// (project,board) — see BrowserState.CollapsedByBoard). Read by _PlanNodeCard (caret glyph +
+	// data-collapsed) and IsHiddenByCollapse below (descendant hiding) — tree/outline only, exactly
+	// like the client mechanism it replaces (kanban/table cards never carried a data-parent-id for
+	// the old client-side hiddenByCollapse to walk, so they're unaffected here too).
+	public IReadOnlySet<string> CollapsedNodeIds { get; private set; } = new HashSet<string>(StringComparer.Ordinal);
+
+	// NodeId -> its own ParentNodeId, built once from Nodes — IsHiddenByCollapse walks this
+	// upward from a node's parent to find a collapsed ancestor anywhere in the chain, not just the
+	// immediate parent.
+	Dictionary<string, string?> _parentOf = new(StringComparer.Ordinal);
+
+	// Whether `parentNodeId`'s ancestor chain contains a collapsed node — mirrors ts/board.ts's
+	// hiddenByCollapse exactly (same guard against a part_of cycle).
+	public bool IsHiddenByCollapse(string? parentNodeId)
+	{
+		var cur = parentNodeId;
+		var guard = 0;
+		while (cur is not null && guard++ < 1000)
+		{
+			if (CollapsedNodeIds.Contains(cur)) return true;
+			_parentOf.TryGetValue(cur, out cur);
+		}
+		return false;
+	}
+
+	// board-filters-server-state / board-sort-impl: the server-side twin of ts/board.ts's
+	// sortKeyValue+compareSortValues — an unrecognized sortBy (a stale saved value referencing a
+	// removed key) falls back to "priority", never throws. `desc` flips the PRIMARY comparison
+	// only; the secondary Key tie-break stays ascending regardless of `desc` — this matches the
+	// EXACT previous hardcoded behavior when sortBy is the default ("priority", desc:false), which
+	// is what every pre-existing ordering test still asserts.
+	public static IComparer<PlanNodeView> SortComparer(string sortBy, bool desc)
+	{
+		Comparison<PlanNodeView> primary = sortBy switch
+		{
+			BoardSortKeys.Created => (a, b) => (a.CreatedAt?.Ticks ?? 0).CompareTo(b.CreatedAt?.Ticks ?? 0),
+			BoardSortKeys.Updated => (a, b) => (a.UpdatedAt?.Ticks ?? 0).CompareTo(b.UpdatedAt?.Ticks ?? 0),
+			BoardSortKeys.Title => (a, b) => string.Compare(TitleKey(a), TitleKey(b), StringComparison.Ordinal),
+			_ => (a, b) => a.Priority.CompareTo(b.Priority),
+		};
+		return Comparer<PlanNodeView>.Create((a, b) => desc ? -primary(a, b) : primary(a, b));
+	}
+
+	static string TitleKey(PlanNodeView n) => (string.IsNullOrEmpty(n.Title) ? n.Key : n.Title).ToLowerInvariant();
 
 	// The mode BoardViewModeRegistry.Resolve settled on (explicit -> methodology defaultView
 	// -> Tree) — RENDERABLE by construction (Resolve never returns a mode without a partial).
@@ -204,7 +261,15 @@ public sealed class TaskBoardModel : PageModel
 		int Depth, bool Closed, bool KeepVisible, bool HasChildren,
 		IReadOnlyList<CommentLine>? Thread, BoardFieldConfig Fields, string? CommitUrlTemplate = null,
 		IReadOnlyDictionary<string, NodeRefTarget>? NodeRefs = null,
-		IReadOnlyDictionary<string, NodeRefTarget>? MemoryRefs = null);
+		IReadOnlyDictionary<string, NodeRefTarget>? MemoryRefs = null,
+		// board-filters-server-state: server-computed hidden (active-only OR a collapsed ancestor)
+		// and self-collapsed (this node's OWN caret state) — an inline `display:none` + the caret
+		// glyph/`data-collapsed` attribute render correctly on the FIRST response instead of
+		// ts/board.ts hiding/flipping them after paint. Default false: the tag-groups projection
+		// (_BoardViewTags.cshtml) doesn't compute or thread these through — that pane is a Hidden
+		// (from-the-switcher) projection over the tree, out of scope for this pass, so its cards
+		// simply render as always-visible/never-collapsed, same as before this change.
+		bool Hidden = false, bool CollapsedSelf = false);
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
@@ -313,13 +378,47 @@ public sealed class TaskBoardModel : PageModel
 		Error = error;
 		(Runtime, KindSlug, ClosedAt) = await ResolveProcessAsync(ct);
 		KindName = Runtime.KindName(KindSlug);
-		// board-view-persistence resolution order: explicit `view` query-param (or a saved
-		// localStorage pick the client redirected into one — see board-view-meta in the
-		// .cshtml) -> this board's kind's methodology defaultView -> the builtin Tree
-		// default. Always lands on a RENDERABLE mode (BoardViewModeRegistry.Resolve never
-		// returns an entry without a shipped partial), so an unknown/reserved-but-unshipped
-		// name in the URL or in a definition degrades silently instead of 500ing.
-		ResolvedViewMode = BoardViewModeRegistry.Resolve(ViewMode, Runtime.DefaultView(KindSlug));
+
+		// board-view-cross-device / board-filters-server-state: resolve BoardPreferences (DB,
+		// Scope.User) and BrowserState.CollapsedByBoard (cookie) BEFORE deciding view/fields/
+		// active-only/sort/collapse, the same "resolve before render" discipline every other
+		// UI-state consumer follows (ui-state-framework). Deliberately NOT IUiState/BrowserState's
+		// DB branch here: (a) IUiState throws outside a real HTTP request (by design — see
+		// UiState.cs), and TaskBoardModel is unit-tested via a bare `new TaskBoardModel(...)` with
+		// no HttpContext at all (TaskBoardViewModeTests); (b) board preferences live on their OWN
+		// record (BoardPreferences.cs), not BrowserState — see that file for why. Guarding
+		// HttpContext/User ourselves (falling back to record defaults when absent) keeps those
+		// bare-constructed tests green while a real request still gets the full resolve.
+		var userIdString = HttpContext is not null ? User.FindFirst(PetBoxClaims.UserId)?.Value : null;
+		var boardPrefs = userIdString is not null
+			? await _settings.GetAsync<BoardPreferences>(Scope.User, userIdString, ct)
+			: new BoardPreferences();
+		var cookieValue = HttpContext is not null && HttpContext.Request.Cookies.TryGetValue(UiStateResolver.CookieName, out var cv)
+			? cv
+			: null;
+		var browserState = UiStateResolver.ApplyBrowserState(new BrowserState(), cookieValue);
+
+		var boardPrefKey = $"{ProjectKey}/{Board}";
+		var savedPref = boardPrefs.ViewPreferences.GetValueOrDefault(boardPrefKey);
+
+		ActiveOnly = boardPrefs.ActiveOnly;
+		SortBy = BoardSortKeys.IsKnown(boardPrefs.SortBy) ? boardPrefs.SortBy : BoardSortKeys.Priority;
+		SortDesc = boardPrefs.SortDesc;
+		CollapsedNodeIds = browserState.CollapsedByBoard.TryGetValue(boardPrefKey, out var collapsedArr)
+			? new HashSet<string>(collapsedArr, StringComparer.Ordinal)
+			: new HashSet<string>(StringComparer.Ordinal);
+
+		// board-view-cross-device resolution order: explicit `view` query-param (a shareable
+		// override, and the thing that WRITES the preference below) -> the saved per-(project,board)
+		// DB preference -> this board's kind's methodology defaultView -> the builtin Tree default.
+		// No client redirect anywhere in this chain (board-view-cross-device: the OLD
+		// window.location.replace() when a localStorage pick disagreed with the server's own
+		// resolution is gone — the server now resolves the SAME preference before it ever renders).
+		// Always lands on a RENDERABLE mode (BoardViewModeRegistry.Resolve never returns an entry
+		// without a shipped partial).
+		var effectiveViewRequest = ViewMode ?? savedPref?.Mode;
+		ResolvedViewMode = BoardViewModeRegistry.Resolve(effectiveViewRequest, Runtime.DefaultView(KindSlug));
+		var effectiveBy = By ?? savedPref?.By;
 		// closed-board-disabled-display: a closed board never shows quick-add, regardless of
 		// what the kind would otherwise allow — mirrors the server-side reject in UpsertAsync.
 		ShowQuickAdd = Runtime.QuickAddAllowed(KindSlug) && ClosedAt is null;
@@ -350,19 +449,61 @@ public sealed class TaskBoardModel : PageModel
 		// unless the definition opts in.
 		OutlineRevealMode = Runtime.OutlineReveal(KindSlug);
 
-		// board-view-fields: the mode+kind default, then the explicit override when the request
-		// carries one — FieldsSetParam is the disambiguator between "no `fields` in the URL" (use
-		// the default) and "the dialog submitted a deliberately empty selection" (FieldsParam null
-		// or []), which an absent-vs-empty check on FieldsParam alone can't tell apart (unchecked
-		// checkboxes don't post).
+		// board-view-fields / board-view-cross-device: explicit `?fields=`+`fieldsSet=1` wins (and
+		// is what WRITES the preference below) -> the saved per-board DB preference -> the
+		// mode+kind default. FieldsSetParam is the disambiguator between "no `fields` in the URL"
+		// (use the saved/default) and "the dialog submitted a deliberately empty selection"
+		// (FieldsParam null or []), which an absent-vs-empty check on FieldsParam alone can't tell
+		// apart (unchecked checkboxes don't post).
 		DefaultFields = BoardFieldConfig.Default(ResolvedViewMode, Runtime, KindSlug, OutlineRevealMode == OutlineRevealModeNames.InlineLazy);
-		Fields = string.IsNullOrEmpty(FieldsSetParam) ? DefaultFields : BoardFieldConfig.FromKeys(FieldsParam);
+		Fields = !string.IsNullOrEmpty(FieldsSetParam)
+			? BoardFieldConfig.FromKeys(FieldsParam)
+			: savedPref?.Fields is { } savedFieldsCsv
+				? BoardFieldConfig.FromKeys(savedFieldsCsv.Split(',', StringSplitOptions.RemoveEmptyEntries))
+				: DefaultFields;
+
+		// board-view-cross-device: `?view=`/`?fields=` are the explicit, shareable override AND the
+		// thing that writes the DB preference for next time (and every other device) — a plain
+		// read-modify-write against the ONE per-user ViewPreferences dictionary, skipped entirely
+		// when nothing actually changed (repeat-loading the same saved link shouldn't fire a write
+		// every time) or when there's no authenticated user to own the row.
+		if (userIdString is not null)
+		{
+			var nextPref = savedPref ?? new BoardViewPreference();
+			var changed = false;
+			if (ViewMode is not null && (nextPref.Mode != ViewMode || nextPref.By != By))
+			{
+				nextPref = nextPref with { Mode = ViewMode, By = By };
+				changed = true;
+			}
+			if (!string.IsNullOrEmpty(FieldsSetParam))
+			{
+				var fieldsCsv = Fields.ToCsv();
+				if (nextPref.Fields != fieldsCsv)
+				{
+					nextPref = nextPref with { Fields = fieldsCsv };
+					changed = true;
+				}
+			}
+			if (changed)
+			{
+				var updatedPrefs = new Dictionary<string, BoardViewPreference>(boardPrefs.ViewPreferences, StringComparer.Ordinal)
+				{
+					[boardPrefKey] = nextPref,
+				};
+				var updatedBoardPrefs = boardPrefs with { ViewPreferences = updatedPrefs };
+				var updatedBy = long.TryParse(userIdString, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var uid) ? uid : (long?)null;
+				await _settings.SetAsync(Scope.User, userIdString, updatedBoardPrefs, boardPrefs, updatedBy, ct);
+			}
+		}
 
 		// includeClosed: we render closed nodes too (the "active only" toggle hides them
-		// client-side); GetAsync supplies each node's part_of parent + depth.
+		// client-side, and now also server-side via ActiveOnly/Hidden — see PlanNodeCard.Hidden);
+		// GetAsync supplies each node's part_of parent + depth.
 		var view = await _tasks.GetAsync(ProjectKey, Board, includeClosed: true, ct: ct);
-		Nodes = OrderHierarchically([.. view.Nodes], Runtime, KindSlug, out var keepVisible);
+		Nodes = OrderHierarchically([.. view.Nodes], Runtime, KindSlug, SortComparer(SortBy, SortDesc), out var keepVisible);
 		ClosedWithActiveDescendant = keepVisible;
+		_parentOf = Nodes.ToDictionary(n => n.NodeId, n => n.ParentNodeId, StringComparer.Ordinal);
 
 		// One query for every comment on the board, grouped by owning node; DFS-flatten each
 		// node's thread by parentId so the view just iterates (no per-node N+1).
@@ -383,7 +524,7 @@ public sealed class TaskBoardModel : PageModel
 		// Tag-groups projection: only when the RESOLVED mode is tags with a valid dimension
 		// list. Bad/empty `by` silently falls back to the tree (the service would reject it)
 		// — the view stays explicit, no implicit redirects.
-		var dims = (By ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+		var dims = (effectiveBy ?? "").Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 		if (string.Equals(ResolvedViewMode, BoardViewModeNames.Tags, StringComparison.OrdinalIgnoreCase) && dims.Length > 0)
 		{
 			try
@@ -441,11 +582,14 @@ public sealed class TaskBoardModel : PageModel
 		return (runtime, meta?.Kind, meta?.ClosedAt);
 	}
 
-	// Render order is the plan tree itself — DFS by part_of parent, siblings ordered by
-	// Priority then Key. A flat priority sort let a low-priority child of an early branch
-	// visually drift past a later one (finding D11). DFS keeps every node under its parent.
+	// Render order is the plan tree itself — DFS by part_of parent, siblings ordered by the
+	// resolved sort comparator (default: Priority then Key — board-filters-server-state's
+	// SortComparer reproduces this EXACT ordering for the default {"priority", desc:false} case, so
+	// this is behaviorally unchanged for every caller that doesn't pass a different sort). A flat
+	// priority sort let a low-priority child of an early branch visually drift past a later one
+	// (finding D11). DFS keeps every node under its parent regardless of which key sorts siblings.
 	static List<PlanNodeView> OrderHierarchically(
-		List<PlanNodeView> nodes, MethodologyRuntime runtime, string? kindSlug,
+		List<PlanNodeView> nodes, MethodologyRuntime runtime, string? kindSlug, IComparer<PlanNodeView> sort,
 		out IReadOnlySet<string> closedWithActiveDescendant)
 	{
 		var byId = new Dictionary<string, PlanNodeView>(StringComparer.Ordinal);
@@ -460,14 +604,14 @@ public sealed class TaskBoardModel : PageModel
 			.ToDictionary(
 				g => g.Key,
 				g => (IReadOnlyList<PlanNodeView>)g
-					.OrderBy(n => n.Priority)
+					.OrderBy(n => n, sort)
 					.ThenBy(n => n.Key, StringComparer.Ordinal)
 					.ToList(),
 				StringComparer.Ordinal);
 
 		var roots = nodes
 			.Where(n => { var pk = ParentOf(n); return pk is null || !byId.ContainsKey(pk); })
-			.OrderBy(n => n.Priority)
+			.OrderBy(n => n, sort)
 			.ThenBy(n => n.Key, StringComparer.Ordinal)
 			.ToList();
 
