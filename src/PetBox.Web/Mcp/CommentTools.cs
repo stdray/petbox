@@ -64,6 +64,7 @@ public static class CommentTools
 		string projectKey, string board,
 		[Description("Array of comment items: { id? (omit to CREATE), nodeId? (owner slug|NodeId, required to create), parentId? (a COMMENT id = reply), author? (required to create), body, tags? (array of strings), version? (watermark for a PATCH; 0 = new) }.")] CommentItemInput[] items,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
+		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid items LAND, each refused item comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ITEM, not of the call. A parentId must address an already-active comment (no intra-batch forward reference), so nothing cascades: every item is independent. A rejected CREATE has no id yet — its conflict is keyed by the item's position (\"#0\", \"#1\", …).")] bool atomic = true,
 		CancellationToken ct = default)
 	{
 		ModuleMcp.AssertFeature(features, Feature.Tasks);
@@ -85,7 +86,7 @@ public static class CommentTools
 			parsed.Add(new CommentItem(i.Id, node, i.ParentId, i.Author, body, i.Tags, i.Version));
 		}
 
-		var r = await comments.UpsertAsync(projectKey, board, parsed, ct);
+		var r = await comments.UpsertAsync(projectKey, board, parsed, atomic, ct);
 		return new CommentsUpsertResult(
 			r.Applied, r.CurrentVersion,
 			r.Added.Select(c => Shape(c, bodyLen, ModuleMcp.NoBody)).ToList(),

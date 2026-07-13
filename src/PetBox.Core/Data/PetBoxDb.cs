@@ -115,7 +115,11 @@ public sealed class PetBoxDb : DataConnection
 			// M042 (spec work/smoke-writes-into-real-projects) — same "dropped from the schema
 			// cache" trap: without this, a sandboxOnly key would mint fine but persist/read back
 			// SandboxOnly=false, silently defeating the write gate for every minted key.
-			.Property(a => a.SandboxOnly).IsNullable(false);
+			.Property(a => a.SandboxOnly).IsNullable(false)
+			// M043 (spec apikey-last-used) — declared for the same reason as ExpiresAt above: an
+			// undeclared DateTime column is dropped from the schema cache, and the flusher's UPDATE
+			// would write a column linq2db then refuses to read back (every key would look unused).
+			.Property(a => a.LastUsedAt).HasDataType(DataType.DateTime).IsNullable(true);
 
 		builder.Entity<DataTable>()
 			.HasTableName("DataTables")

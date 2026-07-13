@@ -25,13 +25,18 @@ public sealed class TaskBoardNodeModel : PageModel
 	readonly ITasksService _tasks;
 	readonly ICommentService _comments;
 	readonly ISettingsResolver _settings;
+	// Optional ctor param (see TaskBoardModel): DI always supplies it; a page-model unit test that
+	// doesn't exercise memory autolinking may omit it. Null = keys render literal.
+	readonly PetBox.Memory.Contract.IMemoryService? _memory;
 
-	public TaskBoardNodeModel(FeatureFlags features, ITasksService tasks, ICommentService comments, ISettingsResolver settings)
+	public TaskBoardNodeModel(FeatureFlags features, ITasksService tasks, ICommentService comments,
+		ISettingsResolver settings, PetBox.Memory.Contract.IMemoryService? memory = null)
 	{
 		_features = features;
 		_tasks = tasks;
 		_comments = comments;
 		_settings = settings;
+		_memory = memory;
 	}
 
 	// authz-bypass-project-create: route-only bind — see Admin/Projects.cshtml.cs for why.
@@ -83,6 +88,12 @@ public sealed class TaskBoardNodeModel : PageModel
 	// the MENTIONED slug. Handed to the markdown renderer so those mentions become links. Empty when
 	// nothing resolved.
 	public IReadOnlyDictionary<string, NodeRefTarget> NodeRefs { get; private set; }
+		= new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal);
+
+	// Resolved memory-entry keys (`m-<32hex>` / `ac-<12hex>`) mentioned in the body or any comment
+	// (memory-key-mention-link) — one batch per container, unresolved/ambiguous keys absent (they
+	// render literal). Empty when the Memory feature is off.
+	public IReadOnlyDictionary<string, NodeRefTarget> MemoryRefs { get; private set; }
 		= new Dictionary<string, NodeRefTarget>(StringComparer.Ordinal);
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
@@ -195,7 +206,7 @@ public sealed class TaskBoardNodeModel : PageModel
 		{
 			// The interactive UI is the cookie-authenticated owner — an APPROVING actor:
 			// methodology-enforced approval gates (enforceApproval) are the owner's call.
-			var outcome = await _tasks.UpsertAsync(ProjectKey, detail.Board, [patch], TasksActor.Approver, ct);
+			var outcome = await _tasks.UpsertAsync(ProjectKey, detail.Board, [patch], TasksActor.Approver, ct: ct);
 			if (outcome.Result.Conflicts.Count > 0)
 			{
 				// A Stale conflict now names the moved fields (Reason) — surface them so the
@@ -245,8 +256,15 @@ public sealed class TaskBoardNodeModel : PageModel
 
 		// Resolve `[[slug]]` mentions in the body + every comment body in ONE batch, so the
 		// renderer can turn resolvable mentions into node links (node-ref-autolink).
-		NodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey,
-			comments.Select(c => c.Body).Prepend(detail.Node.Body), ct);
+		var bodies = comments.Select(c => (string?)c.Body).Prepend(detail.Node.Body).ToList();
+		NodeRefs = await NodeRefMap.BuildAsync(_tasks, WorkspaceKey, ProjectKey, bodies, ct);
+
+		// Same batch shape for memory-entry keys (memory-key-mention-link): one resolution query per
+		// container for every candidate key on the page. Off with the Memory feature — nothing to
+		// link to then, so the keys stay literal.
+		MemoryRefs = _memory is not null && _features.IsEnabled(Feature.Memory)
+			? await MemoryRefMap.BuildAsync(_memory, WorkspaceKey, ProjectKey, bodies, ct)
+			: MemoryRefs;
 		return Page();
 	}
 }

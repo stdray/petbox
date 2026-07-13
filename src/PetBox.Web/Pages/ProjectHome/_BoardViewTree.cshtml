@@ -14,7 +14,7 @@ else
 	// get a collapse caret. (Visibility/collapse/filter is applied client-side by ts/board.ts;
 	// active-only + collapsed state persist in localStorage.)
 	var parentIds = Model.Nodes.Where(x => x.ParentNodeId is not null).Select(x => x.ParentNodeId!).ToHashSet(StringComparer.Ordinal);
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(SortHint: "sort branches:");
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Tree, SortHint: "sort branches:");
 
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	@* data-sort-scope (board-sort): the DFS-flat <li> list IS the single reorder scope for this
@@ -29,7 +29,7 @@ else
 			var keepVisible = !closed || Model.ClosedWithActiveDescendant.Contains(n.NodeId);
 			var hasChildren = parentIds.Contains(n.NodeId);
 			Model.CommentThreads.TryGetValue(n.NodeId, out var thread);
-			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread, Model.CommitUrlTemplate, Model.NodeRefs)" />
+			<partial name="_PlanNodeCard" model="new PetBox.Web.Pages.ProjectHome.TaskBoardModel.PlanNodeCard(Model.WorkspaceKey, Model.ProjectKey, Model.Board, Model.Runtime, Model.KindSlug, n, n.Depth, closed, keepVisible, hasChildren, thread, Model.Fields, Model.CommitUrlTemplate, Model.NodeRefs, Model.MemoryRefs)" />
 		}
 	</ul>
 }

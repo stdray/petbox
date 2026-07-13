@@ -1,0 +1,52 @@
+@model PetBox.Web.Pages.Shared.BoardFilterSortModel
+@* board-view-fields: the ONE properties dialog + its GET form, rendered by every mode via
+   _BoardFilterSort (same "one shared bar" discipline as the filter/sort controls). Applying is a
+   plain GET (ui-conventions: "Plain forms for: GET filters") — `view`/`by` round-trip as hidden
+   fields so choosing properties never resets the view the user is on; `fieldsSet=1` is the marker
+   that disambiguates "the dialog submitted a deliberately empty selection" from "no `fields` query
+   param at all" (unchecked checkboxes don't post — TaskBoardModel.FieldsSetParam). Persisting the
+   choice for future page loads (so it survives navigating away and back, and applies before the
+   NEXT view switch too — "выбор действует в любом режиме просмотра") is ts/board.ts's job:
+   initBoardViewPersistence saves the checked set to localStorage on submit, keyed the SAME way the
+   view-mode preference already is (board-view-fields storage: тот же механизм). Skipped entirely
+   when ViewMode is empty (Search's cross-scope table reuse — no board-view-meta there to persist
+   against, and Fields there is the fixed kitchen-sink set, not a per-board choice). *@
+@if (!string.IsNullOrEmpty(Model.ViewMode))
+{
+	<button type="button" class="btn btn-ghost btn-xs" data-testid="board-fields-toggle" title="Choose which properties to show" aria-label="Choose properties">⚙ fields</button>
+
+	<div class="modal" data-testid="fields-modal" role="dialog" aria-modal="true">
+		<div class="modal-box max-w-sm">
+			<div class="flex items-center justify-between gap-2 mb-3">
+				<h3 class="font-semibold text-lg" data-testid="fields-modal-title">Board properties</h3>
+				<button type="button" class="btn btn-sm btn-circle btn-ghost" data-testid="fields-modal-close" aria-label="Close">✕</button>
+			</div>
+			<form method="get" data-testid="fields-form" class="flex flex-col gap-2">
+				<input type="hidden" name="view" value="@Model.ViewMode" />
+				@if (!string.IsNullOrEmpty(Model.By))
+				{
+					<input type="hidden" name="by" value="@Model.By" />
+				}
+				<input type="hidden" name="fieldsSet" value="1" />
+				@foreach (var (key, label) in BoardFieldNames.Options)
+				{
+					// board-view-outline-show-bodies: Body is disabled (not just unchecked) when the
+					// current board's outline is Navigate — checking it would have zero effect on the
+					// render, so a live checkbox would be a lie. Still posts nothing when disabled
+					// (browsers never submit a disabled control), matching what the outline actually
+					// does with it.
+					var disabled = Model.BodyUnavailable && key == BoardFieldNames.Body;
+					<label class="label cursor-pointer justify-start gap-2 @(disabled ? "opacity-50" : "")">
+						<input type="checkbox" name="fields" value="@key" class="checkbox checkbox-sm" data-testid="field-@key" checked="@(Model.Fields.Has(key) ? "checked" : null)" disabled="@(disabled ? "disabled" : null)" />
+						<span class="label-text">@label@(disabled ? " (opens on its own page here)" : "")</span>
+					</label>
+				}
+				<div class="mt-2 flex items-center gap-2">
+					<button type="submit" class="btn btn-sm btn-primary" data-testid="fields-apply">Apply</button>
+					<span class="text-xs opacity-60">status/type/priority/tags/updated/delivery/blocked-by/body</span>
+				</div>
+			</form>
+		</div>
+		<div class="modal-backdrop" data-testid="fields-modal-backdrop"></div>
+	</div>
+}

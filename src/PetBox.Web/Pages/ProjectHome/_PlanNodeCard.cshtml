@@ -5,6 +5,10 @@
 	var parent = n.ParentSlug;
 	var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
 	var search = $"{n.Title} {n.Key} {n.Body} {string.Join(' ', n.Tags)}".ToLowerInvariant();
+	// board-terminal-negative-visible: the strikethrough is an INVARIANT over the data
+	// (StatusKind.TerminalCancel), not a dialog checkbox — a terminally-cancelled node reads as
+	// dead REGARDLESS of whether Model.Fields.Status is on, so this never consults Fields.
+	var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
 }
 
 @* One plan-node card. Reused by both the part_of tree and the tag-groups projection; the
@@ -12,7 +16,7 @@
    data-priority/title/created/updated (board-sort-impl) feed the client sort toggle — CreatedAt/
    UpdatedAt come straight off the active PlanNode revision, so they're only meaningful here in
    the tree pane. *@
-<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@Model.Depth" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-closed="@Model.Closed.ToString().ToLowerInvariant()" data-keep-visible="@Model.KeepVisible.ToString().ToLowerInvariant()" data-status="@n.Status" data-type="@n.Type" data-search="@search" data-priority="@n.Priority" data-title="@n.Title" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" style="margin-left:@(Model.Depth * 1.5)rem">
+<li class="card bg-base-200 border border-base-300" data-testid="plan-node" data-node-key="@n.Key" data-depth="@Model.Depth" data-node-id="@n.NodeId" data-parent-id="@(n.ParentNodeId ?? "")" data-closed="@Model.Closed.ToString().ToLowerInvariant()" data-keep-visible="@Model.KeepVisible.ToString().ToLowerInvariant()" data-status="@n.Status" data-type="@n.Type" data-search="@search" data-priority="@n.Priority" data-title="@n.Title" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()" style="margin-left:@(Model.Depth * 1.5)rem">
 	<div class="card-body p-3">
 		<div class="flex items-baseline justify-between gap-2">
 			<div class="min-w-0 flex items-baseline gap-2 flex-wrap">
@@ -22,7 +26,7 @@
 				}
 				@if (!string.IsNullOrEmpty(n.Title))
 				{
-					<a href="@nodeUrl" class="font-semibold link link-hover" data-testid="node-name">@n.Title</a>
+					<a href="@nodeUrl" class="font-semibold link link-hover @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
 				}
 				<span class="font-mono text-xs opacity-50">
 					@if (parent is not null)
@@ -32,23 +36,58 @@
 					<a href="@nodeUrl" class="link link-hover" data-testid="node-leaf">@leaf</a>
 				</span>
 			</div>
-			<div class="flex items-center gap-1 shrink-0">
+			<div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
+				@* board-view-fields: type/priority badges are plain, so they render inline here
+				   rather than through a shared partial (only the ENABLE decision — Model.Fields —
+				   is shared, per BoardFieldConfig's own header comment). *@
+				@if (Model.Fields.Type && !string.IsNullOrEmpty(n.Type))
+				{
+					<span class="badge badge-ghost badge-xs" data-testid="node-type">@n.Type</span>
+				}
+				@if (Model.Fields.Priority)
+				{
+					<span class="font-mono text-xs opacity-70" data-testid="node-priority" title="priority">P@(n.Priority)</span>
+				}
 				@* Status + delivery badges via the shared partials — the ONE spec-board suppression
 				   rule (StatusBadgeModel.Show) and colour mappings, so the board card and the node
-				   detail page can never drift (ui-spec-status-board-node-mismatch). *@
-				<partial name="_StatusBadge" model="new PetBox.Web.Pages.Shared.StatusBadgeModel(Model.Runtime, Model.KindSlug, n.Status)" />
-				@if (n.Delivery is not null)
+				   detail page can never drift (ui-spec-status-board-node-mismatch). Gated on
+				   Model.Fields.Status/Delivery — unlike the terminal-cancel strikethrough above,
+				   these ARE dialog-togglable (board-view-fields). *@
+				@if (Model.Fields.Status)
+				{
+					<partial name="_StatusBadge" model="new PetBox.Web.Pages.Shared.StatusBadgeModel(Model.Runtime, Model.KindSlug, n.Status)" />
+				}
+				@if (Model.Fields.Delivery && n.Delivery is not null)
 				{
 					<partial name="_DeliveryBadge" model="new PetBox.Web.Pages.Shared.DeliveryBadgeModel(n.Delivery)" />
 				}
+				@if (Model.Fields.UpdatedAt && n.UpdatedAt is not null)
+				{
+					<time class="local-time text-xs opacity-60" datetime="@n.UpdatedAt.Value.ToString("o")" data-testid="node-updated">@n.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time>
+				}
 			</div>
 		</div>
-		@if (!string.IsNullOrEmpty(n.Body))
+		@if (Model.Fields.Tags && n.Tags.Count > 0)
+		{
+			<div class="flex flex-wrap gap-1 mt-1" data-testid="node-tags">
+				@foreach (var t in n.Tags)
+				{
+					<span class="badge badge-outline badge-xs">@t</span>
+				}
+			</div>
+		}
+		@if (Model.Fields.BlockedBy)
+		{
+			<div class="mt-1">
+				<partial name="_BlockedByChips" model="new PetBox.Web.Pages.Shared.BlockedByChipsModel(Model.WorkspaceKey, Model.ProjectKey, n.BlockedBy)" />
+			</div>
+		}
+		@if (Model.Fields.Body && !string.IsNullOrEmpty(n.Body))
 		{
 			@* Body is markdown, hydrated client-side (ts/markdown.ts) and clipped on the
 			   board — the full text lives on the node detail page (board-body-truncate). *@
 			<div class="mt-1">
-				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-24 overflow-hidden", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs })" />
+				<partial name="_MdBody" model="@(new PetBox.Web.Pages.Shared.MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-24 overflow-hidden", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
 				<a href="@nodeUrl" class="text-xs link link-hover opacity-60" data-testid="node-body-more">full ↗</a>
 			</div>
 		}
@@ -81,6 +120,6 @@
 		@* List-view card (tree/tags/kanban/table): show existing comments, but suppress the
 		   root add-comment form (board-comment-form-list-noise) — commenting is a node-detail
 		   operation, not a per-card affordance under every node on the board. *@
-		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread ?? [], n.NodeId, Model.CommitUrlTemplate, Model.NodeRefs, ShowAddForm: false))" />
+		<partial name="_CommentThread" model="@(new PetBox.Web.Pages.Shared.CommentThreadModel(Model.Thread ?? [], n.NodeId, Model.CommitUrlTemplate, Model.NodeRefs, ShowAddForm: false, MemoryRefs: Model.MemoryRefs))" />
 	</div>
 </li>

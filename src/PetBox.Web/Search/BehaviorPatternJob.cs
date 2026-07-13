@@ -231,7 +231,7 @@ public sealed class BehaviorPatternJob : IBackgroundIndexJob
 				Body = candidate.Body ?? existing?.Body ?? "",
 				Tags = existing?.Tags ?? [SessionFactsJob.Tag, PatternTag],
 				Metadata = metadata,
-			}], [], ct);
+			}], [], ct: ct);
 			written++;
 		}
 		return written;

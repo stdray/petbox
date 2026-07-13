@@ -23,6 +23,10 @@ const LS_ACTIVE = "tasksActiveOnly";
 const LS_COLLAPSED = "tasksCollapsed";
 const LS_SORT = "tasksSort";
 const LS_VIEW_PREFIX = "tasksView:";
+// board-view-fields: the SAME localStorage-by-board-key mechanism as LS_VIEW_PREFIX above (spec's
+// explicit ask — no second persistence mechanism), just its own key prefix + its own csv shape
+// (BoardFieldConfig.ToCsv()/FromKeys, not JSON — the value is already just a flat key list).
+const LS_FIELDS_PREFIX = "tasksFields:";
 
 interface Row {
 	el: HTMLElement;
@@ -119,36 +123,88 @@ export function viewPrefNeedsReconcile(
 	return saved.mode !== resolvedMode || (saved.by ?? "") !== (resolvedBy ?? "");
 }
 
+// board-view-fields: a saved csv and a freshly-resolved one are the SAME preference regardless of
+// key order or incidental duplicates — the dialog emits BoardFieldNames.Options order, the server
+// emits BoardFieldConfig.Keys() order (same order, in practice), but comparing as sets rather than
+// strings keeps this robust to either changing independently.
+function normalizeFieldsCsv(csv: string): string {
+	return Array.from(
+		new Set(
+			csv
+				.split(",")
+				.map((s) => s.trim())
+				.filter(Boolean),
+		),
+	)
+		.sort()
+		.join(",");
+}
+
+// board-view-fields: whether a saved fields csv differs from what the server actually resolved/
+// rendered this load (`data-resolved-fields`) — the fields counterpart of viewPrefNeedsReconcile
+// just above. `saved === null` means "no preference saved" (never reconcile, use the server
+// default); an empty STRING is a real, deliberately-empty saved selection and DOES reconcile
+// against a non-empty default.
+export function fieldsPrefNeedsReconcile(saved: string | null, resolvedFields: string | undefined): boolean {
+	if (saved === null) return false;
+	return normalizeFieldsCsv(saved) !== normalizeFieldsCsv(resolvedFields ?? "");
+}
+
 // Runs on EVERY board page load (every view mode alike — unlike initBoardPage below, which
 // wires the filter/sort/collapse interactivity and bails when no view mode's filter bar
-// rendered, e.g. an empty board). Two jobs:
-//   1. Reconcile: if the URL has no explicit `?view=`, and a saved pref differs from what the
-//      server actually resolved/rendered (`data-resolved-view`), redirect to the saved mode.
+// rendered, e.g. an empty board). Three jobs, all keyed off the SAME per-board localStorage
+// namespace (board-view-fields: "тот же механизм, что и режим просмотра" — one storage
+// mechanism, two key prefixes):
+//   1. Reconcile view: if the URL has no explicit `?view=`, and a saved pref differs from what
+//      the server actually resolved/rendered (`data-resolved-view`), redirect to the saved mode.
+//   2. Reconcile fields: same idea for `?fields=`/`fieldsSet` against `data-resolved-fields` — a
+//      saved field selection applies REGARDLESS of which view mode is active ("выбор действует в
+//      любом режиме просмотра"), so this fires independently of the view reconcile above and both
+//      land in ONE redirect (never two competing ones — see the shared `qs`/`redirect` below).
 //      This runs at normal deferred module-script timing (after the body is parsed, same as
-//      every other persisted board pref in this file) rather than an early <head> script, so
-//      a returning user with a non-default saved mode may see one flash of the server-
+//      every other persisted board pref in this file) rather than an early <head> script, so a
+//      returning user with a non-default saved mode/fields may see one flash of the server-
 //      resolved view before the redirect — the same tradeoff already accepted for the
 //      active-only/collapsed/sort prefs above, kept deliberately rather than adding a second
 //      inline-<script> exception to the "no inline JS in .cshtml" rule (the one that exists,
 //      _ThemeScript, is reserved for the light/dark FOUC case).
-//   2. Save: clicking a view-switch link (`[data-view-link]`) persists its mode (+ optional
-//      `by`) before the browser navigates — a plain `<a href>` click, not intercepted.
+//   3. Save: clicking a view-switch link (`[data-view-link]`) persists its mode (+ optional
+//      `by`) before the browser navigates — a plain `<a href>` click, not intercepted. Submitting
+//      the fields dialog's form persists the checked set the same way, before its own (also
+//      un-intercepted) GET submit.
 export function initBoardViewPersistence(): void {
 	const meta = document.querySelector<HTMLElement>("[data-testid='board-view-meta']");
 	if (!meta) return;
 	const boardKey = meta.dataset["boardKey"];
 	if (!boardKey) return;
-	const storageKey = LS_VIEW_PREFIX + boardKey;
+	const viewStorageKey = LS_VIEW_PREFIX + boardKey;
+	const fieldsStorageKey = LS_FIELDS_PREFIX + boardKey;
 
-	if (!new URLSearchParams(window.location.search).has("view")) {
-		const saved = parseViewPref(localStorage.getItem(storageKey));
+	const params = new URLSearchParams(window.location.search);
+	const qs = new URLSearchParams(params);
+	let redirect = false;
+
+	if (!params.has("view")) {
+		const saved = parseViewPref(localStorage.getItem(viewStorageKey));
 		if (saved && viewPrefNeedsReconcile(saved, meta.dataset["resolvedView"], meta.dataset["resolvedBy"])) {
-			const qs = new URLSearchParams();
 			qs.set("view", saved.mode);
 			if (saved.by) qs.set("by", saved.by);
-			window.location.replace(`${window.location.pathname}?${qs.toString()}`);
-			return; // navigating away — no point wiring click handlers on this (stale) page
+			else qs.delete("by");
+			redirect = true;
 		}
+	}
+	if (!params.has("fieldsSet")) {
+		const savedFields = localStorage.getItem(fieldsStorageKey);
+		if (savedFields !== null && fieldsPrefNeedsReconcile(savedFields, meta.dataset["resolvedFields"])) {
+			qs.delete("fields");
+			for (const key of normalizeFieldsCsv(savedFields).split(",").filter(Boolean)) qs.append("fields", key);
+			qs.set("fieldsSet", "1");
+			redirect = true;
+		}
+	}
+	if (redirect) {
+		window.location.replace(`${window.location.pathname}?${qs.toString()}`);
+		return; // navigating away — no point wiring click/submit handlers on this (stale) page
 	}
 
 	for (const link of Array.from(document.querySelectorAll<HTMLAnchorElement>("[data-view-link]"))) {
@@ -157,12 +213,44 @@ export function initBoardViewPersistence(): void {
 			if (!mode) return;
 			const by = link.dataset["viewBy"];
 			try {
-				localStorage.setItem(storageKey, JSON.stringify(by ? { mode, by } : { mode }));
+				localStorage.setItem(viewStorageKey, JSON.stringify(by ? { mode, by } : { mode }));
 			} catch {
 				// storage unavailable (private mode / quota) — the click still navigates normally
 			}
 		});
 	}
+
+	const fieldsForm = document.querySelector<HTMLFormElement>("[data-testid='fields-form']");
+	fieldsForm?.addEventListener("submit", () => {
+		const checked = Array.from(fieldsForm.querySelectorAll<HTMLInputElement>("input[name='fields']:checked")).map(
+			(el) => el.value,
+		);
+		try {
+			localStorage.setItem(fieldsStorageKey, checked.join(","));
+		} catch {
+			// storage unavailable (private mode / quota) — the submit still navigates normally
+		}
+	});
+}
+
+// board-view-fields: the properties dialog's open/close — same daisyUI `.modal-open` toggle
+// pattern as initWorkflowViz's "View workflow" modal (ts/workflow-viz.ts), independent of
+// initBoardViewPersistence above so it still wires up on a page with the dialog but (hypothetically)
+// no board-view-meta.
+export function initBoardFieldsDialog(): void {
+	const modal = document.querySelector<HTMLElement>("[data-testid='fields-modal']");
+	const toggle = document.querySelector<HTMLElement>("[data-testid='board-fields-toggle']");
+	if (!modal || !toggle) return;
+	const closeBtn = modal.querySelector<HTMLElement>("[data-testid='fields-modal-close']");
+	const backdrop = modal.querySelector<HTMLElement>("[data-testid='fields-modal-backdrop']");
+
+	const close = (): void => modal.classList.remove("modal-open");
+	toggle.addEventListener("click", () => modal.classList.add("modal-open"));
+	closeBtn?.addEventListener("click", close);
+	backdrop?.addEventListener("click", close);
+	document.addEventListener("keydown", (evt) => {
+		if (evt.key === "Escape" && modal.classList.contains("modal-open")) close();
+	});
 }
 
 // One independent reorder scope (board-sort): a `[data-sort-scope]` container plus the

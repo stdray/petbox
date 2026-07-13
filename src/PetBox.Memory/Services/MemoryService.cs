@@ -137,6 +137,44 @@ public sealed class MemoryService : IMemoryService
 		return wanted.Where(found.ContainsKey).Select(k => View(found[k])).ToList();
 	}
 
+	// Batch key→store resolution for the autolink surfaces (spec memory-key-mention-link). ONE
+	// entries query for ALL keys — every store of a container lives in the same file, partitioned by
+	// the Store column, so "which stores hold key K?" is a single `Store IN (…) AND Key IN (…)` scan
+	// no matter how many mentions a page carries (no N+1). SENSITIVE stores are filtered out of the
+	// candidate set here, at the door: a key that exists only in `ops` resolves to nothing, so no
+	// caller can build a link into it. A key in several stores comes back with several names — that
+	// is the AMBIGUITY the caller must refuse, not a pick-the-first situation.
+	public async Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> ResolveKeysAsync(
+		string projectKey, IReadOnlyCollection<string> keys, CancellationToken ct = default)
+	{
+		var wanted = keys.Where(k => !string.IsNullOrWhiteSpace(k)).Select(k => k.Trim())
+			.Distinct(StringComparer.Ordinal).ToList();
+		if (wanted.Count == 0) return EmptyResolution;
+
+		var stores = (await _stores.ListAsync(projectKey, ct))
+			.Select(s => s.Name)
+			.Where(n => !MemoryStores.IsSensitive(n))
+			.ToList();
+		if (stores.Count == 0) return EmptyResolution;
+
+		using var ctx = _stores.NewEnsuredConnection(projectKey);
+		var rows = ctx.Entries
+			.Where(e => e.ActiveTo == null && stores.Contains(e.Store) && wanted.Contains(e.Key))
+			.Select(e => new { e.Key, e.Store })
+			.ToList();
+		if (rows.Count == 0) return EmptyResolution;
+
+		return rows
+			.GroupBy(r => r.Key, StringComparer.Ordinal)
+			.ToDictionary(
+				g => g.Key,
+				g => (IReadOnlyList<string>)g.Select(r => r.Store).Distinct(StringComparer.Ordinal).OrderBy(s => s, StringComparer.Ordinal).ToList(),
+				StringComparer.Ordinal);
+	}
+
+	static readonly IReadOnlyDictionary<string, IReadOnlyList<string>> EmptyResolution =
+		new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal);
+
 	public async Task<MemorySearchResult> SearchAsync(string projectKey, string store, string query, string? type, bool? lexical = null, bool? semantic = null, CancellationToken ct = default)
 	{
 		await EnsureStore(projectKey, store, ct);
@@ -169,8 +207,11 @@ public sealed class MemoryService : IMemoryService
 	// stores in default recall). Protected system stores that ARE knowledge — canon, autocaptured —
 	// stay in the sweep, so default memory_search still returns them. An explicit Filter.Store
 	// still reaches any store; only the implicit sweep excludes (spec: memoverhaul store taxonomy).
+	// The sensitive leg is NOT re-listed here — it is MemoryStores.SensitiveNames (Contract), the
+	// single marker the link/autolink surfaces also consult; this set adds the recall-only exclusion
+	// on top of it.
 	static readonly HashSet<string> SweepExcludedStores =
-		new(StringComparer.OrdinalIgnoreCase) { "ops", "session-digests" };
+		new(MemoryStores.SensitiveNames.Append("session-digests"), StringComparer.OrdinalIgnoreCase);
 
 	// The generic uniform-read seam (implemented EXPLICITLY — the contract is a shared shape,
 	// not a DI dispatch point): the plain envelope of the rich SearchEntriesAsync. Budget
@@ -454,19 +495,50 @@ public sealed class MemoryService : IMemoryService
 	static string SnippetBody(string body, int bodyLen) =>
 		bodyLen <= 0 || body.Length <= bodyLen ? body : string.Concat(body.AsSpan(0, bodyLen), "…");
 
-	public async Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, CancellationToken ct = default)
+	public async Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, bool atomic = true, CancellationToken ct = default)
 	{
 		using var op = PetBoxActivitySources.Memory.StartActivity("memory.upsert");
 		op?.SetTag("petbox.project", projectKey);
 		op?.SetTag("petbox.store", store);
 		op?.SetTag("petbox.upsert_count", upserts.Count);
 		op?.SetTag("petbox.delete_count", deletes.Count);
+		op?.SetTag("petbox.atomic", atomic);
 
-		EnforceCanonBudget(store, upserts); // reject an oversized canon body before we vivify the store
+		// ATOMIC (default): the first bad entry throws and the whole call is refused — unchanged.
+		// PARTIAL (atomic:false): the same refusal becomes a per-entry Rejected conflict and the
+		// rest of the batch lands. Memory entries cannot reference each other, so the cascade has
+		// nothing to walk — every entry is independent, which is the degenerate-but-correct read of
+		// the same contract.
+		var rejected = new List<TemporalConflict>();
+		var live = upserts;
+		if (atomic)
+			EnforceCanonBudget(store, upserts); // reject an oversized canon body before we vivify the store
+		else
+		{
+			var ok = new List<MemoryEntryInput>(upserts.Count);
+			foreach (var u in upserts)
+				try
+				{
+					EnforceCanonBudget(store, [u]);
+					ok.Add(u);
+				}
+				catch (ArgumentException ex)
+				{
+					rejected.Add(new(u.Key ?? "", TemporalConflictKind.Rejected, u.Version, null, ex.Message));
+				}
+			live = ok;
+		}
 
 		await _stores.EnsureAsync(projectKey, store, ct); // auto-vivify on first write
 		using var ctx = _stores.NewEnsuredConnection(projectKey);
-		var desired = MergePatches(ctx, store, upserts);
+		// The payload guards (key required, type required on a new entry, unknown type) fire per
+		// entry: in partial mode they land in `rejected` instead of throwing the call away.
+		var desired = MergePatches(ctx, store, live, atomic ? null : rejected);
+		if (!atomic)
+		{
+			var refused = rejected.Select(c => c.Key).ToHashSet(StringComparer.Ordinal);
+			live = live.Where(u => !refused.Contains(u.Key ?? "")).ToList();
+		}
 		var dels = deletes.Select(d => (d.Key, d.Version)).ToArray();
 		var fts = new SqliteFtsIndex(() => ctx); // writes ride the tx below; connect unused
 
@@ -475,7 +547,11 @@ public sealed class MemoryService : IMemoryService
 		// with the entity. Class-B vectors are NOT touched here — the worker materializes them.
 		// The store is the temporal PARTITION (stores share the project file), so the version
 		// cursor, the active-key reads and the closes are all scoped to it.
-		var r = await TemporalStore.UpsertAsync(ctx, desired, dels, 0,
+		// The SAME engine decides the batch outcome as for tasks: atomicity, the guard rejections,
+		// and (here, vacuously) the cascade. Memory entries carry no intra-batch references, so no
+		// dependency graph is supplied and the cascade degenerates to "each entry is independent".
+		var r = await TemporalStore.UpsertAsync(ctx, desired, dels,
+			new TemporalBatchPolicy(atomic, rejected), 0,
 			onWithinTx: async (tx, upserted, deletedKeys, c) =>
 			{
 				foreach (var e in upserted)
@@ -532,10 +608,14 @@ public sealed class MemoryService : IMemoryService
 		if (!r.Applied)
 			return r with { Added = [], Updated = [], Removed = [] };
 
+		// A REJECTED key is never echoed, even when the call as a whole applied (partial mode).
+		// In atomic mode Applied ⟹ no conflicts, so this set is empty and the echo is unchanged.
+		var refused = r.Conflicts.Select(c => c.Key).ToHashSet(StringComparer.Ordinal);
 		var mentioned = upserts.Select(u => u.Key)
 			.Concat(upserts.Where(u => u.PrevKey is not null).Select(u => u.PrevKey!))
+			.Where(k => !refused.Contains(k))
 			.ToHashSet(StringComparer.Ordinal);
-		var deleted = deletes.Select(d => d.Key).ToHashSet(StringComparer.Ordinal);
+		var deleted = deletes.Select(d => d.Key).Where(k => !refused.Contains(k)).ToHashSet(StringComparer.Ordinal);
 		return r with
 		{
 			Added = r.Added.Where(e => mentioned.Contains(e.Key)).ToList(),
@@ -577,6 +657,21 @@ public sealed class MemoryService : IMemoryService
 		var hasNext = rows.Count > pageSize;
 		if (hasNext) rows.RemoveAt(rows.Count - 1);
 		return new MemoryEntryPage(rows, hasNext, total);
+	}
+
+	public async Task<int?> FindActiveEntryPageAsync(string projectKey, string store, string key, int pageSize,
+		CancellationToken ct = default)
+	{
+		if (pageSize <= 0 || string.IsNullOrWhiteSpace(key)) return null;
+		using var ctx = _stores.NewEnsuredConnection(projectKey);
+		var active = ctx.Entries.Where(e => e.Store == store && e.ActiveTo == null);
+		// The key must actually BE there — a stale/garbage key resolves to no page (the caller then
+		// renders page 0 with no highlight rather than inventing an offset).
+		if (!await active.AnyAsync(e => e.Key == key, ct)) return null;
+		// Rank in the listing's ordering (OrderBy Key, BINARY collation both here and there), so the
+		// page is exactly the one ListActiveEntriesPageAsync would put the entry on.
+		var before = await active.CountAsync(e => string.Compare(e.Key, key) < 0, ct);
+		return before / pageSize;
 	}
 
 	public async Task<IReadOnlyDictionary<string, MemoryUsageView>> GetUsageAsync(string projectKey, string store,
@@ -820,16 +915,31 @@ public sealed class MemoryService : IMemoryService
 	// description/body. The merge base is read at the author's baseline; if the entry moves
 	// before the write lands, TemporalStore's CAS yields a Stale conflict, so a merge against a
 	// stale base can never be committed.
-	static MemoryEntry[] MergePatches(MemoryDb ctx, string store, IReadOnlyList<MemoryEntryInput> upserts)
+	// `rejected` non-null = PARTIAL mode: a per-entry payload refusal is recorded and the entry is
+	// dropped, instead of the throw that (correctly) kills an atomic call.
+	static MemoryEntry[] MergePatches(MemoryDb ctx, string store, IReadOnlyList<MemoryEntryInput> upserts,
+		List<TemporalConflict>? rejected = null)
 	{
 		var editKeys = upserts.Where(u => u.Version != 0).Select(u => u.PrevKey ?? u.Key).Distinct().ToList();
 		var active = editKeys.Count == 0
 			? new Dictionary<string, MemoryEntry>(StringComparer.Ordinal)
 			: ctx.Entries.Where(e => e.Store == store && e.ActiveTo == null && editKeys.Contains(e.Key)).ToList()
 				.ToDictionary(e => e.Key, StringComparer.Ordinal);
-		return upserts
-			.Select(u => ToEntry(u, store, u.Version != 0 && active.TryGetValue(u.PrevKey ?? u.Key, out var c) ? c : null))
-			.ToArray();
+
+		var desired = new List<MemoryEntry>(upserts.Count);
+		foreach (var u in upserts)
+		{
+			var current = u.Version != 0 && active.TryGetValue(u.PrevKey ?? u.Key ?? "", out var c) ? c : null;
+			try
+			{
+				desired.Add(ToEntry(u, store, current));
+			}
+			catch (ArgumentException ex) when (rejected is not null)
+			{
+				rejected.Add(new(u.Key ?? "", TemporalConflictKind.Rejected, u.Version, current?.Version, ex.Message));
+			}
+		}
+		return desired.ToArray();
 	}
 
 	static MemoryEntry ToEntry(MemoryEntryInput i, string store, MemoryEntry? current) => new()

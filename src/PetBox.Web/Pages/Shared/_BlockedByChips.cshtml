@@ -1,0 +1,22 @@
+@model PetBox.Web.Pages.Shared.BlockedByChipsModel
+@* Blockers ("блокеры" — board-view-fields): the ONE LinkDto→chip rendering rule shared by every
+   card/row that opts the BlockedBy field in. A resolvable target links to its live location; a
+   missing one (Status "missing", the relation store's tombstone read) renders literal — the same
+   two-case split TaskBoardNode.cshtml's relations panel already applies to every other link kind. *@
+@if (Model.Links is { Count: > 0 })
+{
+	<div class="flex flex-wrap items-center gap-1 text-xs" data-testid="node-blocked-by">
+		<span class="opacity-60">blocked by:</span>
+		@foreach (var l in Model.Links)
+		{
+			@if (l.NodeId.Length > 0 && l.Status != "missing" && l is { Board: { Length: > 0 } b, Slug: { Length: > 0 } s })
+			{
+				<a href="@Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, b, s)" class="badge badge-outline badge-xs font-mono link link-hover" data-testid="node-blocker-link">@s</a>
+			}
+			else
+			{
+				<span class="badge badge-ghost badge-xs font-mono opacity-60" data-testid="node-blocker-missing">@(l.Slug ?? l.NodeId) · @l.Status</span>
+			}
+		}
+	</div>
+}

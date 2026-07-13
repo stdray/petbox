@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -31,11 +32,17 @@ public sealed class ApiKeyAuthenticationHandler : AuthenticationHandler<Authenti
 	// check", i.e. the old behavior, for every existing key. ProjectScope.AuthorizesAsync reads it.
 	public const string SandboxOnlyClaim = "sandbox_only";
 
+	// The ONE place that knows where a key may arrive from — shared with KeyUsageStampMiddleware, so
+	// the stamp is keyed by exactly the key this handler authenticated (a second header-parsing
+	// implementation would drift and quietly stop stamping the legacy/Authorization callers).
+	public static string? ExtractKey(HttpRequest request) =>
+		request.Headers[ApiKeyHeader].FirstOrDefault()
+			?? request.Headers[LegacyApiKeyHeader].FirstOrDefault()
+			?? FromAuthorization(request.Headers.Authorization.FirstOrDefault());
+
 	protected override Task<AuthenticateResult> HandleAuthenticateAsync()
 	{
-		var apiKey = Request.Headers[ApiKeyHeader].FirstOrDefault()
-			?? Request.Headers[LegacyApiKeyHeader].FirstOrDefault()
-			?? FromAuthorization(Request.Headers.Authorization.FirstOrDefault());
+		var apiKey = ExtractKey(Request);
 		if (string.IsNullOrEmpty(apiKey))
 			return Task.FromResult(AuthenticateResult.NoResult());
 

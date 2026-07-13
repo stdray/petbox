@@ -65,15 +65,22 @@ public sealed record ConfigBindingRow(long Id, string Path, string Tags, string 
 //   • A write is PUT-by-(path, tagset): `Added` = items that created a fresh (path, tagset);
 //     `Updated` = items that superseded an active twin (a NEW immutable row replaced it).
 //   • `Superseded` = the soft-closed twin ids (kept for the PUT-by semantics visibility).
-//   • `Conflicts` exists only for shape parity — a PUT-by-key never has a CAS conflict, so it is
-//     ALWAYS empty (a validation failure throws and aborts the whole atomic batch instead).
+//   • `Conflicts` carries no CAS conflict — a PUT-by-key cannot have one. It is empty on an ATOMIC
+//     call (a validation failure throws and aborts the whole batch). Under `atomic:false` it is
+//     where a REJECTED item lands, one entry per item, with the reason — the same promise as the
+//     other batch verbs, with the watermark half of it simply having no subject here.
 public sealed record ConfigBindingsUpsertResult(
 	bool Applied,
 	long CurrentVersion,
 	IReadOnlyList<ConfigBindingRow> Added,
 	IReadOnlyList<ConfigBindingRow> Updated,
 	IReadOnlyList<long> Superseded,
-	IReadOnlyList<string> Conflicts);
+	IReadOnlyList<ConfigBindingConflict> Conflicts);
+
+// One binding item the batch refused (partial mode only). Config bindings are immutable rows
+// keyed by (path, tagset) with no version watermark, so `Kind` is always "Rejected" — there is
+// no Stale to report. The shape still mirrors the other verbs' conflicts[]: WHICH entry, and WHY.
+public sealed record ConfigBindingConflict(string Path, string Tags, string Kind, string Reason);
 
 // config_binding_search answer (list = search without a query). `Retrievers` is present only in
 // query mode — config has no FTS/vector index, so a query is a server-side substring match over
@@ -107,10 +114,19 @@ public sealed record ProjectListResult(IReadOnlyList<ProjectRow> Projects);
 public sealed record ApiKeyCreatedResult(string Key, string ProjectKey, IReadOnlyList<string> Scopes, DateTime? ExpiresAt,
 	string? DefaultProjectKey = null, bool SandboxOnly = false);
 
+// `LastUsedAt` (spec apikey-last-used) is the MERGED value: the later of the stored column and the
+// in-memory stamp, so a call made seconds ago is visible NOW rather than after the next flush.
+// NULL = never used (distinguishable from used-long-ago, which is the point of the field).
 public sealed record ApiKeyRow(string Key, string Name, string Scopes, DateTime CreatedAt, DateTime? ExpiresAt,
-	string? DefaultProjectKey = null, bool SandboxOnly = false);
+	string? DefaultProjectKey = null, bool SandboxOnly = false, DateTime? LastUsedAt = null);
 
 public sealed record ApiKeyListResult(IReadOnlyList<ApiKeyRow> Keys);
+
+// apikey_update patches an ISSUED key in place — the secret is unchanged (and is the address, not a
+// result). `Updated` names the fields this call actually touched, so a caller can tell a real patch
+// from a no-op: an omitted field is left alone, it is NOT rewritten with a default.
+public sealed record ApiKeyUpdatedResult(string Key, string ProjectKey, IReadOnlyList<string> Scopes, DateTime? ExpiresAt,
+	string? DefaultProjectKey, bool SandboxOnly, IReadOnlyList<string> Updated);
 
 public sealed record ApiKeyDeletedResult(bool Deleted, string Key);
 

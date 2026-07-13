@@ -17,4 +17,19 @@ namespace PetBox.Web.Pages.Shared;
 // stay one shared implementation; only the label changes so the affordance reads correctly per
 // mode. A future mode with a dimension this bar doesn't cover (or that wants FEWER controls)
 // extends this record with a new switch, not a new copy of the markup.
-public sealed record BoardFilterSortModel(string SortHint = "sort:");
+// board-view-fields: the SAME bar also hosts the "fields" dialog trigger + form (one shared
+// affordance per page load, same posture as the sort/filter controls above — a mode declares its
+// current Fields/ViewMode/By, the bar draws the SAME dialog markup for every mode). ViewMode/By are
+// the hidden fields the dialog's GET form round-trips so applying a field selection doesn't also
+// reset the view the user is currently looking at.
+// board-view-outline-show-bodies: BodyUnavailable is Outline's own honesty signal — true only
+// when that board's kind is OutlineRevealModeNames.Navigate, where the outline never renders a
+// body inline (wiki-like boards would ship megabytes on load) regardless of the dialog checkbox.
+// Every other caller (Kanban/Table/Tree) leaves it false; the dialog just disables the Body
+// checkbox and says why instead of silently ignoring a selection the user can still make.
+public sealed record BoardFilterSortModel(
+	PetBox.Web.Rendering.BoardFieldConfig Fields,
+	string ViewMode,
+	string SortHint = "sort:",
+	string? By = null,
+	bool BodyUnavailable = false);

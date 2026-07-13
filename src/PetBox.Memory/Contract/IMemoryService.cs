@@ -30,6 +30,14 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	// that resolves to nothing is silently absent from the result (never an error), and an empty
 	// ask is an empty result. Not-found is therefore the CALLER's decision, not this method's.
 	Task<IReadOnlyList<MemoryEntryView>> GetManyAsync(string projectKey, string store, IReadOnlyList<string> keys, CancellationToken ct = default);
+	// BATCH key→store resolution across the container (spec: memory-key-mention-link). For each of
+	// `keys`, the NON-SENSITIVE stores (MemoryStores.IsSensitive) that hold an ACTIVE entry under
+	// that key — a key found in several stores comes back with several store names, so the caller
+	// can refuse an ambiguous mention; a key found nowhere is absent from the map. Every key is
+	// resolved in ONE entries query (the container's stores share one file), so a page full of
+	// mentions costs one query, not one per key. A container with no (non-sensitive) store resolves
+	// to an empty map without touching the file.
+	Task<IReadOnlyDictionary<string, IReadOnlyList<string>>> ResolveKeysAsync(string projectKey, IReadOnlyCollection<string> keys, CancellationToken ct = default);
 	// Hybrid search over active entries (lexical FTS5 ⊕ semantic vectors, RRF-fused),
 	// ranked; optional taxonomy filter. `lexical`/`semantic` (null = enabled) toggle each
 	// retriever; semantic is silently off when no embedding capability is available. The
@@ -63,7 +71,12 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	// write-ack (spec sinceversion-contract): Added/Updated/Removed cover ONLY this call's
 	// entries — no cursor parameter on a write; CurrentVersion is the store-wide cursor to
 	// feed DeltaAsync (the only delta/catch-up surface).
-	Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, CancellationToken ct = default);
+	// `atomic` (default TRUE) = all-or-nothing: any conflict or refusal aborts the WHOLE call.
+	// `atomic: false` opts into PARTIAL apply — valid entries land, each refused entry (a stale
+	// baseline included) comes back in `conflicts[]` with its own reason. Memory entries cannot
+	// reference each other, so the dependent-rejection cascade has nothing to walk here: every
+	// entry is independent. Same flag, same promise, degenerate graph.
+	Task<MemoryUpsertOutcome> UpsertAsync(string projectKey, string store, IReadOnlyList<MemoryEntryInput> upserts, IReadOnlyList<MemoryDelete> deletes, bool atomic = true, CancellationToken ct = default);
 	Task<MemoryUpsertOutcome> DeltaAsync(string projectKey, string store, long sinceVersion, CancellationToken ct = default);
 
 	// --- UI helper (store page renders the raw active entries) ---
@@ -72,6 +85,14 @@ public interface IMemoryService : ISearchService<MemoryEntryHit, MemoryEntryFilt
 	// substring over Key/Description/Body/Tags (case-insensitive LIKE). OFFSET/LIMIT at the
 	// query — the 200+-entry stores are reachable by paging, never loaded whole.
 	Task<MemoryEntryPage> ListActiveEntriesPageAsync(string projectKey, string store, string? search, int pageNum, int pageSize, CancellationToken ct = default);
+	// WHICH PAGE holds `key` — the server half of the stable entry URL (spec memory-entry-url).
+	// Counts the active entries that sort BEFORE the key in the listing's own ordering
+	// (OrderBy Key, no search filter) and divides by pageSize; returns null when the store has no
+	// active entry under that key. Two cheap aggregate queries, never a scan of the page set: the
+	// alternative — the client walking pages until it finds the card — is N requests for one entry.
+	// Without this, a `…#{key}` fragment lands on page 0 and the card is simply absent from the DOM
+	// for every entry past the first page (~187 of 227 in the live `notes` store).
+	Task<int?> FindActiveEntryPageAsync(string projectKey, string store, string key, int pageSize, CancellationToken ct = default);
 
 	// --- usage telemetry, read side (the writer is IMemoryUsageRecorder) ---
 	// Usage counters for the given keys (null = the whole store), keyed by entry key;

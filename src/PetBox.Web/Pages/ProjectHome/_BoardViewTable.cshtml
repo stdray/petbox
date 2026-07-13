@@ -1,7 +1,7 @@
 @model PetBox.Web.Pages.ProjectHome.TaskBoardModel
-@* Table view mode (board-view-mode-framework): a flat row-per-node table. Columns: key / type /
-   status / priority / tags / updatedAt / delivery. This partial's only job is projecting
-   Model.Nodes into TaskTableRow — the actual table markup + sort/filter wiring live in the
+@* Table view mode (board-view-mode-framework): a flat row-per-node table. Columns follow
+   Model.Fields (board-view-fields) — this partial's only job is projecting Model.Nodes into
+   TaskTableRow — the actual table markup + column gating + sort/filter wiring live in the
    REUSABLE _TaskTable.cshtml (Pages/Shared), the same partial the cross-scope search results
    page renders (with its extra workspace/project/board columns switched on) — one table
    component, not two. *@
@@ -16,7 +16,9 @@
 			StatusSlug: n.Status, StatusDisplay: badge.Display, StatusCssClass: badge.CssClass, StatusShow: badge.Show,
 			Closed: Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status),
 			Priority: n.Priority, Tags: n.Tags, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
-			Delivery: n.Delivery);
+			Delivery: n.Delivery,
+			TerminalCancel: Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel,
+			BlockedBy: n.BlockedBy, Body: n.Body);
 	}).ToList();
 }
-<partial name="_TaskTable" model="new TaskTableModel(rows, ShowScopeColumns: false)" />
+<partial name="_TaskTable" model="new TaskTableModel(rows, ShowScopeColumns: false, Fields: Model.Fields, WorkspaceKey: Model.WorkspaceKey, ProjectKey: Model.ProjectKey)" />

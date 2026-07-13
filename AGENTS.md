@@ -78,6 +78,9 @@ records**, not the working plan — do not treat them as current state.
    **`dotnet trx`** (the `dotnet-trx` local tool, in `.config/dotnet-tools.json`; run
    `dotnet tool restore` once). It auto-discovers `*.trx` under the cwd and prints each
    failed test's message + stack (`--path <dir>` to scope, `-v verbose` for all).
+   Set **both** `NO_COLOR=1` and `TERM=dumb` for it (PowerShell: `$env:NO_COLOR='1'`,
+   `$env:TERM='dumb'`) — otherwise the render carries ANSI color and OSC-8 hyperlink
+   escapes that are pure noise in a captured log; `NO_COLOR` alone leaves the hyperlinks.
    For TIMING analysis (per-class totals, wall-clock critical path of a parallel run)
    use `dotnet run scripts/trx-timings.cs -- <run.trx>` — don't re-write that parser.
 4. **Finish = branch + commit + push:** completed work is committed on a feature

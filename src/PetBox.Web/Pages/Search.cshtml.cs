@@ -44,6 +44,9 @@ public sealed class SearchModel(CrossScopeTaskSearchService search) : PageModel
 			Closed: MethodologyPresets.IsTerminalSlug(h.Status),
 			Priority: h.Priority, Tags: h.Tags ?? [], CreatedAt: null, UpdatedAt: h.UpdatedAt,
 			Delivery: h.Delivery,
+			// board-terminal-negative-visible: same project-wide preset approximation Closed
+			// already uses above (no per-project MethodologyRuntime available at this fan-out).
+			TerminalCancel: MethodologyPresets.KindOfSlug(h.Status) == StatusKind.TerminalCancel,
 			Workspace: h.Workspace, ProjectKey: h.ProjectKey, Board: h.Board)).ToList();
 	}
 }

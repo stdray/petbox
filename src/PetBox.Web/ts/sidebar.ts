@@ -30,10 +30,12 @@ function apply(pinned: boolean): void {
 	document.querySelector(".drawer")?.classList.toggle(PINNED_CLASS, pinned);
 	const toggle = document.querySelector<HTMLInputElement>(".drawer-toggle");
 	if (toggle && !pinned) toggle.checked = false;
-	document.querySelectorAll<HTMLElement>("[data-sidebar-pin]").forEach((btn) => {
+	// NodeListOf isn't iterable under this project's DOM lib (no "DOM.Iterable"; see
+	// ts/logs.ts's Array.from(querySelectorAll(...)) pattern) — wrap it for for...of.
+	for (const btn of Array.from(document.querySelectorAll<HTMLElement>("[data-sidebar-pin]"))) {
 		btn.setAttribute("aria-pressed", String(pinned));
 		btn.classList.toggle("btn-active", pinned);
-	});
+	}
 }
 
 // --- Tree expand memory: DELETED, not migrated (work sidebar-tree-cookie-dead) -----------------

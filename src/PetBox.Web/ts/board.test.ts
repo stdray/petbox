@@ -7,7 +7,14 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { compareSortValues, parseSortPref, parseViewPref, sortKeyValue, viewPrefNeedsReconcile } from "./board.ts";
+import {
+	compareSortValues,
+	fieldsPrefNeedsReconcile,
+	parseSortPref,
+	parseViewPref,
+	sortKeyValue,
+	viewPrefNeedsReconcile,
+} from "./board.ts";
 
 test("parseSortPref: defaults to priority/asc for null, malformed, or unknown-key input", () => {
 	assert.deepEqual(parseSortPref(null), { by: "priority", desc: false });
@@ -61,7 +68,10 @@ test("parseViewPref: round-trips a mode-only preference", () => {
 });
 
 test("parseViewPref: round-trips a mode+by preference (tags)", () => {
-	assert.deepEqual(parseViewPref(JSON.stringify({ mode: "tags", by: "area,concern" })), { mode: "tags", by: "area,concern" });
+	assert.deepEqual(parseViewPref(JSON.stringify({ mode: "tags", by: "area,concern" })), {
+		mode: "tags",
+		by: "area,concern",
+	});
 });
 
 test("parseViewPref: a non-string/blank `by` is dropped, not carried through as garbage", () => {
@@ -91,4 +101,27 @@ test("viewPrefNeedsReconcile: same mode and by -> no reconcile", () => {
 	assert.equal(viewPrefNeedsReconcile({ mode: "tags", by: "area" }, "tags", "area"), false);
 	assert.equal(viewPrefNeedsReconcile({ mode: "tree" }, "tree", undefined), false);
 	assert.equal(viewPrefNeedsReconcile({ mode: "tree" }, "tree", ""), false);
+});
+
+// board-view-fields: fieldsPrefNeedsReconcile backs initBoardViewPersistence's fields half of the
+// reconcile-on-load redirect (the SAME localStorage-by-board-key mechanism as the view preference
+// above, just its own key prefix — spec's explicit "no second persistence mechanism" ask).
+test("fieldsPrefNeedsReconcile: no saved pref never reconciles", () => {
+	assert.equal(fieldsPrefNeedsReconcile(null, "type,status"), false);
+	assert.equal(fieldsPrefNeedsReconcile(null, undefined), false);
+});
+
+test("fieldsPrefNeedsReconcile: a saved DELIBERATELY EMPTY selection still reconciles against a non-empty default", () => {
+	assert.equal(fieldsPrefNeedsReconcile("", "type,status"), true);
+	assert.equal(fieldsPrefNeedsReconcile("", ""), false);
+});
+
+test("fieldsPrefNeedsReconcile: differing sets -> reconcile", () => {
+	assert.equal(fieldsPrefNeedsReconcile("type,status", "type,priority"), true);
+});
+
+test("fieldsPrefNeedsReconcile: same set, different order/whitespace/duplicates -> no reconcile", () => {
+	assert.equal(fieldsPrefNeedsReconcile("status,type", "type,status"), false);
+	assert.equal(fieldsPrefNeedsReconcile(" type , status ", "status,type"), false);
+	assert.equal(fieldsPrefNeedsReconcile("type,type,status", "type,status"), false);
 });

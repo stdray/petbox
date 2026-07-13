@@ -302,7 +302,7 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 			Body = body,
 			Tags = [Tag],
 			Metadata = metadata,
-		}], [], ct);
+		}], [], ct: ct);
 		if (outcome.Result.Conflicts.Count > 0)
 		{
 			// Someone edited the digest entry concurrently; the HELD cursor (not advanced yet)
@@ -401,7 +401,7 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 			Body = state.Body,
 			Tags = [Tag],
 			Metadata = BuildMetadata(header, to),
-		}], [], ct);
+		}], [], ct: ct);
 		if (outcome.Result.Conflicts.Count > 0)
 			_logger?.LogWarning("session digest metadata cursor mirror conflicted for {Project}/{Session}; harmless — the durable cursor moved",
 				project, header.SessionId);
@@ -420,7 +420,7 @@ public sealed class SessionDigestJob : IBackgroundIndexJob
 			.Select(e => new MemoryDelete(e.Key, e.Version))
 			.ToList();
 		if (deletes.Count == 0) return;
-		await _memory.UpsertAsync(project, Store, [], deletes, ct);
+		await _memory.UpsertAsync(project, Store, [], deletes, ct: ct);
 		_logger?.LogWarning("session digest cleanup: removed {Count} empty/no-content digest(s) in {Project}",
 			deletes.Count, project);
 	}

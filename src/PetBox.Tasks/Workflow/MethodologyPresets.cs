@@ -107,12 +107,21 @@ public static class MethodologyPresets
 	]);
 
 	// WORK reuses the EXISTING status vocabulary (Pending/InProgress/Done/Blocked/
-	// Deferred/Cancelled) + Review, so live boards and the MCP/UI contract don't break.
+	// Cancelled) + Review, so live boards and the MCP/UI contract don't break.
 	// feature/bug/chore share ONE state machine; the linkConstraints say a NEW feature or
 	// bug must link a spec node (task_spec = specRef) — `chore` is absent by design: the
 	// home for below-spec engineering hygiene (test fixes, flakes, refactorings) that has
 	// no requirement to link. Quick-add is rejected: a work node needs a specRef at birth
 	// the bare form can't supply.
+	//
+	// No `Deferred` status (work-preset-drop-deferred, 2026-07): the maintainer decided a
+	// kanban column for "parked, come back later" wasn't worth the extra status — Pending
+	// already covers "not started yet" and a card that stalls stays Pending or moves to
+	// Blocked. Dropping it from THIS preset does not, by itself, remove it from a
+	// definition already materialized into a project's stored methodology document before
+	// this change (RenderBuiltinTemplate copies a preset kind verbatim at creation time) —
+	// WorkDeferredStatusMigrator (PetBox.Tasks.Data) is the one-time startup migration that
+	// strips it (status + referencing transitions) from any such stored document.
 	static readonly MethodologyKindDef WorkKind = new("work", QuickAddAllowed: false,
 	[
 		new MethodologyWorkflowDef(["feature", "bug", "chore"],
@@ -122,7 +131,6 @@ public static class MethodologyPresets
 				new("Review", "Review", StatusKind.Open),
 				new("Done", "Done", StatusKind.TerminalOk),
 				new("Blocked", "Blocked", StatusKind.Open),
-				new("Deferred", "Deferred", StatusKind.Open),
 				new("Cancelled", "Cancelled", StatusKind.TerminalCancel),
 			],
 			[
@@ -132,8 +140,6 @@ public static class MethodologyPresets
 				new("Review", "Done", RequiresApproval: true),     // approve gate
 				new("InProgress", "Blocked"),
 				new("Blocked", "InProgress"),
-				new("Pending", "Deferred"),
-				new("Deferred", "Pending"),
 				new("Pending", "Cancelled"),
 				new("InProgress", "Cancelled"),
 				new("Review", "Cancelled"),

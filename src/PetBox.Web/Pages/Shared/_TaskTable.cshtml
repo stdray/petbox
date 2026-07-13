@@ -6,14 +6,22 @@
    Sorting/filtering reuse the EXISTING client mechanism (board-sort-impl, ts/board.ts
    initBoardPage) via the same testids/data-* the tree pane uses — not a second parallel one:
    initBoardPage() runs unconditionally on every page and wires up whatever of this markup is
-   present, table or tree alike. *@
+   present, table or tree alike.
+   board-view-fields: columns are gated on Model.Fields — null (Search's cross-scope call, which
+   never resolves BlockedBy/Body and has no board-view-meta to persist a choice against) falls back
+   to the table's original always-on set so search results are unaffected by this feature. *@
+@{
+	var fields = Model.Fields ?? new PetBox.Web.Rendering.BoardFieldConfig(
+		Type: true, Status: true, Priority: true, Tags: true, UpdatedAt: true, Delivery: true, BlockedBy: false, Body: false);
+	var viewMode = Model.Fields is not null ? BoardViewModeNames.Table : "";
+}
 @if (Model.Rows.Count == 0)
 {
 	<div class="alert" data-testid="board-empty">No tasks.</div>
 }
 else
 {
-	var filterSortModel = new BoardFilterSortModel(SortHint: "sort rows:");
+	var filterSortModel = new BoardFilterSortModel(Fields: fields, ViewMode: viewMode, SortHint: "sort rows:");
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<div class="overflow-x-auto">
 		<table class="table table-sm" data-testid="board-table">
@@ -26,12 +34,14 @@ else
 						<th>board</th>
 					}
 					<th>key</th>
-					<th>type</th>
-					<th>status</th>
-					<th>priority</th>
-					<th>tags</th>
-					<th>updated</th>
-					<th>delivery</th>
+					@if (fields.Type) { <th>type</th> }
+					@if (fields.Status) { <th>status</th> }
+					@if (fields.Priority) { <th>priority</th> }
+					@if (fields.Tags) { <th>tags</th> }
+					@if (fields.UpdatedAt) { <th>updated</th> }
+					@if (fields.Delivery) { <th>delivery</th> }
+					@if (fields.BlockedBy) { <th>blocked by</th> }
+					@if (fields.Body) { <th>body</th> }
 				</tr>
 			</thead>
 			<tbody data-testid="board-nodes" data-sort-scope>
@@ -42,7 +52,7 @@ else
 						data-node-id="@row.NodeId" data-node-key="@row.Key"
 						data-status="@row.StatusSlug" data-type="@row.Type" data-priority="@row.Priority" data-title="@row.Title"
 						data-created="@(row.CreatedAt?.ToString("o") ?? "")" data-updated="@(row.UpdatedAt?.ToString("o") ?? "")"
-						data-search="@search" data-closed="@row.Closed.ToString().ToLowerInvariant()" data-keep-visible="false">
+						data-search="@search" data-closed="@row.Closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@row.TerminalCancel.ToString().ToLowerInvariant()">
 						@if (Model.ShowScopeColumns)
 						{
 							<td class="font-mono text-xs opacity-70" data-testid="row-workspace">@row.Workspace</td>
@@ -50,35 +60,69 @@ else
 							<td class="font-mono text-xs opacity-70" data-testid="row-board">@row.Board</td>
 						}
 						<td>
-							<a href="@row.Url" class="link link-hover font-semibold" data-testid="node-name">@row.Title</a>
+							@* board-terminal-negative-visible: struck through regardless of whether the
+							   status COLUMN is on — the same invariant every other view enforces. *@
+							<a href="@row.Url" class="link link-hover font-semibold @(row.TerminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@row.Title</a>
 							<span class="font-mono text-xs opacity-50">@row.Key</span>
 						</td>
-						<td><span class="badge badge-ghost badge-xs" data-testid="node-type">@row.Type</span></td>
-						<td>
-							@if (row.StatusShow)
-							{
-								<span class="badge @row.StatusCssClass badge-sm" data-testid="node-status">@row.StatusDisplay</span>
-							}
-						</td>
-						<td data-testid="node-priority">@row.Priority</td>
-						<td data-testid="node-tags">
-							@foreach (var t in row.Tags)
-							{
-								<span class="badge badge-outline badge-xs mr-1">@t</span>
-							}
-						</td>
-						<td>
-							@if (row.UpdatedAt is not null)
-							{
-								<time class="local-time text-xs" datetime="@row.UpdatedAt.Value.ToString("o")" data-testid="node-updated">@row.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time>
-							}
-						</td>
-						<td>
-							@if (row.Delivery is not null)
-							{
-								<partial name="_DeliveryBadge" model="@(new DeliveryBadgeModel(row.Delivery) { Size = "badge-xs" })" />
-							}
-						</td>
+						@if (fields.Type)
+						{
+							<td><span class="badge badge-ghost badge-xs" data-testid="node-type">@row.Type</span></td>
+						}
+						@if (fields.Status)
+						{
+							<td>
+								@if (row.StatusShow)
+								{
+									<span class="badge @row.StatusCssClass badge-sm" data-testid="node-status">@row.StatusDisplay</span>
+								}
+							</td>
+						}
+						@if (fields.Priority)
+						{
+							<td data-testid="node-priority">@row.Priority</td>
+						}
+						@if (fields.Tags)
+						{
+							<td data-testid="node-tags">
+								@foreach (var t in row.Tags)
+								{
+									<span class="badge badge-outline badge-xs mr-1">@t</span>
+								}
+							</td>
+						}
+						@if (fields.UpdatedAt)
+						{
+							<td>
+								@if (row.UpdatedAt is not null)
+								{
+									<time class="local-time text-xs" datetime="@row.UpdatedAt.Value.ToString("o")" data-testid="node-updated">@row.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time>
+								}
+							</td>
+						}
+						@if (fields.Delivery)
+						{
+							<td>
+								@if (row.Delivery is not null)
+								{
+									<partial name="_DeliveryBadge" model="@(new DeliveryBadgeModel(row.Delivery) { Size = "badge-xs" })" />
+								}
+							</td>
+						}
+						@if (fields.BlockedBy)
+						{
+							<td><partial name="_BlockedByChips" model="@(new BlockedByChipsModel(Model.WorkspaceKey ?? "", Model.ProjectKey ?? "", row.BlockedBy))" /></td>
+						}
+						@if (fields.Body)
+						{
+							<td class="max-w-xs">
+								@if (!string.IsNullOrEmpty(row.Body))
+								{
+									var excerpt = row.Body.Length > 120 ? row.Body[..120] + "…" : row.Body;
+									<span class="text-xs opacity-70" data-testid="node-body">@excerpt</span>
+								}
+							</td>
+						}
 					</tr>
 				}
 			</tbody>

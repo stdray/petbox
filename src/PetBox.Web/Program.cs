@@ -371,6 +371,10 @@ public partial class Program
 		builder.Services.AddSingleton<ConfigApiKeyLookup>();
 		builder.Services.AddScoped<DbApiKeyLookup>();
 		builder.Services.AddScoped<IApiKeyLookup, CompositeApiKeyLookup>();
+		// spec apikey-last-used — the singleton the auth middleware stamps into, and the background
+		// flusher that folds the marks into ApiKeys.LastUsedAt in one batched statement (~5 min).
+		builder.Services.AddSingleton<IKeyStatService, KeyStatService>();
+		builder.Services.AddGatedHostedService<KeyStatFlusher>();
 
 		builder.Logging.Configure(o => o.ActivityTrackingOptions =
 			ActivityTrackingOptions.TraceId | ActivityTrackingOptions.SpanId);
@@ -646,6 +650,18 @@ public partial class Program
 			new PetBox.Tasks.Data.MethodologyInstanceBackfill(coreDbFactory, tasksFactory, backfillLog).Migrate();
 		}
 
+		// One-time, idempotent (work-preset-drop-deferred): the `work` kind's builtin preset
+		// no longer declares the `Deferred` status. A preset code change alone does not reach
+		// a definition/instance already materialized (verbatim-copied) into a project's stored
+		// methodology document before this change — this strips `Deferred` (status +
+		// referencing transitions) from every stored document that still carries it. Runs
+		// after the instance backfill so every project's documents are in their per-project
+		// tasks file already.
+		{
+			var deferredLog = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Tasks.WorkDeferredStatusMigrator");
+			new PetBox.Tasks.Data.WorkDeferredStatusMigrator(coreDbFactory, tasksFactory, deferredLog).Migrate();
+		}
+
 		// One-time, idempotent (llm-registry-own-store): copy the live LLM registry out of the Config
 		// module (config/$system.db: the `llm/registry` JSON binding + one `llm/secret/{endpoint}`
 		// binding per api key) into core.db's llm_endpoints/llm_routes at level System:$. A startup
@@ -715,6 +731,13 @@ public partial class Program
 		app.UseStaticFiles();
 		app.UseRouting();
 		app.UseAuthentication();
+
+		// spec apikey-last-used: record the key's use IN MEMORY (KeyStatService), never in SQLite —
+		// the auth hot path stays a single indexed read. KeyStatFlusher persists the batch every
+		// ~5 min. Sits above UseAuthorization so a call refused for a missing SCOPE still counts as
+		// a use of the key (it authenticated); a bogus key does not.
+		app.UseMiddleware<PetBox.Core.Auth.KeyUsageStampMiddleware>();
+
 		app.UseAuthorization();
 
 		// App-wide request logging into the self-log (after auth so the project claim is

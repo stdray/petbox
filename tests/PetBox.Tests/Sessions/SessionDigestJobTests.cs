@@ -330,7 +330,7 @@ public sealed class SessionDigestJobTests : IDisposable
 			new MemoryEntryInput { Key = "junk-refusal", Type = "Reference", Description = "No content to digest.", Body = "", Tags = [SessionDigestJob.Tag] },
 			new MemoryEntryInput { Key = "junk-short", Type = "Reference", Description = "empty", Body = "", Tags = [SessionDigestJob.Tag] },
 			new MemoryEntryInput { Key = "real", Type = "Reference", Description = "Сессия про реальную работу над конфигом resolver", Body = "- починили NRE\n- задеплоили ci.512", Tags = [SessionDigestJob.Tag] },
-		], [], CancellationToken.None);
+		], [], ct: CancellationToken.None);
 
 		var chat = new ChatFake { NextText = "Сессия про конфиг\n- факт про фикс" };
 		var log = new CapturingLogger();
@@ -432,7 +432,7 @@ public sealed class SessionDigestJobTests : IDisposable
 			Body = "- разобрали падение резолвера конфигурации",
 			Tags = [SessionDigestJob.Tag],
 			Metadata = """{"sessionId":"s1","agent":"claude-code","cursor":2}""",
-		}], [], CancellationToken.None);
+		}], [], ct: CancellationToken.None);
 		var chat = new ChatFake { NextText = "digest v2\n- old facts\n- new gamma fact" };
 
 		(await Job(chat).DrainAllAsync(CancellationToken.None)).Should().Be(1);

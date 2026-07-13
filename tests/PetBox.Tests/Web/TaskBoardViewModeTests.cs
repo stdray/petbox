@@ -167,7 +167,7 @@ public sealed class TaskBoardViewModeTests : IDisposable
 	public async Task Kanban_ColumnsComeFromTheBoardsOwnWorkflow_NotHardcoded()
 	{
 		// A custom methodology whose statuses (Todo/Done) look nothing like the `work` preset's
-		// own kanban columns (Pending/InProgress/Review/Done/Blocked/Deferred/Cancelled) — proves
+		// own kanban columns (Pending/InProgress/Review/Done/Blocked/Cancelled) — proves
 		// KanbanColumns is sourced from THIS board's workflow, not a hardcoded stage list.
 		var board = await CreateInstanceBoard("kanbaninst", "kanbankind", BoardViewModeNames.Kanban);
 		var m = Model(board);

@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Settings;
+using PetBox.Web.Memory;
 
 namespace PetBox.Tests.Web;
 
@@ -406,19 +407,23 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().NotContain("a wiki-length body that must not ship inline or leak into data-search");
 	}
 
+	// board-view-outline-show-bodies: spec's kind defaults Body ON (BoardFieldConfig.Default,
+	// inline-lazy reveal) — and the whole point of the task is that spec's DEFAULT render ships
+	// every body eagerly, server-side (TasksService.GetAsync already loaded them regardless), so
+	// reading the spec tree is one page load with zero `?handler=NodeBody` round-trips.
 	[Fact]
-	public async Task TaskBoard_OutlineView_SpecKind_UsesInlineLazy_BodyNotInInitialRender()
+	public async Task TaskBoard_OutlineView_SpecKind_DefaultRendersBodiesEagerly_NoLazyFetchNeeded()
 	{
-		const string board = "viewmodeoutlinespec";
+		const string board = "viewmodeoutlinespeceager";
 		using (var scope = _factory.Services.CreateScope())
 		{
 			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
 			if (!await boards.ExistsAsync("$system", board))
-				await boards.CreateAsync("$system", board, "outline spec smoke", "spec");
+				await boards.CreateAsync("$system", board, "outline spec eager smoke", "spec");
 			var ctx = boards.GetContext("$system");
 			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
 			{
-				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "sreq", NodeId = "id-sreq", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "sreq", NodeId = "id-sreq-eager", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
 			}, partition: n => n.Board == board);
 		}
 
@@ -426,8 +431,70 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"inline-lazy\"");
+		html.Should().Contain("data-testid=\"outline-node-eager\"");
+		html.Should().NotContain("data-testid=\"outline-node-lazy\"");
+		html.Should().Contain("a one-line normative statement"); // shipped in the initial HTML, no fetch needed
+	}
+
+	// The other half of the same contract: turning the Body field OFF (even on spec, whose kind
+	// is inline-lazy) still offers the per-node lazy peek — the mechanism from before this task,
+	// preserved for "point at one node" without opting the whole board into eager bodies.
+	[Fact]
+	public async Task TaskBoard_OutlineView_SpecKind_BodyFieldOff_StillOffersLazyPerNodeExpand()
+	{
+		const string board = "viewmodeoutlinespeclazy";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "outline spec lazy smoke", "spec");
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "sreq", NodeId = "id-sreq-lazy", Version = 0, Status = "defined", Type = "spec", Name = "Spec req", Body = "a one-line normative statement", Priority = 1 },
+			}, partition: n => n.Board == board);
+		}
+
+		// fieldsSet=1 with no `fields=body` is a deliberately empty-of-body selection (unchecked
+		// checkboxes don't post) — TaskBoardModel.FieldsSetParam distinguishes this from "no
+		// fields in the URL at all", which would fall back to the ON-by-default spec preset.
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline&fieldsSet=1");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"inline-lazy\"");
 		html.Should().Contain("data-testid=\"outline-node-lazy\"");
+		html.Should().NotContain("data-testid=\"outline-node-eager\"");
 		html.Should().NotContain("a one-line normative statement"); // fetched only on expand
+	}
+
+	// Navigate mode ignores the Body field entirely, even when explicitly turned on — the fields
+	// dialog must say so (disabled checkbox with a reason) rather than silently accepting a
+	// selection that has zero effect on the render.
+	[Fact]
+	public async Task TaskBoard_OutlineView_NavigateMode_DisablesBodyCheckboxInFieldsDialog_EvenWhenRequested()
+	{
+		const string board = "viewmodeoutlinenavbody";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "outline navigate body smoke"); // simple kind → navigate
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "onb1", Title = "ONB1", Body = "a wiki-length body that must never ship inline" },
+			]);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline&fieldsSet=1&fields=body");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain("data-testid=\"board-outline\" data-reveal-mode=\"navigate\"");
+		html.Should().NotContain("data-testid=\"outline-node-eager\"");
+		html.Should().NotContain("data-testid=\"outline-node-lazy\"");
+		html.Should().NotContain("a wiki-length body that must never ship inline");
+		html.Should().Contain("data-testid=\"field-body\"");
+		html.Should().MatchRegex("data-testid=\"field-body\"[^>]*disabled=\"disabled\"");
 	}
 
 	[Fact]
@@ -503,6 +570,10 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// suppresses that badge and shows one only for a non-default (terminal `deprecated`) state
 	// (spec-board-status-noise #9). Nodes are seeded straight through TemporalStore to bypass the
 	// idea/FSM gates — this exercises the render path, not the write path.
+	// board-view-fields: the Status FIELD itself now defaults OFF on spec's default view (outline —
+	// "it cuts the eye"), so the badge assertion moves to an explicit `fields=status` request; the
+	// DEFAULT request instead asserts board-terminal-negative-visible — reqb (terminal `deprecated`)
+	// reads as struck-through regardless, reqa (non-terminal `defined`) does not.
 	[Fact]
 	public async Task SpecBoard_SuppressesDefaultDefinedStatus_ShowsTerminalDeprecated()
 	{
@@ -527,10 +598,23 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		// Both cards render (deprecated is closed but the server emits it; the client hides it).
 		html.Should().Contain("data-node-key=\"reqa\"");
 		html.Should().Contain("data-node-key=\"reqb\"");
-		// The default `defined` gets NO status badge; the non-default `deprecated` still gets one.
-		// The badge shows the declared human Name (`deprecated` → "Deprecated"); the slug is unchanged.
+		// board-view-fields: Status defaults off on spec's default (outline) view — neither status
+		// badge renders without an explicit opt-in.
 		html.Should().NotContain("data-testid=\"node-status\">defined");
-		html.Should().Contain("data-testid=\"node-status\">Deprecated");
+		html.Should().NotContain("data-testid=\"node-status\">Deprecated");
+		// board-terminal-negative-visible: the invariant holds regardless — reqb's row carries the
+		// strikethrough marker, reqa's does not (both attributes live on the SAME row element).
+		html.Should().MatchRegex("data-node-key=\"reqa\"[^>]*data-terminal-cancel=\"false\"");
+		html.Should().MatchRegex("data-node-key=\"reqb\"[^>]*data-terminal-cancel=\"true\"");
+
+		// Explicit opt-in (fields=status) restores the ORIGINAL spec-board-status-noise
+		// suppression: `defined` (the near-universal default) still stays silent; `deprecated`
+		// still shows, with its declared human Name — the badge-level rule (StatusBadgeModel.Show)
+		// is unchanged, only its DEFAULT visibility on this view moved.
+		using var withStatusResp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline&fieldsSet=1&fields=status");
+		var withStatusHtml = await withStatusResp.Content.ReadAsStringAsync();
+		withStatusHtml.Should().NotContain("data-testid=\"node-status\">defined");
+		withStatusHtml.Should().Contain("data-testid=\"node-status\">Deprecated");
 	}
 
 	// ui-spec-status-board-node-mismatch: the node DETAIL page must apply the SAME spec-board status
@@ -712,13 +796,15 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	// custom slug, the custom statuses render with definition-classified badges, the custom
 	// terminal `closed` is marked closed (data-closed drives the active-only hiding), and
 	// quick-add follows the definition (disabled here — the Simple fallback would show it).
+	// board-view-fields: the tree view's Status field defaults off, so the status-badge
+	// assertions request it explicitly (`fields=status`) — everything else here is unaffected.
 	[Fact]
 	public async Task TaskBoard_CustomDefinedKind_ResolvesProcessFromDefinition_NotPresetFallback()
 	{
 		const string board = "tickets";
 		await SeedSupportKindBoardAsync(board);
 
-		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}");
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tree&fieldsSet=1&fields=status");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 
@@ -734,6 +820,169 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().MatchRegex("data-node-key=\"t1\"[^>]*data-closed=\"false\"");
 		// Quick-add follows the definition (false); the Simple fallback would render the form.
 		html.Should().NotContain("data-testid=\"task-create\"");
+	}
+
+	// board-terminal-negative-visible: the strikethrough invariant is driven by StatusKind DATA
+	// (StatusKind.TerminalCancel), never a hardcoded status name — this methodology names its
+	// terminal-cancel status "archived" (not "deprecated"/"Cancelled"/"wontfix", every name the
+	// builtin presets happen to use) specifically so a name-matching implementation would fail
+	// this test while a StatusKind-driven one passes. Exercises all four board views (tree default,
+	// kanban, outline, table) plus the node detail page in one pass, and proves the strikethrough
+	// survives even when the Status FIELD itself is off (tree's default) — the whole point of the
+	// invariant being "over the setting", not a dialog checkbox.
+	[Fact]
+	public async Task TerminalCancelStrikethrough_DrivenByStatusKindData_NotHardcodedStatusNames()
+	{
+		const string board = "archiveboard";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			var def = new PetBox.Tasks.Workflow.MethodologyDefinition("archivist",
+			[
+				new PetBox.Tasks.Workflow.MethodologyKindDef("archivist", QuickAddAllowed: false,
+				[
+					new PetBox.Tasks.Workflow.MethodologyWorkflowDef(["note"],
+						[
+							new("triage", "Triage", PetBox.Tasks.Workflow.StatusKind.Open),
+							new("shipped", "Shipped", PetBox.Tasks.Workflow.StatusKind.TerminalOk),
+							new("archived", "Archived", PetBox.Tasks.Workflow.StatusKind.TerminalCancel),
+						],
+						[new("triage", "shipped"), new("triage", "archived")]),
+				]),
+			]);
+			if (await tasks.GetMethodologyInstanceAsync("$system", "archivist-ui") is null)
+			{
+				await tasks.UpsertMethodologyTemplateAsync("$system", "archivist-ui-tmpl", def, 0);
+				await tasks.CreateMethodologyInstanceAsync("$system", "archivist-ui", "template", "archivist-ui-tmpl");
+			}
+
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "archive smoke", "archivist", methodologyInstance: "archivist-ui");
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "live", NodeId = "id-live", Version = 0, Status = "triage", Type = "note", Name = "Live note", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "done", NodeId = "id-done", Version = 0, Status = "shipped", Type = "note", Name = "Shipped note", Body = "", Priority = 2 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "dead", NodeId = "id-dead", Version = 0, Status = "archived", Type = "note", Name = "Archived note", Body = "", Priority = 3 },
+			}, partition: n => n.Board == board);
+		}
+
+		// Tree default view: Status field defaults OFF, but the strikethrough still fires.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=tree"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().NotContain("data-testid=\"node-status\""); // Status field off by default
+			html.Should().MatchRegex("data-node-key=\"live\"[^>]*data-terminal-cancel=\"false\"");
+			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\""); // TerminalOk, NOT struck
+			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+		}
+
+		// Kanban view: same invariant, same distinction between terminal-ok and terminal-cancel.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
+			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+		}
+
+		// Outline view.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=outline"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
+			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+		}
+
+		// Table view.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=table"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().MatchRegex("data-node-key=\"done\"[^>]*data-terminal-cancel=\"false\"");
+			html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+		}
+
+		// Node detail page — the same invariant applies there too.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}/dead"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().Contain("data-testid=\"node-detail\"");
+			html.Should().MatchRegex("data-testid=\"node-detail\"[^>]*data-terminal-cancel=\"true\"");
+		}
+	}
+
+	// kanban-blocked-signal: the blocked indicator (border + badge) is driven off the DATA — a
+	// non-empty BlockedBy edge list — never off the status name "Blocked", and never off
+	// BoardKind.Work's own RequireBlockersAsync guard (which only fires for kind==Work and
+	// status=="Blocked", see TasksService). This methodology's "held" status is Open-kind and
+	// isn't named "Blocked" at all, so a name-matching implementation would show nothing here
+	// while a BlockedBy-driven one still lights up the card — same reasoning as the sibling
+	// TerminalCancelStrikethrough test above, applied to the blocked signal instead. Also proves
+	// the signal survives Model.Fields.BlockedBy being off (kanban's own default): board-view-
+	// fields governs the DETAIL — who's blocking, via the chip link — not the fact of being
+	// blocked at all.
+	[Fact]
+	public async Task KanbanBlockedSignal_DrivenByBlockedByData_NotStatusName()
+	{
+		const string board = "heldboard";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			var def = new PetBox.Tasks.Workflow.MethodologyDefinition("holder",
+			[
+				new PetBox.Tasks.Workflow.MethodologyKindDef("holder", QuickAddAllowed: false,
+				[
+					new PetBox.Tasks.Workflow.MethodologyWorkflowDef(["note"],
+						[
+							new("queued", "Queued", PetBox.Tasks.Workflow.StatusKind.Open),
+							new("held", "Held", PetBox.Tasks.Workflow.StatusKind.Open),
+							new("done", "Done", PetBox.Tasks.Workflow.StatusKind.TerminalOk),
+						],
+						[new("queued", "held"), new("queued", "done"), new("held", "done")]),
+				]),
+			]);
+			if (await tasks.GetMethodologyInstanceAsync("$system", "holder-ui") is null)
+			{
+				await tasks.UpsertMethodologyTemplateAsync("$system", "holder-ui-tmpl", def, 0);
+				await tasks.CreateMethodologyInstanceAsync("$system", "holder-ui", "template", "holder-ui-tmpl");
+			}
+
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "held smoke", "holder", methodologyInstance: "holder-ui");
+
+			// "gate" blocks "waiting" via blockedBy — "waiting" sits in "held" (not "Blocked"),
+			// "free" sits in "queued" with no blocker at all.
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "gate", Title = "Gate" },
+			]);
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "waiting", Title = "Waiting", Status = "held", BlockedBy = "gate" },
+				new PetBox.Tasks.Contract.NodePatch { Key = "free", Title = "Free", Status = "queued" },
+			]);
+		}
+
+		// Default kanban fields (BlockedBy OFF by default there) — the blocked signal still fires.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().MatchRegex("data-node-key=\"waiting\"[^>]*data-blocked=\"true\"");
+			html.Should().MatchRegex("data-node-key=\"free\"[^>]*data-blocked=\"false\"");
+			html.Should().Contain("data-testid=\"node-blocked-badge\"");
+			// The chip (who's blocking) stays off with the field — only the invariant signal fires.
+			html.Should().NotContain("data-testid=\"node-blocked-by\"");
+		}
+
+		// Explicitly turning BlockedBy on surfaces the chip, linking to the actual blocker.
+		using (var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}?view=kanban&fieldsSet=1&fields=blockedBy"))
+		{
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().Contain("data-testid=\"node-blocked-by\"");
+			html.Should().Contain("data-testid=\"node-blocker-link\"");
+			html.Should().Contain(">gate<");
+		}
 	}
 
 	// The admin boards list resolves kind badges through the runtime too — a custom-kind
@@ -759,11 +1008,196 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		html.Should().Contain("data-store-name=\"notes\"");
 	}
 
+	// memory-entry-url: every entry card carries id={key}, so …/memory/{store}#{key} lands on
+	// (and, via `.memory-entry:target` in app.css, highlights) that card. A key that matches no
+	// entry simply has no anchor — the store page still renders 200.
+	[Fact]
+	public async Task MemoryStore_EntryCard_CarriesKeyAnchor()
+	{
+		const string key = "m-0123456789abcdef0123456789abcd01";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var memory = scope.ServiceProvider.GetRequiredService<PetBox.Memory.Contract.IMemoryService>();
+			await memory.UpsertAsync("$system", "notes",
+				[new PetBox.Memory.Contract.MemoryEntryInput
+				{
+					Key = key, Version = 0, Type = "Project",
+					Description = "anchored entry", Body = "body",
+				}],
+				[]);
+		}
+
+		using var resp = await GetAuthedAsync("/ui/$system/$system/memory/notes");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain($"id=\"{key}\"");           // the fragment target
+		html.Should().Contain("class=\"memory-entry ");   // the :target highlight hook
+		html.Should().NotContain("id=\"m-doesnotexist\""); // an unknown key anchors nothing
+	}
+
 	[Fact]
 	public async Task MemoryStore_UnknownStore_Returns404()
 	{
 		using var resp = await GetAuthedAsync("/ui/$system/$system/memory/does-not-exist");
 		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+	}
+
+	// --- memory-anchor-ignores-pagination -------------------------------------------------------
+	// These two run on a store of 150 entries — the store page pages at 40, so it spans FOUR pages
+	// and the target entries sit on page 2 / page 3. That is the whole point: the earlier anchor
+	// tests seeded 3 entries, where every card lands on page 0 and the defect is UNEXPRESSIBLE.
+
+	const int BigStoreEntries = 150;
+	const int StorePageSize = 40; // MemoryStoreModel.PageSize
+
+	// Zero-padded hex keys: lexicographic order (what the listing pages by) == numeric order, so
+	// entry #i has rank i-1 and therefore lives on page (i-1)/40. `salt` keeps each test's store on
+	// its own key space — the SAME key in two stores is AMBIGUOUS to the autolink and earns no link.
+	static string BigKey(int salt, int i) => "m-" + ((salt << 16) | i).ToString("x").PadLeft(32, '0');
+
+	async Task SeedBigStore(string store, int salt)
+	{
+		using var scope = _factory.Services.CreateScope();
+		var memory = scope.ServiceProvider.GetRequiredService<PetBox.Memory.Contract.IMemoryService>();
+		await memory.UpsertAsync("$system", store,
+			Enumerable.Range(1, BigStoreEntries).Select(i => new PetBox.Memory.Contract.MemoryEntryInput
+			{
+				Key = BigKey(salt, i),
+				Version = 0,
+				Type = "Project",
+				Description = $"entry {i}",
+				Body = $"body {i}",
+			}).ToList(), []);
+	}
+
+	// A deep-link to an entry that is NOT on page 0 must open the page that HOLDS it, with the card
+	// present in the DOM and highlighted. Before the fix the fragment was never sent to the server:
+	// page 0 rendered, the card was absent, and nothing said so.
+	[Fact]
+	public async Task MemoryStore_DeepLink_LandsOnTheEntrysOwnPage_OfAMultiPageStore()
+	{
+		const string store = "bignotes";
+		const int entry = 100;                       // rank 99 → page 2 (0-based), i.e. "page 3"
+		var target = BigKey(1, entry);
+		await SeedBigStore(store, salt: 1);
+
+		// Precondition — the store really is bigger than one page and the target is NOT on page 0.
+		using (var page0 = await GetAuthedAsync($"/ui/$system/$system/memory/{store}"))
+		{
+			page0.StatusCode.Should().Be(HttpStatusCode.OK);
+			var html0 = await page0.Content.ReadAsStringAsync();
+			html0.Should().Contain($"{BigStoreEntries} entries");
+			html0.Should().Contain("data-testid=\"store-next\"");   // more pages exist
+			html0.Should().NotContain($"id=\"{target}\"");          // …and the card is not on this one
+		}
+
+		// The URL the link builder hands out — the query is what the server can actually see.
+		var url = MemoryLinks.ProjectEntry("$system", "$system", store, target)!;
+		url.Should().Be($"/ui/$system/$system/memory/{store}?key={target}#{target}");
+
+		using var resp = await GetAuthedAsync(url.Split('#')[0]);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain($"id=\"{target}\"");                                     // the card IS in the DOM
+		html.Should().MatchRegex($"id=\"{target}\"[^>]*data-highlight=\"true\"");      // …and it is the highlighted one
+		html.Should().Contain($"page {(entry - 1) / StorePageSize + 1} ·");            // the server resolved page 3
+		html.Should().NotContain($"id=\"{BigKey(1, 1)}\"");                            // page 0 is NOT what rendered
+	}
+
+	// An unresolvable key (deleted entry, typo) must degrade to the plain first page — never a 500,
+	// never an invented offset.
+	[Fact]
+	public async Task MemoryStore_DeepLink_UnknownKey_RendersPageZero_WithNoHighlight()
+	{
+		const string store = "bignotes2";
+		await SeedBigStore(store, salt: 2);
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/memory/{store}?key=m-doesnotexist");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain($"id=\"{BigKey(2, 1)}\""); // page 0
+		html.Should().NotContain("data-highlight=\"true\"");
+	}
+
+	// The autolink half (memory-key-mention-link): a key mentioned in a NODE BODY links to the
+	// entry — and following that href must reach the CARD, not merely the store. Same multi-page
+	// store; the mentioned entry sits on page 3.
+	[Fact]
+	public async Task MemoryKeyAutolink_InANodeBody_ReachesTheCard_NotJustTheStore()
+	{
+		const string store = "linknotes";
+		const string board = "memlinkboard";
+		const int entry = 137;                       // rank 136 → page 3
+		var target = BigKey(3, entry);
+		await SeedBigStore(store, salt: 3);
+
+		string nodeId;
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "memory autolink smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch
+				{
+					Key = "memlink", Title = "Mentions a memory key", Body = $"the rule is in {target}",
+				},
+			]);
+			nodeId = await tasks.ResolveNodeRefAsync("$system", "memlink", board);
+		}
+
+		using var nodeResp = await GetAuthedAsync($"/ui/$system/$system/tasks/node/{nodeId}");
+		nodeResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var nodeHtml = await nodeResp.Content.ReadAsStringAsync();
+
+		// The href the reader would click, taken from the rendered body — not one the test builds.
+		var href = System.Text.RegularExpressions.Regex
+			.Match(nodeHtml, $"href=\"(?<h>[^\"]*memory/{store}[^\"]*)\"").Groups["h"].Value;
+		href = WebUtility.HtmlDecode(href);
+		href.Should().Be($"/ui/$system/$system/memory/{store}?key={target}#{target}");
+
+		using var entryResp = await GetAuthedAsync(href.Split('#')[0]);
+		entryResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var entryHtml = await entryResp.Content.ReadAsStringAsync();
+		entryHtml.Should().MatchRegex($"id=\"{target}\"[^>]*data-highlight=\"true\"");
+		entryHtml.Should().Contain($"page {(entry - 1) / StorePageSize + 1} ·");
+	}
+
+	// The sensitive store keeps its refusal: no automatic link is built into `ops`, whatever the
+	// URL shape — the pagination fix must not open a machine-generated door into it.
+	[Fact]
+	public async Task MemoryKeyAutolink_SensitiveStore_StillGetsNoLink()
+	{
+		const string board = "memopsboard";
+		var target = BigKey(4, 7);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var memory = scope.ServiceProvider.GetRequiredService<PetBox.Memory.Contract.IMemoryService>();
+			await memory.UpsertAsync("$system", "ops",
+				[new PetBox.Memory.Contract.MemoryEntryInput
+				{
+					Key = target, Version = 0, Type = "Project", Description = "secret", Body = "s3cret",
+				}], []);
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "ops autolink refusal");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "opslink", Title = "Ops", Body = $"see {target}" },
+			]);
+			var nodeId = await tasks.ResolveNodeRefAsync("$system", "opslink", board);
+
+			using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/node/{nodeId}");
+			resp.StatusCode.Should().Be(HttpStatusCode.OK);
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().Contain(target);              // the key is there, as literal text…
+			html.Should().NotContain("memory/ops");     // …with no link into the sensitive store
+		}
 	}
 
 	// The reserved "$workspace" memory container (seeded by M028/M031) resolves as a project

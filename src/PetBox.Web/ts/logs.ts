@@ -7,9 +7,7 @@ import { writeUiState } from "./ui-state";
 
 renderLocalTimes(document);
 document.addEventListener("htmx:afterSwap", (event) => {
-	const detail = (event as CustomEvent).detail as
-		| { target?: Element }
-		| undefined;
+	const detail = (event as CustomEvent).detail as { target?: Element } | undefined;
 	renderLocalTimes(detail?.target ?? document);
 });
 
@@ -74,8 +72,7 @@ function deferHotkeyToast(combo: string, action: string): void {
 		if (!raw) return;
 		sessionStorage.removeItem(PendingToastKey);
 		const data = JSON.parse(raw) as { combo: string; action: string; t: number };
-		if (Date.now() - data.t < 5_000)
-			showHotkeyToast(data.combo, data.action);
+		if (Date.now() - data.t < 5_000) showHotkeyToast(data.combo, data.action);
 	} catch {
 		// ignore
 	}
@@ -86,14 +83,8 @@ document.addEventListener("keydown", (event) => {
 	if (event.key !== "/") return;
 	if (event.ctrlKey || event.metaKey || event.altKey) return;
 	const active = document.activeElement;
-	if (
-		active instanceof HTMLInputElement ||
-		active instanceof HTMLTextAreaElement
-	)
-		return;
-	const textarea = document.getElementById(
-		"kql-textarea",
-	) as HTMLTextAreaElement | null;
+	if (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) return;
+	const textarea = document.getElementById("kql-textarea") as HTMLTextAreaElement | null;
 	if (!textarea) return;
 	event.preventDefault();
 	textarea.focus();
@@ -108,9 +99,7 @@ document.addEventListener("click", (event) => {
 	if (!button) return;
 
 	const list = button.closest("[data-kql-completions]") as HTMLElement | null;
-	const textarea = document.getElementById(
-		"kql-textarea",
-	) as HTMLTextAreaElement | null;
+	const textarea = document.getElementById("kql-textarea") as HTMLTextAreaElement | null;
 	if (!list || !textarea) return;
 
 	const editStart = Number(list.dataset["editStart"] ?? "0");
@@ -122,8 +111,7 @@ document.addEventListener("click", (event) => {
 	const left = value.substring(0, editStart);
 	const right = value.substring(editStart + editLength);
 	const prevChar = left.slice(-1);
-	const needsLeadingSpace =
-		editLength === 0 && prevChar !== "" && !/[\s(.]/.test(prevChar);
+	const needsLeadingSpace = editLength === 0 && prevChar !== "" && !/[\s(.]/.test(prevChar);
 	const prefix = needsLeadingSpace ? ` ${before}` : before;
 	textarea.value = left + prefix + after + right;
 
@@ -141,10 +129,7 @@ document.addEventListener("click", (event) => {
 
 document.addEventListener("keydown", (event) => {
 	const target = event.target as HTMLElement | null;
-	if (
-		!(target instanceof HTMLTextAreaElement) ||
-		target.id !== "kql-textarea"
-	) {
+	if (!(target instanceof HTMLTextAreaElement) || target.id !== "kql-textarea") {
 		if (event.key === "Escape") closeKqlPanel();
 		return;
 	}
@@ -152,20 +137,14 @@ document.addEventListener("keydown", (event) => {
 	if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
 		event.preventDefault();
 		closeKqlPanel();
-		const submit = target.form?.querySelector<HTMLButtonElement>(
-			'button[type="submit"]',
-		);
+		const submit = target.form?.querySelector<HTMLButtonElement>('button[type="submit"]');
 		if (submit) flashButton(submit);
 		deferHotkeyToast(event.metaKey ? "⌘+Enter" : "Ctrl+Enter", "apply");
 		target.form?.requestSubmit();
 		return;
 	}
 
-	const items = Array.from(
-		document.querySelectorAll<HTMLButtonElement>(
-			"#kql-completions .kql-suggestion",
-		),
-	);
+	const items = Array.from(document.querySelectorAll<HTMLButtonElement>("#kql-completions .kql-suggestion"));
 
 	if (event.key === "Escape") {
 		closeKqlPanel();
@@ -216,15 +195,11 @@ function closeKqlPanel(): void {
 document.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement | null;
 	if (!target) return;
-	if (target.closest("#kql-completions") || target.closest("#kql-textarea"))
-		return;
+	if (target.closest("#kql-completions") || target.closest("#kql-textarea")) return;
 	closeKqlPanel();
 });
 
-function highlightKqlItem(
-	items: readonly HTMLButtonElement[],
-	i: number,
-): void {
+function highlightKqlItem(items: readonly HTMLButtonElement[], i: number): void {
 	for (let idx = 0; idx < items.length; idx++) {
 		const btn = items[idx];
 		if (!btn) continue;
@@ -248,9 +223,7 @@ window.addEventListener("pageshow", () => {
 
 document.addEventListener("click", (event) => {
 	const target = event.target as HTMLElement | null;
-	const btn = target?.closest(
-		"[data-filter-field]",
-	) as HTMLButtonElement | null;
+	const btn = target?.closest("[data-filter-field]") as HTMLButtonElement | null;
 	if (!btn) return;
 	event.stopPropagation();
 	event.preventDefault();
@@ -262,25 +235,13 @@ document.addEventListener("click", (event) => {
 	const value = btn.dataset["filterValue"] ?? "";
 	if (!field || !value) return;
 
-	const sym =
-		op === "eq"
-			? "=="
-			: op === "ne"
-				? "!="
-				: op === "ge"
-					? ">="
-					: op === "le"
-						? "<="
-						: "==";
+	const sym = op === "eq" ? "==" : op === "ne" ? "!=" : op === "ge" ? ">=" : op === "le" ? "<=" : "==";
 
-	const textarea = document.getElementById(
-		"kql-textarea",
-	) as HTMLTextAreaElement | null;
+	const textarea = document.getElementById("kql-textarea") as HTMLTextAreaElement | null;
 	if (!textarea) return;
 
 	const clause = `| where ${field} ${sym} ${value}`;
-	const base =
-		textarea.value.trim().length > 0 ? textarea.value.trimEnd() : "events";
+	const base = textarea.value.trim().length > 0 ? textarea.value.trimEnd() : "events";
 	if (base.includes(clause)) return;
 	textarea.value = `${base}\n${clause}`;
 	chipSubmitLock = true;
@@ -387,9 +348,7 @@ document.addEventListener("click", (event) => {
 	if (!target) return;
 	if (target.closest("button, a, input, textarea, select, summary")) return;
 
-	const row = target.closest(
-		"tr[data-event-id], tr.event-live",
-	) as HTMLTableRowElement | null;
+	const row = target.closest("tr[data-event-id], tr.event-live") as HTMLTableRowElement | null;
 	if (!row) return;
 
 	const details = row.nextElementSibling as HTMLElement | null;
@@ -422,7 +381,8 @@ function ensureLiveTailBanner(): HTMLTableRowElement {
 	banner.id = "live-tail-banner";
 	banner.className = "hidden cursor-pointer";
 	banner.setAttribute("data-testid", "live-tail-banner");
-	banner.innerHTML = '<td colspan="4" class="text-center py-2 text-sm font-semibold bg-primary/20 hover:bg-primary/30"><span data-testid="live-tail-count">0</span> new events — click to show</td>';
+	banner.innerHTML =
+		'<td colspan="4" class="text-center py-2 text-sm font-semibold bg-primary/20 hover:bg-primary/30"><span data-testid="live-tail-count">0</span> new events — click to show</td>';
 	tbody.insertBefore(banner, tbody.firstChild);
 	return banner;
 }
@@ -470,9 +430,15 @@ document.addEventListener("click", (event) => {
 		tmp.innerHTML = stagedPayloads.join("");
 		const frag = document.createDocumentFragment();
 		while (tmp.firstChild) frag.appendChild(tmp.firstChild);
+		// This insert bypasses htmx (it batches staged rows instead of swapping them one
+		// at a time), so htmx:afterSwap never fires for these rows — localize the fragment
+		// here, before its nodes move into tbody and it empties out.
+		renderLocalTimes(frag);
 		tbody.insertBefore(frag, banner.nextSibling);
 	} finally {
-		queueMicrotask(() => { liveTailFlushing = false; });
+		queueMicrotask(() => {
+			liveTailFlushing = false;
+		});
 	}
 	resetLiveTailStaging();
 	window.scrollTo({ top: 0, behavior: "smooth" });
@@ -506,6 +472,11 @@ document.addEventListener("change", (event) => {
 	container.setAttribute("sse-retry", "3000");
 	container.innerHTML = '<div sse-swap="event" hx-target="#events-body" hx-swap="afterbegin"></div>';
 	tbody.parentElement.parentElement?.insertBefore(container, tbody.parentElement);
+	// window.htmx is an untyped global set by the `import "htmx.org"` side-effect in site.ts —
+	// no ambient Window.htmx declaration exists anywhere in this codebase yet. Adding one is a
+	// real (if small) design decision (shared ambient .d.ts vs. local ad-hoc type, how much of
+	// the htmx API surface to expose) that belongs to its own change, not this lint-debt cleanup.
+	// biome-ignore lint/suspicious/noExplicitAny: see comment above — left as-is, not typed here.
 	(window as any).htmx?.process(container);
 });
 

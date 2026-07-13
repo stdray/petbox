@@ -19,9 +19,12 @@ export function formatLocalTime(iso: string, withMs: boolean): string {
 }
 
 export function renderLocalTimes(root: ParentNode): void {
-	const list = root.querySelectorAll<HTMLElement>("time.local-time[datetime]");
-	list.forEach((el) => {
+	// NodeListOf isn't iterable under this project's DOM lib (no "DOM.Iterable"; see
+	// ts/logs.ts's identical Array.from(querySelectorAll(...)) pattern) — wrap it to get a
+	// real for...of target.
+	const list = Array.from(root.querySelectorAll<HTMLElement>("time.local-time[datetime]"));
+	for (const el of list) {
 		const iso = el.getAttribute("datetime");
 		if (iso) el.textContent = formatLocalTime(iso, el.hasAttribute("data-ms"));
-	});
+	}
 }
