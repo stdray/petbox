@@ -1,0 +1,43 @@
+{
+	"compilerOptions": {
+		"target": "ES2023",
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"lib": ["ES2023"],
+
+		"strict": true,
+		"noImplicitAny": true,
+		"strictNullChecks": true,
+		"strictFunctionTypes": true,
+		"strictBindCallApply": true,
+		"strictPropertyInitialization": true,
+		"noImplicitThis": true,
+		"useUnknownInCatchVariables": true,
+		"alwaysStrict": true,
+
+		"noUncheckedIndexedAccess": true,
+		"exactOptionalPropertyTypes": true,
+		"noImplicitOverride": true,
+		"noImplicitReturns": true,
+		"noFallthroughCasesInSwitch": true,
+		"noUnusedLocals": true,
+		"noUnusedParameters": true,
+		"noPropertyAccessFromIndexSignature": true,
+
+		"isolatedModules": true,
+		"verbatimModuleSyntax": true,
+		"allowSyntheticDefaultImports": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true,
+
+		// Kit source is run directly by Node's native TS type-stripping (no build step — see
+		// package.json's `test`/`typecheck` scripts and the AGENTS.md note on this package),
+		// so imports use explicit `.ts` specifiers (Node ESM requires a resolvable extension).
+		// allowImportingTsExtensions requires noEmit.
+		"allowImportingTsExtensions": true,
+		"noEmit": true
+	},
+	"include": ["src/**/*.ts"],
+	"exclude": ["node_modules"]
+}
