@@ -15,9 +15,7 @@ function readCookie(name: string): string | null {
 }
 
 function getAntiforgeryToken(): string {
-	const input = document.querySelector<HTMLInputElement>(
-		'input[name="__RequestVerificationToken"]',
-	);
+	const input = document.querySelector<HTMLInputElement>('input[name="__RequestVerificationToken"]');
 	return input?.value ?? "";
 }
 
@@ -27,16 +25,28 @@ export function initWorkspacePersistence(): void {
 	const cookie = readCookie("yb_ws");
 
 	if (cookie) {
-		try { localStorage.setItem(STORAGE_KEY, cookie); } catch { /* private mode */ }
+		try {
+			localStorage.setItem(STORAGE_KEY, cookie);
+		} catch {
+			/* private mode */
+		}
 		return;
 	}
 
 	if (currentFromPage) {
-		try { localStorage.setItem(STORAGE_KEY, currentFromPage); } catch { /* private mode */ }
+		try {
+			localStorage.setItem(STORAGE_KEY, currentFromPage);
+		} catch {
+			/* private mode */
+		}
 	}
 
 	let remembered: string | null = null;
-	try { remembered = localStorage.getItem(STORAGE_KEY); } catch { remembered = null; }
+	try {
+		remembered = localStorage.getItem(STORAGE_KEY);
+	} catch {
+		remembered = null;
+	}
 	if (!remembered || remembered === currentFromPage) return;
 
 	const token = getAntiforgeryToken();

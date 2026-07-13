@@ -21,10 +21,12 @@ function apply(pinned: boolean): void {
 	document.querySelector(".drawer")?.classList.toggle(PINNED_CLASS, pinned);
 	const toggle = document.querySelector<HTMLInputElement>(".drawer-toggle");
 	if (toggle && !pinned) toggle.checked = false;
-	document.querySelectorAll<HTMLElement>("[data-sidebar-pin]").forEach((btn) => {
+	// NodeListOf isn't iterable under this project's DOM lib (no "DOM.Iterable"; see
+	// ts/logs.ts's Array.from(querySelectorAll(...)) pattern) — wrap it for for...of.
+	for (const btn of Array.from(document.querySelectorAll<HTMLElement>("[data-sidebar-pin]"))) {
 		btn.setAttribute("aria-pressed", String(pinned));
 		btn.classList.toggle("btn-active", pinned);
-	});
+	}
 }
 
 // --- Tree expand memory -----------------------------------------------------
@@ -54,16 +56,16 @@ function persistOpenSet(set: Set<string>): void {
 function initTreeMemory(): void {
 	// Open state is rendered server-side from the cookie (no FOUC); here we only
 	// keep the cookie in sync as the user expands/collapses project nodes.
-	document.querySelectorAll<HTMLDetailsElement>("details[data-tree-key]").forEach((d) => {
+	for (const d of Array.from(document.querySelectorAll<HTMLDetailsElement>("details[data-tree-key]"))) {
 		const key = d.getAttribute("data-tree-key");
-		if (!key) return;
+		if (!key) continue;
 		d.addEventListener("toggle", () => {
 			const set = readOpenSet();
 			if (d.open) set.add(key);
 			else set.delete(key);
 			persistOpenSet(set);
 		});
-	});
+	}
 }
 
 function init(): void {

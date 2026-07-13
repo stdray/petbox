@@ -541,7 +541,10 @@ public static class LogApi
 				sb.Append("data: ");
 				sb.Append("<tr class=\"event-live\" data-event-id=\"");
 				sb.Append(record.Id);
-				sb.Append("\"><td><time class=\"local-time\" datetime=\"");
+				// data-ms matches every other log/trace row template (_EventRow.cshtml, Traces.cshtml,
+				// Trace.cshtml) — sub-second precision is data here (event ordering within a second),
+				// not noise; see localTime.ts's renderLocalTimes, which reads this attribute per-element.
+				sb.Append("\"><td><time class=\"local-time\" data-ms datetime=\"");
 				var dt = DateTimeOffset.FromUnixTimeMilliseconds(record.TimestampMs);
 				sb.Append(dt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", CultureInfo.InvariantCulture));
 				sb.Append("\">");

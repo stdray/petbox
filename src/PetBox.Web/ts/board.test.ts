@@ -61,7 +61,10 @@ test("parseViewPref: round-trips a mode-only preference", () => {
 });
 
 test("parseViewPref: round-trips a mode+by preference (tags)", () => {
-	assert.deepEqual(parseViewPref(JSON.stringify({ mode: "tags", by: "area,concern" })), { mode: "tags", by: "area,concern" });
+	assert.deepEqual(parseViewPref(JSON.stringify({ mode: "tags", by: "area,concern" })), {
+		mode: "tags",
+		by: "area,concern",
+	});
 });
 
 test("parseViewPref: a non-string/blank `by` is dropped, not carried through as garbage", () => {
