@@ -30,7 +30,13 @@ public sealed class LoginModel : PageModel
 	public string? Username { get; set; }
 	public string? ErrorMessage { get; set; }
 
-	public void OnGet() { }
+	// Already signed in → there is nothing to do here. Showing the form to an authenticated user
+	// is what made a 403 look like a session expiry (the old AccessDeniedPath pointed here) and
+	// what made re-logging-in feel like an endless loop.
+	public IActionResult OnGet() =>
+		User.Identity?.IsAuthenticated == true
+			? Redirect("/")
+			: Page();
 
 	public async Task<IActionResult> OnPostAsync(string? username, string? password, string? returnUrl)
 	{
@@ -71,7 +77,11 @@ public sealed class LoginModel : PageModel
 			.Where(m => m.UserId == user.Id)
 			.ToList();
 
-		var activeWs = memberships.FirstOrDefault()?.WorkspaceKey ?? "$system";
+		// No membership → NO active workspace. The old `?? "$system"` fallback handed every fresh
+		// account a claim (and a yb_ws cookie) for a workspace it had no membership in — which is
+		// how a brand-new user landed on /ui/$system/$system. Null here; the landing page renders
+		// the "no workspaces" empty state instead (auth-denied-and-empty-state).
+		var activeWs = memberships.FirstOrDefault()?.WorkspaceKey;
 		var rolesClaim = WorkspaceRoleAuthorizationHandler.SerializeRoles(
 			memberships.Select(m => (m.WorkspaceKey, m.Role)));
 
@@ -79,9 +89,10 @@ public sealed class LoginModel : PageModel
 		{
 			new(ClaimTypes.Name, user.Username),
 			new(PetBoxClaims.UserId, user.Id.ToString(CultureInfo.InvariantCulture)),
-			new(PetBoxClaims.ActiveWorkspace, activeWs),
 			new(PetBoxClaims.WorkspaceRoles, rolesClaim),
 		};
+		if (activeWs is not null)
+			claims.Add(new Claim(PetBoxClaims.ActiveWorkspace, activeWs));
 
 		// Bootstrap admin (username matches Admin:Username from appsettings) gets the sysadmin claim.
 		// See doc/settings-taxonomy.md §4 for the permission model.
@@ -99,17 +110,20 @@ public sealed class LoginModel : PageModel
 			new ClaimsPrincipal(identity),
 			new AuthenticationProperties { IsPersistent = true });
 
-		HttpContext.Response.Cookies.Append(
-			PetBox.Web.Navigation.WorkspaceSwitchEndpoint.CookieName,
-			activeWs,
-			new CookieOptions
-			{
-				HttpOnly = false,
-				SameSite = SameSiteMode.Lax,
-				Expires = DateTimeOffset.UtcNow.AddDays(365),
-				IsEssential = true,
-				Path = "/",
-			});
+		if (activeWs is not null)
+		{
+			HttpContext.Response.Cookies.Append(
+				PetBox.Web.Navigation.WorkspaceSwitchEndpoint.CookieName,
+				activeWs,
+				new CookieOptions
+				{
+					HttpOnly = false,
+					SameSite = SameSiteMode.Lax,
+					Expires = DateTimeOffset.UtcNow.AddDays(365),
+					IsEssential = true,
+					Path = "/",
+				});
+		}
 
 		return !string.IsNullOrEmpty(returnUrl) && Url.IsLocalUrl(returnUrl)
 			? LocalRedirect(returnUrl)

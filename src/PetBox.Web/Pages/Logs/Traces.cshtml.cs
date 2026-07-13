@@ -9,7 +9,10 @@ using PetBox.Log.Core.Tracing;
 
 namespace PetBox.Web.Pages.Logs;
 
-[Authorize]
+// WorkspaceViewer: membership in the ROUTE workspace ({workspaceKey}), sysadmin free-pass.
+// A bare [Authorize] here let ANY signed-in user read another tenant's data by typing the URL
+// (workspace-access-isolation).
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class TracesModel : PageModel
 {
 	readonly ICoreDbFactory _f;
@@ -57,8 +60,12 @@ public sealed class TracesModel : PageModel
 		EffectiveProjectKey = ProjectKey ?? "";
 		if (string.IsNullOrEmpty(EffectiveProjectKey)) { SchemaMissing = true; return; }
 
-		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == EffectiveProjectKey, ct);
-		ProjectName = project?.Name;
+		// Bind the project to the ROUTE workspace: WorkspaceViewer only proves membership in
+		// {workspaceKey}, so a member of wsA could otherwise read wsB's traces via /ui/wsA/proj-of-wsB.
+		var project = await db.Projects.FirstOrDefaultAsync(
+			(Project p) => p.Key == EffectiveProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
+		if (project is null) { SchemaMissing = true; return; }
+		ProjectName = project.Name;
 
 		var logs = (await _logStore.ListAsync(EffectiveProjectKey, ct)).Select(l => l.Name).ToList();
 		AvailableLogs = logs;

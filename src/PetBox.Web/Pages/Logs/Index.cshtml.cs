@@ -5,6 +5,7 @@ using Kusto.Language;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Models;
 using PetBox.Log.Core.Data;
@@ -12,7 +13,11 @@ using PetBox.Log.Core.Query;
 
 namespace PetBox.Web.Pages.Logs;
 
-[Authorize(Policy = "WorkspaceMember")]
+// viewer-member-consistency: reading (KQL query, saved-query list) needs only WorkspaceViewer — a
+// Viewer who can see the board list must not 403 on the log page itself. Saving/deleting a saved
+// query is a MUTATION and stays Member+ (guarded per-handler below, not by the class policy, since
+// the class also carries the read handler).
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class IndexModel : PageModel
 {
 	readonly ILogStore _logStore;
@@ -252,6 +257,11 @@ public sealed class IndexModel : PageModel
 		[FromForm(Name = "kql")] string? kql,
 		CancellationToken ct)
 	{
+		// viewer-member-consistency: the class policy is WorkspaceViewer (a Viewer must be able to
+		// READ this page) — saving a query is a MUTATION, so it needs Member+ on its own.
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey ?? string.Empty, WorkspaceRole.Member))
+			return Forbid();
+
 		using var db = _f.Open();
 		if (string.IsNullOrWhiteSpace(ProjectKeyRoute) || string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(kql))
 			return RedirectToProject();
@@ -286,6 +296,9 @@ public sealed class IndexModel : PageModel
 		[FromForm(Name = "savedId")] long savedId,
 		CancellationToken ct)
 	{
+		if (!User.HasWorkspaceRoleAtLeast(WorkspaceKey ?? string.Empty, WorkspaceRole.Member))
+			return Forbid();
+
 		using var db = _f.Open();
 		// Defense in depth: scope the delete to the ROUTE project too, not just the id — even
 		// with ProjectKeyRoute now route-locked, an id alone spans every project in every

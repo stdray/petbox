@@ -12,6 +12,17 @@ public sealed class IndexModel : PageModel
 
 	public IndexModel(INavigationContext nav) => _nav = nav;
 
-	// The app root always lands on the current workspace status page.
-	public IActionResult OnGet() => Redirect(Routes.Workspace(_nav.CurrentWorkspaceKey));
+	public string? Username { get; private set; }
+
+	// The app root lands on the current workspace status page — unless the user has no workspace
+	// at all, in which case there is nowhere to land: the old code redirected to the "$system"
+	// fallback (a workspace a fresh Regular account is not a member of), which now 403s. Render
+	// the empty state instead of bouncing the user between a redirect and an access-denied page.
+	public IActionResult OnGet()
+	{
+		Username = _nav.Username;
+		return _nav.CurrentWorkspaceKey is { } ws
+			? Redirect(Routes.Workspace(ws))
+			: Page();
+	}
 }

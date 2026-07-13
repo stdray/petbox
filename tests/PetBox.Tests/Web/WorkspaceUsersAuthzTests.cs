@@ -134,7 +134,7 @@ public sealed class WorkspaceUsersAuthzTests : IClassFixture<WorkspaceUsersAuthz
 
 		addResp.StatusCode.Should().Be(HttpStatusCode.Redirect,
 			"the WorkspaceAdmin policy must deny eve (Admin of wsa only) acting on wsb");
-		addResp.Headers.Location!.ToString().Should().Contain("/Login");
+		addResp.Headers.Location!.ToString().Should().Contain("/AccessDenied");
 
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();

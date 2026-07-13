@@ -12,7 +12,10 @@ namespace PetBox.Web.Pages.ProjectHome;
 // Main-UI databases dashboard for a project (/ui/{ws}/{project}/databases).
 // Read-only list from petbox.db metadata (cheap; no SQLite file opens).
 // Create/delete + schema live in the admin area (reached via the gear).
-[Authorize]
+// WorkspaceViewer: membership in the ROUTE workspace ({workspaceKey}), sysadmin free-pass.
+// A bare [Authorize] here let ANY signed-in user read another tenant's data by typing the URL
+// (workspace-access-isolation).
+[Authorize(Policy = "WorkspaceViewer")]
 public sealed class DatabasesModel : PageModel
 {
 	readonly ICoreDbFactory _f;
@@ -41,7 +44,10 @@ public sealed class DatabasesModel : PageModel
 	{
 		using var db = _f.Open();
 		CanAdminWorkspace = User.CanAdminWorkspace(WorkspaceKey);
-		Project = await db.Projects.FirstOrDefaultAsync(p => p.Key == ProjectKey, ct);
+		// Bind the project to the ROUTE workspace (see ProjectHome/Index) — rejects the field IDOR
+		// /ui/wsA/proj-of-wsB, which the workspace-membership policy alone does not catch.
+		Project = await db.Projects.FirstOrDefaultAsync(
+			p => p.Key == ProjectKey && p.WorkspaceKey == WorkspaceKey, ct);
 		if (Project is null || !DataEnabled) return;
 
 		Dbs = await db.DataDbs

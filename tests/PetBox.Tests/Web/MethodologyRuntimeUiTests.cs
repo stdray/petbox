@@ -1,5 +1,9 @@
+using System.Security.Claims;
 using LinqToDB;
+using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Mvc.RazorPages;
 using Microsoft.Extensions.Configuration;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
@@ -201,6 +205,7 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 
 		var model = new TaskBoardModel(Flags(), _tasks, new CommentService(_factory), new NullSettingsResolver())
 		{ WorkspaceKey = "ws", ProjectKey = Proj, Board = board };
+		Wire(model);
 		var result = await model.OnPostCreateAsync("a risk", "body", 50, default);
 
 		result.Should().BeOfType<Microsoft.AspNetCore.Mvc.BadRequestResult>();
@@ -212,5 +217,18 @@ public sealed class MethodologyRuntimeUiTests : IDisposable
 	{
 		await _tasks.UpsertMethodologyTemplateAsync(Proj, "risk-tmpl", RiskDefinition(), 0);
 		await _tasks.CreateMethodologyInstanceAsync(Proj, "risks", "template", "risk-tmpl");
+	}
+
+	// Sysadmin claim: OnPostCreateAsync now guards itself to Member+ (viewer-member-consistency)
+	// via User.HasWorkspaceRoleAtLeast — an unwired PageModel has no PageContext at all, which
+	// this test's assertion (BadRequest from the KIND's own quick-add policy) never used to need.
+	// Sysadmin is the universal free-pass, so the guard stays out of the way of what's under test.
+	static void Wire(PageModel page)
+	{
+		var identity = new ClaimsIdentity([new Claim(PetBoxClaims.IsSysAdmin, "true")], "Test");
+		page.PageContext = new PageContext
+		{
+			HttpContext = new DefaultHttpContext { User = new ClaimsPrincipal(identity) },
+		};
 	}
 }

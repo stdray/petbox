@@ -199,7 +199,17 @@ public sealed class ConfigPipelineTests : IClassFixture<ConfigPipelineFixture>
 	[Fact]
 	public async Task Admin_ProjectsPage_Renders()
 	{
-		var resp = await GetPageAsync("/ui/admin/projects");
+		// The literal URL used to be the admin projects LIST page before the IA rework moved it to
+		// /ui/admin/ws/{workspaceKey}/projects (see the comment below). "/ui/admin/projects" is no
+		// longer that page — with only 3 segments it doesn't match that 5-segment template at all,
+		// so ASP.NET falls through to the unrelated generic /ui/{workspaceKey}/{projectKey} catch-all
+		// (ProjectHome/Index) with workspaceKey="admin", projectKey="projects" — neither of which
+		// exists. That coincidentally rendered 200 with an in-page "not found" banner (matching
+		// `.Contain("$system")` trivially, since that string appears in ANY authenticated page's
+		// sidebar) — silently testing nothing. The global ProjectWorkspaceBindingFilter
+		// (workspace-access-isolation follow-up) now correctly 404s that phantom combination, which
+		// is what surfaced this test's URL as stale. Point it at the real page.
+		var resp = await GetPageAsync("/ui/admin/ws/$system/projects");
 		resp.StatusCode.Should().Be(HttpStatusCode.OK);
 		var html = await resp.Content.ReadAsStringAsync();
 		html.Should().Contain("$system");

@@ -131,7 +131,7 @@ public sealed class AdminProjectDetailAuthzTests : IClassFixture<AdminProjectDet
 
 		deleteResp.StatusCode.Should().Be(HttpStatusCode.Redirect,
 			"the WorkspaceAdmin policy must deny eve (Admin of wsa only) acting on wsb");
-		deleteResp.Headers.Location!.ToString().Should().Contain("/Login");
+		deleteResp.Headers.Location!.ToString().Should().Contain("/AccessDenied");
 
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
@@ -160,7 +160,7 @@ public sealed class AdminProjectDetailAuthzTests : IClassFixture<AdminProjectDet
 
 		createResp.StatusCode.Should().Be(HttpStatusCode.Redirect,
 			"the WorkspaceAdmin policy must deny eve (Admin of wsa only) acting on wsb");
-		createResp.Headers.Location!.ToString().Should().Contain("/Login");
+		createResp.Headers.Location!.ToString().Should().Contain("/AccessDenied");
 
 		using var scope = _fx.Factory.Services.CreateScope();
 		using var db = scope.ServiceProvider.GetRequiredService<ICoreDbFactory>().Open();
