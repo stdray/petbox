@@ -62,8 +62,9 @@ else
 						}
 						<td>
 							@* board-terminal-negative-visible: struck through regardless of whether the
-							   status COLUMN is on — the same invariant every other view enforces. *@
-							<a href="@row.Url" class="link link-hover font-semibold @(row.TerminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@row.Title</a>
+							   status COLUMN is on — but only on the spec board (row.IsSpecBoard, review
+							   finding) — everywhere else the status is already a displayable property. *@
+							<a href="@row.Url" class="link link-hover font-semibold @(row.TerminalCancel && row.IsSpecBoard ? "line-through opacity-60" : "")" data-testid="node-name">@row.Title</a>
 							<span class="font-mono text-xs opacity-50">@row.Key</span>
 						</td>
 						@if (fields.Type)

@@ -18,6 +18,12 @@ public sealed record TaskTableRow(
 	// specifically StatusKind.TerminalCancel, the strikethrough invariant's trigger. Closed still
 	// drives active-only filtering; TerminalCancel drives ONLY the title's line-through.
 	bool TerminalCancel = false,
+	// board-terminal-negative-visible review finding: the strikethrough itself is scoped to the
+	// spec board only (everywhere else status is already a displayable property) — the caller
+	// resolves this (it has the runtime; the row doesn't), default false so a caller with no
+	// per-row board-kind context (Search's cross-scope fan-out, no per-project runtime available)
+	// simply never renders it rather than guessing.
+	bool IsSpecBoard = false,
 	// board-view-fields: populated only when Model.Fields opts them in — the caller (_BoardViewTable
 	// for a board, Search for cross-scope) decides whether to resolve/pass these at all.
 	IReadOnlyList<LinkDto>? BlockedBy = null,

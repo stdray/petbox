@@ -15,6 +15,8 @@
 	{
 		var badge = new StatusBadgeModel(Model.Runtime, Model.KindSlug, n.Status);
 		var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
+		// board-terminal-negative-visible review finding: strikethrough scoped to the spec board.
+		var isSpecBoard = Model.Runtime.PresetKind(Model.KindSlug) == BoardKind.Spec;
 		return new TaskTableRow(
 			NodeId: n.NodeId, Key: n.Key, Title: n.Title,
 			Url: Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key),
@@ -24,6 +26,7 @@
 			Priority: n.Priority, Tags: n.Tags, CreatedAt: n.CreatedAt, UpdatedAt: n.UpdatedAt,
 			Delivery: n.Delivery,
 			TerminalCancel: Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel,
+			IsSpecBoard: isSpecBoard,
 			BlockedBy: n.BlockedBy, Body: n.Body,
 			// board-filters-server-state: table has no hierarchy to orphan a child out of, so
 			// (unlike PlanNodeCard) there's no keepVisible exception — a closed row hides under

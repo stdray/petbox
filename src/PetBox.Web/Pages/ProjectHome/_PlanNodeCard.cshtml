@@ -8,7 +8,12 @@
 	// board-terminal-negative-visible: the strikethrough is an INVARIANT over the data
 	// (StatusKind.TerminalCancel), not a dialog checkbox — a terminally-cancelled node reads as
 	// dead REGARDLESS of whether Model.Fields.Status is on, so this never consults Fields.
+	// SCOPED TO THE SPEC BOARD ONLY (review finding, 2026-07): on every other board the status is
+	// already a displayable property (toggle via the fields dialog), so the strikethrough was
+	// redundant noise there — the maintainer ruled it out everywhere except spec.
 	var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
+	var isSpecBoard = Model.Runtime.PresetKind(Model.KindSlug) == BoardKind.Spec;
+	var strikethrough = terminalCancel && isSpecBoard;
 }
 
 @* One plan-node card. Reused by both the part_of tree and the tag-groups projection; the
@@ -29,7 +34,7 @@
 				}
 				@if (!string.IsNullOrEmpty(n.Title))
 				{
-					<a href="@nodeUrl" class="font-semibold link link-hover @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
+					<a href="@nodeUrl" class="font-semibold link link-hover @(strikethrough ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
 				}
 				<span class="font-mono text-xs opacity-50">
 					@if (parent is not null)
