@@ -3,16 +3,20 @@ using PetBox.Web.Memory;
 
 namespace PetBox.Tests.Web;
 
-// The stable memory-entry URL (spec memory-entry-url): …/memory/{store}#{key}, project- and
-// workspace-scoped, and the sensitivity refusal that both this card and the key-autolink rest on.
+// The stable memory-entry URL (spec memory-entry-url): …/memory/{store}?key={key}#{key}, project-
+// and workspace-scoped, and the sensitivity refusal that both this card and the key-autolink rest on.
+//
+// The `?key=` half is not decoration: the store page pages at 40 entries, a fragment is never sent to
+// the server, so a bare `#{key}` silently rendered page 0 without the card. The query is what makes
+// the server resolve the entry's page (memory-anchor-ignores-pagination).
 public sealed class MemoryLinksTests
 {
 	const string Key = "m-0123456789abcdef0123456789abcdef";
 
 	[Fact]
-	public void ProjectEntry_IsStoreUrlPlusKeyFragment()
+	public void ProjectEntry_CarriesTheKeyAsQueryAndFragment()
 		=> MemoryLinks.ProjectEntry("$system", "$system", "notes", Key)
-			.Should().Be($"/ui/$system/$system/memory/notes#{Key}");
+			.Should().Be($"/ui/$system/$system/memory/notes?key={Key}#{Key}");
 
 	// Workspace scope has no separate route — it is the reserved memory CONTAINER project
 	// ("$workspace" under $system, "$ws-{ws}" elsewhere), addressed through the same UI entry.
@@ -20,10 +24,17 @@ public sealed class MemoryLinksTests
 	public void WorkspaceEntry_TargetsTheWorkspaceMemoryContainer()
 	{
 		MemoryLinks.WorkspaceEntry("$system", "canon", "index")
-			.Should().Be("/ui/$system/$workspace/memory/canon#index");
+			.Should().Be("/ui/$system/$workspace/memory/canon?key=index#index");
 		MemoryLinks.WorkspaceEntry("acme", "canon", "index")
-			.Should().Be("/ui/acme/$ws-acme/memory/canon#index");
+			.Should().Be("/ui/acme/$ws-acme/memory/canon?key=index#index");
 	}
+
+	// The query value is percent-encoded (the fragment keeps the raw key — it must match the card's
+	// `id`), so a key with URL-significant characters cannot break the link.
+	[Fact]
+	public void KeyIsEncodedInTheQuery()
+		=> MemoryLinks.ProjectEntry("$system", "$system", "notes", "a b&c")
+			.Should().Be("/ui/$system/$system/memory/notes?key=a%20b%26c#a b&c");
 
 	// A sensitive store gets NO automatic link — in either scope, whatever the key.
 	[Fact]

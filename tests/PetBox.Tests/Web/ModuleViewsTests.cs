@@ -7,6 +7,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
 using PetBox.Core.Settings;
+using PetBox.Web.Memory;
 
 namespace PetBox.Tests.Web;
 
@@ -792,6 +793,163 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 	{
 		using var resp = await GetAuthedAsync("/ui/$system/$system/memory/does-not-exist");
 		resp.StatusCode.Should().Be(HttpStatusCode.NotFound);
+	}
+
+	// --- memory-anchor-ignores-pagination -------------------------------------------------------
+	// These two run on a store of 150 entries — the store page pages at 40, so it spans FOUR pages
+	// and the target entries sit on page 2 / page 3. That is the whole point: the earlier anchor
+	// tests seeded 3 entries, where every card lands on page 0 and the defect is UNEXPRESSIBLE.
+
+	const int BigStoreEntries = 150;
+	const int StorePageSize = 40; // MemoryStoreModel.PageSize
+
+	// Zero-padded hex keys: lexicographic order (what the listing pages by) == numeric order, so
+	// entry #i has rank i-1 and therefore lives on page (i-1)/40. `salt` keeps each test's store on
+	// its own key space — the SAME key in two stores is AMBIGUOUS to the autolink and earns no link.
+	static string BigKey(int salt, int i) => "m-" + ((salt << 16) | i).ToString("x").PadLeft(32, '0');
+
+	async Task SeedBigStore(string store, int salt)
+	{
+		using var scope = _factory.Services.CreateScope();
+		var memory = scope.ServiceProvider.GetRequiredService<PetBox.Memory.Contract.IMemoryService>();
+		await memory.UpsertAsync("$system", store,
+			Enumerable.Range(1, BigStoreEntries).Select(i => new PetBox.Memory.Contract.MemoryEntryInput
+			{
+				Key = BigKey(salt, i),
+				Version = 0,
+				Type = "Project",
+				Description = $"entry {i}",
+				Body = $"body {i}",
+			}).ToList(), []);
+	}
+
+	// A deep-link to an entry that is NOT on page 0 must open the page that HOLDS it, with the card
+	// present in the DOM and highlighted. Before the fix the fragment was never sent to the server:
+	// page 0 rendered, the card was absent, and nothing said so.
+	[Fact]
+	public async Task MemoryStore_DeepLink_LandsOnTheEntrysOwnPage_OfAMultiPageStore()
+	{
+		const string store = "bignotes";
+		const int entry = 100;                       // rank 99 → page 2 (0-based), i.e. "page 3"
+		var target = BigKey(1, entry);
+		await SeedBigStore(store, salt: 1);
+
+		// Precondition — the store really is bigger than one page and the target is NOT on page 0.
+		using (var page0 = await GetAuthedAsync($"/ui/$system/$system/memory/{store}"))
+		{
+			page0.StatusCode.Should().Be(HttpStatusCode.OK);
+			var html0 = await page0.Content.ReadAsStringAsync();
+			html0.Should().Contain($"{BigStoreEntries} entries");
+			html0.Should().Contain("data-testid=\"store-next\"");   // more pages exist
+			html0.Should().NotContain($"id=\"{target}\"");          // …and the card is not on this one
+		}
+
+		// The URL the link builder hands out — the query is what the server can actually see.
+		var url = MemoryLinks.ProjectEntry("$system", "$system", store, target)!;
+		url.Should().Be($"/ui/$system/$system/memory/{store}?key={target}#{target}");
+
+		using var resp = await GetAuthedAsync(url.Split('#')[0]);
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().Contain($"id=\"{target}\"");                                     // the card IS in the DOM
+		html.Should().MatchRegex($"id=\"{target}\"[^>]*data-highlight=\"true\"");      // …and it is the highlighted one
+		html.Should().Contain($"page {(entry - 1) / StorePageSize + 1} ·");            // the server resolved page 3
+		html.Should().NotContain($"id=\"{BigKey(1, 1)}\"");                            // page 0 is NOT what rendered
+	}
+
+	// An unresolvable key (deleted entry, typo) must degrade to the plain first page — never a 500,
+	// never an invented offset.
+	[Fact]
+	public async Task MemoryStore_DeepLink_UnknownKey_RendersPageZero_WithNoHighlight()
+	{
+		const string store = "bignotes2";
+		await SeedBigStore(store, salt: 2);
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/memory/{store}?key=m-doesnotexist");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+		html.Should().Contain($"id=\"{BigKey(2, 1)}\""); // page 0
+		html.Should().NotContain("data-highlight=\"true\"");
+	}
+
+	// The autolink half (memory-key-mention-link): a key mentioned in a NODE BODY links to the
+	// entry — and following that href must reach the CARD, not merely the store. Same multi-page
+	// store; the mentioned entry sits on page 3.
+	[Fact]
+	public async Task MemoryKeyAutolink_InANodeBody_ReachesTheCard_NotJustTheStore()
+	{
+		const string store = "linknotes";
+		const string board = "memlinkboard";
+		const int entry = 137;                       // rank 136 → page 3
+		var target = BigKey(3, entry);
+		await SeedBigStore(store, salt: 3);
+
+		string nodeId;
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "memory autolink smoke");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch
+				{
+					Key = "memlink", Title = "Mentions a memory key", Body = $"the rule is in {target}",
+				},
+			]);
+			nodeId = await tasks.ResolveNodeRefAsync("$system", "memlink", board);
+		}
+
+		using var nodeResp = await GetAuthedAsync($"/ui/$system/$system/tasks/node/{nodeId}");
+		nodeResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var nodeHtml = await nodeResp.Content.ReadAsStringAsync();
+
+		// The href the reader would click, taken from the rendered body — not one the test builds.
+		var href = System.Text.RegularExpressions.Regex
+			.Match(nodeHtml, $"href=\"(?<h>[^\"]*memory/{store}[^\"]*)\"").Groups["h"].Value;
+		href = WebUtility.HtmlDecode(href);
+		href.Should().Be($"/ui/$system/$system/memory/{store}?key={target}#{target}");
+
+		using var entryResp = await GetAuthedAsync(href.Split('#')[0]);
+		entryResp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var entryHtml = await entryResp.Content.ReadAsStringAsync();
+		entryHtml.Should().MatchRegex($"id=\"{target}\"[^>]*data-highlight=\"true\"");
+		entryHtml.Should().Contain($"page {(entry - 1) / StorePageSize + 1} ·");
+	}
+
+	// The sensitive store keeps its refusal: no automatic link is built into `ops`, whatever the
+	// URL shape — the pagination fix must not open a machine-generated door into it.
+	[Fact]
+	public async Task MemoryKeyAutolink_SensitiveStore_StillGetsNoLink()
+	{
+		const string board = "memopsboard";
+		var target = BigKey(4, 7);
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var memory = scope.ServiceProvider.GetRequiredService<PetBox.Memory.Contract.IMemoryService>();
+			await memory.UpsertAsync("$system", "ops",
+				[new PetBox.Memory.Contract.MemoryEntryInput
+				{
+					Key = target, Version = 0, Type = "Project", Description = "secret", Body = "s3cret",
+				}], []);
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "ops autolink refusal");
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			await tasks.UpsertAsync("$system", board,
+			[
+				new PetBox.Tasks.Contract.NodePatch { Key = "opslink", Title = "Ops", Body = $"see {target}" },
+			]);
+			var nodeId = await tasks.ResolveNodeRefAsync("$system", "opslink", board);
+
+			using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/node/{nodeId}");
+			resp.StatusCode.Should().Be(HttpStatusCode.OK);
+			var html = await resp.Content.ReadAsStringAsync();
+			html.Should().Contain(target);              // the key is there, as literal text…
+			html.Should().NotContain("memory/ops");     // …with no link into the sensitive store
+		}
 	}
 
 	// The reserved "$workspace" memory container (seeded by M028/M031) resolves as a project
