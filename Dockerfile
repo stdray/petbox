@@ -11,7 +11,10 @@ RUN curl -fsSL https://bun.sh/install | bash
 ENV PATH="/root/.bun/bin:$PATH"
 
 WORKDIR /src
-COPY global.json Directory.Build.props Directory.Packages.props Directory.Build.targets ./
+# BannedSymbols.txt rides with the build props that reference it (AdditionalFiles). Leave it out and
+# the image build dies at CSC with "Source file '/src/BannedSymbols.txt' could not be found" — while
+# every local gate stays green, because they build the whole tree and this COPY is a curated subset.
+COPY global.json Directory.Build.props Directory.Packages.props Directory.Build.targets BannedSymbols.txt ./
 COPY src/PetBox.Core/PetBox.Core.csproj ./src/PetBox.Core/
 COPY src/PetBox.Config/PetBox.Config.csproj ./src/PetBox.Config/
 COPY src/PetBox.Log.Core/PetBox.Log.Core.csproj ./src/PetBox.Log.Core/
