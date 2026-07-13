@@ -33,7 +33,11 @@
 		<input id="account-sidebar-toggle" type="checkbox" class="drawer-toggle" />
 		<div class="drawer-content flex flex-col min-h-screen">
 			<header class="navbar bg-base-200 border-b border-base-300 px-2 lg:px-4 min-h-12" data-testid="account-navbar">
-				<div class="flex-none lg:hidden">
+				@* board-ui-review-findings #4 (sidebar-unpin-admin-trap): same fix as _AdminLayout —
+				   the account zone has the identical trap (the pin button lives inside the drawer this
+				   toggle opens, so `lg:hidden` leaves no way to reopen an unpinned sidebar at desktop
+				   width). Not gated to mobile, matching _Layout.cshtml's own toggle. *@
+				<div class="flex-none">
 					<label for="account-sidebar-toggle" class="btn btn-ghost btn-sm drawer-button" data-testid="account-nav-toggle">
 						<svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
 							<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
