@@ -615,7 +615,10 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Web.Auth.AgentKeyAdminService>();
 		// core.db lives in the service layer only: the binding filter and the claims transformation
 		// above ask these, they never open a connection themselves (db-access-layer-cleanup).
-		builder.Services.AddScoped<PetBox.Web.Auth.IProjectDirectory, PetBox.Web.Auth.ProjectDirectory>();
+		// SINGLETON, deliberately: it carries the project cache (db-cache-behind-services), and a
+		// cache inside a scoped service would be per-request and buy nothing. Its dependencies
+		// (ICoreDbFactory, IMemoryCache) are singletons — CaptiveDependencyTests guards this wiring.
+		builder.Services.AddSingleton<PetBox.Web.Auth.IProjectDirectory, PetBox.Web.Auth.ProjectDirectory>();
 		// The membership + account services live in PetBox.Core, not here: AdminBootstrapper and
 		// WorkspaceProvisioning are Core writers of WorkspaceMembers and must be able to reach them.
 		builder.Services.AddScoped<PetBox.Core.Auth.IWorkspaceMembershipService, PetBox.Core.Auth.WorkspaceMembershipService>();
