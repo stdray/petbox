@@ -3,6 +3,7 @@
 @{
 	ViewData["Title"] = "Agent Keys";
 	Layout = "_AdminLayout";
+	var table = new PetBox.Web.Pages.Shared.AgentKeysTableView(Model.Keys, "sys-agent-keys-table", "sys-agent-keys-empty");
 }
 
 <div class="mb-4">
@@ -25,62 +26,4 @@
 	<span class="badge badge-ghost">@Model.Keys.Count</span>
 </div>
 
-@if (Model.Keys.Count == 0)
-{
-	<div class="text-xs opacity-60 italic" data-testid="sys-agent-keys-empty">No agent keys.</div>
-}
-else
-{
-	<div class="overflow-x-auto">
-		<table class="table table-sm" data-testid="sys-agent-keys-table">
-			<thead>
-				<tr>
-					<th>Name</th>
-					<th>Project</th>
-					<th>Scopes</th>
-					<th>Expires</th>
-					<th class="w-24">Actions</th>
-				</tr>
-			</thead>
-			<tbody>
-				@foreach (var k in Model.Keys)
-				{
-					<tr data-testid="agent-key-row">
-						<td>@k.Name</td>
-						<td class="font-mono text-xs">
-							@if (k.ProjectKey == "*")
-							{
-								<span class="badge badge-warning badge-sm" data-testid="agent-key-all-projects-badge">all projects</span>
-							}
-							else
-							{
-								@k.ProjectKey
-							}
-						</td>
-						<td class="font-mono text-xs">@k.Scopes</td>
-						<td class="text-xs">
-							@if (k.Expired)
-							{
-								<span class="badge badge-error badge-sm" data-testid="agent-key-expired">expired</span>
-							}
-							else if (k.ExpiresAt is null)
-							{
-								<span class="badge badge-ghost badge-sm" data-testid="agent-key-never-expires">never</span>
-							}
-							else
-							{
-								<span class="font-mono opacity-70">@k.ExpiresAt?.ToString("yyyy-MM-dd HH:mm")</span>
-							}
-						</td>
-						<td>
-							<form method="post" asp-page-handler="Revoke" onsubmit="return confirm('Revoke this key?');">
-								<input type="hidden" name="key" value="@k.Key" />
-								<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="agent-key-revoke">Revoke</button>
-							</form>
-						</td>
-					</tr>
-				}
-			</tbody>
-		</table>
-	</div>
-}
+<partial name="_AgentKeysTable" model="table" />

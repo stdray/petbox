@@ -161,7 +161,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task AgentKeys_revoke_redirects_clean_and_sets_success_notice()
 	{
 		_db.Insert(new ApiKey { Key = "yb_key_x", ProjectKey = "proj", Scopes = ApiKeyScopes.TasksRead, Name = "ci", CreatedAt = DateTime.UtcNow });
-		var page = new AgentKeysModel(_db.Factory());
+		var page = new AgentKeysModel(new PetBox.Web.Auth.AgentKeyAdminService(_db.Factory()));
 		Wire(page);
 
 		var result = await page.OnPostRevokeAsync("yb_key_x");
