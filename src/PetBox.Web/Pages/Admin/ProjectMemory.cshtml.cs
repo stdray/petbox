@@ -1,11 +1,10 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Memory.Contract;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
@@ -15,13 +14,13 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectMemoryModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly IMemoryService _memory;
 
-	public ProjectMemoryModel(ICoreDbFactory f, FeatureFlags features, IMemoryService memory)
+	public ProjectMemoryModel(IProjectDirectory projects, FeatureFlags features, IMemoryService memory)
 	{
-		_f = f;
+		_projects = projects;
 		_features = features;
 		_memory = memory;
 	}
@@ -39,11 +38,10 @@ public sealed class ProjectMemoryModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync()
 	{
-		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Memory))
 			return NotFound();
 
-		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey);
+		var project = await _projects.GetAsync(ProjectKey);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
 		Stores = [.. await _memory.ListStoresAsync(ProjectKey)];

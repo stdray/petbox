@@ -1,13 +1,12 @@
 using System.Text.RegularExpressions;
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
+using PetBox.Web.Auth;
 using PetBox.Web.Mcp;
 using PetBox.Web.Pages.ProjectHome;
 
@@ -35,13 +34,13 @@ public sealed class ProjectMethodologyModel : PageModel
 {
 	public enum EditorMode { View, Cta, Base, Edit, Confirm }
 
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
 
-	public ProjectMethodologyModel(ICoreDbFactory f, FeatureFlags features, ITasksService tasks)
+	public ProjectMethodologyModel(IProjectDirectory projects, FeatureFlags features, ITasksService tasks)
 	{
-		_f = f;
+		_projects = projects;
 		_features = features;
 		_tasks = tasks;
 	}
@@ -333,8 +332,7 @@ public sealed class ProjectMethodologyModel : PageModel
 
 	async Task<bool> LoadStateAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
-		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
+		var project = await _projects.GetAsync(ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return false; }
 
 		OpenInstances = (await _tasks.ListMethodologyInstancesAsync(ProjectKey, ct))
@@ -389,7 +387,6 @@ public sealed class ProjectMethodologyModel : PageModel
 	// stored templates and open instance rules — each with graph docs for the per-card SVG preview.
 	async Task LoadBasesAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
 		var options = new List<BaseOption>();
 		var previews = new List<(string Ref, IEnumerable<(BoardWorkflowView View, IReadOnlyList<string> EffectNotes)> Views)>();
 
@@ -400,8 +397,11 @@ public sealed class ProjectMethodologyModel : PageModel
 			previews.Add((slug, GraphViews(MethodologyPresets.RenderPresetDefinition(p.Slug))));
 		}
 
-		var projects = await db.Projects.Where((Project p) => p.Key != ProjectKey)
-			.OrderBy(p => p.Key).ToListAsync(ct);
+		// Every project across every workspace (the base picker's whole point — another project's
+		// template/instance may live in a different workspace than this one). Workspace memory
+		// containers never hold methodology templates/instances, so the directory's safe default
+		// (containers excluded) changes nothing observable here.
+		var projects = (await _projects.ListAllAsync(ct: ct)).Where(p => p.Key != ProjectKey);
 		foreach (var p in projects)
 		{
 			var templates = await _tasks.ListMethodologyTemplatesAsync(p.Key, ct);

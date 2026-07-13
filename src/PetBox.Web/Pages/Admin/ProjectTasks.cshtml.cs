@@ -1,12 +1,11 @@
-using LinqToDB;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
-using PetBox.Core.Data;
 using PetBox.Core.Features;
 using PetBox.Core.Models;
 using PetBox.Tasks.Contract;
 using PetBox.Tasks.Workflow;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
@@ -18,13 +17,13 @@ namespace PetBox.Web.Pages.Admin;
 [Authorize(Policy = "WorkspaceAdmin")]
 public sealed class ProjectTasksModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IProjectDirectory _projects;
 	readonly FeatureFlags _features;
 	readonly ITasksService _tasks;
 
-	public ProjectTasksModel(ICoreDbFactory f, FeatureFlags features, ITasksService tasks)
+	public ProjectTasksModel(IProjectDirectory projects, FeatureFlags features, ITasksService tasks)
 	{
-		_f = f;
+		_projects = projects;
 		_features = features;
 		_tasks = tasks;
 	}
@@ -59,11 +58,10 @@ public sealed class ProjectTasksModel : PageModel
 
 	public async Task<IActionResult> OnGetAsync(CancellationToken ct)
 	{
-		using var db = _f.Open();
 		if (!_features.IsEnabled(Feature.Tasks))
 			return NotFound();
 
-		var project = await db.Projects.FirstOrDefaultAsync((Project p) => p.Key == ProjectKey, ct);
+		var project = await _projects.GetAsync(ProjectKey, ct);
 		if (project is null) { ProjectNotFound = true; return Page(); }
 
 		Runtime = await _tasks.GetRuntimeAsync(ProjectKey, ct);
