@@ -1,6 +1,8 @@
 using LinqToDB;
 using Microsoft.Data.Sqlite;
+using PetBox.Core.Auth;
 using PetBox.Core.Data;
+using PetBox.Core.Models;
 
 namespace PetBox.Tests;
 
@@ -50,6 +52,77 @@ public static class TestCoreDb
 
 	public static PetBox.Log.Core.Data.ISavedQueryStore SavedQueries(this ICoreDbFactory dbf) =>
 		new PetBox.Log.Core.Data.SavedQueryStore(dbf);
+
+	// WorkspaceMembers' one door, for tests — the REAL production service, not a stub.
+	//
+	// The table is banned (RS0030, BannedSymbols.txt), and the tests are the reason the ban exists.
+	// A membership seeded with a raw `db.Insert(new WorkspaceMember …)` never walks the path
+	// production walks, so the bug the test is meant to catch cannot manifest where the assertion
+	// looks — this repo has been bitten by that three times. See WorkspaceDeletePageTests for the
+	// worst of them: a workspace-delete gate stayed green for two days because the fixture's raw
+	// insert never created the service-managed container the gate keys on.
+	public static IWorkspaceMembershipService Memberships(this ICoreDbFactory dbf) =>
+		new WorkspaceMembershipService(dbf);
+
+	// Seed a membership for an ALREADY-SEEDED user, through the production service. Tests hold a user
+	// id (they just inserted the User row); AddMemberAsync is keyed by username because that is what
+	// the admin page posts — so resolve the one to the other and go through the real door.
+	// `password: null` is deliberate: the account exists, and AddMemberAsync must never overwrite it.
+	public static async Task SeedMemberAsync(
+		this ICoreDbFactory dbf, long userId, string workspaceKey, WorkspaceRole role)
+	{
+		string username;
+		using (var db = dbf.Open())
+			username = db.Users.FirstOrDefault(u => u.Id == userId)?.Username
+				?? throw new InvalidOperationException(
+					$"SeedMemberAsync: no User row with id {userId} — seed the user before its membership.");
+
+		var outcome = await dbf.Memberships().AddMemberAsync(workspaceKey, username, null, role);
+		if (outcome != AddMemberOutcome.Added)
+			throw new InvalidOperationException(
+				$"SeedMemberAsync: '{username}' → '{workspaceKey}' as {role} returned {outcome}, not Added.");
+	}
+
+	// Same door, for the fixtures that hold a PetBoxDb rather than a factory. Its connection and the
+	// service's are two connections to ONE file — the production shape (see the note on Factory()).
+	public static Task SeedMemberAsync(this PetBoxDb db, long userId, string workspaceKey, WorkspaceRole role) =>
+		db.Factory().SeedMemberAsync(userId, workspaceKey, role);
+
+	public static IWorkspaceMembershipService Memberships(this PetBoxDb db) => db.Factory().Memberships();
+
+	// Drop every membership — a fixture RESET, not a production path (nothing in production wipes the
+	// table). Still goes through the service, one user at a time, because RemoveUserAsync is the
+	// cascade the service owns and the quota ledger is what it keeps honest.
+	public static async Task ClearMembershipsAsync(this ICoreDbFactory dbf)
+	{
+		var members = dbf.Memberships();
+		foreach (var userId in (await members.ListAllAsync()).Select(m => m.UserId).Distinct())
+			await members.RemoveUserAsync(userId);
+	}
+}
+
+// GROUND TRUTH — the ONE place in the suite allowed to read WorkspaceMembers raw, and it can only
+// READ.
+//
+// Tests SEED through the production service (TestCoreDb.SeedMemberAsync above) but must ASSERT
+// against the TABLE. Asserting through the same service you seeded with lets a bug in that service
+// cancel itself out — seed wrong, read wrong, green. So the two directions get two different doors
+// on purpose: the write goes through the code under test, the read goes around it.
+//
+// It returns WorkspaceMemberOf (not the banned entity), so no call site has to name WorkspaceMember
+// and the ban stays total everywhere else.
+public static class MembershipProbe
+{
+#pragma warning disable RS0030 // The sanctioned ground-truth read — see the note above.
+	public static IReadOnlyList<WorkspaceMemberOf> MembershipRows(this ICoreDbFactory dbf)
+	{
+		using var db = dbf.Open();
+		return [.. db.WorkspaceMembers.Select(m => new WorkspaceMemberOf(m.UserId, m.WorkspaceKey, m.Role))];
+	}
+#pragma warning restore RS0030
+
+	public static IReadOnlyList<WorkspaceMemberOf> MembershipRows(this PetBoxDb db) =>
+		db.Factory().MembershipRows();
 }
 
 // Building the Core (petbox.db) schema with FluentMigrator — a fresh DI container, an

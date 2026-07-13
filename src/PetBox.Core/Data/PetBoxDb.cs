@@ -77,6 +77,10 @@ public sealed class PetBoxDb : DataConnection
 			.Property(u => u.PasswordHash).HasLength(200).IsNullable(false)
 			.Property(u => u.WorkspaceQuota).HasDataType(DataType.Int32).IsNullable(false);
 
+		// RS0030 exempt: this is the DECLARATION of the mapping the ban protects. PetBoxDb is where
+		// the WorkspaceMembers table is defined at all — banning the entity here would ban the table
+		// into non-existence. Everyone ELSE goes through IWorkspaceMembershipService.
+#pragma warning disable RS0030
 		builder.Entity<WorkspaceMember>()
 			.HasTableName("WorkspaceMembers")
 			.HasIdentity(m => m.Id)
@@ -84,6 +88,7 @@ public sealed class PetBoxDb : DataConnection
 			.Property(m => m.UserId).IsNullable(false)
 			.Property(m => m.WorkspaceKey).HasLength(100).IsNullable(false)
 			.Property(m => m.Role).HasDataType(DataType.Int32).IsNullable(false);
+#pragma warning restore RS0030
 
 		builder.Entity<Project>()
 			.HasTableName("Projects")

@@ -196,7 +196,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	{
 		var uid = await _db.InsertWithInt64IdentityAsync(
 			new User { Username = "bob", PasswordHash = "x", CreatedAt = DateTime.UtcNow });
-		_db.Insert(new WorkspaceMember { UserId = uid, WorkspaceKey = "ws", Role = WorkspaceRole.Member });
+		await _db.SeedMemberAsync(uid, "ws", WorkspaceRole.Member);
 		var page = new WorkspaceUsersModel(new WorkspaceMembershipService(_db.Factory()));
 		Wire(page);
 
@@ -204,7 +204,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 
 		result.Should().BeOfType<RedirectToPageResult>();
 		page.TempData[Notice.SuccessKey].Should().Be("Member removed.");
-		_db.WorkspaceMembers.Any(m => m.UserId == uid && m.WorkspaceKey == "ws").Should().BeFalse();
+		_db.MembershipRows().Any(m => m.UserId == uid && m.WorkspaceKey == "ws").Should().BeFalse();
 	}
 
 	[Fact]

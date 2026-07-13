@@ -87,7 +87,7 @@ public sealed class AgentKeyEditFixture : IAsyncLifetime
 			PasswordHash = PasswordHash,
 			CreatedAt = DateTime.UtcNow,
 		});
-		await db.InsertAsync(new WorkspaceMember { UserId = id, WorkspaceKey = ws, Role = role });
+		await db.SeedMemberAsync(id, ws, role);
 	}
 
 	public async Task<string> MintKeyAsync(

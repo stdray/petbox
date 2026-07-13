@@ -8,6 +8,13 @@ indent_size = 4
 insert_final_newline = true
 trim_trailing_whitespace = true
 
+[*.cs]
+# RS0030 — a use of a symbol listed in BannedSymbols.txt (repo root). ERROR, not warning: the
+# bans encode ownership invariants ("WorkspaceMembers is reachable only through
+# IWorkspaceMembershipService"), and a warning is a suggestion. An owner opts back in with a
+# narrow `#pragma warning disable RS0030` carrying the reason it is the exception.
+dotnet_diagnostic.RS0030.severity = error
+
 [*.md]
 trim_trailing_whitespace = false
 

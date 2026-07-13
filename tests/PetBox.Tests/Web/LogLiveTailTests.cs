@@ -89,7 +89,7 @@ public sealed class LiveTailFixture : IAsyncLifetime
 			PasswordHash = PasswordHash,
 			CreatedAt = DateTime.UtcNow,
 		});
-		await db.InsertAsync(new WorkspaceMember { UserId = memberId, WorkspaceKey = WsA, Role = WorkspaceRole.Member });
+		await db.SeedMemberAsync(memberId, WsA, WorkspaceRole.Member);
 
 		await db.InsertAsync(new ApiKey
 		{

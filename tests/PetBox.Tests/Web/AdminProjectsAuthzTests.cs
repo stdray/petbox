@@ -59,11 +59,11 @@ public sealed class AdminProjectsAuthzFixture : IAsyncLifetime
 
 		// eve administers wsa ONLY.
 		var eveId = await db.InsertWithInt64IdentityAsync(new User { Username = "eve", PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = eveId, WorkspaceKey = "wsa", Role = WorkspaceRole.Admin });
+		await db.SeedMemberAsync(eveId, "wsa", WorkspaceRole.Admin);
 
 		// bo administers wsb.
 		var boId = await db.InsertWithInt64IdentityAsync(new User { Username = "bo", PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = boId, WorkspaceKey = "wsb", Role = WorkspaceRole.Admin });
+		await db.SeedMemberAsync(boId, "wsb", WorkspaceRole.Admin);
 	}
 
 	public async Task DisposeAsync()

@@ -117,7 +117,7 @@ public sealed class WorkspaceMembershipServiceTests
 		SeedWorkspace(dbf, "alpha");
 
 		using (var db = dbf.Open())
-			db.Insert(new WorkspaceMember { UserId = uid, WorkspaceKey = "$system", Role = WorkspaceRole.Admin });
+			await db.SeedMemberAsync(uid, "$system", WorkspaceRole.Admin);
 		await svc.ClaimAdminSlotAsync(uid, "alpha", bypassQuota: false);
 
 		(await svc.CountOwnedWorkspacesAsync(uid)).Should().Be(1,

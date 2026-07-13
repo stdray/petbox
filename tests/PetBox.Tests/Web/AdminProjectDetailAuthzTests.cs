@@ -56,7 +56,7 @@ public sealed class AdminProjectDetailAuthzFixture : IAsyncLifetime
 
 		// eve administers wsa ONLY.
 		var eveId = await db.InsertWithInt64IdentityAsync(new User { Username = "eve2", PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = eveId, WorkspaceKey = "wsa", Role = WorkspaceRole.Admin });
+		await db.SeedMemberAsync(eveId, "wsa", WorkspaceRole.Admin);
 	}
 
 	public async Task DisposeAsync()

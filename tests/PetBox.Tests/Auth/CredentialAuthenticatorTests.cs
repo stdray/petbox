@@ -44,11 +44,8 @@ public sealed class CredentialAuthenticatorTests
 		});
 	}
 
-	static void SeedMembership(ICoreDbFactory dbf, long userId, string workspaceKey, WorkspaceRole role)
-	{
-		using var db = dbf.Open();
-		db.Insert(new WorkspaceMember { UserId = userId, WorkspaceKey = workspaceKey, Role = role });
-	}
+	static Task SeedMembership(ICoreDbFactory dbf, long userId, string workspaceKey, WorkspaceRole role) =>
+		dbf.SeedMemberAsync(userId, workspaceKey, role);
 
 	static ClaimsPrincipal PrincipalFor(long userId) =>
 		new(new ClaimsIdentity(
@@ -68,7 +65,7 @@ public sealed class CredentialAuthenticatorTests
 	{
 		var (auth, _, _, dbf) = New();
 		var uid = SeedUser(dbf, "alice");
-		SeedMembership(dbf, uid, "alpha", WorkspaceRole.Member);
+		await SeedMembership(dbf, uid, "alpha", WorkspaceRole.Member);
 
 		var user = (await auth.AuthenticateAsync("alice", Password))
 			.Should().BeOfType<CredentialResult.Authenticated>().Which.User;
@@ -113,7 +110,7 @@ public sealed class CredentialAuthenticatorTests
 	{
 		var (auth, _, _, dbf) = New(bootstrapAdmin: "admin");
 		var adminId = SeedUser(dbf, "admin");
-		SeedMembership(dbf, adminId, WorkspaceMemory.SystemWorkspace, WorkspaceRole.Admin);
+		await SeedMembership(dbf, adminId, WorkspaceMemory.SystemWorkspace, WorkspaceRole.Admin);
 
 		var user = (await auth.AuthenticateAsync("admin", Password))
 			.Should().BeOfType<CredentialResult.Authenticated>().Which.User;
@@ -125,9 +122,9 @@ public sealed class CredentialAuthenticatorTests
 	{
 		var (auth, _, _, dbf) = New(bootstrapAdmin: "admin");
 		var adminId = SeedUser(dbf, "admin");
-		SeedMembership(dbf, adminId, WorkspaceMemory.SystemWorkspace, WorkspaceRole.Admin);
+		await SeedMembership(dbf, adminId, WorkspaceMemory.SystemWorkspace, WorkspaceRole.Admin);
 		var realId = SeedUser(dbf, "real-admin");
-		SeedMembership(dbf, realId, WorkspaceMemory.SystemWorkspace, WorkspaceRole.Admin);
+		await SeedMembership(dbf, realId, WorkspaceMemory.SystemWorkspace, WorkspaceRole.Admin);
 
 		(await auth.AuthenticateAsync("admin", Password))
 			.Should().BeOfType<CredentialResult.Rejected>()

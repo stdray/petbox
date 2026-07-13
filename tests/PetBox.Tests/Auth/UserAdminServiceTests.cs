@@ -64,7 +64,7 @@ public sealed class UserAdminServiceTests
 		SeedWorkspace(dbf, "alpha");
 		await members.ClaimAdminSlotAsync(uid, "alpha", bypassQuota: false);
 		using (var db = dbf.Open())
-			db.Insert(new WorkspaceMember { UserId = uid, WorkspaceKey = "$system", Role = WorkspaceRole.Admin });
+			await db.SeedMemberAsync(uid, "$system", WorkspaceRole.Admin);
 
 		var alice = (await users.ListAsync()).Single(u => u.Username == "alice");
 
@@ -100,7 +100,7 @@ public sealed class UserAdminServiceTests
 		var alice = await CreateUser(users, "alice", quota: 0);
 		var bob = await CreateUser(users, "bob", quota: 0);
 		using (var db = dbf.Open())
-			db.Insert(new WorkspaceMember { UserId = alice, WorkspaceKey = "$system", Role = WorkspaceRole.Admin });
+			await db.SeedMemberAsync(alice, "$system", WorkspaceRole.Admin);
 
 		(await users.DeleteAsync(alice, actingUserId: alice)).Should().BeOfType<UserChangeResult.Refused>()
 			.Which.Reason.Should().Contain("your own account");
@@ -113,7 +113,7 @@ public sealed class UserAdminServiceTests
 
 		// A second sysadmin makes alice deletable — and her memberships must go WITH her.
 		using (var db = dbf.Open())
-			db.Insert(new WorkspaceMember { UserId = bob, WorkspaceKey = "$system", Role = WorkspaceRole.Admin });
+			await db.SeedMemberAsync(bob, "$system", WorkspaceRole.Admin);
 
 		(await users.DeleteAsync(alice, actingUserId: bob)).Should().BeOfType<UserChangeResult.Changed>();
 		(await users.GetAsync(alice)).Should().BeNull();

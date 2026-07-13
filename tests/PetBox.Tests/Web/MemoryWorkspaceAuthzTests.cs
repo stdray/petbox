@@ -64,12 +64,7 @@ public sealed class MemoryWorkspaceAuthzFixture : IAsyncLifetime
 			PasswordHash = PasswordHash,
 			CreatedAt = DateTime.UtcNow,
 		});
-		await db.InsertAsync(new WorkspaceMember
-		{
-			UserId = eveId,
-			WorkspaceKey = "wsa",
-			Role = WorkspaceRole.Member,
-		});
+		await db.SeedMemberAsync(eveId, "wsa", WorkspaceRole.Member);
 	}
 
 	public async Task DisposeAsync()

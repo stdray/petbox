@@ -56,7 +56,7 @@ public sealed class WorkspaceUsersAuthzFixture : IAsyncLifetime
 
 		// eve administers wsa ONLY.
 		var eveId = await db.InsertWithInt64IdentityAsync(new User { Username = "eve3", PasswordHash = PasswordHash, CreatedAt = DateTime.UtcNow });
-		await db.InsertAsync(new WorkspaceMember { UserId = eveId, WorkspaceKey = "wsa", Role = WorkspaceRole.Admin });
+		await db.SeedMemberAsync(eveId, "wsa", WorkspaceRole.Admin);
 	}
 
 	public async Task DisposeAsync()
@@ -178,8 +178,8 @@ public sealed class WorkspaceUsersAuthzTests : IClassFixture<WorkspaceUsersAuthz
 		var user = db.Users.FirstOrDefault(u => u.Username == "pwn-user");
 		user.Should().NotBeNull("the create should still succeed — scoped to the route workspace");
 
-		var landedInWsb = db.WorkspaceMembers.Any(m => m.UserId == user!.Id && m.WorkspaceKey == "wsb");
-		var landedInWsa = db.WorkspaceMembers.Any(m => m.UserId == user!.Id && m.WorkspaceKey == "wsa");
+		var landedInWsb = db.MembershipRows().Any(m => m.UserId == user!.Id && m.WorkspaceKey == "wsb");
+		var landedInWsa = db.MembershipRows().Any(m => m.UserId == user!.Id && m.WorkspaceKey == "wsa");
 
 		landedInWsb.Should().BeFalse(
 			"a form-supplied workspaceKey must NOT override the route workspace used for the membership insert — " +
