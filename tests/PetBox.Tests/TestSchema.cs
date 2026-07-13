@@ -44,6 +44,12 @@ public static class TestCoreDb
 			new PetBox.Core.Auth.KeyStatService(),
 			new PetBox.Core.Auth.ConfigApiKeyLookup(
 				Microsoft.Extensions.Options.Options.Create(new PetBox.Core.Auth.ConfigApiKeyOptions())));
+
+	public static PetBox.Web.Auth.IProjectDirectory Projects(this ICoreDbFactory dbf) =>
+		new PetBox.Web.Auth.ProjectDirectory(dbf);
+
+	public static PetBox.Log.Core.Data.ISavedQueryStore SavedQueries(this ICoreDbFactory dbf) =>
+		new PetBox.Log.Core.Data.SavedQueryStore(dbf);
 }
 
 // Building the Core (petbox.db) schema with FluentMigrator — a fresh DI container, an

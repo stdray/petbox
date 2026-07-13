@@ -153,6 +153,8 @@ public partial class Program
 				cs => new LogDb(LogDb.CreateOptions(cs)), LogSchema.Ensure));
 		builder.Services.AddScoped<ILogStore, LogStore>();
 		builder.Services.AddScoped<PetBox.Log.Core.Query.ILogQueryService, PetBox.Log.Core.Query.LogQueryService>();
+		// The saved-KQL-query door (Pages/Logs/Index.cshtml.cs) — SavedQueries had no owner before this.
+		builder.Services.AddScoped<PetBox.Log.Core.Data.ISavedQueryStore, PetBox.Log.Core.Data.SavedQueryStore>();
 		builder.Services.AddSingleton<IScopedDbFactory<ConfigDb>>(sp => new ScopedDbFactory<ConfigDb>(
 				Path.Combine(ResolveDataDir(sp), "config"), PetBox.Core.Settings.Scope.Workspace,
 				cs => new ConfigDb(ConfigDb.CreateOptions(cs)), ConfigSchema.Ensure));
