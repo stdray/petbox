@@ -1243,8 +1243,9 @@ async function main(): Promise<void> {
       console.error(
         `[2/10] no API key found.\n` +
           `  Provide one with --key <KEY>, or set ${envVar} (env or ~/.petbox/keys.json) first.\n` +
-          `  Mint a key from a Claude session on the $system project:\n` +
-          `    mcp__petbox__apikey_create  (project='${project}')\n` +
+          `  A key for a NEW project has no agent on it yet, so it can't mint its own key —\n` +
+          `  ask a workspace admin to mint one on the project's Connect page:\n` +
+          `    /ui/admin/ws/<workspace>/projects/${project}/connect (mint only happens there)\n` +
           `  Then re-run with --key <KEY>. (Minting keys is out of scope for wire.ts.)`,
       );
       process.exit(1);

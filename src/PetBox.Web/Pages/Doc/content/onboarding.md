@@ -2,23 +2,33 @@
 
 This is the short path for bringing a coding agent onto a PetBox project — from minting a key to the agent planning real work. There are five steps; do them in order and check each one worked before moving on, because a silent failure early (wrong key, stale connection, half-read model) is expensive to debug later.
 
-The **maintainer** (you) does step 1 in the UI and confirms the checks in steps 3 and 5. The **agent** does the rest. The deeper material lives on other pages, linked inline — this page is just the sequence.
+The **maintainer** (you) does step 1 in the UI. The **agent** does the rest, from a terminal in the project directory. The deeper material lives on other pages, linked inline — this page is just the sequence.
 
 > **Keep this in mind throughout.** After any server deploy, an MCP client's tool list goes stale: a tool you expect can return *"unknown tool"*, or a write can quietly do nothing. Whenever that happens, re-establish the MCP connection and retry before assuming the key or the request is wrong. This is the most common confusing failure here.
 
-## 1. Mint a key and set the environment variable
+## 1. Mint a key and wire the project
 
-On the project's **Connect agent** page, mint an agent key with the scopes the agent will actually use (at least `tasks:write` for planning). The key is shown once — copy it immediately.
+On the project's **Connect** page (admin gear → project → Connect) mint an access key — this is the **only** legal place a project key is minted; nowhere else in the UI or docs issues one. The key is shown once — copy it, and copy the `npx petbox-wire@latest …` command shown right below it.
 
-Then set a **per-project environment variable** to that value — named `PETBOX_<PROJECT>_API_KEY` (the Connect page shows the exact name), so several projects coexist on one machine. The MCP config never stores the key itself — it references that variable and reads it from the environment. The [connect guide](/doc/agent) has the exact `export` / `setx` commands.
+From a terminal **inside the project directory**, run that one command:
 
-**Check:** the variable resolves to a non-empty value in the agent's environment. (A truncated or wrong-project key still looks non-empty here — step 2 is the real validity test.)
+```
+npx petbox-wire@latest . '<project>' --key <KEY> --env PETBOX_<PROJECT>_API_KEY
+```
 
-## 2. Register the MCP server
+This single step replaces what older material described as several manual ones: it validates the key, persists it where every agent looks, writes the MCP config (`.mcp.json` for Claude Code, `.factory/mcp.json` for Factory Droid, `.opencode/opencode.json` for opencode), installs the `petbox` skill, and installs the session hooks that inject the memory protocol at the start of every session. See the [wire guide](/doc/wire) for exactly what it does and its full flag/command reference.
 
-Add a project-level MCP server named `petbox` in the config your agent reads (HTTP / streamable transport, the MCP endpoint URL, and the header `X-Api-Key: ${PETBOX_<PROJECT>_API_KEY}`). The [connect guide](/doc/agent) lists the config-file path per agent type. Then **restart the MCP connection** so the tool list loads.
+Requires **Node ≥ 23.6**. `petbox-wire` never mints a key itself — if you don't have one yet, get it from the Connect page above; a brand-new agent has no project of its own to mint one from.
 
-**Check:** call `tasks_board_list` for the project. A list — even an empty one — means it works. An auth error means a bad or wrong-project key; a connection error means the URL or transport is wrong; a missing tool means the tool list is stale, so reconnect and retry.
+**Check:** the run ends with `[10/10] self-smoke: OK`. If it doesn't, fix the reported step before continuing — everything after this depends on it.
+
+> **Agent not covered by `petbox-wire` yet?** `opencode` and Factory Droid are wired the same way as Claude Code; `omp` and `pi` aren't, and need the manual registration steps on the [connect reference](/doc/agent) instead. Claude Code is the priority path — treat the other harnesses as best-effort until that page says otherwise.
+
+## 2. Open a new session and verify the connection
+
+Wiring persists the key to a real environment variable, which only new shells pick up. **Open a new terminal**, `cd` back into the project directory, and start the agent there.
+
+**Check:** the agent's first reply opens with the injected memory banner (`🧠 PetBox memory active` or similar); calling `tasks_board_list` returns a list — even an empty one. An auth error means a bad or wrong-project key; a missing tool means the MCP tool list is stale (reconnect and retry).
 
 ## 3. Read the platform, then confirm understanding
 
@@ -30,11 +40,11 @@ Before writing anything, the agent reads the [overview](/doc/overview) (what Pet
 - "You just finished coding a feature and it works locally — what status do you set, and who sets the next one?" (Answer: `Review`; the **maintainer** sets `Done`.)
 - "A user reports a bug — which board does it land on first?"
 
-## 4. Install the skill (optional, recommended)
+## 4. Confirm the skill loaded
 
-Copy the `SKILL.md` template from the [connect guide](/doc/agent) into the agent's skills folder so the conventions survive into new sessions. Put it at the correct path for your agent type — a skill in the wrong place silently won't load.
+Step 1 already installed `SKILL.md` at the right path for your agent type — nothing to copy by hand.
 
-**Check:** in a fresh session the agent lists the petbox skill and can answer one question from it (e.g. "what is your status ceiling?" → `Review`). Skipping this step is fine — it just means re-reading step 3 each new session.
+**Check:** in a fresh session the agent lists the petbox skill and can answer one question from it (e.g. "what is your status ceiling?" → `Review`). If it's missing, re-run the wire command from step 1 — a skill in the wrong place silently won't load, and `petbox-wire` always writes the right path per harness.
 
 ## 5. Do one real piece of work end-to-end
 

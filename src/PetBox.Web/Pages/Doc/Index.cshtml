@@ -23,17 +23,9 @@
 				<a href="@Routes.DocOnboarding()" class="card-body p-4 hover:text-primary" data-testid="doc-link-onboarding">
 					<div class="font-semibold">Agent onboarding (staged runbook)</div>
 					<div class="text-sm opacity-70">
-						The end-to-end sequence — key → env var → MCP → comprehension → skill → first real plan —
-						with a validation gate at every stage. Follow this when bringing an agent online.
-					</div>
-				</a>
-			</li>
-			<li class="card bg-base-200 border border-base-300">
-				<a href="@Routes.DocAgent()" class="card-body p-4 hover:text-primary" data-testid="doc-link-agent">
-					<div class="font-semibold">Connect a coding agent (MCP)</div>
-					<div class="text-sm opacity-70">
-						What PetBox exposes over MCP, the board/node model, the full tool list, and a SKILL.md
-						template. Point your agent here after it is wired up.
+						The end-to-end sequence — mint on Connect → one <code>petbox-wire</code> command →
+						comprehension → first real plan — with a validation gate at every stage. Start here
+						when bringing an agent online.
 					</div>
 				</a>
 			</li>
@@ -43,6 +35,16 @@
 					<div class="text-sm opacity-70">
 						The operator guide to the CLI: wiring a project, the commands (update / apply / doctor /
 						roles / profile), generated agent files, the offline cache and the exit codes.
+					</div>
+				</a>
+			</li>
+			<li class="card bg-base-200 border border-base-300">
+				<a href="@Routes.DocAgent()" class="card-body p-4 hover:text-primary" data-testid="doc-link-agent">
+					<div class="font-semibold">MCP surface reference</div>
+					<div class="text-sm opacity-70">
+						What PetBox exposes over MCP, the board/node model, the full tool list, and the SKILL.md
+						contents <code>petbox-wire</code> installs. Also the manual registration steps for
+						harnesses it doesn't cover yet (<code>omp</code>, <code>pi</code>).
 					</div>
 				</a>
 			</li>
