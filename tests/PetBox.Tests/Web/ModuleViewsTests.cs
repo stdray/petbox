@@ -617,6 +617,77 @@ public sealed class ModuleViewsTests : IClassFixture<ModuleViewsFixture>
 		withStatusHtml.Should().Contain("data-testid=\"node-status\">Deprecated");
 	}
 
+	// REGRESSION (production, commit a99c2fb): `SpecBoard_SuppressesDefaultDefinedStatus_
+	// ShowsTerminalDeprecated` above creates its board with the bare kind string "spec" and NO
+	// methodology instance — `RuntimeForBoardAsync` then falls through to the PROJECT's open
+	// instances (none, in that test), so `Runtime.IsDefinedKind("spec")` is false there and
+	// `PresetKind("spec")` resolves normally. That is NOT the shape a real project's spec board
+	// has: $system's `spec` board is DEFINITION-resolved — the quartet preset renders its kinds
+	// (including `spec`) VERBATIM into a methodology instance's stored definition at creation
+	// time (RenderPresetDefinition), so `IsDefinedKind("spec")` is TRUE in production.
+	// `MethodologyRuntime.PresetKind` NULLS OUT for any defined kind (by design, for
+	// process-role guards — FSM effects, delivery roll-up, quartet invariants) — `OutlineReveal`'s
+	// own header comment already warns that gating a view-mode decision on `PresetKind(...) ==
+	// BoardKind.Spec` is exactly the trap that makes InlineLazy unreachable "in practice" for a
+	// perfectly ordinary spec board. board-ui-review-findings #2 used that exact broken
+	// construct for the strikethrough gate, so it silently never fired in production (24 nodes
+	// carrying data-terminal-cancel="true" and data-status="deprecated" on $system's real spec
+	// board, zero line-through anywhere). This test builds the board the way $system ACTUALLY
+	// has it — kind "spec" declared by a real methodology instance — to make that shape
+	// reproducible in CI.
+	[Fact]
+	public async Task SpecBoard_DefinitionResolvedKind_StillStrikesThroughDeprecated()
+	{
+		const string board = "specdefres";
+		const string instance = "specdefres-instance";
+		using (var scope = _factory.Services.CreateScope())
+		{
+			var tasks = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Contract.ITasksService>();
+			// Mirrors MethodologyPresets' own SpecKind shape (kind slug "spec", defined →
+			// deprecated) — exactly what RenderPresetDefinition materializes for a real
+			// quartet-provisioned project, just declared directly here instead of via the
+			// (internal) preset renderer.
+			var def = new PetBox.Tasks.Workflow.MethodologyDefinition("specdefres-def",
+			[
+				new PetBox.Tasks.Workflow.MethodologyKindDef("spec", QuickAddAllowed: false,
+				[
+					new PetBox.Tasks.Workflow.MethodologyWorkflowDef(["spec"],
+						[
+							new("defined", "Defined", PetBox.Tasks.Workflow.StatusKind.Open),
+							new("deprecated", "Deprecated", PetBox.Tasks.Workflow.StatusKind.TerminalCancel),
+						],
+						[new("defined", "deprecated")]),
+				]),
+			]);
+			if (await tasks.GetMethodologyInstanceAsync("$system", instance) is null)
+			{
+				await tasks.UpsertMethodologyTemplateAsync("$system", $"{instance}-tmpl", def, 0);
+				await tasks.CreateMethodologyInstanceAsync("$system", instance, "template", $"{instance}-tmpl");
+			}
+
+			var boards = scope.ServiceProvider.GetRequiredService<PetBox.Tasks.Data.ITaskBoardStore>();
+			if (!await boards.ExistsAsync("$system", board))
+				await boards.CreateAsync("$system", board, "spec def-resolved smoke", "spec", methodologyInstance: instance);
+			var ctx = boards.GetContext("$system");
+			await PetBox.Core.Data.Temporal.TemporalStore.UpsertAsync(ctx, new[]
+			{
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "live", NodeId = "id-defres-live", Version = 0, Status = "defined", Type = "spec", Name = "Live req", Body = "", Priority = 1 },
+				new PetBox.Tasks.Data.PlanNode { Board = board, Key = "dead", NodeId = "id-defres-dead", Version = 0, Status = "deprecated", Type = "spec", Name = "Dead req", Body = "", Priority = 2 },
+			}, partition: n => n.Board == board);
+		}
+
+		using var resp = await GetAuthedAsync($"/ui/$system/$system/tasks/{board}");
+		resp.StatusCode.Should().Be(HttpStatusCode.OK);
+		var html = await resp.Content.ReadAsStringAsync();
+
+		html.Should().MatchRegex("data-node-key=\"live\"[^>]*data-terminal-cancel=\"false\"");
+		html.Should().MatchRegex("data-node-key=\"dead\"[^>]*data-terminal-cancel=\"true\"");
+		// THE regression assertion: on a DEFINITION-resolved spec board, the terminal-cancel
+		// node must still render struck through — this is the one that silently failed on prod.
+		html.Should().MatchRegex("data-node-key=\"dead\"[\\s\\S]{0,800}line-through",
+			"a definition-resolved spec board (the shape $system actually has) must still strike through its terminal-cancel nodes — PresetKind nulling out for a defined kind must not silently disable the invariant");
+	}
+
 	// ui-spec-status-board-node-mismatch: the node DETAIL page must apply the SAME spec-board status
 	// suppression as the board (previously it always showed the badge, so board and node disagreed).
 	// A non-terminal spec status (`defined`) → NO status badge; the terminal `deprecated` → badge

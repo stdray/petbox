@@ -12,7 +12,10 @@
 	// already a displayable property (toggle via the fields dialog), so the strikethrough was
 	// redundant noise there — the maintainer ruled it out everywhere except spec.
 	var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
-	var isSpecBoard = Model.Runtime.PresetKind(Model.KindSlug) == BoardKind.Spec;
+	// IsSpecKind, NOT PresetKind(...) == BoardKind.Spec (production regression, 2026-07):
+	// PresetKind nulls out for any DEFINED kind, and a real project's spec board is virtually
+	// always definition-resolved — see MethodologyRuntime.IsSpecKind's own comment.
+	var isSpecBoard = Model.Runtime.IsSpecKind(Model.KindSlug);
 	var strikethrough = terminalCancel && isSpecBoard;
 }
 
