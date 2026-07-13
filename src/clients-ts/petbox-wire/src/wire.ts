@@ -78,13 +78,14 @@ import {
   planApply,
   type ApplyPlan,
 } from "./apply-artifacts.ts";
+import { resolveApplyRoot } from "./apply-root.ts";
 import { cleanupLegacyArtifact, writeArtifact } from "./apply-write.ts";
 import { HARNESS_IDS } from "./harness-capabilities.ts";
 import { pruneDeadPromptRagHooks } from "./hook-prune.ts";
 import { persistKeyForAgentsPosix } from "./posix-env.ts";
 import { classifyApplyExit, WIRE_EXIT } from "./wire-exit.ts";
 import { deriveEnvVar, resolveWorkspace } from "./wire-identity.ts";
-import { readRegistry, resolveProject } from "./registry.ts";
+import { resolveProject } from "./registry.ts";
 import {
   exportRolesBootstrap,
   formatResolvedBinding,
@@ -152,7 +153,11 @@ function usage(exitCode: number = WIRE_EXIT.usage): never {
     "             when cwd resolves via ~/.petbox/projects.json; on miss uses LKG cache\n" +
     "             (~/.petbox/cache/<project>.agent-def.json) with a staleness mark, else built-in\n" +
     "             DEFAULT only when no cache. --offline skips network (cache→DEFAULT). --definition\n" +
-    "             <key> selects the server doc (default: default). Writes under project root:\n" +
+    "             <key> selects the server doc (default: default). Writes under the git worktree\n" +
+    "             toplevel for cwd (`git rev-parse --show-toplevel`; falls back to cwd when cwd is not\n" +
+    "             inside a git working tree) — NEVER the registry's project prefix, so apply run from a\n" +
+    "             worktree targets that worktree, not the primary tree it was branched from. Always\n" +
+    "             prints which root it resolved and how (git/cwd). Targets:\n" +
     "             claude-code .claude/agents/, opencode .opencode/agent/, droid .factory/droids/.\n" +
     "             Emitted names are namespaced petbox-<role> (frontmatter name: + file basename) —\n" +
     "             role.slug and ~/.petbox/roles.json stay unprefixed; only the render is. Every\n" +
@@ -239,30 +244,6 @@ function isRolesCommand(argv: string[]): boolean {
 
 function isProfileCommand(argv: string[]): boolean {
   return argv[0] === "profile";
-}
-
-// Longest registry prefix that covers cwd (no API key required). Falls back to cwd.
-function resolveApplyRoot(cwd: string): { root: string; via: "registry" | "cwd" } {
-  try {
-    const entries = readRegistry();
-    const nd = cwd.replace(/[\\/]+/g, "/").replace(/\/+$/, "");
-    const ndCmp = process.platform === "win32" ? nd.toLowerCase() : nd;
-    let best: string | null = null;
-    let bestLen = -1;
-    for (const e of entries) {
-      let np = String(e.prefix).replace(/[\\/]+/g, "/").replace(/\/+$/, "");
-      const npCmp = process.platform === "win32" ? np.toLowerCase() : np;
-      const under = ndCmp === npCmp || ndCmp.startsWith(npCmp + "/");
-      if (under && npCmp.length > bestLen) {
-        best = e.prefix;
-        bestLen = npCmp.length;
-      }
-    }
-    if (best) return { root: best, via: "registry" };
-  } catch {
-    /* fall through */
-  }
-  return { root: cwd, via: "cwd" };
 }
 
 // doctor — truthfulness gate for each known harness vs default definition.
