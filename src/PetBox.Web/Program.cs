@@ -614,6 +614,13 @@ public partial class Program
 		// WorkspaceProvisioning are Core writers of WorkspaceMembers and must be able to reach them.
 		builder.Services.AddScoped<PetBox.Core.Auth.IWorkspaceMembershipService, PetBox.Core.Auth.WorkspaceMembershipService>();
 		builder.Services.AddScoped<PetBox.Core.Auth.IUserAdminService, PetBox.Core.Auth.UserAdminService>();
+		// The two NARROW auth doors. Neither is IUserAdminService, and that is the whole point: the
+		// login page is anonymous and /Me/Security is reachable by every logged-in user, while the admin
+		// service can reset ANY account's password. ICredentialAuthenticator can only CHECK a password
+		// it was handed (and owns the bootstrap-admin lockdown rule); IAccountSelfService can only
+		// change the password of the account the request is authenticated as — it takes no user id.
+		builder.Services.AddScoped<PetBox.Core.Auth.ICredentialAuthenticator, PetBox.Core.Auth.CredentialAuthenticator>();
+		builder.Services.AddScoped<PetBox.Core.Auth.IAccountSelfService, PetBox.Core.Auth.AccountSelfService>();
 		builder.Services.AddScoped<PetBox.Web.Auth.IWorkspaceAdminService, PetBox.Web.Auth.WorkspaceAdminService>();
 		// The doors the MCP tools ask instead of opening core.db themselves (db-access-layer-cleanup):
 		// the DataDbs catalog (db_* tools), the HealthReports reader (health_search) and the workspace
