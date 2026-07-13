@@ -578,7 +578,11 @@ public partial class Program
 		// core.db lives in the service layer only: the binding filter and the claims transformation
 		// above ask these, they never open a connection themselves (db-access-layer-cleanup).
 		builder.Services.AddScoped<PetBox.Web.Auth.IProjectDirectory, PetBox.Web.Auth.ProjectDirectory>();
-		builder.Services.AddScoped<PetBox.Web.Auth.IWorkspaceMembershipService, PetBox.Web.Auth.WorkspaceMembershipService>();
+		// The membership + account services live in PetBox.Core, not here: AdminBootstrapper and
+		// WorkspaceProvisioning are Core writers of WorkspaceMembers and must be able to reach them.
+		builder.Services.AddScoped<PetBox.Core.Auth.IWorkspaceMembershipService, PetBox.Core.Auth.WorkspaceMembershipService>();
+		builder.Services.AddScoped<PetBox.Core.Auth.IUserAdminService, PetBox.Core.Auth.UserAdminService>();
+		builder.Services.AddScoped<PetBox.Web.Auth.IWorkspaceAdminService, PetBox.Web.Auth.WorkspaceAdminService>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.
