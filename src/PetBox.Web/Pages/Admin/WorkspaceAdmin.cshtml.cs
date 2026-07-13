@@ -3,20 +3,29 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.RazorPages;
 using PetBox.Config.Data;
-using PetBox.Core.Data;
+using PetBox.Core.Auth;
 using PetBox.Core.Models;
+using PetBox.Web.Auth;
 
 namespace PetBox.Web.Pages.Admin;
 
 [Authorize(Policy = "WorkspaceMember")]
 public sealed class WorkspaceAdminModel : PageModel
 {
-	readonly ICoreDbFactory _f;
+	readonly IWorkspaceAdminService _workspaces;
+	readonly IProjectDirectory _projects;
+	readonly IWorkspaceMembershipService _members;
 	readonly IConfigDbFactory _configFactory;
 
-	public WorkspaceAdminModel(ICoreDbFactory f, IConfigDbFactory configFactory)
+	public WorkspaceAdminModel(
+		IWorkspaceAdminService workspaces,
+		IProjectDirectory projects,
+		IWorkspaceMembershipService members,
+		IConfigDbFactory configFactory)
 	{
-		_f = f;
+		_workspaces = workspaces;
+		_projects = projects;
+		_members = members;
 		_configFactory = configFactory;
 	}
 
@@ -30,15 +39,17 @@ public sealed class WorkspaceAdminModel : PageModel
 	public int ProjectCount { get; private set; }
 	public int BindingCount { get; private set; }
 
-	public void OnGet()
+	public async Task OnGetAsync()
 	{
-		using var db = _f.Open();
-		Workspace = db.Workspaces.FirstOrDefault(w => w.Key == WorkspaceKey);
+		Workspace = await _workspaces.GetAsync(WorkspaceKey);
 		if (Workspace is null) return;
 
-		Projects = db.Projects.Where(p => p.WorkspaceKey == WorkspaceKey).OrderBy(p => p.Key).ToList();
+		// includeContainers: true — this overview table is the one surface that DOES show the
+		// workspace's own $ws-* memory container alongside its user projects (see IProjectDirectory's
+		// doc comment); the original inline query never filtered it either.
+		Projects = await _projects.ListAsync(WorkspaceKey, includeContainers: true);
 		ProjectCount = Projects.Count;
-		MemberCount = db.WorkspaceMembers.Count(m => m.WorkspaceKey == WorkspaceKey);
+		MemberCount = await _members.CountMembersAsync(WorkspaceKey);
 
 		using var configDb = _configFactory.NewConfigDb(WorkspaceKey);
 		BindingCount = configDb.Bindings.Count(b => !b.IsDeleted);

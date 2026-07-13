@@ -119,7 +119,8 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	public async Task Connect_mint_redirects_clean_and_carries_the_once_shown_key()
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
-		var page = new ProjectConnectModel(_db.Factory(), Features()) { WorkspaceKey = "ws", ProjectKey = "proj" };
+		var page = new ProjectConnectModel(new ProjectDirectory(_db.Factory()), _db.Factory().AgentKeys(), Features())
+			{ WorkspaceKey = "ws", ProjectKey = "proj" };
 		Wire(page);
 
 		var result = await page.OnPostMintAsync("agent", [ApiKeyScopes.TasksRead]);
