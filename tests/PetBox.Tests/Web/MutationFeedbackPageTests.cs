@@ -119,7 +119,7 @@ public sealed class MutationFeedbackPageTests : IDisposable
 	{
 		_db.Insert(new Project { Key = "proj", WorkspaceKey = "ws", Name = "P", Description = "" });
 		var page = new ProjectConnectModel(new ProjectDirectory(_db.Factory()), _db.Factory().AgentKeys(), Features())
-			{ WorkspaceKey = "ws", ProjectKey = "proj" };
+		{ WorkspaceKey = "ws", ProjectKey = "proj" };
 		Wire(page);
 
 		var result = await page.OnPostMintAsync("agent", [ApiKeyScopes.TasksRead]);
