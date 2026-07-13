@@ -155,13 +155,20 @@ public sealed class MutationFeedbackPageTests : IDisposable
 		_db.ApiKeys.Count(k => k.ProjectKey == "proj").Should().Be(0);
 	}
 
+	// The key-admin service also reads the in-memory last-used stamps and the config-declared key set
+	// (admin-ui-apikey-edit-lastused). Neither matters to revoke — empty instances keep these
+	// handler-level tests free of a full DI container.
+	PetBox.Web.Auth.AgentKeyAdminService NewKeyAdminService() =>
+		new(_db.Factory(), new KeyStatService(),
+			new ConfigApiKeyLookup(Microsoft.Extensions.Options.Options.Create(new ConfigApiKeyOptions())));
+
 	// notice-tail: the remaining mutators that already Post/Redirect/Get now also carry a
 	// one-line success notice across the redirect. A representative few of them exercised here.
 	[Fact]
 	public async Task AgentKeys_revoke_redirects_clean_and_sets_success_notice()
 	{
 		_db.Insert(new ApiKey { Key = "yb_key_x", ProjectKey = "proj", Scopes = ApiKeyScopes.TasksRead, Name = "ci", CreatedAt = DateTime.UtcNow });
-		var page = new AgentKeysModel(new PetBox.Web.Auth.AgentKeyAdminService(_db.Factory()));
+		var page = new AgentKeysModel(NewKeyAdminService());
 		Wire(page);
 
 		var result = await page.OnPostRevokeAsync("yb_key_x");

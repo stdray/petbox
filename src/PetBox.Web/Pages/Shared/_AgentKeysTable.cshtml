@@ -1,4 +1,13 @@
 @model PetBox.Web.Pages.Shared.AgentKeysTableView
+@* admin-ui-apikey-edit-lastused: the ONE table both key pages render (sysadmin + workspace admin).
+	The "Last used" column and the per-row editor live here precisely so neither page can drift from
+	the other — a copy for the sysadmin page only is how the workspace admin ends up with a lesser
+	surface again. The editor posts to the `Edit` handler, which BOTH page models implement over the
+	shared AgentKeyAdminService; the workspace confinement is inside that service's UPDATE statement,
+	never in what this markup chooses to render.
+
+	Config-declared keys (Auth:ApiKeys) are not DB rows, so they never appear here at all — there is
+	no edit button to press for them. A hand-crafted POST naming one is refused WITH a reason. *@
 
 @if (Model.Keys.Count == 0)
 {
@@ -13,19 +22,26 @@ else
 					<th>Name</th>
 					<th>Project</th>
 					<th>Scopes</th>
+					<th>Last used</th>
 					<th>Expires</th>
-					<th class="w-24">Actions</th>
+					<th class="w-32">Actions</th>
 				</tr>
 			</thead>
 			<tbody>
 				@foreach (var k in Model.Keys)
 				{
+					var current = k.Scopes.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+					var isCrossProject = k.ProjectKey == "*";
 					<tr data-testid="agent-key-row">
 						<td>@k.Name</td>
 						<td class="font-mono text-xs">
-							@if (k.ProjectKey == "*")
+							@if (isCrossProject)
 							{
 								<span class="badge badge-warning badge-sm" data-testid="agent-key-all-projects-badge">all projects</span>
+								@if (!string.IsNullOrEmpty(k.DefaultProjectKey))
+								{
+									<span class="block opacity-60 mt-0.5" data-testid="agent-key-default-project">default: @k.DefaultProjectKey</span>
+								}
 							}
 							else
 							{
@@ -33,6 +49,18 @@ else
 							}
 						</td>
 						<td class="font-mono text-xs">@k.Scopes</td>
+						<td class="text-xs">
+							@* A key that has never authenticated SAYS so. An empty cell would read as "unknown",
+								and a zero DateTime would render as 1970/0001 — a date that never happened. *@
+							@if (k.LastUsedAt is null)
+							{
+								<span class="badge badge-ghost badge-sm" data-testid="agent-key-never-used">never</span>
+							}
+							else
+							{
+								<span class="font-mono opacity-70" data-testid="agent-key-last-used">@k.LastUsedAt?.ToString("yyyy-MM-dd HH:mm")</span>
+							}
+						</td>
 						<td class="text-xs">
 							@if (k.Expired)
 							{
@@ -48,10 +76,74 @@ else
 							}
 						</td>
 						<td>
-							<form method="post" asp-page-handler="Revoke" onsubmit="return confirm('Revoke this key?');">
-								<input type="hidden" name="key" value="@k.Key" />
-								<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="agent-key-revoke">Revoke</button>
-							</form>
+							<div class="flex items-center gap-1" x-data="{ open: false }">
+								<button type="button" class="btn btn-ghost btn-xs" data-testid="agent-key-edit" @@click="open = true">Edit</button>
+
+								@* Sibling of the edit form, never nested inside it — nested forms are invalid HTML. *@
+								<form method="post" asp-page-handler="Revoke" onsubmit="return confirm('Revoke this key?');">
+									<input type="hidden" name="key" value="@k.Key" />
+									<button type="submit" class="btn btn-ghost btn-xs text-error" data-testid="agent-key-revoke">Revoke</button>
+								</form>
+
+								<div class="modal" :class="{ 'modal-open': open }" role="dialog" aria-modal="true">
+									<div class="modal-box text-left">
+										<h3 class="font-semibold text-lg mb-3">Edit key</h3>
+										<form method="post" asp-page-handler="Edit" class="flex flex-col gap-3" data-testid="agent-key-edit-form">
+											<input type="hidden" name="key" value="@k.Key" />
+
+											<label class="form-control">
+												<span class="label-text text-xs opacity-70 mb-1">Name</span>
+												<input type="text" name="name" required value="@k.Name"
+													   class="input input-bordered input-sm font-mono"
+													   data-testid="agent-key-edit-name" />
+											</label>
+
+											<div>
+												<span class="label-text text-xs opacity-70">Scopes</span>
+												<p class="text-xs opacity-50 mb-1">The checked set REPLACES the current one.</p>
+												<div class="grid grid-cols-1 sm:grid-cols-2 gap-1 max-h-56 overflow-y-auto pr-1"
+													 data-testid="agent-key-edit-scopes">
+													@foreach (var scope in Model.AllScopes)
+													{
+														var isChecked = current.Contains(scope.Value, StringComparer.Ordinal);
+														<label class="flex items-start gap-2 cursor-pointer" data-testid="agent-key-edit-scope-@scope.Value">
+															<input class="checkbox checkbox-sm" type="checkbox" name="scopes"
+																   value="@scope.Value" checked="@isChecked" />
+															<span>
+																<span class="font-mono text-xs">@scope.Value</span>
+																<span class="block text-xs opacity-60">@scope.Title</span>
+															</span>
+														</label>
+													}
+												</div>
+											</div>
+
+											@* Only a cross-project key HAS a default project — a project-scoped one already
+												defaults to its own claim, so the field would be a lie there (and the server
+												refuses it anyway). Clearing it is just submitting it empty. *@
+											@if (isCrossProject)
+											{
+												<label class="form-control">
+													<span class="label-text text-xs opacity-70 mb-1">Default project</span>
+													<input type="text" name="defaultProject" value="@k.DefaultProjectKey"
+														   placeholder="none — leave empty to clear"
+														   class="input input-bordered input-sm font-mono"
+														   data-testid="agent-key-edit-default-project" />
+													<span class="text-xs opacity-50 mt-1">The project this key falls back to when a call omits one. Empty = no default.</span>
+												</label>
+											}
+
+											<div class="modal-action">
+												<button type="button" class="btn btn-ghost btn-sm"
+														data-testid="agent-key-edit-cancel" @@click="open = false">Cancel</button>
+												<button type="submit" class="btn btn-primary btn-sm"
+														data-testid="agent-key-edit-submit">Save</button>
+											</div>
+										</form>
+									</div>
+									<div class="modal-backdrop bg-black/40" @@click="open = false"></div>
+								</div>
+							</div>
 						</td>
 					</tr>
 				}
