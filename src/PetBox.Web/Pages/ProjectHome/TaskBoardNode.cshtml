@@ -11,6 +11,10 @@
 	var nodeKindTitle = nodeIsSimple
 		? "simple board — lightweight preset: statuses Todo|InProgress|Blocked|Done|Cancelled, free transitions, types task|bug|feature|chore|issue"
 		: $"{nodeKindName} board — statuses follow the {nodeKindName} workflow";
+	// board-terminal-negative-visible: the same invariant the board views enforce — a node in a
+	// terminal-cancel status reads as dead on its own detail page too, independent of the status
+	// badge's own visibility (StatusBadgeModel.Show, spec-board-status-noise).
+	var nodeTerminalCancel = Model.Runtime.StatusKindOf(Model.Detail.Kind, node.Status) == PetBox.Tasks.Workflow.StatusKind.TerminalCancel;
 }
 
 @* Breadcrumb: tasks / {board} / {ancestors…} / {this node}. The node is addressed by its
@@ -38,7 +42,7 @@
    (works without JS); the read/edit toggle + markdown write/preview is wired imperatively by
    ts/nodeEdit.ts (no inline JS), mirroring ts/board.ts. The edit form starts hidden (inline style)
    so it doesn't flash before the script runs. *@
-<div class="card bg-base-200 border border-base-300" data-testid="node-detail" data-node-id="@node.NodeId" data-board="@Model.Detail.Board">
+<div class="card bg-base-200 border border-base-300" data-testid="node-detail" data-node-id="@node.NodeId" data-board="@Model.Detail.Board" data-terminal-cancel="@nodeTerminalCancel.ToString().ToLowerInvariant()">
 	<div class="card-body p-4">
 
 		@if (Model.Error is not null)
@@ -47,7 +51,7 @@
 		}
 
 		<div class="flex items-baseline justify-between gap-2 flex-wrap">
-			<h1 class="text-2xl font-semibold" data-testid="node-name">@(string.IsNullOrEmpty(node.Title) ? node.Key : node.Title)</h1>
+			<h1 class="text-2xl font-semibold @(nodeTerminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@(string.IsNullOrEmpty(node.Title) ? node.Key : node.Title)</h1>
 			<div class="flex items-center gap-1 shrink-0 flex-wrap justify-end">
 				@if (!string.IsNullOrEmpty(node.Type))
 				{

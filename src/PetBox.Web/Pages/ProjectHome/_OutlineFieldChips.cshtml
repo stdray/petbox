@@ -1,0 +1,37 @@
+@model PetBox.Web.Pages.ProjectHome.OutlineFieldChipsModel
+@* board-view-fields: shared by both branches of _BoardViewOutline.cshtml (lazy-reveal summary and
+   the plain heading row) so the field-gating logic isn't duplicated. *@
+@{ var n = Model.Node; }
+@if (Model.Fields.Type && !string.IsNullOrEmpty(n.Type))
+{
+	<span class="badge badge-ghost badge-xs" data-testid="node-type">@n.Type</span>
+}
+@if (Model.Fields.Priority)
+{
+	<span class="font-mono text-xs opacity-70" data-testid="node-priority" title="priority">P@(n.Priority)</span>
+}
+@if (Model.Fields.Status)
+{
+	<partial name="_StatusBadge" model="new StatusBadgeModel(Model.Runtime, Model.KindSlug, n.Status)" />
+}
+@if (Model.Fields.Delivery && n.Delivery is not null)
+{
+	<partial name="_DeliveryBadge" model="@(new DeliveryBadgeModel(n.Delivery) { Size = "badge-xs" })" />
+}
+@if (Model.Fields.UpdatedAt && n.UpdatedAt is not null)
+{
+	<time class="local-time text-xs opacity-60" datetime="@n.UpdatedAt.Value.ToString("o")" data-testid="node-updated">@n.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time>
+}
+@if (Model.Fields.Tags && n.Tags.Count > 0)
+{
+	<span data-testid="node-tags" class="flex flex-wrap gap-1">
+		@foreach (var t in n.Tags)
+		{
+			<span class="badge badge-outline badge-xs">@t</span>
+		}
+	</span>
+}
+@if (Model.Fields.BlockedBy)
+{
+	<partial name="_BlockedByChips" model="new BlockedByChipsModel(Model.WorkspaceKey, Model.ProjectKey, n.BlockedBy)" />
+}

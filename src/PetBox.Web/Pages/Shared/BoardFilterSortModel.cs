@@ -17,4 +17,13 @@ namespace PetBox.Web.Pages.Shared;
 // stay one shared implementation; only the label changes so the affordance reads correctly per
 // mode. A future mode with a dimension this bar doesn't cover (or that wants FEWER controls)
 // extends this record with a new switch, not a new copy of the markup.
-public sealed record BoardFilterSortModel(string SortHint = "sort:");
+// board-view-fields: the SAME bar also hosts the "fields" dialog trigger + form (one shared
+// affordance per page load, same posture as the sort/filter controls above — a mode declares its
+// current Fields/ViewMode/By, the bar draws the SAME dialog markup for every mode). ViewMode/By are
+// the hidden fields the dialog's GET form round-trips so applying a field selection doesn't also
+// reset the view the user is currently looking at.
+public sealed record BoardFilterSortModel(
+	PetBox.Web.Rendering.BoardFieldConfig Fields,
+	string ViewMode,
+	string SortHint = "sort:",
+	string? By = null);

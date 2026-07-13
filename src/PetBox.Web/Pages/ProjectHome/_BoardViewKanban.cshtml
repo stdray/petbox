@@ -26,7 +26,7 @@ else
 	// declares) still needs a home on the board — an extra "other" column rather than a silently
 	// dropped card.
 	var strayCount = Model.Nodes.Count(n => !knownSlugs.Contains(n.Status));
-	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(SortHint: "sort within column:");
+	var filterSortModel = new PetBox.Web.Pages.Shared.BoardFilterSortModel(Fields: Model.Fields, ViewMode: BoardViewModeNames.Kanban, SortHint: "sort within column:");
 
 	<partial name="_BoardFilterSort" model="filterSortModel" />
 	<div class="flex gap-3 overflow-x-auto pb-2" data-testid="board-kanban">
@@ -49,21 +49,38 @@ else
 					{
 						var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
 						var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
+						// board-terminal-negative-visible: same invariant as the tree card — a
+						// terminal-cancel node's title is struck through regardless of Model.Fields.Status.
+						var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
 						// board-body-truncate: a kanban card never renders the body (unlike the tree
 						// card) — data-search omits n.Body so filtering can't leak it into the HTML.
 						var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
-						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false">
+						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()">
 							<div class="card-body p-2 gap-1">
-								<a href="@nodeUrl" class="font-semibold link link-hover text-sm" data-testid="node-name">@n.Title</a>
+								<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
 								<div class="flex items-center gap-1 flex-wrap text-xs opacity-70">
-									<span class="badge badge-ghost badge-xs" data-testid="node-type">@n.Type</span>
-									<span class="font-mono" data-testid="node-priority" title="priority">P@(n.Priority)</span>
-									@if (n.Delivery is not null)
+									@if (Model.Fields.Type)
+									{
+										<span class="badge badge-ghost badge-xs" data-testid="node-type">@n.Type</span>
+									}
+									@if (Model.Fields.Priority)
+									{
+										<span class="font-mono" data-testid="node-priority" title="priority">P@(n.Priority)</span>
+									}
+									@if (Model.Fields.Status)
+									{
+										<partial name="_StatusBadge" model="new StatusBadgeModel(Model.Runtime, Model.KindSlug, n.Status)" />
+									}
+									@if (Model.Fields.Delivery && n.Delivery is not null)
 									{
 										<partial name="_DeliveryBadge" model="@(new DeliveryBadgeModel(n.Delivery) { Size = "badge-xs" })" />
 									}
+									@if (Model.Fields.UpdatedAt && n.UpdatedAt is not null)
+									{
+										<time class="local-time" datetime="@n.UpdatedAt.Value.ToString("o")" data-testid="node-updated">@n.UpdatedAt.Value.ToString("yyyy-MM-dd HH:mm")</time>
+									}
 								</div>
-								@if (n.Tags.Count > 0)
+								@if (Model.Fields.Tags && n.Tags.Count > 0)
 								{
 									<div class="flex flex-wrap gap-1" data-testid="node-tags">
 										@foreach (var t in n.Tags)
@@ -71,6 +88,14 @@ else
 											<span class="badge badge-outline badge-xs">@t</span>
 										}
 									</div>
+								}
+								@if (Model.Fields.BlockedBy)
+								{
+									<partial name="_BlockedByChips" model="new BlockedByChipsModel(Model.WorkspaceKey, Model.ProjectKey, n.BlockedBy)" />
+								}
+								@if (Model.Fields.Body && !string.IsNullOrEmpty(n.Body))
+								{
+									<partial name="_MdBody" model="@(new MdBodyModel { Body = n.Body, TestId = "node-body", ExtraClasses = "max-h-16 overflow-hidden text-xs", CommitUrlTemplate = Model.CommitUrlTemplate, NodeRefs = Model.NodeRefs, MemoryRefs = Model.MemoryRefs })" />
 								}
 							</div>
 						</li>
@@ -87,12 +112,13 @@ else
 					{
 						var nodeUrl = Routes.TaskBoardNodeBySlug(Model.WorkspaceKey, Model.ProjectKey, Model.Board, n.Key);
 						var closed = Model.Runtime.IsTerminalStatus(Model.KindSlug, n.Status);
+						var terminalCancel = Model.Runtime.StatusKindOf(Model.KindSlug, n.Status) == StatusKind.TerminalCancel;
 						// board-body-truncate: a kanban card never renders the body (unlike the tree
 						// card) — data-search omits n.Body so filtering can't leak it into the HTML.
 						var search = $"{n.Title} {n.Key} {string.Join(' ', n.Tags)}".ToLowerInvariant();
-						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false">
+						<li class="card card-compact bg-base-200 border border-base-300" data-testid="kanban-card" data-node-key="@n.Key" data-node-id="@n.NodeId" data-status="@n.Status" data-type="@n.Type" data-priority="@n.Priority" data-title="@n.Title" data-search="@search" data-created="@(n.CreatedAt?.ToString("o") ?? "")" data-updated="@(n.UpdatedAt?.ToString("o") ?? "")" data-closed="@closed.ToString().ToLowerInvariant()" data-keep-visible="false" data-terminal-cancel="@terminalCancel.ToString().ToLowerInvariant()">
 							<div class="card-body p-2 gap-1">
-								<a href="@nodeUrl" class="font-semibold link link-hover text-sm" data-testid="node-name">@n.Title</a>
+								<a href="@nodeUrl" class="font-semibold link link-hover text-sm @(terminalCancel ? "line-through opacity-60" : "")" data-testid="node-name">@n.Title</a>
 								<span class="font-mono text-xs opacity-70" title="unrecognized status">@n.Status</span>
 							</div>
 						</li>
