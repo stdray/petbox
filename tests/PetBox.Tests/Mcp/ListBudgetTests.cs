@@ -114,7 +114,7 @@ public sealed class ListBudgetTests : IDisposable
 	{
 		await SeedMemoryAsync(3, 200);
 
-		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes");
 
 		res.Items.Count.Should().Be(3);
@@ -131,7 +131,7 @@ public sealed class ListBudgetTests : IDisposable
 		await SeedMemoryAsync(total, 2000); // ~80k chars of bodies > the 30k budget
 
 		// bodyLen:-1 = the full body (the default is now a compact snippet); full bodies overflow.
-		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", bodyLen: -1, limit: 0);
 
 		res.Items.Count.Should().BeGreaterThan(0).And.BeLessThan(total);
@@ -150,7 +150,7 @@ public sealed class ListBudgetTests : IDisposable
 		const int total = 40;
 		await SeedMemoryAsync(total, 2000);
 
-		var snipped = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
+		var snipped = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, new PetBox.Tests.Memory.NoopUsageRecorder(),
 			scope: "project", store: "notes", bodyLen: 20, limit: 0);
 
 		snipped.Items.Count.Should().Be(total);

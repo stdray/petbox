@@ -601,6 +601,12 @@ public partial class Program
 		builder.Services.AddScoped<PetBox.Core.Auth.IWorkspaceMembershipService, PetBox.Core.Auth.WorkspaceMembershipService>();
 		builder.Services.AddScoped<PetBox.Core.Auth.IUserAdminService, PetBox.Core.Auth.UserAdminService>();
 		builder.Services.AddScoped<PetBox.Web.Auth.IWorkspaceAdminService, PetBox.Web.Auth.WorkspaceAdminService>();
+		// The doors the MCP tools ask instead of opening core.db themselves (db-access-layer-cleanup):
+		// the DataDbs catalog (db_* tools), the HealthReports reader (health_search) and the workspace
+		// memory containers (memory_* tools — resolve, lazily ensure, and the reachability predicate).
+		builder.Services.AddScoped<PetBox.Data.Contract.IDataDbCatalog, PetBox.Data.Services.DataDbCatalog>();
+		builder.Services.AddScoped<PetBox.Core.Health.IHealthReportService, PetBox.Core.Health.HealthReportService>();
+		builder.Services.AddScoped<PetBox.Core.Data.IWorkspaceMemoryDirectory, PetBox.Core.Data.WorkspaceMemoryDirectory>();
 		builder.Services.AddRazorPages(options =>
 		{
 			// Project-scoped Config — same Config/Index page, applies project:{projectKey} filter.

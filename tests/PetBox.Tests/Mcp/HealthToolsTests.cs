@@ -58,7 +58,7 @@ public sealed class HealthToolsTests : IDisposable
 		Push("worker", Proj, "ok", now.AddSeconds(-10), version: "2.0.0");
 
 		var http = Http("health:read");
-		var res = await HealthTools.SearchAsync(http, _db.Factory(), Proj);
+		var res = await HealthTools.SearchAsync(http, _db.Factory().HealthReports(), Proj);
 
 		res.Services.Select(s => s.Svc).Should().Equal("api", "worker"); // svc-sorted, one row each
 		var api = res.Services.Single(s => s.Svc == "api");
@@ -75,7 +75,7 @@ public sealed class HealthToolsTests : IDisposable
 		Push("old", Proj, "ok", now.AddSeconds(-600));
 
 		var http = Http("health:read");
-		var res = await HealthTools.SearchAsync(http, _db.Factory(), Proj, staleThresholdSeconds: 300);
+		var res = await HealthTools.SearchAsync(http, _db.Factory().HealthReports(), Proj, staleThresholdSeconds: 300);
 
 		res.Services.Single(s => s.Svc == "fresh").Stale.Should().BeFalse();
 		res.Services.Single(s => s.Svc == "fresh").AgeSeconds.Should().BeInRange(25, 90);
@@ -88,7 +88,7 @@ public sealed class HealthToolsTests : IDisposable
 		Push("api", Proj, "ok", DateTime.UtcNow.AddSeconds(-5));
 
 		var http = Http("health:read");
-		var res = await HealthTools.SearchAsync(http, _db.Factory(), Proj);
+		var res = await HealthTools.SearchAsync(http, _db.Factory().HealthReports(), Proj);
 
 		var iso = res.Services.Single().ReceivedAt;
 		iso.Should().Contain("T").And.EndWith("Z"); // ISO 'T' separator + UTC 'Z', not the stored space form
@@ -103,7 +103,7 @@ public sealed class HealthToolsTests : IDisposable
 		// A key scoped to another project may not read this project.
 		var other = Http("health:read", project: "other");
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			HealthTools.SearchAsync(other, _db.Factory(), Proj));
+			HealthTools.SearchAsync(other, _db.Factory().HealthReports(), Proj));
 	}
 
 	[Fact]
@@ -114,7 +114,7 @@ public sealed class HealthToolsTests : IDisposable
 		Push("theirs", "other", "ok", now);
 
 		var http = Http("health:read");
-		var res = await HealthTools.SearchAsync(http, _db.Factory(), Proj);
+		var res = await HealthTools.SearchAsync(http, _db.Factory().HealthReports(), Proj);
 		res.Services.Select(s => s.Svc).Should().Equal("mine"); // "theirs" belongs to another project
 	}
 
@@ -125,7 +125,7 @@ public sealed class HealthToolsTests : IDisposable
 		Push("theirs", "other", "ok", now);
 
 		var star = Http("health:read", project: "*");
-		var res = await HealthTools.SearchAsync(star, _db.Factory(), "other");
+		var res = await HealthTools.SearchAsync(star, _db.Factory().HealthReports(), "other");
 		res.Services.Single().Svc.Should().Be("theirs");
 	}
 
@@ -134,7 +134,7 @@ public sealed class HealthToolsTests : IDisposable
 	{
 		var http = Http("health:write"); // write, not read
 		await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-			HealthTools.SearchAsync(http, _db.Factory(), Proj));
+			HealthTools.SearchAsync(http, _db.Factory().HealthReports(), Proj));
 	}
 
 	[Fact]
@@ -148,13 +148,13 @@ public sealed class HealthToolsTests : IDisposable
 		var http = Http("health:read");
 
 		// window bounds the age; the 500s-old entry is excluded.
-		var windowed = await HealthTools.SearchAsync(http, _db.Factory(), Proj, window: 300);
+		var windowed = await HealthTools.SearchAsync(http, _db.Factory().HealthReports(), Proj, window: 300);
 		var api = windowed.Services.Single();
 		api.History.Should().NotBeNull();
 		api.History!.Select(h => h.Status).Should().Equal("ok", "degraded"); // most-recent first, 500s one dropped
 
 		// limit caps the count (most-recent first).
-		var limited = await HealthTools.SearchAsync(http, _db.Factory(), Proj, limit: 1);
+		var limited = await HealthTools.SearchAsync(http, _db.Factory().HealthReports(), Proj, limit: 1);
 		limited.Services.Single().History!.Should().ContainSingle()
 			.Which.Status.Should().Be("ok");
 	}
@@ -167,7 +167,7 @@ public sealed class HealthToolsTests : IDisposable
 		Push("worker", Proj, "ok", now);
 
 		var http = Http("health:read");
-		var res = await HealthTools.SearchAsync(http, _db.Factory(), Proj, svc: "worker");
+		var res = await HealthTools.SearchAsync(http, _db.Factory().HealthReports(), Proj, svc: "worker");
 		res.Services.Single().Svc.Should().Be("worker");
 	}
 

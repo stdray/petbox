@@ -1,12 +1,9 @@
 using System.ComponentModel;
 using System.Text.RegularExpressions;
-using LinqToDB;
-using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
-using PetBox.Core.Models;
+using PetBox.Web.Auth;
 using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
@@ -33,7 +30,7 @@ public static partial class ProjectTools
 		smoke-test / throwaway traffic that must never land in a real project.
 		""")]
 	public static async Task<ProjectCreatedResult> CreateAsync(
-		IHttpContextAccessor http, ICoreDbFactory dbf,
+		IHttpContextAccessor http, IProjectDirectory projects,
 		[Description("Workspace the project belongs to.")] string workspaceKey,
 		[Description("Project key (^[a-z][a-z0-9_-]{0,99}$).")] string key,
 		[Description("Display name (defaults to the key).")] string? name = null,
@@ -41,43 +38,43 @@ public static partial class ProjectTools
 		[Description("Marks this a SANDBOX project — the write-gate containment target for sandbox-only API keys. Default false.")] bool sandbox = false,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
 		if (string.IsNullOrWhiteSpace(workspaceKey)) throw new ArgumentException("workspaceKey is required");
 		if (string.IsNullOrWhiteSpace(key) || !KeyRegex().IsMatch(key))
 			throw new ArgumentException($"key '{key}' is invalid; must match ^[a-z][a-z0-9_-]{{0,99}}$");
 
-		if (!await db.Workspaces.AnyAsync((Workspace w) => w.Key == workspaceKey, ct))
-			throw new InvalidOperationException($"Workspace '{workspaceKey}' not found");
-		if (await db.Projects.AnyAsync((Project p) => p.Key == key, ct))
-			throw new InvalidOperationException($"Project '{key}' already exists");
+		// IProjectDirectory is THE catalog: the workspace-exists / reserved-key / $system / duplicate
+		// rules live there, so this tool cannot drift from the admin page that creates projects too.
+		var result = await projects.CreateAsync(
+			workspaceKey, key, string.IsNullOrWhiteSpace(name) ? key : name!, description, sandbox, ct);
 
-		await db.InsertAsync(new Project
+		return result switch
 		{
-			Key = key,
-			WorkspaceKey = workspaceKey,
-			Name = string.IsNullOrWhiteSpace(name) ? key : name!,
-			Description = description ?? string.Empty,
-			Sandbox = sandbox,
-		}, token: ct);
-		return new ProjectCreatedResult(key, workspaceKey, name, description, sandbox);
+			ProjectChangeResult.Created => new ProjectCreatedResult(key, workspaceKey, name, description, sandbox),
+			// NotFound out of a CREATE is the workspace — the project is what we are making.
+			ProjectChangeResult.NotFound => throw new InvalidOperationException($"Workspace '{workspaceKey}' not found"),
+			ProjectChangeResult.Refused r => throw new InvalidOperationException(r.Reason),
+			_ => throw new InvalidOperationException("Project could not be created"),
+		};
 	}
 
 	[McpServerTool(Name = "project_list", Title = "List projects", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(ProjectListResult))]
 	[Description("Lists projects, optionally scoped to one workspace. Requires admin:provision.")]
 	public static async Task<ProjectListResult> ListAsync(
-		IHttpContextAccessor http, ICoreDbFactory dbf,
+		IHttpContextAccessor http, IProjectDirectory projects,
 		[Description("Restrict to one workspace; omit for all projects.")] string? workspaceKey = null,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertScope(http, ApiKeyScopes.AdminProvision);
-		var q = db.Projects.AsQueryable();
-		if (!string.IsNullOrEmpty(workspaceKey))
-			q = q.Where(p => p.WorkspaceKey == workspaceKey);
-		var rows = await q.OrderBy(p => p.Key)
-			.Select(p => new ProjectRow(p.Key, p.WorkspaceKey, p.Name, p.Description, p.Sandbox))
-			.ToListAsync(ct);
-		return new ProjectListResult(rows);
+
+		// includeContainers: this is the ADMIN/provisioning view — the $ws-* memory containers are real
+		// Projects rows here, and hiding them from a provisioning agent (which the pages' default does,
+		// because a container is not a user project) would change what this tool has always answered.
+		var rows = string.IsNullOrEmpty(workspaceKey)
+			? await projects.ListAllAsync(includeContainers: true, ct)
+			: await projects.ListAsync(workspaceKey, includeContainers: true, ct);
+
+		return new ProjectListResult(
+			[.. rows.Select(p => new ProjectRow(p.Key, p.WorkspaceKey, p.Name, p.Description, p.Sandbox))]);
 	}
 }

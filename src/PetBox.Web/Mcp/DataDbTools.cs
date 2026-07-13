@@ -1,134 +1,93 @@
 using System.ComponentModel;
-using LinqToDB;
-using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
-using Microsoft.Data.Sqlite;
 using ModelContextProtocol.Server;
 using PetBox.Core.Auth;
-using PetBox.Core.Data;
-using PetBox.Core.Models;
-using PetBox.Data;
-using PetBox.Data.Schema;
+using PetBox.Data.Contract;
 using PetBox.Web.Mcp.Contract;
 
 namespace PetBox.Web.Mcp;
 
 // DataDb lifecycle MCP tools (db_create / db_list / db_delete / db_describe) — de-collapsed
 // from the old generic entity.* tools into typed per-type tools (typed-surface Phase 4).
-// Kept in its OWN type, separate from DataTools, so DataTools stays free of a raw
-// Microsoft.Data.Sqlite dependency (a NetArchTest guards that). db_describe legitimately
-// introspects the schema over its own connection — same as the old entity.describe did.
-// Scopes: data:schema (create/delete) / data:read (list/describe), project-scoped. Tools
-// throw on a failed Assert*; McpErrorEnvelopeFilter renders the structured {error} body.
+// Kept in its OWN type, separate from DataTools (a NetArchTest guards that DataTools carries no
+// raw Microsoft.Data.Sqlite dependency).
+//
+// Neither core.db nor the DataDb files are opened here: the rows-plus-file lifecycle and the
+// schema introspection live in IDataDbCatalog, the one door onto the DataDbs catalog (AGENTS.md:
+// the database is visible only in the service layer). The project is proven FIRST (AssertProject
+// → the key's claim, incl. sandbox containment) and the scope second; the catalog then takes the
+// project as part of the address, so a call can only ever reach its own project's DataDbs.
+// Tools throw on a failed Assert*; McpErrorEnvelopeFilter renders the structured {error} body.
 [McpServerToolType]
 public static class DataDbTools
 {
 	[McpServerTool(Name = "db_create", Title = "Create a DataDb", UseStructuredContent = true, OutputSchemaType = typeof(DataDbCreatedResult))]
 	[Description("Creates a named DataDb (user-data SQLite file) in a project. Requires data:schema scope. `maxPageCount` caps the file size (default ~1 GB at 4 KB pages).")]
 	public static async Task<DataDbCreatedResult> CreateAsync(
-		IHttpContextAccessor http, ICoreDbFactory dbf, IDataDbFactory factory,
+		IHttpContextAccessor http, IDataDbCatalog catalog,
 		string projectKey, string name,
 		[Description("Optional description.")] string? description = null,
 		[Description("Page-count quota (default ~262144 = ~1 GB).")] long? maxPageCount = null,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
-		if (await db.DataDbs.AnyAsync((DataDb d) => d.ProjectKey == projectKey && d.Name == name, ct))
-			throw new InvalidOperationException($"DataDb '{name}' already exists");
 
-		var quota = maxPageCount ?? DataDbFactory.DefaultMaxPageCount;
-		await factory.CreateAsync(projectKey, name, quota, ct);
-		var now = DateTime.UtcNow;
-		await db.InsertAsync(new DataDb
+		var result = await catalog.CreateAsync(projectKey, name, description, maxPageCount, ct);
+		return result switch
 		{
-			ProjectKey = projectKey,
-			Name = name,
-			Description = description,
-			MaxPageCount = quota,
-			CreatedAt = now,
-			UpdatedAt = now,
-		}, token: ct);
-		return new DataDbCreatedResult(name, description, quota, now);
+			DataDbChangeResult.Created c => new DataDbCreatedResult(c.Db.Name, c.Db.Description, c.Db.MaxPageCount, c.Db.CreatedAt),
+			DataDbChangeResult.Conflict k => throw new InvalidOperationException(k.Reason),
+			DataDbChangeResult.Refused r => throw new ArgumentException(r.Reason),
+			_ => throw new InvalidOperationException("DataDb could not be created"),
+		};
 	}
 
 	[McpServerTool(Name = "db_list", Title = "List DataDbs", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbListResult))]
 	[Description("Lists a project's DataDbs (name, description, quota, timestamps). Requires data:read scope.")]
 	public static async Task<DataDbListResult> ListAsync(
-		IHttpContextAccessor http, ICoreDbFactory dbf,
+		IHttpContextAccessor http, IDataDbCatalog catalog,
 		string projectKey, CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataRead);
-		var rows = await db.DataDbs
-			.Where(d => d.ProjectKey == projectKey)
-			.OrderBy(d => d.Name)
-			.Select(d => new DataDbRow(d.Name, d.Description, d.MaxPageCount, d.CreatedAt, d.UpdatedAt))
-			.ToListAsync(ct);
-		return new DataDbListResult(rows);
+		var rows = await catalog.ListAsync(projectKey, ct);
+		return new DataDbListResult(
+			[.. rows.Select(d => new DataDbRow(d.Name, d.Description, d.MaxPageCount, d.CreatedAt, d.UpdatedAt))]);
 	}
 
 	[McpServerTool(Name = "db_delete", Title = "Delete a DataDb", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDeletedResult))]
 	[Description("Deletes a DataDb and its on-disk file. Requires data:schema scope.")]
 	public static async Task<DataDbDeletedResult> DeleteAsync(
-		IHttpContextAccessor http, ICoreDbFactory dbf, IDataDbFactory factory,
+		IHttpContextAccessor http, IDataDbCatalog catalog,
 		string projectKey, string name, CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataSchema);
 		if (string.IsNullOrWhiteSpace(name)) throw new ArgumentException("name is required");
-		var deleted = await db.DataDbs.Where(d => d.ProjectKey == projectKey && d.Name == name).DeleteAsync(ct);
-		if (deleted == 0) throw new InvalidOperationException("DataDb not found");
-		factory.TryDelete(projectKey, name);
+
+		var result = await catalog.DeleteAsync(projectKey, name, ct);
+		if (result is not DataDbChangeResult.Deleted) throw new InvalidOperationException("DataDb not found");
 		return new DataDbDeletedResult(true, name);
 	}
 
 	[McpServerTool(Name = "db_describe", Title = "Describe a DataDb", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(DataDbDescribeResult))]
 	[Description("Returns a DataDb's tables and their columns (name, type, notNull, pk). Requires data:read scope.")]
 	public static async Task<DataDbDescribeResult> DescribeAsync(
-		IHttpContextAccessor http, ICoreDbFactory dbf, IDataDbFactory factory,
+		IHttpContextAccessor http, IDataDbCatalog catalog,
 		string projectKey, string dbName, CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		await ModuleMcp.AssertProject(http, projectKey, ct);
 		AssertScope(http, ApiKeyScopes.DataRead);
-		var row = await db.DataDbs.FirstOrDefaultAsync(
-			(DataDb d) => d.ProjectKey == projectKey && d.Name == dbName, ct);
-		if (row is null) throw new InvalidOperationException("DataDb not found");
 
-		var cs = factory.GetConnectionString(projectKey, dbName);
-		await using var conn = new SqliteConnection(cs);
-		await conn.OpenAsync(ct);
+		var tables = await catalog.DescribeAsync(projectKey, dbName, ct)
+			?? throw new InvalidOperationException("DataDb not found");
 
-		var names = new List<string>();
-		await using (var cmd = conn.CreateCommand())
-		{
-			cmd.CommandText = "SELECT name FROM sqlite_master WHERE type='table' "
-				+ "AND name NOT LIKE 'sqlite_%' AND name <> @journal ORDER BY name";
-			var p = cmd.CreateParameter();
-			p.ParameterName = "@journal";
-			p.Value = SchemaRunner.JournalTableName;
-			cmd.Parameters.Add(p);
-			await using var reader = await cmd.ExecuteReaderAsync(ct);
-			while (await reader.ReadAsync(ct)) names.Add(reader.GetString(0));
-		}
-
-		var tables = new List<DataTableView>();
-		foreach (var tableName in names)
-		{
-			var cols = new List<DataColumnView>();
-			await using var cmd = conn.CreateCommand();
-			cmd.CommandText = $"PRAGMA table_info(\"{tableName.Replace("\"", "\"\"")}\")";
-			await using var reader = await cmd.ExecuteReaderAsync(ct);
-			while (await reader.ReadAsync(ct))
-				cols.Add(new DataColumnView(reader.GetString(1), reader.GetString(2), reader.GetInt32(3) == 1, reader.GetInt32(5) > 0));
-			tables.Add(new DataTableView(tableName, cols));
-		}
-		return new DataDbDescribeResult(tables);
+		return new DataDbDescribeResult(
+			[.. tables.Select(t => new DataTableView(
+				t.Name,
+				[.. t.Columns.Select(c => new DataColumnView(c.Name, c.Type, c.NotNull, c.PrimaryKey))]))]);
 	}
 
 	static void AssertScope(IHttpContextAccessor accessor, string required)

@@ -173,10 +173,10 @@ public sealed class MemoryUsage2dTests : IDisposable
 		Deliver("k", chars: 400, kRel: 0.25, times: 2);
 		await _recorder.FlushAsync();
 
-		var plain = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory(), _memory, Proj);
+		var plain = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj);
 		plain.Stores.Single(s => s.Name == Store).Usage.Should().BeNull(); // still off by default
 
-		var res = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory(), _memory, Proj, includeUsage: true);
+		var res = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, includeUsage: true);
 		var usage = res.Stores.Single(s => s.Name == Store).Usage;
 
 		usage.Should().NotBeNull();
@@ -195,10 +195,10 @@ public sealed class MemoryUsage2dTests : IDisposable
 		DeliverAt("k", chars: 5_000, kRel: 0.1, DateTime.UtcNow.AddDays(-40));
 		await _recorder.FlushAsync();
 
-		var narrow = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory(), _memory, Proj, includeUsage: true);
+		var narrow = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, includeUsage: true);
 		narrow.Stores.Single(s => s.Name == Store).Usage!.DeliveredChars.Should().Be(0);
 
-		var wide = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory(), _memory, Proj, includeUsage: true, usageWindowDays: 90);
+		var wide = await MemoryTools.StoreListAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, Proj, includeUsage: true, usageWindowDays: 90);
 		var usage = wide.Stores.Single(s => s.Name == Store).Usage!;
 		usage.WindowDays.Should().Be(90);
 		usage.DeliveredChars.Should().Be(5_000);
@@ -219,14 +219,14 @@ public sealed class MemoryUsage2dTests : IDisposable
 
 		// Usage is read BEFORE this call records its own delivery, so the numbers are the two
 		// events above — the search does not count itself.
-		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", store: Store, includeUsage: true);
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", store: Store, includeUsage: true);
 		var hit = res.Items.Single();
 
 		hit.DeliveredChars.Should().Be(600);
 		hit.AvgKRel.Should().BeApproximately(0.75, 1e-9);
 		hit.Surfaced.Should().NotBeNull(); // the old counters still ride along
 
-		var plain = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", store: Store);
+		var plain = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", store: Store);
 		plain.Items[0].DeliveredChars.Should().BeNull(); // omitted unless asked
 		plain.Items[0].AvgKRel.Should().BeNull();
 	}

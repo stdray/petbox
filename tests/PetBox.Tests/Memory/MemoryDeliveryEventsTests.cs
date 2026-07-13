@@ -92,7 +92,7 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 	{
 		await Seed("u1", "u2");
 
-		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
 		await _recorder.FlushAsync();
 
 		res.Items.Should().HaveCount(2);
@@ -139,7 +139,7 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 	{
 		await Seed("u1", "u2", "u3");
 
-		var res = await MemoryTools.GetAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, Proj, "notes",
+		var res = await MemoryTools.GetAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, Proj, "notes",
 			keys: ["u3", "u1", "nope"]);
 		await _recorder.FlushAsync();
 
@@ -166,7 +166,7 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 	{
 		await Seed("u1");
 
-		await MemoryTools.GetAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, Proj, "notes", "u1");
+		await MemoryTools.GetAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, Proj, "notes", "u1");
 		await _recorder.FlushAsync();
 
 		var e = Events().Should().ContainSingle().Subject;
@@ -191,7 +191,7 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 	{
 		await Seed("u1", "u2");
 
-		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, scope: "project", store: "notes");
+		var res = await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, scope: "project", store: "notes");
 		await _recorder.FlushAsync();
 
 		var events = Events();
@@ -206,7 +206,7 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 	{
 		await Seed("u1");
 
-		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes", usageSource: "machine");
+		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes", usageSource: "machine");
 		await _recorder.FlushAsync();
 
 		Events().Should().OnlyContain(e => e.UsageSource == "machine");
@@ -219,8 +219,8 @@ public sealed class MemoryDeliveryEventsTests : IDisposable
 	{
 		await Seed("u1");
 
-		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
-		await MemoryTools.GetAsync(Http(), Flags(), _db.Factory(), _memory, _recorder, Proj, "notes", "u1");
+		await MemoryTools.SearchAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, "телеметрию", scope: "project", store: "notes");
+		await MemoryTools.GetAsync(Http(), Flags(), _db.Factory().WorkspaceMemory(), _memory, _recorder, Proj, "notes", "u1");
 		await _recorder.FlushAsync();
 
 		var u = (await _memory.GetUsageAsync(Proj, "notes"))["u1"];

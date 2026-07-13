@@ -26,15 +26,14 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_store_create", Title = "Create a memory store", UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreCreatedResult))]
 	[Description("CREATE a named memory store. `scope`: project (default) | workspace. Requires memory:write.")]
 	public static async Task<MemoryStoreCreatedResult> StoreCreateAsync(
-		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, string store, string? description = null,
 		[Description("project | workspace (default project).")] string? scope = null,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		projectKey = (await ResolveScopeAsync(http, db, projectKey, scope, ct)).Key;
-		await AssertMemoryProjectAsync(http, db, projectKey, ct);
+		projectKey = (await ResolveScopeAsync(http, wsmem, projectKey, scope, ct)).Key;
+		await AssertMemoryProjectAsync(http, wsmem, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var meta = await memory.CreateStoreAsync(projectKey, store, description, ct);
 		return new MemoryStoreCreatedResult(meta.ProjectKey, meta.Name, meta.Description, meta.CreatedAt);
@@ -56,21 +55,20 @@ public static class MemoryTools
 		apart. Reading this does NOT count as usage (curation, not an impression).
 		""")]
 	public static async Task<MemoryStoreListResult> StoreListAsync(
-		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string? projectKey = null,
 		[Description("Attach a per-store usage aggregate (coverage, median recency, dead tail, window cost/fit) (default false).")] bool includeUsage = false,
 		[LogArg][Description("Trailing window (days) the usage cost/fit is measured over (default 30). Ignored without includeUsage.")] int? usageWindowDays = null,
 		[Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var rows = new List<MemoryStoreRow>();
-		foreach (var (scopeName, container) in await SearchContainersAsync(http, db, projectKey, scope, ct))
+		foreach (var (scopeName, container) in await SearchContainersAsync(http, wsmem, projectKey, scope, ct))
 		{
 			ct.ThrowIfCancellationRequested();
-			try { await AssertMemoryProjectAsync(http, db, container, ct); }
+			try { await AssertMemoryProjectAsync(http, wsmem, container, ct); }
 			catch (UnauthorizedAccessException) { continue; }
 			var list = await memory.ListStoresAsync(container, ct);
 			foreach (var s in list)
@@ -97,15 +95,14 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_store_delete", Title = "Delete a memory store", Destructive = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryStoreDeletedResult))]
 	[Description("Delete a memory store and its entries. `scope`: project (default) | workspace. Requires memory:write.")]
 	public static async Task<MemoryStoreDeletedResult> StoreDeleteAsync(
-		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, string store,
 		[Description("project | workspace (default project).")] string? scope = null,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		projectKey = (await ResolveScopeAsync(http, db, projectKey, scope, ct)).Key;
-		await AssertMemoryProjectAsync(http, db, projectKey, ct);
+		projectKey = (await ResolveScopeAsync(http, wsmem, projectKey, scope, ct)).Key;
+		await AssertMemoryProjectAsync(http, wsmem, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		return new MemoryStoreDeletedResult(await memory.DeleteStoreAsync(projectKey, store, ct));
 	}
@@ -124,14 +121,13 @@ public static class MemoryTools
 		the same cascade contract as memory_search. Requires memory:read.
 		""")]
 	public static async Task<MemoryGetResultView> GetAsync(
-		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory, IMemoryUsageRecorder usage,
+		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory, IMemoryUsageRecorder usage,
 		string projectKey, string store,
 		[Description("One key to read. Combine with `keys` or use either alone.")] string? key = null,
 		[Description("Batch of keys read in ONE call; a key that matches nothing is silently dropped (soft filter).")] string[]? keys = null,
 		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
@@ -153,10 +149,10 @@ public static class MemoryTools
 		// Where each entry was read from — a cascade answer may mix containers, and a delivery
 		// event belongs in the file of the container that served it.
 		var origin = new Dictionary<string, (string Container, string Scope)>(StringComparer.Ordinal);
-		foreach (var (scopeName, container) in await SearchContainersAsync(http, db, projectKey, scope, ct))
+		foreach (var (scopeName, container) in await SearchContainersAsync(http, wsmem, projectKey, scope, ct))
 		{
 			ct.ThrowIfCancellationRequested();
-			try { await AssertMemoryProjectAsync(http, db, container, ct); }
+			try { await AssertMemoryProjectAsync(http, wsmem, container, ct); }
 			catch (UnauthorizedAccessException) { continue; }
 			var missing = wanted.Where(k => !found.ContainsKey(k)).ToList();
 			if (missing.Count == 0) break;
@@ -231,7 +227,7 @@ public static class MemoryTools
 		for a full delta since a cursor, call memory_delta with it as `sinceVersion`.
 		""")]
 	public static async Task<MemoryUpsertResultView> UpsertAsync(
-		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, string store,
 		[Description("Array of entry objects: { key, type, description, body, tags? (array of strings), metadata?, version?, prevKey? }, or { key, deleted:true } to soft-delete.")] MemoryEntryInputDto[] entries,
 		[Description("Body length knob (uniform contract): omitted = NO body (the compact ack default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
@@ -239,10 +235,9 @@ public static class MemoryTools
 		[Description("Batch policy. TRUE (default) = ATOMIC: any conflict/refusal aborts the WHOLE call, nothing is written. FALSE = PARTIAL apply (explicit opt-in): valid entries LAND, each refused entry comes back in conflicts[] with its own reason — a STALE baseline is then a refusal of THAT ENTRY, not of the call. Memory entries cannot reference each other, so nothing cascades: every entry is independent.")] bool atomic = true,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
-		projectKey = (await ResolveScopeAsync(http, db, projectKey, scope, ct)).Key;
-		await AssertMemoryProjectAsync(http, db, projectKey, ct);
+		projectKey = (await ResolveScopeAsync(http, wsmem, projectKey, scope, ct)).Key;
+		await AssertMemoryProjectAsync(http, wsmem, projectKey, ct);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		var (upserts, deletes) = ParseEntries(entries);
 		return Serialize(await memory.UpsertAsync(projectKey, store, upserts, deletes, atomic, ct), bodyLen);
@@ -251,20 +246,19 @@ public static class MemoryTools
 	[McpServerTool(Name = "memory_delta", Title = "Memory delta since cursor", ReadOnly = true, UseStructuredContent = true, OutputSchemaType = typeof(MemoryUpsertResultView))]
 	[Description("Return entries added/updated/removed since `sinceVersion` (no writes) — THE cursor/catch-up surface. `scope`: project (default) | workspace. Omit to CASCADE project first, then workspace — the same cascade contract as memory_search. Bodies follow the uniform bodyLen knob (compact by default). Requires memory:read.")]
 	public static async Task<MemoryUpsertResultView> DeltaAsync(
-		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string projectKey, string store, long sinceVersion,
 		[Description("Body length knob (uniform contract): omitted = NO body (compact default); 0 = no body; N>0 = the first N chars (\"…\" when cut); -1 = the full body.")] int? bodyLen = null,
 		[Description("project | workspace; omit to cascade project first, then workspace.")] string? scope = null,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 
-		foreach (var (scopeName, container) in await SearchContainersAsync(http, db, projectKey, scope, ct))
+		foreach (var (scopeName, container) in await SearchContainersAsync(http, wsmem, projectKey, scope, ct))
 		{
 			ct.ThrowIfCancellationRequested();
-			try { await AssertMemoryProjectAsync(http, db, container, ct); }
+			try { await AssertMemoryProjectAsync(http, wsmem, container, ct); }
 			catch (UnauthorizedAccessException) { continue; }
 			return Serialize(await memory.DeltaAsync(container, store, sinceVersion, ct), bodyLen);
 		}
@@ -298,7 +292,7 @@ public static class MemoryTools
 	// project claim is the wildcard "*" or names a project whose WorkspaceKey equals the
 	// container's WorkspaceKey. For every other target this is exactly AssertProject, so no
 	// non-memory module gains container access.
-	static async Task AssertMemoryProjectAsync(IHttpContextAccessor http, PetBoxDb db, string projectKey, CancellationToken ct)
+	static async Task AssertMemoryProjectAsync(IHttpContextAccessor http, IWorkspaceMemoryDirectory wsmem, string projectKey, CancellationToken ct)
 	{
 		if (!WorkspaceMemory.IsWorkspaceContainer(projectKey))
 		{
@@ -308,13 +302,10 @@ public static class MemoryTools
 		var ctx = http.HttpContext ?? throw new InvalidOperationException("No HttpContext");
 		var claim = ctx.User.Claims.FirstOrDefault(c => c.Type == "project")?.Value;
 		if (claim == ProjectScope.AllProjects) return;
-		var rows = await db.Projects
-			.Where(p => p.Key == projectKey || p.Key == claim)
-			.Select(p => new { p.Key, p.WorkspaceKey })
-			.ToListAsync(ct);
-		var containerWs = rows.FirstOrDefault(p => p.Key == projectKey)?.WorkspaceKey;
-		var callerWs = rows.FirstOrDefault(p => p.Key == claim)?.WorkspaceKey;
-		if (containerWs is null || callerWs is null || !string.Equals(callerWs, containerWs, StringComparison.Ordinal))
+
+		// The container is reachable only by keys of projects IN ITS OWN WORKSPACE — the predicate is
+		// IWorkspaceMemoryDirectory's, welded into one read, not re-derived here.
+		if (!await wsmem.ReachableByAsync(projectKey, claim, ct))
 			throw new UnauthorizedAccessException(
 				$"ApiKey is not scoped to project '{projectKey}' (the shared container is reachable only by keys of projects in its workspace)");
 	}
@@ -339,17 +330,16 @@ public static class MemoryTools
 		Returns { id, scope, store, key }.
 		""")]
 	public static async Task<MemoryRememberResult> RememberAsync(
-		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory,
+		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory,
 		string text, string? scope = null, string? projectKey = null, string? store = null,
 		string? type = null, string[]? tags = null, string? description = null,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryWrite);
 		if (string.IsNullOrWhiteSpace(text)) throw new ArgumentException("text is required");
-		var container = await ResolveScopeAsync(http, db, projectKey, scope, ct);
-		await AssertMemoryProjectAsync(http, db, container.Key, ct);
+		var container = await ResolveScopeAsync(http, wsmem, projectKey, scope, ct);
+		await AssertMemoryProjectAsync(http, wsmem, container.Key, ct);
 		var st = NormalizeStore(store);
 		var key = "m-" + Guid.NewGuid().ToString("N");
 		var input = new MemoryEntryInput
@@ -430,7 +420,7 @@ public static class MemoryTools
 		hit below the relevance floor is dropped, so `limit` is a CEILING, not a plan (a query can return fewer rows).
 		""")]
 	public static async Task<MemorySearchResultView> SearchAsync(
-		IHttpContextAccessor http, FeatureFlags features, ICoreDbFactory dbf, IMemoryService memory, IMemoryUsageRecorder usage,
+		IHttpContextAccessor http, FeatureFlags features, IWorkspaceMemoryDirectory wsmem, IMemoryService memory, IMemoryUsageRecorder usage,
 		[LogArg(LogArgMode.Presence)][Description("Search query. Omit for a deterministic listing (list = search without q).")] string? q = null,
 		[LogArg][Description("project | workspace; omit to cascade both (rows labelled by scope, project first).")] string? scope = null,
 		string? projectKey = null,
@@ -443,7 +433,6 @@ public static class MemoryTools
 		[Description("Usage-signal source of the impression this search records (with q): \"deliberate\" (default — a human/agent intentionally searched, counts toward the honest value signal) or \"machine\" (an automatic hook/context pull — bumps only the raw surfaced count, never the deliberate cut GC trusts). Automated wiring-kit pulls should pass \"machine\".")] string? usageSource = null,
 		CancellationToken ct = default)
 	{
-		using var db = dbf.Open();
 		ModuleMcp.AssertFeature(features, Feature.Memory);
 		ModuleMcp.AssertScope(http, ApiKeyScopes.MemoryRead);
 		var hasQuery = !string.IsNullOrWhiteSpace(q);
@@ -461,11 +450,11 @@ public static class MemoryTools
 		// legs that ran; degraded = OR (any leg that wanted semantic but couldn't).
 		SearchRetrievers? retrievers = null;
 		var scopeRank = -1;
-		foreach (var (scopeName, container) in await SearchContainersAsync(http, db, projectKey, scope, ct))
+		foreach (var (scopeName, container) in await SearchContainersAsync(http, wsmem, projectKey, scope, ct))
 		{
 			ct.ThrowIfCancellationRequested();
 			// Skip containers the key cannot reach (foreign workspace container, etc.).
-			try { await AssertMemoryProjectAsync(http, db, container, ct); }
+			try { await AssertMemoryProjectAsync(http, wsmem, container, ct); }
 			catch (UnauthorizedAccessException) { continue; }
 			scopeRank++;
 			// QUERY: give each scope the FULL cap so both pools compete on merit — the honest
@@ -673,18 +662,18 @@ public static class MemoryTools
 	// may address $workspace / $ws-* directly as projectKey). A "*" key with NO default and no
 	// projectKey resolves nothing and throws ArgumentException.
 	static async Task<(string Scope, string Key)> ResolveScopeAsync(
-		IHttpContextAccessor http, PetBoxDb db, string? projectKey, string? scope, CancellationToken ct)
+		IHttpContextAccessor http, IWorkspaceMemoryDirectory wsmem, string? projectKey, string? scope, CancellationToken ct)
 	{
 		var s = scope?.Trim().ToLowerInvariant();
 		if ((s is null or "" or "project")
 			&& projectKey is not null
 			&& WorkspaceMemory.IsWorkspaceContainer(projectKey))
-			return ("workspace", await DirectContainerAsync(db, projectKey, ct));
+			return ("workspace", await DirectContainerAsync(wsmem, projectKey, ct));
 
 		return s switch
 		{
 			null or "" or "project" => ("project", await ModuleMcp.ResolveProject(http, projectKey, ct)),
-			"workspace" => ("workspace", await ResolveCallerWorkspaceContainerAsync(http, db, projectKey, ct)),
+			"workspace" => ("workspace", await ResolveCallerWorkspaceContainerAsync(http, wsmem, projectKey, ct)),
 			_ => throw new ArgumentException($"invalid scope '{s}' (project|workspace)"),
 		};
 	}
@@ -694,23 +683,23 @@ public static class MemoryTools
 	// only when it names a workspace that EXISTS (WorkspaceMemory.EnsureAddressedContainerAsync); a
 	// typo'd "$ws-nosuch" stays a rejection (McpProjectExistsFilter refuses it, and for a key the filter
 	// skips, AssertMemoryProjectAsync below still does) rather than becoming a fresh container row.
-	static async Task<string> DirectContainerAsync(PetBoxDb db, string container, CancellationToken ct)
+	static async Task<string> DirectContainerAsync(IWorkspaceMemoryDirectory wsmem, string container, CancellationToken ct)
 	{
-		await WorkspaceMemory.EnsureAddressedContainerAsync(db, container, ct);
+		await wsmem.EnsureAddressedContainerAsync(container, ct);
 		return container;
 	}
 
 	// Caller's project → WorkspaceKey → WorkspaceMemory.ContainerKeyFor, ensuring the row.
 	// A direct container projectKey passes through (ensured the same way).
 	static async Task<string> ResolveCallerWorkspaceContainerAsync(
-		IHttpContextAccessor http, PetBoxDb db, string? projectKey, CancellationToken ct)
+		IHttpContextAccessor http, IWorkspaceMemoryDirectory wsmem, string? projectKey, CancellationToken ct)
 	{
 		if (projectKey is not null && WorkspaceMemory.IsWorkspaceContainer(projectKey))
-			return await DirectContainerAsync(db, projectKey, ct);
+			return await DirectContainerAsync(wsmem, projectKey, ct);
 		// ResolveProject throws ArgumentException for a "*" key with no default and no
 		// projectKey — intentional (nothing to derive a workspace from).
 		var proj = await ModuleMcp.ResolveProject(http, projectKey, ct);
-		return await WorkspaceMemory.ResolveAndEnsureContainerAsync(db, proj, ct);
+		return await wsmem.ResolveContainerForProjectAsync(proj, ct);
 	}
 
 	// The ordered list of (scope, container) memory_search reads. A single scope → that
@@ -727,11 +716,11 @@ public static class MemoryTools
 	// the whole search (admin/wiring bare memory_search("q") must degrade to empty, not throw).
 	// Explicit scope=project|workspace still throws via ResolveScopeAsync when unresolvable.
 	static async Task<List<(string Scope, string Key)>> SearchContainersAsync(
-		IHttpContextAccessor http, PetBoxDb db, string? projectKey, string? scope, CancellationToken ct)
+		IHttpContextAccessor http, IWorkspaceMemoryDirectory wsmem, string? projectKey, string? scope, CancellationToken ct)
 	{
 		var s = scope?.Trim().ToLowerInvariant();
 		if (!string.IsNullOrEmpty(s) && s != "all" && s != "cascade")
-			return [await ResolveScopeAsync(http, db, projectKey, s, ct)];
+			return [await ResolveScopeAsync(http, wsmem, projectKey, s, ct)];
 
 		var list = new List<(string, string)>();
 		string? resolvedProject = null;
@@ -750,7 +739,7 @@ public static class MemoryTools
 		}
 		try
 		{
-			var wsContainer = await ResolveCallerWorkspaceContainerAsync(http, db, forWs, ct);
+			var wsContainer = await ResolveCallerWorkspaceContainerAsync(http, wsmem, forWs, ct);
 			if (!list.Any(c => c.Item2 == wsContainer))
 				list.Add(("workspace", wsContainer));
 		}

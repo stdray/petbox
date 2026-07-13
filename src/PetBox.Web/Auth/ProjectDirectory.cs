@@ -55,6 +55,12 @@ public interface IProjectDirectory
 	Task<IReadOnlyList<Project>> ListAsync(
 		string workspaceKey, bool includeContainers = false, CancellationToken ct = default);
 
+	// EVERY project, across every workspace, ordered by key — the fleet-wide view the provisioning
+	// surface (project_list with no workspace) asks for. It is NOT a page's question: a page always has
+	// a workspace, and asking this one there would be the IDOR. `includeContainers` admits the $ws-*
+	// memory containers, which the admin/provisioning surfaces do see.
+	Task<IReadOnlyList<Project>> ListAllAsync(bool includeContainers = false, CancellationToken ct = default);
+
 	// The user projects of SEVERAL workspaces at once, grouped by workspace key — the sidebar's whole
 	// project tree in ONE read. NavigationContext used to open core.db 3-4 times per request to build
 	// this; that is the measured cost this method exists to collapse.
@@ -65,9 +71,12 @@ public interface IProjectDirectory
 
 	// Create a project IN a workspace. The workspace comes from the caller's ROUTE, never from a form
 	// field (authz-bypass-project-create), and the key rules — reserved URL segments, no projects in
-	// $system, no duplicate — are enforced HERE so that a second create page cannot forget one of them.
+	// $system, no duplicate, the workspace must exist — are enforced HERE so that a second create page
+	// (or the project_create MCP tool) cannot forget one of them. `sandbox` flags the project as the
+	// write-gate containment target for sandbox-only API keys (only the provisioning surface sets it).
 	Task<ProjectChangeResult> CreateAsync(
-		string workspaceKey, string? key, string? name, string? description, CancellationToken ct = default);
+		string workspaceKey, string? key, string? name, string? description,
+		bool sandbox = false, CancellationToken ct = default);
 
 	// Delete a project and everything it owns in core.db (keys, health endpoints, data/log/board/memory
 	// metadata, relations, settings) — see ProjectDeletion for the cascade and the file-scope boundary.
@@ -128,6 +137,16 @@ public sealed class ProjectDirectory(ICoreDbFactory dbf) : IProjectDirectory
 			: [.. rows.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p.Key))];
 	}
 
+	public async Task<IReadOnlyList<Project>> ListAllAsync(
+		bool includeContainers = false, CancellationToken ct = default)
+	{
+		using var db = dbf.Open();
+		var rows = await db.Projects.OrderBy(p => p.Key).ToListAsync(ct);
+		return includeContainers
+			? rows
+			: [.. rows.Where(p => !WorkspaceMemory.IsWorkspaceContainer(p.Key))];
+	}
+
 	public async Task<IReadOnlyDictionary<string, IReadOnlyList<Project>>> ListByWorkspaceAsync(
 		IReadOnlyCollection<string> workspaceKeys, CancellationToken ct = default)
 	{
@@ -161,7 +180,8 @@ public sealed class ProjectDirectory(ICoreDbFactory dbf) : IProjectDirectory
 	}
 
 	public async Task<ProjectChangeResult> CreateAsync(
-		string workspaceKey, string? key, string? name, string? description, CancellationToken ct = default)
+		string workspaceKey, string? key, string? name, string? description,
+		bool sandbox = false, CancellationToken ct = default)
 	{
 		if (string.IsNullOrWhiteSpace(key) || string.IsNullOrWhiteSpace(name))
 			return new ProjectChangeResult.Refused("Key and Name are required.");
@@ -182,6 +202,12 @@ public sealed class ProjectDirectory(ICoreDbFactory dbf) : IProjectDirectory
 
 		using var db = dbf.Open();
 
+		// The workspace must EXIST. A page's workspace comes from its route (it exists by the time the
+		// filter let the request through), but the provisioning surface takes it as an argument — and a
+		// project row pointing at no workspace is an orphan nothing can reach.
+		if (!await db.Workspaces.AnyAsync((Workspace w) => w.Key == workspaceKey, ct))
+			return new ProjectChangeResult.NotFound();
+
 		// Keys are GLOBALLY unique, so the duplicate check is not workspace-scoped — a key taken in
 		// another workspace is taken.
 		if (await db.Projects.AnyAsync(p => p.Key == key, ct))
@@ -193,6 +219,7 @@ public sealed class ProjectDirectory(ICoreDbFactory dbf) : IProjectDirectory
 			WorkspaceKey = workspaceKey,
 			Name = name,
 			Description = description ?? string.Empty,
+			Sandbox = sandbox,
 		};
 		await db.InsertAsync(project, token: ct);
 		return new ProjectChangeResult.Created(project);

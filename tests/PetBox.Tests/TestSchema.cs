@@ -21,6 +21,25 @@ public static class TestCoreDb
 
 	public static ICoreDbFactory CoreFactory(string connectionString) =>
 		new CoreDbFactory(connectionString);
+
+	// The MCP tools no longer take a core-db factory — they take the SERVICE that owns core.db for
+	// their concern (db-access-layer-cleanup: the database is visible only in the service layer).
+	// A unit test that drives a tool directly builds the real service over its own factory: these
+	// are the production implementations, not stubs, so the tools are exercised through exactly the
+	// door DI hands them at runtime.
+	public static IWorkspaceMemoryDirectory WorkspaceMemory(this ICoreDbFactory dbf) =>
+		new WorkspaceMemoryDirectory(dbf);
+
+	public static PetBox.Core.Health.IHealthReportService HealthReports(this ICoreDbFactory dbf) =>
+		new PetBox.Core.Health.HealthReportService(dbf);
+
+	// ApiKeys' one door. The config-key lookup is EMPTY here (no Auth:ApiKeys section in a unit
+	// test) — a config-declared key is a host-level concern and has its own integration coverage.
+	public static PetBox.Web.Auth.AgentKeyAdminService AgentKeys(this ICoreDbFactory dbf) =>
+		new(dbf,
+			new PetBox.Core.Auth.KeyStatService(),
+			new PetBox.Core.Auth.ConfigApiKeyLookup(
+				Microsoft.Extensions.Options.Options.Create(new PetBox.Core.Auth.ConfigApiKeyOptions())));
 }
 
 // Building the Core (petbox.db) schema with FluentMigrator — a fresh DI container, an
