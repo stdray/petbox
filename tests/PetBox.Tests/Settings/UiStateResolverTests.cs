@@ -1,5 +1,6 @@
 using System.Text.Json;
 using LinqToDB;
+using LinqToDB.Async;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using PetBox.Core.Data;
@@ -198,5 +199,109 @@ public sealed class UiStateResolverTests : IClassFixture<SettingsResolverFixture
 
 		resolved.SidebarPinned.Should().BeFalse();
 		resolved.KqlPanelPinned.Should().BeTrue();
+	}
+
+	// --- Theme unification (work `ui-state-theme-unify`) ---
+	//
+	// Theme moved from the retired standalone `UiSettings` record onto the REAL BrowserState (not a
+	// Test* fixture) with the SAME TopLevel=User and the SAME Key="ui.theme" the old record used, so
+	// existing rows in the Settings table keep resolving unchanged. These tests use the real
+	// BrowserState type — not TestUiState above — because the point is to prove Theme now goes
+	// through this exact mechanism, not a parallel one.
+
+	[Fact]
+	public async Task ResolveAsync_AuthenticatedUser_ResolvesThemeFromDb_AtTheUiThemeKey()
+	{
+		var (resolver, db) = GetResolverAndDb();
+		await db.InsertAsync(new Setting
+		{
+			Scope = "User",
+			ScopeKey = "user-theme-unify-authenticated",
+			Path = "ui.theme",
+			Type = "enum",
+			Value = "Light",
+			UpdatedAt = DateTime.UtcNow,
+		});
+
+		var result = await UiStateResolver.ResolveAsync<BrowserState>(resolver, userId: "user-theme-unify-authenticated", cookieValue: null);
+
+		result.Theme.Should().Be(Theme.Light);
+	}
+
+	[Fact]
+	public async Task ResolveAsync_Anonymous_Theme_DefaultsToSystem_MatchingThePreUnificationFallback()
+	{
+		var (resolver, _) = GetResolverAndDb();
+
+		var result = await UiStateResolver.ResolveAsync<BrowserState>(resolver, userId: null, cookieValue: null);
+
+		// The old ThemeHelper special-cased "no user id at all" to a null Theme that its own
+		// Resolve() mapped to the follow-system branch. A single, unified resolver can't keep that
+		// as a second branch, so BrowserState.Theme's own record default IS Theme.System — giving
+		// anonymous requests the identical (dark data-theme, follow-system script) outcome as before.
+		result.Theme.Should().Be(Theme.System);
+	}
+
+	[Fact]
+	public async Task SetAsync_BrowserState_WritesThemeAtTheUiThemeKey_LeavesSidebarPinnedUntouched()
+	{
+		var (resolver, db) = GetResolverAndDb();
+		var old = new BrowserState();
+		var updated = old with { Theme = Theme.Light };
+
+		await resolver.SetAsync(Scope.User, "user-theme-unify-write", updated, old, updatedBy: null);
+
+		var themeRows = await db.Settings
+			.Where(s => s.Scope == "User" && s.ScopeKey == "user-theme-unify-write" && s.Path == "ui.theme")
+			.ToListAsync();
+		themeRows.Should().ContainSingle();
+		themeRows[0].Value.Should().Be("Light");
+
+		// SidebarPinned is [BrowserState] (cookie branch), not [Setting] — ISettingsResolver's
+		// SetAsync<BrowserState> must never write it to the Settings table.
+		var sidebarRows = await db.Settings
+			.Where(s => s.Scope == "User" && s.ScopeKey == "user-theme-unify-write" && s.Path == "sidebarPinned")
+			.ToListAsync();
+		sidebarRows.Should().BeEmpty();
+	}
+
+	[Fact]
+	public async Task IUiState_AuthenticatedUser_ResolvesThemeFromDb()
+	{
+		var (resolver, db) = GetResolverAndDb();
+		await db.InsertAsync(new Setting
+		{
+			Scope = "User",
+			ScopeKey = "user-theme-uistate-authenticated",
+			Path = "ui.theme",
+			Type = "enum",
+			Value = "Light",
+			UpdatedAt = DateTime.UtcNow,
+		});
+		var nav = new FakeNav { IsAuthenticated = true };
+		var http = new DefaultHttpContext();
+		http.User = new System.Security.Claims.ClaimsPrincipal(new System.Security.Claims.ClaimsIdentity(
+			[new System.Security.Claims.Claim(PetBox.Core.Auth.PetBoxClaims.UserId, "user-theme-uistate-authenticated")],
+			authenticationType: "Test"));
+		var accessor = new HttpContextAccessor { HttpContext = http };
+		var sut = new UiState(nav, resolver, accessor);
+
+		var result = await sut.GetAsync();
+
+		result.Theme.Should().Be(Theme.Light);
+	}
+
+	[Fact]
+	public async Task IUiState_Anonymous_Theme_DefaultsToSystem_NoDbCall()
+	{
+		var (resolver, _) = GetResolverAndDb();
+		var nav = new FakeNav { IsAuthenticated = false };
+		var http = new DefaultHttpContext();
+		var accessor = new HttpContextAccessor { HttpContext = http };
+		var sut = new UiState(nav, resolver, accessor);
+
+		var result = await sut.GetAsync();
+
+		result.Theme.Should().Be(Theme.System);
 	}
 }

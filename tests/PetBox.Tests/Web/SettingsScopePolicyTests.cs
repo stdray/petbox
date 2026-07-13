@@ -55,8 +55,9 @@ public sealed class SettingsScopePolicyTests
 	[Fact]
 	public void IsEditableAt_OutsideUniformRange_KeepsOriginalTopLevelCeiling()
 	{
-		// UiSettings.Theme (TopLevel=User) at Scope.User — untouched by B (Preferences page).
-		var attr = typeof(UiSettings).GetProperty(nameof(UiSettings.Theme))!
+		// BrowserState.Theme (TopLevel=User, folded in from the retired UiSettings by work
+		// `ui-state-theme-unify`) at Scope.User — untouched by B (Preferences page).
+		var attr = typeof(BrowserState).GetProperty(nameof(BrowserState.Theme))!
 			.GetCustomAttributes(typeof(SettingAttribute), inherit: false)
 			.Cast<SettingAttribute>().Single();
 

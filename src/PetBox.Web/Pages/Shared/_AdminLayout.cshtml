@@ -1,5 +1,4 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
-@inject PetBox.Core.Settings.ISettingsResolver Settings
 @inject PetBox.Web.Settings.IUiState UiState
 @{
 	var currentWs = Nav.CurrentWorkspaceKey;
@@ -11,13 +10,12 @@
 	var backUrl = Routes.Workspace(currentWs);
 	var backLabel = $"Back to {currentWs}";
 
-	var (dataTheme, systemScript) = await PetBox.Web.Settings.ThemeHelper.ResolveForCurrentUserAsync(Nav, Settings, Context);
-
-	// Combined DB+cookie UI-state record (ui-state-framework), resolved via the injected IUiState
-	// service (typed, memoized per request) — sidebarPinned drives the drawer-open class below so
-	// the admin zone's first response already carries the right class too (SidebarPinTests covers
-	// this zone).
+	// Combined DB+cookie UI-state record (ui-state-framework + ui-state-theme-unify) — the ONE
+	// mechanism for both, resolved via the injected IUiState service (typed, memoized per request):
+	// sidebarPinned drives the drawer-open class below (SidebarPinTests covers this zone) and Theme
+	// drives data-theme, both from this SAME resolve.
 	var browserState = await UiState.GetAsync();
+	var (dataTheme, systemScript) = PetBox.Web.Settings.ThemeHelper.Resolve(browserState.Theme);
 }
 <!DOCTYPE html>
 <html lang="en" data-theme="@dataTheme" class="h-full">

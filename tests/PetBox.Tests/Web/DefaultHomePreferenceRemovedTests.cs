@@ -12,20 +12,21 @@ namespace PetBox.Tests.Web;
 // Card ui-defaulthome-phantom. The DefaultHome preference (Status/LastProject/AllLogs) was a
 // phantom: the app root always redirected to workspace status, so LastProject/AllLogs were dead
 // no-ops. The setting is removed entirely. This locks:
-//   1. Preferences no longer offers a DefaultHome control (the setting is gone from UiSettings, so
+//   1. Preferences no longer offers a DefaultHome control (the setting is gone from BrowserState —
+//      Theme's new home since work `ui-state-theme-unify` retired the standalone UiSettings — so
 //      the reflection-driven _SettingsForm can't render it) and the Save handler no longer binds it.
 //   2. The orphaned DefaultHome enum type is gone.
 //   3. The app root still redirects to the current workspace status page — unchanged behavior.
 public sealed class DefaultHomePreferenceRemovedTests
 {
 	[Fact]
-	public void UiSettings_HasNoDefaultHomeSetting()
+	public void BrowserState_HasNoDefaultHomeSetting()
 	{
-		typeof(UiSettings).GetProperty("DefaultHome").Should().BeNull(
+		typeof(BrowserState).GetProperty("DefaultHome").Should().BeNull(
 			"the phantom DefaultHome preference must be removed");
 
 		// The form + resolver reflect over [Setting]-annotated properties; none may key the dead path.
-		var settingKeys = typeof(UiSettings)
+		var settingKeys = typeof(BrowserState)
 			.GetProperties(BindingFlags.Public | BindingFlags.Instance)
 			.Select(p => p.GetCustomAttribute<SettingAttribute>())
 			.Where(a => a is not null)
@@ -36,7 +37,7 @@ public sealed class DefaultHomePreferenceRemovedTests
 	[Fact]
 	public void DefaultHomeEnum_IsGone()
 	{
-		typeof(UiSettings).Assembly.GetType("PetBox.Core.Settings.DefaultHome")
+		typeof(BrowserState).Assembly.GetType("PetBox.Core.Settings.DefaultHome")
 			.Should().BeNull("the orphaned DefaultHome enum must be removed");
 	}
 

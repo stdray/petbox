@@ -9,12 +9,14 @@ using PetBox.Web.Navigation;
 
 namespace PetBox.Web.Settings;
 
-// Resolves the combined DB+cookie UI-state record BEFORE render, the same shape ThemeHelper
-// established for the theme: a pure/testable core (ResolveAsync/ApplyBrowserState/MergeCookieValue,
-// no ASP.NET types) plus a thin wiring method (ResolveForCurrentUserAsync) that pulls the user id
-// and the cookie out of the current request. Call it from a layout the same way ThemeHelper is
-// called — before RenderBody — so a future [BrowserState]/[Setting] property never needs a
-// post-load class correction, a redirect, or a reload to take effect.
+// Resolves the combined DB+cookie UI-state record BEFORE render: a pure/testable core
+// (ResolveAsync/ApplyBrowserState/MergeCookieValue, no ASP.NET types) plus a thin wiring method
+// (ResolveForCurrentUserAsync) that pulls the user id and the cookie out of the current request.
+// This is now the ONLY resolution path for UI state, including Theme (work `ui-state-theme-unify`
+// folded the formerly-separate ThemeHelper.ResolveForCurrentUserAsync in here — ThemeHelper is pure
+// presentation mapping now, with no DB/cookie access of its own). Call it from a layout before
+// RenderBody so a future [BrowserState]/[Setting] property never needs a post-load class
+// correction, a redirect, or a reload to take effect.
 public static class UiStateResolver
 {
 	// The ONE cookie every [BrowserState] property reads and writes through — never one cookie per
@@ -28,7 +30,7 @@ public static class UiStateResolver
 	};
 
 	// Core resolution: the DB branch (only when a userId is given — Scope.User, same axis
-	// UiSettings.Theme already uses) merged with the cookie branch. No HttpContext/INavigationContext
+	// BrowserState.Theme uses) merged with the cookie branch. No HttpContext/INavigationContext
 	// dependency, so it's directly unit-testable. `userId is null` (anonymous) skips the DB branch
 	// entirely and never throws — requirement is cookie-branch-only, no exception, for anonymous
 	// visitors.
@@ -42,8 +44,8 @@ public static class UiStateResolver
 		return ApplyBrowserState(result, cookieValue);
 	}
 
-	// ASP.NET wiring: extracts the user id and the petbox.ui cookie from the current request the
-	// same way ThemeHelper.ResolveForCurrentUserAsync extracts the theme, then defers to ResolveAsync.
+	// ASP.NET wiring: extracts the user id and the petbox.ui cookie from the current request, then
+	// defers to ResolveAsync.
 	public static Task<T> ResolveForCurrentUserAsync<T>(
 		INavigationContext nav, ISettingsResolver settings, HttpContext http, CancellationToken ct = default)
 		where T : new()

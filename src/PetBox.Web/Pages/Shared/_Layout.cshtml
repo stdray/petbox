@@ -1,5 +1,4 @@
 @inject PetBox.Web.Navigation.INavigationContext Nav
-@inject PetBox.Core.Settings.ISettingsResolver Settings
 @inject PetBox.Tasks.Contract.ITasksService Tasks
 @inject PetBox.Web.Settings.IUiState UiState
 @{
@@ -22,13 +21,14 @@
 	var sharedMemoryUrl = Routes.SharedMemory(currentWs);
 	var sharedConfigUrl = Routes.SharedConfig(currentWs);
 
-	var (dataTheme, systemScript) = await PetBox.Web.Settings.ThemeHelper.ResolveForCurrentUserAsync(Nav, Settings, Context);
-
-	// Combined DB+cookie UI-state record (ui-state-framework), resolved via the injected IUiState
-	// service — typed, memoized per request — instead of the ViewData bag: sidebarPinned drives the
-	// drawer-open class below, so the FIRST response already carries the right class: no post-load
-	// correction, no cast, no dependence on this layout remembering to stash anything for a partial.
+	// Combined DB+cookie UI-state record (ui-state-framework + ui-state-theme-unify) — the ONE
+	// mechanism for both, resolved via the injected IUiState service (typed, memoized per request)
+	// instead of the ViewData bag AND instead of a second, theme-only resolve: sidebarPinned drives
+	// the drawer-open class below and Theme drives data-theme, both from this SAME resolve, so the
+	// FIRST response already carries the right values — no post-load correction, no cast, no second
+	// DB round trip.
 	var browserState = await UiState.GetAsync();
+	var (dataTheme, systemScript) = PetBox.Web.Settings.ThemeHelper.Resolve(browserState.Theme);
 }
 <!DOCTYPE html>
 <html lang="en" data-theme="@dataTheme" class="h-full">
